@@ -1,0 +1,3016 @@
+{
+ "event_id": 15322373,
+ "home_team": "Nebraska Cornhuskers",
+ "away_team": "Indiana Hoosiers",
+ "home_score": 3,
+ "away_score": 3,
+ "status": "live",
+ "spreads": [
+  {
+   "market_name": "Spread: Indiana (-7.5)",
+   "outcome_name": "Nebraska",
+   "observed_at": "2026-10-10T16:39:49.077350+00:00",
+   "contributor_outcome_ids": [
+    241766449
+   ],
+   "threshold": null,
+   "probability": 0.575,
+   "source": "polymarket",
+   "is_winner": null,
+   "resolution_source": null,
+   "_market_id": 64240568
+  },
+  {
+   "market_name": "Spread: Indiana (-7.5)",
+   "outcome_name": "Indiana",
+   "observed_at": "2026-10-10T16:39:49.077350+00:00",
+   "contributor_outcome_ids": [
+    241766448
+   ],
+   "threshold": null,
+   "probability": 0.425,
+   "source": "polymarket",
+   "is_winner": null,
+   "resolution_source": null,
+   "_market_id": 64240568
+  },
+  {
+   "market_name": "Spread: Indiana (-17.5)",
+   "outcome_name": "Nebraska",
+   "observed_at": "2026-10-10T16:39:49.077350+00:00",
+   "contributor_outcome_ids": [
+    242337697
+   ],
+   "threshold": null,
+   "probability": 0.8,
+   "source": "polymarket",
+   "is_winner": null,
+   "resolution_source": null,
+   "_market_id": 64409755
+  },
+  {
+   "market_name": "Spread: Indiana (-17.5)",
+   "outcome_name": "Indiana",
+   "observed_at": "2026-10-10T16:39:49.077350+00:00",
+   "contributor_outcome_ids": [
+    242337696
+   ],
+   "threshold": null,
+   "probability": 0.2,
+   "source": "polymarket",
+   "is_winner": null,
+   "resolution_source": null,
+   "_market_id": 64409755
+  },
+  {
+   "market_name": "Spread: Indiana (-16.5)",
+   "outcome_name": "Nebraska",
+   "observed_at": "2026-10-10T16:41:02.440509+00:00",
+   "contributor_outcome_ids": [
+    242337699
+   ],
+   "threshold": null,
+   "probability": 0.765,
+   "source": "polymarket",
+   "is_winner": null,
+   "resolution_source": null,
+   "_market_id": 64409756
+  },
+  {
+   "market_name": "Spread: Indiana (-16.5)",
+   "outcome_name": "Indiana",
+   "observed_at": "2026-10-10T16:41:02.440509+00:00",
+   "contributor_outcome_ids": [
+    242337698
+   ],
+   "threshold": null,
+   "probability": 0.235,
+   "source": "polymarket",
+   "is_winner": null,
+   "resolution_source": null,
+   "_market_id": 64409756
+  },
+  {
+   "market_name": "Spread: Indiana (-14.5)",
+   "outcome_name": "Nebraska",
+   "observed_at": "2026-10-10T16:39:49.077350+00:00",
+   "contributor_outcome_ids": [
+    242337701
+   ],
+   "threshold": null,
+   "probability": 0.74,
+   "source": "polymarket",
+   "is_winner": null,
+   "resolution_source": null,
+   "_market_id": 64409757
+  },
+  {
+   "market_name": "Spread: Indiana (-14.5)",
+   "outcome_name": "Indiana",
+   "observed_at": "2026-10-10T16:39:49.077350+00:00",
+   "contributor_outcome_ids": [
+    242337700
+   ],
+   "threshold": null,
+   "probability": 0.26,
+   "source": "polymarket",
+   "is_winner": null,
+   "resolution_source": null,
+   "_market_id": 64409757
+  },
+  {
+   "market_name": "Spread: Indiana (-13.5)",
+   "outcome_name": "Nebraska",
+   "observed_at": "2026-10-10T16:40:36.583620+00:00",
+   "contributor_outcome_ids": [
+    241766443
+   ],
+   "threshold": null,
+   "probability": 0.685,
+   "source": "polymarket",
+   "is_winner": null,
+   "resolution_source": null,
+   "_market_id": 64240565
+  },
+  {
+   "market_name": "Spread: Indiana (-13.5)",
+   "outcome_name": "Indiana",
+   "observed_at": "2026-10-10T16:40:36.583620+00:00",
+   "contributor_outcome_ids": [
+    241766442
+   ],
+   "threshold": null,
+   "probability": 0.315,
+   "source": "polymarket",
+   "is_winner": null,
+   "resolution_source": null,
+   "_market_id": 64240565
+  },
+  {
+   "market_name": "Spread: Indiana (-6.5)",
+   "outcome_name": "Indiana",
+   "observed_at": "2026-10-10T16:41:21.095308+00:00",
+   "contributor_outcome_ids": [
+    241766450
+   ],
+   "threshold": null,
+   "probability": 0.51,
+   "source": "polymarket",
+   "is_winner": null,
+   "resolution_source": null,
+   "_market_id": 64240569
+  },
+  {
+   "market_name": "Spread: Indiana (-6.5)",
+   "outcome_name": "Nebraska",
+   "observed_at": "2026-10-10T16:41:21.095308+00:00",
+   "contributor_outcome_ids": [
+    241766451
+   ],
+   "threshold": null,
+   "probability": 0.49,
+   "source": "polymarket",
+   "is_winner": null,
+   "resolution_source": null,
+   "_market_id": 64240569
+  },
+  {
+   "market_name": "Spread: Indiana (-5.5)",
+   "outcome_name": "Indiana",
+   "observed_at": "2026-10-10T16:39:50.895754+00:00",
+   "contributor_outcome_ids": [
+    242337712
+   ],
+   "threshold": null,
+   "probability": 0.525,
+   "source": "polymarket",
+   "is_winner": null,
+   "resolution_source": null,
+   "_market_id": 64409763
+  },
+  {
+   "market_name": "Spread: Indiana (-5.5)",
+   "outcome_name": "Nebraska",
+   "observed_at": "2026-10-10T16:39:50.895754+00:00",
+   "contributor_outcome_ids": [
+    242337713
+   ],
+   "threshold": null,
+   "probability": 0.475,
+   "source": "polymarket",
+   "is_winner": null,
+   "resolution_source": null,
+   "_market_id": 64409763
+  },
+  {
+   "market_name": "Spread: Indiana (-2.5)",
+   "outcome_name": "Indiana",
+   "observed_at": "2026-10-10T16:41:13.354257+00:00",
+   "contributor_outcome_ids": [
+    242337718
+   ],
+   "threshold": null,
+   "probability": 0.65,
+   "source": "polymarket",
+   "is_winner": null,
+   "resolution_source": null,
+   "_market_id": 64409766
+  },
+  {
+   "market_name": "Spread: Indiana (-2.5)",
+   "outcome_name": "Nebraska",
+   "observed_at": "2026-10-10T16:41:13.354257+00:00",
+   "contributor_outcome_ids": [
+    242337719
+   ],
+   "threshold": null,
+   "probability": 0.35,
+   "source": "polymarket",
+   "is_winner": null,
+   "resolution_source": null,
+   "_market_id": 64409766
+  },
+  {
+   "market_name": "Spread: Indiana (-1.5)",
+   "outcome_name": "Indiana",
+   "observed_at": "2026-10-10T16:39:42.052905+00:00",
+   "contributor_outcome_ids": [
+    242337720
+   ],
+   "threshold": null,
+   "probability": 0.67,
+   "source": "polymarket",
+   "is_winner": null,
+   "resolution_source": null,
+   "_market_id": 64409767
+  },
+  {
+   "market_name": "Spread: Indiana (-1.5)",
+   "outcome_name": "Nebraska",
+   "observed_at": "2026-10-10T16:39:42.052905+00:00",
+   "contributor_outcome_ids": [
+    242337721
+   ],
+   "threshold": null,
+   "probability": 0.33,
+   "source": "polymarket",
+   "is_winner": null,
+   "resolution_source": null,
+   "_market_id": 64409767
+  },
+  {
+   "market_name": "Spread: Nebraska (-1.5)",
+   "outcome_name": "Indiana",
+   "observed_at": "2026-10-10T16:41:04.370883+00:00",
+   "contributor_outcome_ids": [
+    242337723
+   ],
+   "threshold": null,
+   "probability": 0.71,
+   "source": "polymarket",
+   "is_winner": null,
+   "resolution_source": null,
+   "_market_id": 64409768
+  },
+  {
+   "market_name": "Spread: Nebraska (-1.5)",
+   "outcome_name": "Nebraska",
+   "observed_at": "2026-10-10T16:41:04.370883+00:00",
+   "contributor_outcome_ids": [
+    242337722
+   ],
+   "threshold": null,
+   "probability": 0.29,
+   "source": "polymarket",
+   "is_winner": null,
+   "resolution_source": null,
+   "_market_id": 64409768
+  },
+  {
+   "market_name": "Spread: Nebraska (-4.5)",
+   "outcome_name": "Indiana",
+   "observed_at": "2026-10-10T16:39:59.837760+00:00",
+   "contributor_outcome_ids": [
+    241766453
+   ],
+   "threshold": null,
+   "probability": 0.82,
+   "source": "polymarket",
+   "is_winner": null,
+   "resolution_source": null,
+   "_market_id": 64240570
+  },
+  {
+   "market_name": "Spread: Nebraska (-4.5)",
+   "outcome_name": "Nebraska",
+   "observed_at": "2026-10-10T16:39:59.837760+00:00",
+   "contributor_outcome_ids": [
+    241766452
+   ],
+   "threshold": null,
+   "probability": 0.18,
+   "source": "polymarket",
+   "is_winner": null,
+   "resolution_source": null,
+   "_market_id": 64240570
+  },
+  {
+   "market_name": "Spread: Nebraska (-10.5)",
+   "outcome_name": "Indiana",
+   "observed_at": "2026-10-10T16:41:02.440509+00:00",
+   "contributor_outcome_ids": [
+    242337739
+   ],
+   "threshold": null,
+   "probability": 0.91,
+   "source": "polymarket",
+   "is_winner": null,
+   "resolution_source": null,
+   "_market_id": 64409776
+  },
+  {
+   "market_name": "Spread: Nebraska (-10.5)",
+   "outcome_name": "Nebraska",
+   "observed_at": "2026-10-10T16:41:02.440509+00:00",
+   "contributor_outcome_ids": [
+    242337738
+   ],
+   "threshold": null,
+   "probability": 0.09,
+   "source": "polymarket",
+   "is_winner": null,
+   "resolution_source": null,
+   "_market_id": 64409776
+  },
+  {
+   "market_name": "Spread: Nebraska (-13.5)",
+   "outcome_name": "Indiana",
+   "observed_at": "2026-10-10T16:41:02.440509+00:00",
+   "contributor_outcome_ids": [
+    242337741
+   ],
+   "threshold": null,
+   "probability": 0.94,
+   "source": "polymarket",
+   "is_winner": null,
+   "resolution_source": null,
+   "_market_id": 64409777
+  },
+  {
+   "market_name": "Spread: Nebraska (-13.5)",
+   "outcome_name": "Nebraska",
+   "observed_at": "2026-10-10T16:41:02.440509+00:00",
+   "contributor_outcome_ids": [
+    242337740
+   ],
+   "threshold": null,
+   "probability": 0.06,
+   "source": "polymarket",
+   "is_winner": null,
+   "resolution_source": null,
+   "_market_id": 64409777
+  },
+  {
+   "market_name": "Spread: Nebraska (-14.5)",
+   "outcome_name": "Indiana",
+   "observed_at": "2026-10-10T16:41:08.634985+00:00",
+   "contributor_outcome_ids": [
+    242337743
+   ],
+   "threshold": null,
+   "probability": 0.949,
+   "source": "polymarket",
+   "is_winner": null,
+   "resolution_source": null,
+   "_market_id": 64409778
+  },
+  {
+   "market_name": "Spread: Nebraska (-14.5)",
+   "outcome_name": "Nebraska",
+   "observed_at": "2026-10-10T16:41:08.634985+00:00",
+   "contributor_outcome_ids": [
+    242337742
+   ],
+   "threshold": null,
+   "probability": 0.051,
+   "source": "polymarket",
+   "is_winner": null,
+   "resolution_source": null,
+   "_market_id": 64409778
+  },
+  {
+   "market_name": "Spread: Indiana (-20.5)",
+   "outcome_name": "Nebraska",
+   "observed_at": "2026-10-10T16:41:21.095308+00:00",
+   "contributor_outcome_ids": [
+    242337695
+   ],
+   "threshold": null,
+   "probability": 0.85,
+   "source": "polymarket",
+   "is_winner": null,
+   "resolution_source": null,
+   "_market_id": 64409754
+  },
+  {
+   "market_name": "Spread: Indiana (-20.5)",
+   "outcome_name": "Indiana",
+   "observed_at": "2026-10-10T16:41:21.095308+00:00",
+   "contributor_outcome_ids": [
+    242337694
+   ],
+   "threshold": null,
+   "probability": 0.15,
+   "source": "polymarket",
+   "is_winner": null,
+   "resolution_source": null,
+   "_market_id": 64409754
+  },
+  {
+   "market_name": "Spread: Indiana (-10.5)",
+   "outcome_name": "Nebraska",
+   "observed_at": "2026-10-10T16:41:01.294599+00:00",
+   "contributor_outcome_ids": [
+    241766445
+   ],
+   "threshold": null,
+   "probability": 0.645,
+   "source": "polymarket",
+   "is_winner": null,
+   "resolution_source": null,
+   "_market_id": 64240566
+  },
+  {
+   "market_name": "Spread: Indiana (-10.5)",
+   "outcome_name": "Indiana",
+   "observed_at": "2026-10-10T16:41:01.294599+00:00",
+   "contributor_outcome_ids": [
+    241766444
+   ],
+   "threshold": null,
+   "probability": 0.355,
+   "source": "polymarket",
+   "is_winner": null,
+   "resolution_source": null,
+   "_market_id": 64240566
+  },
+  {
+   "market_name": "Spread: Indiana (-8.5)",
+   "outcome_name": "Nebraska",
+   "observed_at": "2026-10-10T16:39:40.306309+00:00",
+   "contributor_outcome_ids": [
+    239783482
+   ],
+   "threshold": null,
+   "probability": 0.595,
+   "source": "polymarket",
+   "is_winner": null,
+   "resolution_source": null,
+   "_market_id": 63646299
+  },
+  {
+   "market_name": "Spread: Indiana (-8.5)",
+   "outcome_name": "Indiana",
+   "observed_at": "2026-10-10T16:39:40.306309+00:00",
+   "contributor_outcome_ids": [
+    239783481
+   ],
+   "threshold": null,
+   "probability": 0.405,
+   "source": "polymarket",
+   "is_winner": null,
+   "resolution_source": null,
+   "_market_id": 63646299
+  },
+  {
+   "market_name": "Spread: Indiana (-0.5)",
+   "outcome_name": "Indiana",
+   "observed_at": "2026-10-10T15:59:52.763461+00:00",
+   "contributor_outcome_ids": [
+    243008036
+   ],
+   "threshold": null,
+   "probability": 0.75,
+   "source": "polymarket",
+   "is_winner": null,
+   "resolution_source": null,
+   "_market_id": 64609730
+  },
+  {
+   "market_name": "Spread: Indiana (-0.5)",
+   "outcome_name": "Nebraska",
+   "observed_at": "2026-10-10T15:59:52.763461+00:00",
+   "contributor_outcome_ids": [
+    243008037
+   ],
+   "threshold": null,
+   "probability": 0.25,
+   "source": "polymarket",
+   "is_winner": null,
+   "resolution_source": null,
+   "_market_id": 64609730
+  },
+  {
+   "market_name": "Spread: Nebraska (-2.5)",
+   "outcome_name": "Indiana",
+   "observed_at": "2026-10-10T16:39:42.052905+00:00",
+   "contributor_outcome_ids": [
+    242337725
+   ],
+   "threshold": null,
+   "probability": 0.73,
+   "source": "polymarket",
+   "is_winner": null,
+   "resolution_source": null,
+   "_market_id": 64409769
+  },
+  {
+   "market_name": "Spread: Nebraska (-2.5)",
+   "outcome_name": "Nebraska",
+   "observed_at": "2026-10-10T16:39:42.052905+00:00",
+   "contributor_outcome_ids": [
+    242337724
+   ],
+   "threshold": null,
+   "probability": 0.27,
+   "source": "polymarket",
+   "is_winner": null,
+   "resolution_source": null,
+   "_market_id": 64409769
+  },
+  {
+   "market_name": "Spread: Nebraska (-3.5)",
+   "outcome_name": "Indiana",
+   "observed_at": "2026-10-10T16:41:02.440509+00:00",
+   "contributor_outcome_ids": [
+    242337727
+   ],
+   "threshold": null,
+   "probability": 0.795,
+   "source": "polymarket",
+   "is_winner": null,
+   "resolution_source": null,
+   "_market_id": 64409770
+  },
+  {
+   "market_name": "Spread: Nebraska (-3.5)",
+   "outcome_name": "Nebraska",
+   "observed_at": "2026-10-10T16:41:02.440509+00:00",
+   "contributor_outcome_ids": [
+    242337726
+   ],
+   "threshold": null,
+   "probability": 0.205,
+   "source": "polymarket",
+   "is_winner": null,
+   "resolution_source": null,
+   "_market_id": 64409770
+  },
+  {
+   "market_name": "Spread: Nebraska (-6.5)",
+   "outcome_name": "Indiana",
+   "observed_at": "2026-10-10T16:41:07.437698+00:00",
+   "contributor_outcome_ids": [
+    242337733
+   ],
+   "threshold": null,
+   "probability": 0.855,
+   "source": "polymarket",
+   "is_winner": null,
+   "resolution_source": null,
+   "_market_id": 64409773
+  },
+  {
+   "market_name": "Spread: Nebraska (-6.5)",
+   "outcome_name": "Nebraska",
+   "observed_at": "2026-10-10T16:41:07.437698+00:00",
+   "contributor_outcome_ids": [
+    242337732
+   ],
+   "threshold": null,
+   "probability": 0.145,
+   "source": "polymarket",
+   "is_winner": null,
+   "resolution_source": null,
+   "_market_id": 64409773
+  },
+  {
+   "market_name": "Spread: Nebraska (-16.5)",
+   "outcome_name": "Indiana",
+   "observed_at": "2026-10-10T05:36:27.711539+00:00",
+   "contributor_outcome_ids": [
+    242337745
+   ],
+   "threshold": null,
+   "probability": 0.964,
+   "source": "polymarket",
+   "is_winner": null,
+   "resolution_source": null,
+   "_market_id": 64409779
+  },
+  {
+   "market_name": "Spread: Nebraska (-16.5)",
+   "outcome_name": "Nebraska",
+   "observed_at": "2026-10-10T05:36:27.711539+00:00",
+   "contributor_outcome_ids": [
+    242337744
+   ],
+   "threshold": null,
+   "probability": 0.036,
+   "source": "polymarket",
+   "is_winner": null,
+   "resolution_source": null,
+   "_market_id": 64409779
+  },
+  {
+   "market_name": "Spread: Nebraska (-17.5)",
+   "outcome_name": "Indiana",
+   "observed_at": "2026-10-09T20:10:11.059355+00:00",
+   "contributor_outcome_ids": [
+    243008065
+   ],
+   "threshold": null,
+   "probability": 0.9685,
+   "source": "polymarket",
+   "is_winner": null,
+   "resolution_source": null,
+   "_market_id": 64609744
+  },
+  {
+   "market_name": "Spread: Nebraska (-17.5)",
+   "outcome_name": "Nebraska",
+   "observed_at": "2026-10-09T20:10:11.059355+00:00",
+   "contributor_outcome_ids": [
+    243008064
+   ],
+   "threshold": null,
+   "probability": 0.0315,
+   "source": "polymarket",
+   "is_winner": null,
+   "resolution_source": null,
+   "_market_id": 64609744
+  },
+  {
+   "market_name": "Spread: Indiana (-4.5)",
+   "outcome_name": "Indiana",
+   "observed_at": "2026-10-10T16:40:30.024236+00:00",
+   "contributor_outcome_ids": [
+    242337714
+   ],
+   "threshold": null,
+   "probability": 0.545,
+   "source": "polymarket",
+   "is_winner": null,
+   "resolution_source": null,
+   "_market_id": 64409764
+  },
+  {
+   "market_name": "Spread: Indiana (-4.5)",
+   "outcome_name": "Nebraska",
+   "observed_at": "2026-10-10T16:40:35.769643+00:00",
+   "contributor_outcome_ids": [
+    242337715
+   ],
+   "threshold": null,
+   "probability": 0.455,
+   "source": "polymarket",
+   "is_winner": null,
+   "resolution_source": null,
+   "_market_id": 64409764
+  },
+  {
+   "market_name": "Spread: Indiana (-3.5)",
+   "outcome_name": "Indiana",
+   "observed_at": "2026-10-10T16:41:01.294599+00:00",
+   "contributor_outcome_ids": [
+    242337716
+   ],
+   "threshold": null,
+   "probability": 0.57,
+   "source": "polymarket",
+   "is_winner": null,
+   "resolution_source": null,
+   "_market_id": 64409765
+  },
+  {
+   "market_name": "Spread: Indiana (-3.5)",
+   "outcome_name": "Nebraska",
+   "observed_at": "2026-10-10T16:41:01.294599+00:00",
+   "contributor_outcome_ids": [
+    242337717
+   ],
+   "threshold": null,
+   "probability": 0.43,
+   "source": "polymarket",
+   "is_winner": null,
+   "resolution_source": null,
+   "_market_id": 64409765
+  },
+  {
+   "market_name": "Spread: Nebraska (-5.5)",
+   "outcome_name": "Indiana",
+   "observed_at": "2026-10-10T16:41:01.294599+00:00",
+   "contributor_outcome_ids": [
+    242337731
+   ],
+   "threshold": null,
+   "probability": 0.825,
+   "source": "polymarket",
+   "is_winner": null,
+   "resolution_source": null,
+   "_market_id": 64409772
+  },
+  {
+   "market_name": "Spread: Nebraska (-5.5)",
+   "outcome_name": "Nebraska",
+   "observed_at": "2026-10-10T16:41:01.294599+00:00",
+   "contributor_outcome_ids": [
+    242337730
+   ],
+   "threshold": null,
+   "probability": 0.175,
+   "source": "polymarket",
+   "is_winner": null,
+   "resolution_source": null,
+   "_market_id": 64409772
+  },
+  {
+   "market_name": "Spread: Nebraska (-7.5)",
+   "outcome_name": "Indiana",
+   "observed_at": "2026-10-10T16:39:59.837760+00:00",
+   "contributor_outcome_ids": [
+    242337735
+   ],
+   "threshold": null,
+   "probability": 0.88,
+   "source": "polymarket",
+   "is_winner": null,
+   "resolution_source": null,
+   "_market_id": 64409774
+  },
+  {
+   "market_name": "Spread: Nebraska (-7.5)",
+   "outcome_name": "Nebraska",
+   "observed_at": "2026-10-10T16:39:59.837760+00:00",
+   "contributor_outcome_ids": [
+    242337734
+   ],
+   "threshold": null,
+   "probability": 0.12,
+   "source": "polymarket",
+   "is_winner": null,
+   "resolution_source": null,
+   "_market_id": 64409774
+  },
+  {
+   "market_name": "Spread: Nebraska (-8.5)",
+   "outcome_name": "Indiana",
+   "observed_at": "2026-10-10T15:57:48.005937+00:00",
+   "contributor_outcome_ids": [
+    242337737
+   ],
+   "threshold": null,
+   "probability": 0.91,
+   "source": "polymarket",
+   "is_winner": null,
+   "resolution_source": null,
+   "_market_id": 64409775
+  },
+  {
+   "market_name": "Spread: Nebraska (-8.5)",
+   "outcome_name": "Nebraska",
+   "observed_at": "2026-10-10T15:57:48.005937+00:00",
+   "contributor_outcome_ids": [
+    242337736
+   ],
+   "threshold": null,
+   "probability": 0.09,
+   "source": "polymarket",
+   "is_winner": null,
+   "resolution_source": null,
+   "_market_id": 64409775
+  },
+  {
+   "market_name": "Spread: Nebraska (-20.5)",
+   "outcome_name": "Indiana",
+   "observed_at": "2026-10-09T11:08:07.657651+00:00",
+   "contributor_outcome_ids": [
+    243008067
+   ],
+   "threshold": null,
+   "probability": 0.9625,
+   "source": "polymarket",
+   "is_winner": null,
+   "resolution_source": null,
+   "_market_id": 64609745
+  },
+  {
+   "market_name": "Spread: Nebraska (-20.5)",
+   "outcome_name": "Nebraska",
+   "observed_at": "2026-10-09T11:08:07.657651+00:00",
+   "contributor_outcome_ids": [
+    243008066
+   ],
+   "threshold": null,
+   "probability": 0.0375,
+   "source": "polymarket",
+   "is_winner": null,
+   "resolution_source": null,
+   "_market_id": 64609745
+  },
+  {
+   "market_name": "Spread: Nebraska (-0.5)",
+   "outcome_name": "Indiana",
+   "observed_at": "2026-10-10T16:01:42.363264+00:00",
+   "contributor_outcome_ids": [
+    243008039
+   ],
+   "threshold": null,
+   "probability": 0.75,
+   "source": "polymarket",
+   "is_winner": null,
+   "resolution_source": null,
+   "_market_id": 64609731
+  },
+  {
+   "market_name": "Spread: Nebraska (-0.5)",
+   "outcome_name": "Nebraska",
+   "observed_at": "2026-10-10T16:01:42.363264+00:00",
+   "contributor_outcome_ids": [
+    243008038
+   ],
+   "threshold": null,
+   "probability": 0.25,
+   "source": "polymarket",
+   "is_winner": null,
+   "resolution_source": null,
+   "_market_id": 64609731
+  }
+ ],
+ "totals": [
+  {
+   "threshold": 35.5,
+   "over_probability": 0.785,
+   "source": "polymarket",
+   "market_type": "game_total",
+   "market_name": "Indiana vs. Nebraska: O/U 35.5",
+   "outcome_name": "Over",
+   "observed_at": "2026-10-10T16:00:00.964786+00:00",
+   "contributor_outcome_ids": [
+    242337746
+   ],
+   "is_winner": null,
+   "resolution_source": null,
+   "movement": -0.11,
+   "period": null,
+   "_market_id": 64409780,
+   "_external_id": "0xf7adacfdcb46c03c55bbd59c30fb1cd9d073a431c999a60984f8c007edd44478"
+  },
+  {
+   "threshold": 37.5,
+   "over_probability": 0.77,
+   "source": "polymarket",
+   "market_type": "game_total",
+   "market_name": "Indiana vs. Nebraska: O/U 37.5",
+   "outcome_name": "Over",
+   "observed_at": "2026-10-10T16:41:06.025065+00:00",
+   "contributor_outcome_ids": [
+    242337748
+   ],
+   "is_winner": null,
+   "resolution_source": null,
+   "movement": -0.085,
+   "period": null,
+   "_market_id": 64409781,
+   "_external_id": "0xbf2eae10a4aca09b32363f435e8e58b24fcee09aaf53eeeb8261cab21e4caa52"
+  },
+  {
+   "threshold": 39.5,
+   "over_probability": 0.745,
+   "source": "polymarket",
+   "market_type": "game_total",
+   "market_name": "Indiana vs. Nebraska: O/U 39.5",
+   "outcome_name": "Over",
+   "observed_at": "2026-10-10T15:52:31.455515+00:00",
+   "contributor_outcome_ids": [
+    242337750
+   ],
+   "is_winner": null,
+   "resolution_source": null,
+   "movement": -0.05,
+   "period": null,
+   "_market_id": 64409782,
+   "_external_id": "0x4808db512fdf5f6f1638cddffd3df5aabd227f0a5ce14aa5e8aa3fc62bfa0170"
+  },
+  {
+   "threshold": 41.5,
+   "over_probability": 0.71,
+   "source": "polymarket",
+   "market_type": "game_total",
+   "market_name": "Indiana vs. Nebraska: O/U 41.5",
+   "outcome_name": "Over",
+   "observed_at": "2026-10-10T16:29:26.417835+00:00",
+   "contributor_outcome_ids": [
+    242337752
+   ],
+   "is_winner": null,
+   "resolution_source": null,
+   "movement": -0.07,
+   "period": null,
+   "_market_id": 64409783,
+   "_external_id": "0x9ef9f70ae36d71808c979c0bd31fb4712f233a94a21b798b8a33ad1f2bcd7e13"
+  },
+  {
+   "threshold": 43.5,
+   "over_probability": 0.62,
+   "source": "polymarket",
+   "market_type": "game_total",
+   "market_name": "Indiana vs. Nebraska: O/U 43.5",
+   "outcome_name": "Over",
+   "observed_at": "2026-10-10T16:40:24.865474+00:00",
+   "contributor_outcome_ids": [
+    242337754
+   ],
+   "is_winner": null,
+   "resolution_source": null,
+   "movement": -0.12,
+   "period": null,
+   "_market_id": 64409784,
+   "_external_id": "0x8733aeeefc1753421b78f97ad7e51b4921f61d68250fa50eaaeabeeffc00cadf"
+  },
+  {
+   "threshold": 45.5,
+   "over_probability": 0.54,
+   "source": "polymarket",
+   "market_type": "game_total",
+   "market_name": "Indiana vs. Nebraska: O/U 45.5",
+   "outcome_name": "Over",
+   "observed_at": "2026-10-10T16:41:28.755656+00:00",
+   "contributor_outcome_ids": [
+    242337756
+   ],
+   "is_winner": null,
+   "resolution_source": null,
+   "movement": -0.145,
+   "period": null,
+   "_market_id": 64409785,
+   "_external_id": "0x858b1cdee2a1c34dc684e431012af2b9a290af65e2496d69bb4d3fd53a1764bc"
+  },
+  {
+   "threshold": 47.5,
+   "over_probability": 0.485,
+   "source": "polymarket",
+   "market_type": "game_total",
+   "market_name": "Indiana vs. Nebraska: O/U 47.5",
+   "outcome_name": "Under",
+   "observed_at": "2026-10-10T16:41:13.354257+00:00",
+   "contributor_outcome_ids": [
+    242337759
+   ],
+   "is_winner": null,
+   "resolution_source": null,
+   "movement": 0.15,
+   "period": null,
+   "_market_id": 64409786,
+   "_external_id": "0xebd4e77cc194df360776479c47ce1563a1d5bdf9250c43f86f6ed7c43a812669"
+  },
+  {
+   "threshold": 49.5,
+   "over_probability": 0.435,
+   "source": "polymarket",
+   "market_type": "game_total",
+   "market_name": "Indiana vs. Nebraska: O/U 49.5",
+   "outcome_name": "Under",
+   "observed_at": "2026-10-10T16:39:59.837760+00:00",
+   "contributor_outcome_ids": [
+    241766455
+   ],
+   "is_winner": null,
+   "resolution_source": null,
+   "movement": 0.15,
+   "period": null,
+   "_market_id": 64240571,
+   "_external_id": "0xc4ef2ded337c73eb50f5a8bc0b62d92299d131394ba56ca84d5b3eeb5a37e92b"
+  },
+  {
+   "threshold": 51.5,
+   "over_probability": 0.37,
+   "source": "polymarket",
+   "market_type": "game_total",
+   "market_name": "Indiana vs. Nebraska: O/U 51.5",
+   "outcome_name": "Under",
+   "observed_at": "2026-10-10T16:41:39.018483+00:00",
+   "contributor_outcome_ids": [
+    241766457
+   ],
+   "is_winner": null,
+   "resolution_source": null,
+   "movement": 0.15,
+   "period": null,
+   "_market_id": 64240572,
+   "_external_id": "0x645ccda5c9a2727b623b4d2a7797f8fea78b28ba2856ffc9bf2be39437c1dacc"
+  },
+  {
+   "threshold": 53.5,
+   "over_probability": 0.345,
+   "source": "polymarket",
+   "market_type": "game_total",
+   "market_name": "Indiana vs. Nebraska: O/U 53.5",
+   "outcome_name": "Under",
+   "observed_at": "2026-10-10T16:39:07.188056+00:00",
+   "contributor_outcome_ids": [
+    241766459
+   ],
+   "is_winner": null,
+   "resolution_source": null,
+   "movement": 0.11,
+   "period": null,
+   "_market_id": 64240573,
+   "_external_id": "0x9f9c26d43186af88bffc1fde30bd560abe6aee6f9b4d7daeff447ee42acb82cc"
+  },
+  {
+   "threshold": 55.5,
+   "over_probability": 0.295,
+   "source": "polymarket",
+   "market_type": "game_total",
+   "market_name": "Indiana vs. Nebraska: O/U 55.5",
+   "outcome_name": "Under",
+   "observed_at": "2026-10-10T16:39:49.077350+00:00",
+   "contributor_outcome_ids": [
+    242337767
+   ],
+   "is_winner": null,
+   "resolution_source": null,
+   "movement": 0.115,
+   "period": null,
+   "_market_id": 64409790,
+   "_external_id": "0xedddc1f6d9afab86ac25e060cb07a52650cad422a072d9d7a703e11f4edb8b90"
+  },
+  {
+   "threshold": 57.5,
+   "over_probability": 0.29,
+   "source": "polymarket",
+   "market_type": "game_total",
+   "market_name": "Indiana vs. Nebraska: O/U 57.5",
+   "outcome_name": "Under",
+   "observed_at": "2026-10-10T15:59:53.293889+00:00",
+   "contributor_outcome_ids": [
+    242337769
+   ],
+   "is_winner": null,
+   "resolution_source": null,
+   "movement": 0.065,
+   "period": null,
+   "_market_id": 64409791,
+   "_external_id": "0xc631dbf0981808cc2119445da1ace64166d635b5c82e8aa2e15cbbfa2c3e4427"
+  },
+  {
+   "threshold": 59.5,
+   "over_probability": 0.225,
+   "source": "polymarket",
+   "market_type": "game_total",
+   "market_name": "Indiana vs. Nebraska: O/U 59.5",
+   "outcome_name": "Under",
+   "observed_at": "2026-10-10T15:57:48.178015+00:00",
+   "contributor_outcome_ids": [
+    243008093
+   ],
+   "is_winner": null,
+   "resolution_source": null,
+   "movement": 0.08,
+   "period": null,
+   "_market_id": 64609758,
+   "_external_id": "0xd788b79792581a99b734542f46b7b70b7a09952480ad20e7f337557ff95e4e3a"
+  },
+  {
+   "threshold": 61.5,
+   "over_probability": 0.16,
+   "source": "polymarket",
+   "market_type": "game_total",
+   "market_name": "Indiana vs. Nebraska: O/U 61.5",
+   "outcome_name": "Under",
+   "observed_at": "2026-10-10T16:39:59.837760+00:00",
+   "contributor_outcome_ids": [
+    242337771
+   ],
+   "is_winner": null,
+   "resolution_source": null,
+   "movement": 0.115,
+   "period": null,
+   "_market_id": 64409792,
+   "_external_id": "0xf5a984730d8dba593e8dd43ba18abe4c5c87c7a282f97c89879ee587aecce072"
+  },
+  {
+   "threshold": 63.5,
+   "over_probability": 0.16,
+   "source": "polymarket",
+   "market_type": "game_total",
+   "market_name": "Indiana vs. Nebraska: O/U 63.5",
+   "outcome_name": "Under",
+   "observed_at": "2026-10-10T16:39:59.837760+00:00",
+   "contributor_outcome_ids": [
+    242337773
+   ],
+   "is_winner": null,
+   "resolution_source": null,
+   "movement": 0.06,
+   "period": null,
+   "_market_id": 64409793,
+   "_external_id": "0x77ed32330de8995ec67519fc2516ab7f4a519a34fccda530236a7ae5c770599d",
+   "observed_at_basis": "capped_to_sibling"
+  },
+  {
+   "threshold": 65.5,
+   "over_probability": 0.13,
+   "source": "polymarket",
+   "market_type": "game_total",
+   "market_name": "Indiana vs. Nebraska: O/U 65.5",
+   "outcome_name": "Under",
+   "observed_at": "2026-10-10T16:00:08.571643+00:00",
+   "contributor_outcome_ids": [
+    243008099
+   ],
+   "is_winner": null,
+   "resolution_source": null,
+   "movement": 0.06,
+   "period": null,
+   "_market_id": 64609761,
+   "_external_id": "0xc60d3fb0bae8d41b40a5b3bfb0376536d6f721ebf66f48574f618bae2fa3a619"
+  },
+  {
+   "threshold": 67.5,
+   "over_probability": 0.08,
+   "source": "polymarket",
+   "market_type": "game_total",
+   "market_name": "Indiana vs. Nebraska: O/U 67.5",
+   "outcome_name": "Under",
+   "observed_at": "2026-10-10T16:39:49.077350+00:00",
+   "contributor_outcome_ids": [
+    242337775
+   ],
+   "is_winner": null,
+   "resolution_source": null,
+   "movement": 0.08,
+   "period": null,
+   "_market_id": 64409794,
+   "_external_id": "0x2d3780a0f2493178c61c8d0c25405248b060b80cb9479eca7ee3ddf5645da338"
+  },
+  {
+   "threshold": 69.5,
+   "over_probability": 0.08,
+   "source": "polymarket",
+   "market_type": "game_total",
+   "market_name": "Indiana vs. Nebraska: O/U 69.5",
+   "outcome_name": "Under",
+   "observed_at": "2026-10-10T16:39:49.077350+00:00",
+   "contributor_outcome_ids": [
+    243008103
+   ],
+   "is_winner": null,
+   "resolution_source": null,
+   "movement": 0.03,
+   "period": null,
+   "_market_id": 64609763,
+   "_external_id": "0xbe508b93db4dc40a128a368eee27200d37558014fa57102e7b060211bffa13a8",
+   "observed_at_basis": "capped_to_sibling"
+  },
+  {
+   "threshold": 71.5,
+   "over_probability": 0.08,
+   "source": "polymarket",
+   "market_type": "game_total",
+   "market_name": "Indiana vs. Nebraska: O/U 71.5",
+   "outcome_name": "Under",
+   "observed_at": "2026-10-10T16:39:49.077350+00:00",
+   "contributor_outcome_ids": [
+    242337777
+   ],
+   "is_winner": null,
+   "resolution_source": null,
+   "movement": 0.025,
+   "period": null,
+   "_market_id": 64409795,
+   "_external_id": "0x24fcd6e8689be9ff5b94edcccea64dd2b72a324aed4c64d792097e793ffce29e",
+   "observed_at_basis": "capped_to_sibling"
+  },
+  {
+   "threshold": 73.5,
+   "over_probability": 0.07,
+   "source": "polymarket",
+   "market_type": "game_total",
+   "market_name": "Indiana vs. Nebraska: O/U 73.5",
+   "outcome_name": "Under",
+   "observed_at": "2026-10-10T15:52:31.455515+00:00",
+   "contributor_outcome_ids": [
+    242337779
+   ],
+   "is_winner": null,
+   "resolution_source": null,
+   "movement": 0.04,
+   "period": null,
+   "_market_id": 64409796,
+   "_external_id": "0x246aac7f33547e5349366949d993bbb2590df1b4107d9fc67e4ee6b63940dda9"
+  },
+  {
+   "threshold": 75.5,
+   "over_probability": 0.07,
+   "source": "polymarket",
+   "market_type": "game_total",
+   "market_name": "Indiana vs. Nebraska: O/U 75.5",
+   "outcome_name": "Under",
+   "observed_at": "2026-10-10T15:52:31.455515+00:00",
+   "contributor_outcome_ids": [
+    243008109
+   ],
+   "is_winner": null,
+   "resolution_source": null,
+   "movement": 0.02,
+   "period": null,
+   "_market_id": 64609766,
+   "_external_id": "0x212c0b8155edef1c60151ebc5d2c6628a2785886702b1d73b4f3df50a60a0867",
+   "observed_at_basis": "capped_to_sibling"
+  }
+ ],
+ "period_markets": [
+  {
+   "market_name": "Indiana vs Nebraska: 1st Half Winner",
+   "outcome_name": "Indiana wins 1st Half",
+   "observed_at": "2026-10-10T16:41:05.085871+00:00",
+   "contributor_outcome_ids": [
+    236456029
+   ],
+   "threshold": null,
+   "probability": 0.5,
+   "source": "kalshi",
+   "market_type": "half_winner",
+   "period": "1H",
+   "is_winner": null,
+   "resolution_source": null,
+   "_market_id": 62601542
+  },
+  {
+   "market_name": "Indiana vs Nebraska: 1st Half Winner",
+   "outcome_name": "Nebraska wins 1st Half",
+   "observed_at": "2026-10-10T16:41:06.378388+00:00",
+   "contributor_outcome_ids": [
+    236456027
+   ],
+   "threshold": null,
+   "probability": 0.37,
+   "source": "kalshi",
+   "market_type": "half_winner",
+   "period": "1H",
+   "is_winner": null,
+   "resolution_source": null,
+   "_market_id": 62601542
+  },
+  {
+   "market_name": "Indiana vs Nebraska: 1st Half Winner",
+   "outcome_name": "Tie 1st Half",
+   "observed_at": "2026-10-10T16:41:01.981719+00:00",
+   "contributor_outcome_ids": [
+    236456028
+   ],
+   "threshold": null,
+   "probability": 0.115,
+   "source": "kalshi",
+   "market_type": "half_winner",
+   "period": "1H",
+   "is_winner": null,
+   "resolution_source": null,
+   "_market_id": 62601542
+  },
+  {
+   "market_name": "Indiana vs Nebraska: 1st Quarter Winner",
+   "outcome_name": "Tie",
+   "observed_at": "2026-10-10T16:40:55.907748+00:00",
+   "contributor_outcome_ids": [
+    243479859
+   ],
+   "threshold": null,
+   "probability": 0.555,
+   "source": "kalshi",
+   "market_type": "quarter_winner",
+   "period": "1Q",
+   "is_winner": null,
+   "resolution_source": null,
+   "_market_id": 64739377
+  },
+  {
+   "market_name": "Indiana vs Nebraska: 1st Quarter Winner",
+   "outcome_name": "Nebraska",
+   "observed_at": "2026-10-10T16:41:39.250967+00:00",
+   "contributor_outcome_ids": [
+    243479858
+   ],
+   "threshold": null,
+   "probability": 0.35,
+   "source": "kalshi",
+   "market_type": "quarter_winner",
+   "period": "1Q",
+   "is_winner": null,
+   "resolution_source": null,
+   "_market_id": 64739377
+  },
+  {
+   "market_name": "Indiana vs Nebraska: 1st Quarter Winner",
+   "outcome_name": "Indiana",
+   "observed_at": "2026-10-10T16:41:39.250967+00:00",
+   "contributor_outcome_ids": [
+    243479857
+   ],
+   "threshold": null,
+   "probability": 0.075,
+   "source": "kalshi",
+   "market_type": "quarter_winner",
+   "period": "1Q",
+   "is_winner": null,
+   "resolution_source": null,
+   "_market_id": 64739377
+  },
+  {
+   "market_name": "1H Spread: Indiana (-7.5)",
+   "outcome_name": "Nebraska",
+   "observed_at": "2026-10-10T16:41:02.440509+00:00",
+   "contributor_outcome_ids": [
+    243008121
+   ],
+   "threshold": null,
+   "probability": 0.78,
+   "source": "polymarket",
+   "market_type": "half_spread",
+   "period": "1H",
+   "is_winner": null,
+   "resolution_source": null,
+   "_market_id": 64609772
+  },
+  {
+   "market_name": "1H Spread: Indiana (-7.5)",
+   "outcome_name": "Indiana",
+   "observed_at": "2026-10-10T16:41:02.440509+00:00",
+   "contributor_outcome_ids": [
+    243008120
+   ],
+   "threshold": null,
+   "probability": 0.22,
+   "source": "polymarket",
+   "market_type": "half_spread",
+   "period": "1H",
+   "is_winner": null,
+   "resolution_source": null,
+   "_market_id": 64609772
+  },
+  {
+   "market_name": "1H Spread: Indiana (-6.5)",
+   "outcome_name": "Nebraska",
+   "observed_at": "2026-10-10T16:41:02.440509+00:00",
+   "contributor_outcome_ids": [
+    243008123
+   ],
+   "threshold": null,
+   "probability": 0.69,
+   "source": "polymarket",
+   "market_type": "half_spread",
+   "period": "1H",
+   "is_winner": null,
+   "resolution_source": null,
+   "_market_id": 64609773
+  },
+  {
+   "market_name": "1H Spread: Indiana (-6.5)",
+   "outcome_name": "Indiana",
+   "observed_at": "2026-10-10T16:41:02.440509+00:00",
+   "contributor_outcome_ids": [
+    243008122
+   ],
+   "threshold": null,
+   "probability": 0.31,
+   "source": "polymarket",
+   "market_type": "half_spread",
+   "period": "1H",
+   "is_winner": null,
+   "resolution_source": null,
+   "_market_id": 64609773
+  },
+  {
+   "market_name": "1H Spread: Indiana (-5.5)",
+   "outcome_name": "Nebraska",
+   "observed_at": "2026-10-10T16:40:48.815022+00:00",
+   "contributor_outcome_ids": [
+    243008125
+   ],
+   "threshold": null,
+   "probability": 0.665,
+   "source": "polymarket",
+   "market_type": "half_spread",
+   "period": "1H",
+   "is_winner": null,
+   "resolution_source": null,
+   "_market_id": 64609774
+  },
+  {
+   "market_name": "1H Spread: Indiana (-5.5)",
+   "outcome_name": "Indiana",
+   "observed_at": "2026-10-10T16:40:48.815022+00:00",
+   "contributor_outcome_ids": [
+    243008124
+   ],
+   "threshold": null,
+   "probability": 0.335,
+   "source": "polymarket",
+   "market_type": "half_spread",
+   "period": "1H",
+   "is_winner": null,
+   "resolution_source": null,
+   "_market_id": 64609774
+  },
+  {
+   "market_name": "1H Spread: Indiana (-4.5)",
+   "outcome_name": "Nebraska",
+   "observed_at": "2026-10-10T16:39:40.306309+00:00",
+   "contributor_outcome_ids": [
+    243008127
+   ],
+   "threshold": null,
+   "probability": 0.65,
+   "source": "polymarket",
+   "market_type": "half_spread",
+   "period": "1H",
+   "is_winner": null,
+   "resolution_source": null,
+   "_market_id": 64609775
+  },
+  {
+   "market_name": "1H Spread: Indiana (-4.5)",
+   "outcome_name": "Indiana",
+   "observed_at": "2026-10-10T16:39:40.306309+00:00",
+   "contributor_outcome_ids": [
+    243008126
+   ],
+   "threshold": null,
+   "probability": 0.35,
+   "source": "polymarket",
+   "market_type": "half_spread",
+   "period": "1H",
+   "is_winner": null,
+   "resolution_source": null,
+   "_market_id": 64609775
+  },
+  {
+   "market_name": "2H Spread: Indiana (-4.5)",
+   "outcome_name": "Indiana",
+   "observed_at": "2026-10-10T16:40:41.456637+00:00",
+   "contributor_outcome_ids": [
+    244538216
+   ],
+   "threshold": null,
+   "probability": 0.515,
+   "source": "polymarket",
+   "market_type": "half_spread",
+   "period": "2H",
+   "is_winner": null,
+   "resolution_source": null,
+   "_market_id": 65027762
+  },
+  {
+   "market_name": "2H Spread: Indiana (-4.5)",
+   "outcome_name": "Nebraska",
+   "observed_at": "2026-10-10T16:40:41.456637+00:00",
+   "contributor_outcome_ids": [
+    244538217
+   ],
+   "threshold": null,
+   "probability": 0.485,
+   "source": "polymarket",
+   "market_type": "half_spread",
+   "period": "2H",
+   "is_winner": null,
+   "resolution_source": null,
+   "_market_id": 65027762
+  },
+  {
+   "market_name": "2H Spread: Indiana (-3.5)",
+   "outcome_name": "Indiana",
+   "observed_at": "2026-10-10T16:39:40.306309+00:00",
+   "contributor_outcome_ids": [
+    244538218
+   ],
+   "threshold": null,
+   "probability": 0.555,
+   "source": "polymarket",
+   "market_type": "half_spread",
+   "period": "2H",
+   "is_winner": null,
+   "resolution_source": null,
+   "_market_id": 65027763
+  },
+  {
+   "market_name": "2H Spread: Indiana (-3.5)",
+   "outcome_name": "Nebraska",
+   "observed_at": "2026-10-10T16:39:40.306309+00:00",
+   "contributor_outcome_ids": [
+    244538219
+   ],
+   "threshold": null,
+   "probability": 0.445,
+   "source": "polymarket",
+   "market_type": "half_spread",
+   "period": "2H",
+   "is_winner": null,
+   "resolution_source": null,
+   "_market_id": 65027763
+  },
+  {
+   "market_name": "1Q Spread: Indiana (-2.5)",
+   "outcome_name": "Nebraska",
+   "observed_at": "2026-10-10T16:39:40.306309+00:00",
+   "contributor_outcome_ids": [
+    243640916
+   ],
+   "threshold": null,
+   "probability": 0.925,
+   "source": "polymarket",
+   "market_type": "quarter_spread",
+   "period": "1Q",
+   "is_winner": null,
+   "resolution_source": null,
+   "_market_id": 64786766
+  },
+  {
+   "market_name": "1Q Spread: Indiana (-2.5)",
+   "outcome_name": "Indiana",
+   "observed_at": "2026-10-10T16:39:40.306309+00:00",
+   "contributor_outcome_ids": [
+    243640915
+   ],
+   "threshold": null,
+   "probability": 0.075,
+   "source": "polymarket",
+   "market_type": "quarter_spread",
+   "period": "1Q",
+   "is_winner": null,
+   "resolution_source": null,
+   "_market_id": 64786766
+  },
+  {
+   "market_name": "2Q Spread: Indiana (-3.5)",
+   "outcome_name": "Nebraska",
+   "observed_at": "2026-10-10T16:41:08.634985+00:00",
+   "contributor_outcome_ids": [
+    244538231
+   ],
+   "threshold": null,
+   "probability": 0.545,
+   "source": "polymarket",
+   "market_type": "quarter_spread",
+   "period": "2Q",
+   "is_winner": null,
+   "resolution_source": null,
+   "_market_id": 65027769
+  },
+  {
+   "market_name": "2Q Spread: Indiana (-3.5)",
+   "outcome_name": "Indiana",
+   "observed_at": "2026-10-10T16:41:08.634985+00:00",
+   "contributor_outcome_ids": [
+    244538230
+   ],
+   "threshold": null,
+   "probability": 0.455,
+   "source": "polymarket",
+   "market_type": "quarter_spread",
+   "period": "2Q",
+   "is_winner": null,
+   "resolution_source": null,
+   "_market_id": 65027769
+  },
+  {
+   "market_name": "3Q Spread: Indiana (-3.5)",
+   "outcome_name": "Nebraska",
+   "observed_at": "2026-10-10T16:40:43.310221+00:00",
+   "contributor_outcome_ids": [
+    244538235
+   ],
+   "threshold": null,
+   "probability": 0.565,
+   "source": "polymarket",
+   "market_type": "quarter_spread",
+   "period": "3Q",
+   "is_winner": null,
+   "resolution_source": null,
+   "_market_id": 65027771
+  },
+  {
+   "market_name": "3Q Spread: Indiana (-3.5)",
+   "outcome_name": "Indiana",
+   "observed_at": "2026-10-10T16:40:43.310221+00:00",
+   "contributor_outcome_ids": [
+    244538234
+   ],
+   "threshold": null,
+   "probability": 0.435,
+   "source": "polymarket",
+   "market_type": "quarter_spread",
+   "period": "3Q",
+   "is_winner": null,
+   "resolution_source": null,
+   "_market_id": 65027771
+  },
+  {
+   "market_name": "4Q Spread: Indiana (-2.5)",
+   "outcome_name": "Nebraska",
+   "observed_at": "2026-10-10T16:41:07.437698+00:00",
+   "contributor_outcome_ids": [
+    244982469
+   ],
+   "threshold": null,
+   "probability": 0.505,
+   "source": "polymarket",
+   "market_type": "quarter_spread",
+   "period": "4Q",
+   "is_winner": null,
+   "resolution_source": null,
+   "_market_id": 65152920
+  },
+  {
+   "market_name": "4Q Spread: Indiana (-2.5)",
+   "outcome_name": "Indiana",
+   "observed_at": "2026-10-10T16:41:07.437698+00:00",
+   "contributor_outcome_ids": [
+    244982468
+   ],
+   "threshold": null,
+   "probability": 0.495,
+   "source": "polymarket",
+   "market_type": "quarter_spread",
+   "period": "4Q",
+   "is_winner": null,
+   "resolution_source": null,
+   "_market_id": 65152920
+  },
+  {
+   "market_name": "4Q Spread: Indiana (-1.5)",
+   "outcome_name": "Indiana",
+   "observed_at": "2026-10-10T16:41:34.814006+00:00",
+   "contributor_outcome_ids": [
+    244538238
+   ],
+   "threshold": null,
+   "probability": 0.505,
+   "source": "polymarket",
+   "market_type": "quarter_spread",
+   "period": "4Q",
+   "is_winner": null,
+   "resolution_source": null,
+   "_market_id": 65027773
+  },
+  {
+   "market_name": "4Q Spread: Indiana (-1.5)",
+   "outcome_name": "Nebraska",
+   "observed_at": "2026-10-10T16:41:34.814006+00:00",
+   "contributor_outcome_ids": [
+    244538239
+   ],
+   "threshold": null,
+   "probability": 0.495,
+   "source": "polymarket",
+   "market_type": "quarter_spread",
+   "period": "4Q",
+   "is_winner": null,
+   "resolution_source": null,
+   "_market_id": 65027773
+  },
+  {
+   "market_name": "1H Spread: Indiana (-9.5)",
+   "outcome_name": "Nebraska",
+   "observed_at": "2026-10-10T16:41:01.294599+00:00",
+   "contributor_outcome_ids": [
+    243008119
+   ],
+   "threshold": null,
+   "probability": 0.805,
+   "source": "polymarket",
+   "market_type": "half_spread",
+   "period": "1H",
+   "is_winner": null,
+   "resolution_source": null,
+   "_market_id": 64609771
+  },
+  {
+   "market_name": "1H Spread: Indiana (-9.5)",
+   "outcome_name": "Indiana",
+   "observed_at": "2026-10-10T16:41:01.294599+00:00",
+   "contributor_outcome_ids": [
+    243008118
+   ],
+   "threshold": null,
+   "probability": 0.195,
+   "source": "polymarket",
+   "market_type": "half_spread",
+   "period": "1H",
+   "is_winner": null,
+   "resolution_source": null,
+   "_market_id": 64609771
+  },
+  {
+   "market_name": "2H Spread: Indiana (-2.5)",
+   "outcome_name": "Indiana",
+   "observed_at": "2026-10-10T16:40:34.836305+00:00",
+   "contributor_outcome_ids": [
+    243640911
+   ],
+   "threshold": null,
+   "probability": 0.615,
+   "source": "polymarket",
+   "market_type": "half_spread",
+   "period": "2H",
+   "is_winner": null,
+   "resolution_source": null,
+   "_market_id": 64786764
+  },
+  {
+   "market_name": "2H Spread: Indiana (-2.5)",
+   "outcome_name": "Nebraska",
+   "observed_at": "2026-10-10T16:40:43.800194+00:00",
+   "contributor_outcome_ids": [
+    243640912
+   ],
+   "threshold": null,
+   "probability": 0.385,
+   "source": "polymarket",
+   "market_type": "half_spread",
+   "period": "2H",
+   "is_winner": null,
+   "resolution_source": null,
+   "_market_id": 64786764
+  },
+  {
+   "market_name": "1Q Spread: Indiana (-0.5)",
+   "outcome_name": "Indiana",
+   "observed_at": "2026-10-10T15:52:31.455515+00:00",
+   "contributor_outcome_ids": [
+    243008130
+   ],
+   "threshold": null,
+   "probability": 0.525,
+   "source": "polymarket",
+   "market_type": "quarter_spread",
+   "period": "1Q",
+   "is_winner": null,
+   "resolution_source": null,
+   "_market_id": 64609777
+  },
+  {
+   "market_name": "1Q Spread: Indiana (-0.5)",
+   "outcome_name": "Nebraska",
+   "observed_at": "2026-10-10T15:52:31.455515+00:00",
+   "contributor_outcome_ids": [
+    243008131
+   ],
+   "threshold": null,
+   "probability": 0.475,
+   "source": "polymarket",
+   "market_type": "quarter_spread",
+   "period": "1Q",
+   "is_winner": null,
+   "resolution_source": null,
+   "_market_id": 64609777
+  },
+  {
+   "market_name": "Indiana vs. Nebraska: 1H Moneyline",
+   "outcome_name": "Indiana",
+   "observed_at": "2026-10-10T16:40:36.583620+00:00",
+   "contributor_outcome_ids": [
+    243008132
+   ],
+   "threshold": null,
+   "probability": 0.545,
+   "source": "polymarket",
+   "market_type": "half_winner",
+   "period": "1H",
+   "is_winner": null,
+   "resolution_source": null,
+   "_market_id": 64609778
+  },
+  {
+   "market_name": "Indiana vs. Nebraska: 1H Moneyline",
+   "outcome_name": "Nebraska",
+   "observed_at": "2026-10-10T16:40:36.583620+00:00",
+   "contributor_outcome_ids": [
+    243008133
+   ],
+   "threshold": null,
+   "probability": 0.455,
+   "source": "polymarket",
+   "market_type": "half_winner",
+   "period": "1H",
+   "is_winner": null,
+   "resolution_source": null,
+   "_market_id": 64609778
+  },
+  {
+   "market_name": "1H Spread: Indiana (-2.5)",
+   "outcome_name": "Nebraska",
+   "observed_at": "2026-10-10T16:41:26.981290+00:00",
+   "contributor_outcome_ids": [
+    243008129
+   ],
+   "threshold": null,
+   "probability": 0.535,
+   "source": "polymarket",
+   "market_type": "half_spread",
+   "period": "1H",
+   "is_winner": null,
+   "resolution_source": null,
+   "_market_id": 64609776
+  },
+  {
+   "market_name": "1H Spread: Indiana (-2.5)",
+   "outcome_name": "Indiana",
+   "observed_at": "2026-10-10T16:41:26.981290+00:00",
+   "contributor_outcome_ids": [
+    243008128
+   ],
+   "threshold": null,
+   "probability": 0.465,
+   "source": "polymarket",
+   "market_type": "half_spread",
+   "period": "1H",
+   "is_winner": null,
+   "resolution_source": null,
+   "_market_id": 64609776
+  },
+  {
+   "market_name": "1Q Spread: Indiana (-1.5)",
+   "outcome_name": "Nebraska",
+   "observed_at": "2026-10-10T16:41:09.333260+00:00",
+   "contributor_outcome_ids": [
+    243640918
+   ],
+   "threshold": null,
+   "probability": 0.91,
+   "source": "polymarket",
+   "market_type": "quarter_spread",
+   "period": "1Q",
+   "is_winner": null,
+   "resolution_source": null,
+   "_market_id": 64786767
+  },
+  {
+   "market_name": "1Q Spread: Indiana (-1.5)",
+   "outcome_name": "Indiana",
+   "observed_at": "2026-10-10T16:41:09.333260+00:00",
+   "contributor_outcome_ids": [
+    243640917
+   ],
+   "threshold": null,
+   "probability": 0.09,
+   "source": "polymarket",
+   "market_type": "quarter_spread",
+   "period": "1Q",
+   "is_winner": null,
+   "resolution_source": null,
+   "_market_id": 64786767
+  },
+  {
+   "market_name": "2Q Spread: Indiana (-2.5)",
+   "outcome_name": "Indiana",
+   "observed_at": "2026-10-10T16:40:46.659808+00:00",
+   "contributor_outcome_ids": [
+    244538232
+   ],
+   "threshold": null,
+   "probability": 0.535,
+   "source": "polymarket",
+   "market_type": "quarter_spread",
+   "period": "2Q",
+   "is_winner": null,
+   "resolution_source": null,
+   "_market_id": 65027770
+  },
+  {
+   "market_name": "2Q Spread: Indiana (-2.5)",
+   "outcome_name": "Nebraska",
+   "observed_at": "2026-10-10T16:40:46.659808+00:00",
+   "contributor_outcome_ids": [
+    244538233
+   ],
+   "threshold": null,
+   "probability": 0.465,
+   "source": "polymarket",
+   "market_type": "quarter_spread",
+   "period": "2Q",
+   "is_winner": null,
+   "resolution_source": null,
+   "_market_id": 65027770
+  },
+  {
+   "market_name": "3Q Spread: Indiana (-2.5)",
+   "outcome_name": "Indiana",
+   "observed_at": "2026-10-10T16:40:43.310221+00:00",
+   "contributor_outcome_ids": [
+    244538236
+   ],
+   "threshold": null,
+   "probability": 0.525,
+   "source": "polymarket",
+   "market_type": "quarter_spread",
+   "period": "3Q",
+   "is_winner": null,
+   "resolution_source": null,
+   "_market_id": 65027772
+  },
+  {
+   "market_name": "3Q Spread: Indiana (-2.5)",
+   "outcome_name": "Nebraska",
+   "observed_at": "2026-10-10T16:40:43.310221+00:00",
+   "contributor_outcome_ids": [
+    244538237
+   ],
+   "threshold": null,
+   "probability": 0.475,
+   "source": "polymarket",
+   "market_type": "quarter_spread",
+   "period": "3Q",
+   "is_winner": null,
+   "resolution_source": null,
+   "_market_id": 65027772
+  },
+  {
+   "market_name": "2H Spread: Indiana (-7.5)",
+   "outcome_name": "Nebraska",
+   "observed_at": "2026-10-10T16:40:24.865474+00:00",
+   "contributor_outcome_ids": [
+    244538215
+   ],
+   "threshold": null,
+   "probability": 0.625,
+   "source": "polymarket",
+   "market_type": "half_spread",
+   "period": "2H",
+   "is_winner": null,
+   "resolution_source": null,
+   "_market_id": 65027761
+  },
+  {
+   "market_name": "2H Spread: Indiana (-7.5)",
+   "outcome_name": "Indiana",
+   "observed_at": "2026-10-10T16:40:24.865474+00:00",
+   "contributor_outcome_ids": [
+    244538214
+   ],
+   "threshold": null,
+   "probability": 0.375,
+   "source": "polymarket",
+   "market_type": "half_spread",
+   "period": "2H",
+   "is_winner": null,
+   "resolution_source": null,
+   "_market_id": 65027761
+  },
+  {
+   "market_name": "Indiana vs Nebraska: 2nd Quarter Winner",
+   "outcome_name": "Indiana",
+   "observed_at": "2026-10-10T16:39:52.929920+00:00",
+   "contributor_outcome_ids": [
+    243479893
+   ],
+   "threshold": null,
+   "probability": 0.575,
+   "source": "kalshi",
+   "market_type": "quarter_winner",
+   "period": "2Q",
+   "is_winner": null,
+   "resolution_source": null,
+   "_market_id": 64739389
+  },
+  {
+   "market_name": "Indiana vs Nebraska: 2nd Quarter Winner",
+   "outcome_name": "Nebraska",
+   "observed_at": "2026-10-10T16:40:00.651013+00:00",
+   "contributor_outcome_ids": [
+    243479894
+   ],
+   "threshold": null,
+   "probability": 0.295,
+   "source": "kalshi",
+   "market_type": "quarter_winner",
+   "period": "2Q",
+   "is_winner": null,
+   "resolution_source": null,
+   "_market_id": 64739389
+  },
+  {
+   "market_name": "Indiana vs Nebraska: 2nd Quarter Winner",
+   "outcome_name": "Tie",
+   "observed_at": "2026-10-10T16:39:38.030676+00:00",
+   "contributor_outcome_ids": [
+    243479895
+   ],
+   "threshold": null,
+   "probability": 0.14,
+   "source": "kalshi",
+   "market_type": "quarter_winner",
+   "period": "2Q",
+   "is_winner": null,
+   "resolution_source": null,
+   "_market_id": 64739389
+  },
+  {
+   "market_name": "Indiana vs Nebraska: 3rd Quarter Winner",
+   "outcome_name": "Indiana",
+   "observed_at": "2026-10-10T16:39:45.653082+00:00",
+   "contributor_outcome_ids": [
+    243479929
+   ],
+   "threshold": null,
+   "probability": 0.545,
+   "source": "kalshi",
+   "market_type": "quarter_winner",
+   "period": "3Q",
+   "is_winner": null,
+   "resolution_source": null,
+   "_market_id": 64739401
+  },
+  {
+   "market_name": "Indiana vs Nebraska: 3rd Quarter Winner",
+   "outcome_name": "Nebraska",
+   "observed_at": "2026-10-10T16:39:38.030676+00:00",
+   "contributor_outcome_ids": [
+    243479930
+   ],
+   "threshold": null,
+   "probability": 0.25,
+   "source": "kalshi",
+   "market_type": "quarter_winner",
+   "period": "3Q",
+   "is_winner": null,
+   "resolution_source": null,
+   "_market_id": 64739401
+  },
+  {
+   "market_name": "Indiana vs Nebraska: 3rd Quarter Winner",
+   "outcome_name": "Tie",
+   "observed_at": "2026-10-10T16:40:54.318283+00:00",
+   "contributor_outcome_ids": [
+    243479931
+   ],
+   "threshold": null,
+   "probability": 0.2,
+   "source": "kalshi",
+   "market_type": "quarter_winner",
+   "period": "3Q",
+   "is_winner": null,
+   "resolution_source": null,
+   "_market_id": 64739401
+  },
+  {
+   "market_name": "Indiana vs Nebraska: 4th Quarter Winner",
+   "outcome_name": "Indiana",
+   "observed_at": "2026-10-10T16:41:09.339755+00:00",
+   "contributor_outcome_ids": [
+    243479965
+   ],
+   "threshold": null,
+   "probability": 0.52,
+   "source": "kalshi",
+   "market_type": "quarter_winner",
+   "period": "4Q",
+   "is_winner": null,
+   "resolution_source": null,
+   "_market_id": 64739413
+  },
+  {
+   "market_name": "Indiana vs Nebraska: 4th Quarter Winner",
+   "outcome_name": "Nebraska",
+   "observed_at": "2026-10-10T16:41:19.792408+00:00",
+   "contributor_outcome_ids": [
+    243479966
+   ],
+   "threshold": null,
+   "probability": 0.31,
+   "source": "kalshi",
+   "market_type": "quarter_winner",
+   "period": "4Q",
+   "is_winner": null,
+   "resolution_source": null,
+   "_market_id": 64739413
+  },
+  {
+   "market_name": "Indiana vs Nebraska: 4th Quarter Winner",
+   "outcome_name": "Tie",
+   "observed_at": "2026-10-10T16:41:10.221156+00:00",
+   "contributor_outcome_ids": [
+    243479967
+   ],
+   "threshold": null,
+   "probability": 0.155,
+   "source": "kalshi",
+   "market_type": "quarter_winner",
+   "period": "4Q",
+   "is_winner": null,
+   "resolution_source": null,
+   "_market_id": 64739413
+  },
+  {
+   "market_name": "1Q Spread: Indiana (-3.5)",
+   "outcome_name": "Nebraska",
+   "observed_at": "2026-10-10T16:41:24.795483+00:00",
+   "contributor_outcome_ids": [
+    243640914
+   ],
+   "threshold": null,
+   "probability": 0.93,
+   "source": "polymarket",
+   "market_type": "quarter_spread",
+   "period": "1Q",
+   "is_winner": null,
+   "resolution_source": null,
+   "_market_id": 64786765
+  },
+  {
+   "market_name": "1Q Spread: Indiana (-3.5)",
+   "outcome_name": "Indiana",
+   "observed_at": "2026-10-10T16:41:24.795483+00:00",
+   "contributor_outcome_ids": [
+    243640913
+   ],
+   "threshold": null,
+   "probability": 0.07,
+   "source": "polymarket",
+   "market_type": "quarter_spread",
+   "period": "1Q",
+   "is_winner": null,
+   "resolution_source": null,
+   "_market_id": 64786765
+  },
+  {
+   "threshold": 7.5,
+   "over_probability": 0.79,
+   "source": "polymarket",
+   "market_type": "quarter_total",
+   "market_name": "Indiana vs. Nebraska: 2Q O/U 7.5",
+   "outcome_name": "Over",
+   "observed_at": "2026-10-10T16:40:43.310221+00:00",
+   "contributor_outcome_ids": [
+    244538174
+   ],
+   "is_winner": null,
+   "resolution_source": null,
+   "movement": 0.035,
+   "period": "2Q",
+   "_market_id": 65027741,
+   "_external_id": "0x7eb60b7e2854aeb7b34fe8e36d73221b3349b93d89ba968a2bd9b28c124220f9"
+  },
+  {
+   "threshold": 7.5,
+   "over_probability": 0.79,
+   "source": "polymarket",
+   "market_type": "quarter_total",
+   "market_name": "Indiana vs. Nebraska: 2Q O/U 7.5",
+   "outcome_name": "Under",
+   "observed_at": "2026-10-10T16:40:43.310221+00:00",
+   "contributor_outcome_ids": [
+    244538175
+   ],
+   "is_winner": null,
+   "resolution_source": null,
+   "movement": -0.035,
+   "period": "2Q",
+   "_market_id": 65027741,
+   "_external_id": "0x7eb60b7e2854aeb7b34fe8e36d73221b3349b93d89ba968a2bd9b28c124220f9"
+  },
+  {
+   "threshold": 7.5,
+   "over_probability": 0.57,
+   "source": "polymarket",
+   "market_type": "quarter_total",
+   "market_name": "Indiana vs. Nebraska: 3Q O/U 7.5",
+   "outcome_name": "Over",
+   "observed_at": "2026-10-10T16:40:43.310221+00:00",
+   "contributor_outcome_ids": [
+    244538184
+   ],
+   "is_winner": null,
+   "resolution_source": null,
+   "movement": 0.01,
+   "period": "3Q",
+   "_market_id": 65027746,
+   "_external_id": "0xdbd01065170fc338dd7d6dac78fc1d4b5dc1a013829463528c480b54027a81c0"
+  },
+  {
+   "threshold": 7.5,
+   "over_probability": 0.57,
+   "source": "polymarket",
+   "market_type": "quarter_total",
+   "market_name": "Indiana vs. Nebraska: 3Q O/U 7.5",
+   "outcome_name": "Under",
+   "observed_at": "2026-10-10T16:40:43.310221+00:00",
+   "contributor_outcome_ids": [
+    244538185
+   ],
+   "is_winner": null,
+   "resolution_source": null,
+   "movement": -0.01,
+   "period": "3Q",
+   "_market_id": 65027746,
+   "_external_id": "0xdbd01065170fc338dd7d6dac78fc1d4b5dc1a013829463528c480b54027a81c0"
+  },
+  {
+   "threshold": 7.5,
+   "over_probability": 0.45,
+   "source": "polymarket",
+   "market_type": "quarter_total",
+   "market_name": "Indiana vs. Nebraska: 1Q O/U 7.5",
+   "outcome_name": "Under",
+   "observed_at": "2026-10-10T16:40:43.800194+00:00",
+   "contributor_outcome_ids": [
+    243640890
+   ],
+   "is_winner": null,
+   "resolution_source": null,
+   "movement": 0.075,
+   "period": "1Q",
+   "_market_id": 64786753,
+   "_external_id": "0x56ff1ef0fdf3cf8cabca66490abd4a8936dfb7e99d355600c07cecea958b482d"
+  },
+  {
+   "threshold": 7.5,
+   "over_probability": 0.45,
+   "source": "polymarket",
+   "market_type": "quarter_total",
+   "market_name": "Indiana vs. Nebraska: 1Q O/U 7.5",
+   "outcome_name": "Over",
+   "observed_at": "2026-10-10T16:40:43.800194+00:00",
+   "contributor_outcome_ids": [
+    243640889
+   ],
+   "is_winner": null,
+   "resolution_source": null,
+   "movement": -0.075,
+   "period": "1Q",
+   "_market_id": 64786753,
+   "_external_id": "0x56ff1ef0fdf3cf8cabca66490abd4a8936dfb7e99d355600c07cecea958b482d"
+  },
+  {
+   "threshold": 10.5,
+   "over_probability": 0.645,
+   "source": "polymarket",
+   "market_type": "quarter_total",
+   "market_name": "Indiana vs. Nebraska: 2Q O/U 10.5",
+   "outcome_name": "Over",
+   "observed_at": "2026-10-10T16:39:42.052905+00:00",
+   "contributor_outcome_ids": [
+    244538176
+   ],
+   "is_winner": null,
+   "resolution_source": null,
+   "movement": 0.025,
+   "period": "2Q",
+   "_market_id": 65027742,
+   "_external_id": "0x5d3a8325b4947e8039665b685bed1bcf358221f9dc4b2d4d5bb7dc7e8d86964d"
+  },
+  {
+   "threshold": 10.5,
+   "over_probability": 0.645,
+   "source": "polymarket",
+   "market_type": "quarter_total",
+   "market_name": "Indiana vs. Nebraska: 2Q O/U 10.5",
+   "outcome_name": "Under",
+   "observed_at": "2026-10-10T16:39:42.052905+00:00",
+   "contributor_outcome_ids": [
+    244538177
+   ],
+   "is_winner": null,
+   "resolution_source": null,
+   "movement": -0.025,
+   "period": "2Q",
+   "_market_id": 65027742,
+   "_external_id": "0x5d3a8325b4947e8039665b685bed1bcf358221f9dc4b2d4d5bb7dc7e8d86964d"
+  },
+  {
+   "threshold": 10.5,
+   "over_probability": 0.42,
+   "source": "polymarket",
+   "market_type": "quarter_total",
+   "market_name": "Indiana vs. Nebraska: 3Q O/U 10.5",
+   "outcome_name": "Under",
+   "observed_at": "2026-10-10T16:39:42.052905+00:00",
+   "contributor_outcome_ids": [
+    244538187
+   ],
+   "is_winner": null,
+   "resolution_source": null,
+   "movement": -0.01,
+   "period": "3Q",
+   "_market_id": 65027747,
+   "_external_id": "0x4286508ed77beff632425b542d5f0c4bb8d511e1ebf1f7f00d4dd9f45b1369e7"
+  },
+  {
+   "threshold": 10.5,
+   "over_probability": 0.42,
+   "source": "polymarket",
+   "market_type": "quarter_total",
+   "market_name": "Indiana vs. Nebraska: 3Q O/U 10.5",
+   "outcome_name": "Over",
+   "observed_at": "2026-10-10T16:39:42.052905+00:00",
+   "contributor_outcome_ids": [
+    244538186
+   ],
+   "is_winner": null,
+   "resolution_source": null,
+   "movement": 0.01,
+   "period": "3Q",
+   "_market_id": 65027747,
+   "_external_id": "0x4286508ed77beff632425b542d5f0c4bb8d511e1ebf1f7f00d4dd9f45b1369e7"
+  },
+  {
+   "threshold": 10.5,
+   "over_probability": 0.305,
+   "source": "polymarket",
+   "market_type": "quarter_total",
+   "market_name": "Indiana vs. Nebraska: 1Q O/U 10.5",
+   "outcome_name": "Under",
+   "observed_at": "2026-10-10T16:39:59.837760+00:00",
+   "contributor_outcome_ids": [
+    243008115
+   ],
+   "is_winner": null,
+   "resolution_source": null,
+   "movement": 0.125,
+   "period": "1Q",
+   "_market_id": 64609769,
+   "_external_id": "0x7e6c73ff54eacc6b3571df3033efdef08a0e2e0d0b19e01fa1b21368a83993d6"
+  },
+  {
+   "threshold": 10.5,
+   "over_probability": 0.305,
+   "source": "polymarket",
+   "market_type": "quarter_total",
+   "market_name": "Indiana vs. Nebraska: 1Q O/U 10.5",
+   "outcome_name": "Over",
+   "observed_at": "2026-10-10T16:39:59.837760+00:00",
+   "contributor_outcome_ids": [
+    243008114
+   ],
+   "is_winner": null,
+   "resolution_source": null,
+   "movement": -0.125,
+   "period": "1Q",
+   "_market_id": 64609769,
+   "_external_id": "0x7e6c73ff54eacc6b3571df3033efdef08a0e2e0d0b19e01fa1b21368a83993d6"
+  },
+  {
+   "threshold": 10.5,
+   "over_probability": 0.575,
+   "source": "polymarket",
+   "market_type": "quarter_total",
+   "market_name": "Indiana vs. Nebraska: 4Q O/U 10.5",
+   "outcome_name": "Over",
+   "observed_at": "2026-10-10T16:41:28.755656+00:00",
+   "contributor_outcome_ids": [
+    244982420
+   ],
+   "is_winner": null,
+   "resolution_source": null,
+   "movement": 0.015,
+   "period": "4Q",
+   "_market_id": 65152896,
+   "_external_id": "0x86c2f872d0bd86298cb5ac4e246a8420e1121cb11b15290961ed2acffcf09ab0"
+  },
+  {
+   "threshold": 10.5,
+   "over_probability": 0.575,
+   "source": "polymarket",
+   "market_type": "quarter_total",
+   "market_name": "Indiana vs. Nebraska: 4Q O/U 10.5",
+   "outcome_name": "Under",
+   "observed_at": "2026-10-10T16:41:28.755656+00:00",
+   "contributor_outcome_ids": [
+    244982421
+   ],
+   "is_winner": null,
+   "resolution_source": null,
+   "movement": -0.015,
+   "period": "4Q",
+   "_market_id": 65152896,
+   "_external_id": "0x86c2f872d0bd86298cb5ac4e246a8420e1121cb11b15290961ed2acffcf09ab0"
+  },
+  {
+   "threshold": 13.5,
+   "over_probability": 0.05,
+   "source": "polymarket",
+   "market_type": "quarter_total",
+   "market_name": "Indiana vs. Nebraska: 1Q O/U 13.5",
+   "outcome_name": "Under",
+   "observed_at": "2026-10-10T16:40:59.304500+00:00",
+   "contributor_outcome_ids": [
+    243640894
+   ],
+   "is_winner": null,
+   "resolution_source": null,
+   "movement": 0.315,
+   "period": "1Q",
+   "_market_id": 64786755,
+   "_external_id": "0x84f3a296a77d1185be67a1f5254e3c19f9bcd5d813cd9be38e5f18234ccba04b"
+  },
+  {
+   "threshold": 13.5,
+   "over_probability": 0.05,
+   "source": "polymarket",
+   "market_type": "quarter_total",
+   "market_name": "Indiana vs. Nebraska: 1Q O/U 13.5",
+   "outcome_name": "Over",
+   "observed_at": "2026-10-10T16:40:59.304500+00:00",
+   "contributor_outcome_ids": [
+    243640893
+   ],
+   "is_winner": null,
+   "resolution_source": null,
+   "movement": -0.315,
+   "period": "1Q",
+   "_market_id": 64786755,
+   "_external_id": "0x84f3a296a77d1185be67a1f5254e3c19f9bcd5d813cd9be38e5f18234ccba04b"
+  },
+  {
+   "threshold": 13.5,
+   "over_probability": 0.555,
+   "source": "polymarket",
+   "market_type": "quarter_total",
+   "market_name": "Indiana vs. Nebraska: 2Q O/U 13.5",
+   "outcome_name": "Over",
+   "observed_at": "2026-10-10T16:40:43.310221+00:00",
+   "contributor_outcome_ids": [
+    244538178
+   ],
+   "is_winner": null,
+   "resolution_source": null,
+   "movement": 0.02,
+   "period": "2Q",
+   "_market_id": 65027743,
+   "_external_id": "0x96af8906ec98a4fc96d071071fb4dc6b88313ecf89312cb2eccaa89f730810a2"
+  },
+  {
+   "threshold": 13.5,
+   "over_probability": 0.555,
+   "source": "polymarket",
+   "market_type": "quarter_total",
+   "market_name": "Indiana vs. Nebraska: 2Q O/U 13.5",
+   "outcome_name": "Under",
+   "observed_at": "2026-10-10T16:40:43.310221+00:00",
+   "contributor_outcome_ids": [
+    244538179
+   ],
+   "is_winner": null,
+   "resolution_source": null,
+   "movement": -0.02,
+   "period": "2Q",
+   "_market_id": 65027743,
+   "_external_id": "0x96af8906ec98a4fc96d071071fb4dc6b88313ecf89312cb2eccaa89f730810a2"
+  },
+  {
+   "threshold": 13.5,
+   "over_probability": 0.365,
+   "source": "polymarket",
+   "market_type": "quarter_total",
+   "market_name": "Indiana vs. Nebraska: 3Q O/U 13.5",
+   "outcome_name": "Under",
+   "observed_at": "2026-10-10T16:39:42.052905+00:00",
+   "contributor_outcome_ids": [
+    244538189
+   ],
+   "is_winner": null,
+   "resolution_source": null,
+   "movement": -0.005,
+   "period": "3Q",
+   "_market_id": 65027748,
+   "_external_id": "0xd1f8ffa147831ac0b6b8e64c72f365f03c37603953626395ff148a58559e24bc"
+  },
+  {
+   "threshold": 13.5,
+   "over_probability": 0.365,
+   "source": "polymarket",
+   "market_type": "quarter_total",
+   "market_name": "Indiana vs. Nebraska: 3Q O/U 13.5",
+   "outcome_name": "Over",
+   "observed_at": "2026-10-10T16:39:42.052905+00:00",
+   "contributor_outcome_ids": [
+    244538188
+   ],
+   "is_winner": null,
+   "resolution_source": null,
+   "movement": 0.005,
+   "period": "3Q",
+   "_market_id": 65027748,
+   "_external_id": "0xd1f8ffa147831ac0b6b8e64c72f365f03c37603953626395ff148a58559e24bc"
+  },
+  {
+   "threshold": 13.5,
+   "over_probability": 0.48,
+   "source": "polymarket",
+   "market_type": "quarter_total",
+   "market_name": "Indiana vs. Nebraska: 4Q O/U 13.5",
+   "outcome_name": "Under",
+   "observed_at": "2026-10-10T16:41:34.814006+00:00",
+   "contributor_outcome_ids": [
+    244538195
+   ],
+   "is_winner": null,
+   "resolution_source": null,
+   "movement": -0.02,
+   "period": "4Q",
+   "_market_id": 65027751,
+   "_external_id": "0x8da0885e69bf09f85abe2fa4594ea13ef41ccfb4cc144f1a2c5da6759db37556"
+  },
+  {
+   "threshold": 13.5,
+   "over_probability": 0.48,
+   "source": "polymarket",
+   "market_type": "quarter_total",
+   "market_name": "Indiana vs. Nebraska: 4Q O/U 13.5",
+   "outcome_name": "Over",
+   "observed_at": "2026-10-10T16:41:34.814006+00:00",
+   "contributor_outcome_ids": [
+    244538194
+   ],
+   "is_winner": null,
+   "resolution_source": null,
+   "movement": 0.02,
+   "period": "4Q",
+   "_market_id": 65027751,
+   "_external_id": "0x8da0885e69bf09f85abe2fa4594ea13ef41ccfb4cc144f1a2c5da6759db37556"
+  },
+  {
+   "threshold": 16.5,
+   "over_probability": 0.0385,
+   "source": "polymarket",
+   "market_type": "quarter_total",
+   "market_name": "Indiana vs. Nebraska: 1Q O/U 16.5",
+   "outcome_name": "Under",
+   "observed_at": "2026-10-10T16:41:34.814006+00:00",
+   "contributor_outcome_ids": [
+    244538171
+   ],
+   "is_winner": null,
+   "resolution_source": null,
+   "movement": 0.1515,
+   "period": "1Q",
+   "_market_id": 65027739,
+   "_external_id": "0x494f427af2dc4fbb5001af93e866f1e44f64067f78623d948c8f26cc80e45443"
+  },
+  {
+   "threshold": 16.5,
+   "over_probability": 0.0385,
+   "source": "polymarket",
+   "market_type": "quarter_total",
+   "market_name": "Indiana vs. Nebraska: 1Q O/U 16.5",
+   "outcome_name": "Over",
+   "observed_at": "2026-10-10T16:41:34.814006+00:00",
+   "contributor_outcome_ids": [
+    244538170
+   ],
+   "is_winner": null,
+   "resolution_source": null,
+   "movement": -0.1515,
+   "period": "1Q",
+   "_market_id": 65027739,
+   "_external_id": "0x494f427af2dc4fbb5001af93e866f1e44f64067f78623d948c8f26cc80e45443"
+  },
+  {
+   "threshold": 16.5,
+   "over_probability": 0.415,
+   "source": "polymarket",
+   "market_type": "quarter_total",
+   "market_name": "Indiana vs. Nebraska: 2Q O/U 16.5",
+   "outcome_name": "Under",
+   "observed_at": "2026-10-10T16:40:43.310221+00:00",
+   "contributor_outcome_ids": [
+    244538181
+   ],
+   "is_winner": null,
+   "resolution_source": null,
+   "movement": -0.015,
+   "period": "2Q",
+   "_market_id": 65027744,
+   "_external_id": "0xb9174d25d4e3c821f4d617d7d53e9b254e28bd7537f18f75bfd0dd64ec3fbb4a"
+  },
+  {
+   "threshold": 16.5,
+   "over_probability": 0.415,
+   "source": "polymarket",
+   "market_type": "quarter_total",
+   "market_name": "Indiana vs. Nebraska: 2Q O/U 16.5",
+   "outcome_name": "Over",
+   "observed_at": "2026-10-10T16:40:43.310221+00:00",
+   "contributor_outcome_ids": [
+    244538180
+   ],
+   "is_winner": null,
+   "resolution_source": null,
+   "movement": 0.015,
+   "period": "2Q",
+   "_market_id": 65027744,
+   "_external_id": "0xb9174d25d4e3c821f4d617d7d53e9b254e28bd7537f18f75bfd0dd64ec3fbb4a"
+  },
+  {
+   "threshold": 16.5,
+   "over_probability": 0.18,
+   "source": "polymarket",
+   "market_type": "quarter_total",
+   "market_name": "Indiana vs. Nebraska: 3Q O/U 16.5",
+   "outcome_name": "Under",
+   "observed_at": "2026-10-10T16:40:41.456637+00:00",
+   "contributor_outcome_ids": [
+    244538191
+   ],
+   "is_winner": null,
+   "resolution_source": null,
+   "movement": 0.025,
+   "period": "3Q",
+   "_market_id": 65027749,
+   "_external_id": "0xb26ace0b8a9e6f6594301b07541e80adfc048d9e6d1fa7ba8f971227aa90d4a9"
+  },
+  {
+   "threshold": 16.5,
+   "over_probability": 0.18,
+   "source": "polymarket",
+   "market_type": "quarter_total",
+   "market_name": "Indiana vs. Nebraska: 3Q O/U 16.5",
+   "outcome_name": "Over",
+   "observed_at": "2026-10-10T16:40:41.456637+00:00",
+   "contributor_outcome_ids": [
+    244538190
+   ],
+   "is_winner": null,
+   "resolution_source": null,
+   "movement": -0.025,
+   "period": "3Q",
+   "_market_id": 65027749,
+   "_external_id": "0xb26ace0b8a9e6f6594301b07541e80adfc048d9e6d1fa7ba8f971227aa90d4a9"
+  },
+  {
+   "threshold": 19.5,
+   "over_probability": 0.28,
+   "source": "polymarket",
+   "market_type": "quarter_total",
+   "market_name": "Indiana vs. Nebraska: 2Q O/U 19.5",
+   "outcome_name": "Under",
+   "observed_at": "2026-10-10T16:40:43.310221+00:00",
+   "contributor_outcome_ids": [
+    244538183
+   ],
+   "is_winner": null,
+   "resolution_source": null,
+   "movement": -0.01,
+   "period": "2Q",
+   "_market_id": 65027745,
+   "_external_id": "0x2ea4dc31159fb545475881b9305fcac46e046e131d64e8d5b13483a35b5030b6"
+  },
+  {
+   "threshold": 19.5,
+   "over_probability": 0.28,
+   "source": "polymarket",
+   "market_type": "quarter_total",
+   "market_name": "Indiana vs. Nebraska: 2Q O/U 19.5",
+   "outcome_name": "Over",
+   "observed_at": "2026-10-10T16:40:43.310221+00:00",
+   "contributor_outcome_ids": [
+    244538182
+   ],
+   "is_winner": null,
+   "resolution_source": null,
+   "movement": 0.01,
+   "period": "2Q",
+   "_market_id": 65027745,
+   "_external_id": "0x2ea4dc31159fb545475881b9305fcac46e046e131d64e8d5b13483a35b5030b6"
+  },
+  {
+   "threshold": 19.5,
+   "over_probability": 0.0215,
+   "source": "polymarket",
+   "market_type": "quarter_total",
+   "market_name": "Indiana vs. Nebraska: 1Q O/U 19.5",
+   "outcome_name": "Under",
+   "observed_at": "2026-10-10T16:39:40.306309+00:00",
+   "contributor_outcome_ids": [
+    243640896
+   ],
+   "is_winner": null,
+   "resolution_source": null,
+   "movement": 0.1235,
+   "period": "1Q",
+   "_market_id": 64786756,
+   "_external_id": "0x97c59b2281ad45ceaca357c1b9d99973e831951b0d6f54d3fb572b0bce25bf61"
+  },
+  {
+   "threshold": 19.5,
+   "over_probability": 0.0215,
+   "source": "polymarket",
+   "market_type": "quarter_total",
+   "market_name": "Indiana vs. Nebraska: 1Q O/U 19.5",
+   "outcome_name": "Over",
+   "observed_at": "2026-10-10T16:39:40.306309+00:00",
+   "contributor_outcome_ids": [
+    243640895
+   ],
+   "is_winner": null,
+   "resolution_source": null,
+   "movement": -0.1235,
+   "period": "1Q",
+   "_market_id": 64786756,
+   "_external_id": "0x97c59b2281ad45ceaca357c1b9d99973e831951b0d6f54d3fb572b0bce25bf61"
+  },
+  {
+   "threshold": 19.5,
+   "over_probability": 0.115,
+   "source": "polymarket",
+   "market_type": "quarter_total",
+   "market_name": "Indiana vs. Nebraska: 3Q O/U 19.5",
+   "outcome_name": "Under",
+   "observed_at": "2026-10-10T16:39:42.052905+00:00",
+   "contributor_outcome_ids": [
+    244538193
+   ],
+   "is_winner": null,
+   "resolution_source": null,
+   "movement": 0.02,
+   "period": "3Q",
+   "_market_id": 65027750,
+   "_external_id": "0xe83b77eb4b703877bcd51067e9663b49260c2ce64e1cef64f882c443c623899a"
+  },
+  {
+   "threshold": 19.5,
+   "over_probability": 0.115,
+   "source": "polymarket",
+   "market_type": "quarter_total",
+   "market_name": "Indiana vs. Nebraska: 3Q O/U 19.5",
+   "outcome_name": "Over",
+   "observed_at": "2026-10-10T16:39:42.052905+00:00",
+   "contributor_outcome_ids": [
+    244538192
+   ],
+   "is_winner": null,
+   "resolution_source": null,
+   "movement": -0.02,
+   "period": "3Q",
+   "_market_id": 65027750,
+   "_external_id": "0xe83b77eb4b703877bcd51067e9663b49260c2ce64e1cef64f882c443c623899a"
+  },
+  {
+   "threshold": 24.5,
+   "over_probability": 0.475,
+   "source": "polymarket",
+   "market_type": "half_total",
+   "market_name": "Indiana vs. Nebraska: 1H O/U 24.5",
+   "outcome_name": "Under",
+   "observed_at": "2026-10-10T13:31:47.776412+00:00",
+   "contributor_outcome_ids": [
+    244817134
+   ],
+   "is_winner": null,
+   "resolution_source": null,
+   "movement": 0.005,
+   "period": "1H",
+   "_market_id": 65104687,
+   "_external_id": "0x7c4e9ae44d0852d2bcab248740f5e9d3a1ab5dcae1709e0656760ce2106e9d31"
+  },
+  {
+   "threshold": 24.5,
+   "over_probability": 0.475,
+   "source": "polymarket",
+   "market_type": "half_total",
+   "market_name": "Indiana vs. Nebraska: 1H O/U 24.5",
+   "outcome_name": "Over",
+   "observed_at": "2026-10-10T13:31:47.776412+00:00",
+   "contributor_outcome_ids": [
+    244817133
+   ],
+   "is_winner": null,
+   "resolution_source": null,
+   "movement": -0.005,
+   "period": "1H",
+   "_market_id": 65104687,
+   "_external_id": "0x7c4e9ae44d0852d2bcab248740f5e9d3a1ab5dcae1709e0656760ce2106e9d31"
+  },
+  {
+   "threshold": 24.5,
+   "over_probability": 0.45,
+   "source": "polymarket",
+   "market_type": "half_total",
+   "market_name": "Indiana vs. Nebraska: 2H O/U 24.5",
+   "outcome_name": "Under",
+   "observed_at": "2026-10-10T07:06:14.075859+00:00",
+   "contributor_outcome_ids": [
+    244538159
+   ],
+   "is_winner": null,
+   "resolution_source": null,
+   "movement": -0.04,
+   "period": "2H",
+   "_market_id": 65027733,
+   "_external_id": "0xac7dd9d68648a93bfcf55fe4636608eeae5a2293a1e13624120c9e7581dfc359"
+  },
+  {
+   "threshold": 24.5,
+   "over_probability": 0.45,
+   "source": "polymarket",
+   "market_type": "half_total",
+   "market_name": "Indiana vs. Nebraska: 2H O/U 24.5",
+   "outcome_name": "Over",
+   "observed_at": "2026-10-10T07:06:14.075859+00:00",
+   "contributor_outcome_ids": [
+    244538158
+   ],
+   "is_winner": null,
+   "resolution_source": null,
+   "movement": 0.04,
+   "period": "2H",
+   "_market_id": 65027733,
+   "_external_id": "0xac7dd9d68648a93bfcf55fe4636608eeae5a2293a1e13624120c9e7581dfc359"
+  },
+  {
+   "threshold": 27.5,
+   "over_probability": 0.255,
+   "source": "polymarket",
+   "market_type": "half_total",
+   "market_name": "Indiana vs. Nebraska: 1H O/U 27.5",
+   "outcome_name": "Under",
+   "observed_at": "2026-10-10T16:39:40.306309+00:00",
+   "contributor_outcome_ids": [
+    243008111
+   ],
+   "is_winner": null,
+   "resolution_source": null,
+   "movement": 0.19,
+   "period": "1H",
+   "_market_id": 64609767,
+   "_external_id": "0x2e2ff7203f02225ea8a7738d681bc4b447e1aabb43de46b3e60bfb3bee56f5d3"
+  },
+  {
+   "threshold": 27.5,
+   "over_probability": 0.255,
+   "source": "polymarket",
+   "market_type": "half_total",
+   "market_name": "Indiana vs. Nebraska: 1H O/U 27.5",
+   "outcome_name": "Over",
+   "observed_at": "2026-10-10T16:39:40.306309+00:00",
+   "contributor_outcome_ids": [
+    243008110
+   ],
+   "is_winner": null,
+   "resolution_source": null,
+   "movement": -0.19,
+   "period": "1H",
+   "_market_id": 64609767,
+   "_external_id": "0x2e2ff7203f02225ea8a7738d681bc4b447e1aabb43de46b3e60bfb3bee56f5d3"
+  },
+  {
+   "threshold": 27.5,
+   "over_probability": 0.35,
+   "source": "polymarket",
+   "market_type": "half_total",
+   "market_name": "Indiana vs. Nebraska: 2H O/U 27.5",
+   "outcome_name": "Under",
+   "observed_at": "2026-10-10T16:39:40.306309+00:00",
+   "contributor_outcome_ids": [
+    244538161
+   ],
+   "is_winner": null,
+   "resolution_source": null,
+   "movement": -0.02,
+   "period": "2H",
+   "_market_id": 65027734,
+   "_external_id": "0xe20fc6e1047b814821c7d986520999b265861c7e93297eaa80a22e26b33c24f4"
+  },
+  {
+   "threshold": 27.5,
+   "over_probability": 0.35,
+   "source": "polymarket",
+   "market_type": "half_total",
+   "market_name": "Indiana vs. Nebraska: 2H O/U 27.5",
+   "outcome_name": "Over",
+   "observed_at": "2026-10-10T16:39:40.306309+00:00",
+   "contributor_outcome_ids": [
+    244538160
+   ],
+   "is_winner": null,
+   "resolution_source": null,
+   "movement": 0.02,
+   "period": "2H",
+   "_market_id": 65027734,
+   "_external_id": "0xe20fc6e1047b814821c7d986520999b265861c7e93297eaa80a22e26b33c24f4"
+  },
+  {
+   "threshold": 30.5,
+   "over_probability": 0.265,
+   "source": "polymarket",
+   "market_type": "half_total",
+   "market_name": "Indiana vs. Nebraska: 2H O/U 30.5",
+   "outcome_name": "Under",
+   "observed_at": "2026-10-10T16:40:27.298852+00:00",
+   "contributor_outcome_ids": [
+    244538163
+   ],
+   "is_winner": null,
+   "resolution_source": null,
+   "movement": -0.02,
+   "period": "2H",
+   "_market_id": 65027735,
+   "_external_id": "0x5f236d181a22ee0b7831adbcb67f9fd24a4fb5f98354f3d9942a48baddffa8fa"
+  },
+  {
+   "threshold": 30.5,
+   "over_probability": 0.265,
+   "source": "polymarket",
+   "market_type": "half_total",
+   "market_name": "Indiana vs. Nebraska: 2H O/U 30.5",
+   "outcome_name": "Over",
+   "observed_at": "2026-10-10T16:40:27.298852+00:00",
+   "contributor_outcome_ids": [
+    244538162
+   ],
+   "is_winner": null,
+   "resolution_source": null,
+   "movement": 0.02,
+   "period": "2H",
+   "_market_id": 65027735,
+   "_external_id": "0x5f236d181a22ee0b7831adbcb67f9fd24a4fb5f98354f3d9942a48baddffa8fa"
+  },
+  {
+   "threshold": 30.5,
+   "over_probability": 0.165,
+   "source": "polymarket",
+   "market_type": "half_total",
+   "market_name": "Indiana vs. Nebraska: 1H O/U 30.5",
+   "outcome_name": "Under",
+   "observed_at": "2026-10-10T16:41:04.370883+00:00",
+   "contributor_outcome_ids": [
+    243008113
+   ],
+   "is_winner": null,
+   "resolution_source": null,
+   "movement": 0.215,
+   "period": "1H",
+   "_market_id": 64609768,
+   "_external_id": "0xdd777b46bba6dbabc0ea4ba65d2e8b3d00417bf9ffc68c0ca90423aee5988c76"
+  },
+  {
+   "threshold": 30.5,
+   "over_probability": 0.165,
+   "source": "polymarket",
+   "market_type": "half_total",
+   "market_name": "Indiana vs. Nebraska: 1H O/U 30.5",
+   "outcome_name": "Over",
+   "observed_at": "2026-10-10T16:41:04.370883+00:00",
+   "contributor_outcome_ids": [
+    243008112
+   ],
+   "is_winner": null,
+   "resolution_source": null,
+   "movement": -0.215,
+   "period": "1H",
+   "_market_id": 64609768,
+   "_external_id": "0xdd777b46bba6dbabc0ea4ba65d2e8b3d00417bf9ffc68c0ca90423aee5988c76"
+  },
+  {
+   "threshold": 33.5,
+   "over_probability": 0.25,
+   "source": "polymarket",
+   "market_type": "half_total",
+   "market_name": "Indiana vs. Nebraska: 1H O/U 33.5",
+   "outcome_name": "Under",
+   "observed_at": "2026-10-10T04:15:32.226710+00:00",
+   "contributor_outcome_ids": [
+    244817140
+   ],
+   "is_winner": null,
+   "resolution_source": null,
+   "movement": -0.025,
+   "period": "1H",
+   "_market_id": 65104690,
+   "_external_id": "0xa3985985eda0a57a2e78cdc08959c0c507a6be23eece34dc62eacac88a6b491d"
+  },
+  {
+   "threshold": 33.5,
+   "over_probability": 0.25,
+   "source": "polymarket",
+   "market_type": "half_total",
+   "market_name": "Indiana vs. Nebraska: 1H O/U 33.5",
+   "outcome_name": "Over",
+   "observed_at": "2026-10-10T04:15:32.226710+00:00",
+   "contributor_outcome_ids": [
+    244817139
+   ],
+   "is_winner": null,
+   "resolution_source": null,
+   "movement": 0.025,
+   "period": "1H",
+   "_market_id": 65104690,
+   "_external_id": "0xa3985985eda0a57a2e78cdc08959c0c507a6be23eece34dc62eacac88a6b491d"
+  }
+ ],
+ "team_totals": [],
+ "player_props": [],
+ "matchups": [],
+ "other": []
+}

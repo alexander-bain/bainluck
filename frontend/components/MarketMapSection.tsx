@@ -1351,6 +1351,8 @@ export default function MarketMapSection({
           : null;
       const rawParsedAll = parseSpreadRungs(spreads, homeTeam, awayTeam, vocab.unit, {
         keepUnpriced: halfFinalMargin != null,
+        // #10830: a half rail reads `1H Spread: <Team> (-N)` titles.
+        readsHalfTitles: true,
       });
       // Collapse before the monotonicity pass: equal duplicates satisfy
       // `prob <= lastProb` trivially, so that guard cannot remove them.

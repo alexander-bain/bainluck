@@ -353,8 +353,9 @@ export function parseSpreadRungs(
   homeTeam: string,
   awayTeam: string,
   railUnit: string,
-  opts: { keepUnpriced?: boolean } = {}
+  opts: { keepUnpriced?: boolean; readsHalfTitles?: boolean } = {}
 ): ParsedSpread[] {
+  const halfTitles = opts.readsHalfTitles === true;
   /* #8739: a Polymarket market's uncovered leg is read as its cover rung at
      1 − p. Where the cover leg itself is served, that leg IS the reading and
      the complement only adds the other token's midpoint noise (Dodgers −2.5:
@@ -373,10 +374,14 @@ export function parseSpreadRungs(
     .filter((s) => opts.keepUnpriced || (typeof s.probability === "number" && Number.isFinite(s.probability)))
     .map((s) => ({ ...s, probability: s.probability ?? 0 }));
   const coverServed = new Set(
-    priced.filter((s) => polymarketLegRole(s.market_name, s.outcome_name) === "cover").map((s) => s.market_name)
+    priced
+      .filter((s) => polymarketLegRole(s.market_name, s.outcome_name, halfTitles) === "cover")
+      .map((s) => s.market_name)
   );
   return priced
-    .filter((s) => !(polymarketLegRole(s.market_name, s.outcome_name) === "other" && coverServed.has(s.market_name)))
+    .filter(
+      (s) => !(polymarketLegRole(s.market_name, s.outcome_name, halfTitles) === "other" && coverServed.has(s.market_name))
+    )
     .map((s) =>
       parseSpreadOutcome(
         s.outcome_name ?? "",
@@ -384,7 +389,8 @@ export function parseSpreadRungs(
         s.source ?? "",
         homeTeam,
         awayTeam,
-        s.market_name ?? ""
+        s.market_name ?? "",
+        halfTitles
       )
     )
     .filter((p): p is ParsedSpread => p != null)
@@ -454,7 +460,8 @@ export function parseSpreadOutcome(
   source: string,
   homeTeam: string,
   awayTeam: string,
-  marketName = ""
+  marketName = "",
+  readsHalfTitles = false
 ): ParsedSpread | null {
   const lower = foldName(outcomeName);
   const homeWords = foldName(homeTeam).split(" ");
@@ -491,7 +498,7 @@ export function parseSpreadOutcome(
 
   const matches = outcomeName.match(/(\d+\.?\d*)/g);
   if (!matches || matches.length === 0) {
-    return parseLineFromMarketName(marketName, outcomeName, probability, source, homeTeam, awayTeam);
+    return parseLineFromMarketName(marketName, outcomeName, probability, source, homeTeam, awayTeam, readsHalfTitles);
   }
   const threshold = parseFloat(matches[matches.length - 1]);
 
@@ -527,14 +534,34 @@ export function parseSpreadOutcome(
  */
 const POLYMARKET_SPREAD_MARKET = /^\s*spread:\s*(.+?)\s*\(\s*-\s*(\d+(?:\.\d+)?)\s*\)\s*$/i;
 
+/**
+ * #10830: a half rail's twin. Polymarket titles a half the same way
+ * (`1H Spread: Indiana (-9.5)`, legs `Nebraska` / `Indiana`), and the anchor
+ * above dropped every leg, so `/events/15322373` (live, priced only on
+ * Polymarket) drew no 1st or 2nd half margin card. Only a half prefix, and only
+ * where the caller is a half rail (`readsHalfTitles`): `1st 5 Innings Spread:`
+ * stays refused, and the full-game rail never reads a half's title.
+ */
+const POLYMARKET_HALF_SPREAD_MARKET =
+  /^\s*(?:(?:1h|2h|1st half|2nd half|first half|second half)\s+)?spread:\s*(.+?)\s*\(\s*-\s*(\d+(?:\.\d+)?)\s*\)\s*$/i;
+
+/** The cover team and line a Polymarket spread title states, or null. */
+function polymarketSpreadTitle(
+  marketName: string | null | undefined,
+  readsHalfTitles = false
+): RegExpMatchArray | null {
+  return (marketName ?? "").match(readsHalfTitles ? POLYMARKET_HALF_SPREAD_MARKET : POLYMARKET_SPREAD_MARKET);
+}
+
 /** Which leg of a `Spread: <Team> (-N)` market a numberless outcome is, if any. */
 function polymarketLegRole(
   marketName: string | null | undefined,
-  outcomeName: string | null | undefined
+  outcomeName: string | null | undefined,
+  readsHalfTitles = false
 ): "cover" | "other" | null {
   const outcome = foldName((outcomeName ?? "").trim());
   if (!outcome || /\d/.test(outcome)) return null;
-  const m = (marketName ?? "").match(POLYMARKET_SPREAD_MARKET);
+  const m = polymarketSpreadTitle(marketName, readsHalfTitles);
   if (!m) return null;
   return foldName(m[1].trim()) === outcome ? "cover" : "other";
 }
@@ -552,9 +579,10 @@ function parseLineFromMarketName(
   probability: number,
   source: string,
   homeTeam: string,
-  awayTeam: string
+  awayTeam: string,
+  readsHalfTitles = false
 ): ParsedSpread | null {
-  const m = marketName.match(POLYMARKET_SPREAD_MARKET);
+  const m = polymarketSpreadTitle(marketName, readsHalfTitles);
   if (!m) return null;
   const coverTeam = foldName(m[1].trim());
   const threshold = parseFloat(m[2]);
