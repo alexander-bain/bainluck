@@ -298,4 +298,116 @@ final class CompactEventMarkets10830Tests: XCTestCase {
         }
         XCTAssertEqual(reached.count, 1_200)
     }
+
+    // MARK: - Game question focus (#10830)
+
+    private func question(_ key: String, options optionKeys: [String]) -> EventQuestionMatrixAdapter.Row {
+        EventQuestionMatrixAdapter.Row(
+            id: .init(scope: .game, questionKey: key), kind: .namedOptions, label: key, quantity: nil,
+            period: nil, subject: nil, predicate: nil, lifecycle: nil,
+            options: optionKeys.map {
+                EventQuestionMatrixAdapter.Option(
+                    selection: QuestionMatrixSelection(scope: .game, questionKey: key, optionKey: $0),
+                    label: $0, side: nil, value: .quoted(0.5), observedAt: nil, basis: nil, result: nil)
+            },
+            missingOptions: [], offersMoreOptions: false, complete: nil, optionCounts: nil, sourceTotals: [])
+    }
+
+    /// Focus returns to the exact option only while its question is both in the
+    /// latest payload and drawn by the browser; otherwise to the heading.
+    func testFocusReturnsOnlyToAnOptionTheBrowserStillDraws() {
+        let rows = [question("m:1", options: ["o:1", "o:2"]), question("m:2", options: ["o:3"])]
+        let pick = QuestionMatrixSelection(scope: .game, questionKey: "m:2", optionKey: "o:3")
+        let target = EventQuestionMatrixSection10238.focusReturnTarget
+
+        XCTAssertEqual(target(pick, rows, [rows[0].id, rows[1].id]), pick)
+        // A refresh moved m:2 to another family or past the window.
+        XCTAssertNil(target(pick, rows, [rows[0].id]))
+        // Withdrawn from the latest payload, even if the id was on screen.
+        XCTAssertNil(target(pick, [rows[0]], [rows[0].id, rows[1].id]))
+        // A different option of a visible question is not substituted.
+        XCTAssertNil(target(
+            QuestionMatrixSelection(scope: .game, questionKey: "m:2", optionKey: "o:9"),
+            rows, [rows[0].id, rows[1].id]))
+        XCTAssertNil(target(nil, rows, [rows[0].id, rows[1].id]))
+    }
+
+    /// A question's last page and a search both reach its one row in a large
+    /// typed matrix, and the browse window never hands back a row twice.
+    func testSearchReachesTheLastQuestionOfALargeMatrix() {
+        let rows = (0..<240).map { question("Spread: Team \($0) (-\($0 % 9).5)") }
+        let groups = rows.map(EventQuestionMatrixSection10238.family)
+        let texts = rows.map(EventQuestionMatrixSection10238.searchText)
+        XCTAssertEqual(MarketBrowserLogic.matchingIndices(
+            groupNames: groups, searchTexts: texts, query: "team 239", selected: nil), [239])
+        let all = MarketBrowserLogic.matchingIndices(
+            groupNames: groups, searchTexts: texts, query: "", selected: "Spreads")
+        XCTAssertEqual(all.count, 240)
+        XCTAssertEqual(Set(all).count, 240)
+        XCTAssertEqual(all.last, 239)
+    }
+
+    // MARK: - Period maps (#10830 review)
+
+    /// A first half that is over says so on its own map while the game is
+    /// still live; the second half, still in play, keeps its distribution.
+    func testAFinishedFirstHalfIsOverWhileTheGameIsLive() {
+        let live = HalfScores.Pair(
+            first: HalfScoreSplit(home: 14, away: 10),
+            second: HalfScoreSplit(home: 3, away: 0),
+            secondIsComplete: false
+        )
+        XCTAssertTrue(MarketMapRail.halfMapIsOver(gameIsDone: false, halfIsComplete: live.isComplete(.first)))
+        XCTAssertFalse(MarketMapRail.halfMapIsOver(gameIsDone: false, halfIsComplete: live.isComplete(.second)))
+        // The game's final ends every half, with or without a halftime reading.
+        XCTAssertTrue(MarketMapRail.halfMapIsOver(gameIsDone: true, halfIsComplete: false))
+    }
+
+    /// A half grades only against its OWN finished score — never a half in
+    /// play, never a scoreboard that does not count the map's unit, and never
+    /// the whole game's final split into halves.
+    func testAHalfGradesOnlyAgainstItsOwnFinishedScore() {
+        let first = HalfScoreSplit(home: 14, away: 10)
+        XCTAssertEqual(MarketMapRail.halfSettledScore(
+            halfIsComplete: true, scoreboardCountsTheUnit: true, played: first), first)
+        XCTAssertNil(MarketMapRail.halfSettledScore(
+            halfIsComplete: false, scoreboardCountsTheUnit: true, played: HalfScoreSplit(home: 3, away: 0)))
+        XCTAssertNil(MarketMapRail.halfSettledScore(
+            halfIsComplete: true, scoreboardCountsTheUnit: false, played: first))
+        XCTAssertNil(MarketMapRail.halfSettledScore(
+            halfIsComplete: true, scoreboardCountsTheUnit: true, played: nil))
+
+        // Home won the half by 4: home +3.5 HIT, home +4.5 MISS, away +3.5 MISS.
+        let home = MarketMapRail.sideFinalMargin(gameMargin: first.margin, isHome: true)
+        let away = MarketMapRail.sideFinalMargin(gameMargin: first.margin, isHome: false)
+        XCTAssertEqual(MarketMapRail.totalLadderResult(threshold: 3.5, finalTotal: home), .over)
+        XCTAssertEqual(MarketMapRail.totalLadderResult(threshold: 4.5, finalTotal: home), .under)
+        XCTAssertEqual(MarketMapRail.totalLadderResult(threshold: 3.5, finalTotal: away), .under)
+    }
+
+    /// Every quoted half-total line is reachable behind "All N lines"; the
+    /// default window is the short one, and after the half it is the lines the
+    /// half's total decided.
+    func testEveryHalfTotalLineIsReachable() {
+        let lines: [Double] = (0..<11).map { 17.5 + Double($0) * 2 }
+        let names = lines.map { "Over: 1H \($0)" } + lines.map { "Under: 1H \($0)" }
+        let thresholds: [Double?] = lines + lines
+        let overs: [Double?] = lines.enumerated().map { 0.95 - Double($0.offset) * 0.08 } + lines.map { _ in nil }
+
+        let full = MarketMapRail.fullTotalRungs(outcomeNames: names, thresholds: thresholds)
+        XCTAssertEqual(full.map(\.threshold), lines)
+
+        let pre = MarketMapRail.drawnFullTotalRungs(
+            outcomeNames: names, thresholds: thresholds, overProbabilities: overs,
+            settledTotal: nil, limit: MarketMapRail.halfMapLadderLimit)
+        XCTAssertEqual(pre.count, MarketMapRail.halfMapLadderLimit)
+        XCTAssertLessThan(pre.count, full.count)
+
+        let settled = MarketMapRail.drawnFullTotalRungs(
+            outcomeNames: names, thresholds: thresholds, overProbabilities: overs,
+            settledTotal: 24, limit: MarketMapRail.halfMapLadderLimit)
+        let results = settled.map { MarketMapRail.totalLadderResult(threshold: $0.threshold, finalTotal: 24) }
+        XCTAssertTrue(results.contains(.over) && results.contains(.under),
+                      "the settled window straddles the half's own total: \(settled.map(\.threshold))")
+    }
 }

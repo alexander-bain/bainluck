@@ -18,6 +18,8 @@ struct EventQuestionMatrixSection10238: View {
 
     @State private var open: OpenOption?
     @State private var returnSelection: QuestionMatrixSelection?
+    /// #10830 — the questions the browser has on screen right now.
+    @State private var visibleRowIDs: Set<EventQuestionMatrixAdapter.RowID> = []
     @AccessibilityFocusState private var focus: Focus?
     @Environment(\.dynamicTypeSize) private var typeSize
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -55,7 +57,8 @@ struct EventQuestionMatrixSection10238: View {
                     group: Self.family,
                     searchText: Self.searchText,
                     pageSize: Self.pageSize,
-                    searchPrompt: "questions"
+                    searchPrompt: "questions",
+                    visibleIDs: $visibleRowIDs
                 ) { row in
                     question(row)
                         .padding(.bottom, 10)
@@ -169,12 +172,31 @@ struct EventQuestionMatrixSection10238: View {
     }
 
     private func restoreFocus() {
-        if let target = returnSelection,
-           rows.contains(where: { $0.options.contains(where: { $0.selection == target }) }) {
+        if let target = Self.focusReturnTarget(
+            returnSelection, rows: rows, visibleRowIDs: visibleRowIDs
+        ) {
             focus = .option(target)
         } else {
             focus = .heading
         }
+    }
+
+    /// The option focus returns to when the detail sheet closes, or nil for the
+    /// section heading.
+    ///
+    /// #10830 — the option has to be in the LATEST payload (withdrawn → the
+    /// heading, as before) AND on screen: a refresh can move its question to
+    /// another family or past the browser's window, and focusing a row that is
+    /// not drawn strands VoiceOver.
+    static func focusReturnTarget(
+        _ selection: QuestionMatrixSelection?,
+        rows: [EventQuestionMatrixAdapter.Row],
+        visibleRowIDs: Set<EventQuestionMatrixAdapter.RowID>
+    ) -> QuestionMatrixSelection? {
+        guard let selection,
+              let row = rows.first(where: { $0.options.contains(where: { $0.selection == selection }) }),
+              visibleRowIDs.contains(row.id) else { return nil }
+        return selection
     }
 
     private func detail(_ selection: QuestionMatrixSelection) -> some View {

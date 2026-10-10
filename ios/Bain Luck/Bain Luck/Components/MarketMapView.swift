@@ -431,49 +431,10 @@ struct MarketMapView: View {
         // sort by `abs(margin)`; the home half used to sort by the signed value,
         // which is the same order for the non-negative margins `SpreadRungs`
         // produces and is the order the window rule actually requires.
-        let ladderLimit = 3
-        // #10830 — `limit: nil` is every line, for the card's "All N lines".
-        // Same rows, same grades; only the window is lifted.
-        func marginLadder(
-            _ rungs: [SpreadRungs.Rung], isHome: Bool, abbr: String, color: Color,
-            limit: Int? = ladderLimit
-        ) -> [LadderRow] {
-            let sorted = rungs.sorted { abs($0.margin) < abs($1.margin) }
-            let lines = sorted.map { abs($0.margin) }
-            let sideFinal = settledMargin.map {
-                MarketMapRail.sideFinalMargin(gameMargin: $0, isHome: isHome)
-            }
-            // Before the result, the tightest lines; after it, the lines the
-            // result actually decided — the totals card's rule, unchanged.
-            let window: Range<Int>
-            if let limit {
-                window = sideFinal.map {
-                    MarketMapRail.settledLadderWindow(
-                        sortedThresholds: lines, finalTotal: $0, limit: limit
-                    )
-                } ?? 0 ..< Swift.min(limit, sorted.count)
-            } else {
-                window = 0 ..< sorted.count
-            }
-            return window.map { i in
-                LadderRow(
-                    // #7905 — `by N+`, not `+N`. The side is already known here,
-                    // so this is the one margin label that names it itself.
-                    label: MarketMapRail.marginThresholdLabel(teamAbbr: abbr, threshold: lines[i]),
-                    prob: sorted[i].probability,
-                    color: color,
-                    result: sideFinal.map {
-                        MarketMapRail.totalLadderResult(threshold: lines[i], finalTotal: $0)
-                    }
-                )
-            }
-        }
-        let ladder: [LadderRow] =
-            marginLadder(parsed.filter { !$0.isHome }, isHome: false, abbr: aAbbr, color: awayColor)
-            + marginLadder(parsed.filter(\.isHome), isHome: true, abbr: hAbbr, color: homeColor)
-        let fullLadder: [LadderRow] =
-            marginLadder(parsed.filter { !$0.isHome }, isHome: false, abbr: aAbbr, color: awayColor, limit: nil)
-            + marginLadder(parsed.filter(\.isHome), isHome: true, abbr: hAbbr, color: homeColor, limit: nil)
+        // #10830 — `marginLadder` is a member now so the half cards share it;
+        // `limit: nil` is every line, for the card's "All N lines".
+        let ladder = marginLadders(parsed, settledMargin: settledMargin)
+        let fullLadder = marginLadders(parsed, settledMargin: settledMargin, limit: nil)
 
         // Headline: favored team + win %
         //
@@ -596,6 +557,60 @@ struct MarketMapView: View {
             ladder: ladder,
             fullLadder: fullLadder
         )
+    }
+
+    /// #3852 — each SIDE is its own one-sided cover ladder: positive lines
+    /// ascending, graded against the margin that side won by. Both sides sort
+    /// by `abs(margin)`, which is the order the window rule requires.
+    ///
+    /// #10830 — lifted out of `marginMapCard` so a half card builds its ladder
+    /// with the SAME rows and grades; the caller decides which result
+    /// (`settledMargin`, home-signed) the rows may be graded against.
+    private static let marginLadderLimit = 3
+
+    private func marginLadders(
+        _ rungs: [SpreadRungs.Rung], settledMargin: Int?,
+        limit: Int? = MarketMapView.marginLadderLimit
+    ) -> [LadderRow] {
+        marginLadder(rungs.filter { !$0.isHome }, isHome: false, abbr: aAbbr,
+                     color: awayColor, settledMargin: settledMargin, limit: limit)
+            + marginLadder(rungs.filter(\.isHome), isHome: true, abbr: hAbbr,
+                           color: homeColor, settledMargin: settledMargin, limit: limit)
+    }
+
+    private func marginLadder(
+        _ rungs: [SpreadRungs.Rung], isHome: Bool, abbr: String, color: Color,
+        settledMargin: Int?, limit: Int?
+    ) -> [LadderRow] {
+        let sorted = rungs.sorted { abs($0.margin) < abs($1.margin) }
+        let lines = sorted.map { abs($0.margin) }
+        let sideFinal = settledMargin.map {
+            MarketMapRail.sideFinalMargin(gameMargin: $0, isHome: isHome)
+        }
+        // Before the result, the tightest lines; after it, the lines the
+        // result actually decided — the totals card's rule, unchanged.
+        let window: Range<Int>
+        if let limit {
+            window = sideFinal.map {
+                MarketMapRail.settledLadderWindow(
+                    sortedThresholds: lines, finalTotal: $0, limit: limit
+                )
+            } ?? 0 ..< Swift.min(limit, sorted.count)
+        } else {
+            window = 0 ..< sorted.count
+        }
+        return window.map { i in
+            LadderRow(
+                // #7905 — `by N+`, not `+N`. The side is already known here,
+                // so this is the one margin label that names it itself.
+                label: MarketMapRail.marginThresholdLabel(teamAbbr: abbr, threshold: lines[i]),
+                prob: sorted[i].probability,
+                color: color,
+                result: sideFinal.map {
+                    MarketMapRail.totalLadderResult(threshold: lines[i], finalTotal: $0)
+                }
+            )
+        }
     }
 
     // MARK: - Full Game Total Map
@@ -987,13 +1002,24 @@ struct MarketMapView: View {
             ))
         }
 
+        // #10830 — the half's own phase and result. The full-game card's
+        // ladder rows, graded only against THIS half's finished score.
+        let halfOver = MarketMapRail.halfMapIsOver(
+            gameIsDone: isDone, halfIsComplete: halfScores.isComplete(half)
+        )
+        let settledHalfMargin = MarketMapRail.halfSettledScore(
+            halfIsComplete: halfScores.isComplete(half),
+            scoreboardCountsTheUnit: scoreboardCounts(data.unit),
+            played: halfScores.score(half)
+        )?.margin
+
         // #3642 — each end names its own bound, as on the full-game card above.
         let axisEnds = MarketMapRail.marginAxisEnds(bounds)
         return mapCard(
             // #3763 — as on the full-game card above.
             title: label,
             subtitle: MarketMapRail.halfMarginSubtitle(
-                hasDistribution: !isDone && MarketMapRail.marginRailHasDistribution(density: density)
+                hasDistribution: !halfOver && MarketMapRail.marginRailHasDistribution(density: density)
             ),
             headline: "",
             density: density, rangeMin: rangeMin, rangeMax: rangeMax,
@@ -1002,7 +1028,10 @@ struct MarketMapView: View {
             axisLeft: MarketMapRail.marginThresholdLabel(teamAbbr: aAbbr, threshold: axisEnds.left),
             axisMid: "Tie",
             axisRight: MarketMapRail.marginThresholdLabel(teamAbbr: hAbbr, threshold: axisEnds.right),
-            markers: markers, ladder: []
+            markers: markers,
+            ladder: marginLadders(parsed, settledMargin: settledHalfMargin),
+            fullLadder: marginLadders(parsed, settledMargin: settledHalfMargin, limit: nil),
+            periodIsOver: halfOver
         )
     }
 
@@ -1071,10 +1100,49 @@ struct MarketMapView: View {
         let hasDistribution = MarketMapRail.totalRailHasDistribution(density: density)
         let purpleRgb = (r: 124.0, g: 58.0, b: 237.0)
 
+        // #10830 — the half's own phase and result, as on the half margin card.
+        // Every quoted line is reachable; rows grade only against this half's
+        // finished total, never live (`liveTotalLadderResult` refuses a
+        // sub-contest market) and never from the whole game's score.
+        let halfOver = MarketMapRail.halfMapIsOver(
+            gameIsDone: isDone, halfIsComplete: halfScores.isComplete(half)
+        )
+        let settledHalfTotal = MarketMapRail.halfSettledScore(
+            halfIsComplete: halfScores.isComplete(half),
+            scoreboardCountsTheUnit: scoreboardCounts(mapUnit),
+            played: halfScores.score(half)
+        )?.total
+        func halfTotalRow(_ rung: MarketMapRail.TotalRung) -> LadderRow {
+            let outcome = outcomes[rung.index]
+            return LadderRow(
+                label: "Over \(formatThreshold(rung.threshold))",
+                prob: outcome.overProbability ?? outcome.probability ?? 0.5,
+                color: Color(hex: "#7c3aed"),
+                result: settledHalfTotal.map {
+                    MarketMapRail.totalLadderResult(threshold: rung.threshold, finalTotal: $0)
+                }
+            )
+        }
+        let ladder = MarketMapRail.drawnFullTotalRungs(
+            outcomeNames: outcomes.map(\.outcomeName),
+            thresholds: outcomes.map(\.threshold),
+            overProbabilities: outcomes.map {
+                MarketMapRail.ladderWindowPrice(
+                    overProbability: $0.overProbability, probability: $0.probability
+                )
+            },
+            settledTotal: settledHalfTotal,
+            limit: MarketMapRail.halfMapLadderLimit
+        ).map(halfTotalRow)
+        let fullLadder = MarketMapRail.fullTotalRungs(
+            outcomeNames: outcomes.map(\.outcomeName),
+            thresholds: outcomes.map(\.threshold)
+        ).map(halfTotalRow)
+
         return mapCard(
             title: label,
             subtitle: MarketMapRail.halfTotalSubtitle(
-                hasDistribution: !isDone && hasDistribution,
+                hasDistribution: !halfOver && hasDistribution,
                 unit: displayUnit(mapUnit)
             ),
             headline: "",
@@ -1083,7 +1151,10 @@ struct MarketMapView: View {
             zeroPosition: nil,
             leftRgb: purpleRgb, rightRgb: purpleRgb,
             axisLeft: "\(Int(rangeMin))", axisMid: "\(Int((rangeMin + rangeMax) / 2))", axisRight: "\(Int(rangeMax))+",
-            markers: markers, ladder: []
+            markers: markers,
+            ladder: ladder,
+            fullLadder: fullLadder,
+            periodIsOver: halfOver
         )
     }
 
@@ -1103,13 +1174,16 @@ struct MarketMapView: View {
         axisLeft: String, axisMid: String, axisRight: String,
         markers: [MapMarker],
         ladder: [LadderRow],
-        fullLadder: [LadderRow] = []
+        fullLadder: [LadderRow] = [],
+        periodIsOver: Bool? = nil
     ) -> some View {
         // #10830 — after the final the rail compares the markers on a plain
         // number line: a resolved price is not a distribution (web's compact
         // map withholds the same shape). And with no marker either there is
         // nothing left for the rail to point at, so it is not drawn.
-        let showsShape = drawsDistribution && !isDone
+        // `periodIsOver` is a half card's own phase (`halfMapIsOver`); the
+        // full-game cards leave it nil and read the game's.
+        let showsShape = drawsDistribution && !(periodIsOver ?? isDone)
         let drawsRail = !MarketMapRail.railDrawsNothing(density: density, markerCount: markers.count)
             && (showsShape || !markers.isEmpty)
         let ladderOpen = expandedLadders.contains(title)

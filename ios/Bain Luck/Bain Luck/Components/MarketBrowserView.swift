@@ -20,6 +20,10 @@ struct MarketBrowserView<Item: Identifiable, Row: View>: View {
     var searchable: Bool = true
     /// What the search placeholder suggests — "player or stat", "team or market".
     var searchPrompt: String? = nil
+    /// The ids of the rows on screen, for a host that must not send focus to a
+    /// row the browser has filtered out or paged away (the game questions'
+    /// focus return after their detail sheet closes).
+    var visibleIDs: Binding<Set<Item.ID>>? = nil
     @ViewBuilder let row: (Item) -> Row
 
     @State private var selected: String?
@@ -45,6 +49,7 @@ struct MarketBrowserView<Item: Identifiable, Row: View>: View {
             )
             : Array(items.indices)
         let window = browses ? (limit ?? pageSize) : items.count
+        let shown = matches.prefix(window).map { items[$0] }
 
         if !items.isEmpty {
             VStack(alignment: .leading, spacing: 10) {
@@ -57,9 +62,12 @@ struct MarketBrowserView<Item: Identifiable, Row: View>: View {
                 VStack(alignment: .leading, spacing: 0) {
                     // Keyed by the item's own id, so a refresh that reorders
                     // the collection keeps each row's state with its row.
-                    ForEach(matches.prefix(window).map { items[$0] }) { item in
+                    ForEach(shown) { item in
                         row(item)
                     }
+                }
+                .onChange(of: shown.map(\.id), initial: true) { _, ids in
+                    visibleIDs?.wrappedValue = Set(ids)
                 }
                 if matches.isEmpty {
                     Text("No matches. Try a player, team, or market name.")
