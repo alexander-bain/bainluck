@@ -1,0 +1,97 @@
+{
+  "contradictions": [
+    {
+      "ids": ["q1227", "q0085"],
+      "why": "Same event, later deadline shown as less likely: Trump impeached before 2028 = 66%, but impeached during his whole term (to Jan 20, 2029) = 63%"
+    },
+    {
+      "ids": ["q0200", "q1878"],
+      "why": "Same claim from two venues 5 points apart: Matt Damon wins Best Actor at the 2027 Oscars = 26% (K) vs 21% (P)"
+    },
+    {
+      "ids": ["q1220", "q1360"],
+      "why": "GTA VI released before Dec 1, 2026 = 93% (K) but launch postponed again = 4% (P): no further delay (96%) means it ships Nov 19, so release before Dec 1 cannot be below 96%; 3 points unaccounted for"
+    },
+    {
+      "ids": ["q1221", "q1360"],
+      "why": "GTA VI released before 2027 = 94% (K) but launch postponed again = 4% (P): the broader claim (released in 2026) is shown 2 points below the narrower one it contains (no further delay = 96%)"
+    }
+  ],
+  "duplicates": [
+    {
+      "first": "j245",
+      "second": "j099",
+      "why": "Boards share three claims: q1750, q1531, q0868"
+    },
+    {
+      "first": "j192",
+      "second": "j150",
+      "why": "Two clocks on the same Russia-Ukraine negotiation (ceasefire agreement vs peace talks)"
+    },
+    {
+      "first": "j192",
+      "second": "j076",
+      "why": "Two clocks on the same Russia-Ukraine negotiation (ceasefire agreement vs any diplomatic meeting)"
+    },
+    {
+      "first": "j150",
+      "second": "j076",
+      "why": "Two clocks on the same Russia-Ukraine negotiation (peace talks vs any diplomatic meeting)"
+    },
+    {
+      "first": "j250",
+      "second": "j155",
+      "why": "Two clocks on the same underlying event, the Strait of Hormuz crisis ending (US-Iran Hormuz agreement vs Hormuz traffic back to normal)"
+    },
+    {
+      "first": "j250",
+      "second": "j156",
+      "why": "Two clocks on the same US-Iran negotiation (Hormuz agreement vs next senior diplomatic meeting)"
+    },
+    {
+      "first": "j138",
+      "second": "j189",
+      "why": "Yardsticks with the identical main claim q1534 (Tesla-SpaceX merger by June 30, 2027)"
+    },
+    {
+      "first": "j075",
+      "second": "j153",
+      "why": "Yardsticks whose main claim is the same question at different deadlines: Trump impeached (q0085 during term vs q1227 before 2028)"
+    },
+    {
+      "first": "j047",
+      "second": "j191",
+      "why": "Yardsticks whose main claim is the same 'blue wave 2026' question from different venues (q1426 on P vs q0438 on K)"
+    },
+    {
+      "first": "j047",
+      "second": "j090",
+      "why": "Yardsticks with the identical main claim q1426 (blue wave 2026)"
+    },
+    {
+      "first": "j191",
+      "second": "j090",
+      "why": "Yardsticks whose main claim is the same 'blue wave 2026' question (q0438 on K vs q1426 on P); second claim q0991 is also identical"
+    },
+    {
+      "first": "j172",
+      "second": "j131",
+      "why": "Yardsticks whose main claim is the same question, which party wins the Senate in 2026, shown from complementary sides (Republicans 35% vs Democrats 66%)"
+    },
+    {
+      "first": "j118",
+      "second": "j121",
+      "why": "Yardsticks whose main claim is the same question from different venues: JD Vance wins the 2028 presidential election (q0060 on K vs q1252 on P)"
+    }
+  ],
+  "misleading": [
+    {
+      "jid": "j191",
+      "why": "q0991 'Bad Bunny is Spotify's top artist of 2026' (86%) is the worldwide list but is unqualified; beside j047's 'Drake is Spotify's top artist in the US in 2026' (84%) it reads as two different winners of one race. Needs 'worldwide'"
+    },
+    {
+      "jid": "j090",
+      "why": "Same as j191: the unqualified worldwide Bad Bunny claim q0991 (86%) appears to conflict with Drake as US top artist (84%) in j047"
+    }
+  ]
+}

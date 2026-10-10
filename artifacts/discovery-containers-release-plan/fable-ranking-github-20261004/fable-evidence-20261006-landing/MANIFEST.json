@@ -1,0 +1,40 @@
+{
+ "created_utc": "2026-10-06T21:39:37Z",
+ "files": [
+  {
+   "name": "analyze.py",
+   "bytes": 3960,
+   "sha256": "fe55fff47541726096f73ab13081001c31bce7f28c76c29d4f9f29572ba78a35"
+  },
+  {
+   "name": "audit_stats.py",
+   "bytes": 8776,
+   "sha256": "e6742c0aecf7c11846f17e2d5e9fcb6530d549f74c9e4ef5e494d6e108452208"
+  },
+  {
+   "name": "audit_stats_output.txt",
+   "bytes": 9053,
+   "sha256": "339f34ec5532cf69c5b676df202fe998cf360c74a2503c827afa541435214011"
+  },
+  {
+   "name": "metrics.json",
+   "bytes": 78597,
+   "sha256": "bdf2c8ae5e7ab8b200022595f81fb6cae91a19beca7d4d5695639a7b94f5dbf6"
+  },
+  {
+   "name": "observed_pages.json",
+   "bytes": 6680,
+   "sha256": "2181c458627da7e6975c1507936b1927e19c336cc5e2f1ac0559fe254ddc0c4a"
+  },
+  {
+   "name": "pull.py",
+   "bytes": 1108,
+   "sha256": "aff41a78e406b60c4cb176021c56862b771a98d5d22fbb9ea88cfe466b633cc6"
+  },
+  {
+   "name": "raw.tar.gz",
+   "bytes": 2046188,
+   "sha256": "da4bd35603b5374785c1479abaeea6fbc820f06004fe33da26d389f6424492e5"
+  }
+ ]
+}

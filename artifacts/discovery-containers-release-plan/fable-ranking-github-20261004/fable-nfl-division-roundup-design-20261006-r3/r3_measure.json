@@ -1,0 +1,265 @@
+{
+ "all8_340": {
+  "card_h": 330.2,
+  "card_w": 340,
+  "footer_h": 27.7,
+  "footer_lines": 1,
+  "row_h": [
+   36,
+   36,
+   36,
+   36
+  ],
+  "ages": []
+ },
+ "all8_358": {
+  "card_h": 330.2,
+  "card_w": 358,
+  "footer_h": 27.7,
+  "footer_lines": 1,
+  "row_h": [
+   36,
+   36,
+   36,
+   36
+  ],
+  "ages": []
+ },
+ "all8_448": {
+  "card_h": 330.2,
+  "card_w": 448,
+  "footer_h": 27.7,
+  "footer_lines": 1,
+  "row_h": [
+   36,
+   36,
+   36,
+   36
+  ],
+  "ages": []
+ },
+ "three3_340": {
+  "card_h": 280.2,
+  "card_w": 340,
+  "footer_h": 27.7,
+  "footer_lines": 1,
+  "row_h": [
+   36,
+   36,
+   36
+  ],
+  "ages": []
+ },
+ "three3_358": {
+  "card_h": 280.2,
+  "card_w": 358,
+  "footer_h": 27.7,
+  "footer_lines": 1,
+  "row_h": [
+   36,
+   36,
+   36
+  ],
+  "ages": []
+ },
+ "three3_448": {
+  "card_h": 280.2,
+  "card_w": 448,
+  "footer_h": 27.7,
+  "footer_lines": 1,
+  "row_h": [
+   36,
+   36,
+   36
+  ],
+  "ages": []
+ },
+ "partial_340": {
+  "card_h": 330.2,
+  "card_w": 340,
+  "footer_h": 27.7,
+  "footer_lines": 1,
+  "row_h": [
+   36,
+   36,
+   36,
+   36
+  ],
+  "ages": []
+ },
+ "partial_358": {
+  "card_h": 330.2,
+  "card_w": 358,
+  "footer_h": 27.7,
+  "footer_lines": 1,
+  "row_h": [
+   36,
+   36,
+   36,
+   36
+  ],
+  "ages": []
+ },
+ "partial_448": {
+  "card_h": 330.2,
+  "card_w": 448,
+  "footer_h": 27.7,
+  "footer_lines": 1,
+  "row_h": [
+   36,
+   36,
+   36,
+   36
+  ],
+  "ages": []
+ },
+ "old_340": {
+  "card_h": 330.2,
+  "card_w": 340,
+  "footer_h": 27.7,
+  "footer_lines": 1,
+  "row_h": [
+   36,
+   36,
+   36,
+   36
+  ],
+  "ages": [
+   {
+    "text": "7h ago",
+    "right_inset": 19,
+    "top": 302.9,
+    "w": 41.1,
+    "h": 10,
+    "in_footer": true
+   }
+  ]
+ },
+ "old_358": {
+  "card_h": 330.2,
+  "card_w": 358,
+  "footer_h": 27.7,
+  "footer_lines": 1,
+  "row_h": [
+   36,
+   36,
+   36,
+   36
+  ],
+  "ages": [
+   {
+    "text": "7h ago",
+    "right_inset": 19,
+    "top": 302.9,
+    "w": 41.1,
+    "h": 10,
+    "in_footer": true
+   }
+  ]
+ },
+ "old_448": {
+  "card_h": 330.2,
+  "card_w": 448,
+  "footer_h": 27.7,
+  "footer_lines": 1,
+  "row_h": [
+   36,
+   36,
+   36,
+   36
+  ],
+  "ages": [
+   {
+    "text": "7h ago",
+    "right_inset": 19,
+    "top": 302.9,
+    "w": 41.1,
+    "h": 10,
+    "in_footer": true
+   }
+  ]
+ },
+ "mixed_340": {
+  "card_h": 330.2,
+  "card_w": 340,
+  "footer_h": 27.7,
+  "footer_lines": 1,
+  "row_h": [
+   36,
+   36,
+   36,
+   36
+  ],
+  "ages": [
+   {
+    "text": "yesterday",
+    "right_inset": 19,
+    "top": 196.1,
+    "w": 55.4,
+    "h": 10,
+    "in_footer": false
+   }
+  ]
+ },
+ "mixed_358": {
+  "card_h": 330.2,
+  "card_w": 358,
+  "footer_h": 27.7,
+  "footer_lines": 1,
+  "row_h": [
+   36,
+   36,
+   36,
+   36
+  ],
+  "ages": [
+   {
+    "text": "yesterday",
+    "right_inset": 19,
+    "top": 196.1,
+    "w": 55.4,
+    "h": 10,
+    "in_footer": false
+   }
+  ]
+ },
+ "mixed_448": {
+  "card_h": 330.2,
+  "card_w": 448,
+  "footer_h": 27.7,
+  "footer_lines": 1,
+  "row_h": [
+   36,
+   36,
+   36,
+   36
+  ],
+  "ages": [
+   {
+    "text": "yesterday",
+    "right_inset": 19,
+    "top": 196.1,
+    "w": 55.4,
+    "h": 10,
+    "in_footer": false
+   }
+  ]
+ },
+ "page_light_390": {
+  "scrollWidth": 390,
+  "viewport": 390
+ },
+ "page_light_1100": {
+  "scrollWidth": 1100,
+  "viewport": 1100
+ },
+ "page_dark_390": {
+  "scrollWidth": 390,
+  "viewport": 390
+ },
+ "page_dark_1100": {
+  "scrollWidth": 1100,
+  "viewport": 1100
+ },
+ "page_errors": []
+}

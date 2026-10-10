@@ -1,0 +1,1946 @@
+{
+ "light_358": {
+  "card": {
+   "w": 358,
+   "h": 330.2,
+   "padding-top": "18px",
+   "padding-right": "18px",
+   "padding-bottom": "13px",
+   "padding-left": "18px",
+   "border-top-width": "1px",
+   "border-top-color": "rgb(229, 231, 235)",
+   "border-radius": "16px",
+   "background-color": "rgb(255, 255, 255)",
+   "row-gap": "14px"
+  },
+  "khead": {
+   "w": 320,
+   "h": 19.9,
+   "column-gap": "10px"
+  },
+  "kicker": {
+   "w": 68.3,
+   "h": 15.9,
+   "font-size": "11px",
+   "line-height": "15.95px",
+   "font-weight": "600",
+   "letter-spacing": "0.99px",
+   "color": "rgb(107, 114, 128)",
+   "font-family": "ui-sans-serif, -apple-system, BlinkMacSystemFont, \"SF Pro Text\", system-ui, Inter, \"Segoe UI\", Roboto, sans-serif",
+   "text-transform": "uppercase"
+  },
+  "tag": {
+   "w": 39,
+   "h": 19.9,
+   "font-size": "11px",
+   "line-height": "15.95px",
+   "font-weight": "600",
+   "letter-spacing": "normal",
+   "color": "rgb(75, 85, 99)",
+   "font-family": "ui-sans-serif, -apple-system, BlinkMacSystemFont, \"SF Pro Text\", system-ui, Inter, \"Segoe UI\", Roboto, sans-serif",
+   "text-transform": "none",
+   "background-color": "rgb(240, 240, 242)",
+   "padding-top": "2px",
+   "padding-left": "9px",
+   "border-radius": "999px"
+  },
+  "headline": {
+   "w": 320,
+   "h": 27.6,
+   "font-size": "23px",
+   "line-height": "27.6px",
+   "font-weight": "700",
+   "letter-spacing": "-0.345px",
+   "color": "rgb(17, 24, 39)",
+   "font-family": "ui-sans-serif, -apple-system, BlinkMacSystemFont, \"SF Pro Text\", system-ui, Inter, \"Segoe UI\", Roboto, sans-serif",
+   "text-transform": "none",
+   "margin-top": "-6px"
+  },
+  "rows": {
+   "w": 320,
+   "h": 186,
+   "row-gap": "14px"
+  },
+  "row": {
+   "w": 320,
+   "h": 36,
+   "grid-template-columns": "49.5938px 258.406px",
+   "column-gap": "12px"
+  },
+  "num": {
+   "w": 49.6,
+   "h": 23,
+   "font-size": "20px",
+   "line-height": "23px",
+   "font-weight": "700",
+   "letter-spacing": "-0.6px",
+   "color": "rgb(17, 24, 39)",
+   "font-family": "\"JetBrains Mono\", \"SF Mono\", ui-monospace, Menlo, Consolas, monospace",
+   "text-transform": "none",
+   "text-align": "right"
+  },
+  "pct": {
+   "w": 7.2,
+   "h": 14,
+   "font-size": "12px",
+   "line-height": "13.8px",
+   "font-weight": "500",
+   "letter-spacing": "normal",
+   "color": "rgb(107, 114, 128)",
+   "font-family": "\"JetBrains Mono\", \"SF Mono\", ui-monospace, Menlo, Consolas, monospace",
+   "text-transform": "none",
+   "margin-left": "1px"
+  },
+  "text": {
+   "w": 258.4,
+   "h": 19.5,
+   "font-size": "15px",
+   "line-height": "19.5px",
+   "font-weight": "400",
+   "letter-spacing": "normal",
+   "color": "rgb(17, 24, 39)",
+   "font-family": "ui-sans-serif, -apple-system, BlinkMacSystemFont, \"SF Pro Text\", system-ui, Inter, \"Segoe UI\", Roboto, sans-serif",
+   "text-transform": "none"
+  },
+  "meter": {
+   "w": 258.4,
+   "h": 6,
+   "height": "6px",
+   "border-radius": "3px",
+   "background-color": "rgb(236, 238, 242)",
+   "margin-top": "7px"
+  },
+  "fill": {
+   "w": 113.7,
+   "h": 6,
+   "background-color": "rgb(37, 99, 235)",
+   "border-top-right-radius": "3px",
+   "min-width": "3px"
+  },
+  "src": {
+   "w": 320,
+   "h": 27.7,
+   "font-size": "11.5px",
+   "line-height": "16.675px",
+   "font-weight": "400",
+   "letter-spacing": "normal",
+   "color": "rgb(107, 114, 128)",
+   "font-family": "ui-sans-serif, -apple-system, BlinkMacSystemFont, \"SF Pro Text\", system-ui, Inter, \"Segoe UI\", Roboto, sans-serif",
+   "text-transform": "none",
+   "border-top-width": "1px",
+   "border-top-color": "rgb(229, 231, 235)",
+   "padding-top": "10px"
+  },
+  "body": {
+   "w": 390,
+   "h": 1454.7,
+   "background-color": "rgb(245, 245, 247)"
+  },
+  "longHeadline": {
+   "w": 320,
+   "h": 47.5,
+   "font-size": "19px",
+   "line-height": "23.75px",
+   "font-weight": "700",
+   "letter-spacing": "-0.285px",
+   "color": "rgb(17, 24, 39)",
+   "font-family": "ui-sans-serif, -apple-system, BlinkMacSystemFont, \"SF Pro Text\", system-ui, Inter, \"Segoe UI\", Roboto, sans-serif",
+   "text-transform": "none"
+  },
+  "geom": {
+   "card": [
+    358,
+    330.203125
+   ],
+   "kicker": [
+    [
+     19,
+     21,
+     68.3,
+     15.9
+    ]
+   ],
+   "tag": [
+    [
+     300,
+     19,
+     39,
+     19.9
+    ]
+   ],
+   "headline": [
+    [
+     19,
+     46.9,
+     320,
+     27.6
+    ]
+   ],
+   "rows": [
+    [
+     19,
+     88.5,
+     320,
+     36
+    ],
+    [
+     19,
+     138.5,
+     320,
+     36
+    ],
+    [
+     19,
+     188.5,
+     320,
+     36
+    ],
+    [
+     19,
+     238.5,
+     320,
+     36
+    ]
+   ],
+   "nums": [
+    [
+     19,
+     88.5,
+     49.6,
+     23
+    ],
+    [
+     19,
+     138.5,
+     49.6,
+     23
+    ],
+    [
+     19,
+     188.5,
+     49.6,
+     23
+    ],
+    [
+     19,
+     238.5,
+     49.6,
+     23
+    ]
+   ],
+   "texts": [
+    [
+     80.6,
+     88.5,
+     258.4,
+     19.5
+    ],
+    [
+     80.6,
+     138.5,
+     258.4,
+     19.5
+    ],
+    [
+     80.6,
+     188.5,
+     258.4,
+     19.5
+    ],
+    [
+     80.6,
+     238.5,
+     258.4,
+     19.5
+    ]
+   ],
+   "meters": [
+    [
+     80.6,
+     118.5,
+     258.4,
+     6
+    ],
+    [
+     80.6,
+     168.5,
+     258.4,
+     6
+    ],
+    [
+     80.6,
+     218.5,
+     258.4,
+     6
+    ],
+    [
+     80.6,
+     268.5,
+     258.4,
+     6
+    ]
+   ],
+   "fills": [
+    [
+     80.6,
+     118.5,
+     113.7,
+     6
+    ],
+    [
+     80.6,
+     168.5,
+     105.9,
+     6
+    ],
+    [
+     80.6,
+     218.5,
+     98.2,
+     6
+    ],
+    [
+     80.6,
+     268.5,
+     90.4,
+     6
+    ]
+   ],
+   "src": [
+    [
+     19,
+     288.5,
+     320,
+     27.7
+    ]
+   ]
+  },
+  "heights": {
+   "ex-canonical": 330.2,
+   "ex-three": 280.2,
+   "ex-long": 414.1,
+   "ex-extremes": 326.2
+  },
+  "markup": "<article class=\"card\"><div class=\"khead\"><span class=\"kicker\">Round-up</span><span class=\"tag\">NFL</span></div><h2 class=\"headline\">NFL division front-runners</h2><div class=\"rows\"><div class=\"row\"><div class=\"n num \">44<small>%</small></div><div class=\"t\">NFC East: Cowboys</div><div class=\"meter\" title=\"NFC East: Cowboys: 44%\"><i style=\"width: 44%;\"></i></div></div><div class=\"row\"><div class=\"n num \">41<small>%</small></div><div class=\"t\">NFC West: 49ers</div><div class=\"meter\" title=\"NFC West: 49ers: 41%\"><i style=\"width: 41%;\"></i></div></div><div class=\"row\"><div class=\"n num \">38<small>%</small></div><div class=\"t\">NFC North: Vikings</div><div class=\"meter\" title=\"NFC North: Vikings: 38%\"><i style=\"width: 38%;\"></i></div></div><div class=\"row\"><div class=\"n num \">35<small>%</small></div><div class=\"t\">NFC South: Falcons</div><div class=\"meter\" title=\"NFC South: Falcons: 35%\"><i style=\"width: 35%;\"></i></div></div></div><div class=\"src\">Venue prices: Kalshi</div></article>"
+ },
+ "light_340": {
+  "card": {
+   "w": 340,
+   "h": 330.2,
+   "padding-top": "18px",
+   "padding-right": "18px",
+   "padding-bottom": "13px",
+   "padding-left": "18px",
+   "border-top-width": "1px",
+   "border-top-color": "rgb(229, 231, 235)",
+   "border-radius": "16px",
+   "background-color": "rgb(255, 255, 255)",
+   "row-gap": "14px"
+  },
+  "khead": {
+   "w": 302,
+   "h": 19.9,
+   "column-gap": "10px"
+  },
+  "kicker": {
+   "w": 68.3,
+   "h": 15.9,
+   "font-size": "11px",
+   "line-height": "15.95px",
+   "font-weight": "600",
+   "letter-spacing": "0.99px",
+   "color": "rgb(107, 114, 128)",
+   "font-family": "ui-sans-serif, -apple-system, BlinkMacSystemFont, \"SF Pro Text\", system-ui, Inter, \"Segoe UI\", Roboto, sans-serif",
+   "text-transform": "uppercase"
+  },
+  "tag": {
+   "w": 39,
+   "h": 19.9,
+   "font-size": "11px",
+   "line-height": "15.95px",
+   "font-weight": "600",
+   "letter-spacing": "normal",
+   "color": "rgb(75, 85, 99)",
+   "font-family": "ui-sans-serif, -apple-system, BlinkMacSystemFont, \"SF Pro Text\", system-ui, Inter, \"Segoe UI\", Roboto, sans-serif",
+   "text-transform": "none",
+   "background-color": "rgb(240, 240, 242)",
+   "padding-top": "2px",
+   "padding-left": "9px",
+   "border-radius": "999px"
+  },
+  "headline": {
+   "w": 302,
+   "h": 27.6,
+   "font-size": "23px",
+   "line-height": "27.6px",
+   "font-weight": "700",
+   "letter-spacing": "-0.345px",
+   "color": "rgb(17, 24, 39)",
+   "font-family": "ui-sans-serif, -apple-system, BlinkMacSystemFont, \"SF Pro Text\", system-ui, Inter, \"Segoe UI\", Roboto, sans-serif",
+   "text-transform": "none",
+   "margin-top": "-6px"
+  },
+  "rows": {
+   "w": 302,
+   "h": 186,
+   "row-gap": "14px"
+  },
+  "row": {
+   "w": 302,
+   "h": 36,
+   "grid-template-columns": "49.5938px 240.406px",
+   "column-gap": "12px"
+  },
+  "num": {
+   "w": 49.6,
+   "h": 23,
+   "font-size": "20px",
+   "line-height": "23px",
+   "font-weight": "700",
+   "letter-spacing": "-0.6px",
+   "color": "rgb(17, 24, 39)",
+   "font-family": "\"JetBrains Mono\", \"SF Mono\", ui-monospace, Menlo, Consolas, monospace",
+   "text-transform": "none",
+   "text-align": "right"
+  },
+  "pct": {
+   "w": 7.2,
+   "h": 14,
+   "font-size": "12px",
+   "line-height": "13.8px",
+   "font-weight": "500",
+   "letter-spacing": "normal",
+   "color": "rgb(107, 114, 128)",
+   "font-family": "\"JetBrains Mono\", \"SF Mono\", ui-monospace, Menlo, Consolas, monospace",
+   "text-transform": "none",
+   "margin-left": "1px"
+  },
+  "text": {
+   "w": 240.4,
+   "h": 19.5,
+   "font-size": "15px",
+   "line-height": "19.5px",
+   "font-weight": "400",
+   "letter-spacing": "normal",
+   "color": "rgb(17, 24, 39)",
+   "font-family": "ui-sans-serif, -apple-system, BlinkMacSystemFont, \"SF Pro Text\", system-ui, Inter, \"Segoe UI\", Roboto, sans-serif",
+   "text-transform": "none"
+  },
+  "meter": {
+   "w": 240.4,
+   "h": 6,
+   "height": "6px",
+   "border-radius": "3px",
+   "background-color": "rgb(236, 238, 242)",
+   "margin-top": "7px"
+  },
+  "fill": {
+   "w": 105.8,
+   "h": 6,
+   "background-color": "rgb(37, 99, 235)",
+   "border-top-right-radius": "3px",
+   "min-width": "3px"
+  },
+  "src": {
+   "w": 302,
+   "h": 27.7,
+   "font-size": "11.5px",
+   "line-height": "16.675px",
+   "font-weight": "400",
+   "letter-spacing": "normal",
+   "color": "rgb(107, 114, 128)",
+   "font-family": "ui-sans-serif, -apple-system, BlinkMacSystemFont, \"SF Pro Text\", system-ui, Inter, \"Segoe UI\", Roboto, sans-serif",
+   "text-transform": "none",
+   "border-top-width": "1px",
+   "border-top-color": "rgb(229, 231, 235)",
+   "padding-top": "10px"
+  },
+  "body": {
+   "w": 390,
+   "h": 1454.7,
+   "background-color": "rgb(245, 245, 247)"
+  },
+  "longHeadline": {
+   "w": 302,
+   "h": 47.5,
+   "font-size": "19px",
+   "line-height": "23.75px",
+   "font-weight": "700",
+   "letter-spacing": "-0.285px",
+   "color": "rgb(17, 24, 39)",
+   "font-family": "ui-sans-serif, -apple-system, BlinkMacSystemFont, \"SF Pro Text\", system-ui, Inter, \"Segoe UI\", Roboto, sans-serif",
+   "text-transform": "none"
+  },
+  "geom": {
+   "card": [
+    340,
+    330.203125
+   ],
+   "kicker": [
+    [
+     19,
+     21,
+     68.3,
+     15.9
+    ]
+   ],
+   "tag": [
+    [
+     282,
+     19,
+     39,
+     19.9
+    ]
+   ],
+   "headline": [
+    [
+     19,
+     46.9,
+     302,
+     27.6
+    ]
+   ],
+   "rows": [
+    [
+     19,
+     88.5,
+     302,
+     36
+    ],
+    [
+     19,
+     138.5,
+     302,
+     36
+    ],
+    [
+     19,
+     188.5,
+     302,
+     36
+    ],
+    [
+     19,
+     238.5,
+     302,
+     36
+    ]
+   ],
+   "nums": [
+    [
+     19,
+     88.5,
+     49.6,
+     23
+    ],
+    [
+     19,
+     138.5,
+     49.6,
+     23
+    ],
+    [
+     19,
+     188.5,
+     49.6,
+     23
+    ],
+    [
+     19,
+     238.5,
+     49.6,
+     23
+    ]
+   ],
+   "texts": [
+    [
+     80.6,
+     88.5,
+     240.4,
+     19.5
+    ],
+    [
+     80.6,
+     138.5,
+     240.4,
+     19.5
+    ],
+    [
+     80.6,
+     188.5,
+     240.4,
+     19.5
+    ],
+    [
+     80.6,
+     238.5,
+     240.4,
+     19.5
+    ]
+   ],
+   "meters": [
+    [
+     80.6,
+     118.5,
+     240.4,
+     6
+    ],
+    [
+     80.6,
+     168.5,
+     240.4,
+     6
+    ],
+    [
+     80.6,
+     218.5,
+     240.4,
+     6
+    ],
+    [
+     80.6,
+     268.5,
+     240.4,
+     6
+    ]
+   ],
+   "fills": [
+    [
+     80.6,
+     118.5,
+     105.8,
+     6
+    ],
+    [
+     80.6,
+     168.5,
+     98.6,
+     6
+    ],
+    [
+     80.6,
+     218.5,
+     91.3,
+     6
+    ],
+    [
+     80.6,
+     268.5,
+     84.1,
+     6
+    ]
+   ],
+   "src": [
+    [
+     19,
+     288.5,
+     302,
+     27.7
+    ]
+   ]
+  },
+  "heights": {
+   "ex-canonical": 330.2,
+   "ex-three": 280.2,
+   "ex-long": 414.1,
+   "ex-extremes": 326.2
+  },
+  "markup": "<article class=\"card\"><div class=\"khead\"><span class=\"kicker\">Round-up</span><span class=\"tag\">NFL</span></div><h2 class=\"headline\">NFL division front-runners</h2><div class=\"rows\"><div class=\"row\"><div class=\"n num \">44<small>%</small></div><div class=\"t\">NFC East: Cowboys</div><div class=\"meter\" title=\"NFC East: Cowboys: 44%\"><i style=\"width: 44%;\"></i></div></div><div class=\"row\"><div class=\"n num \">41<small>%</small></div><div class=\"t\">NFC West: 49ers</div><div class=\"meter\" title=\"NFC West: 49ers: 41%\"><i style=\"width: 41%;\"></i></div></div><div class=\"row\"><div class=\"n num \">38<small>%</small></div><div class=\"t\">NFC North: Vikings</div><div class=\"meter\" title=\"NFC North: Vikings: 38%\"><i style=\"width: 38%;\"></i></div></div><div class=\"row\"><div class=\"n num \">35<small>%</small></div><div class=\"t\">NFC South: Falcons</div><div class=\"meter\" title=\"NFC South: Falcons: 35%\"><i style=\"width: 35%;\"></i></div></div></div><div class=\"src\">Venue prices: Kalshi</div></article>"
+ },
+ "light_448": {
+  "card": {
+   "w": 448,
+   "h": 330.2,
+   "padding-top": "18px",
+   "padding-right": "18px",
+   "padding-bottom": "13px",
+   "padding-left": "18px",
+   "border-top-width": "1px",
+   "border-top-color": "rgb(229, 231, 235)",
+   "border-radius": "16px",
+   "background-color": "rgb(255, 255, 255)",
+   "row-gap": "14px"
+  },
+  "khead": {
+   "w": 410,
+   "h": 19.9,
+   "column-gap": "10px"
+  },
+  "kicker": {
+   "w": 68.3,
+   "h": 15.9,
+   "font-size": "11px",
+   "line-height": "15.95px",
+   "font-weight": "600",
+   "letter-spacing": "0.99px",
+   "color": "rgb(107, 114, 128)",
+   "font-family": "ui-sans-serif, -apple-system, BlinkMacSystemFont, \"SF Pro Text\", system-ui, Inter, \"Segoe UI\", Roboto, sans-serif",
+   "text-transform": "uppercase"
+  },
+  "tag": {
+   "w": 39,
+   "h": 19.9,
+   "font-size": "11px",
+   "line-height": "15.95px",
+   "font-weight": "600",
+   "letter-spacing": "normal",
+   "color": "rgb(75, 85, 99)",
+   "font-family": "ui-sans-serif, -apple-system, BlinkMacSystemFont, \"SF Pro Text\", system-ui, Inter, \"Segoe UI\", Roboto, sans-serif",
+   "text-transform": "none",
+   "background-color": "rgb(240, 240, 242)",
+   "padding-top": "2px",
+   "padding-left": "9px",
+   "border-radius": "999px"
+  },
+  "headline": {
+   "w": 410,
+   "h": 27.6,
+   "font-size": "23px",
+   "line-height": "27.6px",
+   "font-weight": "700",
+   "letter-spacing": "-0.345px",
+   "color": "rgb(17, 24, 39)",
+   "font-family": "ui-sans-serif, -apple-system, BlinkMacSystemFont, \"SF Pro Text\", system-ui, Inter, \"Segoe UI\", Roboto, sans-serif",
+   "text-transform": "none",
+   "margin-top": "-6px"
+  },
+  "rows": {
+   "w": 410,
+   "h": 186,
+   "row-gap": "14px"
+  },
+  "row": {
+   "w": 410,
+   "h": 36,
+   "grid-template-columns": "49.5938px 348.406px",
+   "column-gap": "12px"
+  },
+  "num": {
+   "w": 49.6,
+   "h": 23,
+   "font-size": "20px",
+   "line-height": "23px",
+   "font-weight": "700",
+   "letter-spacing": "-0.6px",
+   "color": "rgb(17, 24, 39)",
+   "font-family": "\"JetBrains Mono\", \"SF Mono\", ui-monospace, Menlo, Consolas, monospace",
+   "text-transform": "none",
+   "text-align": "right"
+  },
+  "pct": {
+   "w": 7.2,
+   "h": 14,
+   "font-size": "12px",
+   "line-height": "13.8px",
+   "font-weight": "500",
+   "letter-spacing": "normal",
+   "color": "rgb(107, 114, 128)",
+   "font-family": "\"JetBrains Mono\", \"SF Mono\", ui-monospace, Menlo, Consolas, monospace",
+   "text-transform": "none",
+   "margin-left": "1px"
+  },
+  "text": {
+   "w": 348.4,
+   "h": 19.5,
+   "font-size": "15px",
+   "line-height": "19.5px",
+   "font-weight": "400",
+   "letter-spacing": "normal",
+   "color": "rgb(17, 24, 39)",
+   "font-family": "ui-sans-serif, -apple-system, BlinkMacSystemFont, \"SF Pro Text\", system-ui, Inter, \"Segoe UI\", Roboto, sans-serif",
+   "text-transform": "none"
+  },
+  "meter": {
+   "w": 348.4,
+   "h": 6,
+   "height": "6px",
+   "border-radius": "3px",
+   "background-color": "rgb(236, 238, 242)",
+   "margin-top": "7px"
+  },
+  "fill": {
+   "w": 153.3,
+   "h": 6,
+   "background-color": "rgb(37, 99, 235)",
+   "border-top-right-radius": "3px",
+   "min-width": "3px"
+  },
+  "src": {
+   "w": 410,
+   "h": 27.7,
+   "font-size": "11.5px",
+   "line-height": "16.675px",
+   "font-weight": "400",
+   "letter-spacing": "normal",
+   "color": "rgb(107, 114, 128)",
+   "font-family": "ui-sans-serif, -apple-system, BlinkMacSystemFont, \"SF Pro Text\", system-ui, Inter, \"Segoe UI\", Roboto, sans-serif",
+   "text-transform": "none",
+   "border-top-width": "1px",
+   "border-top-color": "rgb(229, 231, 235)",
+   "padding-top": "10px"
+  },
+  "body": {
+   "w": 480,
+   "h": 1390.7,
+   "background-color": "rgb(245, 245, 247)"
+  },
+  "longHeadline": {
+   "w": 410,
+   "h": 47.5,
+   "font-size": "19px",
+   "line-height": "23.75px",
+   "font-weight": "700",
+   "letter-spacing": "-0.285px",
+   "color": "rgb(17, 24, 39)",
+   "font-family": "ui-sans-serif, -apple-system, BlinkMacSystemFont, \"SF Pro Text\", system-ui, Inter, \"Segoe UI\", Roboto, sans-serif",
+   "text-transform": "none"
+  },
+  "geom": {
+   "card": [
+    448,
+    330.203125
+   ],
+   "kicker": [
+    [
+     19,
+     21,
+     68.3,
+     15.9
+    ]
+   ],
+   "tag": [
+    [
+     390,
+     19,
+     39,
+     19.9
+    ]
+   ],
+   "headline": [
+    [
+     19,
+     46.9,
+     410,
+     27.6
+    ]
+   ],
+   "rows": [
+    [
+     19,
+     88.5,
+     410,
+     36
+    ],
+    [
+     19,
+     138.5,
+     410,
+     36
+    ],
+    [
+     19,
+     188.5,
+     410,
+     36
+    ],
+    [
+     19,
+     238.5,
+     410,
+     36
+    ]
+   ],
+   "nums": [
+    [
+     19,
+     88.5,
+     49.6,
+     23
+    ],
+    [
+     19,
+     138.5,
+     49.6,
+     23
+    ],
+    [
+     19,
+     188.5,
+     49.6,
+     23
+    ],
+    [
+     19,
+     238.5,
+     49.6,
+     23
+    ]
+   ],
+   "texts": [
+    [
+     80.6,
+     88.5,
+     348.4,
+     19.5
+    ],
+    [
+     80.6,
+     138.5,
+     348.4,
+     19.5
+    ],
+    [
+     80.6,
+     188.5,
+     348.4,
+     19.5
+    ],
+    [
+     80.6,
+     238.5,
+     348.4,
+     19.5
+    ]
+   ],
+   "meters": [
+    [
+     80.6,
+     118.5,
+     348.4,
+     6
+    ],
+    [
+     80.6,
+     168.5,
+     348.4,
+     6
+    ],
+    [
+     80.6,
+     218.5,
+     348.4,
+     6
+    ],
+    [
+     80.6,
+     268.5,
+     348.4,
+     6
+    ]
+   ],
+   "fills": [
+    [
+     80.6,
+     118.5,
+     153.3,
+     6
+    ],
+    [
+     80.6,
+     168.5,
+     142.8,
+     6
+    ],
+    [
+     80.6,
+     218.5,
+     132.4,
+     6
+    ],
+    [
+     80.6,
+     268.5,
+     121.9,
+     6
+    ]
+   ],
+   "src": [
+    [
+     19,
+     288.5,
+     410,
+     27.7
+    ]
+   ]
+  },
+  "heights": {
+   "ex-canonical": 330.2,
+   "ex-three": 280.2,
+   "ex-long": 350.1,
+   "ex-extremes": 326.2
+  },
+  "markup": "<article class=\"card\"><div class=\"khead\"><span class=\"kicker\">Round-up</span><span class=\"tag\">NFL</span></div><h2 class=\"headline\">NFL division front-runners</h2><div class=\"rows\"><div class=\"row\"><div class=\"n num \">44<small>%</small></div><div class=\"t\">NFC East: Cowboys</div><div class=\"meter\" title=\"NFC East: Cowboys: 44%\"><i style=\"width: 44%;\"></i></div></div><div class=\"row\"><div class=\"n num \">41<small>%</small></div><div class=\"t\">NFC West: 49ers</div><div class=\"meter\" title=\"NFC West: 49ers: 41%\"><i style=\"width: 41%;\"></i></div></div><div class=\"row\"><div class=\"n num \">38<small>%</small></div><div class=\"t\">NFC North: Vikings</div><div class=\"meter\" title=\"NFC North: Vikings: 38%\"><i style=\"width: 38%;\"></i></div></div><div class=\"row\"><div class=\"n num \">35<small>%</small></div><div class=\"t\">NFC South: Falcons</div><div class=\"meter\" title=\"NFC South: Falcons: 35%\"><i style=\"width: 35%;\"></i></div></div></div><div class=\"src\">Venue prices: Kalshi</div></article>"
+ },
+ "dark_358": {
+  "card": {
+   "w": 358,
+   "h": 330.2,
+   "padding-top": "18px",
+   "padding-right": "18px",
+   "padding-bottom": "13px",
+   "padding-left": "18px",
+   "border-top-width": "1px",
+   "border-top-color": "rgb(40, 50, 68)",
+   "border-radius": "16px",
+   "background-color": "rgb(21, 27, 38)",
+   "row-gap": "14px"
+  },
+  "khead": {
+   "w": 320,
+   "h": 19.9,
+   "column-gap": "10px"
+  },
+  "kicker": {
+   "w": 68.3,
+   "h": 15.9,
+   "font-size": "11px",
+   "line-height": "15.95px",
+   "font-weight": "600",
+   "letter-spacing": "0.99px",
+   "color": "rgb(151, 161, 178)",
+   "font-family": "ui-sans-serif, -apple-system, BlinkMacSystemFont, \"SF Pro Text\", system-ui, Inter, \"Segoe UI\", Roboto, sans-serif",
+   "text-transform": "uppercase"
+  },
+  "tag": {
+   "w": 39,
+   "h": 19.9,
+   "font-size": "11px",
+   "line-height": "15.95px",
+   "font-weight": "600",
+   "letter-spacing": "normal",
+   "color": "rgb(195, 202, 214)",
+   "font-family": "ui-sans-serif, -apple-system, BlinkMacSystemFont, \"SF Pro Text\", system-ui, Inter, \"Segoe UI\", Roboto, sans-serif",
+   "text-transform": "none",
+   "background-color": "rgb(28, 36, 49)",
+   "padding-top": "2px",
+   "padding-left": "9px",
+   "border-radius": "999px"
+  },
+  "headline": {
+   "w": 320,
+   "h": 27.6,
+   "font-size": "23px",
+   "line-height": "27.6px",
+   "font-weight": "700",
+   "letter-spacing": "-0.345px",
+   "color": "rgb(243, 244, 246)",
+   "font-family": "ui-sans-serif, -apple-system, BlinkMacSystemFont, \"SF Pro Text\", system-ui, Inter, \"Segoe UI\", Roboto, sans-serif",
+   "text-transform": "none",
+   "margin-top": "-6px"
+  },
+  "rows": {
+   "w": 320,
+   "h": 186,
+   "row-gap": "14px"
+  },
+  "row": {
+   "w": 320,
+   "h": 36,
+   "grid-template-columns": "49.5938px 258.406px",
+   "column-gap": "12px"
+  },
+  "num": {
+   "w": 49.6,
+   "h": 23,
+   "font-size": "20px",
+   "line-height": "23px",
+   "font-weight": "700",
+   "letter-spacing": "-0.6px",
+   "color": "rgb(243, 244, 246)",
+   "font-family": "\"JetBrains Mono\", \"SF Mono\", ui-monospace, Menlo, Consolas, monospace",
+   "text-transform": "none",
+   "text-align": "right"
+  },
+  "pct": {
+   "w": 7.2,
+   "h": 14,
+   "font-size": "12px",
+   "line-height": "13.8px",
+   "font-weight": "500",
+   "letter-spacing": "normal",
+   "color": "rgb(151, 161, 178)",
+   "font-family": "\"JetBrains Mono\", \"SF Mono\", ui-monospace, Menlo, Consolas, monospace",
+   "text-transform": "none",
+   "margin-left": "1px"
+  },
+  "text": {
+   "w": 258.4,
+   "h": 19.5,
+   "font-size": "15px",
+   "line-height": "19.5px",
+   "font-weight": "400",
+   "letter-spacing": "normal",
+   "color": "rgb(243, 244, 246)",
+   "font-family": "ui-sans-serif, -apple-system, BlinkMacSystemFont, \"SF Pro Text\", system-ui, Inter, \"Segoe UI\", Roboto, sans-serif",
+   "text-transform": "none"
+  },
+  "meter": {
+   "w": 258.4,
+   "h": 6,
+   "height": "6px",
+   "border-radius": "3px",
+   "background-color": "rgb(35, 44, 59)",
+   "margin-top": "7px"
+  },
+  "fill": {
+   "w": 113.7,
+   "h": 6,
+   "background-color": "rgb(59, 130, 246)",
+   "border-top-right-radius": "3px",
+   "min-width": "3px"
+  },
+  "src": {
+   "w": 320,
+   "h": 27.7,
+   "font-size": "11.5px",
+   "line-height": "16.675px",
+   "font-weight": "400",
+   "letter-spacing": "normal",
+   "color": "rgb(151, 161, 178)",
+   "font-family": "ui-sans-serif, -apple-system, BlinkMacSystemFont, \"SF Pro Text\", system-ui, Inter, \"Segoe UI\", Roboto, sans-serif",
+   "text-transform": "none",
+   "border-top-width": "1px",
+   "border-top-color": "rgb(40, 50, 68)",
+   "padding-top": "10px"
+  },
+  "body": {
+   "w": 390,
+   "h": 1454.7,
+   "background-color": "rgb(11, 15, 23)"
+  },
+  "longHeadline": {
+   "w": 320,
+   "h": 47.5,
+   "font-size": "19px",
+   "line-height": "23.75px",
+   "font-weight": "700",
+   "letter-spacing": "-0.285px",
+   "color": "rgb(243, 244, 246)",
+   "font-family": "ui-sans-serif, -apple-system, BlinkMacSystemFont, \"SF Pro Text\", system-ui, Inter, \"Segoe UI\", Roboto, sans-serif",
+   "text-transform": "none"
+  },
+  "geom": {
+   "card": [
+    358,
+    330.203125
+   ],
+   "kicker": [
+    [
+     19,
+     21,
+     68.3,
+     15.9
+    ]
+   ],
+   "tag": [
+    [
+     300,
+     19,
+     39,
+     19.9
+    ]
+   ],
+   "headline": [
+    [
+     19,
+     46.9,
+     320,
+     27.6
+    ]
+   ],
+   "rows": [
+    [
+     19,
+     88.5,
+     320,
+     36
+    ],
+    [
+     19,
+     138.5,
+     320,
+     36
+    ],
+    [
+     19,
+     188.5,
+     320,
+     36
+    ],
+    [
+     19,
+     238.5,
+     320,
+     36
+    ]
+   ],
+   "nums": [
+    [
+     19,
+     88.5,
+     49.6,
+     23
+    ],
+    [
+     19,
+     138.5,
+     49.6,
+     23
+    ],
+    [
+     19,
+     188.5,
+     49.6,
+     23
+    ],
+    [
+     19,
+     238.5,
+     49.6,
+     23
+    ]
+   ],
+   "texts": [
+    [
+     80.6,
+     88.5,
+     258.4,
+     19.5
+    ],
+    [
+     80.6,
+     138.5,
+     258.4,
+     19.5
+    ],
+    [
+     80.6,
+     188.5,
+     258.4,
+     19.5
+    ],
+    [
+     80.6,
+     238.5,
+     258.4,
+     19.5
+    ]
+   ],
+   "meters": [
+    [
+     80.6,
+     118.5,
+     258.4,
+     6
+    ],
+    [
+     80.6,
+     168.5,
+     258.4,
+     6
+    ],
+    [
+     80.6,
+     218.5,
+     258.4,
+     6
+    ],
+    [
+     80.6,
+     268.5,
+     258.4,
+     6
+    ]
+   ],
+   "fills": [
+    [
+     80.6,
+     118.5,
+     113.7,
+     6
+    ],
+    [
+     80.6,
+     168.5,
+     105.9,
+     6
+    ],
+    [
+     80.6,
+     218.5,
+     98.2,
+     6
+    ],
+    [
+     80.6,
+     268.5,
+     90.4,
+     6
+    ]
+   ],
+   "src": [
+    [
+     19,
+     288.5,
+     320,
+     27.7
+    ]
+   ]
+  },
+  "heights": {
+   "ex-canonical": 330.2,
+   "ex-three": 280.2,
+   "ex-long": 414.1,
+   "ex-extremes": 326.2
+  },
+  "markup": "<article class=\"card\"><div class=\"khead\"><span class=\"kicker\">Round-up</span><span class=\"tag\">NFL</span></div><h2 class=\"headline\">NFL division front-runners</h2><div class=\"rows\"><div class=\"row\"><div class=\"n num \">44<small>%</small></div><div class=\"t\">NFC East: Cowboys</div><div class=\"meter\" title=\"NFC East: Cowboys: 44%\"><i style=\"width: 44%;\"></i></div></div><div class=\"row\"><div class=\"n num \">41<small>%</small></div><div class=\"t\">NFC West: 49ers</div><div class=\"meter\" title=\"NFC West: 49ers: 41%\"><i style=\"width: 41%;\"></i></div></div><div class=\"row\"><div class=\"n num \">38<small>%</small></div><div class=\"t\">NFC North: Vikings</div><div class=\"meter\" title=\"NFC North: Vikings: 38%\"><i style=\"width: 38%;\"></i></div></div><div class=\"row\"><div class=\"n num \">35<small>%</small></div><div class=\"t\">NFC South: Falcons</div><div class=\"meter\" title=\"NFC South: Falcons: 35%\"><i style=\"width: 35%;\"></i></div></div></div><div class=\"src\">Venue prices: Kalshi</div></article>"
+ },
+ "dark_340": {
+  "card": {
+   "w": 340,
+   "h": 330.2,
+   "padding-top": "18px",
+   "padding-right": "18px",
+   "padding-bottom": "13px",
+   "padding-left": "18px",
+   "border-top-width": "1px",
+   "border-top-color": "rgb(40, 50, 68)",
+   "border-radius": "16px",
+   "background-color": "rgb(21, 27, 38)",
+   "row-gap": "14px"
+  },
+  "khead": {
+   "w": 302,
+   "h": 19.9,
+   "column-gap": "10px"
+  },
+  "kicker": {
+   "w": 68.3,
+   "h": 15.9,
+   "font-size": "11px",
+   "line-height": "15.95px",
+   "font-weight": "600",
+   "letter-spacing": "0.99px",
+   "color": "rgb(151, 161, 178)",
+   "font-family": "ui-sans-serif, -apple-system, BlinkMacSystemFont, \"SF Pro Text\", system-ui, Inter, \"Segoe UI\", Roboto, sans-serif",
+   "text-transform": "uppercase"
+  },
+  "tag": {
+   "w": 39,
+   "h": 19.9,
+   "font-size": "11px",
+   "line-height": "15.95px",
+   "font-weight": "600",
+   "letter-spacing": "normal",
+   "color": "rgb(195, 202, 214)",
+   "font-family": "ui-sans-serif, -apple-system, BlinkMacSystemFont, \"SF Pro Text\", system-ui, Inter, \"Segoe UI\", Roboto, sans-serif",
+   "text-transform": "none",
+   "background-color": "rgb(28, 36, 49)",
+   "padding-top": "2px",
+   "padding-left": "9px",
+   "border-radius": "999px"
+  },
+  "headline": {
+   "w": 302,
+   "h": 27.6,
+   "font-size": "23px",
+   "line-height": "27.6px",
+   "font-weight": "700",
+   "letter-spacing": "-0.345px",
+   "color": "rgb(243, 244, 246)",
+   "font-family": "ui-sans-serif, -apple-system, BlinkMacSystemFont, \"SF Pro Text\", system-ui, Inter, \"Segoe UI\", Roboto, sans-serif",
+   "text-transform": "none",
+   "margin-top": "-6px"
+  },
+  "rows": {
+   "w": 302,
+   "h": 186,
+   "row-gap": "14px"
+  },
+  "row": {
+   "w": 302,
+   "h": 36,
+   "grid-template-columns": "49.5938px 240.406px",
+   "column-gap": "12px"
+  },
+  "num": {
+   "w": 49.6,
+   "h": 23,
+   "font-size": "20px",
+   "line-height": "23px",
+   "font-weight": "700",
+   "letter-spacing": "-0.6px",
+   "color": "rgb(243, 244, 246)",
+   "font-family": "\"JetBrains Mono\", \"SF Mono\", ui-monospace, Menlo, Consolas, monospace",
+   "text-transform": "none",
+   "text-align": "right"
+  },
+  "pct": {
+   "w": 7.2,
+   "h": 14,
+   "font-size": "12px",
+   "line-height": "13.8px",
+   "font-weight": "500",
+   "letter-spacing": "normal",
+   "color": "rgb(151, 161, 178)",
+   "font-family": "\"JetBrains Mono\", \"SF Mono\", ui-monospace, Menlo, Consolas, monospace",
+   "text-transform": "none",
+   "margin-left": "1px"
+  },
+  "text": {
+   "w": 240.4,
+   "h": 19.5,
+   "font-size": "15px",
+   "line-height": "19.5px",
+   "font-weight": "400",
+   "letter-spacing": "normal",
+   "color": "rgb(243, 244, 246)",
+   "font-family": "ui-sans-serif, -apple-system, BlinkMacSystemFont, \"SF Pro Text\", system-ui, Inter, \"Segoe UI\", Roboto, sans-serif",
+   "text-transform": "none"
+  },
+  "meter": {
+   "w": 240.4,
+   "h": 6,
+   "height": "6px",
+   "border-radius": "3px",
+   "background-color": "rgb(35, 44, 59)",
+   "margin-top": "7px"
+  },
+  "fill": {
+   "w": 105.8,
+   "h": 6,
+   "background-color": "rgb(59, 130, 246)",
+   "border-top-right-radius": "3px",
+   "min-width": "3px"
+  },
+  "src": {
+   "w": 302,
+   "h": 27.7,
+   "font-size": "11.5px",
+   "line-height": "16.675px",
+   "font-weight": "400",
+   "letter-spacing": "normal",
+   "color": "rgb(151, 161, 178)",
+   "font-family": "ui-sans-serif, -apple-system, BlinkMacSystemFont, \"SF Pro Text\", system-ui, Inter, \"Segoe UI\", Roboto, sans-serif",
+   "text-transform": "none",
+   "border-top-width": "1px",
+   "border-top-color": "rgb(40, 50, 68)",
+   "padding-top": "10px"
+  },
+  "body": {
+   "w": 390,
+   "h": 1454.7,
+   "background-color": "rgb(11, 15, 23)"
+  },
+  "longHeadline": {
+   "w": 302,
+   "h": 47.5,
+   "font-size": "19px",
+   "line-height": "23.75px",
+   "font-weight": "700",
+   "letter-spacing": "-0.285px",
+   "color": "rgb(243, 244, 246)",
+   "font-family": "ui-sans-serif, -apple-system, BlinkMacSystemFont, \"SF Pro Text\", system-ui, Inter, \"Segoe UI\", Roboto, sans-serif",
+   "text-transform": "none"
+  },
+  "geom": {
+   "card": [
+    340,
+    330.203125
+   ],
+   "kicker": [
+    [
+     19,
+     21,
+     68.3,
+     15.9
+    ]
+   ],
+   "tag": [
+    [
+     282,
+     19,
+     39,
+     19.9
+    ]
+   ],
+   "headline": [
+    [
+     19,
+     46.9,
+     302,
+     27.6
+    ]
+   ],
+   "rows": [
+    [
+     19,
+     88.5,
+     302,
+     36
+    ],
+    [
+     19,
+     138.5,
+     302,
+     36
+    ],
+    [
+     19,
+     188.5,
+     302,
+     36
+    ],
+    [
+     19,
+     238.5,
+     302,
+     36
+    ]
+   ],
+   "nums": [
+    [
+     19,
+     88.5,
+     49.6,
+     23
+    ],
+    [
+     19,
+     138.5,
+     49.6,
+     23
+    ],
+    [
+     19,
+     188.5,
+     49.6,
+     23
+    ],
+    [
+     19,
+     238.5,
+     49.6,
+     23
+    ]
+   ],
+   "texts": [
+    [
+     80.6,
+     88.5,
+     240.4,
+     19.5
+    ],
+    [
+     80.6,
+     138.5,
+     240.4,
+     19.5
+    ],
+    [
+     80.6,
+     188.5,
+     240.4,
+     19.5
+    ],
+    [
+     80.6,
+     238.5,
+     240.4,
+     19.5
+    ]
+   ],
+   "meters": [
+    [
+     80.6,
+     118.5,
+     240.4,
+     6
+    ],
+    [
+     80.6,
+     168.5,
+     240.4,
+     6
+    ],
+    [
+     80.6,
+     218.5,
+     240.4,
+     6
+    ],
+    [
+     80.6,
+     268.5,
+     240.4,
+     6
+    ]
+   ],
+   "fills": [
+    [
+     80.6,
+     118.5,
+     105.8,
+     6
+    ],
+    [
+     80.6,
+     168.5,
+     98.6,
+     6
+    ],
+    [
+     80.6,
+     218.5,
+     91.3,
+     6
+    ],
+    [
+     80.6,
+     268.5,
+     84.1,
+     6
+    ]
+   ],
+   "src": [
+    [
+     19,
+     288.5,
+     302,
+     27.7
+    ]
+   ]
+  },
+  "heights": {
+   "ex-canonical": 330.2,
+   "ex-three": 280.2,
+   "ex-long": 414.1,
+   "ex-extremes": 326.2
+  },
+  "markup": "<article class=\"card\"><div class=\"khead\"><span class=\"kicker\">Round-up</span><span class=\"tag\">NFL</span></div><h2 class=\"headline\">NFL division front-runners</h2><div class=\"rows\"><div class=\"row\"><div class=\"n num \">44<small>%</small></div><div class=\"t\">NFC East: Cowboys</div><div class=\"meter\" title=\"NFC East: Cowboys: 44%\"><i style=\"width: 44%;\"></i></div></div><div class=\"row\"><div class=\"n num \">41<small>%</small></div><div class=\"t\">NFC West: 49ers</div><div class=\"meter\" title=\"NFC West: 49ers: 41%\"><i style=\"width: 41%;\"></i></div></div><div class=\"row\"><div class=\"n num \">38<small>%</small></div><div class=\"t\">NFC North: Vikings</div><div class=\"meter\" title=\"NFC North: Vikings: 38%\"><i style=\"width: 38%;\"></i></div></div><div class=\"row\"><div class=\"n num \">35<small>%</small></div><div class=\"t\">NFC South: Falcons</div><div class=\"meter\" title=\"NFC South: Falcons: 35%\"><i style=\"width: 35%;\"></i></div></div></div><div class=\"src\">Venue prices: Kalshi</div></article>"
+ },
+ "dark_448": {
+  "card": {
+   "w": 448,
+   "h": 330.2,
+   "padding-top": "18px",
+   "padding-right": "18px",
+   "padding-bottom": "13px",
+   "padding-left": "18px",
+   "border-top-width": "1px",
+   "border-top-color": "rgb(40, 50, 68)",
+   "border-radius": "16px",
+   "background-color": "rgb(21, 27, 38)",
+   "row-gap": "14px"
+  },
+  "khead": {
+   "w": 410,
+   "h": 19.9,
+   "column-gap": "10px"
+  },
+  "kicker": {
+   "w": 68.3,
+   "h": 15.9,
+   "font-size": "11px",
+   "line-height": "15.95px",
+   "font-weight": "600",
+   "letter-spacing": "0.99px",
+   "color": "rgb(151, 161, 178)",
+   "font-family": "ui-sans-serif, -apple-system, BlinkMacSystemFont, \"SF Pro Text\", system-ui, Inter, \"Segoe UI\", Roboto, sans-serif",
+   "text-transform": "uppercase"
+  },
+  "tag": {
+   "w": 39,
+   "h": 19.9,
+   "font-size": "11px",
+   "line-height": "15.95px",
+   "font-weight": "600",
+   "letter-spacing": "normal",
+   "color": "rgb(195, 202, 214)",
+   "font-family": "ui-sans-serif, -apple-system, BlinkMacSystemFont, \"SF Pro Text\", system-ui, Inter, \"Segoe UI\", Roboto, sans-serif",
+   "text-transform": "none",
+   "background-color": "rgb(28, 36, 49)",
+   "padding-top": "2px",
+   "padding-left": "9px",
+   "border-radius": "999px"
+  },
+  "headline": {
+   "w": 410,
+   "h": 27.6,
+   "font-size": "23px",
+   "line-height": "27.6px",
+   "font-weight": "700",
+   "letter-spacing": "-0.345px",
+   "color": "rgb(243, 244, 246)",
+   "font-family": "ui-sans-serif, -apple-system, BlinkMacSystemFont, \"SF Pro Text\", system-ui, Inter, \"Segoe UI\", Roboto, sans-serif",
+   "text-transform": "none",
+   "margin-top": "-6px"
+  },
+  "rows": {
+   "w": 410,
+   "h": 186,
+   "row-gap": "14px"
+  },
+  "row": {
+   "w": 410,
+   "h": 36,
+   "grid-template-columns": "49.5938px 348.406px",
+   "column-gap": "12px"
+  },
+  "num": {
+   "w": 49.6,
+   "h": 23,
+   "font-size": "20px",
+   "line-height": "23px",
+   "font-weight": "700",
+   "letter-spacing": "-0.6px",
+   "color": "rgb(243, 244, 246)",
+   "font-family": "\"JetBrains Mono\", \"SF Mono\", ui-monospace, Menlo, Consolas, monospace",
+   "text-transform": "none",
+   "text-align": "right"
+  },
+  "pct": {
+   "w": 7.2,
+   "h": 14,
+   "font-size": "12px",
+   "line-height": "13.8px",
+   "font-weight": "500",
+   "letter-spacing": "normal",
+   "color": "rgb(151, 161, 178)",
+   "font-family": "\"JetBrains Mono\", \"SF Mono\", ui-monospace, Menlo, Consolas, monospace",
+   "text-transform": "none",
+   "margin-left": "1px"
+  },
+  "text": {
+   "w": 348.4,
+   "h": 19.5,
+   "font-size": "15px",
+   "line-height": "19.5px",
+   "font-weight": "400",
+   "letter-spacing": "normal",
+   "color": "rgb(243, 244, 246)",
+   "font-family": "ui-sans-serif, -apple-system, BlinkMacSystemFont, \"SF Pro Text\", system-ui, Inter, \"Segoe UI\", Roboto, sans-serif",
+   "text-transform": "none"
+  },
+  "meter": {
+   "w": 348.4,
+   "h": 6,
+   "height": "6px",
+   "border-radius": "3px",
+   "background-color": "rgb(35, 44, 59)",
+   "margin-top": "7px"
+  },
+  "fill": {
+   "w": 153.3,
+   "h": 6,
+   "background-color": "rgb(59, 130, 246)",
+   "border-top-right-radius": "3px",
+   "min-width": "3px"
+  },
+  "src": {
+   "w": 410,
+   "h": 27.7,
+   "font-size": "11.5px",
+   "line-height": "16.675px",
+   "font-weight": "400",
+   "letter-spacing": "normal",
+   "color": "rgb(151, 161, 178)",
+   "font-family": "ui-sans-serif, -apple-system, BlinkMacSystemFont, \"SF Pro Text\", system-ui, Inter, \"Segoe UI\", Roboto, sans-serif",
+   "text-transform": "none",
+   "border-top-width": "1px",
+   "border-top-color": "rgb(40, 50, 68)",
+   "padding-top": "10px"
+  },
+  "body": {
+   "w": 480,
+   "h": 1390.7,
+   "background-color": "rgb(11, 15, 23)"
+  },
+  "longHeadline": {
+   "w": 410,
+   "h": 47.5,
+   "font-size": "19px",
+   "line-height": "23.75px",
+   "font-weight": "700",
+   "letter-spacing": "-0.285px",
+   "color": "rgb(243, 244, 246)",
+   "font-family": "ui-sans-serif, -apple-system, BlinkMacSystemFont, \"SF Pro Text\", system-ui, Inter, \"Segoe UI\", Roboto, sans-serif",
+   "text-transform": "none"
+  },
+  "geom": {
+   "card": [
+    448,
+    330.203125
+   ],
+   "kicker": [
+    [
+     19,
+     21,
+     68.3,
+     15.9
+    ]
+   ],
+   "tag": [
+    [
+     390,
+     19,
+     39,
+     19.9
+    ]
+   ],
+   "headline": [
+    [
+     19,
+     46.9,
+     410,
+     27.6
+    ]
+   ],
+   "rows": [
+    [
+     19,
+     88.5,
+     410,
+     36
+    ],
+    [
+     19,
+     138.5,
+     410,
+     36
+    ],
+    [
+     19,
+     188.5,
+     410,
+     36
+    ],
+    [
+     19,
+     238.5,
+     410,
+     36
+    ]
+   ],
+   "nums": [
+    [
+     19,
+     88.5,
+     49.6,
+     23
+    ],
+    [
+     19,
+     138.5,
+     49.6,
+     23
+    ],
+    [
+     19,
+     188.5,
+     49.6,
+     23
+    ],
+    [
+     19,
+     238.5,
+     49.6,
+     23
+    ]
+   ],
+   "texts": [
+    [
+     80.6,
+     88.5,
+     348.4,
+     19.5
+    ],
+    [
+     80.6,
+     138.5,
+     348.4,
+     19.5
+    ],
+    [
+     80.6,
+     188.5,
+     348.4,
+     19.5
+    ],
+    [
+     80.6,
+     238.5,
+     348.4,
+     19.5
+    ]
+   ],
+   "meters": [
+    [
+     80.6,
+     118.5,
+     348.4,
+     6
+    ],
+    [
+     80.6,
+     168.5,
+     348.4,
+     6
+    ],
+    [
+     80.6,
+     218.5,
+     348.4,
+     6
+    ],
+    [
+     80.6,
+     268.5,
+     348.4,
+     6
+    ]
+   ],
+   "fills": [
+    [
+     80.6,
+     118.5,
+     153.3,
+     6
+    ],
+    [
+     80.6,
+     168.5,
+     142.8,
+     6
+    ],
+    [
+     80.6,
+     218.5,
+     132.4,
+     6
+    ],
+    [
+     80.6,
+     268.5,
+     121.9,
+     6
+    ]
+   ],
+   "src": [
+    [
+     19,
+     288.5,
+     410,
+     27.7
+    ]
+   ]
+  },
+  "heights": {
+   "ex-canonical": 330.2,
+   "ex-three": 280.2,
+   "ex-long": 350.1,
+   "ex-extremes": 326.2
+  },
+  "markup": "<article class=\"card\"><div class=\"khead\"><span class=\"kicker\">Round-up</span><span class=\"tag\">NFL</span></div><h2 class=\"headline\">NFL division front-runners</h2><div class=\"rows\"><div class=\"row\"><div class=\"n num \">44<small>%</small></div><div class=\"t\">NFC East: Cowboys</div><div class=\"meter\" title=\"NFC East: Cowboys: 44%\"><i style=\"width: 44%;\"></i></div></div><div class=\"row\"><div class=\"n num \">41<small>%</small></div><div class=\"t\">NFC West: 49ers</div><div class=\"meter\" title=\"NFC West: 49ers: 41%\"><i style=\"width: 41%;\"></i></div></div><div class=\"row\"><div class=\"n num \">38<small>%</small></div><div class=\"t\">NFC North: Vikings</div><div class=\"meter\" title=\"NFC North: Vikings: 38%\"><i style=\"width: 38%;\"></i></div></div><div class=\"row\"><div class=\"n num \">35<small>%</small></div><div class=\"t\">NFC South: Falcons</div><div class=\"meter\" title=\"NFC South: Falcons: 35%\"><i style=\"width: 35%;\"></i></div></div></div><div class=\"src\">Venue prices: Kalshi</div></article>"
+ }
+}

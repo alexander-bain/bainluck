@@ -1,0 +1,14 @@
+[
+{"vid":"v00","verdict":"pass","reasons":["sentences match venue wording and rules; row labels fit both sides"],"fixes":[],"drop_members":[],"headline_fix":""},
+{"vid":"v01","verdict":"pass","reasons":["headline true of all four rows; same deadline and rules; no duplicates"],"fixes":[],"drop_members":[],"headline_fix":""},
+{"vid":"v02","verdict":"pass","reasons":["headline true of all five states; 'ban or pause' is a fair reading of statewide moratorium"],"fixes":[],"drop_members":[],"headline_fix":""},
+{"vid":"v03","verdict":"pass","reasons":["stages nested and non-increasing (75/26/12); sentences faithful","note: title member carries a 2029 deadline in data, sentence correctly says February 2027"],"fixes":[],"drop_members":[],"headline_fix":""},
+{"vid":"v04","verdict":"pass","reasons":["stages nested and non-increasing (71/37/7); sentences faithful"],"fixes":[],"drop_members":[],"headline_fix":""},
+{"vid":"v05","verdict":"pass","reasons":["stages nested and non-increasing (63/29/9); sentences faithful"],"fixes":[],"drop_members":[],"headline_fix":""},
+{"vid":"v06","verdict":"fail","reasons":["two mutually exclusive outcomes each shown at 51% (sum 102%): both 'likelier than not' is impossible","data/pricing problem, not wording; no sentence fix available","sentences themselves are faithful (opening week, domestic, 2026 releases)"],"fixes":[],"drop_members":[],"headline_fix":""},
+{"vid":"v07","verdict":"pass","reasons":["true rivals for one title, cannot both win; sentences faithful","note: data deadline 2028 is odd but not shown in the sentence"],"fixes":[],"drop_members":[],"headline_fix":""},
+{"vid":"v08","verdict":"pass","reasons":["true rivals for one title, cannot both win; sentences faithful"],"fixes":[],"drop_members":[],"headline_fix":""},
+{"vid":"v09","verdict":"pass","reasons":["same division, only one winner; sentences faithful"],"fixes":[],"drop_members":[],"headline_fix":""},
+{"vid":"v10","verdict":"pass","reasons":["one question, deadlines increasing, probabilities rising 15/27/43/57; marked rung is the first above 50%","sentences match rules (merger or acquisition, either direction, announcement)"],"fixes":[],"drop_members":[],"headline_fix":""},
+{"vid":"v11","verdict":"pass","reasons":["one question, deadlines increasing, probabilities rising 19/59/82; marked rung is the first above 50%","sentences faithful to visible rules; year 2026 inferred from deadlines","note: rules excerpt cut off, so the exact bar for 'representatives' is unverified; subject is diplomacy, not strikes, so no tone flag"],"fixes":[],"drop_members":[],"headline_fix":""}
+]

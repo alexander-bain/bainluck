@@ -1,0 +1,184 @@
+{
+ "y00": {
+  "at": "2026-10-06T20:03:59.563Z",
+  "grade": "amazing",
+  "n": 15,
+  "note": "",
+  "type": "roundup"
+ },
+ "y01": {
+  "at": "2026-10-06T20:04:26.151Z",
+  "grade": "fine",
+  "n": 19,
+  "note": "",
+  "type": "roundup"
+ },
+ "y02": {
+  "at": "2026-10-06T20:02:12.600Z",
+  "grade": "fine",
+  "n": 1,
+  "note": "",
+  "type": "movers"
+ },
+ "y04": {
+  "at": "2026-10-06T20:02:24.188Z",
+  "grade": "fine",
+  "n": 3,
+  "note": "",
+  "type": "movers"
+ },
+ "y05": {
+  "at": "2026-10-06T20:02:34.133Z",
+  "grade": "fine",
+  "n": 5,
+  "note": "",
+  "type": "movers"
+ },
+ "y06": {
+  "at": "2026-10-06T20:03:34.851Z",
+  "grade": "fine",
+  "n": 10,
+  "note": "",
+  "type": "movers"
+ },
+ "y08": {
+  "at": "2026-10-06T20:04:07.150Z",
+  "grade": "fine",
+  "n": 16,
+  "note": "",
+  "type": "movers"
+ },
+ "y09": {
+  "at": "2026-10-06T20:04:35.184Z",
+  "grade": "no",
+  "n": 20,
+  "note": "",
+  "type": "movers"
+ },
+ "y10": {
+  "at": "2026-10-06T20:02:28.896Z",
+  "grade": "fine",
+  "n": 4,
+  "note": "",
+  "type": "newfav"
+ },
+ "y11": {
+  "at": "2026-10-06T20:03:40.276Z",
+  "grade": "no",
+  "n": 11,
+  "note": "",
+  "type": "newfav"
+ },
+ "y12": {
+  "at": "2026-10-06T20:04:36.775Z",
+  "grade": "fine",
+  "n": 21,
+  "note": "",
+  "type": "newfav"
+ },
+ "y13": {
+  "at": "2026-10-06T20:02:37.467Z",
+  "grade": "amazing",
+  "n": 6,
+  "note": "",
+  "type": "swing"
+ },
+ "y14": {
+  "at": "2026-10-06T20:03:46.805Z",
+  "grade": "fine",
+  "n": 12,
+  "note": "",
+  "type": "swing"
+ },
+ "y15": {
+  "at": "2026-10-06T20:04:29.210Z",
+  "grade": "fine",
+  "n": 18,
+  "note": "",
+  "type": "swing"
+ },
+ "y16": {
+  "at": "2026-10-06T20:04:09.421Z",
+  "grade": "amazing",
+  "n": 17,
+  "note": "",
+  "type": "peer"
+ },
+ "y17": {
+  "at": "2026-10-06T20:02:17.058Z",
+  "grade": "fine",
+  "n": 2,
+  "note": "",
+  "type": "board"
+ },
+ "y18": {
+  "at": "2026-10-06T20:03:57.821Z",
+  "grade": "no",
+  "n": 14,
+  "note": "",
+  "type": "board"
+ },
+ "y19": {
+  "at": "2026-10-06T20:04:55.133Z",
+  "grade": "fine",
+  "n": 24,
+  "note": "",
+  "type": "board"
+ },
+ "y21": {
+  "at": "2026-10-06T20:04:42.188Z",
+  "grade": "fine",
+  "n": 23,
+  "note": "",
+  "type": "deadheat"
+ },
+ "y22": {
+  "at": "2026-10-06T20:03:25.784Z",
+  "grade": "amazing",
+  "n": 9,
+  "note": "",
+  "type": "checklist"
+ },
+ "y23": {
+  "at": "2026-10-06T20:03:52.771Z",
+  "grade": "amazing",
+  "n": 13,
+  "note": "",
+  "type": "checklist"
+ },
+ "y24": {
+  "at": "2026-10-06T20:04:38.509Z",
+  "grade": "amazing",
+  "n": 22,
+  "note": "",
+  "type": "checklist"
+ },
+ "y25": {
+  "at": "2026-10-06T20:04:52.325Z",
+  "grade": "fine",
+  "n": 26,
+  "note": "",
+  "type": "when"
+ },
+ "y26": {
+  "at": "2026-10-06T20:04:50.738Z",
+  "grade": "fine",
+  "n": 25,
+  "note": "",
+  "type": "band"
+ },
+ "y30": {
+  "at": "2026-10-06T20:02:43.000Z",
+  "grade": "fine",
+  "n": 7,
+  "note": "",
+  "type": "movers"
+ },
+ "y35": {
+  "at": "2026-10-06T20:03:29.792Z",
+  "grade": "fine",
+  "n": 8,
+  "note": "",
+  "type": "board"
+ }
+}

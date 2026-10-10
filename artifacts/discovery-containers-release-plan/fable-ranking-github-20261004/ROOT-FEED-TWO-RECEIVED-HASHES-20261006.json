@@ -1,0 +1,18 @@
+{
+  "FABLE-FEED-TWO-20261006.md": {
+    "bytes": 6268,
+    "sha256": "3bb7adf17214463750223b82948dadb52746d9b47be236f3ce92c8919e257c42"
+  },
+  "fable-evidence-20261006-feed-two.tar.gz": {
+    "bytes": 15787310,
+    "sha256": "21369bfbef26230ae27fd80d33ba8dd6a87842c28a3e527e3cb48cc49d92041c"
+  },
+  "FABLE-FEED-TWO-RESULT-20261006.md": {
+    "bytes": 4340,
+    "sha256": "6ac81d12b3dfdb670cc0ee39fefa5857ca265833cfa49655073cb3bb02d930ec"
+  },
+  "fable-evidence-20261006-feed-two-result.tar.gz": {
+    "bytes": 18100,
+    "sha256": "6e627ef58c9509961b985baea7aecd9aa0371011e146f4606820d8bd269f743a"
+  }
+}

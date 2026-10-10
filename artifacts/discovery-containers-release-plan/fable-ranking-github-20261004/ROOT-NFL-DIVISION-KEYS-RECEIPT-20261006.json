@@ -1,0 +1,15 @@
+{
+  "received_archive": "fable-evidence-20261006-nfl-division-keys.tar.gz",
+  "sha256_received": "24fdc954af22a37f4fe5d2ffff8d1921a45338610eab38edc4f248d90d922769",
+  "sha256_alex_supplied": "43ea063d0deefc331e71481f38028baa1f45d6418659d162691bd670c8880a50",
+  "supplied_hash_matches": false,
+  "contents": "16 division response JSON files, summarize.py, summary_output.txt, MANIFEST.json; 86832.json absent",
+  "manifest_payloads_verified": 18,
+  "summarize_exit": 0,
+  "summary_output_exact_match": true,
+  "r3_committed_hashes_reverified": {
+    "FABLE-NFL-DIVISION-ROUNDUP-DESIGN-20261006-R3.md": "15f9cb1d6a43adf7d97c43045c0c25fd3713e5ab6e63a29b33877da6602e8a3e",
+    "fable-nfl-division-roundup-design-20261006-r3.tar.gz": "f0943ad77fa61f3f764b83bc35e7b17ee0af428624cbdb8befeb39c4f9c0c857"
+  },
+  "boundary": "Preserved received bytes unchanged. This is not the bundle identified by the supplied hash. Awaiting final bundle clarification; no new live API reads."
+}

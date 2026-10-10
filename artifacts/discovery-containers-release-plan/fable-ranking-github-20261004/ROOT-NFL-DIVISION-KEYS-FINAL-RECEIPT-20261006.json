@@ -1,0 +1,16 @@
+{
+  "evidence_for_alex_paste": "fable-evidence-20261006-nfl-division-keys-final.tar.gz",
+  "sha256": "43ea063d0deefc331e71481f38028baa1f45d6418659d162691bd670c8880a50",
+  "matches_supplied_hash": true,
+  "manifest_payloads_verified": 19,
+  "regular_files_including_manifest": 20,
+  "response_count": 17,
+  "comparison_page": "superbowl_86832.json",
+  "script_exit": 0,
+  "saved_output_exact_match": true,
+  "sixteen_division_responses_unchanged_from_earlier_bundle": true,
+  "supersedes": "fable-evidence-20261006-nfl-division-keys.tar.gz",
+  "superseded_sha256": "24fdc954af22a37f4fe5d2ffff8d1921a45338610eab38edc4f248d90d922769",
+  "superseded_handling": "Keep earlier archive and receipt unchanged as received history only; not the evidence for Alex paste.",
+  "answers_a_through_i": "Unchanged; final bundle adds saved Super Bowl comparison and matches supplied evidence identity."
+}

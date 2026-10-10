@@ -1,0 +1,555 @@
+[
+ {
+  "type": "h2h",
+  "ids": [
+   "t1593",
+   "t1590",
+   "t0247",
+   "t0215"
+  ],
+  "score": 0.62,
+  "title": "Anthropic vs OpenAI",
+  "labels": [
+   "announces it has filed or will file for bankruptcy by December 31, 2029",
+   "officially announces an IPO before February 2027"
+  ],
+  "names": [
+   "Anthropic",
+   "OpenAI"
+  ],
+  "rank": 1,
+  "vid": "v00",
+  "role": "slate"
+ },
+ {
+  "type": "peer",
+  "ids": [
+   "t1596",
+   "t1599",
+   "t1593",
+   "t1590"
+  ],
+  "score": 0.4633,
+  "title": "____ announces it has filed or will file for bankruptcy by December 31, 2029",
+  "names": [
+   "NuScale",
+   "CoreWeave",
+   "Anthropic",
+   "OpenAI"
+  ],
+  "rank": 1,
+  "vid": "v01",
+  "role": "slate"
+ },
+ {
+  "type": "peer",
+  "ids": [
+   "t1624",
+   "t1620",
+   "t1640",
+   "t1632",
+   "t1636"
+  ],
+  "score": 0.3667,
+  "title": "A statewide ban or pause on new data centers becomes law in ____ by June 30, 2027",
+  "names": [
+   "Texas",
+   "Ohio",
+   "Louisiana",
+   "Oklahoma",
+   "Missouri"
+  ],
+  "rank": 2,
+  "vid": "v02",
+  "role": "slate"
+ },
+ {
+  "type": "funnel",
+  "ids": [
+   "t0362",
+   "t0365",
+   "t0287"
+  ],
+  "score": 0.9338,
+  "title": "Los Angeles Rams",
+  "rank": 1,
+  "vid": "v03",
+  "role": "slate"
+ },
+ {
+  "type": "funnel",
+  "ids": [
+   "t0363",
+   "t0375",
+   "t1215"
+  ],
+  "score": 0.9038,
+  "title": "Minnesota Vikings",
+  "rank": 2,
+  "vid": "v04",
+  "role": "slate"
+ },
+ {
+  "type": "funnel",
+  "ids": [
+   "t0361",
+   "t0373",
+   "t0301"
+  ],
+  "score": 0.8438,
+  "title": "Chicago Bears",
+  "rank": 3,
+  "vid": "v05",
+  "role": "slate"
+ },
+ {
+  "type": "deadheat",
+  "ids": [
+   "t1298",
+   "t1299"
+  ],
+  "score": 0.5867,
+  "title": "____ has the biggest domestic (US and Canada) opening week of any 2026 movie",
+  "names": [
+   "Spider-Man: Brand New Day",
+   "Avengers: Doomsday"
+  ],
+  "rest": 0,
+  "rank": 1,
+  "vid": "v06",
+  "role": "slate"
+ },
+ {
+  "type": "deadheat",
+  "ids": [
+   "t0853",
+   "t0852"
+  ],
+  "score": 0.5806,
+  "title": "____ win the 2026 World Series",
+  "names": [
+   "The Los Angeles Dodgers",
+   "The Milwaukee Brewers"
+  ],
+  "rest": 46,
+  "rank": 2,
+  "vid": "v07",
+  "role": "slate"
+ },
+ {
+  "type": "deadheat",
+  "ids": [
+   "t0182",
+   "t0184"
+  ],
+  "score": 0.4644,
+  "title": "____ win the 2027 NBA Finals",
+  "names": [
+   "The Oklahoma City Thunder",
+   "The San Antonio Spurs"
+  ],
+  "rest": 57,
+  "rank": 4,
+  "vid": "v08",
+  "role": "slate"
+ },
+ {
+  "type": "deadheat",
+  "ids": [
+   "t0377",
+   "t0376"
+  ],
+  "score": 0.3667,
+  "title": "____ win the NFC East division in the 2026 NFL season",
+  "names": [
+   "The Dallas Cowboys",
+   "The Philadelphia Eagles"
+  ],
+  "rest": 19,
+  "rank": 5,
+  "vid": "v09",
+  "role": "slate"
+ },
+ {
+  "type": "when",
+  "ids": [
+   "t1192",
+   "t1194",
+   "t1195",
+   "t1193"
+  ],
+  "score": 0.8865,
+  "title": "Tesla and SpaceX merger officially announced by...?",
+  "flip": 3,
+  "rank": 2,
+  "vid": "v10",
+  "role": "slate"
+ },
+ {
+  "type": "when",
+  "ids": [
+   "t1546",
+   "t1545",
+   "t1544"
+  ],
+  "score": 0.4718,
+  "title": "Russia x Ukraine any diplomatic meeting by...?",
+  "flip": 1,
+  "rank": 3,
+  "vid": "v11",
+  "role": "slate"
+ },
+ {
+  "type": "when",
+  "ids": [
+   "t0873",
+   "t0874",
+   "t0875",
+   "t0876"
+  ],
+  "score": 0.4522,
+  "title": "Jerome Powell departure as Fed Governor announced?",
+  "flip": 2,
+  "rank": 4,
+  "vid": "v12",
+  "role": "slate"
+ },
+ {
+  "type": "band",
+  "ids": [
+   "t0057",
+   "t0051",
+   "t0577",
+   "t0687"
+  ],
+  "score": 1.0,
+  "title": "About 1 in 20",
+  "rank": 1,
+  "vid": "v13",
+  "role": "slate"
+ },
+ {
+  "type": "band",
+  "ids": [
+   "t0033",
+   "t0146",
+   "t0101",
+   "t0579"
+  ],
+  "score": 0.8167,
+  "title": "About 1 in 4",
+  "rank": 2,
+  "vid": "v14",
+  "role": "slate"
+ },
+ {
+  "type": "band",
+  "ids": [
+   "t0593",
+   "t0102",
+   "t0756",
+   "t0065"
+  ],
+  "score": 0.7167,
+  "title": "About 2 in 3",
+  "rank": 3,
+  "vid": "v15",
+  "role": "slate"
+ },
+ {
+  "type": "band",
+  "ids": [
+   "t1298",
+   "t0135",
+   "t0310",
+   "t0025"
+  ],
+  "score": 0.5861,
+  "title": "A coin flip",
+  "rank": 4,
+  "vid": "v16",
+  "role": "slate"
+ },
+ {
+  "type": "board",
+  "ids": [
+   "t1535",
+   "t1236",
+   "t1563",
+   "t0031",
+   "t0067"
+  ],
+  "score": 0.8033,
+  "title": "By the end of 2026",
+  "rank": 5,
+  "vid": "v17",
+  "role": "slate"
+ },
+ {
+  "type": "board",
+  "ids": [
+   "t0932",
+   "t0605",
+   "t0901",
+   "t0408",
+   "t0686"
+  ],
+  "score": 0.6533,
+  "title": "By the end of November",
+  "rank": 7,
+  "vid": "v18",
+  "role": "slate"
+ },
+ {
+  "type": "board",
+  "ids": [
+   "t1545",
+   "t0897",
+   "t0604",
+   "t1536",
+   "t1608"
+  ],
+  "score": 0.5244,
+  "title": "By the end of October",
+  "rank": 10,
+  "vid": "v19",
+  "role": "slate"
+ },
+ {
+  "type": "board",
+  "ids": [
+   "t1099",
+   "t0898",
+   "t1539",
+   "t0873",
+   "t0660"
+  ],
+  "score": 0.3267,
+  "title": "By the end of November",
+  "rank": 16,
+  "vid": "v20",
+  "role": "slate"
+ },
+ {
+  "type": "movers",
+  "ids": [
+   "t1530",
+   "t1095",
+   "t1563",
+   "t1535"
+  ],
+  "score": 0.2047,
+  "title": "Biggest moves this week",
+  "tag": null,
+  "prev": [
+   22,
+   28,
+   41,
+   61
+  ],
+  "rank": 1,
+  "vid": "v21",
+  "role": "slate"
+ },
+ {
+  "type": "movers",
+  "ids": [
+   "t1563",
+   "t1222",
+   "t1365",
+   "t0848"
+  ],
+  "score": 0.1021,
+  "title": "Biggest moves this week",
+  "tag": "Culture and sport",
+  "prev": [
+   41,
+   7,
+   32,
+   23
+  ],
+  "rank": 3,
+  "vid": "v22",
+  "role": "slate"
+ },
+ {
+  "type": "peer",
+  "ids": [
+   "t0246",
+   "t0214",
+   "t0206"
+  ],
+  "score": 0.2463,
+  "title": "____ officially announces an IPO before 2027",
+  "names": [
+   "Anthropic",
+   "OpenAI",
+   "Starlink"
+  ],
+  "rank": 3,
+  "vid": "v23",
+  "role": "reserve"
+ },
+ {
+  "type": "deadheat",
+  "ids": [
+   "t0844",
+   "t0845"
+  ],
+  "score": 0.4722,
+  "title": "____ win the 2026 National League title and advance to the World Series",
+  "names": [
+   "The Milwaukee Brewers",
+   "The Los Angeles Dodgers"
+  ],
+  "rest": 21,
+  "rank": 3,
+  "vid": "v24",
+  "role": "reserve"
+ },
+ {
+  "type": "deadheat",
+  "ids": [
+   "t0196",
+   "t0195"
+  ],
+  "score": 0.3056,
+  "title": "____ win the NBA's Eastern Conference Finals in the 2026-27 season",
+  "names": [
+   "The Philadelphia 76ers",
+   "The New York Knicks"
+  ],
+  "rest": 56,
+  "rank": 6,
+  "vid": "v25",
+  "role": "reserve"
+ },
+ {
+  "type": "when",
+  "ids": [
+   "t0937",
+   "t0938",
+   "t0939"
+  ],
+  "score": 0.905,
+  "title": "Will Trump be impeached?",
+  "flip": 2,
+  "rank": 1,
+  "vid": "v26",
+  "role": "reserve"
+ },
+ {
+  "type": "when",
+  "ids": [
+   "t0940",
+   "t0941",
+   "t0942"
+  ],
+  "score": 0.4253,
+  "title": "Will marijuana be rescheduled?",
+  "flip": 1,
+  "rank": 5,
+  "vid": "v27",
+  "role": "reserve"
+ },
+ {
+  "type": "band",
+  "ids": [
+   "t0975",
+   "t0081",
+   "t0606",
+   "t0177"
+  ],
+  "score": 0.5417,
+  "title": "About 1 in 3",
+  "rank": 5,
+  "vid": "v28",
+  "role": "reserve"
+ },
+ {
+  "type": "band",
+  "ids": [
+   "t1575",
+   "t0776",
+   "t1376",
+   "t0740"
+  ],
+  "score": 0.4222,
+  "title": "About 3 in 4",
+  "rank": 6,
+  "vid": "v29",
+  "role": "reserve"
+ },
+ {
+  "type": "board",
+  "ids": [
+   "t1193",
+   "t0032",
+   "t0688",
+   "t0111",
+   "t0704"
+  ],
+  "score": 0.9267,
+  "title": "By the end of 2027",
+  "rank": 1,
+  "vid": "v30",
+  "role": "reserve"
+ },
+ {
+  "type": "board",
+  "ids": [
+   "t0933",
+   "t0635",
+   "t1192",
+   "t0110",
+   "t0051"
+  ],
+  "score": 0.8867,
+  "title": "By the end of 2026",
+  "rank": 2,
+  "vid": "v31",
+  "role": "reserve"
+ },
+ {
+  "type": "movers",
+  "ids": [
+   "t1530",
+   "t1147",
+   "t1095",
+   "t1535"
+  ],
+  "score": 0.1717,
+  "title": "Biggest moves this week",
+  "tag": "Tech and business",
+  "prev": [
+   22,
+   45,
+   28,
+   61
+  ],
+  "rank": 2,
+  "vid": "v32",
+  "role": "reserve"
+ },
+ {
+  "type": "movers",
+  "ids": [
+   "t1619",
+   "t1623",
+   "t1043",
+   "t0553"
+  ],
+  "score": 0.0594,
+  "title": "Biggest moves this week",
+  "tag": "Washington",
+  "prev": [
+   28,
+   27,
+   16,
+   46
+  ],
+  "rank": 4,
+  "vid": "v33",
+  "role": "reserve"
+ }
+]
