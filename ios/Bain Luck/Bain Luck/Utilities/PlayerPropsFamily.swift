@@ -38,6 +38,42 @@ enum PlayerPropsFamily {
         isPriced ? name(statLabel: statLabel) : unpricedFamily
     }
 
+    // MARK: - Protected touchdowns (Alex 10/10)
+
+    /// The pill a VERIFIED protected-touchdown ladder is filed under. Still its
+    /// own family — a protected contract settles differently, so it never
+    /// shares a pill (or a price) with the plain "Touchdowns" ladders.
+    static let protectedTouchdownFamily = "Protected TDs"
+    /// What the row calls the stat: the thing the contract counts.
+    static let protectedTouchdownStat = "Touchdowns scored"
+    static let participationRuleTitle = "Participation rule"
+
+    /// Kalshi's `rules_secondary` for series `KXNFLTDPROT`, in fan words.
+    /// Read by Root on 2026-10-10 from the series and from both Drake Maye
+    /// LV–NE markets (`native-usability-20261010/kalshi-*.json`). Applies to
+    /// THAT series only; another protected stat needs its own verified rule.
+    static let participationRuleLines = [
+        "If the player plays in the first half but not after halftime (overtime included), the market settles at its price just before kickoff — unless the player has already reached the target.",
+        "If the player plays after halftime, it settles on the actual touchdowns scored.",
+        "No injury or injury designation is needed for this to apply. A player who never plays falls under Kalshi's separate non-participation rule.",
+        "Passing touchdowns don't count as the passer scoring.",
+    ]
+    /// The series' own contract terms (`contract_terms_url` in the series JSON).
+    static let participationRuleTermsURL = URL(
+        string: "https://assets.kalshi.com/contract_terms/NFLENTITYSTATCOVERED.pdf")!
+
+    /// Is this ladder one whose protection rule has been read from the venue?
+    /// Only Kalshi's NFL "Touchdowns (Protected)" contract. Every other
+    /// "(Protected)" stat keeps its venue name verbatim and gets no
+    /// explanation, because none has been verified for it.
+    static func isVerifiedProtectedTouchdowns(
+        statLabel: String, sportKey: String?, sources: Set<String>
+    ) -> Bool {
+        sportKey == "americanfootball_nfl"
+            && sources == ["kalshi"]
+            && name(statLabel: statLabel).lowercased() == "touchdowns (protected)"
+    }
+
     /// Pill order: the families with the most ladders first (the stat the
     /// game is most quoted on leads), ties by name so a relaunch deals the same
     /// row (#4857), and the unpriced family always last.

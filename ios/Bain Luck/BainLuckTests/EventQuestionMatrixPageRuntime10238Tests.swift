@@ -202,11 +202,11 @@ final class EventQuestionMatrixPageRuntime10238Tests: XCTestCase {
                       "control: every Game option is unpriced")
         for (name, size) in [("no-game-price", DynamicTypeSize.large), ("no-game-price-ax3", .accessibility3)] {
             let all = try await readPage(markets, try openSeries(), name, at: size)
-            XCTAssertTrue(has(all, "Series questions"), "\(name): the open Series vanished: \(all)")
+            XCTAssertTrue(has(all, "Series odds"), "\(name): the open Series vanished: \(all)")
             XCTAssertTrue(has(all, "Boston Red Sox") && has(all, "70%"), "\(name): the Series price is gone: \(all)")
             XCTAssertTrue(has(all, "29%"), "\(name): the Series' second side is gone or rewritten: \(all)")
             XCTAssertFalse(has(all, "30%"), "\(name): 70/29 was normalised: \(all)")
-            XCTAssertTrue(has(all, "Game questions"), "\(name): the unpriced Game question is not drawn: \(all)")
+            XCTAssertTrue(has(all, "Game odds"), "\(name): the unpriced Game question is not drawn: \(all)")
             for withdrawn in ["56%", "36%", "8%"] {
                 XCTAssertFalse(all.contains { $0.trimmingCharacters(in: .whitespaces) == withdrawn },
                                "\(name): a withdrawn Game price \(withdrawn) is on the page: \(all)")
@@ -221,8 +221,8 @@ final class EventQuestionMatrixPageRuntime10238Tests: XCTestCase {
     func testASeriesAloneDoesNotSilenceTheNoGameMarketsNote() async throws {
         let all = try await readPage(try gameMarkets(.none), try openSeries(), "series-alone")
         XCTAssertTrue(has(all, Self.note), "a Series alone silenced '\(Self.note)': \(all)")
-        XCTAssertTrue(has(all, "Series questions") && has(all, "70%"), "the Series is not drawn: \(all)")
-        XCTAssertFalse(has(all, "Game questions"), "a Game section drew with no Game matrix: \(all)")
+        XCTAssertTrue(has(all, "Series odds") && has(all, "70%"), "the Series is not drawn: \(all)")
+        XCTAssertFalse(has(all, "Game odds"), "a Game section drew with no Game matrix: \(all)")
     }
 
     /// Control for 2: the same page with a priced Game question has no note,
@@ -230,7 +230,7 @@ final class EventQuestionMatrixPageRuntime10238Tests: XCTestCase {
     func testAGameQuestionBesideTheSeriesSilencesTheNote() async throws {
         let all = try await readPage(try gameMarkets(.priced), try openSeries(), "game-and-series")
         XCTAssertFalse(has(all, "No prediction markets"), "the note sits beside a drawn Game question: \(all)")
-        XCTAssertTrue(has(all, "Game questions") && has(all, "56%"), "control: the Game question is drawn: \(all)")
-        XCTAssertTrue(has(all, "Series questions") && has(all, "70%"), "the Series is not drawn: \(all)")
+        XCTAssertTrue(has(all, "Game odds") && has(all, "56%"), "control: the Game question is drawn: \(all)")
+        XCTAssertTrue(has(all, "Series odds") && has(all, "70%"), "the Series is not drawn: \(all)")
     }
 }
