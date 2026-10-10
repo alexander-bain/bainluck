@@ -92,8 +92,11 @@ final class RectangularWidgetHostJourneyTests: XCTestCase {
         XCTAssertTrue(host.otherElements["Watch Face"].firstMatch.waitForExistence(timeout: 15))
         let center = host.otherElements["center"].firstMatch
         XCTAssertTrue(center.waitForExistence(timeout: 15) && center.isHittable && host.frame.contains(center.frame))
+        // The canonical-opponent forecast is a supported saved reading in this
+        // mounted slot. All original title, Saved, value, timestamp and fit checks follow.
         let reading = host.descendants(matching: .any).matching(NSPredicate(format: "identifier IN %@", [
-            "watch.complication.rectangular.prominent", "watch.complication.rectangular.compact"
+            "watch.complication.rectangular.prominent", "watch.complication.rectangular.compact",
+            "watch.complication.rectangular.opponent"
         ])).firstMatch
         XCTAssertTrue(reading.waitForExistence(timeout: 20), "Actual installed WidgetKit extension must render a typed fitting reading")
         XCTAssertTrue(reading.label.contains("San Francisco Giants win"))

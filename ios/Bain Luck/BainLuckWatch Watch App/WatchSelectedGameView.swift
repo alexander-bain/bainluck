@@ -379,6 +379,9 @@ struct WatchSelectedGameView: View {
                         .fixedSize(horizontal: false, vertical: true)
                         .accessibilityAddTraits(.isHeader)
                         .accessibilityIdentifier("watch.scheduled-start")
+                        #if DEBUG
+                        .accessibilityValue(WatchUIFixture.current == nil ? "" : String(describing: dynamicTypeSize))
+                        #endif
                 }
                 if showsScores {
                     if scheduledStart == nil {
@@ -478,7 +481,8 @@ struct WatchSelectedGameView: View {
                  (finalOutcomeText(game) ??
                   (game.isLive && (store.isRestoredReading || store.errorMessage != nil)
                    ? "At last update: Live" : game.stateLabel)))
-                .font(.footnote).foregroundStyle(.secondary)
+                .font(!dynamicTypeSize.isAccessibilitySize && finalOutcomeText(game) != nil ? .caption : .footnote)
+                .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
             if game.isLive, let clock = game.liveClockText {
                 Text(clock).font(.footnote).foregroundStyle(.secondary)
@@ -535,7 +539,7 @@ struct WatchSelectedGameView: View {
         if let probabilityText = game.homeProbabilityText, let score = game.homeScore {
             VStack(alignment: .leading, spacing: 2) {
                 scoreTeamName(game.homeTeam, color: scoreTeamColor(game, home: true))
-                    .font(.footnote.weight(.semibold))
+                    .font((dynamicTypeSize.isAccessibilitySize ? Font.footnote : Font.caption).weight(.semibold))
                     .fixedSize(horizontal: false, vertical: true)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .accessibilityElement(children: .ignore)
@@ -598,17 +602,30 @@ struct WatchSelectedGameView: View {
     @ViewBuilder
     private func sharedLiveAwayReading(_ game: WatchSelectedGame) -> some View {
         if let score = game.awayScore {
-            ViewThatFits(in: .horizontal) {
-                HStack(alignment: .firstTextBaseline, spacing: 6) {
-                    scoreTeamName(game.awayTeam, color: scoreTeamColor(game, home: false))
-                        .font(.footnote).fixedSize()
-                    Spacer(minLength: 2)
-                    Text("Score \(score)").font(.title3.bold()).monospacedDigit().fixedSize()
-                }
-                VStack(alignment: .leading, spacing: 3) {
-                    scoreTeamName(game.awayTeam, color: scoreTeamColor(game, home: false))
-                        .font(.footnote).fixedSize(horizontal: false, vertical: true)
-                    Text("Score \(score)").font(.title3.bold()).monospacedDigit()
+            Group {
+                if dynamicTypeSize.isAccessibilitySize {
+                    ViewThatFits(in: .horizontal) {
+                        HStack(alignment: .firstTextBaseline, spacing: 6) {
+                            scoreTeamName(game.awayTeam, color: scoreTeamColor(game, home: false))
+                                .font(.footnote).fixedSize()
+                            Spacer(minLength: 2)
+                            Text("Score \(score)").font(.title3.bold()).monospacedDigit().fixedSize()
+                        }
+                        VStack(alignment: .leading, spacing: 3) {
+                            scoreTeamName(game.awayTeam, color: scoreTeamColor(game, home: false))
+                                .font(.footnote).fixedSize(horizontal: false, vertical: true)
+                            Text("Score \(score)").font(.title3.bold()).monospacedDigit()
+                        }
+                    }
+                } else {
+                    // Wrap the complete identity alongside its score, rather than
+                    // spending another line below a long name on the first screen.
+                    HStack(alignment: .firstTextBaseline, spacing: 6) {
+                        scoreTeamName(game.awayTeam, color: scoreTeamColor(game, home: false))
+                            .font(.caption).fixedSize(horizontal: false, vertical: true)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                        Text(String(score)).font(.title3.bold()).monospacedDigit().fixedSize()
+                    }
                 }
             }
             .accessibilityElement(children: .ignore)
@@ -641,17 +658,29 @@ struct WatchSelectedGameView: View {
     }
 
     private func scoreRow(team: String, score: Int?, color: Color?) -> some View {
-        ViewThatFits(in: .horizontal) {
-            HStack(alignment: .firstTextBaseline, spacing: 6) {
-                scoreTeamName(team, color: color).font(.footnote).fixedSize()
-                Spacer(minLength: 2)
-                Text(score.map(String.init) ?? "—")
-                    .font(.title3.bold()).monospacedDigit().fixedSize()
-            }
-            VStack(alignment: .leading, spacing: 3) {
-                scoreTeamName(team, color: color).font(.footnote).fixedSize(horizontal: false, vertical: true)
-                Text(score.map(String.init) ?? "—")
-                    .font(.title3.bold()).monospacedDigit()
+        Group {
+            if dynamicTypeSize.isAccessibilitySize {
+                ViewThatFits(in: .horizontal) {
+                    HStack(alignment: .firstTextBaseline, spacing: 6) {
+                        scoreTeamName(team, color: color).font(.footnote).fixedSize()
+                        Spacer(minLength: 2)
+                        Text(score.map(String.init) ?? "—")
+                            .font(.title3.bold()).monospacedDigit().fixedSize()
+                    }
+                    VStack(alignment: .leading, spacing: 3) {
+                        scoreTeamName(team, color: color).font(.footnote).fixedSize(horizontal: false, vertical: true)
+                        Text(score.map(String.init) ?? "—")
+                            .font(.title3.bold()).monospacedDigit()
+                    }
+                }
+            } else {
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    scoreTeamName(team, color: color).font(.caption)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    Text(score.map(String.init) ?? "—")
+                        .font(.title3.bold()).monospacedDigit().fixedSize()
+                }
             }
         }
         .accessibilityElement(children: .ignore)

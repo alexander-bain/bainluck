@@ -115,7 +115,7 @@ struct WatchSavedComplicationContent: View {
     /// No line limit can silently turn a long name into a fitting candidate.
     private func namedReading(_ snapshot: WatchComplicationSnapshot,
                               reading: WatchCircularReading, width: CGFloat) -> some View {
-        VStack(alignment: .leading, spacing: 3) {
+        VStack(alignment: .leading, spacing: 1) {
             if reading.kind != .forecast,
                let awayScore = reading.awayScore, let homeScore = reading.homeScore {
                 VStack(alignment: .leading, spacing: 1) {
@@ -123,9 +123,10 @@ struct WatchSavedComplicationContent: View {
                     namedScoreRow(team: namedScoreTeam(reading, home: true), score: homeScore)
                 }
             } else {
-                VStack(alignment: .leading, spacing: 1) {
+                // Full title and 30pt probability share height; neither is clipped.
+                HStack(alignment: .center, spacing: 6) {
                     Text(snapshot.title)
-                        .font(.system(size: 14, weight: .semibold))
+                        .font(.system(size: 12, weight: .semibold))
                         .fixedSize(horizontal: false, vertical: true)
                         .frame(maxWidth: .infinity, alignment: .leading)
                     Text(prominentValue(reading))
@@ -145,7 +146,7 @@ struct WatchSavedComplicationContent: View {
     private func namedScoreRow(team: String, score: Int) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: 6) {
             Text(team)
-                .font(.system(size: 12, weight: .semibold))
+                .font(.system(size: 11, weight: .semibold))
                 .fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: .infinity, alignment: .leading)
             Text(String(score))
@@ -213,7 +214,7 @@ struct WatchSavedComplicationContent: View {
     }
 
     private func compactScoreColumn(identity: String, score: Int, won: Bool) -> some View {
-        VStack(alignment: .leading, spacing: 1) {
+        HStack(alignment: .firstTextBaseline, spacing: 4) {
             Text(won ? "\(identity) won" : identity)
                 .font(.system(size: 12, weight: .semibold)).fixedSize()
             Text(String(score))

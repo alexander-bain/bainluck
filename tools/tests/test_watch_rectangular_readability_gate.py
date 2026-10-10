@@ -206,7 +206,7 @@ class RectangularReceiptTests(unittest.TestCase):
             circular,
         )
 
-    def test_named_forecast_gives_full_title_its_own_row_without_shrinking(self):
+    def test_named_forecast_wraps_full_title_beside_30pt_value_without_truncation(self):
         source = (
             ROOT
             / "ios/Bain Luck/BainLuckWatch Watch App/WatchSavedComplicationContent.swift"
@@ -217,12 +217,15 @@ class RectangularReceiptTests(unittest.TestCase):
         forecast = named.split("} else {", 1)[1].split(
             "metadata(snapshot, reading: reading)", 1
         )[0]
-        self.assertIn("VStack(alignment: .leading, spacing: 1)", forecast)
+        # A–C v2 proposes a fixed 12pt full title beside the unchanged 30pt
+        # value. Root reviews this explicit replacement of the own-row/14pt
+        # contract; native slot/readability assertions remain independent.
+        self.assertIn("HStack(alignment: .center, spacing: 6)", forecast)
         self.assertLess(
             forecast.index("Text(snapshot.title)"),
             forecast.index("Text(prominentValue(reading))"),
         )
-        self.assertIn("size: 14, weight: .semibold", forecast)
+        self.assertIn("size: 12, weight: .semibold", forecast)
         self.assertIn("size: 30, weight: .bold, design: .rounded", forecast)
         self.assertIn(".fixedSize(horizontal: false, vertical: true)", forecast)
         self.assertNotIn(".lineLimit", forecast)
