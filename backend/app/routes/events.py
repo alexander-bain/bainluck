@@ -20742,6 +20742,36 @@ def _team_name_patterns(full_name: str) -> list[str]:
     return patterns
 
 
+def _or_group_minimal_patterns(patterns: list[str]) -> list[str]:
+    """The patterns of one ``OR`` group of ``name ILIKE '%p%'`` terms that can
+    decide a match, in their original order.
+
+    #10820: if ``q`` is a substring of ``p``, every name containing ``p`` also
+    contains ``q``, so ``ILIKE '%p%'`` adds nothing to an OR that already holds
+    ``ILIKE '%q%'``. Dropping it leaves the result set unchanged and removes the
+    costliest probe: a long pattern has many trigrams, and on production
+    (2026-10-10, game-markets of live 15324058) ``'%Utah State Aggies%'`` and
+    ``'%Washington State Cougars%'`` took 900 + 1,242 ms of the Polymarket
+    parent lookup's 2,424 ms, beside ``'%Utah%'`` / ``'%Washington%'`` at 4 and
+    65 ms.
+
+    Containment is tested case-sensitively on the literal text, which only
+    under-drops. A pattern carrying a backslash (an escaped ``%``/``_``/``\\``)
+    is never dropped and never used to drop another: a substring of an
+    escaped string is not always a substring of the text it stands for.
+    """
+    kept: list[str] = []
+    for p in patterns:
+        if p in kept:
+            continue
+        if "\\" not in p and any(
+            q and q != p and "\\" not in q and q in p for q in patterns
+        ):
+            continue
+        kept.append(p)
+    return kept
+
+
 # ── Regex helpers for game-market classification ────────────────────────
 _TOTAL_RE = re.compile(
     r"(?:total|over|under|o/u)\b",
@@ -25754,8 +25784,16 @@ async def _build_game_markets(
     if sport_key and event.commence_time:
         home_patterns = _team_name_patterns(event.home_team_name)
         away_patterns = _team_name_patterns(event.away_team_name)
-        home_conditions = [FuturesMarket.name.ilike(f"%{p}%") for p in home_patterns if len(p) >= 4]
-        away_conditions = [FuturesMarket.name.ilike(f"%{p}%") for p in away_patterns if len(p) >= 4]
+        # #10820: each side is an OR group, so a pattern containing another one
+        # of the group can never decide a match — see `_or_group_minimal_patterns`.
+        home_conditions = [
+            FuturesMarket.name.ilike(f"%{p}%")
+            for p in _or_group_minimal_patterns([p for p in home_patterns if len(p) >= 4])
+        ]
+        away_conditions = [
+            FuturesMarket.name.ilike(f"%{p}%")
+            for p in _or_group_minimal_patterns([p for p in away_patterns if len(p) >= 4])
+        ]
 
         if home_conditions and away_conditions:
             window = timedelta(hours=6)
