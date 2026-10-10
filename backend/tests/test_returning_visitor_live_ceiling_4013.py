@@ -400,6 +400,7 @@ class TestTheOldBehaviourFailsThisBar:
 
 class TestTheRepublishedMirrorInheritsTheAgeItWasBuiltFrom:
     @pytest.mark.asyncio
+    @pytest.mark.usefixtures("opening_seating_off")
     async def test_an_aged_shared_entry_earns_a_shortened_private_mirror(
         self, monkeypatch
     ):
@@ -457,6 +458,7 @@ class TestTheRepublishedMirrorInheritsTheAgeItWasBuiltFrom:
                 ), f"{key} outlives the ceiling at age {age_at_seed}"
 
     @pytest.mark.asyncio
+    @pytest.mark.usefixtures("opening_seating_off")
     async def test_a_shared_entry_that_has_spent_the_ceiling_is_not_republished(
         self, monkeypatch
     ):
@@ -496,6 +498,7 @@ class TestTheRepublishedMirrorInheritsTheAgeItWasBuiltFrom:
         assert resp.headers["x-feed-cache"] == "shared_hit"
 
     @pytest.mark.asyncio
+    @pytest.mark.usefixtures("opening_seating_off")
     async def test_a_non_live_shared_entry_keeps_its_long_window(self, monkeypatch):
         """The clamp is the LIVE ceiling and must not shorten a settled page.
 
@@ -573,6 +576,7 @@ class TestNoLivePageIsServedPastTheCeiling:
         assert resp.headers["x-feed-cache"] != "hit"
 
     @pytest.mark.asyncio
+    @pytest.mark.usefixtures("opening_seating_off")
     async def test_refusing_falls_through_to_the_shared_entry_not_a_cold_build(
         self, monkeypatch
     ):
@@ -601,6 +605,7 @@ class TestNoLivePageIsServedPastTheCeiling:
         assert served_age < FEED_RESPONSE_STALE_TTL_LIVE_SECONDS
 
     @pytest.mark.asyncio
+    @pytest.mark.usefixtures("opening_seating_off")
     async def test_a_live_entry_inside_the_ceiling_is_still_served(self, monkeypatch):
         """The control. Without it this suite could pass by refusing everything."""
         built_at = time.time() - 20.0
@@ -616,6 +621,7 @@ class TestNoLivePageIsServedPastTheCeiling:
         assert not built
 
     @pytest.mark.asyncio
+    @pytest.mark.usefixtures("opening_seating_off")
     async def test_a_settled_page_past_the_ceiling_is_still_served(self, monkeypatch):
         """The LIVE ceiling binds live pages only — the second control."""
         built_at = time.time() - 240.0
@@ -631,6 +637,7 @@ class TestNoLivePageIsServedPastTheCeiling:
         assert not built
 
     @pytest.mark.asyncio
+    @pytest.mark.usefixtures("opening_seating_off")
     async def test_a_payload_with_no_origin_is_not_refused(self, monkeypatch):
         """An UNKNOWN age is not an over-age.
 
@@ -667,6 +674,7 @@ class TestTheCohortThatBreachedIsTheOneWithAPrivateKey:
         assert PRIVATE_KEY != SHARED_KEY
 
     @pytest.mark.asyncio
+    @pytest.mark.usefixtures("opening_seating_off")
     async def test_the_route_still_uses_these_exact_keys(self, monkeypatch):
         """Ask the ROUTE, don't recompute — see the note at the constants.
 
