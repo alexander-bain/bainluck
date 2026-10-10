@@ -155,9 +155,13 @@ class TestTheWriteTheReaderSees:
             "betting": {"value": 0.5005, "updated_at": "2026-09-20T14:41:30+00:00"},
             "betting_book_count": 6,
         }
-        assert compute_aggregate_probability(served) == pytest.approx(0.5005), (
-            "the defect, reproduced: the served blend WAS the invented midpoint"
-        )
+        # RESTATED for #10764: under the median the served blend WAS the
+        # invented 0.5005. On the live weighted average the same bag reads
+        # 0.571974 — still pulled 27 points off Kalshi by the invented midpoint,
+        # which is why the writer above must drop it.
+        assert compute_aggregate_probability(served) == pytest.approx(
+            0.571974, abs=1e-6
+        ), "the defect, reproduced: the invented midpoint pulls the served blend"
 
         repaired = _Row()
         repaired.win_probability_sources = {

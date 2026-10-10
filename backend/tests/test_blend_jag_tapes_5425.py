@@ -54,6 +54,19 @@ SFLAR = FIXTURES / "blend_tape_sflar_14632820.json"
 # publication count ~6x versus live/159's 5s probe grid.
 GRID_SECONDS = 30.0
 
+# RESTATED 2026-10-10 (#10764, #1829). These tapes were captured on live events
+# and replayed through the live hero, which was then a weighted median. #10764
+# (Alex-approved) made the live hero a weighted AVERAGE, so the tie rule no
+# longer reaches a live publication and old-rule vs new-rule replays came out
+# identical — every comparison below went vacuous. The tie rule still governs
+# every median path, and `suspended` is the one that keeps the in-play recency
+# decay these tapes were measured under, so the replay runs there. Measured on
+# that path at this grid: steps > 5pt 29 -> 21, thin kalshi 25.0 -> 12.5pt,
+# thin polymarket 14.0 -> 18.2pt — the docstring's directions, all three. On the
+# live average the Gauff tape reads 21 / 12.5 / 18.2, the new tie rule's own
+# numbers: two equal-weight venues average to their tie midpoint.
+MEDIAN_PATH_STATUS = "suspended"
+
 
 class _FakeEvent:
     espn_win_prob_home = None
@@ -61,7 +74,7 @@ class _FakeEvent:
 
     def __init__(self, wps):
         self.win_probability_sources = wps
-        self.status = "live"
+        self.status = MEDIAN_PATH_STATUS
 
 
 def _lower_value_tie_rule(values, weights):
@@ -107,7 +120,9 @@ def _replay(tape):
                 s: {"value": v, "updated_at": stamp.isoformat()}
                 for s, (stamp, v) in latest.items()
             }
-            published = agg.compute_aggregate_probability(_FakeEvent(wps), "live")
+            published = agg.compute_aggregate_probability(
+                _FakeEvent(wps), MEDIAN_PATH_STATUS
+            )
             series.append((t, published, {s: v for s, (_, v) in latest.items()}))
         t += step
     return series

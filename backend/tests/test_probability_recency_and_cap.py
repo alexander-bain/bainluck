@@ -86,23 +86,45 @@ def _stamped(**kwargs):
 
 
 class TestTheSpecimenIsFixed:
+    """RESTATED for #10764 + the #1829 eligibility follow-through (2026-10-10).
+
+    Under the median these read 99/1 and landed ON espn. #10764 (Alex-approved)
+    made the live hero a weighted AVERAGE, which lands on no single source, and
+    Alex then ruled "keep the weighted average and strengthen stale-input
+    eligibility". The stamped live specimen now reads 95/5: the day-old kalshi
+    leaves, and `betting` (25 min behind) still pulls at about half weight
+    because `espn` is just as far behind and right, so no timestamp rule can
+    separate them. Full replay: `test_live_average_stale_eligibility_1829.py`.
+    The median paths still read 99/1 (`test_the_median_paths_still_read_99_1`).
+    """
+
     def test_the_header_no_longer_reads_87_13(self):
         home = compute_aggregate_probability(_FakeEvent(SPECIMEN_STAMPED))
-        assert round((1 - home) * 100) == 99
-        assert round(home * 100) == 1
+        assert (round((1 - home) * 100), round(home * 100)) == (95, 5)
+        assert (round((1 - home) * 100), round(home * 100)) != (87, 13)
+
+    def test_the_median_paths_still_read_99_1(self):
+        for status in ("completed", "suspended"):
+            home = compute_aggregate_probability(_FakeEvent(SPECIMEN_STAMPED, status))
+            assert home == pytest.approx(SPECIMEN_VALUES["espn"], abs=1e-9)
 
     def test_the_hero_is_no_longer_the_betting_source_verbatim(self):
-        """The whole defect in one assertion: the median must stop landing ON
+        """The whole defect in one assertion: the hero must stop landing ON
         the frozen sportsbook number."""
         home = compute_aggregate_probability(_FakeEvent(SPECIMEN_STAMPED))
         assert home != pytest.approx(SPECIMEN_VALUES["betting"], abs=1e-6)
-        # It lands on a source that was actually watching the game.
-        assert home == pytest.approx(SPECIMEN_VALUES["espn"], abs=1e-9)
+        assert home == pytest.approx(0.049069, abs=1e-6)
 
     def test_the_three_live_aware_models_now_carry_the_answer(self):
-        """They agreed on ~0 and were out-voted. Now they are not."""
-        home = compute_aggregate_probability(_FakeEvent(SPECIMEN_STAMPED))
-        assert home <= 0.01
+        """They agreed on ~0 and were out-voted. Now they hold most of the
+        weight the live average uses (2.5 of 3.85), and kalshi holds none."""
+        from app.utils.aggregation import _live_average_inputs
+
+        values, weights = _live_average_inputs(_FakeEvent(SPECIMEN_STAMPED), "live")
+        by_key = dict(zip(SPECIMEN_STAMPED, weights))
+        live_aware = by_key["mlb"] + by_key["espn"] + by_key["stat_model"]
+        assert live_aware / sum(weights) > 0.6
+        assert by_key["kalshi"] == 0.0
 
     def test_either_half_fixes_it_alone(self):
         """Decay and cap are independent, and each is sufficient here.
@@ -111,9 +133,18 @@ class TestTheSpecimenIsFixed:
         backup and two mechanisms that only work together — and because the
         cap is live on deploy while the decay waits for the writers to re-poll.
         """
-        # Cap only: the unstamped shape production holds TODAY.
-        cap_only = compute_aggregate_probability(_FakeEvent(dict(SPECIMEN_VALUES)))
+        # Cap only: the unstamped shape production held on 2026-08-13. On the
+        # MEDIAN path the cap is still sufficient by itself. RESTATED: on the
+        # live AVERAGE (#10764) it is not — 0.120991, 88/12 — and with no clock
+        # on any arm the #1829 eligibility rule has nothing to refuse. Every
+        # writer has stamped since 2026-08-14, so this is the legacy shape.
+        cap_only = compute_aggregate_probability(
+            _FakeEvent(dict(SPECIMEN_VALUES), "suspended")
+        )
         assert cap_only == pytest.approx(0.008, abs=1e-9)
+        assert compute_aggregate_probability(
+            _FakeEvent(dict(SPECIMEN_VALUES))
+        ) == pytest.approx(0.120991, abs=1e-6)
 
         # Decay only: same stamps, cap disabled by dropping below its gate is not
         # possible at 5 sources, so verify against hand-computed decayed weights.
@@ -176,10 +207,13 @@ class TestMonotoneOnUnstampedData:
         ) == compute_aggregate_probability(_FakeEvent(as_dicts))
 
     def test_an_unstamped_source_is_not_decayed_by_a_stamped_sibling(self):
-        """Mixed shapes are the ROLLOUT state and will exist for hours.
+        """Mixed shapes were the ROLLOUT state, expected to exist for hours.
 
-        The unstamped source must not be punished for the silence it cannot
-        prove it did not have.
+        On the MEDIAN path the unstamped source is still not punished for the
+        silence it cannot prove it did not have. RESTATED (2026-10-10): the
+        rollout ended 2026-08-14, and on the live AVERAGE an undated arm beside
+        two or more dated ones cannot be shown current, so it is refused
+        (#1829 eligibility follow-through, `_live_average_inputs` rule 2).
         """
         mixed = {
             "betting": 0.9,  # bare float, no stamp
@@ -192,8 +226,13 @@ class TestMonotoneOnUnstampedData:
             "mlb": {"value": 0.2, "updated_at": T0.isoformat()},
         }
         assert compute_aggregate_probability(
+            _FakeEvent(mixed, "suspended")
+        ) == compute_aggregate_probability(_FakeEvent(all_fresh, "suspended"))
+
+        without_betting = {k: v for k, v in all_fresh.items() if k != "betting"}
+        assert compute_aggregate_probability(
             _FakeEvent(mixed)
-        ) == compute_aggregate_probability(_FakeEvent(all_fresh))
+        ) == compute_aggregate_probability(_FakeEvent(without_betting))
 
     def test_uniformly_old_is_not_stale(self):
         """Every source an hour behind: cadence, not staleness. Unchanged.
@@ -295,7 +334,13 @@ class TestRelativeDecayCurve:
         decay first, then cap the decayed weights. Capping first would let a
         source be re-inflated relative to a sibling that later decayed."""
         fresh = _stamped(betting=(0.9, 0), espn=(0.1, 0), mlb=(0.12, 0))
-        assert compute_aggregate_probability(_FakeEvent(fresh)) == pytest.approx(0.12)
+        # RESTATED for #10764: the fresh live hero is the capped weighted
+        # AVERAGE (0.386), no longer the median's 0.12. The ordering claim and
+        # the stale assertion below are unchanged.
+        assert compute_aggregate_probability(_FakeEvent(fresh)) == pytest.approx(0.386)
+        assert compute_aggregate_probability(
+            _FakeEvent(fresh, "suspended")
+        ) == pytest.approx(0.12)
         stale_book = _stamped(betting=(0.9, 3600), espn=(0.1, 0), mlb=(0.12, 0))
         assert compute_aggregate_probability(_FakeEvent(stale_book)) < 0.5
 
@@ -578,12 +623,16 @@ class TestOneRuleAcrossAllThreeBlendPaths:
         )
 
         hero = compute_aggregate_probability(_FakeEvent(dict(SPECIMEN_VALUES)))
+        # RESTATED for #10764: the route draws a live event's chart with
+        # `live_blend=True` (`events.py`), so that is the series the hero must
+        # match; without it the series is the median the hero no longer uses.
         series = compute_aggregated_probability(
             {
                 key: [TimestampedProb(timestamp=T0, home_probability=value)]
                 for key, value in SPECIMEN_VALUES.items()
             },
             bucket_seconds=30,
+            live_blend=True,
         )
         assert hero == pytest.approx(series[-1].home_probability, abs=1e-6)
 

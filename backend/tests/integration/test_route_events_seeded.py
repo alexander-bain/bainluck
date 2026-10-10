@@ -685,18 +685,18 @@ class TestEventDetailCurrentOdds:
     async def test_aggregate_current_odds_fallback_contract(self, event_detail_client):
         resp = await event_detail_client.get("/api/events/1")
         body = resp.json()
-        # Weighted-MEDIAN blend (#240 Item 1), matching the chart's blend line.
-        # Sources: betting=0.65 (w=3.0), espn=0.62 (w=1.5); betting carries the
-        # majority weight so the median is 0.65 (was 0.64 under the old mean).
+        # Live blend, matching the chart's blend line. RESTATED for #10764: the
+        # live hero is the weighted AVERAGE again — betting=0.65 (w=3.0),
+        # espn=0.62 (w=1.5) -> 0.64. (The #240 median read 0.65.)
         # #2085: `*_rendered_percent` are the two whole percents the page PRINTS,
         # served so both sides round once against each other instead of
         # independently (which prints 101 on a half-percent blend). The
         # probabilities themselves are unchanged — that is the point of the pair.
         assert body["current_odds"] == {
-            "home_probability": 0.65,
-            "away_probability": 0.35,
-            "away_rendered_percent": 35,
-            "home_rendered_percent": 65,
+            "home_probability": 0.64,
+            "away_probability": 0.36,
+            "away_rendered_percent": 36,
+            "home_rendered_percent": 64,
             "source": "aggregate",
             "bookmaker_count": 0,
         }
@@ -706,8 +706,8 @@ class TestEventDetailCurrentOdds:
         probability (the blend), and it matches the displayed current_odds."""
         resp = await event_detail_client.get("/api/events/1")
         body = resp.json()
-        assert body["hero_probability"] == 0.65
-        assert body["hero_probability_away"] == 0.35
+        assert body["hero_probability"] == 0.64  # #10764 live average
+        assert body["hero_probability_away"] == 0.36
         assert body["hero_probability_source"] == "blend"
         assert body["hero_probability"] == body["current_odds"]["home_probability"]
 

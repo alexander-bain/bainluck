@@ -109,7 +109,10 @@ class TestLiveSurfaceParity:
 
         assert card == hero == edge
         # And it is the real blend, not whatever the series happened to end on.
-        assert edge == pytest.approx(0.5956)
+        # RESTATED for #10764: the live blend is the capped weighted AVERAGE of
+        # the five readings (0.632434), no longer the median that landed on
+        # betting's 0.5956.
+        assert edge == pytest.approx(0.632434, abs=1e-6)
 
     def test_integer_rounded_surfaces_agree(self):
         """What the user actually reads: the rounded percentage on each surface."""
@@ -509,7 +512,11 @@ class TestNoSmoothingOnTheDisplayedLine:
             ]
             for src, val in current.items()
         }
-        line = compute_aggregated_probability(series, bucket_seconds=60)
+        # RESTATED for #10764: the route draws a live chart with
+        # `live_blend=True`, the series the live hero must match.
+        line = compute_aggregated_probability(
+            series, bucket_seconds=60, live_blend=True
+        )
         assert line
         assert line[-1].home_probability == pytest.approx(
             compute_aggregate_probability(_event(**current))

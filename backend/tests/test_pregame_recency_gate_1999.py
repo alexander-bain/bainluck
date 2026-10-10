@@ -208,9 +208,12 @@ class TestCadenceInvariance:
             for stamp in self.STAMPS
         }
         assert len(set(heroes.values())) > 1, heroes
-        assert max(heroes.values()) - min(heroes.values()) == pytest.approx(
-            BETTING_VALUE - KALSHI_VALUE
-        )
+        # RESTATED 2026-10-10 (#10764, #1829). Under the median the sweep ran
+        # the whole spread, betting to kalshi. On the live average it runs from
+        # the fresh pair's proportional blend (0.589921) to kalshi alone: from
+        # 40 minutes behind, `betting` carries no weight at all.
+        assert max(heroes.values()) == pytest.approx(0.589921, abs=1e-6)
+        assert min(heroes.values()) == pytest.approx(KALSHI_VALUE)
 
 
 class TestTheGhostCannotArbitrateAnUnstartedGameEither:

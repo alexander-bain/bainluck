@@ -236,10 +236,17 @@ def test_the_dead_arm_keeps_its_weight_in_the_blend_it_only_leaves_the_gate():
     """#5542 narrows WHEN the gate fires, never what the median is made of.
 
     The floored arm is dropped from the gate's population only. If the two live
-    arms agree (no divergence), the blend must still weigh all three — "we
+    arms agree (no divergence), the MEDIAN must still weigh all three — "we
     stopped hearing from Kalshi" is not "Kalshi does not exist", and this is the
     property that keeps the repair a gate change rather than a silent
     source-deletion.
+
+    RESTATED 2026-10-10 (#10764, #1829). The live hero is now a weighted
+    AVERAGE, and at 10% inside an average a lapsed arm is a permanent pull by
+    value. Alex ruled "keep the weighted average and strengthen stale-input
+    eligibility", so on the live average an arm 40+ minutes behind carries zero
+    weight — the chart's live rule. The gate population and the median paths
+    are unchanged and still asserted here; the arm is still a hero source key.
     """
     now = datetime.now(timezone.utc)
     ev = _Ev(
@@ -259,10 +266,13 @@ def test_the_dead_arm_keeps_its_weight_in_the_blend_it_only_leaves_the_gate():
     assert not spread_exceeds(abs(0.62 - 0.60))
 
     assert assess_event_divergence(ev, "live") is None
-    # All three still weigh: the median is taken over the full population.
-    assert compute_aggregate_probability(ev, "live") == pytest.approx(
+    # On the median path all three still weigh.
+    assert compute_aggregate_probability(ev, "suspended") == pytest.approx(
         round(_weighted_median(values, weights), 6)
     )
+    # On the live average the 131-minute arm carries nothing: kalshi and
+    # polymarket at equal weight average to 0.61.
+    assert compute_aggregate_probability(ev, "live") == pytest.approx(0.61)
     assert len(keys) == 3 and "mlb" in keys
 
 
