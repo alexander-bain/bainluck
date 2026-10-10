@@ -12,7 +12,11 @@ session) and old debt prepared once then stamped in order. Failures are keyed
 to the EVENT whose transaction fails, not to a session attempt number, and the
 invariants are asserted per event: a failed or cancelled transaction leaves
 only its own event owed with its slots undone, every committed event stays
-authoritative and is never re-owed, and nothing is double counted.
+authoritative, and nothing is double counted. An event whose commit was
+bookkept (written value, chart slot and receipt recorded) is never re-owed.
+The one allowed overlap is the ambiguous sibling seam: a worker cancelled
+after its COMMIT but before that synchronous bookkeeping leaves a committed,
+unbookkept event owed, a redundant re-stamp bounded by the other workers.
 """
 
 import asyncio
@@ -224,9 +228,10 @@ async def committed_events(rig):
 
 async def cancelled_accounting(rig, r, *, owed_at_least):
     """A cancelled refresh: nothing uncommitted is lost, and a committed stamp
-    is at worst re-owed once (a worker cancelled after its COMMIT but before
-    its bookkeeping costs "one redundant re-stamp, never a lost one"; at most
-    the other FRESH_STAMP_WORKERS - 1 workers can be in that window)."""
+    is re-owed only from the ambiguous seam (a worker cancelled after its
+    COMMIT but before its bookkeeping costs "one redundant re-stamp, never a
+    lost one"; at most the other FRESH_STAMP_WORKERS - 1 workers can be in
+    that window). A bookkept commit is past that seam and is never owed."""
     from app.tasks.live_blend_refresh import FRESH_STAMP_WORKERS
 
     kept = await committed_events(rig)
@@ -237,11 +242,13 @@ async def cancelled_accounting(rig, r, *, owed_at_least):
     owed = set(r.pending_event_ids())
     assert set(range(1, 13)) - kept <= owed, "an uncommitted event was lost"
     assert owed_at_least <= owed
+    written = set(r._last_written_value)
     redundant = owed & kept
     assert len(redundant) <= FRESH_STAMP_WORKERS - 1, redundant
     assert kept == snapshots  # each kept stamp kept its chart point with it
-    assert set(r._last_written_value) == set(r._last_snapshot_at) <= kept
-    assert kept - set(r._last_written_value) <= redundant
+    assert written == set(r._last_snapshot_at) <= kept
+    assert not owed & written, f"bookkept event re-owed: {sorted(owed & written)}"
+    assert redundant == kept - written  # only the unbookkept commits overlap
     assert r.stats["stamped"] == len(r._last_written_value)
     return kept, redundant
 
@@ -598,10 +605,27 @@ async def test_real_cold_orientation_later_event_view_warm_price_and_named_overr
     assert [f["source_value"] for f in frames if f["event_id"] == 1] == [0.3, 0.2, 0.75]
 
 
-async def test_later_delivery_cancel_does_not_double_count_prior_failed_group(rig):
+def _reowe_on_cancel(r, event_ids):
+    """Mutant: the cancel cleanup also re-owes events that were bookkept."""
+    real_failed = r._refresh_failed
+
+    def refresh_failed(due, *args, **kwargs):
+        if any(isinstance(a, asyncio.CancelledError) for a in args):
+            due = set(due) | set(event_ids)
+        return real_failed(due, *args, **kwargs)
+
+    r._refresh_failed = refresh_failed
+
+
+@pytest.mark.parametrize("mutant", [False, True], ids=["source", "reowe-bookkept"])
+async def test_later_delivery_cancel_does_not_double_count_prior_failed_group(
+    rig, mutant
+):
     await seed(rig)
     r, _, _, resolved, publish = refresher(rig, fail_commit_event=6)
     stage(r, range(1, 13))
+    if mutant:
+        _reowe_on_cancel(r, {9})
 
     async def partial(batch):
         await publish(batch[:1])
@@ -615,6 +639,13 @@ async def test_later_delivery_cancel_does_not_double_count_prior_failed_group(ri
     r._publish = partial
     with pytest.raises(asyncio.CancelledError):
         await r.refresh(range(1, 13))
+    if mutant:
+        # Event 9 committed, was bookkept and delivered; owing it again is
+        # not the ambiguous seam, so the accounting must refuse it.
+        assert 9 in r._last_written_value and 9 in r.pending_event_ids()
+        with pytest.raises(AssertionError, match=r"bookkept event re-owed: \[9\]"):
+            await cancelled_accounting(rig, r, owed_at_least={6})
+        return
     kept, redundant = await cancelled_accounting(rig, r, owed_at_least={6})
     assert 6 not in kept and 9 in kept
     assert set().union(*resolved) <= kept
