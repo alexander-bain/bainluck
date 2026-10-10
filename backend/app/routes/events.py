@@ -26692,6 +26692,20 @@ async def _build_game_markets(
     team_total_items: list[dict] = []
     home_lower = (event.home_team_name or "").lower()
     away_lower = (event.away_team_name or "").lower()
+    # A word both club names share ("york", "angeles") identifies neither.
+    _home_words = {w for w in home_lower.split() if len(w) >= 4}
+    _away_words = {w for w in away_lower.split() if len(w) >= 4}
+    _home_words, _away_words = _home_words - _away_words, _away_words - _home_words
+
+    def _clubs_named(text: str | None) -> set[str]:
+        low = (text or "").lower()
+        named = set()
+        if any(w in low for w in _home_words):
+            named.add("home")
+        if any(w in low for w in _away_words):
+            named.add("away")
+        return named
+
     for t in totals_thresholds:
         if t["market_type"] == "game_total":
             key = t["threshold"]
@@ -26715,11 +26729,19 @@ async def _build_game_markets(
                 elif t["source"] == "kalshi":
                     seen_thresholds[key] = t
         elif t["market_type"] == "team_total":
-            mname = (t.get("market_name") or "").lower()
-            if home_lower and any(w in mname for w in home_lower.split() if len(w) >= 4):
+            # #10823: the OUTCOME names the club before the market does. Kalshi
+            # lists both clubs' ladders in ONE market ("LV Raiders vs NE
+            # Patriots: Team Total"), so a market-name test tagged every
+            # "LV Raiders over 7.5 points" row as the home Patriots, and 7c then
+            # capped Raiders rungs with Patriots prices. A text naming both clubs
+            # attributes neither — an untagged row is served as it is, never
+            # guessed onto a side.
+            named = _clubs_named(t.get("outcome_name")) or _clubs_named(t.get("market_name"))
+            side = next(iter(named)) if len(named) == 1 else None
+            if side == "home":
                 t["team_name"] = event.home_team_name
                 t["team_side"] = "home"
-            elif away_lower and any(w in mname for w in away_lower.split() if len(w) >= 4):
+            elif side == "away":
                 t["team_name"] = event.away_team_name
                 t["team_side"] = "away"
             team_total_items.append(t)
@@ -27031,15 +27053,40 @@ async def _build_game_markets(
         cleaned_period_totals.extend(_enforce_monotonicity(group))
     period_markets = period_non_totals + cleaned_period_totals
 
-    # 7c. Enforce monotonicity on team totals — group by team side
-    team_total_by_side: dict[str, list[dict]] = {}
-    for tt in team_total_items:
+    # 7c. Enforce monotonicity on team totals — WITHIN ONE MARKET'S OWN CLUB (#10823)
+    #
+    # This grouped by `team_side` alone, which made one ladder out of a club's
+    # first-half AND full-game totals, from both venues, plus — through the
+    # market-name tag fixed above — the OTHER club's rungs of Kalshi's two-club
+    # market. Production 2026-10-10 04:08Z, `/api/events/14782161/game-markets`
+    # (Raiders at Patriots): 64 team-total rows carried 13 distinct prices, and
+    # Patriots 1H o6.5, Patriots o10.5 and "LV Raiders over 7.5 points" were all
+    # served 0.825. Same rule as 7d below: a market is the widest a cap may
+    # travel, the club the outcome names splits a two-club market, and
+    # `_is_threshold_ladder` decides whether the rows left are rungs at all. A
+    # row with no market id is never grouped. Rows not capped still pass through
+    # `_enforce_monotonicity` one at a time, so its `> 0` filter (and the #6196
+    # verdict exemption) still runs on every row.
+    _tt_side_order: dict[str, int] = {}
+    team_total_groups: dict[tuple, list[dict]] = {}
+    for i, tt in enumerate(team_total_items):
         side = tt.get("team_side", "unknown")
-        team_total_by_side.setdefault(side, []).append(tt)
+        _tt_side_order.setdefault(side, len(_tt_side_order))
+        mid = tt.get("_market_id")
+        key = (mid, side) if mid is not None else (None, i)
+        team_total_groups.setdefault(key, []).append(tt)
     team_total_items = []
-    for group in team_total_by_side.values():
+    for key, group in team_total_groups.items():
         group.sort(key=lambda x: x.get("threshold", 0) or 0)
-        team_total_items.extend(_enforce_monotonicity(group))
+        if key[0] is not None and _is_threshold_ladder(group):
+            team_total_items.extend(_enforce_monotonicity(group))
+        else:
+            for tt in group:
+                team_total_items.extend(_enforce_monotonicity([tt]))
+    # Back to the served order: by side, then by rung.
+    team_total_items.sort(
+        key=lambda x: (_tt_side_order[x.get("team_side", "unknown")], x.get("threshold", 0) or 0)
+    )
 
     # 7d. Enforce monotonicity on spreads — WITHIN ONE MARKET'S OWN LADDER (#5374)
     #
