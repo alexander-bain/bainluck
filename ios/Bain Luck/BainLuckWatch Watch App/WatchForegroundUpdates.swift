@@ -8,6 +8,7 @@ import Foundation
     private var lastFrame: LiveStreamFrame?
     private var nextAttempt: TimeInterval = 0
     var pending: Bool { sequence != consumed }
+    var onPending: (@MainActor () -> Void)?
 
     func receive(_ frame: LiveStreamFrame, eventID: Int) {
         guard frame.eventId == eventID, frame != lastFrame else { return }
@@ -18,11 +19,67 @@ import Foundation
         lastFrame = frame
         invalidate()
     }
-    func invalidate() { sequence += 1 }
+    func invalidate() {
+        let alreadyPending = pending
+        sequence += 1
+        // A burst while already pending earns no extra scheduler wakeups.
+        if !alreadyPending { onPending?() }
+    }
     func delay(at now: TimeInterval) -> TimeInterval { max(0, nextAttempt - now) }
     func take(at now: TimeInterval) {
         consumed = sequence
         nextAttempt = now + 2 // Coalesce bursts without permitting a hot request loop.
+    }
+}
+
+/// One cancellation-safe wait owned by the visible refresh loop. Stream signals
+/// interrupt the deadline; a late canceled timer cannot resume a later wait.
+@MainActor final class WatchForegroundWakeup {
+    private var waitID: UUID?
+    private var waiter: CheckedContinuation<Void, Error>?
+    private var timer: Task<Void, Never>?
+
+    func signal() {
+        guard let id = waitID else { return }
+        finish(id: id, result: .success(()))
+    }
+
+    func wait(seconds: TimeInterval,
+              sleep: @escaping @MainActor (TimeInterval) async throws -> Void) async throws {
+        try Task.checkCancellation()
+        let id = UUID()
+        try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+                precondition(waiter == nil, "Only the serial foreground owner may wait")
+                guard !Task.isCancelled else {
+                    continuation.resume(throwing: CancellationError())
+                    return
+                }
+                waitID = id
+                waiter = continuation
+                timer = Task { @MainActor in
+                    do {
+                        try await sleep(seconds)
+                        finish(id: id, result: .success(()))
+                    } catch {
+                        finish(id: id, result: .failure(error))
+                    }
+                }
+            }
+        } onCancel: {
+            Task { @MainActor [weak self] in
+                self?.finish(id: id, result: .failure(CancellationError()))
+            }
+        }
+    }
+
+    private func finish(id: UUID, result: Result<Void, Error>) {
+        guard waitID == id, let continuation = waiter else { return }
+        waitID = nil
+        waiter = nil
+        timer?.cancel()
+        timer = nil
+        continuation.resume(with: result)
     }
 }
 
@@ -42,12 +99,14 @@ extension WatchSelectedGameStore {
     @MainActor func runLiveForegroundRefresh(
         open: @escaping @MainActor (Int) throws -> LiveStreamHandle = { try WatchForegroundStreamFactory.open(eventID: $0) },
         clock: @escaping () -> TimeInterval = { ProcessInfo.processInfo.systemUptime },
-        sleep: (TimeInterval) async throws -> Void = { try await Task.sleep(for: .seconds($0)) }
+        sleep: @escaping @MainActor (TimeInterval) async throws -> Void = { try await Task.sleep(for: .seconds($0)) }
     ) async {
         stopLiveForegroundUpdates()
         guard let eventID = selectedEventID else { return }
         let generation = foregroundStreamGeneration
         let invalidation = WatchForegroundInvalidation()
+        let wakeup = WatchForegroundWakeup()
+        invalidation.onPending = { wakeup.signal() }
         var stream: LiveStreamController?
         var attemptedStream = false
         var nextTick = clock()
@@ -66,7 +125,17 @@ extension WatchSelectedGameStore {
                 invalidation.take(at: clock())
             } else if !attemptedStream {
                 attemptedStream = true
-                let controller = LiveStreamController(open: { try open(eventID) }, now: clock,
+                let controller = LiveStreamController(open: {
+                    let handle = try open(eventID)
+                    // Control events can change deadlines without changing
+                    // delivering (for example a rollover before the first open).
+                    // Wake after the synchronous controller handlers run; these
+                    // signals do not themselves authorize another detail read.
+                    for event in ["reconnect", "closed", "error"] {
+                        handle.on(event) { _ in wakeup.signal() }
+                    }
+                    return handle
+                }, now: clock,
                     onFrame: { frame in invalidation.receive(frame, eventID: eventID) },
                     onDeliveringChange: { delivering in
                         // A dropped/closed stream earns one authoritative reread.
@@ -76,7 +145,7 @@ extension WatchSelectedGameStore {
                 activeForegroundStream = controller
                 controller.start()
             }
-            if clock() >= nextTick {
+            if clock() >= nextTick || stream?.state.reopenAt.map({ clock() >= $0 }) == true {
                 stream?.tick()
                 nextTick = clock() + LiveStreamTiming.tickInterval
             }
@@ -97,12 +166,23 @@ extension WatchSelectedGameStore {
                 // A newer invalidation is still pending. Never run a parallel HTTP read.
                 continue
             }
-            // No stream exists outside live play. Sleep to the next real
-            // poll/backoff deadline instead of waking the CPU every second.
-            // The visible view's task cancellation still interrupts this wait.
-            let sleepDelay = game?.isLive == true ? 1 : max(
-                foregroundPollDelay, max(0, fallbackNotBefore - clock()))
-            do { try await sleep(max(0.01, sleepDelay)) } catch { return }
+            // Wait only for a real deadline. Accepted stream invalidations
+            // wake this immediately; pending bursts share the same two-second
+            // coalescing/backoff deadline instead of waking once per frame.
+            let at = clock()
+            var sleepDelay = max(foregroundPollDelay, max(0, fallbackNotBefore - at))
+            if let stream, !stream.state.stopped {
+                sleepDelay = min(sleepDelay, max(0, nextTick - at))
+                if let reopenAt = stream.state.reopenAt {
+                    sleepDelay = min(sleepDelay, max(0, reopenAt - at))
+                }
+            }
+            if invalidation.pending {
+                sleepDelay = min(sleepDelay, max(foregroundInvalidationDelay,
+                                                invalidation.delay(at: at)))
+            }
+            do { try await wakeup.wait(seconds: max(0.01, sleepDelay), sleep: sleep) }
+            catch { return }
         }
     }
 }

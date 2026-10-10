@@ -62,6 +62,8 @@ import XCTest
 
     func testInvalidationDuringFetchEarnsOneFollowupAndDuplicatesDoNot() {
         let signal = WatchForegroundInvalidation()
+        var wakeups = 0
+        signal.onPending = { wakeups += 1 }
         let first = LiveStreamFrame(eventId: 101, p: 0.5, source: nil, sourceValue: nil,
             updatedAt: nil, status: nil, rev: .init(FoldRevision(["101": 1])))
         let newer = LiveStreamFrame(eventId: 101, p: 0.6, source: nil, sourceValue: nil,
@@ -72,12 +74,14 @@ import XCTest
         signal.receive(newer, eventID: 101)
         signal.receive(first, eventID: 101)
         XCTAssertTrue(signal.pending)
+        XCTAssertEqual(wakeups, 2, "One initial wake and one in-flight follow-up, no duplicate wakes")
         XCTAssertEqual(signal.delay(at: 101), 1)
         signal.take(at: 102)
         signal.receive(newer, eventID: 101)
         XCTAssertFalse(signal.pending)
         signal.receive(newer, eventID: 202)
         XCTAssertFalse(signal.pending)
+        XCTAssertEqual(wakeups, 2)
     }
 
     func testResyncIsDedupedPerConnectionAndNeverPaintsAPrice() {
@@ -107,5 +111,222 @@ import XCTest
             priceClock: "2026-10-10T08:00:00Z"), replacing: held))
         let final = try Self.game(revision: 8, status: "final")
         XCTAssertFalse(WatchSelectedGameStore.canAdopt(try Self.game(revision: 9), replacing: final))
+    }
+
+    func testLiveSignalInterruptsQuietTickWaitAndReadsAuthoritativeDetail() async throws {
+        let name = "watch-event-wakeup-\(UUID())"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: name))
+        defer { defaults.removePersistentDomain(forName: name) }
+        var clock = 1_000.0
+        let selected = WatchSelectedGameStore(transport: Detail(), defaults: defaults, retryClock: { clock })
+        selected.select(eventID: 101)
+        let handle = Handle()
+        let quiet = expectation(description: "Quiet live wait uses controller tick")
+        let refreshed = expectation(description: "Signal fetched detail before tick")
+        var waits = 0
+        let worker = Task {
+            await selected.runLiveForegroundRefresh(open: { _ in handle }, clock: { clock }, sleep: { seconds in
+                waits += 1
+                if waits == 1 {
+                    XCTAssertEqual(seconds, 5, accuracy: 0.001)
+                    quiet.fulfill()
+                } else if waits == 2 {
+                    XCTAssertEqual(selected.successfulRefreshSequence, 2)
+                    XCTAssertEqual(selected.game?.homeProbability, 0.61)
+                    XCTAssertEqual(selected.game?.awayProbability, 0.29)
+                    XCTAssertEqual(selected.game?.drawProbability, 0.10)
+                    XCTAssertEqual(selected.game?.probabilitySource, "blend")
+                    XCTAssertEqual(clock, 1_002, "No timer advance was needed for the frame")
+                    refreshed.fulfill()
+                } else { XCTFail("Unexpected extra wake") }
+                try await Task.sleep(for: .seconds(60))
+            })
+        }
+        defer { worker.cancel() }
+        await fulfillment(of: [quiet], timeout: 2)
+        clock = 1_002 // The existing two-second coalescing deadline has passed.
+        handle.fire("probability", #"{"event_id":101,"p":0.99,"rev":{"101":2}}"#)
+        await fulfillment(of: [refreshed], timeout: 2)
+        worker.cancel()
+        await worker.value
+        XCTAssertEqual(waits, 2)
+        XCTAssertEqual(handle.closes, 1)
+    }
+
+    func testRolloverBeforeDeliveringWakesForOneSecondReopenDeadline() async throws {
+        let name = "watch-rollover-wakeup-\(UUID())"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: name))
+        defer { defaults.removePersistentDomain(forName: name) }
+        var clock = 1_000.0
+        let selected = WatchSelectedGameStore(transport: Detail(), defaults: defaults, retryClock: { clock })
+        selected.select(eventID: 101)
+        var handles: [Handle] = []
+        let quiet = expectation(description: "Waiting before any open frame")
+        let reopened = expectation(description: "Reopened at controller deadline")
+        var waits = 0
+        let worker = Task {
+            await selected.runLiveForegroundRefresh(open: { _ in
+                let handle = Handle(); handles.append(handle); return handle
+            }, clock: { clock }, sleep: { seconds in
+                waits += 1
+                if waits == 1 {
+                    XCTAssertEqual(seconds, 5, accuracy: 0.001)
+                    quiet.fulfill()
+                } else if waits == 2 {
+                    XCTAssertEqual(seconds, 1, accuracy: 0.001)
+                    clock += seconds
+                    return
+                } else if waits == 3 {
+                    XCTAssertEqual(handles.count, 2)
+                    XCTAssertEqual(clock, 1_001)
+                    XCTAssertEqual(selected.successfulRefreshSequence, 1,
+                                   "A control wake is not a detail invalidation")
+                    reopened.fulfill()
+                } else { XCTFail("Unexpected extra wake") }
+                try await Task.sleep(for: .seconds(60))
+            })
+        }
+        defer { worker.cancel() }
+        await fulfillment(of: [quiet], timeout: 2)
+        handles.first?.fire("reconnect", "") // delivering is already false.
+        await fulfillment(of: [reopened], timeout: 2)
+        worker.cancel()
+        await worker.value
+        XCTAssertTrue(handles.allSatisfy(\.isClosed))
+    }
+
+    func testSignalDuringCoalescingDoesNotEarnExtraWakeOrEarlyRead() async throws {
+        let name = "watch-coalesce-wakeup-\(UUID())"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: name))
+        defer { defaults.removePersistentDomain(forName: name) }
+        var clock = 1_000.0
+        let selected = WatchSelectedGameStore(transport: Detail(), defaults: defaults, retryClock: { clock })
+        selected.select(eventID: 101)
+        let handle = Handle()
+        var waits = 0
+        await selected.runLiveForegroundRefresh(open: { _ in handle }, clock: { clock }, sleep: { seconds in
+            waits += 1
+            if waits == 1 {
+                XCTAssertEqual(seconds, 5, accuracy: 0.001)
+                handle.fire("probability", #"{"event_id":101,"p":0.99,"rev":{"101":2}}"#)
+            } else if waits == 2 {
+                XCTAssertEqual(seconds, 2, accuracy: 0.001)
+                XCTAssertEqual(selected.successfulRefreshSequence, 1)
+                // These arrive while the two-second wait is pending. Neither
+                // duplicates nor newer frames bypass its single deadline.
+                handle.fire("probability", #"{"event_id":101,"p":0.99,"rev":{"101":2}}"#)
+                handle.fire("probability", #"{"event_id":101,"p":0.98,"rev":{"101":3}}"#)
+                clock += seconds
+            } else {
+                XCTAssertEqual(waits, 3)
+                XCTAssertEqual(selected.successfulRefreshSequence, 2)
+                XCTAssertEqual(clock, 1_002)
+                throw CancellationError()
+            }
+        })
+        XCTAssertEqual(waits, 3)
+    }
+
+    func testWakeupFencesLateTimerAndCancelsRegisteredWait() async throws {
+        let wakeup = WatchForegroundWakeup()
+        let firstStarted = expectation(description: "First timer suspended")
+        let secondStarted = expectation(description: "Second timer suspended")
+        let oldTimerReturned = expectation(description: "Canceled old timer returned late")
+        var oldTimer: CheckedContinuation<Void, Never>?
+        let first = Task {
+            try await wakeup.wait(seconds: 300) { _ in
+                await withCheckedContinuation { continuation in
+                    oldTimer = continuation
+                    firstStarted.fulfill()
+                }
+                oldTimerReturned.fulfill()
+            }
+        }
+        await fulfillment(of: [firstStarted], timeout: 2)
+        wakeup.signal()
+        try await first.value
+        var secondFinished = false
+        let second = Task {
+            defer { secondFinished = true }
+            try await wakeup.wait(seconds: 300) { _ in
+                secondStarted.fulfill()
+                try await Task.sleep(for: .seconds(300))
+            }
+        }
+        defer { second.cancel() }
+        await fulfillment(of: [secondStarted], timeout: 2)
+        oldTimer?.resume(); oldTimer = nil
+        await fulfillment(of: [oldTimerReturned], timeout: 2)
+        XCTAssertFalse(secondFinished, "A stale timer must not complete the next wait")
+        second.cancel()
+        do { try await second.value; XCTFail("Cancellation must leave the wait") }
+        catch is CancellationError { }
+        catch { XCTFail("Unexpected error: \(error)") }
+        XCTAssertTrue(secondFinished)
+        // A canceled wait leaves no registered continuation behind.
+        try await wakeup.wait(seconds: 1) { _ in }
+    }
+
+    func testAlreadyCancelledWaitDoesNotRegisterTimer() async {
+        let wakeup = WatchForegroundWakeup()
+        let worker = Task { @MainActor in
+            // Test cancellation before entry without depending on scheduling.
+            withUnsafeCurrentTask { $0?.cancel() }
+            do {
+                try await wakeup.wait(seconds: 300) { _ in XCTFail("Canceled owner cannot start a timer") }
+                XCTFail("Canceled owner cannot complete normally")
+            } catch is CancellationError { }
+            catch { XCTFail("Unexpected error: \(error)") }
+        }
+        await worker.value
+    }
+
+    private actor BusyAfterFirstDetail: WatchSelectedGameTransport {
+        var calls = 0
+        func fetch(eventID: Int) async throws -> WatchSelectedGame {
+            calls += 1
+            if calls == 2 { throw WatchSelectedGameRequestError.retryAfter(120) }
+            return try WatchForegroundUpdatesTests.game(revision: calls)
+        }
+    }
+
+    func testStoppedStreamSleepsToServerDeadlineAndCannotBypassBackoff() async throws {
+        let name = "watch-stream-busy-wakeup-\(UUID())"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: name))
+        defer { defaults.removePersistentDomain(forName: name) }
+        var clock = 1_000.0
+        let transport = BusyAfterFirstDetail()
+        let selected = WatchSelectedGameStore(transport: transport, defaults: defaults, retryClock: { clock })
+        selected.select(eventID: 101)
+        let handle = Handle()
+        var waits = 0
+        await selected.runLiveForegroundRefresh(open: { _ in handle }, clock: { clock }, sleep: { seconds in
+            waits += 1
+            switch waits {
+            case 1:
+                XCTAssertEqual(seconds, 5, accuracy: 0.001)
+                clock = 1_002
+                handle.fire("probability", #"{"event_id":101,"p":0.99,"rev":{"101":2}}"#)
+            case 2:
+                XCTAssertEqual(seconds, 3, accuracy: 0.001)
+                XCTAssertEqual(selected.successfulRefreshSequence, 1)
+                XCTAssertEqual(selected.foregroundInvalidationDelay, 120, accuracy: 0.001)
+                handle.fire("closed", "")
+            case 3:
+                XCTAssertEqual(seconds, 120, accuracy: 0.001,
+                               "A stopped stream has no five-second maintenance ticks")
+                XCTAssertEqual(selected.successfulRefreshSequence, 1)
+                handle.fire("probability", #"{"event_id":101,"p":0.99,"rev":{"101":3}}"#)
+                clock += seconds
+            default:
+                XCTAssertEqual(waits, 4)
+                XCTAssertEqual(selected.successfulRefreshSequence, 2)
+                XCTAssertEqual(clock, 1_122)
+                throw CancellationError()
+            }
+        })
+        let calls = await transport.calls
+        XCTAssertEqual(calls, 3)
+        XCTAssertTrue(handle.isClosed)
     }
 }
