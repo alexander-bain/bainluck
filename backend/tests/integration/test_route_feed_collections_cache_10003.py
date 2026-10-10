@@ -17,9 +17,10 @@ ASGI app and pin the three claims the fix makes:
 of the seated-opening switch. The legacy tests set it OFF themselves. Under ON,
 a supported collection keeps all three guarantees — the original fixture
 (``status: live``, the hub's own lifecycle) included, since a hub's status says
-nothing about its games. A hub naming a represented ordinary LIVE game is
-grouped-live input seating refuses, so ON must answer it with a truthful
-``unavailable`` and publish nothing reusable.
+nothing about its games. A hub naming a represented ordinary LIVE game
+inherits that game's restriction (correction A): ON seats both outside the
+opening, serves and caches that deck, and never publishes an opening that
+launders either one into the first ten.
 """
 
 import copy
@@ -328,14 +329,14 @@ async def test_seated_an_unreadable_fingerprint_builds_fresh_and_caches_nothing(
     assert not any(key.startswith("feed_cache:") for key in fake.store), fake.store
 
 
-async def test_seated_a_hub_naming_a_live_game_is_refused_truthfully_and_publishes_nothing(
+async def test_seated_a_hub_naming_a_live_game_seats_both_outside_the_opening(
     client, monkeypatch, enabled, seated, card, ordinary_deck, redis
 ):
-    """The original hub, naming a game the deck carries as ordinary LIVE:
-    grouped-live input the seating helper refuses. ON answers it with the
-    existing ``unavailable`` shape (the client keeps its accepted deck), never a
-    flat or blank opening, and leaves no seated page, base or manifest a later
-    open could reuse."""
+    """The original hub, naming a game the deck carries as ordinary LIVE. Under
+    correction A the hub inherits the game's restriction: the deck is served,
+    not refused, with the hub and its game seated just past the opening. The
+    one publication it caches is that lawful deck — a later open reuses it and
+    still shows neither in the first ten; nothing laundered is ever stored."""
     assert 502 in card["matched_event_ids"]
     next(c for c in ordinary_deck if c["data"]["id"] == 502)["data"]["status"] = "live"
     fake, scheduled = redis
@@ -347,26 +348,48 @@ async def test_seated_a_hub_naming_a_live_game_is_refused_truthfully_and_publish
     read = AsyncMock(return_value=SimpleNamespace(collections=[card]))
     monkeypatch.setattr(producer, "discover_collections", read)
 
-    for attempt in (1, 2):
-        response = await client.get("/api/feed?limit=10")
-        assert response.status_code == 200
-        assert response.headers["x-feed-cache"] == "unavailable"
-        body = response.json()
-        assert body["items"] == [] and body["total"] == 0
-        assert body["has_more"] is False
-        assert body["cache"]["status"] == "unavailable"
-        assert body["cache"]["reason"] == "opening_unsupported"
-        await _drain(scheduled)
-        assert read.await_count == attempt, "a refusal is rebuilt, never reused"
-        assert seated[-1][1] is False and "collection" in seated[-1][0]
-        assert not any(key.startswith("feed_cache:") for key in fake.store), fake.store
+    def opening_ids(body):
+        return [(item["type"], item["data"]["id"]) for item in body["items"]]
 
-    # Control: the same route, once the hub is withdrawn, serves the deck (the
-    # live game seated past the opening) — the refusal above is the hub's, not
-    # a dark seated route.
+    first = await client.get("/api/feed?limit=10")
+    assert first.status_code == 200
+    assert first.headers["x-feed-cache"] == "miss"
+    body = first.json()
+    assert body["cache"]["status"] != "unavailable", body["cache"]
+    opening = opening_ids(body)
+    assert len(opening) == 10 and body["total"] == 26 and body["has_more"] is True
+    assert all(kind == "event" for kind, _ in opening), opening
+    assert ("event", 502) not in opening, opening
+    assert [usable for _, usable in seated] == [True]
+    assert "collection" in seated[0][0], "the seated deck carried the hub"
+    token = body["edition"]
+    assert token
+    await _drain(scheduled)
+    assert any(key.startswith("feed_cache:") for key in fake.store), fake.store
+
+    continuation = await client.get(f"/api/feed?limit=10&offset=10&edition={token}")
+    assert continuation.status_code == 200
+    assert continuation.headers["x-feed-cache"] != "miss", "the continuation reads the base"
+    page = continuation.json()
+    assert page["edition"] == token
+    assert opening_ids(page)[:2] == [("collection", card["id"]), ("event", 502)]
+    assert page["items"][0]["data"] == card
+    assert read.await_count == 1
+
+    second = await client.get("/api/feed?limit=10")
+    assert second.status_code == 200
+    assert second.headers["x-feed-cache"] != "miss", second.headers["x-feed-cache"]
+    assert second.json()["items"] == body["items"], "the reused opening is the lawful one"
+    assert read.await_count == 1, "a cached seated open must not re-read publication"
+
+    # Control: once the hub is withdrawn the route rebuilds, and the live game
+    # alone still sits past the opening — the move is the game's, not the hub's.
     state["fingerprint"] = "withdrawn-rev-2"
     read.return_value = SimpleNamespace(collections=[])
     recovered = await client.get("/api/feed?limit=10")
     assert recovered.status_code == 200
     assert recovered.headers["x-feed-cache"] == "miss"
     assert len(recovered.json()["items"]) == 10
+    assert _collections(recovered.json()) == []
+    assert ("event", 502) not in opening_ids(recovered.json())
+    assert read.await_count == 2

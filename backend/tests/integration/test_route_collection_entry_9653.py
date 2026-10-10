@@ -265,27 +265,43 @@ async def test_seated_discover_paginates_the_unchanged_live_hub_of_scheduled_gam
     "live_id,matched",
     [(502, None), (519, [501, 519])],  # a member in the opening / past seat ten
 )
-async def test_seated_discover_refuses_a_hub_naming_a_represented_live_game(
+async def test_seated_discover_seats_a_hub_naming_a_represented_live_game(
     client, monkeypatch, enabled, card, ordinary_deck, hub_status, live_id, matched
 ):
-    """#5105: whatever the hub's own status, a matched member the deck carries
-    as an ordinary live game refuses the whole deck truthfully — never a flat or
-    partly seated page."""
+    """#5105 correction A: whatever the hub's own status, a matched member the
+    deck carries as an ordinary live game no longer refuses the whole deck. The
+    hub inherits the game's restriction and both leave the opening by the stable
+    move: every page of one edition, all 26 cards once, the card intact, and
+    neither the hub nor its live game laundered into the first ten."""
     hub = {**card, "status": hub_status}
     if matched is not None:
         hub["matched_event_ids"] = matched
     member = next(c for c in ordinary_deck if c["data"]["id"] == live_id)
     member["data"]["status"] = "live"
+    published = copy.deepcopy(hub)
     read = AsyncMock(return_value=SimpleNamespace(collections=[hub]))
     monkeypatch.setattr(producer, "discover_collections", read)
     monkeypatch.setattr(cache, "get_shared_async_redis", AsyncMock(return_value=Redis()))
-    for offset in (0, 10):
+    pages, editions = [], []
+    for offset in (0, 10, 20):
         response = await client.get(f"/api/feed?limit=10&offset={offset}")
         body = response.json()
-        assert response.headers["x-feed-cache"] == "unavailable"
-        assert body["cache"]["reason"] == "opening_unsupported"
-        assert body["items"] == [] and body["total"] == 0
-        assert "edition" not in body
+        assert response.status_code == 200
+        assert response.headers.get("x-feed-cache") != "unavailable", body.get("cache")
+        assert body["total"] == 26, body.get("cache")
+        pages.extend(body["items"])
+        editions.append(body["edition"])
+    assert len(set(editions)) == 1 and editions[0]
+    keys = [(item["type"], item["data"]["id"]) for item in pages]
+    assert len(set(keys)) == len(keys) == 26
+    opening = keys[:10]
+    assert all(kind == "event" for kind, _ in opening), opening
+    assert ("event", live_id) not in opening, opening
+    # The hub takes the first seat after the opening; its game is not moved
+    # earlier than that (502 follows it, 519 keeps its own seat twenty).
+    assert keys[10][0] == "collection", keys
+    assert keys.index(("event", live_id)) == (11 if live_id == 502 else 19), keys
+    assert pages[10]["data"] == hub == published
 
 
 async def test_flag_off_preserves_cached_ordinary_response(
