@@ -78,7 +78,8 @@ describe("sport and source admission", () => {
     ["soccer_epl"],
     ["tennis_atp_us_open"],
     ["golf_pga_championship_winner"],
-    ["basketball_nba"],
+    // A puck line is a fixed ±1.5 handicap, not an expected margin (#10549 follow-through admits leagues by name).
+    ["icehockey_nhl"],
     [null],
   ])("refuses %s even with well-formed pairs", (sportKey) => {
     expect(buildProjectedFinalPointsSeries(nflInput({ sportKey }))).toEqual({
