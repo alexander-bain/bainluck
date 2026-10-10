@@ -67,6 +67,35 @@ final class PickerCurrentGameJourneyTests: XCTestCase {
         try reveal(refresh, in: app)
         XCTAssertTrue(refresh.isHittable)
         try captureComplete(refresh, in: app, name: "Manual refresh remains reachable after choices - " + size)
+        if !large {
+            // Hold the actual picker without scrolling, refresh or reselection.
+            // Its retained producer clock must age even while detail polling pauses.
+            try reveal(first, in: app)
+            first.tap()
+            let probability = app.descendants(matching: .any)["watch.home-probability"].firstMatch
+            XCTAssertTrue(probability.waitForExistence(timeout: 15))
+            XCTAssertEqual(probability.label, "San Francisco Giants win probability, 64%")
+            try openPicker(app)
+            let current = app.buttons["watch.pick.101"]
+            try reveal(current, in: app)
+            let originalValue = try XCTUnwrap(current.value as? String)
+            let originalLabel = current.label
+            XCTAssertTrue(originalValue.contains("Probability observed"))
+            XCTAssertTrue(originalValue.contains("64%"))
+            XCTAssertTrue(current.isSelected)
+            let aged = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+                guard current.exists, let value = current.value as? String else { return false }
+                return value != originalValue && value.contains("Probability observed")
+            }, object: current)
+            // Minute rounding plus the production 15-second display cadence.
+            XCTAssertEqual(XCTWaiter.wait(for: [aged], timeout: 80), .completed,
+                           "An untouched current-game row must not freeze its observation age")
+            XCTAssertEqual(current.label, originalLabel)
+            XCTAssertTrue(current.isSelected)
+            XCTAssertTrue((current.value as? String)?.contains("64%") == true)
+            XCTAssertEqual(app.buttons.matching(identifier: "watch.pick.101").count, 1)
+            capture(app, "Held current-game picker advances observation age without a new reading")
+        }
     }
 
     @MainActor

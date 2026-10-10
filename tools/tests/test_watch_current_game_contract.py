@@ -216,8 +216,17 @@ def check_selected_game_single_clock(text):
         text, "private func selectedGame(", "private func probabilityReading("
     )
     schedule = "TimelineView(.periodic(from: .now, by: 15))"
-    assert text.count("TimelineView(") == 1
+    # One clock for the game screen and one for the separately presented picker.
+    assert text.count("TimelineView(") == 2
+    assert selected.count("TimelineView(") == 1
     assert selected.count(schedule) == 1
+    picker = scope(text, "private var gamePicker:", "private var pickerRefreshButton:")
+    assert picker.count("TimelineView(") == picker.count(schedule) == 1
+    assert schedule + " { context in\n                    currentPickerGame(game, now: context.date)\n                }" in picker
+    current = scope(text, "private func currentPickerGame(", "private func currentPickerReading(")
+    assert "now: Date" in current
+    assert "Date()" not in current
+    assert "WatchObservationAge(observedAt: observed, now: now)" in current
     assert "observationText(game, now: context.date)" in selected
     assert selected.count("probabilityObservationText(game, now: context.date)") == 1
     # Available full named probability leads the useful phase/score context.
@@ -518,3 +527,14 @@ def test_composition_normalizer_rejects_altered_missing_or_duplicate_blocks():
             else:
                 with pytest.raises(AssertionError):
                     normalize_composed_fixture(altered)
+
+
+def test_picker_requires_schedule_date_without_implicit_wall_clock():
+    text = VIEW.read_text()
+    for changed in (
+        text.replace("currentPickerGame(game, now: context.date)", "currentPickerGame(game, now: Date())"),
+        text.replace("private func currentPickerGame(_ game: WatchSelectedGame, now: Date)",
+                     "private func currentPickerGame(_ game: WatchSelectedGame, now: Date = Date())"),
+    ):
+        with pytest.raises(AssertionError):
+            check_selected_game_single_clock(changed)

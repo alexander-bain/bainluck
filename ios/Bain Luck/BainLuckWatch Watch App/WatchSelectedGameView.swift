@@ -785,7 +785,11 @@ struct WatchSelectedGameView: View {
         VStack(alignment: .leading, spacing: 12) {
             WatchPickerHeading(hasSelection: store.selectedEventID != nil)
             if let game = store.game {
-                currentPickerGame(game)
+                // The selected detail loop pauses while this picker is open.
+                // Keep its retained observation age honest without another fetch.
+                TimelineView(.periodic(from: .now, by: 15)) { context in
+                    currentPickerGame(game, now: context.date)
+                }
                 Divider().padding(.vertical, 4)
             } else if store.selectedEventID != nil {
                 Text("Your selection is retained. Its reading is unavailable.")
@@ -978,11 +982,10 @@ struct WatchSelectedGameView: View {
         return "\(game.awayTeam ?? "Away team") at \(game.homeTeam ?? "Home team"). \(state)"
     }
 
-    private func currentPickerGame(_ game: WatchSelectedGame) -> some View {
+    private func currentPickerGame(_ game: WatchSelectedGame, now: Date) -> some View {
         // A missing/partial list cannot erase the retained reading. When the feed
         // returns its proven alias, preserve that row's control identity.
         let rowID = picker.games.first { store.isSelected(eventID: $0.id) }?.id ?? game.id
-        let now = Date()
         let observed = game.showsForecast ? game.probabilityObservedAt : game.scoreObservedAt
         let clockName = game.showsForecast ? "Probability" : "Score"
         let age = WatchObservationAge(observedAt: observed, now: now)
