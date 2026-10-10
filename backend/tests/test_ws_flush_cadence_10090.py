@@ -166,7 +166,9 @@ class TestTheFloorReadsTheFlushStart:
         r._prepare_groups = prepared
         clock["t"] = 1001.5
         await r.refresh(range(1, 9), flush_started=1000.0)
-        assert r.batches == [([1, 2, 3, 4], 1000.0), ([5, 6, 7, 8], 1000.0)]
+        # e0b52e11ed: two or more due events commit one event per transaction;
+        # every one still reads the flush start, not the call-time clock.
+        assert sorted(r.batches) == [([event_id], 1000.0) for event_id in range(1, 9)]
         assert r.stats["errors"] == 0
         assert r._failed_hold_until == {}
         assert r._last_refresh_at == {event_id: 1000.0 for event_id in range(1, 9)}
@@ -249,7 +251,7 @@ class _SlowFlush(lbr.LiveBlendRefresher):
         self.calls: list[tuple[float, float, float | None]] = []
         _SlowFlush.instances.append(self)
 
-    async def refresh_pending(self, *, flush_started=None):
+    async def refresh_pending(self, *, flush_started=None, defer_event_ids=()):
         entered = time.monotonic()
         await asyncio.sleep(WORK)
         self.calls.append((entered, time.monotonic(), flush_started))
@@ -292,13 +294,15 @@ class TestTheRealConsumersFlushStartToStart:
 class TestEveryFlushRefreshCarriesTheFlushStart:
     """The quiet-socket arm above reaches only `refresh_pending`. A price-
     carrying flush reaches `refresh`, from one site in the Kalshi flush and
-    two in the Polymarket one; a site that drops the start reads the
+    two in the Polymarket one (which also has two quiet arms); a site that drops the start reads the
     call-time clock and reopens the deferral. The SET of sites is pinned, so
     a new one is a red test until it is checked too."""
 
     EXPECTED = {
         "_run_kalshi_ws_consumer": {"refresh": 1, "refresh_pending": 1},
-        "_run_polymarket_ws_consumer": {"refresh": 2, "refresh_pending": 1},
+        # bd506333e8: a second quiet arm stamps a cohort an earlier chunk's
+        # stamp excluded; it passes the flush start like the first.
+        "_run_polymarket_ws_consumer": {"refresh": 2, "refresh_pending": 2},
     }
 
     @pytest.mark.parametrize(
@@ -312,10 +316,12 @@ class TestEveryFlushRefreshCarriesTheFlushStart:
             n for n in ast.walk(tree)
             if isinstance(n, ast.AsyncFunctionDef) and n.name == consumer
         ]
-        (flush,) = [
-            n for n in ast.walk(outer)
-            if isinstance(n, ast.AsyncFunctionDef) and n.name == "flush_prices"
-        ]
+        # 81fc5dba42: Polymarket's `flush_prices` enters the catalog boundary
+        # and awaits `_flush_prices`, the body that holds the sites.
+        nested = {
+            n.name: n for n in ast.walk(outer) if isinstance(n, ast.AsyncFunctionDef)
+        }
+        flush = nested.get("_flush_prices") or nested["flush_prices"]
         counts: dict[str, int] = {}
         for call in ast.walk(flush):
             if not (
