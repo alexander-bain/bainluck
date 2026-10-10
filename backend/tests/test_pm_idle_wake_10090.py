@@ -35,6 +35,9 @@ class Clock:
             self.t, action = self.actions.pop(0)
             if action == "stop":
                 self.stop.set()
+            elif isinstance(action, tuple):  # (leg, price): a game's other leg
+                self.prices[action[0]] = action[1]
+                self.wake.set()
             else:
                 self.prices[1] = action
                 self.wake.set()
@@ -57,7 +60,9 @@ class Clock:
             raise TimeoutError
         yield
 
-    async def run(self, *, count=1, fail=False, debt=False, work_seconds=0):
+    async def run(
+        self, *, count=1, fail=False, debt=False, work_seconds=0, coalesce=None,
+    ):
         actual, pending = 0, debt
 
         async def flush(started):
@@ -95,6 +100,8 @@ class Clock:
         kwargs = dict(stop=self.stop, failed_retry_interval_s=2.0)
         if "wake" in inspect.signature(cadence).parameters:
             kwargs.update(wake=self.wake, work_count=lambda: self.work)
+        if coalesce is not None:
+            kwargs.update(wake_coalesce_s=coalesce)
         await cadence(flush, 0.25, **kwargs)
 
 
@@ -137,6 +144,73 @@ async def test_stop_in_budget_wait_prevents_flush_and_retains_final_drain_buffer
     c = Clock(monkeypatch, [(0.751, 0.61), (0.752, 0.62), (0.8, "stop")])
     await c.run(count=2)
     assert c.calls == [(0.751, {1: 0.61}, False)] and c.prices == {1: 0.62}
+
+
+# #10090 (Root 0240Z, option a) — the post-wake coalescing pause. The second
+# leg of one game arrives 2 ms behind the first, on the same socket.
+PAUSE = pm.PM_WAKE_COALESCE_SECONDS
+PAIR = [(0.751, (1, 0.42)), (0.753, (2, 0.61))]
+
+
+async def test_control_without_the_pause_a_wake_splits_a_pair_across_flushes(
+    monkeypatch,
+):
+    """The defect (9aab164651): the wake starts the flush between the legs, so
+    the event is stamped with one new leg and the other waits a full period."""
+    c = Clock(monkeypatch, PAIR)
+    await c.run(count=2)
+    assert c.calls == [(0.751, {1: 0.42}, False), (1.001, {2: 0.61}, False)]
+
+
+async def test_wake_pause_lets_an_arriving_pair_join_one_flush(monkeypatch):
+    c = Clock(monkeypatch, PAIR)
+    await c.run(coalesce=PAUSE)
+    assert c.calls == [(0.751 + PAUSE, {1: 0.42, 2: 0.61}, False)]
+
+
+async def test_wake_pause_is_fixed_and_never_extended_by_later_arrivals(monkeypatch):
+    # A frame every millisecond for 30 ms: the flush starts one pause after
+    # the wake with what has arrived, never after the stream goes quiet.
+    stream = [(0.751 + i / 1000, (1, round(0.40 + i / 1000, 3))) for i in range(30)]
+    c = Clock(monkeypatch, stream + [(1.5, "stop")])
+    await c.run(count=2, coalesce=PAUSE)
+    assert c.calls[0][0] == pytest.approx(0.751 + PAUSE)
+    assert c.calls[0][1] == {1: pytest.approx(0.405)}
+    # The rest coalesce into the next start, one period later: no extra pause.
+    assert c.calls[1][0] == pytest.approx(0.751 + PAUSE + 0.25)
+    assert c.calls[1][1] == {1: pytest.approx(0.429)}
+
+
+async def test_wake_pause_does_not_wait_for_a_leg_that_never_comes(monkeypatch):
+    c = Clock(monkeypatch, [(0.751, (1, 0.42))])
+    await c.run(coalesce=PAUSE)
+    assert c.calls == [(0.751 + PAUSE, {1: 0.42}, False)]
+    assert 0 < PAUSE <= 0.01
+
+
+async def test_timer_flushes_under_continuous_input_never_pay_the_pause(monkeypatch):
+    c = Clock(
+        monkeypatch,
+        [(0.751, 0.61), (0.9, 0.62), (1.1, 0.63), (1.3, 0.64)],
+    )
+    await c.run(count=3, coalesce=PAUSE)
+    starts = [call[0] for call in c.calls]
+    # Only the first (idle) start pays it; budget-bound starts stay exact.
+    assert starts == pytest.approx([0.751 + PAUSE, 1.001 + PAUSE, 1.251 + PAUSE])
+    assert all(b - a == pytest.approx(0.25) for a, b in zip(starts, starts[1:]))
+
+
+async def test_failed_attempt_keeps_its_full_retry_with_the_pause(monkeypatch):
+    c = Clock(monkeypatch, [(0.751, 0.61), (0.752, 0.62), (1.0, 0.63)])
+    await c.run(count=2, fail=True, coalesce=PAUSE)
+    first = 0.751 + PAUSE
+    assert [call[0] for call in c.calls] == pytest.approx([first, first + 0.07 + 2.0])
+
+
+async def test_stop_during_the_pause_starts_no_flush_and_keeps_the_buffer(monkeypatch):
+    c = Clock(monkeypatch, [(0.751, (1, 0.42)), (0.753, "stop")])
+    await c.run(coalesce=PAUSE)
+    assert c.calls == [] and c.prices == {1: 0.42}
 
 
 def callbacks():
