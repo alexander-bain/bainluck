@@ -124,15 +124,22 @@ enum SpreadRungs {
     ///   - home/away: the two competitors, as the event names them.
     ///   - sportUnit: `SportVocab.unit` — what this sport's markets quote when
     ///     a market does not say.
-    static func map(from legs: [Leg], home: String, away: String, sportUnit: String) -> Map {
+    ///   - readsHalfTitles: true only for a half map, whose legs are already
+    ///     one half's. Lets ``TitledSpread`` read `1H Spread: Indiana (-9.5)`;
+    ///     the full-game map leaves it false so its titles stay anchored.
+    static func map(
+        from legs: [Leg], home: String, away: String, sportUnit: String,
+        readsHalfTitles: Bool = false
+    ) -> Map {
         var rungs: [Rung] = []
         for (name, group) in grouped(legs) {
-            rungs += parse(market: name, legs: group, home: home, away: away)
+            rungs += parse(market: name, legs: group, home: home, away: away,
+                           readsHalfTitles: readsHalfTitles)
         }
         // #8739 — only where nothing else on the page parses. See
-        // ``titledSpreadLadder(_:home:away:)`` for why it never merges.
+        // ``titledSpreadLadder(_:home:away:readsHalfTitles:)`` for why it never merges.
         if rungs.isEmpty {
-            rungs = titledSpreadLadder(legs, home: home, away: away)
+            rungs = titledSpreadLadder(legs, home: home, away: away, readsHalfTitles: readsHalfTitles)
         }
         let empty = Map(unit: sportUnit, rungs: [])
         guard let unit = mapUnit(of: rungs, sportUnit: sportUnit) else { return empty }
@@ -170,11 +177,13 @@ enum SpreadRungs {
         return order.map { ($0, byName[$0]!) }
     }
 
-    private static func parse(market name: String, legs: [Leg], home: String, away: String) -> [Rung] {
+    private static func parse(
+        market name: String, legs: [Leg], home: String, away: String, readsHalfTitles: Bool
+    ) -> [Rung] {
         // #8739 — a `Spread: <Team> (-N)` market belongs to the title reader.
         // Its losing leg names the OTHER team, so reading it as a named outcome
         // would draw "Tennessee by 7.5+" out of "Texas does not cover 7.5".
-        if TitledSpread.read(marketName: name) != nil { return [] }
+        if TitledSpread.read(marketName: name, readsHalfTitles: readsHalfTitles) != nil { return [] }
         let unit = SportVocab.declaredMarginUnit(inMarketName: name)
         if let pair = twoWay(legs), let handicap = Handicap.read(marketName: name) {
             return fromHandicap(pair, handicap, home: home, away: away, unit: unit)
@@ -335,8 +344,16 @@ enum SpreadRungs {
         /// full-game map — that card's long-shot floor is #8785's. And only a
         /// `-N` line: a `+N` market asks a different question, and none is
         /// served.
-        static func read(marketName: String) -> TitledSpread? {
-            let pattern = #"^\s*spread:\s*(.+?)\s*\(\s*-\s*(\d+(?:\.\d+)?)\s*\)\s*$"#
+        ///
+        /// #10830 — a half map passes `readsHalfTitles`, and then a half's own
+        /// prefix is allowed before `Spread:`. Polymarket writes a half the
+        /// same way as the game (`1H Spread: Indiana (-9.5)`, legs `Nebraska` /
+        /// `Indiana`), and the anchor alone left NCAAF 15322373's live
+        /// `1st half margin` card printing its title over nothing. Only half
+        /// prefixes, so `1st 5 Innings Spread:` is refused either way.
+        static func read(marketName: String, readsHalfTitles: Bool = false) -> TitledSpread? {
+            let half = readsHalfTitles ? #"(?:(?:1h|2h|1st half|2nd half|first half|second half)\s+)?"# : ""
+            let pattern = #"^\s*"# + half + #"spread:\s*(.+?)\s*\(\s*-\s*(\d+(?:\.\d+)?)\s*\)\s*$"#
             guard let re = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]) else { return nil }
             let range = NSRange(marketName.startIndex..., in: marketName)
             guard let m = re.firstMatch(in: marketName, range: range),
@@ -370,10 +387,12 @@ enum SpreadRungs {
     /// above the one before it is withheld: "wins by 22+" cannot be likelier
     /// than "wins by 18+", and a thin market saying so is not the market's
     /// opinion of the game.
-    static func titledSpreadLadder(_ legs: [Leg], home: String, away: String) -> [Rung] {
+    static func titledSpreadLadder(
+        _ legs: [Leg], home: String, away: String, readsHalfTitles: Bool = false
+    ) -> [Rung] {
         var raw: [Rung] = []
         for (name, group) in grouped(legs) {
-            guard let spread = TitledSpread.read(marketName: name),
+            guard let spread = TitledSpread.read(marketName: name, readsHalfTitles: readsHalfTitles),
                   let coverSide = side(of: spread.coverTeam, home: home, away: away)
             else { continue }
             var cover: [Double] = []

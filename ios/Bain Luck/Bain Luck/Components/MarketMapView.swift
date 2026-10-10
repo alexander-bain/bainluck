@@ -888,12 +888,24 @@ struct MarketMapView: View {
         let halfSpreads = periodMarkets.filter { isSpreadMarket($0) } +
             spreads.filter { !isFullGameSpread($0.marketName) }
 
+        // #10830 — a half with legs but no rung it can draw is withheld, as
+        // `halfTotalGroups` already does. Kept, it printed its title over
+        // nothing (NCAAF 15322373, live, before the half titles were read).
         return [
             MapGroup(id: "1st half margin", half: .first,
                            outcomes: halfSpreads.filter { derivePeriod($0) == "1H" }),
             MapGroup(id: "2nd half margin", half: .second,
                            outcomes: halfSpreads.filter { derivePeriod($0) == "2H" }),
-        ].filter { !$0.outcomes.isEmpty }
+        ].filter { !halfMarginMap($0.outcomes).rungs.isEmpty }
+    }
+
+    /// One half's margin rungs. A half map reads its OWN rungs and its own
+    /// unit (#3509), and reads a half-titled spread (`1H Spread: X (-N)`).
+    private func halfMarginMap(_ outcomes: [GameMarketOutcome]) -> SpreadRungs.Map {
+        SpreadRungs.map(
+            from: outcomes.map(Self.leg), home: homeTeam, away: awayTeam, sportUnit: vocab.unit,
+            readsHalfTitles: true
+        )
     }
 
     /// Whether the MARGIN MAPS column has anything under its heading.
@@ -935,9 +947,7 @@ struct MarketMapView: View {
     private func halfMarginCard(outcomes: [GameMarketOutcome], label: String, half: GameHalf) -> some View {
         // A half reads its OWN rungs and its own unit, exactly as #3509 made
         // the half totals cards do.
-        let data = SpreadRungs.map(
-            from: outcomes.map(Self.leg), home: homeTeam, away: awayTeam, sportUnit: vocab.unit
-        )
+        let data = halfMarginMap(outcomes)
         let parsed = data.rungs
         let allMargins = parsed.map(\.margin)
         let bounds = MarketMapRail.marginBounds(
