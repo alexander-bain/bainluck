@@ -918,6 +918,7 @@ FLUSH_CLOCK_SLACK_S = 1e-6
 async def run_flush_cadence(
     flush, period: float, stop=None, *, failed_retry_interval_s: Optional[float] = None,
     wake=None, work_count: Optional[Callable[[], int]] = None,
+    wake_coalesce_s: Optional[float] = None,
 ) -> None:
     """#10090 — start a flush every ``period`` seconds, START to START.
 
@@ -945,6 +946,14 @@ async def run_flush_cadence(
       configured period, including custom periods.
     * Unchanged callers first flush one ``period`` after the loop starts.
       An opt-in wake may start unused budget sooner, including after idle.
+    * An opt-in ``wake_coalesce_s`` gives a woken flush ONE fixed pause before
+      it starts, so frames already arriving in the same burst (both legs of a
+      game sent back to back) enter the buffer before it snapshots. Without it
+      the wake ran between two such frames: the event stamped half-updated and
+      its second leg waited out the per-event floor (9aab164651). The pause is
+      fixed, never extended by later arrivals, never waits for a missing leg,
+      and applies only to a wake — timer, retry and back-to-back flushes under
+      continuous input never pay it.
 
     ``flush`` is called with the flush's start on the refresher's clock
     (`_mono`), which the refresher uses for its per-event floor. Actual work
@@ -987,6 +996,10 @@ async def run_flush_cadence(
                     pass  # retain ordinary timer/debt probes during quiet input
                 else:
                     wake.clear()
+                    if wake_coalesce_s:
+                        await asyncio.sleep(wake_coalesce_s)
+                        if stopped():
+                            return
                     due = _mono()
                     continue
             if stopped():

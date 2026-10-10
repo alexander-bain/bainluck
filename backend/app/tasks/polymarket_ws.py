@@ -41,6 +41,12 @@ logger = logging.getLogger(__name__)
 # no later periodic retry and keeps its existing database wait behavior.
 PRICE_CHUNK_LOCK_TIMEOUT_MS = 500
 
+#: #10090 — after an idle input wakes the price flush, wait this long (fixed,
+#: once) before it snapshots the buffer, so the rest of an already-arriving
+#: burst — a game's other leg, sent right behind the first — joins the same
+#: flush instead of stamping the event half-updated (see run_flush_cadence).
+PM_WAKE_COALESCE_SECONDS = 0.005
+
 
 class _PMCatalogFlushBoundary:
     """Catalog handover waits for both disjoint flushes without serializing them."""
@@ -2902,6 +2908,7 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
             failed_retry_interval_s=PRICE_FLUSH_SECONDS,
             wake=catalog_boundary.flush_wake,
             work_count=lambda: catalog_boundary.flush_work,
+            wake_coalesce_s=PM_WAKE_COALESCE_SECONDS,
         )
 
     async def standalone_loop():

@@ -51,12 +51,13 @@ async def test_real_pm_consumer_binds_timer_floor_and_legacy_retry(
             instances.append(self)
 
     async def cadence(flush, period, stop=None, *, failed_retry_interval_s=None,
-                      wake=None, work_count=None):
+                      wake=None, work_count=None, wake_coalesce_s=None):
         calls.append((period, failed_retry_interval_s))
         if failed_retry_interval_s is not None:
             assert isinstance(wake, asyncio.Event) and work_count() == 0
+            assert wake_coalesce_s == module.PM_WAKE_COALESCE_SECONDS
         else:
-            assert wake is None and work_count is None
+            assert wake is None and work_count is None and wake_coalesce_s is None
         await stop.wait()
 
     monkeypatch.setattr(lbr, "LiveBlendRefresher", RecordingRefresher)
