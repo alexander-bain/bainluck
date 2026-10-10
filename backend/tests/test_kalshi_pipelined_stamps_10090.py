@@ -8,16 +8,12 @@ stamp. #10090 cross-flush: a stamp may outlive the flush that started it — it
 is the run's (`prices.stamping`), joined by the next flush that needs it, by a
 scope change and before the final drain (`join_stamp`), never left running.
 """
-import ast
 import asyncio
 
 import pytest
 
-from tests.kalshi_price_statement_support import flush_ast
+from app.tasks.kalshi_ws import _KalshiPriceOwner
 from tests.test_kalshi_game_isolation_10655 import rig
-from tests.test_kalshi_pipeline_consumer_10693 import (
-    _without_reviewed_pipelined_stamps,
-)
 
 pytestmark = pytest.mark.asyncio
 
@@ -91,23 +87,46 @@ async def test_the_next_game_commits_while_the_previous_stamp_runs():
     assert r.committed == [1, 2, 3, 9] and not r.batch
 
 
-async def test_strawman_the_serial_flush_holds_the_next_write():
-    """The rig can tell: the same flush with its stamp reverted to serial (the
-    10693 comparator's exact reversal) keeps game 200 unwritten while 100's
-    stamp is held."""
+class _HeldOverlapsEverything(set):
+    """A held-event set that overlaps every phase while it holds anything."""
+
+    def isdisjoint(self, other):
+        return not self and super().isdisjoint(other)
+
+
+class _SerialOwner(_KalshiPriceOwner):
+    """The run's stamp owner with its same-event fence widened to every event:
+    any stamp it holds overlaps the next phase, so the flush joins that stamp
+    before writing. That is the serial flush, at the persistent-owner boundary
+    the flush actually consults (`prices.stamping_events`)."""
+
+    @property
+    def stamping_events(self):
+        return self._held
+
+    @stamping_events.setter
+    def stamping_events(self, events):
+        self._held = _HeldOverlapsEverything(events)
+
+
+async def test_strawman_the_serial_owner_holds_the_next_write():
+    """The rig can tell: with the serial owner, game 200's disjoint write does
+    not begin while game 100's stamp is held, and starts once it is released."""
     r = rig()
     r.release.set()
-    serial = _without_reviewed_pipelined_stamps(flush_ast())
-    exec(compile(ast.Module(body=[serial], type_ignores=[]), "serial", "exec"), r.ns)
+    r.ns["prices"] = _SerialOwner()
     gate, calls = held_refresher(r)
-    flush = asyncio.create_task(r.ns["flush_prices"]())
+    flush = asyncio.create_task(r.flush())
     for _ in range(20):
         await asyncio.sleep(0)
-    assert calls["started"] == [(100,)]
+    assert calls["started"] == [(100,)] and calls["finished"] == []
+    assert r.ns["prices"].stamping_events == {100}, "the owner holds only game 100"
     assert not r.entered.is_set() and r.committed == [1, 2]
+    assert ("write", 3) not in r.trace
     gate.set()
     assert await asyncio.wait_for(flush, 2) is True
-    assert r.trace.index(("refresh", (100,))) < r.trace.index(("commit", (3,)))
+    assert r.trace.index(("refresh", (100,))) < r.trace.index(("write", 3))
+    assert r.committed == [1, 2, 3, 9] and calls["most_running"] == 1
 
 
 async def test_a_later_write_failure_leaves_the_running_stamp_to_the_run():
