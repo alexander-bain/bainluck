@@ -40,7 +40,8 @@ final class ClosedHalfGradesAtHalftime10850Tests: XCTestCase {
     private static func body(
         closed: Bool = true,
         score: (_ row: [String: Any]) -> [String: Int] = { _ in halftime },
-        edit: (_ row: inout [String: Any]) -> Void = { _ in }
+        edit: (_ row: inout [String: Any]) -> Void = { _ in },
+        editBody: (_ body: inout [String: Any]) -> Void = { _ in }
     ) throws -> GameMarketsResponse {
         var json = try XCTUnwrap(
             JSONSerialization.jsonObject(with: Data(contentsOf: fixtureURL)) as? [String: Any]
@@ -61,6 +62,7 @@ final class ClosedHalfGradesAtHalftime10850Tests: XCTestCase {
                 return r
             }
         }
+        editBody(&json)
         let decoder = JSONDecoder()
         decoder.keyDecodingStrategy = .convertFromSnakeCase
         return try decoder.decode(GameMarketsResponse.self,
@@ -245,6 +247,42 @@ final class ClosedHalfGradesAtHalftime10850Tests: XCTestCase {
         }
         let second = try XCTUnwrap(entries.first { $0.id == "margin-2nd half margin" })
         XCTAssertNil(Self.closedBinding(second), "the 2nd half still quotes")
+    }
+
+    func testClosedHalfMarginSurvivesEmptyAndMissingFullGameSpreads() throws {
+        for includesSpreadsKey in [true, false] {
+            let markets = try Self.body(editBody: { json in
+                if includesSpreadsKey { json["spreads"] = [] as [[String: Any]] }
+                else { json.removeValue(forKey: "spreads") }
+            })
+            let entries = Self.map(markets).mapEntries
+            let margin = try XCTUnwrap(entries.first { $0.id == "margin-1st half margin" })
+            XCTAssertEqual(Self.closedBinding(margin)?.score, HalfScoreSplit(home: 10, away: 3))
+            XCTAssertFalse(entries.contains { $0.id == "full-margin" })
+            XCTAssertTrue(entries.contains { $0.id == "total-1st half total map" })
+        }
+    }
+
+    /// Rendering only the card would miss the outer EmptyView gate: exercise
+    /// the whole maps browser with the closed margin as its only content.
+    @MainActor
+    func testClosedHalfMarginOnlyKeepsTheWholeMapsViewVisible() throws {
+        for includesSpreadsKey in [true, false] {
+            let markets = try Self.body(editBody: { json in
+                if includesSpreadsKey { json["spreads"] = [] as [[String: Any]] }
+                else { json.removeValue(forKey: "spreads") }
+                json["totals"] = [] as [[String: Any]]
+                json["period_markets"] = [] as [[String: Any]]
+                json["closed_period_markets"] = (json["closed_period_markets"] as? [[String: Any]])?
+                    .filter { $0["market_type"] as? String == "half_spread" }
+            })
+            let map = Self.map(markets)
+            XCTAssertEqual(map.mapEntries.map(\.id), ["margin-1st half margin"])
+            let view = map.frame(width: 390).background(Color.white)
+            let renderer = rendererForMeasurement(view, at: .large)
+            let image = try XCTUnwrap(renderer.uiImage)
+            XCTAssertGreaterThan(image.size.height, 100)
+        }
     }
 
     func testConflictingFinalsDrawNeitherFirstHalfCard() throws {
