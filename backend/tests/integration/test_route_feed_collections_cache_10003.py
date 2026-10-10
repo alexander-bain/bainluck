@@ -12,6 +12,15 @@ ASGI app and pin the three claims the fix makes:
    the withdrawn hub is gone — revocation stays live authority.
 3. An events-only request is not collection-eligible, so it keeps its cache
    and never pays the publication reads at all.
+
+#5105: claims 1–2 and the unreadable-fingerprint rule are pinned on BOTH sides
+of the seated-opening switch. The legacy tests set it OFF themselves. Under ON,
+a supported collection keeps all three guarantees — the original fixture
+(``status: live``, the hub's own lifecycle) included, since a hub's status says
+nothing about its games. A hub naming a represented ordinary LIVE game
+inherits that game's restriction (correction A): ON seats both outside the
+opening, serves and caches that deck, and never publishes an opening that
+launders either one into the first ten.
 """
 
 import copy
@@ -34,12 +43,52 @@ def enabled(monkeypatch):
 
 
 @pytest.fixture
+def unseated(monkeypatch):
+    """#5105 served switch OFF: the legacy contract, stated, not inherited."""
+    from app.routes import feed
+
+    monkeypatch.setattr(feed, "_DISCOVER_OPENING_SEATING_SERVED", False)
+
+
+@pytest.fixture
+def seated(monkeypatch):
+    """#5105 served switch ON, stated whatever the branch default is. Returns
+    the route's seated compositions (deck types in, usable out), so a test
+    proves the seated path ran rather than inferring it from a header."""
+    from app.routes import feed
+
+    monkeypatch.setattr(feed, "_DISCOVER_OPENING_SEATING_SERVED", True)
+    real = feed.compose_opening_edition
+    calls: list[tuple[list, bool]] = []
+
+    def spy(items, *args, **kwargs):
+        outcome = real(items, *args, **kwargs)
+        calls.append(([item.get("type") for item in items], outcome.usable))
+        return outcome
+
+    monkeypatch.setattr(feed, "compose_opening_edition", spy)
+    return calls
+
+
+@pytest.fixture
 def card():
     path = (
         Path(__file__).parent.parent
         / "fixtures/container_discovery_9653/search_by_games.json"
     )
     return json.loads(path.read_text())["response"]["collections"][0]
+
+
+@pytest.fixture
+def scheduled_card(card):
+    """A SYNTHETIC copy of the 9653 hub whose own status is not live. Seating
+    supports it exactly as it supports the original live hub (whose games are
+    scheduled). The shared fixture itself is left untouched."""
+    synthetic = copy.deepcopy(card)
+    assert synthetic["status"] == "live"
+    synthetic["status"] = "scheduled"
+    synthetic["name"] = synthetic["text"] = "SYNTHETIC #5105 scheduled hub"
+    return synthetic
 
 
 @pytest.fixture
@@ -126,7 +175,7 @@ def _collections(body):
 
 
 async def test_one_publication_state_is_served_from_cache_and_a_withdrawal_misses(
-    client, monkeypatch, enabled, card, ordinary_deck, redis
+    client, monkeypatch, enabled, unseated, card, ordinary_deck, redis
 ):
     fake, scheduled = redis
     state = {"fingerprint": "published-rev-1"}
@@ -165,7 +214,7 @@ async def test_one_publication_state_is_served_from_cache_and_a_withdrawal_misse
 
 
 async def test_an_unreadable_fingerprint_is_never_served_from_cache(
-    client, monkeypatch, enabled, card, ordinary_deck, redis
+    client, monkeypatch, enabled, unseated, card, ordinary_deck, redis
 ):
     """``None`` = could not tell. The page is built fresh every time — the
     pre-#10003 behaviour, so a failed read costs speed, never truth."""
@@ -209,3 +258,138 @@ async def test_the_sports_events_backfill_keeps_its_cache_and_skips_publication(
     assert second.json()["items"] == first.json()["items"]
     read.assert_not_awaited()
     fingerprint.assert_not_awaited()
+
+
+# ---------------------------------------------------------------------------
+# #5105 — the same guarantees with the seated opening ON
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("hub", ["scheduled_card", "card"])
+async def test_seated_a_supported_collection_reuses_one_publication_and_a_withdrawal_misses(
+    client, monkeypatch, enabled, seated, ordinary_deck, redis, request, hub
+):
+    scheduled_card = request.getfixturevalue(hub)
+    fake, scheduled = redis
+    state = {"fingerprint": "published-rev-1"}
+    fingerprint = AsyncMock(
+        side_effect=lambda db, *, max_age_seconds: state["fingerprint"]
+    )
+    monkeypatch.setattr(consumer, "feed_collections_cache_fingerprint", fingerprint)
+    read = AsyncMock(return_value=SimpleNamespace(collections=[scheduled_card]))
+    monkeypatch.setattr(producer, "discover_collections", read)
+
+    first = await client.get("/api/feed?limit=10")
+    assert first.status_code == 200
+    assert first.headers["x-feed-cache"] == "miss"
+    assert [c["data"] for c in _collections(first.json())] == [scheduled_card]
+    assert read.await_count == 1
+    assert [usable for _, usable in seated] == [True]
+    assert "collection" in seated[0][0], "the seated deck carried the hub"
+    await _drain(scheduled)
+    assert any(key.startswith("feed_cache:") for key in fake.store), fake.store
+
+    second = await client.get("/api/feed?limit=10")
+    assert second.status_code == 200
+    assert second.headers["x-feed-cache"] != "miss", second.headers["x-feed-cache"]
+    assert second.json()["items"] == first.json()["items"]
+    assert read.await_count == 1, "a cached seated open must not re-read publication"
+
+    state["fingerprint"] = "withdrawn-rev-2"
+    read.return_value = SimpleNamespace(collections=[])
+    third = await client.get("/api/feed?limit=10")
+    assert third.status_code == 200
+    assert third.headers["x-feed-cache"] == "miss"
+    assert _collections(third.json()) == []
+    assert third.json()["items"], "the withdrawal leaves the games, not a blank page"
+    assert read.await_count == 2
+    assert fingerprint.await_count == 3
+    assert "collection" not in seated[-1][0] and seated[-1][1] is True
+
+
+async def test_seated_an_unreadable_fingerprint_builds_fresh_and_caches_nothing(
+    client, monkeypatch, enabled, seated, scheduled_card, ordinary_deck, redis
+):
+    fake, scheduled = redis
+    monkeypatch.setattr(
+        consumer, "feed_collections_cache_fingerprint", AsyncMock(return_value=None)
+    )
+    read = AsyncMock(return_value=SimpleNamespace(collections=[scheduled_card]))
+    monkeypatch.setattr(producer, "discover_collections", read)
+
+    for _ in range(2):
+        response = await client.get("/api/feed?limit=10")
+        assert response.status_code == 200
+        assert response.headers["x-feed-cache"] == "disabled"
+        assert len(_collections(response.json())) == 1
+        await _drain(scheduled)
+    assert read.await_count == 2
+    assert [usable for _, usable in seated] == [True, True], "built fresh, seated"
+    assert not any(key.startswith("feed_cache:") for key in fake.reads), fake.reads
+    assert not any(key.startswith("feed_cache:") for key in fake.store), fake.store
+
+
+async def test_seated_a_hub_naming_a_live_game_seats_both_outside_the_opening(
+    client, monkeypatch, enabled, seated, card, ordinary_deck, redis
+):
+    """The original hub, naming a game the deck carries as ordinary LIVE. Under
+    correction A the hub inherits the game's restriction: the deck is served,
+    not refused, with the hub and its game seated just past the opening. The
+    one publication it caches is that lawful deck — a later open reuses it and
+    still shows neither in the first ten; nothing laundered is ever stored."""
+    assert 502 in card["matched_event_ids"]
+    next(c for c in ordinary_deck if c["data"]["id"] == 502)["data"]["status"] = "live"
+    fake, scheduled = redis
+    state = {"fingerprint": "published-rev-1"}
+    fingerprint = AsyncMock(
+        side_effect=lambda db, *, max_age_seconds: state["fingerprint"]
+    )
+    monkeypatch.setattr(consumer, "feed_collections_cache_fingerprint", fingerprint)
+    read = AsyncMock(return_value=SimpleNamespace(collections=[card]))
+    monkeypatch.setattr(producer, "discover_collections", read)
+
+    def opening_ids(body):
+        return [(item["type"], item["data"]["id"]) for item in body["items"]]
+
+    first = await client.get("/api/feed?limit=10")
+    assert first.status_code == 200
+    assert first.headers["x-feed-cache"] == "miss"
+    body = first.json()
+    assert body["cache"]["status"] != "unavailable", body["cache"]
+    opening = opening_ids(body)
+    assert len(opening) == 10 and body["total"] == 26 and body["has_more"] is True
+    assert all(kind == "event" for kind, _ in opening), opening
+    assert ("event", 502) not in opening, opening
+    assert [usable for _, usable in seated] == [True]
+    assert "collection" in seated[0][0], "the seated deck carried the hub"
+    token = body["edition"]
+    assert token
+    await _drain(scheduled)
+    assert any(key.startswith("feed_cache:") for key in fake.store), fake.store
+
+    continuation = await client.get(f"/api/feed?limit=10&offset=10&edition={token}")
+    assert continuation.status_code == 200
+    assert continuation.headers["x-feed-cache"] != "miss", "the continuation reads the base"
+    page = continuation.json()
+    assert page["edition"] == token
+    assert opening_ids(page)[:2] == [("collection", card["id"]), ("event", 502)]
+    assert page["items"][0]["data"] == card
+    assert read.await_count == 1
+
+    second = await client.get("/api/feed?limit=10")
+    assert second.status_code == 200
+    assert second.headers["x-feed-cache"] != "miss", second.headers["x-feed-cache"]
+    assert second.json()["items"] == body["items"], "the reused opening is the lawful one"
+    assert read.await_count == 1, "a cached seated open must not re-read publication"
+
+    # Control: once the hub is withdrawn the route rebuilds, and the live game
+    # alone still sits past the opening — the move is the game's, not the hub's.
+    state["fingerprint"] = "withdrawn-rev-2"
+    read.return_value = SimpleNamespace(collections=[])
+    recovered = await client.get("/api/feed?limit=10")
+    assert recovered.status_code == 200
+    assert recovered.headers["x-feed-cache"] == "miss"
+    assert len(recovered.json()["items"]) == 10
+    assert _collections(recovered.json()) == []
+    assert ("event", 502) not in opening_ids(recovered.json())
+    assert read.await_count == 2

@@ -117,6 +117,22 @@ final class ReadableCompactEventMarkets10830Tests: XCTestCase {
         XCTAssertFalse(verified("Touchdowns", "americanfootball_nfl", ["kalshi"]))
     }
 
+    /// The venue's rule exempts team defense/special-teams picks from the
+    /// player exception, so a team subject never gets the player rule.
+    func testATeamSubjectNeverGetsThePlayerRule() {
+        let teams = ["Las Vegas Raiders", "New England Patriots"]
+        XCTAssertFalse(PlayerPropsFamily.isTeamSubject("Drake Maye", teams: teams))
+        XCTAssertFalse(PlayerPropsFamily.isTeamSubject("Rhamondre Stevenson", teams: teams))
+        XCTAssertFalse(PlayerPropsFamily.isTeamSubject("", teams: teams))
+        XCTAssertTrue(PlayerPropsFamily.isTeamSubject("New England Patriots", teams: teams))
+        XCTAssertTrue(PlayerPropsFamily.isTeamSubject("Patriots", teams: teams))
+        XCTAssertTrue(PlayerPropsFamily.isTeamSubject("las vegas", teams: teams))
+        XCTAssertTrue(PlayerPropsFamily.isTeamSubject("New England D/ST", teams: teams))
+        XCTAssertTrue(PlayerPropsFamily.isTeamSubject("Raiders Defense/Special Teams", teams: teams))
+        // A fragment of a word is not the team.
+        XCTAssertFalse(PlayerPropsFamily.isTeamSubject("Pat", teams: teams))
+    }
+
     /// The protected contract stays its own family: renaming it must not land
     /// it on the plain touchdowns pill, where the two would read as one stat.
     func testTheProtectedFamilyNeverSharesAPillWithPlainTouchdowns() {
@@ -137,6 +153,7 @@ final class ReadableCompactEventMarkets10830Tests: XCTestCase {
         XCTAssertTrue(copy.contains("after halftime"))
         XCTAssertTrue(copy.contains("no injury"))
         XCTAssertTrue(copy.contains("passing touchdowns"))
+        XCTAssertTrue(copy.contains("team defense and special-teams picks settle on actual touchdowns"))
         XCTAssertFalse(copy.contains("refund"))
         XCTAssertFalse(copy.contains("void"))
         XCTAssertEqual(PlayerPropsFamily.participationRuleTermsURL.host, "assets.kalshi.com")

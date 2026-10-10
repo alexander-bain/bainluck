@@ -172,6 +172,33 @@ def _reset_request_cache_state():
 
 
 @pytest.fixture
+def opening_seating_off(monkeypatch):
+    """#5105: the served Discover opening-seating switch OFF for one legacy test.
+
+    ``routes/feed.py::_DISCOVER_OPENING_SEATING_SERVED`` is ``True`` on the
+    enabled candidate. A seated request deliberately admits no per-offset tier
+    (fresh, stale, last-good, the LAT-P089 shared page), keys its cache under the
+    seated shape and abandons display capture. Tests of those legacy tiers state
+    the OFF value they test, so the rollback path stays covered on every branch;
+    the seated contract is pinned in ``test_route_feed_opening_seating_5105.py``
+    and the ``*_seated_*`` controls beside each legacy test.
+    """
+    from app.routes import feed as _feed
+
+    monkeypatch.setattr(_feed, "_DISCOVER_OPENING_SEATING_SERVED", False)
+
+
+@pytest.fixture
+def opening_seating_on(monkeypatch):
+    """#5105: the served switch ON, stated rather than inherited from the
+    branch default, so these controls keep testing the seated route after a
+    rollback flips the constant."""
+    from app.routes import feed as _feed
+
+    monkeypatch.setattr(_feed, "_DISCOVER_OPENING_SEATING_SERVED", True)
+
+
+@pytest.fixture
 def healthy_staged_bank():
     """#2007 / CAL-P076 — declare that the staged futures bank is fine.
 

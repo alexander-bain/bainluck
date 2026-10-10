@@ -822,6 +822,7 @@ actor APIClient {
         eventPct: Double? = nil,
         mode: String? = nil,
         tags: [String]? = nil,
+        edition: String? = nil,
         cacheTTL: TimeInterval? = 30,
         trace: (@Sendable (RequestTrace) -> Void)? = nil
     ) async throws -> FeedResponse {
@@ -829,6 +830,7 @@ actor APIClient {
             "limit": "\(limit)",
             "offset": "\(offset)",
         ]
+        Self.addEdition(edition, to: &q)
         if let sport { q["sport"] = sport }
         if myTeamsOnly { q["my_teams_only"] = "true" }
         if !includeFutures { q["include_futures"] = "false" }
@@ -843,6 +845,16 @@ actor APIClient {
         return try await fetch("/api/feed", query: q, cacheTTL: cacheTTL, trace: trace)
     }
 
+    /// #5102/#5105: an accepted edition token rides the query ONLY when there is
+    /// one. A new opening or a manual replacement passes nil and the request is
+    /// byte-identical to before; an empty token is treated as none, matching the
+    /// server's own normalization. Being in `q`, it also partitions the response
+    /// cache key, so a pinned page can never be served for an unpinned ask.
+    static func addEdition(_ edition: String?, to q: inout [String: String]) {
+        guard let edition, !edition.trimmingCharacters(in: .whitespaces).isEmpty else { return }
+        q["edition"] = edition
+    }
+
     /// Fetch the offset-0 Discover feed AND persist its raw body as last-good for
     /// the current identity (#1465). The stale-while-revalidate path in
     /// `DiscoverViewModel` reads this back on the next cold launch to render a
@@ -853,13 +865,15 @@ actor APIClient {
         limit: Int,
         offset: Int,
         eventPct: Double?,
+        edition: String? = nil,
         cacheTTL: TimeInterval?
     ) async throws -> DiscoverFeedFetchResult {
         guard offset == 0 else {
             // Pagination pages are transient and ungated — the principal signals are
             // irrelevant here, so report the neutral publish-always triple (empty
             // dispatch identity so `identityAtFetch == currentIdentity` at the gate).
-            let r = try await fetchFeed(limit: limit, offset: offset, eventPct: eventPct, cacheTTL: cacheTTL)
+            let r = try await fetchFeed(
+                limit: limit, offset: offset, eventPct: eventPct, edition: edition, cacheTTL: cacheTTL)
             return DiscoverFeedFetchResult(
                 response: r, identityAtFetch: currentFeedIdentity(),
                 wasAuthenticated: false, expectedSignedIn: false)
@@ -867,6 +881,10 @@ actor APIClient {
 
         var q: [String: String] = ["limit": "\(limit)", "offset": "0"]
         if let eventPct { q["event_pct"] = String(eventPct) }
+        // The principal-resolving revalidation is the second request builder; an
+        // accepted edition must ride here too or background revalidation of an
+        // accepted deck silently asks for a fresh, unpinned order.
+        Self.addEdition(edition, to: &q)
 
         // Capture the identity at fetch time so a mid-flight account switch cannot
         // cause this response to be written under the WRONG namespace (L2-206 Item 2),

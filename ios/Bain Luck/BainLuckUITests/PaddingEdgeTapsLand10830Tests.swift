@@ -120,8 +120,8 @@ final class PaddingEdgeTapsLand10830Tests: XCTestCase {
 
         // 4 — the protected-touchdown rule control. Step 2 may have left the
         // browser on another family, so the protected one is chosen first.
-        let protectedPill = app.buttons.matching(identifier: "market-browser-pill")
-            .matching(NSPredicate(format: "label == %@", "Protected TDs")).firstMatch
+        let protectedPill = app.buttons.matching(identifier: "market-browser-chip")
+            .matching(NSPredicate(format: "label == %@", "Touchdowns scored, Participation rule")).firstMatch
         if protectedPill.waitForExistence(timeout: 3) || reveal(protectedPill, in: app, swipes: 20) {
             if reveal(protectedPill, in: app, swipes: 20) { protectedPill.tap() }
         }

@@ -151,7 +151,7 @@ struct PlayerPropsCardView: View {
         let items: [PropItem] = cards.flatMap { card -> [PropItem] in
             let priced = card.pricedGroups.map { group -> PropItem in
                 let label = cleanStatLabel(group.type, player: card.name)
-                let isProtected = isVerifiedProtected(group, statLabel: label)
+                let isProtected = isVerifiedProtected(group, statLabel: label, subject: card.name)
                 return PropItem(id: group.id, card: card, group: group,
                                 family: isProtected
                                     ? PlayerPropsFamily.protectedTouchdownFamily
@@ -166,7 +166,7 @@ struct PlayerPropsCardView: View {
                                 family: PlayerPropsFamily.family(statLabel: label, isPriced: false),
                                 statLabel: label,
                                 displayStat: displayStat(group, card: card),
-                                protectedRule: isVerifiedProtected(group, statLabel: label))
+                                protectedRule: isVerifiedProtected(group, statLabel: label, subject: card.name))
             }
             return priced + unpriced
         }
@@ -345,14 +345,20 @@ struct PlayerPropsCardView: View {
                     .background(Color.secondary.opacity(0.08))
                     .clipShape(RoundedRectangle(cornerRadius: 8))
 
-                    // #10830 — every ladder, browsable by stat family and
-                    // searchable by player, in a bounded window (web #10809).
+                    // #10830 — every ladder, browsable by stat family in a
+                    // bounded window (web #10809). Alex 10/10: the Stat
+                    // chooser leads and shows every stat; finding a player
+                    // by name is optional, never the way in.
                     MarketBrowserView(
                         label: "Player props",
                         items: browseItems(cards),
                         group: \.family,
                         searchText: { "\($0.card.name) \($0.card.teamLabel ?? "") \($0.statLabel) \($0.displayStat)" },
-                        searchPrompt: "player or stat"
+                        searchPrompt: "player",
+                        chooserLabel: "Stat",
+                        groupTitle: PlayerPropsFamily.chooserTitle(family:),
+                        groupNote: PlayerPropsFamily.chooserNote(family:),
+                        findLabel: "Find a player"
                     ) { item in
                         propRow(item)
                     }
@@ -585,9 +591,11 @@ struct PlayerPropsCardView: View {
                         .stroke(isSelected ? item.card.color : Color.barTrack,
                                 lineWidth: isSelected ? 1.5 : 0.5)
                 )
+                .contentShape(RoundedRectangle(cornerRadius: 8))
         }
         .buttonStyle(.plain)
         .disabled(!rung.priced)
+        .accessibilityIdentifier("props-target")
         .accessibilityLabel(rung.priced
             ? "\(label) \(spokenStat(item)), \(percent)%"
             : "\(label) \(spokenStat(item)), not priced")
@@ -606,17 +614,19 @@ struct PlayerPropsCardView: View {
         )
     }
 
-    /// Alex 10/10 — a verified protected-touchdown ladder (Kalshi, NFL).
-    private func isVerifiedProtected(_ group: StatGroup, statLabel: String) -> Bool {
+    /// Alex 10/10 — a verified protected-touchdown ladder (Kalshi, NFL) on a
+    /// player; a team subject keeps the venue's name and no player rule.
+    private func isVerifiedProtected(_ group: StatGroup, statLabel: String, subject: String) -> Bool {
         PlayerPropsFamily.isVerifiedProtectedTouchdowns(
             statLabel: statLabel, sportKey: sportKey, sources: group.sources)
+            && !PlayerPropsFamily.isTeamSubject(subject, teams: [homeTeam, awayTeam])
     }
 
     /// The stat as a row prints it. Display only: `group.type` stays the
     /// grouping and grading key.
     private func displayStat(_ group: StatGroup, card: PlayerCard) -> String {
         let label = cleanStatLabel(group.type, player: card.name)
-        return isVerifiedProtected(group, statLabel: label)
+        return isVerifiedProtected(group, statLabel: label, subject: card.name)
             ? PlayerPropsFamily.protectedTouchdownStat
             : label
     }

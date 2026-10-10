@@ -124,3 +124,107 @@ final class DiscoverFeedProdDecodeTests: XCTestCase {
         XCTAssertFalse(response.isDegradedBuild)
     }
 }
+
+// MARK: - #5105: the seated-opening boundary survives tolerant decode
+
+/// The boundary is stated in the SERVER's raw positions. The skip loop compacts
+/// `items`, so a boundary read off the compacted index shifts by one for every
+/// malformed opening row. These pin the three states the opt-in path relies on.
+extension DiscoverFeedProdDecodeTests {
+
+    private static func seatingDecoder() -> JSONDecoder {
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
+        return decoder
+    }
+
+    private static func futuresRow(_ id: Int) -> String {
+        """
+        {"type":"futures","score":90,"data":{"id":\(id),"name":"Market \(id)?",
+         "llm_sport_category":"economics","source":"kalshi","status":"open",
+         "top_outcomes":[{"id":\(id * 10),"name":"A","probability":0.55,"rank":1,"movement":0.02}],"outcome_count":1}}
+        """
+    }
+
+    private static let malformedRow = #"{"garbage": true, "score": 1}"#
+
+    private func seatedPage(rows: [String], extra: String, offset: Int = 0) throws -> FeedResponse {
+        let json = """
+        {"items":[\(rows.joined(separator: ","))],"total":9999,"limit":50,"offset":\(offset),
+         "has_more":true,"edition":"ed-1"\(extra)}
+        """
+        return try Self.seatingDecoder().decode(FeedResponse.self, from: Data(json.utf8))
+    }
+
+    /// E=3 with the second opening row malformed: two opening cards survive and
+    /// the boundary follows them — not three cards (which would pull the first
+    /// continuation card into the opening).
+    func testMalformedOpeningRowKeepsTheBoundaryInRawPositions5105() throws {
+        let page = try seatedPage(
+            rows: [Self.futuresRow(1), Self.malformedRow, Self.futuresRow(3),
+                   Self.futuresRow(4), Self.futuresRow(5)],
+            extra: #","continuation_start":3,"edition_status":"pinned""#)
+
+        XCTAssertEqual(page.items.count, 4)
+        XCTAssertEqual(page.rawPositions, [0, 2, 3, 4])
+        XCTAssertEqual(page.continuationStart, .at(3))
+        XCTAssertEqual(page.openingItemCount, 2,
+            "the heading follows the 2 surviving opening cards, never the compacted index 3")
+        XCTAssertEqual(page.items.prefix(2).compactMap(\.futures?.id), [1, 3])
+        XCTAssertEqual(page.editionStatus, FeedResponse.pinnedEditionStatus)
+    }
+
+    /// Zero is an answer (the continuation starts at the top); absence is not.
+    func testZeroBoundaryIsDistinctFromAbsence5105() throws {
+        let rows = [Self.futuresRow(1), Self.futuresRow(2)]
+        let zero = try seatedPage(rows: rows, extra: #","continuation_start":0"#)
+        let absent = try seatedPage(rows: rows, extra: "")
+        let null = try seatedPage(rows: rows, extra: #","continuation_start":null"#)
+
+        XCTAssertEqual(zero.continuationStart, .at(0))
+        XCTAssertEqual(zero.openingItemCount, 0)
+        XCTAssertEqual(absent.continuationStart, .absent)
+        XCTAssertNil(absent.openingItemCount, "absent keeps the legacy single list")
+        XCTAssertNil(absent.editionStatus)
+        XCTAssertEqual(null.continuationStart, .absent)
+    }
+
+    /// A present-but-unusable boundary is never guessed into a position, and it
+    /// never takes the feed down: every card still decodes.
+    func testUnusableBoundaryIsInvalidAndTheFeedSurvives5105() throws {
+        let rows = [Self.futuresRow(1), Self.futuresRow(2)]
+        for extra in [#","continuation_start":-1"#, #","continuation_start":"3""#,
+                      #","continuation_start":1.5"#] {
+            let page = try seatedPage(rows: rows, extra: extra)
+            XCTAssertEqual(page.continuationStart, .invalid, extra)
+            XCTAssertNil(page.openingItemCount, extra)
+            XCTAssertEqual(page.items.count, 2, extra)
+        }
+        // A GLOBAL position past this page's end is ordinary (a long opening):
+        // every card here is opening, nothing is invalid.
+        let long = try seatedPage(rows: rows, extra: #","continuation_start":60"#)
+        XCTAssertEqual(long.continuationStart, .at(60))
+        XCTAssertEqual(long.openingItemCount, 2)
+    }
+
+    /// The boundary is global: a later page reads it against its own offset, so
+    /// on page 50 with start 51 one card is opening and the rest continuation,
+    /// and with start 3 the whole page is continuation.
+    func testBoundaryIsReadAgainstThePagesOffset5105() throws {
+        let rows = [Self.futuresRow(51), Self.futuresRow(52), Self.futuresRow(53)]
+        let straddling = try seatedPage(rows: rows, extra: #","continuation_start":51"#, offset: 50)
+        XCTAssertEqual(straddling.openingItemCount, 1)
+        let later = try seatedPage(rows: rows, extra: #","continuation_start":3"#, offset: 50)
+        XCTAssertEqual(later.continuationStart, .at(3))
+        XCTAssertEqual(later.openingItemCount, 0)
+    }
+
+    /// The production capture predates #5105: it must read as absent, with raw
+    /// positions that are simply 0..<n because nothing was dropped.
+    func testProductionPageReadsAsLegacy5105() throws {
+        let response = try decodeFixture()
+        XCTAssertEqual(response.continuationStart, .absent)
+        XCTAssertNil(response.editionStatus)
+        XCTAssertEqual(response.rawPositions, Array(0..<response.items.count))
+    }
+}
