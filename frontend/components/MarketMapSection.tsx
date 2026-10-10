@@ -28,6 +28,7 @@ import {
   quotedLinesPhrase,
   settledLinesPhrase,
   derivePeriod,
+  closedHalfRows,
   marketMapIsGraded,
   selectGameTotalRungs,
   selectHalfTotalRungs,
@@ -1332,7 +1333,14 @@ export default function MarketMapSection({
     const maps: Array<{ key: string; data: MapData }> = [];
 
     for (const half of ["1H", "2H"] as const) {
-      const spreads = halfGroups[half];
+      // #10850: a half that finished inside a live game, served without a price
+      // until the venue grades it. Its card grades from the server's evidenced
+      // half score and draws no forecast at all: no band, no projection, no
+      // percentage. `closedHalfRows` refuses whenever this half still quotes.
+      const closed = isLive
+        ? closedHalfRows(gameMarkets.closed_period_markets, gameMarkets.period_markets, "half_spread", half)
+        : null;
+      const spreads = closed ? closed.rows : halfGroups[half];
       if (!spreads || spreads.length === 0) continue;
 
       // #4598: the same seam as the full-game rail above, deliberately the same
@@ -1341,10 +1349,12 @@ export default function MarketMapSection({
          grades (see its `gradeRung` below); leaving the half MARGIN card
          quoting would reproduce, one card lower, the exact two-tenses defect
          this ship is closing on the full-game pair. Same gate as this card's
-         own FINAL marker — `isDone && halfScores` — computed ONCE so the marker,
-         the grade and #8811's unpriced-rung rule cannot disagree about one card. */
-      const halfFinalMargin =
-        isDone && halfScores
+         own FINAL marker — `isDone && halfScores`, or #10850's closed-half
+         score — computed ONCE so the marker, the grade and #8811's
+         unpriced-rung rule cannot disagree about one card. */
+      const halfFinalMargin = closed
+        ? closed.score.home - closed.score.away
+        : isDone && halfScores
           ? half === "1H"
             ? halfScores.h1Home - halfScores.h1Away
             : halfScores.h2Home - halfScores.h2Away
@@ -1388,6 +1398,7 @@ export default function MarketMapSection({
       // margin distribution" and moved the graded ladder behind a tap. The
       // half totals card two cards down printed "Four lines settled" inline.
       const bandDrawsShape =
+        !closed &&
         (!isDone || probabilitiesQuoteASettledLine(halfProbabilities)) &&
         densityDrawsShape(density, MARGIN_ACCENT);
 
@@ -1415,8 +1426,9 @@ export default function MarketMapSection({
 
       const halfMarkers: MarketMapMarker[] = [];
 
-      // Live actual for in-progress games (first, matching full game order)
-      if (isLive && liveHalfScores) {
+      // Live actual for in-progress games (first, matching full game order).
+      // #10850: a closed half carries its FINAL below instead.
+      if (isLive && liveHalfScores && !closed) {
         const hs = half === "1H"
           ? { home: liveHalfScores.h1Home, away: liveHalfScores.h1Away }
           : liveHalfScores.h2Home != null && liveHalfScores.h2Away != null
@@ -1509,7 +1521,7 @@ export default function MarketMapSection({
       const halfLadderQuotesALine = isDone
         ? probabilitiesQuoteASettledLine(halfProbabilities)
         : probabilitiesQuoteALine(halfProbabilities);
-      if (halfRungIsAProjection && (!playHasStarted || halfLadderQuotesALine)) {
+      if (!closed && halfRungIsAProjection && (!playHasStarted || halfLadderQuotesALine)) {
         halfMarkers.push({
           key: "proj",
           // #5206: the half maps already made this exact distinction for a
@@ -1526,12 +1538,10 @@ export default function MarketMapSection({
         });
       }
 
-      // Final actual for completed games
-      if (isDone && halfScores) {
-        const hs = half === "1H"
-          ? { home: halfScores.h1Home, away: halfScores.h1Away }
-          : { home: halfScores.h2Home, away: halfScores.h2Away };
-        const margin = hs.home - hs.away;
+      // Final actual for completed games, and for a closed half (#10850) —
+      // the same number the ladder grades against, read from that one binding.
+      if (halfFinalMargin != null) {
+        const margin = halfFinalMargin;
         const team = margin > 0 ? hAbbr : margin < 0 ? aAbbr : "TIE";
         halfMarkers.push({
           key: "final",
@@ -1580,7 +1590,7 @@ export default function MarketMapSection({
       });
     }
     return maps;
-  }, [gameMarkets.period_markets, status, homeTeam, awayTeam, hAbbr, aAbbr, sportKey, vocab, isDone, isLive, halfScores, liveHalfScores, homeLogo, awayLogo]);
+  }, [gameMarkets.period_markets, gameMarkets.closed_period_markets, status, homeTeam, awayTeam, hAbbr, aAbbr, sportKey, vocab, isDone, isLive, halfScores, liveHalfScores, homeLogo, awayLogo]);
 
   // #5527: the halves' totals where no halftime row exists — see the card below.
   const halfTotalsFromGrades = useMemo(
@@ -1603,7 +1613,13 @@ export default function MarketMapSection({
     // `selectHalfTotalRungs` so this card and the Score Differential note are
     // gated on one selection rather than two that can drift apart.
     for (const halfKey of TOTAL_MAP_HALVES) {
-      const cleaned = selectHalfTotalRungs(allPeriod, halfKey);
+      // #10850: the margin card's closed-half rule, for the same half's total.
+      const closed = isLive
+        ? closedHalfRows(gameMarkets.closed_period_markets, allPeriod, "half_total", halfKey)
+        : null;
+      const cleaned = closed
+        ? selectHalfTotalRungs(closed.rows, halfKey, eventStatus, { keepUnpriced: true })
+        : selectHalfTotalRungs(allPeriod, halfKey);
       if (cleaned.length === 0) continue;
 
       // #5013: this card IS its line — the headline, the marker and the band
@@ -1622,7 +1638,7 @@ export default function MarketMapSection({
       // The full-game card escapes only because it has a real line to fall back
       // on (`overUnder ?? ouLine.threshold`); a half has none.
       const quotesALine = ladderQuotesALine(cleaned);
-      if (!isDone && !quotesALine) continue;
+      if (!isDone && !closed && !quotesALine) continue;
 
       // #5502: and after the whistle ONE interior rung is not a line either.
       // Settlement does not land on every rung at once — Rennes 1-0 Marseille
@@ -1635,7 +1651,9 @@ export default function MarketMapSection({
       // band. Settled cards only: a live ladder with one interior rung is
       // quoting, and #5143's control keeps the tile on a finished game whose
       // ladders did quote.
-      const quotesAPreGameLine = isDone
+      const quotesAPreGameLine = closed
+        ? false
+        : isDone
         ? settledLadderQuotesALine(cleaned)
         : quotesALine;
 
@@ -1679,8 +1697,9 @@ export default function MarketMapSection({
          GOING OVER` over rows the venue had called. Still a NUMBER, drawn as
          the FINAL marker and graded against like any other — the ESPN score
          wins wherever it exists. */
-      const halfFinalTotal =
-        isDone && halfScores
+      const halfFinalTotal = closed
+        ? closed.score.home + closed.score.away
+        : isDone && halfScores
           ? halfKey === "1H"
             ? halfScores.h1Home + halfScores.h1Away
             : halfScores.h2Home + halfScores.h2Away
@@ -1700,8 +1719,9 @@ export default function MarketMapSection({
 
       const halfTotalMarkers: MarketMapMarker[] = [];
 
-      // Live actual for in-progress games (first, matching full game order)
-      if (isLive && liveHalfScores) {
+      // Live actual for in-progress games (first, matching full game order).
+      // #10850: a closed half carries its FINAL below instead.
+      if (isLive && liveHalfScores && !closed) {
         const ht = halfKey === "1H"
           ? liveHalfScores.h1Home + liveHalfScores.h1Away
           : liveHalfScores.h2Home != null && liveHalfScores.h2Away != null
@@ -1772,7 +1792,7 @@ export default function MarketMapSection({
         quotesAPreGameLine && densityDrawsShape(effectiveDensity, TOTAL_ACCENT);
       const effectiveMid = railNumber((effectiveMin + effectiveMax) / 2);
 
-      const headlineVal = isDone ? "" : `O/U ${railNumber(ouLine.threshold)}`;
+      const headlineVal = isDone || closed ? "" : `O/U ${railNumber(ouLine.threshold)}`;
 
       maps.push({
         key: `total-${halfKey}`,
@@ -1804,7 +1824,7 @@ export default function MarketMapSection({
       });
     }
     return maps;
-  }, [gameMarkets.period_markets, status, vocab, isDone, isLive, halfScores, liveHalfScores, halfTotalsFromGrades]);
+  }, [gameMarkets.period_markets, gameMarkets.closed_period_markets, eventStatus, status, vocab, isDone, isLive, halfScores, liveHalfScores, halfTotalsFromGrades]);
 
   // #3136: the headings below are counted, not assumed — see `mapColumnHeading`.
   // A tennis match has no halves, so its totals column has always held exactly
