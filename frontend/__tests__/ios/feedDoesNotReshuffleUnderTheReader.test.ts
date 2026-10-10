@@ -88,10 +88,14 @@ d("#4110 — the feed does not reshuffle under the reader", () => {
         "items = DiscoverPriceRefresh.retainingPrices(Self.interleave(renderable), accepted: &acceptedPriceCards, fences: &priceFences)",
         // Network publish — now the `.repaint` ARM of the decision, not the
         // unconditional assignment it used to be. Guarded below.
-        "items = DiscoverPriceRefresh.retainingPrices(Self.interleave(renderable), accepted: &acceptedPriceCards, fences: &priceFences)",
+        // #5105 runs the spacing pass inside each served section (`within:`).
+        // That reorders nothing the decision has not already licensed: it is
+        // the same arm, on the same input, partitioned. Guarded below.
+        "items = DiscoverPriceRefresh.retainingPrices(Self.interleave(renderable, within: seatedSections), accepted: &acceptedPriceCards, fences: &priceFences)",
         // Pagination — interleaves the NEW PAGE among itself and appends. The
-        // painted prefix is not an input, so it cannot move.
-        "items = items + DiscoverPriceRefresh.retainingPrices(Self.interleave(fresh), accepted: &acceptedPriceCards, fences: &priceFences)",
+        // painted prefix is not an input, so it cannot move. (#5105: per section,
+        // still only over `fresh`.)
+        "items = items + DiscoverPriceRefresh.retainingPrices(Self.interleave(fresh, within: seatedSections), accepted: &acceptedPriceCards, fences: &priceFences)",
       ]);
     });
 
@@ -99,7 +103,32 @@ d("#4110 — the feed does not reshuffle under the reader", () => {
       // `items = Self.interleave(items + fresh)` re-derived the order of every
       // already-painted card on every scroll — the same wholesale-reorder defect
       // as the network path, triggered by the reader instead of by the clock.
-      expect(viewModel()).not.toContain("Self.interleave(items + fresh)");
+      // No closing paren: the sectioned spelling `(items + fresh, within: …)`
+      // is the same defect and must be red too.
+      expect(viewModel()).not.toContain("Self.interleave(items + fresh");
+    });
+
+    it("#5105: the sectioned pass sees only its argument and is the flat pass when no sections exist", () => {
+      // `within:` is a second overload, so it is not one of the three sites
+      // above; what keeps #4110 true through it is pinned here instead.
+      const source = viewModel();
+      const decl = "private static func interleave(\n        _ items: [FeedItem], within sections: [String: FeedSection]\n    ) -> [FeedItem] {";
+      const start = source.indexOf(decl);
+      // `static`: it cannot read the painted `items`, only what the call site
+      // hands it — the repaint's `renderable` or the page's `fresh`.
+      expect([decl, start > -1]).toEqual([decl, true]);
+      const body = source.slice(start, source.indexOf("\n    }\n", start));
+
+      // An empty record (cache seed, option off, legacy server) is exactly the
+      // old single pass, so the legacy path is unchanged.
+      expect(body).toContain("guard !sections.isEmpty else { return interleave(items) }");
+      // Otherwise it partitions its OWN argument and spaces each side; the
+      // opening side comes first, so no card crosses the served boundary.
+      expect(body).toContain("let continuation = items.filter { sections[itemKey($0)] == .continuation }");
+      expect(body).toContain("let opening = items.filter { sections[itemKey($0)] != .continuation }");
+      expect(body).toContain("return interleave(opening) + interleave(continuation)");
+      // THE MUTANT: the painted list must never be an input here.
+      expect(body).not.toMatch(/self\.items|items \+ /);
     });
   });
 
@@ -130,7 +159,7 @@ d("#4110 — the feed does not reshuffle under the reader", () => {
       const repaintArm = body.indexOf("case .repaint:");
       expect(repaintArm).toBeGreaterThan(-1);
       const afterArm = body.slice(repaintArm, repaintArm + 200);
-      expect(afterArm).toContain("items = DiscoverPriceRefresh.retainingPrices(Self.interleave(renderable)");
+      expect(afterArm).toContain("items = DiscoverPriceRefresh.retainingPrices(Self.interleave(renderable, within: seatedSections)");
 
       // And the pre-fix shape — verbatim from origin/master `3b9a420a` — is
       // detectable, so this assertion is not merely describing today's text.

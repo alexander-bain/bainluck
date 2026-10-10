@@ -315,6 +315,7 @@ def _kinds(items) -> set[str]:
 # --------------------------------------------------------------------------- #
 
 
+@pytest.mark.usefixtures("opening_seating_off")
 async def test_an_armed_capture_does_not_change_the_served_response(harness):
     plain = await harness.get("/api/feed?limit=20")
     capture = ddr.DiscoverDisplayCapture(origin="synthetic")
@@ -360,6 +361,7 @@ async def test_an_http_request_cannot_arm_a_capture(harness):
 # --------------------------------------------------------------------------- #
 
 
+@pytest.mark.usefixtures("opening_seating_off")
 async def test_a_capture_replays_to_pass_over_the_whole_deck(harness, tmp_path):
     artifact = await _capture(harness)
     pool = ddr.decode_value(artifact["scored_pool"]["items"])
@@ -387,6 +389,7 @@ async def test_a_capture_replays_to_pass_over_the_whole_deck(harness, tmp_path):
     assert exc.value.code == ddr.INVALID
 
 
+@pytest.mark.usefixtures("opening_seating_off")
 async def test_the_replay_runs_the_shared_chain_not_a_copy(harness, monkeypatch):
     artifact = await _capture(harness)
     calls = []
@@ -401,6 +404,7 @@ async def test_the_replay_runs_the_shared_chain_not_a_copy(harness, monkeypatch)
     assert calls == [artifact["scored_pool"]["count"]]
 
 
+@pytest.mark.usefixtures("opening_seating_off")
 async def test_ties_are_decided_by_the_rank_key_not_by_input_order(harness):
     """Reversing the frozen pool's ORDER changes nothing the chain decides —
     its sort is total — so the replay still passes. The chain's own key is
@@ -416,6 +420,7 @@ async def test_ties_are_decided_by_the_rank_key_not_by_input_order(harness):
 # --------------------------------------------------------------------------- #
 
 
+@pytest.mark.usefixtures("opening_seating_off")
 async def test_an_ordered_mismatch_after_the_top_20_fails(harness):
     artifact = await _capture(harness)
     ids = artifact["expected"]["full_deck_identities"]
@@ -426,6 +431,7 @@ async def test_an_ordered_mismatch_after_the_top_20_fails(harness):
     assert report["first_divergence"] == 25
 
 
+@pytest.mark.usefixtures("opening_seating_off")
 async def test_a_changed_probability_off_the_page_fails(harness):
     artifact = await _capture(harness)
     target = artifact["expected"]["full_deck_identities"][40]
@@ -441,6 +447,7 @@ async def test_a_changed_probability_off_the_page_fails(harness):
     assert report["detail"].startswith("same identities, different public card content")
 
 
+@pytest.mark.usefixtures("opening_seating_off")
 async def test_a_changed_nested_bundle_member_fails(harness):
     artifact = await _capture(harness)
     for card in artifact["scored_pool"]["items"]:
@@ -451,6 +458,7 @@ async def test_a_changed_nested_bundle_member_fails(harness):
     assert report["verdict"] == ddr.MISMATCH, report
 
 
+@pytest.mark.usefixtures("opening_seating_off")
 async def test_the_replay_never_reads_the_oracle(harness):
     """Gutting the expected block cannot make the replay's output move."""
     artifact = await _capture(harness)
@@ -468,6 +476,7 @@ async def test_the_replay_never_reads_the_oracle(harness):
 # --------------------------------------------------------------------------- #
 
 
+@pytest.mark.usefixtures("opening_seating_off")
 async def test_each_arm_gets_its_own_copy_of_the_pool(harness):
     artifact = await _capture(harness)
     handed: list[list] = []
@@ -496,6 +505,7 @@ def _shifted_datetime(fake_now: datetime):
     return _Shifted
 
 
+@pytest.mark.usefixtures("opening_seating_off")
 async def test_the_replay_reads_the_frozen_clock_not_the_wall(harness, monkeypatch):
     """Captured on a build clock three days back, replayed at two other wall
     clocks: still exact. The marquee final is inside its window only on the
@@ -524,6 +534,7 @@ async def test_the_replay_reads_the_frozen_clock_not_the_wall(harness, monkeypat
     assert outputs[0] == outputs[1]
 
 
+@pytest.mark.usefixtures("opening_seating_off")
 async def test_network_or_database_access_during_replay_is_refused(harness, monkeypatch):
     artifact = await _capture(harness)
     real = harness.feed.apply_discover_display_chain
@@ -560,6 +571,7 @@ def _no_network_stub(*_a, **_k):
     return SimpleNamespace(close=lambda: None)
 
 
+@pytest.mark.usefixtures("opening_seating_off")
 async def test_a_candidate_arm_that_reaches_the_network_is_refused(harness, monkeypatch):
     """#10290 review: the candidate arm runs under the SAME fence as the chain.
     Before the fix the arm ran before ``offline()`` and this stub was reached."""
@@ -580,6 +592,7 @@ async def test_a_candidate_arm_that_reaches_the_network_is_refused(harness, monk
     assert socket.create_connection is _no_network_stub
 
 
+@pytest.mark.usefixtures("opening_seating_off")
 async def test_a_candidate_arm_that_queries_the_database_is_refused(harness):
     artifact = await _capture(harness)
 
@@ -681,6 +694,7 @@ async def test_a_bad_pool_refuses_the_capture_and_leaves_the_feed_alone(
     assert exc.value.code == code
 
 
+@pytest.mark.usefixtures("opening_seating_off")
 async def test_an_oversized_capture_is_refused_not_truncated(harness):
     capture = ddr.DiscoverDisplayCapture(origin="synthetic", max_bytes=10_000)
     response = await harness.get("/api/feed?limit=20", capture=capture)
@@ -715,6 +729,7 @@ def test_an_abandoned_build_is_incomplete():
     ids=["schema", "unknown-key", "missing-key", "identities", "venue-missing",
          "personalized", "sports"],
 )
+@pytest.mark.usefixtures("opening_seating_off")
 async def test_load_refuses_a_malformed_capture(harness, tamper, code):
     artifact = await _capture(harness)
     tamper(artifact)
@@ -811,6 +826,7 @@ _UNSUPPORTED_LOADED = [
     [(t, c) for _, t, c in _UNSUPPORTED_LOADED],
     ids=[name for name, _, _ in _UNSUPPORTED_LOADED],
 )
+@pytest.mark.usefixtures("opening_seating_off")
 async def test_a_loaded_capture_outside_the_contract_never_passes(harness, tamper, code):
     artifact = await _capture(harness)
     # Not vacuous: the untouched capture is a real PASS through the shared chain.
@@ -825,6 +841,7 @@ async def test_a_loaded_capture_outside_the_contract_never_passes(harness, tampe
     assert exc.value.code == code
 
 
+@pytest.mark.usefixtures("opening_seating_off")
 async def test_an_unknown_branch_on_an_active_collection_capture_is_unsupported(
     harness, monkeypatch, collection_card
 ):
@@ -868,12 +885,14 @@ def _enable_collections(monkeypatch, read):
     monkeypatch.setattr(container_discovery, "discover_collections", read)
 
 
+@pytest.mark.usefixtures("opening_seating_off")
 async def test_inactive_collections_are_declared_inactive(harness):
     artifact = await _capture(harness)
     assert artifact["downstream"]["collections"] == {"active": False}
     assert artifact["downstream"]["edition"] == {"active": False}
 
 
+@pytest.mark.usefixtures("opening_seating_off")
 async def test_an_active_collection_read_is_frozen_and_replayed(
     harness, monkeypatch, collection_card
 ):
@@ -888,6 +907,7 @@ async def test_an_active_collection_read_is_frozen_and_replayed(
     read.assert_not_awaited()
 
 
+@pytest.mark.usefixtures("opening_seating_off")
 async def test_a_failed_collection_read_replays_its_fail_open_branch(
     harness, monkeypatch
 ):
@@ -932,6 +952,7 @@ def _arm_venue_reads(harness, monkeypatch):
     monkeypatch.setattr(venue_settlement_reader, "attach_venue_settlement", attach)
 
 
+@pytest.mark.usefixtures("opening_seating_off")
 async def test_venue_settlement_deltas_keep_absent_apart_from_false(harness, monkeypatch):
     _arm_venue_reads(harness, monkeypatch)
     artifact = await _capture(harness)
@@ -952,6 +973,7 @@ async def test_venue_settlement_deltas_keep_absent_apart_from_false(harness, mon
     assert ddr.verify_baseline(artifact)["verdict"] == ddr.MISMATCH
 
 
+@pytest.mark.usefixtures("opening_seating_off")
 async def test_a_failed_venue_read_is_recorded_as_fail_open(harness, monkeypatch):
     from app.utils import venue_settlement_reader
 
@@ -967,6 +989,7 @@ async def test_a_failed_venue_read_is_recorded_as_fail_open(harness, monkeypatch
     assert ddr.verify_baseline(artifact)["verdict"] == ddr.PASS
 
 
+@pytest.mark.usefixtures("opening_seating_off")
 async def test_a_pinned_edition_is_frozen_and_replayed(harness):
     from tests.integration.test_route_feed_collections_cache_10003 import _DictRedis
 
@@ -1062,6 +1085,7 @@ def test_the_codec_restores_types_and_refuses_what_it_does_not_know():
 # --------------------------------------------------------------------------- #
 
 
+@pytest.mark.usefixtures("opening_seating_off")
 async def test_the_script_exits_zero_only_on_pass(harness, tmp_path):
     artifact = await _capture(harness)
     good = tmp_path / "good.json"
@@ -1153,6 +1177,7 @@ def _hook_spy(monkeypatch, name):
     return calls
 
 
+@pytest.mark.usefixtures("opening_seating_off")
 async def test_the_ordinary_capture_still_refuses_a_warm_cache_and_names_the_tier(
     harness, monkeypatch, tmp_path
 ):
@@ -1177,6 +1202,7 @@ async def test_the_ordinary_capture_still_refuses_a_warm_cache_and_names_the_tie
     }
 
 
+@pytest.mark.usefixtures("opening_seating_off")
 async def test_the_explicit_warm_rail_mode_reaches_the_seam_and_the_final_return(
     harness, monkeypatch, tmp_path
 ):
@@ -1218,6 +1244,7 @@ async def test_the_explicit_warm_rail_mode_reaches_the_seam_and_the_final_return
         coro.close()
 
 
+@pytest.mark.usefixtures("opening_seating_off")
 async def test_an_armed_warm_rail_capture_does_not_change_the_rebuild(harness, monkeypatch):
     """Enabled vs disabled parity for the new mode: the warm rail's own rebuild
     (the precompute task's marker request, no recorder) and the armed capture
@@ -1247,6 +1274,7 @@ async def test_an_armed_warm_rail_capture_does_not_change_the_rebuild(harness, m
     assert len(plain["items"]) == 20
 
 
+@pytest.mark.usefixtures("opening_seating_off")
 async def test_both_modes_capture_the_same_build_from_the_same_inputs(
     harness, monkeypatch, tmp_path
 ):
@@ -1369,6 +1397,7 @@ def _op(**changes):
          "operational-extra", "ordinary-with-warm-declaration", "armed-wall-missing",
          "returned-digest", "schema-v1"],
 )
+@pytest.mark.usefixtures("opening_seating_off")
 async def test_a_warm_rail_capture_outside_its_declaration_never_passes(
     harness, tamper, code
 ):
@@ -1380,6 +1409,7 @@ async def test_a_warm_rail_capture_outside_its_declaration_never_passes(
     assert "scope" not in report
 
 
+@pytest.mark.usefixtures("opening_seating_off")
 async def test_a_warm_rail_build_that_resolved_no_cache_key_declares_no_publication(
     harness,
 ):
@@ -1469,6 +1499,7 @@ async def test_an_exception_in_the_build_is_not_a_cache_refusal(
 # --------------------------------------------------------------------------- #
 
 
+@pytest.mark.usefixtures("opening_seating_off")
 async def test_a_stage_policy_rebinds_one_stage_only_for_its_replay(harness, monkeypatch):
     from app.utils.feed_market_quality import COLD_START_WINDOW_FIRST_CARDS
 
@@ -1494,6 +1525,7 @@ async def test_a_stage_policy_rebinds_one_stage_only_for_its_replay(harness, mon
     assert ddr.replay_capture(artifact)["stage_policy"] is None
 
 
+@pytest.mark.usefixtures("opening_seating_off")
 async def test_a_stage_policy_is_restored_when_the_replay_raises(harness):
     artifact = await _capture(harness)
     original = harness.feed.diversify_discover_first_page
@@ -1511,6 +1543,7 @@ async def test_a_stage_policy_is_restored_when_the_replay_raises(harness):
 
 
 @pytest.mark.parametrize("policy", ddr.D2_POLICIES)
+@pytest.mark.usefixtures("opening_seating_off")
 async def test_a_d2_policy_is_an_offline_arm_restored_after_its_replay(harness, policy):
     """#5105 D2 — the observer arm reproduces the oracle; every arm restores the
     stage and returns its trace plus the pre-publication facts it reads."""
@@ -1528,6 +1561,7 @@ async def test_a_d2_policy_is_an_offline_arm_restored_after_its_replay(harness, 
     assert ddr.verify_baseline(artifact)["verdict"] == ddr.PASS
 
 
+@pytest.mark.usefixtures("opening_seating_off")
 async def test_an_unknown_stage_policy_refuses_before_any_stage(harness, monkeypatch):
     artifact = await _capture(harness)
     called: list = []
@@ -1811,6 +1845,7 @@ def _make_tournament_ordinary_live(harness, score=99.0):
     )
 
 
+@pytest.mark.usefixtures("opening_seating_off")
 async def test_opening_seating_is_off_by_default_and_moves_only_order(harness):
     _make_tournament_ordinary_live(harness)
     artifact = await _capture(harness)
@@ -1842,6 +1877,7 @@ async def test_opening_seating_is_off_by_default_and_moves_only_order(harness):
     assert ddr.verify_baseline(artifact)["verdict"] == ddr.PASS
 
 
+@pytest.mark.usefixtures("opening_seating_off")
 async def test_a_second_page_is_a_slice_of_the_same_seated_deck(harness):
     _make_tournament_ordinary_live(harness)
     first = ddr.replay_capture(await _capture(harness), opening_seating=True)
@@ -1853,6 +1889,7 @@ async def test_a_second_page_is_a_slice_of_the_same_seated_deck(harness):
     assert page == first["deck_identities"][20:40]
 
 
+@pytest.mark.usefixtures("opening_seating_off")
 async def test_opening_seating_composes_with_a_d2_policy(harness):
     _make_tournament_ordinary_live(harness)
     artifact = await _capture(harness)
@@ -1869,6 +1906,7 @@ async def test_opening_seating_composes_with_a_d2_policy(harness):
     assert guard["verdict"] == ddr.PASS
 
 
+@pytest.mark.usefixtures("opening_seating_off")
 async def test_opening_seating_refuses_a_pinned_edition_before_any_stage(harness, monkeypatch):
     from tests.integration.test_route_feed_collections_cache_10003 import _DictRedis
 
@@ -1903,6 +1941,7 @@ async def test_opening_seating_refuses_a_pinned_edition_before_any_stage(harness
 # "unresolved_sparse_supply" is retired (thin supply now continues, 2026-10-08):
 # a status the arm does not accept still refuses.
 @pytest.mark.parametrize("status", ["unresolved_sparse_supply", "unsupported"])
+@pytest.mark.usefixtures("opening_seating_off")
 async def test_a_refused_seating_refuses_the_arm(harness, monkeypatch, status):
     from app.utils import discover_opening_seating as seating
 
@@ -1954,6 +1993,7 @@ def _thin_pool(harness):
     ]
 
 
+@pytest.mark.usefixtures("opening_seating_off")
 async def test_thin_supply_replays_the_eligible_opening_then_the_continuation(harness):
     _thin_pool(harness)
     artifact = await _capture(harness)
@@ -1980,6 +2020,7 @@ async def test_thin_supply_replays_the_eligible_opening_then_the_continuation(ha
 
 
 @pytest.mark.parametrize("offset", [0, 1, 2, 3, 4])
+@pytest.mark.usefixtures("opening_seating_off")
 async def test_every_page_carries_the_one_full_deck_boundary(harness, offset):
     """Pages that end before, start before, start AT and start after the
     boundary all read the same global ``continuation_start`` and are slices of
@@ -2005,6 +2046,7 @@ async def test_every_page_carries_the_one_full_deck_boundary(harness, offset):
         assert not any(p in _THIN_LIVE for p in page)
 
 
+@pytest.mark.usefixtures("opening_seating_off")
 async def test_enough_supply_replays_with_no_continuation_marker(harness):
     _make_tournament_ordinary_live(harness)
     seated = ddr.replay_capture(await _capture(harness), opening_seating=True)
@@ -2019,6 +2061,7 @@ async def test_enough_supply_replays_with_no_continuation_marker(harness):
      ("sparse_continuation", -1), ("sparse_continuation", 10_000),
      ("sparse_continuation", True)],
 )
+@pytest.mark.usefixtures("opening_seating_off")
 async def test_a_boundary_that_disagrees_with_its_status_is_a_mismatch(
     harness, monkeypatch, status, boundary
 ):
@@ -2053,6 +2096,7 @@ def _make_tournament_ordinary_conflicted(harness, score):
     )
 
 
+@pytest.mark.usefixtures("opening_seating_off")
 async def test_a_real_conflict_in_the_opening_refuses_the_arm_not_a_compliant_deck(harness):
     """No stub: the helper's own UNSUPPORTED for a conflicted opening card
     reaches the caller as a refusal; the arm never returns a compliant deck."""
@@ -2068,6 +2112,7 @@ async def test_a_real_conflict_in_the_opening_refuses_the_arm_not_a_compliant_de
     assert ddr.verify_baseline(artifact)["verdict"] == ddr.PASS
 
 
+@pytest.mark.usefixtures("opening_seating_off")
 async def test_a_real_conflict_below_the_opening_leaves_the_arm_supported(harness):
     _make_tournament_ordinary_conflicted(harness, score=1.0)
     artifact = await _capture(harness)
@@ -2081,6 +2126,7 @@ async def test_a_real_conflict_below_the_opening_leaves_the_arm_supported(harnes
 
 
 @pytest.mark.parametrize("vandalism", ["score", "drop", "rank"])
+@pytest.mark.usefixtures("opening_seating_off")
 async def test_a_seating_stage_that_touches_a_card_is_a_mismatch(harness, monkeypatch, vandalism):
     from app.utils import discover_opening_seating as seating
 
@@ -2102,6 +2148,7 @@ async def test_a_seating_stage_that_touches_a_card_is_a_mismatch(harness, monkey
     assert refused.value.code == ddr.MISMATCH
 
 
+@pytest.mark.usefixtures("opening_seating_off")
 async def test_seating_checks_venue_deltas_against_the_captured_order(harness, monkeypatch):
     """Deltas name the position the capture saw. Seating moves the same card
     objects, so a moved settled game still gets its delta — checked at its
@@ -2135,6 +2182,7 @@ async def test_seating_checks_venue_deltas_against_the_captured_order(harness, m
 
 
 @pytest.mark.parametrize("offset", [0, 1, 2, 3, 4])
+@pytest.mark.usefixtures("opening_seating_off")
 async def test_every_seated_page_envelope_carries_one_boundary_and_one_token(harness, offset):
     from app.utils.feed_cache import feed_edition_token
 
@@ -2157,6 +2205,7 @@ async def test_every_seated_page_envelope_carries_one_boundary_and_one_token(har
     )
 
 
+@pytest.mark.usefixtures("opening_seating_off")
 async def test_a_seated_deck_without_a_continuation_keeps_the_legacy_envelope(harness):
     from app.utils.feed_cache import feed_edition_token
 
@@ -2168,6 +2217,7 @@ async def test_a_seated_deck_without_a_continuation_keeps_the_legacy_envelope(ha
     assert seated["public_response"]["edition"] == feed_edition_token(seated["deck"])
 
 
+@pytest.mark.usefixtures("opening_seating_off")
 async def test_the_baseline_arm_never_states_a_boundary_even_under_thin_supply(harness):
     _thin_pool(harness)
     artifact = await _capture(harness)

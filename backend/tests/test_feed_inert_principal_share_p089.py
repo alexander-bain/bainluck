@@ -266,6 +266,7 @@ def test_the_shared_key_is_the_key_the_warmer_publishes():
 
 
 @pytest.mark.asyncio
+@pytest.mark.usefixtures("opening_seating_off")
 async def test_an_inert_session_serves_the_shared_entry_instead_of_building(
     monkeypatch,
 ):
@@ -294,6 +295,7 @@ async def test_an_inert_session_serves_the_shared_entry_instead_of_building(
 
 
 @pytest.mark.asyncio
+@pytest.mark.usefixtures("opening_seating_off")
 async def test_the_shared_serve_backfills_the_private_key(monkeypatch):
     """The next open from the same install must not even reach the DB.
 
@@ -333,6 +335,7 @@ async def test_a_cold_shared_entry_still_builds(monkeypatch):
 
 
 @pytest.mark.asyncio
+@pytest.mark.usefixtures("opening_seating_off")
 async def test_an_anonymous_request_does_not_read_a_second_key(monkeypatch):
     """An anon request's private key IS the shared key — no double read."""
     redis = _SeededRedis({f"{SHARED_KEY}:stale": json.dumps(WARMED_PAYLOAD)})

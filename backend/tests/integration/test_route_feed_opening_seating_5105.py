@@ -162,6 +162,13 @@ def seated(monkeypatch):
     return clock
 
 
+@pytest.fixture
+def unseated(monkeypatch):
+    """The served switch OFF for this test only: the legacy controls state the
+    value they test instead of inheriting the branch's default."""
+    monkeypatch.setattr(feed_module, "_DISCOVER_OPENING_SEATING_SERVED", False)
+
+
 def _plant(monkeypatch, deck):
     """The build's chain output is ``deck`` (fresh copies every build)."""
     holder = {"deck": deck}
@@ -283,11 +290,13 @@ SPARSE_SEATED = F(0, 1, 2) + [f"event:{i}" for i in range(1, 7)]
 # ---------------------------------------------------------------------------
 
 
-def test_the_served_switch_is_off():
-    assert feed_module._DISCOVER_OPENING_SEATING_SERVED is False
+def test_the_served_switch_is_on_in_the_local_release_candidate():
+    # The local switch-on candidate: the constant is the whole activation and
+    # its rollback. The OFF controls below pin ``False`` themselves.
+    assert feed_module._DISCOVER_OPENING_SEATING_SERVED is True
 
 
-def test_the_policy_is_false_for_every_shape_while_off():
+def test_the_policy_is_false_for_every_shape_while_off(unseated):
     for mode in (None, "discover", "sports"):
         assert not feed_module._feed_opening_seating_policy(
             mode=mode, sport=None, category=None, tags=None,
@@ -310,7 +319,7 @@ def test_the_policy_names_only_the_discover_deck_when_on(monkeypatch):
         assert not policy(**{**base, **other}), other
 
 
-async def test_off_serves_the_unseated_deck_under_legacy_keys_and_shapes(client, monkeypatch):
+async def test_off_serves_the_unseated_deck_under_legacy_keys_and_shapes(client, monkeypatch, unseated):
     fake = _install(monkeypatch, _DictRedis())
     _plant(monkeypatch, FULL)
 
@@ -334,7 +343,7 @@ async def test_off_serves_the_unseated_deck_under_legacy_keys_and_shapes(client,
     assert manifest is not None and "layout" not in manifest
 
 
-async def test_off_still_serves_per_offset_and_last_good_tiers(client, monkeypatch):
+async def test_off_still_serves_per_offset_and_last_good_tiers(client, monkeypatch, unseated):
     """The control for section D: the seeding below reaches the real keys."""
     page = {"items": [fut(7)], "total": 1, "limit": 20, "offset": 20, "has_more": False}
     fake = _install(
@@ -437,13 +446,16 @@ async def test_exemptions_and_typed_non_live_keep_their_seats(client, monkeypatc
     )
 
 
-async def test_the_composition_sees_collections_and_refuses_one_that_launders_live(
+async def test_the_composition_sees_collections_and_seats_one_naming_a_live_game(
     client, monkeypatch, seated
 ):
     """The seam is AFTER collections: a collection naming an ordinary live game
-    makes the deck unsupported — which only the post-collection deck shows."""
+    inherits its restriction (#5105 correction A) — which only the
+    post-collection deck shows. The route serves and paginates a seated deck
+    with BOTH the hub and its game outside the first ten, and publishes it."""
     fake = _install(monkeypatch, _DictRedis())
-    _plant(monkeypatch, FULL)
+    long_deck = [fut(0), live(100)] + [fut(i) for i in range(1, 30)]
+    _plant(monkeypatch, long_deck)
     feed_collections = import_module("app.utils.feed_collections")
     monkeypatch.setattr(feed_collections, "feed_collections_enabled", lambda **_: True)
 
@@ -461,11 +473,16 @@ async def test_the_composition_sees_collections_and_refuses_one_that_launders_li
     resp, body = await _get(client, offset=0)
     await _drain()
 
-    assert body["items"] == [] and body["total"] == 0
-    assert body["cache"]["status"] == "unavailable"
-    assert body["cache"]["reason"] == "opening_unsupported"
-    assert resp.headers["X-Feed-Cache"] == "unavailable"
-    assert fake.writes == [], "an unsupported deck publishes nothing"
+    assert body["cache"]["status"] != "unavailable", body["cache"]
+    ids = _ids(body["items"])
+    assert ids == F(*range(0, 10)) + ["collection:c1", "event:100"] + F(*range(10, 18))
+    assert body["total"] == len(long_deck) + 1
+    token = body["edition"]
+    assert token and fake.writes, "a seated deck publishes its base and manifest"
+
+    _, page1 = await _get(client, offset=20, edition=token)
+    assert page1["edition"] == token
+    assert _ids(page1["items"]) == F(*range(18, 30))
 
 
 async def test_an_ordinary_collection_is_seated_like_any_card(client, monkeypatch, seated):
@@ -776,7 +793,7 @@ async def test_last_good_cannot_certify_it_either(client, monkeypatch, seated):
     assert _ids(body["items"]) == CROSSED[20:40]
 
 
-async def test_last_good_off_control_is_served(client, monkeypatch):
+async def test_last_good_off_control_is_served(client, monkeypatch, unseated):
     """Control for the test above: the same remembered page IS served unseated."""
     key = _response_key(offset=20, opening_seating=False)
     _rc.remember_last_good(key, {"items": [fut(19)], "total": 1, "limit": 20,
@@ -1064,7 +1081,7 @@ async def test_a_seated_build_abandons_its_capture_and_still_serves(
     assert exc.value.code == ddr.INCOMPLETE
 
 
-async def test_off_the_same_capture_is_not_abandoned(client, monkeypatch):
+async def test_off_the_same_capture_is_not_abandoned(client, monkeypatch, unseated):
     """Control: the OFF route records this very build as before."""
     _install(monkeypatch, _DictRedis())
     _plant(monkeypatch, CROSSING)
@@ -1103,7 +1120,7 @@ _SESSION = {"x-session-id": "inert-5105"}
 _FOREIGN_PAGE = {"items": [fut(999)], "total": 1, "limit": 20, "offset": 0, "has_more": False}
 
 
-async def test_off_an_inert_session_takes_the_shared_anonymous_page(client, monkeypatch):
+async def test_off_an_inert_session_takes_the_shared_anonymous_page(client, monkeypatch, unseated):
     """Control: in this harness a session principal reaches LAT-P089's share."""
     _install(
         monkeypatch,

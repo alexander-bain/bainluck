@@ -21,6 +21,8 @@ from contextlib import asynccontextmanager
 from importlib import import_module
 from unittest.mock import MagicMock
 
+import pytest
+
 from app.utils import request_cache as _rc
 from app.utils.feed_cache import FEED_PREWARM_KEY_SCOPE_KEY, feed_response_cache_key
 
@@ -97,6 +99,7 @@ async def _run_warm_capturing_request(monkeypatch, shape, rc=None):
     return outcome, held["request"]
 
 
+@pytest.mark.usefixtures("opening_seating_off")
 async def test_warmed_key_equals_the_key_a_real_discover_request_reads(
     client, mock_db, monkeypatch
 ):
@@ -144,8 +147,19 @@ async def test_warmed_key_equals_the_key_a_real_sports_request_reads(
     assert read_key == feed_response_cache_key(limit=20, offset=0, mode="sports")
 
 
+# #5105: the tier a REAL read is served from when the only entry is a stale
+# mirror. OFF it is the per-offset mirror; seated it is the full-deck page base,
+# because a seated read admits no per-offset tier. A request the route mistook
+# for the warmer reads neither and reports ``miss`` — in both modes.
+_STALE_SERVED = {
+    "opening_seating_off": "stale_hit",
+    "opening_seating_on": "page_base_stale_hit",
+}
+
+
+@pytest.mark.parametrize("seating", sorted(_STALE_SERVED))
 async def test_a_stale_entry_serves_requests_but_does_not_satisfy_the_warmer(
-    client, mock_db, monkeypatch
+    client, mock_db, monkeypatch, request, seating
 ):
     """The warmer must rebuild THROUGH a stale mirror, not be short-circuited by it.
 
@@ -153,13 +167,14 @@ async def test_a_stale_entry_serves_requests_but_does_not_satisfy_the_warmer(
     the mirror (fast — which is exactly what we want live traffic to get while a
     rebuild runs underneath), while the warmer ignores it and builds.
     """
+    request.getfixturevalue(seating)
     _reset_rc()
     fake = _RecordingRedis(stale_payload=_STALE_PAYLOAD)
     _install_redis(monkeypatch, fake)
 
     resp = await client.get("/api/feed?limit=20&offset=0&event_pct=0.15")
     assert resp.status_code == 200
-    assert resp.headers["x-feed-cache"] == "stale_hit"
+    assert resp.headers["x-feed-cache"] == _STALE_SERVED[seating]
     assert resp.json()["total"] == 1, "sanity: the request really was served the mirror"
 
     # The warmer sees the SAME stale mirror.
@@ -180,8 +195,12 @@ async def test_a_stale_entry_serves_requests_but_does_not_satisfy_the_warmer(
     rc.setex.assert_not_called()
 
 
-async def test_prewarm_marker_cannot_be_set_over_http(client, monkeypatch):
+@pytest.mark.parametrize("seating", sorted(_STALE_SERVED))
+async def test_prewarm_marker_cannot_be_set_over_http(
+    client, monkeypatch, request, seating
+):
     """A client that could force rebuilds would have a free DoS on the feed."""
+    request.getfixturevalue(seating)
     _reset_rc()
     fake = _RecordingRedis(stale_payload=_STALE_PAYLOAD)
     _install_redis(monkeypatch, fake)
@@ -192,7 +211,7 @@ async def test_prewarm_marker_cannot_be_set_over_http(client, monkeypatch):
     ):
         resp = await client.get(attempt)
         assert resp.status_code == 200
-        assert resp.headers["x-feed-cache"] == "stale_hit", (
+        assert resp.headers["x-feed-cache"] == _STALE_SERVED[seating], (
             f"{attempt} bypassed the cache read — the marker is client-reachable"
         )
 
@@ -200,4 +219,4 @@ async def test_prewarm_marker_cannot_be_set_over_http(client, monkeypatch):
     resp = await client.get(
         "/api/feed?limit=20", headers={"bainluck-feed-prewarm": "true"}
     )
-    assert resp.headers["x-feed-cache"] == "stale_hit"
+    assert resp.headers["x-feed-cache"] == _STALE_SERVED[seating]
