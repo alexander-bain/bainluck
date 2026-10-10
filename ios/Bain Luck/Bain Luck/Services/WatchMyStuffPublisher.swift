@@ -64,7 +64,7 @@ import Foundation
 
     func refresh() {
         guard binding?.authenticated == true else { return }
-        refreshPins()
+        refreshPins(retryMetadata: true)
         refreshTeams()
         if let pins, pinReloadTask == nil, pins.loadState != .loading, pins.savingKeys.isEmpty {
             let token = UUID(); pinReloadToken = token
@@ -77,7 +77,7 @@ import Foundation
         }
     }
 
-    func refreshPins() {
+    func refreshPins(retryMetadata: Bool = false) {
         guard binding?.authenticated == true, let pins else { return }
         if !pins.savingKeys.isEmpty {
             // Never promote optimistic adds/removals as confirmed phone state.
@@ -91,7 +91,7 @@ import Foundation
             pinSection.state = state
             emit(); return
         }
-        if pinSignature == all {
+        if pinSignature == all, !retryMetadata {
             pinSection.state = state
             pinSection.syncedAt = pins.confirmedPinsForWatchAt
             emit(); return
@@ -120,7 +120,9 @@ import Foundation
                     $0.kind == pin.type && $0.targetID == pin.value
                 }) {
                     switch metadata {
-                    case .available(let title): self.pinSection.items[index].title = Self.boundedTitle(title)
+                    case .available(let title):
+                        self.pinSection.items[index].title = Self.boundedTitle(title)
+                        self.pinSection.items[index].unavailable = false
                     case .unavailable: self.pinSection.items[index].unavailable = true
                     case .failed: break // Keep the identity and last good title; opening can retry.
                     }
