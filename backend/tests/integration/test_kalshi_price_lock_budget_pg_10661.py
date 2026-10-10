@@ -166,6 +166,9 @@ class _Receipts:
         self.trace.append(("receipt", tuple(sorted(marks))))
 
 
+#: The held cohort's retry delay in these rigs (production: PRICE_FLUSH_SECONDS).
+RETRY_S = 0.3
+
 #: #10693: every rig's price owner, closed by `pg` before engine disposal.
 _OWNERS: list = []
 
@@ -225,6 +228,14 @@ def _rig(engine, ids, batch):
         prices=kalshi_ws._KalshiPriceOwner(),  # #10693: the run's price pipeline
         live_event_ids=None,  # #10090: the pre-#10090 plan, no flush budget
         flush_budget=None,  # #10090 (9b7e867c53): the unset run's default budget
+        # d113de4cf6: the run's known non-speaking legs, derived as the
+        # consumer does — the real classifier over each leg's MARKET ticker.
+        non_blend_outcome_ids={
+            oid for oid, mid in market_of.items()
+            if kalshi_ws.kalshi_non_speaking_ticker(
+                next(f"KX-10661-{n}" for n, m in markets.items() if m == mid)
+            )
+        },
     )
     _OWNERS.append(ns["prices"])
     tree = ast.parse(SOURCE.read_text())
@@ -294,9 +305,13 @@ async def test_a_held_game_lets_the_later_games_commit(pg):
         return queue(session, **kwargs)
 
     ns["queue_market_change"] = tick_arrives
+    ns["PRICE_FLUSH_SECONDS"] = RETRY_S  # the held cohort's retry delay
 
     async with _holding(side, legs["a2"]) as held:
-        assert await asyncio.wait_for(ns["flush_prices"](), 5) is False
+        # a5b06f85fa: a handled lock no longer fails the periodic flush (no
+        # retry delay on the unrelated games); the delay is on A's own legs.
+        assert await asyncio.wait_for(ns["flush_prices"](), 5) is True
+        assert legs["a1"] in ns["prices"].lock_retry_until
         assert held.is_active  # all of this happened while A was still held
 
         stored = await _prices(side, ids)
@@ -316,6 +331,12 @@ async def test_a_held_game_lets_the_later_games_commit(pg):
         async with engine.connect() as conn:
             assert await conn.scalar(text("SHOW lock_timeout")) == "0"
 
+    # Inside its retry delay the released game is not retried yet...
+    assert await asyncio.wait_for(ns["flush_prices"](), 5) is True
+    assert (await _prices(side, ids))["a1"] == (0.3, 2)
+    assert batch == {legs["a1"]: (0.8, None, None)}
+    # ...and once the delay has passed it commits its newest tick.
+    await asyncio.sleep(RETRY_S + 0.05)
     assert await asyncio.wait_for(ns["flush_prices"](), 5) is True
     stored = await _prices(side, ids)
     assert stored["a1"] == (0.8, 1) and stored["a2"] == (0.5, 2)
@@ -449,9 +470,12 @@ async def test_a_held_row_inside_a_pipelined_run_lets_the_later_games_commit(pg)
     batch = _pipelined_batch(ids)
     ns, trace, stats = _rig(engine, ids, batch)
     path = _selected_path(engine)
+    ns["PRICE_FLUSH_SECONDS"] = RETRY_S  # the held cohort's retry delay
 
     async with _holding(side, legs["a2"]) as held:
-        assert await asyncio.wait_for(ns["flush_prices"](), 5) is False
+        # a5b06f85fa: True, with the retry delay on A's legs (see above).
+        assert await asyncio.wait_for(ns["flush_prices"](), 5) is True
+        assert {legs["a1"], legs["a2"]} <= set(ns["prices"].lock_retry_until)
         assert held.is_active
 
         stored = await _prices(side, ids)
@@ -467,6 +491,9 @@ async def test_a_held_row_inside_a_pipelined_run_lets_the_later_games_commit(pg)
         async with engine.connect() as conn:
             assert await conn.scalar(text("SHOW lock_timeout")) == "0"
 
+    assert await asyncio.wait_for(ns["flush_prices"](), 5) is True
+    assert (await _prices(side, ids))["a1"] == (0.3, 2)  # still inside its delay
+    await asyncio.sleep(RETRY_S + 0.05)
     assert await asyncio.wait_for(ns["flush_prices"](), 5) is True
     stored = await _prices(side, ids)
     assert stored["a1"] == (0.7, 1) and stored["a2"] == (0.2, 2)
