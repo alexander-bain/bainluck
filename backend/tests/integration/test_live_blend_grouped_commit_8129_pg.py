@@ -243,11 +243,13 @@ async def cancelled_accounting(rig, r, *, owed_at_least):
     assert set(range(1, 13)) - kept <= owed, "an uncommitted event was lost"
     assert owed_at_least <= owed
     written = set(r._last_written_value)
+    # Before the size bound: a re-owed bookkept event also inflates
+    # `redundant`, and which siblings sit in the seam depends on timing.
+    assert not owed & written, f"bookkept event re-owed: {sorted(owed & written)}"
     redundant = owed & kept
     assert len(redundant) <= FRESH_STAMP_WORKERS - 1, redundant
     assert kept == snapshots  # each kept stamp kept its chart point with it
     assert written == set(r._last_snapshot_at) <= kept
-    assert not owed & written, f"bookkept event re-owed: {sorted(owed & written)}"
     assert redundant == kept - written  # only the unbookkept commits overlap
     assert r.stats["stamped"] == len(r._last_written_value)
     return kept, redundant
@@ -606,15 +608,23 @@ async def test_real_cold_orientation_later_event_view_warm_price_and_named_overr
 
 
 def _reowe_on_cancel(r, event_ids):
-    """Mutant: the cancel cleanup also re-owes events that were bookkept."""
-    real_failed = r._refresh_failed
+    """Mutant: the cancel cleanup also re-owes events that were bookkept.
 
-    def refresh_failed(due, *args, **kwargs):
-        if any(isinstance(a, asyncio.CancelledError) for a in args):
-            due = set(due) | set(event_ids)
-        return real_failed(due, *args, **kwargs)
+    Applied through the real `_refresh_failed` once the cancelled refresh
+    unwinds, not inside its cleanup call: that call is skipped when nothing
+    is left unfinished, which depends on how far the workers got (#10090)."""
+    real_refresh = r.refresh
 
-    r._refresh_failed = refresh_failed
+    async def refresh(*args, **kwargs):
+        try:
+            return await real_refresh(*args, **kwargs)
+        except asyncio.CancelledError as exc:
+            r._refresh_failed(
+                set(event_ids), set(), 0.0, None, None, None, exc, hold=False
+            )
+            raise
+
+    r.refresh = refresh
 
 
 @pytest.mark.parametrize("mutant", [False, True], ids=["source", "reowe-bookkept"])
