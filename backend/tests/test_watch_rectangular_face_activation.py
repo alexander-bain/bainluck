@@ -220,3 +220,42 @@ def test_content_cannot_be_accepted_before_named_face_activation(method):
     broken_body = body.replace(call, "", 1) + "\n" + call
     with pytest.raises(AssertionError):
         require_activation_paths(source.replace(body, broken_body, 1))
+
+
+def require_saved_final_contract(source):
+    """After the real cold tap a saved FINAL header is the result alone; only
+    the live branch may require Saved/Offline inside the game-state label."""
+    ordered(
+        function(source, "checkActualScoreColumnsColdTap"),
+        "center.tap()",
+        'let finalHeader = homeScore == awayScore ? "Final · scores tied"',
+        '"Final · " + (homeScore > awayScore ? home : away) + " won"',
+        'NSPredicate(format: "label == %@", finalHeader)',
+        '"label CONTAINS %@ AND label CONTAINS %@", "Saved reading", "Offline"',
+        "XCTAssertEqual(XCTWaiter.wait(for: [restored], timeout: 15), .completed)",
+        "if final {",
+        '"exists == true AND label BEGINSWITH %@", "Offline."), object: explanation)',
+        "XCTAssertEqual(XCTWaiter.wait(for: [offline], timeout: 15), .completed)",
+        'XCTAssertEqual(savedNote.label, "Last saved update")',
+        "[gameState, awayRow, homeRow] + (final ? [savedNote, explanation] : [])",
+    )
+
+
+def test_saved_final_cold_tap_reads_result_header_and_quiet_qualifiers():
+    require_saved_final_contract(SOURCE.read_text())
+
+
+@pytest.mark.parametrize(
+    "required",
+    [
+        'NSPredicate(format: "label == %@", finalHeader)',
+        '"Offline."), object: explanation)',
+        'XCTAssertEqual(savedNote.label, "Last saved update")',
+        "+ (final ? [savedNote, explanation] : [])",
+    ],
+)
+def test_each_saved_final_requirement_is_load_bearing(required):
+    source = SOURCE.read_text()
+    assert source.count(required) == 1
+    with pytest.raises(AssertionError):
+        require_saved_final_contract(source.replace(required, "REMOVED_FINAL_STEP", 1))

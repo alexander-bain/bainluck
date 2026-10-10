@@ -220,9 +220,24 @@ final class RectangularWidgetHostJourneyTests: XCTestCase {
         XCTAssertTrue(app.wait(for: .runningForeground, timeout: 45))
         let gameState = app.descendants(matching: .any)["watch.game-state"].firstMatch
         XCTAssertTrue(gameState.waitForExistence(timeout: 15))
-        let restored = XCTNSPredicateExpectation(predicate: NSPredicate(
-            format: "label CONTAINS %@ AND label CONTAINS %@", "Saved reading", "Offline"), object: gameState)
+        // A saved final's header is the result alone; its saved/offline
+        // qualification sits quietly below (PickerCurrentGameJourneyTests
+        // checkFinalOutcome(saved: true) owns that product contract).
+        let finalHeader = homeScore == awayScore ? "Final · scores tied"
+            : "Final · " + (homeScore > awayScore ? home : away) + " won"
+        let restored = XCTNSPredicateExpectation(predicate: final
+            ? NSPredicate(format: "label == %@", finalHeader)
+            : NSPredicate(format: "label CONTAINS %@ AND label CONTAINS %@", "Saved reading", "Offline"),
+            object: gameState)
         XCTAssertEqual(XCTWaiter.wait(for: [restored], timeout: 15), .completed)
+        let savedNote = app.staticTexts["watch.saved-update"]
+        let explanation = app.staticTexts["watch.update-explanation"]
+        if final {
+            let offline = XCTNSPredicateExpectation(predicate: NSPredicate(format:
+                "exists == true AND label BEGINSWITH %@", "Offline."), object: explanation)
+            XCTAssertEqual(XCTWaiter.wait(for: [offline], timeout: 15), .completed)
+            XCTAssertEqual(savedNote.label, "Last saved update")
+        }
         let route = app.staticTexts["watch.launch-receipt"]
         let delivered = XCTNSPredicateExpectation(predicate: NSPredicate(format: "label == %@", "Launcher opens: 1"), object: route)
         XCTAssertEqual(XCTWaiter.wait(for: [delivered], timeout: 15), .completed)
@@ -245,7 +260,7 @@ final class RectangularWidgetHostJourneyTests: XCTestCase {
         XCTAssertEqual(homeRow.label, home + ", score " + String(homeScore))
         XCTAssertEqual(awayRow.label, away + ", score " + String(awayScore))
         XCTAssertFalse(app.descendants(matching: .any)["watch.home-probability"].firstMatch.exists)
-        for element in [gameState, awayRow, homeRow] {
+        for element in [gameState, awayRow, homeRow] + (final ? [savedNote, explanation] : []) {
             try reveal(element, in: app)
             XCTAssertTrue(element.isHittable && app.frame.contains(element.frame))
             capture(app, "Cold Modular tap retained " + element.identifier + " - " + scenario)
