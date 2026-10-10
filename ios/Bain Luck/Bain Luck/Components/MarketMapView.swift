@@ -290,9 +290,11 @@ struct MarketMapView: View {
     struct MapEntry: Identifiable {
         enum Kind {
             case fullMargin
-            case halfMargin(label: String, half: GameHalf, outcomes: [GameMarketOutcome])
+            case halfMargin(label: String, half: GameHalf, outcomes: [GameMarketOutcome],
+                            closed: ClosedHalfMarkets.Binding?)
             case fullTotal
-            case halfTotal(label: String, half: GameHalf, outcomes: [GameMarketOutcome])
+            case halfTotal(label: String, half: GameHalf, outcomes: [GameMarketOutcome],
+                           closed: ClosedHalfMarkets.Binding?)
         }
         let id: String
         let title: String
@@ -301,7 +303,8 @@ struct MarketMapView: View {
 
     /// Margin maps first, then totals — the order the narrow layout always
     /// stacked them in, so the first tab is the card the phone opened on.
-    private var mapEntries: [MapEntry] {
+    /// Internal so tests can ask which cards draw (#10850).
+    var mapEntries: [MapEntry] {
         var entries: [MapEntry] = []
         if hasSpreads && !marginMapIsEmptyChrome {
             entries.append(MapEntry(
@@ -313,7 +316,8 @@ struct MarketMapView: View {
         if hasSpreads {
             entries += halfMarginGroups.map {
                 MapEntry(id: "margin-\($0.id)", title: $0.id,
-                         kind: .halfMargin(label: $0.id, half: $0.half, outcomes: $0.outcomes))
+                         kind: .halfMargin(label: $0.id, half: $0.half, outcomes: $0.outcomes,
+                                           closed: $0.closed))
             }
         }
         if !totalMapIsEmptyChrome {
@@ -325,22 +329,24 @@ struct MarketMapView: View {
         }
         entries += halfTotalGroups.map {
             MapEntry(id: "total-\($0.id)", title: $0.id,
-                     kind: .halfTotal(label: $0.id, half: $0.half, outcomes: $0.outcomes))
+                     kind: .halfTotal(label: $0.id, half: $0.half, outcomes: $0.outcomes,
+                                      closed: $0.closed))
         }
         return entries
     }
 
+    /// Internal so a test can photograph one card (#10850).
     @ViewBuilder
-    private func mapEntryCard(_ entry: MapEntry) -> some View {
+    func mapEntryCard(_ entry: MapEntry) -> some View {
         switch entry.kind {
         case .fullMargin:
             marginMapCard
-        case let .halfMargin(label, half, outcomes):
-            halfMarginCard(outcomes: outcomes, label: label, half: half)
+        case let .halfMargin(label, half, outcomes, closed):
+            halfMarginCard(outcomes: outcomes, label: label, half: half, closed: closed)
         case .fullTotal:
             totalMapCard
-        case let .halfTotal(label, half, outcomes):
-            halfTotalCard(outcomes: outcomes, label: label, half: half)
+        case let .halfTotal(label, half, outcomes, closed):
+            halfTotalCard(outcomes: outcomes, label: label, half: half, closed: closed)
         }
     }
 
@@ -571,8 +577,24 @@ struct MarketMapView: View {
     /// (`settledMargin`, home-signed) the rows may be graded against.
     private static let marginLadderLimit = 3
 
+    /// One margin ladder line: a priced rung, or (#10850) a closed half's
+    /// unpriced line, whose row prints its grade and never a price.
+    private struct MarginLadderLine {
+        let margin: Double
+        let isHome: Bool
+        let prob: Double?
+    }
+
     private func marginLadders(
         _ rungs: [SpreadRungs.Rung], settledMargin: Int?,
+        limit: Int? = MarketMapView.marginLadderLimit
+    ) -> [LadderRow] {
+        marginLadders(rungs.map { MarginLadderLine(margin: $0.margin, isHome: $0.isHome, prob: $0.probability) },
+                      settledMargin: settledMargin, limit: limit)
+    }
+
+    private func marginLadders(
+        _ rungs: [MarginLadderLine], settledMargin: Int?,
         limit: Int? = MarketMapView.marginLadderLimit
     ) -> [LadderRow] {
         marginLadder(rungs.filter { !$0.isHome }, isHome: false, abbr: aAbbr,
@@ -582,7 +604,7 @@ struct MarketMapView: View {
     }
 
     private func marginLadder(
-        _ rungs: [SpreadRungs.Rung], isHome: Bool, abbr: String, color: Color,
+        _ rungs: [MarginLadderLine], isHome: Bool, abbr: String, color: Color,
         settledMargin: Int?, limit: Int?
     ) -> [LadderRow] {
         let sorted = rungs.sorted { abs($0.margin) < abs($1.margin) }
@@ -607,7 +629,7 @@ struct MarketMapView: View {
                 // #7905 — `by N+`, not `+N`. The side is already known here,
                 // so this is the one margin label that names it itself.
                 label: MarketMapRail.marginThresholdLabel(teamAbbr: abbr, threshold: lines[i]),
-                prob: sorted[i].probability,
+                prob: sorted[i].prob,
                 color: color,
                 result: sideFinal.map {
                     MarketMapRail.totalLadderResult(threshold: lines[i], finalTotal: $0)
@@ -646,7 +668,7 @@ struct MarketMapView: View {
         let mapUnit = fullTotalUnit
         let scoreboardIsComparable = scoreboardCounts(mapUnit)
         return MarketMapRail.totalMapDrawsNothing(
-            hasThresholds: !extractTotalThresholds(fullGameTotals).isEmpty,
+            hasThresholds: !totalLines(fullGameTotals).isEmpty,
             // #6290 — the line the tile will actually draw, through the same
             // helper `totalMapCard` uses. A live card with no served opening
             // draws none, and this predicate has to know that or it keeps a card
@@ -666,7 +688,7 @@ struct MarketMapView: View {
 
     private var totalMapCard: some View {
         let thresholds = extractTotalThresholds(fullGameTotals)
-        let allThresh = thresholds.map(\.threshold)
+        let allThresh = totalLines(fullGameTotals)
         // #3509 — this map's own unit, and whether the scoreboard counts it.
         let mapUnit = fullTotalUnit
         let scoreboardIsComparable = scoreboardCounts(mapUnit)
@@ -891,12 +913,40 @@ struct MarketMapView: View {
         // #10830 — a half with legs but no rung it can draw is withheld, as
         // `halfTotalGroups` already does. Kept, it printed its title over
         // nothing (NCAAF 15322373, live, before the half titles were read).
+        //
+        // #10850 — a half that draws nothing quoting may draw its closed rows,
+        // graded from the half's served score (``closedHalfGroup``).
         return [
             MapGroup(id: "1st half margin", half: .first,
                            outcomes: halfSpreads.filter { derivePeriod($0) == "1H" }),
             MapGroup(id: "2nd half margin", half: .second,
                            outcomes: halfSpreads.filter { derivePeriod($0) == "2H" }),
-        ].filter { !halfMarginMap($0.outcomes).rungs.isEmpty }
+        ].compactMap { group in
+            if !halfMarginMap(group.outcomes).rungs.isEmpty { return group }
+            return closedHalfGroup(group, kind: .spread).flatMap {
+                closedMarginLines($0.outcomes).lines.isEmpty ? nil : $0
+            }
+        }
+    }
+
+    /// #10850 — the same half, drawn from `closed_period_markets` instead:
+    /// live games only, and only where ``ClosedHalfMarkets`` admits the rows.
+    private func closedHalfGroup(_ group: MapGroup, kind: ClosedHalfMarkets.Kind) -> MapGroup? {
+        guard isLive,
+              let binding = ClosedHalfMarkets.binding(
+                  closed: gameMarkets.closedPeriodMarkets, quoting: gameMarkets.periodMarkets,
+                  kind: kind, half: group.half == .first ? "1H" : "2H", periodOf: derivePeriod
+              )
+        else { return nil }
+        return MapGroup(id: group.id, half: group.half, outcomes: binding.rows, closed: binding)
+    }
+
+    /// A closed half's margin lines: what its rows claim, with no price.
+    private func closedMarginLines(_ outcomes: [GameMarketOutcome]) -> (unit: String, lines: [SpreadRungs.Line]) {
+        SpreadRungs.unpricedLines(
+            from: outcomes.map(Self.leg), home: homeTeam, away: awayTeam, sportUnit: vocab.unit,
+            readsHalfTitles: true
+        )
     }
 
     /// One half's margin rungs. A half map reads its OWN rungs and its own
@@ -920,6 +970,8 @@ struct MarketMapView: View {
         /// #7943 — which half this is, as a value. `id` is display copy.
         let half: GameHalf
         let outcomes: [GameMarketOutcome]
+        /// #10850 — set when `outcomes` are this half's closed rows.
+        var closed: ClosedHalfMarkets.Binding? = nil
     }
 
     private var halfTotalGroups: [MapGroup] {
@@ -928,12 +980,20 @@ struct MarketMapView: View {
         let halfTotals = periodMarkets.filter { isTotalMarket($0) } +
             totals.filter { $0.outcomeName.contains(":") }
 
+        // #10850 — as on the margin side: a half with no line to draw may
+        // draw its closed rows instead. A line, not a price, admits a card, so
+        // an unpriced line stays reachable (#10830).
         return [
             MapGroup(id: "1st half total map", half: .first,
                            outcomes: halfTotals.filter { derivePeriod($0) == "1H" }),
             MapGroup(id: "2nd half total map", half: .second,
                            outcomes: halfTotals.filter { derivePeriod($0) == "2H" }),
-        ].filter { !extractTotalThresholds($0.outcomes).isEmpty }
+        ].compactMap { group in
+            if !totalLines(group.outcomes).isEmpty { return group }
+            return closedHalfGroup(group, kind: .total).flatMap {
+                totalLines($0.outcomes).isEmpty ? nil : $0
+            }
+        }
     }
 
     /// Whether the TOTAL MAPS column has anything under its heading. Without
@@ -944,15 +1004,25 @@ struct MarketMapView: View {
         !totalMapIsEmptyChrome || !halfTotalGroups.isEmpty
     }
 
-    private func halfMarginCard(outcomes: [GameMarketOutcome], label: String, half: GameHalf) -> some View {
+    private func halfMarginCard(
+        outcomes: [GameMarketOutcome], label: String, half: GameHalf,
+        closed: ClosedHalfMarkets.Binding? = nil
+    ) -> some View {
         // A half reads its OWN rungs and its own unit, exactly as #3509 made
         // the half totals cards do.
+        //
+        // #10850 — a closed half has no prices, so no rungs: it grades its
+        // LINES against the half's served score and draws no distribution.
         let data = halfMarginMap(outcomes)
-        let parsed = data.rungs
-        let allMargins = parsed.map(\.margin)
+        let parsed = closed == nil ? data.rungs : []
+        let closedLines = closed.map { closedMarginLines($0.rows) }
+        let mapUnit = closedLines?.unit ?? data.unit
+        let played = closed?.score ?? halfScores.score(half)
+        let halfIsComplete = closed != nil || halfScores.isComplete(half)
+        let allMargins = closedLines?.lines.map(\.margin) ?? parsed.map(\.margin)
         let bounds = MarketMapRail.marginBounds(
             margins: allMargins,
-            declared: vocab.marginRange(quotedBy: data.unit),
+            declared: vocab.marginRange(quotedBy: mapUnit),
             pad: 3
         )
         let rangeMin = bounds.min
@@ -1001,8 +1071,8 @@ struct MarketMapView: View {
         // full-game card uses, and the right one here: the alternative
         // (`scoredHomeScore != nil`) would let a tennis scoreboard counting SETS
         // mark a rail drawn in GAMES.
-        if scoreboardCounts(data.unit), let played = halfScores.score(half) {
-            let over = halfScores.isComplete(half)
+        if scoreboardCounts(mapUnit), let played {
+            let over = halfIsComplete
             markers.append(MapMarker(
                 id: over ? "final" : "actual",
                 value: Double(played.margin),
@@ -1017,13 +1087,15 @@ struct MarketMapView: View {
         // #10830 — the half's own phase and result. The full-game card's
         // ladder rows, graded only against THIS half's finished score.
         let halfOver = MarketMapRail.halfMapIsOver(
-            gameIsDone: isDone, halfIsComplete: halfScores.isComplete(half)
+            gameIsDone: isDone, halfIsComplete: halfIsComplete
         )
         let settledHalfMargin = MarketMapRail.halfSettledScore(
-            halfIsComplete: halfScores.isComplete(half),
-            scoreboardCountsTheUnit: scoreboardCounts(data.unit),
-            played: halfScores.score(half)
+            halfIsComplete: halfIsComplete,
+            scoreboardCountsTheUnit: scoreboardCounts(mapUnit),
+            played: played
         )?.margin
+        let ladderLines = closedLines?.lines.map { MarginLadderLine(margin: $0.margin, isHome: $0.isHome, prob: nil) }
+            ?? parsed.map { MarginLadderLine(margin: $0.margin, isHome: $0.isHome, prob: $0.probability) }
 
         // #3642 — each end names its own bound, as on the full-game card above.
         let axisEnds = MarketMapRail.marginAxisEnds(bounds)
@@ -1034,22 +1106,31 @@ struct MarketMapView: View {
                 hasDistribution: !halfOver && MarketMapRail.marginRailHasDistribution(density: density)
             ),
             headline: "",
-            density: density, rangeMin: rangeMin, rangeMax: rangeMax,
+            density: density, drawsDistribution: closed == nil,
+            rangeMin: rangeMin, rangeMax: rangeMax,
             zeroPosition: zeroPos,
             leftRgb: resolveRGB(awayColor), rightRgb: resolveRGB(homeColor),
             axisLeft: MarketMapRail.marginThresholdLabel(teamAbbr: aAbbr, threshold: axisEnds.left),
             axisMid: "Tie",
             axisRight: MarketMapRail.marginThresholdLabel(teamAbbr: hAbbr, threshold: axisEnds.right),
             markers: markers,
-            ladder: marginLadders(parsed, settledMargin: settledHalfMargin),
-            fullLadder: marginLadders(parsed, settledMargin: settledHalfMargin, limit: nil),
+            ladder: marginLadders(ladderLines, settledMargin: settledHalfMargin),
+            fullLadder: marginLadders(ladderLines, settledMargin: settledHalfMargin, limit: nil),
             periodIsOver: halfOver
         )
     }
 
-    private func halfTotalCard(outcomes: [GameMarketOutcome], label: String, half: GameHalf) -> some View {
+    private func halfTotalCard(
+        outcomes: [GameMarketOutcome], label: String, half: GameHalf,
+        closed: ClosedHalfMarkets.Binding? = nil
+    ) -> some View {
+        // #10850 — a closed half's rows are unpriced, so `thresholds` is empty
+        // and the rail draws no distribution; its lines grade against the
+        // half's served score.
         let thresholds = extractTotalThresholds(outcomes)
-        let allThresh = thresholds.map(\.threshold)
+        let allThresh = totalLines(outcomes)
+        let played = closed?.score ?? halfScores.score(half)
+        let halfIsComplete = closed != nil || halfScores.isComplete(half)
         // #3509 — a half map reads ITS OWN rungs, not the full map's and not
         // the sport's.
         let mapUnit = vocab.totalsUnit(quotedBy: outcomes.map(\.marketName))
@@ -1077,8 +1158,8 @@ struct MarketMapView: View {
         // "17 points" and not a bare 17). `scoreboardCounts(mapUnit)` asks the
         // question of THIS map's unit, which is what #3509 made the half maps
         // parse for in the first place.
-        if scoreboardCounts(mapUnit), let played = halfScores.score(half) {
-            let over = halfScores.isComplete(half)
+        if scoreboardCounts(mapUnit), let played {
+            let over = halfIsComplete
             markers.append(MapMarker(
                 id: over ? "final" : "actual",
                 value: Double(played.total),
@@ -1117,12 +1198,12 @@ struct MarketMapView: View {
         // finished total, never live (`liveTotalLadderResult` refuses a
         // sub-contest market) and never from the whole game's score.
         let halfOver = MarketMapRail.halfMapIsOver(
-            gameIsDone: isDone, halfIsComplete: halfScores.isComplete(half)
+            gameIsDone: isDone, halfIsComplete: halfIsComplete
         )
         let settledHalfTotal = MarketMapRail.halfSettledScore(
-            halfIsComplete: halfScores.isComplete(half),
+            halfIsComplete: halfIsComplete,
             scoreboardCountsTheUnit: scoreboardCounts(mapUnit),
-            played: halfScores.score(half)
+            played: played
         )?.total
         func halfTotalRow(_ rung: MarketMapRail.TotalRung) -> LadderRow {
             return Self.totalsOverRow(
@@ -1671,20 +1752,29 @@ struct MarketMapView: View {
     /// Projected scoring card underneath this one has to be able to ask what
     /// this map drew. Behaviour is unchanged and every caller comes along:
     /// the half maps below parse their rungs by the same rule they always did.
+    ///
+    /// #6676 / #10850 — PRICED rungs only. `?? 0.5` turned an unpriced line
+    /// into a coin flip in the rail's density and made it the O/U line the
+    /// tile names. Whether a card draws, and its axis, read ``totalLines``.
     private func extractTotalThresholds(
         _ outcomes: [GameMarketOutcome]
     ) -> [(threshold: Double, overProb: Double, marketName: String?)] {
         MarketMapRail.fullTotalRungs(
             outcomeNames: outcomes.map(\.outcomeName),
             thresholds: outcomes.map(\.threshold)
-        ).map { rung in
+        ).compactMap { rung in
             let outcome = outcomes[rung.index]
-            return (
-                rung.threshold,
-                outcome.overProbability ?? outcome.probability ?? 0.5,
-                outcome.marketName
-            )
+            guard let price = outcome.overProbability ?? outcome.probability else { return nil }
+            return (rung.threshold, price, outcome.marketName)
         }
+    }
+
+    /// Every Over line a totals card can show, priced or not.
+    private func totalLines(_ outcomes: [GameMarketOutcome]) -> [Double] {
+        MarketMapRail.fullTotalRungs(
+            outcomeNames: outcomes.map(\.outcomeName),
+            thresholds: outcomes.map(\.threshold)
+        ).map(\.threshold)
     }
 
     // MARK: - Density Computation

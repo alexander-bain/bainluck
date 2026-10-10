@@ -55,6 +55,11 @@ nonisolated struct GameMarketsResponse: Decodable, Equatable, Sendable {
     var totals: [GameMarketOutcome]?
     var teamTotals: [GameMarketOutcome]?
     var periodMarkets: [GameMarketOutcome]?
+    /// #10850 — a live game's period rows whose window has closed and that the
+    /// venue has not graded yet: unpriced, beside the period's evidenced score.
+    /// Read only through ``ClosedHalfMarkets``. Absent before the server half
+    /// ships; a body the app cannot read is nil and costs only these cards.
+    @LenientDecode var closedPeriodMarkets: [ClosedPeriodOutcome]? = nil
     var other: [GameMarketOther]?
     let pace: GameMarketPace?
     // Raw row revision orders projections; real observation remains separate.
@@ -212,6 +217,35 @@ nonisolated struct GameMarketOutcome: Decodable, Equatable, Identifiable, Sendab
     /// ``HalfScoresFromGrades``; absent on older payloads, decoding to `nil`.
     let isWinner: Bool?
     let resolutionSource: String?
+}
+
+/// #10850 — one `closed_period_markets` row: the period row as served, plus
+/// the two fields the contract adds. `probability` is null by contract and the
+/// row carries no other price.
+nonisolated struct ClosedPeriodOutcome: Decodable, Equatable, Sendable {
+    nonisolated struct PeriodScore: Decodable, Equatable, Sendable {
+        let home: Int
+        let away: Int
+    }
+
+    let row: GameMarketOutcome
+    let windowClosed: Bool?
+    let periodScore: PeriodScore?
+
+    private enum CodingKeys: String, CodingKey { case windowClosed, periodScore }
+
+    init(row: GameMarketOutcome, windowClosed: Bool?, periodScore: PeriodScore?) {
+        self.row = row
+        self.windowClosed = windowClosed
+        self.periodScore = periodScore
+    }
+
+    init(from decoder: Decoder) throws {
+        row = try GameMarketOutcome(from: decoder)
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        windowClosed = try c.decodeIfPresent(Bool.self, forKey: .windowClosed)
+        periodScore = try c.decodeIfPresent(PeriodScore.self, forKey: .periodScore)
+    }
 }
 
 // MARK: - Futures Market Detail
