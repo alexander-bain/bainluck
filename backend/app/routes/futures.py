@@ -13,7 +13,7 @@ from typing import Optional, Sequence
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from sqlalchemy import select, and_, or_, func, exists
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import joinedload, selectinload
+from sqlalchemy.orm import aliased, joinedload, selectinload
 
 from app.models import Event, FuturesMarket, FuturesOutcome, FuturesOddsSnapshot, Sport, Team
 from app.services import get_db, OddsAPIService
@@ -4244,6 +4244,55 @@ def _unsupported_price_candidates(market: FuturesMarket) -> list:
     ]
 
 
+def _newest_capture_per_outcome(outcome_ids: list[int], bookmaker: str):
+    """`(outcome_id, captured_at)`: each leg's newest capture on `bookmaker` (#2316).
+
+    The two trade reads below join their rows back to this. It used to be
+    `max(captured_at) ... GROUP BY outcome_id` over `futures_odds_snapshots`,
+    and Postgres has no index skip scan, so that form read EVERY snapshot a
+    leg has ever had to find its newest one — a cost that grows for as long as
+    we keep pricing the market, on an append-only 51 GB table. Production
+    `pg_stat_statements`, 2026-10-10: ~2.8 s mean, 10-21 s max, ~285k buffers
+    per call to return ~1,150 rows. One `EXPLAIN ANALYZE` over 150 hockey
+    season legs: 57,430 index entries and 1,587 ms.
+
+    Here each leg asks the question by itself, as an UNGROUPED `max()` keyed on
+    its own id, which Postgres answers as a one-row backward probe of
+    `(outcome_id, bookmaker, captured_at DESC)`. Same 150 legs: 9 ms. `max()`
+    is kept on purpose rather than `ORDER BY ... LIMIT 1`, because `captured_at`
+    is nullable and `max()` already ignores NULLs exactly as the old aggregate
+    did; a leg with no capture gets NULL here and joins nothing, as before.
+
+    Driven from `futures_outcomes` by primary key so it stays portable SQL (the
+    SQLite rigs run these readers too). That is the same set of legs: the FK
+    `futures_odds_snapshots_outcome_id_fkey` is validated, so no snapshot names
+    an outcome that is not there. Proven on production as a FULL OUTER JOIN of
+    old and new answers: 0 mismatches over 376 Kalshi legs (max price), 400
+    Polymarket legs (raw rows, 148 with a NULL price) and 376 Kalshi legs (raw).
+
+    The inner snapshot table is an alias so the correlation can only bind to
+    the outcome row, never to the outer query's own `futures_odds_snapshots`.
+    """
+    capture = aliased(FuturesOddsSnapshot)
+    newest_at = (
+        select(func.max(capture.captured_at))
+        .where(
+            capture.outcome_id == FuturesOutcome.id,
+            capture.bookmaker == bookmaker,
+        )
+        .correlate(FuturesOutcome)
+        .scalar_subquery()
+    )
+    return (
+        select(
+            FuturesOutcome.id.label("outcome_id"),
+            newest_at.label("captured_at"),
+        )
+        .where(FuturesOutcome.id.in_(outcome_ids))
+        .subquery()
+    )
+
+
 async def _newest_kalshi_trades(db: AsyncSession, outcome_ids: list[int]) -> dict:
     """`{outcome_id: last_price}` at each leg's newest Kalshi capture (#7632).
 
@@ -4260,18 +4309,7 @@ async def _newest_kalshi_trades(db: AsyncSession, outcome_ids: list[int]) -> dic
     """
     if not outcome_ids:
         return {}
-    newest = (
-        select(
-            FuturesOddsSnapshot.outcome_id,
-            func.max(FuturesOddsSnapshot.captured_at).label("captured_at"),
-        )
-        .where(
-            FuturesOddsSnapshot.outcome_id.in_(outcome_ids),
-            FuturesOddsSnapshot.bookmaker == KALSHI_BOOKMAKER,
-        )
-        .group_by(FuturesOddsSnapshot.outcome_id)
-        .subquery()
-    )
+    newest = _newest_capture_per_outcome(outcome_ids, KALSHI_BOOKMAKER)
     rows = await db.execute(
         select(
             FuturesOddsSnapshot.outcome_id,
@@ -4447,18 +4485,7 @@ async def _newest_venue_trade_rows(
     """
     if not outcome_ids:
         return []
-    newest = (
-        select(
-            FuturesOddsSnapshot.outcome_id,
-            func.max(FuturesOddsSnapshot.captured_at).label("captured_at"),
-        )
-        .where(
-            FuturesOddsSnapshot.outcome_id.in_(outcome_ids),
-            FuturesOddsSnapshot.bookmaker == venue,
-        )
-        .group_by(FuturesOddsSnapshot.outcome_id)
-        .subquery()
-    )
+    newest = _newest_capture_per_outcome(outcome_ids, venue)
     rows = await db.execute(
         select(
             FuturesOddsSnapshot.outcome_id,
