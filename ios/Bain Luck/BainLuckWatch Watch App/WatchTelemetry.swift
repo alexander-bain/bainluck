@@ -146,6 +146,9 @@ final class WatchTelemetry: NSObject, ObservableObject, WCSessionDelegate, @unch
         #if DEBUG
         if WatchUIFixture.current != nil { return }
         #endif
+        // Disabled telemetry must not encode and rewrite its empty buffer for
+        // every foreground refresh. Consent changes persist in setEnabled.
+        guard enabled else { return }
         let now = Date()
         buffer.append(WatchTelemetryRecord(recordedAt: now, kind: kind, surface: surface,
                                             action: action, outcome: outcome, durationMS: durationMS,
