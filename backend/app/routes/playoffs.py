@@ -4501,18 +4501,56 @@ _GRID_DECIDED_STATES = frozenset({"won", "eliminated", "lost"})
 _GRID_RESOLVED_COVERAGE = 0.9
 
 
-def _grid_admitted_price(current_probability, yes_bid, yes_ask) -> float | None:
+def _grid_price_was_withdrawn(price_changed_at, book_updated_at) -> bool:
+    """A NULL price that was WITHDRAWN, not never written (#10839).
+
+    ``polymarket_ws.withdraw_book_refuted_prices`` (#9934) clears
+    ``current_probability`` when a wide book refutes it: ``price_changed_at``
+    moves (a price going away is a move) and ``last_updated`` deliberately does
+    not, and the stored bid/ask are left as they were — the book the withdrawn
+    price was read from. So a NULL price whose last change is no older than the
+    stored book is a withdrawal, and that book's midpoint is the price the
+    venue's own later book refused.
+
+    What a reader saw: ``/playoffs/wnba`` 2026-10-10 11:33Z priced the Aces,
+    swept 3-0 at 04:01Z, at 4.8% to win the title. Polymarket's leg had been
+    withdrawn at 08:22Z; its stored book (0.09/0.10) was from 22:50Z the day
+    before, before Game 3 tipped. ``/api/futures/9413479`` served it as null.
+
+    A price that was never written has no ``price_changed_at``, so the
+    migration case #10209 admitted on the midpoint is untouched.
+    """
+    if price_changed_at is None:
+        return False
+    return book_updated_at is None or book_updated_at <= price_changed_at
+
+
+def _grid_admitted_price(
+    current_probability,
+    yes_bid,
+    yes_ask,
+    *,
+    price_changed_at,
+    book_updated_at,
+) -> float | None:
     """The price a grid leg is ADMITTED on, or ``None`` when it has none (#10209).
 
     The stored ``current_probability`` when there is one, otherwise the bid/ask
     midpoint (a leg whose price was never written, e.g. during an API format
-    migration). Both the admission loop and the cell builder read this, because
-    they used to disagree: admission took the midpoint, the cell re-read the
-    NULL column and called ``float()`` on it, and that one leg 500'd the whole
-    league's grid (Sentry BAINLUCK-1HG, ``/api/playoffs/nhl``, 2026-10-02).
+    migration) — unless the price was WITHDRAWN after that book was stored
+    (#10839, `_grid_price_was_withdrawn`). Both the admission loop and the cell
+    builder read this, because they used to disagree: admission took the
+    midpoint, the cell re-read the NULL column and called ``float()`` on it,
+    and that one leg 500'd the whole league's grid (Sentry BAINLUCK-1HG,
+    ``/api/playoffs/nhl``, 2026-10-02).
+
+    The two stamps are keyword-only and required so that neither call site can
+    silently drop the withdrawal check by omitting them.
     """
     if current_probability is not None:
         return float(current_probability)
+    if _grid_price_was_withdrawn(price_changed_at, book_updated_at):
+        return None
     if yes_bid is not None and yes_ask is not None and float(yes_ask) > 0:
         return (float(yes_bid) + float(yes_ask)) / 2
     return None
@@ -6145,6 +6183,8 @@ async def get_playoff_grid(
                     outcome.current_probability,
                     outcome.current_yes_bid,
                     outcome.current_yes_ask,
+                    price_changed_at=outcome.price_changed_at,
+                    book_updated_at=outcome.last_updated,
                 )
                 if prob is None:
                     continue
@@ -6361,6 +6401,8 @@ async def get_playoff_grid(
                     outcome.current_probability,
                     outcome.current_yes_bid,
                     outcome.current_yes_ask,
+                    price_changed_at=outcome.price_changed_at,
+                    book_updated_at=outcome.last_updated,
                 )
                 if _probability is None:
                     continue
