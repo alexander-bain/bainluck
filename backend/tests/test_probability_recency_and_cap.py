@@ -618,8 +618,14 @@ class TestWireShapeIsNormalised:
         import inspect
 
         from app.routes import events as events_route
+        from app.utils import probability_source_format
 
-        src = inspect.getsource(events_route._format_event)
+        # 1037235f7e: `_format_event` delegates the entries to the shared
+        # formatter, which is where the sibling key is written.
+        assert "format_probability_sources(" in inspect.getsource(
+            events_route._format_event
+        )
+        src = inspect.getsource(probability_source_format.format_probability_sources)
         idx = src.index('["updated_at"] = updated_at.isoformat()')
         assert idx > 0, "the write time should be exposed alongside value"
 

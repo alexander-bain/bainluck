@@ -42,6 +42,7 @@ established. Only the socket, the slate query and the write outcome are faked.
 
 import asyncio
 import json
+from types import SimpleNamespace
 
 import pytest
 from tests._kalshi_price_session import bind_sessions, is_price_write, returned
@@ -231,9 +232,18 @@ class _FlakySession:
                 self._writes.extend(price_writes(stmt, params))
                 if is_price_write(stmt):
                     # #10693: a landed Kalshi write is the row the UPDATE
-                    # RETURNED. (Polymarket's writer reads no rows here.)
+                    # RETURNED.
                     (oid, _prob), = price_writes(stmt, params)
                     return _Result([returned(oid, quote_moved=False)])
+                if "chunk_ids" in params:
+                    # 1b298f0362: so is a landed Polymarket chunk write — only
+                    # the rows it returns count as written. Every price lands.
+                    return _Result([
+                        SimpleNamespace(**vars(returned(oid, quote_moved=False)), ord=i)
+                        for i, (oid, _prob) in enumerate(
+                            price_writes(stmt, params), start=1,
+                        )
+                    ])
             return _Result([])
         return _Result(self._batches.pop(0) if self._batches else [])
 

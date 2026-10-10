@@ -136,7 +136,7 @@ class _LosesOneCancel(lbr.LiveBlendRefresher):
         self.swallowed = 0
         _LosesOneCancel.instances.append(self)
 
-    async def refresh_pending(self, *, flush_started=None):
+    async def refresh_pending(self, *, flush_started=None, defer_event_ids=()):
         self.entered.append(time.monotonic())
         try:
             await asyncio.sleep(WORK)

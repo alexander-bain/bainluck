@@ -25,16 +25,29 @@ from app.tasks.polymarket import sub_market_metadata
 
 
 def _flush_function(module, consumer_name: str) -> ast.AsyncFunctionDef:
-    """The nested `flush_prices` coroutine inside a WS consumer."""
+    """The nested `flush_prices` coroutine inside a WS consumer.
+
+    81fc5dba42: Polymarket's `flush_prices` only enters the catalog boundary
+    and awaits `_flush_prices`, which holds the flush; that body is returned.
+    """
     tree = ast.parse(inspect.getsource(module))
     for node in ast.walk(tree):
         if isinstance(node, ast.AsyncFunctionDef) and node.name == consumer_name:
-            for inner in ast.walk(node):
-                if (
-                    isinstance(inner, ast.AsyncFunctionDef)
-                    and inner.name == "flush_prices"
-                ):
-                    return inner
+            nested = {
+                inner.name: inner for inner in ast.walk(node)
+                if isinstance(inner, ast.AsyncFunctionDef)
+            }
+            flush = nested.get("flush_prices")
+            if flush is None:
+                break
+            body = nested.get("_flush_prices")
+            if body is not None and any(
+                isinstance(call, ast.Call) and isinstance(call.func, ast.Name)
+                and call.func.id == "_flush_prices"
+                for call in ast.walk(flush)
+            ):
+                return body
+            return flush
     raise AssertionError(f"{consumer_name} has no nested flush_prices")
 
 
@@ -254,7 +267,40 @@ class TestFlushReachesTheBlend:
             )
             refresh_calls = _calls_named(flush, "refresh")
             assert refresh_calls, consumer
-            assert min(c.lineno for c in refresh_calls) > write_line, (
+            first = min(refresh_calls, key=lambda c: c.lineno)
+            starter = next(
+                (fn for fn in ast.walk(flush)
+                 if isinstance(fn, ast.AsyncFunctionDef) and fn is not flush
+                 and any(c is first for c in ast.walk(fn))),
+                None,
+            )
+            if starter is None:
+                assert first.lineno > write_line, (
+                    f"{consumer}: blend refresh must follow the price write"
+                )
+                continue
+            # 17f801bfcf: the Kalshi stamp starts in a closure defined (and
+            # awaited at each phase's top) above the write. It stamps only
+            # `queued_events`, which only `queue_committed` fills, and every
+            # call of that follows the write — so the refresh still reads
+            # only rows this flush has written.
+            assert "queued_events" in ast.unparse(starter), consumer
+            fills = [
+                c for c in ast.walk(flush)
+                if isinstance(c, ast.Call) and isinstance(c.func, ast.Attribute)
+                and isinstance(c.func.value, ast.Name)
+                and c.func.value.id == "queued_events"
+                and c.func.attr in ("update", "add", "__ior__")
+            ]
+            (filler,) = [
+                fn for fn in ast.walk(flush)
+                if isinstance(fn, ast.FunctionDef) and fn.name == "queue_committed"
+            ]
+            assert fills and all(
+                any(c is f for c in ast.walk(filler)) for f in fills
+            ), f"{consumer}: queued_events is filled outside queue_committed"
+            committed = _calls_named(flush, "queue_committed")
+            assert committed and min(c.lineno for c in committed) > write_line, (
                 f"{consumer}: blend refresh must follow the price write"
             )
 
@@ -335,7 +381,9 @@ class TestSubscriptionListIsRefreshed:
                 for n in ast.walk(tree)
                 if isinstance(n, ast.AsyncFunctionDef) and n.name == consumer
             )
-            waits = _calls_named(node, "wait_for")
+            # d1a2bcb366: Kalshi bounds its run with `asyncio.wait(timeout=)`
+            # and refreshes the scope at each timeout instead of recycling.
+            waits = _calls_named(node, "wait_for") + _calls_named(node, "wait")
             assert waits, f"{consumer}: ws.run must not be awaited unbounded"
             assert any(
                 kw.arg == "timeout" for w in waits for kw in w.keywords
@@ -448,7 +496,7 @@ def _exec_flush(module, consumer_name: str, namespace: dict):
         inspect.getsourcefile(module), "exec",
     )
     exec(code, namespace)
-    return namespace["flush_prices"]
+    return namespace[fn.name]  # Polymarket's body is `_flush_prices` (81fc5dba42)
 
 
 async def _no_withdrawals(**_kw):
@@ -458,7 +506,9 @@ async def _no_withdrawals(**_kw):
 def _quiet_namespace(module, refresher):
     import asyncio
 
-    return {
+    from app.tasks.live_blend_refresh import event_ids_for_outcomes
+
+    namespace = {
         "buffer_lock": asyncio.Lock(),
         "price_buffer": {},
         "blend_refresher": refresher,
@@ -469,10 +519,29 @@ def _quiet_namespace(module, refresher):
         "standalone_open_outcome_ids": getattr(
             module, "standalone_open_outcome_ids", None
         ),
+        # bd506333e8: and maps the withdrawal cohort to its events with the
+        # helper the consumer imports from the refresher.
+        "event_ids_for_outcomes": event_ids_for_outcomes,
         "open_outcome_ids": set(),
         "event_id_by_outcome": {},
         "open_complement_of": {},
+        # 78d4774b67: known props never hold a headline cohort.
+        "non_blend_outcome_ids": set(),
+        # #837: Polymarket's held-price withdrawals and receive marks; none.
+        "withdraw_buffer": {},
+        "input_marks": {},
+        # Polymarket's run-scoped lock-retry isolation; nothing held.
+        "lock_retry_events": set(),
+        "lock_retry_until": {},
     }
+    # a5b06f85fa: Kalshi's flush keeps its lock-retry clock and stamp on the
+    # run's price owner, which the consumer's lifetime wrapper creates.
+    if hasattr(module, "_KalshiPriceOwner"):
+        namespace["prices"] = module._KalshiPriceOwner()
+    # Polymarket's run-scoped catalog boundary owns its persistent stamp.
+    if hasattr(module, "_PMCatalogFlushBoundary"):
+        namespace["catalog_boundary"] = module._PMCatalogFlushBoundary()
+    return namespace
 
 
 class TestAQuietFlushServicesLockDeferredStamps:
