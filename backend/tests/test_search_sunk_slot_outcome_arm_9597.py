@@ -10,6 +10,7 @@ pay nothing), and that its shed path never rolls the session back while
 from __future__ import annotations
 
 import inspect
+import time
 
 import pytest
 
@@ -45,11 +46,83 @@ def test_the_fetch_uses_a_savepoint_and_never_a_session_rollback():
     assert "db.rollback(" not in code
 
 
-def test_the_fetch_excludes_the_name_arms():
+class _CapturingSession:
+    """Records every statement; answers each with no rows."""
+
+    def __init__(self):
+        self.statements = []
+
+    async def execute(self, stmt, *args, **kwargs):
+        self.statements.append(stmt)
+
+        class _Result:
+            def scalars(self):
+                return self
+
+            def unique(self):
+                return self
+
+            def all(self):
+                return []
+
+        return _Result()
+
+    async def begin_nested(self):
+        class _Savepoint:
+            async def commit(self):
+                pass
+
+            async def rollback(self):
+                pass
+
+        return _Savepoint()
+
+
+async def _sunk_slot_sql():
+    """The arm's statement as Postgres receives it, over a stand-in window."""
+    from sqlalchemy import select
+    from sqlalchemy.dialects import postgresql
+
+    from app.models.models import FuturesMarket
+
+    db = _CapturingSession()
+    rows, state = await events_route._fetch_sunk_slot_outcome_rows(
+        db,
+        lambda flt: select(FuturesMarket.id).where(flt, FuturesMarket.status == "open"),
+        [FuturesMarket.name.ilike("%rangers%"),
+         FuturesMarket.external_id.like("kxmlb%")],
+        events_route._market_has_outcome(
+            events_route.FuturesOutcome.name.ilike("%rangers%")
+        ),
+        time.monotonic() + 5,
+    )
+    assert (rows, state) == ([], "merged")
+    window = [
+        s for s in db.statements if "futures_markets" in str(s)
+    ]
+    assert len(window) == 1, db.statements
+    return str(window[0].compile(dialect=postgresql.dialect()))
+
+
+async def test_the_fetch_excludes_the_name_arms():
     """Without the exclusion the window's name-tier-first order returns the
     props whose OUTCOMES name the club, and no outcome-only row (the pg mutant)."""
-    src = inspect.getsource(events_route._fetch_sunk_slot_outcome_rows)
-    assert "~candidates_in(tier1_arms)" in src
+    sql = await _sunk_slot_sql()
+    assert "IS NOT true" in sql
+    assert "futures_markets.name ILIKE" in sql
+    assert "futures_markets.external_id" in sql
+
+
+async def test_the_name_arms_are_tested_on_the_row_10803():
+    """#10803: no candidate SET is built for either side. `NOT IN (UNION ...)`
+    scanned 5,804 `rangers` name matches to drop them from ~39 rows, and the
+    `IN (SELECT id ...)` self-join was its twin. Row-for-row identity with the
+    old form is pinned on Postgres in
+    `integration/test_search_sunk_slot_identity_10803_pg.py`."""
+    sql = await _sunk_slot_sql()
+    assert "NOT IN" not in sql
+    assert "futures_markets.id IN" not in sql
+    assert "UNION" not in sql
 
 
 def test_the_route_reports_the_arm_state():

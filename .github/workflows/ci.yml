@@ -967,10 +967,16 @@ jobs:
         # a real database behind the real route can observe it. One strawman (arm
         # disarmed -> props fill the page), two controls, the World Series pin, and a
         # seed the drop-the-exclusion mutant bites. Three refusals.
+        #
+        # #10803 rides this step: the arm tests its exclusion on the row instead of
+        # building every name match as a set (~1 s on `rangers`). Its file keeps the
+        # old candidate-set form as the reference and pins the same rows in the same
+        # order, plus the `NOT (...)` NULL mutant. 9 + 3 = 12.
         if: matrix.group == 'shared'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_search_sunk_slot_outcome_arm_9597_pg.py \
+            tests/integration/test_search_sunk_slot_identity_10803_pg.py \
             -v -rs 2>&1 | tee /tmp/sunkslot9597.txt
           if grep -qiE "[0-9]+ skipped" /tmp/sunkslot9597.txt; then
             echo "::error::#9597 sunk-slot outcome arm gate SKIPPED — the gate did not run"
@@ -980,8 +986,8 @@ jobs:
             echo "::error::#9597 sunk-slot outcome arm gate collected NOTHING"
             exit 1
           fi
-          if ! grep -qE "^=+ 9 passed" /tmp/sunkslot9597.txt; then
-            echo "::error::#9597 sunk-slot outcome arm gate did not pass all 9"
+          if ! grep -qE "^=+ 12 passed" /tmp/sunkslot9597.txt; then
+            echo "::error::#9597/#10803 sunk-slot outcome arm gate did not pass all 12"
             exit 1
           fi
 

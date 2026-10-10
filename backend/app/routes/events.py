@@ -5336,7 +5336,7 @@ def _sunk_slot_spare_rows(
 
 
 async def _fetch_sunk_slot_outcome_rows(
-    db, window_query, candidates_in, tier1_arms: list, outcome_arm, deadline: float
+    db, window_query, tier1_arms: list, outcome_arm, deadline: float
 ) -> tuple[list, str]:
     """#9597: the outcome-only rows, for the page slots #8628 r2's sunk rows hold.
 
@@ -5354,6 +5354,24 @@ async def _fetch_sunk_slot_outcome_rows(
     alone would return twenty game props whose OUTCOMES name the club and no
     outcome-only row at all. Excluding the tier<=1 arms leaves exactly the rows
     `_futures_name_tier` scores 2, in the window's own order.
+
+    #10803: the arms are tested ON THE ROW, not as candidate sets. The first
+    form was `id IN (outcome arm) AND id NOT IN (UNION of tier<=1 arms)`, and
+    the NOT IN built the whole name-match set before excluding anything: for
+    `rangers` that is a trigram heap scan of 5,804 markets (mostly settled) to
+    keep 173, all to drop name matches from ~39 outcome candidates. Production
+    2026-10-10, EXPLAIN (ANALYZE, BUFFERS) with the outcome array inlined:
+    rangers 3,235 ms / 3,368 blocks read cold, 852 ms / 10,279 hit warm, against
+    353 ms / 3,229 hit for this form; mariners 3,883 -> 1,672 blocks hit. Same
+    twenty ids in the same order on eight terms, read through db-query.
+
+    Set-identical because `window_query` already ANDs `_futures_open_now`
+    onto every row, and each candidate subquery was `arm AND open_now` over
+    `futures_markets` alone, so for a row the window can return "is in the
+    subquery" is "the arm is TRUE". 🔴 `IS NOT TRUE`, never `NOT (...)`: a
+    row whose arm is NULL was never IN the set, so NOT IN kept it, while
+    `NOT NULL` is NULL and drops it. Today's arms read NOT NULL columns, so
+    this holds the identity for the first arm that reads a nullable one.
 
     The arm's own bound (`_search_outcome_arm_bound_ms`) and a SAVEPOINT, never a
     session rollback: `deduped_futures` is live and read again afterwards
@@ -5376,10 +5394,7 @@ async def _fetch_sunk_slot_outcome_rows(
             (
                 await db.execute(
                     window_query(
-                        and_(
-                            candidates_in([outcome_arm]),
-                            ~candidates_in(tier1_arms),
-                        )
+                        and_(outcome_arm, or_(*tier1_arms).is_not(True))
                     )
                 )
             )
@@ -12692,7 +12707,6 @@ async def search_events(
         _sunk_slot_rows, _futures_sunk_slot_arm = await _fetch_sunk_slot_outcome_rows(
             db,
             _futures_window_query,
-            _futures_candidates_in,
             _futures_tier1_arms,
             futures_outcome_match,
             _deadline,
