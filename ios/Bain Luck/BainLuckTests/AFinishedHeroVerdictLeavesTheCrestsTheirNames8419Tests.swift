@@ -50,7 +50,7 @@ final class AFinishedHeroVerdictLeavesTheCrestsTheirNames8419Tests: XCTestCase {
 
     func testTheWinnerVerdictIsBoundedToTheSlot() throws {
         let verdict = try chain(after: #"Text("\(winnerName)Win")"#)
-        XCTAssertTrue(verdict.contains(".frame(maxWidth:EventDetailView.verdictSlotWidth)"),
+        XCTAssertTrue(verdict.contains(".frame(maxWidth:Self.heroVerdictWidth(at:dynamicTypeSize))"),
                       "the finished verdict is unbounded again — a long winner name squeezes the crest names")
         XCTAssertTrue(verdict.contains(".lineLimit(2)"),
                       "the bounded verdict must be allowed to wrap, or it truncates itself instead")
@@ -60,7 +60,7 @@ final class AFinishedHeroVerdictLeavesTheCrestsTheirNames8419Tests: XCTestCase {
     func testTheNamedPregameCaptionIsBoundedToTheSlot() throws {
         let caption = try chain(
             after: #"Text("\(pregameWord)\(named.home)\(formatProbability(opened.home))")"#)
-        XCTAssertTrue(caption.contains(".frame(maxWidth:EventDetailView.verdictSlotWidth)"),
+        XCTAssertTrue(caption.contains(".frame(maxWidth:Self.heroVerdictWidth(at:dynamicTypeSize))"),
                       "the named pre-match caption is unbounded — it carries the same full name as the verdict")
         XCTAssertTrue(caption.contains(".lineLimit(2)"))
     }

@@ -18,22 +18,30 @@ import Charts
 /// visible one at `OddsChartView.xAxisLabelCenters` — centred on its tick,
 /// clamped inside the plot. The period chips have been placed the same way, in
 /// the same overlay, since #3237.
+enum EventChartTypography {
+    /// Grow the plot's labels without letting its axes consume the plot.
+    /// Only chart labels use this budget; page text keeps full Dynamic Type.
+    static func labelSize(scaled: CGFloat) -> CGFloat { min(max(scaled, 12), 16) }
+}
+
 struct ChartTimeAxisLabels: View {
+    @ScaledMetric(relativeTo: .caption2) private var scaledFontSize: CGFloat = 12
+    private var fontSize: CGFloat { EventChartTypography.labelSize(scaled: scaledFontSize) }
     let ticks: [Date]
     let plan: OddsChartView.XAxisPlan
     let proxy: ChartProxy
     let plotFrame: CGRect
 
     /// From the plot's bottom edge to a label's vertical centre: the
-    /// framework's own offset for a 9pt bottom-axis label, measured off its
-    /// render, so the drawn label sits where the reserved one does.
+    /// framework's measured offset at 9pt. Scale it with the visible and
+    /// reserved label font so both occupy the same row.
     static let labelCenterOffset: CGFloat = 9.5
 
     /// The framework's label, kept for its height and its accessibility, never
     /// for its ink.
-    static func reservedRow(format: Date.FormatStyle) -> some AxisMark {
+    static func reservedRow(format: Date.FormatStyle, fontSize: CGFloat = 12) -> some AxisMark {
         AxisValueLabel(format: format, anchor: .topTrailing)
-            .font(.system(size: 9))
+            .font(.system(size: fontSize))
             .foregroundStyle(Color.clear)
     }
 
@@ -44,15 +52,15 @@ struct ChartTimeAxisLabels: View {
         let centers = OddsChartView.xAxisLabelCenters(
             tickPositions: placed.map(\.x),
             plotWidth: plotFrame.width,
-            labelWidth: OddsChartView.xAxisLabelWidth(for: plan.labelStyle))
+            labelWidth: OddsChartView.xAxisLabelWidth(for: plan.labelStyle) * fontSize / 9)
         ForEach(Array(placed.enumerated()), id: \.offset) { index, item in
             Text(item.tick, format: plan.format)
-                .font(.system(size: 9))
-                .foregroundStyle(.secondary)
+                .font(.system(size: fontSize))
+                .foregroundStyle(Color.primary)
                 .lineLimit(1)
                 .fixedSize()
                 .position(x: plotFrame.minX + centers[index],
-                          y: plotFrame.maxY + Self.labelCenterOffset)
+                          y: plotFrame.maxY + Self.labelCenterOffset * fontSize / 9)
                 .accessibilityHidden(true)
         }
     }
