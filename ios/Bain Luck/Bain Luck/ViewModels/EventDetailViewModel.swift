@@ -231,6 +231,10 @@ final class EventDetailViewModel: ObservableObject {
     private var streamTickTask: Task<Void, Never>?
     /// True only while `stopStream()` is stopping the controller (#10834).
     private var stoppingStream = false
+    /// Bumped by `stopRefresh()` (#10834). A detail read captures it when it
+    /// starts; one that lands after the reader left still adopts what it
+    /// read, but does not re-plan a page nobody is looking at.
+    private var visit = 0
     /// Injected so tests can drive the lifecycle without a socket. `nil` means
     /// the real `URLSession` transport.
     private let makeStreamHandle: (@MainActor (Int) throws -> LiveStreamHandle)?
@@ -442,6 +446,7 @@ final class EventDetailViewModel: ObservableObject {
     @MainActor
     func load(fresh: Bool = true, awaitingOptionalSections: Bool = true) async {
         loading = event == nil
+        let visit = self.visit
 
         // Start (or join) secondary fetches immediately (they only need
         // eventId); each is applied by THIS load only after its own detail.
@@ -490,8 +495,13 @@ final class EventDetailViewModel: ObservableObject {
         // #9657: a page returning with a pair still failed (`stopRefresh`
         // cancelled its retry) re-arms it. A load is not the pair, so it never
         // clears the failure itself.
-        if pricePairRefreshFailed, pricePairRetryTask == nil { schedulePricePairRetry() }
-        configureAutoRefresh()
+        // #10834: not when the page was left while the detail was in flight
+        // (a cancelled read lands here too, through the catch). The return
+        // runs its own `load()`, which plans.
+        if visit == self.visit {
+            if pricePairRefreshFailed, pricePairRetryTask == nil { schedulePricePairRetry() }
+            configureAutoRefresh()
+        }
         detailTaken.open()
 
         // Stamp the honest "last updated" moment once every section this load
@@ -690,6 +700,7 @@ final class EventDetailViewModel: ObservableObject {
     /// chart and markets to the full load that owns them.
     @MainActor
     private func rereadGameState() async {
+        let visit = self.visit
         do {
             var fetched = try await client.fetchEvent(id: eventId)
             if pricePairRefreshFailed, EventPriceStreaming.isEligible(fetched.status), let held = event {
@@ -711,6 +722,8 @@ final class EventDetailViewModel: ObservableObject {
         }
         // A read that brings the final (or a suspension) has to re-plan the page
         // just as a load would; unchanged, this leaves the running loop alone.
+        // Not a page left while it was reading (#10834).
+        guard visit == self.visit else { return }
         configureAutoRefresh()
     }
 
@@ -958,6 +971,7 @@ final class EventDetailViewModel: ObservableObject {
         // `currentRefreshPlan` name a cadence nothing is running at, and the
         // idempotence check above read a stale plan on the way back in.
         installedPlan = nil
+        visit += 1
         stopStream()
     }
 

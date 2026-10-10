@@ -74,6 +74,49 @@ final class ALeftPageStaysStopped10834Tests: XCTestCase {
         }
     }
 
+    /// Like `CountingClient`, but every detail read after the first `free`
+    /// parks until the test lets it land — with the detail, or with an error.
+    /// Held reads land in the order they parked.
+    private nonisolated final class HeldClient: EventDetailProviding, @unchecked Sendable {
+        struct Declined: Error {}
+        enum Landing { case detail, failure }
+        private let lock = NSLock()
+        private let detail: EventDetail
+        private var free: Int
+        private var parkedSoFar = 0
+        private var held = 0
+        private var landings: [Landing] = []
+        init(_ detail: EventDetail, free: Int) { self.detail = detail; self.free = free }
+        var heldCount: Int { lock.withLock { held } }
+        func land(_ landing: Landing) { lock.withLock { landings.append(landing) } }
+        func fetchEvent(id: Int) async throws -> EventDetail {
+            let ticket: Int? = lock.withLock {
+                guard free == 0 else { free -= 1; return nil }
+                held += 1
+                parkedSoFar += 1
+                return parkedSoFar - 1
+            }
+            guard let ticket else { return detail }
+            while true {
+                let landing: Landing? = lock.withLock {
+                    guard landings.count > ticket else { return nil }
+                    held -= 1
+                    return landings[ticket]
+                }
+                switch landing {
+                case .detail: return detail
+                case .failure: throw Declined()
+                case nil: try? await Task.sleep(nanoseconds: 200_000)
+                }
+            }
+        }
+        func fetchEventHistory(id: Int, hours: Int) async throws -> EventHistoryResponse { throw Declined() }
+        func fetchRelatedFutures(eventId: Int) async throws -> RelatedFuturesResponse { throw Declined() }
+        func fetchTeamProgression(eventId: Int) async throws -> TeamProgressionResponse { throw Declined() }
+        func fetchGameMarkets(eventId: Int) async throws -> GameMarketsResponse { throw Declined() }
+        func fetchLineMovement(eventId: Int) async throws -> LineMovementResponse { throw Declined() }
+    }
+
     // MARK: - Fixtures
 
     private func live() throws -> EventDetail {
@@ -158,6 +201,110 @@ final class ALeftPageStaysStopped10834Tests: XCTestCase {
         XCTAssertEqual(client.detailCount, base, "a left page kept reading")
         XCTAssertEqual(sleeper.parked, 0, "a left page started another loop")
         XCTAssertFalse(vm.isAutoRefreshing)
+    }
+
+    // MARK: - A read that lands after the reader left
+
+    /// A page with a held client, its stream handles and its sleeper.
+    private func heldPage(free: Int)
+        -> (EventDetailViewModel, HeldClient, Sleeper, () -> [FakeHandle]) {
+        var handles: [FakeHandle] = []
+        let client = HeldClient(try! live(), free: free)
+        let sleeper = Sleeper()
+        let vm = EventDetailViewModel(
+            eventId: 4242,
+            client: client,
+            makeStreamHandle: { _ in
+                let handle = FakeHandle()
+                handles.append(handle)
+                return handle
+            },
+            now: { 1_790_562_050 },
+            sleep: { seconds in await sleeper.sleep(seconds) }
+        )
+        return (vm, client, sleeper, { handles })
+    }
+
+    /// The page is opened and left before its detail answers. When the detail
+    /// lands — with the game, or with an error (a cancelled read takes the
+    /// same catch) — the page keeps what it read and arms nothing: no loop,
+    /// no plan, no stream.
+    func testALoadLandingAfterTheReaderLeftArmsNothing() async throws {
+        for landing in [HeldClient.Landing.detail, .failure] {
+            let (vm, client, sleeper, handles) = heldPage(free: 0)
+            let open = Task { @MainActor in await vm.load() }
+            await waitUntil("the opening detail to be in flight (\(landing))") { client.heldCount == 1 }
+
+            vm.stopRefresh()
+            client.land(landing)
+            await open.value
+
+            if landing == .detail {
+                XCTAssertEqual(vm.event?.id, 4242, "the late detail was dropped, not just fenced")
+            }
+            XCTAssertFalse(vm.isAutoRefreshing, "a load that landed after the reader left re-armed the poll (\(landing))")
+            XCTAssertNil(vm.currentRefreshPlan, "a left page names a cadence (\(landing))")
+            XCTAssertEqual(handles().count, 0, "a left page opened a stream (\(landing))")
+            try? await Task.sleep(nanoseconds: 30_000_000)
+            XCTAssertEqual(sleeper.parked, 0, "a left page parked a loop (\(landing))")
+        }
+    }
+
+    /// The ordinary game-state slot of a delivering page is mid-read when the
+    /// reader leaves. When it lands it re-plans nothing.
+    func testAGameStateReadLandingAfterTheReaderLeftArmsNothing() async throws {
+        for landing in [HeldClient.Landing.detail, .failure] {
+            let (vm, client, sleeper, handles) = heldPage(free: 1)
+            await vm.load()
+            deliver(handles()[0])
+            await waitUntil("the delivering page to park on the push cadence (\(landing))") {
+                vm.currentRefreshPlan == .poll(every: EventRefreshPlan.livePushPollInterval)
+                    && sleeper.parked == 1
+            }
+            XCTAssertGreaterThan(
+                EventRefreshPlan.slots(for: .poll(every: EventRefreshPlan.livePushPollInterval)), 1,
+                "the first push-cadence slot is no longer the game-state read"
+            )
+
+            XCTAssertEqual(client.heldCount, 0, "a read other than the slot's is parked (\(landing))")
+            sleeper.release()
+            await waitUntil("the game-state read to be in flight (\(landing))") { client.heldCount == 1 }
+            vm.stopRefresh()
+            client.land(landing)
+            await waitUntil("the late read to land (\(landing))") { client.heldCount == 0 }
+            try? await Task.sleep(nanoseconds: 30_000_000)
+
+            XCTAssertFalse(vm.isAutoRefreshing, "a game-state read that landed after the reader left re-armed the poll (\(landing))")
+            XCTAssertNil(vm.currentRefreshPlan, "a left page names a cadence (\(landing))")
+            XCTAssertEqual(handles().count, 1, "a left page opened another stream (\(landing))")
+            XCTAssertEqual(sleeper.parked, 0, "a left page parked a loop (\(landing))")
+        }
+    }
+
+    /// The reader leaves and comes back while the first visit's detail is still
+    /// out. The return plans one loop and one stream; the old read landing after
+    /// it adds neither.
+    func testAReturnWhileTheOldReadIsOutStillArmsOneLoop() async throws {
+        let (vm, client, sleeper, handles) = heldPage(free: 0)
+        defer { vm.stopRefresh() }
+        let first = Task { @MainActor in await vm.load() }
+        await waitUntil("the first visit's detail to be in flight") { client.heldCount == 1 }
+        vm.stopRefresh()
+
+        let back = Task { @MainActor in await vm.load() }
+        await waitUntil("the return's detail to be in flight") { client.heldCount == 2 }
+        client.land(.detail)   // the FIRST visit's read lands first
+        await first.value
+        XCTAssertNil(vm.currentRefreshPlan, "the old visit's read planned the page before the return did")
+        XCTAssertEqual(handles().count, 0)
+
+        client.land(.detail)
+        await back.value
+        XCTAssertEqual(vm.currentRefreshPlan, .poll(every: EventRefreshPlan.livePollInterval))
+        XCTAssertEqual(handles().count, 1, "the return opened no stream, or two")
+        await waitUntil("the returned page to park one loop") { sleeper.parked == 1 }
+        try? await Task.sleep(nanoseconds: 30_000_000)
+        XCTAssertEqual(sleeper.parked, 1, "a duplicate loop is parked")
     }
 
     // MARK: - Coming back
