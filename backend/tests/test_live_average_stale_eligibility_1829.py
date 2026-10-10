@@ -25,6 +25,7 @@ import pytest
 
 from app.utils.aggregation import (
     HERO_RELATIVE_DECAY_SECONDS,
+    assess_event_divergence,
     HERO_RELATIVE_GRACE_SECONDS,
     TimestampedProb,
     _weighted_average,
@@ -33,6 +34,7 @@ from app.utils.aggregation import (
     compute_aggregated_probability,
     effective_source_weights_detailed,
 )
+from app.utils.source_divergence import assess_divergence
 from app.utils.probability_eligibility import (
     ELIGIBILITY_KEY,
     INELIGIBLE,
@@ -262,6 +264,127 @@ class TestHeroEqualsTheLiveChartEdge:
             self._series(stamped), bucket_seconds=30, live_blend=True
         )
         assert _hero(stamped) == pytest.approx(line[-1].home_probability, abs=1e-6)
+
+
+# ── A refused arm cannot hold the divergence gate off (Root hold on a772) ───
+
+
+#: Root's counterexample: betting undated, espn and kalshi stamped at T0.
+REFUSED_ARM_BAG = {
+    "betting": 0.9,
+    "espn": {"value": 0.1, "updated_at": T0.isoformat()},
+    "kalshi": {"value": 0.9, "updated_at": T0.isoformat()},
+}
+
+
+def _series_of(stamped):
+    return {
+        key: [
+            TimestampedProb(
+                timestamp=datetime.fromisoformat(entry["updated_at"]),
+                home_probability=entry["value"],
+            )
+        ]
+        for key, entry in stamped.items()
+        if isinstance(entry, dict)
+    }
+
+
+class TestTheRefusedArmDoesNotControlTheGate:
+    """The gate governs exactly-two-source events. An undated arm the live
+    average refuses used to count as a third source, so the gate stood down and
+    the average blended the broken pair: 0.378261, where the bag without the
+    refused arm (and the dated chart edge) reads 0.10."""
+
+    def test_the_counterexample_renders_the_pairs_primary(self):
+        assert _hero(REFUSED_ARM_BAG) == pytest.approx(0.1, abs=1e-9)
+        assert _hero(REFUSED_ARM_BAG) != pytest.approx(0.378261, abs=1e-6)
+
+    def test_removing_the_refused_arm_changes_nothing(self):
+        without = {k: v for k, v in REFUSED_ARM_BAG.items() if k != "betting"}
+        assert _hero(REFUSED_ARM_BAG) == _hero(without)
+
+    def test_the_hero_equals_the_dated_live_chart_edge(self):
+        line = compute_aggregated_probability(
+            _series_of(REFUSED_ARM_BAG), bucket_seconds=30, live_blend=True
+        )
+        assert line[-1].home_probability == pytest.approx(0.1, abs=1e-6)
+        assert _hero(REFUSED_ARM_BAG) == pytest.approx(
+            line[-1].home_probability, abs=1e-6
+        )
+
+    def test_the_flag_half_agrees_with_the_value(self):
+        flag = assess_event_divergence(_FakeEvent(REFUSED_ARM_BAG, "live"), "live")
+        assert flag is not None
+        assert (flag.primary_source, flag.other_source) == ("espn", "kalshi")
+
+    def test_the_strawman_shows_the_old_gate_population_stood_down(self):
+        """The defect, reproduced from the pre-correction gate input: every
+        tier-1 arm, refused or not, so three readings and no verdict."""
+        keys, values, weights, _floored = effective_source_weights_detailed(
+            _FakeEvent(REFUSED_ARM_BAG), "live"
+        )
+        assert len(keys) == 3
+        assert assess_divergence(dict(zip(keys, values)), dict(zip(keys, weights))) is None
+
+    @pytest.mark.parametrize("status", ["completed", "suspended", "scheduled"])
+    def test_non_live_paths_keep_the_median_gate(self, status):
+        """Rule 2 is a live-average rule; the median paths still count the
+        undated arm, so three readings, no gate, and the capped median."""
+        keys, values, weights, _ = effective_source_weights_detailed(
+            _FakeEvent(REFUSED_ARM_BAG, status), status
+        )
+        from app.utils.aggregation import _weighted_median
+
+        assert _hero(REFUSED_ARM_BAG, status) == pytest.approx(
+            round(_weighted_median(values, weights), 6)
+        )
+
+    def test_a_healthy_dated_triple_is_still_not_gated(self):
+        """No widest-pair gating: three dated arms, two agreeing, refuse nobody
+        and keep the average even though one pair is 0.8 apart."""
+        triple = _stamped(betting=(0.9, 0), espn=(0.1, 0), kalshi=(0.9, 0))
+        assert assess_event_divergence(_FakeEvent(triple, "live"), "live") is None
+        assert _hero(triple) == _plain_average(betting=0.9, espn=0.1, kalshi=0.9)
+
+    def test_one_clock_still_refuses_nobody_and_stays_ungoverned(self):
+        """One dated arm among two undated: nothing refused, three arms, no gate,
+        the #10764 average."""
+        one = {"betting": 0.9, "espn": 0.1, **_stamped(kalshi=(0.9, 0))}
+        assert assess_event_divergence(_FakeEvent(one, "live"), "live") is None
+        assert _hero(one) == _plain_average(betting=0.9, espn=0.1, kalshi=0.9)
+
+    def test_no_clock_still_refuses_nobody(self):
+        bare = {"betting": 0.9, "espn": 0.1, "kalshi": 0.9}
+        assert _hero(bare) == _plain_average(**bare)
+
+    def test_the_stale_pair_behind_a_refused_arm_is_still_governed(self):
+        """Refused undated arm + a fresh arm + a floored one: what remains is the
+        anti-#240 pair, governed exactly as the same pair alone."""
+        bag = {"mlb": 0.5, **_stamped(betting=(0.65, 2400), kalshi=(0.05, 0))}
+        pair = _stamped(betting=(0.65, 2400), kalshi=(0.05, 0))
+        assert _hero(bag) == _hero(pair) == pytest.approx(0.05)
+
+    def test_a_dead_arm_beside_a_refused_one_leaves_the_two_speaking(self):
+        """#5542 still applies after the refusal: four arms, one undated, one
+        floored, two speaking 0.8 apart — the speaking pair is governed."""
+        bag = {
+            "mlb": 0.5,
+            **_stamped(betting=(0.4, 7200), espn=(0.1, 0), kalshi=(0.9, 0)),
+        }
+        without_mlb = {k: v for k, v in bag.items() if k != "mlb"}
+        assert _hero(bag) == _hero(without_mlb) == pytest.approx(0.1)
+
+    def test_a_positive_refusal_beside_the_pair_still_governs_it(self):
+        refused = {
+            **_stamped(espn=(0.1, 0), kalshi=(0.9, 0)),
+            "betting": {
+                "value": 0.9,
+                "updated_at": T0.isoformat(),
+                ELIGIBILITY_KEY: EligibilityRecord(status=INELIGIBLE).to_entry(),
+            },
+        }
+        assert _hero(refused) == pytest.approx(0.1)
 
 
 def test_the_specimen_clock_is_a_literal():

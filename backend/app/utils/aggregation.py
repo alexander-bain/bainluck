@@ -1491,6 +1491,8 @@ def assess_event_divergence(
     )
     if not keys:
         return None
+    if _takes_live_average(event, event_status, keys):
+        return assess_divergence(*_live_gate_population(event, event_status))
     return assess_divergence(*_gate_population(keys, values, weights, floored))
 
 
@@ -1584,16 +1586,17 @@ def _live_average_inputs(
 
     Returns ``None`` only when tier 1 has nothing. Completed, settled,
     pre-game and ``final_result`` events never reach this; neither do source
-    refusals (`_tier1_readings` has already removed them) or the divergence
-    gate, which runs first on the hero-floor weights.
+    refusals (`_tier1_readings` has already removed them). The divergence gate
+    runs first, on the hero-floor weights of the population left after rule 2
+    (`_live_gate_population`), so an arm refused here cannot hold it off.
     """
     keys, values, weights, _floored, stamps = _decayed_source_weights(
         event, event_status, floor=0.0
     )
     if not keys:
         return None
-    if sum(1 for key in keys if key in stamps) >= _MIN_DATED_FOR_UNDATED_REFUSAL:
-        weights = [w if key in stamps else 0.0 for key, w in zip(keys, weights)]
+    refused = _undated_refusals(keys, stamps)
+    weights = [0.0 if key in refused else w for key, w in zip(keys, weights)]
     weights = cap_weight_shares(
         weights, exempt=[src in _UNCAPPED_SOURCES for src in keys]
     )
@@ -1602,6 +1605,61 @@ def _live_average_inputs(
 
 #: Two clocks make a comparison; see rule 2 of `_live_average_inputs`.
 _MIN_DATED_FOR_UNDATED_REFUSAL = 2
+
+
+def _undated_refusals(keys: list[str], stamps: dict[str, datetime]) -> set[str]:
+    """Rule 2 of `_live_average_inputs`: the undated arms the live average refuses.
+
+    Empty unless at least ``_MIN_DATED_FOR_UNDATED_REFUSAL`` arms are dated, so
+    a refusal always leaves two clocked arms behind.
+    """
+    if sum(1 for key in keys if key in stamps) < _MIN_DATED_FOR_UNDATED_REFUSAL:
+        return set()
+    return {key for key in keys if key not in stamps}
+
+
+def _takes_live_average(event, event_status: Optional[str], keys: list[str]) -> bool:
+    """True when the tier-1 hero is the live weighted average, not the median."""
+    status = event_status or getattr(event, "status", None)
+    return status == "live" and "final_result" not in keys
+
+
+def _live_gate_population(
+    event, event_status: Optional[str] = None
+) -> tuple[dict[str, float], dict[str, float]]:
+    """The divergence gate's population on the LIVE path, after rule 2 (#1829).
+
+    🔴 **A refused arm must not decide which rule chooses the headline.** The
+    gate governs events resting on exactly two sources. An undated arm the live
+    average refuses still counted as a third source, so the gate stood down and
+    the average rendered a pair it was built to protect: betting 0.90 (undated)
+    beside espn 0.10 and kalshi 0.90 (both stamped) read hero 0.378261, while
+    the same bag without betting reads 0.10 — as does the dated live chart edge,
+    whose gate only ever sees the arms it weighed.
+
+    So the refused arms leave the population BEFORE `_gate_population` runs, and
+    the share cap is re-taken over what remains, which makes the gate answer
+    exactly as it would for the event with those arms deleted. Nothing else
+    moves: refusal needs two dated arms, so it can never take the population
+    below a pair; floored arms still go through `_gate_population`'s own rule
+    (the stale pair is still governed, a 3-arm event with one floored arm still
+    governs the two speaking); a healthy dated triple refuses nobody and stays
+    ungoverned (no widest-pair gating); one/no-clock bags refuse nobody and
+    read exactly as before. Weights are the hero-floor ones, as on the median
+    path, so the primary of a governed pair is chosen the same way.
+    """
+    keys, values, weights, floored, stamps = _decayed_source_weights(
+        event, event_status, floor=HERO_MIN_STALENESS_MULTIPLIER
+    )
+    refused = _undated_refusals(keys, stamps)
+    kept = [i for i, key in enumerate(keys) if key not in refused]
+    keys = [keys[i] for i in kept]
+    values = [values[i] for i in kept]
+    weights = cap_weight_shares(
+        [weights[i] for i in kept],
+        exempt=[src in _UNCAPPED_SOURCES for src in keys],
+    )
+    return _gate_population(keys, values, weights, floored - refused)
 
 
 #: The three tiers ``compute_aggregate_probability_tiered`` can answer from, in
@@ -1676,18 +1734,22 @@ def compute_aggregate_probability_tiered(
         # the admission, relative freshness and effective share cap above.
         # Preserve the existing divergence gate before either statistic: a
         # semantically broken pair is rendered from its primary source alone.
+        # #1829: on the live path the gate sees the population the average
+        # will use, so a refused arm cannot switch the pair protection off.
+        live = _takes_live_average(event, event_status, keys)
         divergence = assess_divergence(
-            *_gate_population(keys, values, weights, floored)
+            *(
+                _live_gate_population(event, event_status)
+                if live
+                else _gate_population(keys, values, weights, floored)
+            )
         )
         if divergence is not None:
             return round(divergence.primary_value, 6), TIER_SOURCES
 
         if any(w > 0 for w in weights):
-            status = event_status or getattr(event, "status", None)
             live_inputs = (
-                _live_average_inputs(event, event_status)
-                if status == "live" and "final_result" not in keys
-                else None
+                _live_average_inputs(event, event_status) if live else None
             )
             blend = (
                 _weighted_average(*live_inputs)
