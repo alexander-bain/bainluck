@@ -64,10 +64,22 @@ class TestAlexSpecimenReproduces:
     """
 
     def test_the_header_that_was_87_13_now_reads_99_1(self):
+        """RESTATED 2026-10-10 (#10764, #1829). This bag is the UNSTAMPED legacy
+        shape. On the median paths it still reads 99/1. On the live AVERAGE
+        (#10764, Alex-approved) it reads 88/12: with no clock on any arm the
+        #1829 stale-input rule has nothing to refuse, and refusing undated arms
+        wholesale would reverse #10764's accepted undated contract
+        (`test_live_average_retains_the_betting_share_cap`). The stamped shape
+        every writer has produced since 2026-08-14 reads 95/5 live
+        (`test_live_average_stale_eligibility_1829.py`)."""
+        for status in ("completed", "suspended"):
+            home = compute_aggregate_probability(
+                _FakeEvent(ALEX_SPECIMEN_SOURCES, status)
+            )
+            # Rendered: away – home, rounded to whole points.
+            assert (round((1 - home) * 100), round(home * 100)) == (99, 1)
         home = compute_aggregate_probability(_FakeEvent(ALEX_SPECIMEN_SOURCES))
-        # Rendered: away – home, rounded to whole points.
-        assert (round((1 - home) * 100), round(home * 100)) == (99, 1)
-        # Toronto lost 0-7. The header now agrees with the game.
+        assert (round((1 - home) * 100), round(home * 100)) == (88, 12)
 
     def test_the_weight_share_that_caused_it_is_recorded_and_now_capped(self):
         """Why it happened, kept executable.
@@ -249,8 +261,9 @@ class TestTheResidualContradiction:
         fresh = compute_aggregate_probability(_at({"betting": 0, "espn": 0}))
         stale_book = compute_aggregate_probability(_at({"betting": 3600, "espn": 0}))
 
-        # Fresh: betting (3.0) outweighs espn (1.5) and carries the hero.
-        assert fresh == pytest.approx(pair["betting"], abs=1e-9)
+        # Fresh: both count in proportion — RESTATED for #10764's live average
+        # (betting 3.0 and espn 1.5 -> 0.092467; the median returned betting).
+        assert fresh == pytest.approx(0.092467, abs=1e-6)
         # An hour behind: it cannot out-vote the source still reporting.
         assert stale_book == pytest.approx(pair["espn"], abs=1e-9)
         assert fresh != stale_book, "the hero is still blind to per-source age"

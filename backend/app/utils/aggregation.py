@@ -1406,10 +1406,35 @@ def effective_source_weights_detailed(
     is small — a source with a low BASE weight is not stale, it is just lightly
     trusted, and it keeps its vote.
     """
+    keys, values, weights, floored, _stamps = _decayed_source_weights(
+        event, event_status, floor=HERO_MIN_STALENESS_MULTIPLIER
+    )
+    weights = cap_weight_shares(
+        weights, exempt=[src in _UNCAPPED_SOURCES for src in keys]
+    )
+    return keys, values, weights, floored
+
+
+def _decayed_source_weights(
+    event,
+    event_status: Optional[str],
+    *,
+    floor: float,
+) -> tuple[list[str], list[float], list[float], set[str], dict[str, datetime]]:
+    """Tier-1 readings with relative decay applied and the share cap NOT yet.
+
+    Split from `effective_source_weights_detailed` so `_live_average_inputs`
+    can refuse arms before the cap is taken: capping first and zeroing after
+    would measure every share against a total that still holds the refused arm.
+
+    ``floor`` goes to `_relative_staleness_multiplier`. The floored set is
+    always measured against the hero floor, so the divergence gate's
+    population does not move when the live average asks for ``0.0``.
+    """
     prob_readings, stamps = _tier1_readings(event, event_status)
 
     if not prob_readings:
-        return [], [], [], set()
+        return [], [], [], set(), stamps
 
     values = list(prob_readings.values())
     keys = list(prob_readings.keys())
@@ -1436,15 +1461,12 @@ def effective_source_weights_detailed(
             relative_age = (freshest - stamp).total_seconds()
             if relative_age <= 0:
                 continue
-            multiplier = _relative_staleness_multiplier(relative_age)
+            multiplier = _relative_staleness_multiplier(relative_age, floor=floor)
             weights[i] *= multiplier
             if multiplier <= HERO_MIN_STALENESS_MULTIPLIER:
                 floored.add(src)
 
-    weights = cap_weight_shares(
-        weights, exempt=[src in _UNCAPPED_SOURCES for src in keys]
-    )
-    return keys, values, weights, floored
+    return keys, values, weights, floored, stamps
 
 
 def assess_event_divergence(
@@ -1469,6 +1491,8 @@ def assess_event_divergence(
     )
     if not keys:
         return None
+    if _takes_live_average(event, event_status, keys):
+        return assess_divergence(*_live_gate_population(event, event_status))
     return assess_divergence(*_gate_population(keys, values, weights, floored))
 
 
@@ -1525,6 +1549,117 @@ def _gate_population(
         {k: v for k, v, _ in live},
         {k: w for k, _, w in live},
     )
+
+
+def _live_average_inputs(
+    event, event_status: Optional[str] = None
+) -> Optional[tuple[list[float], list[float]]]:
+    """The readings the LIVE weighted average may use, or ``None`` (#1829).
+
+    Alex, 2026-10-10: "Keep the weighted average and strengthen stale-input
+    eligibility." #10764 moved the live hero from the weighted median to a
+    weighted average, and a median and an average are not hurt by a stale arm in
+    the same way. Under the median a decayed arm only had to stop straddling the
+    midpoint; under the average every gram of weight pulls by value. So the two
+    eligibility rules below are about the statistic, not new opinions about any
+    source:
+
+    1. AN ARM 40 MINUTES BEHIND ITS FRESHEST SIBLING LEAVES. Same relative
+       clock, same 10-minute grace and 30-minute ramp, but the ramp ends at
+       ``0.0`` instead of the hero's 0.1 floor — exactly what the chart's live
+       buckets already do (`compute_aggregated_probability` passes
+       ``floor=0.0``), so the headline and the chart edge stop disagreeing on a
+       game with a lapsed arm. The floor was argued for a median ("demotes,
+       not deletes"); at 10% inside an average it is a permanent pull.
+
+    2. AN UNDATED ARM BESIDE DATED ONES CANNOT BE SHOWN CURRENT, so it leaves —
+       but only while at least ``_MIN_DATED_FOR_UNDATED_REFUSAL`` dated arms
+       remain. Relative freshness is a comparison; it needs two clocks. With
+       one dated arm among bare ones that arm is "freshest" by default, and
+       refusing the bare ones would hand it the whole hero (the #1829
+       specimen's day-old 0.565 Kalshi price). With NO dated arm there is
+       nothing to compare, and every admitted arm stays exactly as #10764
+       averaged it. A malformed stamp is undated (`_coerce_timestamp`). Every
+       writer has stamped since 2026-08-14
+       (`test_no_writer_assigns_a_bare_number_into_the_column`), so the
+       undated cases are legacy rows and writer faults, not the live shape.
+
+    Returns ``None`` only when tier 1 has nothing. Completed, settled,
+    pre-game and ``final_result`` events never reach this; neither do source
+    refusals (`_tier1_readings` has already removed them). The divergence gate
+    runs first, on the hero-floor weights of the population left after rule 2
+    (`_live_gate_population`), so an arm refused here cannot hold it off.
+    """
+    keys, values, weights, _floored, stamps = _decayed_source_weights(
+        event, event_status, floor=0.0
+    )
+    if not keys:
+        return None
+    refused = _undated_refusals(keys, stamps)
+    weights = [0.0 if key in refused else w for key, w in zip(keys, weights)]
+    weights = cap_weight_shares(
+        weights, exempt=[src in _UNCAPPED_SOURCES for src in keys]
+    )
+    return values, weights
+
+
+#: Two clocks make a comparison; see rule 2 of `_live_average_inputs`.
+_MIN_DATED_FOR_UNDATED_REFUSAL = 2
+
+
+def _undated_refusals(keys: list[str], stamps: dict[str, datetime]) -> set[str]:
+    """Rule 2 of `_live_average_inputs`: the undated arms the live average refuses.
+
+    Empty unless at least ``_MIN_DATED_FOR_UNDATED_REFUSAL`` arms are dated, so
+    a refusal always leaves two clocked arms behind.
+    """
+    if sum(1 for key in keys if key in stamps) < _MIN_DATED_FOR_UNDATED_REFUSAL:
+        return set()
+    return {key for key in keys if key not in stamps}
+
+
+def _takes_live_average(event, event_status: Optional[str], keys: list[str]) -> bool:
+    """True when the tier-1 hero is the live weighted average, not the median."""
+    status = event_status or getattr(event, "status", None)
+    return status == "live" and "final_result" not in keys
+
+
+def _live_gate_population(
+    event, event_status: Optional[str] = None
+) -> tuple[dict[str, float], dict[str, float]]:
+    """The divergence gate's population on the LIVE path, after rule 2 (#1829).
+
+    🔴 **A refused arm must not decide which rule chooses the headline.** The
+    gate governs events resting on exactly two sources. An undated arm the live
+    average refuses still counted as a third source, so the gate stood down and
+    the average rendered a pair it was built to protect: betting 0.90 (undated)
+    beside espn 0.10 and kalshi 0.90 (both stamped) read hero 0.378261, while
+    the same bag without betting reads 0.10 — as does the dated live chart edge,
+    whose gate only ever sees the arms it weighed.
+
+    So the refused arms leave the population BEFORE `_gate_population` runs, and
+    the share cap is re-taken over what remains, which makes the gate answer
+    exactly as it would for the event with those arms deleted. Nothing else
+    moves: refusal needs two dated arms, so it can never take the population
+    below a pair; floored arms still go through `_gate_population`'s own rule
+    (the stale pair is still governed, a 3-arm event with one floored arm still
+    governs the two speaking); a healthy dated triple refuses nobody and stays
+    ungoverned (no widest-pair gating); one/no-clock bags refuse nobody and
+    read exactly as before. Weights are the hero-floor ones, as on the median
+    path, so the primary of a governed pair is chosen the same way.
+    """
+    keys, values, weights, floored, stamps = _decayed_source_weights(
+        event, event_status, floor=HERO_MIN_STALENESS_MULTIPLIER
+    )
+    refused = _undated_refusals(keys, stamps)
+    kept = [i for i, key in enumerate(keys) if key not in refused]
+    keys = [keys[i] for i in kept]
+    values = [values[i] for i in kept]
+    weights = cap_weight_shares(
+        [weights[i] for i in kept],
+        exempt=[src in _UNCAPPED_SOURCES for src in keys],
+    )
+    return _gate_population(keys, values, weights, floored - refused)
 
 
 #: The three tiers ``compute_aggregate_probability_tiered`` can answer from, in
@@ -1599,17 +1734,26 @@ def compute_aggregate_probability_tiered(
         # the admission, relative freshness and effective share cap above.
         # Preserve the existing divergence gate before either statistic: a
         # semantically broken pair is rendered from its primary source alone.
+        # #1829: on the live path the gate sees the population the average
+        # will use, so a refused arm cannot switch the pair protection off.
+        live = _takes_live_average(event, event_status, keys)
         divergence = assess_divergence(
-            *_gate_population(keys, values, weights, floored)
+            *(
+                _live_gate_population(event, event_status)
+                if live
+                else _gate_population(keys, values, weights, floored)
+            )
         )
         if divergence is not None:
             return round(divergence.primary_value, 6), TIER_SOURCES
 
         if any(w > 0 for w in weights):
-            status = event_status or getattr(event, "status", None)
+            live_inputs = (
+                _live_average_inputs(event, event_status) if live else None
+            )
             blend = (
-                _weighted_average(values, weights)
-                if status == "live" and "final_result" not in keys
+                _weighted_average(*live_inputs)
+                if live_inputs is not None
                 else _weighted_median(values, weights)
             )
             return round(blend, 6), TIER_SOURCES

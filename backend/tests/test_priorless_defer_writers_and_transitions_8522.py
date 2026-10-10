@@ -140,9 +140,18 @@ def test_why_the_writer_must_retire_a_frozen_reading_8522():
     market still wins. This pins that fact so the retirement below is not
     mistaken for a belt-and-braces extra.
     """
+    # RESTATED for #10764: on the live weighted AVERAGE the frozen 50% no
+    # longer IS the headline; it pulls it 13 points off the market (0.606667
+    # against 0.74). Inside the 10-minute grace no recency rule can refuse it,
+    # so the retirement below is still required.
     for age in (60, MAX_STALENESS + 60):
         row = _row(_model_then_market(model_age_seconds=age))
-        assert compute_aggregate_probability(row, "live") == pytest.approx(0.5)
+        assert compute_aggregate_probability(row, "live") == pytest.approx(
+            0.606667, abs=1e-6
+        )
+        assert compute_aggregate_probability(row, "live") != pytest.approx(
+            KALSHI_JUST_BEFORE
+        )
 
 
 def test_the_retire_helper_drops_only_the_model_8522():
