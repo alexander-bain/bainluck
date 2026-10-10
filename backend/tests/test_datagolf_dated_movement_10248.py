@@ -130,8 +130,16 @@ class _Recording:
         self.calls: list[tuple[str, dict]] = []
 
     async def execute(self, stmt, params=None):
-        self.calls.append((" ".join(str(stmt).split()), params or {}))
-        return SimpleNamespace(rowcount=0)
+        sql = " ".join(str(stmt).split())
+        self.calls.append((sql, params or {}))
+        # The lock-free A4/A7 prepare reads (f44c689c88) select ids, none
+        # prepared here; the retirement clock reads the transaction's time.
+        clock = NOW if sql == "SELECT transaction_timestamp()" else None
+        return SimpleNamespace(
+            rowcount=0,
+            scalars=lambda: SimpleNamespace(all=lambda: []),
+            scalar_one=lambda: clock,
+        )
 
     async def commit(self):
         return None
