@@ -109,18 +109,25 @@ async def test_a_newer_tick_buffered_during_the_held_flush_survives():
     assert not r.batch
 
 
-async def test_refresh_debt_keeps_games_together_so_nothing_continues_past_it():
-    """The planner joins every game while a stamp is owed; a held row then
-    holds them all, and the debt is not paid ahead of the unwritten prices."""
+async def test_refresh_debt_waits_for_its_own_game_and_a_held_game_holds_only_itself():
+    """The debt is not paid ahead of the unwritten prices.
+
+    1cbd6e28e9: the flush no longer joins every game while a stamp is owed; it
+    fences the owed game out of every stamp until its own price commits. So
+    the held row holds only its own game (retained, with its retry delay —
+    a5b06f85fa), and game 200's owed stamp runs after game 200 commits."""
     from app.tasks.live_blend_refresh import LiveBlendRefresher
 
     r = rig(locked={1})
 
     class RecordingRefresher(LiveBlendRefresher):
-        async def _refresh_batch(self, event_ids, now):
+        async def _refresh_batch(self, event_ids, now, *, prepared=None,
+                                 on_committed=None, publish_committed=None):
             r.trace.append(("real-refresh", tuple(sorted(event_ids))))
             for event_id in event_ids:
                 self._last_refresh_at[event_id] = now
+            if on_committed is not None:  # the production batch's commit callback
+                on_committed(event_ids)
 
         async def publish_market_changes(self, session):
             r.trace.append(("publish", tuple(session.rows)))
@@ -129,11 +136,13 @@ async def test_refresh_debt_keeps_games_together_so_nothing_continues_past_it():
     refresher.adopt_pending({200})
     r.ns["blend_refresher"] = refresher
     r.release.set()
-    assert await bounded(r.flush(flush_started=100.0)) is False
-    assert r.committed == [9]
-    assert set(r.batch) == {1, 2, 3}
-    assert not any(t[0] == "real-refresh" for t in r.trace)
-    assert refresher.pending_event_ids() == frozenset({200})
+    assert await bounded(r.flush(flush_started=100.0)) is True
+    assert r.committed == [3, 9]
+    assert set(r.batch) == set(GAME_100)
+    assert set(r.ns["prices"].lock_retry_until) == set(GAME_100)
+    assert r.trace.index(("commit", (3,))) < r.trace.index(("real-refresh", (200,)))
+    assert not any(t[0] == "real-refresh" and 100 in t[1] for t in r.trace)
+    assert refresher.pending_event_ids() == frozenset()
 
 
 async def test_the_real_refresher_stamps_the_continued_game_after_its_commit():
