@@ -507,6 +507,19 @@ READ_SIDE_CONSUMERS = {
         "number, a missing one), but it is the same shape as the defect the "
         "`>=` repaired."
     ),
+    "app/utils/kalshi_price_statement.py": (
+        "POLLER ALIVE — 29b2c2ea9b's repeat skip. The Kalshi socket's typed "
+        "price UPDATE writes a row only when the run forces its first "
+        "observation, the price or book moved, or `last_updated <= now() - "
+        "KALSHI_REPEAT_REFRESH_SECONDS` (30 s): a repeated quote renews the "
+        "stamp at most every 30 s instead of locking and rewriting the row at "
+        "socket cadence. The stamp is read as 'something wrote this row "
+        "recently'. Under option 1 a stable price would never advance it, so "
+        "every repeated tick past 30 s would satisfy the predicate, take the "
+        "row lock and write — the skip collapses into the write-every-repeat "
+        "load it removed, on exactly the live games it exists to spare. No "
+        "wrong number reaches a reader; the cost is lock and write churn."
+    ),
 }
 
 _GATE = re.compile(r"last_updated\s*(?:<|>=|<=|>)\s*")
