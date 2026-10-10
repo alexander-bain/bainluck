@@ -190,6 +190,16 @@ final class LaunchRigContractTests: XCTestCase {
         XCTAssertEqual(LaunchRig.debugCountsKey, "launch_debug_counts")
         XCTAssertEqual(LaunchRig.scrollKey, "launch_scroll")
         XCTAssertEqual(LaunchRig.expandSectionsKey, "launch_expand_sections")
+        XCTAssertEqual(LaunchRig.browseFamilyKey, "launch_browse_family")
+    }
+
+    /// #10830 — the family a market browser opens on for the camera.
+    func testBrowseFamilyReadsTheNameAndRefusesBlank() {
+        XCTAssertNil(LaunchRig.browseFamily(defaults: defaults))
+        defaults.set("1st half margin", forKey: LaunchRig.browseFamilyKey)
+        XCTAssertEqual(LaunchRig.browseFamily(defaults: defaults), "1st half margin")
+        defaults.set("   ", forKey: LaunchRig.browseFamilyKey)
+        XCTAssertNil(LaunchRig.browseFamily(defaults: defaults))
     }
 
     // MARK: - Photographing below the fold (`--scroll`)

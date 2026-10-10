@@ -26,7 +26,9 @@ struct MarketBrowserView<Item: Identifiable, Row: View>: View {
     var visibleIDs: Binding<Set<Item.ID>>? = nil
     @ViewBuilder let row: (Item) -> Row
 
-    @State private var selected: String?
+    // `-launch_browse_family` (LaunchRig) lets the camera open a family the
+    // rig cannot tap; nil for every reader.
+    @State private var selected: String? = LaunchRig.browseFamily()
     @State private var query = ""
     @State private var limit: Int?
 

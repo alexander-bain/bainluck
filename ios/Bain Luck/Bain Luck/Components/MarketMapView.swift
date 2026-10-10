@@ -81,6 +81,9 @@ struct MarketMapView: View {
     /// card title. Closed is the default: the card draws the lines the game is
     /// poised on (or the result decided) and one tap reaches the rest.
     @State private var expandedLadders: Set<String> = []
+    /// `-launch_expand_sections` (LaunchRig) starts every ladder open for the
+    /// camera, which cannot tap "All N lines". Off for every reader.
+    private static let rigOpensLadders = LaunchRig.expandsCollapsedSections()
 
     /// The ring drawn around every marker dot on a density rail.
     ///
@@ -1186,7 +1189,7 @@ struct MarketMapView: View {
         let showsShape = drawsDistribution && !(periodIsOver ?? isDone)
         let drawsRail = !MarketMapRail.railDrawsNothing(density: density, markerCount: markers.count)
             && (showsShape || !markers.isEmpty)
-        let ladderOpen = expandedLadders.contains(title)
+        let ladderOpen = expandedLadders.contains(title) || Self.rigOpensLadders
         let drawnLadder = ladderOpen && fullLadder.count > ladder.count ? fullLadder : ladder
         return VStack(alignment: .leading, spacing: 10) {
             // Header

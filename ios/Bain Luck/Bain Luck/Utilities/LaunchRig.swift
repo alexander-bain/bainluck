@@ -115,6 +115,24 @@ enum LaunchRig {
         defaults.bool(forKey: expandSectionsKey)
     }
 
+    /// Launch-argument key naming the family a market browser opens on.
+    ///
+    /// `xcrun simctl launch <sim> <bundle> -launch_browse_family "1st half margin"`.
+    ///
+    /// #10830 — the event page's map tabs, prop families and question families
+    /// are `MarketBrowserView` pills, and the rig cannot tap one, so every map
+    /// but the first was unphotographable. A browser whose families do not
+    /// include the name ignores it (`MarketBrowserLogic.activeGroup` falls back
+    /// to the first family). Off unless asked for.
+    static let browseFamilyKey = "launch_browse_family"
+
+    /// The family to open on, or nil when the argument is absent or blank.
+    static func browseFamily(defaults: UserDefaults = .standard) -> String? {
+        let name = defaults.string(forKey: browseFamilyKey)?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return name?.isEmpty == false ? name : nil
+    }
+
     // MARK: - Photographing a control the rig cannot tap
 
     /// Launch-argument key that starts the Evolution chart's `Sum` line ON.
