@@ -12,6 +12,7 @@ from sqlalchemy.sql.dml import Update
 
 import app.tasks.live_blend_refresh as blend_module
 from app.tasks.live_blend_refresh import (
+    FRESH_STAMP_WORKERS,
     LiveBlendRefresher,
     PREPARED_EVENT_FIELDS,
     PREPARED_MARKET_FIELDS,
@@ -24,6 +25,13 @@ from app.utils.kalshi_exact_trace import ExactKalshiTrace
 OLD = datetime(2026, 10, 8, tzinfo=timezone.utc)
 NEW = OLD + timedelta(seconds=1)
 TICKER = "KXNBAGAME-26OCT08BOSGSW-BOS"
+#: 43ed0b2629: the first FRESH_STAMP_WORKERS events take the initial worker
+#: slots from the shared read; the queued tail behind them rereads current
+#: quotes. The tail is what this file is about, so it starts after the slots.
+HEAD = tuple(range(1, FRESH_STAMP_WORKERS + 1))
+TAIL = (FRESH_STAMP_WORKERS + 1, FRESH_STAMP_WORKERS + 2)
+PENDING = {TAIL[-1] + 1, TAIL[-1] + 2}
+SINGLE = TAIL[-1] + 3
 
 
 class Result:
@@ -45,7 +53,7 @@ class Board:
         self.reads, self.writes, self.commits = [], {}, []
         self.release = asyncio.Event()
         self.events, self.markets, self.quotes = {}, {}, {}
-        for eid in range(1, 8):
+        for eid in range(1, SINGLE + 1):
             self.events[eid] = SimpleNamespace(
                 id=eid, home_team_name="Boston Celtics",
                 away_team_name="Golden State Warriors", status="live",
@@ -62,7 +70,7 @@ class Board:
             )]
 
     def advance_tail(self):
-        for eid in (3, 4):
+        for eid in TAIL:
             self.quotes[eid][0].current_probability = 0.8
             self.quotes[eid][0].last_updated = NEW
 
@@ -134,10 +142,12 @@ async def test_queued_fresh_tail_reads_actual_quote_clock_without_claiming_old_m
     board = Board(source, schedule)
     r = LiveBlendRefresher(source, session_factory=board.session, stamp_lock_timeout_ms=0)
     r.receipts = TailReceipts(source)
-    r.receipts._live_events.update(range(1, 8))
-    # Existing hold for event 3, so both delivery and tail closure are exercised.
-    mark = r.receipts.note_input(3, 30, 0.6, "price")
-    r.receipts.observe({3: mark}, OLD.timestamp(), set(), 100.0)
+    r.receipts._live_events.update(range(1, SINGLE + 1))
+    held = TAIL[0]
+    # Existing hold for the first tail event, so both delivery and tail
+    # closure are exercised.
+    mark = r.receipts.note_input(held, held * 10, 0.6, "price")
+    r.receipts.observe({held: mark}, OLD.timestamp(), set(), 100.0)
     r.receipts.stage([mark])
     trace_lines = []
     trace = ExactKalshiTrace(
@@ -146,43 +156,44 @@ async def test_queued_fresh_tail_reads_actual_quote_clock_without_claiming_old_m
     )
     message = {"market_ticker": TICKER, "price": 60}
     trace.received(1, message)
-    trace.decided(message, reason="accepted", event=3, outcome=30,
+    trace.decided(message, reason="accepted", event=held, outcome=held * 10,
                   probability=0.6, mark=mark)
     trace.committed(mark, OLD)
     r.receipts.exact_trace = trace
     # Keep the chart outside this source control; known named orientation is real.
-    r._last_snapshot_at.update({eid: float("inf") for eid in range(1, 8)})
+    r._last_snapshot_at.update({eid: float("inf") for eid in range(1, SINGLE + 1)})
     frames = []
 
     async def publish(batch):
         frames.extend(batch)
 
     monkeypatch.setattr(r, "_publish", publish)
-    await asyncio.wait_for(r.refresh([4, 3, 2, 1]), timeout=2)
+    await asyncio.wait_for(r.refresh([*reversed(HEAD + TAIL)]), timeout=2)
 
-    assert board.reads[0] == (1, 2, 3, 4)
-    assert board.writes[1]["value"] == board.writes[2]["value"] == 0.6
-    for eid in (3, 4):
+    assert board.reads[0] == HEAD + TAIL
+    assert all(board.writes[eid]["value"] == 0.6 for eid in HEAD)
+    for eid in TAIL:
         assert board.writes[eid]["value"] == 0.8
         assert board.writes[eid]["observed_basis"] == {str(eid * 10): NEW.timestamp()}
         assert board.writes[eid]["observed_value"] == 0.8
         assert eid in board.commits
         assert next(frame for frame in frames if frame["event_id"] == eid)["p"] == 0.8
-    assert sorted(board.reads[1:]) == [(3,), (4,)]
+    assert sorted(board.reads[1:]) == [(eid,) for eid in TAIL]
     assert r.stats["errors"] == (1 if schedule == "failed_head" else 0)
     assert not any(line["stage"] == "EVENT_COMMITTED" for line in trace_lines)
     assert trace.stamps == {}  # Old staged mark did not join the new observation.
-    delivery = r.receipts._window[3]["stamps"]
+    delivery = r.receipts._window[held]["stamps"]
     assert len(delivery) == 1 and delivery[0].endswith("@-@-@0")
     tail = [record.getMessage() for record in caplog.records
-            if "tail-receipt run=" in record.getMessage() and "event=3 " in record.getMessage()]
+            if "tail-receipt run=" in record.getMessage()
+            and f"event={held} " in record.getMessage()]
     assert len(tail) == 1 and "stamp_rev_seq=- " in tail[0]
 
     # Pending-only work still shares preparation; singleton still reads directly.
-    r._throttle_deferred.update({5, 6})
+    r._throttle_deferred.update(PENDING)
     before = len(board.reads)
     await r.refresh([])
-    assert board.reads[before:] == [(5, 6)]
+    assert board.reads[before:] == [tuple(sorted(PENDING))]
     before = len(board.reads)
-    await r.refresh([7])
-    assert board.reads[before:] == [(7,)]
+    await r.refresh([SINGLE])
+    assert board.reads[before:] == [(SINGLE,)]
