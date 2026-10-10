@@ -24,6 +24,10 @@ struct MarketBrowserView<Item: Identifiable, Row: View>: View {
     /// row the browser has filtered out or paged away (the game questions'
     /// focus return after their detail sheet closes).
     var visibleIDs: Binding<Set<Item.ID>>? = nil
+    /// A shared heading drawn ONCE above each run of rows that share it (the
+    /// game odds' period, "Game" / "1st half"), instead of inside every row.
+    /// nil, or an empty string for an item, draws no heading.
+    var heading: ((Item) -> String)? = nil
     @ViewBuilder let row: (Item) -> Row
 
     // `-launch_browse_family` (LaunchRig) lets the camera open a family the
@@ -52,6 +56,7 @@ struct MarketBrowserView<Item: Identifiable, Row: View>: View {
             : Array(items.indices)
         let window = browses ? (limit ?? pageSize) : items.count
         let shown = matches.prefix(window).map { items[$0] }
+        let headings = heading.map { shown.map($0) } ?? []
 
         if !items.isEmpty {
             VStack(alignment: .leading, spacing: 10) {
@@ -64,7 +69,15 @@ struct MarketBrowserView<Item: Identifiable, Row: View>: View {
                 VStack(alignment: .leading, spacing: 0) {
                     // Keyed by the item's own id, so a refresh that reorders
                     // the collection keeps each row's state with its row.
-                    ForEach(shown) { item in
+                    ForEach(Array(shown.enumerated()), id: \.element.id) { index, item in
+                        if let text = MarketBrowserLogic.headingText(headings, at: index) {
+                            Text(text)
+                                .font(.footnote.weight(.semibold))
+                                .foregroundStyle(.secondary)
+                                .padding(.top, index == 0 ? 0 : 10)
+                                .padding(.bottom, 2)
+                                .accessibilityAddTraits(.isHeader)
+                        }
                         row(item)
                     }
                 }
@@ -113,6 +126,7 @@ struct MarketBrowserView<Item: Identifiable, Row: View>: View {
                     Image(systemName: "xmark.circle.fill")
                         .foregroundStyle(.secondary)
                         .frame(minWidth: 44, minHeight: 44)
+                        .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel("Clear search")
@@ -137,17 +151,23 @@ struct MarketBrowserView<Item: Identifiable, Row: View>: View {
                             query = ""
                             limit = nil
                         } label: {
+                            // Alex 10/10: a tap on the pill's padding has to
+                            // land, not only a tap on its word. The shape is
+                            // declared after the padding and frame, so the
+                            // whole drawn pill (≥44×44) is the target.
                             Text(family)
                                 .font(.subheadline.weight(isActive ? .semibold : .medium))
                                 .lineLimit(1)
                                 .padding(.horizontal, 14)
-                                .frame(minHeight: 44)
+                                .frame(minWidth: 44, minHeight: 44)
                                 .foregroundStyle(isActive ? AnyShapeStyle(.background) : AnyShapeStyle(.secondary))
                                 .background(isActive ? Color.primary : Color.secondary.opacity(0.08))
                                 .clipShape(RoundedRectangle(cornerRadius: 10))
+                                .contentShape(RoundedRectangle(cornerRadius: 10))
                         }
                         .buttonStyle(.plain)
                         .id(family)
+                        .accessibilityIdentifier("market-browser-pill")
                         .accessibilityAddTraits(isActive ? .isSelected : [])
                         .accessibilityHint("Shows \(family) in \(label.lowercased())")
                     }

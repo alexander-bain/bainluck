@@ -78,4 +78,14 @@ enum MarketBrowserLogic {
     static func windowStatus(limit: Int, matchCount: Int) -> String {
         "\(Swift.min(limit, matchCount)) of \(matchCount)"
     }
+
+    /// The heading drawn above the row at `index`: its own heading when it
+    /// starts a new run, nil when the row above already carries the same one.
+    static func headingText(_ headings: [String], at index: Int) -> String? {
+        guard headings.indices.contains(index) else { return nil }
+        let text = headings[index].trimmingCharacters(in: .whitespaces)
+        guard !text.isEmpty else { return nil }
+        if index > 0, headings[index - 1].trimmingCharacters(in: .whitespaces) == text { return nil }
+        return text
+    }
 }
