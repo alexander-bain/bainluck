@@ -178,6 +178,7 @@ describe("the event page actually wraps its sections", () => {
       // it; with none, this labelled boundary stands in its place.
       "The projected final points",
       "The market maps",
+      "Team scoring and period lines",
       // UX-P098: THE DIVERGENCE rail leads the props body, above the full set.
       "What's moving",
       // #10358: the live During player chances matrix sits between the rail

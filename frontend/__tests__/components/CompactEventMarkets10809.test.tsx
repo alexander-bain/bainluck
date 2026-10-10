@@ -77,6 +77,10 @@ test.each([
   "Shots",
   "Aces",
   "Takedowns",
+  "Saves",
+  "Birdies",
+  "Wickets",
+  "Laps Led",
 ])("%s uses served targets and no fabricated live progress", (type) => {
   const players: PlayerData[] = [
     {
@@ -243,6 +247,9 @@ test.each([
   ["baseball_mlb", "Runs"],
   ["soccer_epl", "Goals"],
   ["tennis_atp", "Games"],
+  ["icehockey_nhl", "Goals"],
+  ["basketball_wnba", "Points"],
+  ["americanfootball_ncaaf", "Points"],
 ])("%s keeps sport vocabulary and phase-safe map inputs", (sportKey, unit) => {
   const data = {
     totals: [
@@ -304,4 +311,42 @@ test("original Under rows never borrow the normalized over probability", () => {
   expect(host.querySelector("strong")?.textContent).toBe("82%");
   render(<GameLineBrowser data={data} status="completed" />);
   expect(host.querySelector("strong")?.textContent).toBe("Last quote 82%");
+});
+
+// Categorical markets do not need a points model or an NFL-specific family.
+// Exercise the actual question renderer with large fields and settled legs.
+test.each([
+  ["Golf", "Top 20 finish"],
+  ["Motorsport", "Podium finish"],
+  ["MMA", "Method of victory"],
+  ["Boxing", "Winning round"],
+  ["Cricket", "Top wicket taker"],
+  ["Rugby", "First try scorer"],
+  ["Hockey", "First goal scorer"],
+  ["Volleyball", "Exact set score"],
+])("%s categorical fields keep every outcome reachable in every phase", (sport, market) => {
+  const rows = Array.from({ length: 30 }, (_, i) => ({
+    market_name: `${sport}: ${market}`,
+    outcome_name: `Competitor ${String(i).padStart(2, "0")}`,
+    probability: 0.03,
+    source: "polymarket",
+  }));
+  for (const status of ["scheduled", "live", "completed"]) {
+    const data = { other: rows.map((row, i) => ({ ...row,
+      ...(status === "completed" ? { is_winner: i === 29, resolution_source: "polymarket_api" } : {}),
+    })) } as unknown as GameMarketsResponse;
+    render(<SpecialEventMarkets compact data={data} eventStatus={status} />);
+    search("Competitor 29");
+    expect(host.textContent).toContain("Competitor 29");
+    const disclosure = host.querySelector("details");
+    expect(disclosure).not.toBeNull();
+    act(() => disclosure!.querySelector("summary")!.click());
+    expect(disclosure!.open).toBe(true);
+    if (status === "completed") {
+      expect(host.textContent).toContain("Won");
+      expect(host.textContent).not.toContain("3%");
+    }
+    // Clear the disclosure and browser state before testing the next phase.
+    render(<div />);
+  }
 });

@@ -237,6 +237,8 @@ interface Surface {
    * glyph branch only renders when there isn't one. One entry per branch.
    */
   variant?: string;
+  /** Callback-owned verdicts are exercised through their enrolled parent. */
+  delegatesTo?: string;
   render: (hit: boolean) => string;
 }
 
@@ -295,6 +297,22 @@ const SURFACES: Surface[] = [
         />,
       ),
   },
+  ...[false, true].map((withoutActual): Surface => ({
+    file: "components/event/CompactPlayerProps.tsx",
+    variant: withoutActual ? "compact without box score" : "compact with box score",
+    delegatesTo: "components/PlayerPropsDashboard.tsx",
+    render: (hit) => renderToStaticMarkup(
+      <PlayerPropsDashboard
+        compact
+        data={gameMarkets(hit, withoutActual ? {
+          player_props: rawPropRows(hit).map((r) => ({ ...r, actual: null })),
+        } : {})}
+        eventStatus="completed"
+        homeTeam="Los Angeles Dodgers"
+        awayTeam="Colorado Rockies"
+      />,
+    ),
+  })),
   {
     file: "components/TotalPointsSpectrum.tsx",
     render: (hit) =>
@@ -521,7 +539,18 @@ describe("every settled surface is enrolled in the census", () => {
       // `PropTravelBar` was extracted rather than copied in the first place.
       "PropTravelBar",
     ];
-    const offenders = SURFACES.map((s) => s.file).filter((f) => {
+    // The compact browser delegates its verdict slot to the parent's existing
+    // StatBox. Pin BOTH sides of that callback instead of exempting wrappers
+    // from the import contract or copying verdict words into the browser.
+    const delegated = SURFACES.filter((s) => s.delegatesTo);
+    for (const surface of delegated) {
+      expect(SURFACES.some((s) => s.file === surface.delegatesTo && !s.delegatesTo)).toBe(true);
+      const child = fs.readFileSync(path.join(FRONTEND_ROOT, surface.file), "utf8");
+      const parent = fs.readFileSync(path.join(FRONTEND_ROOT, surface.delegatesTo!), "utf8");
+      expect(child).toMatch(/settled\s*\?\s*\(\s*renderSettled\(stat, player.color\)/);
+      expect(parent).toContain('renderSettled={(stat, color) => <StatBox stat={stat} gameState="settled" teamColor={color} />}');
+    }
+    const offenders = SURFACES.filter((s) => !s.delegatesTo).map((s) => s.file).filter((f) => {
       const src = fs.readFileSync(path.join(FRONTEND_ROOT, f), "utf8");
       const imports = src.match(/import[\s\S]*?from\s+["'][^"']+["']/g)?.join("\n") ?? "";
       return !VERDICT_EXPORTS.some((e) => imports.includes(e));
