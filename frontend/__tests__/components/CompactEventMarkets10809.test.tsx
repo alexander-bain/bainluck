@@ -289,28 +289,54 @@ test.each([
   }
 });
 
-test("original Under rows never borrow the normalized over probability", () => {
-  const quote = {
-    market_name: "Patriots Team Total: O/U 6.5",
+// #10823: the retained production payload served one flattened 0.825 on a
+// first-half line, a full-game line and the other club's Kalshi outcome. Those
+// rows keep their question and source but print no number; period quotes stay.
+test("flattened team totals print no percentage while period quotes remain", () => {
+  const total = (market_name: string, outcome_name: string, source: string) => ({
+    market_name,
+    outcome_name,
     threshold: 6.5,
-    over_probability: 0.82,
-    source: "polymarket",
+    over_probability: 0.825,
+    source,
     market_type: "team_total",
     movement: null,
-  };
+  });
   const data = {
     team_totals: [
-      { ...quote, outcome_name: "Over" },
-      { ...quote, outcome_name: "Under" },
+      total("Patriots 1H Team Total: O/U 6.5", "Over", "polymarket"),
+      total("Patriots 1H Team Total: O/U 6.5", "Under", "polymarket"),
+      total("Patriots Team Total: O/U 10.5", "Over", "polymarket"),
+      total("LV Raiders vs NE Patriots: Team Total", "LV Raiders over 7.5 points", "kalshi"),
     ],
-    period_markets: [],
+    period_markets: [
+      {
+        market_name: "1H Spread: Raiders (-9.5)",
+        outcome_name: "Patriots",
+        threshold: -9.5,
+        probability: 0.61,
+        source: "polymarket",
+        market_type: "spread",
+        period: "1H",
+      },
+    ],
   } as unknown as GameMarketsResponse;
-  render(<GameLineBrowser data={data} status="scheduled" />);
-  expect(host.textContent).toContain("Under");
-  expect(host.querySelectorAll("strong")).toHaveLength(1);
-  expect(host.querySelector("strong")?.textContent).toBe("82%");
-  render(<GameLineBrowser data={data} status="completed" />);
-  expect(host.querySelector("strong")?.textContent).toBe("Last quote 82%");
+  for (const status of ["scheduled", "in_progress", "completed"]) {
+    render(<GameLineBrowser data={data} status={status} />);
+    const text = host.textContent ?? "";
+    expect(text).not.toMatch(/8[23]%/);
+    expect(text).toContain("LV Raiders over 7.5 points");
+    expect(text).toContain("Patriots 1H Team Total: O/U 6.5");
+    expect(text).toContain("kalshi");
+    expect(host.querySelectorAll('[data-quote="withheld"]')).toHaveLength(4);
+    expect(host.querySelectorAll("strong")).toHaveLength(0);
+    click("Periods");
+    const quotes = Array.from(host.querySelectorAll("strong")).map((s) => s.textContent);
+    expect(quotes).toEqual([status === "completed" ? "Last quote 61%" : "61%"]);
+    expect(host.querySelectorAll('[data-quote="withheld"]')).toHaveLength(0);
+    act(() => root.unmount());
+    root = createRoot(host);
+  }
 });
 
 // Categorical markets do not need a points model or an NFL-specific family.
