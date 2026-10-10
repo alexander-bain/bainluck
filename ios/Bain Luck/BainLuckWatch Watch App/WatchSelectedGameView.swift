@@ -291,13 +291,32 @@ struct WatchSelectedGameView: View {
         } message: {
             Text("On your iPhone, swipe up from the bottom and pause midway. If it has a Home button, double-click Home.\n\nLook along the bottom for Bain Luck’s Handoff banner. Tap it if shown.\n\nBoth devices need Handoff on and the same Apple Account. The iPhone app must support Watch Handoff.\n\nIf no banner appears, your game stays selected here.")
         }
+        .onDisappear { store.stopLiveForegroundUpdates() }
+        .onChange(of: scenePhase) { _, phase in
+            if phase != .active { store.stopLiveForegroundUpdates() }
+        }
+        .onChange(of: choosingGame) { _, showing in
+            if showing { store.stopLiveForegroundUpdates() }
+        }
+        .onChange(of: showingDiscoveries) { _, showing in
+            if showing { store.stopLiveForegroundUpdates() }
+        }
+        .onChange(of: showingMyStuff) { _, showing in
+            if showing { store.stopLiveForegroundUpdates() }
+        }
         .task(id: refreshKey) {
             guard scenePhase == .active, !choosingGame, !showingDiscoveries, !showingMyStuff else { return }
             if store.selectedEventID == nil {
                 await picker.refresh()
                 return
             }
-            await store.runForegroundRefresh()
+            #if DEBUG
+            if WatchUIFixture.current != nil {
+                await store.runForegroundRefresh()
+                return
+            }
+            #endif
+            await store.runLiveForegroundRefresh()
         }
         .onChange(of: myStuff.snapshot) { _, _ in myStuff.reconcileSelection(in: store) }
         .onChange(of: myStuff.navigationGeneration) { _, _ in myStuff.reconcileSelection(in: store) }

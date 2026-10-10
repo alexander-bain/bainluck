@@ -18,7 +18,7 @@ nonisolated struct WatchSelectedGameHTTPTransport: WatchSelectedGameTransport {
     init(session: URLSession = .shared) { self.session = session }
 
     func fetch(eventID: Int) async throws -> WatchSelectedGame {
-        let url = URL(string: "https://api.bainluck.com/api/events/\(eventID)")!
+        let url = URL(string: "https://api.bainluck.com/api/events/\(eventID)?fresh=true")!
         var request = URLRequest(url: url)
         request.timeoutInterval = 15
         request.cachePolicy = .reloadIgnoringLocalCacheData
@@ -75,6 +75,24 @@ final class WatchSelectedGameStore: ObservableObject {
     private var selectedIdentityIDs: [Int] = []
     private var revision = 0
     private var consecutiveFailures = 0
+    private(set) var successfulRefreshSequence = 0
+    @MainActor var activeForegroundStream: LiveStreamController?
+    @MainActor var foregroundStreamGeneration = UUID()
+
+    @MainActor func stopLiveForegroundUpdates() {
+        foregroundStreamGeneration = UUID()
+        activeForegroundStream?.stop()
+        activeForegroundStream = nil
+    }
+
+    /// Stream invalidations may bypass the normal live polling cadence, never
+    /// server-directed waits or the backoff of an unsuccessful detail fetch.
+    var foregroundPollDelay: TimeInterval {
+        max(0, max(automaticRefreshNotBefore.map { $0 - retryClock() } ?? 0, remainingServerDelay))
+    }
+    var foregroundInvalidationDelay: TimeInterval {
+        consecutiveFailures > 0 ? foregroundPollDelay : remainingServerDelay
+    }
     // Monotonic process clock keeps a wall-clock correction from extending the pause.
     private let retryClock: () -> TimeInterval
     private var retryNotBefore: TimeInterval?
@@ -163,6 +181,7 @@ final class WatchSelectedGameStore: ObservableObject {
 
     @MainActor func select(eventID: Int) {
         guard eventID > 0, !isSelected(eventID: eventID) else { return }
+        stopLiveForegroundUpdates()
         selectedIdentityIDs = []
         revision += 1
         consecutiveFailures = 0
@@ -180,6 +199,7 @@ final class WatchSelectedGameStore: ObservableObject {
     }
 
     @MainActor func clearSelection() {
+        stopLiveForegroundUpdates()
         selectedIdentityIDs = []
         revision += 1
         consecutiveFailures = 0
@@ -242,6 +262,34 @@ final class WatchSelectedGameStore: ObservableObject {
         }
     }
 
+    static func canAdopt(_ incoming: WatchSelectedGame, replacing held: WatchSelectedGame?) -> Bool {
+        guard let held, incoming.id == held.id else { return true }
+        if held.isFinal && !incoming.isFinal { return false }
+        if held.isClosed && !incoming.isClosed && !incoming.isFinal { return false }
+        if let old = held.scoreObservedAt, let next = incoming.scoreObservedAt, next < old { return false }
+        // A fresh authoritative change of source or lifecycle is not ordered
+        // by the old source's price clock or blend vector.
+        if incoming.isFinal || incoming.isClosed || incoming.probabilitySource != held.probabilitySource {
+            return true
+        }
+        if let old = held.blendRevision, let next = incoming.blendRevision {
+            switch FoldRevision.compare(next, old) {
+            case .older: return false
+            case .newer, .incomparable:
+                // A fresh full detail resolves changed membership or source removal.
+                return true
+            case .same: break
+            }
+        } else if held.blendRevision != nil, incoming.blendRevision == nil,
+                  !incoming.isFinal, !incoming.isClosed { return false }
+        if let old = held.probabilityObservedAt, let next = incoming.probabilityObservedAt, next < old {
+            return false
+        }
+        if let old = held.scoreObservedAt, let next = incoming.scoreObservedAt, next < old { return false }
+        if held.isFinal && !incoming.isFinal { return false }
+        return true
+    }
+
     /// Optional UI-owned diagnostics; tests and background data owners default to no sink.
     var telemetry: (@MainActor (String, Int, Int) -> Void)?
 
@@ -263,6 +311,10 @@ final class WatchSelectedGameStore: ObservableObject {
             let result = try await transport.fetch(eventID: id)
             try Task.checkCancellation()
             guard requestRevision == revision, selectedEventID == id else { return }
+            guard Self.canAdopt(result, replacing: game) else {
+                throw WatchSelectedGameRequestError.invalidResponse
+            }
+            successfulRefreshSequence += 1
             retainIdentity(requestedID: id, canonicalID: result.id)
             // Detail can resolve an absorbed alias to the surviving canonical id.
             selectedEventID = result.id

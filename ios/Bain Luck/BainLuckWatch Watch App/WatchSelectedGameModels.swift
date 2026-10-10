@@ -20,6 +20,8 @@ nonisolated struct WatchSelectedGame: Codable, Sendable, Identifiable {
     let homeProbability: Double?
     let awayProbability: Double?
     let drawProbability: Double?
+    let blendRevision: FoldRevision?
+    let probabilitySource: String?
 
     var isFinal: Bool { ["completed", "final"].contains(status?.lowercased() ?? "") }
     var isClosed: Bool { status?.lowercased() == "closed" }
@@ -84,6 +86,7 @@ nonisolated struct WatchSelectedGame: Codable, Sendable, Identifiable {
         case currentOdds = "current_odds", espn, sportKey = "sport_key", sport
         case heroProbability = "hero_probability", heroAway = "hero_probability_away"
         case probabilityObservedAt = "hero_probability_observed_at"
+        case blendRevision = "blend_fold_revision", probabilitySource = "hero_probability_source"
     }
     private struct Odds: Decodable {
         let homeProbability: Double?
@@ -125,10 +128,16 @@ nonisolated struct WatchSelectedGame: Codable, Sendable, Identifiable {
         status = try? c.decode(String.self, forKey: .status)
         commenceTime = Self.date(try? c.decode(String.self, forKey: .commenceTime))
         scoreObservedAt = Self.date(try? c.decode(String.self, forKey: .scoreObservedAt))
+        let servedRevision = (try? c.decode(ServedFoldRevision.self, forKey: .blendRevision))?.revision
+        probabilitySource = try? c.decode(String.self, forKey: .probabilitySource)
         let odds = try? c.decode(Odds.self, forKey: .currentOdds)
         let rawHero = try? c.decode(Double.self, forKey: .heroProbability)
         let hero = rawHero.flatMap { $0.isFinite && (0...1).contains($0) ? $0 : nil }
         let heroAway = try? c.decode(Double.self, forKey: .heroAway)
+        // Only the served live blend's vector dates the displayed hero. Never
+        // borrow it for a sportsbook fallback, ESPN reading or settled result.
+        blendRevision = ["live", "in_progress"].contains(status?.lowercased() ?? "")
+            && probabilitySource == "blend" && hero != nil ? servedRevision : nil
         homeProbability = hero.flatMap { (0...1).contains($0) ? $0 : nil } ?? odds?.homeProbability
         awayProbability = hero != nil ? heroAway.flatMap { (0...1).contains($0) ? $0 : nil } : odds?.awayProbability
         // The producer clock dates the hero, never the sportsbook capture or score.
@@ -146,6 +155,8 @@ nonisolated struct WatchSelectedGame: Codable, Sendable, Identifiable {
     func encode(to encoder: Encoder) throws {
         var c = encoder.container(keyedBy: CodingKeys.self)
         try c.encode(id, forKey: .id)
+        try c.encodeIfPresent(blendRevision?.rows, forKey: .blendRevision)
+        try c.encodeIfPresent(probabilitySource, forKey: .probabilitySource)
         try c.encode(homeTeam, forKey: .homeTeam)
         try c.encode(awayTeam, forKey: .awayTeam)
         try c.encodeIfPresent(homeCompactIdentity, forKey: .homeTeamData)

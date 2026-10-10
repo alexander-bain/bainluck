@@ -63,6 +63,10 @@ import Foundation
 
 // MARK: - Frame
 
+private nonisolated struct LiveStreamRecovery: Decodable {
+    let generation: Int
+}
+
 /// One pushed price. Matches `backend/app/routes/event_stream.py`'s
 /// `probability` event, decoded with the app's `.convertFromSnakeCase` policy.
 nonisolated struct LiveStreamFrame: Decodable, Sendable, Equatable {
@@ -260,6 +264,7 @@ final class LiveStreamController {
     private let now: () -> TimeInterval
     private let onFrame: @MainActor (LiveStreamFrame) -> Void
     private let onDeliveringChange: @MainActor (Bool) -> Void
+    private let onResync: @MainActor () -> Void
     /// #10090 — whether the owner reads `folded_probability`. Opt-in, so a
     /// surface that only needs "something moved" (Discover's cards) keeps its
     /// one refresh per raw frame instead of a second for the quote after it.
@@ -272,6 +277,7 @@ final class LiveStreamController {
     private var openedAt: TimeInterval = 0
     private var lastMessageAt: TimeInterval = 0
     private var lastDataAt: TimeInterval = 0
+    private var lastResyncGeneration = 0
     private var reopenAt: TimeInterval?
     private var consecutiveFastRollovers = 0
 
@@ -290,12 +296,14 @@ final class LiveStreamController {
         now: @escaping () -> TimeInterval,
         onFrame: @escaping @MainActor (LiveStreamFrame) -> Void,
         onDeliveringChange: @escaping @MainActor (Bool) -> Void,
+        onResync: @escaping @MainActor () -> Void = {},
         deliversFoldedQuotes: Bool = false
     ) {
         self.open = open
         self.now = now
         self.onFrame = onFrame
         self.onDeliveringChange = onDeliveringChange
+        self.onResync = onResync
         self.deliversFoldedQuotes = deliversFoldedQuotes
     }
 
@@ -429,9 +437,13 @@ final class LiveStreamController {
         // flap the caller straight back to polling on every rollover.
         lastMessageAt = openedAt
         lastDataAt = openedAt
+        lastResyncGeneration = 0
 
+        // The transport can reopen underneath this same handle after a drop.
+        // A different server process may begin its recovery generation at 1.
         next.on("open") { [weak self, weak next] _ in
             guard let self, let next, !self.stopped, self.handle === next else { return }
+            self.lastResyncGeneration = 0
             self.lastMessageAt = self.now()
             self.lastDataAt = self.now()
             self.setDelivering(true)
@@ -465,6 +477,19 @@ final class LiveStreamController {
         // the quote inside is ordered by its own full vector, never deduped as
         // a repeat of the raw row.
         if deliversFoldedQuotes { next.on("folded_probability", onProbability(true)) }
+
+        // #10090: a recovered shared subscription may have missed writes. Its
+        // generation invalidates the held quote; it is not itself a price.
+        // Dedup belongs to THIS connection, reset on every transport open.
+        next.on("resync") { [weak self, weak next] raw in
+            guard let self, let next, !self.stopped, self.handle === next else { return }
+            self.lastMessageAt = self.now()
+            guard let data = raw.data(using: .utf8),
+                  let recovery = try? JSONDecoder().decode(LiveStreamRecovery.self, from: data),
+                  recovery.generation > self.lastResyncGeneration else { return }
+            self.lastResyncGeneration = recovery.generation
+            self.onResync()
+        }
 
         next.on("heartbeat") { [weak self, weak next] _ in
             guard let self, let next, !self.stopped, self.handle === next else { return }
