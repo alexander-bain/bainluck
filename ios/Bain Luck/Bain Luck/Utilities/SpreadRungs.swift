@@ -147,6 +147,60 @@ enum SpreadRungs {
         return kept.isEmpty ? empty : Map(unit: unit, rungs: kept)
     }
 
+    // MARK: - A closed half's lines, without prices (#10850)
+
+    /// One line a margin ladder can be GRADED on: a side and a cover margin,
+    /// with no price. Signed like ``Rung/margin``.
+    struct Line: Equatable {
+        let margin: Double
+        let isHome: Bool
+        let quotedUnit: String?
+    }
+
+    /// The lines a closed half's margin card grades, read without a price.
+    ///
+    /// #10850. A half whose window has closed comes back unpriced, so ``map``
+    /// — which takes its rungs from prices — has nothing to read. The claim a
+    /// line makes ("NEB by 6.5+") is in its title or outcome, never in its
+    /// price, so these are the same three shapes ``map`` reads, minus the
+    /// price: a `Spread: Team (-N)` title gives its cover line, a handicap
+    /// title its favourite's line, and a named outcome its own. Nothing here
+    /// is a probability and nothing downstream may draw one from it.
+    static func unpricedLines(
+        from legs: [Leg], home: String, away: String, sportUnit: String,
+        readsHalfTitles: Bool = false
+    ) -> (unit: String, lines: [Line]) {
+        var lines: [Line] = []
+        for (name, group) in grouped(legs) {
+            let unit = SportVocab.declaredMarginUnit(inMarketName: name)
+            if let spread = TitledSpread.read(marketName: name, readsHalfTitles: readsHalfTitles) {
+                guard let cover = side(of: spread.coverTeam, home: home, away: away) else { continue }
+                lines.append(Line(margin: cover == .home ? spread.line : -spread.line,
+                                  isHome: cover == .home, quotedUnit: unit))
+            } else if let handicap = Handicap.read(marketName: name),
+                      let favourite = side(of: handicap.favourite, home: home, away: away),
+                      let underdog = side(of: handicap.underdog, home: home, away: away),
+                      favourite != underdog {
+                lines.append(Line(margin: favourite == .home ? handicap.line : -handicap.line,
+                                  isHome: favourite == .home, quotedUnit: unit))
+            } else {
+                for leg in group where !namesARange(leg.outcomeName) {
+                    guard let side = side(of: leg.outcomeName, home: home, away: away),
+                          let line = lineInOutcome(leg.outcomeName) ?? leg.threshold
+                    else { continue }
+                    lines.append(Line(margin: side == .home ? line : -line,
+                                      isHome: side == .home, quotedUnit: unit))
+                }
+            }
+        }
+        var seen: [Line] = []
+        for line in lines where !seen.contains(line) { seen.append(line) }
+        guard let unit = mapUnit(quoted: seen.map(\.quotedUnit), sportUnit: sportUnit) else {
+            return (sportUnit, [])
+        }
+        return (unit, seen.filter { ($0.quotedUnit ?? sportUnit) == unit })
+    }
+
     /// The unit a single map is drawn in, or nil where no single map is honest.
     ///
     /// Mirrors ``SportVocab/totalsUnit(quotedBy:)`` in shape and differs in one
@@ -155,8 +209,12 @@ enum SpreadRungs {
     /// mixed onto its rail. A totals map's rungs are all points on one number
     /// line; a margin map's `±1.5 sets` beside a `±5.5 games` is #3533 itself.
     static func mapUnit(of rungs: [Rung], sportUnit: String) -> String? {
-        guard !rungs.isEmpty else { return nil }
-        let declared = Set(rungs.compactMap(\.quotedUnit))
+        mapUnit(quoted: rungs.map(\.quotedUnit), sportUnit: sportUnit)
+    }
+
+    private static func mapUnit(quoted units: [String?], sportUnit: String) -> String? {
+        guard !units.isEmpty else { return nil }
+        let declared = Set(units.compactMap { $0 })
         if declared.isEmpty { return sportUnit }
         if declared.contains(sportUnit) { return sportUnit }
         if declared.count == 1 { return declared.first }
@@ -487,9 +545,13 @@ enum SpreadRungs {
         guard !namesARange(leg.outcomeName) else { return nil }
         guard let side = side(of: leg.outcomeName, home: home, away: away) else { return nil }
         guard let threshold = lineInOutcome(leg.outcomeName) ?? leg.threshold else { return nil }
+        // #6676 / #10850 — no price, no rung. `?? 0.5` drew an unpriced leg as
+        // a coin flip on the ladder and into the rail's density. A line with
+        // no price is still a line: ``unpricedLines`` reads it for a closed half.
+        guard let probability = leg.probability else { return nil }
         return Rung(
             margin: side == .home ? threshold : -threshold,
-            probability: leg.probability ?? 0.5,
+            probability: probability,
             isHome: side == .home,
             quotedUnit: unit
         )

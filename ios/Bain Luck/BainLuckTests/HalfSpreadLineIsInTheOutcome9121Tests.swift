@@ -37,8 +37,11 @@ final class HalfSpreadLineIsInTheOutcome9121Tests: XCTestCase {
             leg("Cruz Azul vs Toluca: Second Half Spread", "Toluca wins the 2H by more than 1.5 goals", 2.0, 1.0),
             leg("Cruz Azul vs Toluca: Second Half Spread", "Cruz Azul wins the 2H by more than 1.5 goals", 2.0, nil),
         ]
-        XCTAssertEqual(margins(first, home: "Cruz Azul", away: "Toluca", sport: "soccer_mexico_ligamx"), [-1.5, 1.5])
-        XCTAssertEqual(margins(second, home: "Cruz Azul", away: "Toluca", sport: "soccer_mexico_ligamx"), [-1.5, 1.5])
+        // #6676 / #10850 — the unpriced leg of each half is no rung (it used to
+        // draw as a made-up 50%); the priced leg still sits at 1.5, not at its
+        // period digit, which is what this case is about.
+        XCTAssertEqual(margins(first, home: "Cruz Azul", away: "Toluca", sport: "soccer_mexico_ligamx"), [1.5])
+        XCTAssertEqual(margins(second, home: "Cruz Azul", away: "Toluca", sport: "soccer_mexico_ligamx"), [-1.5])
     }
 
     /// Event 14870011, Texas @ Tennessee (NCAAF). home `Tennessee Volunteers`,
