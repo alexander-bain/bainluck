@@ -18,6 +18,8 @@ import { teamCardRecord } from "@/lib/teamCardRecord";
 import EntityImage from "./EntityImage";
 import { SettledMark, isSettledOutcome } from "@/components/SettledOutcomeMark";
 import AdvancementPath from "@/components/event/AdvancementPath";
+import MarketBrowser from "./event/MarketBrowser";
+import SeasonComparison from "./event/SeasonComparison";
 import PlayerAwardsList from "@/components/event/PlayerAwardsList";
 
 interface TeamStandings {
@@ -51,6 +53,7 @@ function standingsSeed(s?: TeamStandings | null): string | null {
 }
 
 interface RelatedFuturesProps {
+  compact?: boolean;
   eventId: number;
   homeTeam: string;
   awayTeam: string;
@@ -2514,6 +2517,7 @@ function categorizeFutures(futures: RelatedFuture[], homeTeam: string = "", away
  * V5 layout: cross-team sections instead of per-team columns.
  */
 export default function RelatedFutures({
+  compact = false,
   eventId,
   homeTeam,
   awayTeam,
@@ -2855,9 +2859,20 @@ export default function RelatedFutures({
   const drawsGameMarkets = !hasGameMarkets && gameMarketCount > 0;
   const drawsSeries = seriesMarkets.length > 0 || legacySeries.length > 0;
   const drawsTeamCards = homeCardDraws || awayCardDraws;
+  // Keep the complete served season collection reachable, including categories
+  // with no bespoke visualization. Identity dedup removes only the same leg
+  // appearing under both teams; semantic blending remains the server's job.
+  const seasonRows = Array.from(new Map([
+    ...safeData.home_team_futures, ...safeData.away_team_futures,
+  ].filter(f => f.display_category !== "game_prop" && f.display_category !== "other")
+    .map(f => [`${f.market_id}-${f.outcome_id}`, f] as const)).values());
+  const categoryNames: Record<string, string> = {
+    playoff_path: "Season outcomes", conference: "Conference", season_stat: "Season totals",
+    award: "Awards", series: "Series", trade: "Next team", novelty: "More questions",
+  };
   const drawsTrades = homeCats.trades.length > 0 || awayCats.trades.length > 0;
 
-  if (!drawsGameMarkets && !drawsSeries && !drawsTeamCards && !drawsTrades) return null;
+  if (!drawsGameMarkets && !drawsSeries && !drawsTeamCards && !drawsTrades && !(compact && seasonRows.length)) return null;
 
   // #3801: the payload's row count rides a data-attribute, never the page —
   // it counted every raw row (1350 under two team cards on a Chiefs–Dolphins
@@ -3030,11 +3045,13 @@ export default function RelatedFutures({
         </div>
       ) : null}
 
+      {compact && <SeasonComparison home={homePathEntries} away={awayPathEntries} homeName={homeShort} awayName={awayShort} />}
+
       {/* === Two-Column Team Cards === */}
       {drawsTeamCards && (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           {/* Home Team Card */}
-          {homeCardDraws && (() => {
+          {homeCardDraws && (!compact || homeAwards.length > 0 || !!homeStandings) && (() => {
             const standings = homeStandings;
             const record = teamCardRecord(homeRecord, standings);
             const seed = standingsSeed(standings);
@@ -3058,7 +3075,7 @@ export default function RelatedFutures({
 
                 {/* UX-P152: was an inline copy, here and on the other card.
                     One component now — see components/event/AdvancementPath. */}
-                <AdvancementPath stages={homePathEntries} testId="home-championship-path" />
+                {!compact && <AdvancementPath stages={homePathEntries} testId="home-championship-path" />}
 
                 {homeAwards.length > 0 && (() => {
                   // #8360: one row per person, however the venues spell them.
@@ -3082,7 +3099,7 @@ export default function RelatedFutures({
           })()}
 
           {/* Away Team Card */}
-          {awayCardDraws && (() => {
+          {awayCardDraws && (!compact || awayAwards.length > 0 || !!awayStandings) && (() => {
             const standings = awayStandings;
             const record = teamCardRecord(awayRecord, standings);
             const seed = standingsSeed(standings);
@@ -3106,7 +3123,7 @@ export default function RelatedFutures({
 
                 {/* UX-P152: was an inline copy, here and on the other card.
                     One component now — see components/event/AdvancementPath. */}
-                <AdvancementPath stages={awayPathEntries} testId="away-championship-path" />
+                {!compact && <AdvancementPath stages={awayPathEntries} testId="away-championship-path" />}
 
                 {awayAwards.length > 0 && (() => {
                   // #8360: one row per person, however the venues spell them.
@@ -3149,6 +3166,18 @@ export default function RelatedFutures({
           />
         </div>
       )}
+      {compact && seasonRows.length > 0 && <details className="mt-4 rounded-xl border border-surface-border bg-surface-card p-4">
+        <summary className="cursor-pointer min-h-11 text-sm font-semibold">Browse related markets</summary>
+        <MarketBrowser label="Related markets" items={[...seasonRows].sort((a, b) => Number(!a.display_category) - Number(!b.display_category)).map(future => ({
+          key: `${future.market_id}-${future.outcome_id}`,
+          group: categoryNames[future.display_category ?? ""] ?? "More questions",
+          search: `${future.market_name} ${future.clean_label ?? ""} ${future.outcome_name}`,
+          content: <Link href={`/futures/${future.market_id}`} className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-4 py-3 border-b border-surface-border hover:bg-surface-elevated rounded-lg px-2">
+            <div className="min-w-0"><div className="text-sm font-medium">{future.clean_label || future.market_name}</div><div className="text-xs text-text-secondary">{future.outcome_name}</div></div>
+            {future.display_category && future.probability != null && <div className="w-16 text-right"><strong className="text-sm font-mono tabular-nums">{formatProbabilityPercent(future.probability)}</strong><div aria-hidden="true" className="h-1 mt-1 bg-surface-elevated rounded-full overflow-hidden"><div className="h-full bg-accent-futures" style={{ width: `${future.probability * 100}%` }} /></div></div>}
+          </Link>,
+        }))} />
+      </details>}
     </div>
   );
 }

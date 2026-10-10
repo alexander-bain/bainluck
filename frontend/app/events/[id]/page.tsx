@@ -81,6 +81,8 @@ import PropDivergenceRail from "@/components/PropDivergenceRail";
 import OriginBackControl from "@/components/OriginBackControl";
 import { gameOrigin } from "@/lib/futuresReturnOrigin";
 const SpecialEventMarkets = dynamic(() => import("@/components/SpecialEventMarkets"), { ssr: false });
+const MarketBrowser = dynamic(() => import("@/components/event/MarketBrowser"), { ssr: false });
+const GameLineBrowser = dynamic(() => import("@/components/event/GameLineBrowser"), { ssr: false });
 const MarketMapSection = dynamic(() => import("@/components/MarketMapSection"), { ssr: false, loading: ChartSkeleton });
 // UX-P152: the tournament's sections OF this page. Dynamic and below the fold —
 // 94 events on the whole site render it and none of them should pay for it in
@@ -3244,6 +3246,7 @@ export default function EventPage({ params }: EventPageProps) {
       {gameMarkets && !venueVoided && marketMapSectionMounts(gameMarkets) && (
         <SectionErrorBoundary label="The market maps" resetKey={gameMarkets}>
         <MarketMapSection
+          compact
           gameMarkets={gameMarkets}
           eventStatus={event.status}
           homeTeam={event.home_team}
@@ -3289,6 +3292,10 @@ export default function EventPage({ params }: EventPageProps) {
         </SectionErrorBoundary>
       )}
 
+      {gameMarkets && !venueVoided && <SectionErrorBoundary label="Team scoring and period lines" resetKey={gameMarkets}>
+        <GameLineBrowser data={gameMarkets} status={event.status} />
+      </SectionErrorBoundary>}
+
       {/* Game Markets — Player Props + Matchups + Special Markets */}
       {gameMarkets && (duringPlayerProps || gameMarkets.player_props.length > 0 || (gameMarkets.matchups?.length ?? 0) > 0 || (gameMarkets.other?.length ?? 0) >= SPECIAL_MARKETS_MIN_WIRE_ROWS) && (
         <div className="space-y-3">
@@ -3316,7 +3323,7 @@ export default function EventPage({ params }: EventPageProps) {
             </SectionErrorBoundary>}
 
             {gameMarkets.player_props.length > 0 && <SectionErrorBoundary label="Player props" resetKey={gameMarkets}>
-            <details className="group bg-surface-card rounded-card shadow-card overflow-hidden">
+            <details open={!duringPlayerProps} className="group bg-surface-card rounded-card shadow-card overflow-hidden p-4">
               <summary className="cursor-pointer select-none px-4 sm:px-5 py-3 text-[13px] font-semibold text-text-primary marker:content-none">
                 All {countOf(gameMarkets.player_props.length, "prop", "props")}
                 <span className="ml-1.5 text-[11px] font-normal text-text-muted group-open:hidden">
@@ -3328,6 +3335,7 @@ export default function EventPage({ params }: EventPageProps) {
               </summary>
               <PlayerPropsDashboard
                 data={gameMarkets}
+                compact
                 eventStatus={event.status}
                 homeTeam={event.home_team}
                 awayTeam={event.away_team}
@@ -3344,17 +3352,20 @@ export default function EventPage({ params }: EventPageProps) {
           )}
 
           {/* Matchups — H2H and 3-ball markets (golf) */}
-          {(gameMarkets.matchups?.length ?? 0) > 0 && (
+          {!venueVoided && (gameMarkets.matchups?.length ?? 0) > 0 && (
             <SectionErrorBoundary label="Matchups" resetKey={gameMarkets}>
             <div className="bg-surface-card rounded-card shadow-card overflow-hidden">
               <div className="px-4 sm:px-5 py-3 border-b border-surface-border/30">
                 <h3 className="text-[13px] font-semibold text-text-primary">Matchups</h3>
               </div>
-              <div className="divide-y divide-surface-border/30">
-                {gameMarkets.matchups!.map((matchup, idx) => (
+              <div className="p-4">
+                <MarketBrowser label="Matchups" items={gameMarkets.matchups!.map((matchup, idx) => ({
+                  key: String(idx), group: matchup.type === "3ball" ? "Three ball" : "Head to head",
+                  search: `${matchup.market_name} ${matchup.outcomes.map(o => o.name).join(" ")}`,
+                  content: (
                   <div key={idx} className="px-4 sm:px-5 py-3">
                     <div className="flex items-center justify-between mb-2.5">
-                      <span className="text-xs font-medium text-text-secondary">{matchup.market_name}</span>
+                      <span className="text-xs font-medium text-text-secondary">{matchup.market_name}{isFinished ? " · Last quotes" : ""}</span>
                       {/* L2-52: source-name badge removed (blend-only). */}
                     </div>
                     <div className="space-y-2">
@@ -3386,7 +3397,7 @@ export default function EventPage({ params }: EventPageProps) {
                       })}
                     </div>
                   </div>
-                ))}
+                )}))} />
               </div>
             </div>
             </SectionErrorBoundary>
@@ -3396,6 +3407,7 @@ export default function EventPage({ params }: EventPageProps) {
           {(gameMarkets.other?.length ?? 0) >= SPECIAL_MARKETS_MIN_WIRE_ROWS && (
             <SectionErrorBoundary label="Special markets" resetKey={gameMarkets}>
               <SpecialEventMarkets
+                compact
                 data={gameMarkets}
                 eventStatus={event.status}
                 // #8816 — the page's ONE settled answer again (#6438's slot, the
@@ -3451,6 +3463,8 @@ export default function EventPage({ params }: EventPageProps) {
         const rawPropRowsByKey = indexPropRowsByScriptKey(gameMarkets?.player_props);
         return (
           <SectionErrorBoundary label="The script" resetKey={gameMarkets}>
+          <details className="bg-surface-card border border-surface-border rounded-xl p-4">
+          <summary className="cursor-pointer min-h-11 text-sm font-semibold">{isFinished ? "All prop results" : "More game questions"}</summary>
           <PropsSection
             eventStatus={event.status}
             // #4866: the venue heads every matchup-level family with
@@ -3489,6 +3503,7 @@ export default function EventPage({ params }: EventPageProps) {
               // clipped away. PropsSection self-gates on an empty array.
               .filter((mark) => !isChildTitleMark(mark))}
           />
+          </details>
           </SectionErrorBoundary>
         );
       })()}
@@ -3569,6 +3584,7 @@ export default function EventPage({ params }: EventPageProps) {
       {/* Related Futures — bigger picture context (below charts) */}
       <SectionErrorBoundary label="Related futures" resetKey={eventId}>
       <RelatedFutures
+        compact
         eventId={eventId}
         homeTeam={event.home_team}
         awayTeam={event.away_team}

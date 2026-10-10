@@ -9,9 +9,11 @@ import {
   type PlayerStat,
 } from "@/lib/playerPropsGrouping";
 import { shippableCrestBadge } from "@/lib/teamShortName";
+import CompactPlayerProps from "./event/CompactPlayerProps";
 import SectionErrorBoundary from "./SectionErrorBoundary";
 
 interface PlayerPropsDashboardProps {
+  compact?: boolean;
   data: GameMarketsResponse;
   eventStatus?: string;
   homeTeam?: string;
@@ -429,6 +431,7 @@ function PlayerCard({ player, gameState, showAllStats }: { player: PlayerData; g
 }
 
 export default function PlayerPropsDashboard({
+  compact = false,
   data,
   eventStatus,
   homeTeam,
@@ -565,7 +568,7 @@ export default function PlayerPropsDashboard({
       <div className="flex items-end justify-between mb-4">
         <div>
           <h3 className="text-lg font-semibold tracking-tight">Player Props</h3>
-          {gameState === "settled" && (
+          {(gameState === "settled" || (compact && isSettled)) && (
             <p className="text-[11px] text-text-muted mt-0.5">
               {anyGraded ? "Final · graded results" : "Final · per-player grading unavailable for this game"}
             </p>
@@ -582,12 +585,12 @@ export default function PlayerPropsDashboard({
           )}
         </div>
         <div className="flex items-center gap-2">
-          <button
+          {!compact && <button
             onClick={() => setShowAllStats((s) => !s)}
             className="text-xs font-medium text-blue-600 hover:text-blue-700 transition-colors"
           >
             {showAllStats ? "Points only" : "All stats"}
-          </button>
+          </button>}
           {/* L2-52: source-name pill removed (blend-only). */}
           <div className="flex bg-surface-card rounded-lg border border-surface-border p-0.5">
             {(["all", "home", "away"] as const).map((f) => (
@@ -606,7 +609,8 @@ export default function PlayerPropsDashboard({
       </div>
 
 
-      <div className="grid gap-4" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(320px, 1fr))" }}>
+      {compact ? <CompactPlayerProps players={filtered} settled={isSettled} live={gameState === "live"}
+        renderSettled={(stat, color) => <StatBox stat={stat} gameState="settled" teamColor={color} />} /> : <div className="grid gap-4" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(320px, 1fr))" }}>
         {/* UX-P056 — the render half of the same rule. The grouping above is
             guarded per player; this guards the RENDER per player, so a throw
             inside one card costs that card and its seventeen neighbours stay up.
@@ -619,7 +623,7 @@ export default function PlayerPropsDashboard({
             <PlayerCard player={p} gameState={gameState} showAllStats={showAllStats} />
           </SectionErrorBoundary>
         ))}
-      </div>
+      </div>}
     </div>
   );
 }
