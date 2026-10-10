@@ -323,8 +323,10 @@ extension CompactEventPriceStatusTests {
             let recognized = try text(shot(host, name))
             XCTAssertTrue(recognized.contains("Win Probability"), recognized)
             XCTAssertTrue(recognized.contains("Waiting for update"), recognized)
-            XCTAssertTrue(recognized.contains("55%"), recognized)
-            XCTAssertTrue(recognized.contains("45%"), recognized)
+            // #10830 — read as the hero's adjacent pair. With Start Live Activity
+            // moved under the chart, page-wide OCR reads the pixel-identical hero
+            // as "55% - 45" (the crest circle beside it swallows the trailing %).
+            XCTAssertNotNil(recognized.range(of: #"55%\s*[-–—]?\s*45%?"#, options: .regularExpression), recognized)
             XCTAssertNil(recognized.range(of: "No live.*update yet", options: .regularExpression),
                          "the old second receipt row is back: \(recognized)")
             XCTAssertFalse(recognized.contains("Received"), "a receipt time in the hero: \(recognized)")

@@ -189,8 +189,10 @@ extension VisibleLivePriceStatusTests {
             XCTAssertTrue(recognized.contains("Waiting for update"), recognized)
             // #8320 v24: the receipt row left the hero; the exact time is on tap only.
             XCTAssertNil(recognized.range(of: "No live.*update yet", options: .regularExpression), recognized)
-            XCTAssertTrue(recognized.contains("55%"), recognized)
-            XCTAssertTrue(recognized.contains("45%"), recognized)
+            // #10830 — read as the hero's adjacent pair. With Start Live Activity
+            // moved under the chart, page-wide OCR reads the pixel-identical hero
+            // as "55% - 45" (the crest circle beside it swallows the trailing %).
+            XCTAssertNotNil(recognized.range(of: #"55%\s*[-–—]?\s*45%?"#, options: .regularExpression), recognized)
         }
     }
 }

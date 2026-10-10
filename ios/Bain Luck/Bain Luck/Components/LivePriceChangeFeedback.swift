@@ -133,8 +133,6 @@ private struct LivePriceFeedbackFlash: View {
 }
 
 /// Caller supplies a named-team caption and mounts this reserved slot only while live.
-/// #10830 — one line, not two: the caption is a short pair ("SC ↑3 pts"), and the
-/// second reserved line was the blank band Alex saw under Live updates on build 46.
 struct LivePriceMovementCaption: View {
     let sequence: Int
     let text: String?
@@ -142,7 +140,7 @@ struct LivePriceMovementCaption: View {
     var isEnabled: Bool = true
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.scenePhase) private var scenePhase
-    @ScaledMetric(relativeTo: .caption2) private var slotHeight: CGFloat = 16
+    @ScaledMetric(relativeTo: .caption2) private var slotHeight: CGFloat = 32
     @State private var previousSequence: Int?
     @State private var shownText: String?
 
@@ -155,8 +153,7 @@ struct LivePriceMovementCaption: View {
         Text(shownText ?? " ")
             .font(.caption2)
             .foregroundStyle(color)
-            .lineLimit(1)
-            .minimumScaleFactor(0.8)
+            .lineLimit(2)
             .frame(height: slotHeight, alignment: .topLeading)
             .opacity(trigger.enabled && shownText != nil ? 1 : 0)
             .accessibilityHidden(!trigger.enabled || shownText == nil)

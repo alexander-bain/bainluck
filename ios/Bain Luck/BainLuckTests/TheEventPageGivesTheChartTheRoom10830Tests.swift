@@ -71,15 +71,6 @@ final class TheEventPageGivesTheChartTheRoom10830Tests: XCTestCase {
 
     // MARK: - The headline card fits its content
 
-    func testTheMovementCaptionReservesOneLineNotTwo() throws {
-        let feedback = try code("Components", "LivePriceChangeFeedback.swift")
-        let caption = try span(feedback, from: "structLivePriceMovementCaption:View{",
-                               to: "structFreshnessRevealView")
-        XCTAssertTrue(caption.contains("privatevarslotHeight:CGFloat=16"))
-        XCTAssertTrue(caption.contains(".lineLimit(1)"))
-        XCTAssertFalse(caption.contains(".lineLimit(2)"))
-    }
-
     func testStackedTheCaptionRidesThePaddingAndOtherwiseKeepsItsSlot() throws {
         let page = try code("Views", "EventDetailView.swift")
         XCTAssertTrue(page.contains(

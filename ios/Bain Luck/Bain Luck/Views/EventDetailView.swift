@@ -1647,10 +1647,11 @@ struct EventDetailView: View {
                             // #10830 — stacked, the caption's reserved slot was the
                             // last row of the card: the band of "weigh empty space"
                             // under Live updates (Alex, build 46). There it rides the
-                            // card's bottom padding instead. Accessibility sizes
-                            // outgrow that padding, and in a row the taller crest
-                            // columns set the card's height anyway, so both keep
-                            // the slot below.
+                            // card's bottom padding instead (its one-line text sits
+                            // in the slot's top line). Accessibility sizes outgrow
+                            // that padding, and in a row the taller crest columns
+                            // set the card's height anyway, so both keep the slot
+                            // below, unchanged.
                             probabilityDetails(confidenceTier: confidenceTier)
                                 .overlay(alignment: .bottom) {
                                     if priceStreamingEligible && captionRidesPadding {
