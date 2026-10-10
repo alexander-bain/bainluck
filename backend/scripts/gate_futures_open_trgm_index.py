@@ -225,18 +225,26 @@ API = os.environ.get("BAINLUCK_API", "https://api.bainluck.com")
 #: The one index the attended DDL creates.
 EXPECTED_INDEX = "ix_futures_name_trgm_open"
 
-#: The index whose 71,368-row bitmap the partial index exists to REMOVE. Its
-#: presence in the name-arm plan is a FAIL after the DDL: it means the planner
-#: still needs a separate `status='open'` bitmap, i.e. it is not satisfying that
-#: clause from the partial index, i.e. the index is not doing its job even if it
-#: appears in the plan alongside.
-FORBIDDEN_INDEX = "ix_futures_markets_status"
+#: The index the partial one exists to REPLACE in the name-arm plan. For a term
+#: whose recorded before read it (a SUBJECT), its presence after the DDL is a
+#: FAIL: the planner is still scanning the whole-table trigram GIN rather than the
+#: open-only one, so the index is not doing its job even if it appears alongside.
+#:
+#: Until 2026-10-08 this was `ix_futures_markets_status` (the 71,368-row
+#: `status='open'` bitmap, 2026-08-25 plans). The before re-recorded on 10/08
+#: (#10769) has no term building that bitmap: every name arm is now served by
+#: `ix_futures_name_fts_open`, and `champion`, `winner` and `election` also read
+#: the full `ix_futures_name_trgm`. Subjects are classified from the recorded
+#: plan, never from this file's list, so the definition follows the plan.
+FORBIDDEN_INDEX = "ix_futures_name_trgm"
 
 #: Terms with a real outcome arm (so the control exists), chosen from a 14-term
-#: probe to cover BOTH measured plan shapes rather than whichever came to mind:
-#: the four that build the `status` bitmap and four that do not. Single common
-#: words and multi-word phrases both appear, because they take different code
-#: paths in `search_events()` (`len(terms) > 1` branches the whole predicate).
+#: probe to cover BOTH measured plan shapes rather than whichever came to mind.
+#: Single common words and multi-word phrases both appear, because they take
+#: different code paths in `search_events()` (`len(terms) > 1` branches the whole
+#: predicate). The SUBJECT/bystander split below is the 2026-08-25 one and is a
+#: comment only: `graded_terms` reads it from the recorded before (10/08:
+#: subjects `champion`, `winner`, `election`).
 TERMS = (
     # measured SUBJECTS -- status bitmap present 2026-08-25
     "world series",
@@ -387,6 +395,31 @@ def per_term_collapses(terms: dict) -> dict[str, float]:
     }
 
 
+def shape_verdict(seen_indexes: set[str], was_subject: bool, label: str) -> bool:
+    """One term's SHAPE. Red by construction on a `before` run (the index does
+    not exist yet). After: a subject must choose `EXPECTED_INDEX` AND no longer
+    read `FORBIDDEN_INDEX` -- both, because the partial index can sit in the plan
+    beside the whole-table scan it was meant to replace. A bystander passes."""
+    if label == "before":
+        return False
+    if not was_subject:
+        return True
+    return EXPECTED_INDEX in seen_indexes and FORBIDDEN_INDEX not in seen_indexes
+
+
+def graded_terms(terms: dict) -> dict:
+    """The terms the budget grades: those whose recorded before read
+    `FORBIDDEN_INDEX` (`was_subject`).
+
+    A bystander's name arm is served by an index this DDL does not touch, so its
+    collapse is ~1.0 by construction. Pooled in, five of them would hold the
+    median at 1.0 and RED a correct build. Bystanders are still graded, on
+    semantics and per-term non-regression. No subject means the budget cannot be
+    computed, which `budget_verdict` reports as a FAIL, never a pass.
+    """
+    return {term: t for term, t in terms.items() if t.get("was_subject")}
+
+
 def budget_verdict(terms: dict) -> tuple[bool, dict[str, float], str]:
     """(passed, per-term collapses, human note) for an `after` run."""
     collapses = per_term_collapses(terms)
@@ -480,11 +513,10 @@ def main() -> int:
 
         # SHAPE. On a `before` run the expected index does not exist, so this is
         # RED by construction -- that is what red-first means. On an `after` run
-        # the partial index must be CHOSEN for every term, and must have replaced
-        # the status bitmap for the terms that measurably had one.
-        shape_ok = EXPECTED_INDEX in seen_indexes
-        if was_subject and FORBIDDEN_INDEX in seen_indexes:
-            shape_ok = False
+        # a SUBJECT must CHOOSE the partial index and no longer read the one it
+        # replaces. A bystander is not required to choose it: its arm is served
+        # by an open-only index the DDL does not touch.
+        shape_ok = shape_verdict(seen_indexes, was_subject, args.label)
 
         # NON-REGRESSION, per term, against its own recorded before.
         regression_ok = True
@@ -572,7 +604,7 @@ def main() -> int:
             "beat, so the budget is RED by construction"
         )
     else:
-        budget_ok, collapses, budget_note = budget_verdict(record["terms"])
+        budget_ok, collapses, budget_note = budget_verdict(graded_terms(record["terms"]))
         if collapses:
             record["median_collapse"] = round(statistics.median(collapses.values()), 4)
     record["per_term_collapse"] = collapses

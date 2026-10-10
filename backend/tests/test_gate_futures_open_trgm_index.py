@@ -143,6 +143,42 @@ class TestTheCollapseIsPerTermNotPooled:
         assert "cannot compute" in note
 
 
+class TestTheBudgetGradesSubjectsOnly:
+    def test_bystanders_cannot_hold_the_median_at_one(self, gate):
+        """Three subjects collapse; five bystanders served by an untouched index
+        sit at 1.0. Pooled, the median is 1.0 and a correct build reads RED."""
+        terms = {
+            **{t: {"ratio": 0.1, "before_ratio": 1.0, "was_subject": True}
+               for t in ("champion", "winner", "election")},
+            **{t: {"ratio": 1.0, "before_ratio": 1.0, "was_subject": False}
+               for t in ("world series", "world cup", "presidential election",
+                         "super bowl", "best picture")},
+        }
+        assert gate.budget_verdict(terms)[0] is False  # the pooled trap
+        passed, collapses, _ = gate.budget_verdict(gate.graded_terms(terms))
+        assert passed is True
+        assert set(collapses) == {"champion", "winner", "election"}
+
+    def test_a_no_op_on_the_subjects_still_fails(self, gate):
+        terms = {t: {"ratio": 0.3, "before_ratio": 0.3, "was_subject": True}
+                 for t in ("champion", "winner")}
+        assert gate.budget_verdict(gate.graded_terms(terms))[0] is False
+
+    def test_no_subject_is_a_fail_not_a_pass(self, gate):
+        terms = {"super bowl": {"ratio": 0.01, "before_ratio": 1.0, "was_subject": False}}
+        passed, collapses, _ = gate.budget_verdict(gate.graded_terms(terms))
+        assert (passed, collapses) == (False, {})
+
+    def test_the_recorded_before_grades_the_three_trigram_terms(self, gate):
+        with open(gate.BASELINE) as handle:
+            baseline = json.load(handle)
+        subjects = sorted(
+            t for t, e in baseline["terms"].items()
+            if gate.FORBIDDEN_INDEX in e["name_arm_indexes"]
+        )
+        assert subjects == ["champion", "election", "winner"]
+
+
 class TestNoAbsoluteBudgetSurvives:
     def test_no_millisecond_constant_in_the_gate(self, gate):
         """Failure mode 1, kept out. Any module-level constant whose name says
@@ -229,7 +265,9 @@ class TestPredicateIsCompiledFromTheLiveRoute:
 class TestShapeCriterion:
     def test_the_expected_and_forbidden_indexes_are_the_specified_pair(self, gate):
         assert gate.EXPECTED_INDEX == "ix_futures_name_trgm_open"
-        assert gate.FORBIDDEN_INDEX == "ix_futures_markets_status"
+        # Re-aimed 2026-10-08: the recorded before has no `status` bitmap left;
+        # the whole-table trigram GIN is what the partial index replaces.
+        assert gate.FORBIDDEN_INDEX == "ix_futures_name_trgm"
 
     def test_bitmap_index_scans_are_found_at_any_nesting_depth(self, gate):
         plan = {
@@ -261,17 +299,26 @@ class TestShapeCriterion:
             "ix_futures_markets_status",
         }
 
-    def test_the_new_index_present_alongside_the_status_bitmap_is_a_fail(self, gate):
+    def test_the_new_index_present_alongside_the_one_it_replaces_is_a_fail(self, gate):
         """The half a casual check skips. If the planner picks the partial index
-        AND still builds the 71,368-row status bitmap, it is not satisfying
-        `status='open'` from the index predicate and the mechanism has not
+        AND still scans the whole-table trigram GIN, the mechanism has not
         engaged -- even though the index is right there in the plan."""
         seen = {gate.EXPECTED_INDEX, gate.FORBIDDEN_INDEX}
-        was_subject = True
-        shape_ok = gate.EXPECTED_INDEX in seen and not (
-            was_subject and gate.FORBIDDEN_INDEX in seen
-        )
-        assert shape_ok is False
+        assert gate.shape_verdict(seen, True, "after") is False
+        assert gate.shape_verdict({gate.EXPECTED_INDEX}, True, "after") is True
+
+    def test_a_subject_that_never_chose_the_partial_index_fails(self, gate):
+        assert gate.shape_verdict({"ix_futures_name_fts_open"}, True, "after") is False
+
+    def test_a_bystander_is_not_required_to_choose_the_partial_index(self, gate):
+        """10/08: five of eight terms are served by `ix_futures_name_fts_open`,
+        which the DDL does not touch. Demanding the new index of them would RED
+        a correct build."""
+        assert gate.shape_verdict({"ix_futures_name_fts_open"}, False, "after") is True
+
+    def test_every_term_is_red_on_a_before_run(self, gate):
+        for was_subject in (True, False):
+            assert gate.shape_verdict({gate.EXPECTED_INDEX}, was_subject, "before") is False
 
     def test_a_seq_scan_plan_finds_no_indexes(self, gate):
         plan = {"plan": [{"Plan": {"Node Type": "Seq Scan", "Relation Name": "futures_markets"}}]}
