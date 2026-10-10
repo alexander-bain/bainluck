@@ -320,28 +320,137 @@ final class EventDetailViewModel: ObservableObject {
         return nil
     }
 
+    /// #10833 — the optional payloads a load reads beside the detail.
+    private enum OptionalSection: CaseIterable {
+        case history, relatedFutures, progression, gameMarkets, lineMovement
+    }
+
+    /// What one optional read returned. Game markets publish through
+    /// `receiveGameMarkets` on their own schedule and return nothing here.
+    private enum OptionalPayload: Sendable {
+        case history(EventHistoryResponse)
+        case relatedFutures(RelatedFuturesResponse)
+        case progression(TeamProgressionResponse)
+        case lineMovement(LineMovementResponse)
+    }
+
+    /// #10833 — at most one NETWORK read per optional section. A load that
+    /// finds its section in flight joins that read instead of stacking another.
+    /// The entry leaves when the read settles, not when a load applies it: a
+    /// joiner shares the response, never the starting load's detail barrier.
+    /// The poll loop does not wait for these. Anonymous telemetry shows these
+    /// routes answering in 37–81 s, and the loop awaited them all before its
+    /// next slot; it does not identify which readers' pages that held.
+    private var optionalReads: [OptionalSection: (generation: Int, read: Task<OptionalPayload?, Never>)] = [:]
+    private var optionalReadGeneration = 0
+    /// The newest read each section has put on the page, so a response that
+    /// reaches a slower load's application after a newer one is not re-applied.
+    private var appliedOptionalGeneration: [OptionalSection: Int] = [:]
+
+    /// Opens once, when ONE load has taken its detail. That load's sections
+    /// wait here, so each is applied after its own load's detail, as when the
+    /// load awaited each section in turn. Never shared between loads.
+    private final class DetailTaken {
+        private var taken = false
+        private var waiters: [CheckedContinuation<Void, Never>] = []
+        func wait() async {
+            guard !taken else { return }
+            await withCheckedContinuation { waiters.append($0) }
+        }
+        func open() {
+            taken = true
+            waiters.forEach { $0.resume() }
+            waiters.removeAll()
+        }
+    }
+
     @MainActor
-    func load(fresh: Bool = true) async {
+    private func sharedOptionalRead(_ section: OptionalSection) -> (generation: Int, read: Task<OptionalPayload?, Never>) {
+        if let inFlight = optionalReads[section] { return inFlight }
+        optionalReadGeneration += 1
+        let generation = optionalReadGeneration
+        let read = Task { @MainActor [weak self] () -> OptionalPayload? in
+            let payload = await self?.fetchOptional(section)
+            if self?.optionalReads[section]?.generation == generation { self?.optionalReads[section] = nil }
+            return payload
+        }
+        optionalReads[section] = (generation, read)
+        return (generation, read)
+    }
+
+    @MainActor
+    private func fetchOptional(_ section: OptionalSection) async -> OptionalPayload? {
+        let client = self.client
+        do {
+            switch section {
+            case .history: return .history(try await client.fetchEventHistory(id: eventId, hours: 168))
+            case .relatedFutures: return .relatedFutures(try await client.fetchRelatedFutures(eventId: eventId))
+            case .progression: return .progression(try await client.fetchTeamProgression(eventId: eventId))
+            case .gameMarkets: await marketDelivery.load(); return nil
+            case .lineMovement: return .lineMovement(try await client.fetchLineMovement(eventId: eventId))
+            }
+        } catch {
+            switch section {
+            case .history: logger.error("History fetch failed for \(self.eventId): \(error)")
+            case .relatedFutures: logger.error("Related futures failed for \(self.eventId): \(error)")
+            case .progression: logger.error("Team progression failed for \(self.eventId): \(error)")
+            case .gameMarkets: break
+            case .lineMovement: logger.error("Line movement failed for \(self.eventId): \(error)")
+            }
+            return nil
+        }
+    }
+
+    /// One section into the page, after the load that asked for it took its
+    /// detail — only updated if successful AND non-empty (preserve existing
+    /// data when a refresh returns nil or empty results), and never with a
+    /// read older than the one already applied.
+    @MainActor
+    private func applyOptional(_ section: OptionalSection, _ payload: OptionalPayload?, generation: Int) {
+        if let payload, generation > appliedOptionalGeneration[section, default: 0] {
+            switch payload {
+            case .history(let h):
+                history = h
+                appliedOptionalGeneration[section] = generation
+            case .relatedFutures(let related):
+                if relatedFutures == nil || related.homeTeamFutures != nil || related.awayTeamFutures != nil || related.sharedFutures != nil || related.boxScore != nil {
+                    relatedFutures = related
+                    appliedOptionalGeneration[section] = generation
+                }
+            case .progression(let progression):
+                if teamProgression == nil || progression.homeTeam != nil || progression.awayTeam != nil {
+                    teamProgression = progression
+                    appliedOptionalGeneration[section] = generation
+                }
+            case .lineMovement(let movement):
+                lineMovement = movement
+                appliedOptionalGeneration[section] = generation
+            }
+        }
+        // Every load whose history read succeeded checks the chart against the
+        // detail that load just adopted — also when the joined read was already
+        // applied by an earlier load against an older detail. Deduplicated by key.
+        if section == .history, payload != nil { requestChartRevisionRefreshIfNeeded() }
+    }
+
+    /// `awaitingOptionalSections: false` is the poll loop's: it returns once the
+    /// detail is adopted and the page re-planned, leaving the optional reads to
+    /// land on their own (#10833). Every other caller — open, return, pull to
+    /// refresh — still returns only when every section has settled.
+    @MainActor
+    func load(fresh: Bool = true, awaitingOptionalSections: Bool = true) async {
         loading = event == nil
 
-        // Start secondary fetches immediately (they only need eventId)
-        let client = self.client
-        let historyTask = Task { () -> EventHistoryResponse? in
-            do { return try await client.fetchEventHistory(id: eventId, hours: 168) }
-            catch { logger.error("History fetch failed for \(self.eventId): \(error)"); return nil }
-        }
-        let relatedFuturesTask = Task { () -> RelatedFuturesResponse? in
-            do { return try await client.fetchRelatedFutures(eventId: eventId) }
-            catch { logger.error("Related futures failed for \(self.eventId): \(error)"); return nil }
-        }
-        let progressionTask = Task { () -> TeamProgressionResponse? in
-            do { return try await client.fetchTeamProgression(eventId: eventId) }
-            catch { logger.error("Team progression failed for \(self.eventId): \(error)"); return nil }
-        }
-        let gameMarketsTask = Task { await marketDelivery.load() }
-        let lineMovementTask = Task { () -> LineMovementResponse? in
-            do { return try await client.fetchLineMovement(eventId: eventId) }
-            catch { logger.error("Line movement failed for \(self.eventId): \(error)"); return nil }
+        // Start (or join) secondary fetches immediately (they only need
+        // eventId); each is applied by THIS load only after its own detail.
+        let detailTaken = DetailTaken()
+        let optional = OptionalSection.allCases.map { section in
+            let shared = sharedOptionalRead(section)
+            return Task { @MainActor [weak self] in
+                let payload = await shared.read.value
+                await detailTaken.wait()
+                self?.applyOptional(section, payload, generation: shared.generation)
+            }
         }
 
         // Await primary fetch (controls loading state)
@@ -381,30 +490,18 @@ final class EventDetailViewModel: ObservableObject {
         // clears the failure itself.
         if pricePairRefreshFailed, pricePairRetryTask == nil { schedulePricePairRetry() }
         configureAutoRefresh()
+        detailTaken.open()
 
-        // Await secondary fetches — only update if successful AND non-empty
-        // (preserve existing data when a refresh returns nil or empty results)
-        if let h = await historyTask.value {
-            history = h
-            requestChartRevisionRefreshIfNeeded()
-        }
-        if let related = await relatedFuturesTask.value {
-            if relatedFutures == nil || related.homeTeamFutures != nil || related.awayTeamFutures != nil || related.sharedFutures != nil || related.boxScore != nil {
-                relatedFutures = related
+        // Stamp the honest "last updated" moment once every section this load
+        // asked for has settled — whether or not the caller waits for that.
+        guard awaitingOptionalSections else {
+            Task { @MainActor [weak self] in
+                for read in optional { await read.value }
+                self?.lastLoadedAt = Date()
             }
+            return
         }
-        if let progression = await progressionTask.value {
-            if teamProgression == nil || progression.homeTeam != nil || progression.awayTeam != nil {
-                teamProgression = progression
-            }
-        }
-        await gameMarketsTask.value
-        if let movement = await lineMovementTask.value {
-            lineMovement = movement
-        }
-
-        // Stamp the honest "last updated" moment — this load has completed. The
-        // refresh countdown counts down from here to the next scheduled auto-refresh.
+        for read in optional { await read.value }
         lastLoadedAt = Date()
     }
 
@@ -811,9 +908,11 @@ final class EventDetailViewModel: ObservableObject {
         // `Timer`'s `@Sendable` block cannot reach a non-Sendable view model
         // across that boundary without the compiler saying so.
         //
-        // The gap is measured BETWEEN loads rather than on the wall clock, so a
-        // six-endpoint refresh that takes longer than the interval on a slow
-        // network never stacks a second one on top of itself.
+        // The gap is measured BETWEEN detail reads rather than on the wall
+        // clock, so a detail that takes longer than the interval on a slow
+        // network never stacks a second one on top of itself. The optional
+        // sections are not waited for (#10833): each owns one read in flight,
+        // which a later slot joins rather than repeats.
         //
         // #9268 — ONE loop, cut into slots, rather than a second loop for the
         // detail: two loops would each sleep, each re-plan, and could each run
@@ -836,7 +935,7 @@ final class EventDetailViewModel: ObservableObject {
                     await self.rereadGameState()
                 } else {
                     slot = 0
-                    await self.load(fresh: false)
+                    await self.load(fresh: false, awaitingOptionalSections: false)
                 }
             }
         }
