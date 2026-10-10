@@ -10,7 +10,8 @@ import XCTest
 ///   3. every stat is a visible chip (or, past the chip limit or at
 ///      accessibility text, one labelled menu) — none needs a sideways scroll
 ///      — and another stat can be chosen;
-///   4. then a team, then a player's target line.
+///   4. then a team, then a player's target line — Show more and the target
+///      are tapped on their padded edge, not their words.
 ///
 ///   `BL_10830_ROUTE`  default `bainluck://events/14782161` (LV @ NE, Oct 11:
 ///                     16 stats, the menu). `bainluck://events/15327325`
@@ -97,7 +98,8 @@ final class PropsBrowseFirst10830UITests: XCTestCase {
         if more.exists || reveal(more, in: app, swipes: 60) {
             if reveal(more, in: app, swipes: 60) {
                 let before = status.label
-                more.tap()
+                // Root 10/10: on the padding, not the words.
+                more.coordinate(withNormalizedOffset: CGVector(dx: 0.04, dy: 0.15)).tap()
                 XCTAssertTrue(status.waitForExistence(timeout: 3))
                 XCTAssertNotEqual(status.label, before, "Show more drew no more props (\(before))")
                 print("10830B more \(before) -> \(status.label)")
@@ -181,8 +183,10 @@ final class PropsBrowseFirst10830UITests: XCTestCase {
         if target == nil { print("10830B target: none of \(targets.count) target lines is unselected and enabled") }
         if let target, reveal(target, in: app) {
             let label = target.label
-            target.tap()
-            XCTAssertTrue(target.isSelected, "tapping target '\(label)' did not choose it")
+            // Root 10/10: an edge tap, inside the chip's padding, past the
+            // number — the whole 52×44 frame is the control.
+            target.coordinate(withNormalizedOffset: CGVector(dx: 0.06, dy: 0.12)).tap()
+            XCTAssertTrue(target.isSelected, "an edge tap on target '\(label)' did not choose it")
             shot(app, "10830B-\(tag)-4-team-and-target-chosen")
             walked.append("target")
         } else {

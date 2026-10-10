@@ -71,6 +71,7 @@ enum PlayerPropsFamily {
         "If the player plays after halftime, it settles on the actual touchdowns scored.",
         "No injury or injury designation is needed for this to apply. A player who never plays falls under Kalshi's separate non-participation rule.",
         "Passing touchdowns don't count as the passer scoring.",
+        "Team defense and special-teams picks settle on actual touchdowns; this player rule doesn't apply to them.",
     ]
     /// The series' own contract terms (`contract_terms_url` in the series JSON).
     static let participationRuleTermsURL = URL(
@@ -86,6 +87,24 @@ enum PlayerPropsFamily {
         sportKey == "americanfootball_nfl"
             && sources == ["kalshi"]
             && name(statLabel: statLabel).lowercased() == "touchdowns (protected)"
+    }
+
+    /// The same rules exempt team defense/special-teams picks from the player
+    /// participation exception, so a subject that names a team — either club
+    /// on the page, as a whole name or a run of its words, or a defense /
+    /// special-teams pick — never gets the player rule. The model carries no
+    /// ticker, so this reads the subject's name; an unknown subject is a
+    /// player, as every captured protected row is.
+    static func isTeamSubject(_ subject: String, teams: [String]) -> Bool {
+        let name = subject.trimmingCharacters(in: .whitespaces).lowercased()
+        guard !name.isEmpty else { return false }
+        if ["d/st", "defense", "defence", "special teams"].contains(where: { name.contains($0) }) {
+            return true
+        }
+        return teams.contains { team in
+            let team = team.trimmingCharacters(in: .whitespaces).lowercased()
+            return !team.isEmpty && " \(team) ".contains(" \(name) ")
+        }
     }
 
     /// Pill order: the families with the most ladders first (the stat the
