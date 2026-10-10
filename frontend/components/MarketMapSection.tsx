@@ -1,6 +1,8 @@
 "use client";
 
 import { useMemo } from "react";
+import MarketBrowser from "./event/MarketBrowser";
+import CompactMarketMap from "./event/CompactMarketMap";
 import MarketMap, { ladderGraded } from "./MarketMap";
 import type { MarketMapMarker, MarketMapLadderRow } from "./MarketMap";
 import type { GameMarketsResponse } from "@/lib/api";
@@ -57,6 +59,7 @@ const MARGIN_ACCENT = "37,99,235";
 const TOTAL_ACCENT = "124,58,237";
 
 interface MarketMapSectionProps {
+  compact?: boolean;
   gameMarkets: GameMarketsResponse;
   eventStatus: string;
   homeTeam: string;
@@ -455,6 +458,7 @@ export function marginSideLabels(
 }
 
 export default function MarketMapSection({
+  compact = false,
   gameMarkets,
   eventStatus,
   homeTeam,
@@ -482,7 +486,7 @@ export default function MarketMapSection({
 
   const isLive = eventStatus === "live";
   const isDone = marketMapIsGraded(eventStatus);
-  const status = isLive ? "live" : isDone ? "done" : "pre";
+  const status: "live" | "done" | "pre" = isLive ? "live" : isDone ? "done" : "pre";
 
   /**
    * ── #5206: A FORECAST AND A RESULT ARE TWO QUESTIONS, AND SO ARE THEIR MARKS ──
@@ -1801,6 +1805,20 @@ export default function MarketMapSection({
   const hasTotal = totalCardCount > 0;
 
   if (!hasMargin && !hasTotal) return null;
+
+  if (compact) {
+    const maps = [
+      ...(marginData ? [{ key: "game-margin", data: { ...marginData, variant: "margin" as const, status } }] : []),
+      ...(totalData ? [{ key: "game-total", data: { ...totalData, variant: "total" as const, status } }] : []),
+      ...halfMarginMaps,
+      ...halfTotalMaps,
+    ];
+    return <MarketBrowser label="Game maps" searchable={false} items={maps.map(map => ({
+      key: map.key, group: map.data.title, search: map.data.title,
+      content: <CompactMarketMap key={map.key} {...map.data} />,
+    }))} />;
+  }
+
 
   return (
     <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">

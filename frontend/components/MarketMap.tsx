@@ -27,7 +27,7 @@ export interface MarketMapLadderRow {
   outcome?: "cleared" | "missed";
 }
 
-interface MarketMapProps {
+export interface MarketMapProps {
   variant: "margin" | "total";
   title: string;
   subtitle: string;

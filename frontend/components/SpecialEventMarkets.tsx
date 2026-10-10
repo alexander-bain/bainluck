@@ -1,5 +1,6 @@
 "use client";
 
+import MarketBrowser from "./event/MarketBrowser";
 import { useMemo } from "react";
 import type { GameMarketsResponse } from "@/lib/api";
 import {
@@ -24,6 +25,7 @@ import { oldestSourceStamp, sourceIsStale } from "@/lib/sourceAge";
 import { outcomeRowVerdict } from "@/components/futures/OutcomeRow";
 
 interface SpecialEventMarketsProps {
+  compact?: boolean;
   data: GameMarketsResponse;
   eventStatus?: string;
   /**
@@ -519,6 +521,7 @@ function PropMiniCard({
 }
 
 export default function SpecialEventMarkets({
+  compact = false,
   data,
   eventStatus,
   venueSettled = false,
@@ -589,6 +592,18 @@ export default function SpecialEventMarkets({
   const live = !voided && !settled && !isPregameStatus(eventStatus);
 
   if (section.categories.length === 0) return null;
+
+  if (compact) return <section className="bg-surface-card border border-surface-border rounded-xl p-4">
+    <h3 className="text-lg font-semibold mb-3">Game questions</h3>
+    {settled && <p className="text-sm text-text-secondary mb-3">{SETTLED_SECTION_NOTE_NO_QUOTES}</p>}
+    <MarketBrowser label="Game questions" items={section.categories.flatMap(category => category.cards.map((item, index) => ({
+      key: `${category.title}-${item.name}-${index}`,
+      group: category.title,
+      search: `${category.title} ${item.name} ${item.outcomes.map(outcome => outcome.label).join(" ")}`,
+      content: <PropMiniCard item={item} settled={settled} live={live} voided={voided} />,
+    })))} />
+  </section>;
+
 
   return (
     <div>
