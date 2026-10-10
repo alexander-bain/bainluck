@@ -23,6 +23,7 @@ import { useMemo } from "react";
 import { format } from "date-fns";
 import {
   buildProjectedFinalPointsSeries,
+  projectedFinalPointsLeague,
   type ActualStep,
   type ForecastPoint,
   type ProjectedFinalPointsInput,
@@ -183,6 +184,26 @@ function readingLabel(series: ProjectedFinalPointsSeries): string {
 }
 
 /** How much a marker's time says about the period's start, in a reader's words. */
+/**
+ * A period chip as a screen reader should say it: "Q2" and "1H" are otherwise
+ * read as letters. Any other chip is spoken as drawn.
+ */
+export function spokenPeriodLabel(label: string): string {
+  const ordinal = (n: number) => `${n}${n % 100 >= 11 && n % 100 <= 13 ? "th" : ["th", "st", "nd", "rd"][n % 10] ?? "th"}`;
+  const end = label.startsWith("/");
+  const chip = end ? label.slice(1) : label;
+  let spoken = chip;
+  const q = chip.match(/^Q(\d+)$/);
+  const h = chip.match(/^(\d+)H$/);
+  const ot = chip.match(/^OT(\d+)$/);
+  if (chip === "HT") spoken = "Halftime";
+  else if (chip === "OT") spoken = "Overtime";
+  else if (ot && Number(ot[1]) > 0) spoken = `${ordinal(Number(ot[1]))} overtime`;
+  else if (q && Number(q[1]) > 0) spoken = `${ordinal(Number(q[1]))} quarter`;
+  else if (h && Number(h[1]) > 0) spoken = `${ordinal(Number(h[1]))} half`;
+  return end ? `End of ${spoken === chip ? chip : spoken.charAt(0).toLowerCase() + spoken.slice(1)}` : spoken;
+}
+
 function markerTiming(b: PeriodBoundary): string {
   if (b.precision === "boundary_observed") return "began";
   if (b.precision === "first_score") return "first score";
@@ -228,6 +249,8 @@ export default function ProjectedFinalPointsChart({
   const full = useMemo(() => buildProjectedFinalPointsSeries(input), [input]);
   const markers = useMemo(() => drawnPeriodMarkers(full, periodBoundaries), [full, periodBoundaries]);
   if (!full.supported) return null;
+  // The league's own period word: men's college basketball plays halves, never quarters.
+  const firstPeriodWord = projectedFinalPointsLeague(input.sportKey)?.firstPeriod === "1H" ? "half" : "quarter";
 
   const { home: homeStroke, away: awayStroke } = projectedTeamStrokes(homeColor, awayColor);
   const span = Math.max(1, full.end - full.start);
@@ -451,7 +474,7 @@ export default function ProjectedFinalPointsChart({
       {markers.length > 0 && (
         <p className="sr-only" data-testid="projected-period-markers-text">
           Game state marked on the chart:{" "}
-          {markers.map((m) => `${m.label} ${markerTiming(m)} ${formatProjectionTime(Date.parse(m.timestamp))}`).join(", ")}.
+          {markers.map((m) => `${spokenPeriodLabel(m.label)} ${markerTiming(m)} ${formatProjectionTime(Date.parse(m.timestamp))}`).join(", ")}.
         </p>
       )}
 
@@ -473,7 +496,7 @@ export default function ProjectedFinalPointsChart({
           was missing or could not be right, such as a projection below points already scored. The last projection is never
           joined to the final score.
           {markers.length > 0 &&
-            " The thin vertical rules mark each quarter, halftime or overtime where it was first seen in progress, which can be a little after it began."}
+            ` The thin vertical rules mark each ${firstPeriodWord}, halftime or overtime where it was first seen in progress, which can be a little after it began.`}
         </p>
       </details>
     </section>

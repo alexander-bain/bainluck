@@ -69,8 +69,8 @@
  * ── WHAT THE CHART MAY NEVER DO ─────────────────────────────────────────────
  *
  * - Draw a sport whose spread is not an expected margin in points. Only the
- *   sports in `PROJECTED_FINAL_POINTS_SPORTS` are admitted. Baseball's fixed
- *   ±1.5 run line, soccer goals, tennis sets and golf positions are refused by
+ *   leagues in `PROJECTED_FINAL_POINTS_LEAGUES` are admitted. Hockey's and
+ *   baseball's fixed ±1.5 lines, soccer goals, tennis sets and golf positions are refused by
  *   name, not by a unit lookup that would let soccer through.
  * - Bridge a gap. A missing half, a non-finite value, a value already beaten
  *   by the recorded score, a pair whose leader contradicts its own moneyline,
@@ -107,16 +107,38 @@ import { sourceLabel } from "@/lib/sourceLabels";
 import type { BookmakerHistoryPoint, EventHistoryResponse } from "@/lib/types";
 
 /**
- * Sports whose sportsbook spread is an expected margin in points. Admission
- * is by name on purpose (see module doc). Add a sport here only with its own
- * fixture proving both units and orientation.
+ * One admitted league: the chip (`normalizePeriodLabel` with its own key) an
+ * observed first period carries, and its y-axis gridline step in points.
  */
-export const PROJECTED_FINAL_POINTS_SPORTS: ReadonlySet<string> = new Set([
-  "americanfootball_nfl",
+export interface ProjectedFinalPointsLeague {
+  /** Men's college basketball plays two halves; every other league here opens with a first quarter. */
+  firstPeriod: "Q1" | "1H";
+  /** A touchdown with the extra point in football; twenty in basketball, whose finals sit in the 60s–130s. */
+  tickStep: number;
+}
+
+/**
+ * Leagues whose sportsbook spread is an expected full-game margin in POINTS,
+ * so one book's spread and total captured together are a pair of projected
+ * final scores. Admission is by exact NAME, never by prefix (see module doc):
+ * a hockey puck line is a fixed ±1.5 handicap, not an expected margin (#8231,
+ * #8617), so hockey and baseball are absent, and tennis sets/games are not
+ * points. An unlisted key keeps its Score Differential card. The same table as
+ * native's `ProjectedFinalPointsSeries.leagues` (#10549 follow-through, PR #10849).
+ */
+export const PROJECTED_FINAL_POINTS_LEAGUES: ReadonlyMap<string, ProjectedFinalPointsLeague> = new Map([
+  ["americanfootball_nfl", { firstPeriod: "Q1", tickStep: 7 }],
+  ["americanfootball_ncaaf", { firstPeriod: "Q1", tickStep: 7 }],
+  ["basketball_nba", { firstPeriod: "Q1", tickStep: 20 }],
+  ["basketball_wnba", { firstPeriod: "Q1", tickStep: 20 }],
+  ["basketball_ncaab", { firstPeriod: "1H", tickStep: 20 }],
+  ["basketball_wncaab", { firstPeriod: "Q1", tickStep: 20 }],
 ]);
 
-/** Y-axis gridline step per admitted sport: one touchdown with the extra point. */
-const TICK_STEP: Record<string, number> = { americanfootball_nfl: 7 };
+/** The admitted league a sport key names exactly, or null. */
+export function projectedFinalPointsLeague(sportKey: string | null | undefined): ProjectedFinalPointsLeague | null {
+  return PROJECTED_FINAL_POINTS_LEAGUES.get(sportKey ?? "") ?? null;
+}
 
 /**
  * The only basis this module accepts: one sportsbook, one capture, full-game
@@ -353,10 +375,8 @@ function niceMax(value: number, step: number): number {
 export function buildProjectedFinalPointsSeries(
   input: ProjectedFinalPointsInput,
 ): ProjectedFinalPointsSeries | ProjectedFinalPointsUnsupported {
-  const sportKey = input.sportKey ?? "";
-  if (!PROJECTED_FINAL_POINTS_SPORTS.has(sportKey)) {
-    return { supported: false, reason: "sport_not_supported" };
-  }
+  const league = projectedFinalPointsLeague(input.sportKey);
+  if (!league) return { supported: false, reason: "sport_not_supported" };
   const sourceName = sourceLabel(input.sourceKey);
   if (!sourceName) return { supported: false, reason: "source_not_named" };
 
@@ -444,7 +464,7 @@ export function buildProjectedFinalPointsSeries(
   let high = 0;
   for (const seg of segments) for (const p of seg) high = Math.max(high, p.home, p.away);
   for (const s of actualSteps) high = Math.max(high, s.home, s.away);
-  const step = TICK_STEP[sportKey] ?? 7;
+  const step = league.tickStep;
   const yMax = niceMax(high + step / 4, step);
   const yTicks: number[] = [];
   for (let v = 0; v <= yMax; v += step) yTicks.push(v);
@@ -584,20 +604,30 @@ const PERIOD_START_PRECISIONS: ReadonlySet<string> = new Set(["first_seen", "bou
 
 /**
  * The first recorded game state: the earliest `not_before` among the served
- * first-period markers an instrument observed, or null when there is none.
- * An `estimated` marker, a marker with no source or no lower bound, and a
- * `first_score` marker are all refused. NOT a kickoff (module doc), so it is
- * only ever passed as `scoreObservationStartAt`.
+ * markers of the league's own first period (Q1, or 1H in men's college
+ * basketball) an instrument observed, or null when there is none. An
+ * `estimated` marker, a marker with no source or no lower bound, a
+ * `first_score` marker and another league's period vocabulary are all refused:
+ * a men's college basketball game never opens on a "Q1". An unadmitted sport
+ * has no first period here. NOT a kickoff (module doc), so it is only ever
+ * passed as `scoreObservationStartAt`.
+ *
+ * The server stamps observed transition precision only for football today
+ * (`period_markers.TRANSITION_SPORT_PREFIXES`), so a live or finished
+ * basketball page finds none here and keeps its Score Differential card until
+ * it does. That refusal is the point, not a gap to work around.
  */
 export function firstRecordedGameStateAt(
   markers: ServedPeriodMarker[] | null | undefined,
   sportKey: string | null | undefined,
 ): string | null {
+  const firstPeriod = projectedFinalPointsLeague(sportKey)?.firstPeriod;
+  if (!firstPeriod) return null;
   let best: { at: number; iso: string } | null = null;
   for (const m of markers ?? []) {
     if (!m.source || m.source === PERIOD_SOURCE_ESTIMATED || !OBSERVING_MARKER_SOURCES.has(m.source)) continue;
     if (!m.precision || !PERIOD_START_PRECISIONS.has(m.precision)) continue;
-    if (normalizePeriodLabel(m.period, sportKey) !== "Q1") continue;
+    if (normalizePeriodLabel(m.period, sportKey) !== firstPeriod) continue;
     const at = parseTime(m.not_before);
     if (at === null || (best && best.at <= at)) continue;
     best = { at, iso: m.not_before as string };
@@ -661,9 +691,13 @@ export function projectedFinalPointsInputFromHistory(
  * not in the module, so the page can ask without pulling the chart into its
  * own bundle.
  *
- * NFL, before, during and after the game (#10461). It renders nothing unless
+ * The leagues `PROJECTED_FINAL_POINTS_LEAGUES` names (NFL, college football,
+ * NBA, WNBA, men's and women's college basketball), before, during and after
+ * the game (#10461), on the page's own sport key. It renders nothing unless
  * every input below is present, and the page's win probability stays the
- * headline.
+ * headline. Basketball's during/after phases need an observed first-period
+ * start, which the server serves only for football today, so those pages keep
+ * their Score Differential card until it does (`firstRecordedGameStateAt`).
  *
  * - The page and the history must be in the same phase. The history carries
  *   its own served `status`; a finished page over a live, scheduled or
@@ -725,7 +759,7 @@ export function projectedFinalPointsMount(opts: {
   now: string;
 }): ProjectedFinalPointsMount {
   const { sportKey, eventStatus, history } = opts;
-  if (!PROJECTED_FINAL_POINTS_SPORTS.has(sportKey ?? "")) return { mount: false, reason: "sport_not_supported" };
+  if (!projectedFinalPointsLeague(sportKey)) return { mount: false, reason: "sport_not_supported" };
   const phase = phaseOf(eventStatus);
   if (!phase) return { mount: false, reason: "status_not_supported" };
   if (!history) return { mount: false, reason: "no_history" };
@@ -741,7 +775,7 @@ export function projectedFinalPointsMount(opts: {
   const admission = { finishedPage, cutoffAt: null, asOf };
   const sourceKey = pickProjectionSportsbook(history, admission);
   if (!sourceKey) return { mount: false, reason: "no_named_book" };
-  // Before the game there is no score floor at all, even when the history retains a first-quarter marker.
+  // Before the game there is no score floor at all, even when the history retains a first-period marker.
   const scoreObservationStartAt = phase === "before" ? null : firstRecordedGameStateAt(history.period_markers, sportKey);
   if (!scoreObservationStartAt && phase !== "before") {
     return { mount: false, reason: "no_recorded_game_state" };

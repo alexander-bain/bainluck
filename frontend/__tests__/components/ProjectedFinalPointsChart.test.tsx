@@ -403,7 +403,8 @@ describe("#10539 period markers at their evidenced times", () => {
   it("tells a screen reader each marker is a first observed state, not a guaranteed start", () => {
     const html = render(nflInput(), null, [observed("2026-09-29T01:05:00Z", "Q2"), observed("2026-09-29T02:40:00Z", "Q4", "boundary_observed")]);
     expect(html).toContain(
-      `Game state marked on the chart: Q2 first seen in progress ${formatProjectionTime(Date.parse("2026-09-29T01:05:00Z"))}, Q4 began ${formatProjectionTime(Date.parse("2026-09-29T02:40:00Z"))}.`,
+      // Spoken as words (#10549 follow-through): "Q2" is otherwise read as letters.
+      `Game state marked on the chart: 2nd quarter first seen in progress ${formatProjectionTime(Date.parse("2026-09-29T01:05:00Z"))}, 4th quarter began ${formatProjectionTime(Date.parse("2026-09-29T02:40:00Z"))}.`,
     );
     expect(html).toContain("where it was first seen in progress, which can be a little after it began");
   });

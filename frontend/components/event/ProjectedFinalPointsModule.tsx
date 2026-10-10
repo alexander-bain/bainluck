@@ -3,7 +3,9 @@
 /**
  * #10239 — the event-page mount for projected final points.
  *
- * NFL, before, during and after the game (#10461). It draws the decision the
+ * The leagues `PROJECTED_FINAL_POINTS_LEAGUES` names (football and
+ * basketball), before, during and after the game (#10461), on the page's own
+ * sport key. It draws the decision the
  * page already took (`useProjectedFinalPointsMount`, every admission rule is
  * documented there) from the history the page already adopted. No fetch, no
  * polling, and no second decision: #10539 drops the Score Differential card on
