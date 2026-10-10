@@ -5,15 +5,19 @@ import XCTest
 ///
 /// At `361cb29772` the loop's full-load slot ran `await load(fresh: false)`,
 /// and `load()` returned only after history, related futures, progression,
-/// game markets and line movement had all been awaited. Telemetry measured
-/// related-futures and line-movement reads at 37–81 s; for that long the same
-/// loop could not reach its next game-state slot, so a held page's score and
-/// clock stood still while prices kept arriving by push.
+/// game markets and line movement had all been awaited, so the loop's next
+/// game-state slot waited on the slowest of them. That dependency is in the
+/// source. Anonymous slow-route telemetry shows related-futures and
+/// line-movement reads answering in 37–81 s; it carries no event or session,
+/// so it does not show that any identified iPhone page's clock stood still
+/// for that long.
 ///
 /// BOTH DIRECTIONS: the next game-state slot runs while one optional read is
 /// still pending, AND the slot after that does not stack a second read of the
 /// pending section — it joins it; the read still lands and still stamps the
-/// load; a stopped page asks for nothing more.
+/// load; a stopped page asks for nothing more. Joining shares the RESPONSE
+/// only: a later load never waits on an earlier load's stalled detail, and
+/// each load checks the chart against the detail it adopted.
 @MainActor
 final class ASlowOptionalSectionDoesNotHoldTheGameState10833Tests: XCTestCase {
 
@@ -33,7 +37,7 @@ final class ASlowOptionalSectionDoesNotHoldTheGameState10833Tests: XCTestCase {
 
     /// Serves `script` in order, then repeats its last entry. The first
     /// related-futures read (the page opening) answers at once; every later one
-    /// is held until `releaseRelatedFutures()`, standing in for the 37–81 s read.
+    /// is held until `releaseRelatedFutures()`, standing in for a slow read.
     private nonisolated final class SlowSectionClient: EventDetailProviding, @unchecked Sendable {
         struct Declined: Error {}
         private let lock = NSLock()
@@ -275,5 +279,197 @@ final class ASlowOptionalSectionDoesNotHoldTheGameState10833Tests: XCTestCase {
         XCTAssertEqual(client.detailCount, base + 1, "a stopped page ran another slot")
         XCTAssertEqual(client.relatedFuturesCount, 2)
         XCTAssertEqual(sleeper.parked, 0, "a stopped page started another loop")
+    }
+
+    // MARK: - Overlapping loads
+
+    /// Holds exactly the reads a test arms, each on its own continuation, and
+    /// ignores cancellation while holding — a transport slow to notice that its
+    /// load was retired. Every response is the one current when it was ASKED.
+    @MainActor
+    private final class OrderingClient: EventDetailProviding {
+        struct Declined: Error {}
+        var detail: EventDetail
+        var historyResponse: EventHistoryResponse?
+        var holdNextDetail = false
+        var holdNextHistory = false
+        var holdNextRelated = false
+        private(set) var heldDetail: CheckedContinuation<Void, Never>?
+        private(set) var heldHistory: CheckedContinuation<Void, Never>?
+        private(set) var heldRelated: CheckedContinuation<Void, Never>?
+        private(set) var detailReads = 0
+        private(set) var historyReads = 0
+        private(set) var freshHistoryReads = 0
+        private(set) var relatedReads = 0
+        private let related: (Int) throws -> RelatedFuturesResponse
+        init(_ detail: EventDetail, related: @escaping (Int) throws -> RelatedFuturesResponse) {
+            self.detail = detail
+            self.related = related
+        }
+        func releaseDetail() { heldDetail?.resume(); heldDetail = nil }
+        func releaseHistory() { heldHistory?.resume(); heldHistory = nil }
+        func releaseRelated() { heldRelated?.resume(); heldRelated = nil }
+        func fetchEvent(id: Int) async throws -> EventDetail {
+            detailReads += 1
+            let response = detail
+            if holdNextDetail {
+                holdNextDetail = false
+                await withCheckedContinuation { heldDetail = $0 }
+            }
+            return response
+        }
+        func fetchEventHistory(id: Int, hours: Int) async throws -> EventHistoryResponse {
+            historyReads += 1
+            let response = historyResponse
+            if holdNextHistory {
+                holdNextHistory = false
+                await withCheckedContinuation { heldHistory = $0 }
+            }
+            guard let response else { throw Declined() }
+            return response
+        }
+        /// The chart's catch-up read (`rereadPricePair`), counted apart from a
+        /// load's own history read.
+        func fetchFreshEventHistory(id: Int, hours: Int) async throws -> EventHistoryResponse {
+            freshHistoryReads += 1
+            guard let historyResponse else { throw Declined() }
+            return historyResponse
+        }
+        func fetchRelatedFutures(eventId: Int) async throws -> RelatedFuturesResponse {
+            relatedReads += 1
+            let read = relatedReads
+            if holdNextRelated {
+                holdNextRelated = false
+                await withCheckedContinuation { heldRelated = $0 }
+            }
+            return try related(read)
+        }
+        func fetchTeamProgression(eventId: Int) async throws -> TeamProgressionResponse { throw Declined() }
+        func fetchGameMarkets(eventId: Int) async throws -> GameMarketsResponse { throw Declined() }
+        func fetchLineMovement(eventId: Int) async throws -> LineMovementResponse { throw Declined() }
+    }
+
+    @MainActor private final class Finished { var value = false }
+
+    private func orderingPage(_ client: OrderingClient) -> EventDetailViewModel {
+        EventDetailViewModel(
+            eventId: 4242, client: client, makeStreamHandle: { _ in FakeHandle() },
+            now: { 1_790_562_050 },
+            sleep: { _ in try? await Task.sleep(nanoseconds: 60_000_000_000) }
+        )
+    }
+
+    /// A blend headline carrying fold revision `revision` (#9051's shape).
+    private func folded(p: Double, revision: Int, clock: String = "11:13") throws -> EventDetail {
+        try decoder().decode(EventDetail.self, from: Data("""
+        {"id":4242,"home_team":"Denver Broncos","away_team":"Los Angeles Rams","status":"live",
+         "home_score":16,"away_score":0,
+         "espn":{"game_clock":"\(clock)","period":"3"},
+         "current_odds":{"home_probability":\(p),"away_probability":\(1 - p),
+           "home_rendered_percent":\(Int((p * 100).rounded())),"away_rendered_percent":\(Int(((1 - p) * 100).rounded()))},
+         "hero_probability":\(p),"hero_probability_source":"blend",
+         "hero_probability_observed_at":"2026-09-28T02:19:00Z",
+         "blend_fold_revision":{"4242":\(revision)},
+         "win_probability_sources":{"polymarket":{"value":\(p),"updated_at":"2026-09-28T02:19:00Z"}}}
+        """.utf8))
+    }
+
+    /// History whose pinned right edge is `edge` on fold revision `revision`.
+    private func pinnedHistory(revision: Int, edge: Double) throws -> EventHistoryResponse {
+        try decoder().decode(EventHistoryResponse.self, from: Data("""
+        {"event_id":4242,"home_team":"Denver Broncos","away_team":"Los Angeles Rams","status":"live","history":[],
+         "aggregate_line":[{"timestamp":"2026-09-28T02:00:00Z","home_probability":0.55},
+                           {"timestamp":"2026-09-28T02:19:00Z","home_probability":\(edge)}],
+         "blend_edge_pinned":true,"blend_edge_fold_revision":{"4242":\(revision)}}
+        """.utf8))
+    }
+
+    /// Load A's detail stalls (and A is cancelled, which its transport does not
+    /// notice) while load B joins A's related-futures read. B's own detail
+    /// lands; the joined read lands; B finishes and stamps the page without A
+    /// ever resuming — and B still reads related futures once, not twice.
+    func testALaterLoadNeverWaitsOnAnEarlierLoadsStalledDetail() async throws {
+        let client = OrderingClient(try live(clock: "11:13"), related: { [unowned self] in try self.related($0) })
+        let vm = orderingPage(client)
+        defer { vm.stopRefresh() }
+        await vm.load()
+        XCTAssertEqual(vm.relatedFutures?.boxScore?["read"]?["n"], 1)
+
+        client.holdNextDetail = true
+        client.holdNextRelated = true
+        let a = Task { await vm.load() }
+        await waitUntil("load A's detail and related-futures reads to stall") {
+            client.heldDetail != nil && client.heldRelated != nil
+        }
+        a.cancel()
+
+        let stamped = vm.lastLoadedAt
+        client.detail = try live(clock: "9:56")
+        let bFinished = Finished()
+        let b = Task { await vm.load(); bFinished.value = true }
+        await waitUntil("load B's own detail to be adopted") { vm.event?.espn?.gameClock == "9:56" }
+        client.releaseRelated()
+        await waitUntil("load B to finish while load A's detail is still stalled") { bFinished.value }
+
+        XCTAssertNotNil(client.heldDetail, "load A resumed; the control no longer holds A's barrier")
+        XCTAssertEqual(client.relatedReads, 2, "load B stacked a second related-futures read")
+        XCTAssertEqual(vm.relatedFutures?.boxScore?["read"]?["n"], 2, "the joined read was not applied after B's detail")
+        XCTAssertNotEqual(vm.lastLoadedAt, stamped, "load B did not stamp the page")
+
+        // A's transport finally answers: A finishes, re-reads nothing, and its
+        // copy of the shared read is not applied a second time.
+        let afterB = vm.lastLoadedAt
+        client.releaseDetail()
+        await a.value
+        await b.value
+        XCTAssertEqual(client.relatedReads, 2)
+        XCTAssertEqual(vm.relatedFutures?.boxScore?["read"]?["n"], 2)
+        XCTAssertNotNil(afterB)
+    }
+
+    /// Load A's history is in flight when load B joins it; it lands and is
+    /// checked while A's detail (revision 12, the edge it pins) is current —
+    /// nothing to repair. B then adopts a removal (revision 14, 40%) that the
+    /// pinned edge (60%) no longer draws. B's check, after its own detail,
+    /// asks the chart to catch up exactly once.
+    func testAJoinedHistoryIsCheckedAgainstTheJoiningLoadsAdvancedDetail() async throws {
+        let client = OrderingClient(try folded(p: 0.6, revision: 12), related: { [unowned self] in try self.related($0) })
+        client.historyResponse = try pinnedHistory(revision: 12, edge: 0.6)
+        let vm = orderingPage(client)
+        defer { vm.stopRefresh() }
+        await vm.load()
+        XCTAssertNotNil(vm.history)
+        XCTAssertEqual(client.freshHistoryReads, 0, "a covered page asked the chart to catch up")
+
+        let detailsBefore = client.detailReads
+        let historiesBefore = client.historyReads
+        client.holdNextHistory = true
+        let aFinished = Finished()
+        let a = Task { await vm.load(); aFinished.value = true }
+        await waitUntil("load A's detail to answer and its history to stall") {
+            client.detailReads == detailsBefore + 1 && client.heldHistory != nil
+        }
+
+        client.detail = try folded(p: 0.4, revision: 14)
+        client.holdNextDetail = true
+        let bFinished = Finished()
+        let b = Task { await vm.load(); bFinished.value = true }
+        await waitUntil("load B's detail to stall") { client.heldDetail != nil }
+        XCTAssertEqual(client.historyReads, historiesBefore + 1, "load B stacked a second history read")
+
+        client.releaseHistory()
+        await waitUntil("load A to apply the history against its own detail") { aFinished.value }
+        XCTAssertEqual(vm.event?.blendFoldRevision?.revision?.rows, ["4242": 12])
+        XCTAssertEqual(client.freshHistoryReads, 0, "A's covered detail needed no repair")
+
+        client.releaseDetail()
+        await waitUntil("load B to finish") { bFinished.value }
+        XCTAssertEqual(vm.event?.blendFoldRevision?.revision?.rows, ["4242": 14])
+        XCTAssertEqual(vm.event?.currentOdds?.homeProbability, 0.4)
+        await waitUntil("the chart to ask history to catch up to B's removal") { client.freshHistoryReads == 1 }
+        for _ in 0..<50 { await Task.yield() }
+        XCTAssertEqual(client.freshHistoryReads, 1, "the repair was not asked exactly once")
+        await a.value
+        await b.value
     }
 }
