@@ -220,12 +220,14 @@ class TestContainment:
     async def test_a_failing_batch_is_counted_not_raised(self, monkeypatch):
         r = LiveBlendRefresher("kalshi")
 
-        async def _boom(event_ids, now):
+        async def _boom(event_ids, now, **_kw):
             raise RuntimeError("db went away")
 
         monkeypatch.setattr(r, "_refresh_batch", _boom)
         stats = await r.refresh([1, 2, 3])
-        assert stats["errors"] == 1
+        # e0b52e11ed / fe0aa54fbf: each event owns its transaction and read,
+        # so each failure is contained and counted on its own; none raises.
+        assert stats["errors"] == 3
         assert stats["considered"] == 3
 
     @pytest.mark.asyncio
@@ -562,6 +564,13 @@ class _RecordingSession:
                 return raw.get(source) if isinstance(raw, dict) else None
             return raw
 
+        # The read admits only the events it names (`event_id IN ...`), as the
+        # production statement does; fe0aa54fbf's fresh stamps each read their
+        # own event, so an unscoped answer would hand every stamp its siblings.
+        try:
+            wanted = statement.compile().params.get("event_id_1")
+        except Exception:
+            wanted = None
         return _Result(rows=[
             tuple(
                 field(obj, key)
@@ -572,6 +581,7 @@ class _RecordingSession:
                 ) for key in fields
             )
             for market, event in self._market_rows
+            if wanted is None or event.id in wanted
             for outcome in (
                 [o for o in self._outcomes if getattr(o, "market_id", None) == market.id]
                 or [None]
