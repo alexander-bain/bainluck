@@ -17,6 +17,7 @@ import AppKit
 
 @main
 struct Bain_LuckApp: App {
+    @Environment(\.scenePhase) private var myStuffScenePhase
     #if os(iOS)
     @UIApplicationDelegateAdaptor(BainLuckAppDelegate.self) var appDelegate
     #elseif os(macOS)
@@ -169,6 +170,9 @@ struct Bain_LuckApp: App {
                     #else
                     pinManager.bindAccount(identity)
                     #endif
+                    #if os(iOS)
+                    WatchTelemetryReceiver.shared.bindMyStuff(identity, pins: pinManager)
+                    #endif
                     NotificationManager.shared.setUser(id: isAuth ? authManager.user?.id : nil)
                     AnalyticsService.setCrashReportingUserId(
                         isAuth ? ((authManager.user?.id).map { String($0) } ?? "") : ""
@@ -177,11 +181,21 @@ struct Bain_LuckApp: App {
                         await pinManager.loadPins()
                     }
                 }
+                .onChange(of: myStuffScenePhase) { _, phase in
+                    #if os(iOS)
+                    if phase == .active { WatchTelemetryReceiver.shared.refreshMyStuff() }
+                    #endif
+                }
                 .task {
                     #if DEBUG
                     bindPins(PinAccountBinding(userID: authManager.activeFeedUserId, authenticated: authManager.isAuthenticated))
                     #else
                     pinManager.bindAccount(PinAccountBinding(userID: authManager.activeFeedUserId, authenticated: authManager.isAuthenticated))
+                    #endif
+                    #if os(iOS)
+                    WatchTelemetryReceiver.shared.bindMyStuff(
+                        PinAccountBinding(userID: authManager.activeFeedUserId, authenticated: authManager.isAuthenticated),
+                        pins: pinManager)
                     #endif
                     await pinManager.loadPins()
                     // Wire up notification deep linking and request permission

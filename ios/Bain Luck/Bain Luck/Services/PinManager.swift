@@ -26,6 +26,11 @@ final class PinManager: ObservableObject {
     /// Pins whose server save has not answered yet, keyed `type:id`.
     @Published private(set) var savingKeys: Set<String> = []
 
+    // Product sync consumes server-confirmed identities, not optimistic screen state.
+    @Published private(set) var confirmedPinsForWatch: [SavedPin]?
+    private(set) var confirmedPinsForWatchAt: Date?
+    @Published private(set) var watchPinSaveFailed = false
+    private var confirmedMutationsForWatch: [SavedPin: (revision: Int, pinned: Bool)] = [:]
     @Published private(set) var loadState: PinLoadState = .local
     @Published private(set) var identityGeneration = UUID()
     @Published var managementPresentation: PinManagementRequest?
@@ -68,6 +73,10 @@ final class PinManager: ObservableObject {
         savingKeys.removeAll()
         pendingRemovals.removeAll()
         mutations.removeAll()
+        watchPinSaveFailed = false
+        confirmedPinsForWatchAt = nil
+        confirmedPinsForWatch = nil
+        confirmedMutationsForWatch.removeAll()
         feedback = nil
         managementPresentation = nil
         loadFromDefaults()
@@ -209,6 +218,7 @@ final class PinManager: ObservableObject {
             return nil
         }
 
+        watchPinSaveFailed = false
         savingKeys.insert(key)
         feedback = PinActionFeedback(
             message: alreadyPinned ? "Removing…" : "Saving…",
@@ -222,9 +232,20 @@ final class PinManager: ObservableObject {
             do {
                 try await serverSync(type, id, !alreadyPinned)
                 guard identityGeneration == generation else { return }
+                // Advance only after the server acknowledges this exact account's write.
+                mutationRevision += 1
+                let pin = SavedPin(type: type, value: id)
+                confirmedMutationsForWatch[pin] = (mutationRevision, !alreadyPinned)
+                if let confirmedPinsForWatch {
+                    var saved = Set(confirmedPinsForWatch)
+                    if alreadyPinned { saved.remove(pin) } else { saved.insert(pin) }
+                    self.confirmedPinsForWatchAt = Date()
+                    self.confirmedPinsForWatch = Self.sortedWatchPins(saved)
+                }
                 feedback = Self.confirmed(removed: alreadyPinned)
             } catch {
                 guard identityGeneration == generation else { return }
+                watchPinSaveFailed = true
                 logger.error("Failed to sync pin to server: \(error)")
                 if alreadyPinned {
                     addLocally(type: type, id: id)
@@ -277,6 +298,10 @@ final class PinManager: ObservableObject {
     @MainActor
     func syncLocalToServer() async {
         await loadPins()
+    }
+
+    private static func sortedWatchPins(_ pins: Set<SavedPin>) -> [SavedPin] {
+        pins.sorted { $0.type == $1.type ? $0.value < $1.value : $0.type < $1.type }
     }
 
     // MARK: - Private
@@ -338,6 +363,15 @@ final class PinManager: ObservableObject {
                 if mutation.pinned { addLocally(type: pin.type, id: pin.value) }
                 else { removeLocally(type: pin.type, id: pin.value) }
             }
+            var confirmed = Set(pins.events.map { SavedPin(type: "event", value: $0) }
+                + pins.futures.map { SavedPin(type: "future", value: $0) })
+            // A delayed read may predate a write acknowledged while it was in flight.
+            for (pin, change) in confirmedMutationsForWatch where change.revision > revision {
+                if change.pinned { confirmed.insert(pin) } else { confirmed.remove(pin) }
+            }
+            watchPinSaveFailed = false
+            confirmedPinsForWatchAt = Date()
+            confirmedPinsForWatch = Self.sortedWatchPins(confirmed)
             saveToDefaults()
             loadState = .loaded
         } catch {

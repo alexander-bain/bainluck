@@ -4,6 +4,8 @@ struct WatchQuestionDetailView: View {
     @Environment(\.scenePhase) private var scenePhase
     let destination: WatchQuestionDetailDestination
     let close: () -> Void
+    var originLabel: String = "From your story"
+    var backLabel: String = "Back to story"
     @StateObject private var store = WatchQuestionDetailStore()
     @State private var refreshID = 0
 
@@ -19,7 +21,7 @@ struct WatchQuestionDetailView: View {
                 Text(heading.text).font(.headline)
                     .fixedSize(horizontal: false, vertical: true)
                     .accessibilityAddTraits(.isHeader)
-                if heading.retained { Text("From your story").font(.footnote) }
+                if heading.retained { Text(originLabel).font(.footnote) }
                 if let detail = matchingDetail {
                     ForEach(detail.outcomes) { outcome in
                         VStack(alignment: .leading, spacing: 4) {
@@ -39,7 +41,7 @@ struct WatchQuestionDetailView: View {
                 if let error = status.error { Text(error) }
                 Button("Refresh") { refreshID += 1 }
                     .disabled(status.loading || scenePhase != .active)
-                Button("Back to story", action: close)
+                Button(backLabel, action: close)
             }.padding(.horizontal, 6)
         }
         .accessibilityIdentifier("watch.question.detail")

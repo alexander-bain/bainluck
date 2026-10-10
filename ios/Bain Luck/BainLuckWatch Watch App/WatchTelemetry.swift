@@ -13,6 +13,7 @@ final class WatchTelemetry: NSObject, ObservableObject, WCSessionDelegate, @unch
     @MainActor private var foregroundActive = false
     @MainActor private var sending = false
     @MainActor private var handshaking = false
+    @MainActor private var myStuffTimeout: Task<Void, Never>?
     @MainActor private var readings = WatchTelemetryReadingTracker()
     @MainActor private var shownScreen: WatchTelemetrySurface?
     @MainActor private var currentScreen: WatchTelemetrySurface?
@@ -68,12 +69,15 @@ final class WatchTelemetry: NSObject, ObservableObject, WCSessionDelegate, @unch
         start()
         if let shownScreen { screen(shownScreen) }
         record(.appOpen, surface: currentScreen ?? .game)
+        refreshMyStuff()
         synchronize()
     }
 
     @MainActor func background() {
         guard foregroundActive else { return }
         foregroundActive = false
+        myStuffTimeout?.cancel()
+        WatchMyStuffStore.shared.disconnect()
         finishScreen()
         record(.appBackground, surface: currentScreen ?? .game)
         currentScreen = nil
@@ -177,6 +181,34 @@ final class WatchTelemetry: NSObject, ObservableObject, WCSessionDelegate, @unch
         if !enabled && !consentSaved { defaults.removeObject(forKey: Self.storageKey) }
     }
 
+    @MainActor func refreshMyStuff() {
+        #if DEBUG
+        if WatchUIFixture.current != nil { return }
+        #endif
+        start()
+        guard WCSession.default.activationState == .activated, WCSession.default.isReachable else {
+            WatchMyStuffStore.shared.disconnect(); return
+        }
+        let token = WatchMyStuffStore.shared.beginHandshake()
+        myStuffTimeout?.cancel()
+        myStuffTimeout = Task {
+            do { try await Task.sleep(for: .seconds(15)) } catch { return }
+            WatchMyStuffStore.shared.failedHandshake(token)
+        }
+        WCSession.default.sendMessage([WatchMyStuffSnapshot.handshakeKey: token.uuidString], replyHandler: { reply in
+            let echoed = reply[WatchMyStuffSnapshot.handshakeKey] as? String
+            let data = reply[WatchMyStuffSnapshot.contextKey] as? Data
+            Task { @MainActor in
+                guard echoed == token.uuidString, let data else {
+                    WatchMyStuffStore.shared.failedHandshake(token); return
+                }
+                WatchMyStuffStore.shared.receive(data, handshake: token)
+            }
+        }, errorHandler: { _ in
+            Task { @MainActor in WatchMyStuffStore.shared.failedHandshake(token) }
+        })
+    }
+
     @MainActor private func synchronize() {
         guard enabled, !handshaking, WCSession.default.activationState == .activated,
               WCSession.default.isReachable else { return }
@@ -239,14 +271,18 @@ final class WatchTelemetry: NSObject, ObservableObject, WCSessionDelegate, @unch
 
     nonisolated func session(_ session: WCSession, activationDidCompleteWith activationState: WCSessionActivationState,
                  error: Error?) {
-        Task { @MainActor in self.synchronize() }
+        Task { @MainActor in self.refreshMyStuff(); self.synchronize() }
     }
     nonisolated func sessionReachabilityDidChange(_ session: WCSession) {
-        Task { @MainActor in self.synchronize() }
+        Task { @MainActor in self.refreshMyStuff(); self.synchronize() }
     }
     nonisolated func session(_ session: WCSession, didReceiveApplicationContext applicationContext: [String: Any]) {
-        guard applicationContext.keys.contains("watch_telemetry_grant") else { return }
+        let hasGrant = applicationContext.keys.contains("watch_telemetry_grant")
         let data = applicationContext["watch_telemetry_grant"] as? Data
-        Task { @MainActor in self.applyGrant(data) }
+        let product = applicationContext[WatchMyStuffSnapshot.contextKey] as? Data
+        Task { @MainActor in
+            if hasGrant { self.applyGrant(data) }
+            if let product { WatchMyStuffStore.shared.receive(product) }
+        }
     }
 }

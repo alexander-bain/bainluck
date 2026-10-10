@@ -16,6 +16,8 @@ struct WatchSelectedGameView: View {
     @State private var choosingGame = false
     @State private var showingHandoffHelp = false
     @State private var showingDiscoveries = false
+    @State private var showingMyStuff = false
+    @ObservedObject private var myStuff = WatchMyStuffStore.shared
     #if DEBUG
     @State private var launcherOpenCount = 0
     #endif
@@ -47,14 +49,14 @@ struct WatchSelectedGameView: View {
         _picker = StateObject(wrappedValue: WatchGamePickerStore(transport: WatchDiscoverGameTransport()))
     }
 
-    private var refreshKey: String { "\(scenePhase)-\(choosingGame)-\(showingDiscoveries)-\(refreshGeneration)-\(store.selectedEventID ?? 0)" }
+    private var refreshKey: String { "\(scenePhase)-\(choosingGame)-\(showingDiscoveries)-\(showingMyStuff)-\(refreshGeneration)-\(store.selectedEventID ?? 0)" }
 
     private var telemetrySurface: WatchTelemetrySurface {
         showingDiscoveries ? .discoveries : (choosingGame || store.selectedEventID == nil ? .picker : .game)
     }
 
     private var continuationEventID: Int? {
-        guard scenePhase == .active, !choosingGame, !showingDiscoveries else { return nil }
+        guard scenePhase == .active, !choosingGame, !showingDiscoveries, !showingMyStuff else { return nil }
         return store.game?.id
     }
 
@@ -159,6 +161,15 @@ struct WatchSelectedGameView: View {
                 }
                 .buttonStyle(.plain)
                 .accessibilityIdentifier("watch.discoveries-entry")
+                Button { showingMyStuff = true } label: {
+                    Label("My Stuff", systemImage: "bookmark")
+                        .font(.footnote.weight(.semibold))
+                        .fixedSize(horizontal: false, vertical: true)
+                        .frame(maxWidth: .infinity, minHeight: 44)
+                        .background(.quaternary, in: RoundedRectangle(cornerRadius: 12))
+                }
+                .buttonStyle(.plain)
+                .accessibilityIdentifier("watch.my-stuff-entry")
                 Button {
                     showingMoreActions.toggle()
                 } label: {
@@ -247,9 +258,12 @@ struct WatchSelectedGameView: View {
             choosingGame = false
             showingHandoffHelp = false
             showingDiscoveries = false
+            showingMyStuff = false
             scroll.scrollTo("watch.game.top", anchor: .top)
         }
         .onAppear {
+            myStuff.expireIfNeeded()
+            myStuff.reconcileSelection(in: store)
             store.telemetry = { outcome, ms, count in
                 WatchTelemetry.shared.refreshResult(.game, outcome: outcome, durationMS: ms, count: count)
             }
@@ -278,12 +292,19 @@ struct WatchSelectedGameView: View {
             Text("On your iPhone, swipe up from the bottom and pause midway. If it has a Home button, double-click Home.\n\nLook along the bottom for Bain Luck’s Handoff banner. Tap it if shown.\n\nBoth devices need Handoff on and the same Apple Account. The iPhone app must support Watch Handoff.\n\nIf no banner appears, your game stays selected here.")
         }
         .task(id: refreshKey) {
-            guard scenePhase == .active, !choosingGame, !showingDiscoveries else { return }
+            guard scenePhase == .active, !choosingGame, !showingDiscoveries, !showingMyStuff else { return }
             if store.selectedEventID == nil {
                 await picker.refresh()
                 return
             }
             await store.runForegroundRefresh()
+        }
+        .onChange(of: myStuff.snapshot) { _, _ in myStuff.reconcileSelection(in: store) }
+        .onChange(of: myStuff.navigationGeneration) { _, _ in myStuff.reconcileSelection(in: store) }
+        .sheet(isPresented: $showingMyStuff) {
+            NavigationStack {
+                WatchMyStuffView(selected: store) { showingMyStuff = false }
+            }
         }
         .sheet(isPresented: $showingDiscoveries) {
             NavigationStack {
@@ -334,6 +355,7 @@ struct WatchSelectedGameView: View {
             #endif
         }
         .onChange(of: store.selectedEventID) { _, _ in
+            myStuff.reconcileSelection(in: store)
             // A new choice must reveal its identity, not inherit the old game's scroll.
             scroll.scrollTo("watch.game.top", anchor: .top)
         }

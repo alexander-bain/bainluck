@@ -1254,7 +1254,11 @@ actor APIClient {
 
     /// Submits onboarding preferences and favorite teams for the current user.
     func submitOnboarding(_ submission: OnboardingSubmission) async throws -> OnboardingResponse {
-        return try await postEncodable("/api/me/onboarding", body: submission)
+        let result: OnboardingResponse = try await postEncodable("/api/me/onboarding", body: submission)
+        #if os(iOS)
+        NotificationCenter.default.post(name: WatchMyStuffPublisher.didChangeFavorites, object: nil)
+        #endif
+        return result
     }
 
     // MARK: - Preferences
@@ -1266,7 +1270,11 @@ actor APIClient {
 
     /// Removes a favorite-team relation from the current user's preferences.
     func removeFavorite(teamId: Int, relationType: String) async throws -> StatusResponse {
-        return try await delete("/api/me/favorites/\(teamId)", query: ["relation_type": relationType])
+        let result: StatusResponse = try await delete("/api/me/favorites/\(teamId)", query: ["relation_type": relationType])
+        #if os(iOS)
+        NotificationCenter.default.post(name: WatchMyStuffPublisher.didChangeFavorites, object: nil)
+        #endif
+        return result
     }
 
     /// Updates per-sport affinity weights used for personalization.

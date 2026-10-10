@@ -7,16 +7,23 @@ import WatchConnectivity
 final class WatchTelemetryReceiver: NSObject, WCSessionDelegate, @unchecked Sendable {
     @MainActor static let shared = WatchTelemetryReceiver()
     @MainActor private var started = false
+    @MainActor private let myStuff = WatchMyStuffPublisher()
     @MainActor private var observer: NSObjectProtocol?
     private let defaults: UserDefaults
     private static let seenKey = "bainluck_watch_telemetry_seen_v1"
 
-    private override init() { defaults = .standard; super.init() }
+    @MainActor private override init() { defaults = .standard; super.init() }
 
     @MainActor func start() {
         guard !started, WCSession.isSupported() else { return }
         // A future connectivity feature must compose with this owner, not replace it.
         guard WCSession.default.delegate == nil else { return }
+        myStuff.publish = { data in
+            guard WCSession.default.activationState == .activated else { return }
+            var context = WCSession.default.applicationContext
+            context[WatchMyStuffSnapshot.contextKey] = data
+            try? WCSession.default.updateApplicationContext(context)
+        }
         started = true
         WCSession.default.delegate = self
         WCSession.default.activate()
@@ -24,6 +31,12 @@ final class WatchTelemetryReceiver: NSObject, WCSessionDelegate, @unchecked Send
             forName: TelemetryConsent.didChange, object: nil, queue: nil
         ) { _ in Task { @MainActor in self.publishGrant() } }
     }
+
+    @MainActor func bindMyStuff(_ identity: PinAccountBinding, pins: PinManager) {
+        myStuff.bind(identity, pins: pins)
+    }
+
+    @MainActor func refreshMyStuff() { myStuff.refresh() }
 
     @MainActor private func grantData() -> Data {
         guard let epoch = TelemetryConsent.shared.analyticsAuthorizationEpoch else { return Data() }
@@ -35,6 +48,9 @@ final class WatchTelemetryReceiver: NSObject, WCSessionDelegate, @unchecked Send
         guard WCSession.default.activationState == .activated else { return }
         var context = WCSession.default.applicationContext
         context["watch_telemetry_grant"] = grantData()
+        if let value = myStuff.snapshot, let bytes = try? JSONEncoder().encode(value) {
+            context[WatchMyStuffSnapshot.contextKey] = bytes
+        }
         // The latest context replaces the previous grant; no unlimited transfer queue.
         try? WCSession.default.updateApplicationContext(context)
         if !TelemetryConsent.shared.isGranted { defaults.removeObject(forKey: Self.seenKey) }
@@ -74,10 +90,19 @@ final class WatchTelemetryReceiver: NSObject, WCSessionDelegate, @unchecked Send
     nonisolated func session(_ session: WCSession, didReceiveMessage message: [String: Any],
                  replyHandler: @escaping ([String: Any]) -> Void) {
         // Extract only the typed, bounded protocol values before crossing actors.
+        let productNonce = (message[WatchMyStuffSnapshot.handshakeKey] as? String).flatMap(UUID.init(uuidString:))
         let handshake = message["watch_telemetry_handshake"] as? Int == 1
         let data = message["watch_telemetry_batch"] as? Data
         Task { @MainActor in
-            if handshake { replyHandler(["watch_telemetry_grant": self.grantData()]) }
+            if let productNonce {
+                self.myStuff.refresh()
+                var reply: [String: Any] = [WatchMyStuffSnapshot.handshakeKey: productNonce.uuidString]
+                if let value = self.myStuff.snapshot, let bytes = try? JSONEncoder().encode(value) {
+                    reply[WatchMyStuffSnapshot.contextKey] = bytes
+                }
+                replyHandler(reply)
+            }
+            else if handshake { replyHandler(["watch_telemetry_grant": self.grantData()]) }
             else if let data {
                 replyHandler(["watch_telemetry_ack": self.receive(data),
                               "watch_telemetry_grant": self.grantData()])
