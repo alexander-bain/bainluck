@@ -32,8 +32,10 @@ final class ChampionshipPathWordsStayWhole4395Tests: XCTestCase {
     /// CHW @ HOU (`15320300`), the page #4395 was re-photographed on, stages as
     /// served. `logo_url` is omitted so the header does not wait on a network
     /// image; the placeholder is the same 40 pt square.
-    private static func progression() throws -> TeamProgressionResponse {
-        let json = #"""
+    /// #10830 — `awayOnly` is the page that still draws the per-team CARD (a
+    /// two-team page is the aligned season table, `SeasonComparisonView`).
+    private static func progression(awayOnly: Bool = false) throws -> TeamProgressionResponse {
+        var json = #"""
         {"event_id": 15320300, "league": "baseball_mlb", "league_name": "MLB",
          "away_team": {"name": "Chicago White Sox", "short_name": "CHW", "record": "84-78",
                        "conference": "American League",
@@ -50,6 +52,10 @@ final class ChampionshipPathWordsStayWhole4395Tests: XCTestCase {
                          {"key": "world_series", "label": "World Series", "probability": 0.019}
                        ]}}
         """#
+        if awayOnly, let home = json.range(of: #""home_team""#),
+           let comma = json[..<home.lowerBound].lastIndex(of: ",") {
+            json = String(json[..<comma]) + "}"
+        }
         let dec = JSONDecoder()
         dec.keyDecodingStrategy = .convertFromSnakeCase
         return try dec.decode(TeamProgressionResponse.self, from: Data(json.utf8))
@@ -79,8 +85,8 @@ final class ChampionshipPathWordsStayWhole4395Tests: XCTestCase {
         }
     }
 
-    private func hosted(width: CGFloat, at size: DynamicTypeSize) throws -> Hosted {
-        let view = ChampionshipPathView(progression: try Self.progression())
+    private func hosted(width: CGFloat, at size: DynamicTypeSize, awayOnly: Bool = false) throws -> Hosted {
+        let view = ChampionshipPathView(progression: try Self.progression(awayOnly: awayOnly))
             .frame(width: width)
             .fixedSize(horizontal: false, vertical: true)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
@@ -97,10 +103,10 @@ final class ChampionshipPathWordsStayWhole4395Tests: XCTestCase {
         return Hosted(host: host, window: window)
     }
 
-    /// The width a card gives its rows: the view's own 16 pt padding each side,
-    /// then `ChampionshipRowLayout`'s split between two cards.
+    /// The width the one-team card gives its rows: the view's own 16 pt padding
+    /// each side, then `ChampionshipRowLayout`'s card insets.
     private static func cardContentWidth(_ width: CGFloat) -> CGFloat {
-        ChampionshipRowLayout.teamCardContentWidth(totalWidth: width - 32, cardCount: 2)
+        ChampionshipRowLayout.teamCardContentWidth(totalWidth: width - 32, cardCount: 1)
     }
 
     /// The size `text` draws at when it may wrap freely within `width`.
@@ -132,27 +138,50 @@ final class ChampionshipPathWordsStayWhole4395Tests: XCTestCase {
         width: CGFloat, at size: DynamicTypeSize,
         file: StaticString = #filePath, line: UInt = #line
     ) throws {
-        let page = try hosted(width: width, at: size)
+        // The one-team page: the card.
+        let card = try hosted(width: width, at: size, awayOnly: true)
         let column = Self.cardContentWidth(width)
         for label in ["Make Playoffs", "World Series"] {
             let whole = try drawnSize(stageLabel(label), within: column, at: size)
-            let found = page.frames(sized: whole)
+            let found = card.frames(sized: whole)
             XCTAssertEqual(
-                found.count, 2,
+                found.count, 1,
                 """
                 at \(size) on \(width)pt '\(label)' wrapped whole in a \(column)pt card \
-                draws \(whole.width)×\(whole.height); expected one such layer per card, \
-                found \(found.count). Text layers: \(describe(page.textFrames))
+                draws \(whole.width)×\(whole.height); expected one such layer, \
+                found \(found.count). Text layers: \(describe(card.textFrames))
+                """,
+                file: file, line: line)
+        }
+
+        // #10830 — the two-team page: the aligned table. At the accessibility
+        // sizes its label takes its own line across the table's whole width.
+        let table = try hosted(width: width, at: size)
+        for label in ["Make Playoffs", "World Series"] {
+            let whole = try drawnSize(tableLabel(label), within: width - 32, at: size)
+            XCTAssertEqual(
+                table.frames(sized: whole).count, 1,
+                """
+                at \(size) on \(width)pt the table's '\(label)' should draw whole across \
+                \(width - 32)pt as \(whole.width)×\(whole.height). Text layers: \
+                \(describe(table.textFrames))
                 """,
                 file: file, line: line)
         }
     }
 
+    /// The table's stage label: `SeasonComparisonView.label`'s font.
+    private func tableLabel(_ s: String) -> some View {
+        Text(s).font(.subheadline)
+    }
+
     /// Not vacuous: at this size "World Series" cannot sit on one line in a
-    /// card, so the label must wrap — the case the defect cut.
+    /// third of the table — the column a side-by-side row would give it — which
+    /// is why the table gives the label its own line at the accessibility sizes
+    /// (#10830), and the case the defect cut.
     func testWorldSeriesReallyHasToWrapAtTheLargestSize() throws {
-        let oneLine = try drawnSize(stageLabel("World Series"), within: nil, at: .accessibility5)
-        XCTAssertGreaterThan(oneLine.width, Self.cardContentWidth(Self.seWidth))
+        let oneLine = try drawnSize(tableLabel("World Series"), within: nil, at: .accessibility5)
+        XCTAssertGreaterThan(oneLine.width, (Self.seWidth - 32) / 3)
     }
 
     func testStageLabelsWrapWholeAtTheLargestSizeOnTheNarrowestPhone() throws {
@@ -176,7 +205,12 @@ final class ChampionshipPathWordsStayWhole4395Tests: XCTestCase {
     /// A three-letter code must never split across lines. At the largest size
     /// on the narrowest phone that means it leaves the logo's side.
     func testTheTeamCodeDrawsOnOneLineAtTheLargestSize() throws {
+        // The two-team table (#10830); the card's own header is held below.
         let page = try hosted(width: Self.seWidth, at: .accessibility5)
+        let cardPage = try hosted(width: Self.seWidth, at: .accessibility5, awayOnly: true)
+        let oneLineCHW = try drawnSize(teamName("CHW"), within: nil, at: .accessibility5)
+        XCTAssertEqual(cardPage.frames(sized: oneLineCHW).count, 1,
+                       "the card's 'CHW' broke mid-word. Text layers: \(describe(cardPage.textFrames))")
         for code in ["CHW", "HOU"] {
             let oneLine = try drawnSize(teamName(code), within: nil, at: .accessibility5)
             XCTAssertEqual(
@@ -191,25 +225,40 @@ final class ChampionshipPathWordsStayWhole4395Tests: XCTestCase {
 
     // MARK: - Control: the default text size keeps the header as it shipped
 
-    /// At the default size the name still sits beside its 40 pt logo, as it
-    /// always has, rather than under it.
+    /// At the default size the card's name still sits beside its 40 pt logo,
+    /// as it always has, rather than under it.
     func testAtTheDefaultSizeTheNameStaysBesideTheLogo() throws {
-        let page = try hosted(width: Self.iPhone17Width, at: .large)
+        let page = try hosted(width: Self.iPhone17Width, at: .large, awayOnly: true)
         let column = Self.cardContentWidth(Self.iPhone17Width)
-        let labels = page.frames(
-            sized: try drawnSize(stageLabel("Make Playoffs"), within: column, at: .large))
-            .sorted { $0.minX < $1.minX }
-        XCTAssertEqual(labels.count, 2, "Text layers: \(describe(page.textFrames))")
-        for (code, label) in zip(["CHW", "HOU"], labels) {
-            let names = page.frames(
-                sized: try drawnSize(teamName(code), within: nil, at: .large))
-            let name = try XCTUnwrap(names.first, "no one-line '\(code)' layer")
-            XCTAssertGreaterThanOrEqual(
-                name.minX, label.minX + 40,
-                "at the default size '\(code)' must sit right of its logo, not under it")
-            XCTAssertLessThan(
-                name.minY, label.minY,
-                "'\(code)' belongs to the header above its card's first stage")
+        let label = try XCTUnwrap(page.frames(
+            sized: try drawnSize(stageLabel("Make Playoffs"), within: column, at: .large)).first,
+            "Text layers: \(describe(page.textFrames))")
+        let name = try XCTUnwrap(page.frames(
+            sized: try drawnSize(teamName("CHW"), within: nil, at: .large)).first, "no one-line 'CHW' layer")
+        XCTAssertGreaterThanOrEqual(
+            name.minX, label.minX + 40, "at the default size 'CHW' must sit right of its logo, not under it")
+        XCTAssertLessThan(name.minY, label.minY, "'CHW' belongs to the header above its card's first stage")
+    }
+
+    /// #10830 — and the two-team page is ONE aligned table at the default
+    /// size: both names on one header row, away left of home, and every stage
+    /// label in the left column beneath them.
+    func testAtTheDefaultSizeTwoTeamsReadAsOneAlignedTable() throws {
+        let page = try hosted(width: Self.iPhone17Width, at: .large)
+        let away = try XCTUnwrap(page.frames(
+            sized: try drawnSize(teamName("CHW"), within: nil, at: .large)).first, "no 'CHW' header")
+        let home = try XCTUnwrap(page.frames(
+            sized: try drawnSize(teamName("HOU"), within: nil, at: .large)).first, "no 'HOU' header")
+        XCTAssertEqual(away.minY, home.minY, accuracy: 2, "the two names share one header row")
+        XCTAssertLessThan(away.maxX, home.minX, "away is the left column, home the right")
+        for label in ["Make Playoffs", "Division", "World Series"] {
+            let one = try drawnSize(tableLabel(label), within: nil, at: .large)
+            let frame = try XCTUnwrap(page.frames(sized: one).first,
+                                      "'\(label)' is not drawn whole on one line: \(describe(page.textFrames))")
+            XCTAssertLessThan(frame.maxX, away.minX, "'\(label)' sits in the label column")
+            XCTAssertGreaterThan(frame.minY, away.maxY, "'\(label)' sits beneath the header row")
         }
+        // Each stage appears once — not once per team, as the two cards drew it.
+        XCTAssertEqual(page.frames(sized: try drawnSize(tableLabel("Division"), within: nil, at: .large)).count, 1)
     }
 }

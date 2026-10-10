@@ -44,14 +44,55 @@ struct EventQuestionMatrixSection10238: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
-                ForEach(rows) { row in
+                // #10830 — a bounded, searchable window by family (web's
+                // compact game-question browser, #10809). An NFL page serves
+                // ~200 questions; drawn whole they were ~70,000 pt of scroll.
+                // Each card is still `question(_:)`, and selection still
+                // resolves against the latest payload.
+                MarketBrowserView(
+                    label: title,
+                    items: rows,
+                    group: Self.family,
+                    searchText: Self.searchText,
+                    pageSize: Self.pageSize,
+                    searchPrompt: "questions"
+                ) { row in
                     question(row)
+                        .padding(.bottom, 10)
                 }
             }
             .sheet(item: $open, onDismiss: restoreFocus) { selected in
                 detail(selected.id)
             }
         }
+    }
+
+    // MARK: - Browsing (#10830)
+
+    /// Question cards are tall, so a page of them is shorter than a page of rows.
+    static let pageSize = 8
+
+    /// The family a question is browsed under, read from its typed kind and
+    /// its own words. Navigation only: every question keeps its own card and
+    /// options, and one the rules do not recognise is "More questions" rather
+    /// than guessed into a family.
+    static func family(_ row: EventQuestionMatrixAdapter.Row) -> String {
+        let label = row.label.lowercased()
+        if label.contains("team total") { return "Team totals" }
+        if label.contains("spread") || label.contains("handicap") || row.kind == .signedHandicap {
+            return "Spreads"
+        }
+        if row.kind == .countThreshold || label.contains("o/u") || label.contains("total") {
+            return "Totals"
+        }
+        if label.contains("moneyline") || label.contains("winner") { return "Winners" }
+        return "More questions"
+    }
+
+    /// What a search over one question reads: its words, its period and every
+    /// option's name.
+    static func searchText(_ row: EventQuestionMatrixAdapter.Row) -> String {
+        ([row.label, row.period?.label ?? ""] + row.options.map(\.label)).joined(separator: " ")
     }
 
     private func question(_ row: EventQuestionMatrixAdapter.Row) -> some View {
