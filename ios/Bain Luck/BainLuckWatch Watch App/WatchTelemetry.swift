@@ -195,7 +195,7 @@ final class WatchTelemetry: NSObject, ObservableObject, WCSessionDelegate, @unch
         guard WCSession.default.activationState == .activated, WCSession.default.isReachable else {
             WatchMyStuffStore.shared.disconnect(); return
         }
-        let token = WatchMyStuffStore.shared.beginHandshake()
+        guard let token = WatchMyStuffStore.shared.beginHandshakeIfNeeded() else { return }
         myStuffTimeout?.cancel()
         myStuffTimeout = Task {
             do { try await Task.sleep(for: .seconds(15)) } catch { return }

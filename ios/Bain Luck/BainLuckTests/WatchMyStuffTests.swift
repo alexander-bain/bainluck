@@ -105,4 +105,55 @@ final class WatchMyStuffTests: XCTestCase {
         store.reconcileSelection(in: selected)
         XCTAssertNil(selected.selectedEventID)
     }
+
+    @MainActor func testConcurrentSyncTriggersPreserveFirstReplyAndPermitNextSync() throws {
+        let name = "watch-my-stuff-coalescing-\(UUID())"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: name))
+        defer { defaults.removePersistentDomain(forName: name) }
+        let store = WatchMyStuffStore(defaults: defaults, now: { self.instant })
+        let value = packet()
+        let data = try encoded(value)
+        let first = try XCTUnwrap(store.beginHandshakeIfNeeded())
+        XCTAssertNil(store.beginHandshakeIfNeeded(), "Screen entry must share the foreground request")
+        XCTAssertNil(store.beginHandshakeIfNeeded(), "Reachability must not replace its nonce or restart its timeout")
+        store.receive(data, handshake: first)
+        XCTAssertEqual(store.snapshot, value)
+        XCTAssertTrue(store.connected, "The original valid phone reply still completes sync")
+        XCTAssertFalse(store.connecting)
+
+        let next = try XCTUnwrap(store.beginHandshakeIfNeeded())
+        XCTAssertNotEqual(next, first)
+        store.receive(data, handshake: first)
+        XCTAssertTrue(store.connecting, "A stale callback cannot finish the new request")
+        XCTAssertFalse(store.connected)
+        store.receive(data, handshake: next)
+        XCTAssertTrue(store.connected, "An unchanged current reply can verify a later sync")
+        XCTAssertFalse(store.connecting)
+    }
+
+    @MainActor func testFailedOrDisconnectedCoalescedHandshakeCanRetry() throws {
+        let name = "watch-my-stuff-coalesced-retry-\(UUID())"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: name))
+        defer { defaults.removePersistentDomain(forName: name) }
+        let store = WatchMyStuffStore(defaults: defaults, now: { self.instant })
+        let data = try encoded(packet())
+        let first = try XCTUnwrap(store.beginHandshakeIfNeeded())
+        XCTAssertNil(store.beginHandshakeIfNeeded())
+        store.failedHandshake(first) // Existing timeout and transport-error path.
+        XCTAssertFalse(store.connecting)
+        let retry = try XCTUnwrap(store.beginHandshakeIfNeeded())
+        store.receive(data, handshake: first)
+        XCTAssertNil(store.snapshot)
+        store.failedHandshake(first)
+        XCTAssertTrue(store.connecting, "The old timeout cannot end the retry")
+        store.disconnect() // Existing unreachable/background path.
+        XCTAssertFalse(store.connecting)
+        let resumed = try XCTUnwrap(store.beginHandshakeIfNeeded())
+        store.receive(data, handshake: retry)
+        XCTAssertNil(store.snapshot)
+        XCTAssertTrue(store.connecting)
+        store.receive(data, handshake: resumed)
+        XCTAssertTrue(store.connected)
+        XCTAssertFalse(store.connecting)
+    }
 }

@@ -48,6 +48,13 @@ import Foundation
         } else { defaults.removeObject(forKey: Self.snapshotKey) }
     }
 
+    /// Foreground, screen-entry and connectivity callbacks share one phone reply.
+    /// Only completion, failure or disconnect permits another transport request.
+    func beginHandshakeIfNeeded() -> UUID? {
+        guard !connecting else { return nil }
+        return beginHandshake()
+    }
+
     func beginHandshake() -> UUID {
         expireIfNeeded()
         let token = UUID(); nonce = token
