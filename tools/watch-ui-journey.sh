@@ -8,6 +8,12 @@ fi
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 OUT="$ROOT/build/watch-ui-journey"
 mkdir -p "$OUT"
+SHARD="${WATCH_UI_SHARD:-full}"
+TEST_SELECTION=()
+if [[ "$SHARD" != full ]]; then
+  python3 "$ROOT/tools/watch_ui_shards.py" select --shard "$SHARD" > "$OUT/selected-cases.txt"
+  while IFS= read -r selector; do TEST_SELECTION+=("$selector"); done < "$OUT/selected-cases.txt"
+fi
 PHASE=preflight
 failure() {
   local status=$?
@@ -130,12 +136,27 @@ printf '%s\n' 'Default layout plus forced accessibility5 layout stress; system p
 # Simulator-only ad-hoc signing uses generated simulated App Group xcent. No Apple
 # identity, provisioning profile, account access or upload is requested; Debug
 # also leaves the existing Release Crashlytics upload path unexecuted.
+# Select the architecture from these actual newly owned destinations. Watch
+# build-for-testing forces ONLY_ACTIVE_ARCH=NO, so setting that flag alone still
+# compiles both simulator architectures. Device/archive gates remain separate.
+PHASE='resolve the architecture shared by the selected simulator destinations'
+for scheme in BainLuckWatchUITests 'Bain Luck'; do
+  if [[ "$scheme" == BainLuckWatchUITests ]]; then destination_log=watch; else destination_log=phone; fi
+  xcodebuild -showdestinations -project "$ROOT/ios/Bain Luck/Bain Luck.xcodeproj" \
+    -scheme "$scheme" -clonedSourcePackagesDirPath "$PACKAGES" \
+    -disableAutomaticPackageResolution > "$OUT/$destination_log-destinations.log" 2>&1
+done
+SIM_ARCH="$(python3 "$ROOT/tools/watch_simulator_architecture.py" \
+  --watch-destinations "$OUT/watch-destinations.log" --watch-id "$TEST_UDID" \
+  --phone-destinations "$OUT/phone-destinations.log" --phone-id "$PHONE_UDID" \
+  --output "$OUT/simulator-architecture.json")"
 XCODE_ARGS=(
   -project "$ROOT/ios/Bain Luck/Bain Luck.xcodeproj"
   -scheme BainLuckWatchUITests -configuration Debug
   -destination "platform=watchOS Simulator,id=$TEST_UDID"
   -derivedDataPath "$DERIVED" -parallel-testing-enabled NO -jobs 2
   -clonedSourcePackagesDirPath "$PACKAGES" -disableAutomaticPackageResolution
+  "ARCHS=$SIM_ARCH"
   CODE_SIGNING_ALLOWED=YES CODE_SIGNING_REQUIRED=YES
   CODE_SIGN_IDENTITY=- CODE_SIGN_STYLE=Manual PROVISIONING_PROFILE_SPECIFIER=
   'OTHER_SWIFT_FLAGS=$(inherited) -Xfrontend -disable-sandbox'
@@ -148,6 +169,7 @@ xcodebuild build -project "$ROOT/ios/Bain Luck/Bain Luck.xcodeproj" \
   -destination "platform=iOS Simulator,id=$PHONE_UDID" \
   -derivedDataPath "$PHONE_DERIVED" -jobs 2 \
   -clonedSourcePackagesDirPath "$PACKAGES" -disableAutomaticPackageResolution \
+  "ARCHS=$SIM_ARCH" \
   CODE_SIGNING_ALLOWED=YES CODE_SIGNING_REQUIRED=YES \
   CODE_SIGN_IDENTITY=- CODE_SIGN_STYLE=Manual PROVISIONING_PROFILE_SPECIFIER= \
   'OTHER_SWIFT_FLAGS=$(inherited) -Xfrontend -disable-sandbox' \
@@ -172,7 +194,7 @@ date -u '+%Y-%m-%dT%H:%M:%SZ boot-ready' >> "$OUT/install-lifecycle.txt"
 xcrun simctl get_app_container "$PHONE_UDID" com.bainluck.Bain-Luck app >> "$OUT/install-lifecycle.txt"
 xcrun simctl get_app_container "$TEST_UDID" com.bainluck.Bain-Luck.watchkitapp app >> "$OUT/install-lifecycle.txt"
 PHASE='BainLuckWatchUITests full suite from the same built products'
-if xcodebuild test-without-building "${XCODE_ARGS[@]}" \
+if xcodebuild test-without-building "${XCODE_ARGS[@]}" ${TEST_SELECTION[@]+"${TEST_SELECTION[@]}"} \
   -resultBundlePath "$RESULT" -collect-test-diagnostics never \
   -test-timeouts-enabled YES -default-test-execution-time-allowance 180 \
   -maximum-test-execution-time-allowance 300 \
@@ -295,7 +317,7 @@ else
   if [[ "$TEST_EXIT" -eq 0 ]]; then exit 1; fi
 fi
 PHASE='effective layout stress size verification'
-if [[ "$TEST_EXIT" -eq 0 ]]; then
+if [[ "$TEST_EXIT" -eq 0 && "$SHARD" == full ]]; then
   python3 - "$OUT/tests.log" <<'PYVERIFY'
 import sys
 from pathlib import Path
@@ -306,13 +328,21 @@ if 'WATCH_UI_STRESS_TYPE=accessibility5' not in lines:
     raise SystemExit('App did not confirm accessibility5 layout stress; gate unpaid')
 if not any(line.startswith('WATCH_UI_STANDARD_TYPE=') for line in lines):
     raise SystemExit('Default text-size journey did not report its actual size; gate unpaid')
-for marker in ('WATCH_UI_ROUNDING_PAIR=45', 'WATCH_UI_ROUNDING_DRAW=46', 'WATCH_UI_LAUNCHER_COLD=PASS', 'WATCH_UI_COMPLICATION_CONTENT=PASS', 'WATCH_UI_ACTUAL_WIDGET_WARM=PASS', 'WATCH_UI_ACTUAL_WIDGET_COLD=PASS', 'WATCH_UI_ACTUAL_WIDGET_EMPTY=PASS', 'WATCH_UI_FRESH_FACE_ACTIVATION=PASS', 'WATCH_RECTANGULAR_INSTALLED_DETAIL=Saved · 64% · Live', 'WATCH_UI_CLEAR_SELECTION=PASS', 'WATCH_UI_PICKER_RETURN=PASS', 'WATCH_UI_PICKER_NETWORK_OFFLINE=PASS', 'WATCH_UI_PICKER_NETWORK_INTERRUPTED=PASS', 'WATCH_UI_PICKER_NETWORK_TIMEOUT=PASS', 'WATCH_UI_DISCOVERIES_SAVED=PASS', 'WATCH_UI_DISCOVERIES_LARGE=PASS', 'WATCH_UI_DISCOVERIES_UNSELECTED=PASS', 'WATCH_UI_DISCOVERIES_CONTINUATION=PASS', 'WATCH_UI_DISCOVERIES_RETURN_STANDARD=PASS', 'WATCH_UI_DISCOVERIES_RETURN_LARGE=PASS', 'WATCH_UI_DISCOVERIES_HEADING_STANDARD=PASS', 'WATCH_UI_DISCOVERIES_HEADING_LARGE=PASS', 'WATCH_UI_CIRCULAR_CONTENT=PASS', 'WATCH_UI_CIRCULAR_FALLBACK=PASS', 'WATCH_UI_ACTUAL_CIRCULAR_SAVED=PASS', 'WATCH_UI_PICKER_SELECTED_STANDARD=PASS', 'WATCH_UI_PICKER_SELECTED_LARGE=PASS', 'WATCH_UI_GAME_UPDATING_STANDARD=PASS', 'WATCH_UI_GAME_UPDATING_LARGE=PASS'):
+for marker in ('WATCH_UI_ROUNDING_PAIR=45', 'WATCH_UI_ROUNDING_DRAW=46', 'WATCH_UI_LAUNCHER_COLD=PASS', 'WATCH_UI_COMPLICATION_CONTENT=PASS', 'WATCH_UI_ACTUAL_WIDGET_WARM=PASS', 'WATCH_UI_ACTUAL_WIDGET_COLD=PASS', 'WATCH_UI_ACTUAL_WIDGET_EMPTY=PASS', 'WATCH_UI_FRESH_FACE_ACTIVATION=PASS', 'WATCH_RECTANGULAR_INSTALLED_DETAIL=Saved · 64% · Live', 'WATCH_UI_CLEAR_SELECTION=PASS', 'WATCH_UI_PICKER_RETURN=PASS', 'WATCH_UI_PICKER_NETWORK_OFFLINE=PASS', 'WATCH_UI_PICKER_NETWORK_INTERRUPTED=PASS', 'WATCH_UI_PICKER_NETWORK_TIMEOUT=PASS', 'WATCH_UI_DISCOVERIES_SAVED=PASS', 'WATCH_UI_DISCOVERIES_LARGE=PASS', 'WATCH_UI_DISCOVERIES_UNSELECTED=PASS', 'WATCH_UI_DISCOVERIES_CONTINUATION=PASS', 'WATCH_UI_DISCOVERIES_RETURN_STANDARD=PASS', 'WATCH_UI_DISCOVERIES_RETURN_LARGE=PASS', 'WATCH_UI_DISCOVERIES_HEADING_STANDARD=PASS', 'WATCH_UI_DISCOVERIES_HEADING_LARGE=PASS', 'WATCH_UI_CIRCULAR_CONTENT=PASS', 'WATCH_UI_CIRCULAR_FALLBACK=PASS', 'WATCH_UI_ACTUAL_CIRCULAR_SAVED=PASS', 'WATCH_UI_PICKER_SELECTED_STANDARD=PASS', 'WATCH_UI_PICKER_SELECTED_LARGE=PASS', 'WATCH_UI_GAME_UPDATING_STANDARD=PASS', 'WATCH_UI_GAME_UPDATING_LARGE=PASS', 'WATCH_UI_RECTANGULAR_TYPED=PASS', 'WATCH_UI_RECTANGULAR_MONOCHROME=PASS', 'WATCH_UI_RECTANGULAR_LEGACY=PASS', 'WATCH_UI_RECTANGULAR_ACTUAL_TYPED=PASS'):
     if marker not in lines:
         raise SystemExit(f'Watch journey did not confirm {marker}; gate unpaid')
 if not re.search(r"^Test Case '-\[BainLuckWatchUITests\.WidgetTapJourneyTests testFreshConfiguredFaceIsActiveBeforeActualLauncherTap\]' passed \([0-9.]+ seconds\)\.$", log, re.MULTILINE):
     raise SystemExit('Fresh-face activation regression did not pass; gate unpaid')
 if not re.search(r"^Test Case '-\[BainLuckWatchUITests\.PickerReturnJourneyTests testNetworkFailureGuidanceRetainsChoicesAndRecoversSelection\]' passed \([0-9.]+ seconds\)\.$", log, re.MULTILINE):
     raise SystemExit('Picker network recovery did not complete its visible retained-choice journey; gate unpaid')
+for suite, case in (
+    ('ComplicationContentJourneyTests', 'testRectangularTypedNamedValuesFitWithMonochromeRendering'),
+    ('ComplicationContentJourneyTests', 'testRectangularLegacyMismatchUnknownAndEmptyStayHonest'),
+    ('RectangularWidgetHostJourneyTests', 'testActualRectangularWidgetShowsPublishedSavedReading'),
+):
+    pattern = rf"^Test Case '-\[BainLuckWatchUITests\.{suite} {case}\]' passed \([0-9.]+ seconds\)\.$"
+    if not re.search(pattern, log, re.MULTILINE):
+        raise SystemExit(f'Rectangular readability case {case} did not pass; gate unpaid')
 for case in ('testSelectedGameIsMarkedInPickerAndCanChange', 'testSelectedGameIsMarkedAtAccessibilitySize'):
     pattern = rf"^Test Case '-\[BainLuckWatchUITests\.PickerSelectedStateJourneyTests {case}\]' (passed|failed|skipped) \([0-9.]+ seconds\)\.$"
     if re.findall(pattern, log, re.MULTILINE) != ['passed']:
@@ -322,11 +352,18 @@ for case in ('testUpdatingIsVisibleUntilRequestFinishes', 'testUpdatingIsVisible
     if re.findall(pattern, log, re.MULTILINE) != ['passed']:
         raise SystemExit(f'Updating case {case} did not pass exactly once; gate unpaid')
 PYVERIFY
+  python3 "$ROOT/tools/watch_discovery_polish_receipt.py" "$OUT/tests.log"
 fi
 PHASE='rendered diagnostics consent verification'
-if [[ "$TEST_EXIT" -eq 0 ]]; then
+if [[ "$TEST_EXIT" -eq 0 && "$SHARD" == full ]]; then
   python3 "$ROOT/tools/watch_diagnostics_receipt.py" --log "$OUT/tests.log"
 fi
 PHASE='full-suite receipt verification'
+if [[ "$SHARD" != full ]]; then
+  python3 "$ROOT/tools/watch_ui_shards.py" receipt --shard "$SHARD" --directory "$OUT" --sha "$SHA" --exit-code "$TEST_EXIT"
+  exit 0
+fi
+
+
 python3 "$ROOT/tools/watch_iphone_receipt.py" --log "$OUT/tests.log" \
   --exit-code "$TEST_EXIT" --sha "$SHA" --output "$OUT/receipt.json"
