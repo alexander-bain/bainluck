@@ -29,6 +29,28 @@ nonisolated struct FeedCacheMetadata: Decodable, Sendable {
     }
 }
 
+/// #5105: where the seated opening ends on an offset-0 page, as the server said it.
+///
+/// It is a GLOBAL 0-based position in the whole ranked deck, never an index into
+/// one page: every offset page of one deck carries the same value, so a boundary
+/// past this page's end (a long opening) or before its offset (a later page) is
+/// ordinary. Three states are kept apart on purpose. `absent` is an older backend
+/// or the options-OFF path: no section opinion, render exactly as before.
+/// `invalid` is a field that was present but unusable (negative, not an integer):
+/// it must not be guessed into a boundary, so it reads like `absent`. `at(0)` is a
+/// real answer — the whole deck is continuation.
+nonisolated enum FeedContinuationStart: Equatable, Sendable {
+    case absent
+    case invalid
+    case at(Int)
+}
+
+/// #5105: which side of the seated-opening boundary the server placed a card on.
+nonisolated enum FeedSection: Equatable, Sendable {
+    case opening
+    case continuation
+}
+
 /// Paginated Discover feed response containing event and futures cards.
 nonisolated struct FeedResponse: Decodable, Sendable {
     let items: [FeedItem]
@@ -47,6 +69,29 @@ nonisolated struct FeedResponse: Decodable, Sendable {
     /// empty refusal, deliberately carry no token so three different failures are
     /// not reconciled as one agreed ordering. See `DiscoverFeedReconcile`.
     let edition: String?
+    /// #5102: what the server did with a requested edition — `pinned`, `expired`,
+    /// `superseded` or `invalidated`. Nil when no edition was requested (or on an
+    /// older backend). Only `pinned` means this page continues the requested order.
+    let editionStatus: String?
+    /// #5105: the seated-opening boundary, as a GLOBAL deck position. A card's
+    /// section is `offset + rawPositions[i] >= start`, read on the server's own
+    /// array: membership belongs to the edition, not to the compacted array.
+    let continuationStart: FeedContinuationStart
+    /// #5105: each decoded item's ORIGINAL slot in the server's `items` array.
+    /// A malformed row is skipped while decoding, so `items[i]` is not raw slot `i`
+    /// once anything has been dropped; the boundary must be read through this.
+    let rawPositions: [Int]
+
+    /// The edition status meaning the requested order was held for this page.
+    static let pinnedEditionStatus = "pinned"
+
+    /// #5105: how many of the SURVIVING decoded items on this page sit before
+    /// the boundary. Nil when the server stated no usable boundary (absent or
+    /// invalid), so the caller keeps the legacy single-list rendering.
+    var openingItemCount: Int? {
+        guard case .at(let start) = continuationStart else { return nil }
+        return rawPositions.prefix { offset + $0 < start }.count
+    }
 
     /// The cache status the backend uses for the truthful no-data terminal.
     static let unavailableCacheStatus = "unavailable"
@@ -100,22 +145,39 @@ nonisolated struct FeedResponse: Decodable, Sendable {
         // server states no ordering opinion" and reconciles. The one thing it
         // must never do is take the whole feed down over a string.
         edition = try? c.decodeIfPresent(String.self, forKey: .edition)
+        editionStatus = try? c.decodeIfPresent(String.self, forKey: .editionStatus)
 
         var itemsContainer = try c.nestedUnkeyedContainer(forKey: .items)
         var decoded: [FeedItem] = []
+        var positions: [Int] = []
+        var rawCount = 0
         while !itemsContainer.isAtEnd {
             if let item = try? itemsContainer.decode(FeedItem.self) {
                 decoded.append(item)
+                positions.append(rawCount)
             } else {
                 _ = try? itemsContainer.decode(SkipOne.self)
             }
+            rawCount += 1
         }
         items = decoded
+        rawPositions = positions
+
+        // #5105: tolerant like every field above, but an unusable value is
+        // remembered as `invalid` rather than collapsed into absence or zero.
+        if !c.contains(.continuationStart) || (try? c.decodeNil(forKey: .continuationStart)) == true {
+            continuationStart = .absent
+        } else if let start = try? c.decode(Int.self, forKey: .continuationStart),
+                  start >= 0 {
+            continuationStart = .at(start)
+        } else {
+            continuationStart = .invalid
+        }
     }
 
     private enum CodingKeys: String, CodingKey {
         case items, total, limit, offset, hasMore, cache, buildQuality, degradedReason
-        case edition
+        case edition, editionStatus, continuationStart
     }
 }
 

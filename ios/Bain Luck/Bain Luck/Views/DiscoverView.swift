@@ -262,7 +262,7 @@ struct DiscoverView: View {
     // Presentation memo (L2-202 / C42 P2): a reference-type cache held in @State
     // so mutating its contents is invisible to SwiftUI's invalidation. Rebuilds
     // the interleave+group pipeline only when `presentationSignature` changes.
-    @State private var presentationCache = MemoizedPresentation<[DiscoverGroupedItem]>()
+    @State private var presentationCache = MemoizedPresentation<GroupedPresentation>()
     // Monotonic stamps bumped by the two view-owned semantic inputs so the memo
     // signature changes exactly when they do (the feed itself is tracked by
     // `vm.itemsVersion`).
@@ -1263,11 +1263,13 @@ struct DiscoverView: View {
         }
     }
 
-    private var groupedItems: [DiscoverGroupedItem] {
+    private var groupedPresentation: GroupedPresentation {
         presentationCache.resolve(signature: presentationSignature) {
             buildGroupedItems()
         }
     }
+
+    private var groupedItems: [DiscoverGroupedItem] { groupedPresentation.items }
 
     /// SHOWABLE-1 G1's own number, drawn for the camera (#3157).
     ///
@@ -1424,8 +1426,11 @@ struct DiscoverView: View {
     ///     gate re-evaluates on a bounded cadence (e.g. after backgrounding) without
     ///     rebuilding on every body pass. A card can outlive its stale threshold by
     ///     at most one bucket, far tighter than the reload cadence.
+    ///   • `vm.acceptedSeatedEdition` — #5105: which served-section record the
+    ///     grouping is split by. It changes only beside an `items` reassign, but
+    ///     naming it keeps a record change from ever reusing a flat memo.
     private var presentationSignature: String {
-        "\(vm.itemsVersion)|\(dismissVersion)|\(profileVersion)|\(Self.staleBucket())"
+        "\(vm.itemsVersion)|\(dismissVersion)|\(profileVersion)|\(Self.staleBucket())|\(vm.acceptedSeatedEdition ?? "")"
     }
 
     /// Coarse staleness bucket (30s) — see `presentationSignature`.
@@ -1433,13 +1438,103 @@ struct DiscoverView: View {
         Int(Date().timeIntervalSince1970 / 30)
     }
 
-    private func buildGroupedItems() -> [DiscoverGroupedItem] {
+    /// The memoized grouped feed, plus (#5105) the index where its continuation
+    /// begins. The boundary is produced BY the grouping, never re-derived from a
+    /// grouped card afterwards: a bundle's lead is one of its children, which the
+    /// server never placed, so reading it back would misplace the heading.
+    fileprivate struct GroupedPresentation {
+        let items: [DiscoverGroupedItem]
+        /// Nil = no section to draw (legacy deck, or no continuation card survived).
+        let continuationStart: Int?
+    }
+
+    private func buildGroupedItems() -> GroupedPresentation {
+        let filtered = filteredItems
+        // #5105: every filter and fallback above stayed GLOBAL (dismiss floor,
+        // cooldown sink, stale gate). With an accepted seated edition the
+        // admitted cards are then split by the section the server served them
+        // in, and spacing, futures grouping and personalization run inside each
+        // section — so a shared group prefix can never merge cards across the
+        // heading. A card the edition never placed cannot be guessed into a
+        // section, so the list is shown whole rather than split on a guess.
+        if let sections = Self.partitionBySection(filtered, section: vm.seatedSection(of:)),
+           !sections.continuation.isEmpty {
+            let opening = groupRelated(interleave(sections.opening))
+            // The expansion floor counts the whole feed, as before; it only ever
+            // splits a group into its own singles in place, and moves the
+            // boundary by what it inserted ahead of it.
+            var boundary = opening.count
+            let floored = enforceGroupFloor(
+                opening + groupRelated(interleave(sections.continuation)), boundary: &boundary)
+            let openingItems = interleaveGrouped(applyLocalPersonalization(Array(floored[..<boundary])))
+            let continuationItems = interleaveGrouped(applyLocalPersonalization(Array(floored[boundary...])))
+            return GroupedPresentation(
+                items: openingItems + continuationItems, continuationStart: openingItems.count)
+        }
+        return GroupedPresentation(
+            items: interleaveGrouped(applyLocalPersonalization(enforceGroupFloor(groupRelated(interleave(filtered))))),
+            continuationStart: nil)
+    }
+
+    /// #5105: split an already-filtered list by served section, keeping order
+    /// within each. Nil on the legacy path, or when any card has no recorded
+    /// section (never guessed).
+    static func partitionBySection<Item>(
+        _ items: [Item], section: (Item) -> FeedSection?
+    ) -> (opening: [Item], continuation: [Item])? {
+        var opening: [Item] = []
+        var continuation: [Item] = []
+        for item in items {
+            switch section(item) {
+            case .opening: opening.append(item)
+            case .continuation: continuation.append(item)
+            case nil: return nil
+            }
+        }
+        return (opening, continuation)
+    }
+
+    /// #5105: the heading over the ordinary-live continuation — the web's
+    /// `CONTINUATION_HEADING`, so both clients name the section the same way.
+    static let continuationHeading = "Live events"
+
+    /// #5105: one masonry block of the visible window. `range` holds indices in
+    /// the WHOLE window, so a card's index never resets at the heading.
+    struct SectionBlock: Equatable {
+        let range: Range<Int>
+        let isContinuation: Bool
+    }
+
+    /// #5105: the visible window as one block (legacy, or no continuation card
+    /// on screen yet) or split at the continuation's first index. The heading
+    /// is not a card: the blocks together cover exactly `0..<cardCount`.
+    static func sectionBlocks(cardCount: Int, continuationStart: Int?) -> [SectionBlock] {
+        guard let start = continuationStart, start < cardCount else {
+            return [SectionBlock(range: 0..<cardCount, isContinuation: false)]
+        }
+        let continuation = SectionBlock(range: start..<cardCount, isContinuation: true)
+        guard start > 0 else { return [continuation] }
+        return [SectionBlock(range: 0..<start, isContinuation: false), continuation]
+    }
+
+    private func continuationHeading(leads: Bool) -> some View {
+        Text(Self.continuationHeading)
+            .font(.title3.weight(.heavy))
+            .foregroundStyle(.primary)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.top, leads ? 0 : 24)
+            .padding(.bottom, 12)
+            .accessibilityAddTraits(.isHeader)
+            .accessibilityIdentifier("discover.continuation.heading")
+    }
+
+    /// Bundles and futures groups for one already-spaced list (#1221's grouping,
+    /// unchanged; extracted so #5105 can run it inside one section at a time).
+    private func groupRelated(_ mixedItems: [FeedItem]) -> [DiscoverGroupedItem] {
         var groups: [String: [FeedItem]] = [:]
         var groupTitles: [String: String] = [:]
         var result: [DiscoverGroupedItem] = []
         var usedPrefixes: Set<String> = []
-
-        let mixedItems = interleave(filteredItems)
 
         for item in mixedItems {
             if item.type == "bundle" { continue }
@@ -1484,7 +1579,7 @@ struct DiscoverView: View {
                 result.append(.single(group[0]))
             }
         }
-        return interleaveGrouped(applyLocalPersonalization(enforceGroupFloor(result)))
+        return result
     }
 
     private func groupItemCount(_ item: DiscoverGroupedItem) -> Int {
@@ -1502,6 +1597,16 @@ struct DiscoverView: View {
     /// so chasing the G1 card count here would put back exactly the near-
     /// duplicate cards grouping exists to remove.
     private func enforceGroupFloor(_ items: [DiscoverGroupedItem]) -> [DiscoverGroupedItem] {
+        var unused = 0
+        return enforceGroupFloor(items, boundary: &unused)
+    }
+
+    /// #5105: the same floor, keeping a section `boundary` (an index into
+    /// `items`) on the same card: expanding a group ahead of it shifts it by the
+    /// singles inserted.
+    private func enforceGroupFloor(
+        _ items: [DiscoverGroupedItem], boundary: inout Int
+    ) -> [DiscoverGroupedItem] {
         var result = items
         while result.count < Self.groupExpansionFloor {
             let expandable = result.enumerated().filter { entry in
@@ -1515,6 +1620,7 @@ struct DiscoverView: View {
             }
             if case .group(_, let its, _, _, _) = result[target.offset] {
                 result.replaceSubrange(target.offset...target.offset, with: its.map { DiscoverGroupedItem.single($0) })
+                if target.offset < boundary { boundary += its.count - 1 }
             } else {
                 break
             }
@@ -1750,25 +1856,40 @@ struct DiscoverView: View {
                 // column that is one `LazyVStack` holding every card in feed
                 // order — the phone keeps the single file it always had.
                 let columnCount = DiscoverMasonry.columnCount(availableWidth: gridWidth)
-                let masonryColumns = DiscoverMasonry.columns(
+                // #5105: with an accepted seated edition the SAME visible window
+                // is split where the continuation begins: the heading takes no
+                // card slot, and every card keeps its index in the whole window,
+                // so the first-card, impression-rank and paging triggers mean
+                // what they meant before. No continuation card on screen yet =
+                // no heading; no opening card = the heading leads.
+                let blocks = Self.sectionBlocks(
                     cardCount: pageGrouped.count,
-                    columnCount: columnCount
-                )
+                    continuationStart: groupedPresentation.continuationStart)
                 ScrollViewReader { proxy in
-                    HStack(alignment: .top, spacing: DiscoverMasonry.spacing) {
-                        ForEach(Array(masonryColumns.enumerated()), id: \.offset) { _, indices in
-                            LazyVStack(spacing: DiscoverMasonry.spacing) {
-                                ForEach(indices, id: \.self) { idx in
-                                    discoverCard(
-                                        idx: idx,
-                                        gi: pageGrouped[idx],
-                                        pageGrouped: pageGrouped,
-                                        totalCount: grouped.count,
-                                        proxy: proxy
-                                    )
+                    VStack(spacing: 0) {
+                        ForEach(blocks, id: \.range.lowerBound) { block in
+                            let range = block.range
+                            if block.isContinuation {
+                                continuationHeading(leads: range.lowerBound == 0)
+                            }
+                            HStack(alignment: .top, spacing: DiscoverMasonry.spacing) {
+                                ForEach(Array(DiscoverMasonry.columns(
+                                    cardCount: range.count, columnCount: columnCount
+                                ).enumerated()), id: \.offset) { _, indices in
+                                    LazyVStack(spacing: DiscoverMasonry.spacing) {
+                                        ForEach(indices.map { $0 + range.lowerBound }, id: \.self) { idx in
+                                            discoverCard(
+                                                idx: idx,
+                                                gi: pageGrouped[idx],
+                                                pageGrouped: pageGrouped,
+                                                totalCount: grouped.count,
+                                                proxy: proxy
+                                            )
+                                        }
+                                    }
+                                    .frame(maxWidth: .infinity)
                                 }
                             }
-                            .frame(maxWidth: .infinity)
                         }
                     }
                 }

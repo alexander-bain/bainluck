@@ -123,6 +123,7 @@ async def _drain(scheduled):
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.usefixtures("opening_seating_off")
 async def test_the_route_reads_the_base_key_the_helper_computes(client, monkeypatch):
     fake = _DictRedis()
     _install(monkeypatch, fake)
@@ -136,6 +137,7 @@ async def test_the_route_reads_the_base_key_the_helper_computes(client, monkeypa
     )
 
 
+@pytest.mark.usefixtures("opening_seating_off")
 async def test_the_base_is_read_after_the_per_offset_entry_not_instead_of_it(
     client, monkeypatch
 ):
@@ -164,6 +166,7 @@ async def test_the_base_is_read_after_the_per_offset_entry_not_instead_of_it(
         (100, [100, 101, 102, 103, 104], False),
     ],
 )
+@pytest.mark.usefixtures("opening_seating_off")
 async def test_every_page_of_the_scroll_comes_off_one_stored_build(
     client, monkeypatch, offset, expected_ids, expected_more
 ):
@@ -181,6 +184,7 @@ async def test_every_page_of_the_scroll_comes_off_one_stored_build(
     assert body["has_more"] is expected_more
 
 
+@pytest.mark.usefixtures("opening_seating_off")
 async def test_the_header_says_page_base_so_a_debugger_can_tell_the_tiers_apart(
     client, monkeypatch
 ):
@@ -193,6 +197,7 @@ async def test_the_header_says_page_base_so_a_debugger_can_tell_the_tiers_apart(
     assert resp.json()["cache"]["reason"] == "page_base"
 
 
+@pytest.mark.usefixtures("opening_seating_off")
 async def test_a_stale_only_base_is_served_and_says_so(client, monkeypatch):
     fake = _DictRedis({f"{NATIVE_BASE_KEY}:stale": json.dumps(_base_body())})
     _install(monkeypatch, fake)
@@ -202,6 +207,7 @@ async def test_a_stale_only_base_is_served_and_says_so(client, monkeypatch):
     assert len(resp.json()["items"]) == 50
 
 
+@pytest.mark.usefixtures("opening_seating_off")
 async def test_the_bases_build_time_survives_the_hop(client, monkeypatch):
     """CERT-409: the live ceiling bounds how old a SCORE may be, so every tier
     carries the build time rather than stamping its own read time."""
@@ -276,6 +282,7 @@ async def test_a_my_teams_page_is_never_served_from_a_shared_list(
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.usefixtures("opening_seating_off")
 async def test_an_ordinary_cold_build_publishes_the_base(client, monkeypatch):
     fake = _DictRedis()
     scheduled = _install(monkeypatch, fake)
@@ -288,6 +295,7 @@ async def test_an_ordinary_cold_build_publishes_the_base(client, monkeypatch):
     assert f"{NATIVE_BASE_KEY}:stale" in fake.written_keys()
 
 
+@pytest.mark.usefixtures("opening_seating_off")
 async def test_the_published_base_carries_the_whole_list_and_no_page_fields(
     client, monkeypatch
 ):
@@ -308,6 +316,7 @@ async def test_the_published_base_carries_the_whole_list_and_no_page_fields(
     assert FEED_PAGE_BASE_BUILT_AT_FIELD in stored
 
 
+@pytest.mark.usefixtures("opening_seating_off")
 async def test_the_base_never_carries_an_internal_underscore_item_key(
     client, monkeypatch
 ):
@@ -361,6 +370,7 @@ def _plant_a_real_list(monkeypatch, n=TOTAL):
     return planted
 
 
+@pytest.mark.usefixtures("opening_seating_off")
 async def test_a_build_publishes_the_WHOLE_list_and_serves_only_the_window(
     client, monkeypatch
 ):
@@ -383,6 +393,7 @@ async def test_a_build_publishes_the_WHOLE_list_and_serves_only_the_window(
     assert [it["data"]["id"] for it in stored["items"]] == list(range(TOTAL))
 
 
+@pytest.mark.usefixtures("opening_seating_off")
 async def test_the_scrub_reaches_past_the_first_window_into_the_stored_list(
     client, monkeypatch
 ):
@@ -428,6 +439,7 @@ async def test_page_two_of_a_published_base_is_page_two_of_the_build(
     assert not [k for it in body["items"] for k in it if k.startswith("_")]
 
 
+@pytest.mark.usefixtures("opening_seating_off")
 async def test_the_base_gets_the_anonymous_lifetime_not_the_builders(
     client, monkeypatch
 ):
@@ -448,6 +460,7 @@ async def test_the_base_gets_the_anonymous_lifetime_not_the_builders(
     assert fake.ttl_for(NATIVE_BASE_KEY) == FEED_RESPONSE_TTL_ANON_SECONDS
 
 
+@pytest.mark.usefixtures("opening_seating_off")
 async def test_the_warmers_build_publishes_the_base(client, monkeypatch, mock_db):
     """The whole scroll goes warm at zero extra cost to the warmer: it already
     builds this list for page 1."""

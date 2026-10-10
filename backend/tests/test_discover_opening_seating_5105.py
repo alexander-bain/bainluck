@@ -843,9 +843,10 @@ def test_a_conflict_cannot_be_laundered_through_thin_supply():
 
 
 def test_a_group_refusal_keeps_its_own_verdict_beside_a_conflict():
-    grouped = _deck(20, {0: _conflicted(), 5: _collection(7, status="live")})
+    grouped = _deck(20, {0: _conflicted(), 5: _collection(7, matched=[601]),
+                         12: _event(601)})
     out = seat_opening(grouped, now=NOW)
-    assert out.status == UNSUPPORTED and "collection status" in out.detail
+    assert out.status == UNSUPPORTED and "matched event event:601" in out.detail
     assert out.refused_conflicts == []
 
 
@@ -930,15 +931,47 @@ def test_a_bundle_member_of_unknown_kind_refuses(child):
     assert seat_opening(deck, now=NOW).status == UNSUPPORTED
 
 
-def test_a_collection_reading_live_refuses():
-    deck = _deck(20, {0: _collection(7, status="live")})
-    assert seat_opening(deck, now=NOW).status == UNSUPPORTED
-
-
-def test_a_collection_naming_a_restricted_event_refuses():
-    deck = _deck(20, {0: _collection(7, matched=[601]), 12: _event(601)})
+@pytest.mark.parametrize("status", ["live", "in_progress", "in-progress", "active"])
+@pytest.mark.parametrize("position", [0, 25])
+def test_a_live_hub_of_scheduled_represented_games_is_an_ordinary_card(status, position):
+    """A hub's ``status`` is its own authority lifecycle, not its games': a
+    published NFL week reads ``live`` while the games it names are scheduled.
+    It once refused the whole deck."""
+    game = _event(602, status="scheduled", start=NOW + timedelta(hours=3))
+    hub = _collection(7, status=status, matched=[602, 999])
+    deck = _deck(30, {1: game, position: hub})
     out = seat_opening(deck, now=NOW)
-    assert out.status == UNSUPPORTED and "event:601" in out.detail
+    assert out.status == COMPLIANT
+    assert out.items == deck and out.items[position] is hub
+
+
+def test_a_live_hub_beside_an_ordinary_live_card_it_does_not_name_is_seated():
+    hub = _collection(7, status="live", matched=[602])
+    deck = _deck(20, {0: hub, 1: _event(602, status="scheduled",
+                                        start=NOW + timedelta(hours=3)),
+                      2: _event(603)})
+    out = seat_opening(deck, now=NOW)
+    assert out.status == APPLIED and out.displaced == ["event:603"]
+    assert _ids(out.items)[:2] == ["collection:7", "event:602"]
+
+
+@pytest.mark.parametrize("status", ["live", "scheduled", None])
+@pytest.mark.parametrize("hub_at,member_at", [(0, 12), (25, 3), (0, 28), (27, 28)])
+def test_a_collection_naming_a_restricted_event_refuses(status, hub_at, member_at):
+    """Whatever the hub's own status and wherever either card sits, a matched
+    member the deck represents as an ordinary live event refuses."""
+    hub = _collection(7, status=status, matched=[999, 601])
+    deck = _deck(28, {hub_at: hub, member_at: _event(601)})
+    snapshot = copy.deepcopy(deck)
+    out = seat_opening(deck, now=NOW)
+    assert out.status == UNSUPPORTED and "matched event event:601" in out.detail
+    assert out.items == deck == snapshot
+
+
+def test_a_live_hub_naming_an_exempt_live_event_is_an_ordinary_card():
+    deck = _deck(20, {0: _collection(7, status="live", matched=[601]),
+                      1: _event(601, is_marquee=True)})
+    assert seat_opening(deck, now=NOW).status == COMPLIANT
 
 
 def test_a_collection_of_scheduled_games_is_an_ordinary_card():
