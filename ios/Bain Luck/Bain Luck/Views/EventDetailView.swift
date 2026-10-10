@@ -1210,6 +1210,7 @@ struct EventDetailView: View {
         let heroLayout = stacked
             ? AnyLayout(EventHeroTeamLayout())
             : AnyLayout(HStackLayout(spacing: 0))
+        let captionRidesPadding = stacked && !dynamicTypeSize.isAccessibilitySize
         let metaLayout = stacked
             ? AnyLayout(VStackLayout(alignment: .leading, spacing: 4))
             : AnyLayout(HStackLayout(spacing: 8))
@@ -1643,14 +1644,16 @@ struct EventDetailView: View {
                                 .foregroundStyle(.secondary)
                                 .frame(minHeight: 44)
                         } else {
-                            // #10830 — at standard text sizes the caption rides the
-                            // card's bottom padding instead of reserving a band of
-                            // its own (Alex, build 46: "weigh empty space" under
-                            // Live updates). Accessibility sizes outgrow that
-                            // padding, so there it keeps its slot below.
+                            // #10830 — stacked, the caption's reserved slot was the
+                            // last row of the card: the band of "weigh empty space"
+                            // under Live updates (Alex, build 46). There it rides the
+                            // card's bottom padding instead. Accessibility sizes
+                            // outgrow that padding, and in a row the taller crest
+                            // columns set the card's height anyway, so both keep
+                            // the slot below.
                             probabilityDetails(confidenceTier: confidenceTier)
                                 .overlay(alignment: .bottom) {
-                                    if priceStreamingEligible && !dynamicTypeSize.isAccessibilitySize {
+                                    if priceStreamingEligible && captionRidesPadding {
                                         movementCaptionSlot(event, colors: colors)
                                             .alignmentGuide(.bottom) { $0[.top] }
                                     }
@@ -1658,8 +1661,7 @@ struct EventDetailView: View {
                         }
                         // #9500 — any streamable status moves the hero, but an
                         // opening line (#9470) still reports no delivery.
-                        if priceStreamingEligible && !shown.isOpeningLine
-                            && dynamicTypeSize.isAccessibilitySize {
+                        if priceStreamingEligible && !shown.isOpeningLine && !captionRidesPadding {
                             movementCaptionSlot(event, colors: colors)
                         }
                         // #8320 — #3313's live sparkline was drawn here, and it

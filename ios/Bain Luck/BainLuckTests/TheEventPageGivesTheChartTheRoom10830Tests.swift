@@ -80,17 +80,20 @@ final class TheEventPageGivesTheChartTheRoom10830Tests: XCTestCase {
         XCTAssertFalse(caption.contains(".lineLimit(2)"))
     }
 
-    func testAtStandardSizesTheCaptionRidesThePaddingAndAtAccessibilitySizesKeepsItsSlot() throws {
+    func testStackedTheCaptionRidesThePaddingAndOtherwiseKeepsItsSlot() throws {
         let page = try code("Views", "EventDetailView.swift")
         XCTAssertTrue(page.contains(
-            "probabilityDetails(confidenceTier:confidenceTier).overlay(alignment:.bottom){"
-            + "ifpriceStreamingEligible&&!dynamicTypeSize.isAccessibilitySize{"
-            + "movementCaptionSlot(event,colors:colors).alignmentGuide(.bottom){$0[.top]}"),
-            "the caption reserves a band under Live updates again")
+            "letcaptionRidesPadding=stacked&&!dynamicTypeSize.isAccessibilitySize"),
+            "accessibility sizes outgrow the padding; a row never had the band")
         XCTAssertTrue(page.contains(
-            "ifpriceStreamingEligible&&!shown.isOpeningLine&&dynamicTypeSize.isAccessibilitySize{"
+            "probabilityDetails(confidenceTier:confidenceTier).overlay(alignment:.bottom){"
+            + "ifpriceStreamingEligible&&captionRidesPadding{"
+            + "movementCaptionSlot(event,colors:colors).alignmentGuide(.bottom){$0[.top]}"),
+            "the stacked caption reserves a band under Live updates again")
+        XCTAssertTrue(page.contains(
+            "ifpriceStreamingEligible&&!shown.isOpeningLine&&!captionRidesPadding{"
             + "movementCaptionSlot(event,colors:colors)}"),
-            "at accessibility sizes the caption would be clipped by the card")
+            "the caption lost its slot where it cannot ride the padding")
         XCTAssertEqual(page.components(separatedBy: "LivePriceMovementCaption(").count - 1, 1)
     }
 
