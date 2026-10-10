@@ -437,7 +437,7 @@ struct SpecialEventMarketsView: View {
             let rows = Self.browseRows(cats)
             VStack(alignment: .leading, spacing: 12) {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("More game questions")
+                    Text("More game odds")
                         .font(.headline)
                     // #3550 — "1 markets grouped by category" is what every US
                     // Open page printed, because a tennis event's props all
@@ -459,11 +459,11 @@ struct SpecialEventMarketsView: View {
                 // by `propMiniCard`, so every row keeps its verdict, frozen-quote
                 // and no-price treatment.
                 MarketBrowserView(
-                    label: "Game questions",
+                    label: "Game odds",
                     items: rows,
                     group: \.family,
                     searchText: Self.searchText,
-                    searchPrompt: "questions"
+                    searchPrompt: "team or market"
                 ) { row in
                     propMiniCard(row.item)
                         .padding(.vertical, 4)

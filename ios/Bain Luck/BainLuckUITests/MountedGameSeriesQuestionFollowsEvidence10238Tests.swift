@@ -44,11 +44,11 @@ final class MountedGameSeriesQuestionFollowsEvidence10238Tests: XCTestCase {
     /// EXPECTED.json's `actual_open_sheet_expected`, verbatim.
     private static let subjects: [String: Subject] = [
         "game": Subject(
-            sheetTitle: "Game questions", question: "Game total 9.5", option: "Over",
+            sheetTitle: "Game odds", question: "Game total 9.5", option: "Over",
             expected: ["48%", "55%", "Unavailable", "57%", removedSentence, "58%", removedSentence,
                        "59%", removedSentence, "60%", "61%", "Won", "Won"]),
         "series": Subject(
-            sheetTitle: "Series questions", question: "Series winner", option: "Home",
+            sheetTitle: "Series odds", question: "Series winner", option: "Home",
             expected: ["62%", "67%", "Unavailable", "69%", removedSentence, "70%", removedSentence,
                        "71%", "72%", removedSentence, "73%", "74%", removedSentence]),
     ]

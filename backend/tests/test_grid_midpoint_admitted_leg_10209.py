@@ -38,7 +38,9 @@ from app.routes.playoffs import _grid_admitted_price
     ],
 )
 def test_the_admitted_price(current, bid, ask, expected, why):
-    got = _grid_admitted_price(current, bid, ask)
+    got = _grid_admitted_price(
+        current, bid, ask, price_changed_at=None, book_updated_at=None
+    )
     if expected is None:
         assert got is None, why
     else:
@@ -50,7 +52,9 @@ def test_decimal_columns_come_back_as_floats():
     is JSON-serialised and compared against floats downstream."""
     from decimal import Decimal
 
-    got = _grid_admitted_price(None, Decimal("0.40"), Decimal("0.44"))
+    got = _grid_admitted_price(
+        None, Decimal("0.40"), Decimal("0.44"), price_changed_at=None, book_updated_at=None
+    )
     assert isinstance(got, float)
     assert got == pytest.approx(0.42)
 

@@ -1192,17 +1192,19 @@ struct MarketMapView: View {
             // Header
             HStack(alignment: .top) {
                 VStack(alignment: .leading, spacing: 1) {
+                    // Alex 10/10: semantic styles, so the map's words grow
+                    // with the reader's text size like the rest of the page.
                     Text(title)
-                        .font(.system(size: 15, weight: .black))
+                        .font(.subheadline.weight(.black))
                         .tracking(-0.5)
                     Text(subtitle)
-                        .font(.system(size: 12))
+                        .font(.caption)
                         .foregroundStyle(.secondary)
                 }
                 Spacer()
                 if !headline.isEmpty {
                     Text(headline)
-                        .font(.system(size: 14, weight: .black))
+                        .font(.subheadline.weight(.black))
                         .foregroundStyle(.primary)
                 }
             }
@@ -1213,11 +1215,11 @@ struct MarketMapView: View {
                     ForEach(markers) { m in
                         VStack(alignment: .leading, spacing: 2) {
                             Text(m.label)
-                                .font(.system(size: 10, weight: .heavy))
+                                .font(.caption2.weight(.heavy))
                                 .foregroundStyle(.secondary)
                                 .tracking(0.5)
                             Text(m.displayValue)
-                                .font(.system(size: 14, weight: .black))
+                                .font(.subheadline.weight(.black))
                                 .lineLimit(1)
                         }
                         .padding(.horizontal, 10)
@@ -1258,18 +1260,18 @@ struct MarketMapView: View {
                     Spacer()
                     Text(axisRight).foregroundStyle(.secondary)
                 }
-                .font(.system(size: 11, weight: .heavy))
+                .font(.caption2.weight(.heavy))
                 .overlay {
                     GeometryReader { geo in
                         switch MarketMapRail.midAxisLabel(zeroPercent: zeroPosition) {
                         case .centred:
                             Text(axisMid)
-                                .font(.system(size: 11, weight: .heavy))
+                                .font(.caption2.weight(.heavy))
                                 .foregroundStyle(.secondary)
                                 .position(x: geo.size.width / 2, y: geo.size.height / 2)
                         case .at(let percent):
                             Text(axisMid)
-                                .font(.system(size: 11, weight: .heavy))
+                                .font(.caption2.weight(.heavy))
                                 .foregroundStyle(.secondary)
                                 .position(x: geo.size.width * percent / 100.0, y: geo.size.height / 2)
                         case .withheld:
