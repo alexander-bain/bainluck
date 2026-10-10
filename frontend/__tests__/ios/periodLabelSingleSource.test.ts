@@ -121,6 +121,16 @@ const NOT_PERIOD_PARSERS = new Map([
     // one-state-two-vocabularies defect (#1650) the file exists to prevent.
     "holds the EVENT-STATUS vocabulary ('live', 'halftime', 'suspended') pinned to web's LIVE_STATUSES — answers whether a contest is in play, never labels a period",
   ],
+  [
+    join(IOS_ROOT, "Utilities/PlayerPropsFamily.swift"),
+    // #10830 (Alex 10/10). The fourth non-labelling mention: the protected-
+    // touchdown "Participation rule" sheet states Kalshi's verified settlement
+    // rule (series KXNFLTDPROT) in fan words, and that rule is ABOUT halftime
+    // and overtime. The words are reader prose in a string array; nothing here
+    // reads a clock string or labels a period. Rewording the venue's rule to
+    // dodge this scan would trade a true sentence for a vaguer one.
+    "holds the protected-touchdown RULE COPY ('after halftime (overtime included)') — prose stating Kalshi's settlement rule, never parses or labels a period",
+  ],
 ]);
 
 // The whole suite is meaningless if it is pointed at nothing — a path typo

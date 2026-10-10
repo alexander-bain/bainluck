@@ -713,9 +713,13 @@ describe("#4018 — a card stops forecasting a game that can never be graded", (
     // wraps it under the stat name instead of clipping the name), and that
     // header draws it with `Text(caption)`. Both halves are pinned, so
     // re-inlining a literal at either end is still red here.
+    //
+    // #10830 (Alex 10/10) changed only the LABEL argument to `displayStat`
+    // (a verified protected contract reads "Touchdowns scored"); the caption
+    // argument this assertion exists for is untouched.
     const props = read("Components/PlayerPropsCardView.swift");
     expect(props).toMatch(
-      /PropsStatGroupHeader\(\s*label: cleanStatLabel\(group\.type, player: card\.name\)\.uppercased\(\),\s*caption: EventState\.propsChanceCaption\(\s*eventStatus, commenceTime: commenceTime, hasGradedRung: hasGradedRung\s*\),/,
+      /PropsStatGroupHeader\(\s*label: displayStat\(group, card: card\)\.uppercased\(\),\s*caption: EventState\.propsChanceCaption\(\s*eventStatus, commenceTime: commenceTime, hasGradedRung: hasGradedRung\s*\),/,
     );
     const header = read("Components/PropsStatGroupHeader.swift");
     expect(header).toMatch(/if let caption \{\s*Text\(caption\)/);

@@ -27,6 +27,8 @@ struct PlayerPropsCardView: View {
     /// #10830 — the target the reader picked on each pre-game ladder, by
     /// ladder id. Absent means the ladder's default (``PlayerPropsFamily/defaultTarget(probabilities:)``).
     @State private var selectedTargets: [String: Double] = [:]
+    /// Alex 10/10 — the protected-touchdown ladder whose rule sheet is open.
+    @State private var openRule: PropItem?
 
     /// #3430 — both competitors of one matchup, so the pair rule decides. A
     /// prop attributed to a team the other side shares a label with is
@@ -93,6 +95,9 @@ struct PlayerPropsCardView: View {
         let id: String
         let type: String
         let rungs: [Rung]
+        /// The venues that quoted this ladder (Alex 10/10: a protection rule
+        /// is read for ONE venue's contract).
+        var sources: Set<String> = []
 
         /// #5137 — a ladder whose every rung prints the same percentage is not a
         /// price and does not draw bars. See ``PlayerPropsPricing``.
@@ -130,6 +135,11 @@ struct PlayerPropsCardView: View {
         let group: StatGroup
         let family: String
         let statLabel: String
+        /// Alex 10/10 — what the row PRINTS for the stat. The venue's own
+        /// words (`statLabel`) except for a verified protected contract, whose
+        /// row says what it counts and offers the rule on tap.
+        var displayStat: String
+        var protectedRule: Bool = false
     }
 
     /// Every ladder on the page as a browser row: the PRICED ladders under
@@ -141,15 +151,22 @@ struct PlayerPropsCardView: View {
         let items: [PropItem] = cards.flatMap { card -> [PropItem] in
             let priced = card.pricedGroups.map { group -> PropItem in
                 let label = cleanStatLabel(group.type, player: card.name)
+                let isProtected = isVerifiedProtected(group, statLabel: label, subject: card.name)
                 return PropItem(id: group.id, card: card, group: group,
-                                family: PlayerPropsFamily.family(statLabel: label, isPriced: true),
-                                statLabel: label)
+                                family: isProtected
+                                    ? PlayerPropsFamily.protectedTouchdownFamily
+                                    : PlayerPropsFamily.family(statLabel: label, isPriced: true),
+                                statLabel: label,
+                                displayStat: displayStat(group, card: card),
+                                protectedRule: isProtected)
             }
             let unpriced = card.unpricedGroups.map { group -> PropItem in
                 let label = cleanStatLabel(group.type, player: card.name)
                 return PropItem(id: group.id, card: card, group: group,
                                 family: PlayerPropsFamily.family(statLabel: label, isPriced: false),
-                                statLabel: label)
+                                statLabel: label,
+                                displayStat: displayStat(group, card: card),
+                                protectedRule: isVerifiedProtected(group, statLabel: label, subject: card.name))
             }
             return priced + unpriced
         }
@@ -213,7 +230,9 @@ struct PlayerPropsCardView: View {
             let color = PlayerPropsTeam.color(for: side, home: homeColor, away: awayColor)
 
             var statGroups: [String: [Rung]] = [:]
+            var statSources: [String: Set<String>] = [:]
             for (prop, statType) in props {
+                if let source = prop.source { statSources[statType, default: []].insert(source) }
                 let rung = Rung(
                     threshold: prop.threshold ?? 0,
                     probability: prop.overProbability ?? 0,
@@ -230,7 +249,8 @@ struct PlayerPropsCardView: View {
                 StatGroup(
                     id: "\(player)-\(type)",
                     type: type,
-                    rungs: rungs.sorted { $0.threshold < $1.threshold }
+                    rungs: rungs.sorted { $0.threshold < $1.threshold },
+                    sources: statSources[type] ?? []
                 )
             }
             .filter { !$0.rungs.isEmpty }
@@ -282,13 +302,13 @@ struct PlayerPropsCardView: View {
                 // Header: title + source badge + controls
                 HStack {
                     Text("Player Props")
-                        .font(.subheadline)
-                        .fontWeight(.semibold)
+                        .font(.headline)
+                        .accessibilityAddTraits(.isHeader)
 
                     // Source badge — #4351: named, or not drawn.
                     if let src = SourceLabels.label(for: sources.first) {
                         Text(src)
-                            .font(.system(size: 10, weight: .heavy))
+                            .font(.caption2.weight(.heavy))
                             .foregroundStyle(.blue)
                             .padding(.horizontal, 8)
                             .padding(.vertical, 3)
@@ -321,17 +341,24 @@ struct PlayerPropsCardView: View {
                         filterButton(awayAbbr, value: "away")
                             .frame(maxWidth: .infinity)
                     }
+                    .padding(2)
                     .background(Color.secondary.opacity(0.08))
                     .clipShape(RoundedRectangle(cornerRadius: 8))
 
-                    // #10830 — every ladder, browsable by stat family and
-                    // searchable by player, in a bounded window (web #10809).
+                    // #10830 — every ladder, browsable by stat family in a
+                    // bounded window (web #10809). Alex 10/10: the Stat
+                    // chooser leads and shows every stat; finding a player
+                    // by name is optional, never the way in.
                     MarketBrowserView(
                         label: "Player props",
                         items: browseItems(cards),
                         group: \.family,
-                        searchText: { "\($0.card.name) \($0.card.teamLabel ?? "") \($0.statLabel)" },
-                        searchPrompt: "player or stat"
+                        searchText: { "\($0.card.name) \($0.card.teamLabel ?? "") \($0.statLabel) \($0.displayStat)" },
+                        searchPrompt: "player",
+                        chooserLabel: "Stat",
+                        groupTitle: PlayerPropsFamily.chooserTitle(family:),
+                        groupNote: PlayerPropsFamily.chooserNote(family:),
+                        findLabel: "Find a player"
                     ) { item in
                         propRow(item)
                     }
@@ -340,22 +367,35 @@ struct PlayerPropsCardView: View {
             .padding()
             .background(Color.cardBackground)
             .clipShape(RoundedRectangle(cornerRadius: 16))
+            .sheet(item: $openRule) { item in
+                participationRuleSheet(item)
+            }
         }
     }
 
+    /// Alex 10/10: the team filter's whole third is the button. It used to be
+    /// a word-sized 11pt pill inside a full-width frame drawn OUTSIDE the
+    /// button, so a tap beside the word landed on nothing. The frame, the
+    /// 44pt height and the content shape are now all inside the label.
     private func filterButton(_ label: String, value: String) -> some View {
-        Button {
+        let isActive = teamFilter == value
+        return Button {
             withAnimation(.easeInOut(duration: 0.15)) { teamFilter = value }
         } label: {
             Text(label)
-                .font(.system(size: 11, weight: teamFilter == value ? .bold : .medium))
-                .foregroundStyle(teamFilter == value ? .white : .secondary)
+                .font(.subheadline.weight(isActive ? .semibold : .medium))
+                .lineLimit(1)
+                .minimumScaleFactor(0.85)
+                .foregroundStyle(isActive ? .white : .secondary)
                 .padding(.horizontal, 10)
-                .padding(.vertical, 5)
-                .background(teamFilter == value ? Color.blue : Color.clear)
-                .clipShape(RoundedRectangle(cornerRadius: 6))
+                .frame(maxWidth: .infinity, minHeight: 44)
+                .background(isActive ? Color.blue : Color.clear)
+                .clipShape(RoundedRectangle(cornerRadius: 8))
+                .contentShape(RoundedRectangle(cornerRadius: 8))
         }
         .buttonStyle(.plain)
+        .accessibilityIdentifier("props-team-filter")
+        .accessibilityAddTraits(isActive ? .isSelected : [])
     }
 
     // MARK: - One ladder as a browser row (#10830)
@@ -388,10 +428,21 @@ struct PlayerPropsCardView: View {
             }
             .accessibilityElement(children: .combine)
 
+            // The rule control sits at the end of the target row where it has
+            // room, so a page of protected ladders is not a page of rule lines.
+            if item.protectedRule && !(item.group.isPriced && browsesByTarget) {
+                participationRuleButton(item, compact: false)
+            }
+
             if !item.group.isPriced {
                 unpricedGroupView(item.group, card: item.card)
             } else if browsesByTarget {
-                targetRow(item, chosen: target?.index)
+                HStack(alignment: .center, spacing: 8) {
+                    targetRow(item, chosen: target?.index)
+                    if item.protectedRule {
+                        participationRuleButton(item, compact: true)
+                    }
+                }
             } else {
                 statGroupView(item.group, card: item.card)
             }
@@ -468,7 +519,7 @@ struct PlayerPropsCardView: View {
     /// "Touchdowns · 1+ · Home" — the stat, the chosen line (pre-game only)
     /// and the side when it is known (#4919).
     private func rowSubtitle(_ item: PropItem, target: Rung?) -> String {
-        var parts = [item.statLabel]
+        var parts = [item.displayStat]
         if let target { parts.append(PlayerPropsFamily.targetLabel(target.threshold)) }
         if let side = item.card.teamLabel { parts.append(side) }
         return parts.joined(separator: " · ")
@@ -492,7 +543,7 @@ struct PlayerPropsCardView: View {
                     }
                     .padding(.vertical, 1)
                 }
-                .accessibilityLabel("\(item.statLabel) targets")
+                .accessibilityLabel("\(spokenStat(item)) targets")
             } else if let selected {
                 GeometryReader { geo in
                     Capsule()
@@ -540,12 +591,14 @@ struct PlayerPropsCardView: View {
                         .stroke(isSelected ? item.card.color : Color.barTrack,
                                 lineWidth: isSelected ? 1.5 : 0.5)
                 )
+                .contentShape(RoundedRectangle(cornerRadius: 8))
         }
         .buttonStyle(.plain)
         .disabled(!rung.priced)
+        .accessibilityIdentifier("props-target")
         .accessibilityLabel(rung.priced
-            ? "\(label) \(item.statLabel), \(percent)%"
-            : "\(label) \(item.statLabel), not priced")
+            ? "\(label) \(spokenStat(item)), \(percent)%"
+            : "\(label) \(spokenStat(item)), not priced")
         .accessibilityAddTraits(isSelected ? .isSelected : [])
     }
 
@@ -559,6 +612,78 @@ struct PlayerPropsCardView: View {
             awayTeam: awayTeam,
             player: player
         )
+    }
+
+    /// Alex 10/10 — a verified protected-touchdown ladder (Kalshi, NFL) on a
+    /// player; a team subject keeps the venue's name and no player rule.
+    private func isVerifiedProtected(_ group: StatGroup, statLabel: String, subject: String) -> Bool {
+        PlayerPropsFamily.isVerifiedProtectedTouchdowns(
+            statLabel: statLabel, sportKey: sportKey, sources: group.sources)
+            && !PlayerPropsFamily.isTeamSubject(subject, teams: [homeTeam, awayTeam])
+    }
+
+    /// The stat as a row prints it. Display only: `group.type` stays the
+    /// grouping and grading key.
+    private func displayStat(_ group: StatGroup, card: PlayerCard) -> String {
+        let label = cleanStatLabel(group.type, player: card.name)
+        return isVerifiedProtected(group, statLabel: label, subject: card.name)
+            ? PlayerPropsFamily.protectedTouchdownStat
+            : label
+    }
+
+    /// The stat as VoiceOver says it — a protected contract says so.
+    private func spokenStat(_ item: PropItem) -> String {
+        item.protectedRule ? "\(item.displayStat), protected" : item.displayStat
+    }
+
+    private func participationRuleButton(_ item: PropItem, compact: Bool) -> some View {
+        Button {
+            openRule = item
+        } label: {
+            Label(compact ? "Rule" : PlayerPropsFamily.participationRuleTitle, systemImage: "info.circle")
+                .font(.footnote.weight(.semibold))
+                .foregroundStyle(.blue)
+                .lineLimit(1)
+                .fixedSize()
+                .padding(.horizontal, compact ? 6 : 0)
+                .padding(.trailing, compact ? 0 : 12)
+                .frame(minWidth: 44, minHeight: 44, alignment: compact ? .center : .leading)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(PlayerPropsFamily.participationRuleTitle)
+        .accessibilityHint("Explains how this protected touchdown market settles")
+    }
+
+    private func participationRuleSheet(_ item: PropItem) -> some View {
+        NavigationStack {
+            List {
+                Section {
+                    ForEach(PlayerPropsFamily.participationRuleLines, id: \.self) { line in
+                        Text(line)
+                            .font(.body)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+                Section("Market") {
+                    Text("\(item.card.name) · \(item.group.type)")
+                        .font(.subheadline)
+                    Link("Kalshi's full contract terms",
+                         destination: PlayerPropsFamily.participationRuleTermsURL)
+                        .font(.subheadline)
+                }
+            }
+            .navigationTitle(PlayerPropsFamily.participationRuleTitle)
+            #if os(iOS)
+            .navigationBarTitleDisplayMode(.inline)
+            #endif
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Close") { openRule = nil }
+                }
+            }
+        }
+        .presentationDetents([.medium, .large])
     }
 
     private func statGroupView(_ group: StatGroup, card: PlayerCard) -> some View {
@@ -579,7 +704,7 @@ struct PlayerPropsCardView: View {
             // #10076 — the header never clips the stat name for the caption: in
             // a narrow paired column the caption drops to its own line.
             PropsStatGroupHeader(
-                label: cleanStatLabel(group.type, player: card.name).uppercased(),
+                label: displayStat(group, card: card).uppercased(),
                 caption: EventState.propsChanceCaption(
                     eventStatus, commenceTime: commenceTime, hasGradedRung: hasGradedRung
                 ),
@@ -727,7 +852,7 @@ struct PlayerPropsCardView: View {
 
         return VStack(alignment: .leading, spacing: 3) {
             HStack(spacing: 4) {
-                Text(cleanStatLabel(group.type, player: card.name).uppercased())
+                Text(displayStat(group, card: card).uppercased())
                     .font(.system(size: 8, weight: .bold))
                     .tracking(0.5)
                     .foregroundStyle(.tertiary)

@@ -23,11 +23,19 @@ struct EventQuestionMatrixSection10238: View {
     @AccessibilityFocusState private var focus: Focus?
     @Environment(\.dynamicTypeSize) private var typeSize
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    /// The ladder's label column, so every bar starts at the same x and the
+    /// column grows with the reader's text size.
+    @ScaledMetric(relativeTo: .subheadline) private var labelColumn: CGFloat = 116
+    @ScaledMetric(relativeTo: .subheadline) private var valueColumn: CGFloat = 48
 
     private var rows: [EventQuestionMatrixAdapter.Row] {
         EventQuestionMatrixAdapter.rows(in: matrix, scope: scope)
     }
-    private var title: String { scope == .game ? "Game questions" : "Series questions" }
+    /// Alex 10/10: ordinary sports words, not "questions".
+    private var title: String { Self.title(scope) }
+    static func title(_ scope: QuestionMatrixScope) -> String {
+        scope == .game ? "Game odds" : "Series odds"
+    }
 
     var body: some View {
         // Keep a reachable fallback while an open question is withdrawn.
@@ -38,7 +46,7 @@ struct EventQuestionMatrixSection10238: View {
         if !rows.isEmpty || open != nil || returnSelection != nil {
             VStack(alignment: .leading, spacing: 12) {
                 Text(title)
-                    .font(.subheadline.weight(.semibold))
+                    .font(.headline)
                     .accessibilityAddTraits(.isHeader)
                     .accessibilityFocused($focus, equals: .heading)
                 if rows.isEmpty {
@@ -49,19 +57,20 @@ struct EventQuestionMatrixSection10238: View {
                 // #10830 — a bounded, searchable window by family (web's
                 // compact game-question browser, #10809). An NFL page serves
                 // ~200 questions; drawn whole they were ~70,000 pt of scroll.
-                // Each card is still `question(_:)`, and selection still
-                // resolves against the latest payload.
+                // Each question is still `question(_:)`, and selection still
+                // resolves against the latest payload. The period ("Game",
+                // "1st half") is a heading over its run of lines, said once.
                 MarketBrowserView(
                     label: title,
                     items: rows,
                     group: Self.family,
                     searchText: Self.searchText,
                     pageSize: Self.pageSize,
-                    searchPrompt: "questions",
-                    visibleIDs: $visibleRowIDs
+                    searchPrompt: "team or line",
+                    visibleIDs: $visibleRowIDs,
+                    heading: { $0.period?.label ?? "" }
                 ) { row in
                     question(row)
-                        .padding(.bottom, 10)
                 }
             }
             .sheet(item: $open, onDismiss: restoreFocus) { selected in
@@ -72,8 +81,9 @@ struct EventQuestionMatrixSection10238: View {
 
     // MARK: - Browsing (#10830)
 
-    /// Question cards are tall, so a page of them is shorter than a page of rows.
-    static let pageSize = 8
+    /// Alex 10/10: a question is a ladder line now, not a tall card, so a page
+    /// holds as many as any other browser's.
+    static let pageSize = MarketBrowserLogic.pageSize
 
     /// The family a question is browsed under, read from its typed kind and
     /// its own words. Navigation only: every question keeps its own card and
@@ -98,77 +108,125 @@ struct EventQuestionMatrixSection10238: View {
         ([row.label, row.period?.label ?? ""] + row.options.map(\.label)).joined(separator: " ")
     }
 
+    /// One line of the compact ladder: what the line is called, and the
+    /// served option it opens.
+    struct ScanLine: Identifiable, Equatable {
+        var id: QuestionMatrixSelection { option.selection }
+        let label: String
+        let option: EventQuestionMatrixAdapter.Option
+    }
+
+    /// How a question is scanned (Alex 10/10: threshold at left, bar in the
+    /// middle, percent at right — not a tall card that says the line twice).
+    ///
+    /// A typed threshold with exactly ONE option is one line named by the
+    /// question ("24+ points"): its option ("Over 23.5 points") states the
+    /// same line again, so it moves to the detail and to VoiceOver instead of
+    /// being printed beside it. Every other question keeps its own heading and
+    /// one line per served option, named by that option — no option is
+    /// renamed into the question's words and no missing side is added.
+    static func scan(_ row: EventQuestionMatrixAdapter.Row) -> (heading: String?, lines: [ScanLine]) {
+        if row.kind == .countThreshold, row.options.count == 1, let only = row.options.first {
+            return (nil, [ScanLine(label: row.label, option: only)])
+        }
+        return (row.label, row.options.map { ScanLine(label: $0.label, option: $0) })
+    }
+
     private func question(_ row: EventQuestionMatrixAdapter.Row) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text(row.label)
-                .font(.subheadline.weight(.semibold))
-                .fixedSize(horizontal: false, vertical: true)
-                .accessibilityAddTraits(.isHeader)
-            if let period = row.period?.label, !period.isEmpty {
-                Text(period).font(.caption).foregroundStyle(.secondary)
+        let scan = Self.scan(row)
+        return VStack(alignment: .leading, spacing: 0) {
+            if let heading = scan.heading {
+                Text(heading)
+                    .font(.subheadline.weight(.semibold))
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.top, 8)
+                    .padding(.bottom, 2)
+                    .accessibilityAddTraits(.isHeader)
             }
-            // Small named sets (including a three-way draw) sit side by side.
-            // Larger sets and accessibility sizes keep full labels in a list.
-            if row.options.count <= 3 && !typeSize.isAccessibilitySize {
-                HStack(alignment: .top, spacing: 6) {
-                    ForEach(row.options) { option in
-                        optionButton(option, question: row.label, compact: true)
-                    }
-                }
-            } else {
-                VStack(spacing: 6) {
-                    ForEach(row.options) { option in
-                        optionButton(option, question: row.label, compact: false)
-                    }
-                }
+            ForEach(scan.lines) { line in
+                ladderLine(line, question: row.label)
             }
             if row.options.isEmpty {
                 Text("No quoted options right now")
-                    .font(.caption).foregroundStyle(.secondary)
+                    .font(.footnote).foregroundStyle(.secondary)
+                    .padding(.bottom, 6)
             }
             if row.offersMoreOptions {
                 // Disclosure of incomplete coverage, not a nonfunctional button.
                 Text("Additional options are not shown")
-                    .font(.caption).foregroundStyle(.secondary)
+                    .font(.footnote).foregroundStyle(.secondary)
+                    .padding(.bottom, 6)
             }
         }
-        .padding(14)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color.cardBackground)
-        .clipShape(RoundedRectangle(cornerRadius: 14))
     }
 
-    private func optionButton(
-        _ option: EventQuestionMatrixAdapter.Option, question: String, compact: Bool
-    ) -> some View {
-        Button {
+    private func ladderLine(_ line: ScanLine, question: String) -> some View {
+        let option = line.option
+        let stacked = typeSize.isAccessibilitySize
+        return Button {
             focus = nil
             returnSelection = option.selection
             open = OpenOption(id: option.selection)
         } label: {
-            let layout = compact || typeSize.isAccessibilitySize
-                ? AnyLayout(VStackLayout(alignment: .leading, spacing: 5))
-                : AnyLayout(HStackLayout(alignment: .firstTextBaseline, spacing: 10))
+            let layout = stacked
+                ? AnyLayout(VStackLayout(alignment: .leading, spacing: 4))
+                : AnyLayout(HStackLayout(alignment: .center, spacing: 10))
             layout {
-                Text(option.label)
-                    .font(.caption)
+                Text(line.label)
+                    .font(.subheadline)
+                    .foregroundStyle(.primary)
                     .fixedSize(horizontal: false, vertical: true)
-                if !compact && !typeSize.isAccessibilitySize { Spacer(minLength: 4) }
-                Text(valueText(option.value))
-                    .font(.subheadline.monospacedDigit().weight(.semibold))
-                    .contentTransition(.numericText())
-                    .animation(reduceMotion ? nil : .easeOut(duration: 0.2), value: option.value)
+                    .frame(width: stacked ? nil : labelColumn, alignment: .leading)
+                HStack(spacing: 10) {
+                    bar(option.value)
+                    Text(valueText(option.value))
+                        .font(.subheadline.monospacedDigit().weight(.semibold))
+                        .foregroundStyle(.primary)
+                        .contentTransition(.numericText())
+                        .animation(reduceMotion ? nil : .easeOut(duration: 0.2), value: option.value)
+                        .frame(minWidth: valueColumn, alignment: .trailing)
+                }
             }
+            .padding(.vertical, 6)
             .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
-            .padding(8)
-            .background(Color.secondary.opacity(0.08))
-            .clipShape(RoundedRectangle(cornerRadius: 8))
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .overlay(alignment: .bottom) {
+            Rectangle().fill(Color.barTrack.opacity(0.4)).frame(height: 0.5)
+        }
         .accessibilityLabel("\(question), \(option.label), \(valueText(option.value))")
-        .accessibilityHint("Shows this exact question and its sources")
+        .accessibilityHint("Shows this exact line and its sources")
         .accessibilityFocused($focus, equals: .option(option.selection))
+    }
+
+    /// A quoted line draws its own chance; an unpriced one keeps an empty
+    /// track; a decided one draws no bar (a filled bar pictures a live price).
+    @ViewBuilder
+    private func bar(_ value: EventQuestionMatrixAdapter.Value) -> some View {
+        switch value {
+        case .quoted(let probability):
+            GeometryReader { geo in
+                Capsule()
+                    .fill(Color.secondary.opacity(0.1))
+                    .overlay(alignment: .leading) {
+                        Capsule()
+                            .fill(Color.accentColor.opacity(0.6))
+                            .frame(width: max(2, geo.size.width * min(max(probability, 0), 1)))
+                    }
+            }
+            .frame(height: 8)
+            .accessibilityHidden(true)
+        case .unavailable:
+            Capsule()
+                .fill(Color.secondary.opacity(0.1))
+                .frame(maxWidth: .infinity, maxHeight: 8)
+                .frame(height: 8)
+                .accessibilityHidden(true)
+        case .won, .lost:
+            Spacer(minLength: 0)
+        }
     }
 
     private func restoreFocus() {

@@ -143,7 +143,7 @@ d("the scoring race is reachable through the browser", () => {
     const code = view();
 
     expect(code).toMatch(/let rows = Self\.browseRows\(cats\)/);
-    expect(code).toMatch(/MarketBrowserView\(\s*label: "Game questions",\s*items: rows,/);
+    expect(code).toMatch(/MarketBrowserView\(\s*label: "Game odds",\s*items: rows,/);
     // THE DEFECT, spelled out so it cannot come back by accident.
     expect(code).not.toMatch(/\.items\.prefix\(/);
     expect(code).not.toMatch(/\.prefix\(5\)/);
