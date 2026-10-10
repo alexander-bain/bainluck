@@ -1255,30 +1255,22 @@ struct MarketMapView: View {
                 // only at the middle when the rail has no zero on it. On a margin
                 // rail the mid label names zero ("Tie"), so it is drawn where zero
                 // actually falls; `densityRail` no longer draws a second one.
-                HStack {
-                    Text(axisLeft).foregroundStyle(.secondary)
-                    Spacer()
-                    Text(axisRight).foregroundStyle(.secondary)
+                // #10830 — the three labels are placed on measured widths, so
+                // at large text sizes a label that would touch its neighbour
+                // moves to its own row instead of printing over it.
+                let midPlacement = MarketMapRail.midAxisLabel(zeroPercent: zeroPosition)
+                let midFraction: CGFloat? = switch midPlacement {
+                case .centred: 0.5
+                case .at(let percent): percent / 100.0
+                case .withheld: nil
+                }
+                MarketMapAxisRow(midFraction: midFraction) {
+                    Text(axisLeft)
+                    if midFraction != nil { Text(axisMid).multilineTextAlignment(.center) }
+                    Text(axisRight).multilineTextAlignment(.trailing)
                 }
                 .font(.caption2.weight(.heavy))
-                .overlay {
-                    GeometryReader { geo in
-                        switch MarketMapRail.midAxisLabel(zeroPercent: zeroPosition) {
-                        case .centred:
-                            Text(axisMid)
-                                .font(.caption2.weight(.heavy))
-                                .foregroundStyle(.secondary)
-                                .position(x: geo.size.width / 2, y: geo.size.height / 2)
-                        case .at(let percent):
-                            Text(axisMid)
-                                .font(.caption2.weight(.heavy))
-                                .foregroundStyle(.secondary)
-                                .position(x: geo.size.width * percent / 100.0, y: geo.size.height / 2)
-                        case .withheld:
-                            EmptyView()
-                        }
-                    }
-                }
+                .foregroundStyle(.secondary)
             }
 
             // Probability ladder
@@ -1700,4 +1692,51 @@ struct MarketMapView: View {
         return density.map { ($0 / peak) * 96 }
     }
 
+}
+
+// MARK: - Axis label row
+
+/// Lays out a map's axis labels: `[left, right]`, or `[left, mid, right]` when
+/// the mid label is drawn. Placement is ``MarketMapRail/axisLabelFrames``, so
+/// the rule is unit-tested without rendering. A label wider than the row is
+/// measured at the row's width and wraps at whole words.
+struct MarketMapAxisRow: Layout {
+    /// Where the mid label is centred, as a fraction of the row's width. nil
+    /// when there is no mid label.
+    var midFraction: CGFloat?
+
+    private func frames(width: CGFloat, subviews: Subviews) -> MarketMapRail.AxisLabelFrames? {
+        guard subviews.count >= 2 else { return nil }
+        func size(_ subview: LayoutSubview) -> CGSize {
+            let ideal = subview.sizeThatFits(.unspecified)
+            guard ideal.width > width else { return ideal }
+            return subview.sizeThatFits(ProposedViewSize(width: width, height: nil))
+        }
+        let hasMid = subviews.count >= 3 && midFraction != nil
+        return MarketMapRail.axisLabelFrames(
+            width: width,
+            left: size(subviews[0]),
+            mid: hasMid ? size(subviews[1]) : nil,
+            right: size(subviews[subviews.count - 1]),
+            midCentreX: hasMid ? width * (midFraction ?? 0.5) : nil
+        )
+    }
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let width = proposal.width ?? 0
+        return CGSize(width: width, height: frames(width: width, subviews: subviews)?.height ?? 0)
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        guard let frames = frames(width: bounds.width, subviews: subviews) else { return }
+        func place(_ subview: LayoutSubview, _ frame: CGRect) {
+            subview.place(
+                at: CGPoint(x: bounds.minX + frame.minX, y: bounds.minY + frame.minY),
+                proposal: ProposedViewSize(frame.size)
+            )
+        }
+        place(subviews[0], frames.left)
+        if let mid = frames.mid { place(subviews[1], mid) }
+        place(subviews[subviews.count - 1], frames.right)
+    }
 }

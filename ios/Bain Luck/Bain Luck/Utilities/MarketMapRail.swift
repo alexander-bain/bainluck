@@ -1,3 +1,4 @@
+import CoreGraphics
 import Foundation
 
 // MARK: - The rail a totals map is drawn on
@@ -2032,6 +2033,62 @@ enum MarketMapRail {
         guard let zero = zeroPercent else { return .centred }
         if zero <= endLabelBand || zero >= 100 - endLabelBand { return .withheld }
         return .at(percent: zero)
+    }
+
+    // MARK: - Keeping the three axis labels apart
+
+    /// Where each axis label is drawn, so that no label prints over another.
+    ///
+    /// #10830, seen by native while gating #10796: at AX3 on a 390 pt iPhone,
+    /// NFL 14782161's margin map ran `LV by 18+` into `Tie` and `Tie` into
+    /// `NE by 23.5+` on one line
+    /// (`artifacts/native-10796-composed-6a4b/margin-map-ax3-collision.png`).
+    /// ``endLabelBandPercent`` keeps the mid label clear of the ends only at the
+    /// text size it was measured at, because a percentage of the rail does not
+    /// know how wide a word is. So this decision is made on the widths SwiftUI
+    /// measured. The end labels keep the first row. A label that would touch its
+    /// neighbour moves to its own row, at the same x, so the mid label still
+    /// sits under the point it names.
+    struct AxisLabelFrames: Equatable {
+        var left: CGRect
+        var mid: CGRect?
+        var right: CGRect
+        var height: CGFloat { Swift.max(left.maxY, right.maxY, mid?.maxY ?? 0) }
+    }
+
+    /// - Parameters:
+    ///   - width: the axis row's width, the same as the rail above it.
+    ///   - left, mid, right: each label's measured size. `mid` is nil when
+    ///     ``midAxisLabel(zeroPercent:endLabelBand:)`` withholds it.
+    ///   - midCentreX: where the mid label is centred, in the row's own points.
+    ///   - gap: the smallest clear space allowed between two labels on one row.
+    static func axisLabelFrames(
+        width: CGFloat,
+        left: CGSize, mid: CGSize?, right: CGSize,
+        midCentreX: CGFloat?,
+        gap: CGFloat = 6, rowSpacing: CGFloat = 2
+    ) -> AxisLabelFrames {
+        let leftFrame = CGRect(origin: .zero, size: left)
+        let rightSharesFirstRow = left.width + gap + right.width <= width
+        let firstRowHeight = rightSharesFirstRow ? Swift.max(left.height, right.height) : left.height
+        let rightFrame = CGRect(
+            x: Swift.max(0, width - right.width),
+            y: rightSharesFirstRow ? 0 : firstRowHeight + rowSpacing,
+            width: right.width, height: right.height
+        )
+        guard let mid, let midCentreX else {
+            return AxisLabelFrames(left: leftFrame, mid: nil, right: rightFrame)
+        }
+        let x = Swift.min(Swift.max(0, midCentreX - mid.width / 2), Swift.max(0, width - mid.width))
+        let rightLimit = rightSharesFirstRow ? rightFrame.minX - gap : width
+        let fitsFirstRow = x >= leftFrame.maxX + gap && x + mid.width <= rightLimit
+        let lowestRowEnd = rightSharesFirstRow ? firstRowHeight : rightFrame.maxY
+        let midFrame = CGRect(
+            x: x,
+            y: fitsFirstRow ? 0 : lowestRowEnd + rowSpacing,
+            width: mid.width, height: mid.height
+        )
+        return AxisLabelFrames(left: leftFrame, mid: midFrame, right: rightFrame)
     }
 
     // MARK: - Keeping a marker dot on the rail it names
