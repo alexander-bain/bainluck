@@ -107,8 +107,9 @@ final class RectangularWidgetHostJourneyTests: XCTestCase {
             .trimmingCharacters(in: .whitespacesAndNewlines)
         XCTAssertFalse(observedTimestamp.isEmpty, "Saved reading must retain its observation timestamp")
         XCTAssertEqual(reading.label.components(separatedBy: "64% · Live").count, 2)
-        let contentBounds = CGRect(origin: .zero, size: center.frame.size)
-        XCTAssertTrue(reading.frame.width > 0 && reading.frame.height > 0 && contentBounds.contains(reading.frame),
+        // Both XCUIElement frames are in screen coordinates.
+        XCTAssertTrue(reading.frame.width > 0 && reading.frame.height > 0
+                      && center.frame.contains(reading.frame) && host.frame.contains(reading.frame),
                       "Actual WidgetKit complete reading frame escapes its rectangular content bounds")
         XCTAssertFalse(host.descendants(matching: .any)["watch.complication.fallback"].firstMatch.exists)
         // Preserve the prior required receipt only after actual named saved content is verified.

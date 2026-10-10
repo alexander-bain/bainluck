@@ -63,7 +63,13 @@ final class PickerSelectedStateJourneyTests: XCTestCase {
             XCTAssertFalse(textSize.hasPrefix("accessibility"), "Standard journey must retain a standard text size")
         }
         let rows = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "watch.pick.")).allElementsBoundByIndex
-        XCTAssertEqual(rows.map { $0.identifier }, ["watch.pick.101", "watch.pick.202"], "Selected decoration must preserve server order")
+        let providerOrder = ["watch.pick.101", "watch.pick.202"]
+        let currentID = selected.map { "watch.pick.\($0)" }
+        let expectedOrder = currentID.map { current in
+            [current] + providerOrder.filter { $0 != current }
+        } ?? providerOrder
+        XCTAssertEqual(rows.map { $0.identifier }, expectedOrder,
+                       "Current game appears exactly once first; other games retain provider order")
         for (row, id, name, state) in [
             (first, 101, "Los Angeles Dodgers at San Francisco Giants", "Live"),
             (second, 202, "Kansas City Chiefs at Buffalo Bills", "Scheduled")
