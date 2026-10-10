@@ -26,7 +26,7 @@ ENV = "KALSHI_WS_PRICE_FLUSH_SECONDS"
 
 async def _run_recording(monkeypatch, arm):
     """Run the REAL consumer to its recycle; return (cadence calls, refreshers,
-    per-call (wake is an Event, work_count() at entry))."""
+    per-call (wake is an Event, work_count() at entry, wake_coalesce_s))."""
     module, consumer, slate = _arm(monkeypatch, arm)
     _install_quiet_socket(monkeypatch)
     _install_session(monkeypatch, slate, lambda _: [])
@@ -41,13 +41,15 @@ async def _run_recording(monkeypatch, arm):
 
     async def cadence(
         flush, period, stop=None, *, failed_retry_interval_s=None,
-        wake=None, work_count=None,
+        wake=None, work_count=None, wake_coalesce_s=None,
     ):
         # #10090: what each caller passes for the idle wake, asserted per
-        # caller by the tests (PM's standalone flush passes neither).
+        # caller by the tests (PM's standalone flush passes neither; only
+        # PM's game flush takes the post-wake coalescing pause).
         wakes.append((
             isinstance(wake, asyncio.Event),
             None if work_count is None else work_count(),
+            wake_coalesce_s,
         ))
         calls.append((period, failed_retry_interval_s))
         await stop.wait()
@@ -79,7 +81,7 @@ async def test_real_kalshi_consumer_binds_timer_floor_and_legacy_retry(
     calls, instances, wakes = await _run_recording(monkeypatch, "kalshi")
     assert calls == [(expected_period, expected_retry)]
     # The Kalshi flush opts into the idle wake with a zero actual-work count.
-    assert wakes == [(True, 0)]
+    assert wakes == [(True, 0, None)]  # Kalshi: no coalescing pause
     (refresher,) = instances
     assert refresher.min_refresh_interval_s == expected_floor
     # Nothing else about the refresher moves with the timer.
@@ -116,8 +118,12 @@ async def test_kalshi_override_does_not_change_real_pm_consumer(monkeypatch):
     calls, instances, wakes = await _run_recording(monkeypatch, "polymarket")
     # The PM game flush, then its standalone flush on the base timer (962ced).
     assert calls == [(3.5, 3.5), (3.5, None)]
-    # Only the game flush takes the idle wake; standalone stays timer-only.
-    assert wakes == [(True, 0), (False, None)]
+    # Only the game flush takes the idle wake and its coalescing pause;
+    # standalone stays timer-only.
+    assert wakes == [
+        (True, 0, poly_task.PM_WAKE_COALESCE_SECONDS), (False, None, None),
+    ]
+    assert 0 < poly_task.PM_WAKE_COALESCE_SECONDS <= 0.01
     assert instances[0].min_refresh_interval_s == 2
 
 
