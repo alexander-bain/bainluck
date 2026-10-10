@@ -289,53 +289,77 @@ test.each([
   }
 });
 
-// #10823: the retained production payload served one flattened 0.825 on a
-// first-half line, a full-game line and the other club's Kalshi outcome. Those
-// rows keep their question and source but print no number; period quotes stay.
-test("flattened team totals print no percentage while period quotes remain", () => {
-  const total = (market_name: string, outcome_name: string, source: string) => ({
+// #10823: the server now prices each team-total line on its own. Rows below are
+// the f7e7cf8b served shape (Eagles @ Jaguars 14639175, Florida live, 10/10):
+// each question prints its own quote, an Under row never borrows the Over
+// price (beside its Over twin it is not listed at all), and during play a
+// pregame-stamped price prints nothing.
+test("team totals print each line's own quote; Under borrows nothing; live drops stale prices", () => {
+  const NOW = Date.parse("2026-10-10T19:50:00Z");
+  const now = jest.spyOn(Date, "now").mockReturnValue(NOW);
+  const total = (
+    market_name: string,
+    outcome_name: string,
+    threshold: number,
+    over_probability: number,
+    source: string,
+    observed_at: string,
+  ) => ({
     market_name,
     outcome_name,
-    threshold: 6.5,
-    over_probability: 0.825,
+    threshold,
+    over_probability,
     source,
+    observed_at,
     market_type: "team_total",
     movement: null,
+    period: null,
   });
   const data = {
     team_totals: [
-      total("Patriots 1H Team Total: O/U 6.5", "Over", "polymarket"),
-      total("Patriots 1H Team Total: O/U 6.5", "Under", "polymarket"),
-      total("Patriots Team Total: O/U 10.5", "Over", "polymarket"),
-      total("LV Raiders vs NE Patriots: Team Total", "LV Raiders over 7.5 points", "kalshi"),
+      total("Eagles 1H Team Total: O/U 6.5", "Over", 6.5, 0.555, "polymarket", "2026-10-10T19:44:00Z"),
+      total("Eagles 1H Team Total: O/U 6.5", "Under", 6.5, 0.555, "polymarket", "2026-10-10T19:44:00Z"),
+      total("Eagles Team Total: O/U 10.5", "Over", 10.5, 0.73, "polymarket", "2026-10-10T19:44:00Z"),
+      total("PHI Eagles vs JAC Jaguars: Team Total", "PHI Eagles over 7.5 points", 7.5, 0.865, "kalshi", "2026-10-10T19:40:00Z"),
+      total("PHI Eagles vs JAC Jaguars: Team Total", "JAC Jaguars over 7.5 points", 7.5, 0.975, "kalshi", "2026-10-10T19:40:00Z"),
+      // Pregame-stamped (16:39Z) — 3h old once the game is under way.
+      total("Florida Team Total: O/U 26.5", "Over", 26.5, 0.82, "polymarket", "2026-10-10T16:39:00Z"),
+      // An Under with no Over twin stays reachable, without a number.
+      total("Jaguars Team Total: O/U 20.5", "Under", 20.5, 0.4, "polymarket", "2026-10-10T19:44:00Z"),
     ],
-    period_markets: [
-      {
-        market_name: "1H Spread: Raiders (-9.5)",
-        outcome_name: "Patriots",
-        threshold: -9.5,
-        probability: 0.61,
-        source: "polymarket",
-        market_type: "spread",
-        period: "1H",
-      },
-    ],
+    period_markets: [],
   } as unknown as GameMarketsResponse;
-  for (const status of ["scheduled", "in_progress", "completed"]) {
-    render(<GameLineBrowser data={data} status={status} />);
-    const text = host.textContent ?? "";
-    expect(text).not.toMatch(/8[23]%/);
-    expect(text).toContain("LV Raiders over 7.5 points");
-    expect(text).toContain("Patriots 1H Team Total: O/U 6.5");
-    expect(text).toContain("kalshi");
-    expect(host.querySelectorAll('[data-quote="withheld"]')).toHaveLength(4);
-    expect(host.querySelectorAll("strong")).toHaveLength(0);
-    click("Periods");
-    const quotes = Array.from(host.querySelectorAll("strong")).map((s) => s.textContent);
-    expect(quotes).toEqual([status === "completed" ? "Last quote 61%" : "61%"]);
-    expect(host.querySelectorAll('[data-quote="withheld"]')).toHaveLength(0);
-    act(() => root.unmount());
-    root = createRoot(host);
+  try {
+    const quotes = () => Array.from(host.querySelectorAll("strong")).map((s) => s.textContent);
+    const lines = () =>
+      Array.from(host.querySelectorAll("div.py-3")).map(
+        (r) => `${r.children[0].textContent} · ${r.children[1].textContent}`,
+      );
+    render(<GameLineBrowser data={data} status="scheduled" />);
+    expect(host.textContent).not.toContain("Unavailable");
+    expect(lines()).toEqual([
+      "Eagles 1H Team Total: O/U 6.5 · Over56%",
+      "Eagles Team Total: O/U 10.5 · Over73%",
+      "PHI Eagles vs JAC Jaguars: Team Total · PHI Eagles over 7.5 points87%",
+      "PHI Eagles vs JAC Jaguars: Team Total · JAC Jaguars over 7.5 points98%",
+      "Florida Team Total: O/U 26.5 · Over82%",
+      "Jaguars Team Total: O/U 20.5 · Under",
+    ]);
+    expect(host.querySelectorAll('[data-quote="stale"]')).toHaveLength(0);
+
+    render(<GameLineBrowser data={data} status="in_progress" />);
+    expect(quotes()).toEqual(["56%", "73%", "87%", "98%"]);
+    const stale = host.querySelectorAll('[data-quote="stale"]');
+    expect(stale).toHaveLength(1);
+    expect(stale[0].textContent).toContain("Florida Team Total: O/U 26.5");
+    expect(stale[0].querySelector("strong")).toBeNull();
+
+    render(<GameLineBrowser data={data} status="completed" />);
+    expect(quotes()).toEqual([
+      "Last quote 56%", "Last quote 73%", "Last quote 87%", "Last quote 98%", "Last quote 82%",
+    ]);
+  } finally {
+    now.mockRestore();
   }
 });
 
