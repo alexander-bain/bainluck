@@ -365,7 +365,7 @@ class TestOpenGradePoolReserve:
         api = dict(vars(asyncio))
         api["Semaphore"] = RecordingSemaphore
         monkeypatch.setattr(task, "asyncio", types.SimpleNamespace(**api))
-        release, quote_seen = asyncio.Event(), asyncio.Event()
+        release = asyncio.Event()
         calls = _recording_grader(monkeypatch)
         _recording_changes(monkeypatch)
         recorded_grade = oc.grade_open_contract_leg
@@ -407,34 +407,18 @@ class TestOpenGradePoolReserve:
             return state
 
         monkeypatch.setattr(rig, "_install_session", install)
-        original_note = blend_mod.TailReceipts.note_input
-
-        def note(self, event, outcome, probability, origin):
-            if outcome == OPEN_ID:
-                quote_seen.set()
-            return original_note(self, event, outcome, probability, origin)
-
-        monkeypatch.setattr(blend_mod.TailReceipts, "note_input", note)
-        original_next = rig._Socket.__anext__
-
-        async def next_frame(sock):
-            # The game socket's open-leg fallback must see completed admission.
-            if sock._pending and sock._pending[0] == main_frame:
-                await quote_seen.wait()
-            return await original_next(sock)
-
-        monkeypatch.setattr(rig._Socket, "__anext__", next_frame)
         tickers = [f"KXRESERVE-26C{i}-A" for i in range(5)]
         rows = [(t, 100 + i, 1000 + i) for i, t in enumerate(tickers)]
         rows.append((OPEN_TICKER, 50, OPEN_ID))
-        main_frame = _settle(tickers[4])
+        # ded5f8ed39: a frame for a ticker another connection owns is that
+        # connection's, so the game socket no longer grades a shard's leg; the
+        # fifth request arrives on the owning connection, after the quote.
         job = asyncio.create_task(
             _run(
                 monkeypatch,
                 frames_for={
-                    rig.LINKED_TICKER: [main_frame],
                     tickers[0]: [_settle(t) for t in tickers[:3]]
-                    + [_tick(OPEN_TICKER), _settle(tickers[3])],
+                    + [_tick(OPEN_TICKER), _settle(tickers[3]), _settle(tickers[4])],
                 },
                 open_rows=rows,
                 refresh=0.4 if mode == "recycle" else 1.0,

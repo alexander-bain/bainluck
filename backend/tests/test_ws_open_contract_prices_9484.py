@@ -265,6 +265,10 @@ async def _run(monkeypatch, *, frames_for, linked=True, open_rows=(),
     monkeypatch.setenv("KALSHI_API_KEY_ID", "test-key")
     monkeypatch.setenv("KALSHI_RSA_PRIVATE_KEY", "test-secret")
     monkeypatch.setattr(kalshi_task, "SUBSCRIPTION_REFRESH_SECONDS", refresh)
+    # d1a2bcb366: an unchanged routine refresh no longer recycles the run.
+    # These sockets never acknowledge a subscription, so the first routine
+    # refresh rebuilds them — ending the run where the old timer recycle did.
+    monkeypatch.setattr(kalshi_task, "SUBSCRIBE_ACK_DEADLINE_SECONDS", 0.0)
     monkeypatch.setattr(kalshi_task, "PRICE_FLUSH_SECONDS", 0.02)
     monkeypatch.setattr(admission, "ADMISSION_CHECK_SECONDS", check)
     monkeypatch.setattr(admission, "ADMISSION_MIN_RECYCLE_SECONDS", 0)
@@ -370,7 +374,11 @@ class TestAnOpenContractNeverReachesSettlementOrAdmission:
         """Delivered on the GAME socket, where the two-sided handler listens:
         the open contract's event ticker is not in the lifecycle map, so no
         market-wide write happens there. #10022: the frame is graded per leg
-        instead — that one leg, and no sibling."""
+        instead — that one leg, and no sibling.
+
+        ded5f8ed39: the shard that carries the contract owns its frames, so it
+        delivers one too; the game socket's copy reaches no two-sided write and
+        grades nothing but that leg, if it is handled at all."""
         graded = []
 
         async def _grade(_session, *, market_id, outcome_id, state, result):
@@ -380,12 +388,15 @@ class TestAnOpenContractNeverReachesSettlementOrAdmission:
         monkeypatch.setattr(oc, "grade_open_contract_leg", _grade)
         _stats, _record, state = await _run(
             monkeypatch,
-            frames_for={LINKED_TICKER: [_settle(OPEN_TICKER)]},
+            frames_for={
+                LINKED_TICKER: [_settle(OPEN_TICKER)],
+                OPEN_TICKER: [_settle(OPEN_TICKER)],
+            },
             open_rows=[(OPEN_TICKER, 50, 501), ("KXNBAMVP-27-JOK", 50, 502)],
         )
 
         assert state["market_writes"] == []
-        assert graded == [(50, 501, "determined", "no")]
+        assert graded and set(graded) == {(50, 501, "determined", "no")}
 
     async def test_a_far_game_turning_live_still_recycles(self, monkeypatch):
         """Market 9 is streaming as an open contract. When its event goes live
