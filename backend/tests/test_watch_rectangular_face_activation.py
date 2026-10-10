@@ -82,9 +82,8 @@ def require_activation_paths(source):
         "let center =",
         "let reading =",
         'XCTAssertTrue(reading.label.contains("San Francisco Giants win"))',
-        # XCUIElement frames are screen coordinates: the reading must sit inside
-        # the real center and host frames, not a zero-origin copy of the center.
-        "center.frame.contains(reading.frame) && host.frame.contains(reading.frame)",
+        'capture(host, "Actual Modular saved frame evidence before bounds assertion")',
+        "try requireReadingWithinWidgetContent(reading, center: center, host: host)",
         'print("WATCH_UI_RECTANGULAR_ACTUAL_TYPED=PASS")',
     )
     assert "CGRect(origin: .zero" not in published
@@ -115,12 +114,45 @@ def require_activation_paths(source):
         "let reading =",
         "XCTAssertTrue(reading.waitForExistence(timeout: 20)",
         "XCTAssertEqual(reading.label, expected)",
-        "center.frame.contains(reading.frame)",
+        "try requireReadingWithinWidgetContent(reading, center: center, host: host)",
         'XCTAssertTrue(host.otherElements["Watch Face"].firstMatch.exists)',
         'XCTAssertFalse(host.otherElements["Face Library View"].firstMatch.exists)',
         "XCTAssertEqual(reading.label, expected)",
         "center.tap()",
         'print("WATCH_SCORE_MODULAR_HOST_ROUTE_CHECKS=PASS scenario=',
+    )
+    bounds = function(source, "requireReadingWithinWidgetContent")
+    ordered(
+        bounds,
+        "XCTAssertTrue(host.frame.contains(centerFrame))",
+        "let remoteRoot = try XCTUnwrap(center.descendants(matching: .any)",
+        "$0.frame.origin == .zero && $0.frame.size == centerFrame.size",
+        "remoteRoot.descendants(matching: .any).matching(identifier: reading.identifier)",
+        "XCTAssertEqual(localReadings.count, 1",
+        "XCTAssertEqual(localReadings.firstMatch.frame, readingFrame)",
+        "XCTAssertGreaterThan(readingFrame.width, 0)",
+        "XCTAssertGreaterThan(readingFrame.height, 0)",
+        "let contentFrame = remoteFrame.insetBy(dx: 7.5, dy: 7.5)",
+        "XCTAssertTrue(remoteFrame.contains(readingFrame)",
+        "XCTAssertTrue(contentFrame.contains(readingFrame)",
+    )
+    assert "host.frame.contains(reading.frame)" not in source
+    assert "center.frame.contains(reading.frame)" not in source
+    assert "CGRect(origin: .zero" not in bounds
+    reveal = function(source, "reveal")
+    ordered(
+        reveal,
+        "for _ in 0..<32",
+        "element.isHittable && app.frame.contains(element.frame) && belowChrome",
+        "if belowNavigationChrome && earlier, let priorTop = previousEarlierTop",
+        "element.frame.minY == priorTop",
+        "if usedRecoveryDrag",
+        'XCTFail("Modular Add reveal made zero displacement after recovery:',
+        'throw NSError(domain: "WatchRectangularHost", code: 2)',
+        "usedRecoveryDrag = true",
+        "dy: 0.40",
+        "dy: 0.90",
+        "continue",
     )
     for suffix, arguments in [
         ("LiveScore", 'scenario: "score", homeScore: 4, awayScore: 2, final: false'),
@@ -155,6 +187,10 @@ def test_rectangular_host_activates_named_face_before_accepting_widget_content()
         ),
         ("activateConfiguredModularFace", "preview.tap()"),
         ("activateConfiguredModularFace", "face.exists && !library.exists"),
+        ("requireReadingWithinWidgetContent", "let remoteRoot = try XCTUnwrap"),
+        ("requireReadingWithinWidgetContent", "XCTAssertTrue(contentFrame.contains(readingFrame)"),
+        ("reveal", "if usedRecoveryDrag"),
+        ("reveal", "dy: 0.90"),
     ],
 )
 def test_each_activation_path_is_required_independently(method, required):

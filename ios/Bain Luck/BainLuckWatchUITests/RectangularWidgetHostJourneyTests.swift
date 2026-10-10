@@ -110,10 +110,9 @@ final class RectangularWidgetHostJourneyTests: XCTestCase {
             .trimmingCharacters(in: .whitespacesAndNewlines)
         XCTAssertFalse(observedTimestamp.isEmpty, "Saved reading must retain its observation timestamp")
         XCTAssertEqual(reading.label.components(separatedBy: "64% · Live").count, 2)
-        // Both XCUIElement frames are in screen coordinates.
-        XCTAssertTrue(reading.frame.width > 0 && reading.frame.height > 0
-                      && center.frame.contains(reading.frame) && host.frame.contains(reading.frame),
-                      "Actual WidgetKit complete reading frame escapes its rectangular content bounds")
+        print("WATCH_RECTANGULAR_SAVED_FRAMES host=\(host.frame) center=\(center.frame) reading=\(reading.frame)")
+        capture(host, "Actual Modular saved frame evidence before bounds assertion")
+        try requireReadingWithinWidgetContent(reading, center: center, host: host)
         XCTAssertFalse(host.descendants(matching: .any)["watch.complication.fallback"].firstMatch.exists)
         // Preserve the prior required receipt only after actual named saved content is verified.
         print("WATCH_RECTANGULAR_INSTALLED_TITLE=San Francisco Giants win")
@@ -189,14 +188,9 @@ final class RectangularWidgetHostJourneyTests: XCTestCase {
             + home + homeWinner + ", score " + String(homeScore) + ". " + state + ". Observed "
             + observed.formatted(date: .abbreviated, time: .shortened) + ". Open your game in Bain Luck."
         XCTAssertEqual(reading.label, expected)
-        // XCUIElement frames share screen coordinates; never subtract the center origin.
         print("WATCH_SCORE_MODULAR_FRAMES host=\(host.frame) center=\(center.frame) reading=\(reading.frame)")
         capture(host, "Actual Modular score frame evidence before bounds assertion - " + scenario)
-        XCTAssertGreaterThan(reading.frame.width, 0)
-        XCTAssertGreaterThan(reading.frame.height, 0)
-        XCTAssertTrue(host.frame.contains(center.frame))
-        XCTAssertTrue(center.frame.contains(reading.frame) && host.frame.contains(reading.frame),
-                      "Score reading must fit its actual center in the same screen coordinate space")
+        try requireReadingWithinWidgetContent(reading, center: center, host: host)
         for id in ["watch.complication.rectangular.prominent", "watch.complication.rectangular.opponent",
                    "watch.complication.rectangular.compact", "watch.complication.rectangular.launcher"] {
             XCTAssertFalse(host.descendants(matching: .any)[id].firstMatch.exists)
@@ -263,6 +257,31 @@ final class RectangularWidgetHostJourneyTests: XCTestCase {
         capture(app, "Cold Modular tap original score age - " + scenario)
         print("WATCH_SCORE_MODULAR_COLD_STORE_RECEIPT=\(receiptText)")
         print("WATCH_SCORE_MODULAR_HOST_ROUTE_CHECKS=PASS scenario=\(scenario)")
+    }
+
+    @MainActor
+    private func requireReadingWithinWidgetContent(_ reading: XCUIElement, center: XCUIElement,
+                                                  host: XCUIApplication) throws {
+        let centerFrame = center.frame
+        // Carousel owns screen-space center/host frames. The retained WidgetKit
+        // tree resets to a local origin at the equal-size remote root.
+        XCTAssertTrue(host.frame.contains(centerFrame))
+        let remoteRoot = try XCTUnwrap(center.descendants(matching: .any).allElementsBoundByIndex.first {
+            $0.frame.origin == .zero && $0.frame.size == centerFrame.size
+        }, "Mounted Modular center has no proven zero-origin WidgetKit remote root")
+        let localReadings = remoteRoot.descendants(matching: .any).matching(identifier: reading.identifier)
+        XCTAssertEqual(localReadings.count, 1, "Reading must belong uniquely to the proven remote root")
+        let readingFrame = reading.frame
+        XCTAssertEqual(localReadings.firstMatch.frame, readingFrame)
+        XCTAssertTrue([readingFrame.minX, readingFrame.minY, readingFrame.maxX, readingFrame.maxY]
+            .allSatisfy { $0.isFinite }, "Widget reading frame must be finite")
+        XCTAssertGreaterThan(readingFrame.width, 0)
+        XCTAssertGreaterThan(readingFrame.height, 0)
+        let remoteFrame = remoteRoot.frame
+        let contentFrame = remoteFrame.insetBy(dx: 7.5, dy: 7.5)
+        XCTAssertTrue(remoteFrame.contains(readingFrame), "Reading escapes the WidgetKit remote root")
+        XCTAssertTrue(contentFrame.contains(readingFrame), "Reading escapes the inset rectangular content box")
+        print("WATCH_RECTANGULAR_LOCAL_BOUNDS root=\(remoteFrame) content=\(contentFrame) reading=\(readingFrame)")
     }
 
     @MainActor
@@ -379,6 +398,8 @@ final class RectangularWidgetHostJourneyTests: XCTestCase {
 
     @MainActor
     private func reveal(_ element: XCUIElement, in app: XCUIApplication, belowNavigationChrome: Bool = false) throws {
+        var previousEarlierTop: CGFloat?
+        var usedRecoveryDrag = false
         for _ in 0..<32 {
             let chromeBottom = belowNavigationChrome ? app.navigationBars.allElementsBoundByIndex
                 .filter { bar in bar.exists && bar.frame.intersects(app.frame) }
@@ -389,6 +410,24 @@ final class RectangularWidgetHostJourneyTests: XCTestCase {
                 print("WATCH_MODULAR_ADD_REVEAL top=\(element.frame.minY) chromeBottom=\(chromeBottom) oldVisible=\(element.isHittable && app.frame.contains(element.frame))")
             }
             let earlier = belowNavigationChrome ? element.frame.minY <= chromeBottom : element.frame.minY < app.frame.minY
+            // Only the OS gallery needs overshoot recovery. An unchanged earlier
+            // position earns one longer drag from inside the visible list, never
+            // another identical zero-displacement gesture sequence.
+            if belowNavigationChrome && earlier, let priorTop = previousEarlierTop,
+               element.frame.minY == priorTop {
+                if usedRecoveryDrag {
+                    capture(app, "Modular Add zero displacement after recovery drag")
+                    XCTFail("Modular Add reveal made zero displacement after recovery: " + element.label)
+                    throw NSError(domain: "WatchRectangularHost", code: 2)
+                }
+                usedRecoveryDrag = true
+                previousEarlierTop = element.frame.minY
+                let start = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.40))
+                let end = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.90))
+                start.press(forDuration: 0.1, thenDragTo: end, withVelocity: .slow, thenHoldForDuration: 0.4)
+                continue
+            }
+            previousEarlierTop = belowNavigationChrome && earlier ? element.frame.minY : nil
             let start = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.60))
             let end = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: earlier ? 0.75 : 0.45))
             start.press(forDuration: 0.1, thenDragTo: end, withVelocity: .slow, thenHoldForDuration: 0.4)
