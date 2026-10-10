@@ -345,14 +345,20 @@ struct PlayerPropsCardView: View {
                     .background(Color.secondary.opacity(0.08))
                     .clipShape(RoundedRectangle(cornerRadius: 8))
 
-                    // #10830 — every ladder, browsable by stat family and
-                    // searchable by player, in a bounded window (web #10809).
+                    // #10830 — every ladder, browsable by stat family in a
+                    // bounded window (web #10809). Alex 10/10: the Stat
+                    // chooser leads and shows every stat; finding a player
+                    // by name is optional, never the way in.
                     MarketBrowserView(
                         label: "Player props",
                         items: browseItems(cards),
                         group: \.family,
                         searchText: { "\($0.card.name) \($0.card.teamLabel ?? "") \($0.statLabel) \($0.displayStat)" },
-                        searchPrompt: "player or stat"
+                        searchPrompt: "player",
+                        chooserLabel: "Stat",
+                        groupTitle: PlayerPropsFamily.chooserTitle(family:),
+                        groupNote: PlayerPropsFamily.chooserNote(family:),
+                        findLabel: "Find a player"
                     ) { item in
                         propRow(item)
                     }
@@ -588,6 +594,7 @@ struct PlayerPropsCardView: View {
         }
         .buttonStyle(.plain)
         .disabled(!rung.priced)
+        .accessibilityIdentifier("props-target")
         .accessibilityLabel(rung.priced
             ? "\(label) \(spokenStat(item)), \(percent)%"
             : "\(label) \(spokenStat(item)), not priced")

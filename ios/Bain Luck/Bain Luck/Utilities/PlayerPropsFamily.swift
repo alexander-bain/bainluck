@@ -48,6 +48,20 @@ enum PlayerPropsFamily {
     static let protectedTouchdownStat = "Touchdowns scored"
     static let participationRuleTitle = "Participation rule"
 
+    /// Alex 10/10 — what the Stat chooser prints for a family. The protected
+    /// family is a navigation key, never shown: its chip says what the
+    /// contract counts, and ``chooserNote(family:)`` ties the rule to it so it
+    /// still reads as a different choice from plain "Touchdowns".
+    static func chooserTitle(family: String) -> String {
+        family == protectedTouchdownFamily ? protectedTouchdownStat : family
+    }
+
+    /// The second line on a family's chip — the protected contract's rule
+    /// name, nil for every other family.
+    static func chooserNote(family: String) -> String? {
+        family == protectedTouchdownFamily ? participationRuleTitle : nil
+    }
+
     /// Kalshi's `rules_secondary` for series `KXNFLTDPROT`, in fan words.
     /// Read by Root on 2026-10-10 from the series and from both Drake Maye
     /// LV–NE markets (`native-usability-20261010/kalshi-*.json`). Applies to
