@@ -7,6 +7,7 @@ from types import SimpleNamespace
 import pytest
 from sqlalchemy.sql.dml import Update
 
+from app.tasks.live_blend_refresh import FRESH_STAMP_WORKERS
 from app.utils.repair_lock_budget import SET_LOCK_TIMEOUT_SQL
 from tests.test_live_blend_refresh import (
     _RecordingSession, _event_and_market, _one_event_refresher,
@@ -88,7 +89,11 @@ async def test_known_skipped_readings_do_not_issue_lock_budget_sql(monkeypatch, 
 async def test_prepared_skipped_group_has_no_write_session_statement(monkeypatch):
     x = rig(monkeypatch, count=5)
     await x.r.refresh(range(1, 6), flush_started=1000)
-    assert x.session.calls == ["read"], "only the existing preparation graph read remains"
+    # The shared preparation read, plus one reread per queued fresh event
+    # behind the worker slots (6d8b493900) — reads only, no budget or write.
+    assert x.session.calls == ["read"] * (1 + 5 - FRESH_STAMP_WORKERS), (
+        "only the preparation read and the queued rereads remain"
+    )
     assert x.frames == [] and x.r.stats["unobserved_skipped"] == 5
 
 
@@ -96,7 +101,11 @@ async def test_mixed_group_installs_one_budget_before_savepoint_and_actual_updat
     x = rig(monkeypatch, count=2)
     x.rows[1][1].win_probability_sources = None
     await x.r.refresh([1, 2], flush_started=1000)
-    assert x.session.calls == ["read", "budget", "savepoint", "update"]
+    # fe0aa54fbf: each fresh stamp reads its own event in its own session;
+    # e0b52e11ed: each owns its transaction, so no sibling savepoint. The
+    # skipped event still issues nothing past its read.
+    assert x.session.calls.count("read") == 2
+    assert [c for c in x.session.calls if c != "read"] == ["budget", "update"]
     assert [f["event_id"] for f in x.frames] == [2]
 
 
@@ -114,4 +123,5 @@ async def test_budget_failure_requeues_entire_batch_or_groups(monkeypatch, count
     assert x.r.pending_event_ids() == frozenset(range(1, count + 1))
     assert set(x.r._failed_hold_until) == set(range(1, count + 1))
     assert x.frames == [] and x.session.updates == []
-    assert x.r.stats["errors"] == (1 if count == 2 else 2)
+    # e0b52e11ed: one write transaction, and so one contained error, per event.
+    assert x.r.stats["errors"] == count
