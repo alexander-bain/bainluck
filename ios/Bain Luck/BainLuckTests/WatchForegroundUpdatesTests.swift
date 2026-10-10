@@ -329,4 +329,128 @@ import XCTest
         XCTAssertEqual(calls, 3)
         XCTAssertTrue(handle.isClosed)
     }
+
+    /// Deliberately ignores task cancellation until released. This models a
+    /// response racing visibility loss and makes the store's fence observable.
+    private actor HeldDetail: WatchSelectedGameTransport {
+        private var waiter: CheckedContinuation<WatchSelectedGame, Error>?
+        private let onHeld: @MainActor @Sendable () -> Void
+        var calls = 0
+        var active = 0
+        var maxActive = 0
+        init(onHeld: @escaping @MainActor @Sendable () -> Void) { self.onHeld = onHeld }
+        func fetch(eventID: Int) async throws -> WatchSelectedGame {
+            calls += 1
+            active += 1
+            maxActive = max(maxActive, active)
+            defer { active -= 1 }
+            if calls == 2 {
+                let notify = onHeld
+                return try await withCheckedThrowingContinuation { continuation in
+                    waiter = continuation
+                    Task { @MainActor in notify() }
+                }
+            }
+            return try WatchForegroundUpdatesTests.game(revision: calls, home: calls == 1 ? 0.50 : 0.70)
+        }
+        func release() throws {
+            let result = try WatchForegroundUpdatesTests.game(revision: 2, home: 0.61)
+            waiter?.resume(returning: result)
+            waiter = nil
+        }
+    }
+
+    func testActualLoopRetainsOneSerialFollowupForFramesDuringDetailFetch() async throws {
+        let name = "watch-inflight-followup-\(UUID())"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: name))
+        defer { defaults.removePersistentDomain(forName: name) }
+        let held = expectation(description: "Second detail held in flight")
+        let transport = HeldDetail(onHeld: { held.fulfill() })
+        var clock = 1_000.0
+        let selected = WatchSelectedGameStore(transport: transport, defaults: defaults, retryClock: { clock })
+        selected.select(eventID: 101)
+        let handle = Handle()
+        let quiet = expectation(description: "Initial detail adopted and stream waiting")
+        let followed = expectation(description: "Exactly one follow-up adopted")
+        var waits = 0
+        let worker = Task {
+            await selected.runLiveForegroundRefresh(open: { _ in handle }, clock: { clock }, sleep: { _ in
+                waits += 1
+                if waits == 1 { quiet.fulfill() }
+                else if waits == 2 {
+                    XCTAssertEqual(selected.successfulRefreshSequence, 3)
+                    XCTAssertEqual(selected.game?.homeProbability, 0.70)
+                    XCTAssertEqual(selected.game?.probabilitySource, "blend")
+                    followed.fulfill()
+                } else { XCTFail("Unexpected extra read or wait") }
+                try await Task.sleep(for: .seconds(60))
+            })
+        }
+        defer { worker.cancel() }
+        await fulfillment(of: [quiet], timeout: 2)
+        clock = 1_002
+        handle.fire("probability", #"{"event_id":101,"p":0.99,"rev":{"101":2}}"#)
+        await fulfillment(of: [held], timeout: 2)
+        XCTAssertTrue(selected.isRefreshing)
+        XCTAssertEqual(selected.game?.homeProbability, 0.50)
+        clock = 1_004
+        handle.fire("probability", #"{"event_id":101,"p":0.98,"rev":{"101":3}}"#)
+        handle.fire("probability", #"{"event_id":101,"p":0.98,"rev":{"101":3}}"#)
+        handle.fire("probability", #"{"event_id":101,"p":0.97,"rev":{"101":4}}"#)
+        try await transport.release()
+        await fulfillment(of: [followed], timeout: 2)
+        worker.cancel()
+        await worker.value
+        let calls = await transport.calls
+        let maxActive = await transport.maxActive
+        XCTAssertEqual(calls, 3, "Burst during a fetch earns one authoritative follow-up")
+        XCTAssertEqual(maxActive, 1, "Detail requests never overlap")
+        XCTAssertEqual(handle.closes, 1)
+    }
+
+    func testCancellingVisibleOwnerDiscardsLateDetailAndPendingFollowup() async throws {
+        let name = "watch-inflight-cancel-\(UUID())"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: name))
+        defer { defaults.removePersistentDomain(forName: name) }
+        let held = expectation(description: "Detail held across owner cancellation")
+        let transport = HeldDetail(onHeld: { held.fulfill() })
+        var clock = 1_000.0
+        var publications = 0
+        let selected = WatchSelectedGameStore(transport: transport, defaults: defaults,
+            retryClock: { clock }, publish: { _, _ in publications += 1 })
+        selected.select(eventID: 101)
+        let handle = Handle()
+        let quiet = expectation(description: "Waiting after initial reading")
+        let worker = Task {
+            await selected.runLiveForegroundRefresh(open: { _ in handle }, clock: { clock }, sleep: { _ in
+                quiet.fulfill()
+                try await Task.sleep(for: .seconds(60))
+            })
+        }
+        defer { worker.cancel() }
+        await fulfillment(of: [quiet], timeout: 2)
+        let initialPublications = publications
+        let initialReceived = selected.fetchedAt
+        let initialObserved = selected.game?.probabilityObservedAt
+        clock = 1_002
+        handle.fire("probability", #"{"event_id":101,"p":0.99,"rev":{"101":2}}"#)
+        await fulfillment(of: [held], timeout: 2)
+        clock = 1_004
+        handle.fire("probability", #"{"event_id":101,"p":0.98,"rev":{"101":3}}"#)
+        // Same stop + structured-task cancellation performed on view departure.
+        selected.stopLiveForegroundUpdates()
+        worker.cancel()
+        XCTAssertTrue(handle.isClosed)
+        try await transport.release()
+        await worker.value
+        let calls = await transport.calls
+        XCTAssertEqual(calls, 2, "Cancellation discards the queued follow-up")
+        XCTAssertEqual(selected.successfulRefreshSequence, 1)
+        XCTAssertEqual(selected.game?.homeProbability, 0.50)
+        XCTAssertEqual(selected.fetchedAt, initialReceived)
+        XCTAssertEqual(selected.game?.probabilityObservedAt, initialObserved)
+        XCTAssertEqual(publications, initialPublications, "Late response cannot publish a complication update")
+        XCTAssertFalse(selected.isRefreshing)
+        XCTAssertNil(selected.activeForegroundStream)
+    }
 }
