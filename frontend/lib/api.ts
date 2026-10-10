@@ -1238,6 +1238,7 @@ export interface GameMarketsResponse {
     market_name: string;
     outcome_name: string;
     movement: number | null;
+    observed_at?: string | null;
   }[];
   spreads: {
     market_name: string;
@@ -1256,6 +1257,7 @@ export interface GameMarketsResponse {
     over_probability?: number;
     movement?: number | null;
     period?: string | null;
+    observed_at?: string | null;
   }[];
   /** #10850: closed, not-yet-graded period rows — never priced, graded from `period_score`. */
   closed_period_markets?: ClosedPeriodRow[] | null;
