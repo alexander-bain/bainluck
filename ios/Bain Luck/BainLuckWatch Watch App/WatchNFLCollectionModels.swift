@@ -68,11 +68,24 @@ nonisolated struct WatchNFLGame: Identifiable, Sendable, Equatable {
     let heroProbabilitySource: String?
 }
 
+/// A published week market identity, not a game-level chance or cached result.
+nonisolated struct WatchNFLQuestion: Identifiable, Sendable, Equatable {
+    let id: Int
+    let name: String
+}
+
 nonisolated struct WatchNFLMembership: Sendable {
     let published: Bool
     let revision: Int?
     let games: [WatchNFLGame]
     let hasOtherEntries: Bool
+    let questions: [WatchNFLQuestion]
+
+    init(published: Bool, revision: Int?, games: [WatchNFLGame], hasOtherEntries: Bool,
+         questions: [WatchNFLQuestion] = []) {
+        self.published = published; self.revision = revision; self.games = games
+        self.hasOtherEntries = hasOtherEntries; self.questions = questions
+    }
 }
 
 nonisolated enum WatchNFLDecodeError: Error { case invalid }
@@ -126,12 +139,24 @@ nonisolated enum WatchNFLCollectionDecoder {
             heroProbabilitySource = try? c.decode(String.self, forKey: .heroProbabilitySource)
         }
     }
+    private struct QuestionCard: Decodable { let id: Int; let name: String }
+    private struct MemberSlot: Decodable {
+        private struct Identity: Decodable { let type: String; let id: Int }
+        let marketID: Int?
+        let value: Member?
+        init(from decoder: Decoder) throws {
+            let identity = try? Identity(from: decoder)
+            marketID = identity?.type == "market" ? identity?.id : nil
+            value = try? Member(from: decoder)
+        }
+    }
     private struct Member: Decodable {
         let type: String
         let id: Int
         let containerId: Int
         let destination: WatchNFLWeek.Destination?
         let card: EventCard?
+        let questionCard: QuestionCard?
         enum CodingKeys: String, CodingKey { case type, id, containerId, destination, card }
         init(from decoder: Decoder) throws {
             let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -140,6 +165,15 @@ nonisolated enum WatchNFLCollectionDecoder {
             containerId = try c.decode(Int.self, forKey: .containerId)
             destination = try c.decodeIfPresent(WatchNFLWeek.Destination.self, forKey: .destination)
             card = type == "event" ? try c.decode(EventCard.self, forKey: .card) : nil
+            questionCard = type == "market" ? try c.decode(QuestionCard.self, forKey: .card) : nil
+        }
+        var question: WatchNFLQuestion? {
+            guard type == "market", id > 0, let questionCard, questionCard.id == id,
+                  destination?.kind == "market", destination?.id == id,
+                  destination?.api == "/api/futures/\(id)" else { return nil }
+            let name = questionCard.name.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !name.isEmpty, name.utf8.count <= 2048 else { return nil }
+            return WatchNFLQuestion(id: id, name: name)
         }
         var game: WatchNFLGame? {
             guard type == "event", id > 0, let card, card.id == id,
@@ -159,7 +193,7 @@ nonisolated enum WatchNFLCollectionDecoder {
                 heroProbability: card.heroProbability, heroProbabilitySource: card.heroProbabilitySource)
         }
     }
-    private struct Section: Decodable { let members: [Slot<Member>] }
+    private struct Section: Decodable { let members: [MemberSlot] }
     private struct Hub: Decodable {
         let state: String
         let slug: String
@@ -204,19 +238,25 @@ nonisolated enum WatchNFLCollectionDecoder {
               hub.edition == week.edition, hub.container?.id == week.id,
               hub.container?.slug == week.slug, hub.withheldCount >= 0 else { throw WatchNFLDecodeError.invalid }
         var seen = Set<Int>()
+        let questionClaims = hub.sections.flatMap(\.members).reduce(into: [Int: Int]()) { counts, slot in
+            if let id = slot.marketID { counts[id, default: 0] += 1 }
+        }
+        var questions: [WatchNFLQuestion] = []
         var other = hub.withheldCount > 0
         var games: [WatchNFLGame] = []
         for section in hub.sections {
             for slot in section.members {
-                guard let member = slot.value, member.containerId == week.id,
-                      let game = member.game, seen.insert(game.id).inserted else {
-                    other = true
-                    continue
+                guard let member = slot.value, member.containerId == week.id else { other = true; continue }
+                if member.type == "market" {
+                    guard let question = member.question, questionClaims[question.id] == 1 else { other = true; continue }
+                    questions.append(question)
+                } else {
+                    guard let game = member.game, seen.insert(game.id).inserted else { other = true; continue }
+                    games.append(game)
                 }
-                games.append(game)
             }
         }
-        return WatchNFLMembership(published: true, revision: revision, games: games, hasOtherEntries: other)
+        return WatchNFLMembership(published: true, revision: revision, games: games, hasOtherEntries: other, questions: questions)
     }
     static func season(asOf now: Date) -> Int {
         var calendar = Calendar(identifier: .gregorian)

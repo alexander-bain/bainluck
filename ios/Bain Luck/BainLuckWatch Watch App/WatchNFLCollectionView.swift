@@ -7,6 +7,7 @@ struct WatchNFLCollectionView: View {
     let close: () -> Void
     let selectedGame: () -> Void
     @State private var action: Task<Void, Never>?
+    @State private var question: WatchQuestionDetailDestination?
 
     var body: some View {
         ScrollView {
@@ -36,6 +37,24 @@ struct WatchNFLCollectionView: View {
                                 .accessibilityIdentifier("watch.nfl.game.\(game.id)")
                             }
                             if membership.games.isEmpty { Text("No available games in this collection.") }
+                            if !membership.questions.isEmpty {
+                                Text("Questions").font(.headline).accessibilityAddTraits(.isHeader)
+                                ForEach(membership.questions) { item in
+                                    Button(item.name) {
+                                        start {
+                                            await browser.openQuestion(item.id,
+                                                isActive: { scenePhase == .active },
+                                                open: { current in
+                                                    question = .init(id: current.id, question: current.name)
+                                                })
+                                        }
+                                    }
+                                    .disabled(browser.isLoading || scenePhase != .active)
+                                    .fixedSize(horizontal: false, vertical: true)
+                                    .frame(minHeight: 44)
+                                    .accessibilityIdentifier("watch.nfl.question.\(item.id)")
+                                }
+                            }
                             if membership.hasOtherEntries {
                                 Text("Some collection entries aren't shown in this Watch list.").font(.footnote)
                             }
@@ -62,12 +81,16 @@ struct WatchNFLCollectionView: View {
             }.padding(.horizontal, 6)
         }
         .accessibilityIdentifier("watch.nfl.browser")
+        .sheet(item: $question) { destination in
+            WatchQuestionDetailView(destination: destination, close: { question = nil },
+                originLabel: "From your NFL week", backLabel: "Back to NFL week")
+        }
         .task(id: scenePhase) {
             guard scenePhase == .active else { return }
             await browser.refresh()
         }
         .onChange(of: scenePhase) { _, phase in
-            if phase != .active { action?.cancel(); browser.cancel() }
+            if phase != .active { action?.cancel(); browser.cancel(); question = nil }
         }
         .onDisappear { action?.cancel(); browser.cancel() }
     }

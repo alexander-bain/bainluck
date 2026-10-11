@@ -69,11 +69,49 @@ import Foundation
         let result = try membership(hub)
         check(result.published && result.revision == 4 && result.hasOtherEntries)
         check(result.games.map(\.id) == [502, 501])
+        check(result.questions.map(\.id) == [9101, 9102, 9103], "published week questions retain producer order")
+        check(result.questions.map(\.name) == ["Chiefs at Bills: winner", "Cowboys at Eagles: winner", "Josh Allen: 2+ passing touchdowns?"],
+              "question titles come from their own exact cards")
+        var complete = hub; complete["withheld_count"] = 0
+        check(!(try membership(complete)).hasOtherEntries, "supported market rows no longer count as omitted")
+        func mutateFirstQuestion(_ mutate: (inout [String: Any]) -> Void) -> [String: Any] {
+            var body = hub
+            var groups = body["sections"] as! [[String: Any]]
+            var rows = groups[0]["members"] as! [[String: Any]]
+            mutate(&rows[2]); groups[0]["members"] = rows; body["sections"] = groups
+            return body
+        }
+        let badQuestions: [(inout [String: Any]) -> Void] = [
+            { $0["id"] = 999 },
+            { $0["container_id"] = 999 },
+            { $0["destination"] = ["kind": "market", "id": 9101, "api": "/api/futures/999"] },
+            { $0["destination"] = ["kind": "event", "id": 9101, "api": "/api/events/9101"] },
+            { $0["card"] = ["id": 999, "name": "Wrong identity"] },
+            { $0["card"] = ["id": 9101, "name": " "] },
+            { $0["card"] = ["id": 9101, "name": 42] }
+        ]
+        for corrupt in badQuestions {
+            let partial = try membership(mutateFirstQuestion(corrupt))
+            check(partial.questions.map(\.id) == [9102, 9103] && partial.games.map(\.id) == [502, 501]
+                  && partial.hasOtherEntries, "bad question cannot erase valid siblings or games")
+        }
+        for malformed in [false, true] {
+            var body = hub
+            var groups = body["sections"] as! [[String: Any]]
+            var rows = groups[0]["members"] as! [[String: Any]]
+            var duplicate = rows[2]
+            if malformed { duplicate["card"] = ["id": 9101, "name": 42] }
+            rows.append(duplicate); groups[0]["members"] = rows; body["sections"] = groups
+            let partial = try membership(body)
+            check(partial.questions.map(\.id) == [9102, 9103] && partial.hasOtherEntries,
+                  "duplicate question identity stays unavailable even with a malformed payload")
+        }
+
         check(result.games[0].scheduledStart == nil)
         check(result.games[1].scheduledStart == "2026-10-06T22:00:00+00:00")
         for state in ["withdrawn", "draft", "unpublished"] {
             let hidden = try membership(changed(hub, ["state"], state))
-            check(!hidden.published && hidden.games.isEmpty)
+            check(!hidden.published && hidden.games.isEmpty && hidden.questions.isEmpty)
         }
         let invalidHubs: [([String], Any?)] = [
             (["slug"], "wrong"), (["revision"], nil), (["revision"], 3),
