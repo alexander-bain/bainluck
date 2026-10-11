@@ -83,6 +83,128 @@ class StageTests(unittest.TestCase):
         self.assertIn("timeout-minutes: 60", matrix)
 
 
+class ExecutionGuardTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+        stage.admission(self.root, "prepare", 100)
+        path = self.root / "global-deadline.json"
+        state = json.loads(path.read_text())
+        state["stages"]["prepare"] = 0
+        path.write_text(json.dumps(state))
+
+    def test_guard_covers_inner_budget_and_shutdown_without_resetting_global(self):
+        original = (self.root / "global-deadline.json").read_bytes()
+        for now in (100, 135, 700, 780.392925333, 1299.9, 1300):
+            with self.subTest(now=now):
+                remaining = 3000 - (now - 100)
+                minutes = stage.execution_timeout(self.root, now)
+                self.assertGreaterEqual(minutes * 60, remaining + 35)
+                self.assertLess(minutes * 60, remaining + 35 + 60)
+                self.assertLessEqual(minutes, 51)
+                record = json.loads(
+                    (self.root / "execution-step-guard.json").read_text()
+                )
+                self.assertEqual(record["remaining_seconds"], remaining)
+                self.assertEqual(record["timeout_minutes"], minutes)
+                self.assertEqual(
+                    (self.root / "global-deadline.json").read_bytes(), original
+                )
+
+    def test_insufficient_reserve_and_expired_budget_cannot_emit_timeout(self):
+        for now in (1300.01, 3100, 3200):
+            with self.subTest(now=now), self.assertRaises(ValueError):
+                stage.execution_timeout(self.root, now)
+        self.assertFalse((self.root / "execution-step-guard.json").exists())
+
+    def test_failed_or_repeated_preparation_is_not_bypassed(self):
+        path = self.root / "global-deadline.json"
+        for stages in ({"prepare": 1}, {"prepare": 0, "execute": 124}):
+            state = json.loads(path.read_text())
+            state["stages"] = stages
+            path.write_text(json.dumps(state))
+            with self.assertRaises(ValueError):
+                stage.execution_timeout(self.root, 700)
+
+    def test_failed_cancelled_skipped_step_overrides_a_late_pass_and_retains_it(self):
+        for outcome in ("failure", "cancelled", "skipped"):
+            prior = {"sha": "exact-source", "verdict": "PASS", "cases": 42}
+            receipt = self.root / "receipt.json"
+            receipt.write_text(json.dumps(prior))
+            stage.preserve_execution_failure(self.root, outcome)
+            result = json.loads(receipt.read_text())
+            self.assertEqual(result["verdict"], "UNPAID")
+            self.assertEqual(result["reason"], "Execution step outcome: " + outcome)
+            self.assertEqual(result["sha"], "exact-source")
+            self.assertEqual(
+                json.loads(
+                    (self.root / "execution-step-prior-receipt.json").read_text()
+                ),
+                prior,
+            )
+
+    def test_success_does_not_create_or_promote_a_receipt(self):
+        stage.preserve_execution_failure(self.root, "success")
+        receipt = self.root / "receipt.json"
+        self.assertFalse(receipt.exists())
+        raw = '{"verdict":"UNPAID","reason":"DEADLINE"}'
+        receipt.write_text(raw)
+        stage.preserve_execution_failure(self.root, "success")
+        self.assertEqual(receipt.read_text(), raw)
+
+    def test_missing_malformed_or_nonobject_receipt_remains_unpaid(self):
+        receipt = self.root / "receipt.json"
+        for raw in (None, "not json", "[]"):
+            if raw is None:
+                receipt.unlink(missing_ok=True)
+            else:
+                receipt.write_text(raw)
+            stage.preserve_execution_failure(self.root, "failure")
+            self.assertEqual(json.loads(receipt.read_text())["verdict"], "UNPAID")
+
+    def test_unknown_step_outcome_fails_closed(self):
+        with self.assertRaises(ValueError):
+            stage.preserve_execution_failure(self.root, "unexpected")
+
+    def test_workflow_places_guard_and_failure_receipt_before_evidence(self):
+        text = (ROOT / ".github/workflows/watch-mvp.yml").read_text()
+        job = text.split("  watch-ui-journey:")[1].split("  watch-ui-complete:")[0]
+        self.assertLess(job.index("execution-timeout"), job.index("id: execute_cases"))
+        self.assertIn(
+            "timeout-minutes: ${{ fromJSON(steps.execute_budget.outputs.minutes) }}",
+            job,
+        )
+        self.assertLess(
+            job.index("execution-receipt"),
+            job.index("name: Preserve UI journey evidence"),
+        )
+        self.assertIn("EXECUTION_OUTCOME: ${{ steps.execute_cases.outcome }}", job)
+        self.assertIn(
+            "if: always()",
+            job.split("name: Keep failed or interrupted execution receipts unpaid")[
+                1
+            ].split("name: Preserve UI journey evidence")[0],
+        )
+
+    def test_aggregate_rejects_failed_job_even_if_a_receipt_was_written_late(self):
+        text = (ROOT / ".github/workflows/watch-mvp.yml").read_text()
+        aggregate = text.split("  watch-ui-complete:")[1].split("  companion-archive:")[
+            0
+        ]
+        self.assertLess(
+            aggregate.index('test "$JOURNEY_RESULT" = success'),
+            aggregate.index("watch_ui_shards.py aggregate"),
+        )
+        for outcome in ("failure", "cancelled", "skipped", "success"):
+            result = subprocess.run(
+                ["bash", "-c", 'test "$JOURNEY_RESULT" = success'],
+                env={"JOURNEY_RESULT": outcome},
+                timeout=5,
+            )
+            self.assertEqual(result.returncode == 0, outcome == "success")
+
+
 class RestartBoundaryTests(unittest.TestCase):
     phases = (
         "post-install shutdown of only this run disposable Watch",

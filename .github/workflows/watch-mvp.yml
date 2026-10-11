@@ -331,8 +331,20 @@ jobs:
             build/watch-ui-journey/*.log
             build/watch-ui-journey/stage-*/**
           retention-days: 7
+      - name: Bound the execution step independently of its child supervisor
+        id: execute_budget
+        timeout-minutes: 1
+        run: python3 tools/watch_ui_stage.py execution-timeout --output-dir build/watch-ui-journey >> "$GITHUB_OUTPUT"
       - name: Execute unchanged cases within the remaining global budget
+        id: execute_cases
+        timeout-minutes: ${{ fromJSON(steps.execute_budget.outputs.minutes) }}
         run: python3 tools/watch_ui_stage.py execute --output-dir build/watch-ui-journey -- bash tools/watch-ui-journey.sh execute
+      - name: Keep failed or interrupted execution receipts unpaid
+        if: always()
+        timeout-minutes: 1
+        env:
+          EXECUTION_OUTCOME: ${{ steps.execute_cases.outcome }}
+        run: python3 tools/watch_ui_stage.py execution-receipt --output-dir build/watch-ui-journey --step-outcome "$EXECUTION_OUTCOME"
       - name: Preserve UI journey evidence
         if: always()
         uses: actions/upload-artifact@v4
@@ -381,6 +393,10 @@ jobs:
         with:
           name: watch-ui-journey-widgets
           path: build/watch-ui-aggregate/widgets
+      - name: Reject failed or interrupted journey jobs before full acceptance
+        env:
+          JOURNEY_RESULT: ${{ needs.watch-ui-journey.result }}
+        run: test "$JOURNEY_RESULT" = success
       - name: Require exact full coverage, source, signatures and all journey markers
         env:
           EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}

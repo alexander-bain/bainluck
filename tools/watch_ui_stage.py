@@ -2,6 +2,7 @@
 
 import argparse
 import json
+import math
 import signal
 from pathlib import Path
 import time
@@ -48,6 +49,46 @@ def admission(output, stage, now):
     return min(remaining, PREPARATION_SECONDS) if stage == "prepare" else remaining
 
 
+def execution_timeout(output, now):
+    # The runner guard allows the unchanged inner budget and both 15s signal
+    # grace periods plus the 5s reap. It does not grant more test time.
+    seconds = admission(output, "execute", now)
+    minutes = math.ceil((seconds + 35) / 60)
+    _write(
+        output / "execution-step-guard.json",
+        {
+            "remaining_seconds": seconds,
+            "shutdown_seconds": 35,
+            "timeout_minutes": minutes,
+            "sampled_monotonic": now,
+            "sampled_utc": time.time(),
+        },
+    )
+    return minutes
+
+
+def preserve_execution_failure(output, outcome):
+    if outcome == "success":
+        return  # Only the existing full-suite validator can write PASS.
+    if outcome not in {"failure", "cancelled", "skipped"}:
+        raise ValueError("Unknown execution step outcome")
+    output.mkdir(parents=True, exist_ok=True)
+    receipt = output / "receipt.json"
+    prior = {}
+    if receipt.exists():
+        try:
+            prior = json.loads(receipt.read_text())
+            if not isinstance(prior, dict):
+                prior = {}
+        except (ValueError, OSError):
+            pass
+    _write(output / "execution-step-prior-receipt.json", prior)
+    _write(
+        receipt,
+        {**prior, "verdict": "UNPAID", "reason": "Execution step outcome: " + outcome},
+    )
+
+
 def run(output, stage, command):
     output.mkdir(parents=True, exist_ok=True)
     try:
@@ -87,12 +128,31 @@ def install_signal_handlers():
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("stage", choices=["prepare", "execute", "products", "phase"])
+    parser.add_argument(
+        "stage",
+        choices=[
+            "prepare",
+            "execute",
+            "products",
+            "phase",
+            "execution-timeout",
+            "execution-receipt",
+        ],
+    )
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--phase")
+    parser.add_argument(
+        "--step-outcome", choices=["success", "failure", "cancelled", "skipped"]
+    )
     args, command = parser.parse_known_args()
     if command and command[0] == "--":
         command = command[1:]
+    if args.stage == "execution-timeout":
+        print("minutes=" + str(execution_timeout(args.output_dir, time.monotonic())))
+        return
+    if args.stage == "execution-receipt":
+        preserve_execution_failure(args.output_dir, args.step_outcome)
+        return
     if args.stage == "phase":
         args.output_dir.mkdir(parents=True, exist_ok=True)
         record = {
