@@ -12,7 +12,8 @@ final class RectangularWidgetHostJourneyTests: XCTestCase {
             "BAINLUCK_WATCH_UI_SUITE": UUID().uuidString,
             "BAINLUCK_WATCH_UI_RESET": "1",
             "BAINLUCK_WATCH_UI_LAUNCH_RECEIPT": "1",
-            "BAINLUCK_WATCH_UI_SHARED_PUBLICATION": "1"
+            "BAINLUCK_WATCH_UI_SHARED_PUBLICATION": "1",
+            "BAINLUCK_WATCH_UI_CIRCULAR_IDENTITY": "1"
         ]
         app.launch()
         let first = app.buttons["watch.pick.101"]
@@ -75,29 +76,70 @@ final class RectangularWidgetHostJourneyTests: XCTestCase {
         capture(host, "Actual rectangular Your game gallery entry")
         installed.tap()
         XCUIDevice.shared.press(.home)
-        XCUIDevice.shared.press(.home)
+        try activateConfiguredModularFace(in: host)
         XCTAssertTrue(host.wait(for: .runningForeground, timeout: 15))
         XCTAssertTrue(host.otherElements["Watch Face"].firstMatch.waitForExistence(timeout: 15))
         let center = host.otherElements["center"].firstMatch
         XCTAssertTrue(center.waitForExistence(timeout: 15) && center.isHittable && host.frame.contains(center.frame))
-        let title = host.staticTexts["watch.complication.title"].firstMatch
-        let detail = host.staticTexts["watch.complication.detail"].firstMatch
-        let observed = host.staticTexts["watch.complication.observed"].firstMatch
-        XCTAssertTrue(title.waitForExistence(timeout: 20), "Actual installed WidgetKit extension did not render published title")
-        XCTAssertEqual(title.label, "San Francisco Giants win")
-        XCTAssertEqual(detail.label, "Saved · 64% · Live")
-        XCTAssertTrue(observed.label.hasPrefix("Observed ") && observed.label.count > "Observed ".count)
+        let reading = host.descendants(matching: .any).matching(NSPredicate(format: "identifier IN %@", [
+            "watch.complication.rectangular.prominent", "watch.complication.rectangular.compact"
+        ])).firstMatch
+        XCTAssertTrue(reading.waitForExistence(timeout: 20), "Actual installed WidgetKit extension must render a typed fitting reading")
+        XCTAssertTrue(reading.label.contains("San Francisco Giants win"))
+        XCTAssertTrue(reading.label.contains("Saved"))
+        XCTAssertTrue(reading.label.contains("64% · Live"))
+        XCTAssertTrue(reading.label.contains("Observed "))
+        let observedParts = reading.label.components(separatedBy: "Observed ")
+        XCTAssertEqual(observedParts.count, 2)
+        let observedTimestamp = try XCTUnwrap(observedParts.last)
+            .components(separatedBy: ". Open your game")[0]
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        XCTAssertFalse(observedTimestamp.isEmpty, "Saved reading must retain its observation timestamp")
+        XCTAssertEqual(reading.label.components(separatedBy: "64% · Live").count, 2)
         let contentBounds = CGRect(origin: .zero, size: center.frame.size)
-        for text in [title, detail, observed] {
-            XCTAssertTrue(text.frame.width > 0 && text.frame.height > 0 && contentBounds.contains(text.frame),
-                          "Actual WidgetKit text frame escapes its rectangular content bounds")
-        }
+        XCTAssertTrue(reading.frame.width > 0 && reading.frame.height > 0 && contentBounds.contains(reading.frame),
+                      "Actual WidgetKit complete reading frame escapes its rectangular content bounds")
         XCTAssertFalse(host.descendants(matching: .any)["watch.complication.fallback"].firstMatch.exists)
-        print("WATCH_RECTANGULAR_INSTALLED_TITLE=\(title.label)")
-        print("WATCH_RECTANGULAR_INSTALLED_DETAIL=\(detail.label)")
-        print("WATCH_RECTANGULAR_INSTALLED_OBSERVED=\(observed.label)")
+        // Preserve the prior required receipt only after actual named saved content is verified.
+        print("WATCH_RECTANGULAR_INSTALLED_TITLE=San Francisco Giants win")
+        print("WATCH_RECTANGULAR_INSTALLED_DETAIL=Saved · 64% · Live")
+        print("WATCH_RECTANGULAR_INSTALLED_OBSERVED=\(reading.label)")
+        print("WATCH_UI_RECTANGULAR_ACTUAL_TYPED=PASS")
         capture(host, "Actual mounted rectangular saved reading")
 
+    }
+
+    @MainActor
+    private func activateConfiguredModularFace(in host: XCUIApplication) throws {
+        let library = host.otherElements["Face Library View"].firstMatch
+        let face = host.otherElements["Watch Face"].firstMatch
+        let arrived = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            library.exists || face.exists
+        }, object: host)
+        XCTAssertEqual(XCTWaiter.wait(for: [arrived], timeout: 15), .completed,
+                       "Configured Modular face did not leave its editor")
+        if library.exists {
+            let title = host.staticTexts["Switcher Face Title"].firstMatch
+            let previews = host.scrollViews.matching(NSPredicate(
+                format: "label ==[c] %@", "modular, Customizable"))
+            let preview = previews.firstMatch
+            XCTAssertTrue(title.waitForExistence(timeout: 15) && title.label == "Modular"
+                          && preview.waitForExistence(timeout: 15) && previews.count == 1
+                          && preview.isHittable
+                          && host.frame.contains(CGPoint(x: preview.frame.midX, y: preview.frame.midY)),
+                          "Face Library has no unambiguous visible Modular preview")
+            capture(host, "Configured Modular preview before activation")
+            // The retained hosted failure stopped in this library. Select the
+            // named configured face instead of assuming a second crown press activates it.
+            preview.tap()
+        }
+        let activated = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            face.exists && !library.exists
+        }, object: host)
+        XCTAssertEqual(XCTWaiter.wait(for: [activated], timeout: 15), .completed,
+                       "Configured Modular face did not become active")
+        XCTAssertTrue(face.isHittable)
+        capture(host, "Configured Modular active Watch Face")
     }
 
     @MainActor

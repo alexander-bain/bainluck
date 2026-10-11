@@ -32,10 +32,20 @@ on:
       - 'ios/Bain Luck/BainLuckTests/DiscoverViewModelPaginationTests.swift'
       - 'ios/Bain Luck/BainLuckWatchUITests/**'
       - 'tools/watch-ui-journey.sh'
+      - 'tools/watch_ui_shards.py'
+      - 'tools/watch_simulator_architecture.py'
+      - 'tools/tests/test_watch_simulator_architecture.py'
+      - 'tools/watch_ui_cases.json'
+      - 'tools/tests/test_watch_ui_shards.py'
+      - 'tools/watch_ui_deadline.py'
+      - 'tools/tests/test_watch_ui_deadline.py'
       - 'tools/tests/test_watch_picker_network_gate.py'
       - 'tools/tests/test_watch_picker_selected_gate.py'
       - 'tools/tests/test_watch_game_updating_gate.py'
       - 'backend/tests/test_watch_fresh_face_receipt_10577.py'
+      - 'tools/watch_discovery_polish_receipt.py'
+      - 'tools/tests/test_watch_discovery_polish_receipt.py'
+      - 'tools/tests/test_watch_rectangular_readability_gate.py'
       - 'tools/watch_resolve_packages.py'
       - 'tools/tests/test_watch_resolve_packages.py'
       - 'tools/watch-build.sh'
@@ -88,10 +98,20 @@ on:
       - 'ios/Bain Luck/BainLuckTests/DiscoverViewModelPaginationTests.swift'
       - 'ios/Bain Luck/BainLuckWatchUITests/**'
       - 'tools/watch-ui-journey.sh'
+      - 'tools/watch_ui_shards.py'
+      - 'tools/watch_simulator_architecture.py'
+      - 'tools/tests/test_watch_simulator_architecture.py'
+      - 'tools/watch_ui_cases.json'
+      - 'tools/tests/test_watch_ui_shards.py'
+      - 'tools/watch_ui_deadline.py'
+      - 'tools/tests/test_watch_ui_deadline.py'
       - 'tools/tests/test_watch_picker_network_gate.py'
       - 'tools/tests/test_watch_picker_selected_gate.py'
       - 'tools/tests/test_watch_game_updating_gate.py'
       - 'backend/tests/test_watch_fresh_face_receipt_10577.py'
+      - 'tools/watch_discovery_polish_receipt.py'
+      - 'tools/tests/test_watch_discovery_polish_receipt.py'
+      - 'tools/tests/test_watch_rectangular_readability_gate.py'
       - 'tools/watch_resolve_packages.py'
       - 'tools/tests/test_watch_resolve_packages.py'
       - 'tools/watch-build.sh'
@@ -198,41 +218,98 @@ jobs:
           retention-days: 7
 
   watch-ui-journey:
-    name: Watch picker interaction journey
+    name: Watch picker interaction journey (${{ matrix.shard }})
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [readings, navigation, controls, widgets]
     concurrency:
-      group: watch-ui-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.run_id }}
+      group: watch-ui-${{ matrix.shard }}-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.run_id }}
       cancel-in-progress: true
     needs: watch-mvp
     runs-on: xcode-27
-    # Fresh paired companion preparation took ~23m on the hosted runner.
-    # Preserve the full UI suite and its 180s per-test limit after setup.
+    # Retain all33 cases across four isolated pairs with destination-specific builds.
+    # The aggregate requires exact coverage; all command/job/test limits stay fixed.
     timeout-minutes: 60
     env:
       DEVELOPER_DIR: /Applications/Xcode_27.0.app/Contents/Developer
+      WATCH_UI_SHARD: ${{ matrix.shard }}
     steps:
       - uses: actions/checkout@v6
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
+      - name: Verify exact shard coverage
+        run: python3 -m unittest discover -s tools/tests -p test_watch_ui_shards.py
       - name: Verify bounded package-download recovery
         run: python3 -m unittest discover -s tools/tests -p test_watch_resolve_packages.py
       - name: Reject incomplete picker network recovery evidence
         run: python3 -m unittest discover -s tools/tests -p test_watch_picker_network_gate.py
       - name: Reject incomplete selected-picker evidence
         run: python3 -m unittest discover -s tools/tests -p test_watch_picker_selected_gate.py
+      - name: Verify Discoveries polish receipts fail closed
+        run: python3 -m unittest discover -s tools/tests -p test_watch_discovery_polish_receipt.py
+      - name: Verify simulator architecture selection fails closed
+        run: python3 -m unittest discover -s tools/tests -p test_watch_simulator_architecture.py
+      - name: Reject incomplete rectangular readability evidence
+        run: python3 -m unittest discover -s tools/tests -p test_watch_rectangular_readability_gate.py
+      - name: Verify failed gates retain evidence before job cancellation
+        run: python3 -m unittest discover -s tools/tests -p test_watch_ui_deadline.py
       - name: Select, reopen offline, and change a game through Watch controls
-        run: bash tools/watch-ui-journey.sh
+        run: python3 tools/watch_ui_deadline.py --output-dir build/watch-ui-journey -- bash tools/watch-ui-journey.sh
       - name: Preserve UI journey evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: watch-ui-journey-evidence
+          name: watch-ui-journey-${{ matrix.shard }}
           path: |
             build/watch-ui-journey/*.txt
             build/watch-ui-journey/*.json
             build/watch-ui-journey/*.log
             build/watch-ui-journey/package-resolution/**
             build/watch-ui-journey/run.*/BainLuckWatchUITests.xcresult
+          if-no-files-found: ignore
+          retention-days: 7
+
+  watch-ui-complete:
+    name: Watch full UI coverage from isolated pairs
+    needs: watch-ui-journey
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          name: watch-ui-journey-readings
+          path: build/watch-ui-aggregate/readings
+      - uses: actions/download-artifact@v4
+        with:
+          name: watch-ui-journey-navigation
+          path: build/watch-ui-aggregate/navigation
+      - uses: actions/download-artifact@v4
+        with:
+          name: watch-ui-journey-controls
+          path: build/watch-ui-aggregate/controls
+      - uses: actions/download-artifact@v4
+        with:
+          name: watch-ui-journey-widgets
+          path: build/watch-ui-aggregate/widgets
+      - name: Require exact full coverage, source, signatures and all journey markers
+        env:
+          EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: python3 tools/watch_ui_shards.py aggregate --directory build/watch-ui-aggregate --sha "$EXPECTED_SHA"
+      - name: Preserve complete coverage receipt
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: watch-ui-complete-receipt
+          path: |
+            build/watch-ui-aggregate/aggregate-receipt.json
+            build/watch-ui-aggregate/combined-tests.log
           if-no-files-found: ignore
           retention-days: 7
 
