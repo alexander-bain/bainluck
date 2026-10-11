@@ -30,7 +30,7 @@
  */
 
 import "../helpers/minimalDom";
-import React, { act, useCallback, useEffect, useMemo, useRef } from "react";
+import React, { act, useCallback, useMemo, useRef } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import fs from "fs";
 import path from "path";
@@ -291,7 +291,7 @@ describe("structural pin: the harness carries the page's own composition", () =>
   it("app/events/[id]/page.tsx still reads as the lines ChartPage mounts", () => {
     expect(PAGE).toContain("const quoteEligible = canSubscribeEventQuotes(event);");
     expect(PAGE).toMatch(/chartPoints,\s*status: reportedStreamStatus,\s*recoveryGeneration,\s*\} = useLiveEventStream\(eventId, quoteEligible, applyPushedFrame\);/);
-    expect(PAGE).toMatch(/if \(liveFrame\.p === null \|\| liveFrame\.p === undefined\) return;\s*(?:\/\/.*\s*)*latestLiveFrameRef\.current = heldFrameAfter\(latestLiveFrameRef\.current, liveFrame\);\s*const frame = \{ \.\.\.liveFrame, p: liveFrame\.p \};\s*refreshEvent\(/);
+    expect(PAGE).toMatch(/if \(liveFrame\.p === null \|\| liveFrame\.p === undefined\) return;\s*(?:\/\/[^\n]*\n\s*)*latestLiveFrameRef\.current = heldFrameAfter\(latestLiveFrameRef\.current, liveFrame\);\s*const frame = \{ \.\.\.liveFrame, p: liveFrame\.p \};\s*refreshEvent\(/);
     expect(PAGE.match(/\(prev\) => applyLiveFrame\(prev, frame\),/g)).toHaveLength(1);
     expect(PAGE).toMatch(/\(prev\) => applyLiveFrame\(prev, frame\),[^]{0,300}\{ revalidate: false \}/);
     expect(PAGE).toContain('["history", eventId, fullHistoryRequested]');

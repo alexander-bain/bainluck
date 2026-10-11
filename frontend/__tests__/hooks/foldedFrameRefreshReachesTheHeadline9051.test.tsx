@@ -273,7 +273,7 @@ describe("structural pin: the harness carries the page's own wiring", () => {
     // The push effect: a refused frame requests a refetch and writes NOTHING.
     expect(PAGE).toMatch(/if \(frameInvalidatesFoldedBlend\(heldEventRef\.current, liveFrame\)\) \{\s*foldedRefetch\.request\(\);\s*return;\s*\}/);
     expect(PAGE).toMatch(/\(prev\) => applyLiveFrame\(prev, frame\),/);
-    expect(PAGE).toMatch(/\}, \[refreshEvent, eventId, foldedRefetch\]\);\s*(?:\/\/.*\s*)*const quoteEligible = canSubscribeEventQuotes\(event\);/);
+    expect(PAGE).toMatch(/\}, \[refreshEvent, eventId, foldedRefetch\]\);\s*(?:\/\/[^\n]*\n\s*)*const quoteEligible = canSubscribeEventQuotes\(event\);/);
     expect(PAGE).toMatch(/\} = useLiveEventStream\(eventId, quoteEligible, applyPushedFrame\);/);
     expect(PAGE.indexOf("frameInvalidatesFoldedBlend(heldEventRef.current, liveFrame)"))
       .toBeLessThan(PAGE.indexOf("if (liveFrame.p === null"));
