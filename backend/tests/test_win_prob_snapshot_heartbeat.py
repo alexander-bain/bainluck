@@ -230,6 +230,10 @@ def _reading(away_probability=None, draw_probability=None):
         yes_probability=0.60,
         away_probability=away_probability,
         draw_probability=draw_probability,
+        # Direct legacy helper controls have no committed-history stamp time.
+        # MagicMock must not invent one (or owned-history exception policy).
+        snapshot_observed_at=None,
+        owned_history=False,
     )
 
 

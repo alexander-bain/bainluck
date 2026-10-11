@@ -453,6 +453,7 @@ async def test_stale_refusal_preserves_revision_and_snapshot_accounting(rig):
 
     r._prepare_groups = prepare
     await r.refresh(range(1, 9))
+    await r.drain_history()
     assert r.stats["stale_readings_refused"] == 1
     assert 6 not in r._last_written_value and 6 not in r._last_snapshot_at
     assert {f["event_id"] for f in frames} == set(range(1, 9)) - {6}
