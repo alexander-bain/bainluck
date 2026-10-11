@@ -313,12 +313,11 @@ struct MarketMapView: View {
                 kind: .fullMargin
             ))
         }
-        if hasSpreads {
-            entries += halfMarginGroups.map {
-                MapEntry(id: "margin-\($0.id)", title: $0.id,
-                         kind: .halfMargin(label: $0.id, half: $0.half, outcomes: $0.outcomes,
-                                           closed: $0.closed))
-            }
+        // A half can have its own quoted or closed rows without full-game spreads.
+        entries += halfMarginGroups.map {
+            MapEntry(id: "margin-\($0.id)", title: $0.id,
+                     kind: .halfMargin(label: $0.id, half: $0.half, outcomes: $0.outcomes,
+                                       closed: $0.closed))
         }
         if !totalMapIsEmptyChrome {
             entries.append(MapEntry(
@@ -960,7 +959,7 @@ struct MarketMapView: View {
 
     /// Whether the MARGIN MAPS column has anything under its heading.
     private var showsAnyMarginMap: Bool {
-        hasSpreads && (!marginMapIsEmptyChrome || !halfMarginGroups.isEmpty)
+        (hasSpreads && !marginMapIsEmptyChrome) || !halfMarginGroups.isEmpty
     }
 
     /// One half-map's worth of outcomes, labelled. Shared by the margin and
