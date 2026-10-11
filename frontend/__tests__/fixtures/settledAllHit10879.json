@@ -1,0 +1,252 @@
+{
+  "source": "https://api.bainluck.com/api/events/15327330/game-markets",
+  "captured_at": "2026-10-11T13:57:36Z",
+  "event_id": 15327330,
+  "status": "completed",
+  "home_team": "Colorado Avalanche",
+  "away_team": "Toronto Maple Leafs",
+  "player_props": [
+    {
+      "market_name": "Toronto vs Colorado: Points",
+      "outcome_name": "Nathan MacKinnon: 1+",
+      "observed_at": "2026-10-11T01:54:38.949913+00:00",
+      "contributor_outcome_ids": [
+        245004208
+      ],
+      "threshold": 1.0,
+      "over_probability": 1.0,
+      "opening_over_probability": 0.76,
+      "pregame_mark": 0.76,
+      "_inverted": false,
+      "source": "kalshi",
+      "movement": 0.24,
+      "_market_id": 65160286,
+      "actual": 2.0,
+      "hit": true,
+      "is_winner": true,
+      "resolution_source": "api_settlement",
+      "player_headshot": "https://a.espncdn.com/i/headshots/nhl/players/full/3041969.png",
+      "player_team": "home"
+    },
+    {
+      "market_name": "Toronto vs Colorado: Points",
+      "outcome_name": "Nathan MacKinnon: 2+",
+      "observed_at": "2026-10-11T01:54:38.949913+00:00",
+      "contributor_outcome_ids": [
+        245004174
+      ],
+      "threshold": 2.0,
+      "over_probability": 1.0,
+      "opening_over_probability": 0.46,
+      "pregame_mark": 0.46,
+      "_inverted": false,
+      "source": "kalshi",
+      "movement": 0.54,
+      "_market_id": 65160286,
+      "actual": 2.0,
+      "hit": true,
+      "is_winner": true,
+      "resolution_source": "api_settlement",
+      "player_headshot": "https://a.espncdn.com/i/headshots/nhl/players/full/3041969.png",
+      "player_team": "home"
+    },
+    {
+      "market_name": "Toronto vs Colorado: Points",
+      "outcome_name": "Nathan MacKinnon: 3+",
+      "observed_at": "2026-10-11T01:54:38.949913+00:00",
+      "contributor_outcome_ids": [
+        245004188
+      ],
+      "threshold": 3.0,
+      "over_probability": 0.0,
+      "opening_over_probability": 0.18,
+      "pregame_mark": 0.18,
+      "_inverted": false,
+      "source": "kalshi",
+      "movement": -0.18,
+      "_market_id": 65160286,
+      "actual": 2.0,
+      "hit": false,
+      "is_winner": false,
+      "resolution_source": "api_settlement",
+      "player_headshot": "https://a.espncdn.com/i/headshots/nhl/players/full/3041969.png",
+      "player_team": "home"
+    },
+    {
+      "market_name": "Toronto vs Colorado: Points",
+      "outcome_name": "Auston Matthews: 1+",
+      "observed_at": "2026-10-11T01:54:38.949913+00:00",
+      "contributor_outcome_ids": [
+        245004169
+      ],
+      "threshold": 1.0,
+      "over_probability": 1.0,
+      "opening_over_probability": 0.61,
+      "pregame_mark": 0.61,
+      "_inverted": false,
+      "source": "kalshi",
+      "movement": 0.39,
+      "_market_id": 65160286,
+      "actual": 4.0,
+      "hit": true,
+      "is_winner": true,
+      "resolution_source": "api_settlement",
+      "player_headshot": "https://a.espncdn.com/i/headshots/nhl/players/full/4024123.png",
+      "player_team": "away"
+    },
+    {
+      "market_name": "Toronto vs Colorado: Points",
+      "outcome_name": "Auston Matthews: 2+",
+      "observed_at": "2026-10-11T01:54:38.949913+00:00",
+      "contributor_outcome_ids": [
+        245004185
+      ],
+      "threshold": 2.0,
+      "over_probability": 1.0,
+      "opening_over_probability": 0.215,
+      "pregame_mark": 0.215,
+      "_inverted": false,
+      "source": "kalshi",
+      "movement": 0.785,
+      "_market_id": 65160286,
+      "actual": 4.0,
+      "hit": true,
+      "is_winner": true,
+      "resolution_source": "api_settlement",
+      "player_headshot": "https://a.espncdn.com/i/headshots/nhl/players/full/4024123.png",
+      "player_team": "away"
+    },
+    {
+      "market_name": "Toronto vs Colorado: Points",
+      "outcome_name": "Auston Matthews: 3+",
+      "observed_at": "2026-10-11T01:54:38.949913+00:00",
+      "contributor_outcome_ids": [
+        245004200
+      ],
+      "threshold": 3.0,
+      "over_probability": 1.0,
+      "opening_over_probability": 0.07,
+      "pregame_mark": 0.07,
+      "_inverted": false,
+      "source": "kalshi",
+      "movement": 0.93,
+      "_market_id": 65160286,
+      "actual": 4.0,
+      "hit": true,
+      "is_winner": true,
+      "resolution_source": "api_settlement",
+      "player_headshot": "https://a.espncdn.com/i/headshots/nhl/players/full/4024123.png",
+      "player_team": "away"
+    },
+    {
+      "market_name": "Toronto vs Colorado: Points",
+      "outcome_name": "William Nylander: 1+",
+      "observed_at": "2026-10-11T01:54:38.949913+00:00",
+      "contributor_outcome_ids": [
+        245004170
+      ],
+      "threshold": 1.0,
+      "over_probability": 1.0,
+      "opening_over_probability": 0.59,
+      "pregame_mark": 0.59,
+      "_inverted": false,
+      "source": "kalshi",
+      "movement": 0.41,
+      "_market_id": 65160286,
+      "actual": 5.0,
+      "hit": true,
+      "is_winner": true,
+      "resolution_source": "api_settlement",
+      "player_headshot": "https://a.espncdn.com/i/headshots/nhl/players/full/3114736.png",
+      "player_team": "away"
+    },
+    {
+      "market_name": "Toronto vs Colorado: Points",
+      "outcome_name": "William Nylander: 2+",
+      "observed_at": "2026-10-11T01:54:38.949913+00:00",
+      "contributor_outcome_ids": [
+        245004186
+      ],
+      "threshold": 2.0,
+      "over_probability": 1.0,
+      "opening_over_probability": 0.195,
+      "pregame_mark": 0.195,
+      "_inverted": false,
+      "source": "kalshi",
+      "movement": 0.805,
+      "_market_id": 65160286,
+      "actual": 5.0,
+      "hit": true,
+      "is_winner": true,
+      "resolution_source": "api_settlement",
+      "player_headshot": "https://a.espncdn.com/i/headshots/nhl/players/full/3114736.png",
+      "player_team": "away"
+    },
+    {
+      "market_name": "Toronto vs Colorado: Points",
+      "outcome_name": "William Nylander: 3+",
+      "observed_at": "2026-10-11T01:54:38.949913+00:00",
+      "contributor_outcome_ids": [
+        245004201
+      ],
+      "threshold": 3.0,
+      "over_probability": 1.0,
+      "opening_over_probability": 0.065,
+      "pregame_mark": 0.065,
+      "_inverted": false,
+      "source": "kalshi",
+      "movement": 0.935,
+      "_market_id": 65160286,
+      "actual": 5.0,
+      "hit": true,
+      "is_winner": true,
+      "resolution_source": "api_settlement",
+      "player_headshot": "https://a.espncdn.com/i/headshots/nhl/players/full/3114736.png",
+      "player_team": "away"
+    },
+    {
+      "market_name": "Toronto vs Colorado: Points",
+      "outcome_name": "Nick Paul: 1+",
+      "observed_at": "2026-10-11T01:54:38.949913+00:00",
+      "contributor_outcome_ids": [
+        245222739
+      ],
+      "threshold": 1.0,
+      "over_probability": 1.0,
+      "opening_over_probability": 0.355,
+      "pregame_mark": 0.355,
+      "_inverted": false,
+      "source": "kalshi",
+      "movement": 0.645,
+      "_market_id": 65160286,
+      "actual": 2.0,
+      "hit": true,
+      "is_winner": true,
+      "resolution_source": "api_settlement",
+      "player_headshot": "https://a.espncdn.com/i/headshots/nhl/players/full/3042111.png",
+      "player_team": "away"
+    },
+    {
+      "market_name": "Toronto vs Colorado: Points",
+      "outcome_name": "Nick Paul: 2+",
+      "observed_at": "2026-10-11T01:54:38.949913+00:00",
+      "contributor_outcome_ids": [
+        245222764
+      ],
+      "threshold": 2.0,
+      "over_probability": 1.0,
+      "opening_over_probability": 0.06,
+      "pregame_mark": 0.06,
+      "_inverted": false,
+      "source": "kalshi",
+      "movement": 0.94,
+      "_market_id": 65160286,
+      "actual": 2.0,
+      "hit": true,
+      "is_winner": true,
+      "resolution_source": "api_settlement",
+      "player_headshot": "https://a.espncdn.com/i/headshots/nhl/players/full/3042111.png",
+      "player_team": "away"
+    }
+  ]
+}

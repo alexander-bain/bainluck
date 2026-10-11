@@ -86,6 +86,10 @@ function StatBox({
 
     if (graded) {
       const didHit = hitBool === true;
+      // #10879: all-hit ladders keep their highest typed HIT, including the
+      // two-rung groups whose pre/live layout is a single line. The actual is
+      // a count, not a fraction of the lowest target.
+      const allHitLine = didHit ? stat.settledAllHitLine ?? null : null;
       // No stated verdict → neutral, never the red that reads as "missed".
       const accentColor = hitBool == null ? undefined : didHit ? accent : "#EF4444";
       return (
@@ -117,7 +121,7 @@ function StatBox({
               <div className="font-mono tabular-nums text-2xl font-bold" style={{ color: accentColor }}>
                 {gradeActual}
               </div>
-              {firstLine != null && (
+              {allHitLine == null && firstLine != null && (
                 <div className="font-mono tabular-nums text-xs text-text-muted">of {firstLine}</div>
               )}
             </div>
@@ -135,7 +139,9 @@ function StatBox({
                 {propVerdictLabel(didHit)}
               </span>
             )}
-            {firstLine != null && (
+            {allHitLine != null ? (
+              <span className="text-xs text-text-muted font-mono tabular-nums">{allHitLine}+</span>
+            ) : firstLine != null && (
               <span className="text-xs text-text-muted font-mono tabular-nums">needed {firstLine}+</span>
             )}
           </div>
