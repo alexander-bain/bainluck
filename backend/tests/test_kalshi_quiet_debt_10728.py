@@ -21,6 +21,8 @@ still sees a join.
 """
 
 import asyncio
+from collections import defaultdict
+from contextlib import asynccontextmanager
 
 import pytest
 
@@ -79,46 +81,162 @@ def test_debt_with_no_game_in_the_batch_is_unchanged():
 # ---------------------------------------- the shipped flush, #10655 rig ----
 
 
-async def test_quiet_debt_is_paid_after_the_first_game_commits_not_joined():
-    """Game 100 commits and is stamped while game 200's write is still held;
-    game 200 then gets its own unthrottled stamp, and the quiet debt is paid.
+async def _caused(event, failure):
+    """Wait on the cause itself; its absence within the rig's bound is a finding."""
+    try:
+        await asyncio.wait_for(event.wait(), 2)
+    except asyncio.TimeoutError:
+        raise AssertionError(failure) from None
 
-    fe0aa54fbf / ff98c3547f: a fresh stamp reads only its fresh events, and a
-    fresh-bearing flush then attempts its one old owed event with its own
-    read — so the quiet stamp follows the games rather than riding game 100's.
+
+async def _quiet_slate(*, quiet_after_row3, mutate=None):
+    """Run the SHIPPED flush owing only the quiet event, with game 200's row 3
+    held, and assert the delivery contract at explicit causes, not turns.
+
+    The original arm asserted one exact interleaving: the quiet stamp after
+    every row, including the unrelated futures row 9. That is a scheduler
+    accident — Python 3.11's ``wait_for`` adds turns before the held phase is
+    observed, and the refresher then legitimately pays the quiet debt while
+    row 3 is still held (artifacts/live-iteration-goal-20261011/
+    quiet-debt-diagnosis). Both legal schedules are now driven explicitly:
+    ``quiet_after_row3=False`` waits for the quiet stamp while row 3 is held;
+    ``True`` gates the quiet stamp on row 3's commit. ``mutate`` wraps the
+    refresher class for the negative controls below.
     """
     from app.tasks.live_blend_refresh import LiveBlendRefresher
 
     r = isolation.rig()
+    stamped = defaultdict(asyncio.Event)
+    row3_committed = asyncio.Event()
+    session = r.ns['get_task_session']
+
+    @asynccontextmanager
+    async def observed_session():
+        async with session() as s:
+            yield s
+        if 3 in r.committed:
+            row3_committed.set()
+
+    r.ns['get_task_session'] = observed_session
 
     class RecordingRefresher(LiveBlendRefresher):
         async def _refresh_batch(self, event_ids, now, *, prepared=None,
                                  on_committed=None, publish_committed=None):
+            if quiet_after_row3 and set(event_ids) == {QUIET}:  # its own read is slow
+                await row3_committed.wait()
             r.trace.append(('real-refresh', tuple(sorted(event_ids)), tuple(r.committed)))
             for event_id in event_ids:
                 self._last_refresh_at[event_id] = now
             if on_committed is not None:  # the production batch's commit callback
                 on_committed(event_ids)
+            for event_id in event_ids:
+                stamped[event_id].set()
 
         async def publish_market_changes(self, session):
             r.trace.append(('publish', tuple(session.rows)))
 
-    refresher = RecordingRefresher('kalshi')
+    refresher = (mutate or (lambda cls: cls))(RecordingRefresher)('kalshi')
     refresher.adopt_pending({QUIET})
-    r.flush.__globals__['blend_refresher'] = refresher
+    r.ns['blend_refresher'] = refresher
     task = asyncio.create_task(r.flush(flush_started=100.0))
     try:
         await asyncio.wait_for(r.entered.wait(), 2)
+        await _caused(stamped[100], "game 100 was not stamped while game 200 was held")
         assert r.committed == [1, 2]
+        for t in r.trace:
+            if t[0] == 'real-refresh' and 100 in t[1]:
+                assert t[1] == (100,), f"stamp {t[1]} joined unrelated games"
         assert ('real-refresh', (100,), (1, 2)) in r.trace
+        if not quiet_after_row3:
+            await _caused(stamped[QUIET], "quiet debt was not paid while game 200 was held")
+            assert r.committed == [1, 2]  # still held: the quiet stamp waited on no game
+        assert not stamped[200].is_set(), "game 200 stamped before its own row committed"
     finally:
         r.release.set()
         await asyncio.wait_for(task, 2)
-    assert ('real-refresh', (QUIET,), (1, 2, 3, 9)) in r.trace
-    assert ('real-refresh', (200,), (1, 2, 3, 9)) in r.trace
+        # The flush can return while its stamp still runs (f3236c0f23); the
+        # next flush joins it. Join it here exactly as that flush would.
+        await asyncio.wait_for(r.ns['prices'].join_stamp(refresher), 2)
+
+    stamps = [(r.trace.index(t), t[1], t[2]) for t in r.trace if t[0] == 'real-refresh']
+    row3_at = r.trace.index(('commit', (3,)))
+    for at, ids, rows in stamps:
+        if 200 in ids:
+            assert at > row3_at and 3 in rows, "game 200 stamped before its own row committed"
+    for at, ids, rows in stamps:
+        if {100, 200, QUIET} & set(ids):
+            assert len(ids) == 1, f"stamp {ids} joined unrelated games"
+    quiet = [(at, rows) for at, ids, rows in stamps if ids == (QUIET,)]
+    assert quiet, "quiet debt was never paid"
+    game_100_at = next(at for at, ids, _ in stamps if ids == (100,))
+    assert quiet[0][0] > game_100_at  # follows game 100 rather than riding its stamp
+    if quiet_after_row3:
+        assert {1, 2, 3} <= set(quiet[0][1])
+    else:
+        assert quiet[0][1] == (1, 2)
+    assert sorted(ids for _, ids, _ in stamps) == [(100,), (200,), (QUIET,)]
     assert r.committed == [1, 2, 3, 9]
     assert refresher.pending_event_ids() == frozenset()
     assert refresher.stats['throttled'] == 0
+
+
+@pytest.mark.parametrize("quiet_after_row3", [False, True],
+                         ids=["quiet-paid-while-held", "quiet-paid-after-row3"])
+async def test_quiet_debt_is_paid_after_the_first_game_commits_not_joined(quiet_after_row3):
+    """Game 100 commits and is stamped while game 200's write is still held;
+    game 200 then gets its own unthrottled stamp, and the quiet debt is paid.
+
+    fe0aa54fbf / ff98c3547f: a fresh stamp reads only its fresh events, and a
+    fresh-bearing flush then attempts its one old owed event with its own
+    read — so the quiet stamp follows game 100 rather than riding its stamp,
+    whether it lands while game 200 is held or after.
+    """
+    await _quiet_slate(quiet_after_row3=quiet_after_row3)
+
+
+def _drops_quiet_debt(cls):
+    class Dropping(cls):
+        async def refresh(self, event_ids, **kwargs):
+            self._throttle_deferred.discard(QUIET)  # neither stamped nor owed
+            return await super().refresh(event_ids, **kwargs)
+    return Dropping
+
+
+def _stamps_game_200_before_its_commit(cls):
+    class Early(cls):
+        async def refresh(self, event_ids, **kwargs):
+            ids = set(event_ids)
+            if 100 in ids:  # the fence lost: 200 read from a partial board
+                ids.add(200)
+                kwargs['defer_event_ids'] = set(kwargs.get('defer_event_ids', ())) - {200}
+            return await super().refresh(ids, **kwargs)
+    return Early
+
+
+def _joins_quiet_debt_to_game_100(cls):
+    class Joined(cls):
+        async def _refresh_batch(self, event_ids, now, **kwargs):
+            if 100 in event_ids and QUIET not in event_ids:
+                event_ids = [*event_ids, QUIET]
+            return await super()._refresh_batch(event_ids, now, **kwargs)
+    return Joined
+
+
+@pytest.mark.parametrize("quiet_after_row3", [False, True],
+                         ids=["quiet-paid-while-held", "quiet-paid-after-row3"])
+@pytest.mark.parametrize("mutate, finding", [
+    (_drops_quiet_debt, "quiet debt was (not|never) paid"),
+    (_stamps_game_200_before_its_commit, "game 200 stamped before its own row committed"),
+    (_joins_quiet_debt_to_game_100, r"stamp \(100, 500\) joined unrelated games"),
+], ids=["drops-quiet-debt", "stamps-200-precommit", "joins-quiet-to-100"])
+async def test_strawman_the_quiet_contract_rejects_lost_debt_early_and_joined_stamps(
+    mutate, finding, quiet_after_row3,
+):
+    """The same slate through refreshers that drop the quiet debt, stamp game
+    200 before its row commits, or pay the debt inside game 100's stamp: each
+    fails the contract above on its own clause, so it is not vacuous."""
+    with pytest.raises(AssertionError, match=finding):
+        await _quiet_slate(quiet_after_row3=quiet_after_row3, mutate=mutate)
 
 
 async def test_mixed_debt_is_fenced_not_joined():
