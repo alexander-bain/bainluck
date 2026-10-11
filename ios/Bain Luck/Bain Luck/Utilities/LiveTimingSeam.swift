@@ -32,7 +32,7 @@ import os
 enum LiveTimingSeam {
     /// One emitted mark. `basis` is `rev:<row>=<n>;…` (rows sorted), else
     /// `clock:<source updated_at>`, else `none`; `null` for an explicit null
-    /// folded result. `stamp` is a chart point's time (epoch seconds) or `-`.
+    /// folded result. `stamp` is the exact reference-date Double bit pattern or `-`.
     nonisolated struct Mark: Equatable, Sendable {
         let name: Name
         let eventId: Int
@@ -72,7 +72,7 @@ enum LiveTimingSeam {
     }
 
     nonisolated static func stamp(_ date: Date) -> String {
-        String(format: "%.3f", date.timeIntervalSince1970)
+        String(date.timeIntervalSinceReferenceDate.bitPattern)
     }
 
     // MARK: - Marks

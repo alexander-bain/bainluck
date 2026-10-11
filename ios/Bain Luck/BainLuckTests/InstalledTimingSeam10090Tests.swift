@@ -90,6 +90,29 @@ final class InstalledTimingSeam10090Tests: XCTestCase {
 
     private func names(_ marks: [LiveTimingSeam.Mark]) -> [LiveTimingSeam.Name] { marks.map(\.name) }
 
+    func testDistinctAdmittedChartDatesKeepDistinctModelToViewKeys() {
+        // These distinct Foundation Dates collapse when converted to epoch seconds.
+        let a = Date(timeIntervalSinceReferenceDate: Double(bitPattern: 4740106905103354771))
+        let b = Date(timeIntervalSinceReferenceDate: Double(bitPattern: 4740106905103354772))
+        XCTAssertLessThan(a, b)
+        XCTAssertEqual(a.timeIntervalSince1970, b.timeIntervalSince1970)
+        let first = LiveBlendBuffer.appending(LiveBlendPoint(date: a, homeProbability: 0.4), to: [])
+        let both = LiveBlendBuffer.appending(LiveBlendPoint(date: b, homeProbability: 0.5), to: first)
+        XCTAssertEqual(both.count, 2)
+
+        LiveTimingSeam.modelChartAppended(eventId: 4242, path: "stream", basis: "rev:4242=21", at: a)
+        LiveTimingSeam.modelChartAppended(eventId: 4242, path: "stream", basis: "rev:4242=22", at: b)
+        LiveTimingSeam.viewUpdated(
+            from: .init(eventId: 4242, revision: nil, clock: nil, chartEdge: nil),
+            to: .init(eventId: 4242, revision: nil, clock: nil, chartEdge: b)
+        )
+        XCTAssertEqual(names(marks), [.modelChartAppended, .modelChartAppended, .viewChartUpdated])
+        XCTAssertEqual(marks[0].stamp, "4740106905103354771")
+        XCTAssertEqual(marks[1].stamp, "4740106905103354772")
+        XCTAssertNotEqual(marks[0].stamp, marks[1].stamp)
+        XCTAssertEqual(marks[2].stamp, marks[1].stamp, "the coalesced view joins only the point it carries")
+    }
+
     // MARK: - Raw row
 
     func testAValidChangedFrameMarksReceiptThenModelHeadlineAndChartOnItsOwnRevision() async throws {
