@@ -44,7 +44,42 @@ import Foundation
         check(real.games[0].home == "New York Yankees" && real.games[0].away == "Boston Red Sox", "full sides unchanged")
         check(real.games[0].stateText == "Final" && real.games[0].scheduledStart == nil, "final is supplied; no inferred result or start")
         check(real.games[1].stateText == "Scheduled" && real.games[1].scheduledStart != nil, "explicit known start retained")
-        check(real.hasOtherEntries && real.children.isEmpty, "market questions excluded with partial note")
+        check(real.questions.map(\.id) == [9201, 9202], "exact own-root market questions preserve producer order")
+        check(real.questions.map(\.name) == ["Padres at Dodgers: winner", "2026 World Series champion"],
+              "full question titles retained without promoting card prices or results")
+        check(!real.hasOtherEntries && real.children.isEmpty, "all supported root entries shown")
+        func mutateFirstQuestion(_ mutate: (inout [String: Any]) -> Void) -> [String: Any] {
+            var body = hub
+            var sections = body["sections"] as! [[String: Any]]
+            var members = sections[0]["members"] as! [[String: Any]]
+            mutate(&members[2]); sections[0]["members"] = members; body["sections"] = sections
+            return body
+        }
+        let badQuestions: [(inout [String: Any]) -> Void] = [
+            { $0["id"] = 999 },
+            { $0["container_id"] = 999 },
+            { $0["destination"] = ["kind": "market", "id": 9201, "api": "/api/futures/999"] },
+            { $0["destination"] = ["kind": "event", "id": 9201, "api": "/api/events/9201"] },
+            { $0["card"] = ["id": 999, "name": "Wrong identity"] },
+            { $0["card"] = ["id": 9201, "name": " "] },
+            { $0["card"] = ["id": 9201, "name": 42] }
+        ]
+        for corrupt in badQuestions {
+            let result = try decode(mutateFirstQuestion(corrupt))
+            check(result.questions.map(\.id) == [9202] && result.games.map(\.id) == [801, 802]
+                  && result.hasOtherEntries, "invalid question cannot erase healthy questions or games")
+        }
+        for malformed in [false, true] {
+            var body = hub
+            var sections = body["sections"] as! [[String: Any]]
+            var members = sections[0]["members"] as! [[String: Any]]
+            var duplicate = members[2]
+            if malformed { duplicate["card"] = ["id": 9201, "name": 42] }
+            members.append(duplicate); sections[0]["members"] = members; body["sections"] = sections
+            let result = try decode(body)
+            check(result.questions.map(\.id) == [9202] && result.hasOtherEntries,
+                  "readable duplicate market identity is refused even with malformed payload")
+        }
 
         for change in [
             ["state": "withdrawn"], ["state": "unpublished"], ["state": "unknown"],
@@ -64,12 +99,12 @@ import Foundation
         for state in ["withdrawn", "unpublished", "unknown"] {
             var body = hub; body["state"] = state
             let result = try decode(body)
-            check(result.availability == .unavailable && result.games.isEmpty && result.children.isEmpty,
+            check(result.availability == .unavailable && result.games.isEmpty && result.children.isEmpty && result.questions.isEmpty,
                   "nonpublished hub never exposes stale rows")
         }
         var empty = hub; empty["state"] = "empty"
         let emptyResult = try decode(empty)
-        check(emptyResult.availability == .empty && emptyResult.games.isEmpty, "empty distinguished from unavailable; stale members ignored")
+        check(emptyResult.availability == .empty && emptyResult.games.isEmpty && emptyResult.questions.isEmpty, "empty distinguished from unavailable; stale members ignored")
         var noGames = hub; noGames["sections"] = []
         check(try decode(noGames).published && decode(noGames).games.isEmpty, "published empty visible list is supported")
         for change in [

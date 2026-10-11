@@ -7,6 +7,7 @@ struct WatchMLBCollectionView: View {
     let close: () -> Void
     let selectedGame: () -> Void
     @State private var action: Task<Void, Never>?
+    @State private var question: WatchQuestionDetailDestination?
 
     var body: some View {
         ScrollView {
@@ -50,6 +51,24 @@ struct WatchMLBCollectionView: View {
                                 .accessibilityIdentifier("watch.mlb.game.\(game.id)")
                             }
                             if membership.games.isEmpty { Text("No available games in this collection.") }
+                            if !membership.questions.isEmpty {
+                                Text("Questions").font(.headline).accessibilityAddTraits(.isHeader)
+                                ForEach(membership.questions) { item in
+                                    Button(item.name) {
+                                        start {
+                                            await browser.openQuestion(item.id,
+                                                isActive: { scenePhase == .active },
+                                                open: { current in
+                                                    question = .init(id: current.id, question: current.name)
+                                                })
+                                        }
+                                    }
+                                    .disabled(browser.isLoading || scenePhase != .active)
+                                    .fixedSize(horizontal: false, vertical: true)
+                                    .frame(minHeight: 44)
+                                    .accessibilityIdentifier("watch.mlb.question.\(item.id)")
+                                }
+                            }
                             if !membership.children.isEmpty {
                                 Text("Related collections").font(.headline)
                                 ForEach(membership.children) { child in
@@ -87,12 +106,16 @@ struct WatchMLBCollectionView: View {
             }.padding(.horizontal, 6)
         }
         .accessibilityIdentifier("watch.mlb.browser")
+        .sheet(item: $question) { destination in
+            WatchQuestionDetailView(destination: destination, close: { question = nil },
+                originLabel: "From your postseason collection", backLabel: "Back to postseason")
+        }
         .task(id: scenePhase) {
             guard scenePhase == .active else { return }
             await browser.refresh()
         }
         .onChange(of: scenePhase) { _, phase in
-            if phase != .active { action?.cancel(); browser.cancel() }
+            if phase != .active { action?.cancel(); browser.cancel(); question = nil }
         }
         .onDisappear { action?.cancel(); browser.cancel() }
     }

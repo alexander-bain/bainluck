@@ -96,6 +96,24 @@ final class WatchMLBCollectionStore: ObservableObject {
         select(validatedID)
         return true
     }
+    /// Revalidate the root membership, then perform navigation in the same actor turn.
+    /// The full-question reader fetches its own probabilities, grades and clocks.
+    @MainActor @discardableResult
+    func openQuestion(_ id: Int, isActive: () -> Bool, open: (WatchMLBQuestion) -> Void) async -> Bool {
+        guard isActive(), !Task.isCancelled, !isLoading, let collection,
+              membership?.published == true,
+              let tapped = membership?.questions.first(where: { $0.id == id }) else { return false }
+        let expectedRevision = revision + 1
+        await refresh()
+        guard revision == expectedRevision, !Task.isCancelled, !isLoading, errorMessage == nil,
+              isActive(), self.collection == collection, membership?.published == true else { return false }
+        guard let current = membership?.questions.first(where: { $0.id == id }) else {
+            errorMessage = "\(tapped.name) is no longer available in this collection. Choose another question or refresh."
+            return false
+        }
+        open(current)
+        return true
+    }
     @MainActor private func finish(_ error: Error, stamp: Int) {
         guard stamp == revision else { return }
         isLoading = false

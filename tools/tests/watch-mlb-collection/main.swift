@@ -88,7 +88,7 @@ actor SuspendedTransport: WatchMLBCollectionTransport {
         collection = try WatchMLBCollectionDecoder.collections(JSONSerialization.data(withJSONObject: index), season: 2026)[0]
         hub = try response("postseason.json")
     }
-    func membership(revision: Int = 11, published: Bool = true, removing id: Int? = nil) throws -> WatchMLBMembership {
+    func membership(revision: Int = 11, published: Bool = true, removing id: Int? = nil, removingQuestion questionID: Int? = nil) throws -> WatchMLBMembership {
         var body = hub
         body["revision"] = revision
         body["state"] = published ? "published" : "withdrawn"
@@ -97,6 +97,15 @@ actor SuspendedTransport: WatchMLBCollectionTransport {
                 var result = section
                 result["members"] = (section["members"] as! [[String: Any]]).filter {
                     !(($0["type"] as? String) == "event" && ($0["id"] as? Int) == id)
+                }
+                return result
+            }
+        }
+        if let questionID {
+            body["sections"] = (body["sections"] as! [[String: Any]]).map { section in
+                var result = section
+                result["members"] = (section["members"] as! [[String: Any]]).filter {
+                    !(($0["type"] as? String) == "market" && ($0["id"] as? Int) == questionID)
                 }
                 return result
             }
@@ -239,6 +248,65 @@ actor SuspendedTransport: WatchMLBCollectionTransport {
         check(count == 4, "display, denied tap, explicit refresh and valid tap only; no automatic retry")
         await finish(transport)
     }
+    @MainActor static func questionNavigation(_ f: Fixtures, mode: String) async throws {
+        let transport = SuspendedTransport(), store = makeStore(transport)
+        try await display(store, transport, f, revision: mode == "rollback" ? 12 : 11)
+        var opened: [WatchMLBQuestion] = []
+        var active = true
+        let wrongType = await store.openQuestion(801, isActive: { true }, open: { opened.append($0) })
+        let inactive = await store.openQuestion(9201, isActive: { false }, open: { opened.append($0) })
+        check(!wrongType && !inactive, "game identity and inactive surface cannot open a question")
+        let navigation = Task { await store.openQuestion(9201, isActive: { active }, open: { opened.append($0) }) }
+        let request = await transport.next()
+        let duplicate = await store.openQuestion(9201, isActive: { true }, open: { opened.append($0) })
+        check(!duplicate && store.membership == nil, "in-flight validation removes stale destinations and coalesces taps")
+        switch mode {
+        case "cancel-task": navigation.cancel()
+        case "cancel-surface": store.cancel()
+        case "inactive": active = false
+        default: break
+        }
+        if mode == "failure" { await transport.fail(request) }
+        else {
+            await transport.resolve(request, membership: try f.membership(
+                revision: mode == "rollback" ? 11 : 12,
+                published: mode != "withdrawal", removingQuestion: mode == "removed" ? 9201 : nil))
+        }
+        let accepted = await navigation.value
+        check(accepted == (mode == "valid"), "question navigation follows fresh membership and lifecycle checks")
+        check(opened.map(\.id) == (mode == "valid" ? [9201] : []), "one exact question opens only after successful validation")
+        if mode == "valid" { check(opened[0].name == "Padres at Dodgers: winner", "fresh full title passed to reader") }
+        if mode == "removed" {
+            check(store.errorMessage == "Padres at Dodgers: winner is no longer available in this collection. Choose another question or refresh.",
+                  "removed question retains its heading in a useful recovery message")
+            check(store.membership?.questions.map(\.id) == [9202], "healthy sibling survives removal")
+            let refresh = Task { await store.refresh() }; let recovery = await transport.next()
+            await transport.resolve(recovery, membership: try f.membership(revision: 13)); await refresh.value
+            let retry = Task { await store.openQuestion(9201, isActive: { true }, open: { opened.append($0) }) }
+            let validation = await transport.next()
+            await transport.resolve(validation, membership: try f.membership(revision: 14))
+            let recovered = await retry.value
+            check(recovered && opened.map(\.id) == [9201] && store.errorMessage == nil,
+                  "returned question requires a fresh tap validation and opens once")
+        }
+        let count = await transport.count()
+        check(count == (mode == "removed" ? 4 : 2), "no request for unknown, inactive or duplicate tap")
+        await finish(transport)
+    }
+    @MainActor static func supersededQuestionDoesNotOpen(_ f: Fixtures) async throws {
+        let transport = SuspendedTransport(), store = makeStore(transport)
+        try await display(store, transport, f)
+        var opened: [Int] = []
+        let navigation = Task { await store.openQuestion(9201, isActive: { true }, open: { opened.append($0.id) }) }
+        let old = await transport.next()
+        let refresh = Task { await store.refresh() }; let current = await transport.next()
+        await transport.resolve(current, membership: try f.membership(revision: 13)); await refresh.value
+        await transport.resolve(old, membership: try f.membership(revision: 12, removingQuestion: 9201))
+        let accepted = await navigation.value
+        check(!accepted && opened.isEmpty && store.membership?.revision == 13 && store.errorMessage == nil,
+              "superseded question tap cannot navigate or add a stale removal error")
+        await finish(transport)
+    }
     @MainActor static func main() async throws {
         let directory = URL(fileURLWithPath: CommandLine.arguments[1])
         try DecoderChecks.run(directory)
@@ -252,6 +320,10 @@ actor SuspendedTransport: WatchMLBCollectionTransport {
         try await validSelectsOnce(f)
         try await inactiveBeforeTap(f)
         try await removedGameRecovers(f)
-        print("MLB decoder checks and 13 deterministic store scenarios PASS")
+        for mode in ["valid", "failure", "withdrawal", "removed", "rollback", "cancel-task", "cancel-surface", "inactive"] {
+            try await questionNavigation(f, mode: mode)
+        }
+        try await supersededQuestionDoesNotOpen(f)
+        print("MLB decoder, original game controls and added question navigation controls PASS")
     }
 }

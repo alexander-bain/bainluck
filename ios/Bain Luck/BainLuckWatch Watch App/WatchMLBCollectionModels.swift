@@ -54,6 +54,12 @@ nonisolated struct WatchMLBChildLabel: Identifiable, Sendable, Equatable {
     let name: String
 }
 
+/// A published root market identity, not a series-level chance or cached result.
+nonisolated struct WatchMLBQuestion: Identifiable, Sendable, Equatable {
+    let id: Int
+    let name: String
+}
+
 nonisolated struct WatchMLBMembership: Sendable {
     enum Availability: Sendable, Equatable { case published, empty, unavailable }
     let availability: Availability
@@ -61,7 +67,16 @@ nonisolated struct WatchMLBMembership: Sendable {
     let games: [WatchMLBGame]
     let children: [WatchMLBChildLabel]
     let hasOtherEntries: Bool
+    let questions: [WatchMLBQuestion]
     var published: Bool { availability == .published }
+
+    init(availability: Availability, revision: Int?, games: [WatchMLBGame],
+         children: [WatchMLBChildLabel], hasOtherEntries: Bool,
+         questions: [WatchMLBQuestion] = []) {
+        self.availability = availability; self.revision = revision
+        self.games = games; self.children = children
+        self.hasOtherEntries = hasOtherEntries; self.questions = questions
+    }
 }
 
 nonisolated enum WatchMLBCollectionError: Error { case invalid, serviceBusy }
@@ -91,12 +106,24 @@ nonisolated enum WatchMLBCollectionDecoder {
         let startIsTbd: Bool?
         let startedWithoutResult: Bool?
     }
+    private struct QuestionCard: Decodable { let id: Int; let name: String }
+    private struct MemberSlot: Decodable {
+        private struct Identity: Decodable { let type: String; let id: Int }
+        let marketID: Int?
+        let value: Member?
+        init(from decoder: Decoder) throws {
+            let identity = try? Identity(from: decoder)
+            marketID = identity?.type == "market" ? identity?.id : nil
+            value = try? Member(from: decoder)
+        }
+    }
     private struct Member: Decodable {
         let type: String
         let id: Int
         let containerId: Int
         let destination: WatchMLBCollection.Destination?
         let card: Card?
+        let questionCard: QuestionCard?
         enum CodingKeys: String, CodingKey { case type, id, containerId, destination, card }
         init(from decoder: Decoder) throws {
             let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -105,6 +132,15 @@ nonisolated enum WatchMLBCollectionDecoder {
             containerId = try c.decode(Int.self, forKey: .containerId)
             destination = try c.decodeIfPresent(WatchMLBCollection.Destination.self, forKey: .destination)
             card = type == "event" ? try c.decode(Card.self, forKey: .card) : nil
+            questionCard = type == "market" ? try c.decode(QuestionCard.self, forKey: .card) : nil
+        }
+        var question: WatchMLBQuestion? {
+            guard type == "market", id > 0, let questionCard, questionCard.id == id,
+                  destination?.kind == "market", destination?.id == id,
+                  destination?.api == "/api/futures/\(id)" else { return nil }
+            let name = questionCard.name.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !name.isEmpty, name.utf8.count <= 2048 else { return nil }
+            return WatchMLBQuestion(id: id, name: name)
         }
         var game: WatchMLBGame? {
             guard type == "event", id > 0, let card, card.id == id, card.sport == "baseball_mlb",
@@ -139,7 +175,7 @@ nonisolated enum WatchMLBCollectionDecoder {
             return formatter.date(from: value) ?? ISO8601DateFormatter().date(from: value)
         }
     }
-    private struct Section: Decodable { let members: [Slot<Member>] }
+    private struct Section: Decodable { let members: [MemberSlot] }
     private struct Hub: Decodable {
         let state: String
         let slug: String
@@ -189,13 +225,22 @@ nonisolated enum WatchMLBCollectionDecoder {
             return WatchMLBMembership(availability: .empty, revision: revision, games: [], children: [], hasOtherEntries: false)
         }
         var seenGames = Set<Int>(), seenChildren = Set<Int>(), seenSlugs: Set<String> = [collection.slug]
+        let questionClaims = hub.sections.flatMap(\.members).reduce(into: [Int: Int]()) { counts, slot in
+            if let id = slot.marketID { counts[id, default: 0] += 1 }
+        }
+        var questions: [WatchMLBQuestion] = []
         var other = hub.withheldCount > 0
         var games: [WatchMLBGame] = [], children: [WatchMLBChildLabel] = []
         for section in hub.sections {
             for slot in section.members {
-                guard let member = slot.value, member.containerId == collection.id,
-                      let game = member.game, seenGames.insert(game.id).inserted else { other = true; continue }
-                games.append(game)
+                guard let member = slot.value, member.containerId == collection.id else { other = true; continue }
+                if member.type == "market" {
+                    guard let question = member.question, questionClaims[question.id] == 1 else { other = true; continue }
+                    questions.append(question)
+                } else {
+                    guard let game = member.game, seenGames.insert(game.id).inserted else { other = true; continue }
+                    games.append(game)
+                }
             }
         }
         for slot in hub.children {
@@ -207,7 +252,7 @@ nonisolated enum WatchMLBCollectionDecoder {
             children.append(WatchMLBChildLabel(id: child.id, name: child.name))
         }
         return WatchMLBMembership(availability: .published, revision: revision, games: games,
-                                  children: children, hasOtherEntries: other)
+                                  children: children, hasOtherEntries: other, questions: questions)
     }
     static func season(asOf now: Date) -> Int {
         var calendar = Calendar(identifier: .gregorian)
