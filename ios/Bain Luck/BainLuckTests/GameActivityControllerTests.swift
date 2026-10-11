@@ -11,6 +11,16 @@ import UIKit
     var requests = 0
     var updates: [(String, GameActivitySnapshot, Date)] = []
     var ends: [(String, GameActivitySnapshot?)] = []
+    var suspendNextEnd = false
+    private var suspendedEnd: CheckedContinuation<Void, Never>?
+    var didSuspendEnd: (() -> Void)?
+
+    func releaseSuspendedEnd() {
+        let continuation = suspendedEnd
+        suspendedEnd = nil
+        continuation?.resume()
+    }
+
     var suspendNextUpdate = false
     private var suspendedUpdate: CheckedContinuation<Void, Never>?
     private var pauseObserver: CheckedContinuation<Void, Never>?
@@ -48,6 +58,13 @@ import UIKit
         didUpdate?(snapshot, staleDate)
     }
     func end(id: String, final: GameActivitySnapshot?) async {
+        if suspendNextEnd {
+            suspendNextEnd = false
+            await withCheckedContinuation { continuation in
+                suspendedEnd = continuation
+                didSuspendEnd?()
+            }
+        }
         ends.append((id, final))
         records.removeAll { $0.id == id }
     }
@@ -85,7 +102,7 @@ final class GameActivityControllerTests: XCTestCase {
         let disabled = GameActivityController(service: service, isForeground: { true })
         disabled.start(snapshot: try snapshot())
         XCTAssertEqual(service.requests, 0)
-        XCTAssertTrue(disabled.status?.contains("disabled") == true)
+        XCTAssertTrue(disabled.status(for: 1)?.contains("disabled") == true)
         service.isEnabled = true
         let background = GameActivityController(service: service, isForeground: { false })
         background.start(snapshot: try snapshot())
@@ -94,7 +111,7 @@ final class GameActivityControllerTests: XCTestCase {
         let failing = GameActivityController(service: service, isForeground: { true })
         failing.start(snapshot: try snapshot())
         XCTAssertTrue(failing.activeEventIDs.isEmpty)
-        XCTAssertTrue(failing.status?.contains("Couldn't start") == true)
+        XCTAssertTrue(failing.status(for: 1)?.contains("Couldn't start") == true)
     }
 
     @MainActor func testReturningFromSettingsRevealsPreviouslyDisabledControl() async {
@@ -207,5 +224,101 @@ final class GameActivityControllerTests: XCTestCase {
         await fulfillment(of: [renewed], timeout: 0.1)
         XCTAssertEqual(service.updates.last?.2, clock)
     }
+
+    @MainActor func testFinishedFeedbackDoesNotFollowNavigationToAnotherEvent() async throws {
+        let service = FakeGameActivityService()
+        let controller = GameActivityController(service: service, isForeground: { true })
+        controller.start(snapshot: try snapshot(clock: clock))
+        await controller.update(snapshot: try snapshot(status: "completed", scoreClock: clock, scores: true))
+        XCTAssertEqual(controller.status(for: 1), "Game finished. The Live Activity has ended.")
+        // The new page renders before beginViewing's task runs as well as after it.
+        XCTAssertNil(controller.status(for: 2))
+        controller.beginViewing(eventID: 2)
+        XCTAssertNil(controller.status(for: 2))
+        controller.start(snapshot: try snapshot(2, clock: clock))
+        XCTAssertEqual(controller.status(for: 2), "Live Activity started. Updates arrive while this game is open.")
+        XCTAssertNil(controller.status(for: 1))
+        XCTAssertEqual(service.requests, 2)
+        XCTAssertEqual(service.ends.map(\.0), ["activity-1"])
+        XCTAssertEqual(controller.activeEventIDs, [2])
+        await controller.stop(eventID: 2)
+        XCTAssertEqual(controller.status(for: 2), "Live Activity stopped.")
+        XCTAssertNil(controller.status(for: 1))
+    }
+
+    @MainActor func testStartFeedbackBelongsToAttemptedEvent() throws {
+        let service = FakeGameActivityService()
+        var foreground = false
+        let controller = GameActivityController(service: service, isForeground: { foreground })
+        controller.start(snapshot: try snapshot(2))
+        XCTAssertEqual(controller.status(for: 2), "Open the app to start a Live Activity.")
+        XCTAssertNil(controller.status(for: 1))
+        foreground = true
+        service.isEnabled = false
+        controller.start(snapshot: try snapshot(2))
+        XCTAssertEqual(controller.status(for: 2), "Live Activities are unavailable or disabled in Settings.")
+        XCTAssertNil(controller.status(for: 1))
+        service.isEnabled = true
+        controller.start(snapshot: try snapshot(2, status: "completed"))
+        XCTAssertEqual(controller.status(for: 2), "A finished or unavailable game cannot start a Live Activity.")
+        XCTAssertNil(controller.status(for: 1))
+        service.requestFails = true
+        controller.start(snapshot: try snapshot(2))
+        XCTAssertEqual(controller.status(for: 2), "Couldn't start the Live Activity. Try again.")
+        XCTAssertNil(controller.status(for: 1))
+        service.requestFails = false
+        controller.start(snapshot: try snapshot(clock: clock))
+        controller.start(snapshot: try snapshot(clock: clock))
+        XCTAssertEqual(controller.status(for: 1), "This game already has a Live Activity.")
+        XCTAssertNil(controller.status(for: 2))
+        controller.start(snapshot: try snapshot(2, clock: clock))
+        XCTAssertEqual(controller.status(for: 2), "Stop the existing game's Live Activity before starting this game.")
+        XCTAssertNil(controller.status(for: 1))
+        controller.beginViewing(eventID: 2)
+        XCTAssertEqual(controller.status(for: 2), "Stop the existing game's Live Activity before starting this game.")
+        XCTAssertEqual(controller.activeEventIDs, [1])
+        XCTAssertEqual(service.requests, 2, "Only the failed request and successful game1 request reach the service")
+    }
+
+    @MainActor func testLateEndAndStopCannotPublishFeedbackOnNewlyViewedGame() async throws {
+        for endingFinal in [false, true] {
+            let service = FakeGameActivityService()
+            let controller = GameActivityController(service: service, isForeground: { true })
+            controller.start(snapshot: try snapshot(clock: clock, scoreClock: clock, scores: true))
+            let final = try snapshot(status: "completed", clock: clock,
+                                     scoreClock: clock.addingTimeInterval(-1), scores: true)
+            controller.start(snapshot: try snapshot(2, clock: clock))
+            let otherGameFeedback = "Stop the existing game's Live Activity before starting this game."
+            XCTAssertEqual(controller.status(for: 2), otherGameFeedback)
+            service.suspendNextEnd = true
+            let suspended = expectation(description: "Service end suspended")
+            service.didSuspendEnd = { suspended.fulfill() }
+            let operation = Task {
+                if endingFinal { await controller.update(snapshot: final) }
+                else { await controller.stop(eventID: 1) }
+            }
+            await fulfillment(of: [suspended], timeout: 2)
+            controller.beginViewing(eventID: 2)
+            XCTAssertEqual(controller.status(for: 2), otherGameFeedback)
+            service.releaseSuspendedEnd()
+            await operation.value
+            XCTAssertEqual(controller.status(for: 2), otherGameFeedback,
+                           "Late game1 completion must not replace game2 feedback with finished or stopped")
+            XCTAssertNil(controller.status(for: 1), "Navigation clears obsolete game1 operation feedback")
+            XCTAssertEqual(service.ends.count, 1)
+            XCTAssertEqual(service.ends.first?.0, "activity-1")
+            if endingFinal {
+                XCTAssertEqual(service.ends.first?.1, final, "Final contents and original clocks reach the service unchanged")
+            } else {
+                XCTAssertNil(service.ends.first?.1)
+            }
+            XCTAssertFalse(controller.isBusy)
+            XCTAssertTrue(controller.activeEventIDs.isEmpty)
+            controller.start(snapshot: try snapshot(2, clock: clock))
+            XCTAssertEqual(controller.activeEventIDs, [2])
+            XCTAssertEqual(controller.status(for: 2), "Live Activity started. Updates arrive while this game is open.")
+        }
+    }
+
 }
 #endif
