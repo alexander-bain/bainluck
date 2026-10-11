@@ -8,6 +8,12 @@ fi
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 OUT="$ROOT/build/watch-ui-journey"
 mkdir -p "$OUT"
+SHARD="${WATCH_UI_SHARD:-full}"
+TEST_SELECTION=()
+if [[ "$SHARD" != full ]]; then
+  python3 "$ROOT/tools/watch_ui_shards.py" select --shard "$SHARD" > "$OUT/selected-cases.txt"
+  while IFS= read -r selector; do TEST_SELECTION+=("$selector"); done < "$OUT/selected-cases.txt"
+fi
 PHASE=preflight
 failure() {
   local status=$?
@@ -172,7 +178,7 @@ date -u '+%Y-%m-%dT%H:%M:%SZ boot-ready' >> "$OUT/install-lifecycle.txt"
 xcrun simctl get_app_container "$PHONE_UDID" com.bainluck.Bain-Luck app >> "$OUT/install-lifecycle.txt"
 xcrun simctl get_app_container "$TEST_UDID" com.bainluck.Bain-Luck.watchkitapp app >> "$OUT/install-lifecycle.txt"
 PHASE='BainLuckWatchUITests full suite from the same built products'
-if xcodebuild test-without-building "${XCODE_ARGS[@]}" \
+if xcodebuild test-without-building "${XCODE_ARGS[@]}" ${TEST_SELECTION[@]+"${TEST_SELECTION[@]}"} \
   -resultBundlePath "$RESULT" -collect-test-diagnostics never \
   -test-timeouts-enabled YES -default-test-execution-time-allowance 180 \
   -maximum-test-execution-time-allowance 300 \
@@ -295,7 +301,7 @@ else
   if [[ "$TEST_EXIT" -eq 0 ]]; then exit 1; fi
 fi
 PHASE='effective layout stress size verification'
-if [[ "$TEST_EXIT" -eq 0 ]]; then
+if [[ "$TEST_EXIT" -eq 0 && "$SHARD" == full ]]; then
   python3 - "$OUT/tests.log" <<'PYVERIFY'
 import sys
 from pathlib import Path
@@ -324,9 +330,13 @@ for case in ('testUpdatingIsVisibleUntilRequestFinishes', 'testUpdatingIsVisible
 PYVERIFY
 fi
 PHASE='rendered diagnostics consent verification'
-if [[ "$TEST_EXIT" -eq 0 ]]; then
+if [[ "$TEST_EXIT" -eq 0 && "$SHARD" == full ]]; then
   python3 "$ROOT/tools/watch_diagnostics_receipt.py" --log "$OUT/tests.log"
 fi
-PHASE='full-suite receipt verification'
+PHASE='exact coverage receipt verification'
+if [[ "$SHARD" != full ]]; then
+  python3 "$ROOT/tools/watch_ui_shards.py" receipt --shard "$SHARD" --directory "$OUT" --sha "$SHA" --exit-code "$TEST_EXIT"
+  exit 0
+fi
 python3 "$ROOT/tools/watch_iphone_receipt.py" --log "$OUT/tests.log" \
   --exit-code "$TEST_EXIT" --sha "$SHA" --output "$OUT/receipt.json"
