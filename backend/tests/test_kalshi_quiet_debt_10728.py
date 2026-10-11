@@ -94,11 +94,13 @@ async def _quiet_slate(*, quiet_after_row3, mutate=None):
     held, and assert the delivery contract at explicit causes, not turns.
 
     The original arm asserted one exact interleaving: the quiet stamp after
-    every row, including the unrelated futures row 9. That is a scheduler
-    accident — Python 3.11's ``wait_for`` adds turns before the held phase is
-    observed, and the refresher then legitimately pays the quiet debt while
-    row 3 is still held (artifacts/live-iteration-goal-20261011/
-    quiet-debt-diagnosis). Both legal schedules are now driven explicitly:
+    every row, including the unrelated futures row 9. That is only one legal
+    schedule. Local experiments that add scheduler turns, or make ``wait_for``
+    task-wrap the way Python 3.11's does, reproduce a valid alternative: the
+    refresher pays the quiet debt while row 3 is still held. That is
+    consistent with the hosted failure but does not prove its historical
+    cause (artifacts/live-iteration-goal-20261011/quiet-debt-diagnosis).
+    Both legal schedules are now driven explicitly:
     ``quiet_after_row3=False`` waits for the quiet stamp while row 3 is held;
     ``True`` gates the quiet stamp on row 3's commit. ``mutate`` wraps the
     refresher class for the negative controls below.
