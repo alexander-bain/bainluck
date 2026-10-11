@@ -531,6 +531,16 @@ class PolymarketWebSocket:
             else None
         )
         tasks: dict[int, asyncio.Task] = {}
+        # #10090 — what each running socket actually subscribed to. A token
+        # that leaves the catalog stays here, unrouted (the handlers return on
+        # a token no map owns), so losing tokens never restarts a socket:
+        # every restart re-sends the venue's book for every token on it, and
+        # props resolve all game long. v5644, 17:42:43Z: one timer refresh
+        # that mostly REMOVED tokens restarted 118 of 132 sockets; ~38k
+        # snapshot quotes then held live NFL prices 24-41 s from their commit
+        # and 16-78 s more from their stamp. `_shard_ids` stays the wanted
+        # subset, so coverage still counts only the catalog.
+        subscribed: dict[int, list[str]] = {}
         coverage = asyncio.create_task(self._coverage_loop())
         refresh = None
         try:
@@ -539,40 +549,52 @@ class PolymarketWebSocket:
                 wanted = set(self._next_asset_ids)
                 retained = {
                     i: [a for a in ids if a in wanted]
-                    for i, ids in self._shard_ids.items()
+                    for i, ids in subscribed.items()
                 }
                 present = {a for ids in retained.values() for a in ids}
                 added = [a for a in self._next_asset_ids if a not in present]
-                # Fill spare capacity without moving any retained token to a
-                # different shard. A stable catalog therefore restarts NONE.
-                for i, ids in retained.items():
-                    if added and len(ids) < MAX_ASSETS_PER_CONNECTION:
-                        filled = _shard_asset_ids(ids + added)[0]
-                        used = len(filled) - len(ids)
-                        retained[i] = filled
-                        added = added[used:]
-                next_index = max(retained, default=-1) + 1
-                for ids in _shard_asset_ids(added):
-                    retained[next_index] = ids
-                    next_index += 1
-                desired = {i: ids for i, ids in retained.items() if ids}
-                changed = {
+                # A socket restarts only when it is empty, or when it is under
+                # half full and either shrank this time or there are tokens to
+                # place: its few tokens are repacked with the new ones. Every
+                # kept socket is at least half full (or untouched), so the shard
+                # count stays within about twice the minimum, and a stable
+                # catalog — or one that only shrinks — restarts NONE.
+                half = max(1, MAX_ASSETS_PER_CONNECTION // 2)
+                repack = {
                     i
-                    for i in self._shard_ids.keys() | desired.keys()
-                    if self._shard_ids.get(i) != desired.get(i)
+                    for i, ids in retained.items()
+                    if not ids
+                    or (len(ids) < half and (added or ids != self._shard_ids.get(i)))
                 }
-                stopped = [tasks.pop(i) for i in changed if i in tasks]
+                pooled = set(added).union(*(retained[i] for i in repack))
+                free = sorted(repack)
+                next_index = max(subscribed, default=-1) + 1
+                fresh: dict[int, list[str]] = {}
+                for ids in _shard_asset_ids(
+                    [a for a in self._next_asset_ids if a in pooled]
+                ):
+                    if free:
+                        index = free.pop(0)
+                    else:
+                        index, next_index = next_index, next_index + 1
+                    fresh[index] = ids
+                stopped = [tasks.pop(i) for i in repack if i in tasks]
                 for task in stopped:
                     task.cancel()
                 await asyncio.gather(*stopped, return_exceptions=True)
-                for i in changed:
+                for i in repack:
                     self._mark_shard_down(i)
+                    subscribed.pop(i, None)
                     self._shard_ids.pop(i, None)
                     self._shard_wire.pop(i, None)
-                    if i in desired:
-                        self._shard_ids[i] = desired[i]
-                        self._shard_wire[i] = set()
-                        tasks[i] = asyncio.create_task(self._run_one(desired[i], i))
+                for i, ids in retained.items():
+                    if i not in repack:
+                        self._shard_ids[i] = ids
+                for i, ids in fresh.items():
+                    subscribed[i] = ids
+                    self._shard_ids[i] = list(ids)
+                    self._shard_wire[i] = set()
+                    tasks[i] = asyncio.create_task(self._run_one(ids, i))
                 refresh = asyncio.create_task(self._asset_refresh.wait())
                 done, _ = await asyncio.wait(
                     {refresh, *tasks.values()},
