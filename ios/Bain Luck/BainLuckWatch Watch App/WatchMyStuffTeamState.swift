@@ -6,21 +6,34 @@ nonisolated struct WatchMyStuffTeamPage: Decodable, Sendable {
     struct Team: Decodable, Sendable { let id: Int; let name: String }
     struct Game: Decodable, Identifiable, Sendable {
         let id: Int; let homeTeam: String; let awayTeam: String
+        var isReadableDestination: Bool {
+            id > 0 && !homeTeam.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                && !awayTeam.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }
     }
     struct Market: Decodable, Sendable {
         let marketId: Int; let marketName: String
+        var isReadableDestination: Bool {
+            marketId > 0 && !marketName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }
     }
     let team: Team
     let upcomingEvents: [Game]
     let recentEvents: [Game]
     let futures: [Market]
+    var hasUnavailableGames: Bool {
+        (upcomingEvents + recentEvents).contains { !$0.isReadableDestination }
+    }
+    var hasUnavailableQuestions: Bool {
+        futures.contains { !$0.isReadableDestination }
+    }
     var games: [Game] {
         var seen = Set<Int>()
-        return (upcomingEvents + recentEvents).filter { $0.id > 0 && seen.insert($0.id).inserted }
+        return (upcomingEvents + recentEvents).filter { $0.isReadableDestination && seen.insert($0.id).inserted }
     }
     var questions: [Market] {
         var seen = Set<Int>()
-        return futures.filter { $0.marketId > 0 && seen.insert($0.marketId).inserted }
+        return futures.filter { $0.isReadableDestination && seen.insert($0.marketId).inserted }
     }
 }
 

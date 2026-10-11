@@ -119,10 +119,15 @@ private struct WatchMyStuffTeamView: View {
             VStack(alignment: .leading, spacing: 10) {
                 Text(teamState.page?.team.name ?? item.title).font(.headline)
                 if let page = teamState.page {
-                    if page.games.isEmpty { Text("No games listed for this team.") }
+                    if page.hasUnavailableGames {
+                        Text("Some game details are unavailable. Refresh to try again.").font(.footnote)
+                    } else if page.games.isEmpty { Text("No games listed for this team.") }
                     ForEach(Array(page.games.prefix(12))) { game in
                         Button("\(game.awayTeam) at \(game.homeTeam)") { select(game.id) }
                             .frame(minHeight: 44)
+                    }
+                    if page.hasUnavailableQuestions {
+                        Text("Some question details are unavailable. Refresh to try again.").font(.footnote)
                     }
                     ForEach(Array(page.questions.prefix(12)), id: \.marketId) { market in
                         Button(market.marketName) {
