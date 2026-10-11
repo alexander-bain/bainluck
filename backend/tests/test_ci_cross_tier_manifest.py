@@ -110,8 +110,8 @@ _REQUIRED_NATIVE_INPUTS = tuple(
         "Bain Luck/Utilities/EventState.swift",
         "BainLuckTests/Fixtures/event-ufc-26sep19.served6816.SYNTHETIC.json",
         "BainLuckWatch Watch App/WatchTabView.swift",
-        "BainLuckWatchUITests/ComplicationContentJourneyTests.swift",
-        "BainLuckWatchUITests/WatchDiscoverJourneyTests.swift",
+        "BainLuckWatchUITests/LauncherURLJourneyTests.swift",
+        "BainLuckWatchUITests/PickerCurrentGameJourneyTests.swift",
         "Bain Luck/Utilities/RenderedPercent.swift",
         "Bain Luck/Components/DiscoverEventCard.swift",
         "Bain Luck/Components/RelatedByTagView.swift",
@@ -537,7 +537,7 @@ class TestNativeInactivePreparation:
     @pytest.mark.parametrize(
         "path",
         [
-            "ios/Bain Luck/BainLuckWatchUITests/ComplicationContentJourneyTests.swift",
+            "ios/Bain Luck/BainLuckWatchUITests/LauncherURLJourneyTests.swift",
             "ios/Bain Luck/BainLuckTests/Fixtures/event-ufc-26sep19.served6816.SYNTHETIC.json",
         ],
     )
