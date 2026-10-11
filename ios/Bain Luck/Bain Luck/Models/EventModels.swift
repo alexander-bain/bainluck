@@ -20,12 +20,14 @@ nonisolated struct EventDetail: Decodable, Identifiable, Sendable {
     // #2687 — a `closed` frame means the match ended under the stream; the
     // status has to be able to follow it without a full refetch.
     var status: String?
-    let homeScore: Int?
-    let awayScore: Int?
+    // #10866 — the score pair and its provenance move together when a held
+    // live page retains a provably newer observation over an older response.
+    var homeScore: Int?
+    var awayScore: Int?
     /// The producer's clock and attribution for this response's score tuple.
     /// Missing on older servers/caches; never replace with receipt or price time.
-    let scoreSource: String?
-    let scoreObservedAt: String?
+    var scoreSource: String?
+    var scoreObservedAt: String?
     let homeTeamData: TeamData?
     let awayTeamData: TeamData?
     let metadata: EventMetadata?

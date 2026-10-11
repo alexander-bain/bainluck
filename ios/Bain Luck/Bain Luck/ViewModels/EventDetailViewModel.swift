@@ -526,7 +526,9 @@ final class EventDetailViewModel: ObservableObject {
     @MainActor
     private func adopt(_ response: EventDetail, recordsPriceActivity: Bool = true) {
         let prior = event
-        var fetched = response
+        // Compare the original lifecycle before pushed-final reconciliation.
+        // A price clock never dates the score (#10866).
+        var fetched = LiveEventScoreReconciliation.keepingNewerHeldScore(response, held: prior)
         if awaitingServedFinal {
             if EventState.isFinished(fetched.status) {
                 awaitingServedFinal = false
