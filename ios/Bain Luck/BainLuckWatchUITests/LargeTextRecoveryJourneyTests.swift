@@ -25,7 +25,7 @@ final class LargeTextRecoveryJourneyTests: XCTestCase {
         capture(app, "Continue on iPhone explanation without delivery claim")
         dismissHelp.tap()
         let change = app.buttons["watch.choose-another"]
-        try reveal(change, in: app)
+        _ = try revealChange(change, in: app)
         capture(app, "Largest text reachable change control")
         change.tap()
         try expandPickerDetails(in: app)
@@ -145,6 +145,56 @@ final class LargeTextRecoveryJourneyTests: XCTestCase {
             details.tap()
         }
         XCTAssertEqual(details.value as? String, "Expanded")
+    }
+
+    @MainActor
+    private func changeViewport(in app: XCUIApplication) throws -> CGRect {
+        let visible = app.scrollViews.allElementsBoundByIndex.filter {
+            let bounds = $0.frame.intersection(app.frame)
+            return $0.isHittable && !bounds.isNull && !bounds.isEmpty
+                && bounds.minX.isFinite && bounds.maxX.isFinite
+                && bounds.minY.isFinite && bounds.maxY.isFinite
+        }
+        guard visible.count == 1 else {
+            XCTFail("Expected one visible change scroll viewport")
+            throw NSError(domain: "WatchLargeTextChangeViewport", code: 1)
+        }
+        var bounds = visible[0].frame.intersection(app.frame)
+        let bars = app.navigationBars.allElementsBoundByIndex.filter {
+            $0.exists && $0.frame.intersects(bounds)
+        }
+        if let chromeBottom = bars.map({ $0.frame.maxY }).max() {
+            let top = max(bounds.minY, chromeBottom + 3)
+            bounds = CGRect(x: bounds.minX, y: top, width: bounds.width, height: bounds.maxY - top)
+        }
+        guard !bounds.isEmpty, !bounds.isNull, bounds.height > 30,
+              bounds.minX.isFinite, bounds.maxX.isFinite,
+              bounds.minY.isFinite, bounds.maxY.isFinite else {
+            XCTFail("Invalid unobscured change viewport")
+            throw NSError(domain: "WatchLargeTextChangeViewport", code: 2)
+        }
+        return bounds.insetBy(dx: 2, dy: 3)
+    }
+
+    @MainActor
+    private func revealChange(_ change: XCUIElement, in app: XCUIApplication) throws -> CGRect {
+        XCTAssertTrue(change.waitForExistence(timeout: 15))
+        for _ in 0..<32 {
+            let bounds = try changeViewport(in: app)
+            let frame = change.frame
+            if change.isHittable && bounds.contains(frame) { return bounds }
+            let earlier = frame.minY < bounds.minY
+            let distance = earlier ? bounds.minY - frame.minY : frame.maxY - bounds.maxY
+            let fraction = min(0.50, max(0.15, distance / bounds.height))
+            let origin = app.coordinate(withNormalizedOffset: .zero)
+            let start = origin.withOffset(CGVector(dx: bounds.midX - app.frame.minX,
+                dy: bounds.minY + bounds.height * (earlier ? 0.25 : 0.75) - app.frame.minY))
+            let end = start.withOffset(CGVector(dx: 0, dy: bounds.height * (earlier ? fraction : -fraction)))
+            start.press(forDuration: 0.1, thenDragTo: end, withVelocity: .slow, thenHoldForDuration: 0.4)
+        }
+        capture(app, "Unreachable largest text control - \(change.identifier)")
+        XCTFail("Cannot bring full change control below navigation chrome")
+        throw NSError(domain: "WatchLargeTextChangeViewport", code: 3)
     }
 
     @MainActor

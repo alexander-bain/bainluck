@@ -67,6 +67,12 @@ ORIGINAL_RECOVERED_SELECTION_REVEAL = (
     "            try reveal(retained, in: app)\n"
     "            retained.tap()\n"
 )
+LARGE_TEXT_CHANGE_HELPERS = {
+    "changeViewport": "39f275d30ca7681f295e0523992b7bc48e701015136b6081486521da0c94e19a",
+    "revealChange": "305e4904e2e23ca60049ed888fca95dc099218260037137a7db8becf73a26c3b",
+}
+LARGE_TEXT_CHANGE_CALL = "        _ = try revealChange(change, in: app)\n"
+LARGE_TEXT_ORIGINAL_CHANGE_CALL = "        try reveal(change, in: app)\n"
 ORIGINAL_RECOVERY = {
     "ClearSelectionJourneyTests.swift": "0bc9ab18e65695765e1a85da54be3df652a56e0012807b6d066134caa5a5516c",
     "LargeTextRecoveryJourneyTests.swift": "c409b318d266880176c15fb6db744b805e4f9610afbe4b9a5c9d9948badce673",
@@ -88,6 +94,14 @@ def replace_exact(text, old, new, count=1):
 
 def normalize_disclosure(name, text):
     assert name in (*ORIGINAL_RECOVERY, "PickerReturnJourneyTests.swift")
+    if name == "LargeTextRecoveryJourneyTests.swift":
+        for helper, expected in LARGE_TEXT_CHANGE_HELPERS.items():
+            added = helper_block(text, helper)
+            assert digest(added) == expected, "Unreviewed largest-text change viewport"
+            text = replace_exact(text, added, "")
+        text = replace_exact(
+            text, LARGE_TEXT_CHANGE_CALL, LARGE_TEXT_ORIGINAL_CHANGE_CALL
+        )
     helper_names = ["expandPickerDetails"]
     if name != "LargeTextRecoveryJourneyTests.swift":
         helper_names += ["refreshViewport", "revealRefresh"]
@@ -353,7 +367,9 @@ def test_more_actions_normalization_rejects_missing_duplicate_or_changed_expansi
             normalize_more_actions(name, altered)
 
 
-@pytest.mark.parametrize("mutation", ["old_helper", "missing", "duplicate", "after_tap"])
+@pytest.mark.parametrize(
+    "mutation", ["old_helper", "missing", "duplicate", "after_tap"]
+)
 def test_recovered_selection_requires_chrome_free_reveal_before_unchanged_tap(mutation):
     text = source("PickerReturnJourneyTests.swift")
     line = "            _ = try revealRefresh(retained, in: app)\n"
@@ -369,5 +385,103 @@ def test_recovered_selection_requires_chrome_free_reveal_before_unchanged_tap(mu
     assert text.count(block) == 1
     with pytest.raises(AssertionError):
         normalize_disclosure(
-            "PickerReturnJourneyTests.swift", text.replace(block, replacements[mutation])
+            "PickerReturnJourneyTests.swift",
+            text.replace(block, replacements[mutation]),
         )
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "old",
+        "missing",
+        "duplicate",
+        "direction",
+        "containment",
+        "budget",
+        "hittability",
+        "reading",
+    ],
+)
+def test_largest_text_change_rejects_weakened_or_missing_viewport(mutation):
+    text = source("LargeTextRecoveryJourneyTests.swift")
+    replacements = {
+        "old": text.replace(LARGE_TEXT_CHANGE_CALL, LARGE_TEXT_ORIGINAL_CHANGE_CALL),
+        "missing": text.replace(LARGE_TEXT_CHANGE_CALL, ""),
+        "duplicate": text.replace(LARGE_TEXT_CHANGE_CALL, LARGE_TEXT_CHANGE_CALL * 2),
+        "direction": text.replace(
+            "let earlier = frame.minY < bounds.minY",
+            "let earlier = frame.minY < app.frame.minY",
+        ),
+        "containment": text.replace(
+            "bounds.contains(frame)", "bounds.intersects(frame)"
+        ),
+        "budget": text.replace("for _ in 0..<32", "for _ in 0..<64"),
+        "hittability": text.replace(
+            "change.isHittable && bounds.contains", "bounds.contains"
+        ),
+        "reading": text.replace(
+            "        XCTAssertEqual(probability.label, reading)\n", ""
+        ),
+    }
+    assert replacements[mutation] != text
+    with pytest.raises(AssertionError):
+        normalized = normalize_disclosure(
+            "LargeTextRecoveryJourneyTests.swift", replacements[mutation]
+        )
+        assert (
+            digest(normalized)
+            == ORIGINAL_RECOVERY["LargeTextRecoveryJourneyTests.swift"]
+        )
+
+
+def test_largest_text_change_uses_finite_unique_unobscured_viewport_and_original_gesture_cap():
+    text = source("LargeTextRecoveryJourneyTests.swift")
+    viewport = helper_block(text, "changeViewport")
+    reveal = helper_block(text, "revealChange")
+    assert "guard visible.count == 1 else" in viewport
+    assert "$0.isHittable" in viewport
+    for edge in ("minX", "maxX", "minY", "maxY"):
+        assert f"bounds.{edge}.isFinite" in viewport
+    assert "app.navigationBars.allElementsBoundByIndex.filter" in viewport
+    assert "let top = max(bounds.minY, chromeBottom + 3)" in viewport
+    assert "bounds.height > 30" in viewport
+    assert "return bounds.insetBy(dx: 2, dy: 3)" in viewport
+    assert "change.isHittable && bounds.contains(frame)" in reveal
+    assert "let earlier = frame.minY < bounds.minY" in reveal
+    assert "for _ in 0..<32" in reveal
+    assert "waitForExistence(timeout: 15)" in reveal
+    assert "thenHoldForDuration: 0.4" in reveal
+    assert "min(0.50, max(0.15, distance / bounds.height))" in reveal
+    assert "bounds.height * (earlier ? 0.25 : 0.75)" in reveal
+    assert "bounds.height * (earlier ? fraction : -fraction)" in reveal
+
+
+@pytest.mark.parametrize(
+    "top,y,height,earlier",
+    [
+        (6, 0.5, 44, True),
+        (68, 0.5, 44, True),
+        (68, -20, 44, True),
+        (68, 230, 44, False),
+        (68, 300, 44, False),
+        (6, -60, 44, True),
+    ],
+)
+def test_largest_text_change_geometry_model_keeps_both_endpoints_inside_content(
+    top, y, height, earlier
+):
+    # Synthetic content bounds, not a claim about retained navigation-bar dimensions.
+    # Source hashes bind the modeled formula; Swift and gestures remain unexecuted.
+    bottom = 245
+    assert (y < top) is earlier
+    distance = top - y if earlier else y + height - bottom
+    fraction = min(0.50, max(0.15, distance / (bottom - top)))
+    start = top + (bottom - top) * (0.25 if earlier else 0.75)
+    end = start + (bottom - top) * (fraction if earlier else -fraction)
+    assert top < min(start, end) < max(start, end) < bottom
+    if y == 0.5:
+        assert not (
+            y < 0
+        ), "Original whole-app direction pushes top-edge target outward"
+        assert end > start
