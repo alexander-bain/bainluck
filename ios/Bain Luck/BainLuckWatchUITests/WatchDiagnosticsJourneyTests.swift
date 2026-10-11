@@ -31,16 +31,20 @@ final class WatchDiagnosticsJourneyTests: XCTestCase {
         if large { XCTAssertEqual(size, "accessibility5") }
         else { XCTAssertFalse(size.hasPrefix("accessibility")) }
         try captureContent(choice, app: app, name: "Watch diagnostics default off - \(size)")
+        let phoneRequirement = app.staticTexts["watch.diagnostics.phone-requirement"].firstMatch
+        try reveal(phoneRequirement, app: app)
+        XCTAssertEqual(phoneRequirement.label, "Your iPhone must also allow analytics.")
+        try captureContent(phoneRequirement, app: app, name: "Watch diagnostics iPhone requirement beside choice - \(size)")
         let disclosure = app.staticTexts["watch.diagnostics.disclosure"].firstMatch
-        XCTAssertTrue(disclosure.label.contains("part of your iPhone’s analytics"))
-        XCTAssertTrue(disclosure.label.contains("Your iPhone must also allow analytics"))
+        try reveal(disclosure, app: app)
+        XCTAssertEqual(disclosure.label, "Shares screen visits, actions and load times as part of your iPhone’s analytics. No game names or search text are included.")
         try captureContent(disclosure, app: app, name: "Watch diagnostics consent disclosure - \(size)")
         let revocation = app.staticTexts["watch.diagnostics.revocation"].firstMatch
         try reveal(revocation, app: app)
         XCTAssertTrue(revocation.label.contains("clears unsent Watch diagnostics"))
         XCTAssertTrue(revocation.label.contains("Data already sent cannot be recalled here"))
         try captureContent(revocation, app: app, name: "Watch diagnostics revocation disclosure - \(size)")
-        try reveal(choice, app: app, earlierWhenMissing: true)
+        try reveal(choice, app: app, earlierWhenMissing: true, maxScrollFraction: 0.55)
         // watchOS exposes the whole row as a Switch; its center is the label.
         // Tap the visible trailing switch, then assert the actual persisted value.
         choice.coordinate(withNormalizedOffset: CGVector(dx: 0.85, dy: 0.5)).tap()
@@ -51,7 +55,7 @@ final class WatchDiagnosticsJourneyTests: XCTestCase {
         app.launch()
         try openSettings(app)
         XCTAssertEqual(choice.value as? String, "1", "Explicit choice must survive relaunch")
-        try reveal(choice, app: app, earlierWhenMissing: true)
+        try reveal(choice, app: app, earlierWhenMissing: true, maxScrollFraction: 0.55)
         // watchOS exposes the whole row as a Switch; its center is the label.
         // Tap the visible trailing switch, then assert the actual persisted value.
         choice.coordinate(withNormalizedOffset: CGVector(dx: 0.85, dy: 0.5)).tap()
@@ -65,39 +69,56 @@ final class WatchDiagnosticsJourneyTests: XCTestCase {
     }
 
     @MainActor private func openSettings(_ app: XCUIApplication) throws {
+        let more = app.buttons["watch.more-actions"]
+        try reveal(more, app: app, maxScrollFraction: 0.55)
+        XCTAssertEqual(more.value as? String, "Collapsed")
+        more.tap()
+        XCTAssertEqual(more.value as? String, "Expanded")
         let link = app.buttons["watch.diagnostics"].firstMatch
         XCTAssertTrue(link.waitForExistence(timeout: 20))
-        try reveal(link, app: app)
+        try reveal(link, app: app, maxScrollFraction: 0.55)
         link.tap()
         XCTAssertTrue(app.switches["watch.diagnostics.choice"].firstMatch.waitForExistence(timeout: 10))
     }
 
-    @MainActor private func bounds(_ app: XCUIApplication) -> CGRect {
+    @MainActor private func bounds(_ app: XCUIApplication, appFrame: CGRect) -> CGRect {
         let scroll = app.scrollViews.firstMatch
         let collection = app.collectionViews.firstMatch
-        let content = scroll.exists ? scroll.frame : (collection.exists ? collection.frame : app.frame)
+        let content = scroll.exists ? scroll.frame : (collection.exists ? collection.frame : appFrame)
         let bar = app.navigationBars.firstMatch
         let top = bar.exists ? max(content.minY, bar.frame.maxY) : content.minY
         return CGRect(x: content.minX, y: top, width: content.width,
-                      height: max(1, content.maxY - top)).intersection(app.frame)
+                      height: max(1, content.maxY - top)).intersection(appFrame)
     }
 
-    @MainActor private func scroll(_ app: XCUIApplication, earlier: Bool) {
-        let box = bounds(app)
+    @MainActor private func scroll(_ app: XCUIApplication, earlier: Bool, fraction: CGFloat = 0.20) {
+        let appFrame = app.frame
+        let box = bounds(app, appFrame: appFrame)
+        scroll(app, box: box, appFrame: appFrame, earlier: earlier, fraction: fraction)
+    }
+
+    @MainActor private func scroll(_ app: XCUIApplication, box: CGRect, appFrame: CGRect, earlier: Bool, fraction: CGFloat = 0.20) {
+        // Longer moves only traverse distant content. Keep both endpoints
+        // inside the viewport and retain the small step near the target.
+        let startFraction: CGFloat = fraction > 0.20 ? (earlier ? 0.20 : 0.80) : 0.60
         let start = app.coordinate(withNormalizedOffset: .zero).withOffset(
-            CGVector(dx: box.midX - app.frame.minX, dy: box.minY + box.height * 0.60 - app.frame.minY))
-        let end = start.withOffset(CGVector(dx: 0, dy: box.height * (earlier ? 0.20 : -0.20)))
+            CGVector(dx: box.midX - appFrame.minX, dy: box.minY + box.height * startFraction - appFrame.minY))
+        let end = start.withOffset(CGVector(dx: 0, dy: box.height * (earlier ? fraction : -fraction)))
         start.press(forDuration: 0.1, thenDragTo: end, withVelocity: .slow, thenHoldForDuration: 0.3)
     }
 
-    @MainActor private func reveal(_ element: XCUIElement, app: XCUIApplication, earlierWhenMissing: Bool = false) throws {
+    @MainActor private func reveal(_ element: XCUIElement, app: XCUIApplication, earlierWhenMissing: Bool = false, maxScrollFraction: CGFloat = 0.20) throws {
         for _ in 0..<24 {
-            let box = bounds(app)
+            let appFrame = app.frame
+            let box = bounds(app, appFrame: appFrame)
             // Form lazily mounts offscreen rows; never read a missing row's frame or label.
-            if !element.exists { scroll(app, earlier: earlierWhenMissing); continue }
-            if element.isHittable && (box.contains(element.frame) ||
-                (element.frame.height > box.height && box.intersects(element.frame))) { return }
-            scroll(app, earlier: element.frame.midY < box.midY)
+            if !element.exists { scroll(app, box: box, appFrame: appFrame, earlier: earlierWhenMissing, fraction: maxScrollFraction); continue }
+            let frame = element.frame
+            if element.isHittable && (box.contains(frame) ||
+                (frame.height > box.height && box.intersects(frame))) { return }
+            let distance = abs(frame.midY - box.midY) / box.height
+            let fraction = min(maxScrollFraction, max(0.20, distance))
+            scroll(app, box: box, appFrame: appFrame, earlier: frame.midY < box.midY, fraction: fraction)
         }
         capture(app, "Unreachable diagnostics element - \(element.identifier)")
         throw NSError(domain: "WatchDiagnostics", code: 1)
@@ -108,19 +129,29 @@ final class WatchDiagnosticsJourneyTests: XCTestCase {
         // both ends; presence in the hierarchy alone is not visible disclosure.
         var covered: CGFloat?
         for _ in 0..<24 {
-            let box = bounds(app), frame = element.frame
+            let appFrame = app.frame
+            let box = bounds(app, appFrame: appFrame), frame = element.frame
+            // A fully visible disclosure already has complete coverage. Moving
+            // it into the upper half adds scrolling but proves nothing further.
+            if element.isHittable && !frame.isEmpty && !frame.isNull &&
+                frame.minX.isFinite && frame.minY.isFinite &&
+                frame.maxX.isFinite && frame.maxY.isFinite && box.contains(frame) {
+                capture(app, name + " - complete")
+                return
+            }
             if element.isHittable && frame.minY >= box.minY && frame.minY <= box.midY {
                 covered = min(frame.height, box.maxY - frame.minY)
                 capture(app, name + " - top")
                 if box.contains(frame) { return }
                 break
             }
-            scroll(app, earlier: frame.minY < box.minY)
+            scroll(app, box: box, appFrame: appFrame, earlier: frame.minY < box.minY)
         }
         guard var end = covered else { throw NSError(domain: "WatchDiagnostics", code: 2) }
         for _ in 0..<24 {
             scroll(app, earlier: false)
-            let box = bounds(app), frame = element.frame
+            let appFrame = app.frame
+            let box = bounds(app, appFrame: appFrame), frame = element.frame
             let start = max(0, box.minY - frame.minY), visibleEnd = min(frame.height, box.maxY - frame.minY)
             if element.isHittable && visibleEnd > end {
                 XCTAssertLessThanOrEqual(start, end + 1, "Disclosure captures must overlap")

@@ -21,6 +21,7 @@ swiftc -parse-as-library -swift-version 5 -D DEBUG \
   "$ROOT/tools/tests/watch-selected-game/ComplicationChecks.swift" \
   "$ROOT/tools/tests/watch-selected-game/ContinuationChecks.swift" \
   "$ROOT/tools/tests/watch-selected-game/FlowChecks.swift" \
+  "$ROOT/tools/tests/watch-selected-game/IdentityChecks.swift" \
   "$ROOT/tools/tests/watch-selected-game/PickerChecks.swift" \
   "$ROOT/tools/tests/watch-selected-game/HTTPChecks.swift" \
   "$ROOT/tools/tests/watch-selected-game/ProbabilityChecks.swift" \

@@ -11,6 +11,11 @@ final class LargeTextRecoveryJourneyTests: XCTestCase {
         defer { app.terminate() }
         let probability = app.descendants(matching: .any)["watch.home-probability"].firstMatch
         let reading = probability.label
+        let more = app.buttons["watch.more-actions"]
+        try reveal(more, in: app)
+        XCTAssertEqual(more.value as? String, "Collapsed")
+        more.tap()
+        XCTAssertEqual(more.value as? String, "Expanded")
         let help = app.buttons["watch.continue-on-phone"]
         try reveal(help, in: app)
         capture(app, "Largest text reachable Continue on iPhone control")
@@ -20,9 +25,10 @@ final class LargeTextRecoveryJourneyTests: XCTestCase {
         capture(app, "Continue on iPhone explanation without delivery claim")
         dismissHelp.tap()
         let change = app.buttons["watch.choose-another"]
-        try reveal(change, in: app)
+        _ = try revealChange(change, in: app)
         capture(app, "Largest text reachable change control")
         change.tap()
+        try expandPickerDetails(in: app)
         let error = app.staticTexts["watch.picker-error"]
         XCTAssertTrue(error.waitForExistence(timeout: 15))
         let heading = app.staticTexts["watch.picker-heading"]
@@ -116,6 +122,7 @@ final class LargeTextRecoveryJourneyTests: XCTestCase {
         XCTAssertFalse(app.descendants(matching: .any)["watch.game-state"].firstMatch.exists)
         XCTAssertFalse(app.buttons["watch.clear-selection"].exists)
         XCTAssertFalse(app.buttons["watch.choose-another"].exists)
+        try expandPickerDetails(in: app)
         let error = app.staticTexts["watch.picker-error"]
         XCTAssertTrue(error.waitForExistence(timeout: 15))
         XCTAssertEqual(error.label, "Offline. Connect to the internet, then refresh games.")
@@ -128,11 +135,80 @@ final class LargeTextRecoveryJourneyTests: XCTestCase {
     }
 
     @MainActor
+    private func expandPickerDetails(in app: XCUIApplication) throws {
+        let details = app.buttons["watch.picker-info"]
+        XCTAssertTrue(details.waitForExistence(timeout: 15))
+        XCTAssertEqual(details.label, "About this list")
+        try reveal(details, in: app)
+        if details.value as? String != "Expanded" {
+            XCTAssertEqual(details.value as? String, "Collapsed")
+            details.tap()
+        }
+        XCTAssertEqual(details.value as? String, "Expanded")
+    }
+
+    @MainActor
+    private func changeViewport(in app: XCUIApplication, appFrame: CGRect) throws -> CGRect {
+        let visible = app.scrollViews.allElementsBoundByIndex.compactMap { scroll -> CGRect? in
+            let bounds = scroll.frame.intersection(appFrame)
+            guard scroll.isHittable && !bounds.isNull && !bounds.isEmpty
+                && bounds.minX.isFinite && bounds.maxX.isFinite
+                && bounds.minY.isFinite && bounds.maxY.isFinite else { return nil }
+            return bounds
+        }
+        guard visible.count == 1 else {
+            XCTFail("Expected one visible change scroll viewport")
+            throw NSError(domain: "WatchLargeTextChangeViewport", code: 1)
+        }
+        var bounds = visible[0]
+        let chromeBottom = app.navigationBars.allElementsBoundByIndex.compactMap { bar -> CGFloat? in
+            guard bar.exists else { return nil }
+            let frame = bar.frame
+            return frame.intersects(bounds) ? frame.maxY : nil
+        }.max()
+        if let chromeBottom = chromeBottom {
+            let top = max(bounds.minY, chromeBottom + 3)
+            bounds = CGRect(x: bounds.minX, y: top, width: bounds.width, height: bounds.maxY - top)
+        }
+        guard !bounds.isEmpty, !bounds.isNull, bounds.height > 30,
+              bounds.minX.isFinite, bounds.maxX.isFinite,
+              bounds.minY.isFinite, bounds.maxY.isFinite else {
+            XCTFail("Invalid unobscured change viewport")
+            throw NSError(domain: "WatchLargeTextChangeViewport", code: 2)
+        }
+        return bounds.insetBy(dx: 2, dy: 3)
+    }
+
+    @MainActor
+    private func revealChange(_ change: XCUIElement, in app: XCUIApplication) throws -> CGRect {
+        XCTAssertTrue(change.waitForExistence(timeout: 15))
+        for _ in 0..<32 {
+            let appFrame = app.frame
+            let bounds = try changeViewport(in: app, appFrame: appFrame)
+            let frame = change.frame
+            if change.isHittable && bounds.contains(frame) { return bounds }
+            let earlier = frame.minY < bounds.minY
+            let distance = earlier ? bounds.minY - frame.minY : frame.maxY - bounds.maxY
+            let fraction = min(0.50, max(0.15, distance / bounds.height))
+            let origin = app.coordinate(withNormalizedOffset: .zero)
+            let start = origin.withOffset(CGVector(dx: bounds.midX - appFrame.minX,
+                dy: bounds.minY + bounds.height * (earlier ? 0.25 : 0.75) - appFrame.minY))
+            let end = start.withOffset(CGVector(dx: 0, dy: bounds.height * (earlier ? fraction : -fraction)))
+            start.press(forDuration: 0.1, thenDragTo: end, withVelocity: .slow, thenHoldForDuration: 0.4)
+        }
+        capture(app, "Unreachable largest text control - \(change.identifier)")
+        XCTFail("Cannot bring full change control below navigation chrome")
+        throw NSError(domain: "WatchLargeTextChangeViewport", code: 3)
+    }
+
+    @MainActor
     private func reveal(_ element: XCUIElement, in app: XCUIApplication) throws {
         XCTAssertTrue(element.waitForExistence(timeout: 15))
         for _ in 0..<32 {
-            if element.isHittable && app.frame.contains(element.frame) { return }
-            let earlier = element.frame.minY < app.frame.minY
+            let appFrame = app.frame
+            let frame = element.frame
+            if element.isHittable && appFrame.contains(frame) { return }
+            let earlier = frame.minY < appFrame.minY
             let start = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.60))
             let end = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: earlier ? 0.75 : 0.45))
             start.press(forDuration: 0.1, thenDragTo: end, withVelocity: .slow, thenHoldForDuration: 0.4)

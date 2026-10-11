@@ -6,6 +6,8 @@ import sys
 import tempfile
 import unittest
 
+UPDATING_CASES = [f"Test Case '-[BainLuckWatchUITests.SelectedGameUpdatingJourneyTests {case}]' passed (12.0 seconds)." for case in ("testUpdatingIsVisibleUntilRequestFinishes", "testUpdatingIsVisibleAtAccessibilitySize")]
+
 ROOT = Path(__file__).resolve().parents[2]
 NETWORK = ("WATCH_UI_PICKER_NETWORK_OFFLINE=PASS", "WATCH_UI_PICKER_NETWORK_INTERRUPTED=PASS", "WATCH_UI_PICKER_NETWORK_TIMEOUT=PASS")
 CASE = "Test Case '-[BainLuckWatchUITests.PickerReturnJourneyTests testNetworkFailureGuidanceRetainsChoicesAndRecoversSelection]' passed (100.0 seconds)."
@@ -23,10 +25,16 @@ class PickerNetworkReceiptTests(unittest.TestCase):
         markers = ast.literal_eval(marker_loop.iter)
         self.rows = ["WATCH_UI_STRESS_TYPE=accessibility5", "WATCH_UI_STANDARD_TYPE=xLarge", FRESH, CASE,
                      *dict.fromkeys((*markers, *NETWORK)),
-                     *(f"Test Case '-[BainLuckWatchUITests.PickerSelectedStateJourneyTests {case}]' passed (12.0 seconds)."
-                       for case in ("testSelectedGameIsMarkedInPickerAndCanChange", "testSelectedGameIsMarkedAtAccessibilitySize")),
-                     *(f"Test Case '-[BainLuckWatchUITests.SelectedGameUpdatingJourneyTests {case}]' passed (12.0 seconds)."
-                       for case in ("testUpdatingIsVisibleUntilRequestFinishes", "testUpdatingIsVisibleAtAccessibilitySize"))]
+                     *(f"Test Case '-[BainLuckWatchUITests.{suite} {case}]' passed (12.0 seconds)."
+                       for suite, case in (
+                           ("ComplicationContentJourneyTests", "testRectangularTypedNamedValuesFitWithMonochromeRendering"),
+                           ("ComplicationContentJourneyTests", "testRectangularLegacyMismatchUnknownAndEmptyStayHonest"),
+                           ("RectangularWidgetHostJourneyTests", "testActualRectangularWidgetShowsPublishedSavedReading")))]
+
+        self.rows.extend(f"Test Case '-[BainLuckWatchUITests.PickerSelectedStateJourneyTests {case}]' passed (12.0 seconds)."
+                         for case in ("testSelectedGameIsMarkedInPickerAndCanChange", "testSelectedGameIsMarkedAtAccessibilitySize"))
+
+        self.rows.extend(UPDATING_CASES)
 
     def run_gate(self, rows):
         with tempfile.TemporaryDirectory() as directory:
