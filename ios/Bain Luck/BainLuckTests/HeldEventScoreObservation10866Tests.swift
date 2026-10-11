@@ -105,11 +105,12 @@ final class HeldEventScoreObservation10866Tests: XCTestCase {
     }
 
     private final class Handle: LiveStreamHandle, @unchecked Sendable {
+        var isClosed = false
         private var handlers: [String: [@MainActor (String) -> Void]] = [:]
         func on(_ event: String, _ handler: @escaping @MainActor (String) -> Void) {
             handlers[event, default: []].append(handler)
         }
-        func close() {}
+        func close() { isClosed = true }
         @MainActor func open() { for handler in handlers["open", default: []] { handler("") } }
     }
 
