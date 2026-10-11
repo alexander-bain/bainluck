@@ -609,6 +609,10 @@ class PolymarketWebSocket:
                 for task in stopped:
                     task.cancel()
                 await asyncio.gather(*stopped, return_exceptions=True)
+                # A newer catalog may have arrived during that await and
+                # narrowed the fences already; never widen past it (the next
+                # pass of this loop picks it up in full).
+                latest = set(self._next_asset_ids)
                 for i in repack:
                     self._mark_shard_down(i)
                     subscribed.pop(i, None)
@@ -618,12 +622,12 @@ class PolymarketWebSocket:
                 for i, ids in retained.items():
                     if i not in repack:
                         self._shard_ids[i] = ids
-                        self._shard_routed[i] = frozenset(ids)
+                        self._shard_routed[i] = frozenset(a for a in ids if a in latest)
                 for i, ids in fresh.items():
                     subscribed[i] = ids
                     self._shard_ids[i] = list(ids)
                     self._shard_wire[i] = set()
-                    self._shard_routed[i] = frozenset(ids)
+                    self._shard_routed[i] = frozenset(a for a in ids if a in latest)
                     tasks[i] = asyncio.create_task(self._run_one(ids, i))
                 refresh = asyncio.create_task(self._asset_refresh.wait())
                 done, _ = await asyncio.wait(

@@ -256,6 +256,10 @@ class _FakeSocket:
         return self
 
     async def __aexit__(self, *args):
+        gate = getattr(self, "exit_gate", None)
+        if gate is not None:  # hold a cancelled socket mid-teardown
+            self.exit_started.set()
+            await gate.wait()
         self.closed = True
 
 
@@ -433,3 +437,35 @@ async def test_a_socket_the_byte_ceiling_filled_is_not_taken_for_a_small_one(mon
         owner.cancel()
         with pytest.raises(asyncio.CancelledError):
             await owner
+
+
+@pytest.mark.asyncio
+async def test_a_catalog_arriving_while_a_refresh_cancels_is_not_reopened_after(wire):
+    """Root's review of 8d3ff60e52: refresh A awaits its cancelled sockets; a
+    catalog B that drops "mv" narrows the fence meanwhile; A must not then
+    restore the fence from its own, older catalog."""
+    received = []
+    game = _client("game", received)
+    task = asyncio.create_task(game.run_refreshable(
+        ["mv", "a", "b", "c", "d1", "d2", "d3", "d4"]
+    ))
+    try:
+        await until(lambda: len(wire.sockets) == 2 and all(s.assets for s in wire.sockets))
+        kept = wire.carrying("mv")[0]
+        emptied = wire.carrying("d1")[0]
+        emptied.exit_gate, emptied.exit_started = asyncio.Event(), asyncio.Event()
+        game.update_asset_ids(["mv", "a", "b", "c"])  # A: empties socket 1
+        await asyncio.wait_for(emptied.exit_started.wait(), 3)
+        game.update_asset_ids(["a", "b", "c"])  # B, while A is cancelling
+        emptied.exit_gate.set()
+        for _ in range(50):
+            assert not game._routes(0, {"asset_id": "mv"})
+            await asyncio.sleep(0)
+        await _settled(game)
+        await kept.deliver(_quote("mv"))
+        await kept.deliver(_quote("a"))
+        assert received == [("game", "price", "a")]
+        assert not kept.closed  # B still only shrank it: no restart
+    finally:
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
