@@ -106,7 +106,9 @@ final class PickerReturnJourneyTests: XCTestCase {
             waitForExpectations(timeout: 15)
             XCTAssertFalse(app.staticTexts["Showing the previously received list."].exists)
             XCTAssertTrue(retained.waitForExistence(timeout: 15))
-            try reveal(retained, in: app)
+            // isHittable includes rows under the native Games bar. Reuse the
+            // existing chrome-free viewport before this same selection tap.
+            _ = try revealRefresh(retained, in: app)
             retained.tap()
             XCTAssertTrue(probability.waitForExistence(timeout: 15))
             expectation(for: NSPredicate(format: "label CONTAINS %@ AND label CONTAINS %@", "Buffalo Bills", "55%"), evaluatedWith: probability)

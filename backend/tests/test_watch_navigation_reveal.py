@@ -53,6 +53,20 @@ APPROVED_HELPERS = {
 APPROVED_REFRESH_BLOCK = (
     "8d19650f759ed1fa7f0d421f123618a9a2696869a17448f0892683bed0f4ab42"
 )
+# Exact retained-state repair: only the recovered row tap uses the existing
+# chrome-aware helper. Original scenario/assertion hashes remain the authority.
+RECOVERED_SELECTION_REVEAL = (
+    "            XCTAssertTrue(retained.waitForExistence(timeout: 15))\n"
+    "            // isHittable includes rows under the native Games bar. Reuse the\n"
+    "            // existing chrome-free viewport before this same selection tap.\n"
+    "            _ = try revealRefresh(retained, in: app)\n"
+    "            retained.tap()\n"
+)
+ORIGINAL_RECOVERED_SELECTION_REVEAL = (
+    "            XCTAssertTrue(retained.waitForExistence(timeout: 15))\n"
+    "            try reveal(retained, in: app)\n"
+    "            retained.tap()\n"
+)
 ORIGINAL_RECOVERY = {
     "ClearSelectionJourneyTests.swift": "0bc9ab18e65695765e1a85da54be3df652a56e0012807b6d066134caa5a5516c",
     "LargeTextRecoveryJourneyTests.swift": "c409b318d266880176c15fb6db744b805e4f9610afbe4b9a5c9d9948badce673",
@@ -102,6 +116,9 @@ def normalize_disclosure(name, text):
             "            try reveal(refresh, in: app)\n"
             "            XCTAssertTrue(refresh.isEnabled)\n"
             "            refresh.tap()\n",
+        )
+        text = replace_exact(
+            text, RECOVERED_SELECTION_REVEAL, ORIGINAL_RECOVERED_SELECTION_REVEAL
         )
     elif name == "ClearSelectionJourneyTests.swift":
         text = replace_exact(
@@ -334,3 +351,23 @@ def test_more_actions_normalization_rejects_missing_duplicate_or_changed_expansi
     ):
         with pytest.raises(AssertionError):
             normalize_more_actions(name, altered)
+
+
+@pytest.mark.parametrize("mutation", ["old_helper", "missing", "duplicate", "after_tap"])
+def test_recovered_selection_requires_chrome_free_reveal_before_unchanged_tap(mutation):
+    text = source("PickerReturnJourneyTests.swift")
+    line = "            _ = try revealRefresh(retained, in: app)\n"
+    block = RECOVERED_SELECTION_REVEAL
+    replacements = {
+        "old_helper": ORIGINAL_RECOVERED_SELECTION_REVEAL,
+        "missing": block.replace(line, ""),
+        "duplicate": block.replace(line, line * 2),
+        "after_tap": block.replace(line, "").replace(
+            "            retained.tap()\n", "            retained.tap()\n" + line
+        ),
+    }
+    assert text.count(block) == 1
+    with pytest.raises(AssertionError):
+        normalize_disclosure(
+            "PickerReturnJourneyTests.swift", text.replace(block, replacements[mutation])
+        )

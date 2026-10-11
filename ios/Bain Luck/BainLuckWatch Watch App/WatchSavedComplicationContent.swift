@@ -85,11 +85,11 @@ struct WatchSavedComplicationContent: View {
         return VStack(alignment: .leading, spacing: 3) {
             Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 1) {
                 GridRow(alignment: .top) {
-                    Text(namedScoreTeam(reading, home: false))
+                    Text(reading.awayName)
                         .font(.system(size: 12, weight: .semibold))
                         .fixedSize(horizontal: false, vertical: true)
                         .frame(width: columnWidth, alignment: .leading)
-                    Text(namedScoreTeam(reading, home: true))
+                    Text(reading.homeName)
                         .font(.system(size: 12, weight: .semibold))
                         .fixedSize(horizontal: false, vertical: true)
                         .frame(width: columnWidth, alignment: .leading)
@@ -104,7 +104,7 @@ struct WatchSavedComplicationContent: View {
                 }
             }
             metadata(snapshot, reading: reading,
-                     stateLabel: reading.kind == .final && awayScore == homeScore ? "Final tie" : reading.stateLabel)
+                     stateLabel: namedScoreState(reading))
         }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(namedAccessibilityReading(snapshot, reading: reading))
@@ -119,8 +119,8 @@ struct WatchSavedComplicationContent: View {
             if reading.kind != .forecast,
                let awayScore = reading.awayScore, let homeScore = reading.homeScore {
                 VStack(alignment: .leading, spacing: 1) {
-                    namedScoreRow(team: namedScoreTeam(reading, home: false), score: awayScore)
-                    namedScoreRow(team: namedScoreTeam(reading, home: true), score: homeScore)
+                    namedScoreRow(team: reading.awayName, score: awayScore)
+                    namedScoreRow(team: reading.homeName, score: homeScore)
                 }
             } else {
                 // Full title and 30pt probability share height; neither is clipped.
@@ -134,7 +134,7 @@ struct WatchSavedComplicationContent: View {
                         .foregroundStyle(forecastColor).monospacedDigit().fixedSize()
                 }
             }
-            metadata(snapshot, reading: reading)
+            metadata(snapshot, reading: reading, stateLabel: namedScoreState(reading))
         }
         .frame(width: width, alignment: .leading)
         .accessibilityElement(children: .ignore)
@@ -161,6 +161,18 @@ struct WatchSavedComplicationContent: View {
               let awayScore = reading.awayScore, homeScore != awayScore else { return name }
         let won = home ? homeScore > awayScore : awayScore > homeScore
         return won ? "\(name) won" : name
+    }
+
+    /// Keep full team names at the passing live-row width. The validated canonical
+    /// winner moves to metadata; spoken rows still say the full winning name.
+    private func namedScoreState(_ reading: WatchCircularReading) -> String {
+        guard reading.kind == .final, let homeScore = reading.homeScore,
+              let awayScore = reading.awayScore else { return reading.stateLabel }
+        guard homeScore != awayScore else { return "Final tie" }
+        let winner = homeScore > awayScore
+            ? (reading.home?.abbreviation ?? reading.homeName)
+            : (reading.away?.abbreviation ?? reading.awayName)
+        return "Final · \(winner) won"
     }
 
     private func namedAccessibilityReading(_ snapshot: WatchComplicationSnapshot,
@@ -293,7 +305,7 @@ struct WatchSavedCircularComplicationContent: View {
                     VStack(spacing: 0) {
                         Text(reading.subject).font(.system(size: 10, weight: .semibold))
                             .accessibilityIdentifier("watch.complication.circular.subject")
-                        Text(reading.value).font(.system(size: reading.kind == .forecast ? 14 : 10, weight: .bold))
+                        Text(displayValue(reading)).font(.system(size: reading.kind == .forecast ? 14 : 10, weight: .bold))
                             .accessibilityIdentifier("watch.complication.circular.value")
                         Text("Saved").font(.system(size: 9, weight: .medium))
                             .accessibilityIdentifier("watch.complication.circular.saved")
@@ -311,6 +323,14 @@ struct WatchSavedCircularComplicationContent: View {
         } else {
             launcher
         }
+    }
+
+    /// The subject supplies away-home identity. Omit only the visible Score prefix
+    /// to fit the inscribed circle; accessibility keeps the complete reading.value.
+    private func displayValue(_ reading: WatchCircularReading) -> String {
+        guard reading.kind == .score, let away = reading.awayScore,
+              let home = reading.homeScore else { return reading.value }
+        return "\(away)–\(home)"
     }
 
     /// The ignored-child parent preserves both full names and their actual scores.

@@ -215,7 +215,7 @@ class RectangularReceiptTests(unittest.TestCase):
             "private func namedScoreRow(", 1
         )[0]
         forecast = named.split("} else {", 1)[1].split(
-            "metadata(snapshot, reading: reading)", 1
+            "metadata(snapshot, reading: reading, stateLabel: namedScoreState(reading))", 1
         )[0]
         # A–C v2 proposes a fixed 12pt full title beside the unchanged 30pt
         # value. Root reviews this explicit replacement of the own-row/14pt
@@ -230,7 +230,7 @@ class RectangularReceiptTests(unittest.TestCase):
         self.assertIn(".fixedSize(horizontal: false, vertical: true)", forecast)
         self.assertNotIn(".lineLimit", forecast)
         self.assertNotIn(".minimumScaleFactor", forecast)
-        self.assertEqual(named.count("metadata(snapshot, reading: reading)"), 1)
+        self.assertEqual(named.count("metadata(snapshot, reading: reading, stateLabel: namedScoreState(reading))"), 1)
 
     def test_full_name_score_columns_keep_intrinsic_headers_and_score_baselines(self):
         source = (
@@ -248,13 +248,12 @@ class RectangularReceiptTests(unittest.TestCase):
         for required in (
             "GridRow(alignment: .top)",
             "GridRow(alignment: .firstTextBaseline)",
-            "namedScoreTeam(reading, home: false)",
-            "namedScoreTeam(reading, home: true)",
+            "Text(reading.awayName)",
+            "Text(reading.homeName)",
             "Text(String(awayScore))",
             "Text(String(homeScore))",
             "size: 22",
-            "stateLabel: reading.kind == .final && awayScore == homeScore",
-            '"Final tie"',
+            "stateLabel: namedScoreState(reading)",
             "namedAccessibilityReading(snapshot, reading: reading)",
         ):
             self.assertIn(required, columns)
@@ -264,6 +263,49 @@ class RectangularReceiptTests(unittest.TestCase):
         self.assertIn("compactScoreColumns(snapshot", body)
         self.assertIn("compactReading(snapshot", body)
         self.assertIn("savedLauncher(snapshot)", body)
+
+    def test_final_winner_moves_to_metadata_without_shortening_full_names(self):
+        source = (
+            ROOT / "ios/Bain Luck/BainLuckWatch Watch App/WatchSavedComplicationContent.swift"
+        ).read_text()
+        named = source.split("private func namedReading(", 1)[1].split(
+            "private func namedScoreRow(", 1
+        )[0]
+        self.assertIn("namedScoreRow(team: reading.awayName, score: awayScore)", named)
+        self.assertIn("namedScoreRow(team: reading.homeName, score: homeScore)", named)
+        state = source.split("private func namedScoreState(", 1)[1].split(
+            "private func namedAccessibilityReading(", 1
+        )[0]
+        for required in (
+            "reading.kind == .final", "homeScore != awayScore", 'return "Final tie"',
+            "homeScore > awayScore", "reading.home?.abbreviation ?? reading.homeName",
+            "reading.away?.abbreviation ?? reading.awayName", r'return "Final · \(winner) won"',
+            "return reading.stateLabel",
+        ):
+            self.assertIn(required, state)
+        spoken = source.split("private func namedAccessibilityReading(", 1)[1].split(
+            "private func compactOpponentReading(", 1
+        )[0]
+        for required in ("namedScoreTeam(reading, home: false)",
+                         "namedScoreTeam(reading, home: true)", "snapshot.observedAt"):
+            self.assertIn(required, spoken)
+
+    def test_circular_score_compacts_only_visible_value_and_keeps_accessibility(self):
+        source = (
+            ROOT / "ios/Bain Luck/BainLuckWatch Watch App/WatchSavedComplicationContent.swift"
+        ).read_text().split("struct WatchSavedCircularComplicationContent", 1)[1].split(
+            "struct WatchSavedCornerComplicationContent", 1
+        )[0]
+        self.assertIn("Text(displayValue(reading))", source)
+        self.assertIn('reading.kind == .score', source)
+        self.assertIn(r'return "\(away)–\(home)"', source)
+        self.assertIn("else { return reading.value }", source)
+        self.assertIn(r'.accessibilityValue("Saved · \(reading.subject) · \(reading.value)")', source)
+        self.assertIn("let contentHeight: CGFloat = 40", source)
+        self.assertIn("sqrt(max(0, diameter * diameter - contentHeight * contentHeight))", source)
+        self.assertIn("size: reading.kind == .forecast ? 14 : 10", source)
+        self.assertNotIn(".minimumScaleFactor", source)
+        self.assertNotIn(".lineLimit", source)
 
     def test_complete_rendering_evidence_passes(self):
         result = self.verify(self.lines)
