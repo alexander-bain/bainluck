@@ -31,7 +31,7 @@
  */
 
 import type { GameMarketsResponse } from "./api";
-import { propOutcomeSide } from "./propResolution";
+import { propOutcomeSide } from "./propOutcomeSide";
 import { isPregameStatus, isSettledStatus } from "./settledQuote";
 import { sourceIsStale } from "./sourceAge";
 import { sourceLabel } from "./sourceLabels";
