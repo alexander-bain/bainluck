@@ -784,6 +784,11 @@ struct EventDetailView: View {
             })
             .onPreferenceChange(NavShowsScorePreferenceKey.self) { navShowsScore = $0 ?? true }
             .onPreferenceChange(ScrollViewportTopPreferenceKey.self) { scrollViewportTop = $0 }
+            // #10090 — the timing seam's view mark: this update handed the hero
+            // and chart the value it names. Not a paint (`LiveTimingSeam`).
+            .onChange(of: LiveTimingSeam.presented(event, liveBlend: vm.liveBlend)) { old, new in
+                LiveTimingSeam.viewUpdated(from: old, to: new)
+            }
         }
     }
 
