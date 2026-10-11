@@ -109,6 +109,8 @@ private struct WatchMyStuffTeamView: View {
     let select: (Int) -> Void
     let close: () -> Void
     @State private var teamState = WatchMyStuffTeamState()
+    @State private var visibleGameCount = 12
+    @State private var visibleQuestionCount = 12
     @State private var loading = false
     @State private var refreshID = 0
     @State private var request = UUID()
@@ -122,20 +124,31 @@ private struct WatchMyStuffTeamView: View {
                     if page.hasUnavailableGames {
                         Text("Some game details are unavailable. Refresh to try again.").font(.footnote)
                     } else if page.games.isEmpty { Text("No games listed for this team.") }
-                    ForEach(Array(page.games.prefix(12))) { game in
+                    ForEach(Array(page.games.prefix(visibleGameCount))) { game in
                         Button("\(game.awayTeam) at \(game.homeTeam)") { select(game.id) }
                             .frame(minHeight: 44)
+                    }
+                    if page.games.count > visibleGameCount {
+                        Button("Show more games") {
+                            visibleGameCount = min(page.games.count, visibleGameCount + 6)
+                        }
+                        .frame(minHeight: 44)
+                        .accessibilityIdentifier("watch.my-stuff.team.more-games")
                     }
                     if page.hasUnavailableQuestions {
                         Text("Some question details are unavailable. Refresh to try again.").font(.footnote)
                     }
-                    ForEach(Array(page.questions.prefix(12)), id: \.marketId) { market in
+                    ForEach(Array(page.questions.prefix(visibleQuestionCount)), id: \.marketId) { market in
                         Button(market.marketName) {
                             question = .init(id: market.marketId, question: market.marketName)
                         }.frame(minHeight: 44)
                     }
-                    if page.games.count > 12 || page.questions.count > 12 {
-                        Text("More on your iPhone").font(.footnote)
+                    if page.questions.count > visibleQuestionCount {
+                        Button("Show more questions") {
+                            visibleQuestionCount = min(page.questions.count, visibleQuestionCount + 6)
+                        }
+                        .frame(minHeight: 44)
+                        .accessibilityIdentifier("watch.my-stuff.team.more-questions")
                     }
                 }
                 if loading { ProgressView("Loading team") }
@@ -149,6 +162,7 @@ private struct WatchMyStuffTeamView: View {
             let accountGeneration = WatchMyStuffStore.shared.navigationGeneration
             let token = UUID(); request = token; loading = true
             teamState.beginRefresh(); question = nil
+            visibleGameCount = 12; visibleQuestionCount = 12
             defer { if request == token { loading = false } }
             do {
                 var urlRequest = URLRequest(url: URL(string: "https://api.bainluck.com/api/teams/\(item.targetID)")!)
