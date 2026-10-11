@@ -24,8 +24,8 @@ tagged = _origin.tagged
 URLS = {
     "health": "https://api.bainluck.com/health",
     "calibration": "https://api.bainluck.com/api/calibration",
-    "discover": "https://api.bainluck.com/api/feed?limit=40",
-    "sports": "https://api.bainluck.com/api/feed?mode=sports&limit=40",
+    "discover": "https://api.bainluck.com/api/feed?limit=20&event_pct=0.15",
+    "sports": "https://api.bainluck.com/api/feed?limit=20&mode=sports",
 }
 
 
