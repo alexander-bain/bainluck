@@ -49,14 +49,16 @@ export type LiveFrame = LiveStreamFrame;
  *
  * Narrow on purpose. Any frame that tells the page something other than a
  * price still replaces the held one exactly as before: no price (an
- * invalidation), a status change, a folded quote or its pending notice, a
+ * invalidation) or one outside [0, 1], a status change, a folded quote or its pending notice, a
  * different event, or a revision that is missing, the same, or not
  * comparable.
  */
 export function heldFrameAfter(previous: LiveFrame | null, next: LiveFrame): LiveFrame {
   if (!previous || previous.event_id !== next.event_id) return next;
+  // A price is what `applyLiveFrame` would adopt: finite and inside [0, 1].
+  // A held frame it would refuse must not keep out the valid one behind it.
   const priced = (f: LiveFrame) =>
-    typeof f.p === 'number' && Number.isFinite(f.p) &&
+    typeof f.p === 'number' && Number.isFinite(f.p) && f.p >= 0 && f.p <= 1 &&
     f.folded_quote === undefined && !f.folded_quote_pending;
   if (!priced(previous) || !priced(next)) return next;
   if ((previous.status ?? null) !== (next.status ?? null)) return next;

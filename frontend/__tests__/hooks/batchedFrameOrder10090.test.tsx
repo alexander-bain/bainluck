@@ -85,11 +85,31 @@ describe("#10090 batched frames reach the page in revision order", () => {
     expect(next.hero_probability).toBe(0.23537);
     expect(next.blend_fold_revision).toEqual({ [EID]: 12482 });
   });
+
+  test.each([-0.1, 1.1])(
+    "a newer price of %s the page would refuse does not hide the valid older one",
+    async (invalid) => {
+      const { frame } = await deliverInOneBatch([{ ...newer, p: invalid }, older]);
+      expect(frame?.p).toBe(0.234736);
+      expect(frame?.rev).toEqual({ [EID]: 12481 });
+    },
+  );
+
+  test.each([0, 1])("a newer price of exactly %s still keeps the older one out", async (edge) => {
+    const { frame } = await deliverInOneBatch([{ ...newer, p: edge }, older]);
+    expect(frame?.p).toBe(edge);
+    expect(frame?.rev).toEqual({ [EID]: 12482 });
+  });
 });
 
 describe("heldFrameAfter keeps an older price out and changes nothing else", () => {
-  test("strictly older priced frame on the same row keeps the held one", () => {
-    expect(heldFrameAfter(newer, older)).toBe(newer);
+  test.each<[string, LiveFrame]>([
+    ["inside [0, 1]", newer],
+    ["held at exactly 0", { ...newer, p: 0 }],
+    ["held at exactly 1", { ...newer, p: 1 }],
+  ])("strictly older priced frame on the same row keeps the held one (%s)", (_label, held) => {
+    expect(heldFrameAfter(held, older)).toBe(held);
+    expect(heldFrameAfter(held, { ...older, p: 0 })).toBe(held);
   });
 
   test.each<[string, LiveFrame | null, LiveFrame]>([
@@ -99,6 +119,9 @@ describe("heldFrameAfter keeps an older price out and changes nothing else", () 
     ["another event (navigation)", newer, { ...older, event_id: EID + 1, rev: { [EID + 1]: 1 } }],
     ["older frame with no price (an invalidation)", newer, { ...older, p: null }],
     ["held frame with no price", { ...newer, p: null }, older],
+    ["held frame priced below 0", { ...newer, p: -0.1 }, older],
+    ["held frame priced above 1", { ...newer, p: 1.1 }, older],
+    ["older frame priced outside [0, 1]", newer, { ...older, p: 1.1 }],
     ["older frame with a different status (a final)", newer, { ...older, status: "final" }],
     ["older frame carrying a folded quote", newer, { ...older, folded_quote: null }],
     ["older frame announcing a pending fold", newer, { ...older, folded_quote_pending: true }],
