@@ -288,17 +288,27 @@ async def _run_ws_refresh(
         if frames is not None:
             frames.extend(pending)
 
-    async with Session() as ws_session:
-        @asynccontextmanager
-        async def _session_cm(**_budget):
-            yield ws_session
-            await ws_session.commit()
+    @asynccontextmanager
+    async def _session_cm(**_budget):
+        # The quote and run-owned chart operations each need a fresh session.
+        # Keep this factory bound to the disposable database after the quote
+        # call returns; no delayed owner may fall back to the application DSN.
+        async with Session() as ws_session:
+            try:
+                yield ws_session
+                await ws_session.commit()
+            except BaseException:
+                await ws_session.rollback()
+                raise
 
-        with ExitStack() as es:
-            es.enter_context(patch.object(base, "get_task_session", _session_cm))
-            es.enter_context(patch.object(LiveBlendRefresher, "_oriented", _oriented))
-            es.enter_context(patch.object(LiveBlendRefresher, "_publish", _publish))
-            stats = await refresher.refresh([event_id])
+    refresher._session_factory = _session_cm
+    with ExitStack() as es:
+        es.enter_context(patch.object(LiveBlendRefresher, "_oriented", _oriented))
+        es.enter_context(patch.object(LiveBlendRefresher, "_publish", _publish))
+        stats = await refresher.refresh([event_id])
+        # These legacy controls inspect the resulting chart, so join that
+        # operation explicitly. New next-quote controls hold it independently.
+        await refresher.drain_history()
     return refresher, dict(stats)
 
 

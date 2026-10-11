@@ -818,8 +818,10 @@ class TestTheFastLaneActuallyCallsTheSnapshot:
         from app.tasks.live_blend_refresh import LiveBlendRefresher
 
         src = inspect.getsource(LiveBlendRefresher._refresh_batch)
-        assert "self._write_owed_snapshots(" in src, (
-            "the fast lane no longer writes a chart point"
+        assert "self._history_reservations(" in src and "self._start_history()" in src
+        owner = inspect.getsource(LiveBlendRefresher._drain_history)
+        assert "self._write_owed_snapshots(" in owner, (
+            "the committed history owner no longer writes a chart point"
         )
         writer = inspect.getsource(LiveBlendRefresher._write_owed_snapshots)
         assert "self._maybe_snapshot(" in writer, (
@@ -874,7 +876,8 @@ class TestTheFastLaneActuallyCallsTheSnapshot:
             < src.index("owed_snapshots.append(")
             < src.index('self.stats["stamped"]')
             < src.index("await publish_committed(pending)")
-            < src.index("self._write_owed_snapshots(")
+            < src.index("history_ready.set()")
+            < src.index("self._start_history()")
         )
         assert "_maybe_snapshot" not in src, (
             "the chart point is back inside the stamp's transaction"
@@ -954,6 +957,7 @@ class TestTheHeadlineDoesNotWaitForItsChartPoint:
         # Returning at all is the proof: each chart write blocks until its own
         # frame is out, so a frame that waited for its chart point deadlocks.
         await asyncio.wait_for(r.refresh(list(range(1, count + 1))), timeout=5)
+        await r.drain_history()
 
         for event_id in range(1, count + 1):
             assert ("frame", event_id) in log and ("chart", event_id) in log
@@ -974,6 +978,7 @@ class TestTheHeadlineDoesNotWaitForItsChartPoint:
     ):
         r, log = self._rig(monkeypatch, 1, chart_open_fails=True)
         await r.refresh([1])
+        await r.drain_history()
 
         assert log == [("open",), ("commit",), ("frame", 1)]
         assert r.stats["stamped"] == 1 and r._last_written_value == {1: 0.9}
@@ -1031,6 +1036,7 @@ class TestTheChartTransactionCarriesItsOwnLockBudget:
             "app.tasks.snapshots._create_or_update_win_prob_snapshot", write_point,
         )
         await r.refresh([1])
+        await r._history_task
         assert [f["event_id"] for f in published] == [1], "rig: headline published"
         assert len(seen) == 1 and seen[0][0] is chart, "rig: point written in its own session"
         stamp_sets = [a[0] for s, a in stamp.statements if s is SET_LOCK_TIMEOUT_SQL]
@@ -1096,6 +1102,7 @@ class TestTheChartTransactionCarriesItsOwnLockBudget:
             "app.tasks.snapshots._create_or_update_win_prob_snapshot", write_point,
         )
         await r.refresh([1])
+        await r._history_task
 
         assert [f["event_id"] for f in published] == [1]
         assert r._last_written_value == {1: 0.9}
@@ -1151,6 +1158,7 @@ class TestSingleEventStampTransaction:
         monkeypatch.setattr(r, "_publish", publish)
         monkeypatch.setattr(session, "flush", flush)
         await r.refresh(list(range(1, count + 1)))
+        await r.drain_history()
         assert len(session.updates) == count
         assert r.stats["stamped"] == count
         assert snapshots == (list(range(1, count + 1)) if snapshot_due else [])
@@ -1229,6 +1237,7 @@ class TestSingleEventStampTransaction:
 
         monkeypatch.setattr(r, "_publish", publish)
         await r.refresh(list(range(1, count + 1)))
+        await r.drain_history()
         assert r.stats["stamped"] == count
         assert session.rollbacks == 0
         assert session.savepoints == (
@@ -1561,6 +1570,7 @@ class TestAFailedCommitLeavesNothingMarkedWritten:
 
         assert len(session.updates) == 2, "the retry was skipped as unchanged"
         assert [f["event_id"] for f in published] == [1]
+        await r.drain_history()
         assert len(snapshots) == 1, "the chart point was not re-attempted"
         assert r._last_written_value == {1: 0.9}
         assert r._last_snapshot_at == {1: clock["t"]}

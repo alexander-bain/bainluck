@@ -67,6 +67,7 @@ async def _create_or_update_win_prob_snapshot(
     is_completed: bool = False,
     max_gap_seconds: float = None,
     draw_probability: float = None,
+    observed_at: datetime = None,
 ) -> tuple:
     """
     Create a new WinProbSnapshot or update existing if value unchanged.
@@ -118,6 +119,12 @@ async def _create_or_update_win_prob_snapshot(
     """
     from app.models.models import WinProbSnapshot
 
+    if observed_at is not None:
+        return await _create_ordered_win_prob_snapshot(
+            session, event_id, source, home_win_probability,
+            away_win_probability, draw_probability, game_state, observed_at,
+            max_gap_seconds,
+        )
     now = datetime.now(timezone.utc)
 
     # Find the most recent snapshot for this event+source
@@ -203,3 +210,90 @@ async def _create_or_update_win_prob_snapshot(
         existing.reading_count += 1
         existing.valid_until = now
         return existing, False
+
+
+async def _create_ordered_win_prob_snapshot(
+    session,
+    event_id,
+    source,
+    home,
+    away,
+    draw,
+    game_state,
+    observed_at,
+    max_gap_seconds,
+):
+    """Insert a delayed WS observation at its original stamp time.
+
+    The ordinary poll path keeps its existing semantics. A queued observation
+    can precede a poll point already in the table: it belongs between its
+    predecessor and successor and must never refresh the newer row in place.
+    """
+    from app.models.models import WinProbSnapshot
+
+    if isinstance(observed_at, str):
+        observed_at = datetime.fromisoformat(observed_at.replace("Z", "+00:00"))
+    if observed_at.tzinfo is None:
+        observed_at = observed_at.replace(tzinfo=timezone.utc)
+    scope = (
+        WinProbSnapshot.event_id == event_id,
+        WinProbSnapshot.source == source,
+    )
+    result = await session.execute(
+        select(WinProbSnapshot)
+        .where(*scope, WinProbSnapshot.captured_at <= observed_at)
+        .order_by(WinProbSnapshot.captured_at.desc())
+        .limit(1)
+        .with_for_update()
+    )
+    previous = result.scalar_one_or_none()
+    result = await session.execute(
+        select(WinProbSnapshot)
+        .where(*scope, WinProbSnapshot.captured_at > observed_at)
+        .order_by(WinProbSnapshot.captured_at.asc())
+        .limit(1)
+        .with_for_update()
+    )
+    following = result.scalar_one_or_none()
+    same = (
+        previous is not None
+        and previous.home_win_probability is not None
+        and float(previous.home_win_probability) == float(home)
+        and _second_slot_same(previous, away, draw)
+    )
+    if same and game_state and previous.game_state:
+        old_state = previous.game_state if isinstance(previous.game_state, dict) else {}
+        period = game_state.get("period") or game_state.get("inning")
+        old_period = old_state.get("period") or old_state.get("inning")
+        same = not (period and old_period and str(period) != str(old_period))
+    if same and max_gap_seconds:
+        captured = previous.captured_at
+        if captured.tzinfo is None:
+            captured = captured.replace(tzinfo=timezone.utc)
+        same = (observed_at - captured).total_seconds() < float(max_gap_seconds)
+    if same:
+        previous.reading_count = (previous.reading_count or 0) + 1
+        # Extend only through this observation; keep a known successor edge.
+        if following is None:
+            until = previous.valid_until
+            if until is not None and until.tzinfo is None:
+                until = until.replace(tzinfo=timezone.utc)
+            if until is None or until < observed_at:
+                previous.valid_until = observed_at
+        return previous, False
+    if previous is not None:
+        previous.valid_until = observed_at
+    return (
+        WinProbSnapshot(
+            event_id=event_id,
+            source=source,
+            home_win_probability=home,
+            away_win_probability=away,
+            draw_probability=draw,
+            game_state=game_state,
+            captured_at=observed_at,
+            valid_until=following.captured_at if following is not None else None,
+            reading_count=1,
+        ),
+        True,
+    )

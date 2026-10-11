@@ -359,6 +359,7 @@ async def test_ce2_ws_writer_keeps_named_home_when_partition_is_out_of_band(
     r._inversion[15314954] = (time.monotonic() + 150, True)
     monkeypatch.setattr(r, "_publish", publish)
     stats = await r.refresh([15314954])
+    await r.drain_history()
     assert stats["errors"] == 0
     assert frames[0]["source_value"] == 0.275
     assert snapshots[0]["home_win_probability"] == 0.275

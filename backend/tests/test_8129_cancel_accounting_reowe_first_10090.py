@@ -54,6 +54,9 @@ class _Refresher:
         self._last_snapshot_at = {eid: object() for eid in written}
         self.stats = {"stamped": len(written)}
 
+    async def drain_history(self):
+        pass  # this retained accounting specimen already has committed points
+
     def pending_event_ids(self):
         return list(self._owed)
 

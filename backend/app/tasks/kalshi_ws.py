@@ -1112,6 +1112,7 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
     # #9462 review: stamps the previous run still owed when it recycled. Its
     # prices are already stored; the first flush below stamps them.
     stats["blend_pending_adopted"] = adopt_handed_off(blend_refresher)
+    stats["history_pending_adopted"] = len(getattr(blend_refresher, "_history", ()))
 
     async def flush_prices(flush_started=None, *, final_drain=False):
         """Write buffered price updates to DB — #10640: game markets first.
@@ -2841,7 +2842,15 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
             # #9462 review: the drain returns once the price BUFFER is empty,
             # but a price it (or the last flush) committed inside the 2 s
             # throttle is still owed its blend stamp. The next run adopts it.
-            stats["blend_pending_carried"] = hand_off_pending(blend_refresher)
+            try:
+                drain_history = getattr(blend_refresher, "drain_history", None)
+                if drain_history is not None:
+                    await drain_history()
+            except asyncio.CancelledError as exc:
+                interrupted = exc
+            finally:
+                stats["history_pending_carried"] = len(getattr(blend_refresher, "_history", ()))
+                stats["blend_pending_carried"] = hand_off_pending(blend_refresher)
             stats["open_contract_messages"] = retired_messages["open"] + sum(
                 c.sock.stats.get("messages", 0)
                 for c in (*open_clients, *retiring) if c.kind != "game"
