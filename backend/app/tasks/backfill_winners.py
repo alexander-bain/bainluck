@@ -11310,6 +11310,87 @@ def _add_month(dt: datetime) -> datetime:
             else datetime(dt.year, dt.month + 1, 1, tzinfo=dt.tzinfo))
 
 
+# #10697 — THE CELL BANK. The traversal budget made a slow walk REPORT instead
+# of dying, but it still threw away every cell it had landed: each run started
+# again at `americanfootball_*`, so once the full walk cost more than 1,620 s no
+# run could ever finish. From 10/08 21:16Z every run stopped at the budget with
+# 92 chunks landed and the first unrun cell `basketball_wnba 2026-09`; the key's
+# 24 h TTL lapsed and `/api/calibration` froze for 33 h behind the
+# `bookmaker_curve_key_absent` refusal. The walk's cost tracks database read
+# speed, which this task does not control, so the fix is that a landed cell is
+# kept: the next run carries it and spends its wall on what is still missing.
+#
+# What may be carried, and for how long, is the honesty question:
+#
+# * Only a SETTLED month — one that ended `_BOOKMAKER_BANK_SETTLE_S` ago. Its
+#   events finished and its pre-game snapshots stopped arriving, so a re-read
+#   returns the same rows unless a late score correction lands. An open month
+#   is read fresh on every run.
+# * For at most `_BOOKMAKER_BANK_MAX_AGE_S`. Past that the cell is missing
+#   again and the run must re-read it before it may publish, which bounds how
+#   late a correction can reach the curve. Runs with wall to spare re-read
+#   cells older than `_BOOKMAKER_BANK_REFRESH_AFTER_S`, oldest first, so the
+#   bank does not age out in one block.
+#
+# The fail-closed contract is unchanged: the key is written only when EVERY
+# grid cell is covered by a read from this run or a carried one inside its age.
+# The bank lives in Redis (`allkeys-lru`), so an eviction costs convergence
+# time, never correctness — an empty bank is exactly the old full walk. Its key
+# carries a digest of `_BOOKMAKER_CHUNK_SQL`, so a changed statement can never
+# be answered from rows the old one produced.
+_BOOKMAKER_BANK_SETTLE_S = 14 * 86400
+_BOOKMAKER_BANK_MAX_AGE_S = 48 * 3600
+_BOOKMAKER_BANK_REFRESH_AFTER_S = 24 * 3600
+#: The hash outlives its oldest usable entry so a few failed runs do not drop
+#: it; entries are judged by their own `banked_at`, never by this TTL.
+_BOOKMAKER_BANK_TTL_S = 7 * 86400
+_BOOKMAKER_BANK_KEY = (
+    "bainluck:bookmaker_calibration:cell_bank:"
+    + __import__("hashlib").sha1(_BOOKMAKER_CHUNK_SQL.encode()).hexdigest()[:12]
+)
+
+
+def _bookmaker_cell_key(category: str, lo: datetime) -> str:
+    return f"{category}|{lo.isoformat()}"
+
+
+def _bookmaker_cell_settled(lo: datetime, now_ts: float) -> bool:
+    """Has this calendar-month cell been over long enough to carry?"""
+    return _add_month(lo).timestamp() + _BOOKMAKER_BANK_SETTLE_S <= now_ts
+
+
+def _bookmaker_row_tuple(r) -> tuple:
+    """A chunk row as plain data, the shape the bank stores and the fold reads."""
+    return (int(r.bucket_idx), str(r.category), int(r.n), int(r.winners),
+            float(r.sum_prob), float(r.sum_sq_err))
+
+
+def _read_bookmaker_bank(client, now_ts: float) -> dict[str, tuple[float, list]]:
+    """Banked cells still inside their age bound, as ``{key: (banked_at, rows)}``.
+
+    An entry that does not parse, or whose ``banked_at`` is in the future by
+    more than a minute of clock skew, is dropped rather than trusted: the cost
+    of dropping one is a re-read, the cost of trusting one is a wrong curve.
+    """
+    import json as _json
+
+    out: dict[str, tuple[float, list]] = {}
+    for k, v in (client.hgetall(_BOOKMAKER_BANK_KEY) or {}).items():
+        try:
+            key = k.decode() if isinstance(k, bytes) else str(k)
+            entry = _json.loads(v.decode() if isinstance(v, bytes) else v)
+            banked_at = float(entry["banked_at"])
+            rows = [tuple(r) for r in entry["rows"]]
+            if any(len(r) != 6 for r in rows):
+                continue
+        except Exception:
+            continue
+        age = now_ts - banked_at
+        if -60.0 <= age <= _BOOKMAKER_BANK_MAX_AGE_S:
+            out[key] = (banked_at, rows)
+    return out
+
+
 async def _precompute_bookmaker_calibration(deadline: float | None = None):
     """Precompute per-bookmaker moneyline calibration and cache in Redis.
 
@@ -11411,7 +11492,42 @@ async def _precompute_bookmaker_calibration(deadline: float | None = None):
         # too slow, which is the reading that sends the next session hunting
         # the wrong defect.
         chunks_unrun: list[str] = []
-        agg: dict = {}
+        # #10697: rows per (category, month) cell — landed this run or carried
+        # from the bank — folded into buckets only after the walk. Per CELL,
+        # not per chunk, because a cell is the unit the bank can vouch for: a
+        # cell whose split halves did not all land is not a cell.
+        cell_rows: dict[str, list] = {}
+        bank_stats = {"read": "skipped", "carried": 0, "banked": 0,
+                      "refreshed": 0, "write_errors": 0}
+        stats["bank"] = bank_stats
+        now_ts = _time.time()
+        bank: dict[str, tuple[float, list]] = {}
+        bank_client = None
+        try:
+            bank_client = get_redis_client()
+            bank = _read_bookmaker_bank(bank_client, now_ts)
+            bank_stats["read"] = "ok"
+        except Exception as e:
+            # The bank only saves wall; without it the run is the full walk it
+            # always was, so a Redis fault here is recorded, not raised.
+            bank_stats["read"] = f"error: {e.__class__.__name__}"
+            logger.warning("Bookmaker calibration: cell bank unreadable (%s) — "
+                           "walking every cell (#10697)", e)
+
+        def _bank_cell(key: str, rows: list) -> None:
+            if bank_client is None:
+                return
+            try:
+                bank_client.hset(_BOOKMAKER_BANK_KEY, key, _json.dumps(
+                    {"banked_at": _time.time(), "rows": rows}))
+                bank_client.expire(_BOOKMAKER_BANK_KEY, _BOOKMAKER_BANK_TTL_S)
+                bank_stats["banked"] += 1
+            except Exception as e:
+                bank_stats["write_errors"] += 1
+                if bank_stats["write_errors"] == 1:
+                    logger.warning("Bookmaker calibration: cell bank write "
+                                   "failed (%s) — this run still publishes on "
+                                   "its own reads (#10697)", e)
 
         async with get_task_session() as session:
             # The grid comes from where the events ACTUALLY are, not from a
@@ -11436,7 +11552,7 @@ async def _precompute_bookmaker_calibration(deadline: float | None = None):
                 ORDER BY 1, 2
             """))).all()
 
-            async def _slice(category, lo, hi, depth=0):
+            async def _slice(category, lo, hi, sink, unrun, failed, depth=0):
                 """One bounded slice, or a SPLIT. Returns True when it landed.
 
                 Adaptive rather than a fixed grid because snapshot density is
@@ -11452,7 +11568,7 @@ async def _precompute_bookmaker_calibration(deadline: float | None = None):
                 # 2,047-node fan-out inside a single cell unbounded, which is
                 # the shape that actually consumes the task.
                 if _time.monotonic() >= _stop_at:
-                    chunks_unrun.append(
+                    unrun.append(
                         f"{category} {lo.date()}..{hi.date()} unrun at depth "
                         f"{depth}")
                     return False
@@ -11468,31 +11584,78 @@ async def _precompute_bookmaker_calibration(deadline: float | None = None):
                         raise
                     span = (hi - lo).total_seconds()
                     if depth >= _CHUNK_MAX_DEPTH or span <= _CHUNK_MIN_SPAN_S:
-                        chunks_failed.append(
+                        failed.append(
                             f"{category} {lo.date()}..{hi.date()} irreducible "
                             f"at depth {depth}")
                         return False
                     mid = lo + (hi - lo) / 2
-                    a = await _slice(category, lo, mid, depth + 1)
-                    b = await _slice(category, mid, hi, depth + 1)
+                    a = await _slice(category, lo, mid, sink, unrun, failed,
+                                     depth + 1)
+                    b = await _slice(category, mid, hi, sink, unrun, failed,
+                                     depth + 1)
                     return a and b
 
                 chunks_done += 1
-                for r in rows:
-                    key = (r.bucket_idx, r.category)
-                    slot = agg.setdefault(
-                        key, {"n": 0, "winners": 0, "sum_prob": 0.0, "sum_sq_err": 0.0})
-                    slot["n"] += r.n
-                    slot["winners"] += r.winners
-                    slot["sum_prob"] += float(r.sum_prob)
-                    slot["sum_sq_err"] += float(r.sum_sq_err)
+                sink.extend(_bookmaker_row_tuple(r) for r in rows)
                 return True
 
+            # Missing cells first, open months last. The order is what makes
+            # the walk converge: every settled cell this run lands is banked,
+            # so a run that exhausts its wall still shortens the next one. Open
+            # months are re-read every run and never carried, so walking them
+            # first would let them consume the wall forever while the settled
+            # backlog never moved — the 10/08-10/11 shape again.
+            missing: list = []
+            open_cells: list = []
+            carried: list = []
             for cell in grid:
                 lo = cell.bucket_start
                 if lo.tzinfo is None:
                     lo = lo.replace(tzinfo=timezone.utc)
-                await _slice(cell.category, lo, _add_month(lo))
+                key = _bookmaker_cell_key(cell.category, lo)
+                if not _bookmaker_cell_settled(lo, now_ts):
+                    open_cells.append((key, cell.category, lo))
+                elif key in bank:
+                    banked_at, rows = bank[key]
+                    cell_rows[key] = list(rows)
+                    carried.append((banked_at, key, cell.category, lo))
+                else:
+                    missing.append((key, cell.category, lo))
+            bank_stats["carried"] = len(carried)
+
+            for key, category, lo in missing + open_cells:
+                sink: list = []
+                if await _slice(category, lo, _add_month(lo), sink,
+                                chunks_unrun, chunks_failed):
+                    cell_rows[key] = sink
+                    _bank_cell(key, sink)
+
+            # Spare wall re-reads the oldest carried cells, so the bank does not
+            # age out in one block 48 h after it filled. Optional work: a cell
+            # that does not land here keeps its carried rows and is NOT reported
+            # unrun or irreducible — it was already covered.
+            if not chunks_unrun and not chunks_failed:
+                for banked_at, key, category, lo in sorted(carried):
+                    if now_ts - banked_at < _BOOKMAKER_BANK_REFRESH_AFTER_S:
+                        break
+                    if _time.monotonic() >= _stop_at:
+                        break
+                    sink = []
+                    if await _slice(category, lo, _add_month(lo), sink, [], []):
+                        cell_rows[key] = sink
+                        _bank_cell(key, sink)
+                        bank_stats["refreshed"] += 1
+
+            agg: dict = {}
+            for rows in cell_rows.values():
+                for bucket_idx, category, n, winners, sum_prob, sum_sq_err in rows:
+                    slot = agg.setdefault(
+                        (bucket_idx, category),
+                        {"n": 0, "winners": 0, "sum_prob": 0.0, "sum_sq_err": 0.0})
+                    slot["n"] += n
+                    slot["winners"] += winners
+                    slot["sum_prob"] += sum_prob
+                    slot["sum_sq_err"] += sum_sq_err
 
             buckets = []
             for (bucket_idx, category), slot in sorted(agg.items(),
@@ -11537,8 +11700,10 @@ async def _precompute_bookmaker_calibration(deadline: float | None = None):
                     f"traversal budget exhausted after "
                     f"{stats['duration_seconds']}s with {len(chunks_unrun)} "
                     f"cell(s) unrun ({len(chunks_failed)} irreducible, "
-                    f"{chunks_done} landed); Redis key NOT written rather than "
-                    f"published short: {'; '.join(chunks_unrun[:5])}"
+                    f"{chunks_done} landed, {bank_stats['banked']} cell(s) banked "
+                    f"for the next run, {bank_stats['carried']} carried); Redis "
+                    f"key NOT written rather than published short: "
+                    f"{'; '.join(chunks_unrun[:5])}"
                 )
                 logger.error(
                     "Bookmaker calibration: BUDGET EXHAUSTED after %.1fs — "
