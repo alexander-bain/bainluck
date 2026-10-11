@@ -256,6 +256,8 @@ async def test_final_drain_joins_the_stamp_it_starts_even_after_price_buffer_emp
 async def test_repeated_shutdown_cancel_joins_old_owner_then_still_drains_prices(
     monkeypatch,
 ):
+    # The periodic flush and final drain must share the same clock.
+    monkeypatch.setattr(blend, "_mono", lambda: 1000.0)
     p, x, later = cross_batch(monkeypatch)
     unwinding, unwind = asyncio.Event(), asyncio.Event()
     factory = x.r._session_factory
