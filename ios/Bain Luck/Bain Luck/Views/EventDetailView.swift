@@ -2060,7 +2060,7 @@ struct EventDetailView: View {
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .padding(.horizontal, 16)
                             .padding(.top, 8)
-                        bookmakerContent(event, rows: bookmakers)
+                        bookmakerContent(event)
                     }
                 }
             }
@@ -2458,8 +2458,10 @@ struct EventDetailView: View {
         return Array(rows.prefix(limit))
     }
 
-    private func bookmakerContent(_ event: EventDetail, rows allRows: [NamedBookmakerRow]) -> some View {
+    private func bookmakerContent(_ event: EventDetail) -> some View {
         let colors = teamColors(event)
+        // #10863 — every named, priced row; the view decides how many are drawn.
+        let allRows = Self.namedBookmakerRows(event.bookmakerOdds ?? [])
         let rows = Self.visibleBookmakerRows(allRows, showAll: showAllBookmakers)
         // #4107 — the SAME defect as `sourceContent` above, one function down and
         // in the same visual list: a hardcoded label column that never tracked
