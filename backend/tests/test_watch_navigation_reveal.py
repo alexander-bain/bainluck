@@ -665,6 +665,8 @@ COST_PROPOSED_SHA256 = {
 
 
 def restore_cost_reads(name, text):
+    if name == "WatchDiagnosticsJourneyTests.swift":
+        text = restore_controls_traversal(text)
     assert digest(text) == COST_PROPOSED_SHA256[name], "Unreviewed cost-reduction scope"
     for old, new, count in reversed(COST_READ_TRANSFORMS[name]):
         assert text.count(new) == count
@@ -864,3 +866,142 @@ def test_launcher_scope_normalization_rejects_missing_retained_tap_assertion():
                 1,
             )
         )
+
+
+# Bounded 756d controls correction. Normalize ONLY these traversal changes
+# before existing original cost/assertion hashes; lifecycle adds fatal cleanup checks.
+CONTROLS_TRAVERSAL = [
+    (
+        "try reveal(more, app: app)",
+        "try reveal(more, app: app, maxScrollFraction: 0.55)",
+        1,
+    ),
+    (
+        "try reveal(choice, app: app, earlierWhenMissing: true)",
+        "try reveal(choice, app: app, earlierWhenMissing: true, maxScrollFraction: 0.55)",
+        2,
+    ),
+    (
+        "if !element.exists { scroll(app, box: box, appFrame: appFrame, earlier: earlierWhenMissing); continue }",
+        "if !element.exists { scroll(app, box: box, appFrame: appFrame, earlier: earlierWhenMissing, fraction: maxScrollFraction); continue }",
+        1,
+    ),
+]
+FLAT_CLEANUP = '        defer {\n            // Let the selected-game foreground task cancel through its normal\n            // scene transition before asking XCTest to terminate this process.\n            // A failed transition or termination still fails this case.\n            XCUIDevice.shared.press(.home)\n            let backgrounded = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in\n                let state = app.state\n                return state == .runningBackground || state == .runningBackgroundSuspended || state == .notRunning\n            }, object: app)\n            XCTAssertEqual(XCTWaiter.wait(for: [backgrounded], timeout: 5), .completed,\n                           "Layout fixture must leave foreground before cleanup")\n            if app.state != .notRunning { app.terminate() }\n            XCTAssertEqual(app.state, .notRunning, "Layout fixture cleanup must stop the app")\n        }\n'
+FLAT_ORIGINAL_CLEANUP = "        defer { app.terminate() }\n"
+FLAT_ORIGINAL_SHA256 = (
+    "81714894e7b460b17173ff0db17b7a158ef315d884e48d4c9e5b745f83bb062b"
+)
+
+
+def restore_controls_traversal(text):
+    for previous, current, count in reversed(CONTROLS_TRAVERSAL):
+        assert text.count(current) == count, "Unreviewed diagnostics traversal"
+        text = text.replace(current, previous)
+    return text
+
+
+def require_flat_cleanup(raw):
+    assert (
+        raw.count(FLAT_CLEANUP) == 1
+    ), "Cleanup transition must be exact and fail closed"
+    restored = raw.replace(FLAT_CLEANUP, FLAT_ORIGINAL_CLEANUP, 1)
+    assert (
+        digest(restored) == FLAT_ORIGINAL_SHA256
+    ), "Layout assertions, captures or other cases changed"
+
+
+def test_flat_cleanup_preserves_whole_original_file_and_fails_closed():
+    raw = (SWIFT / "PickerCurrentGameJourneyTests.swift").read_text()
+    require_flat_cleanup(raw)
+    ordered = [
+        "XCUIDevice.shared.press(.home)",
+        "let backgrounded =",
+        "XCTWaiter.wait(for: [backgrounded], timeout: 5)",
+        "if app.state != .notRunning { app.terminate() }",
+        "XCTAssertEqual(app.state, .notRunning",
+    ]
+    positions = [FLAT_CLEANUP.index(part) for part in ordered]
+    assert positions == sorted(positions)
+    for bypass in (
+        "try?",
+        "catch",
+        "record(",
+        "XCTSkip",
+        "continueAfterFailure = true",
+    ):
+        assert bypass not in FLAT_CLEANUP
+
+
+@pytest.mark.parametrize(
+    "required",
+    [
+        "XCUIDevice.shared.press(.home)",
+        "state == .runningBackground || state == .runningBackgroundSuspended || state == .notRunning",
+        "XCTWaiter.wait(for: [backgrounded], timeout: 5)",
+        "if app.state != .notRunning { app.terminate() }",
+        'XCTAssertEqual(app.state, .notRunning, "Layout fixture cleanup must stop the app")',
+        'XCTAssertEqual(probability.label, "Association Sportive de Saint-Étienne Full Canonical Name win probability, 64%")',
+    ],
+)
+def test_cleanup_or_retained_content_cannot_be_dropped(required):
+    raw = (SWIFT / "PickerCurrentGameJourneyTests.swift").read_text()
+    assert required in raw
+    with pytest.raises(AssertionError):
+        require_flat_cleanup(raw.replace(required, "REMOVED", 1))
+
+
+def test_original_foreground_only_cleanup_is_rejected():
+    raw = (SWIFT / "PickerCurrentGameJourneyTests.swift").read_text()
+    with pytest.raises(AssertionError):
+        require_flat_cleanup(raw.replace(FLAT_CLEANUP, FLAT_ORIGINAL_CLEANUP))
+
+
+def test_distant_controls_use_existing_bounded_reveal_without_bypassing_content():
+    raw = (SWIFT / "WatchDiagnosticsJourneyTests.swift").read_text()
+    restored = restore_controls_traversal(raw)
+    assert (
+        digest(restored) == COST_PROPOSED_SHA256["WatchDiagnosticsJourneyTests.swift"]
+    )
+    # Disclosure captures, consent assertions, three launches and terminations
+    # remain exact. Only navigation call arguments and absent-row stride differ.
+    for token in (
+        "XCTAssert",
+        "capture(app,",
+        "captureContent(",
+        "app.launch()",
+        "app.terminate()",
+        "for _ in 0..<24",
+    ):
+        assert [line.strip() for line in raw.splitlines() if token in line] == [
+            line.strip() for line in restored.splitlines() if token in line
+        ]
+    reveal = raw.split("private func reveal(", 1)[1].split("    @MainActor", 1)[0]
+    assert "for _ in 0..<24" in reveal
+    assert reveal.index("if !element.exists") < reveal.index(
+        "let frame = element.frame"
+    )
+    assert "let fraction = min(maxScrollFraction, max(0.20, distance))" in reveal
+    assert "element.isHittable && (box.contains(frame) ||" in reveal
+    assert "(frame.height > box.height && box.intersects(frame)))" in reveal
+
+
+@pytest.mark.parametrize("index", range(3))
+def test_each_distant_traversal_change_is_required(index):
+    raw = (SWIFT / "WatchDiagnosticsJourneyTests.swift").read_text()
+    previous, current, count = CONTROLS_TRAVERSAL[index]
+    with pytest.raises(AssertionError):
+        restore_controls_traversal(raw.replace(current, previous))
+
+
+def test_large_and_small_drag_endpoints_stay_inside_measured_viewport():
+    raw = (SWIFT / "WatchDiagnosticsJourneyTests.swift").read_text()
+    assert "fraction > 0.20 ? (earlier ? 0.20 : 0.80) : 0.60" in raw
+    assert "box.height * (earlier ? fraction : -fraction)" in raw
+    # Synthetic geometry checks the unchanged gesture formula, not UI runtime.
+    for earlier in (False, True):
+        for fraction in (0.20, 0.21, 0.35, 0.55):
+            start = (0.20 if earlier else 0.80) if fraction > 0.20 else 0.60
+            end = start + (fraction if earlier else -fraction)
+            assert 0 < start < 1 and 0 < end < 1
+    assert 186 * 0.55 > 186 * 0.20

@@ -174,7 +174,20 @@ final class PickerCurrentGameJourneyTests: XCTestCase {
             "BAINLUCK_WATCH_UI_RESET": "1", "BAINLUCK_WATCH_UI_SCORE_LAYOUT": "long-live",
             "BAINLUCK_WATCH_UI_LARGE_TEXT": large ? "1" : "0"]
         app.launch()
-        defer { app.terminate() }
+        defer {
+            // Let the selected-game foreground task cancel through its normal
+            // scene transition before asking XCTest to terminate this process.
+            // A failed transition or termination still fails this case.
+            XCUIDevice.shared.press(.home)
+            let backgrounded = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+                let state = app.state
+                return state == .runningBackground || state == .runningBackgroundSuspended || state == .notRunning
+            }, object: app)
+            XCTAssertEqual(XCTWaiter.wait(for: [backgrounded], timeout: 5), .completed,
+                           "Layout fixture must leave foreground before cleanup")
+            if app.state != .notRunning { app.terminate() }
+            XCTAssertEqual(app.state, .notRunning, "Layout fixture cleanup must stop the app")
+        }
         let probability = app.descendants(matching: .any)["watch.home-probability"].firstMatch
         XCTAssertTrue(probability.waitForExistence(timeout: 15))
         XCTAssertEqual(probability.label, "Association Sportive de Saint-Étienne Full Canonical Name win probability, 64%")

@@ -44,7 +44,7 @@ final class WatchDiagnosticsJourneyTests: XCTestCase {
         XCTAssertTrue(revocation.label.contains("clears unsent Watch diagnostics"))
         XCTAssertTrue(revocation.label.contains("Data already sent cannot be recalled here"))
         try captureContent(revocation, app: app, name: "Watch diagnostics revocation disclosure - \(size)")
-        try reveal(choice, app: app, earlierWhenMissing: true)
+        try reveal(choice, app: app, earlierWhenMissing: true, maxScrollFraction: 0.55)
         // watchOS exposes the whole row as a Switch; its center is the label.
         // Tap the visible trailing switch, then assert the actual persisted value.
         choice.coordinate(withNormalizedOffset: CGVector(dx: 0.85, dy: 0.5)).tap()
@@ -55,7 +55,7 @@ final class WatchDiagnosticsJourneyTests: XCTestCase {
         app.launch()
         try openSettings(app)
         XCTAssertEqual(choice.value as? String, "1", "Explicit choice must survive relaunch")
-        try reveal(choice, app: app, earlierWhenMissing: true)
+        try reveal(choice, app: app, earlierWhenMissing: true, maxScrollFraction: 0.55)
         // watchOS exposes the whole row as a Switch; its center is the label.
         // Tap the visible trailing switch, then assert the actual persisted value.
         choice.coordinate(withNormalizedOffset: CGVector(dx: 0.85, dy: 0.5)).tap()
@@ -70,7 +70,7 @@ final class WatchDiagnosticsJourneyTests: XCTestCase {
 
     @MainActor private func openSettings(_ app: XCUIApplication) throws {
         let more = app.buttons["watch.more-actions"]
-        try reveal(more, app: app)
+        try reveal(more, app: app, maxScrollFraction: 0.55)
         XCTAssertEqual(more.value as? String, "Collapsed")
         more.tap()
         XCTAssertEqual(more.value as? String, "Expanded")
@@ -112,7 +112,7 @@ final class WatchDiagnosticsJourneyTests: XCTestCase {
             let appFrame = app.frame
             let box = bounds(app, appFrame: appFrame)
             // Form lazily mounts offscreen rows; never read a missing row's frame or label.
-            if !element.exists { scroll(app, box: box, appFrame: appFrame, earlier: earlierWhenMissing); continue }
+            if !element.exists { scroll(app, box: box, appFrame: appFrame, earlier: earlierWhenMissing, fraction: maxScrollFraction); continue }
             let frame = element.frame
             if element.isHittable && (box.contains(frame) ||
                 (frame.height > box.height && box.intersects(frame))) { return }
