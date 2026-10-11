@@ -43,6 +43,13 @@ nonisolated struct WatchMyStuffSnapshot: Codable, Equatable, Sendable {
         var items: [Item] = []
         var syncedAt: Date?
         var omittedCount: Int = 0
+
+        /// Filter this received section only; state, omissions and identity stay intact.
+        func items(matching search: String) -> [Item] {
+            let query = search.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !query.isEmpty else { return items }
+            return items.filter { $0.title.localizedStandardContains(query) }
+        }
     }
 
     func valid(at now: Date) -> Bool {

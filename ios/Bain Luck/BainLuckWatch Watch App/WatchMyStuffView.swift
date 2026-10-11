@@ -7,6 +7,7 @@ struct WatchMyStuffView: View {
     @ObservedObject var selected: WatchSelectedGameStore
     let close: () -> Void
     @State private var destination: WatchMyStuffSnapshot.Item?
+    @State private var savedItemSearch = ""
 
     var body: some View {
         ScrollView {
@@ -20,6 +21,17 @@ struct WatchMyStuffView: View {
                     case .signedIn:
                         if store.connecting { Text("Checking with iPhone…").font(.footnote) }
                         else if !store.connected { Text("Last synced with iPhone").font(.footnote) }
+                        if !snapshot.pins.items.isEmpty || !snapshot.teams.items.isEmpty || !savedItemSearch.isEmpty {
+                            TextField("Find a saved item", text: $savedItemSearch)
+                                .frame(minHeight: 44)
+                                .accessibilityLabel("Find a synced saved item by name")
+                                .accessibilityIdentifier("watch.my-stuff.search")
+                        }
+                        if !savedItemSearch.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                            Button("Show all saved items") { savedItemSearch = "" }
+                                .frame(minHeight: 44)
+                                .accessibilityIdentifier("watch.my-stuff.clear-search")
+                        }
                         section("Pinned", value: snapshot.pins, empty: "No pinned games or markets yet.")
                         section("Teams", value: snapshot.teams, empty: "No saved teams yet.")
                         Text("Manage pins and teams on your iPhone.").font(.footnote).foregroundStyle(.secondary)
@@ -60,7 +72,9 @@ struct WatchMyStuffView: View {
                 }
             }.id(store.navigationGeneration)
         }
-        .onChange(of: store.navigationGeneration) { _, _ in destination = nil }
+        .onChange(of: store.navigationGeneration) { _, _ in
+            destination = nil; savedItemSearch = ""
+        }
         .onChange(of: store.snapshot) { _, _ in
             if let destination, !store.contains(destination) { self.destination = nil }
         }
@@ -80,7 +94,12 @@ struct WatchMyStuffView: View {
                 (Text("Phone sync: ") + Text(time, style: .relative) + Text(" ago"))
                     .font(.footnote).foregroundStyle(.secondary)
             }
-            ForEach(value.items) { item in
+            let matches = value.items(matching: savedItemSearch)
+            if !value.items.isEmpty && !savedItemSearch.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                Text("Matching saved items: \(matches.count)").font(.footnote)
+                if matches.isEmpty { Text("No synced items in this section match your search.").font(.footnote) }
+            }
+            ForEach(matches) { item in
                 Button {
                     guard store.contains(item) else { return }
                     if item.kind == "event" {
