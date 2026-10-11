@@ -2477,12 +2477,13 @@ class LiveBlendRefresher:
                     written[event_id] = value
 
                     # #10090: the chart point is written AFTER this commit and
-                    # its frame (`_write_owed_snapshots`), never inside the
-                    # stamp's transaction. Production 2026-10-11 00:52:30Z
-                    # (BOS–PHI 15323924): the Kalshi stamp whose chart clock was
-                    # due reached a reader 3.03 s after its own stamp, against
-                    # 0.05–0.19 s for every stamp whose clock was not due, while
-                    # the event row the Polymarket arm stamps stayed locked.
+                    # its publication (`_write_owed_snapshots`), never inside the
+                    # stamp's transaction, so chart SQL no longer delays the
+                    # stamp's COMMIT or extends its event-row lock. Observed, not
+                    # attributed: production 2026-10-11 00:52:30Z (BOS–PHI
+                    # 15323924) one frame arrived ~3.0 s after its stamp against
+                    # 0.05–0.19 s for its neighbours; no worker/history/lock
+                    # receipt ties that interval to a chart write.
                     # Most changed quotes arrive before the chart clock is due;
                     # those owe nothing and open no second session.
                     snapshot_at = self._last_snapshot_at.get(event_id)
@@ -2605,16 +2606,31 @@ class LiveBlendRefresher:
     async def _write_owed_snapshots(
         self, owed: list[tuple], now: float, get_task_session,
     ) -> None:
-        """#10090 — write the chart points committed stamps owe. Never raises.
+        """#10090 — write the chart points committed stamps owe. Never raises an
+        ordinary exception; cancellation propagates to the refresh worker.
 
-        Runs after the stamps COMMITTED and their frames were sent, in its own
-        short transaction, so neither the headline nor the sibling arm's stamp
-        of the same event row waits on `win_prob_snapshots`. A stamp that never
-        commits owes no point and takes no slot, so its retry still draws one.
-        Each point keeps its own savepoint, and its ORM writes are flushed
+        Runs after the stamps COMMITTED and their frames were published (inline)
+        or submitted to the ordered sender (grouped), in its own short
+        transaction, so neither the stamp's COMMIT nor its hold on the event row
+        waits on `win_prob_snapshots`. It is still awaited by the flush, so the
+        same event's next stamp in this refresher waits for it. A stamp that
+        never commits owes no point and takes no slot, so its retry still draws
+        one. Each point keeps its own savepoint, and its ORM writes are flushed
         inside it: one that cannot be written costs only itself, never another
         point and never the number already published.
+
+        The stamp's lock budget is transaction-local and expired at its COMMIT,
+        and the consumer sessions carry none of their own, so this transaction
+        installs the same budget before any chart SQL. Without it a chart
+        UPDATE queued behind another holder of the latest snapshot row waits
+        out the resting statement timeout while the event stays fenced and the
+        worker slot stays taken. `stamp_lock_timeout_ms` falsy keeps it off, as
+        it does for the stamp.
         """
+        from app.utils.repair_lock_budget import (
+            SET_LOCK_TIMEOUT_SQL, lock_timeout_value,
+        )
+
         try:
             async with (
                 self._snapshot_slots_follow_the_commit(
@@ -2623,6 +2639,11 @@ class LiveBlendRefresher:
                 self._session_slot(),
                 get_task_session() as session,
             ):
+                if self.stamp_lock_timeout_ms:
+                    await session.execute(
+                        SET_LOCK_TIMEOUT_SQL,
+                        {"ms": lock_timeout_value(self.stamp_lock_timeout_ms)},
+                    )
                 for event_id, value, reading in owed:
                     try:
                         async with session.begin_nested():
