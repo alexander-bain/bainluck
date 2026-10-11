@@ -199,6 +199,7 @@ async def test_ws_writer_streams_real_home_and_keeps_snapshot_partition(monkeypa
     r._inversion[15314954] = (time.monotonic() + 150, True)
     monkeypatch.setattr(r, "_publish", publish)
     stats = await r.refresh([15314954])
+    await r.drain_history()
     assert stats["errors"] == 0
     assert frames[0]["source_value"] == 0.325
     assert snapshots[0]["home_win_probability"] == 0.325

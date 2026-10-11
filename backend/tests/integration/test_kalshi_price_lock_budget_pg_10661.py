@@ -90,7 +90,7 @@ async def pg():
 
     wanted = [
         Base.metadata.tables[name]
-        for name in ("sports", "teams", "venues", "events", "futures_markets", "futures_outcomes")
+        for name in ("sports", "teams", "venues", "events", "futures_markets", "futures_outcomes", "win_prob_snapshots")
     ]
     # ONE pooled connection for the flush, so "the next transaction on this
     # connection has no lock_timeout" is a statement about the same backend.

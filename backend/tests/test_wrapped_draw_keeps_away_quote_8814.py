@@ -176,6 +176,7 @@ async def test_ws_writer_streams_raw_home_with_real_away_and_draw(
     r._inversion[15290678] = (time.monotonic() + 150, True)
     monkeypatch.setattr(r, "_publish", publish)
     stats = await r.refresh([15290678])
+    await r.drain_history()
     assert stats["errors"] == 0
     assert frames[0]["source_value"] == 0.335
     assert snapshots[0]["home_win_probability"] == 0.335

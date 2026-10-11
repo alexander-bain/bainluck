@@ -4584,6 +4584,27 @@ jobs:
             exit 1
           }
 
+      - name: "#10090 next same-game quote owns no history wait (real Postgres)"
+        if: matrix.group == 'shared-tail'
+        run: |
+          if python -m pytest tests/integration/test_next_quote_history_owner_10090_pg.py \
+            -v -rs > /tmp/next-quote10090.txt 2>&1; then
+            gate_status=0
+          else
+            gate_status=$?
+          fi
+          cat /tmp/next-quote10090.txt
+          echo "EXIT CODE: $gate_status"
+          test "$gate_status" -eq 0
+          if grep -qiE "[0-9]+ skipped" /tmp/next-quote10090.txt; then
+            echo "::error::#10090 next-quote history gate SKIPPED"
+            exit 1
+          fi
+          grep -qE "[^0-9]6 passed[,[:space:]]" /tmp/next-quote10090.txt || {
+            echo "::error::#10090 next-quote history gate did not run all six cases"
+            exit 1
+          }
+
       - name: "#10702 exact Kalshi trace commit and rollback controls (real Postgres)"
         # Each case owns and drops a random schema in the job's disposable DB.
         if: matrix.group == 'isolated'

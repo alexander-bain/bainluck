@@ -79,7 +79,7 @@ async def maker():
 
     wanted = [
         Base.metadata.tables[name]
-        for name in ("sports", "teams", "venues", "events", "futures_markets", "futures_outcomes")
+        for name in ("sports", "teams", "venues", "events", "futures_markets", "futures_outcomes", "win_prob_snapshots")
     ]
     engine = create_async_engine(DB_URL)
     async with engine.begin() as conn:

@@ -1751,6 +1751,7 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
     # #9462 review: stamps the previous run still owed when it recycled. Its
     # prices are already stored; the first flush below stamps them.
     stats["blend_pending_adopted"] = adopt_handed_off(blend_refresher)
+    stats["history_pending_adopted"] = len(getattr(blend_refresher, "_history", ()))
     input_marks: dict = {}
 
     # #9484: filled IN PLACE by `admit_open_contracts`, which the handlers and
@@ -3298,13 +3299,22 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
         # Q491 repair (CERT-654 BLOCK): the last flush has no successor, so it
         # must RETRY rather than requeue into a buffer nobody will read again.
         # #10090 review: only after both cancelled flushes have finished.
+        history_interrupted = None
         try:
             await join_flushes_then_drain()
         finally:
             # #9462 review: the drain returns once the price BUFFER is empty,
             # but a price it (or the last flush) committed inside the 2 s
             # throttle is still owed its blend stamp. The next run adopts it.
-            stats["blend_pending_carried"] = hand_off_pending(blend_refresher)
+            try:
+                drain_history = getattr(blend_refresher, "drain_history", None)
+                if drain_history is not None:
+                    await drain_history()
+            except asyncio.CancelledError as exc:
+                history_interrupted = exc
+            finally:
+                stats["history_pending_carried"] = len(getattr(blend_refresher, "_history", ()))
+                stats["blend_pending_carried"] = hand_off_pending(blend_refresher)
             await asyncio.gather(
                 admission_task, game_run_task,
                 *([watch_task] if watch_task is not None else []),
@@ -3330,6 +3340,8 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                     "recycle_reset" if stats.get("status") == "resubscribe"
                     else exit_reason
                 )
+            if history_interrupted is not None:
+                raise history_interrupted
 
     # #837: the per-shard breakdown, once per recycle rather than once a minute
     # — this is the shape that tells a starved subscription from a quiet one.

@@ -235,6 +235,7 @@ async def cancelled_accounting(rig, r, *, owed_at_least):
     that window). A bookkept commit is past that seam and is never owed."""
     from app.tasks.live_blend_refresh import FRESH_STAMP_WORKERS
 
+    await r.drain_history()
     kept = await committed_events(rig)
     async with rig.maker() as session:
         snapshots = set(
@@ -261,6 +262,7 @@ async def cancelled_accounting(rig, r, *, owed_at_least):
 
 
 async def accounting(rig, r, expected):
+    await r.drain_history()
     async with rig.maker() as session:
         events = (await session.execute(select(Event))).scalars().all()
         kept = {e.id for e in events if "polymarket" in e.win_probability_sources}
@@ -285,6 +287,7 @@ async def test_actual_due_count_selects_path(rig, count):
     r.adopt_pending(range(2, count + 1))
     stage(r, range(1, count + 1))
     await r.refresh([1])
+    await r.drain_history()
     # One event owns its transaction (the singleton path). Otherwise the fresh
     # event stamps in its own session and the debt is prepared once, then each
     # debt event commits in its own transaction. #10090: each stamp whose chart
@@ -450,6 +453,7 @@ async def test_stale_refusal_preserves_revision_and_snapshot_accounting(rig):
 
     r._prepare_groups = prepare
     await r.refresh(range(1, 9))
+    await r.drain_history()
     assert r.stats["stale_readings_refused"] == 1
     assert 6 not in r._last_written_value and 6 not in r._last_snapshot_at
     assert {f["event_id"] for f in frames} == set(range(1, 9)) - {6}
@@ -476,12 +480,20 @@ async def test_snapshot_helper_failure_does_not_undo_stamp(rig, monkeypatch):
 
     monkeypatch.setattr(snapshots, "_create_or_update_win_prob_snapshot", snapshot)
     await r.refresh(range(1, 9))
+    await r._history_task
     assert r.stats["stamped"] == 8 and not r.pending_event_ids()
-    assert len(frames) == 8 and set(r._last_snapshot_at) == set(range(1, 9))
+    assert len(frames) == 8
+    assert set(r._last_snapshot_at) == set(range(1, 9)) - {6}
+    assert r._history_reserved == {6: r._last_write_at[6]}
+    assert [point[0] for point in r._history] == [6]
     async with rig.maker() as session:
         assert set(
             (await session.execute(select(WinProbSnapshot.event_id))).scalars()
         ) == set(range(1, 9)) - {6}
+    monkeypatch.setattr(snapshots, "_create_or_update_win_prob_snapshot", original)
+    await r.drain_history()
+    await accounting(rig, r, range(1, 9))
+    assert len(frames) == r.stats["stamped"] == 8
 
 
 async def test_real_cold_orientation_later_event_view_warm_price_and_named_override(

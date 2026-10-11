@@ -34,8 +34,10 @@ therefore ~4.8x the 120s poll on a continuously-moving market and 0x on a flat
 one — not 60x. What it buys is Alex's stated bar: a live match page gains a
 chart point within a minute instead of within two.
 
-Each chart point shares its event's blend transaction. A single admitted event
-keeps its direct read/write path; multiple events prepare each fresh/pending
+Committed chart points have one finite FIFO owner for the consumer run.
+Each point freezes its original database stamp time; chart transactions share
+the existing three-session ceiling with preparation and quote stamps. A single
+admitted event keeps its direct read/write path; multiple events prepare each fresh/pending
 population, then commit one event per transaction. Fresh worker tails reread
 current quotes in their write session. Fresh stamps
 do not wait for older debt's preparation reads. Earlier
@@ -64,6 +66,7 @@ must not wipe the pass).
 from __future__ import annotations
 
 from asyncio import CancelledError
+import asyncio
 import contextlib
 from collections import deque
 import logging
@@ -150,6 +153,10 @@ FRESH_FLUSH_PENDING_ATTEMPTS = 1
 # session only inside its stamp; with a consumer's price writer and standalone
 # writer that is the lent engine's five connections (pool 3 + overflow 2).
 FRESH_STAMP_WORKERS = 3
+
+# Includes the point currently writing and reservations before quote COMMIT.
+# At this finite bound a newly due stamp waits for debt space; no points drop.
+HISTORY_POINT_LIMIT = 64
 
 #: #837 receipt — the per-event floor between receipt lines for chains that
 #: cannot qualify as a quiet tail (a busy market's routine deferrals, a held
@@ -905,24 +912,44 @@ def heartbeat_deadline(max_gap_s: float, sample_interval_s: float) -> float:
     return max(1.0, float(max_gap_s) - float(sample_interval_s))
 
 
-def _chart_reading(reading):
-    """#10090 — the fields a chart point reads, copied while the stamp's session
-    is open: the point is written after that session commits, when ORM rows may
-    be expired (gotcha #6). Same attribute names, so `_maybe_snapshot` and
-    `_second_slot` read it exactly as they read the reading."""
-    from types import SimpleNamespace
+@dataclass(frozen=True)
+class _ChartMarket:
+    name: Optional[str]
+    id: Optional[int]
 
+
+@dataclass(frozen=True)
+class _ChartOutcome:
+    name: Optional[str]
+
+
+@dataclass(frozen=True)
+class _ChartReading:
+    home_probability: Optional[float]
+    away_probability: Optional[float]
+    draw_probability: Optional[float]
+    yes_probability: Optional[float]
+    market: _ChartMarket
+    outcome: _ChartOutcome
+    snapshot_observed_at: object
+    owned_history: bool = True
+
+
+def _chart_reading(reading, observed_at):
+    """Freeze only chart scalars before the stamp session closes (#10090)."""
     market = getattr(reading, "market", None)
     outcome = getattr(reading, "outcome", None)
-    return SimpleNamespace(
+    return _ChartReading(
         home_probability=getattr(reading, "home_probability", None),
         away_probability=getattr(reading, "away_probability", None),
         draw_probability=getattr(reading, "draw_probability", None),
         yes_probability=getattr(reading, "yes_probability", None),
-        market=SimpleNamespace(
-            name=getattr(market, "name", None), id=getattr(market, "id", None),
+        market=_ChartMarket(
+            name=getattr(market, "name", None),
+            id=getattr(market, "id", None),
         ),
-        outcome=SimpleNamespace(name=getattr(outcome, "name", None)),
+        outcome=_ChartOutcome(name=getattr(outcome, "name", None)),
+        snapshot_observed_at=observed_at,
     )
 
 
@@ -1115,7 +1142,6 @@ class _FreshAdmission:
         self.flush_started = flush_started
         self.clock = clock
         self.events: set[int] = set(events)
-        self.slots = asyncio.Semaphore(FRESH_STAMP_WORKERS)
         self.queue: deque = deque()
         self.workers: set = set()
         self.admitted: set[int] = set()
@@ -1201,6 +1227,16 @@ class LiveBlendRefresher:
         self._last_write_at: dict[int, float] = {}
         self._last_written_value: dict[int, float] = {}
         self._last_snapshot_at: dict[int, float] = {}
+        # One owner across refresh calls. A chart session cannot borrow slots
+        # from a newer admission window or escape the three-session ceiling.
+        self._session_slots = asyncio.Semaphore(FRESH_STAMP_WORKERS)
+        self._history: list[tuple] = []
+        self._history_task: Optional[asyncio.Task] = None
+        self._history_count = 0  # committed debt plus pre-COMMIT reservations
+        self._history_limit = HISTORY_POINT_LIMIT
+        self._history_changed = asyncio.Event()
+        self._history_reserved: dict[int, float] = {}
+        self._history_retry_at: dict[int, float] = {}
         self._inversion: dict[int, tuple[float, bool]] = {}
         self.stats: dict[str, int] = {
             "considered": 0,
@@ -1315,6 +1351,7 @@ class LiveBlendRefresher:
         a whole extra flush for its stamp. Receipts keep the real clock: they
         time the hold, not the schedule. Omitted, behaviour is unchanged.
         """
+        self._start_history()
         now = _mono()
         clock = now if flush_started is None else flush_started
         receipts = self.receipts
@@ -1857,6 +1894,7 @@ class LiveBlendRefresher:
         without opening a session, when nothing is queued or nothing queued is
         due yet.
         """
+        self._start_history()
         if not self._lock_retry and not self._throttle_deferred:
             if self.receipts is not None:
                 # #10090: a quiet flush still closes a finished minute.
@@ -2213,11 +2251,120 @@ class LiveBlendRefresher:
             return await self._read_groups(session, event_ids)
 
     def _session_slot(self):
-        """#10090 — one of the running call's FRESH_STAMP_WORKERS slots, held
-        for exactly as long as a stamp or preparation session is open, so an
-        admitted cohort never adds a connection; free outside a `refresh`."""
-        window = self._admission
-        return contextlib.nullcontext() if window is None else window.slots
+        """The run's existing three slots, across quote and history owners."""
+        return self._session_slots
+
+    @contextlib.asynccontextmanager
+    async def _history_reservations(self, event_ids, now, owed):
+        """Reserve finite debt space before a transaction can owe a point.
+
+        Same-event quotes remain serial under the consumer's existing fence.
+        At capacity, wait only for the owned writer. If it failed, refuse this
+        stamp before COMMIT and let the existing blend retry retain the price.
+        Distinct due observations are never dropped or coalesced.
+        """
+        reserved = set()
+        committed = False
+        ready = asyncio.Event()
+        try:
+            for eid in event_ids:
+                last = self._history_reserved.get(eid, self._last_snapshot_at.get(eid))
+                if last is not None and now - last < self.snapshot_interval_s:
+                    continue
+                while self._history_count >= self._history_limit:
+                    self._start_history()
+                    if self._history_task is None or self._history_task.done():
+                        raise RuntimeError(
+                            "committed chart backlog is full; stamp remains owed"
+                        )
+                    self._history_changed.clear()
+                    await self._history_changed.wait()
+                self._history_count += 1
+                reserved.add(eid)
+            yield reserved, ready
+            # The nested session has now exited with a successful COMMIT.
+            for eid, value, reading in owed:
+                self._history.append((eid, value, reading, now, ready))
+                self._history_reserved[eid] = now
+            committed = True
+        finally:
+            used = {point[0] for point in owed} if committed else set()
+            self._history_count -= len(reserved - used)
+            self._history_changed.set()
+
+    def _start_history(self, *, force=False):
+        if not self._history or (self._history_task and not self._history_task.done()):
+            return
+        if not force and all(
+            _mono() < self._history_retry_at.get(point[0], 0.0)
+            for point in self._history
+        ):
+            return
+        self._history_task = asyncio.create_task(self._drain_history(force=force))
+
+    async def _drain_history(self, *, force=False):
+        from app.tasks.base import get_task_session
+
+        factory = self._session_factory or get_task_session
+        failed = set()
+        cursor = 0
+        try:
+            while cursor < len(self._history):
+                point = self._history[cursor]
+                eid, value, reading, observed_clock, ready = point
+                # A failed event keeps its original FIFO, but cannot strand a
+                # healthy sibling's history behind its own retry hold.
+                if eid in failed or (
+                    not force and _mono() < self._history_retry_at.get(eid, 0.0)
+                ):
+                    cursor += 1
+                    continue
+                await ready.wait()  # publication was attempted after COMMIT
+                if not await self._write_owed_snapshots(
+                    [(eid, value, reading)],
+                    observed_clock,
+                    factory,
+                ):
+                    failed.add(eid)
+                    self._history_retry_at[eid] = _mono() + self.failed_retry_interval_s
+                    cursor += 1
+                    self._history_changed.set()
+                    continue
+                self._history.pop(cursor)
+                self._history_count -= 1
+                self._history_retry_at.pop(eid, None)
+                if not any(point[0] == eid for point in self._history):
+                    self._history_reserved.pop(eid, None)
+                self._history_changed.set()
+        except Exception:
+            self.stats["errors"] += 1
+            for eid, *_ in self._history:
+                self._history_retry_at[eid] = _mono() + self.failed_retry_interval_s
+            logger.exception(
+                "live_blend_refresh[%s]: history owner failed; debt retained",
+                self.source,
+            )
+        finally:
+            self._history_changed.set()
+
+    async def drain_history(self):
+        """One final attempt, joined through repeated cancellation before close.
+
+        Failed scalar debt stays in the queue for the next run. The owner never
+        republishes frames or turns history-only debt into blend debt.
+        """
+        self._start_history(force=True)
+        task = self._history_task
+        interrupted = None
+        while task is not None and not task.done():
+            try:
+                await asyncio.wait({task})
+            except asyncio.CancelledError as exc:
+                interrupted = exc
+        if task is not None and not task.cancelled():
+            task.exception()
+        if interrupted is not None:
+            raise interrupted
 
     @contextlib.asynccontextmanager
     async def _event_stamp_scope(self, session, *, single_event: bool):
@@ -2293,7 +2440,11 @@ class LiveBlendRefresher:
 
         if self._session_factory is not None:
             get_task_session = self._session_factory  # #2471: the consumer's
-        async with self._session_slot(), get_task_session() as session:
+        async with (
+            self._history_reservations(event_ids, now, owed_snapshots) as reservation,
+            self._session_slot(), get_task_session() as session,
+        ):
+            reserved, history_ready = reservation
             if prepared is None:
                 grouped = await self._read_groups(session, event_ids)
             else:
@@ -2470,6 +2621,13 @@ class LiveBlendRefresher:
                             continue
 
                         stamped_at = new_sources[self.source]["updated_at"]
+                        # Scalar extraction is still inside the event scope:
+                        # if it fails, this stamp cannot commit without its
+                        # due chart obligation.
+                        chart_reading = (
+                            _chart_reading(reading, stamped_at)
+                            if event_id in reserved else None
+                        )
 
                     # Noted only once the stamp scope has succeeded (a stamp
                     # that rolled back must not read as written), and applied only
@@ -2486,20 +2644,8 @@ class LiveBlendRefresher:
                     # receipt ties that interval to a chart write.
                     # Most changed quotes arrive before the chart clock is due;
                     # those owe nothing and open no second session.
-                    snapshot_at = self._last_snapshot_at.get(event_id)
-                    if snapshot_at is None or (
-                        now - snapshot_at >= self.snapshot_interval_s
-                    ):
-                        try:
-                            owed_snapshots.append(
-                                (event_id, value, _chart_reading(reading))
-                            )
-                        except Exception:
-                            self.stats["errors"] += 1
-                            logger.exception(
-                                "live_blend_refresh[%s]: snapshot failed for event %s",
-                                self.source, event_id,
-                            )
+                    if chart_reading is not None:
+                        owed_snapshots.append((event_id, value, chart_reading))
                     if exact_trace is not None:
                         with contextlib.suppress(Exception):
                             if exact_trace.tracks_event(event_id):
@@ -2591,31 +2737,33 @@ class LiveBlendRefresher:
             for event_id, (basis, revision, stamped_at) in trace_bases.items():
                 with contextlib.suppress(Exception):
                     exact_trace.stamp(event_id, basis, revision, stamped_at)
-        if on_committed is not None:
-            on_committed(event_ids)
-        if publish_committed is None:
-            # Inside a `refresh`, ordered with any admitted cohort's frames.
-            window = self._admission
-            publish_committed = (
-                self._publish if window is None else window.publish_inline
-            )
-        await publish_committed(pending)
-        if owed_snapshots:
-            await self._write_owed_snapshots(owed_snapshots, now, get_task_session)
+        try:
+            if on_committed is not None:
+                on_committed(event_ids)
+            if publish_committed is None:
+                # Ordered with the running quote call's admitted frames.
+                window = self._admission
+                publish_committed = (
+                    self._publish if window is None else window.publish_inline
+                )
+            await publish_committed(pending)
+        finally:
+            # The debt was registered immediately after COMMIT, before the
+            # first publication await. Cancellation cannot strand it.
+            history_ready.set()
+            self._start_history()
 
     async def _write_owed_snapshots(
         self, owed: list[tuple], now: float, get_task_session,
-    ) -> None:
-        """#10090 — write the chart points committed stamps owe. Never raises an
-        ordinary exception; cancellation propagates to the refresh worker.
+    ) -> bool:
+        """#10090 — report whether the owed points' transaction committed.
 
         Runs after the stamps COMMITTED and their frames were published (inline)
         or submitted to the ordered sender (grouped), in its own short
         transaction, so neither the stamp's COMMIT nor its hold on the event row
-        waits on `win_prob_snapshots`. It is still awaited by the flush, so the
-        same event's next stamp in this refresher waits for it. A stamp that
-        never commits owes no point and takes no slot, so its retry still draws
-        one. Each point keeps its own savepoint, and its ORM writes are flushed
+        waits on `win_prob_snapshots`. The run's single history owner awaits
+        it, independently of the quote owner. A stamp that never commits owes
+        no point and takes no slot, so its retry still draws one. Each point keeps its own savepoint, and its ORM writes are flushed
         inside it: one that cannot be written costs only itself, never another
         point and never the number already published.
 
@@ -2623,14 +2771,14 @@ class LiveBlendRefresher:
         and the consumer sessions carry none of their own, so this transaction
         installs the same budget before any chart SQL. Without it a chart
         UPDATE queued behind another holder of the latest snapshot row waits
-        out the resting statement timeout while the event stays fenced and the
-        worker slot stays taken. `stamp_lock_timeout_ms` falsy keeps it off, as
+        out the resting statement timeout while the history slot stays taken. `stamp_lock_timeout_ms` falsy keeps it off, as
         it does for the stamp.
         """
         from app.utils.repair_lock_budget import (
             SET_LOCK_TIMEOUT_SQL, lock_timeout_value,
         )
 
+        counts = {key: self.stats[key] for key in ("snapshots_written", "snapshots_deduped")}
         try:
             async with (
                 self._snapshot_slots_follow_the_commit(
@@ -2645,35 +2793,31 @@ class LiveBlendRefresher:
                         {"ms": lock_timeout_value(self.stamp_lock_timeout_ms)},
                     )
                 for event_id, value, reading in owed:
-                    try:
-                        async with session.begin_nested():
-                            await self._maybe_snapshot(
-                                session, event_id, value, reading, now,
-                            )
-                            await session.flush()
-                    except Exception:
-                        self.stats["errors"] += 1
-                        logger.exception(
-                            "live_blend_refresh[%s]: snapshot failed for event %s",
-                            self.source, event_id,
-                        )
-        except Exception:
+                    async with session.begin_nested():
+                        await self._maybe_snapshot(session, event_id, value, reading, now)
+                        await session.flush()
+            return True
+        except BaseException as exc:
+            for key, count in counts.items():
+                self.stats[key] = count
+            if isinstance(exc, asyncio.CancelledError):
+                raise
             self.stats["errors"] += 1
             logger.exception(
-                "live_blend_refresh[%s]: chart points failed for events %s",
-                self.source, [event_id for event_id, _, _ in owed],
+                "live_blend_refresh[%s]: committed chart point remains owed",
+                self.source,
             )
+            return False
 
     @contextlib.asynccontextmanager
     async def _snapshot_slots_follow_the_commit(self, event_ids: list[int]):
         """Undo these chart points' throttle slots if their transaction does
         not commit.
 
-        `_maybe_snapshot` takes its slot BEFORE writing, deliberately: a
-        snapshot that fails inside its own savepoint must not retry every two
-        seconds. But a transaction that never commits wrote no chart point at
-        all, and a slot kept for it would hold the line flat for up to
-        `snapshot_interval_s` after the next stamp. Entered before the session
+        `_maybe_snapshot` takes its tentative slot BEFORE writing. An owned
+        point that fails retains its separate reservation and retry hold; its
+        successful-write slot must roll back with the transaction. Otherwise
+        a retry would skip the immutable observation it still owes. Entered before the session
         and exited after it, so a failing or cancelled COMMIT reaches it.
         """
         prior = {eid: self._last_snapshot_at.get(eid) for eid in event_ids}
@@ -2880,6 +3024,7 @@ class LiveBlendRefresher:
                 max_gap_seconds=heartbeat_deadline(
                     self.snapshot_max_gap_s, self.snapshot_interval_s
                 ),
+                observed_at=getattr(reading, "snapshot_observed_at", None),
             )
             if is_new:
                 session.add(snapshot)
@@ -2887,6 +3032,8 @@ class LiveBlendRefresher:
             else:
                 self.stats["snapshots_deduped"] += 1
         except Exception:
+            if getattr(reading, "owned_history", False):
+                raise
             self.stats["errors"] += 1
             logger.exception(
                 "live_blend_refresh[%s]: snapshot failed for event %s",
@@ -2941,14 +3088,29 @@ def event_ids_for_outcomes(
 PENDING_HANDOFF_TTL_S = 120.0
 
 _pending_handoff: dict[str, tuple[float, frozenset]] = {}
+_history_handoff: dict[str, tuple] = {}
 
 
 def hand_off_pending(refresher) -> int:
     """Leave `refresher`'s owed stamps for the next run of its source.
 
-    Returns how many events were handed off. Never raises: a refresher that
-    cannot say what it owes (a test double) hands off nothing.
+    Returns how many blend events were handed off. Committed history scalars
+    travel separately, without the blend handoff's age cutoff. Its owner must
+    already be joined; a legacy/test refresher without that owner is supported.
     """
+    try:
+        if refresher._history_task is not None and not refresher._history_task.done():
+            raise RuntimeError("history owner must join before handing off its debt")
+        debt = tuple((eid, value, reading, at) for eid, value, reading, at, _ in refresher._history)
+        if debt:
+            _history_handoff[refresher.source] = debt
+            refresher._history.clear()
+            refresher._history_count = 0
+            refresher._history_reserved.clear()
+        else:
+            _history_handoff.pop(refresher.source, None)
+    except AttributeError:
+        pass  # legacy/test refresher without a chart owner
     try:
         pending = frozenset(refresher.pending_event_ids())
     except Exception:
@@ -2963,9 +3125,20 @@ def hand_off_pending(refresher) -> int:
 def adopt_handed_off(refresher) -> int:
     """Give `refresher` the stamps the previous run of its source still owed.
 
-    Returns how many events were adopted (0 when none, too old, or the
-    refresher cannot adopt). The hand-off is consumed either way.
+    Returns how many blend events were adopted (0 when none, too old, or the
+    refresher cannot adopt). History is separate committed observation debt and
+    keeps its original times through a recycle, even after a later poll point.
     """
+    try:
+        debt = _history_handoff.pop(refresher.source, ())
+        for eid, value, reading, at in debt:
+            ready = asyncio.Event()
+            ready.set()
+            refresher._history.append((eid, value, reading, at, ready))
+            refresher._history_count += 1
+            refresher._history_reserved[eid] = at
+    except AttributeError:
+        pass
     try:
         handed = _pending_handoff.pop(refresher.source, None)
     except Exception:

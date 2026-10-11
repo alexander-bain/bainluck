@@ -248,6 +248,7 @@ async def test_actual_ws_resolver_clears_flip_before_snapshot_and_stream(monkeyp
     arm._inversion[1] = (time.monotonic() + 150, True)
     monkeypatch.setattr(arm, "_publish", publish)
     stats = await arm.refresh([1])
+    await arm.drain_history()
     assert stats["errors"] == 0
     assert snapshots[0]["home_win_probability"] == pytest.approx(0.29)
     assert frames[0]["source_value"] == pytest.approx(0.29)

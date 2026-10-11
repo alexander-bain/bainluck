@@ -180,6 +180,8 @@ async def _writer(monkeypatch, writer, population, source="polymarket"):
         refresher = ws.LiveBlendRefresher(source)
         monkeypatch.setattr(refresher, "_publish", publish)
         await refresher.refresh([101])
+        # These parity controls inspect chart output, so join its run owner.
+        await refresher.drain_history()
         assert refresher.stats["errors"] == 0, refresher.stats
     return session, snapshots, frames
 
