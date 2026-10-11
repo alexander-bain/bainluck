@@ -8,6 +8,7 @@ struct WatchQuestionDetailView: View {
     var backLabel: String = "Back to story"
     @StateObject private var store = WatchQuestionDetailStore()
     @State private var refreshID = 0
+    @State private var outcomeSearch = ""
 
     private var matchingDetail: WatchQuestionDetail? {
         guard let detail = store.detail, detail.id == destination.id else { return nil }
@@ -23,7 +24,20 @@ struct WatchQuestionDetailView: View {
                     .accessibilityAddTraits(.isHeader)
                 if heading.retained { Text(originLabel).font(.footnote) }
                 if let detail = matchingDetail {
-                    ForEach(detail.outcomes) { outcome in
+                    let matches = detail.outcomes(matching: outcomeSearch)
+                    if detail.outcomes.count > 1 || !outcomeSearch.isEmpty {
+                        TextField("Find an outcome", text: $outcomeSearch)
+                            .frame(minHeight: 44)
+                            .accessibilityLabel("Find an outcome by name")
+                            .accessibilityIdentifier("watch.question.search")
+                    }
+                    if !outcomeSearch.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        Text("Matching outcomes: \(matches.count)").font(.footnote)
+                        Button("Show all outcomes") { outcomeSearch = "" }
+                            .frame(minHeight: 44)
+                            .accessibilityIdentifier("watch.question.clear-search")
+                    }
+                    ForEach(matches) { outcome in
                         VStack(alignment: .leading, spacing: 4) {
                             Text(outcome.name).font(.body.bold())
                             Text(outcome.reading)
@@ -34,6 +48,7 @@ struct WatchQuestionDetailView: View {
                         .accessibilityIdentifier("watch.question.outcome.\(outcome.id)")
                     }
                     if detail.outcomes.isEmpty { Text("No available outcomes for this question.") }
+                    else if matches.isEmpty { Text("No outcomes match your search.") }
                     if detail.hasOmittedOutcomes { Text("Some outcomes are unavailable.").font(.footnote) }
                 }
                 let status = store.requestStatus(for: destination.id)
@@ -49,6 +64,7 @@ struct WatchQuestionDetailView: View {
             guard scenePhase == .active else { return }
             await store.load(id: destination.id)
         }
+        .onChange(of: destination.id) { _, _ in outcomeSearch = "" }
         .onChange(of: scenePhase) { _, phase in
             if phase != .active { store.cancel() }
         }

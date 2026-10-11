@@ -22,6 +22,13 @@ nonisolated struct WatchQuestionDetail: Sendable, Equatable {
     let outcomes: [Outcome]
     let hasOmittedOutcomes: Bool
 
+    /// Search only received names. Preserve published order and every reading field.
+    func outcomes(matching search: String) -> [Outcome] {
+        let query = search.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !query.isEmpty else { return outcomes }
+        return outcomes.filter { $0.name.localizedStandardContains(query) }
+    }
+
     nonisolated struct Outcome: Identifiable, Sendable, Equatable {
         let id: Int
         let name: String
