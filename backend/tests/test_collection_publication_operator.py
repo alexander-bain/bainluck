@@ -80,6 +80,7 @@ class Session:
         self.commit_error = False
         self.ledger_error = False
         self.close_error = False
+        self.theme_edge_ids = []
 
     async def __aenter__(self):
         return self
@@ -117,6 +118,9 @@ class Session:
         if sql.startswith("SELECT slug FROM containers WHERE id = :cid"):
             # #9935: corrections read the slug under the lock (theme rebuild).
             return Result([] if self.missing else [(self.facts["slug"],)])
+        if sql.startswith("SELECT e.child_id FROM event_edges"):
+            # #9935: a theme page's own market edges.
+            return Result([(i,) for i in self.theme_edge_ids])
         if "SELECT count(*) FROM event_edges" in sql:
             return Result([(self.facts["edge_count"],)])
         if sql.startswith("UPDATE containers SET publication_state"):
@@ -279,7 +283,11 @@ async def test_explicit_slug_preview_binds_exact_target_and_reports_missing_rows
         {"slug": "nfl-2026-week-05"},
         {"slug": "nfl-2026-week-0"},
         {"slug": "wimbledon-2026"},
+        {"slug": "ai-2026"},
+        {"slug": "oscars-27"},
+        {"slug": "Oscars-2027"},
         {"parent_container_id": 200},
+        {"slug": "ai", "parent_container_id": 200},
     ],
 )
 @pytest.mark.asyncio
@@ -1622,3 +1630,194 @@ def test_member_cli_preview_prints_the_run_document(tmp_path, monkeypatch, capsy
     )
     doc = json.loads(capsys.readouterr().out)
     assert doc["status"] == "preview" and len(doc["hubs"]) == 2
+
+
+# ---------------------------------------------------------------------------
+# #9935: a theme collection publishes only when the page it would serve exists
+# ---------------------------------------------------------------------------
+
+
+def theme_snapshot(container_id=101, revision=7, shown=(11, 12, 13), complete=True):
+    return {
+        "container_id": container_id,
+        "revision": revision,
+        "shown_ids": list(shown),
+        "shown_count": len(shown),
+        "eligible_count": len(shown) + 1,
+        "withheld": {"low_quality": [14]},
+        "inventory_complete": complete,
+    }
+
+
+class SnapshotReader:
+    """Records every (container, revision) the operator asks the page for."""
+
+    def __init__(self, snap):
+        self.snap = snap
+        self.calls = []
+
+    async def __call__(self, container_id, revision):
+        self.calls.append((container_id, revision))
+        return self.snap
+
+
+def theme_session(slug="ai", **facts):
+    session = Session(
+        slug=slug,
+        name="AI",
+        kind="theme",
+        game_count=0,
+        question_count=3,
+        edge_count=3,
+        classes=["title"],
+        **facts,
+    )
+    session.theme_edge_ids = [11, 12, 13]
+    return session
+
+
+def theme_apply(operation="publish", slug="ai"):
+    return replace(apply_options(operation), slug=slug)
+
+
+@pytest.mark.parametrize(
+    "slug,edition",
+    [
+        ("ai", {"kind": "theme_continuing", "subject": "ai"}),
+        (
+            "oscars-2027",
+            {"kind": "theme_edition", "subject": "oscars", "edition": 2027},
+        ),
+    ],
+)
+@pytest.mark.asyncio
+async def test_theme_preview_reports_the_page_it_would_serve_read_only(slug, edition):
+    session = theme_session(slug)
+    reader = SnapshotReader(theme_snapshot())
+    receipt, code = await operator.run(
+        operator.Options(slug=slug, operation="publish"),
+        lambda: session,
+        read_snapshot=reader,
+    )
+    assert code == 0 and receipt["status"] == "preview"
+    assert receipt["edition"] == edition
+    assert receipt["publish_eligible"] is True and receipt["publish_refusal"] is None
+    assert receipt["theme_snapshot"] == {
+        "revision": 7,
+        "shown_count": 3,
+        "eligible_count": 4,
+        "withheld_count": {"low_quality": 1},
+        "inventory_complete": True,
+        "unbacked_shown_count": 0,
+    }
+    assert "rebuild_theme_snapshot" in receipt["after_commit"]
+    assert reader.calls == [(101, 7)]
+    assert session.statements[0][0].startswith("SET TRANSACTION")
+    assert "READ ONLY" in session.statements[0][0]
+    assert session.commits == 0 and session.ledger == []
+
+
+@pytest.mark.asyncio
+async def test_theme_publish_applies_through_the_helper_at_the_locked_revision():
+    session = theme_session()
+    reader = SnapshotReader(theme_snapshot())
+    receipt, code = await operator.run(
+        theme_apply(), lambda: session, read_snapshot=reader
+    )
+    assert code == 0 and receipt["status"] == "applied" and receipt["committed"] is True
+    assert reader.calls == [(101, 7)]
+    assert session.commits == 1
+    assert session.facts["publication_state"] == "published"
+    assert session.facts["revision"] == 8
+    assert [row["action"] for row in session.ledger] == ["publish"]
+    assert receipt["rollback"]["operation"] == "withdraw"
+    assert receipt["rollback"]["runnable_without_fresh_review"] is False
+    lock = next(
+        i for i, (sql, _) in enumerate(session.statements) if "FOR UPDATE OF c" in sql
+    )
+    edges = next(
+        i
+        for i, (sql, _) in enumerate(session.statements)
+        if sql.startswith("SELECT e.child_id FROM event_edges")
+    )
+    assert lock < edges
+
+
+@pytest.mark.parametrize(
+    "snap,edge_ids,refusal",
+    [
+        (None, [11, 12, 13], operator.THEME_REFUSED_SNAPSHOT_ABSENT),
+        (
+            theme_snapshot(complete=False),
+            [11, 12, 13],
+            operator.THEME_REFUSED_INCOMPLETE,
+        ),
+        (theme_snapshot(shown=()), [11, 12, 13], operator.THEME_REFUSED_EMPTY),
+        (theme_snapshot(), [11, 12], operator.THEME_REFUSED_DISAGREES),
+    ],
+)
+@pytest.mark.asyncio
+async def test_theme_publish_refuses_a_page_readers_could_not_be_served(
+    snap, edge_ids, refusal
+):
+    session = theme_session()
+    session.theme_edge_ids = edge_ids
+    receipt, code = await operator.run(
+        theme_apply(), lambda: session, read_snapshot=SnapshotReader(snap)
+    )
+    assert code == 1 and receipt["status"] == "refused"
+    assert refusal in receipt["error"]
+    assert session.commits == 0 and session.ledger == []
+    assert session.facts["publication_state"] == "unpublished"
+
+    preview, code = await operator.run(
+        operator.Options(slug="ai"),
+        lambda: theme_session(),
+        read_snapshot=SnapshotReader(snap),
+    )
+    assert code == 0 and preview["status"] == "preview"
+
+
+@pytest.mark.asyncio
+async def test_theme_withdraw_is_never_held_hostage_by_a_missing_page():
+    session = theme_session(publication_state="published")
+    receipt, code = await operator.run(
+        theme_apply("withdraw"), lambda: session, read_snapshot=SnapshotReader(None)
+    )
+    assert code == 0 and receipt["status"] == "applied"
+    assert session.facts["publication_state"] == "withdrawn"
+    assert receipt["publish_refusal"] == operator.THEME_REFUSED_SNAPSHOT_ABSENT
+    assert receipt["rollback"]["operation"] == "publish"
+
+
+@pytest.mark.asyncio
+async def test_sports_hubs_never_consult_the_theme_page():
+    async def refuse(*_):
+        raise AssertionError("an NFL hub has no theme snapshot")
+
+    receipt, code = await operator.run(
+        apply_options(), lambda: Session(), read_snapshot=refuse
+    )
+    assert code == 0 and receipt["status"] == "applied"
+    assert "theme_snapshot" not in receipt
+
+
+@pytest.mark.asyncio
+async def test_the_default_reader_is_the_pages_own(monkeypatch):
+    from app.routes import containers
+
+    seen = []
+
+    async def page_reader(container_id, revision):
+        seen.append((container_id, revision))
+        return None
+
+    monkeypatch.setattr(containers, "_read_theme_snapshot", page_reader)
+    receipt, code = await operator.run(
+        operator.Options(slug="ai"), lambda: theme_session()
+    )
+    assert (
+        code == 0
+        and receipt["publish_refusal"] == operator.THEME_REFUSED_SNAPSHOT_ABSENT
+    )
+    assert seen == [(101, 7)]

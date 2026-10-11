@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
-"""Preview or explicitly publish/withdraw one reviewed NFL/MLB hub (#9916), or
-withdraw/exactly restore a reviewed manifest of its member edges (#9649).
+"""Preview or explicitly publish/withdraw one reviewed NFL/MLB hub (#9916) or
+theme collection (#9935), or withdraw/exactly restore a reviewed manifest of an
+NFL/MLB hub's member edges (#9649).
 
 No target discovery, assembly, flag changes or implicit publication. Authority's
 correction helpers own all writes; this caller owns commit/rollback. See
@@ -307,11 +308,75 @@ async def snapshot(session, options: Options) -> dict:
     return facts
 
 
+#: #9935: the theme kinds ``edition_for_slug`` returns after the sports branches.
+THEME_EDITION_KINDS = frozenset({"theme_edition", "theme_continuing"})
+
+# The page's own membership: the market edges a theme page hydrates its
+# snapshot ids against. Bound to one container; no broad selector exists.
+THEME_EDGE_IDS_SQL = (
+    "SELECT e.child_id FROM event_edges e "
+    "WHERE e.parent_type = 'container' AND e.parent_id = :cid "
+    "  AND e.kind = 'contains' AND e.child_type = 'market'"
+)
+
+THEME_REFUSED_SNAPSHOT_ABSENT = "theme_snapshot_absent_at_revision"
+THEME_REFUSED_INCOMPLETE = "theme_inventory_incomplete"
+THEME_REFUSED_EMPTY = "theme_snapshot_empty"
+THEME_REFUSED_DISAGREES = "theme_snapshot_disagrees_with_membership"
+
+
+async def read_theme_snapshot(container_id: int, revision: int) -> dict | None:
+    """The page's own snapshot read (bounded, fails closed to None). Imported
+    here, never at module load, so a refused apply still opens nothing."""
+    from app.routes.containers import _read_theme_snapshot
+
+    return await _read_theme_snapshot(container_id, revision)
+
+
+async def theme_eligibility(
+    session, facts: dict, read_snapshot
+) -> tuple[dict | None, str | None]:
+    """``(snapshot summary, refusal)`` for a theme collection: the result the
+    page itself would serve once published, read at the target's revision.
+
+    A theme page is served from the producer's snapshot at the live revision
+    (``routes/containers.py``), so stored edges alone cannot say the page will
+    render: no snapshot is a 503 "building", a shown id with no edge is served
+    as "building", and an incomplete inventory would be published as a partial
+    collection. Each of those refuses publication; none refuses a withdrawal.
+    The key is immutable per revision (``SET NX``), so a read at the locked
+    revision describes exactly the membership being published.
+    """
+    snap = await read_snapshot(int(facts["id"]), int(facts["revision"]))
+    if snap is None:
+        return None, THEME_REFUSED_SNAPSHOT_ABSENT
+    summary = {
+        "revision": snap["revision"],
+        "shown_count": snap["shown_count"],
+        "eligible_count": snap["eligible_count"],
+        "withheld_count": {r: len(ids) for r, ids in sorted(snap["withheld"].items())},
+        "inventory_complete": snap["inventory_complete"],
+    }
+    if snap["inventory_complete"] is not True:
+        return summary, THEME_REFUSED_INCOMPLETE
+    if snap["shown_count"] == 0:
+        return summary, THEME_REFUSED_EMPTY
+    edges = (
+        await session.execute(text(THEME_EDGE_IDS_SQL), {"cid": int(facts["id"])})
+    ).fetchall()
+    edge_ids = {int(row[0]) for row in edges}
+    unbacked = [i for i in snap["shown_ids"] if i not in edge_ids]
+    summary["unbacked_shown_count"] = len(unbacked)
+    if unbacked:
+        return summary, THEME_REFUSED_DISAGREES
+    return summary, None
+
+
 def eligibility(facts: dict) -> tuple[dict, str | None]:
     edition = edition_for_slug(facts["slug"])
     if edition is None or edition["kind"] not in DISCOVERABLE_EDITIONS:
         raise OperatorRefused(
-            "target is not a canonical NFL-week/MLB-postseason collection"
+            "target is not a canonical NFL-week/MLB-postseason or theme collection"
         )
     if facts["parent_container_id"] is not None:
         raise OperatorRefused(
@@ -353,7 +418,7 @@ def rollback_prerequisites(facts: dict, result: corrections.CorrectionResult) ->
     }
 
 
-async def prepare(session, options: Options) -> dict:
+async def prepare(session, options: Options, *, read_snapshot=None) -> dict:
     """Use a caller-owned transaction; never commit or roll back inside here."""
     validate(options)
     schema = await corrections.correction_schema_present(session)
@@ -366,7 +431,18 @@ async def prepare(session, options: Options) -> dict:
         # snapshot and its mutation. Nested targets are still refused below.
         await corrections.lock_container_chain(session, options.container_id)
     facts = await snapshot(session, options)
-    edition, publish_refusal = eligibility(facts)
+    edition = edition_for_slug(facts["slug"])
+    theme = None
+    if edition is not None and edition["kind"] in THEME_EDITION_KINDS:
+        if facts["parent_container_id"] is not None:
+            raise OperatorRefused(
+                "target is nested; only the explicitly reviewed root may be operated"
+            )
+        theme, publish_refusal = await theme_eligibility(
+            session, facts, read_snapshot or read_theme_snapshot
+        )
+    else:
+        edition, publish_refusal = eligibility(facts)
     if options.operation == "publish" and publish_refusal:
         raise OperatorRefused(
             f"publication refused by reader eligibility: {publish_refusal}"
@@ -385,6 +461,16 @@ async def prepare(session, options: Options) -> dict:
         "coverage_limit": "Stored member coverage only; completeness requires Authority's assembly receipt.",
         "rollback": None,
     }
+    if theme is not None:
+        receipt["theme_snapshot"] = theme
+        receipt["coverage_limit"] = (
+            "Completeness is the producer snapshot's inventory_complete at this revision."
+        )
+        receipt["after_commit"] = (
+            "A publish or withdrawal bumps the revision and sends one "
+            "rebuild_theme_snapshot; the page answers 503 building until that "
+            "rebuild writes the new revision's snapshot."
+        )
     if not options.apply:
         return receipt
     helper = (
@@ -441,7 +527,9 @@ def failure_receipt(options: Options, exc: Exception, committing: bool) -> dict:
     }
 
 
-async def run(options: Options, session_factory) -> tuple[dict, int]:
+async def run(
+    options: Options, session_factory, *, read_snapshot=None
+) -> tuple[dict, int]:
     """The CLI owns its transaction: previews/errors roll back, only apply commits."""
     validate(options)
     committing = False
@@ -455,7 +543,7 @@ async def run(options: Options, session_factory) -> tuple[dict, int]:
                             "SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY"
                         )
                     )
-                receipt = await prepare(session, options)
+                receipt = await prepare(session, options, read_snapshot=read_snapshot)
                 if options.apply:
                     committing = True
                     await session.commit()
