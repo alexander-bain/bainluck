@@ -2034,7 +2034,8 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                     del batch[oid]
             batch_marks = {oid: input_marks[oid] for oid in batch if oid in input_marks}
             # #10090 / #837: events a held-price withdrawal may still touch
-            # this flush. Their refresh waits for that transaction too.
+            # this flush. Their refresh waits for that transaction when the
+            # withdrawn leg is one the blend reads (`speaking_withdrawals`).
             withdraw_cohort_ids = set(withdraw_buffer)
             withdraw_events = event_ids_for_outcomes(
                 event_id_by_outcome, withdraw_cohort_ids,
@@ -2177,8 +2178,8 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                     await market_publish_done()
                     async with buffer_lock:
                         withdraw_cohort_ids.update(withdraw_buffer)
-                        withdraw_events = event_ids_for_outcomes(
-                            event_id_by_outcome, withdraw_buffer,
+                        speaking_withdrawals = event_ids_for_outcomes(
+                            headline_event_ids, withdraw_buffer,
                         )
                     if stamp_owner.task is not None:
                         unwritten_events = {
@@ -2187,10 +2188,11 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                         }
                         # refresh() also admits retry/deferred events. Their
                         # read must stay before the next write if any cohort
-                        # or withdrawal is still unfinished. Unknown debt
-                        # retains the serial path rather than assuming safety.
+                        # or withdrawal of a leg it reads is still unfinished.
+                        # Unknown debt retains the serial path rather than
+                        # assuming safety.
                         if stamp_owner.events is None or not stamp_owner.events.isdisjoint(
-                            unwritten_events | withdraw_events
+                            unwritten_events | speaking_withdrawals
                         ):
                             await stamp_done()
                     # The plan freezes membership/caps, not a later chunk's
@@ -2215,6 +2217,18 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                         withdraw_cohort_ids.update(withdraw_buffer)
                         withdraw_events = event_ids_for_outcomes(
                             event_id_by_outcome, withdraw_buffer,
+                        )
+                        # #10090: the STAMP waits only for a withdrawal on a leg
+                        # the blend reads. A venue-refuted (non-speaking) leg
+                        # cannot move the reading, and a busy game's props are
+                        # rarely without a fresh wide book (the v5647 specimen's
+                        # game drew 5,589 refused venue messages in one minute).
+                        # Held on every leg, a committed WIN price stayed owed
+                        # while each flush's withdrawal drew another book (local
+                        # replay: 8 flushes, never stamped). Withdrawal maturity
+                        # still waits on every leg (`withdraw_events`).
+                        speaking_withdrawals = event_ids_for_outcomes(
+                            headline_event_ids, withdraw_buffer,
                         )
                     if wrote:
                         unfinished_price_ids.difference_update(chunk_ids)
@@ -2254,19 +2268,23 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                                 oid for oid in early_withdrawn if oid not in owed
                             )
                             withdraw_events.difference_update(mature)
+                            speaking_withdrawals.difference_update(mature)
                             async with buffer_lock:
                                 withdraw_cohort_ids.update(withdraw_buffer)
-                                withdraw_events.update(event_ids_for_outcomes(
-                                    event_id_by_outcome,
-                                    withdraw_cohort_ids.intersection(withdraw_buffer),
-                                ))
+                                still = withdraw_cohort_ids.intersection(withdraw_buffer)
+                                withdraw_events.update(
+                                    event_ids_for_outcomes(event_id_by_outcome, still)
+                                )
+                                speaking_withdrawals.update(
+                                    event_ids_for_outcomes(headline_event_ids, still)
+                                )
                     ready: list[int] = []
                     held: list[int] = []
                     for oid in owed:
                         event_id = headline_event_ids.get(oid)
                         done = event_id is None or (
                             last_chunk_of_event.get(event_id, index) <= index
-                            and event_id not in withdraw_events
+                            and event_id not in speaking_withdrawals
                         )
                         (ready if done else held).append(oid)
                     owed = held
@@ -2281,7 +2299,7 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                         pending_reader = getattr(blend_refresher, "pending_event_ids", None)
                         unfinished_events = (
                             event_ids_for_outcomes(headline_event_ids, unfinished_price_ids)
-                            | withdraw_events
+                            | speaking_withdrawals
                         )
                         if stamp_owner.task is not None and not stamp_owner.task.done():
                             # A committed whole cohort in this or a later flush may use
@@ -2371,7 +2389,7 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
             unfinished_events = (
                 event_ids_for_outcomes(headline_event_ids, unfinished_price_ids)
                 | event_ids_for_outcomes(
-                    event_id_by_outcome,
+                    headline_event_ids,
                     withdraw_cohort_ids.intersection(withdraw_buffer),
                 )
             )
@@ -2419,7 +2437,7 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
             )
         await blend_refresher.refresh(
             event_ids_for_outcomes(headline_event_ids, owed)
-            | event_ids_for_outcomes(event_id_by_outcome, withdrawn),
+            | event_ids_for_outcomes(headline_event_ids, withdrawn),
             flush_started=flush_started,
             defer_event_ids=unfinished_events,
         )
