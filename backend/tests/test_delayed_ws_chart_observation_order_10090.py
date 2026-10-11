@@ -110,3 +110,37 @@ async def test_delayed_heartbeat_and_three_way_values_keep_original_time():
     )
     assert new and snapshot.captured_at == AT and previous.valid_until == AT
     assert snapshot.away_win_probability == 0.40 and snapshot.draw_probability == 0.20
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("second_slot_only", [False, True])
+async def test_delayed_change_splits_newer_dedup_evidence_into_actual_tail(
+    second_slot_only,
+):
+    previous = point(AT - timedelta(seconds=10), 0.40, away=0.40, draw=0.20)
+    polled_at = AT + timedelta(seconds=10)
+    previous.valid_until = polled_at
+    previous.reading_count = 2
+    s = session(previous, None)
+    s.add = MagicMock()
+    home, away, draw = (0.40, 0.50, 0.10) if second_slot_only else (0.60, 0.30, 0.10)
+    delayed, new = await _create_or_update_win_prob_snapshot(
+        s,
+        1,
+        "kalshi",
+        home,
+        away,
+        draw_probability=draw,
+        observed_at=AT,
+    )
+    assert new and delayed.captured_at == AT
+    assert delayed.home_win_probability == home
+    assert delayed.away_win_probability == away and delayed.draw_probability == draw
+    assert delayed.valid_until == polled_at
+    tail = s.add.call_args.args[0]
+    assert tail.captured_at == tail.valid_until == polled_at
+    assert tail.home_win_probability == 0.40
+    assert tail.away_win_probability == 0.40 and tail.draw_probability == 0.20
+    assert tail.game_state == previous.game_state
+    assert previous.valid_until == AT
+    assert previous.reading_count + delayed.reading_count + tail.reading_count == 3

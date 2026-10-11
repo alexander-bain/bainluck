@@ -206,3 +206,95 @@ async def test_real_rollback_leaves_original_point_retriable_at_original_time(ri
     async with rig.maker() as session:
         stored = (await session.execute(select(WinProbSnapshot))).scalar_one()
         assert stored.captured_at == at and stored.reading_count == 1
+
+
+@pytest.mark.parametrize("source", ["kalshi", "polymarket"])
+async def test_delayed_changed_point_preserves_newer_deduplicated_poll_tail(
+    rig, monkeypatch, source
+):
+    from app.tasks import snapshots
+
+    await seed(rig, 1)
+    at = datetime(2026, 10, 11, 0, 52, tzinfo=timezone.utc)
+    delayed_at = at + timedelta(seconds=10)
+    polled_at = at + timedelta(seconds=20)
+
+    class PollClock(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return polled_at
+
+    monkeypatch.setattr(snapshots, "datetime", PollClock)
+    async with rig.maker() as session:
+        session.add(
+            WinProbSnapshot(
+                event_id=1,
+                source=source,
+                captured_at=at,
+                home_win_probability=0.40,
+                away_win_probability=0.60,
+                game_state={"poll_type": "live_fast"},
+                reading_count=1,
+            )
+        )
+        await session.commit()
+    # The ordinary poll really deduplicates into the t0 row: no t20 row yet.
+    async with rig.maker() as session:
+        poll, new = await _create_or_update_win_prob_snapshot(
+            session,
+            1,
+            source,
+            0.40,
+            0.60,
+            max_gap_seconds=60,
+        )
+        assert not new and poll.captured_at == at
+        assert poll.valid_until == polled_at and poll.reading_count == 2
+        await session.commit()
+
+    # A failed delayed transaction must not partially move the later evidence.
+    async with rig.maker() as session:
+        delayed, new = await _create_or_update_win_prob_snapshot(
+            session,
+            1,
+            source,
+            0.60,
+            0.40,
+            observed_at=delayed_at,
+        )
+        assert new
+        session.add(delayed)
+        await session.flush()
+        await session.rollback()
+    async with rig.maker() as session:
+        poll = (await session.execute(select(WinProbSnapshot))).scalar_one()
+        assert poll.valid_until == polled_at and poll.reading_count == 2
+        delayed, new = await _create_or_update_win_prob_snapshot(
+            session,
+            1,
+            source,
+            0.60,
+            0.40,
+            observed_at=delayed_at,
+        )
+        assert new
+        session.add(delayed)
+        await session.commit()
+    async with rig.maker() as session:
+        points = (
+            (
+                await session.execute(
+                    select(WinProbSnapshot).order_by(WinProbSnapshot.captured_at)
+                )
+            )
+            .scalars()
+            .all()
+        )
+    assert [p.captured_at for p in points] == [at, delayed_at, polled_at]
+    assert [float(p.home_win_probability) for p in points] == [0.40, 0.60, 0.40]
+    assert [float(p.away_win_probability) for p in points] == [0.60, 0.40, 0.60]
+    assert points[0].valid_until == delayed_at
+    assert points[1].valid_until == points[2].captured_at == polled_at
+    assert points[2].valid_until == polled_at
+    assert points[2].game_state == {"poll_type": "live_fast"}
+    assert sum(p.reading_count for p in points) == 3

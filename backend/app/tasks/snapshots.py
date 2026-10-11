@@ -281,6 +281,29 @@ async def _create_ordered_win_prob_snapshot(
             if until is None or until < observed_at:
                 previous.valid_until = observed_at
         return previous, False
+    # A same-value poll can confirm the tail later without creating another
+    # captured_at row. Before splitting that interval, move its last actual
+    # observation into a tail row at the recorded time, never at drain time.
+    # Move one reading too: materializing existing evidence is not a new poll.
+    successor_at = following.captured_at if following is not None else None
+    if previous is not None and following is None:
+        confirmed_at = previous.valid_until
+        if confirmed_at is not None and confirmed_at.tzinfo is None:
+            confirmed_at = confirmed_at.replace(tzinfo=timezone.utc)
+        if confirmed_at is not None and confirmed_at > observed_at:
+            session.add(WinProbSnapshot(
+                event_id=event_id,
+                source=source,
+                home_win_probability=previous.home_win_probability,
+                away_win_probability=previous.away_win_probability,
+                draw_probability=previous.draw_probability,
+                game_state=previous.game_state,
+                captured_at=confirmed_at,
+                valid_until=confirmed_at,
+                reading_count=1,
+            ))
+            previous.reading_count = max(1, (previous.reading_count or 1) - 1)
+            successor_at = confirmed_at
     if previous is not None:
         previous.valid_until = observed_at
     return (
@@ -292,7 +315,7 @@ async def _create_ordered_win_prob_snapshot(
             draw_probability=draw,
             game_state=game_state,
             captured_at=observed_at,
-            valid_until=following.captured_at if following is not None else None,
+            valid_until=successor_at,
             reading_count=1,
         ),
         True,
