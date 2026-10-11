@@ -1,6 +1,6 @@
 "use client";
 
-import { useId, useState, type ReactNode } from "react";
+import { useId, useRef, useState, type ReactNode } from "react";
 
 export interface MarketBrowserItem {
   key: string;
@@ -26,8 +26,17 @@ export default function MarketBrowser({
   const [query, setQuery] = useState("");
   const [limit, setLimit] = useState(pageSize);
   const groups = Array.from(new Set(items.map((item) => item.group)));
+  // #10809: the family a reader is looking at stays put when a live refresh
+  // adds or reorders families. Without a pick, it is the first family this
+  // browser ever drew, not whichever family the newest payload lists first.
+  const firstSeen = useRef<string | null>(null);
+  if (firstSeen.current == null && groups.length) firstSeen.current = groups[0];
+  const fallback =
+    firstSeen.current != null && groups.includes(firstSeen.current)
+      ? firstSeen.current
+      : groups[0];
   const active =
-    selected != null && groups.includes(selected) ? selected : groups[0];
+    selected != null && groups.includes(selected) ? selected : fallback;
   const term = query.trim().toLocaleLowerCase();
   const matches = items.filter((item) =>
     term

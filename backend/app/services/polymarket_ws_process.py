@@ -116,6 +116,11 @@ class PolymarketOpenReceiverProcess:
         self._stats: dict = {}
         self._wanted: Optional[tuple[list[str], bool]] = None
         self._wake: Optional[asyncio.Event] = None
+        # #10090: the catalog this client currently owns. The child fences its
+        # own sockets, but frames already in the pipe when a catalog changes
+        # still arrive here after the shared routing maps moved, so a token
+        # that left this client is dropped at the parent too.
+        self._routed: Optional[frozenset[str]] = None
         self.on_price: Optional[Callable] = None
         self.on_trade: Optional[Callable] = None
 
@@ -139,6 +144,7 @@ class PolymarketOpenReceiverProcess:
         if price_book_snapshots is not None:
             self._price_book_snapshots = price_book_snapshots
         self._wanted = (list(dict.fromkeys(asset_ids)), self._price_book_snapshots)
+        self._routed = frozenset(self._wanted[0])
         self._wake.set()
 
     async def run_refreshable(
@@ -172,6 +178,7 @@ class PolymarketOpenReceiverProcess:
         })
         self._wake = asyncio.Event()
         self._wanted = None
+        self._routed = frozenset(asset_ids)
         spawn: Optional[asyncio.Future] = None
         tasks: list[asyncio.Task] = []
         try:
@@ -200,6 +207,7 @@ class PolymarketOpenReceiverProcess:
         finally:
             self._wake = None
             self._wanted = None
+            self._routed = None
             self._stats = {**self._stats, "connected": False, "shards_connected": 0}
             await _to_completion(_teardown(spawn, tasks))
 
@@ -217,6 +225,11 @@ class PolymarketOpenReceiverProcess:
             handler = self.on_price if kind == PRICE else (
                 self.on_trade if kind == TRADE else None
             )
+            routed = self._routed
+            if handler is not None and routed is not None and isinstance(body, dict):
+                asset_id = body.get("asset_id") or body.get("assetId")
+                if asset_id and asset_id not in routed:
+                    handler = None
             if handler is not None:
                 try:
                     result = handler(body)

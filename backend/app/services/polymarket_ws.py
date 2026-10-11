@@ -481,6 +481,14 @@ class PolymarketWebSocket:
         self._shard_wire: dict[int, set[str]] = {}
         self._shards_connected: set[int] = set()
         self._shard_connected_at: dict[int, float] = {}
+        # #10090 — per shard, the tokens whose quotes, trades and books this
+        # client still hands to its callbacks. A refreshable socket can carry
+        # tokens its catalog dropped. The game and open clients share one set of
+        # routing maps, so a token that MOVED to the other client is still
+        # "mapped", and only this fence stops the old socket delivering it a
+        # second time. No entry for a shard (the plain `run()`, including the
+        # resolution-only subscribe-all) means no fence.
+        self._shard_routed: dict[int, frozenset[str]] = {}
 
         self.on_price: Optional[Callable] = None
         self.on_trade: Optional[Callable] = None
@@ -501,6 +509,14 @@ class PolymarketWebSocket:
         if price_book_snapshots is not None:
             self._price_book_snapshots = price_book_snapshots
         self._next_asset_ids = list(dict.fromkeys(asset_ids))
+        # The caller has already handed the routing maps to the new catalog.
+        # Narrow every fence now, before the owner loop next runs, so a socket
+        # that keeps a dropped token cannot deliver it in between. Only the
+        # loop WIDENS a fence (a token returning to its socket).
+        wanted = set(self._next_asset_ids)
+        self._shard_routed = {
+            i: routed & wanted for i, routed in self._shard_routed.items()
+        }
         self._asset_refresh.set()
 
     async def run_refreshable(
@@ -530,7 +546,17 @@ class PolymarketWebSocket:
             if self._max_concurrent_handshakes
             else None
         )
+        self._shard_routed = {}
         tasks: dict[int, asyncio.Task] = {}
+        # #10090 — what each running socket actually subscribed to. A token
+        # that leaves the catalog may stay on its socket, fenced off by
+        # `_shard_routed`, so a socket that stays at least half full is not
+        # restarted for losing tokens. A restart re-sends the venue's book for
+        # every token on it, and props resolve all game long. v5644, 17:42:43Z:
+        # one timer refresh, on a catalog that mostly shrank, restarted 118 of
+        # 132 sockets (+37,876 snapshot quotes). `_shard_ids` stays the wanted
+        # subset, so coverage still counts only the catalog.
+        subscribed: dict[int, list[str]] = {}
         coverage = asyncio.create_task(self._coverage_loop())
         refresh = None
         try:
@@ -539,40 +565,70 @@ class PolymarketWebSocket:
                 wanted = set(self._next_asset_ids)
                 retained = {
                     i: [a for a in ids if a in wanted]
-                    for i, ids in self._shard_ids.items()
+                    for i, ids in subscribed.items()
                 }
                 present = {a for ids in retained.values() for a in ids}
                 added = [a for a in self._next_asset_ids if a not in present]
-                # Fill spare capacity without moving any retained token to a
-                # different shard. A stable catalog therefore restarts NONE.
-                for i, ids in retained.items():
-                    if added and len(ids) < MAX_ASSETS_PER_CONNECTION:
-                        filled = _shard_asset_ids(ids + added)[0]
-                        used = len(filled) - len(ids)
-                        retained[i] = filled
-                        added = added[used:]
-                next_index = max(retained, default=-1) + 1
-                for ids in _shard_asset_ids(added):
-                    retained[next_index] = ids
-                    next_index += 1
-                desired = {i: ids for i, ids in retained.items() if ids}
-                changed = {
+                # A socket restarts when it is empty, or when it is under half
+                # full and either shrank this time or there are tokens to place:
+                # its remaining tokens are repacked with the new ones. "Under
+                # half" is on BOTH ceilings (token count and subscribe bytes),
+                # so a socket the byte ceiling filled is never taken for a
+                # small one. A stable catalog restarts none; a shrinking one
+                # restarts only the sockets that fall under half.
+                half = max(1, MAX_ASSETS_PER_CONNECTION // 2)
+
+                def under_half(ids: list[str]) -> bool:
+                    return len(ids) < half and (
+                        len(_subscribe_frame(ids).encode("utf-8"))
+                        < MAX_SUBSCRIBE_BYTES // 2
+                    )
+
+                repack = {
                     i
-                    for i in self._shard_ids.keys() | desired.keys()
-                    if self._shard_ids.get(i) != desired.get(i)
+                    for i, ids in retained.items()
+                    if not ids
+                    or (
+                        (added or ids != self._shard_ids.get(i))
+                        and under_half(ids)
+                    )
                 }
-                stopped = [tasks.pop(i) for i in changed if i in tasks]
+                pooled = set(added).union(*(retained[i] for i in repack))
+                free = sorted(repack)
+                next_index = max(subscribed, default=-1) + 1
+                fresh: dict[int, list[str]] = {}
+                for ids in _shard_asset_ids(
+                    [a for a in self._next_asset_ids if a in pooled]
+                ):
+                    if free:
+                        index = free.pop(0)
+                    else:
+                        index, next_index = next_index, next_index + 1
+                    fresh[index] = ids
+                stopped = [tasks.pop(i) for i in repack if i in tasks]
                 for task in stopped:
                     task.cancel()
                 await asyncio.gather(*stopped, return_exceptions=True)
-                for i in changed:
+                # A newer catalog may have arrived during that await and
+                # narrowed the fences already; never widen past it (the next
+                # pass of this loop picks it up in full).
+                latest = set(self._next_asset_ids)
+                for i in repack:
                     self._mark_shard_down(i)
+                    subscribed.pop(i, None)
                     self._shard_ids.pop(i, None)
                     self._shard_wire.pop(i, None)
-                    if i in desired:
-                        self._shard_ids[i] = desired[i]
-                        self._shard_wire[i] = set()
-                        tasks[i] = asyncio.create_task(self._run_one(desired[i], i))
+                    self._shard_routed.pop(i, None)
+                for i, ids in retained.items():
+                    if i not in repack:
+                        self._shard_ids[i] = ids
+                        self._shard_routed[i] = frozenset(a for a in ids if a in latest)
+                for i, ids in fresh.items():
+                    subscribed[i] = ids
+                    self._shard_ids[i] = list(ids)
+                    self._shard_wire[i] = set()
+                    self._shard_routed[i] = frozenset(a for a in ids if a in latest)
+                    tasks[i] = asyncio.create_task(self._run_one(ids, i))
                 refresh = asyncio.create_task(self._asset_refresh.wait())
                 done, _ = await asyncio.wait(
                     {refresh, *tasks.values()},
@@ -598,6 +654,7 @@ class PolymarketWebSocket:
             )
             self._shards_connected.clear()
             self._shard_connected_at.clear()
+            self._shard_routed = {}
 
     async def run(self, asset_ids: Optional[list[str]] = None):
         """Connect and stream messages forever, fanned over sized connections.
@@ -616,6 +673,7 @@ class PolymarketWebSocket:
             shards = [None]
 
         self._shard_ids = {i: list(s or []) for i, s in enumerate(shards)}
+        self._shard_routed = {}
         self._shard_wire = {i: set() for i in range(len(shards))}
         self._shards_connected = set()
         self._shard_connected_at = {}
@@ -851,7 +909,12 @@ class PolymarketWebSocket:
                                     # by a client that asked for it; skipped by
                                     # every other, as before.
                                     if self._price_book_snapshots and self.on_price:
-                                        await self._price_snapshot(data)
+                                        await self._price_snapshot(data, shard)
+                                    continue
+
+                                if event_type in (
+                                    "best_bid_ask", "last_trade_price"
+                                ) and not self._routes(shard, data):
                                     continue
 
                                 if event_type == "best_bid_ask" and self.on_price:
@@ -1041,7 +1104,15 @@ class PolymarketWebSocket:
             sample[shard] = _evenly_spaced(unserved, limit)
         return sample
 
-    async def _price_snapshot(self, data: Any) -> None:
+    def _routes(self, shard: int, entry: Any) -> bool:
+        """#10090: does this shard still hand `entry`'s token to the callbacks?"""
+        routed = self._shard_routed.get(shard)
+        if routed is None or not isinstance(entry, dict):
+            return True
+        asset_id = entry.get("asset_id") or entry.get("assetId")
+        return not asset_id or asset_id in routed
+
+    async def _price_snapshot(self, data: Any, shard: Optional[int] = None) -> None:
         """Each book in a snapshot frame, through `on_price` like a quote."""
         # An async price callback can complete without suspending. Bound book
         # extraction as well as callbacks so a reconnect dump cannot monopolize
@@ -1050,6 +1121,8 @@ class PolymarketWebSocket:
         batch_size = 32
         for start in range(0, len(entries), batch_size):
             for quote in _snapshot_quotes(entries[start : start + batch_size]):
+                if shard is not None and not self._routes(shard, quote):
+                    continue
                 self._book_snapshot_quotes += 1
                 try:
                     result = self.on_price(quote)

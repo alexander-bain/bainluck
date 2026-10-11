@@ -582,6 +582,7 @@ final class EventDetailViewModel: ObservableObject {
             &latestSourceFrames, over: fetched, streamRecoverable: streamRecoverable
         )
         event = fetched
+        LiveTimingSeam.readAdopted(prior: prior, fetched: fetched)
         if recordsPriceActivity, let prior, LivePriceActivity.isNewer(fetched, than: prior) {
             recordPriceActivity(from: prior, to: fetched)
         }
@@ -1104,14 +1105,20 @@ final class EventDetailViewModel: ObservableObject {
                 scoreCatchUpUntil = now() + EventRefreshPlan.scoreCatchUpWindow
             }
             if let observed {
+                let edge = liveBlend.last?.date
                 liveBlend = LiveBlendBuffer.appending(
                     LiveBlendPoint(date: observed, homeProbability: p), to: liveBlend
                 )
+                if liveBlend.last?.date != edge {
+                    LiveTimingSeam.modelChartAppended(eventId: current.id, path: "folded",
+                        basis: LiveTimingSeam.headlineBasis(of: current), at: observed)
+                }
             }
         }
         streamHasPushedPrice = true
         acceptPushedPrice()
         event = current
+        LiveTimingSeam.modelHeadlineAdopted(current, path: "folded")
         recordPriceActivity(from: prior, to: current)
         if armScoreCatchUp, current.status == "live" { configureAutoRefresh() }
         stream?.acknowledgeAcceptedPrice()
@@ -1257,11 +1264,17 @@ final class EventDetailViewModel: ObservableObject {
         // the backend blends nothing, and that venue's own line is the one the
         // chart draws — so it is the one that has to keep up with the hero.
         if !priceIsNotNewer, let p = frame.p, let stamped {
+            let edge = liveBlend.last?.date
             liveBlend = LiveBlendBuffer.appending(
                 LiveBlendPoint(date: stamped, homeProbability: p,
                                source: frame.source, sourceProbability: frame.sourceValue),
                 to: liveBlend
             )
+            // The buffer refuses an invalid or not-strictly-newer point.
+            if liveBlend.last?.date != edge {
+                LiveTimingSeam.modelChartAppended(eventId: frame.eventId, path: "stream",
+                    basis: LiveTimingSeam.basis(revision: frame.rev?.revision, clock: frame.updatedAt), at: stamped)
+            }
         }
 
         // A frame whose status has left the live set is the server telling us
@@ -1275,7 +1288,10 @@ final class EventDetailViewModel: ObservableObject {
         }
 
         event = current
-        if acceptedNewPrice { recordPriceActivity(from: prior, to: current) }
+        if acceptedNewPrice {
+            LiveTimingSeam.modelHeadlineAdopted(current, path: "stream")
+            recordPriceActivity(from: prior, to: current)
+        }
         // Re-planned only when the window OPENS: a move inside an open window
         // extends it and the loop is already on the fast cadence. Only a live
         // page: score catch-up is sports state, independent of quote eligibility.

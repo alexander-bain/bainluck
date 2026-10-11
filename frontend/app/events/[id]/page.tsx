@@ -23,7 +23,7 @@ import { matrixForStat, type DuringPlayerProps } from "@/lib/duringPlayerPropsMa
 import { withoutEventOwnMoneyline } from "@/lib/eventOwnMoneyline";
 import { eventPageProjectedPair } from "@/lib/projectedFinalPair";
 import { teamTextColor } from "@/lib/teamColors";
-import { useLiveEventStream, type LiveFrame } from "@/hooks/useLiveEventStream";
+import { heldFrameAfter, useLiveEventStream, type LiveFrame } from "@/hooks/useLiveEventStream";
 import { createReconnectCatchup } from "@/lib/reconnectCatchup";
 import { fetchEventWithLiveFrame, keepNewerHeldHeadline } from "@/lib/reconcileEventPoll";
 import {
@@ -83,6 +83,7 @@ import { gameOrigin } from "@/lib/futuresReturnOrigin";
 const SpecialEventMarkets = dynamic(() => import("@/components/SpecialEventMarkets"), { ssr: false });
 const MarketBrowser = dynamic(() => import("@/components/event/MarketBrowser"), { ssr: false });
 const GameLineBrowser = dynamic(() => import("@/components/event/GameLineBrowser"), { ssr: false });
+const QuestionCatalog = dynamic(() => import("@/components/event/QuestionCatalog"), { ssr: false });
 const MarketMapSection = dynamic(() => import("@/components/MarketMapSection"), { ssr: false, loading: ChartSkeleton });
 // UX-P152: the tournament's sections OF this page. Dynamic and below the fold —
 // 94 events on the whole site render it and none of them should pay for it in
@@ -412,49 +413,18 @@ export default function EventPage({ params }: EventPageProps) {
   // in the database was already live (worker-ws flushes every 2s, the blend is
   // delivered independently of the page poll) — it was the 32s poll that made it
   // look stale on screen.
-  const quoteEligible = canSubscribeEventQuotes(event);
-  const {
-    frame: liveFrame,
-    connected: streamConnected,
-    chartPoints,
-    status: reportedStreamStatus,
-    recoveryGeneration,
-  } = useLiveEventStream(eventId, quoteEligible);
-  // #10200: the transport's own observation, for the chart status only — the
-  // disconnect refetch below still keys on `streamConnected`. A stream that reports only
-  // `connected` (an older hook, a test double) reads as open or idle.
-  const streamStatus = reportedStreamStatus ?? (streamConnected ? "open" : "idle");
-
-  // #10666: spread recovery reads without adding a poll or replacing the
-  // existing single-inflight folded scheduler. Navigation/eligibility teardown
-  // retires both queued jitter and old-lifetime response adoption.
-  const recoveryRef = useRef<ReturnType<typeof createReconnectCatchup> | null>(null);
-  useEffect(() => {
-    if (!quoteEligible) return;
-    const recovery = createReconnectCatchup((epoch) => {
-      if (!canSubscribeEventQuotes(heldEventRef.current)) return;
-      recoveryIntentRef.current = epoch;
-      foldedRefetch.request();
-    });
-    recoveryRef.current = recovery;
-    return () => {
-      recovery.cancel();
-      recoveryRef.current = null;
-      recoveryIntentRef.current = 0;
-      quoteReadLifetimeRef.current += 1;
-      foldedRefetch.cancel();
-    };
-  }, [eventId, quoteEligible, foldedRefetch]);
-  useEffect(() => {
-    if (quoteEligible && recoveryGeneration) recoveryRef.current?.recover(recoveryGeneration);
-  }, [recoveryGeneration, quoteEligible, eventId]);
-
   // Apply a pushed frame to the SWR cache rather than holding it in a local
   // override. One source of truth: the stream writes the same cache the poller
   // writes, so the hero, the sources rail and every other consumer stay
   // consistent and nothing downstream needs to know push exists.
-  useEffect(() => {
-    if (!liveFrame || liveFrame.event_id !== eventId) return;
+  //
+  // #10090: EVERY frame, in arrival order, from the transport callback — not an
+  // effect on the hook's latest frame. React batches a chunk's callbacks into
+  // one render, so an effect saw only the batch's last frame: a newer price
+  // followed by an older invalidation left the headline on the old price until
+  // history answered, while the chart (which banks every frame) moved.
+  const applyPushedFrame = useCallback((liveFrame: LiveFrame) => {
+    if (liveFrame.event_id !== eventId) return;
     // #9051: a FOLDED hero (canonical + twins) refuses a raw-row frame, which
     // would otherwise hold it until the stream-connected 120s poll. The frame
     // still says the blend moved: refetch the folded detail — and write nothing
@@ -490,7 +460,10 @@ export default function EventPage({ params }: EventPageProps) {
     // #9294: contributor notifications invalidate the fold without carrying
     // an adoptable price. Never install one as a price or replay it on a poll.
     if (liveFrame.p === null || liveFrame.p === undefined) return;
-    latestLiveFrameRef.current = liveFrame;
+    // Every frame now gets here, so an older price can follow a newer one in a
+    // batch. `applyLiveFrame` refuses it against the cache; the poll's replay
+    // must not regress to it either.
+    latestLiveFrameRef.current = heldFrameAfter(latestLiveFrameRef.current, liveFrame);
     const frame = { ...liveFrame, p: liveFrame.p };
     refreshEvent(
       // `applyLiveFrame` spreads `prev` FIRST and then only the fields a frame
@@ -502,7 +475,43 @@ export default function EventPage({ params }: EventPageProps) {
       { revalidate: false },
     );
     setLastRefresh(Date.now());
-  }, [liveFrame, refreshEvent, eventId, foldedRefetch]);
+  }, [refreshEvent, eventId, foldedRefetch]);
+
+  const quoteEligible = canSubscribeEventQuotes(event);
+  const {
+    connected: streamConnected,
+    chartPoints,
+    status: reportedStreamStatus,
+    recoveryGeneration,
+  } = useLiveEventStream(eventId, quoteEligible, applyPushedFrame);
+  // #10200: the transport's own observation, for the chart status only — the
+  // disconnect refetch below still keys on `streamConnected`. A stream that reports only
+  // `connected` (an older hook, a test double) reads as open or idle.
+  const streamStatus = reportedStreamStatus ?? (streamConnected ? "open" : "idle");
+
+  // #10666: spread recovery reads without adding a poll or replacing the
+  // existing single-inflight folded scheduler. Navigation/eligibility teardown
+  // retires both queued jitter and old-lifetime response adoption.
+  const recoveryRef = useRef<ReturnType<typeof createReconnectCatchup> | null>(null);
+  useEffect(() => {
+    if (!quoteEligible) return;
+    const recovery = createReconnectCatchup((epoch) => {
+      if (!canSubscribeEventQuotes(heldEventRef.current)) return;
+      recoveryIntentRef.current = epoch;
+      foldedRefetch.request();
+    });
+    recoveryRef.current = recovery;
+    return () => {
+      recovery.cancel();
+      recoveryRef.current = null;
+      recoveryIntentRef.current = 0;
+      quoteReadLifetimeRef.current += 1;
+      foldedRefetch.cancel();
+    };
+  }, [eventId, quoteEligible, foldedRefetch]);
+  useEffect(() => {
+    if (quoteEligible && recoveryGeneration) recoveryRef.current?.recover(recoveryGeneration);
+  }, [recoveryGeneration, quoteEligible, eventId]);
 
   // The freshest write across all sources — what the age stamp counts from.
   // MAX, not the pushed frame's own stamp: the hero is a blend, and its age is
@@ -3464,7 +3473,7 @@ export default function EventPage({ params }: EventPageProps) {
         return (
           <SectionErrorBoundary label="The script" resetKey={gameMarkets}>
           <details className="bg-surface-card border border-surface-border rounded-xl p-4">
-          <summary className="cursor-pointer min-h-11 text-sm font-semibold">{isFinished ? "All prop results" : "More game questions"}</summary>
+          <summary className="cursor-pointer min-h-11 text-sm font-semibold">{isFinished ? "All prop results" : "Prop lines"}</summary>
           <PropsSection
             eventStatus={event.status}
             // #4866: the venue heads every matchup-level family with
@@ -3507,6 +3516,15 @@ export default function EventPage({ params }: EventPageProps) {
           </SectionErrorBoundary>
         );
       })()}
+
+      {/* #10809 / #10868 (Atlas v6): every served question stays reachable,
+          including the rows no map or card above draws. Not on a voided match
+          (#9798), the same rule as the maps and quoted lines. */}
+      {gameMarkets && !venueVoided && (
+        <SectionErrorBoundary label="All markets" resetKey={gameMarkets}>
+          <QuestionCatalog data={gameMarkets} status={event.status} />
+        </SectionErrorBoundary>
+      )}
 
       {/* Standalone pace when no game markets section at all */}
       {gameMarkets && gameMarkets.totals.length === 0 && gameMarkets.player_props.length === 0 && gameMarkets.pace && gameMarkets.pace.projected_total && (

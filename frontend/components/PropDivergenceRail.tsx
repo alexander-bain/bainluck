@@ -75,7 +75,7 @@ export default function PropDivergenceRail({ playerProps, status, defaultExpande
                 attribution" clause is not only about the row labels, and a
                 header is exactly where a banned attribution hides from a
                 capture. Our one number is not a market's opinion we relay. */}
-            The chance of each question before the game, strongest call first.
+            The chance of each prop before the game, strongest call first.
           </span>
         )}
         {result.eligible > result.rows.length && (
@@ -96,7 +96,7 @@ export default function PropDivergenceRail({ playerProps, status, defaultExpande
                 "none has ... They are all listed below" about a single prop.
                 A page with exactly one settled prop is not an edge case — the
                 Chiefs–Broncos MNF page was one the morning this was written. */}
-            {countOf(result.ungraded, "question", "questions")} settled here, and{" "}
+            {countOf(result.ungraded, "prop", "props")} settled here, and{" "}
             {result.ungraded === 1
               ? "it has no published outcome yet — so there is nothing to rank. It is listed below."
               : "none has a published outcome yet — so there is nothing to rank. They are all listed below."}
@@ -111,7 +111,7 @@ export default function PropDivergenceRail({ playerProps, status, defaultExpande
             the complaint V3 exists to answer. */}
         {result.emptyReason === "structural" && (
           <p className="text-[12px] leading-snug text-text-secondary">
-            The only near-certain questions here are rungs of a bigger ladder —
+            The only near-certain props here are rungs of a bigger ladder —
             &ldquo;5+&rdquo; when &ldquo;3+&rdquo; is already priced — so the market
             isn&rsquo;t really making a call. All {result.eligible} are listed below.
           </p>
@@ -148,7 +148,7 @@ export default function PropDivergenceRail({ playerProps, status, defaultExpande
             >
               {expanded
                 ? "Show fewer"
-                : `See all ${countOf(result.eligible, "question", "questions")}`}
+                : `See all ${countOf(result.eligible, "prop", "props")}`}
             </button>
             {expanded && (
               <PropDivergenceDetail playerProps={playerProps} status={status} />

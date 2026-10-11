@@ -1,4 +1,4 @@
-/** #10090: run the page's actual push effect over the controller and cache.
+/** #10090: run the page's actual push callback over the controller and cache.
  * The network/cache writer is doubled; the effect and fold/chart logic are
  * real. This proves local adoption, not production transport or screen time.
  */
@@ -9,6 +9,7 @@ import ts from "typescript";
 import { adoptFoldedQuote, applyLiveFrame, frameInvalidatesFoldedBlend } from "@/lib/eventLivePush";
 import { appendHeroObservation } from "@/lib/liveChartHistory";
 import { canSubscribeEventQuotes } from "@/lib/eventQuoteStream";
+import { heldFrameAfter } from "@/hooks/useLiveEventStream";
 import { createLiveStreamController, type LiveStreamFrame, type StreamHandle } from "@/lib/liveStreamController";
 
 const ID = 15323012;
@@ -31,14 +32,15 @@ const page = fs.readFileSync(path.join(__dirname, "../../app/events/[id]/page.ts
 const tree = ts.createSourceFile("page.tsx", page, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
 let effect: string | undefined;
 function visit(node: ts.Node) {
-  if (ts.isCallExpression(node) && node.expression.getText(tree) === "useEffect" &&
-      node.arguments[1]?.getText(tree) === "[liveFrame, refreshEvent, eventId, foldedRefetch]") {
+  if (ts.isCallExpression(node) && node.expression.getText(tree) === "useCallback" &&
+      node.arguments[1]?.getText(tree) === "[refreshEvent, eventId, foldedRefetch]" &&
+      node.arguments[0]?.getText(tree).includes("applyLiveFrame(prev, frame)")) {
     effect = node.arguments[0].getText(tree);
   }
   ts.forEachChild(node, visit);
 }
 visit(tree);
-if (!effect) throw new Error("page push effect missing");
+if (!effect) throw new Error("page push callback missing");
 const effectScript = new vm.Script(ts.transpileModule(`(${effect})`, {
   compilerOptions: { target: ts.ScriptTarget.ES2020 },
 }).outputText);
@@ -54,16 +56,15 @@ function harness() {
     eventId: ID, heldEventRef: { current: cache }, foldedRefetch: { request: reads },
     quoteTriggerRef: { current: null }, latestLiveFrameRef: { current: null },
     refreshEvent: mutations, setLastRefresh: jest.fn(), Date,
-    adoptFoldedQuote, applyLiveFrame, frameInvalidatesFoldedBlend, canSubscribeEventQuotes,
+    adoptFoldedQuote, applyLiveFrame, frameInvalidatesFoldedBlend, canSubscribeEventQuotes, heldFrameAfter,
   };
   const listeners = new Map<string, (e: unknown) => void>();
   const stream: StreamHandle = { readyState: 1, close: () => {},
     addEventListener: (name, listener) => { listeners.set(name, listener); } };
   const controller = createLiveStreamController({ open: () => stream, now: () => 1,
     onDeliveringChange: () => {}, onFrame: frame => {
-      context.liveFrame = frame;
       (context.heldEventRef as { current: typeof cache }).current = cache;
-      effectScript.runInNewContext(context)();
+      effectScript.runInNewContext(context)(frame);
       chart = appendHeroObservation(chart, cache)!;
     } });
   controller.start();

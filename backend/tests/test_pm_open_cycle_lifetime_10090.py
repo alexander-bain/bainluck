@@ -27,7 +27,7 @@ async def until(predicate):
 
 
 @pytest.mark.asyncio
-async def test_refresh_preserves_unchanged_shards_and_closes_removed_tokens(
+async def test_refresh_preserves_unchanged_shards_and_stops_emptied_ones(
     monkeypatch,
 ):
     monkeypatch.setattr(service, "MAX_ASSETS_PER_CONNECTION", 2)
@@ -58,19 +58,16 @@ async def test_refresh_preserves_unchanged_shards_and_closes_removed_tokens(
         await until(lambda: not ws._asset_refresh.is_set())
         assert active == original and len(starts) == 2
         ws.update_asset_ids(["a", "c", "d", "e", "f"])
-        await until(lambda: len(active) == 3 and active[0] is not original[0])
-        assert active[1] is original[1]
-        assert {a for ids in ws._shard_ids.values() for a in ids} == {
-            "a",
-            "c",
-            "d",
-            "e",
-            "f",
-        }
-        assert original[0] in stopped and original[1] not in stopped
+        await until(lambda: len(active) == 3)
+        # #10090: shard 0 only LOST "b" — its socket stays (the token rides
+        # it unrouted); the new tokens open their own shard.
+        assert active[0] is original[0] and active[1] is original[1]
+        assert ws._shard_ids == {0: ["a"], 1: ["c", "d"], 2: ["e", "f"]}
+        assert not stopped
         ws.update_asset_ids([])
         await until(lambda: not active and not ws._shard_ids)
         assert ws._shard_ids == {}
+        assert original[0] in stopped and original[1] in stopped
         assert all(
             ids for _, ids, _ in starts
         ), "empty must never subscribe to all markets"

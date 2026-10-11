@@ -40,39 +40,24 @@ struct WatchDiscoverStoriesView: View {
                 }
                 if selected.selectedEventID != nil {
                     selectedSummary
-                }
-                if discoveries.isSavedReading {
-                    Text("Saved stories · refresh to confirm")
-                        .font(.footnote).foregroundStyle(.orange)
-                        .accessibilityIdentifier("watch.discovery.saved")
-                }
-                if let error = discoveries.errorMessage {
-                    Text(error).font(.footnote).foregroundStyle(.orange)
-                    if !discoveries.readings.isEmpty {
-                        Text("Showing the last received stories.")
-                            .font(.footnote).foregroundStyle(.secondary)
+                    if !visibleReadings.isEmpty {
+                        Divider()
+                            .accessibilityIdentifier("watch.discovery.separator.selected")
                     }
                 }
-                if discoveries.readings.isEmpty {
-                    if discoveries.isRefreshing {
-                        ProgressView("Loading discoveries")
-                    } else if discoveries.errorMessage == nil {
-                        Text("No discoveries right now")
-                            .font(.headline)
-                        Text("Refresh to try again.")
-                            .font(.footnote).foregroundStyle(.secondary)
-                    }
+                if visibleReadings.isEmpty {
+                    discoveryRecovery
                 }
                 ForEach(visibleReadings) { reading in
+                    if reading.id != visibleReadings.first?.id {
+                        Divider()
+                            .accessibilityIdentifier("watch.discovery.separator.before.\(reading.id)")
+                    }
                     storyCard(reading)
                 }
-                Button(discoveries.isRefreshing ? "Refreshing…" : "Refresh discoveries") {
-                    WatchTelemetry.shared.action(.refresh, surface: .discoveries)
-                    manualRefresh?.cancel()
-                    manualRefresh = Task { await discoveries.refresh() }
+                if !visibleReadings.isEmpty {
+                    discoveryRecovery
                 }
-                .disabled(discoveries.isRefreshing || scenePhase != .active)
-                .accessibilityIdentifier("watch.discovery.refresh")
                 #if DEBUG
                 if WatchUIFixture.current != nil, let continuation,
                    let url = StoryContinuation.url(for: continuation) {
@@ -146,6 +131,45 @@ struct WatchDiscoverStoriesView: View {
         .onOpenURL { url in
             if WatchLaunchRoute.accepts(url) { close() }
         }
+    }
+
+    private var discoveryRecovery: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            if discoveries.isSavedReading {
+                Text("Saved stories · refresh to confirm")
+                    .font(.footnote).foregroundStyle(.secondary)
+                    .accessibilityIdentifier("watch.discovery.saved")
+            }
+            if let error = discoveries.errorMessage {
+                Text(error).font(.footnote).foregroundStyle(.secondary)
+                    .accessibilityIdentifier("watch.discovery.error")
+                if !discoveries.readings.isEmpty {
+                    Text("Showing the last received stories.")
+                        .font(.footnote).foregroundStyle(.secondary)
+                }
+            }
+            if discoveries.readings.isEmpty {
+                if discoveries.isRefreshing {
+                    ProgressView("Loading discoveries")
+                } else if discoveries.errorMessage == nil {
+                    Text("No discoveries right now")
+                        .font(.headline)
+                    Text("Refresh to try again.")
+                        .font(.footnote).foregroundStyle(.secondary)
+                }
+            }
+            Button(discoveries.isRefreshing ? "Refreshing…" : "Refresh discoveries") {
+                WatchTelemetry.shared.action(.refresh, surface: .discoveries)
+                manualRefresh?.cancel()
+                manualRefresh = Task { await discoveries.refresh() }
+            }
+            .disabled(discoveries.isRefreshing || scenePhase != .active)
+            .accessibilityIdentifier("watch.discovery.refresh")
+        }
+        .fixedSize(horizontal: false, vertical: true)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("watch.discovery.recovery")
     }
 
     private func clearContinuation() {

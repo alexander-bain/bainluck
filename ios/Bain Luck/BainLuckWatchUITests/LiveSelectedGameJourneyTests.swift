@@ -105,8 +105,9 @@ final class LiveSelectedGameJourneyTests: XCTestCase {
         if state.contains("Final") || state.contains("Closed") {
             return "No forecast: \(state)"
         }
-        let unavailable = app.staticTexts["Win probability unavailable"]
+        let unavailable = app.staticTexts["watch.home-probability-unavailable"]
         XCTAssertTrue(unavailable.exists, "UNPAID: missing probability lacks an honest explanation")
+        XCTAssertEqual(unavailable.label, home + " win chance unavailable")
         try reveal(unavailable, in: app)
         return unavailable.label
     }

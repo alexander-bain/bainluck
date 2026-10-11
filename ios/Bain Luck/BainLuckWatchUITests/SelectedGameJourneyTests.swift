@@ -77,9 +77,12 @@ final class SelectedGameJourneyTests: XCTestCase {
         let changed = NSPredicate(format: "label CONTAINS %@ AND label CONTAINS %@", "Buffalo Bills", "55%")
         expectation(for: changed, evaluatedWith: probability)
         waitForExpectations(timeout: 15)
-        expectation(for: NSPredicate(format: "hittable == true"), evaluatedWith: state)
+        // Scheduled 202 renders the start header instead of the live state row.
+        let scheduled = app.staticTexts["watch.scheduled-start"]
+        expectation(for: NSPredicate(format: "hittable == true"), evaluatedWith: scheduled)
         waitForExpectations(timeout: 10)
-        XCTAssertEqual(state.value as? String, receivedSize)
+        XCTAssertEqual(scheduled.label, "Scheduled · time unavailable")
+        XCTAssertEqual(scheduled.value as? String, receivedSize)
         capture(app, name: "Changed game identity")
         if largeText { try reveal(probability, in: app) }
         XCTAssertTrue(probability.isHittable, "The new named probability must be reachable after selection")

@@ -57,29 +57,9 @@
  */
 
 import { readPropGrade, type PropGrade, type PropGradeFields } from "./propGrade";
+import { propOutcomeSide } from "./propOutcomeSide";
 
-/** Which side of the line an outcome label names, in over-probability space. */
-export type PropOutcomeSide = "over" | "under" | "unreadable";
-
-/** Kalshi's inclusive ladder rung: "Freddie Freeman: 3+", "Willi Castro: 2+". */
-const RUNG_RE = /\d+\s*\+/;
-
-/**
- * Place an outcome label on the over axis.
- *
- * Three shapes cover 586 of 587 production rows:
- *   - Polymarket O/U legs: "Over" / "Under"
- *   - Polymarket binary legs: "Yes" / "No"
- *   - Kalshi rungs: "<Player>: N+" — inclusive, and therefore the over side
- */
-export function propOutcomeSide(outcomeName?: string | null): PropOutcomeSide {
-  const o = (outcomeName || "").trim().toLowerCase();
-  if (!o) return "unreadable";
-  if (o === "over" || o === "yes") return "over";
-  if (o === "under" || o === "no") return "under";
-  if (RUNG_RE.test(o)) return "over";
-  return "unreadable";
-}
+export { propOutcomeSide, type PropOutcomeSide } from "./propOutcomeSide";
 
 /**
  * One `player_props[]` row's grading fields restated on the over axis.

@@ -594,9 +594,9 @@ export default function SpecialEventMarkets({
   if (section.categories.length === 0) return null;
 
   if (compact) return <section className="bg-surface-card border border-surface-border rounded-xl p-4">
-    <h3 className="text-lg font-semibold mb-3">Game questions</h3>
+    <h3 className="text-lg font-semibold mb-3">More markets</h3>
     {settled && <p className="text-sm text-text-secondary mb-3">{SETTLED_SECTION_NOTE_NO_QUOTES}</p>}
-    <MarketBrowser label="Game questions" items={section.categories.flatMap(category => category.cards.map((item, index) => ({
+    <MarketBrowser label="More markets" items={section.categories.flatMap(category => category.cards.map((item, index) => ({
       key: `${category.title}-${item.name}-${index}`,
       group: category.title,
       search: `${category.title} ${item.name} ${item.outcomes.map(outcome => outcome.label).join(" ")}`,

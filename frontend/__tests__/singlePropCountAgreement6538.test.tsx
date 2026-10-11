@@ -107,14 +107,14 @@ describe("#6538 — one prop, one question, singular copy", () => {
     expect(SINGLE[0].resolution_source).toBeNull();
   });
 
-  it("the rail's expand says 'See all 1 question', not '1 questions'", () => {
+  it("the rail's expand says 'See all 1 prop', not '1 props'", () => {
     const text = textOf(
       renderToStaticMarkup(
         <PropDivergenceRail playerProps={SINGLE} status="completed" />,
       ),
     );
-    expect(text).toContain("See all 1 question");
-    expect(text).not.toContain("See all 1 questions");
+    expect(text).toContain("See all 1 prop");
+    expect(text).not.toContain("See all 1 props");
   });
 
   it("the honest-empty sentence agrees in verb and pronoun for one question", () => {
@@ -123,22 +123,22 @@ describe("#6538 — one prop, one question, singular copy", () => {
         <PropDivergenceRail playerProps={SINGLE} status="completed" />,
       ),
     );
-    expect(text).toContain("1 question settled here");
+    expect(text).toContain("1 prop settled here");
     expect(text).toContain("it has no published outcome yet");
     expect(text).toContain("It is listed below.");
     expect(text).not.toContain("none has a published outcome");
     expect(text).not.toContain("They are all listed below");
   });
 
-  it("the not-graded note says 'this question', not 'these questions'", () => {
+  it("the not-graded note says 'this prop', not 'these props'", () => {
     const text = textOf(
       renderToStaticMarkup(
         <PropDivergenceDetail playerProps={SINGLE} status="completed" />,
       ),
     );
-    expect(text).toContain("this question settled without a published outcome");
+    expect(text).toContain("this prop settled without a published outcome");
     expect(text).toContain("against its mark");
-    expect(text).not.toContain("these questions settled");
+    expect(text).not.toContain("these props settled");
   });
 
   // ─── THE CONTROL. A narrowing that made the plural branch unreachable would
@@ -149,19 +149,19 @@ describe("#6538 — one prop, one question, singular copy", () => {
         <PropDivergenceRail playerProps={repeat(4)} status="completed" />,
       ),
     );
-    expect(text).toContain("4 questions settled here");
+    expect(text).toContain("4 props settled here");
     expect(text).toContain("none has a published outcome yet");
     expect(text).toContain("They are all listed below.");
     expect(text).not.toContain("It is listed below.");
   });
 
-  it("CONTROL: several props keep 'these questions' in the not-graded note", () => {
+  it("CONTROL: several props keep 'these props' in the not-graded note", () => {
     const text = textOf(
       renderToStaticMarkup(
         <PropDivergenceDetail playerProps={repeat(4)} status="completed" />,
       ),
     );
-    expect(text).toContain("these questions settled without a published outcome");
+    expect(text).toContain("these props settled without a published outcome");
     expect(text).toContain("against their mark");
   });
 

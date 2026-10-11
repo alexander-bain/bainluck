@@ -39,7 +39,7 @@
  */
 
 import "../helpers/minimalDom";
-import React, { act, useEffect, useMemo, useRef, useState } from "react";
+import React, { act, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import fs from "fs";
 import path from "path";
@@ -53,7 +53,7 @@ import {
   servedBlendEdgeObservation,
   type BlendEdgeObservation,
 } from "../../lib/blendObservationClock";
-import type { LiveFrame } from "../../hooks/useLiveEventStream";
+import { heldFrameAfter, type LiveFrame } from "../../hooks/useLiveEventStream";
 
 // ── the page's constants, read from the page so they cannot drift ───────────
 const PAGE = fs.readFileSync(path.join(__dirname, "../../app/events/[id]/page.tsx"), "utf8");
@@ -160,9 +160,9 @@ function HeldEvent(props: { net: Net; liveFrame: LiveFrame | null; servedHistory
   ));
   useEffect(() => () => foldedRefetch.cancel(), [foldedRefetch]);
 
-  // ── app/events/[id]/page.tsx — the push effect, as the page writes it ──────
-  useEffect(() => {
-    if (!liveFrame || liveFrame.event_id !== eventId) return;
+  // ── app/events/[id]/page.tsx — the push callback, as the page writes it ────
+  const applyPushedFrame = useCallback((liveFrame: LiveFrame) => {
+    if (liveFrame.event_id !== eventId) return;
     if (frameInvalidatesFoldedBlend(heldEventRef.current, liveFrame)) {
       foldedRefetch.request();
       return;
@@ -170,13 +170,17 @@ function HeldEvent(props: { net: Net; liveFrame: LiveFrame | null; servedHistory
     // #9294: contributor notifications invalidate the fold without carrying
     // an adoptable price. Never install one as a price or replay it on a poll.
     if (liveFrame.p === null || liveFrame.p === undefined) return;
-    latestLiveFrameRef.current = liveFrame;
+    latestLiveFrameRef.current = heldFrameAfter(latestLiveFrameRef.current, liveFrame);
     const frame = { ...liveFrame, p: liveFrame.p };
     refreshEvent(
       (prev) => applyLiveFrame(prev, frame),
       { revalidate: false },
     );
-  }, [liveFrame, refreshEvent, eventId, foldedRefetch]);
+  }, [refreshEvent, eventId, foldedRefetch]);
+  // The hook hands the page each frame; here, each `deliver` is one frame.
+  useEffect(() => {
+    if (liveFrame) applyPushedFrame(liveFrame);
+  }, [liveFrame, applyPushedFrame]);
 
   // ── app/events/[id]/page.tsx — the history-edge effect, as the page writes it
   useEffect(() => {
@@ -269,7 +273,8 @@ describe("structural pin: the harness carries the page's own wiring", () => {
     // The push effect: a refused frame requests a refetch and writes NOTHING.
     expect(PAGE).toMatch(/if \(frameInvalidatesFoldedBlend\(heldEventRef\.current, liveFrame\)\) \{\s*foldedRefetch\.request\(\);\s*return;\s*\}/);
     expect(PAGE).toMatch(/\(prev\) => applyLiveFrame\(prev, frame\),/);
-    expect(PAGE).toMatch(/\}, \[liveFrame, refreshEvent, eventId, foldedRefetch\]\);/);
+    expect(PAGE).toMatch(/\}, \[refreshEvent, eventId, foldedRefetch\]\);\s*(?:\/\/[^\n]*\n\s*)*const quoteEligible = canSubscribeEventQuotes\(event\);/);
+    expect(PAGE).toMatch(/\} = useLiveEventStream\(eventId, quoteEligible, applyPushedFrame\);/);
     expect(PAGE.indexOf("frameInvalidatesFoldedBlend(heldEventRef.current, liveFrame)"))
       .toBeLessThan(PAGE.indexOf("if (liveFrame.p === null"));
     // The history effect: an incomparable edge requests a refetch and writes NOTHING.

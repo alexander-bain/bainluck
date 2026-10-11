@@ -195,7 +195,7 @@ const GRADED_BLURB_UNGRADED = "The pregame script. No grades published for these
  */
 const SUPPLEMENTAL_SCRIPT_META = {
   eyebrow: "More props",
-  blurb: "Additional market questions for this game.",
+  blurb: "Additional markets for this game.",
 };
 
 export function deriveState(eventStatus?: string | null): PropsState {

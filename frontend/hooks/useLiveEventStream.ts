@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { API_URL } from '@/lib/api';
+import { frameFoldOrder } from '@/lib/foldRevision';
 import { rememberLiveChartFrame, type LiveChartFrame } from '@/lib/liveChartHistory';
 import {
   TICK_INTERVAL_MS,
@@ -35,6 +36,36 @@ import {
 export type LiveFrame = LiveStreamFrame;
 
 /**
+ * #10090: the frame the page should see after `next` arrives.
+ *
+ * React batches transport callbacks that land in one chunk, so the page's
+ * push effect sees only the LAST frame of a batch. Publishers do not reach
+ * the stream in revision order: production delivered rev 12482 and then the
+ * older 12481 in one chunk, and the headline held the older price until
+ * history caught up (1.2 s) while the chart, which banks every frame, moved
+ * in 21 ms. So an older priced frame never displaces a newer one here.
+ * `applyLiveFrame` refuses it against the newer frame, and `chartPoints`
+ * still records it.
+ *
+ * Narrow on purpose. Any frame that tells the page something other than a
+ * price still replaces the held one exactly as before: no price (an
+ * invalidation) or one outside [0, 1], a status change, a folded quote or its pending notice, a
+ * different event, or a revision that is missing, the same, or not
+ * comparable.
+ */
+export function heldFrameAfter(previous: LiveFrame | null, next: LiveFrame): LiveFrame {
+  if (!previous || previous.event_id !== next.event_id) return next;
+  // A price is what `applyLiveFrame` would adopt: finite and inside [0, 1].
+  // A held frame it would refuse must not keep out the valid one behind it.
+  const priced = (f: LiveFrame) =>
+    typeof f.p === 'number' && Number.isFinite(f.p) && f.p >= 0 && f.p <= 1 &&
+    f.folded_quote === undefined && !f.folded_quote_pending;
+  if (!priced(previous) || !priced(next)) return next;
+  if ((previous.status ?? null) !== (next.status ?? null)) return next;
+  return frameFoldOrder(previous.rev, next.rev) === 'older' ? previous : next;
+}
+
+/**
  * #10200 — the transport's own observation, or `idle` when this page is not
  * subscribing at all (not quote-eligible) and polling is the only path.
  */
@@ -66,6 +97,13 @@ interface UseLiveEventStreamResult {
 export function useLiveEventStream(
   eventId: number | undefined,
   enabled: boolean,
+  /**
+   * #10090: called with EVERY frame, in arrival order. `frame` is one value per
+   * render, and React renders a chunk's callbacks once, so a consumer that must
+   * act on each frame (the page: a price AND the invalidation behind it) takes
+   * them here.
+   */
+  onFrame?: (frame: LiveFrame) => void,
 ): UseLiveEventStreamResult {
   const [frame, setFrame] = useState<LiveFrame | null>(null);
   const [connected, setConnected] = useState(false);
@@ -80,6 +118,13 @@ export function useLiveEventStream(
   const recoveryOrdinal = useRef(0);
   // A ref so the controller's callbacks never close over a stale setter.
   const mounted = useRef(true);
+  // Updated at commit, and before the controller effect below runs, so a new
+  // event's controller never delivers to the previous event's callback and an
+  // abandoned render never redirects the current one.
+  const onFrameRef = useRef(onFrame);
+  useEffect(() => {
+    onFrameRef.current = onFrame;
+  });
 
   useEffect(() => {
     mounted.current = true;
@@ -109,7 +154,7 @@ export function useLiveEventStream(
       now: () => Date.now(),
       onFrame: (next) => {
         if (mounted.current) {
-          setFrame(next);
+          setFrame(previous => heldFrameAfter(previous, next));
           // Collect in the transport callback, not an effect on `frame`: React
           // may batch several publications into one render.
           setChart(previous => ({
@@ -118,6 +163,15 @@ export function useLiveEventStream(
               previous.chartEventId === eventId ? previous.points : [], next, eventId,
             ),
           }));
+          try {
+            onFrameRef.current?.(next);
+          } catch (error) {
+            // A consumer's bug must not unwind into the controller and skip
+            // its delivery bookkeeping. Report it, uncaught, off this stack.
+            setTimeout(() => {
+              throw error;
+            });
+          }
         }
       },
       onRecovery: () => {
