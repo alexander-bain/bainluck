@@ -10,6 +10,7 @@ import re
 import shutil
 import stat
 import subprocess
+import sys
 import tarfile
 
 GROUP = "group.com.bainluck.watch"
@@ -311,7 +312,19 @@ def verify_runtime_support(payload, mapping, environment):
 
 def toolchain():
     def read(*command):
-        return subprocess.check_output(command, text=True, timeout=30).strip()
+        # Hosted preflight can stall after simulator preparation. Retry only a
+        # timed-out identity read once; real command failures still fail closed.
+        for attempt in range(2):
+            try:
+                return subprocess.check_output(command, text=True, timeout=60).strip()
+            except subprocess.TimeoutExpired:
+                if attempt == 1:
+                    raise
+                print(
+                    f"Toolchain identity read timed out after 60s; retrying once: {command!r}",
+                    file=sys.stderr,
+                    flush=True,
+                )
 
     return {
         "xcode": read("xcodebuild", "-version"),
