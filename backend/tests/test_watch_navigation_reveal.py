@@ -41,6 +41,8 @@ def normalize_more_actions(name, text):
 
 def source(name):
     text = (SWIFT / name).read_text()
+    if name in COST_READ_TRANSFORMS:
+        text = restore_cost_reads(name, text)
     if name == "PickerReturnJourneyTests.swift":
         text = normalize_picker_frame_reads(text)
     return normalize_more_actions(name, text)
@@ -556,3 +558,254 @@ def test_picker_frame_read_normalization_refuses_scope_or_gate_changes(mutation)
     assert changes[mutation] != raw
     with pytest.raises(AssertionError):
         normalize_picker_frame_reads(changes[mutation])
+
+
+# Exact, attempt-local cost changes are undone before all preexisting guards.
+COST_READ_TRANSFORMS = {
+    "LargeTextRecoveryJourneyTests.swift": [
+        (
+            "changeViewport(in app: XCUIApplication) throws",
+            "changeViewport(in app: XCUIApplication, appFrame: CGRect) throws",
+            1,
+        ),
+        (
+            "        let visible = app.scrollViews.allElementsBoundByIndex.filter {\n            let bounds = $0.frame.intersection(app.frame)\n            return $0.isHittable && !bounds.isNull && !bounds.isEmpty\n                && bounds.minX.isFinite && bounds.maxX.isFinite\n                && bounds.minY.isFinite && bounds.maxY.isFinite\n        }",
+            "        let visible = app.scrollViews.allElementsBoundByIndex.compactMap { scroll -> CGRect? in\n            let bounds = scroll.frame.intersection(appFrame)\n            guard scroll.isHittable && !bounds.isNull && !bounds.isEmpty\n                && bounds.minX.isFinite && bounds.maxX.isFinite\n                && bounds.minY.isFinite && bounds.maxY.isFinite else { return nil }\n            return bounds\n        }",
+            1,
+        ),
+        (
+            "var bounds = visible[0].frame.intersection(app.frame)",
+            "var bounds = visible[0]",
+            1,
+        ),
+        (
+            "        let bars = app.navigationBars.allElementsBoundByIndex.filter {\n            $0.exists && $0.frame.intersects(bounds)\n        }\n        if let chromeBottom = bars.map({ $0.frame.maxY }).max() {",
+            "        let chromeBottom = app.navigationBars.allElementsBoundByIndex.compactMap { bar -> CGFloat? in\n            guard bar.exists else { return nil }\n            let frame = bar.frame\n            return frame.intersects(bounds) ? frame.maxY : nil\n        }.max()\n        if let chromeBottom = chromeBottom {",
+            1,
+        ),
+        (
+            "            let bounds = try changeViewport(in: app)",
+            "            let appFrame = app.frame\n            let bounds = try changeViewport(in: app, appFrame: appFrame)",
+            1,
+        ),
+        ("dx: bounds.midX - app.frame.minX", "dx: bounds.midX - appFrame.minX", 1),
+        (
+            "dy: bounds.minY + bounds.height * (earlier ? 0.25 : 0.75) - app.frame.minY",
+            "dy: bounds.minY + bounds.height * (earlier ? 0.25 : 0.75) - appFrame.minY",
+            1,
+        ),
+        (
+            "            if element.isHittable && app.frame.contains(element.frame) { return }\n            let earlier = element.frame.minY < app.frame.minY",
+            "            let appFrame = app.frame\n            let frame = element.frame\n            if element.isHittable && appFrame.contains(frame) { return }\n            let earlier = frame.minY < appFrame.minY",
+            1,
+        ),
+    ],
+    "PickerAliasJourneyTests.swift": [
+        (
+            "            if row.isHittable && frame.minY >= bounds.minY && frame.minY <= bounds.midY {",
+            "            // A complete row already in view needs the same retained capture,\n            // not an extra scroll solely to move its top into the upper half.\n            let complete = !frame.isNull && !frame.isEmpty\n                && frame.minX.isFinite && frame.minY.isFinite\n                && frame.maxX.isFinite && frame.maxY.isFinite && bounds.contains(frame)\n            if row.isHittable && (complete || (frame.minY >= bounds.minY && frame.minY <= bounds.midY)) {",
+            1,
+        )
+    ],
+    "WatchDiagnosticsJourneyTests.swift": [
+        (
+            "bounds(_ app: XCUIApplication) -> CGRect",
+            "bounds(_ app: XCUIApplication, appFrame: CGRect) -> CGRect",
+            1,
+        ),
+        (
+            "(collection.exists ? collection.frame : app.frame)",
+            "(collection.exists ? collection.frame : appFrame)",
+            1,
+        ),
+        (
+            "height: max(1, content.maxY - top)).intersection(app.frame)",
+            "height: max(1, content.maxY - top)).intersection(appFrame)",
+            1,
+        ),
+        (
+            "    @MainActor private func scroll(_ app: XCUIApplication, earlier: Bool, fraction: CGFloat = 0.20) {\n        let box = bounds(app)",
+            "    @MainActor private func scroll(_ app: XCUIApplication, earlier: Bool, fraction: CGFloat = 0.20) {\n        let appFrame = app.frame\n        let box = bounds(app, appFrame: appFrame)\n        scroll(app, box: box, appFrame: appFrame, earlier: earlier, fraction: fraction)\n    }\n\n    @MainActor private func scroll(_ app: XCUIApplication, box: CGRect, appFrame: CGRect, earlier: Bool, fraction: CGFloat = 0.20) {",
+            1,
+        ),
+        (
+            "CGVector(dx: box.midX - app.frame.minX, dy: box.minY + box.height * startFraction - app.frame.minY)",
+            "CGVector(dx: box.midX - appFrame.minX, dy: box.minY + box.height * startFraction - appFrame.minY)",
+            1,
+        ),
+        (
+            "            let box = bounds(app)\n            // Form lazily mounts offscreen rows; never read a missing row's frame or label.\n            if !element.exists { scroll(app, earlier: earlierWhenMissing); continue }\n            if element.isHittable && (box.contains(element.frame) ||\n                (element.frame.height > box.height && box.intersects(element.frame))) { return }\n            let distance = abs(element.frame.midY - box.midY) / box.height\n            let fraction = min(maxScrollFraction, max(0.20, distance))\n            scroll(app, earlier: element.frame.midY < box.midY, fraction: fraction)",
+            "            let appFrame = app.frame\n            let box = bounds(app, appFrame: appFrame)\n            // Form lazily mounts offscreen rows; never read a missing row's frame or label.\n            if !element.exists { scroll(app, box: box, appFrame: appFrame, earlier: earlierWhenMissing); continue }\n            let frame = element.frame\n            if element.isHittable && (box.contains(frame) ||\n                (frame.height > box.height && box.intersects(frame))) { return }\n            let distance = abs(frame.midY - box.midY) / box.height\n            let fraction = min(maxScrollFraction, max(0.20, distance))\n            scroll(app, box: box, appFrame: appFrame, earlier: frame.midY < box.midY, fraction: fraction)",
+            1,
+        ),
+        (
+            "            let box = bounds(app), frame = element.frame",
+            "            let appFrame = app.frame\n            let box = bounds(app, appFrame: appFrame), frame = element.frame",
+            2,
+        ),
+        (
+            "            scroll(app, earlier: frame.minY < box.minY)",
+            "            scroll(app, box: box, appFrame: appFrame, earlier: frame.minY < box.minY)",
+            1,
+        ),
+    ],
+}
+COST_ORIGINAL_SHA256 = {
+    "LargeTextRecoveryJourneyTests.swift": "7e4f629bf67eb20f63159762e436981a19e89a200772d65bb7b21df9eb97c297",
+    "PickerAliasJourneyTests.swift": "50eea733c272411164cda151f5cb7387fb669d6364022c228aec96594deb124d",
+    "WatchDiagnosticsJourneyTests.swift": "2d1319539f2648876a5dd8b1e451c66c64651a0c3ad5c27e914980c1d5f8ec1a",
+}
+COST_PROPOSED_SHA256 = {
+    "LargeTextRecoveryJourneyTests.swift": "3b01a4864451d948c659a8236b85f8548138ca646a259739414a72ff3df7658a",
+    "PickerAliasJourneyTests.swift": "ae6767e2c5563d30604e2f25a574f5ff3c2e20ba22478e8dd6a178161e1d3d1e",
+    "WatchDiagnosticsJourneyTests.swift": "21680343a8a45c392958f2b41b6dd2437ba5b5875c13c89c898535314fed9591",
+}
+
+
+def restore_cost_reads(name, text):
+    assert digest(text) == COST_PROPOSED_SHA256[name], "Unreviewed cost-reduction scope"
+    for old, new, count in reversed(COST_READ_TRANSFORMS[name]):
+        assert text.count(new) == count
+        text = text.replace(new, old)
+    assert digest(text) == COST_ORIGINAL_SHA256[name], "Original obligations changed"
+    return text
+
+
+@pytest.mark.parametrize("name", COST_READ_TRANSFORMS)
+def test_cost_reduction_reconstructs_every_original_assertion_capture_and_loop(name):
+    raw = (SWIFT / name).read_text()
+    restored = restore_cost_reads(name, raw)
+    # Raw Swift assertion/capture call lines are not normalized away by the packet.
+    for token in (
+        "XCTAssert",
+        "capture(app,",
+        "captureContent(",
+        "try captureElement(",
+        "for _ in 0..<",
+        "for attempt in 0..<",
+        "waitForExistence(timeout:",
+        "waitForExpectations(timeout:",
+    ):
+        old_lines = [line.strip() for line in restored.splitlines() if token in line]
+        new_lines = [line.strip() for line in raw.splitlines() if token in line]
+        assert old_lines == new_lines
+
+
+@pytest.mark.parametrize("name", COST_READ_TRANSFORMS)
+@pytest.mark.parametrize("mutation", ["original", "allowance", "capture", "assertion"])
+def test_cost_guard_rejects_original_or_lost_obligations(name, mutation):
+    raw = (SWIFT / name).read_text()
+    altered = raw
+    if mutation == "original":
+        altered = restore_cost_reads(name, raw)
+    elif mutation == "allowance":
+        altered = raw.replace("0..<24", "0..<48").replace("0..<32", "0..<64")
+    elif mutation == "capture":
+        line = next(line for line in raw.splitlines(True) if "capture(app," in line)
+        altered = raw.replace(line, "", 1)
+    else:
+        altered = raw.replace("XCTAssert", "removedAssertion", 1)
+    assert altered != raw
+    with pytest.raises(AssertionError):
+        restore_cost_reads(name, altered)
+
+
+def test_large_text_frames_are_measured_once_per_attempt():
+    raw = (SWIFT / "LargeTextRecoveryJourneyTests.swift").read_text()
+    viewport = helper_block(raw, "changeViewport")
+    change = helper_block(raw, "revealChange")
+    generic = helper_block(raw, "reveal")
+    assert "app.frame" not in viewport
+    assert viewport.count("scroll.frame") == viewport.count("bar.frame") == 1
+    for helper in (change, generic):
+        assert helper.count("let appFrame = app.frame") == 1
+        assert helper.index("for _ in 0..<32") < helper.index(
+            "let appFrame = app.frame"
+        )
+    assert "change.isHittable && bounds.contains(frame)" in change
+    assert "element.isHittable && appFrame.contains(frame)" in generic
+
+
+def test_diagnostics_reuses_only_current_attempt_geometry_and_checks_missing_first():
+    raw = (SWIFT / "WatchDiagnosticsJourneyTests.swift").read_text()
+    reveal = raw.split("private func reveal(", 1)[1].split("    @MainActor", 1)[0]
+    assert reveal.count("element.frame") == 1
+    assert reveal.index("if !element.exists") < reveal.index(
+        "let frame = element.frame"
+    )
+    assert reveal.index("for _ in 0..<24") < reveal.index("let appFrame = app.frame")
+    assert reveal.count("scroll(app, box: box, appFrame: appFrame,") == 2
+    capture = raw.split("private func captureContent(", 1)[1].split(
+        "    @MainActor", 1
+    )[0]
+    # The continuation loop remeasures after dragging; never reuse pre-drag frames.
+    assert (
+        "scroll(app, earlier: false)\n            let appFrame = app.frame" in capture
+    )
+    scroll = raw.split("private func scroll(_ app: XCUIApplication, box:", 1)[1].split(
+        "    @MainActor", 1
+    )[0]
+    assert "bounds(app" not in scroll and "app.frame" not in scroll
+
+
+def test_alias_complete_row_keeps_same_capture_and_oversized_overlap_path():
+    raw = (SWIFT / "PickerAliasJourneyTests.swift").read_text()
+    capture = helper_block(raw, "captureElement")
+    assert "let complete = !frame.isNull && !frame.isEmpty" in capture
+    for edge in ("minX", "minY", "maxX", "maxY"):
+        assert f"frame.{edge}.isFinite" in capture
+    assert "&& bounds.contains(frame)" in capture
+    assert (
+        "if row.isHittable && (complete || (frame.minY >= bounds.minY && frame.minY <= bounds.midY))"
+        in capture
+    )
+    assert 'capture(app, name + " - top")' in capture
+    assert "if bounds.contains(frame) { return }" in capture
+    assert "XCTAssertLessThanOrEqual(visibleStart, coveredEnd + 1" in capture
+    assert "if atBottom { return }" in capture
+
+
+@pytest.mark.parametrize(
+    "name,old,new",
+    [
+        (
+            "LargeTextRecoveryJourneyTests.swift",
+            "change.isHittable && bounds.contains(frame)",
+            "bounds.intersects(frame)",
+        ),
+        (
+            "LargeTextRecoveryJourneyTests.swift",
+            "            let appFrame = app.frame",
+            "            let appFrame = cachedFrame",
+        ),
+        (
+            "PickerAliasJourneyTests.swift",
+            "&& bounds.contains(frame)",
+            "&& bounds.intersects(frame)",
+        ),
+        ("PickerAliasJourneyTests.swift", "!frame.isNull && !frame.isEmpty", "true"),
+        (
+            "PickerAliasJourneyTests.swift",
+            "visibleStart, coveredEnd + 1",
+            "0, coveredEnd + 100",
+        ),
+        ("WatchDiagnosticsJourneyTests.swift", "if !element.exists", "if false"),
+        (
+            "WatchDiagnosticsJourneyTests.swift",
+            "let frame = element.frame",
+            "let frame = cachedFrame",
+        ),
+        (
+            "WatchDiagnosticsJourneyTests.swift",
+            '"Refusal must survive relaunch"',
+            '"ignored"',
+        ),
+    ],
+)
+def test_cost_reduction_refuses_stale_geometry_weakened_fit_or_lost_consent(
+    name, old, new
+):
+    raw = (SWIFT / name).read_text()
+    assert old in raw
+    with pytest.raises(AssertionError):
+        restore_cost_reads(name, raw.replace(old, new))

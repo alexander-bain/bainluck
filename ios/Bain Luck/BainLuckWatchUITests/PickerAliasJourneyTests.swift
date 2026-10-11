@@ -343,7 +343,12 @@ final class PickerAliasJourneyTests: XCTestCase {
             let appFrame = app.frame
             let bounds = try viewport(container, appFrame: appFrame)
             let frame = row.frame
-            if row.isHittable && frame.minY >= bounds.minY && frame.minY <= bounds.midY {
+            // A complete row already in view needs the same retained capture,
+            // not an extra scroll solely to move its top into the upper half.
+            let complete = !frame.isNull && !frame.isEmpty
+                && frame.minX.isFinite && frame.minY.isFinite
+                && frame.maxX.isFinite && frame.maxY.isFinite && bounds.contains(frame)
+            if row.isHittable && (complete || (frame.minY >= bounds.minY && frame.minY <= bounds.midY)) {
                 topCoverage = min(frame.height, bounds.maxY - frame.minY)
                 capture(app, name + " - top")
                 if bounds.contains(frame) { return }

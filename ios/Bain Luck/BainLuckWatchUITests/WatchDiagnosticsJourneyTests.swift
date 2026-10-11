@@ -81,37 +81,44 @@ final class WatchDiagnosticsJourneyTests: XCTestCase {
         XCTAssertTrue(app.switches["watch.diagnostics.choice"].firstMatch.waitForExistence(timeout: 10))
     }
 
-    @MainActor private func bounds(_ app: XCUIApplication) -> CGRect {
+    @MainActor private func bounds(_ app: XCUIApplication, appFrame: CGRect) -> CGRect {
         let scroll = app.scrollViews.firstMatch
         let collection = app.collectionViews.firstMatch
-        let content = scroll.exists ? scroll.frame : (collection.exists ? collection.frame : app.frame)
+        let content = scroll.exists ? scroll.frame : (collection.exists ? collection.frame : appFrame)
         let bar = app.navigationBars.firstMatch
         let top = bar.exists ? max(content.minY, bar.frame.maxY) : content.minY
         return CGRect(x: content.minX, y: top, width: content.width,
-                      height: max(1, content.maxY - top)).intersection(app.frame)
+                      height: max(1, content.maxY - top)).intersection(appFrame)
     }
 
     @MainActor private func scroll(_ app: XCUIApplication, earlier: Bool, fraction: CGFloat = 0.20) {
-        let box = bounds(app)
+        let appFrame = app.frame
+        let box = bounds(app, appFrame: appFrame)
+        scroll(app, box: box, appFrame: appFrame, earlier: earlier, fraction: fraction)
+    }
+
+    @MainActor private func scroll(_ app: XCUIApplication, box: CGRect, appFrame: CGRect, earlier: Bool, fraction: CGFloat = 0.20) {
         // Longer moves only traverse distant content. Keep both endpoints
         // inside the viewport and retain the small step near the target.
         let startFraction: CGFloat = fraction > 0.20 ? (earlier ? 0.20 : 0.80) : 0.60
         let start = app.coordinate(withNormalizedOffset: .zero).withOffset(
-            CGVector(dx: box.midX - app.frame.minX, dy: box.minY + box.height * startFraction - app.frame.minY))
+            CGVector(dx: box.midX - appFrame.minX, dy: box.minY + box.height * startFraction - appFrame.minY))
         let end = start.withOffset(CGVector(dx: 0, dy: box.height * (earlier ? fraction : -fraction)))
         start.press(forDuration: 0.1, thenDragTo: end, withVelocity: .slow, thenHoldForDuration: 0.3)
     }
 
     @MainActor private func reveal(_ element: XCUIElement, app: XCUIApplication, earlierWhenMissing: Bool = false, maxScrollFraction: CGFloat = 0.20) throws {
         for _ in 0..<24 {
-            let box = bounds(app)
+            let appFrame = app.frame
+            let box = bounds(app, appFrame: appFrame)
             // Form lazily mounts offscreen rows; never read a missing row's frame or label.
-            if !element.exists { scroll(app, earlier: earlierWhenMissing); continue }
-            if element.isHittable && (box.contains(element.frame) ||
-                (element.frame.height > box.height && box.intersects(element.frame))) { return }
-            let distance = abs(element.frame.midY - box.midY) / box.height
+            if !element.exists { scroll(app, box: box, appFrame: appFrame, earlier: earlierWhenMissing); continue }
+            let frame = element.frame
+            if element.isHittable && (box.contains(frame) ||
+                (frame.height > box.height && box.intersects(frame))) { return }
+            let distance = abs(frame.midY - box.midY) / box.height
             let fraction = min(maxScrollFraction, max(0.20, distance))
-            scroll(app, earlier: element.frame.midY < box.midY, fraction: fraction)
+            scroll(app, box: box, appFrame: appFrame, earlier: frame.midY < box.midY, fraction: fraction)
         }
         capture(app, "Unreachable diagnostics element - \(element.identifier)")
         throw NSError(domain: "WatchDiagnostics", code: 1)
@@ -122,7 +129,8 @@ final class WatchDiagnosticsJourneyTests: XCTestCase {
         // both ends; presence in the hierarchy alone is not visible disclosure.
         var covered: CGFloat?
         for _ in 0..<24 {
-            let box = bounds(app), frame = element.frame
+            let appFrame = app.frame
+            let box = bounds(app, appFrame: appFrame), frame = element.frame
             // A fully visible disclosure already has complete coverage. Moving
             // it into the upper half adds scrolling but proves nothing further.
             if element.isHittable && !frame.isEmpty && !frame.isNull &&
@@ -137,12 +145,13 @@ final class WatchDiagnosticsJourneyTests: XCTestCase {
                 if box.contains(frame) { return }
                 break
             }
-            scroll(app, earlier: frame.minY < box.minY)
+            scroll(app, box: box, appFrame: appFrame, earlier: frame.minY < box.minY)
         }
         guard var end = covered else { throw NSError(domain: "WatchDiagnostics", code: 2) }
         for _ in 0..<24 {
             scroll(app, earlier: false)
-            let box = bounds(app), frame = element.frame
+            let appFrame = app.frame
+            let box = bounds(app, appFrame: appFrame), frame = element.frame
             let start = max(0, box.minY - frame.minY), visibleEnd = min(frame.height, box.maxY - frame.minY)
             if element.isHittable && visibleEnd > end {
                 XCTAssertLessThanOrEqual(start, end + 1, "Disclosure captures must overlap")

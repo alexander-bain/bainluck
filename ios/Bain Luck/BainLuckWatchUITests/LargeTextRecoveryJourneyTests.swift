@@ -148,22 +148,25 @@ final class LargeTextRecoveryJourneyTests: XCTestCase {
     }
 
     @MainActor
-    private func changeViewport(in app: XCUIApplication) throws -> CGRect {
-        let visible = app.scrollViews.allElementsBoundByIndex.filter {
-            let bounds = $0.frame.intersection(app.frame)
-            return $0.isHittable && !bounds.isNull && !bounds.isEmpty
+    private func changeViewport(in app: XCUIApplication, appFrame: CGRect) throws -> CGRect {
+        let visible = app.scrollViews.allElementsBoundByIndex.compactMap { scroll -> CGRect? in
+            let bounds = scroll.frame.intersection(appFrame)
+            guard scroll.isHittable && !bounds.isNull && !bounds.isEmpty
                 && bounds.minX.isFinite && bounds.maxX.isFinite
-                && bounds.minY.isFinite && bounds.maxY.isFinite
+                && bounds.minY.isFinite && bounds.maxY.isFinite else { return nil }
+            return bounds
         }
         guard visible.count == 1 else {
             XCTFail("Expected one visible change scroll viewport")
             throw NSError(domain: "WatchLargeTextChangeViewport", code: 1)
         }
-        var bounds = visible[0].frame.intersection(app.frame)
-        let bars = app.navigationBars.allElementsBoundByIndex.filter {
-            $0.exists && $0.frame.intersects(bounds)
-        }
-        if let chromeBottom = bars.map({ $0.frame.maxY }).max() {
+        var bounds = visible[0]
+        let chromeBottom = app.navigationBars.allElementsBoundByIndex.compactMap { bar -> CGFloat? in
+            guard bar.exists else { return nil }
+            let frame = bar.frame
+            return frame.intersects(bounds) ? frame.maxY : nil
+        }.max()
+        if let chromeBottom = chromeBottom {
             let top = max(bounds.minY, chromeBottom + 3)
             bounds = CGRect(x: bounds.minX, y: top, width: bounds.width, height: bounds.maxY - top)
         }
@@ -180,15 +183,16 @@ final class LargeTextRecoveryJourneyTests: XCTestCase {
     private func revealChange(_ change: XCUIElement, in app: XCUIApplication) throws -> CGRect {
         XCTAssertTrue(change.waitForExistence(timeout: 15))
         for _ in 0..<32 {
-            let bounds = try changeViewport(in: app)
+            let appFrame = app.frame
+            let bounds = try changeViewport(in: app, appFrame: appFrame)
             let frame = change.frame
             if change.isHittable && bounds.contains(frame) { return bounds }
             let earlier = frame.minY < bounds.minY
             let distance = earlier ? bounds.minY - frame.minY : frame.maxY - bounds.maxY
             let fraction = min(0.50, max(0.15, distance / bounds.height))
             let origin = app.coordinate(withNormalizedOffset: .zero)
-            let start = origin.withOffset(CGVector(dx: bounds.midX - app.frame.minX,
-                dy: bounds.minY + bounds.height * (earlier ? 0.25 : 0.75) - app.frame.minY))
+            let start = origin.withOffset(CGVector(dx: bounds.midX - appFrame.minX,
+                dy: bounds.minY + bounds.height * (earlier ? 0.25 : 0.75) - appFrame.minY))
             let end = start.withOffset(CGVector(dx: 0, dy: bounds.height * (earlier ? fraction : -fraction)))
             start.press(forDuration: 0.1, thenDragTo: end, withVelocity: .slow, thenHoldForDuration: 0.4)
         }
@@ -201,8 +205,10 @@ final class LargeTextRecoveryJourneyTests: XCTestCase {
     private func reveal(_ element: XCUIElement, in app: XCUIApplication) throws {
         XCTAssertTrue(element.waitForExistence(timeout: 15))
         for _ in 0..<32 {
-            if element.isHittable && app.frame.contains(element.frame) { return }
-            let earlier = element.frame.minY < app.frame.minY
+            let appFrame = app.frame
+            let frame = element.frame
+            if element.isHittable && appFrame.contains(frame) { return }
+            let earlier = frame.minY < appFrame.minY
             let start = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.60))
             let end = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: earlier ? 0.75 : 0.45))
             start.press(forDuration: 0.1, thenDragTo: end, withVelocity: .slow, thenHoldForDuration: 0.4)
