@@ -63,7 +63,13 @@ final class PickerSelectedStateJourneyTests: XCTestCase {
             XCTAssertFalse(textSize.hasPrefix("accessibility"), "Standard journey must retain a standard text size")
         }
         let rows = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "watch.pick.")).allElementsBoundByIndex
-        XCTAssertEqual(rows.map { $0.identifier }, ["watch.pick.101", "watch.pick.202"], "Selected decoration must preserve server order")
+        let providerOrder = ["watch.pick.101", "watch.pick.202"]
+        let currentID = selected.map { "watch.pick.\($0)" }
+        let expectedOrder = currentID.map { current in
+            [current] + providerOrder.filter { $0 != current }
+        } ?? providerOrder
+        XCTAssertEqual(rows.map { $0.identifier }, expectedOrder,
+                       "Current game appears exactly once first; other games retain provider order")
         for (row, id, name, state) in [
             (first, 101, "Los Angeles Dodgers at San Francisco Giants", "Live"),
             (second, 202, "Kansas City Chiefs at Buffalo Bills", "Scheduled")
@@ -91,25 +97,52 @@ final class PickerSelectedStateJourneyTests: XCTestCase {
     }
 
     @MainActor
-    private func viewport(for element: XCUIElement, in app: XCUIApplication) -> CGRect {
-        let scroll = app.scrollViews.containing(.button, identifier: element.identifier).firstMatch
-        return scroll.exists ? scroll.frame.intersection(app.frame) : app.frame
+    private func scrollViewport(in app: XCUIApplication) throws -> XCUIElement {
+        let appFrame = app.frame
+        let visible = app.scrollViews.allElementsBoundByIndex.filter { scroll in
+            let bounds = scroll.frame.intersection(appFrame)
+            return !bounds.isNull && !bounds.isEmpty && bounds.minX.isFinite && bounds.minY.isFinite && bounds.maxX.isFinite && bounds.maxY.isFinite && scroll.isHittable
+        }
+        guard visible.count == 1 else {
+            capture(app, "Missing or ambiguous selected picker viewport")
+            XCTFail("Expected one visible scroll viewport")
+            throw NSError(domain: "WatchPickerSelectedStateJourney", code: 4)
+        }
+        return visible[0]
     }
 
     @MainActor
-    private func scroll(_ element: XCUIElement, towardTop: Bool, in app: XCUIApplication) {
-        let bounds = viewport(for: element, in: app)
-        let start = app.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: bounds.midX - app.frame.minX, dy: bounds.minY + bounds.height * 0.60 - app.frame.minY))
+    private func viewport(_ scroll: XCUIElement, appFrame: CGRect) throws -> CGRect {
+        let bounds = scroll.frame.intersection(appFrame)
+        guard !bounds.isNull && !bounds.isEmpty && bounds.minX.isFinite && bounds.minY.isFinite && bounds.maxX.isFinite && bounds.maxY.isFinite else {
+            XCTFail("Expected a finite nonempty scroll viewport")
+            throw NSError(domain: "WatchPickerSelectedStateJourney", code: 5)
+        }
+        return bounds
+    }
+
+    @MainActor
+    private func scroll(bounds: CGRect, appFrame: CGRect, towardTop: Bool, in app: XCUIApplication) {
+        let start = app.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: bounds.midX - appFrame.minX, dy: bounds.minY + bounds.height * 0.60 - appFrame.minY))
         let end = start.withOffset(CGVector(dx: 0, dy: bounds.height * (towardTop ? 0.20 : -0.20)))
         start.press(forDuration: 0.1, thenDragTo: end, withVelocity: .slow, thenHoldForDuration: 0.4)
     }
 
     @MainActor
     private func reveal(_ element: XCUIElement, in app: XCUIApplication) throws {
+        let container = try scrollViewport(in: app)
         for _ in 0..<24 {
-            let bounds = viewport(for: element, in: app)
-            if element.isHittable && bounds.intersects(element.frame) { return }
-            scroll(element, towardTop: element.frame.minY < bounds.minY, in: app)
+            let appFrame = app.frame
+            let bounds = try viewport(container, appFrame: appFrame)
+            let frame = element.frame
+            if element.isHittable && bounds.intersects(frame) { return }
+            let earlier = frame.minY < bounds.minY
+            let hiddenDistance = earlier ? bounds.minY - frame.minY : max(0, frame.maxY - bounds.maxY)
+            let distance = min(0.55, max(0.15, (hiddenDistance + 8) / bounds.height))
+            let startY: CGFloat = earlier ? 0.20 : 0.80
+            let start = app.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: bounds.midX - appFrame.minX, dy: bounds.minY + bounds.height * startY - appFrame.minY))
+            let end = start.withOffset(CGVector(dx: 0, dy: bounds.height * (earlier ? distance : -distance)))
+            start.press(forDuration: 0.1, thenDragTo: end, withVelocity: .slow, thenHoldForDuration: 0.4)
         }
         capture(app, "Unreachable selected picker control - \(element.identifier)")
         XCTFail("Cannot bring the picker control into tappable view")
@@ -120,9 +153,11 @@ final class PickerSelectedStateJourneyTests: XCTestCase {
     private func captureRow(_ row: XCUIElement, in app: XCUIApplication, name: String) throws {
         // Oversized accessibility rows can remain complete through scrolling;
         // capture overlapping views through the bottom instead of demanding one-frame fit.
+        let container = try scrollViewport(in: app)
         var topCoverage: CGFloat?
         for _ in 0..<24 {
-            let bounds = viewport(for: row, in: app)
+            let appFrame = app.frame
+            let bounds = try viewport(container, appFrame: appFrame)
             let frame = row.frame
             if row.isHittable && frame.minY >= bounds.minY && frame.minY <= bounds.midY {
                 topCoverage = min(frame.height, bounds.maxY - frame.minY)
@@ -130,14 +165,15 @@ final class PickerSelectedStateJourneyTests: XCTestCase {
                 if bounds.contains(frame) { return }
                 break
             }
-            scroll(row, towardTop: frame.minY < bounds.minY, in: app)
+            scroll(bounds: bounds, appFrame: appFrame, towardTop: frame.minY < bounds.minY, in: app)
         }
         guard var coveredEnd = topCoverage else {
             XCTFail("Cannot show the beginning of the complete named picker row")
             throw NSError(domain: "WatchPickerSelectedStateJourney", code: 2)
         }
         for _ in 0..<24 {
-            let bounds = viewport(for: row, in: app)
+            let appFrame = app.frame
+            let bounds = try viewport(container, appFrame: appFrame)
             let frame = row.frame
             let visibleStart = max(0, bounds.minY - frame.minY)
             let visibleEnd = min(frame.height, bounds.maxY - frame.minY)
@@ -148,7 +184,7 @@ final class PickerSelectedStateJourneyTests: XCTestCase {
                 coveredEnd = visibleEnd
                 if atBottom { return }
             }
-            scroll(row, towardTop: false, in: app)
+            scroll(bounds: bounds, appFrame: appFrame, towardTop: false, in: app)
         }
         XCTFail("Cannot show the end of the complete picker row")
         throw NSError(domain: "WatchPickerSelectedStateJourney", code: 3)

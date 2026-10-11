@@ -57,6 +57,7 @@ final class ClearSelectionJourneyTests: XCTestCase {
         let heading = app.staticTexts["watch.picker-heading"]
         XCTAssertTrue(heading.exists)
         XCTAssertEqual(heading.label, "Choose your game")
+        try expandPickerDetails(in: app)
         let error = app.staticTexts["watch.picker-error"]
         XCTAssertTrue(error.waitForExistence(timeout: 15), "Offline picker must explain its retry recovery")
         XCTAssertEqual(error.label, "Offline. Connect to the internet, then refresh games.")
@@ -64,7 +65,68 @@ final class ClearSelectionJourneyTests: XCTestCase {
         try reveal(error, in: app)
         expectation(for: NSPredicate(format: "enabled == true"), evaluatedWith: refresh)
         waitForExpectations(timeout: 15)
-        try reveal(refresh, in: app)
+        _ = try revealRefresh(refresh, in: app)
+    }
+
+    @MainActor
+    private func expandPickerDetails(in app: XCUIApplication) throws {
+        let details = app.buttons["watch.picker-info"]
+        XCTAssertTrue(details.waitForExistence(timeout: 15))
+        XCTAssertEqual(details.label, "About this list")
+        try reveal(details, in: app)
+        if details.value as? String != "Expanded" {
+            XCTAssertEqual(details.value as? String, "Collapsed")
+            details.tap()
+        }
+        XCTAssertEqual(details.value as? String, "Expanded")
+    }
+
+    @MainActor
+    private func refreshViewport(in app: XCUIApplication) throws -> CGRect {
+        let visible = app.scrollViews.allElementsBoundByIndex.filter {
+            let bounds = $0.frame.intersection(app.frame)
+            return $0.isHittable && !bounds.isNull && !bounds.isEmpty
+                && bounds.minX.isFinite && bounds.maxX.isFinite
+                && bounds.minY.isFinite && bounds.maxY.isFinite
+        }
+        guard visible.count == 1 else {
+            XCTFail("Expected one visible refresh scroll viewport")
+            throw NSError(domain: "WatchPickerRefreshViewport", code: 1)
+        }
+        var bounds = visible[0].frame.intersection(app.frame)
+        let bars = app.navigationBars.allElementsBoundByIndex.filter {
+            $0.exists && $0.frame.intersects(bounds)
+        }
+        if let chromeBottom = bars.map({ $0.frame.maxY }).max() {
+            let top = max(bounds.minY, chromeBottom + 3)
+            bounds = CGRect(x: bounds.minX, y: top, width: bounds.width, height: bounds.maxY - top)
+        }
+        guard !bounds.isEmpty, !bounds.isNull, bounds.height > 30,
+              bounds.minX.isFinite, bounds.maxX.isFinite,
+              bounds.minY.isFinite, bounds.maxY.isFinite else {
+            XCTFail("Invalid unobscured refresh viewport")
+            throw NSError(domain: "WatchPickerRefreshViewport", code: 2)
+        }
+        return bounds.insetBy(dx: 2, dy: 3)
+    }
+
+    @MainActor
+    private func revealRefresh(_ refresh: XCUIElement, in app: XCUIApplication) throws -> CGRect {
+        for _ in 0..<24 {
+            let bounds = try refreshViewport(in: app)
+            let frame = refresh.frame
+            if refresh.isHittable && bounds.contains(frame) { return bounds }
+            let earlier = frame.minY < bounds.minY
+            let distance = earlier ? bounds.minY - frame.minY : frame.maxY - bounds.maxY
+            let fraction = min(0.50, max(0.15, distance / bounds.height))
+            let origin = app.coordinate(withNormalizedOffset: .zero)
+            let start = origin.withOffset(CGVector(dx: bounds.midX - app.frame.minX,
+                dy: bounds.minY + bounds.height * (earlier ? 0.25 : 0.75) - app.frame.minY))
+            let end = start.withOffset(CGVector(dx: 0, dy: bounds.height * (earlier ? fraction : -fraction)))
+            start.press(forDuration: 0.1, thenDragTo: end, withVelocity: .slow, thenHoldForDuration: 0.3)
+        }
+        XCTFail("Cannot bring full refresh control below navigation chrome")
+        throw NSError(domain: "WatchPickerRefreshViewport", code: 3)
     }
 
     @MainActor

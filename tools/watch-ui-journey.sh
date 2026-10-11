@@ -6,9 +6,20 @@ if [[ "${GITHUB_ACTIONS:-}" != true || "${RUNNER_ENVIRONMENT:-}" != github-hoste
   exit 2
 fi
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+cd "$ROOT"
 OUT="$ROOT/build/watch-ui-journey"
 mkdir -p "$OUT"
+SHARD="${WATCH_UI_SHARD:-full}"
+TEST_SELECTION=()
+if [[ "$SHARD" != full ]]; then
+  python3 "$ROOT/tools/watch_ui_shards.py" select --shard "$SHARD" > "$OUT/selected-cases.txt"
+  while IFS= read -r selector; do TEST_SELECTION+=("$selector"); done < "$OUT/selected-cases.txt"
+fi
+STAGE="${1:?Expected prepare or execute}"
+if [[ "$STAGE" != prepare && "$STAGE" != execute ]]; then exit 2; fi
+if [[ "$STAGE" == prepare ]]; then
 PHASE=preflight
+python3 "$ROOT/tools/watch_ui_stage.py" phase --output-dir "$OUT" --phase "$PHASE"
 failure() {
   local status=$?
   echo "Watch UI journey unpaid: $PHASE failed (exit $status)." >&2
@@ -19,11 +30,9 @@ failure() {
 trap failure ERR
 : > "$OUT/preflight.log"
 : > "$OUT/tests.log"
-# Fresh build and result paths prevent old compiled bundles or receipts passing.
+# Fresh extraction and result paths prevent old bundles or receipts passing.
 RUN="$(mktemp -d "$OUT/run.XXXXXX")"
 DERIVED="$RUN/DerivedData"
-PHONE_DERIVED="$RUN/CompanionDerivedData"
-PACKAGES="$RUN/SourcePackages"
 RESULT="$RUN/BainLuckWatchUITests.xcresult"
 printf '%s\n' "$DERIVED" > "$OUT/derived-data.txt"
 printf '%s\n' "$RESULT" > "$OUT/result-bundle.txt"
@@ -74,23 +83,17 @@ DEVICE_TYPE="$(sed -n '1p' "$OUT/destination-spec.txt")"
 RUNTIME="$(sed -n '2p' "$OUT/destination-spec.txt")"
 PHONE_TYPE="$(sed -n '3p' "$OUT/destination-spec.txt")"
 PHONE_RUNTIME="$(sed -n '4p' "$OUT/destination-spec.txt")"
-# Resolve the pinned dependency graph before booting devices. Both independent
-# build-product directories reuse this run's downloads; no shared/global cache.
-PHASE='resolve pinned packages before simulator preparation'
-PINNED_PACKAGES="$ROOT/ios/Bain Luck/Bain Luck.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved"
-cp "$PINNED_PACKAGES" "$OUT/package-resolved-before.json"
-python3 "$ROOT/tools/watch_resolve_packages.py" --output-dir "$OUT/package-resolution" -- \
-  xcodebuild -resolvePackageDependencies \
-  -project "$ROOT/ios/Bain Luck/Bain Luck.xcodeproj" -scheme 'Bain Luck' \
-  -derivedDataPath "$PHONE_DERIVED" -clonedSourcePackagesDirPath "$PACKAGES" \
-  -onlyUsePackageVersionsFromResolvedFile
-python3 - "$PINNED_PACKAGES" "$OUT/package-resolved-before.json" <<'PINS'
-from pathlib import Path
-import sys
-if Path(sys.argv[1]).read_bytes() != Path(sys.argv[2]).read_bytes():
-    raise SystemExit('Package resolution changed the committed pins; gate unpaid')
-PINS
+PHASE='verify exact immutable simulator products'
+python3 "$ROOT/tools/watch_ui_stage.py" phase --output-dir "$OUT" --phase "$PHASE"
+python3 "$ROOT/tools/watch_ui_products.py" unpack --repo "$ROOT" \
+  --archive "$ROOT/build/watch-ui-products/products.tar.gz" --output "$RUN/package"
+python3 "$ROOT/tools/watch_ui_products.py" verify --repo "$ROOT" --sha "$SHA" \
+  --output "$RUN/package" > "$OUT/products-verification.json"
+DERIVED="$RUN/package/payload/watch"
+printf '%s\n' "$DERIVED" > "$OUT/derived-data.txt"
+XCTESTRUN="$RUN/package/payload/$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["xctestrun"])' "$OUT/products-verification.json")"
 PHASE='disposable companion phone and Watch simulator creation'
+python3 "$ROOT/tools/watch_ui_stage.py" phase --output-dir "$OUT" --phase "$PHASE"
 TEST_UDID="$(xcrun simctl create "codex-watch-ui-journey" "$DEVICE_TYPE" "$RUNTIME" 2>> "$OUT/preflight.log")"
 PHONE_UDID="$(xcrun simctl create "codex-watch-ui-companion" "$PHONE_TYPE" "$PHONE_RUNTIME" 2>> "$OUT/preflight.log")"
 printf '%s\n' "$TEST_UDID" > "$OUT/destination.txt"
@@ -119,60 +122,73 @@ PAIR
 # bootstatus -b starts an unbooted device and waits for it. Prepare each new
 # member serially; the pair-wide boot RPC timed out before reaching readiness.
 PHASE='boot and await only the new disposable companion phone'
+python3 "$ROOT/tools/watch_ui_stage.py" phase --output-dir "$OUT" --phase "$PHASE"
 xcrun simctl bootstatus "$PHONE_UDID" -b >> "$OUT/preflight.log" 2>&1
 PHASE='boot and await only the new disposable Watch'
+python3 "$ROOT/tools/watch_ui_stage.py" phase --output-dir "$OUT" --phase "$PHASE"
 xcrun simctl bootstatus "$TEST_UDID" -b >> "$OUT/preflight.log" 2>&1
-# watchOS Simulator rejects simctl content_size (POSIX45). The suite separately
-# verifies default layout and a DEBUG-only accessibility5 layout stress override.
+# Resolve the exact devices through their available booted runtime metadata.
+# uname inside a simulator can report x86_64 on an arm64-only runtime.
+PHASE='verify exact paired simulator runtime architecture'
+python3 "$ROOT/tools/watch_ui_stage.py" phase --output-dir "$OUT" --phase "$PHASE"
+xcrun simctl list --json > "$OUT/prepared-simulators.json" 2>> "$OUT/preflight.log"
+xcrun simctl list pairs --json > "$OUT/prepared-pairs.json" 2>> "$OUT/preflight.log"
+python3 "$ROOT/tools/watch_simulator_architecture.py" --runtime-pair \
+  --watch-id "$TEST_UDID" --phone-id "$PHONE_UDID" \
+  --simulators "$OUT/prepared-simulators.json" --pairs "$OUT/prepared-pairs.json" \
+  --products "$RUN/package/manifest.json" --output "$OUT/simulator-architecture.json"
 printf '%s\n' 'Default layout plus forced accessibility5 layout stress; system preference unsupported' > "$OUT/text-size.txt"
-# The Watch app and tests supply their own launch environment. Never pair
-# with an existing iPhone or inject fixtures through simulator shell commands.
-# Simulator-only ad-hoc signing uses generated simulated App Group xcent. No Apple
-# identity, provisioning profile, account access or upload is requested; Debug
-# also leaves the existing Release Crashlytics upload path unexecuted.
-XCODE_ARGS=(
-  -project "$ROOT/ios/Bain Luck/Bain Luck.xcodeproj"
-  -scheme BainLuckWatchUITests -configuration Debug
-  -destination "platform=watchOS Simulator,id=$TEST_UDID"
-  -derivedDataPath "$DERIVED" -parallel-testing-enabled NO -jobs 2
-  -clonedSourcePackagesDirPath "$PACKAGES" -disableAutomaticPackageResolution
-  CODE_SIGNING_ALLOWED=YES CODE_SIGNING_REQUIRED=YES
-  CODE_SIGN_IDENTITY=- CODE_SIGN_STYLE=Manual PROVISIONING_PROFILE_SPECIFIER=
-  'OTHER_SWIFT_FLAGS=$(inherited) -Xfrontend -disable-sandbox'
-)
-PHASE='build exact Watch app, embedded Widget and UI test products'
-xcodebuild build-for-testing "${XCODE_ARGS[@]}" > "$OUT/build-for-testing.log" 2>&1
-PHASE='build the exact Debug simulator companion without launching it'
-xcodebuild build -project "$ROOT/ios/Bain Luck/Bain Luck.xcodeproj" \
-  -scheme 'Bain Luck' -configuration Debug \
-  -destination "platform=iOS Simulator,id=$PHONE_UDID" \
-  -derivedDataPath "$PHONE_DERIVED" -jobs 2 \
-  -clonedSourcePackagesDirPath "$PACKAGES" -disableAutomaticPackageResolution \
-  CODE_SIGNING_ALLOWED=YES CODE_SIGNING_REQUIRED=YES \
-  CODE_SIGN_IDENTITY=- CODE_SIGN_STYLE=Manual PROVISIONING_PROFILE_SPECIFIER= \
-  'OTHER_SWIFT_FLAGS=$(inherited) -Xfrontend -disable-sandbox' \
-  > "$OUT/companion-build.log" 2>&1
 # Give the system host a cold startup with the installed extension available.
 # This is preparation for one full suite, never a retry after a failed suite.
 # XCTest may still reinstall products; retain the lifecycle without claiming
 # that preinstallation alone proves WidgetKit discovery.
-BUILT_PHONE="$PHONE_DERIVED/Build/Products/Debug-iphonesimulator/Bain Luck.app"
+BUILT_PHONE="$RUN/package/payload/phone/Bain Luck.app"
 BUILT_APP="$BUILT_PHONE/Watch/BainLuckWatch Watch App.app"
 PHASE='explicitly install companion and nested Watch app on the new pair'
+python3 "$ROOT/tools/watch_ui_stage.py" phase --output-dir "$OUT" --phase "$PHASE"
 date -u '+%Y-%m-%dT%H:%M:%SZ preinstall' >> "$OUT/install-lifecycle.txt"
 xcrun simctl install "$PHONE_UDID" "$BUILT_PHONE" >> "$OUT/preflight.log" 2>&1
 xcrun simctl install "$TEST_UDID" "$BUILT_APP" >> "$OUT/preflight.log" 2>&1
 xcrun simctl get_app_container "$PHONE_UDID" com.bainluck.Bain-Luck app >> "$OUT/install-lifecycle.txt"
 xcrun simctl get_app_container "$TEST_UDID" com.bainluck.Bain-Luck.watchkitapp app >> "$OUT/install-lifecycle.txt"
-PHASE='restart only this run disposable simulator after installation'
+PHASE='post-install shutdown of only this run disposable Watch'
+python3 "$ROOT/tools/watch_ui_stage.py" phase --output-dir "$OUT" --phase "$PHASE"
 xcrun simctl shutdown "$TEST_UDID" >> "$OUT/preflight.log" 2>&1
+PHASE='post-install boot of only this run disposable Watch'
+python3 "$ROOT/tools/watch_ui_stage.py" phase --output-dir "$OUT" --phase "$PHASE"
 xcrun simctl boot "$TEST_UDID" >> "$OUT/preflight.log" 2>&1
+PHASE='post-install boot readiness of only this run disposable Watch'
+python3 "$ROOT/tools/watch_ui_stage.py" phase --output-dir "$OUT" --phase "$PHASE"
 xcrun simctl bootstatus "$TEST_UDID" -b >> "$OUT/preflight.log" 2>&1
+PHASE='post-install Watch ready; verify installed containers'
+python3 "$ROOT/tools/watch_ui_stage.py" phase --output-dir "$OUT" --phase "$PHASE"
 date -u '+%Y-%m-%dT%H:%M:%SZ boot-ready' >> "$OUT/install-lifecycle.txt"
 xcrun simctl get_app_container "$PHONE_UDID" com.bainluck.Bain-Luck app >> "$OUT/install-lifecycle.txt"
 xcrun simctl get_app_container "$TEST_UDID" com.bainluck.Bain-Luck.watchkitapp app >> "$OUT/install-lifecycle.txt"
+python3 - "$OUT/prepared.json" "$RUN" "$DERIVED" "$RESULT" "$SHA" "$TEST_UDID" "$PHONE_UDID" "$XCTESTRUN" <<'STATE'
+import json, sys
+from pathlib import Path
+keys = ['run', 'derived', 'result', 'sha', 'watch', 'phone', 'xctestrun']
+Path(sys.argv[1]).write_text(json.dumps(dict(zip(keys, sys.argv[2:])), indent=2) + '\n')
+STATE
+exit 0
+fi
+# Execute stage reuses only this job's verified immutable package and fresh pair.
+read_state() { python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))[sys.argv[2]])' "$OUT/prepared.json" "$1"; }
+RUN="$(read_state run)"
+DERIVED="$(read_state derived)"
+RESULT="$(read_state result)"
+SHA="$(git -C "$ROOT" rev-parse HEAD)"
+[[ "$SHA" == "$(read_state sha)" ]]
+TEST_UDID="$(read_state watch)"
+PHONE_UDID="$(read_state phone)"
+XCTESTRUN="$(read_state xctestrun)"
+python3 "$ROOT/tools/watch_ui_products.py" verify --repo "$ROOT" --sha "$SHA" \
+  --output "$RUN/package" > "$OUT/products-verification.json"
+XCODE_ARGS=(-xctestrun "$XCTESTRUN" -destination "platform=watchOS Simulator,id=$TEST_UDID" -parallel-testing-enabled NO)
 PHASE='BainLuckWatchUITests full suite from the same built products'
-if xcodebuild test-without-building "${XCODE_ARGS[@]}" \
+python3 "$ROOT/tools/watch_ui_stage.py" phase --output-dir "$OUT" --phase "$PHASE"
+if xcodebuild test-without-building "${XCODE_ARGS[@]}" ${TEST_SELECTION[@]+"${TEST_SELECTION[@]}"} \
   -resultBundlePath "$RESULT" -collect-test-diagnostics never \
   -test-timeouts-enabled YES -default-test-execution-time-allowance 180 \
   -maximum-test-execution-time-allowance 300 \
@@ -246,6 +262,7 @@ Path(sys.argv[3]).write_text(json.dumps(receipt, indent=2) + "\n")
 RUNTIME
 fi
 PHASE='installed simulator WidgetKit entitlement verification'
+python3 "$ROOT/tools/watch_ui_stage.py" phase --output-dir "$OUT" --phase "$PHASE"
 # Retain installation/signing evidence even when gallery navigation fails.
 # A diagnostic error must not hide the original test failure; on a passing
 # suite the same signing checks remain mandatory.
@@ -295,7 +312,8 @@ else
   if [[ "$TEST_EXIT" -eq 0 ]]; then exit 1; fi
 fi
 PHASE='effective layout stress size verification'
-if [[ "$TEST_EXIT" -eq 0 ]]; then
+python3 "$ROOT/tools/watch_ui_stage.py" phase --output-dir "$OUT" --phase "$PHASE"
+if [[ "$TEST_EXIT" -eq 0 && "$SHARD" == full ]]; then
   python3 - "$OUT/tests.log" <<'PYVERIFY'
 import sys
 from pathlib import Path
@@ -306,13 +324,21 @@ if 'WATCH_UI_STRESS_TYPE=accessibility5' not in lines:
     raise SystemExit('App did not confirm accessibility5 layout stress; gate unpaid')
 if not any(line.startswith('WATCH_UI_STANDARD_TYPE=') for line in lines):
     raise SystemExit('Default text-size journey did not report its actual size; gate unpaid')
-for marker in ('WATCH_UI_ROUNDING_PAIR=45', 'WATCH_UI_ROUNDING_DRAW=46', 'WATCH_UI_LAUNCHER_COLD=PASS', 'WATCH_UI_COMPLICATION_CONTENT=PASS', 'WATCH_UI_ACTUAL_WIDGET_WARM=PASS', 'WATCH_UI_ACTUAL_WIDGET_COLD=PASS', 'WATCH_UI_ACTUAL_WIDGET_EMPTY=PASS', 'WATCH_UI_FRESH_FACE_ACTIVATION=PASS', 'WATCH_RECTANGULAR_INSTALLED_DETAIL=Saved · 64% · Live', 'WATCH_UI_CLEAR_SELECTION=PASS', 'WATCH_UI_PICKER_RETURN=PASS', 'WATCH_UI_PICKER_NETWORK_OFFLINE=PASS', 'WATCH_UI_PICKER_NETWORK_INTERRUPTED=PASS', 'WATCH_UI_PICKER_NETWORK_TIMEOUT=PASS', 'WATCH_UI_DISCOVERIES_SAVED=PASS', 'WATCH_UI_DISCOVERIES_LARGE=PASS', 'WATCH_UI_DISCOVERIES_UNSELECTED=PASS', 'WATCH_UI_DISCOVERIES_CONTINUATION=PASS', 'WATCH_UI_DISCOVERIES_RETURN_STANDARD=PASS', 'WATCH_UI_DISCOVERIES_RETURN_LARGE=PASS', 'WATCH_UI_DISCOVERIES_HEADING_STANDARD=PASS', 'WATCH_UI_DISCOVERIES_HEADING_LARGE=PASS', 'WATCH_UI_CIRCULAR_CONTENT=PASS', 'WATCH_UI_CIRCULAR_FALLBACK=PASS', 'WATCH_UI_ACTUAL_CIRCULAR_SAVED=PASS', 'WATCH_UI_PICKER_SELECTED_STANDARD=PASS', 'WATCH_UI_PICKER_SELECTED_LARGE=PASS', 'WATCH_UI_GAME_UPDATING_STANDARD=PASS', 'WATCH_UI_GAME_UPDATING_LARGE=PASS'):
+for marker in ('WATCH_UI_ROUNDING_PAIR=45', 'WATCH_UI_ROUNDING_DRAW=46', 'WATCH_UI_LAUNCHER_COLD=PASS', 'WATCH_UI_COMPLICATION_CONTENT=PASS', 'WATCH_UI_ACTUAL_WIDGET_WARM=PASS', 'WATCH_UI_ACTUAL_WIDGET_COLD=PASS', 'WATCH_UI_ACTUAL_WIDGET_EMPTY=PASS', 'WATCH_UI_FRESH_FACE_ACTIVATION=PASS', 'WATCH_RECTANGULAR_INSTALLED_DETAIL=Saved · 64% · Live', 'WATCH_UI_CLEAR_SELECTION=PASS', 'WATCH_UI_PICKER_RETURN=PASS', 'WATCH_UI_PICKER_NETWORK_OFFLINE=PASS', 'WATCH_UI_PICKER_NETWORK_INTERRUPTED=PASS', 'WATCH_UI_PICKER_NETWORK_TIMEOUT=PASS', 'WATCH_UI_DISCOVERIES_SAVED=PASS', 'WATCH_UI_DISCOVERIES_LARGE=PASS', 'WATCH_UI_DISCOVERIES_UNSELECTED=PASS', 'WATCH_UI_DISCOVERIES_CONTINUATION=PASS', 'WATCH_UI_DISCOVERIES_RETURN_STANDARD=PASS', 'WATCH_UI_DISCOVERIES_RETURN_LARGE=PASS', 'WATCH_UI_DISCOVERIES_HEADING_STANDARD=PASS', 'WATCH_UI_DISCOVERIES_HEADING_LARGE=PASS', 'WATCH_UI_CIRCULAR_CONTENT=PASS', 'WATCH_UI_CIRCULAR_FALLBACK=PASS', 'WATCH_UI_ACTUAL_CIRCULAR_SAVED=PASS', 'WATCH_UI_PICKER_SELECTED_STANDARD=PASS', 'WATCH_UI_PICKER_SELECTED_LARGE=PASS', 'WATCH_UI_GAME_UPDATING_STANDARD=PASS', 'WATCH_UI_GAME_UPDATING_LARGE=PASS', 'WATCH_UI_RECTANGULAR_TYPED=PASS', 'WATCH_UI_RECTANGULAR_MONOCHROME=PASS', 'WATCH_UI_RECTANGULAR_LEGACY=PASS', 'WATCH_UI_RECTANGULAR_ACTUAL_TYPED=PASS'):
     if marker not in lines:
         raise SystemExit(f'Watch journey did not confirm {marker}; gate unpaid')
 if not re.search(r"^Test Case '-\[BainLuckWatchUITests\.WidgetTapJourneyTests testFreshConfiguredFaceIsActiveBeforeActualLauncherTap\]' passed \([0-9.]+ seconds\)\.$", log, re.MULTILINE):
     raise SystemExit('Fresh-face activation regression did not pass; gate unpaid')
 if not re.search(r"^Test Case '-\[BainLuckWatchUITests\.PickerReturnJourneyTests testNetworkFailureGuidanceRetainsChoicesAndRecoversSelection\]' passed \([0-9.]+ seconds\)\.$", log, re.MULTILINE):
     raise SystemExit('Picker network recovery did not complete its visible retained-choice journey; gate unpaid')
+for suite, case in (
+    ('ComplicationContentJourneyTests', 'testRectangularTypedNamedValuesFitWithMonochromeRendering'),
+    ('ComplicationContentJourneyTests', 'testRectangularLegacyMismatchUnknownAndEmptyStayHonest'),
+    ('RectangularWidgetHostJourneyTests', 'testActualRectangularWidgetShowsPublishedSavedReading'),
+):
+    pattern = rf"^Test Case '-\[BainLuckWatchUITests\.{suite} {case}\]' passed \([0-9.]+ seconds\)\.$"
+    if not re.search(pattern, log, re.MULTILINE):
+        raise SystemExit(f'Rectangular readability case {case} did not pass; gate unpaid')
 for case in ('testSelectedGameIsMarkedInPickerAndCanChange', 'testSelectedGameIsMarkedAtAccessibilitySize'):
     pattern = rf"^Test Case '-\[BainLuckWatchUITests\.PickerSelectedStateJourneyTests {case}\]' (passed|failed|skipped) \([0-9.]+ seconds\)\.$"
     if re.findall(pattern, log, re.MULTILINE) != ['passed']:
@@ -322,11 +348,63 @@ for case in ('testUpdatingIsVisibleUntilRequestFinishes', 'testUpdatingIsVisible
     if re.findall(pattern, log, re.MULTILINE) != ['passed']:
         raise SystemExit(f'Updating case {case} did not pass exactly once; gate unpaid')
 PYVERIFY
+  python3 - "$OUT/tests.log" <<'PYALIAS'
+import re
+import sys
+from pathlib import Path
+log = Path(sys.argv[1]).read_text()
+lines = log.splitlines()
+for marker in (
+    'WATCH_UI_PICKER_ALIAS_STANDARD=PASS',
+    'WATCH_UI_PICKER_ALIAS_LARGE=PASS',
+    'WATCH_UI_PICKER_ALIAS_UNPROVEN_CONTROL=PASS',
+    'WATCH_UI_PICKER_ALIAS_SAVED_BANNER_LARGE=PASS',
+):
+    if lines.count(marker) != 1:
+        raise SystemExit(f'Picker alias marker {marker} did not occur exactly once; gate unpaid')
+for case in (
+    'testResolvedAliasRetainsReadingOfflineAndAfterRestart',
+    'testResolvedAliasRetainsReadingAtAccessibilitySize',
+    'testUnprovenSameNameChoiceDoesNotReuseSavedReading',
+    'testRestoredSavedBannerIsReadableAtAccessibilitySize',
+):
+    pattern = rf"^Test Case '-\[BainLuckWatchUITests\.PickerAliasJourneyTests {case}\]' (passed|failed|skipped) \([0-9.]+ seconds\)\.$"
+    if re.findall(pattern, log, re.MULTILINE) != ['passed']:
+        raise SystemExit(f'Picker alias case {case} did not pass exactly once; gate unpaid')
+PYALIAS
+  python3 "$ROOT/tools/watch_discovery_polish_receipt.py" "$OUT/tests.log"
 fi
 PHASE='rendered diagnostics consent verification'
-if [[ "$TEST_EXIT" -eq 0 ]]; then
+python3 "$ROOT/tools/watch_ui_stage.py" phase --output-dir "$OUT" --phase "$PHASE"
+if [[ "$TEST_EXIT" -eq 0 && "$SHARD" == full ]]; then
   python3 "$ROOT/tools/watch_diagnostics_receipt.py" --log "$OUT/tests.log"
 fi
+PHASE='configured corner and fallback verification'
+python3 "$ROOT/tools/watch_ui_stage.py" phase --output-dir "$OUT" --phase "$PHASE"
+if [[ "$TEST_EXIT" -eq 0 && "$SHARD" == full ]]; then
+  python3 - "$OUT/tests.log" <<'PYCORNER'
+import sys
+from pathlib import Path
+import re
+log = Path(sys.argv[1]).read_text()
+for marker in ('WATCH_UI_ACTUAL_CORNER_SAVED=PASS', 'WATCH_UI_CORNER_FALLBACK=PASS', 'WATCH_UI_CORNER_MAIN_FIT=PASS'):
+    if marker not in log.splitlines():
+        raise SystemExit(f'Watch corner journey did not confirm {marker}; gate unpaid')
+for suite, case in [('WidgetTapJourneyTests', 'testActualCornerSavedReadingAndTap'),
+                    ('ComplicationContentJourneyTests', 'testCornerUnsupportedReadingsStayLaunchers'),
+                    ('ComplicationContentJourneyTests', 'testCornerForecastFitsMeasured34PointContentSlot')]:
+    pattern = rf"^Test Case '-\[BainLuckWatchUITests\.{suite} {case}\]' passed \([0-9.]+ seconds\)\.$"
+    if not re.search(pattern, log, re.MULTILINE):
+        raise SystemExit(f'Watch corner case {case} did not pass; gate unpaid')
+PYCORNER
+fi
 PHASE='full-suite receipt verification'
+python3 "$ROOT/tools/watch_ui_stage.py" phase --output-dir "$OUT" --phase "$PHASE"
+if [[ "$SHARD" != full ]]; then
+  python3 "$ROOT/tools/watch_ui_shards.py" receipt --shard "$SHARD" --directory "$OUT" --sha "$SHA" --exit-code "$TEST_EXIT"
+  exit 0
+fi
+
+
 python3 "$ROOT/tools/watch_iphone_receipt.py" --log "$OUT/tests.log" \
   --exit-code "$TEST_EXIT" --sha "$SHA" --output "$OUT/receipt.json"

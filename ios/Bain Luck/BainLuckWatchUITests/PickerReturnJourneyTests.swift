@@ -39,6 +39,7 @@ final class PickerReturnJourneyTests: XCTestCase {
         waitForExpectations(timeout: 15)
         XCTAssertTrue(probability.exists && probability.label.contains("San Francisco Giants"))
         try openPicker(in: app)
+        try expandPickerDetails(in: app)
         let error = app.staticTexts["watch.picker-error"]
         XCTAssertTrue(error.waitForExistence(timeout: 15))
         XCTAssertEqual(error.label, "Offline. Connect to the internet, then refresh games.")
@@ -78,6 +79,7 @@ final class PickerReturnJourneyTests: XCTestCase {
             let probability = app.descendants(matching: .any)["watch.home-probability"].firstMatch
             XCTAssertTrue(probability.waitForExistence(timeout: 15) && probability.label.contains("San Francisco Giants"))
             try openPicker(in: app)
+            try expandPickerDetails(in: app)
             let error = app.staticTexts["watch.picker-error"]
             XCTAssertTrue(error.waitForExistence(timeout: 15))
             XCTAssertEqual(error.label, message)
@@ -89,9 +91,17 @@ final class PickerReturnJourneyTests: XCTestCase {
             try reveal(retained, in: app)
             capture(app, "Picker \(scenario) retains named previously received option")
             let refresh = app.buttons["Refresh games"]
-            try reveal(refresh, in: app)
+            let refreshBounds = try revealRefresh(refresh, in: app)
             XCTAssertTrue(refresh.isEnabled)
-            refresh.tap()
+            let refreshFrame = refresh.frame
+            XCTAssertTrue(refresh.isHittable && refreshBounds.contains(refreshFrame))
+            XCTAssertTrue(refreshBounds.contains(CGPoint(x: refreshFrame.midX, y: refreshFrame.midY)))
+            capture(app, "Picker \(scenario) refresh fully below native chrome")
+            let geometry = XCTAttachment(string: "Refresh frame: \(refreshFrame); safe content: \(refreshBounds)\n" + app.debugDescription)
+            geometry.name = "Picker \(scenario) verified refresh target geometry"
+            geometry.lifetime = .keepAlways
+            add(geometry)
+            refresh.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
             expectation(for: NSPredicate(format: "exists == false"), evaluatedWith: error)
             waitForExpectations(timeout: 15)
             XCTAssertFalse(app.staticTexts["Showing the previously received list."].exists)
@@ -128,12 +138,98 @@ final class PickerReturnJourneyTests: XCTestCase {
     }
 
     @MainActor
-    private func reveal(_ element: XCUIElement, in app: XCUIApplication) throws {
+    private func expandPickerDetails(in app: XCUIApplication) throws {
+        let details = app.buttons["watch.picker-info"]
+        XCTAssertTrue(details.waitForExistence(timeout: 15))
+        XCTAssertEqual(details.label, "About this list")
+        try reveal(details, in: app)
+        if details.value as? String != "Expanded" {
+            XCTAssertEqual(details.value as? String, "Collapsed")
+            details.tap()
+        }
+        XCTAssertEqual(details.value as? String, "Expanded")
+    }
+
+    @MainActor
+    private func refreshViewport(in app: XCUIApplication) throws -> CGRect {
+        let visible = app.scrollViews.allElementsBoundByIndex.filter {
+            let bounds = $0.frame.intersection(app.frame)
+            return $0.isHittable && !bounds.isNull && !bounds.isEmpty
+                && bounds.minX.isFinite && bounds.maxX.isFinite
+                && bounds.minY.isFinite && bounds.maxY.isFinite
+        }
+        guard visible.count == 1 else {
+            XCTFail("Expected one visible refresh scroll viewport")
+            throw NSError(domain: "WatchPickerRefreshViewport", code: 1)
+        }
+        var bounds = visible[0].frame.intersection(app.frame)
+        let bars = app.navigationBars.allElementsBoundByIndex.filter {
+            $0.exists && $0.frame.intersects(bounds)
+        }
+        if let chromeBottom = bars.map({ $0.frame.maxY }).max() {
+            let top = max(bounds.minY, chromeBottom + 3)
+            bounds = CGRect(x: bounds.minX, y: top, width: bounds.width, height: bounds.maxY - top)
+        }
+        guard !bounds.isEmpty, !bounds.isNull, bounds.height > 30,
+              bounds.minX.isFinite, bounds.maxX.isFinite,
+              bounds.minY.isFinite, bounds.maxY.isFinite else {
+            XCTFail("Invalid unobscured refresh viewport")
+            throw NSError(domain: "WatchPickerRefreshViewport", code: 2)
+        }
+        return bounds.insetBy(dx: 2, dy: 3)
+    }
+
+    @MainActor
+    private func revealRefresh(_ refresh: XCUIElement, in app: XCUIApplication) throws -> CGRect {
         for _ in 0..<24 {
-            if element.isHittable && app.frame.contains(element.frame) { return }
-            let earlier = element.frame.minY < app.frame.minY
-            let start = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.60))
-            let end = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: earlier ? 0.75 : 0.45))
+            let bounds = try refreshViewport(in: app)
+            let frame = refresh.frame
+            if refresh.isHittable && bounds.contains(frame) { return bounds }
+            let earlier = frame.minY < bounds.minY
+            let distance = earlier ? bounds.minY - frame.minY : frame.maxY - bounds.maxY
+            let fraction = min(0.50, max(0.15, distance / bounds.height))
+            let origin = app.coordinate(withNormalizedOffset: .zero)
+            let start = origin.withOffset(CGVector(dx: bounds.midX - app.frame.minX,
+                dy: bounds.minY + bounds.height * (earlier ? 0.25 : 0.75) - app.frame.minY))
+            let end = start.withOffset(CGVector(dx: 0, dy: bounds.height * (earlier ? fraction : -fraction)))
+            start.press(forDuration: 0.1, thenDragTo: end, withVelocity: .slow, thenHoldForDuration: 0.3)
+        }
+        XCTFail("Cannot bring full refresh control below navigation chrome")
+        throw NSError(domain: "WatchPickerRefreshViewport", code: 3)
+    }
+
+    @MainActor
+    private func reveal(_ element: XCUIElement, in app: XCUIApplication) throws {
+        let initialAppFrame = app.frame
+        let initialFrame = element.frame
+        if element.isHittable && initialAppFrame.contains(initialFrame) { return }
+        let visible = app.scrollViews.allElementsBoundByIndex.filter { scroll in
+            let bounds = scroll.frame.intersection(initialAppFrame)
+            return !bounds.isNull && !bounds.isEmpty && bounds.minX.isFinite && bounds.minY.isFinite && bounds.maxX.isFinite && bounds.maxY.isFinite && scroll.isHittable
+        }
+        guard visible.count == 1 else {
+            capture(app, "Missing or ambiguous picker return viewport")
+            XCTFail("Expected one visible scroll viewport")
+            throw NSError(domain: "WatchPickerReturnJourney", code: 2)
+        }
+        let container = visible[0]
+        for _ in 0..<24 {
+            let appFrame = app.frame
+            let bounds = container.frame.intersection(appFrame)
+            guard !bounds.isNull && !bounds.isEmpty && bounds.minX.isFinite && bounds.minY.isFinite && bounds.maxX.isFinite && bounds.maxY.isFinite else {
+                XCTFail("Expected a finite nonempty scroll viewport")
+                throw NSError(domain: "WatchPickerReturnJourney", code: 3)
+            }
+            let frame = element.frame
+            // Toolbar return controls lie outside the content scroll viewport.
+            // Retain complete app-frame visibility plus actual hittability.
+            if element.isHittable && appFrame.contains(frame) { return }
+            let earlier = frame.minY < bounds.minY
+            let hiddenDistance = earlier ? bounds.minY - frame.minY : max(0, frame.maxY - bounds.maxY)
+            let distance = min(0.55, max(0.15, (hiddenDistance + 8) / bounds.height))
+            let startY: CGFloat = earlier ? 0.20 : 0.80
+            let start = app.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: bounds.midX - appFrame.minX, dy: bounds.minY + bounds.height * startY - appFrame.minY))
+            let end = start.withOffset(CGVector(dx: 0, dy: bounds.height * (earlier ? distance : -distance)))
             start.press(forDuration: 0.1, thenDragTo: end, withVelocity: .slow, thenHoldForDuration: 0.4)
         }
         capture(app, "Unreachable picker return - \(element.identifier)")
