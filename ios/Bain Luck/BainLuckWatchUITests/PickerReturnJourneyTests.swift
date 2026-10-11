@@ -153,22 +153,26 @@ final class PickerReturnJourneyTests: XCTestCase {
     }
 
     @MainActor
-    private func refreshViewport(in app: XCUIApplication) throws -> CGRect {
-        let visible = app.scrollViews.allElementsBoundByIndex.filter {
-            let bounds = $0.frame.intersection(app.frame)
-            return $0.isHittable && !bounds.isNull && !bounds.isEmpty
+    private func refreshViewport(in app: XCUIApplication, appFrame: CGRect) throws -> CGRect {
+        // Read each frame once for this attempt; never retain geometry across a drag.
+        let visible = app.scrollViews.allElementsBoundByIndex.compactMap { scroll -> CGRect? in
+            let bounds = scroll.frame.intersection(appFrame)
+            guard scroll.isHittable && !bounds.isNull && !bounds.isEmpty
                 && bounds.minX.isFinite && bounds.maxX.isFinite
-                && bounds.minY.isFinite && bounds.maxY.isFinite
+                && bounds.minY.isFinite && bounds.maxY.isFinite else { return nil }
+            return bounds
         }
         guard visible.count == 1 else {
             XCTFail("Expected one visible refresh scroll viewport")
             throw NSError(domain: "WatchPickerRefreshViewport", code: 1)
         }
-        var bounds = visible[0].frame.intersection(app.frame)
-        let bars = app.navigationBars.allElementsBoundByIndex.filter {
-            $0.exists && $0.frame.intersects(bounds)
-        }
-        if let chromeBottom = bars.map({ $0.frame.maxY }).max() {
+        var bounds = visible[0]
+        let chromeBottom = app.navigationBars.allElementsBoundByIndex.compactMap { bar -> CGFloat? in
+            guard bar.exists else { return nil }
+            let frame = bar.frame
+            return frame.intersects(bounds) ? frame.maxY : nil
+        }.max()
+        if let chromeBottom = chromeBottom {
             let top = max(bounds.minY, chromeBottom + 3)
             bounds = CGRect(x: bounds.minX, y: top, width: bounds.width, height: bounds.maxY - top)
         }
@@ -184,15 +188,16 @@ final class PickerReturnJourneyTests: XCTestCase {
     @MainActor
     private func revealRefresh(_ refresh: XCUIElement, in app: XCUIApplication) throws -> CGRect {
         for _ in 0..<24 {
-            let bounds = try refreshViewport(in: app)
+            let appFrame = app.frame
+            let bounds = try refreshViewport(in: app, appFrame: appFrame)
             let frame = refresh.frame
             if refresh.isHittable && bounds.contains(frame) { return bounds }
             let earlier = frame.minY < bounds.minY
             let distance = earlier ? bounds.minY - frame.minY : frame.maxY - bounds.maxY
             let fraction = min(0.50, max(0.15, distance / bounds.height))
             let origin = app.coordinate(withNormalizedOffset: .zero)
-            let start = origin.withOffset(CGVector(dx: bounds.midX - app.frame.minX,
-                dy: bounds.minY + bounds.height * (earlier ? 0.25 : 0.75) - app.frame.minY))
+            let start = origin.withOffset(CGVector(dx: bounds.midX - appFrame.minX,
+                dy: bounds.minY + bounds.height * (earlier ? 0.25 : 0.75) - appFrame.minY))
             let end = start.withOffset(CGVector(dx: 0, dy: bounds.height * (earlier ? fraction : -fraction)))
             start.press(forDuration: 0.1, thenDragTo: end, withVelocity: .slow, thenHoldForDuration: 0.3)
         }

@@ -86,9 +86,9 @@ class WatchUIShardTests(unittest.TestCase):
             ["WidgetTapJourneyTests/testActualCornerSavedReadingAndTap"],
         )
         self.assertEqual(len(self.groups["readings"]), 42)
-        self.assertEqual(len(self.groups["navigation"]), 42)
-        self.assertEqual(len(self.groups["controls"]), 41)
-        self.assertEqual(len(self.groups["widgets"]), 11)
+        self.assertEqual(len(self.groups["navigation"]), 39)
+        self.assertEqual(len(self.groups["controls"]), 33)
+        self.assertEqual(len(self.groups["widgets"]), 22)
 
     def test_composed_fixture_preserves_fixed_clock_and_provider_alias(self):
         source = (

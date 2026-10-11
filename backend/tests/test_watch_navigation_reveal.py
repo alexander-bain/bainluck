@@ -40,7 +40,10 @@ def normalize_more_actions(name, text):
 
 
 def source(name):
-    return normalize_more_actions(name, (SWIFT / name).read_text())
+    text = (SWIFT / name).read_text()
+    if name == "PickerReturnJourneyTests.swift":
+        text = normalize_picker_frame_reads(text)
+    return normalize_more_actions(name, text)
 
 
 # Exact approved additions are normalized away before the ORIGINAL hash check.
@@ -485,3 +488,71 @@ def test_largest_text_change_geometry_model_keeps_both_endpoints_inside_content(
             y < 0
         ), "Original whole-app direction pushes top-edge target outward"
         assert end > start
+
+
+# This candidate only coalesces geometry reads within one reveal attempt.
+# Reconstruct exact prior helpers before the unchanged original-obligation gate.
+PICKER_FRAME_READS_BEFORE = '    @MainActor\n    private func refreshViewport(in app: XCUIApplication) throws -> CGRect {\n        let visible = app.scrollViews.allElementsBoundByIndex.filter {\n            let bounds = $0.frame.intersection(app.frame)\n            return $0.isHittable && !bounds.isNull && !bounds.isEmpty\n                && bounds.minX.isFinite && bounds.maxX.isFinite\n                && bounds.minY.isFinite && bounds.maxY.isFinite\n        }\n        guard visible.count == 1 else {\n            XCTFail("Expected one visible refresh scroll viewport")\n            throw NSError(domain: "WatchPickerRefreshViewport", code: 1)\n        }\n        var bounds = visible[0].frame.intersection(app.frame)\n        let bars = app.navigationBars.allElementsBoundByIndex.filter {\n            $0.exists && $0.frame.intersects(bounds)\n        }\n        if let chromeBottom = bars.map({ $0.frame.maxY }).max() {\n            let top = max(bounds.minY, chromeBottom + 3)\n            bounds = CGRect(x: bounds.minX, y: top, width: bounds.width, height: bounds.maxY - top)\n        }\n        guard !bounds.isEmpty, !bounds.isNull, bounds.height > 30,\n              bounds.minX.isFinite, bounds.maxX.isFinite,\n              bounds.minY.isFinite, bounds.maxY.isFinite else {\n            XCTFail("Invalid unobscured refresh viewport")\n            throw NSError(domain: "WatchPickerRefreshViewport", code: 2)\n        }\n        return bounds.insetBy(dx: 2, dy: 3)\n    }\n\n    @MainActor\n    private func revealRefresh(_ refresh: XCUIElement, in app: XCUIApplication) throws -> CGRect {\n        for _ in 0..<24 {\n            let bounds = try refreshViewport(in: app)\n            let frame = refresh.frame\n            if refresh.isHittable && bounds.contains(frame) { return bounds }\n            let earlier = frame.minY < bounds.minY\n            let distance = earlier ? bounds.minY - frame.minY : frame.maxY - bounds.maxY\n            let fraction = min(0.50, max(0.15, distance / bounds.height))\n            let origin = app.coordinate(withNormalizedOffset: .zero)\n            let start = origin.withOffset(CGVector(dx: bounds.midX - app.frame.minX,\n                dy: bounds.minY + bounds.height * (earlier ? 0.25 : 0.75) - app.frame.minY))\n            let end = start.withOffset(CGVector(dx: 0, dy: bounds.height * (earlier ? fraction : -fraction)))\n            start.press(forDuration: 0.1, thenDragTo: end, withVelocity: .slow, thenHoldForDuration: 0.3)\n        }\n        XCTFail("Cannot bring full refresh control below navigation chrome")\n        throw NSError(domain: "WatchPickerRefreshViewport", code: 3)\n    }\n\n'
+PICKER_FRAME_READS_SHA256 = (
+    "6e1f11359349df7fa451139546138d79cbc9258005f8c97f79e67f063371a404"
+)
+
+
+def normalize_picker_frame_reads(text):
+    start = text.index("    @MainActor\n    private func refreshViewport(")
+    end = text.index("    @MainActor\n    private func reveal(", start)
+    block = text[start:end]
+    assert (
+        digest(block) == PICKER_FRAME_READS_SHA256
+    ), "Unreviewed picker frame-read change"
+    return text[:start] + PICKER_FRAME_READS_BEFORE + text[end:]
+
+
+def test_picker_frame_reads_are_attempt_local_and_not_requeried_for_coordinates():
+    raw = (SWIFT / "PickerReturnJourneyTests.swift").read_text()
+    viewport = helper_block(raw, "refreshViewport")
+    reveal = helper_block(raw, "revealRefresh")
+    assert "app.frame" not in viewport
+    assert viewport.count("scroll.frame") == 1
+    assert viewport.count("bar.frame") == 1
+    assert "var bounds = visible[0]" in viewport
+    assert reveal.count("app.frame") == 1
+    assert reveal.index("for _ in 0..<24") < reveal.index("let appFrame = app.frame")
+    assert "refreshViewport(in: app, appFrame: appFrame)" in reveal
+    assert "bounds.midX - appFrame.minX" in reveal
+    assert "- appFrame.minY" in reveal
+    # Every next drag attempt remeasures all geometry and rechecks hittability.
+    assert reveal.index("let appFrame = app.frame") < reveal.index("refresh.isHittable")
+    assert "guard visible.count == 1 else" in viewport
+    assert "guard bar.exists else" in viewport
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    ["old", "containment", "hittability", "budget", "stale", "ambiguous", "chrome"],
+)
+def test_picker_frame_read_normalization_refuses_scope_or_gate_changes(mutation):
+    raw = (SWIFT / "PickerReturnJourneyTests.swift").read_text()
+    start = raw.index("    @MainActor\n    private func refreshViewport(")
+    end = raw.index("    @MainActor\n    private func reveal(", start)
+    changes = {
+        "old": raw[:start] + PICKER_FRAME_READS_BEFORE + raw[end:],
+        "containment": raw.replace(
+            "bounds.contains(frame)", "bounds.intersects(frame)"
+        ),
+        "hittability": raw.replace(
+            "refresh.isHittable && bounds.contains", "bounds.contains"
+        ),
+        "budget": raw.replace("for _ in 0..<24", "for _ in 0..<48"),
+        "stale": raw.replace(
+            "        for _ in 0..<24 {\n            let appFrame = app.frame",
+            "        let appFrame = app.frame\n        for _ in 0..<24 {",
+        ),
+        "ambiguous": raw.replace(
+            "guard visible.count == 1 else", "guard !visible.isEmpty else"
+        ),
+        "chrome": raw.replace("chromeBottom + 3", "chromeBottom - 3"),
+    }
+    assert changes[mutation] != raw
+    with pytest.raises(AssertionError):
+        normalize_picker_frame_reads(changes[mutation])
