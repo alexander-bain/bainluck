@@ -31,6 +31,8 @@ struct EventDetailView: View {
     /// (`-launch_expand_sections`), which is the only way this list can be
     /// photographed — the rig cannot tap a chevron. See `LaunchRig`.
     @State private var showSources = LaunchRig.expandsCollapsedSections()
+    /// #10863 — the book table past its first `collapsedBookmakerRowLimit` rows.
+    @State private var showAllBookmakers = false
     @State private var showProbabilityDetails = false
     /// The width of a row in the sources disclosure, reported by the
     /// `GeometryReader` behind the whole panel, so both lists inside it can size
@@ -2048,14 +2050,17 @@ struct EventDetailView: View {
                     }
                     if !bookmakers.isEmpty {
                         if !sourceEntries.isEmpty { Divider().padding(.horizontal, 16) }
-                        Text("Individual sportsbooks")
+                        // #10863 — this table is each book's LATEST price, older
+                        // ones included and marked with their age, so its count
+                        // is not the "Based on N sportsbooks" count above it.
+                        Text(Self.bookmakerTableHeading(rowCount: bookmakers.count))
                             .font(.system(size: 10, weight: .semibold))
                             .foregroundStyle(.tertiary)
                             .textCase(.uppercase)
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .padding(.horizontal, 16)
                             .padding(.top, 8)
-                        bookmakerContent(event)
+                        bookmakerContent(event, rows: bookmakers)
                     }
                 }
             }
@@ -2118,6 +2123,7 @@ struct EventDetailView: View {
         probabilities: (away: Double?, home: Double),
         colors: (away: Color, home: Color),
         columns: EventSourceLabelColumn.Columns,
+        detail: String? = nil,
         ageMark: PriceAgeMarkView? = nil,
         complementaryAway: Bool = false
     ) -> some View {
@@ -2126,6 +2132,16 @@ struct EventDetailView: View {
                 .font(font)
                 .lineLimit(EventSourceLabelColumn.maximumLabelLines)
                 .fixedSize(horizontal: false, vertical: true)
+            // #10863 — the same downward slot the age mark uses, for the same
+            // reason: the column is measured from the labels, so a second line
+            // costs no width. No `lineLimit`: it wraps rather than truncating a
+            // count at large text.
+            if let detail {
+                Text(detail)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
             ageMark
         }
         .frame(width: columns.label, alignment: .leading)
@@ -2251,7 +2267,9 @@ struct EventDetailView: View {
                         home: entry.homeProbability
                     ),
                     colors: colors,
-                    columns: columns, complementaryAway: true)
+                    columns: columns,
+                    detail: entry.detail,
+                    complementaryAway: true)
             }
         }
         .padding(.vertical, 8)
@@ -2334,7 +2352,31 @@ struct EventDetailView: View {
         }
     }
 
-    /// The book table's rows: named, in payload order, capped.
+    /// #10863 — the book table shows this many rows until the reader asks for
+    /// the rest. It is a display limit with a visible "Show all" control, never
+    /// a filter: `namedBookmakerRows` no longer caps, so every named, priced
+    /// book the route serves is reachable.
+    static let collapsedBookmakerRowLimit = 10
+
+    /// #10863 — the rows the table draws right now.
+    static func visibleBookmakerRows(
+        _ rows: [NamedBookmakerRow], showAll: Bool
+    ) -> [NamedBookmakerRow] {
+        showAll ? rows : Array(rows.prefix(collapsedBookmakerRowLimit))
+    }
+
+    /// #10863 — the table heading carries the TABLE's count, worded so it
+    /// cannot be read as the consensus count on the Sportsbooks row above.
+    static func bookmakerTableHeading(rowCount: Int) -> String {
+        "Latest price from each sportsbook (\(rowCount))"
+    }
+
+    /// #10863 — the label of the control that reveals the rest of the table.
+    static func showAllBookmakersLabel(rowCount: Int, showingAll: Bool) -> String {
+        showingAll ? "Show fewer sportsbooks" : "Show all \(rowCount) sportsbooks"
+    }
+
+    /// The book table's rows: named and priced, in payload order.
     ///
     /// #4284 — this list used to draw `bm.bookmaker ?? "Unknown"`, so every event
     /// page in the app printed `betonlineag`, `lowvig` and `betus` at readers
@@ -2389,10 +2431,18 @@ struct EventDetailView: View {
     ///
     /// The cap is untouched: `capturedAt` is carried, never filtered on, so the
     /// ordering both comments above reason about is the same ordering as before.
+    ///
+    /// #10863 — AND THERE IS NO DEFAULT CAP ANY MORE. A silent `prefix(10)`
+    /// here made the eleventh priced book onward unreachable from the page,
+    /// with nothing on screen saying a row was missing. The view now draws the
+    /// first `collapsedBookmakerRowLimit` and a "Show all N sportsbooks"
+    /// control; `limit` stays only for callers that ask for one explicitly.
+    /// The ordering argument above still holds for that view limit: naming and
+    /// pricing still run first, so the first ten are the first ten readable.
     static func namedBookmakerRows(
-        _ bookmakers: [BookmakerOdds], limit: Int = 10
+        _ bookmakers: [BookmakerOdds], limit: Int? = nil
     ) -> [NamedBookmakerRow] {
-        bookmakers
+        let rows = bookmakers
             .compactMap { bm -> NamedBookmakerRow? in
                 guard let key = bm.bookmaker,
                       let label = SourceLabels.sportsbookName(for: key),
@@ -2404,13 +2454,13 @@ struct EventDetailView: View {
                     probabilities: probabilities,
                     capturedAt: bm.capturedAt)
             }
-            .prefix(limit)
-            .map { $0 }
+        guard let limit else { return rows }
+        return Array(rows.prefix(limit))
     }
 
-    private func bookmakerContent(_ event: EventDetail) -> some View {
+    private func bookmakerContent(_ event: EventDetail, rows allRows: [NamedBookmakerRow]) -> some View {
         let colors = teamColors(event)
-        let rows = Self.namedBookmakerRows(event.bookmakerOdds ?? [])
+        let rows = Self.visibleBookmakerRows(allRows, showAll: showAllBookmakers)
         // #4107 — the SAME defect as `sourceContent` above, one function down and
         // in the same visual list: a hardcoded label column that never tracked
         // Dynamic Type. This one was 90pt, which is the exact literal the Sources
@@ -2498,6 +2548,24 @@ struct EventDetailView: View {
                     // The same value, so a book that looks secondary on one
                     // client looks secondary on the other.
                     .opacity(mark == nil ? 1 : 0.6)
+            }
+            if allRows.count > Self.collapsedBookmakerRowLimit {
+                Button {
+                    withAnimation(.easeInOut(duration: 0.2)) {
+                        showAllBookmakers.toggle()
+                    }
+                } label: {
+                    Text(Self.showAllBookmakersLabel(
+                        rowCount: allRows.count, showingAll: showAllBookmakers))
+                        .font(.caption.weight(.medium))
+                        .fixedSize(horizontal: false, vertical: true)
+                        .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(Color.accentColor)
+                .padding(.horizontal, EventSourceLabelColumn.horizontalPadding)
+                .accessibilityIdentifier("event.sources.showAllBookmakers")
             }
         }
         .padding(.vertical, 8)
