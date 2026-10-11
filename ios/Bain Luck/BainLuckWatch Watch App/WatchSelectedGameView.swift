@@ -367,7 +367,7 @@ struct WatchSelectedGameView: View {
         let hasSuppliedState = game.status?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
         let showsContextHeader = game.isClosed || finalOutcomeText(game) != nil || (hasSuppliedState && !store.isRestoredReading && store.errorMessage == nil)
         return TimelineView(.periodic(from: .now, by: 15)) { context in
-            VStack(alignment: .leading, spacing: 6) {
+            VStack(alignment: .leading, spacing: sharedLiveIdentity && !dynamicTypeSize.isAccessibilitySize ? 2 : 6) {
                 if sharedLiveIdentity {
                     sharedLiveHomeReading(game)
                 } else if probabilityFirst {
@@ -539,7 +539,7 @@ struct WatchSelectedGameView: View {
         if let probabilityText = game.homeProbabilityText, let score = game.homeScore {
             VStack(alignment: .leading, spacing: 2) {
                 scoreTeamName(game.homeTeam, color: scoreTeamColor(game, home: true))
-                    .font((dynamicTypeSize.isAccessibilitySize ? Font.footnote : Font.caption).weight(.semibold))
+                    .font((dynamicTypeSize.isAccessibilitySize ? Font.footnote : Font.caption2).weight(.semibold))
                     .fixedSize(horizontal: false, vertical: true)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .accessibilityElement(children: .ignore)
@@ -551,7 +551,7 @@ struct WatchSelectedGameView: View {
                         sharedLiveHomeScore(team: game.homeTeam, score: score)
                     }
                 } else {
-                    HStack(alignment: .top, spacing: 12) {
+                    HStack(alignment: .top, spacing: 8) {
                         sharedLiveProbability(team: game.homeTeam, probability: probabilityText)
                             .frame(maxWidth: .infinity, alignment: .leading)
                         sharedLiveHomeScore(team: game.homeTeam, score: score)
@@ -571,7 +571,9 @@ struct WatchSelectedGameView: View {
                         .foregroundStyle(.cyan)
                 }
             } else {
-                HStack(alignment: .firstTextBaseline, spacing: 4) {
+                // Preserve the unscaled34pt value. Centering the complete wrapped
+                // qualifier avoids extra height from aligning its first baseline.
+                HStack(alignment: .center, spacing: 2) {
                     Text(probability)
                         .font(.system(size: 34, weight: .bold, design: .rounded))
                         .monospacedDigit().foregroundStyle(.cyan).fixedSize()
@@ -620,9 +622,9 @@ struct WatchSelectedGameView: View {
                 } else {
                     // Wrap the complete identity alongside its score, rather than
                     // spending another line below a long name on the first screen.
-                    HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    HStack(alignment: .top, spacing: 6) {
                         scoreTeamName(game.awayTeam, color: scoreTeamColor(game, home: false))
-                            .font(.caption).fixedSize(horizontal: false, vertical: true)
+                            .font(.caption2).fixedSize(horizontal: false, vertical: true)
                             .frame(maxWidth: .infinity, alignment: .leading)
                         Text(String(score)).font(.title3.bold()).monospacedDigit().fixedSize()
                     }
