@@ -1,7 +1,7 @@
 import WidgetKit
 import SwiftUI
 
-/// Saved public reading or a timeless launcher; the extension never polls.
+/// A timeless launcher; readings and refresh stay in the selected-game app.
 nonisolated struct BainLuckEntry: TimelineEntry {
     let date: Date
     let snapshot: WatchComplicationSnapshot?
@@ -18,9 +18,7 @@ nonisolated struct BainLuckProvider: TimelineProvider {
         completion(Timeline(entries: [entry()], policy: .never))
     }
     private func entry() -> BainLuckEntry {
-        let now = Date()
-        let directory = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: "group.com.bainluck.watch")
-        return BainLuckEntry(date: now, snapshot: WatchComplicationSnapshot.read(from: directory, now: now))
+        BainLuckEntry(date: Date(), snapshot: nil)
     }
 }
 
@@ -34,6 +32,8 @@ struct BainLuckComplicationView: View {
                 WatchSavedComplicationContent(snapshot: entry.snapshot)
                     .accessibilityElement(children: .ignore)
                     .accessibilityLabel(accessibilityDescription)
+            } else if family == .accessoryCorner {
+                WatchSavedCornerComplicationContent(snapshot: entry.snapshot)
             } else {
                 ZStack {
                     AccessoryWidgetBackground()
@@ -45,10 +45,7 @@ struct BainLuckComplicationView: View {
         .widgetURL(WatchLaunchRoute.url)
     }
     private var accessibilityDescription: String {
-        guard family == .accessoryRectangular, let snapshot = entry.snapshot else {
-            return "Open your selected game in Bain Luck, or choose a game"
-        }
-        return "Saved reading. \(snapshot.title). \(snapshot.detail). Observed \(snapshot.observedAt.formatted(date: .abbreviated, time: .shortened)). Open your game in Bain Luck."
+        "Open your selected game in Bain Luck, or choose a game"
     }
 }
 
@@ -61,7 +58,7 @@ struct BainLuckWidget: Widget {
             BainLuckComplicationView(entry: entry)
         }
         .configurationDisplayName("Your game")
-        .description("Your last saved game reading, when available. Tap to open Bain Luck.")
-        .supportedFamilies([.accessoryCircular, .accessoryRectangular])
+        .description("Open your selected game in Bain Luck, or choose a game.")
+        .supportedFamilies([.accessoryCircular, .accessoryRectangular, .accessoryCorner])
     }
 }

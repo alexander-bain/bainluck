@@ -72,6 +72,7 @@ final class WatchSelectedGameStore: ObservableObject {
     private let defaults: UserDefaults
     private let publish: (WatchSelectedGame?, Date?) -> Void
     private let now: () -> Date
+    private var selectedIdentityIDs: [Int] = []
     private var revision = 0
     private var consecutiveFailures = 0
     // Monotonic process clock keeps a wall-clock correction from extending the pause.
@@ -86,6 +87,34 @@ final class WatchSelectedGameStore: ObservableObject {
         let version: Int
         let game: WatchSelectedGame
         let fetchedAt: Date
+        let selectedIdentityIDs: [Int]?
+
+        private enum CodingKeys: String, CodingKey {
+            case version, game, fetchedAt, selectedIdentityIDs
+        }
+
+        init(version: Int, game: WatchSelectedGame, fetchedAt: Date, selectedIdentityIDs: [Int]) {
+            self.version = version
+            self.game = game
+            self.fetchedAt = fetchedAt
+            self.selectedIdentityIDs = selectedIdentityIDs
+        }
+
+        init(from decoder: Decoder) throws {
+            let values = try decoder.container(keyedBy: CodingKeys.self)
+            version = try values.decode(Int.self, forKey: .version)
+            game = try values.decode(WatchSelectedGame.self, forKey: .game)
+            fetchedAt = try values.decode(Date.self, forKey: .fetchedAt)
+            // Optional identity corruption must not destroy a valid saved reading.
+            selectedIdentityIDs = try? values.decodeIfPresent([Int].self, forKey: .selectedIdentityIDs)
+        }
+
+        var validatedIdentityIDs: [Int] {
+            guard let ids = selectedIdentityIDs, (1...8).contains(ids.count),
+                  ids.allSatisfy({ $0 > 0 }), Set(ids).count == ids.count,
+                  ids.contains(game.id) else { return [game.id] }
+            return ids
+        }
     }
 
     init(transport: any WatchSelectedGameTransport = WatchSelectedGameHTTPTransport(),
@@ -102,6 +131,7 @@ final class WatchSelectedGameStore: ObservableObject {
         if let data = defaults.data(forKey: Self.snapshotKey),
            let snapshot = try? JSONDecoder().decode(Snapshot.self, from: data),
            snapshot.version == 1, snapshot.game.id == selectedEventID {
+            selectedIdentityIDs = snapshot.validatedIdentityIDs
             game = snapshot.game
             fetchedAt = snapshot.fetchedAt
             isRestoredReading = true
@@ -111,8 +141,29 @@ final class WatchSelectedGameStore: ObservableObject {
         publish(game, fetchedAt)
     }
 
+    /// Only accepted detail responses establish equivalence for this one reading.
+    func isSelected(eventID: Int) -> Bool {
+        guard eventID > 0 else { return false }
+        return eventID == selectedEventID
+            || (game?.id == selectedEventID && selectedIdentityIDs.contains(eventID))
+    }
+
+    @MainActor private func retainIdentity(requestedID: Int, canonicalID: Int) {
+        if selectedIdentityIDs.isEmpty { selectedIdentityIDs = [requestedID] }
+        let anchor = selectedIdentityIDs[0]
+        for id in [requestedID, canonicalID] where id != anchor {
+            selectedIdentityIDs.removeAll { $0 == id }
+            selectedIdentityIDs.append(id)
+        }
+        // Keep the original choice and the latest seven distinct proven IDs.
+        if selectedIdentityIDs.count > 8 {
+            selectedIdentityIDs = [anchor] + selectedIdentityIDs.suffix(7)
+        }
+    }
+
     @MainActor func select(eventID: Int) {
-        guard eventID > 0, eventID != selectedEventID else { return }
+        guard eventID > 0, !isSelected(eventID: eventID) else { return }
+        selectedIdentityIDs = []
         revision += 1
         consecutiveFailures = 0
         retryNotBefore = nil
@@ -129,6 +180,7 @@ final class WatchSelectedGameStore: ObservableObject {
     }
 
     @MainActor func clearSelection() {
+        selectedIdentityIDs = []
         revision += 1
         consecutiveFailures = 0
         retryNotBefore = nil
@@ -211,6 +263,7 @@ final class WatchSelectedGameStore: ObservableObject {
             let result = try await transport.fetch(eventID: id)
             try Task.checkCancellation()
             guard requestRevision == revision, selectedEventID == id else { return }
+            retainIdentity(requestedID: id, canonicalID: result.id)
             // Detail can resolve an absorbed alias to the surviving canonical id.
             selectedEventID = result.id
             defaults.set(result.id, forKey: Self.selectionKey)
@@ -223,7 +276,7 @@ final class WatchSelectedGameStore: ObservableObject {
             let receivedAt = now()
             fetchedAt = receivedAt
             isRestoredReading = false
-            if let data = try? JSONEncoder().encode(Snapshot(version: 1, game: result, fetchedAt: receivedAt)) {
+            if let data = try? JSONEncoder().encode(Snapshot(version: 1, game: result, fetchedAt: receivedAt, selectedIdentityIDs: selectedIdentityIDs)) {
                 defaults.set(data, forKey: Self.snapshotKey)
             } else {
                 defaults.removeObject(forKey: Self.snapshotKey)

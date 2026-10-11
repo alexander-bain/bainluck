@@ -245,6 +245,7 @@ actor Stub: WatchSelectedGameTransport {
         checkWatchContinuation()
         try await checkWatchGamePicker()
         try await checkWatchGameFlow()
+        try await checkWatchSelectedIdentity()
         let lifecycleTransport = Stub()
         let lifecycle = WatchSelectedGameStore(transport: lifecycleTransport, defaults: defaults, now: { clock }, retryClock: { 1000 })
         lifecycle.select(eventID: 10)
