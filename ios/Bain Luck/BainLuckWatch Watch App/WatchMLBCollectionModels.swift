@@ -77,6 +77,19 @@ nonisolated struct WatchMLBMembership: Sendable {
         self.games = games; self.children = children
         self.hasOtherEntries = hasOtherEntries; self.questions = questions
     }
+
+    /// Filters only received labels; preserves each full record and producer order.
+    func games(matching query: String) -> [WatchMLBGame] {
+        let term = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !term.isEmpty else { return games }
+        return games.filter { $0.home.localizedStandardContains(term) || $0.away.localizedStandardContains(term) }
+    }
+
+    func questions(matching query: String) -> [WatchMLBQuestion] {
+        let term = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !term.isEmpty else { return questions }
+        return questions.filter { $0.name.localizedStandardContains(term) }
+    }
 }
 
 nonisolated enum WatchMLBCollectionError: Error { case invalid, serviceBusy }

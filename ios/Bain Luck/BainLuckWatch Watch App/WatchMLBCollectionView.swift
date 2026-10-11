@@ -8,6 +8,7 @@ struct WatchMLBCollectionView: View {
     let selectedGame: () -> Void
     @State private var action: Task<Void, Never>?
     @State private var question: WatchQuestionDetailDestination?
+    @State private var searchText = ""
 
     var body: some View {
         ScrollView {
@@ -23,7 +24,26 @@ struct WatchMLBCollectionView: View {
                         case .published:
                             Text("\(membership.games.count) \(membership.games.count == 1 ? "game" : "games") available on Watch")
                                 .font(.footnote)
-                            ForEach(membership.games) { game in
+                            let games = membership.games(matching: searchText)
+                            let questions = membership.questions(matching: searchText)
+                            if !membership.games.isEmpty || !membership.questions.isEmpty {
+                                TextField("Find a game or question", text: $searchText)
+                                    .accessibilityLabel("Find a game or question")
+                                    .accessibilityIdentifier("watch.mlb.search")
+                                if !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                                    Text("Showing \(games.count) of \(membership.games.count) games and \(questions.count) of \(membership.questions.count) questions")
+                                        .font(.footnote).fixedSize(horizontal: false, vertical: true)
+                                    if games.isEmpty && questions.isEmpty {
+                                        Text("No received games or questions match your search.")
+                                            .fixedSize(horizontal: false, vertical: true)
+                                    }
+                                    Button("Show all games and questions") { searchText = "" }
+                                        .fixedSize(horizontal: false, vertical: true)
+                                        .frame(minHeight: 44)
+                                        .accessibilityIdentifier("watch.mlb.search.clear")
+                                }
+                            }
+                            ForEach(games) { game in
                                 Button {
                                     start {
                                         await browser.selectGame(game.id,
@@ -51,9 +71,9 @@ struct WatchMLBCollectionView: View {
                                 .accessibilityIdentifier("watch.mlb.game.\(game.id)")
                             }
                             if membership.games.isEmpty { Text("No available games in this collection.") }
-                            if !membership.questions.isEmpty {
+                            if !questions.isEmpty {
                                 Text("Questions").font(.headline).accessibilityAddTraits(.isHeader)
-                                ForEach(membership.questions) { item in
+                                ForEach(questions) { item in
                                     Button(item.name) {
                                         start {
                                             await browser.openQuestion(item.id,
@@ -114,6 +134,8 @@ struct WatchMLBCollectionView: View {
             guard scenePhase == .active else { return }
             await browser.refresh()
         }
+        .onChange(of: browser.collection?.id) { _, _ in searchText = "" }
+        .onChange(of: browser.collection?.slug) { _, _ in searchText = "" }
         .onChange(of: scenePhase) { _, phase in
             if phase != .active { action?.cancel(); browser.cancel(); question = nil }
         }

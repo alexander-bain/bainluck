@@ -86,6 +86,19 @@ nonisolated struct WatchNFLMembership: Sendable {
         self.published = published; self.revision = revision; self.games = games
         self.hasOtherEntries = hasOtherEntries; self.questions = questions
     }
+
+    /// Filters only received labels; preserves each full record and producer order.
+    func games(matching query: String) -> [WatchNFLGame] {
+        let term = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !term.isEmpty else { return games }
+        return games.filter { $0.home.localizedStandardContains(term) || $0.away.localizedStandardContains(term) }
+    }
+
+    func questions(matching query: String) -> [WatchNFLQuestion] {
+        let term = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !term.isEmpty else { return questions }
+        return questions.filter { $0.name.localizedStandardContains(term) }
+    }
 }
 
 nonisolated enum WatchNFLDecodeError: Error { case invalid }

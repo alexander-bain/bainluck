@@ -8,6 +8,7 @@ struct WatchNFLCollectionView: View {
     let selectedGame: () -> Void
     @State private var action: Task<Void, Never>?
     @State private var question: WatchQuestionDetailDestination?
+    @State private var searchText = ""
 
     var body: some View {
         ScrollView {
@@ -19,7 +20,26 @@ struct WatchNFLCollectionView: View {
                             Text("This collection is no longer available.")
                         } else {
                             Text(WatchNFLGamePresentation.availableGamesText(membership)).font(.footnote)
-                            ForEach(membership.games) { game in
+                            let games = membership.games(matching: searchText)
+                            let questions = membership.questions(matching: searchText)
+                            if !membership.games.isEmpty || !membership.questions.isEmpty {
+                                TextField("Find a game or question", text: $searchText)
+                                    .accessibilityLabel("Find a game or question")
+                                    .accessibilityIdentifier("watch.nfl.search")
+                                if !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                                    Text("Showing \(games.count) of \(membership.games.count) games and \(questions.count) of \(membership.questions.count) questions")
+                                        .font(.footnote).fixedSize(horizontal: false, vertical: true)
+                                    if games.isEmpty && questions.isEmpty {
+                                        Text("No received games or questions match your search.")
+                                            .fixedSize(horizontal: false, vertical: true)
+                                    }
+                                    Button("Show all games and questions") { searchText = "" }
+                                        .fixedSize(horizontal: false, vertical: true)
+                                        .frame(minHeight: 44)
+                                        .accessibilityIdentifier("watch.nfl.search.clear")
+                                }
+                            }
+                            ForEach(games) { game in
                                 Button {
                                     start {
                                         await browser.selectGame(game.id,
@@ -37,9 +57,9 @@ struct WatchNFLCollectionView: View {
                                 .accessibilityIdentifier("watch.nfl.game.\(game.id)")
                             }
                             if membership.games.isEmpty { Text("No available games in this collection.") }
-                            if !membership.questions.isEmpty {
+                            if !questions.isEmpty {
                                 Text("Questions").font(.headline).accessibilityAddTraits(.isHeader)
-                                ForEach(membership.questions) { item in
+                                ForEach(questions) { item in
                                     Button(item.name) {
                                         start {
                                             await browser.openQuestion(item.id,
@@ -89,6 +109,8 @@ struct WatchNFLCollectionView: View {
             guard scenePhase == .active else { return }
             await browser.refresh()
         }
+        .onChange(of: browser.week?.id) { _, _ in searchText = "" }
+        .onChange(of: browser.week?.slug) { _, _ in searchText = "" }
         .onChange(of: scenePhase) { _, phase in
             if phase != .active { action?.cancel(); browser.cancel(); question = nil }
         }
