@@ -481,7 +481,7 @@ struct WatchSelectedGameView: View {
                  (finalOutcomeText(game) ??
                   (game.isLive && (store.isRestoredReading || store.errorMessage != nil)
                    ? "At last update: Live" : game.stateLabel)))
-                .font(!dynamicTypeSize.isAccessibilitySize && finalOutcomeText(game) != nil ? .caption : .footnote)
+                .font(!dynamicTypeSize.isAccessibilitySize && finalOutcomeText(game) != nil ? .caption2 : .footnote)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
             if game.isLive, let clock = game.liveClockText {
@@ -635,12 +635,13 @@ struct WatchSelectedGameView: View {
     }
 
     private func fullWidthScores(_ game: WatchSelectedGame) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
+        let compactFinal = !dynamicTypeSize.isAccessibilitySize && finalOutcomeText(game) != nil
+        return VStack(alignment: .leading, spacing: compactFinal ? 2 : 6) {
             scoreRow(team: game.awayTeam, score: game.awayScore,
-                     color: scoreTeamColor(game, home: false))
+                     color: scoreTeamColor(game, home: false), compactFinal: compactFinal)
                 .accessibilityIdentifier("watch.away-score")
             scoreRow(team: game.homeTeam, score: game.homeScore,
-                     color: scoreTeamColor(game, home: true))
+                     color: scoreTeamColor(game, home: true), compactFinal: compactFinal)
                 .accessibilityIdentifier("watch.home-score")
         }
     }
@@ -657,7 +658,7 @@ struct WatchSelectedGameView: View {
         .accessibilityLabel("\(team), \(score.map { "score \($0)" } ?? "score unavailable")")
     }
 
-    private func scoreRow(team: String, score: Int?, color: Color?) -> some View {
+    private func scoreRow(team: String, score: Int?, color: Color?, compactFinal: Bool) -> some View {
         Group {
             if dynamicTypeSize.isAccessibilitySize {
                 ViewThatFits(in: .horizontal) {
@@ -674,8 +675,10 @@ struct WatchSelectedGameView: View {
                     }
                 }
             } else {
-                HStack(alignment: .firstTextBaseline, spacing: 6) {
-                    scoreTeamName(team, color: color).font(.caption)
+                // Top alignment keeps a large score from adding baseline space
+                // above a wrapped final team name. Both complete names remain visible.
+                HStack(alignment: compactFinal ? .top : .firstTextBaseline, spacing: 6) {
+                    scoreTeamName(team, color: color).font(compactFinal ? .caption2 : .caption)
                         .fixedSize(horizontal: false, vertical: true)
                         .frame(maxWidth: .infinity, alignment: .leading)
                     Text(score.map(String.init) ?? "—")
