@@ -334,6 +334,20 @@ async def enrich_event_with_context(
     home_ctx = None
     away_ctx = None
 
+    # #10889 — the grid row and the event share `teams.id`, so the id decides
+    # first. Names are the fallback only: the event row says `St Louis Blues`
+    # and the grid `St. Louis Blues`, which neither equals nor contains the
+    # other once normalized, so the Blues column of Season outcomes went blank.
+    home_id = getattr(event, "home_team_id", None)
+    away_id = getattr(event, "away_team_id", None)
+    for team_ctx in ctx.teams.values():
+        if team_ctx.team_id is None:
+            continue
+        if not home_ctx and home_id is not None and team_ctx.team_id == home_id:
+            home_ctx = team_ctx
+        if not away_ctx and away_id is not None and team_ctx.team_id == away_id:
+            away_ctx = team_ctx
+
     home_norm = normalize_name(home_name)
     away_norm = normalize_name(away_name)
 
