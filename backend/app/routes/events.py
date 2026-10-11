@@ -19,7 +19,7 @@ from zoneinfo import ZoneInfo
 from typing import Annotated, Optional, Sequence
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
-from sqlalchemy import select, and_, or_, union, func, case, cast, any_, literal, Date, Integer, String, literal_column, text, true, false
+from sqlalchemy import select, and_, or_, union, func, case, cast, any_, literal, Date, Integer, String, literal_column, text, true, false, Interval
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload, aliased
 from sqlalchemy.orm.attributes import set_committed_value
@@ -30611,6 +30611,12 @@ def _observed_play_end(
     return play_end
 
 
+#: #10886. Added to ``captured_at`` inside a per-event ``min()`` so Postgres
+#: cannot answer it by walking the all-events ``captured_at`` index (see
+#: `_end_cap_hides_every_point`). Same value; different plan.
+_NO_MINMAX_REWRITE = literal_column("interval '0 seconds'", Interval)
+
+
 async def _end_cap_hides_every_point(db, event_id: int, end_cap) -> bool:
     """True when the end cap excludes EVERY snapshot the event has.
 
@@ -30635,6 +30641,18 @@ async def _end_cap_hides_every_point(db, event_id: int, end_cap) -> bool:
     Asked only when the capped odds query already came back empty, so the common
     path costs one indexed aggregate and the second query is reached only by an
     event with no win-prob rows at all.
+
+    #10886: "indexed" only holds if the aggregate is over an EXPRESSION. A bare
+    ``min(captured_at) WHERE event_id = X`` is eligible for Postgres's min/max
+    rewrite into ``ORDER BY captured_at LIMIT 1``, and production planned exactly
+    that: walk the all-events ``ix_winprob_captured`` index from the oldest row,
+    filtering on ``event_id`` (cost 820 against 837 for the event's own rows, a
+    near-tie the row estimate decides). For an event whose rows are recent, or
+    which has none, that walk crosses most of a 9.5M-row table: 119 calls,
+    mean 54.4 s, max 177.4 s on 2026-10-11, and ~120 chart requests past the
+    router deadline. Adding a zero interval returns the same value and takes the
+    rewrite off the table, so the plan reads only the event's rows via
+    ``ix_winprob_event_source`` / ``ix_odds_snapshots_event_id``.
     """
     from app.models.models import WinProbSnapshot
 
@@ -30651,7 +30669,7 @@ async def _end_cap_hides_every_point(db, event_id: int, end_cap) -> bool:
     # fold. Widen it when a measurement says the disagreement bites.
     earliest_win_prob = (
         await db.execute(
-            select(func.min(WinProbSnapshot.captured_at)).where(
+            select(func.min(WinProbSnapshot.captured_at + _NO_MINMAX_REWRITE)).where(
                 WinProbSnapshot.event_id == event_id
             )
         )
@@ -30661,7 +30679,7 @@ async def _end_cap_hides_every_point(db, event_id: int, end_cap) -> bool:
 
     earliest_odds = (
         await db.execute(
-            select(func.min(OddsSnapshot.captured_at)).where(
+            select(func.min(OddsSnapshot.captured_at + _NO_MINMAX_REWRITE)).where(
                 OddsSnapshot.event_id == event_id
             )
         )
