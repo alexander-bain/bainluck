@@ -38,8 +38,19 @@ struct WatchDiscoverStoriesView: View {
                         .accessibilityAddTraits(.isHeader)
                         .accessibilityIdentifier("watch.discovery.heading")
                 }
+                Button(discoveries.isRefreshing ? "Refreshing…" : "Refresh discoveries") {
+                    WatchTelemetry.shared.action(.refresh, surface: .discoveries)
+                    manualRefresh?.cancel()
+                    manualRefresh = Task { await discoveries.refresh() }
+                }
+                .disabled(discoveries.isRefreshing || scenePhase != .active)
+                .accessibilityIdentifier("watch.discovery.refresh")
                 if selected.selectedEventID != nil {
                     selectedSummary
+                    if !visibleReadings.isEmpty {
+                        Divider()
+                            .accessibilityIdentifier("watch.discovery.separator.selected")
+                    }
                 }
                 if discoveries.isSavedReading {
                     Text("Saved stories · refresh to confirm")
@@ -48,6 +59,7 @@ struct WatchDiscoverStoriesView: View {
                 }
                 if let error = discoveries.errorMessage {
                     Text(error).font(.footnote).foregroundStyle(.orange)
+                        .accessibilityIdentifier("watch.discovery.error")
                     if !discoveries.readings.isEmpty {
                         Text("Showing the last received stories.")
                             .font(.footnote).foregroundStyle(.secondary)
@@ -64,15 +76,12 @@ struct WatchDiscoverStoriesView: View {
                     }
                 }
                 ForEach(visibleReadings) { reading in
+                    if reading.id != visibleReadings.first?.id {
+                        Divider()
+                            .accessibilityIdentifier("watch.discovery.separator.before.\(reading.id)")
+                    }
                     storyCard(reading)
                 }
-                Button(discoveries.isRefreshing ? "Refreshing…" : "Refresh discoveries") {
-                    WatchTelemetry.shared.action(.refresh, surface: .discoveries)
-                    manualRefresh?.cancel()
-                    manualRefresh = Task { await discoveries.refresh() }
-                }
-                .disabled(discoveries.isRefreshing || scenePhase != .active)
-                .accessibilityIdentifier("watch.discovery.refresh")
                 #if DEBUG
                 if WatchUIFixture.current != nil, let continuation,
                    let url = StoryContinuation.url(for: continuation) {

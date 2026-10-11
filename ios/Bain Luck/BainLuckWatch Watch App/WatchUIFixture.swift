@@ -12,6 +12,7 @@ nonisolated struct WatchUIFixture: WatchSelectedGameTransport, WatchGamePickerTr
     var sharedPublication = false
     var circularIdentity = false
     var pickerNetworkFailure: WatchPickerNetworkFixture?
+    var fixedObservation: Date? = nil
 
     static let current: WatchUIFixture? = {
         var environment = ProcessInfo.processInfo.environment
@@ -29,7 +30,8 @@ nonisolated struct WatchUIFixture: WatchSelectedGameTransport, WatchGamePickerTr
             let keys = ["BAINLUCK_WATCH_UI_TEST", "BAINLUCK_WATCH_UI_SUITE",
                         "BAINLUCK_WATCH_UI_RESET", "BAINLUCK_WATCH_UI_OFFLINE",
                         "BAINLUCK_WATCH_UI_ROUNDING", "BAINLUCK_WATCH_UI_LAUNCH_RECEIPT",
-                        "BAINLUCK_WATCH_UI_SHARED_PUBLICATION", "BAINLUCK_WATCH_UI_CIRCULAR_IDENTITY"]
+                        "BAINLUCK_WATCH_UI_SHARED_PUBLICATION", "BAINLUCK_WATCH_UI_CIRCULAR_IDENTITY",
+                        "BAINLUCK_WATCH_UI_FIXED_OBSERVATION"]
             UserDefaults.standard.set(environment.filter { keys.contains($0.key) }, forKey: seedKey)
         }
         guard environment["BAINLUCK_WATCH_UI_TEST"] == "1",
@@ -45,7 +47,8 @@ nonisolated struct WatchUIFixture: WatchSelectedGameTransport, WatchGamePickerTr
                     launchReceipt: environment["BAINLUCK_WATCH_UI_LAUNCH_RECEIPT"] == "1",
                     sharedPublication: environment["BAINLUCK_WATCH_UI_SHARED_PUBLICATION"] == "1",
                     circularIdentity: environment["BAINLUCK_WATCH_UI_CIRCULAR_IDENTITY"] == "1",
-                    pickerNetworkFailure: environment["BAINLUCK_WATCH_UI_PICKER_NETWORK"].map { WatchPickerNetworkFixture(scenario: $0) })
+                    pickerNetworkFailure: environment["BAINLUCK_WATCH_UI_PICKER_NETWORK"].map { WatchPickerNetworkFixture(scenario: $0) },
+                    fixedObservation: environment["BAINLUCK_WATCH_UI_FIXED_OBSERVATION"].flatMap { ISO8601DateFormatter().date(from: $0) })
     }()
 
     @MainActor func makeStore() -> WatchSelectedGameStore {
@@ -78,7 +81,7 @@ nonisolated struct WatchUIFixture: WatchSelectedGameTransport, WatchGamePickerTr
         if offline { throw URLError(.notConnectedToInternet) }
         guard [101, 202].contains(eventID) else { throw WatchSelectedGameRequestError.unavailable }
         let first = eventID == 101
-        let time = ISO8601DateFormatter().string(from: Date().addingTimeInterval(-60))
+        let time = ISO8601DateFormatter().string(from: fixedObservation ?? Date().addingTimeInterval(-60))
         var payload: [String: Any] = [
             "id": eventID,
             "home_team": first ? "San Francisco Giants" : "Buffalo Bills",
