@@ -293,7 +293,7 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         timeout-minutes: 5
         with:
           name: watch-ui-products
@@ -371,23 +371,23 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: watch-ui-journey-corner
           path: build/watch-ui-aggregate/corner
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: watch-ui-journey-readings
           path: build/watch-ui-aggregate/readings
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: watch-ui-journey-navigation
           path: build/watch-ui-aggregate/navigation
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: watch-ui-journey-controls
           path: build/watch-ui-aggregate/controls
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: watch-ui-journey-widgets
           path: build/watch-ui-aggregate/widgets
