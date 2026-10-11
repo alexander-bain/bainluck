@@ -30,7 +30,7 @@
  */
 
 import "../helpers/minimalDom";
-import React, { act, useEffect, useMemo, useRef } from "react";
+import React, { act, useCallback, useMemo, useRef } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import fs from "fs";
 import path from "path";
@@ -169,17 +169,17 @@ function ChartPage({ net, eventId }: { net: Net; eventId: number }) {
   );
   handles = { refreshEvent: () => refreshEvent(), refreshHistory: () => refreshHistory() };
 
-  // ── app/events/[id]/page.tsx — the hook, as the page calls it ──────────────
-  const quoteEligible = canSubscribeEventQuotes(event);
-  const { frame: liveFrame, chartPoints, status: reportedStreamStatus } = useLiveEventStream(eventId, quoteEligible);
-
-  // ── the push effect's final branch, as the page writes it ──────────────────
-  useEffect(() => {
-    if (!liveFrame || liveFrame.event_id !== eventId) return;
+  // ── the push callback's final branch, as the page writes it ────────────────
+  const applyPushedFrame = useCallback((liveFrame: LiveFrame) => {
+    if (liveFrame.event_id !== eventId) return;
     if (liveFrame.p === null || liveFrame.p === undefined) return;
     const frame = { ...liveFrame, p: liveFrame.p };
     refreshEvent((prev) => applyLiveFrame(prev, frame), { revalidate: false });
-  }, [liveFrame, refreshEvent, eventId]);
+  }, [refreshEvent, eventId]);
+
+  // ── app/events/[id]/page.tsx — the hook, as the page calls it ──────────────
+  const quoteEligible = canSubscribeEventQuotes(event);
+  const { chartPoints, status: reportedStreamStatus } = useLiveEventStream(eventId, quoteEligible, applyPushedFrame);
 
   // ── app/events/[id]/page.tsx — the chart composition, carried (PINNED) ─────
   const admittedChartRef = useRef<AdmittedChartFrames | null>(null);
@@ -290,8 +290,8 @@ afterEach(() => {
 describe("structural pin: the harness carries the page's own composition", () => {
   it("app/events/[id]/page.tsx still reads as the lines ChartPage mounts", () => {
     expect(PAGE).toContain("const quoteEligible = canSubscribeEventQuotes(event);");
-    expect(PAGE).toMatch(/chartPoints,\s*status: reportedStreamStatus,\s*recoveryGeneration,\s*\} = useLiveEventStream\(eventId, quoteEligible\);/);
-    expect(PAGE).toMatch(/if \(liveFrame\.p === null \|\| liveFrame\.p === undefined\) return;\s*latestLiveFrameRef\.current = liveFrame;\s*const frame = \{ \.\.\.liveFrame, p: liveFrame\.p \};\s*refreshEvent\(/);
+    expect(PAGE).toMatch(/chartPoints,\s*status: reportedStreamStatus,\s*recoveryGeneration,\s*\} = useLiveEventStream\(eventId, quoteEligible, applyPushedFrame\);/);
+    expect(PAGE).toMatch(/if \(liveFrame\.p === null \|\| liveFrame\.p === undefined\) return;\s*(?:\/\/[^\n]*\n\s*)*latestLiveFrameRef\.current = heldFrameAfter\(latestLiveFrameRef\.current, liveFrame\);\s*const frame = \{ \.\.\.liveFrame, p: liveFrame\.p \};\s*refreshEvent\(/);
     expect(PAGE.match(/\(prev\) => applyLiveFrame\(prev, frame\),/g)).toHaveLength(1);
     expect(PAGE).toMatch(/\(prev\) => applyLiveFrame\(prev, frame\),[^]{0,300}\{ revalidate: false \}/);
     expect(PAGE).toContain('["history", eventId, fullHistoryRequested]');
