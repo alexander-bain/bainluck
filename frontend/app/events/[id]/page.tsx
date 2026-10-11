@@ -83,6 +83,7 @@ import { gameOrigin } from "@/lib/futuresReturnOrigin";
 const SpecialEventMarkets = dynamic(() => import("@/components/SpecialEventMarkets"), { ssr: false });
 const MarketBrowser = dynamic(() => import("@/components/event/MarketBrowser"), { ssr: false });
 const GameLineBrowser = dynamic(() => import("@/components/event/GameLineBrowser"), { ssr: false });
+const QuestionCatalog = dynamic(() => import("@/components/event/QuestionCatalog"), { ssr: false });
 const MarketMapSection = dynamic(() => import("@/components/MarketMapSection"), { ssr: false, loading: ChartSkeleton });
 // UX-P152: the tournament's sections OF this page. Dynamic and below the fold —
 // 94 events on the whole site render it and none of them should pay for it in
@@ -3507,6 +3508,15 @@ export default function EventPage({ params }: EventPageProps) {
           </SectionErrorBoundary>
         );
       })()}
+
+      {/* #10809 / #10868 (Atlas v6): every served question stays reachable,
+          including the rows no map or card above draws. Not on a voided match
+          (#9798), the same rule as the maps and quoted lines. */}
+      {gameMarkets && !venueVoided && (
+        <SectionErrorBoundary label="All questions" resetKey={gameMarkets}>
+          <QuestionCatalog data={gameMarkets} status={event.status} />
+        </SectionErrorBoundary>
+      )}
 
       {/* Standalone pace when no game markets section at all */}
       {gameMarkets && gameMarkets.totals.length === 0 && gameMarkets.player_props.length === 0 && gameMarkets.pace && gameMarkets.pace.projected_total && (
