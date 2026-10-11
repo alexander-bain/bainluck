@@ -818,8 +818,12 @@ class TestTheFastLaneActuallyCallsTheSnapshot:
         from app.tasks.live_blend_refresh import LiveBlendRefresher
 
         src = inspect.getsource(LiveBlendRefresher._refresh_batch)
-        assert "_maybe_snapshot" in src, (
+        assert "self._write_owed_snapshots(" in src, (
             "the fast lane no longer writes a chart point"
+        )
+        writer = inspect.getsource(LiveBlendRefresher._write_owed_snapshots)
+        assert "self._maybe_snapshot(" in writer, (
+            "the owed chart points are never handed to the snapshot helper"
         )
 
     def test_the_stamp_is_a_server_side_merge_that_returns_the_row(self):
@@ -850,12 +854,12 @@ class TestTheFastLaneActuallyCallsTheSnapshot:
     def test_the_snapshot_follows_a_successful_stamp(self):
         """Ordering matters: a chart point must not outrun the number.
 
-        The snapshot shares the blend stamp's transaction deliberately, so the
-        call has to sit after the UPDATE is known to have landed (the
-        `new_sources is None` exit), inside the same try — not before the write
-        and not outside it. Since #837 both sit inside the event's SAVEPOINT and
-        `stats["stamped"]` is recorded only after that savepoint releases, so the
-        anchor is the landed-UPDATE check, not the counter.
+        A point is owed only after the UPDATE is known to have landed (the
+        `new_sources is None` exit) and its stamp scope succeeded, and #10090
+        writes it only after the stamp's session committed and its frame was
+        sent — so the number never waits for the line, and a stamp that never
+        committed owes no point. The behaviour is pinned by
+        `TestTheHeadlineDoesNotWaitForItsChartPoint`; this is the wire.
         """
         import inspect
 
@@ -866,8 +870,14 @@ class TestTheFastLaneActuallyCallsTheSnapshot:
         assert stamp_scope < src.index("update(Event)")
         assert (
             src.index("if new_sources is None")
-            < src.index("_maybe_snapshot")
+            < src.index("written[event_id] = value")
+            < src.index("owed_snapshots.append(")
             < src.index('self.stats["stamped"]')
+            < src.index("await publish_committed(pending)")
+            < src.index("self._write_owed_snapshots(")
+        )
+        assert "_maybe_snapshot" not in src, (
+            "the chart point is back inside the stamp's transaction"
         )
 
 
@@ -875,6 +885,101 @@ class _LockTimeout(Exception):
     """What asyncpg raises when `lock_timeout` fires: SQLSTATE 55P03."""
 
     sqlstate = "55P03"
+
+
+class TestTheHeadlineDoesNotWaitForItsChartPoint:
+    """#10090 — production 2026-10-11 00:52:30Z, BOS–PHI 15323924: the Kalshi
+    stamp whose 25 s chart clock was due reached a reader 3.03 s after its own
+    database stamp; every stamp whose clock was not due took 0.05–0.19 s. The
+    chart point (`win_prob_snapshots` read + close-out + insert) ran inside the
+    stamp's transaction, so the frame waited for COMMIT behind it and the event
+    row the other venue's arm stamps stayed locked. The point is now written
+    after COMMIT and after the frame is sent, in its own short transaction."""
+
+    def _rig(self, monkeypatch, count, *, chart_open_fails=False):
+        import asyncio
+        from contextlib import asynccontextmanager
+        from copy import copy
+
+        event, market = _event_and_market()
+        rows = [(market, event)]
+        if count == 2:
+            other_event, other_market = copy(event), copy(market)
+            other_event.id = other_market.event_id = 2
+            other_market.id = 20
+            rows.append((other_market, other_event))
+        session = _RecordingSession(rows, [], {
+            "polymarket": {"value": 0.9, "updated_at": "2026-10-11T00:52:30+00:00"},
+        })
+        session.returned_rev = 42
+        r, _ = _one_event_refresher(monkeypatch, session)
+        log = []
+        sent = {eid: asyncio.Event() for eid in range(1, count + 1)}
+
+        @asynccontextmanager
+        async def factory():
+            if chart_open_fails and any(entry[0] == "frame" for entry in log):
+                raise RuntimeError("no connection for the chart point")
+            log.append(("open",))
+            yield session
+            log.append(("commit",))
+
+        async def chart(session, **kw):
+            log.append(("chart", kw["event_id"]))
+            # A chart write that cannot finish until its own frame is out: if
+            # the frame waited for it, this refresh would never return.
+            await sent[kw["event_id"]].wait()
+            return object(), True
+
+        async def publish(frames):
+            for frame in frames:
+                log.append(("frame", frame["event_id"]))
+                sent[frame["event_id"]].set()
+
+        r._session_factory = factory
+        monkeypatch.setattr(
+            "app.tasks.snapshots._create_or_update_win_prob_snapshot", chart,
+        )
+        monkeypatch.setattr(r, "_publish", publish)
+        return r, log
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("count", [1, 2])
+    async def test_the_frame_is_sent_before_the_chart_point_is_written(
+        self, monkeypatch, count,
+    ):
+        import asyncio
+
+        r, log = self._rig(monkeypatch, count)
+        # Returning at all is the proof: each chart write blocks until its own
+        # frame is out, so a frame that waited for its chart point deadlocks.
+        await asyncio.wait_for(r.refresh(list(range(1, count + 1))), timeout=5)
+
+        for event_id in range(1, count + 1):
+            assert ("frame", event_id) in log and ("chart", event_id) in log
+        if count == 1:
+            # Stamp session commits, frame goes out, THEN a second session
+            # writes the point and commits.
+            assert log == [
+                ("open",), ("commit",), ("frame", 1),
+                ("open",), ("chart", 1), ("commit",),
+            ]
+        assert r.stats["stamped"] == count
+        assert r.stats["snapshots_written"] == count
+        assert set(r._last_snapshot_at) == set(range(1, count + 1))
+
+    @pytest.mark.asyncio
+    async def test_a_chart_point_that_cannot_open_costs_only_the_chart_point(
+        self, monkeypatch,
+    ):
+        r, log = self._rig(monkeypatch, 1, chart_open_fails=True)
+        await r.refresh([1])
+
+        assert log == [("open",), ("commit",), ("frame", 1)]
+        assert r.stats["stamped"] == 1 and r._last_written_value == {1: 0.9}
+        assert r.stats["errors"] == 1
+        # No slot was taken, so the next due stamp draws the point.
+        assert 1 not in r._last_snapshot_at
 
 
 class TestSingleEventStampTransaction:
@@ -1311,7 +1416,10 @@ class TestAFailedCommitLeavesNothingMarkedWritten:
             r._throttle_deferred = {1}
         await r.refresh([1] if origin == "fresh" else [])
 
-        assert len(session.updates) == 1 and len(snapshots) == 1, "rig: stamp ran"
+        assert len(session.updates) == 1, "rig: stamp ran"
+        # #10090: the chart point is written after COMMIT, so a stamp whose
+        # COMMIT failed never attempts one.
+        assert snapshots == [], "a chart point was attempted for an uncommitted stamp"
         assert published == [], "a rolled-back stamp must not be pushed"
         assert r._last_written_value == {}, "an uncommitted stamp reads as written"
         assert r._last_write_at == {}
@@ -1331,7 +1439,7 @@ class TestAFailedCommitLeavesNothingMarkedWritten:
 
         assert len(session.updates) == 2, "the retry was skipped as unchanged"
         assert [f["event_id"] for f in published] == [1]
-        assert len(snapshots) == 2, "the chart point was not re-attempted"
+        assert len(snapshots) == 1, "the chart point was not re-attempted"
         assert r._last_written_value == {1: 0.9}
         assert r._last_snapshot_at == {1: clock["t"]}
         assert r.stats["stamped"] == 1

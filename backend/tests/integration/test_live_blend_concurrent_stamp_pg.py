@@ -523,7 +523,7 @@ class TestTheServerSideMergePreservesWhatThePythonHelperDid:
 
 
 async def _concurrent_refresh_frames(engine, monkeypatch, *, prelock_control):
-    """Actual refresh/commit path; only inputs, snapshots and fanout are seams.
+    """Actual refresh/commit path; only inputs and fanout are seams.
 
     The first arm reaches the pre-UPDATE await first, but the sibling obtains
     the row lock first. Observe an actual PostgreSQL transaction lock wait before
@@ -533,6 +533,10 @@ async def _concurrent_refresh_frames(engine, monkeypatch, *, prelock_control):
     UPDATE (the first `begin_nested` is now the chart point, AFTER the row lock
     is held), so the ordering point is the stamp UPDATE itself — the same
     instant the event savepoint used to precede.
+
+    #10090: the chart point is now written after COMMIT, so it can no longer
+    hold the sibling's row lock. The sibling holds it right after its own stamp
+    UPDATE, inside the open transaction, and the chart clock is not due.
     """
     from sqlalchemy.ext.asyncio import async_sessionmaker
 
@@ -592,6 +596,9 @@ async def _concurrent_refresh_frames(engine, monkeypatch, *, prelock_control):
             result = await self.session.execute(statement, *args, **kwargs)
             if is_update and self.source == "kalshi":
                 sibling_has_lock.set()
+                # Keep the row lock, transaction open, until the first arm is
+                # seen waiting on it.
+                await release_sibling.wait()
             return result
 
     @asynccontextmanager
@@ -638,10 +645,6 @@ async def _concurrent_refresh_frames(engine, monkeypatch, *, prelock_control):
         async def oriented(session, eid, probability, *, reading=None, before_fallback=None):
             return probability
 
-        async def snapshot(*args, _source=source):
-            if _source == "kalshi":
-                await release_sibling.wait()
-
         async def publish(batch, _source=source):
             if _source == "polymarket":
                 await sibling_published.wait()
@@ -649,7 +652,8 @@ async def _concurrent_refresh_frames(engine, monkeypatch, *, prelock_control):
             if _source == "kalshi":
                 sibling_published.set()
 
-        arm._oriented, arm._maybe_snapshot, arm._publish = oriented, snapshot, publish
+        arm._oriented, arm._publish = oriented, publish
+        arm._last_snapshot_at = {event_id: 100}  # chart clock not due at 100
         arms[source] = arm
 
     async def observe_lock():

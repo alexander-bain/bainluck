@@ -36,7 +36,9 @@ class _Session:
         return False
 
     async def execute(self, _stmt):
-        return _Result(KEPT)  # each kept stamp has its chart point
+        # #10090: a chart point is written only after its stamp is bookkept,
+        # so the seam's committed-but-unbookkept events have none.
+        return _Result(KEPT - SEAM)
 
 
 class _Rig:
