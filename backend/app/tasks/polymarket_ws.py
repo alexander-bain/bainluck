@@ -1920,6 +1920,7 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
         exclude_events: frozenset[int] | set[int] = frozenset(),
         standalone: Optional[bool] = None,
         final: bool = False,
+        before_write=None,
     ) -> Optional[list[int]]:
         """#9934: withdraw the held prices the latest wide books priced out.
 
@@ -1931,6 +1932,7 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
         The tail excludes attempted events, so even a failure is tried once.
         #10090: ``standalone`` True/False takes only/no standalone legs, so
         each loop withdraws after its own prices; None (final drain) takes all.
+        ``before_write(books)`` sees the exact snapshot before its transaction.
         """
         from app.tasks.live_blend_refresh import _mono
 
@@ -1961,6 +1963,8 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
             }
         if not books:
             return []
+        if before_write is not None:
+            await before_write(books)
         try:
             async with get_task_session() as session:
                 if not final:
@@ -2021,6 +2025,17 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
         headline_event_ids = _PMHeadlineEvents(
             event_id_by_outcome, () if final else non_blend_outcome_ids,
         )
+
+        async def join_stamp_reading(books):
+            # #10090: a withdrawal follows the running stamp unless every leg
+            # in it is one no blend reads (a venue-refuted prop) and the
+            # stamp's membership is known. Judged on the transaction's own
+            # snapshot, so a book arriving after it belongs to a later pass.
+            if stamp_owner.task is not None and (
+                stamp_owner.events is None
+                or event_ids_for_outcomes(headline_event_ids, books)
+            ):
+                await stamp_owner.join()
 
         async with buffer_lock:
             batch = dict(price_buffer)
@@ -2254,12 +2269,13 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                         and eid not in failed_price_events
                     }
                     if mature:
-                        # Withdrawals retain their existing order after the
-                        # preceding stamp, including implicit debt it admitted.
-                        await stamp_done()
+                        # Withdrawals retain their existing order after a
+                        # preceding stamp that reads them, including implicit
+                        # debt it admitted (`join_stamp_reading`).
                         attempted_withdraw_events.update(mature)
                         early_withdrawn = await flush_withdrawals(
                             only_events=mature, final=final,
+                            before_write=join_stamp_reading,
                         )
                         if early_withdrawn is None:
                             wrote_all = False  # retain the ordinary tail fallback
@@ -2315,8 +2331,12 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                             stamp_owner.fresh.update(admitted)
                             if stamp_owner.events is not None:
                                 stamp_owner.events.update(admitted)
+                            # A leg no stamp reads (a prop's price or
+                            # withdrawal) owes no call beside the running one;
+                            # quiet debt is the tail's.
                             ready = [oid for oid in ready
-                                     if headline_event_ids.get(oid) not in admitted]
+                                     if headline_event_ids.get(oid) not in admitted
+                                     and headline_event_ids.get(oid) is not None]
                             refresh_events.difference_update(admitted)
                             if not ready:
                                 continue
@@ -2372,18 +2392,20 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
         # Events already attempted above wait for the next flush if their
         # withdrawal failed or a newer book arrived during the transaction.
         # All other withdrawals retain their ordinary after-price ordering.
-        if withdraw_buffer:
-            await stamp_owner.join()
         withdrawn = await flush_withdrawals(
             # A withdrawal on the held cohort would immediately reacquire its
             # blocked outcome locks and bypass the price eligibility cooldown.
             exclude_events=attempted_withdraw_events | lock_deferred_events,
             standalone=None if final else False,
             final=final,
+            before_write=join_stamp_reading,
         )
         if withdrawn is None:
             wrote_all = False
             withdrawn = []
+        # Only a withdrawn leg the blend reads owes a stamp; a prop-only
+        # withdrawal takes the quiet path and never joins a running owner.
+        withdrawn_events = event_ids_for_outcomes(headline_event_ids, withdrawn)
         async with buffer_lock:
             withdraw_cohort_ids.update(withdraw_buffer)
             unfinished_events = (
@@ -2393,7 +2415,7 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                     withdraw_cohort_ids.intersection(withdraw_buffer),
                 )
             )
-        if not batch and not withdrawn:
+        if not batch and not withdrawn_events:
             # #837 tail — a flush with no new prices still owes the stamps a row
             # lock deferred: those prices are already stored, so waiting for the
             # next venue tick would strand them on a quiet market. Free when
@@ -2411,7 +2433,7 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                 flush_started=flush_started, defer_event_ids=unfinished_events,
             )
             return wrote_all
-        if not owed and not withdrawn:
+        if not owed and not withdrawn_events:
             # A cohort excluded from an earlier chunk's stamp may now be
             # complete even when it contributed no additional ready inputs.
             pending_reader = getattr(blend_refresher, "pending_event_ids", None)
@@ -2436,8 +2458,7 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                  and oid not in headline_event_ids.non_speakers]
             )
         await blend_refresher.refresh(
-            event_ids_for_outcomes(headline_event_ids, owed)
-            | event_ids_for_outcomes(headline_event_ids, withdrawn),
+            event_ids_for_outcomes(headline_event_ids, owed) | withdrawn_events,
             flush_started=flush_started,
             defer_event_ids=unfinished_events,
         )
