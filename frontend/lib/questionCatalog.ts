@@ -9,7 +9,10 @@
  * it by family or by search.
  *
  * GROUPING. A group is one venue's one original question: family, source, the
- * question text exactly as served, and period. Two venues asking the same
+ * question text exactly as served, period, and the venue market id where the
+ * row carries one — Kalshi serves three separate "Both teams to score"
+ * contracts under one title, and without the id their outcomes read as one
+ * question with two "Yes" answers. Two venues asking the same
  * thing stay two groups — matching titles is not evidence that two contracts
  * settle the same way, and the catalog never declares that they do.
  *
@@ -73,6 +76,7 @@ interface LooseRow {
   period?: string | null;
   observed_at?: string | null;
   _inverted?: boolean | null;
+  _market_id?: number | null;
 }
 
 type Side = "over" | "under" | "unreadable";
@@ -121,7 +125,7 @@ export function buildQuestionCatalog(
     const question = (row.market_name ?? "").trim();
     if (!question) return;
     const period = row.period ?? null;
-    const key = JSON.stringify([family, row.source ?? null, question, period]);
+    const key = JSON.stringify([family, row.source ?? null, question, period, row._market_id ?? null]);
     let group = groups.get(key);
     if (!group) {
       group = {

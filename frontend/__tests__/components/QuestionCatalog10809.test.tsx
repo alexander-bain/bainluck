@@ -105,6 +105,26 @@ describe("grouping keeps venue and question identity", () => {
     expect(groups[0].outcomes[0].probability).toBe(0.07);
   });
 
+  test("separate venue contracts under one title stay separate (served market id)", () => {
+    const groups = buildQuestionCatalog(
+      markets({
+        other: [
+          { market_name: "Both teams to score", outcome_name: "Yes", probability: 0.525, source: "kalshi", _market_id: 64953335 },
+          { market_name: "Both teams to score", outcome_name: "Yes", probability: 0.365, source: "kalshi", _market_id: 64953321 },
+          { market_name: "Both teams to score", outcome_name: "14+ points", probability: 0.84, source: "kalshi", _market_id: 64953349 },
+          { market_name: "Both teams to score", outcome_name: "21+ points", probability: 0.32, source: "kalshi", _market_id: 64953349 },
+        ] as GameMarketsResponse["other"],
+      }),
+      "scheduled",
+      NOW,
+    );
+    expect(groups.map((g) => g.outcomes.map((o) => o.label))).toEqual([
+      ["Yes"],
+      ["Yes"],
+      ["14+ points", "21+ points"],
+    ]);
+  });
+
   test("families come out in page order whatever order the payload lists them", () => {
     const groups = buildQuestionCatalog(
       markets({
