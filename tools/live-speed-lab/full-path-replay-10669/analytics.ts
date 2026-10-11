@@ -1,0 +1,1 @@
+const no=()=>{};const context={track:no,pageView:no,setUser:no,setProperties:no,recordEvent:no,recordFilter:no,recordChart:no,consent:'none',showConsentBanner:false,setConsent:no,dismissBanner:no};export const useAnalyticsContext=()=>context;export const AnalyticsProvider=({children}:any)=>children;

@@ -1,0 +1,1 @@
+export const useAuth=()=>({isAuthenticated:false,isLoading:false,user:null,isAuthAvailable:false,authError:null,getToken:async()=>null,signInWithGoogle:async()=>{},signInWithApple:async()=>{},signOut:async()=>{}});
