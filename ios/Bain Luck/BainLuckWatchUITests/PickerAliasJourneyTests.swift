@@ -261,34 +261,64 @@ final class PickerAliasJourneyTests: XCTestCase {
         try assertState(saved: true, in: app)
         let container = try scrollViewport(in: app)
         let state = app.descendants(matching: .any)["watch.game-state"].firstMatch
-        let firstScore = app.descendants(matching: .any)["watch.away-score"].firstMatch
-        // The saved banner is accessibilityHidden; watch.game-state names it for
-        // speech but its frame is not the banner's visual bounds. Return to the
-        // natural top instead of centering that semantic group under the chrome.
-        var previousScoreY: CGFloat?
+        let identity = app.descendants(matching: .any)["watch.home-identity"].firstMatch
+        let savedNote = app.descendants(matching: .any)["watch.saved-update"].firstMatch
+        let recovery = app.descendants(matching: .any)["watch.update-explanation"].firstMatch
+        XCTAssertTrue(identity.exists && savedNote.exists && recovery.exists)
+        XCTAssertEqual(identity.label, "San Francisco Giants")
+        XCTAssertEqual(savedNote.label, "Last saved update")
+        XCTAssertTrue(state.label.contains("Saved reading. Refresh to confirm."))
+        XCTAssertTrue(state.label.contains("Offline."))
+        XCTAssertTrue(recovery.label.hasPrefix("Offline."))
+        // The accepted page begins with the home identity. Saved context is
+        // below the scores and receives its own complete captures after top proof.
+        var previousIdentityY: CGFloat?
         var stableTopSamples = 0
         var samples: [String] = []
         for attempt in 0..<24 {
             let appFrame = app.frame
-            let bounds = try viewport(container, appFrame: appFrame)
-            let scoreY = firstScore.frame.minY
-            let stateFrame = state.frame
-            samples.append("attempt=\(attempt) scoreY=\(scoreY) state=\(stateFrame) viewport=\(bounds)")
-            if let previousScoreY, abs(scoreY - previousScoreY) < 1,
-               state.isHittable, bounds.contains(stateFrame), firstScore.isHittable {
+            var bounds = try viewport(container, appFrame: appFrame)
+            let bars = app.navigationBars.allElementsBoundByIndex.filter { $0.exists && $0.frame.intersects(bounds) }
+            if let chromeBottom = bars.map({ $0.frame.maxY }).max() {
+                let top = max(bounds.minY, chromeBottom + 3)
+                bounds = CGRect(x: bounds.minX, y: top, width: bounds.width, height: bounds.maxY - top)
+            }
+            guard !bounds.isNull, !bounds.isEmpty, bounds.height > 30,
+                  bounds.minX.isFinite, bounds.maxX.isFinite,
+                  bounds.minY.isFinite, bounds.maxY.isFinite else {
+                XCTFail("Invalid unobscured saved-reading viewport")
+                throw NSError(domain: "WatchPickerAliasJourney", code: 5)
+            }
+            let identityFrame = identity.frame
+            let identityY = identityFrame.minY
+            let beginning = CGRect(x: identityFrame.minX, y: identityFrame.minY,
+                                   width: identityFrame.width, height: min(30, identityFrame.height))
+            let finiteIdentity = !identityFrame.isNull && !identityFrame.isEmpty
+                && identityFrame.minX.isFinite && identityFrame.minY.isFinite
+                && identityFrame.maxX.isFinite && identityFrame.maxY.isFinite
+            samples.append("attempt=\(attempt) identity=\(identityFrame) viewport=\(bounds)")
+            if let previousIdentityY, abs(identityY - previousIdentityY) < 1,
+               finiteIdentity, bounds.contains(beginning), identity.isHittable {
                 stableTopSamples += 1
             } else {
                 stableTopSamples = 0
             }
             if stableTopSamples == 2 {
-                capture(app, name + " - natural top with preceding banner")
+                if !(state.value as? String ?? "").hasPrefix("accessibility") {
+                    XCTAssertTrue(bounds.contains(identityFrame), "The full standard-size first identity must fit at natural top")
+                }
+                capture(app, name + " - first reading at stable natural top")
                 let geometry = XCTAttachment(string: samples.joined(separator: "\n") + "\n" + app.debugDescription)
                 geometry.name = name + " - top-boundary geometry and hierarchy"
                 geometry.lifetime = .keepAlways
                 add(geometry)
+                try captureElement(identity, in: app, name: name + " - complete first identity")
+                try captureElement(state, in: app, name: name + " - complete saved state")
+                try captureElement(savedNote, in: app, name: name + " - complete saved note")
+                try captureElement(recovery, in: app, name: name + " - complete offline recovery")
                 return
             }
-            previousScoreY = scoreY
+            previousIdentityY = identityY
             let start = app.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(
                 dx: bounds.midX - appFrame.minX, dy: bounds.minY + bounds.height * 0.20 - appFrame.minY))
             let end = start.withOffset(CGVector(dx: 0, dy: bounds.height * 0.55))

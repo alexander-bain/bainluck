@@ -1550,18 +1550,36 @@ final class PickerCurrentGameJourneyTests: XCTestCase {
     @MainActor
     private func captureSavedReturnTop(in app: XCUIApplication) throws {
         let state = app.descendants(matching: .any)["watch.game-state"].firstMatch
-        let firstScore = app.descendants(matching: .any)["watch.away-score"].firstMatch
+        let identity = app.descendants(matching: .any)["watch.home-identity"].firstMatch
+        let savedNote = app.descendants(matching: .any)["watch.saved-update"].firstMatch
+        let recovery = app.descendants(matching: .any)["watch.update-explanation"].firstMatch
+        XCTAssertTrue(identity.exists && savedNote.exists && recovery.exists)
+        XCTAssertEqual(identity.label, "San Francisco Giants")
+        XCTAssertEqual(savedNote.label, "Last saved update")
+        XCTAssertTrue(state.label.contains("Saved reading. Refresh to confirm."))
+        XCTAssertTrue(state.label.contains("Offline."))
+        XCTAssertTrue(recovery.label.hasPrefix("Offline."))
         var previousY: CGFloat?
         var stable = 0
         for _ in 0..<24 {
             let bounds = try viewport(in: app)
-            let y = firstScore.frame.minY
+            let identityFrame = identity.frame
+            let y = identityFrame.minY
+            let beginning = CGRect(x: identityFrame.minX, y: identityFrame.minY,
+                                   width: identityFrame.width, height: min(30, identityFrame.height))
+            let finiteIdentity = !identityFrame.isNull && !identityFrame.isEmpty
+                && identityFrame.minX.isFinite && identityFrame.minY.isFinite
+                && identityFrame.maxX.isFinite && identityFrame.maxY.isFinite
             if let previousY, abs(y - previousY) < 1,
-               bounds.contains(state.frame), state.isHittable, firstScore.isHittable {
+               finiteIdentity, bounds.contains(beginning), identity.isHittable {
                 stable += 1
             } else { stable = 0 }
             if stable == 2 {
-                capture(app, "Returned saved banner at stable natural top - accessibility5")
+                capture(app, "Returned first reading at stable natural top - accessibility5")
+                try captureComplete(identity, in: app, name: "Returned complete first identity - accessibility5")
+                try captureComplete(state, in: app, name: "Returned complete saved state - accessibility5")
+                try captureComplete(savedNote, in: app, name: "Returned complete saved note - accessibility5")
+                try captureComplete(recovery, in: app, name: "Returned complete offline recovery - accessibility5")
                 return
             }
             previousY = y
