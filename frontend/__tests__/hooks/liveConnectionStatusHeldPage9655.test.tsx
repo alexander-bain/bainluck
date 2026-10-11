@@ -27,13 +27,13 @@
  */
 
 import "../helpers/minimalDom";
-import React, { act, useEffect, useRef, useState } from "react";
+import React, { act, useCallback, useEffect, useRef, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import fs from "fs";
 import path from "path";
 import useSWR, { SWRConfig } from "swr";
 
-import { useLiveEventStream, type LiveFrame } from "../../hooks/useLiveEventStream";
+import { heldFrameAfter, useLiveEventStream, type LiveFrame } from "../../hooks/useLiveEventStream";
 import { applyLiveFrame, frameInvalidatesFoldedBlend } from "../../lib/eventLivePush";
 import { canSubscribeEventQuotes } from "../../lib/eventQuoteStream";
 import { fetchEventWithLiveFrame } from "../../lib/reconcileEventPoll";
@@ -164,17 +164,9 @@ function HeldPage({ net, eventId }: { net: Net; eventId: number }) {
     return () => clearInterval(interval);
   }, []);
 
-  const quoteEligible = canSubscribeEventQuotes(event);
-  const {
-    frame: liveFrame,
-    connected: streamConnected,
-    status: reportedStreamStatus,
-  } = useLiveEventStream(eventId, quoteEligible);
-  const streamStatus = reportedStreamStatus ?? (streamConnected ? "open" : "idle");
-
-  // ── app/events/[id]/page.tsx — the push effect, as the page writes it ──────
-  useEffect(() => {
-    if (!liveFrame || liveFrame.event_id !== eventId) return;
+  // ── app/events/[id]/page.tsx — the push callback, as the page writes it ────
+  const applyPushedFrame = useCallback((liveFrame: LiveFrame) => {
+    if (liveFrame.event_id !== eventId) return;
     const held = heldEventRef.current;
     if (held && canSubscribeEventQuotes(held) && (
       liveFrame.p === null || held.hero_probability_source !== "blend" ||
@@ -190,13 +182,20 @@ function HeldPage({ net, eventId }: { net: Net; eventId: number }) {
       return;
     }
     if (liveFrame.p === null || liveFrame.p === undefined) return;
-    latestLiveFrameRef.current = liveFrame;
+    latestLiveFrameRef.current = heldFrameAfter(latestLiveFrameRef.current, liveFrame);
     const frame = { ...liveFrame, p: liveFrame.p };
     refreshEvent(
       (prev) => applyLiveFrame(prev, frame),
       { revalidate: false },
     );
-  }, [liveFrame, refreshEvent, eventId, foldedRefetch]);
+  }, [refreshEvent, eventId, foldedRefetch]);
+
+  const quoteEligible = canSubscribeEventQuotes(event);
+  const {
+    connected: streamConnected,
+    status: reportedStreamStatus,
+  } = useLiveEventStream(eventId, quoteEligible, applyPushedFrame);
+  const streamStatus = reportedStreamStatus ?? (streamConnected ? "open" : "idle");
 
   // The page returns its loading view here; the status is drawn only below.
   if (!event) return <>loading</>;
@@ -309,11 +308,11 @@ describe("structural pin: the harness carries the page's own wiring", () => {
     // The scheduler and its two branches.
     expect(PAGE).toMatch(/createFoldedRefetchScheduler\(\s*\(\) => \{\s*if \(\(quoteTriggerRef\.current \|\| recoveryIntentRef\.current\) && pairedQuoteReadRef\.current\) return pairedQuoteReadRef\.current\(\);\s*freshNextEventReadRef\.current = true;\s*return refreshEventRef\.current\(\);\s*\}, FOLDED_FRAME_REFETCH_MS,/);
     // The hook, its status, and the fallback for a stream that reports only `connected`.
-    expect(PAGE).toMatch(/status: reportedStreamStatus,\s*recoveryGeneration,\s*\} = useLiveEventStream\(eventId, quoteEligible\);/);
+    expect(PAGE).toMatch(/status: reportedStreamStatus,\s*recoveryGeneration,\s*\} = useLiveEventStream\(eventId, quoteEligible, applyPushedFrame\);/);
     expect(PAGE).toMatch(/const streamStatus = reportedStreamStatus \?\? \(streamConnected \? "open" : "idle"\);/);
     // The push effect: refuse-and-refetch first, then the one guarded write.
     expect(PAGE).toMatch(/if \(held && canSubscribeEventQuotes\(held\) && \(\s*liveFrame\.p === null \|\| held\.hero_probability_source !== "blend" \|\|\s*\(liveFrame\.status && liveFrame\.status !== held\.status\) \|\|\s*\(held\.status !== "live" && frameInvalidatesFoldedBlend\(held, liveFrame\)\)\s*\)\) \{\s*quoteTriggerRef\.current = liveFrame;\s*foldedRefetch\.request\(\);\s*return;\s*\}/);
-    expect(PAGE).toMatch(/if \(liveFrame\.p === null \|\| liveFrame\.p === undefined\) return;\s*latestLiveFrameRef\.current = liveFrame;\s*const frame = \{ \.\.\.liveFrame, p: liveFrame\.p \};\s*refreshEvent\(/);
+    expect(PAGE).toMatch(/if \(liveFrame\.p === null \|\| liveFrame\.p === undefined\) return;\s*(?:\/\/.*\s*)*latestLiveFrameRef\.current = heldFrameAfter\(latestLiveFrameRef\.current, liveFrame\);\s*const frame = \{ \.\.\.liveFrame, p: liveFrame\.p \};\s*refreshEvent\(/);
     expect(PAGE.match(/applyLiveFrame\(prev, frame\)/g)).toHaveLength(1);
     // The status wiring: the ACCEPTED clock, and one step per render from the held result.
     expect(PAGE).toMatch(/const acceptedPriceClock = event\.hero_probability_observed_at \?\? freshestSourceStamp;/);

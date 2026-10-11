@@ -97,6 +97,13 @@ interface UseLiveEventStreamResult {
 export function useLiveEventStream(
   eventId: number | undefined,
   enabled: boolean,
+  /**
+   * #10090: called with EVERY frame, in arrival order. `frame` is one value per
+   * render, and React renders a chunk's callbacks once, so a consumer that must
+   * act on each frame (the page: a price AND the invalidation behind it) takes
+   * them here.
+   */
+  onFrame?: (frame: LiveFrame) => void,
 ): UseLiveEventStreamResult {
   const [frame, setFrame] = useState<LiveFrame | null>(null);
   const [connected, setConnected] = useState(false);
@@ -111,6 +118,13 @@ export function useLiveEventStream(
   const recoveryOrdinal = useRef(0);
   // A ref so the controller's callbacks never close over a stale setter.
   const mounted = useRef(true);
+  // Updated at commit, and before the controller effect below runs, so a new
+  // event's controller never delivers to the previous event's callback and an
+  // abandoned render never redirects the current one.
+  const onFrameRef = useRef(onFrame);
+  useEffect(() => {
+    onFrameRef.current = onFrame;
+  });
 
   useEffect(() => {
     mounted.current = true;
@@ -149,6 +163,15 @@ export function useLiveEventStream(
               previous.chartEventId === eventId ? previous.points : [], next, eventId,
             ),
           }));
+          try {
+            onFrameRef.current?.(next);
+          } catch (error) {
+            // A consumer's bug must not unwind into the controller and skip
+            // its delivery bookkeeping. Report it, uncaught, off this stack.
+            setTimeout(() => {
+              throw error;
+            });
+          }
         }
       },
       onRecovery: () => {
