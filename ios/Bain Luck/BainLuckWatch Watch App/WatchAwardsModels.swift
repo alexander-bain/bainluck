@@ -35,6 +35,13 @@ nonisolated struct WatchAwardsPage: Equatable, Sendable {
     let categories: [WatchAwardsCategory]
     let isSaved: Bool
     let hasUnavailableCategories: Bool
+
+    /// Search admitted category names without changing exact destinations or grades.
+    func categories(matching search: String) -> [WatchAwardsCategory] {
+        let query = search.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !query.isEmpty else { return categories }
+        return categories.filter { $0.name.localizedStandardContains(query) }
+    }
 }
 
 nonisolated enum WatchAwardsError: Error { case invalid, unavailable, busy }

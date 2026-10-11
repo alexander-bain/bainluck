@@ -5,6 +5,7 @@ struct WatchAwardsView: View {
     @StateObject private var browser = WatchAwardsStore()
     @State private var action: Task<Void, Never>?
     @State private var question: WatchQuestionDetailDestination?
+    @State private var categorySearch = ""
     let close: () -> Void
 
     var body: some View {
@@ -25,7 +26,20 @@ struct WatchAwardsView: View {
                         if page.isSaved {
                             Text("Previously received ceremony · refresh to confirm").font(.footnote)
                         }
-                        ForEach(page.categories) { category in
+                        let matches = page.categories(matching: categorySearch)
+                        if page.categories.count > 1 || !categorySearch.isEmpty {
+                            TextField("Find a category", text: $categorySearch)
+                                .frame(minHeight: 44)
+                                .accessibilityLabel("Find an awards category by name")
+                                .accessibilityIdentifier("watch.awards.search")
+                        }
+                        if !categorySearch.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                            Text("Matching categories: \(matches.count)").font(.footnote)
+                            Button("Show all categories") { categorySearch = "" }
+                                .frame(minHeight: 44)
+                                .accessibilityIdentifier("watch.awards.clear-search")
+                        }
+                        ForEach(matches) { category in
                             Button {
                                 guard scenePhase == .active,
                                       let current = browser.category(id: category.id) else { return }
@@ -43,6 +57,7 @@ struct WatchAwardsView: View {
                             .accessibilityIdentifier("watch.awards.category.\(category.id)")
                         }
                         if page.categories.isEmpty { Text("No available categories for this ceremony.") }
+                        else if matches.isEmpty { Text("No categories match your search.") }
                         if page.hasUnavailableCategories {
                             Text("Some ceremony information is unavailable.").font(.footnote)
                         }
@@ -70,6 +85,7 @@ struct WatchAwardsView: View {
             guard scenePhase == .active else { return }
             await browser.refresh()
         }
+        .onChange(of: browser.ceremony) { _, _ in categorySearch = "" }
         .onChange(of: scenePhase) { _, phase in
             if phase != .active { action?.cancel(); browser.cancel(); question = nil }
         }
