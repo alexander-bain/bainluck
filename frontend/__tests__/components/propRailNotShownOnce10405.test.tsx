@@ -36,7 +36,7 @@ describe("#10405 — the rail's 'not shown' line appears once", () => {
   it("collapsed: the rail prints it once", () => {
     const out = text(<PropDivergenceRail playerProps={ROWS} status="completed" />);
     expect(count(out, NOT_SHOWN)).toBe(1);
-    expect(out).toMatch(/See all 14 questions/);
+    expect(out).toMatch(/See all 14 props/);
   });
 
   it("expanded: printed once, by the detail list", () => {

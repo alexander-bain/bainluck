@@ -189,7 +189,7 @@ describe("the event page actually wraps its sections", () => {
       "Special markets",
       "The script",
       // #10809 / #10868 (Atlas v6): every served question, one search.
-      "All questions",
+      "All markets",
       "The series picture",
       // UX-P152: a US Open match is an ordinary event, and the tournament adds
       // its advancement strip and match questions as a section of THIS page

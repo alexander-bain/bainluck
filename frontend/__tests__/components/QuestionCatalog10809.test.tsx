@@ -3,6 +3,7 @@ import React, { act } from "react";
 import { createRoot } from "react-dom/client";
 import QuestionCatalog from "@/components/event/QuestionCatalog";
 import MarketBrowser from "@/components/event/MarketBrowser";
+import SpecialEventMarkets from "@/components/SpecialEventMarkets";
 import { buildQuestionCatalog, catalogQuote } from "@/lib/questionCatalog";
 import type { GameMarketsResponse } from "@/lib/api";
 
@@ -101,7 +102,7 @@ describe("grouping keeps venue and question identity", () => {
       NOW,
     );
     expect(groups).toHaveLength(1);
-    expect(groups[0]).toMatchObject({ family: "More questions", question: "Will there be a safety?" });
+    expect(groups[0]).toMatchObject({ family: "Other", question: "Will there be a safety?" });
     expect(groups[0].outcomes[0].probability).toBe(0.07);
   });
 
@@ -134,7 +135,7 @@ describe("grouping keeps venue and question identity", () => {
       "scheduled",
       NOW,
     );
-    expect(groups.map((g) => g.family)).toEqual(["Game lines", "More questions"]);
+    expect(groups.map((g) => g.family)).toEqual(["Game lines", "Other"]);
   });
 });
 
@@ -238,7 +239,7 @@ describe("the catalog keeps the reader's place", () => {
     });
     render(<QuestionCatalog data={data} status="scheduled" />);
     click("Show all 9 outcomes");
-    click("More questions");
+    click("Other");
     expect(host.textContent).toContain("Will there be a safety?");
     click("Player props");
     expect(host.querySelectorAll("li")).toHaveLength(9);
@@ -263,6 +264,29 @@ describe("the catalog keeps the reader's place", () => {
     expect(host.textContent).toContain("Patrick Mahomes passing yards");
   });
 
+  // #10877: Alex retired "questions" as the umbrella noun. The catalog's own
+  // words — fold, search, chips, details, accessible names — say markets; a
+  // served title is the venue's and is printed as served.
+  test("the catalog's own words never call the rows questions", () => {
+    const data = markets({
+      player_props: rungs(9),
+      other: [{ market_name: "Safety scored", outcome_name: "Yes", probability: 0.07, source: "kalshi" }] as GameMarketsResponse["other"],
+    });
+    render(<QuestionCatalog data={data} status="scheduled" />);
+    expect(host.querySelector("summary")!.textContent).toBe("All markets");
+    expect(host.querySelector("input")!.getAttribute("placeholder")).toBe("Search all markets");
+    const words = [
+      host.textContent ?? "",
+      ...Array.from(host.querySelectorAll("[aria-label],[placeholder]")).flatMap((el) => [
+        el.getAttribute("aria-label") ?? "",
+        el.getAttribute("placeholder") ?? "",
+      ]),
+    ].join(" ");
+    expect(words).toContain("About this market");
+    expect(words).toContain("Other");
+    expect(words).not.toMatch(/question/i);
+  });
+
   test("nothing served, nothing drawn", () => {
     render(<QuestionCatalog data={markets()} status="scheduled" />);
     expect(host.innerHTML).toBe("");
@@ -276,15 +300,31 @@ test("MarketBrowser: the family being read stays put when a refresh lists a new 
     search: `${group} ${i}`,
     content: <span>{`${group} row ${i}`}</span>,
   });
-  render(<MarketBrowser label="Questions" items={[item("Periods", 1), item("Matchups", 1)]} />);
+  render(<MarketBrowser label="Markets" items={[item("Periods", 1), item("Matchups", 1)]} />);
   expect(host.textContent).toContain("Periods row 1");
   render(
     <MarketBrowser
-      label="Questions"
+      label="Markets"
       items={[item("Game lines", 1), item("Periods", 1), item("Matchups", 1)]}
     />,
   );
   expect(host.textContent).toContain("Periods row 1");
   expect(host.textContent).not.toContain("Game lines row 1");
   expect(button("Periods").getAttribute("aria-pressed")).toBe("true");
+});
+
+// #10877: the section right above the catalog on the same page used to head its
+// rows "Game questions". Its chips span game props, novelty, MVP and golf or
+// fight fields, so the heading is the general "More markets".
+test("the compact extra-markets section is headed More markets, and its search says so", () => {
+  const data = {
+    other: [{ market_name: "Safety scored", outcome_name: "Yes", probability: 0.07, source: "kalshi" }],
+  } as unknown as GameMarketsResponse;
+  render(<SpecialEventMarkets compact data={data} eventStatus="scheduled" />);
+  expect(host.querySelector("h3")!.textContent).toBe("More markets");
+  expect(host.querySelector("input")!.getAttribute("placeholder")).toBe("Search more markets");
+  const chrome = Array.from(host.querySelectorAll("h3,[aria-label],[placeholder]"))
+    .map((el) => `${el.getAttribute("aria-label") ?? ""} ${el.getAttribute("placeholder") ?? ""} ${el.tagName === "H3" ? el.textContent : ""}`)
+    .join(" ");
+  expect(chrome).not.toMatch(/question/i);
 });

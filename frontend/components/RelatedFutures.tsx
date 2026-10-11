@@ -2868,7 +2868,7 @@ export default function RelatedFutures({
     .map(f => [`${f.market_id}-${f.outcome_id}`, f] as const)).values());
   const categoryNames: Record<string, string> = {
     playoff_path: "Season outcomes", conference: "Conference", season_stat: "Season totals",
-    award: "Awards", series: "Series", trade: "Next team", novelty: "More questions",
+    award: "Awards", series: "Series", trade: "Next team", novelty: "Other",
   };
   const drawsTrades = homeCats.trades.length > 0 || awayCats.trades.length > 0;
 
@@ -3170,7 +3170,7 @@ export default function RelatedFutures({
         <summary className="cursor-pointer min-h-11 text-sm font-semibold">Browse related markets</summary>
         <MarketBrowser label="Related markets" items={[...seasonRows].sort((a, b) => Number(!a.display_category) - Number(!b.display_category)).map(future => ({
           key: `${future.market_id}-${future.outcome_id}`,
-          group: categoryNames[future.display_category ?? ""] ?? "More questions",
+          group: categoryNames[future.display_category ?? ""] ?? "Other",
           search: `${future.market_name} ${future.clean_label ?? ""} ${future.outcome_name}`,
           content: <Link href={`/futures/${future.market_id}`} className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-4 py-3 border-b border-surface-border hover:bg-surface-elevated rounded-lg px-2">
             <div className="min-w-0"><div className="text-sm font-medium">{future.clean_label || future.market_name}</div><div className="text-xs text-text-secondary">{future.outcome_name}</div></div>

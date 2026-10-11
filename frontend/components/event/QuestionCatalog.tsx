@@ -68,9 +68,9 @@ function QuestionGroupCard({
           </button>
         )}
         <details className="text-xs text-text-secondary">
-          <summary className="cursor-pointer min-h-11 flex items-center">About this question</summary>
+          <summary className="cursor-pointer min-h-11 flex items-center">About this market</summary>
           <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 pb-2">
-            <dt>Question</dt>
+            <dt>Market</dt>
             <dd className="text-text-primary">{group.question}</dd>
             {group.source && (
               <>
@@ -128,10 +128,10 @@ export default function QuestionCatalog({
   return (
     <details className="rounded-xl border border-surface-border bg-surface-card p-4">
       <summary className="cursor-pointer min-h-11 text-sm font-semibold">
-        All questions
+        All markets
       </summary>
       <MarketBrowser
-        label="All questions"
+        label="All markets"
         items={groups.map((group) => ({
           key: group.key,
           group: group.family,

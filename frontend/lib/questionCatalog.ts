@@ -43,7 +43,7 @@ export const CATALOG_FAMILIES = [
   "Periods",
   "Player props",
   "Matchups",
-  "More questions",
+  "Other",
 ] as const;
 export type CatalogFamily = (typeof CATALOG_FAMILIES)[number];
 
@@ -194,7 +194,7 @@ export function buildQuestionCatalog(
       add("Matchups", row, catalogQuote(row, status, now), outcome.name);
     }
   }
-  addRows("More questions", data.other as LooseRow[]);
+  addRows("Other", data.other as LooseRow[]);
 
   return [...groups.values()].sort(
     (a, b) =>

@@ -3465,7 +3465,7 @@ export default function EventPage({ params }: EventPageProps) {
         return (
           <SectionErrorBoundary label="The script" resetKey={gameMarkets}>
           <details className="bg-surface-card border border-surface-border rounded-xl p-4">
-          <summary className="cursor-pointer min-h-11 text-sm font-semibold">{isFinished ? "All prop results" : "More game questions"}</summary>
+          <summary className="cursor-pointer min-h-11 text-sm font-semibold">{isFinished ? "All prop results" : "Prop lines"}</summary>
           <PropsSection
             eventStatus={event.status}
             // #4866: the venue heads every matchup-level family with
@@ -3513,7 +3513,7 @@ export default function EventPage({ params }: EventPageProps) {
           including the rows no map or card above draws. Not on a voided match
           (#9798), the same rule as the maps and quoted lines. */}
       {gameMarkets && !venueVoided && (
-        <SectionErrorBoundary label="All questions" resetKey={gameMarkets}>
+        <SectionErrorBoundary label="All markets" resetKey={gameMarkets}>
           <QuestionCatalog data={gameMarkets} status={event.status} />
         </SectionErrorBoundary>
       )}

@@ -382,7 +382,7 @@ describe("suppressed rungs stay reachable — this is rail capacity, not a loss"
         status: "scheduled",
       }),
     );
-    expect(html).toContain("See all 40 questions");
+    expect(html).toContain("See all 40 props");
     expect(html).toContain("5 of 40");
   });
 });
@@ -638,7 +638,7 @@ describe("when the rule empties the rail, the page says so", () => {
     // It renders, rather than vanishing — a silent gap is indistinguishable from
     // missing data, which is the complaint V3 exists to answer.
     expect(html).toContain("rungs of a bigger ladder");
-    expect(html).toContain("See all 2 questions");
+    expect(html).toContain("See all 2 props");
     expect(html).toContain("The script");
   });
 

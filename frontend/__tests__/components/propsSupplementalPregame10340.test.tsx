@@ -6,7 +6,8 @@
  * said "script": the rail's "The script" and this section's own. Root's
  * decision (`10340-SUPPLEMENTAL-HEADING-DECISION.md`): the rail keeps the name;
  * the section that is left, on that pregame path only, is "More props" —
- * "Additional market questions for this game." — with no secondary "Props".
+ * "Additional markets for this game." — with no secondary "Props". (#10877:
+ * Alex retired "questions" as the umbrella noun; the blurb says markets.)
  * Every other state and every other caller keeps its heading.
  */
 import { readFileSync } from "fs";
@@ -37,7 +38,7 @@ describe("#10340 — the pregame supplemental section is headed as what it is", 
     expect(header(html)).toEqual({
       eyebrow: "More props",
       title: null,
-      blurb: "Additional market questions for this game.",
+      blurb: "Additional markets for this game.",
     });
     expect(html).not.toContain("The script");
     // The rows themselves are untouched.
