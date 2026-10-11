@@ -65,7 +65,7 @@ struct GameActivityRecord {
     static let shared = GameActivityController()
     @Published private(set) var activeEventIDs: Set<Int> = []
     @Published private(set) var isBusy = false
-    @Published private(set) var status: String?
+    @Published private var feedback: (eventID: Int, message: String)?
     @Published private(set) var isEnabled = false
     private let service: any GameActivityServing
     private let isForeground: () -> Bool
@@ -114,11 +114,25 @@ struct GameActivityRecord {
         for record in records { rememberClocks(record.snapshot, id: record.id) }
     }
 
+    /// The consumer supplies its event even before its view task begins.
+    func status(for eventID: Int) -> String? {
+        guard eventID > 0, feedback?.eventID == eventID else { return nil }
+        return feedback?.message
+    }
+
+    private func setStatus(_ message: String, for eventID: Int, completion: Bool = false) {
+        // Ending an activity still completes after departure, but its feedback
+        // must not replace the newly viewed game's operation feedback.
+        if completion, let viewingEventID, viewingEventID != eventID { return }
+        feedback = (eventID, message)
+    }
+
     func beginViewing(eventID: Int) {
         guard isForeground(), eventID > 0 else { return }
         if viewingEventID != eventID {
             viewingGeneration += 1
             viewingEventID = eventID
+            if feedback?.eventID != eventID { feedback = nil }
             pendingSnapshot = nil
         }
     }
@@ -134,24 +148,25 @@ struct GameActivityRecord {
     func start(snapshot: GameActivitySnapshot) {
         guard !isBusy else { return }
         reconcile()
-        guard isForeground() else { status = "Open the app to start a Live Activity."; return }
-        guard isEnabled else { status = "Live Activities are unavailable or disabled in Settings."; return }
+        guard isForeground() else { setStatus("Open the app to start a Live Activity.", for: snapshot.eventID); return }
+        guard isEnabled else { setStatus("Live Activities are unavailable or disabled in Settings.", for: snapshot.eventID); return }
         guard snapshot.eventID > 0, !snapshot.isTerminal else {
-            status = "A finished or unavailable game cannot start a Live Activity."
+            setStatus("A finished or unavailable game cannot start a Live Activity.", for: snapshot.eventID)
             return
         }
         guard service.records.isEmpty else {
-            status = activeEventIDs == [snapshot.eventID]
+            setStatus(activeEventIDs == [snapshot.eventID]
                 ? "This game already has a Live Activity."
-                : "Stop the existing game's Live Activity before starting this game."
+                : "Stop the existing game's Live Activity before starting this game.",
+                for: snapshot.eventID)
             return
         }
         do {
             try service.request(snapshot, staleDate: staleDate(for: snapshot))
             beginViewing(eventID: snapshot.eventID)
-            status = "Live Activity started. Updates arrive while this game is open."
+            setStatus("Live Activity started. Updates arrive while this game is open.", for: snapshot.eventID)
         } catch {
-            status = "Couldn't start the Live Activity. Try again."
+            setStatus("Couldn't start the Live Activity. Try again.", for: snapshot.eventID)
         }
         reconcile()
     }
@@ -182,7 +197,7 @@ struct GameActivityRecord {
             rememberClocks(snapshot, id: record.id)
             if snapshot.isTerminal {
                 await service.end(id: record.id, final: snapshot)
-                status = "Game finished. The Live Activity has ended."
+                setStatus("Game finished. The Live Activity has ended.", for: snapshot.eventID, completion: true)
             } else {
                 await service.update(id: record.id, snapshot: snapshot, staleDate: staleDate(for: snapshot))
             }
@@ -197,7 +212,7 @@ struct GameActivityRecord {
         for record in service.records where record.eventID == eventID {
             await service.end(id: record.id, final: nil)
         }
-        status = "Live Activity stopped."
+        setStatus("Live Activity stopped.", for: eventID, completion: true)
         await finishOperation()
     }
 

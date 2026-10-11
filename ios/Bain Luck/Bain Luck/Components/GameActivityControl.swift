@@ -43,7 +43,7 @@ struct GameActivityControl: View {
                         Text("Updates while this game is open. After you leave, the reading can become stale.")
                             .font(.footnote).foregroundStyle(.secondary)
                     }
-                    if let status = controller.status {
+                    if let status = controller.status(for: snapshot.eventID) {
                         Text(status).font(.footnote).foregroundStyle(.secondary)
                             .accessibilityIdentifier("game.activity.status")
                     }
