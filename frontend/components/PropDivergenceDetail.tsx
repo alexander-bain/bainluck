@@ -182,8 +182,8 @@ export default function PropDivergenceDetail({ playerProps, status }: Props) {
           <p className="text-[11px] text-text-muted pb-1.5">
             {SETTLED_NO_GRADE_LABEL} —{" "}
             {result.ungraded.length === 1
-              ? "this question settled without a published outcome, so there is no result to show against its mark."
-              : "these questions settled without a published outcome, so there is no result to show against their mark."}
+              ? "this prop settled without a published outcome, so there is no result to show against its mark."
+              : "these props settled without a published outcome, so there is no result to show against their mark."}
           </p>
           <ul className="space-y-1">
             {result.ungraded.map((row) => (
@@ -210,7 +210,7 @@ export default function PropDivergenceDetail({ playerProps, status }: Props) {
               // too. Every number on this page is the chance the question
               // happens; the centre line is the coin flip and the bar is how far
               // from it we are.
-              "Ordered by how far from a coin flip each question is — the centre line is 50%, and every number is the chance it happens."
+              "Ordered by how far from a coin flip each prop is — the centre line is 50%, and every number is the chance it happens."
             : "Ordered by distance from the pregame mark — the grey tick is what the script said, the marker is where it is now."}
       </p>
 
