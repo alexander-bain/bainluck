@@ -161,7 +161,8 @@ def refresher(
                 if fail_commit_event in stamping:
                     raise RuntimeError("before outer COMMIT")
                 if cancel_commit_event in stamping:
-                    # Its chart-point slot was taken inside this transaction.
+                    # #10090: no chart-point slot is taken inside a stamp's
+                    # transaction; the point is written after it commits.
                     r.slot_at_cancel.append(cancel_commit_event in r._last_snapshot_at)
                     raise asyncio.CancelledError()
                 await session.commit()
@@ -248,8 +249,12 @@ async def cancelled_accounting(rig, r, *, owed_at_least):
     assert not owed & written, f"bookkept event re-owed: {sorted(owed & written)}"
     redundant = owed & kept
     assert len(redundant) <= FRESH_STAMP_WORKERS - 1, redundant
-    assert kept == snapshots  # each kept stamp kept its chart point with it
-    assert written == set(r._last_snapshot_at) <= kept
+    # #10090: a chart point is written after its stamp's COMMIT and delivery,
+    # so a cancel can leave a kept stamp without its point; never a point
+    # without its bookkept stamp, nor a slot without its row. A cancel landing
+    # after the chart COMMIT returns the slot of a kept point (the chart's own
+    # ambiguous seam): one extra point at the next due stamp, never a gap.
+    assert set(r._last_snapshot_at) <= snapshots <= written
     assert redundant == kept - written  # only the unbookkept commits overlap
     assert r.stats["stamped"] == len(r._last_written_value)
     return kept, redundant
@@ -282,8 +287,10 @@ async def test_actual_due_count_selects_path(rig, count):
     await r.refresh([1])
     # One event owns its transaction (the singleton path). Otherwise the fresh
     # event stamps in its own session and the debt is prepared once, then each
-    # debt event commits in its own transaction.
-    assert len(calls) == (1 if count == 1 else 1 + 1 + (count - 1))
+    # debt event commits in its own transaction. #10090: each stamp whose chart
+    # clock is due then writes its point in one more short transaction.
+    stamp_sessions = 1 if count == 1 else 1 + 1 + (count - 1)
+    assert len(calls) == stamp_sessions + count
     assert [f["event_id"] for f in frames] == list(range(1, count + 1))
     assert set().union(*resolved) == set(range(1, count + 1))
     assert not r.pending_event_ids()
@@ -367,13 +374,13 @@ async def test_partial_delivery_cancel_keeps_committed_group_authoritative(rig):
 
 async def test_cancel_midgroup_restores_provisional_slots(rig):
     await seed(rig)
-    # Event 6's transaction is cancelled at its COMMIT, after it took its
-    # provisional chart-point slot (the per-event form of a group-mate's).
+    # Event 6's transaction is cancelled at its COMMIT. #10090: its chart
+    # point is owed only after that COMMIT, so it never took a slot.
     r, frames, _, _, _ = refresher(rig, cancel_commit_event=6)
     stage(r, range(1, 13))
     with pytest.raises(asyncio.CancelledError):
         await r.refresh(range(1, 13))
-    assert r.slot_at_cancel == [True], "the cancelled stamp held a slot"
+    assert r.slot_at_cancel == [False], "a slot was taken inside the stamp"
     kept, _ = await cancelled_accounting(rig, r, owed_at_least={6})
     assert 6 not in kept
     # The cancelled transaction's provisional slot followed it out.

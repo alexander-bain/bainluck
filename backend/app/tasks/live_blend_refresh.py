@@ -905,6 +905,27 @@ def heartbeat_deadline(max_gap_s: float, sample_interval_s: float) -> float:
     return max(1.0, float(max_gap_s) - float(sample_interval_s))
 
 
+def _chart_reading(reading):
+    """#10090 — the fields a chart point reads, copied while the stamp's session
+    is open: the point is written after that session commits, when ORM rows may
+    be expired (gotcha #6). Same attribute names, so `_maybe_snapshot` and
+    `_second_slot` read it exactly as they read the reading."""
+    from types import SimpleNamespace
+
+    market = getattr(reading, "market", None)
+    outcome = getattr(reading, "outcome", None)
+    return SimpleNamespace(
+        home_probability=getattr(reading, "home_probability", None),
+        away_probability=getattr(reading, "away_probability", None),
+        draw_probability=getattr(reading, "draw_probability", None),
+        yes_probability=getattr(reading, "yes_probability", None),
+        market=SimpleNamespace(
+            name=getattr(market, "name", None), id=getattr(market, "id", None),
+        ),
+        outcome=SimpleNamespace(name=getattr(outcome, "name", None)),
+    )
+
+
 #: #10090 — float tolerance on the per-event floor when it is read on the
 #: flush-start clock. Consecutive starts are `period` apart by construction
 #: (`run_flush_cadence`), but `(t + p) - t` can come back short of `p` at
@@ -2257,6 +2278,8 @@ class LiveBlendRefresher:
         # retry of a lock-deferred event skipped it as unchanged and the price
         # was lost for good.
         written: dict[int, float] = {}
+        # #10090: the chart points the committed stamps owe, in stamp order.
+        owed_snapshots: list[tuple] = []
 
         # Stamp the throttle for EVERY event we are about to attempt, before any
         # of them can fail to resolve. Stamping per-resolved-event instead would
@@ -2270,11 +2293,7 @@ class LiveBlendRefresher:
 
         if self._session_factory is not None:
             get_task_session = self._session_factory  # #2471: the consumer's
-        async with (
-            self._session_slot(),
-            self._snapshot_slots_follow_the_commit(event_ids),
-            get_task_session() as session,
-        ):
+        async with self._session_slot(), get_task_session() as session:
             if prepared is None:
                 grouped = await self._read_groups(session, event_ids)
             else:
@@ -2452,38 +2471,35 @@ class LiveBlendRefresher:
 
                         stamped_at = new_sources[self.source]["updated_at"]
 
-                        # The chart point retains its own savepoint: a
-                        # snapshot that cannot be written must
-                        # not cost the stamp (see `_maybe_snapshot`), and the
-                        # flush puts its ORM writes INSIDE this event's
-                        # savepoint rather than autoflushing into the next
-                        # event's UPDATE, where a failure would be charged to
-                        # the wrong event.
-                        # Most changed quotes arrive before the chart clock is
-                        # due. Do not pay SAVEPOINT + RELEASE (or flush) merely
-                        # to call a snapshot helper that immediately returns.
-                        snapshot_at = self._last_snapshot_at.get(event_id)
-                        snapshot_due = snapshot_at is None or (
-                            now - snapshot_at >= self.snapshot_interval_s
-                        )
+                    # Noted only once the stamp scope has succeeded (a stamp
+                    # that rolled back must not read as written), and applied only
+                    # once the transaction commits — see `written` above.
+                    written[event_id] = value
+
+                    # #10090: the chart point is written AFTER this commit and
+                    # its publication (`_write_owed_snapshots`), never inside the
+                    # stamp's transaction, so chart SQL no longer delays the
+                    # stamp's COMMIT or extends its event-row lock. Observed, not
+                    # attributed: production 2026-10-11 00:52:30Z (BOS–PHI
+                    # 15323924) one frame arrived ~3.0 s after its stamp against
+                    # 0.05–0.19 s for its neighbours; no worker/history/lock
+                    # receipt ties that interval to a chart write.
+                    # Most changed quotes arrive before the chart clock is due;
+                    # those owe nothing and open no second session.
+                    snapshot_at = self._last_snapshot_at.get(event_id)
+                    if snapshot_at is None or (
+                        now - snapshot_at >= self.snapshot_interval_s
+                    ):
                         try:
-                            if snapshot_due:
-                                async with session.begin_nested():
-                                    await self._maybe_snapshot(
-                                        session, event_id, value, reading, now,
-                                    )
-                                    await session.flush()
+                            owed_snapshots.append(
+                                (event_id, value, _chart_reading(reading))
+                            )
                         except Exception:
                             self.stats["errors"] += 1
                             logger.exception(
                                 "live_blend_refresh[%s]: snapshot failed for event %s",
                                 self.source, event_id,
                             )
-
-                    # Noted only once the stamp scope has succeeded (a stamp
-                    # that rolled back must not read as written), and applied only
-                    # once the transaction commits — see `written` above.
-                    written[event_id] = value
                     if exact_trace is not None:
                         with contextlib.suppress(Exception):
                             if exact_trace.tracks_event(event_id):
@@ -2584,17 +2600,81 @@ class LiveBlendRefresher:
                 self._publish if window is None else window.publish_inline
             )
         await publish_committed(pending)
+        if owed_snapshots:
+            await self._write_owed_snapshots(owed_snapshots, now, get_task_session)
+
+    async def _write_owed_snapshots(
+        self, owed: list[tuple], now: float, get_task_session,
+    ) -> None:
+        """#10090 — write the chart points committed stamps owe. Never raises an
+        ordinary exception; cancellation propagates to the refresh worker.
+
+        Runs after the stamps COMMITTED and their frames were published (inline)
+        or submitted to the ordered sender (grouped), in its own short
+        transaction, so neither the stamp's COMMIT nor its hold on the event row
+        waits on `win_prob_snapshots`. It is still awaited by the flush, so the
+        same event's next stamp in this refresher waits for it. A stamp that
+        never commits owes no point and takes no slot, so its retry still draws
+        one. Each point keeps its own savepoint, and its ORM writes are flushed
+        inside it: one that cannot be written costs only itself, never another
+        point and never the number already published.
+
+        The stamp's lock budget is transaction-local and expired at its COMMIT,
+        and the consumer sessions carry none of their own, so this transaction
+        installs the same budget before any chart SQL. Without it a chart
+        UPDATE queued behind another holder of the latest snapshot row waits
+        out the resting statement timeout while the event stays fenced and the
+        worker slot stays taken. `stamp_lock_timeout_ms` falsy keeps it off, as
+        it does for the stamp.
+        """
+        from app.utils.repair_lock_budget import (
+            SET_LOCK_TIMEOUT_SQL, lock_timeout_value,
+        )
+
+        try:
+            async with (
+                self._snapshot_slots_follow_the_commit(
+                    [event_id for event_id, _, _ in owed]
+                ),
+                self._session_slot(),
+                get_task_session() as session,
+            ):
+                if self.stamp_lock_timeout_ms:
+                    await session.execute(
+                        SET_LOCK_TIMEOUT_SQL,
+                        {"ms": lock_timeout_value(self.stamp_lock_timeout_ms)},
+                    )
+                for event_id, value, reading in owed:
+                    try:
+                        async with session.begin_nested():
+                            await self._maybe_snapshot(
+                                session, event_id, value, reading, now,
+                            )
+                            await session.flush()
+                    except Exception:
+                        self.stats["errors"] += 1
+                        logger.exception(
+                            "live_blend_refresh[%s]: snapshot failed for event %s",
+                            self.source, event_id,
+                        )
+        except Exception:
+            self.stats["errors"] += 1
+            logger.exception(
+                "live_blend_refresh[%s]: chart points failed for events %s",
+                self.source, [event_id for event_id, _, _ in owed],
+            )
 
     @contextlib.asynccontextmanager
     async def _snapshot_slots_follow_the_commit(self, event_ids: list[int]):
-        """Undo this batch's chart-point throttle slots if it does not commit.
+        """Undo these chart points' throttle slots if their transaction does
+        not commit.
 
         `_maybe_snapshot` takes its slot BEFORE writing, deliberately: a
         snapshot that fails inside its own savepoint must not retry every two
         seconds. But a transaction that never commits wrote no chart point at
         all, and a slot kept for it would hold the line flat for up to
-        `snapshot_interval_s` after the retry stamps the number. Entered before
-        the session and exited after it, so a failing COMMIT reaches it.
+        `snapshot_interval_s` after the next stamp. Entered before the session
+        and exited after it, so a failing or cancelled COMMIT reaches it.
         """
         prior = {eid: self._last_snapshot_at.get(eid) for eid in event_ids}
         try:
