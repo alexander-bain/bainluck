@@ -3,7 +3,7 @@ import XCTest
 
 final class RectangularWidgetHostJourneyTests: XCTestCase {
     @MainActor
-    func testActualRectangularWidgetShowsPublishedSavedReading() throws {
+    func testActualRectangularLauncherAndTap() throws {
         continueAfterFailure = false
         let app = XCUIApplication()
         defer { app.terminate() }
@@ -92,60 +92,22 @@ final class RectangularWidgetHostJourneyTests: XCTestCase {
         XCTAssertTrue(host.otherElements["Watch Face"].firstMatch.waitForExistence(timeout: 15))
         let center = host.otherElements["center"].firstMatch
         XCTAssertTrue(center.waitForExistence(timeout: 15) && center.isHittable && host.frame.contains(center.frame))
-        // The canonical-opponent forecast is a supported saved reading in this
-        // mounted slot. All original title, Saved, value, timestamp and fit checks follow.
-        let reading = host.descendants(matching: .any).matching(NSPredicate(format: "identifier IN %@", [
-            "watch.complication.rectangular.prominent", "watch.complication.rectangular.compact",
-            "watch.complication.rectangular.opponent"
-        ])).firstMatch
-        XCTAssertTrue(reading.waitForExistence(timeout: 20), "Actual installed WidgetKit extension must render a typed fitting reading")
-        XCTAssertTrue(reading.label.contains("San Francisco Giants win"))
-        XCTAssertTrue(reading.label.contains("Saved"))
-        XCTAssertTrue(reading.label.contains("64% · Live"))
-        XCTAssertTrue(reading.label.contains("Observed "))
-        let observedParts = reading.label.components(separatedBy: "Observed ")
-        XCTAssertEqual(observedParts.count, 2)
-        let observedTimestamp = try XCTUnwrap(observedParts.last)
-            .components(separatedBy: ". Open your game")[0]
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        XCTAssertFalse(observedTimestamp.isEmpty, "Saved reading must retain its observation timestamp")
-        XCTAssertEqual(reading.label.components(separatedBy: "64% · Live").count, 2)
-        print("WATCH_RECTANGULAR_SAVED_FRAMES host=\(host.frame) center=\(center.frame) reading=\(reading.frame)")
-        capture(host, "Actual Modular saved frame evidence before bounds assertion")
-        try requireReadingWithinWidgetContent(reading, center: center, host: host)
-        XCTAssertFalse(host.descendants(matching: .any)["watch.complication.fallback"].firstMatch.exists)
-        // Preserve the prior required receipt only after actual named saved content is verified.
-        print("WATCH_RECTANGULAR_INSTALLED_TITLE=San Francisco Giants win")
-        print("WATCH_RECTANGULAR_INSTALLED_DETAIL=Saved · 64% · Live")
-        print("WATCH_RECTANGULAR_INSTALLED_OBSERVED=\(reading.label)")
-        print("WATCH_UI_RECTANGULAR_ACTUAL_TYPED=PASS")
-        capture(host, "Actual mounted rectangular saved reading")
+        let launcher = host.descendants(matching: .any)["watch.complication.fallback"].firstMatch
+        XCTAssertTrue(launcher.waitForExistence(timeout: 20), "Actual installed extension must render its explicit launcher")
+        XCTAssertEqual(launcher.label, "Open your selected game in Bain Luck, or choose a game")
+        try requireReadingWithinWidgetContent(launcher, center: center, host: host)
+        XCTAssertFalse(host.descendants(matching: .any)["watch.complication.rectangular.score-columns"].firstMatch.exists)
+        capture(host, "Actual Modular complete explicit launcher")
+        center.tap()
+        XCTAssertTrue(app.wait(for: .runningForeground, timeout: 45))
+        XCTAssertTrue(probability.waitForExistence(timeout: 20))
+        XCTAssertTrue(probability.label.contains("San Francisco Giants") && probability.label.contains("64%"))
+        let route = app.staticTexts["watch.launch-receipt"]
+        let delivered = XCTNSPredicateExpectation(predicate: NSPredicate(format: "label == %@", "Launcher opens: 1"), object: route)
+        XCTAssertEqual(XCTWaiter.wait(for: [delivered], timeout: 15), .completed)
+        capture(app, "Actual rectangular launcher retained selected game")
+        print("WATCH_UI_ACTUAL_RECTANGULAR_LAUNCHER=PASS")
 
-    }
-
-    @MainActor
-    func testActualRectangularLiveScoreColumnsColdTap() throws {
-        try checkActualScoreColumnsColdTap(scenario: "score", homeScore: 4, awayScore: 2, final: false)
-    }
-
-    @MainActor
-    func testActualRectangularHomeWinnerColumnsColdTap() throws {
-        try checkActualScoreColumnsColdTap(scenario: "final", homeScore: 4, awayScore: 2, final: true)
-    }
-
-    @MainActor
-    func testActualRectangularAwayWinnerColumnsColdTap() throws {
-        try checkActualScoreColumnsColdTap(scenario: "away-final", homeScore: 2, awayScore: 4, final: true)
-    }
-
-    @MainActor
-    func testActualRectangularTiedColumnsColdTap() throws {
-        try checkActualScoreColumnsColdTap(scenario: "tie", homeScore: 2, awayScore: 2, final: true)
-    }
-
-    @MainActor
-    func testActualRectangularZeroScoreColumnsColdTap() throws {
-        try checkActualScoreColumnsColdTap(scenario: "zero", homeScore: 4, awayScore: 0, final: false)
     }
 
     @MainActor

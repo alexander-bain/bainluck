@@ -1,0 +1,969 @@
+{
+  "base": "d81bf0fba6cdcbc278cc9e4a7d2de6cfae1ff3fb",
+  "original_count": 137,
+  "candidate_count": 101,
+  "retained_unchanged": 98,
+  "deferred": 36,
+  "converted_launchers": 3,
+  "rows": [
+    {
+      "old_case": "WidgetTapJourneyTests/testActualCornerSavedReadingAndTap",
+      "old_group": "corner",
+      "disposition": "replaced_for_removed_display",
+      "candidate_case": "WidgetTapJourneyTests/testActualCornerLauncherAndTap",
+      "reason": "saved numerical face display removed; actual host fit/identity and selected-game tap obligations retained with explicit launcher-only assertions"
+    },
+    {
+      "old_case": "ComplicationContentJourneyTests/testSavedLiveScoreFinalAndEmptyRectangularContent",
+      "old_group": "readings",
+      "disposition": "deferred",
+      "candidate_case": null,
+      "reason": "rich numerical/typed complication renderer removed; launcher-only faces"
+    },
+    {
+      "old_case": "ComplicationContentJourneyTests/testSavedCircularNamedProbabilityFinalAndScoreLayout",
+      "old_group": "readings",
+      "disposition": "deferred",
+      "candidate_case": null,
+      "reason": "rich numerical/typed complication renderer removed; launcher-only faces"
+    },
+    {
+      "old_case": "ComplicationContentJourneyTests/testCircularOldUnknownAndNonfittingReadingsStayLaunchers",
+      "old_group": "readings",
+      "disposition": "deferred",
+      "candidate_case": null,
+      "reason": "rich numerical/typed complication renderer removed; launcher-only faces"
+    },
+    {
+      "old_case": "ProbabilityRoundingJourneyTests/testPairedRoundingPersistsOfflineAndDrawSportKeepsScalarRounding",
+      "old_group": "readings",
+      "disposition": "retained",
+      "candidate_case": "ProbabilityRoundingJourneyTests/testPairedRoundingPersistsOfflineAndDrawSportKeepsScalarRounding",
+      "reason": "selected-game/consent/launcher correctness retained"
+    },
+    {
+      "old_case": "WatchDiscoverJourneyTests/testSelectedGameStaysFirstAndDiscoveriesSurviveOfflineRelaunch",
+      "old_group": "readings",
+      "disposition": "deferred",
+      "candidate_case": null,
+      "reason": "Discoveries entry/sheet removed from1.0.3"
+    },
+    {
+      "old_case": "WatchDiscoverJourneyTests/testDiscoveriesAtAccessibilitySizeKeepReadingAndReturnReachable",
+      "old_group": "readings",
+      "disposition": "deferred",
+      "candidate_case": null,
+      "reason": "Discoveries entry/sheet removed from1.0.3"
+    },
+    {
+      "old_case": "WatchDiscoverJourneyTests/testWithoutSelectionShowsThirdQuestionWithUnknownObservationAge",
+      "old_group": "readings",
+      "disposition": "deferred",
+      "candidate_case": null,
+      "reason": "Discoveries entry/sheet removed from1.0.3"
+    },
+    {
+      "old_case": "WatchDiscoverJourneyTests/testUnselectedReturnControlIsReadableAtAccessibilitySize",
+      "old_group": "readings",
+      "disposition": "deferred",
+      "candidate_case": null,
+      "reason": "Discoveries entry/sheet removed from1.0.3"
+    },
+    {
+      "old_case": "WatchDiscoverPolishTests/testTopRefreshRecoversAndSeparatesStoriesAtStandardSize",
+      "old_group": "readings",
+      "disposition": "deferred",
+      "candidate_case": null,
+      "reason": "Discoveries entry/sheet removed from1.0.3"
+    },
+    {
+      "old_case": "WatchDiscoverPolishTests/testTopRefreshRecoversAndSeparatesStoriesAtAccessibilitySize",
+      "old_group": "readings",
+      "disposition": "deferred",
+      "candidate_case": null,
+      "reason": "Discoveries entry/sheet removed from1.0.3"
+    },
+    {
+      "old_case": "WatchDiscoverPolishTests/testSelectedGameKeepsSummaryBeforeSeparatedStories",
+      "old_group": "readings",
+      "disposition": "deferred",
+      "candidate_case": null,
+      "reason": "Discoveries entry/sheet removed from1.0.3"
+    },
+    {
+      "old_case": "ComplicationContentJourneyTests/testRectangularTypedNamedValuesFitWithMonochromeRendering",
+      "old_group": "readings",
+      "disposition": "deferred",
+      "candidate_case": null,
+      "reason": "rich numerical/typed complication renderer removed; launcher-only faces"
+    },
+    {
+      "old_case": "ComplicationContentJourneyTests/testRectangularLegacyMismatchUnknownAndEmptyStayHonest",
+      "old_group": "readings",
+      "disposition": "deferred",
+      "candidate_case": null,
+      "reason": "rich numerical/typed complication renderer removed; launcher-only faces"
+    },
+    {
+      "old_case": "ComplicationContentJourneyTests/testCornerUnsupportedReadingsStayLaunchers",
+      "old_group": "readings",
+      "disposition": "deferred",
+      "candidate_case": null,
+      "reason": "rich numerical/typed complication renderer removed; launcher-only faces"
+    },
+    {
+      "old_case": "ComplicationContentJourneyTests/testCornerForecastFitsMeasured34PointContentSlot",
+      "old_group": "readings",
+      "disposition": "deferred",
+      "candidate_case": null,
+      "reason": "rich numerical/typed complication renderer removed; launcher-only faces"
+    },
+    {
+      "old_case": "ComplicationContentJourneyTests/testRectangularTypographyForecastKeepsIdentityAndMetadataInFullColor",
+      "old_group": "readings",
+      "disposition": "deferred",
+      "candidate_case": null,
+      "reason": "rich numerical/typed complication renderer removed; launcher-only faces"
+    },
+    {
+      "old_case": "ComplicationContentJourneyTests/testRectangularTypographyForecastKeepsIdentityAndMetadataWhenAccented",
+      "old_group": "readings",
+      "disposition": "deferred",
+      "candidate_case": null,
+      "reason": "rich numerical/typed complication renderer removed; launcher-only faces"
+    },
+    {
+      "old_case": "ComplicationContentJourneyTests/testRectangularOpponentIdentityAndFallbacksInFullColor",
+      "old_group": "readings",
+      "disposition": "deferred",
+      "candidate_case": null,
+      "reason": "rich numerical/typed complication renderer removed; launcher-only faces"
+    },
+    {
+      "old_case": "ComplicationContentJourneyTests/testRectangularOpponentIdentityAndFallbacksWhenAccented",
+      "old_group": "readings",
+      "disposition": "deferred",
+      "candidate_case": null,
+      "reason": "rich numerical/typed complication renderer removed; launcher-only faces"
+    },
+    {
+      "old_case": "ComplicationContentJourneyTests/testRectangularNamedScoreRowsFitInFullColor",
+      "old_group": "readings",
+      "disposition": "deferred",
+      "candidate_case": null,
+      "reason": "rich numerical/typed complication renderer removed; launcher-only faces"
+    },
+    {
+      "old_case": "ComplicationContentJourneyTests/testRectangularNamedScoreRowsFitWhenAccented",
+      "old_group": "readings",
+      "disposition": "deferred",
+      "candidate_case": null,
+      "reason": "rich numerical/typed complication renderer removed; launcher-only faces"
+    },
+    {
+      "old_case": "ComplicationContentJourneyTests/testSyntheticNamedScoreColumnsInFullColor",
+      "old_group": "readings",
+      "disposition": "deferred",
+      "candidate_case": null,
+      "reason": "rich numerical/typed complication renderer removed; launcher-only faces"
+    },
+    {
+      "old_case": "ComplicationContentJourneyTests/testSyntheticNamedScoreColumnsWhenAccented",
+      "old_group": "readings",
+      "disposition": "deferred",
+      "candidate_case": null,
+      "reason": "rich numerical/typed complication renderer removed; launcher-only faces"
+    },
+    {
+      "old_case": "ComplicationContentJourneyTests/testRectangularCanonicalScoreColumnsInFullColor",
+      "old_group": "readings",
+      "disposition": "deferred",
+      "candidate_case": null,
+      "reason": "rich numerical/typed complication renderer removed; launcher-only faces"
+    },
+    {
+      "old_case": "ComplicationContentJourneyTests/testRectangularCanonicalScoreColumnsWhenAccented",
+      "old_group": "readings",
+      "disposition": "deferred",
+      "candidate_case": null,
+      "reason": "rich numerical/typed complication renderer removed; launcher-only faces"
+    },
+    {
+      "old_case": "ComplicationContentJourneyTests/testRectangularCanonicalScoreColumnsPreserveLiteralZeroInFullColor",
+      "old_group": "readings",
+      "disposition": "deferred",
+      "candidate_case": null,
+      "reason": "rich numerical/typed complication renderer removed; launcher-only faces"
+    },
+    {
+      "old_case": "ComplicationContentJourneyTests/testRectangularCanonicalScoreColumnsPreserveLiteralZeroWhenAccented",
+      "old_group": "readings",
+      "disposition": "deferred",
+      "candidate_case": null,
+      "reason": "rich numerical/typed complication renderer removed; launcher-only faces"
+    },
+    {
+      "old_case": "ComplicationContentJourneyTests/testSyntheticCircular64PointValuesAndIdentityFitWithoutLauncher",
+      "old_group": "readings",
+      "disposition": "deferred",
+      "candidate_case": null,
+      "reason": "rich numerical/typed complication renderer removed; launcher-only faces"
+    },
+    {
+      "old_case": "ComplicationContentJourneyTests/testCornerUnderlineKeepsCompleteValueAndIdentityInFullColor",
+      "old_group": "readings",
+      "disposition": "deferred",
+      "candidate_case": null,
+      "reason": "rich numerical/typed complication renderer removed; launcher-only faces"
+    },
+    {
+      "old_case": "ComplicationContentJourneyTests/testCornerUnderlineKeepsCompleteValueAndIdentityWhenAccented",
+      "old_group": "readings",
+      "disposition": "deferred",
+      "candidate_case": null,
+      "reason": "rich numerical/typed complication renderer removed; launcher-only faces"
+    },
+    {
+      "old_case": "ComplicationContentJourneyTests/testCornerStackedPercentFitsAllEndpointsInFullColor",
+      "old_group": "readings",
+      "disposition": "deferred",
+      "candidate_case": null,
+      "reason": "rich numerical/typed complication renderer removed; launcher-only faces"
+    },
+    {
+      "old_case": "ComplicationContentJourneyTests/testCornerStackedPercentFitsAllEndpointsWhenAccented",
+      "old_group": "readings",
+      "disposition": "deferred",
+      "candidate_case": null,
+      "reason": "rich numerical/typed complication renderer removed; launcher-only faces"
+    },
+    {
+      "old_case": "PickerCurrentGameJourneyTests/testLiveMissingAwayScoreIsExplainedAtStandardSize",
+      "old_group": "readings",
+      "disposition": "retained",
+      "candidate_case": "PickerCurrentGameJourneyTests/testLiveMissingAwayScoreIsExplainedAtStandardSize",
+      "reason": "selected-game/consent/launcher correctness retained"
+    },
+    {
+      "old_case": "PickerCurrentGameJourneyTests/testLiveMissingHomeScoreIsExplainedAtAccessibilitySize",
+      "old_group": "readings",
+      "disposition": "retained",
+      "candidate_case": "PickerCurrentGameJourneyTests/testLiveMissingHomeScoreIsExplainedAtAccessibilitySize",
+      "reason": "selected-game/consent/launcher correctness retained"
+    },
+    {
+      "old_case": "PickerCurrentGameJourneyTests/testFirstOpenSwitchAndFailureKeepOnlyNewUndatedContext",
+      "old_group": "readings",
+      "disposition": "retained",
+      "candidate_case": "PickerCurrentGameJourneyTests/testFirstOpenSwitchAndFailureKeepOnlyNewUndatedContext",
+      "reason": "selected-game/consent/launcher correctness retained"
+    },
+    {
+      "old_case": "PickerCurrentGameJourneyTests/testTeamColorNamesAndMissingFallbackAtAccessibilitySize",
+      "old_group": "readings",
+      "disposition": "retained",
+      "candidate_case": "PickerCurrentGameJourneyTests/testTeamColorNamesAndMissingFallbackAtAccessibilitySize",
+      "reason": "selected-game/consent/launcher correctness retained"
+    },
+    {
+      "old_case": "PickerCurrentGameJourneyTests/testMainScoreInvalidColorsStayTextOnlyAtStandardSize",
+      "old_group": "readings",
+      "disposition": "retained",
+      "candidate_case": "PickerCurrentGameJourneyTests/testMainScoreInvalidColorsStayTextOnlyAtStandardSize",
+      "reason": "selected-game/consent/launcher correctness retained"
+    },
+    {
+      "old_case": "PickerCurrentGameJourneyTests/testMainScoreColorsKeepLongNamesAtAccessibilitySize",
+      "old_group": "readings",
+      "disposition": "retained",
+      "candidate_case": "PickerCurrentGameJourneyTests/testMainScoreColorsKeepLongNamesAtAccessibilitySize",
+      "reason": "selected-game/consent/launcher correctness retained"
+    },
+    {
+      "old_case": "PickerCurrentGameJourneyTests/testScheduledPickerShowsSuppliedTimeAtStandardSize",
+      "old_group": "readings",
+      "disposition": "retained",
+      "candidate_case": "PickerCurrentGameJourneyTests/testScheduledPickerShowsSuppliedTimeAtStandardSize",
+      "reason": "selected-game/consent/launcher correctness retained"
+    },
+    {
+      "old_case": "PickerCurrentGameJourneyTests/testCurrentGameSurvivesPartialOfflineAndEmptyLists",
+      "old_group": "readings",
+      "disposition": "retained",
+      "candidate_case": "PickerCurrentGameJourneyTests/testCurrentGameSurvivesPartialOfflineAndEmptyLists",
+      "reason": "selected-game/consent/launcher correctness retained"
+    },
+    {
+      "old_case": "PickerCurrentGameJourneyTests/testUnknownCurrentGameDoesNotInventProbabilityOrAge",
+      "old_group": "readings",
+      "disposition": "retained",
+      "candidate_case": "PickerCurrentGameJourneyTests/testUnknownCurrentGameDoesNotInventProbabilityOrAge",
+      "reason": "selected-game/consent/launcher correctness retained"
+    },
+    {
+      "old_case": "PickerCurrentGameJourneyTests/testIndependentStaleClocksAreCompactAndExplicitAtStandardSize",
+      "old_group": "readings",
+      "disposition": "retained",
+      "candidate_case": "PickerCurrentGameJourneyTests/testIndependentStaleClocksAreCompactAndExplicitAtStandardSize",
+      "reason": "selected-game/consent/launcher correctness retained"
+    },
+    {
+      "old_case": "ClearSelectionJourneyTests/testClearSavedOfflineSelectionSurvivesRelaunch",
+      "old_group": "navigation",
+      "disposition": "retained",
+      "candidate_case": "ClearSelectionJourneyTests/testClearSavedOfflineSelectionSurvivesRelaunch",
+      "reason": "selected-game/consent/launcher correctness retained"
+    },
+    {
+      "old_case": "LargeTextRecoveryJourneyTests/testOfflinePickerReturnRetainsNamedReadingAtLargestTextSize",
+      "old_group": "navigation",
+      "disposition": "retained",
+      "candidate_case": "LargeTextRecoveryJourneyTests/testOfflinePickerReturnRetainsNamedReadingAtLargestTextSize",
+      "reason": "selected-game/consent/launcher correctness retained"
+    },
+    {
+      "old_case": "LargeTextRecoveryJourneyTests/testOfflineClearSurvivesRelaunchAtLargestTextSize",
+      "old_group": "navigation",
+      "disposition": "retained",
+      "candidate_case": "LargeTextRecoveryJourneyTests/testOfflineClearSurvivesRelaunchAtLargestTextSize",
+      "reason": "selected-game/consent/launcher correctness retained"
+    },
+    {
+      "old_case": "LauncherURLJourneyTests/testColdLauncherURLDeliversAndRetainsOfflineSelection",
+      "old_group": "navigation",
+      "disposition": "retained",
+      "candidate_case": "LauncherURLJourneyTests/testColdLauncherURLDeliversAndRetainsOfflineSelection",
+      "reason": "selected-game/consent/launcher correctness retained"
+    },
+    {
+      "old_case": "PickerReturnJourneyTests/testReturnFromPickerPreservesSelectedGameAndSavedOfflineReading",
+      "old_group": "navigation",
+      "disposition": "retained",
+      "candidate_case": "PickerReturnJourneyTests/testReturnFromPickerPreservesSelectedGameAndSavedOfflineReading",
+      "reason": "selected-game/consent/launcher correctness retained"
+    },
+    {
+      "old_case": "PickerReturnJourneyTests/testNetworkFailureGuidanceRetainsChoicesAndRecoversSelection",
+      "old_group": "navigation",
+      "disposition": "retained",
+      "candidate_case": "PickerReturnJourneyTests/testNetworkFailureGuidanceRetainsChoicesAndRecoversSelection",
+      "reason": "selected-game/consent/launcher correctness retained"
+    },
+    {
+      "old_case": "PickerAliasJourneyTests/testResolvedAliasRetainsReadingOfflineAndAfterRestart",
+      "old_group": "navigation",
+      "disposition": "retained",
+      "candidate_case": "PickerAliasJourneyTests/testResolvedAliasRetainsReadingOfflineAndAfterRestart",
+      "reason": "selected-game/consent/launcher correctness retained"
+    },
+    {
+      "old_case": "PickerAliasJourneyTests/testResolvedAliasRetainsReadingAtAccessibilitySize",
+      "old_group": "navigation",
+      "disposition": "retained",
+      "candidate_case": "PickerAliasJourneyTests/testResolvedAliasRetainsReadingAtAccessibilitySize",
+      "reason": "selected-game/consent/launcher correctness retained"
+    },
+    {
+      "old_case": "PickerAliasJourneyTests/testUnprovenSameNameChoiceDoesNotReuseSavedReading",
+      "old_group": "navigation",
+      "disposition": "retained",
+      "candidate_case": "PickerAliasJourneyTests/testUnprovenSameNameChoiceDoesNotReuseSavedReading",
+      "reason": "selected-game/consent/launcher correctness retained"
+    },
+    {
+      "old_case": "PickerAliasJourneyTests/testRestoredSavedBannerIsReadableAtAccessibilitySize",
+      "old_group": "navigation",
+      "disposition": "retained",
+      "candidate_case": "PickerAliasJourneyTests/testRestoredSavedBannerIsReadableAtAccessibilitySize",
+      "reason": "selected-game/consent/launcher correctness retained"
+    },
+    {
+      "old_case": "PickerCurrentGameJourneyTests/testCurrentCardReturnAffordanceAtStandardSize",
+      "old_group": "navigation",
+      "disposition": "retained",
+      "candidate_case": "PickerCurrentGameJourneyTests/testCurrentCardReturnAffordanceAtStandardSize",
+      "reason": "selected-game/consent/launcher correctness retained"
+    },
+    {
+      "old_case": "PickerCurrentGameJourneyTests/testHandoffHelpExplainsPhoneGestureAtStandardSize",
+      "old_group": "navigation",
+      "disposition": "retained",
+      "candidate_case": "PickerCurrentGameJourneyTests/testHandoffHelpExplainsPhoneGestureAtStandardSize",
+      "reason": "selected-game/consent/launcher correctness retained"
+    },
+    {
+      "old_case": "PickerCurrentGameJourneyTests/testFlatProbabilityFullLongNameAtStandardSize",
+      "old_group": "navigation",
+      "disposition": "retained",
+      "candidate_case": "PickerCurrentGameJourneyTests/testFlatProbabilityFullLongNameAtStandardSize",
+      "reason": "selected-game/consent/launcher correctness retained"
+    },
+    {
+      "old_case": "PickerCurrentGameJourneyTests/testProbabilityArcZeroStaysZero",
+      "old_group": "navigation",
+      "disposition": "retained",
+      "candidate_case": "PickerCurrentGameJourneyTests/testProbabilityArcZeroStaysZero",
+      "reason": "selected-game/consent/launcher correctness retained"
+    },
+    {
+      "old_case": "PickerCurrentGameJourneyTests/testProbabilityArcZeroUsesNativeAccessibilityFallback",
+      "old_group": "navigation",
+      "disposition": "retained",
+      "candidate_case": "PickerCurrentGameJourneyTests/testProbabilityArcZeroUsesNativeAccessibilityFallback",
+      "reason": "selected-game/consent/launcher correctness retained"
+    },
+    {
+      "old_case": "PickerCurrentGameJourneyTests/testProbabilityPosterAtStandardSize",
+      "old_group": "navigation",
+      "disposition": "retained",
+      "candidate_case": "PickerCurrentGameJourneyTests/testProbabilityPosterAtStandardSize",
+      "reason": "selected-game/consent/launcher correctness retained"
+    },
+    {
+      "old_case": "PickerCurrentGameJourneyTests/testCompactStateLongClockUsesFullWidthFallbackAtStandardSize",
+      "old_group": "navigation",
+      "disposition": "retained",
+      "candidate_case": "PickerCurrentGameJourneyTests/testCompactStateLongClockUsesFullWidthFallbackAtStandardSize",
+      "reason": "selected-game/consent/launcher correctness retained"
+    },
+    {
+      "old_case": "PickerCurrentGameJourneyTests/testProbabilityArcSavedAtStandardSize",
+      "old_group": "navigation",
+      "disposition": "retained",
+      "candidate_case": "PickerCurrentGameJourneyTests/testProbabilityArcSavedAtStandardSize",
+      "reason": "selected-game/consent/launcher correctness retained"
+    },
+    {
+      "old_case": "PickerCurrentGameJourneyTests/testScheduledMissingScoresShowMatchupAtAccessibilitySize",
+      "old_group": "navigation",
+      "disposition": "retained",
+      "candidate_case": "PickerCurrentGameJourneyTests/testScheduledMissingScoresShowMatchupAtAccessibilitySize",
+      "reason": "selected-game/consent/launcher correctness retained"
+    },
+    {
+      "old_case": "PickerCurrentGameJourneyTests/testAdaptiveScoreShortLiveAtStandardSize",
+      "old_group": "navigation",
+      "disposition": "retained",
+      "candidate_case": "PickerCurrentGameJourneyTests/testAdaptiveScoreShortLiveAtStandardSize",
+      "reason": "selected-game/consent/launcher correctness retained"
+    },
+    {
+      "old_case": "PickerCurrentGameJourneyTests/testAdaptiveScoreLongFinalAtStandardSize",
+      "old_group": "navigation",
+      "disposition": "retained",
+      "candidate_case": "PickerCurrentGameJourneyTests/testAdaptiveScoreLongFinalAtStandardSize",
+      "reason": "selected-game/consent/launcher correctness retained"
+    },
+    {
+      "old_case": "PickerCurrentGameJourneyTests/testAdaptiveScoreMissingFinalAtStandardSize",
+      "old_group": "navigation",
+      "disposition": "retained",
+      "candidate_case": "PickerCurrentGameJourneyTests/testAdaptiveScoreMissingFinalAtStandardSize",
+      "reason": "selected-game/consent/launcher correctness retained"
+    },
+    {
+      "old_case": "PickerCurrentGameJourneyTests/testCompactScoreNamesUseFullWidthRowsAtStandardSize",
+      "old_group": "navigation",
+      "disposition": "retained",
+      "candidate_case": "PickerCurrentGameJourneyTests/testCompactScoreNamesUseFullWidthRowsAtStandardSize",
+      "reason": "selected-game/consent/launcher correctness retained"
+    },
+    {
+      "old_case": "PickerCurrentGameJourneyTests/testConfirmedFinalOutcomeAtAccessibilitySize",
+      "old_group": "navigation",
+      "disposition": "retained",
+      "candidate_case": "PickerCurrentGameJourneyTests/testConfirmedFinalOutcomeAtAccessibilitySize",
+      "reason": "selected-game/consent/launcher correctness retained"
+    },
+    {
+      "old_case": "PickerCurrentGameJourneyTests/testLongFinalOutcomeKeepsWholeHeaderAndBothRowsAtAccessibilitySize",
+      "old_group": "navigation",
+      "disposition": "retained",
+      "candidate_case": "PickerCurrentGameJourneyTests/testLongFinalOutcomeKeepsWholeHeaderAndBothRowsAtAccessibilitySize",
+      "reason": "selected-game/consent/launcher correctness retained"
+    },
+    {
+      "old_case": "PickerCurrentGameJourneyTests/testMissingOrNegativeFinalScoreDoesNotNameOutcome",
+      "old_group": "navigation",
+      "disposition": "retained",
+      "candidate_case": "PickerCurrentGameJourneyTests/testMissingOrNegativeFinalScoreDoesNotNameOutcome",
+      "reason": "selected-game/consent/launcher correctness retained"
+    },
+    {
+      "old_case": "PickerCurrentGameJourneyTests/testSelectedClosedRetainsScoresWithoutForecastAtStandardSize",
+      "old_group": "navigation",
+      "disposition": "retained",
+      "candidate_case": "PickerCurrentGameJourneyTests/testSelectedClosedRetainsScoresWithoutForecastAtStandardSize",
+      "reason": "selected-game/consent/launcher correctness retained"
+    },
+    {
+      "old_case": "PickerCurrentGameJourneyTests/testSelectedUnknownChanceRetainsScoresAtStandardSize",
+      "old_group": "navigation",
+      "disposition": "retained",
+      "candidate_case": "PickerCurrentGameJourneyTests/testSelectedUnknownChanceRetainsScoresAtStandardSize",
+      "reason": "selected-game/consent/launcher correctness retained"
+    },
+    {
+      "old_case": "PickerCurrentGameJourneyTests/testLongNamedUnavailableChanceRetainsScoresAtStandardSize",
+      "old_group": "navigation",
+      "disposition": "retained",
+      "candidate_case": "PickerCurrentGameJourneyTests/testLongNamedUnavailableChanceRetainsScoresAtStandardSize",
+      "reason": "selected-game/consent/launcher correctness retained"
+    },
+    {
+      "old_case": "PickerCurrentGameJourneyTests/testSavedClosedResultQualificationStaysAboveScoresAtStandardSize",
+      "old_group": "navigation",
+      "disposition": "retained",
+      "candidate_case": "PickerCurrentGameJourneyTests/testSavedClosedResultQualificationStaysAboveScoresAtStandardSize",
+      "reason": "selected-game/consent/launcher correctness retained"
+    },
+    {
+      "old_case": "PickerCurrentGameJourneyTests/testLiveMissingBothScoreIsExplainedAtStandardSize",
+      "old_group": "navigation",
+      "disposition": "retained",
+      "candidate_case": "PickerCurrentGameJourneyTests/testLiveMissingBothScoreIsExplainedAtStandardSize",
+      "reason": "selected-game/consent/launcher correctness retained"
+    },
+    {
+      "old_case": "PickerCurrentGameJourneyTests/testLiveMissingAwayScoreIsExplainedAtAccessibilitySize",
+      "old_group": "navigation",
+      "disposition": "retained",
+      "candidate_case": "PickerCurrentGameJourneyTests/testLiveMissingAwayScoreIsExplainedAtAccessibilitySize",
+      "reason": "selected-game/consent/launcher correctness retained"
+    },
+    {
+      "old_case": "PickerCurrentGameJourneyTests/testFirstOpenRetainsContextUntilDetailArrivesAtStandardSize",
+      "old_group": "navigation",
+      "disposition": "retained",
+      "candidate_case": "PickerCurrentGameJourneyTests/testFirstOpenRetainsContextUntilDetailArrivesAtStandardSize",
+      "reason": "selected-game/consent/launcher correctness retained"
+    },
+    {
+      "old_case": "PickerCurrentGameJourneyTests/testFirstOpenMissingPickerMetadataDoesNotInventContext",
+      "old_group": "navigation",
+      "disposition": "retained",
+      "candidate_case": "PickerCurrentGameJourneyTests/testFirstOpenMissingPickerMetadataDoesNotInventContext",
+      "reason": "selected-game/consent/launcher correctness retained"
+    },
+    {
+      "old_case": "PickerCurrentGameJourneyTests/testMainScoreAliasColorsStayTextOnlyAtStandardSize",
+      "old_group": "navigation",
+      "disposition": "retained",
+      "candidate_case": "PickerCurrentGameJourneyTests/testMainScoreAliasColorsStayTextOnlyAtStandardSize",
+      "reason": "selected-game/consent/launcher correctness retained"
+    },
+    {
+      "old_case": "PickerCurrentGameJourneyTests/testMainScoreInvalidColorsStayTextOnlyAtAccessibilitySize",
+      "old_group": "navigation",
+      "disposition": "retained",
+      "candidate_case": "PickerCurrentGameJourneyTests/testMainScoreInvalidColorsStayTextOnlyAtAccessibilitySize",
+      "reason": "selected-game/consent/launcher correctness retained"
+    },
+    {
+      "old_case": "PickerCurrentGameJourneyTests/testProbabilityBarAndEnabledClearAtStandardSize",
+      "old_group": "navigation",
+      "disposition": "retained",
+      "candidate_case": "PickerCurrentGameJourneyTests/testProbabilityBarAndEnabledClearAtStandardSize",
+      "reason": "selected-game/consent/launcher correctness retained"
+    },
+    {
+      "old_case": "PickerCurrentGameJourneyTests/testFinalCurrentGameShowsScoreInsteadOfForecastAtAccessibilitySize",
+      "old_group": "navigation",
+      "disposition": "retained",
+      "candidate_case": "PickerCurrentGameJourneyTests/testFinalCurrentGameShowsScoreInsteadOfForecastAtAccessibilitySize",
+      "reason": "selected-game/consent/launcher correctness retained"
+    },
+    {
+      "old_case": "PickerCurrentGameJourneyTests/testSavedCurrentCardAndReturnPreserveIndependentClocksAtAccessibilitySize",
+      "old_group": "navigation",
+      "disposition": "retained",
+      "candidate_case": "PickerCurrentGameJourneyTests/testSavedCurrentCardAndReturnPreserveIndependentClocksAtAccessibilitySize",
+      "reason": "selected-game/consent/launcher correctness retained"
+    },
+    {
+      "old_case": "SelectedGameUpdatingJourneyTests/testUpdatingIsVisibleUntilRequestFinishes",
+      "old_group": "controls",
+      "disposition": "retained",
+      "candidate_case": "SelectedGameUpdatingJourneyTests/testUpdatingIsVisibleUntilRequestFinishes",
+      "reason": "selected-game/consent/launcher correctness retained"
+    },
+    {
+      "old_case": "SelectedGameUpdatingJourneyTests/testUpdatingIsVisibleAtAccessibilitySize",
+      "old_group": "controls",
+      "disposition": "retained",
+      "candidate_case": "SelectedGameUpdatingJourneyTests/testUpdatingIsVisibleAtAccessibilitySize",
+      "reason": "selected-game/consent/launcher correctness retained"
+    },
+    {
+      "old_case": "WatchDiagnosticsJourneyTests/testConsentSettingPersistsAndRevokesAtStandardSize",
+      "old_group": "controls",
+      "disposition": "retained",
+      "candidate_case": "WatchDiagnosticsJourneyTests/testConsentSettingPersistsAndRevokesAtStandardSize",
+      "reason": "selected-game/consent/launcher correctness retained"
+    },
+    {
+      "old_case": "WatchDiagnosticsJourneyTests/testConsentSettingPersistsAndRevokesAtAccessibilitySize",
+      "old_group": "controls",
+      "disposition": "retained",
+      "candidate_case": "WatchDiagnosticsJourneyTests/testConsentSettingPersistsAndRevokesAtAccessibilitySize",
+      "reason": "selected-game/consent/launcher correctness retained"
+    },
+    {
+      "old_case": "PickerSelectedStateJourneyTests/testSelectedGameIsMarkedInPickerAndCanChange",
+      "old_group": "controls",
+      "disposition": "retained",
+      "candidate_case": "PickerSelectedStateJourneyTests/testSelectedGameIsMarkedInPickerAndCanChange",
+      "reason": "selected-game/consent/launcher correctness retained"
+    },
+    {
+      "old_case": "PickerSelectedStateJourneyTests/testSelectedGameIsMarkedAtAccessibilitySize",
+      "old_group": "controls",
+      "disposition": "retained",
+      "candidate_case": "PickerSelectedStateJourneyTests/testSelectedGameIsMarkedAtAccessibilitySize",
+      "reason": "selected-game/consent/launcher correctness retained"
+    },
+    {
+      "old_case": "SelectedGameJourneyTests/testPickerSelectionSurvivesOfflineRelaunchAndCanChange",
+      "old_group": "controls",
+      "disposition": "retained",
+      "candidate_case": "SelectedGameJourneyTests/testPickerSelectionSurvivesOfflineRelaunchAndCanChange",
+      "reason": "selected-game/consent/launcher correctness retained"
+    },
+    {
+      "old_case": "SelectedGameJourneyTests/testAccessibilityLayoutStressKeepsReadingsAndControlsReachable",
+      "old_group": "controls",
+      "disposition": "retained",
+      "candidate_case": "SelectedGameJourneyTests/testAccessibilityLayoutStressKeepsReadingsAndControlsReachable",
+      "reason": "selected-game/consent/launcher correctness retained"
+    },
+    {
+      "old_case": "PickerCurrentGameJourneyTests/testPopulatedPickerShowsChoicesBeforeRefreshAtStandardSize",
+      "old_group": "controls",
+      "disposition": "retained",
+      "candidate_case": "PickerCurrentGameJourneyTests/testPopulatedPickerShowsChoicesBeforeRefreshAtStandardSize",
+      "reason": "selected-game/consent/launcher correctness retained"
+    },
+    {
+      "old_case": "PickerCurrentGameJourneyTests/testPopulatedPickerShowsChoicesBeforeRefreshAtAccessibilitySize",
+      "old_group": "controls",
+      "disposition": "retained",
+      "candidate_case": "PickerCurrentGameJourneyTests/testPopulatedPickerShowsChoicesBeforeRefreshAtAccessibilitySize",
+      "reason": "selected-game/consent/launcher correctness retained"
+    },
+    {
+      "old_case": "PickerCurrentGameJourneyTests/testHandoffHelpExplainsPhoneGestureAtAccessibilitySize",
+      "old_group": "controls",
+      "disposition": "retained",
+      "candidate_case": "PickerCurrentGameJourneyTests/testHandoffHelpExplainsPhoneGestureAtAccessibilitySize",
+      "reason": "selected-game/consent/launcher correctness retained"
+    },
+    {
+      "old_case": "PickerCurrentGameJourneyTests/testFlatProbabilityFullLongNameAtAccessibilitySize",
+      "old_group": "controls",
+      "disposition": "retained",
+      "candidate_case": "PickerCurrentGameJourneyTests/testFlatProbabilityFullLongNameAtAccessibilitySize",
+      "reason": "selected-game/consent/launcher correctness retained"
+    },
+    {
+      "old_case": "PickerCurrentGameJourneyTests/testProbabilityArcHundredStaysHundred",
+      "old_group": "controls",
+      "disposition": "retained",
+      "candidate_case": "PickerCurrentGameJourneyTests/testProbabilityArcHundredStaysHundred",
+      "reason": "selected-game/consent/launcher correctness retained"
+    },
+    {
+      "old_case": "PickerCurrentGameJourneyTests/testProbabilityArcHundredUsesNativeAccessibilityFallback",
+      "old_group": "controls",
+      "disposition": "retained",
+      "candidate_case": "PickerCurrentGameJourneyTests/testProbabilityArcHundredUsesNativeAccessibilityFallback",
+      "reason": "selected-game/consent/launcher correctness retained"
+    },
+    {
+      "old_case": "PickerCurrentGameJourneyTests/testProbabilityPosterAtAccessibilitySize",
+      "old_group": "controls",
+      "disposition": "retained",
+      "candidate_case": "PickerCurrentGameJourneyTests/testProbabilityPosterAtAccessibilitySize",
+      "reason": "selected-game/consent/launcher correctness retained"
+    },
+    {
+      "old_case": "PickerCurrentGameJourneyTests/testProbabilityPosterSavedReadingKeepsOriginalClocks",
+      "old_group": "controls",
+      "disposition": "retained",
+      "candidate_case": "PickerCurrentGameJourneyTests/testProbabilityPosterSavedReadingKeepsOriginalClocks",
+      "reason": "selected-game/consent/launcher correctness retained"
+    },
+    {
+      "old_case": "PickerCurrentGameJourneyTests/testScheduledMissingScoresShowMatchupAtStandardSize",
+      "old_group": "controls",
+      "disposition": "retained",
+      "candidate_case": "PickerCurrentGameJourneyTests/testScheduledMissingScoresShowMatchupAtStandardSize",
+      "reason": "selected-game/consent/launcher correctness retained"
+    },
+    {
+      "old_case": "PickerCurrentGameJourneyTests/testSavedScheduledStartKeepsQualificationAndOriginalAge",
+      "old_group": "controls",
+      "disposition": "retained",
+      "candidate_case": "PickerCurrentGameJourneyTests/testSavedScheduledStartKeepsQualificationAndOriginalAge",
+      "reason": "selected-game/consent/launcher correctness retained"
+    },
+    {
+      "old_case": "PickerCurrentGameJourneyTests/testAdaptiveScoreLongFinalAtAccessibilitySize",
+      "old_group": "controls",
+      "disposition": "retained",
+      "candidate_case": "PickerCurrentGameJourneyTests/testAdaptiveScoreLongFinalAtAccessibilitySize",
+      "reason": "selected-game/consent/launcher correctness retained"
+    },
+    {
+      "old_case": "PickerCurrentGameJourneyTests/testAdaptiveScoreMissingFinalAtAccessibilitySize",
+      "old_group": "controls",
+      "disposition": "retained",
+      "candidate_case": "PickerCurrentGameJourneyTests/testAdaptiveScoreMissingFinalAtAccessibilitySize",
+      "reason": "selected-game/consent/launcher correctness retained"
+    },
+    {
+      "old_case": "PickerCurrentGameJourneyTests/testConfirmedFinalOutcomeAtStandardSize",
+      "old_group": "controls",
+      "disposition": "retained",
+      "candidate_case": "PickerCurrentGameJourneyTests/testConfirmedFinalOutcomeAtStandardSize",
+      "reason": "selected-game/consent/launcher correctness retained"
+    },
+    {
+      "old_case": "PickerCurrentGameJourneyTests/testLongFinalOutcomeKeepsWholeHeaderAndBothRowsAtStandardSize",
+      "old_group": "controls",
+      "disposition": "retained",
+      "candidate_case": "PickerCurrentGameJourneyTests/testLongFinalOutcomeKeepsWholeHeaderAndBothRowsAtStandardSize",
+      "reason": "selected-game/consent/launcher correctness retained"
+    },
+    {
+      "old_case": "PickerCurrentGameJourneyTests/testCompletedStatusUsesSameFinalScoreInterpretation",
+      "old_group": "controls",
+      "disposition": "retained",
+      "candidate_case": "PickerCurrentGameJourneyTests/testCompletedStatusUsesSameFinalScoreInterpretation",
+      "reason": "selected-game/consent/launcher correctness retained"
+    },
+    {
+      "old_case": "PickerCurrentGameJourneyTests/testSavedFinalOutcomeKeepsQuietQualificationAndOriginalAge",
+      "old_group": "controls",
+      "disposition": "retained",
+      "candidate_case": "PickerCurrentGameJourneyTests/testSavedFinalOutcomeKeepsQuietQualificationAndOriginalAge",
+      "reason": "selected-game/consent/launcher correctness retained"
+    },
+    {
+      "old_case": "PickerCurrentGameJourneyTests/testSelectedClosedRetainsScoresWithoutForecastAtAccessibilitySize",
+      "old_group": "controls",
+      "disposition": "retained",
+      "candidate_case": "PickerCurrentGameJourneyTests/testSelectedClosedRetainsScoresWithoutForecastAtAccessibilitySize",
+      "reason": "selected-game/consent/launcher correctness retained"
+    },
+    {
+      "old_case": "PickerCurrentGameJourneyTests/testLongNamedUnavailableChanceRetainsScoresAtAccessibilitySize",
+      "old_group": "controls",
+      "disposition": "retained",
+      "candidate_case": "PickerCurrentGameJourneyTests/testLongNamedUnavailableChanceRetainsScoresAtAccessibilitySize",
+      "reason": "selected-game/consent/launcher correctness retained"
+    },
+    {
+      "old_case": "PickerCurrentGameJourneyTests/testSavedClosedResultQualificationStaysAboveScoresAtAccessibilitySize",
+      "old_group": "controls",
+      "disposition": "retained",
+      "candidate_case": "PickerCurrentGameJourneyTests/testSavedClosedResultQualificationStaysAboveScoresAtAccessibilitySize",
+      "reason": "selected-game/consent/launcher correctness retained"
+    },
+    {
+      "old_case": "PickerCurrentGameJourneyTests/testLiveMissingBothScoreIsExplainedAtAccessibilitySize",
+      "old_group": "controls",
+      "disposition": "retained",
+      "candidate_case": "PickerCurrentGameJourneyTests/testLiveMissingBothScoreIsExplainedAtAccessibilitySize",
+      "reason": "selected-game/consent/launcher correctness retained"
+    },
+    {
+      "old_case": "PickerCurrentGameJourneyTests/testLiveMissingHomeScoreIsExplainedAtStandardSize",
+      "old_group": "controls",
+      "disposition": "retained",
+      "candidate_case": "PickerCurrentGameJourneyTests/testLiveMissingHomeScoreIsExplainedAtStandardSize",
+      "reason": "selected-game/consent/launcher correctness retained"
+    },
+    {
+      "old_case": "PickerCurrentGameJourneyTests/testFirstOpenRetainsContextUntilDetailArrivesAtAccessibilitySize",
+      "old_group": "controls",
+      "disposition": "retained",
+      "candidate_case": "PickerCurrentGameJourneyTests/testFirstOpenRetainsContextUntilDetailArrivesAtAccessibilitySize",
+      "reason": "selected-game/consent/launcher correctness retained"
+    },
+    {
+      "old_case": "PickerCurrentGameJourneyTests/testMainScoreAliasColorsStayTextOnlyAtAccessibilitySize",
+      "old_group": "controls",
+      "disposition": "retained",
+      "candidate_case": "PickerCurrentGameJourneyTests/testMainScoreAliasColorsStayTextOnlyAtAccessibilitySize",
+      "reason": "selected-game/consent/launcher correctness retained"
+    },
+    {
+      "old_case": "PickerCurrentGameJourneyTests/testProbabilityBarAndEnabledClearAtAccessibilitySize",
+      "old_group": "controls",
+      "disposition": "retained",
+      "candidate_case": "PickerCurrentGameJourneyTests/testProbabilityBarAndEnabledClearAtAccessibilitySize",
+      "reason": "selected-game/consent/launcher correctness retained"
+    },
+    {
+      "old_case": "PickerCurrentGameJourneyTests/testFinalCurrentGameShowsScoreInsteadOfForecast",
+      "old_group": "controls",
+      "disposition": "retained",
+      "candidate_case": "PickerCurrentGameJourneyTests/testFinalCurrentGameShowsScoreInsteadOfForecast",
+      "reason": "selected-game/consent/launcher correctness retained"
+    },
+    {
+      "old_case": "RectangularWidgetHostJourneyTests/testActualRectangularWidgetShowsPublishedSavedReading",
+      "old_group": "widgets",
+      "disposition": "replaced_for_removed_display",
+      "candidate_case": "RectangularWidgetHostJourneyTests/testActualRectangularLauncherAndTap",
+      "reason": "saved numerical face display removed; actual host fit/identity and selected-game tap obligations retained with explicit launcher-only assertions"
+    },
+    {
+      "old_case": "WidgetTapJourneyTests/testColdActualWidgetTapRetainsOfflineReading",
+      "old_group": "widgets",
+      "disposition": "retained",
+      "candidate_case": "WidgetTapJourneyTests/testColdActualWidgetTapRetainsOfflineReading",
+      "reason": "selected-game/consent/launcher correctness retained"
+    },
+    {
+      "old_case": "WidgetTapJourneyTests/testColdActualWidgetTapOffersPickerWithoutSelection",
+      "old_group": "widgets",
+      "disposition": "retained",
+      "candidate_case": "WidgetTapJourneyTests/testColdActualWidgetTapOffersPickerWithoutSelection",
+      "reason": "selected-game/consent/launcher correctness retained"
+    },
+    {
+      "old_case": "WidgetTapJourneyTests/testFreshConfiguredFaceIsActiveBeforeActualLauncherTap",
+      "old_group": "widgets",
+      "disposition": "retained",
+      "candidate_case": "WidgetTapJourneyTests/testFreshConfiguredFaceIsActiveBeforeActualLauncherTap",
+      "reason": "selected-game/consent/launcher correctness retained"
+    },
+    {
+      "old_case": "WidgetTapJourneyTests/testActualCircularSavedReadingAndTap",
+      "old_group": "widgets",
+      "disposition": "replaced_for_removed_display",
+      "candidate_case": "WidgetTapJourneyTests/testActualCircularLauncherAndTap",
+      "reason": "saved numerical face display removed; actual host fit/identity and selected-game tap obligations retained with explicit launcher-only assertions"
+    },
+    {
+      "old_case": "WidgetTapJourneyTests/testActualComplicationHost",
+      "old_group": "widgets",
+      "disposition": "retained",
+      "candidate_case": "WidgetTapJourneyTests/testActualComplicationHost",
+      "reason": "selected-game/consent/launcher correctness retained"
+    },
+    {
+      "old_case": "RectangularWidgetHostJourneyTests/testActualRectangularLiveScoreColumnsColdTap",
+      "old_group": "widgets",
+      "disposition": "deferred",
+      "candidate_case": null,
+      "reason": "rich rectangular score/final/zero display removed; app correctness still covered by all75 PickerCurrentGame cases and cold/warm launcher routes"
+    },
+    {
+      "old_case": "RectangularWidgetHostJourneyTests/testActualRectangularHomeWinnerColumnsColdTap",
+      "old_group": "widgets",
+      "disposition": "deferred",
+      "candidate_case": null,
+      "reason": "rich rectangular score/final/zero display removed; app correctness still covered by all75 PickerCurrentGame cases and cold/warm launcher routes"
+    },
+    {
+      "old_case": "RectangularWidgetHostJourneyTests/testActualRectangularAwayWinnerColumnsColdTap",
+      "old_group": "widgets",
+      "disposition": "deferred",
+      "candidate_case": null,
+      "reason": "rich rectangular score/final/zero display removed; app correctness still covered by all75 PickerCurrentGame cases and cold/warm launcher routes"
+    },
+    {
+      "old_case": "RectangularWidgetHostJourneyTests/testActualRectangularTiedColumnsColdTap",
+      "old_group": "widgets",
+      "disposition": "deferred",
+      "candidate_case": null,
+      "reason": "rich rectangular score/final/zero display removed; app correctness still covered by all75 PickerCurrentGame cases and cold/warm launcher routes"
+    },
+    {
+      "old_case": "RectangularWidgetHostJourneyTests/testActualRectangularZeroScoreColumnsColdTap",
+      "old_group": "widgets",
+      "disposition": "deferred",
+      "candidate_case": null,
+      "reason": "rich rectangular score/final/zero display removed; app correctness still covered by all75 PickerCurrentGame cases and cold/warm launcher routes"
+    },
+    {
+      "old_case": "PickerCurrentGameJourneyTests/testAdaptiveScoreShortLiveAtAccessibilitySize",
+      "old_group": "widgets",
+      "disposition": "retained",
+      "candidate_case": "PickerCurrentGameJourneyTests/testAdaptiveScoreShortLiveAtAccessibilitySize",
+      "reason": "selected-game/consent/launcher correctness retained"
+    },
+    {
+      "old_case": "PickerCurrentGameJourneyTests/testAlternativeCardSelectionAndCurrentReturnAtAccessibilitySize",
+      "old_group": "widgets",
+      "disposition": "retained",
+      "candidate_case": "PickerCurrentGameJourneyTests/testAlternativeCardSelectionAndCurrentReturnAtAccessibilitySize",
+      "reason": "selected-game/consent/launcher correctness retained"
+    },
+    {
+      "old_case": "PickerCurrentGameJourneyTests/testTeamColorNamesAndMissingFallbackAtStandardSize",
+      "old_group": "widgets",
+      "disposition": "retained",
+      "candidate_case": "PickerCurrentGameJourneyTests/testTeamColorNamesAndMissingFallbackAtStandardSize",
+      "reason": "selected-game/consent/launcher correctness retained"
+    },
+    {
+      "old_case": "PickerCurrentGameJourneyTests/testCurrentCardReturnAffordanceAtAccessibilitySize",
+      "old_group": "widgets",
+      "disposition": "retained",
+      "candidate_case": "PickerCurrentGameJourneyTests/testCurrentCardReturnAffordanceAtAccessibilitySize",
+      "reason": "selected-game/consent/launcher correctness retained"
+    },
+    {
+      "old_case": "PickerCurrentGameJourneyTests/testScheduledStartBoundariesAtStandardSize",
+      "old_group": "widgets",
+      "disposition": "retained",
+      "candidate_case": "PickerCurrentGameJourneyTests/testScheduledStartBoundariesAtStandardSize",
+      "reason": "selected-game/consent/launcher correctness retained"
+    },
+    {
+      "old_case": "PickerCurrentGameJourneyTests/testSelectedUnknownChanceRetainsScoresAtAccessibilitySize",
+      "old_group": "widgets",
+      "disposition": "retained",
+      "candidate_case": "PickerCurrentGameJourneyTests/testSelectedUnknownChanceRetainsScoresAtAccessibilitySize",
+      "reason": "selected-game/consent/launcher correctness retained"
+    },
+    {
+      "old_case": "PickerCurrentGameJourneyTests/testMainScoreColorsKeepLongNamesAtStandardSize",
+      "old_group": "widgets",
+      "disposition": "retained",
+      "candidate_case": "PickerCurrentGameJourneyTests/testMainScoreColorsKeepLongNamesAtStandardSize",
+      "reason": "selected-game/consent/launcher correctness retained"
+    },
+    {
+      "old_case": "PickerCurrentGameJourneyTests/testUnknownCurrentGameDoesNotInventProbabilityOrAgeAtAccessibilitySize",
+      "old_group": "widgets",
+      "disposition": "retained",
+      "candidate_case": "PickerCurrentGameJourneyTests/testUnknownCurrentGameDoesNotInventProbabilityOrAgeAtAccessibilitySize",
+      "reason": "selected-game/consent/launcher correctness retained"
+    },
+    {
+      "old_case": "PickerCurrentGameJourneyTests/testScheduledPickerShowsSuppliedTimeAtAccessibilitySize",
+      "old_group": "widgets",
+      "disposition": "retained",
+      "candidate_case": "PickerCurrentGameJourneyTests/testScheduledPickerShowsSuppliedTimeAtAccessibilitySize",
+      "reason": "selected-game/consent/launcher correctness retained"
+    },
+    {
+      "old_case": "PickerCurrentGameJourneyTests/testCurrentGameAndOfflineDetailsAtAccessibilitySize",
+      "old_group": "widgets",
+      "disposition": "retained",
+      "candidate_case": "PickerCurrentGameJourneyTests/testCurrentGameAndOfflineDetailsAtAccessibilitySize",
+      "reason": "selected-game/consent/launcher correctness retained"
+    },
+    {
+      "old_case": "PickerCurrentGameJourneyTests/testScheduledStartBoundariesAtAccessibilitySize",
+      "old_group": "widgets",
+      "disposition": "retained",
+      "candidate_case": "PickerCurrentGameJourneyTests/testScheduledStartBoundariesAtAccessibilitySize",
+      "reason": "selected-game/consent/launcher correctness retained"
+    }
+  ]
+}

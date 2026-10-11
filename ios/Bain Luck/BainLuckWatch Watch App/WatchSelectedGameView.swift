@@ -15,7 +15,6 @@ struct WatchSelectedGameView: View {
     @StateObject private var picker: WatchGamePickerStore
     @State private var choosingGame = false
     @State private var showingHandoffHelp = false
-    @State private var showingDiscoveries = false
     #if DEBUG
     @State private var launcherOpenCount = 0
     #endif
@@ -47,14 +46,14 @@ struct WatchSelectedGameView: View {
         _picker = StateObject(wrappedValue: WatchGamePickerStore(transport: WatchDiscoverGameTransport()))
     }
 
-    private var refreshKey: String { "\(scenePhase)-\(choosingGame)-\(showingDiscoveries)-\(refreshGeneration)-\(store.selectedEventID ?? 0)" }
+    private var refreshKey: String { "\(scenePhase)-\(choosingGame)-\(refreshGeneration)-\(store.selectedEventID ?? 0)" }
 
     private var telemetrySurface: WatchTelemetrySurface {
-        showingDiscoveries ? .discoveries : (choosingGame || store.selectedEventID == nil ? .picker : .game)
+        choosingGame || store.selectedEventID == nil ? .picker : .game
     }
 
     private var continuationEventID: Int? {
-        guard scenePhase == .active, !choosingGame, !showingDiscoveries else { return nil }
+        guard scenePhase == .active, !choosingGame else { return nil }
         return store.game?.id
     }
 
@@ -154,19 +153,6 @@ struct WatchSelectedGameView: View {
                     .accessibilityIdentifier("watch.choose-another")
                 }
                 Button {
-                    WatchTelemetry.shared.action(.discoveries, surface: telemetrySurface)
-                    showingDiscoveries = true
-                } label: {
-                    Text("Discoveries")
-                        .font(.footnote.weight(.semibold))
-                        .fixedSize(horizontal: false, vertical: true)
-                        .padding(.horizontal, 8)
-                        .frame(maxWidth: .infinity, minHeight: 44)
-                        .background(.quaternary, in: RoundedRectangle(cornerRadius: 12))
-                }
-                .buttonStyle(.plain)
-                .accessibilityIdentifier("watch.discoveries-entry")
-                Button {
                     showingMoreActions.toggle()
                 } label: {
                     Label("More actions", systemImage: showingMoreActions ? "chevron.up" : "chevron.down")
@@ -253,7 +239,6 @@ struct WatchSelectedGameView: View {
             // Existing foreground refresh rules still own all network scheduling.
             choosingGame = false
             showingHandoffHelp = false
-            showingDiscoveries = false
             scroll.scrollTo("watch.game.top", anchor: .top)
         }
         .onAppear {
@@ -285,26 +270,12 @@ struct WatchSelectedGameView: View {
             Text("On your iPhone, swipe up from the bottom and pause midway. If it has a Home button, double-click Home.\n\nLook along the bottom for Bain Luck’s Handoff banner. Tap it if shown.\n\nBoth devices need Handoff on and the same Apple Account. The iPhone app must support Watch Handoff.\n\nIf no banner appears, your game stays selected here.")
         }
         .task(id: refreshKey) {
-            guard scenePhase == .active, !choosingGame, !showingDiscoveries else { return }
+            guard scenePhase == .active, !choosingGame else { return }
             if store.selectedEventID == nil {
                 await picker.refresh()
                 return
             }
             await store.runForegroundRefresh()
-        }
-        .sheet(isPresented: $showingDiscoveries) {
-            NavigationStack {
-                WatchDiscoverStoriesView(selected: store) { showingDiscoveries = false }
-            }
-            #if DEBUG
-            .transformEnvironment(\.dynamicTypeSize) { size in
-                // Match the established picker sheet's layout-stress fixture.
-                if WatchUIFixture.current != nil,
-                   ProcessInfo.processInfo.environment["BAINLUCK_WATCH_UI_LARGE_TEXT"] == "1" {
-                    size = dynamicTypeSize
-                }
-            }
-            #endif
         }
         .sheet(isPresented: $choosingGame) {
             NavigationStack {
@@ -347,11 +318,6 @@ struct WatchSelectedGameView: View {
         .onChange(of: choosingGame) { wasChoosing, isChoosing in
             if wasChoosing && !isChoosing && store.selectedEventID != nil {
                 // Returning from the picker reveals the retained game's identity.
-                scroll.scrollTo("watch.game.top", anchor: .top)
-            }
-        }
-        .onChange(of: showingDiscoveries) { wasShowing, isShowing in
-            if wasShowing && !isShowing {
                 scroll.scrollTo("watch.game.top", anchor: .top)
             }
         }

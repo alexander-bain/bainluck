@@ -36,7 +36,7 @@ def ordered(body, *steps):
 def require_activation_paths(source):
     for name, center in [
         (
-            "testActualRectangularWidgetShowsPublishedSavedReading",
+            "testActualRectangularLauncherAndTap",
             'let center = host.otherElements["center"].firstMatch',
         ),
         (
@@ -73,30 +73,23 @@ def require_activation_paths(source):
         "XCTAssertTrue(face.isHittable)",
     )
 
-    published = function(
-        source, "testActualRectangularWidgetShowsPublishedSavedReading"
-    )
+    launcher = function(source, "testActualRectangularLauncherAndTap")
     ordered(
-        published,
+        launcher,
         "try activateConfiguredModularFace(in: host)",
         "let center =",
-        "let reading =",
-        'XCTAssertTrue(reading.label.contains("San Francisco Giants win"))',
-        'capture(host, "Actual Modular saved frame evidence before bounds assertion")',
-        "try requireReadingWithinWidgetContent(reading, center: center, host: host)",
-        'print("WATCH_UI_RECTANGULAR_ACTUAL_TYPED=PASS")',
+        "let launcher =",
+        'XCTAssertEqual(launcher.label, "Open your selected game in Bain Luck, or choose a game")',
+        "try requireReadingWithinWidgetContent(launcher, center: center, host: host)",
+        "center.tap()",
+        "XCTAssertTrue(app.wait(for: .runningForeground, timeout: 45))",
+        'probability.label.contains("San Francisco Giants") && probability.label.contains("64%")',
+        'NSPredicate(format: "label == %@", "Launcher opens: 1")',
+        "XCTAssertEqual(XCTWaiter.wait(for: [delivered], timeout: 15), .completed)",
+        'print("WATCH_UI_ACTUAL_RECTANGULAR_LAUNCHER=PASS")',
     )
-    assert "CGRect(origin: .zero" not in published
-    for assertion in [
-        'XCTAssertTrue(reading.label.contains("Saved"))',
-        'XCTAssertTrue(reading.label.contains("64% · Live"))',
-        'XCTAssertTrue(reading.label.contains("Observed "))',
-        "center.isHittable",
-        'let observedParts = reading.label.components(separatedBy: "Observed ")',
-        "XCTAssertEqual(observedParts.count, 2)",
-        "XCTAssertFalse(observedTimestamp.isEmpty",
-    ]:
-        assert assertion in published
+    assert "CGRect(origin: .zero" not in launcher
+    assert "center.isHittable" in launcher
 
     mount = function(source, "mountScoreFixtureOnModular")
     ordered(
@@ -154,19 +147,6 @@ def require_activation_paths(source):
         "dy: 0.90",
         "continue",
     )
-    for suffix, arguments in [
-        ("LiveScore", 'scenario: "score", homeScore: 4, awayScore: 2, final: false'),
-        ("HomeWinner", 'scenario: "final", homeScore: 4, awayScore: 2, final: true'),
-        (
-            "AwayWinner",
-            'scenario: "away-final", homeScore: 2, awayScore: 4, final: true',
-        ),
-        ("Tied", 'scenario: "tie", homeScore: 2, awayScore: 2, final: true'),
-        ("ZeroScore", 'scenario: "zero", homeScore: 4, awayScore: 0, final: false'),
-    ]:
-        assert f"try checkActualScoreColumnsColdTap({arguments})" in function(
-            source, f"testActualRectangular{suffix}ColumnsColdTap"
-        )
 
 
 def test_rectangular_host_activates_named_face_before_accepting_widget_content():
@@ -177,7 +157,7 @@ def test_rectangular_host_activates_named_face_before_accepting_widget_content()
     "method,required",
     [
         (
-            "testActualRectangularWidgetShowsPublishedSavedReading",
+            "testActualRectangularLauncherAndTap",
             "try activateConfiguredModularFace(in: host)",
         ),
         ("mountScoreFixtureOnModular", "try activateConfiguredModularFace(in: host)"),
@@ -188,7 +168,10 @@ def test_rectangular_host_activates_named_face_before_accepting_widget_content()
         ("activateConfiguredModularFace", "preview.tap()"),
         ("activateConfiguredModularFace", "face.exists && !library.exists"),
         ("requireReadingWithinWidgetContent", "let remoteRoot = try XCTUnwrap"),
-        ("requireReadingWithinWidgetContent", "XCTAssertTrue(contentFrame.contains(readingFrame)"),
+        (
+            "requireReadingWithinWidgetContent",
+            "XCTAssertTrue(contentFrame.contains(readingFrame)",
+        ),
         ("reveal", "if usedRecoveryDrag"),
         ("reveal", "dy: 0.90"),
     ],
@@ -207,7 +190,7 @@ def test_each_activation_path_is_required_independently(method, required):
 @pytest.mark.parametrize(
     "method",
     [
-        "testActualRectangularWidgetShowsPublishedSavedReading",
+        "testActualRectangularLauncherAndTap",
         "mountScoreFixtureOnModular",
     ],
 )

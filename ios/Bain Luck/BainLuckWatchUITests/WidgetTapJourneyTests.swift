@@ -126,7 +126,7 @@ final class WidgetTapJourneyTests: XCTestCase {
     }
 
     @MainActor
-    func testActualCornerSavedReadingAndTap() throws {
+    func testActualCornerLauncherAndTap() throws {
         continueAfterFailure = false
         let app = XCUIApplication()
         let originalObservation = Date().addingTimeInterval(-120)
@@ -147,25 +147,17 @@ final class WidgetTapJourneyTests: XCTestCase {
         let picker = try assertWidgetWarmPickerIsPresented(in: app)
         XCUIDevice.shared.press(.home)
         let host = XCUIApplication(bundleIdentifier: "com.apple.Carousel")
-        let reading = try mountSavedCornerOnFreshExactographFace(in: host)
-        XCTAssertEqual(reading.value as? String, "Saved · SF win · 64%")
-        XCTAssertTrue(reading.label.contains("San Francisco Giants") && reading.label.contains("Los Angeles Dodgers") && reading.label.contains("64%"))
-        XCTAssertTrue(reading.label.contains("Observed \(originalObservation.formatted(date: .abbreviated, time: .shortened))"))
-        // This must be the separate rendered label, not the reading's synthesized
-        // accessible value. Missing/ignored/truncated label is an unpaid feature.
-        let curvedLabel = host.descendants(matching: .any).matching(NSPredicate(format: "label == %@", "Saved · SF win")).firstMatch
-        try freshFaceRequire(curvedLabel.waitForExistence(timeout: 15)
-                             && curvedLabel.frame.width > 0 && curvedLabel.frame.height > 0
-                             && host.frame.contains(curvedLabel.frame),
-                             "Actual corner lacks complete rendered Saved + named win label", host: host)
-        freshFaceCapture(host, name: "Actual configured Exactograph corner 64 percent and full Saved SF win curve")
+        let reading = try mountLauncherOnFreshExactographFace(in: host)
+        XCTAssertEqual(reading.label, "Open your selected game in Bain Luck, or choose a game")
+        XCTAssertFalse(host.descendants(matching: .any)["watch.complication.corner.reading"].firstMatch.exists)
+        freshFaceCapture(host, name: "Actual configured Exactograph explicit launcher")
         try tapActualWidgetHostAndAssertWarmReturn(host: host, widget: reading, app: app,
-            baseline: baseline, tapOrdinal: 1, dismissedOverlays: picker, phase: "saved Exactograph corner forecast")
-        print("WATCH_UI_ACTUAL_CORNER_SAVED=PASS")
+            baseline: baseline, tapOrdinal: 1, dismissedOverlays: picker, phase: "Exactograph corner launcher")
+        print("WATCH_UI_ACTUAL_CORNER_LAUNCHER=PASS")
     }
 
     @MainActor
-    func testActualCircularSavedReadingAndTap() throws {
+    func testActualCircularLauncherAndTap() throws {
         continueAfterFailure = false
         let app = XCUIApplication()
         app.launchEnvironment = [
@@ -187,16 +179,15 @@ final class WidgetTapJourneyTests: XCTestCase {
         let picker = try assertWidgetWarmPickerIsPresented(in: app)
         XCUIDevice.shared.press(.home)
         let host = XCUIApplication(bundleIdentifier: "com.apple.Carousel")
-        let widget = try mountLauncherOnFreshSiriModularFace(in: host, savedCircular: true)
-        let reading = widget.descendants(matching: .any).matching(NSPredicate(format: "label BEGINSWITH %@", "Saved reading.")).firstMatch
-        try freshFaceRequire(reading.exists && reading.label.contains("San Francisco Giants")
-                             && reading.label.contains("64%") && reading.label.contains("Observed"),
-                             "Configured circular slot lacks full saved named forecast and original observation", host: host)
-        XCTAssertEqual(reading.value as? String, "Saved · SF win · 64%")
-        freshFaceCapture(host, name: "Actual configured circular Saved SF win 64 percent")
+        let widget = try mountLauncherOnFreshSiriModularFace(in: host)
+        let launcher = widget.descendants(matching: .any).matching(NSPredicate(format: "label == %@", "Open your selected game in Bain Luck, or choose a game")).firstMatch
+        try freshFaceRequire(launcher.exists && launcher.frame.width > 0 && launcher.frame.height > 0,
+                             "Configured circular slot lacks a complete explicit launcher", host: host)
+        XCTAssertFalse(widget.descendants(matching: .any)["watch.complication.circular.reading"].firstMatch.exists)
+        freshFaceCapture(host, name: "Actual configured circular explicit launcher")
         try tapActualWidgetHostAndAssertWarmReturn(host: host, widget: widget, app: app,
-            baseline: baseline, tapOrdinal: 1, dismissedOverlays: picker, phase: "saved circular forecast")
-        print("WATCH_UI_ACTUAL_CIRCULAR_SAVED=PASS")
+            baseline: baseline, tapOrdinal: 1, dismissedOverlays: picker, phase: "circular launcher")
+        print("WATCH_UI_ACTUAL_CIRCULAR_LAUNCHER=PASS")
     }
 
     @MainActor
@@ -441,7 +432,7 @@ import XCTest
 // current gallery journey. No URL opening, app activation or seeded-face state.
 extension WidgetTapJourneyTests {
     @MainActor
-    func mountLauncherOnFreshSiriModularFace(in host: XCUIApplication, savedCircular: Bool = false) throws -> XCUIElement {
+    func mountLauncherOnFreshSiriModularFace(in host: XCUIApplication) throws -> XCUIElement {
         try freshFaceRequire(host.wait(for: .runningForeground, timeout: 15), "Watch host is not foreground", host: host)
         let face = host.otherElements["Watch Face"].firstMatch
         try freshFaceRequire(face.waitForExistence(timeout: 15), "No actual Watch Face", host: host)
@@ -495,9 +486,7 @@ extension WidgetTapJourneyTests {
         try activateConfiguredSiriModularFace(in: host)
         let widget = host.otherElements["bottom-left"].firstMatch
         try freshFaceRequire(host.wait(for: .runningForeground, timeout: 15)
-                             && widget.waitForExistence(timeout: 15) && widget.descendants(matching: .any).matching(savedCircular
-                                ? NSPredicate(format: "label BEGINSWITH %@", "Saved reading.")
-                                : NSPredicate(format: "label == %@", "Open your selected game in Bain Luck, or choose a game")).firstMatch.exists
+                             && widget.waitForExistence(timeout: 15) && widget.descendants(matching: .any).matching(NSPredicate(format: "label == %@", "Open your selected game in Bain Luck, or choose a game")).firstMatch.exists
                              && widget.isHittable && host.frame.contains(widget.frame),
                              "Fresh installed face has no reachable BainLuckWatch launcher", host: host)
         freshFaceCapture(host, name: "Fresh face actual mounted BainLuckWatch launcher")
@@ -507,7 +496,7 @@ extension WidgetTapJourneyTests {
     }
 
     @MainActor
-    private func mountSavedCornerOnFreshExactographFace(in host: XCUIApplication) throws -> XCUIElement {
+    private func mountLauncherOnFreshExactographFace(in host: XCUIApplication) throws -> XCUIElement {
         try freshFaceRequire(host.wait(for: .runningForeground, timeout: 15), "Corner host not foreground", host: host)
         let face = host.otherElements["Watch Face"].firstMatch
         try freshFaceRequire(face.waitForExistence(timeout: 15), "No actual corner Watch Face", host: host)
@@ -579,9 +568,9 @@ extension WidgetTapJourneyTests {
         let activated = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in face.exists && !library.exists }, object: host)
         try freshFaceRequire(XCTWaiter.wait(for: [activated], timeout: 15) == .completed,
                              "Configured Exactograph did not become active", host: host)
-        let reading = host.descendants(matching: .any)["watch.complication.corner.reading"].firstMatch
+        let reading = host.descendants(matching: .any)["watch.complication.corner.fallback"].firstMatch
         try freshFaceRequire(reading.waitForExistence(timeout: 15) && reading.isHittable && host.frame.contains(reading.frame),
-                             "Actual configured Exactograph has no fitting saved corner forecast", host: host)
+                             "Actual configured Exactograph has no fitting explicit launcher", host: host)
         return reading
     }
 

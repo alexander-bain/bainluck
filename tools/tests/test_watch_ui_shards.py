@@ -79,16 +79,16 @@ class WatchUIShardTests(unittest.TestCase):
     def verify(self):
         return gate.aggregate(self.root, self.sha, self.groups, verify_markers=False)
 
-    def test_complete_distinct_pairs_cover_all_137_debug_cases(self):
-        self.assertEqual(self.verify()["tests"], 137)
+    def test_complete_distinct_pairs_cover_all_101_selected_game_cases(self):
+        self.assertEqual(self.verify()["tests"], 101)
         self.assertEqual(
             self.groups["corner"],
-            ["WidgetTapJourneyTests/testActualCornerSavedReadingAndTap"],
+            ["WidgetTapJourneyTests/testActualCornerLauncherAndTap"],
         )
-        self.assertEqual(len(self.groups["readings"]), 42)
+        self.assertEqual(len(self.groups["readings"]), 11)
         self.assertEqual(len(self.groups["navigation"]), 39)
         self.assertEqual(len(self.groups["controls"]), 33)
-        self.assertEqual(len(self.groups["widgets"]), 22)
+        self.assertEqual(len(self.groups["widgets"]), 17)
 
     def test_composed_fixture_preserves_fixed_clock_and_provider_alias(self):
         source = (
@@ -244,28 +244,20 @@ class WatchUIShardTests(unittest.TestCase):
         rows = [
             *markers,
             *ALIAS_MARKERS,
-            "WATCH_UI_ACTUAL_CORNER_SAVED=PASS",
-            "WATCH_UI_CORNER_FALLBACK=PASS",
-            "WATCH_UI_CORNER_MAIN_FIT=PASS",
+            "WATCH_UI_ACTUAL_CORNER_LAUNCHER=PASS",
             "WATCH_UI_STRESS_TYPE=accessibility5",
             "WATCH_UI_STANDARD_TYPE=xLarge",
-            "WATCH_UI_DISCOVERIES_POLISH_STANDARD=PASS",
-            "WATCH_UI_DISCOVERIES_POLISH_LARGE=PASS",
-            "WATCH_UI_DISCOVERIES_POLISH_SELECTED=PASS",
             "WATCH_UI_DIAGNOSTICS_STANDARD=PASS",
             "WATCH_UI_DIAGNOSTICS_LARGE=PASS",
         ]
         complete = original + "\n" + "\n".join(rows)
         path.write_text(complete)
-        self.assertEqual(gate.aggregate(self.root, self.sha, self.groups)["tests"], 137)
+        self.assertEqual(gate.aggregate(self.root, self.sha, self.groups)["tests"], 101)
         for marker in (
+            "WATCH_UI_ACTUAL_CIRCULAR_LAUNCHER=PASS",
+            "WATCH_UI_ACTUAL_RECTANGULAR_LAUNCHER=PASS",
             *ALIAS_MARKERS,
-            "WATCH_UI_ACTUAL_CORNER_SAVED=PASS",
-            "WATCH_UI_CORNER_FALLBACK=PASS",
-            "WATCH_UI_CORNER_MAIN_FIT=PASS",
-            "WATCH_UI_DISCOVERIES_POLISH_STANDARD=PASS",
-            "WATCH_UI_RECTANGULAR_ACTUAL_TYPED=PASS",
-            "WATCH_UI_RECTANGULAR_MONOCHROME=PASS",
+            "WATCH_UI_ACTUAL_CORNER_LAUNCHER=PASS",
             "WATCH_UI_GAME_UPDATING_LARGE=PASS",
             "WATCH_UI_DIAGNOSTICS_LARGE=PASS",
         ):
@@ -376,7 +368,7 @@ class WatchUIShardTests(unittest.TestCase):
             )
         )
         (source / "WidgetTapJourneyTests.swift").write_text(
-            "#if DEBUG\nfunc testActualCornerSavedReadingAndTap() {}\nfunc testNewCoverage() {}\n#endif"
+            "#if DEBUG\nfunc testActualCornerLauncherAndTap() {}\nfunc testNewCoverage() {}\n#endif"
         )
         with self.assertRaises(ValueError):
             gate.manifest(self.root)

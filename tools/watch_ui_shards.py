@@ -3,6 +3,7 @@
 import argparse
 from collections import Counter
 import json
+import hashlib
 from pathlib import Path
 import re
 import subprocess
@@ -30,8 +31,54 @@ def manifest(root=ROOT):
         raise ValueError("Manifest must cover every source test exactly once")
     if any(not cases for cases in groups.values()):
         raise ValueError("Empty shards are not full coverage")
-    if groups["corner"] != ["WidgetTapJourneyTests/testActualCornerSavedReadingAndTap"]:
+    if groups["corner"] != ["WidgetTapJourneyTests/testActualCornerLauncherAndTap"]:
         raise ValueError("Actual corner host requires its own fresh pair")
+    scope = json.loads((root / "tools/watch_ui_scope_1_0_3.json").read_text())
+    for key, expected in {
+        "original_count": 137,
+        "candidate_count": 101,
+        "retained_unchanged": 98,
+        "deferred": 36,
+        "converted_launchers": 3,
+    }.items():
+        if scope.get(key) != expected:
+            raise ValueError("Scope counters disagree with approved identities")
+    rows = scope["rows"]
+    original = [row["old_case"] for row in rows]
+    retained = [row["candidate_case"] for row in rows if row["candidate_case"]]
+    if (
+        len(original) != 137
+        or len(set(original)) != 137
+        or Counter(retained) != Counter(declared)
+    ):
+        raise ValueError(
+            "1.0.3 scope must account for every original and retained identity"
+        )
+    if (
+        len(declared) != 101
+        or sum(row["disposition"] == "deferred" for row in rows) != 36
+    ):
+        raise ValueError("Unreviewed selected-game scope change")
+    identities = [
+        (r["old_case"], r["old_group"], r["disposition"], r["candidate_case"])
+        for r in rows
+    ]
+    if (
+        hashlib.sha256(
+            json.dumps(identities, separators=(",", ":")).encode()
+        ).hexdigest()
+        != "c9eb25554418e2db68b081eb454bac10c3dfd3b45d01ffbd62441175990aff5b"
+    ):
+        raise ValueError(
+            "Scope mapping differs from the authorized retained/deferred identities"
+        )
+    for group, cases in groups.items():
+        if cases != [
+            r["candidate_case"]
+            for r in rows
+            if r["old_group"] == group and r["candidate_case"]
+        ]:
+            raise ValueError("Retained group assignments or order changed")
     return groups
 
 
@@ -137,14 +184,7 @@ def aggregate(directory, sha, groups, verify_markers=True):
             ],
             check=True,
         )
-        subprocess.run(
-            [
-                sys.executable,
-                str(ROOT / "tools/watch_discovery_polish_receipt.py"),
-                str(combined),
-            ],
-            check=True,
-        )
+
     return {
         "sha": sha,
         "verdict": "PASS",
