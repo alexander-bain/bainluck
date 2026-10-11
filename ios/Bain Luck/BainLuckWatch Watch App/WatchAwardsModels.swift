@@ -53,11 +53,22 @@ nonisolated enum WatchAwardsDecoder {
         let settled: Bool?
         let kind: String?
     }
+    private struct ChildIdentity: Decodable { let marketId: Int }
+    private struct ChildSlot: Decodable {
+        let marketId: Int?
+        let value: Child?
+        init(from decoder: Decoder) throws {
+            // A malformed payload still claims its readable ID. Count that claim
+            // before filtering payloads so it cannot hide a conflicting duplicate.
+            marketId = (try? ChildIdentity(from: decoder))?.marketId
+            value = try? Child(from: decoder)
+        }
+    }
     private struct Envelope: Decodable {
         let event: Event
         let cache: Cache
         let sections: [Slot<Section>]
-        let children: [Slot<Child>]
+        let children: [ChildSlot]
     }
 
     static func decode(_ data: Data, ceremony: WatchAwardsCeremony,
@@ -79,6 +90,10 @@ nonisolated enum WatchAwardsDecoder {
         }
         // Identity is the producer's category market ID. Conflicting duplicates
         // cannot authorize a destination; names and marquee winners never do.
+        var identityCounts: [Int: Int] = [:]
+        for slot in value.children {
+            if let id = slot.marketId { identityCounts[id, default: 0] += 1 }
+        }
         let children = Dictionary(grouping: value.children.compactMap(\.value), by: \.marketId)
         var omitted = value.cache.quality != "full"
             || value.children.contains { $0.value == nil }
@@ -89,7 +104,8 @@ nonisolated enum WatchAwardsDecoder {
             guard section.type == "categories" else { continue }
             for id in section.marketIds {
                 guard seen.insert(id).inserted else { omitted = true; continue }
-                guard id > 0, let matches = children[id], matches.count == 1,
+                guard id > 0, identityCounts[id] == 1,
+                      let matches = children[id], matches.count == 1,
                       let child = matches.first, child.kind == nil,
                       validName(child.marketName), categories.count < 64 else {
                     omitted = true; continue

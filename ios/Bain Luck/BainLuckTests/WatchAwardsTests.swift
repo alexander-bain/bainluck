@@ -168,6 +168,26 @@ import XCTest
         XCTAssertEqual(try decode(json).categories.map(\.id), [202], "Props and unbound IDs cannot become categories")
     }
 
+    func testMalformedDuplicateStillBlocksItsReadableCategoryIdentity() throws {
+        let original = try object()
+        let children = try XCTUnwrap(original["children"] as? [[String: Any]])
+        let malformedClaims: [[String: Any]] = [
+            ["market_id": 101, "market_name": 42],
+            ["market_id": 101, "market_name": "Conflicting category", "settled": "unknown"],
+            ["market_id": 101, "market_name": "Conflicting category", "kind": 42]
+        ]
+        for claim in malformedClaims {
+            for duplicateFirst in [false, true] {
+                var json = original
+                json["children"] = duplicateFirst ? [claim] + children : children + [claim]
+                let page = try decode(json)
+                XCTAssertEqual(page.categories.map(\.id), [202],
+                    "Malformed duplicate must not authorize category 101; healthy category 202 survives")
+                XCTAssertTrue(page.hasUnavailableCategories)
+            }
+        }
+    }
+
     func testCacheAvailabilityAndUnknownGradeRemainExplicit() throws {
         var json = try object()
         json["cache"] = ["availability": "stale_ok", "quality": "partial"]
