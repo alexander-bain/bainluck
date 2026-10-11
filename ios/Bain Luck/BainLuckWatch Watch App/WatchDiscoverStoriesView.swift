@@ -13,6 +13,7 @@ struct WatchDiscoverStoriesView: View {
     @State private var manualRefresh: Task<Void, Never>?
     @State private var showingNFLWeeks = false
     @State private var showingMLBPostseason = false
+    @State private var showingAwards = false
     @State private var questionDestination: WatchQuestionDetailDestination?
 
     private var visibleReadings: [WatchDiscoveryReading] {
@@ -67,6 +68,9 @@ struct WatchDiscoverStoriesView: View {
                 Button("Browse MLB postseason") { showingMLBPostseason = true }
                     .disabled(scenePhase != .active)
                     .accessibilityIdentifier("watch.discovery.browse-mlb")
+                Button("Browse awards") { showingAwards = true }
+                    .disabled(scenePhase != .active)
+                    .accessibilityIdentifier("watch.discovery.browse-awards")
                 #if DEBUG
                 if WatchUIFixture.current != nil, let continuation,
                    let url = StoryContinuation.url(for: continuation) {
@@ -80,6 +84,9 @@ struct WatchDiscoverStoriesView: View {
         }
         .sheet(item: $questionDestination) { destination in
             WatchQuestionDetailView(destination: destination, close: { questionDestination = nil })
+        }
+        .sheet(isPresented: $showingAwards) {
+            WatchAwardsView(close: { showingAwards = false })
         }
         .sheet(isPresented: $showingMLBPostseason) {
             WatchMLBCollectionView(selected: selected,
