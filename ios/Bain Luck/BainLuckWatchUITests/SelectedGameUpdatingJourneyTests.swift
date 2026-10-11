@@ -62,6 +62,11 @@ final class SelectedGameUpdatingJourneyTests: XCTestCase {
         XCTAssertTrue(updating.exists, "Captures must show an actual in-flight request")
         let completed = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: updating)
         XCTAssertEqual(XCTWaiter.wait(for: [completed], timeout: 90), .completed)
+        // Check immediately: screenshot/scroll work can take longer than the
+        // store's 30-second post-completion wait on a busy hosted simulator.
+        // Keep the real disappearance/reappearance assertions before that work.
+        let premature = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == true"), object: updating)
+        XCTAssertEqual(XCTWaiter.wait(for: [premature], timeout: 2), .timedOut)
         XCTAssertEqual(state.value as? String, clocks, "Same producer payload must retain raw clocks after completion")
         XCTAssertEqual(state.label, originalState)
         XCTAssertEqual(probability.label, "San Francisco Giants win probability, 64%")
@@ -71,10 +76,6 @@ final class SelectedGameUpdatingJourneyTests: XCTestCase {
         capture(app, "Request finished same selected state and clocks - \(metadata[0])")
         try reveal(home, in: app)
         try captureRow(home, in: app, name: "Request finished same named score - \(metadata[0])")
-        // This is within the store's unchanged 30-second post-completion wait.
-        // Poll the actual view state; do not infer completion from the delay fixture.
-        let premature = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == true"), object: updating)
-        XCTAssertEqual(XCTWaiter.wait(for: [premature], timeout: 2), .timedOut)
         XCTAssertEqual(state.value as? String, clocks)
     }
 

@@ -48,6 +48,14 @@ nonisolated struct WatchComplicationSnapshot: Codable, Sendable {
         return circularReading
     }
 
+    /// Corner's curved label is deliberately bounded; other families keep their contract.
+    func validatedCornerForecast(showsWidgetLabel: Bool, now: Date = Date()) -> WatchCircularReading? {
+        guard showsWidgetLabel, let reading = validatedCircularReading(now: now),
+              reading.kind == .forecast, let home = reading.home,
+              (1...2).contains(home.abbreviation.count) else { return nil }
+        return reading
+    }
+
     func isValid(now: Date) -> Bool {
         let observation = observedAt.timeIntervalSinceReferenceDate
         let saved = savedAt.timeIntervalSinceReferenceDate

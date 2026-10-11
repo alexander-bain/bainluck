@@ -281,11 +281,19 @@ private actor ComplicationRaceTransport: WatchSelectedGameTransport {
     let fields = "\"status\":\"live\",\"sport\":\"baseball_mlb\",\"hero_probability\":0.455,\"hero_probability_away\":0.545,\(clock)"
     let live = try project("\(fields),\(home),\(away)")!
     let compact = live.validatedCircularReading(now: now)!
+    precondition(live.validatedCornerForecast(showsWidgetLabel: true, now: now)?.value == "45%")
+    precondition(live.validatedCornerForecast(showsWidgetLabel: false, now: now) == nil,
+                 "A numeric corner cannot discard its Saved + named win label")
+    precondition(live.validatedCornerForecast(showsWidgetLabel: true, now: now.addingTimeInterval(-1)) == nil)
+    let longCorner = try project("\(fields),\(home.replacingOccurrences(of: "SF", with: "SFG")),\(away)")!
+    precondition(longCorner.circularReading != nil && longCorner.validatedCornerForecast(showsWidgetLabel: true, now: now) == nil,
+                 "Corner bound does not erase valid circular/rectangular content")
     precondition(compact.subject == "SF win" && compact.value == "45%")
     precondition(compact.observedAt == live.observedAt && live.observedAt < live.savedAt)
     let projectionCheck1 = try project("\(fields),\(home)")
     precondition(projectionCheck1?.validatedCircularReading(now: now)?.value == "45%", "Home forecast does not require fabricated away identity")
     let draw = try project("\(fields.replacingOccurrences(of: "baseball_mlb", with: "soccer_epl")),\(home),\(away)")!
+    precondition(draw.validatedCornerForecast(showsWidgetLabel: true, now: now)?.value == "46%")
     precondition(draw.validatedCircularReading(now: now)?.value == "46%", "Draw-priced rounding remains scalar")
     for identity in [home.replacingOccurrences(of: "1", with: "0"), home.replacingOccurrences(of: "SF", with: "FCNAME"), home.replacingOccurrences(of: "SF", with: ""), home.replacingOccurrences(of: "SF", with: "sf")] {
         let reading = try project("\(fields),\(identity),\(away)")!
@@ -297,11 +305,13 @@ private actor ComplicationRaceTransport: WatchSelectedGameTransport {
     precondition(projectionCheck3?.validatedCircularReading(now: now) == nil)
     for (scores, subject) in [("\"home_score\":4,\"away_score\":2", "SF won"), ("\"home_score\":2,\"away_score\":4", "LA won"), ("\"home_score\":2,\"away_score\":2", "LA·SF")] {
         let final = try project("\"status\":\"final\",\"hero_probability\":0.99,\(scores),\(clock),\(home),\(away)")!
+        precondition(final.validatedCornerForecast(showsWidgetLabel: true, now: now) == nil)
         precondition(final.validatedCircularReading(now: now)?.subject == subject)
         precondition(final.validatedCircularReading(now: now)?.value.hasPrefix("Final") == true && final.circularReading?.percent == nil)
         precondition(final.observedAt == now.addingTimeInterval(-60), "Final uses score clock independently of hero")
     }
     let score = try project("\"status\":\"live\",\"home_score\":4,\"away_score\":2,\(clock),\(home),\(away)")!
+    precondition(score.validatedCornerForecast(showsWidgetLabel: true, now: now) == nil)
     precondition(score.validatedCircularReading(now: now)?.subject == "LA·SF" && score.validatedCircularReading(now: now)?.value == "Score 2–4")
     precondition(score.observedAt == now.addingTimeInterval(-60))
     let projectionCheck4 = try project("\"status\":\"live\",\"home_score\":4,\"away_score\":2,\(clock),\(home)")
@@ -342,5 +352,6 @@ private actor ComplicationRaceTransport: WatchSelectedGameTransport {
         let restored = WatchComplicationSnapshot.read(from: directory, now: now)!
         precondition(restored.validatedCircularReading(now: now) == nil && restored.title == live.title, "Wrong compact identity/version/clock must not erase the parent")
     }
+    print("PASS: corner forecast-only, capability fallback, bounded canonical identity, original clock and independent circular/rectangular contracts")
     print("PASS: circular canonical identity, original clocks, rounding/draw, final/score, old/malformed/wrong compact payload, offline and one-time enrichment")
 }

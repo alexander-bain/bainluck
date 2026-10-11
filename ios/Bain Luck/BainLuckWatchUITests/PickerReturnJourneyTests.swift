@@ -129,11 +129,36 @@ final class PickerReturnJourneyTests: XCTestCase {
 
     @MainActor
     private func reveal(_ element: XCUIElement, in app: XCUIApplication) throws {
+        let initialAppFrame = app.frame
+        let initialFrame = element.frame
+        if element.isHittable && initialAppFrame.contains(initialFrame) { return }
+        let visible = app.scrollViews.allElementsBoundByIndex.filter { scroll in
+            let bounds = scroll.frame.intersection(initialAppFrame)
+            return !bounds.isNull && !bounds.isEmpty && bounds.minX.isFinite && bounds.minY.isFinite && bounds.maxX.isFinite && bounds.maxY.isFinite && scroll.isHittable
+        }
+        guard visible.count == 1 else {
+            capture(app, "Missing or ambiguous picker return viewport")
+            XCTFail("Expected one visible scroll viewport")
+            throw NSError(domain: "WatchPickerReturnJourney", code: 2)
+        }
+        let container = visible[0]
         for _ in 0..<24 {
-            if element.isHittable && app.frame.contains(element.frame) { return }
-            let earlier = element.frame.minY < app.frame.minY
-            let start = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.60))
-            let end = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: earlier ? 0.75 : 0.45))
+            let appFrame = app.frame
+            let bounds = container.frame.intersection(appFrame)
+            guard !bounds.isNull && !bounds.isEmpty && bounds.minX.isFinite && bounds.minY.isFinite && bounds.maxX.isFinite && bounds.maxY.isFinite else {
+                XCTFail("Expected a finite nonempty scroll viewport")
+                throw NSError(domain: "WatchPickerReturnJourney", code: 3)
+            }
+            let frame = element.frame
+            // Toolbar return controls lie outside the content scroll viewport.
+            // Retain complete app-frame visibility plus actual hittability.
+            if element.isHittable && appFrame.contains(frame) { return }
+            let earlier = frame.minY < bounds.minY
+            let hiddenDistance = earlier ? bounds.minY - frame.minY : max(0, frame.maxY - bounds.maxY)
+            let distance = min(0.55, max(0.15, (hiddenDistance + 8) / bounds.height))
+            let startY: CGFloat = earlier ? 0.20 : 0.80
+            let start = app.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: bounds.midX - appFrame.minX, dy: bounds.minY + bounds.height * startY - appFrame.minY))
+            let end = start.withOffset(CGVector(dx: 0, dy: bounds.height * (earlier ? distance : -distance)))
             start.press(forDuration: 0.1, thenDragTo: end, withVelocity: .slow, thenHoldForDuration: 0.4)
         }
         capture(app, "Unreachable picker return - \(element.identifier)")

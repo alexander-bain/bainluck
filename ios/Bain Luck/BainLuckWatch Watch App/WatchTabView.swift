@@ -12,7 +12,13 @@ struct WatchTabView: View {
                       let scenario = ProcessInfo.processInfo.environment["BAINLUCK_WATCH_UI_COMPLICATION"],
                       ["live", "score", "final", "empty", "circular-live", "circular-draw", "circular-final",
                        "circular-away-final", "circular-tie", "circular-score", "circular-old",
-                       "circular-invalid", "circular-long", "circular-empty"].contains(scenario) {
+                       "circular-invalid", "circular-long", "circular-empty",
+                       "rectangular-live", "rectangular-low", "rectangular-zero", "rectangular-hundred",
+                       "rectangular-final", "rectangular-away-final", "rectangular-tie", "rectangular-score",
+                       "rectangular-long", "rectangular-old", "rectangular-mismatch",
+                       "rectangular-invalid", "rectangular-unknown", "rectangular-empty",
+                       "corner-fit", "corner-no-label", "corner-old", "corner-invalid", "corner-long",
+                       "corner-final", "corner-score", "corner-empty"].contains(scenario) {
                 WatchComplicationLayoutFixture(scenario: scenario)
             } else if WatchUIFixture.current != nil,
                ProcessInfo.processInfo.environment["BAINLUCK_WATCH_UI_LARGE_TEXT"] == "1" {
