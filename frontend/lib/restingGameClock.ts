@@ -1,13 +1,20 @@
 import { trustedLiveClock } from "@/lib/gameTimeLabel";
+import { barePeriodThroughOvertime } from "@/lib/periodMarkers";
 import type { ActiveChartPoint } from "@/lib/types";
 
-/** Numeric period → "Q3"; an already-spelled period ("1st Quarter", "Halftime") is kept. */
-export function formatPeriod(period?: string | null): string {
+/**
+ * Numeric period → "Q3"; an already-spelled period ("1st Quarter", "Halftime") is kept.
+ *
+ * #10923 — with the sport, the number is bounded by regulation: an NFL `5` is
+ * "OT", a hockey `2` is "P2", and a number the sport cannot name prints nothing.
+ * Settled BAL–ATL (event 14780557) printed "Q5 2:57" on its winning play.
+ */
+export function formatPeriod(period?: string | null, sportKey?: string | null): string {
   if (!period) return "";
   if (period.length > 2) return period;
   const num = parseInt(period, 10);
   if (isNaN(num)) return period;
-  return `Q${num}`;
+  return barePeriodThroughOvertime(String(num), sportKey) ?? `Q${num}`;
 }
 
 export interface RestingGameClock {
@@ -46,7 +53,7 @@ export function restingGameClock(
   >,
   sportKey?: string | null,
 ): RestingGameClock {
-  const trusted = trustedLiveClock(formatPeriod(point.period), point.clock, sportKey);
+  const trusted = trustedLiveClock(formatPeriod(point.period, sportKey), point.clock, sportKey);
   const periodCarried = point.periodApprox === true && !!trusted.period;
   const clockCarried = point.clockApprox === true && !!trusted.gameClock;
   // A field read off the newest row was observed at the point's own timestamp; a
