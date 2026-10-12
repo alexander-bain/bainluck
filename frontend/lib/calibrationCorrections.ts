@@ -191,6 +191,14 @@ export const CORRECTION_TITLE_OVERRIDES: Readonly<Record<string, string>> = {
   "Soccer 2-way (draw-omission) historical exclusion":
     "Soccer: older win-or-lose prices left the draw out, so they are no longer scored",
 
+  // #1011: "Since 2026-09-16 17:43:41 UTC the sportsbook writer keeps the draw …
+  // Those readings are graded as the three-way question they are — home, draw
+  // and away, drawn matches included … Earlier soccer moneyline stays excluded."
+  // The copy names the date a reader can place and the three answers, and says
+  // nothing older came back.
+  "Soccer graded three-way from the 3-way capture forward":
+    "Soccer: win-or-lose prices since September 16 include the draw, and are scored as home, draw or away",
+
   // "Polymarket packs a whole esports match (cumulative Total-Kills ladders per
   // game, per-game winners, first-blood props) into one non-partition market …
   // neither sums to ~1.0 nor buckets as a clean prediction."
