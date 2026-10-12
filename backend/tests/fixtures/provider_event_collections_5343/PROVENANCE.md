@@ -9,6 +9,7 @@ that reads them proves anything about production.
 |---|---|---|---|
 | `gamma-event-106884.json` | "Fed rate cut by...?" (economy/fed tags), negRisk false, 13 markets, 6 of them closed | 2026-10-12T00:49:13Z | `5ce0eea19067bd1691544f8d650a501bb3a3ef3b31fd2c8f630267883068c224` |
 | `gamma-event-86832.json` | "Which companies will be acquired before 2027?" (tech/business tags), negRisk false, 19 markets, 5 of them closed | 2026-10-12T00:49:16Z | `70627d0daa3f87869dc0df399fa7424c28066e65a8f7837d5e732d69f54885c7` |
+| `gamma-event-145916.json` | "New \"Stranger Things\" episode released by...?" (pop-culture/tv/netflix/movies tags), negRisk false, 12 markets, 10 of them closed (resolved, prices ["0","1"]) | 2026-10-12T03:55:30Z | `490706087008cc43b6eb253bd5dc90f130f2ee1e0018c190f6d6e2be35f688a7` |
 
 Also read (not copied; owned by #8466):
 `../polymarket_leg_dates_8466/gamma-event-1038648.json` — "US-Iran ceasefire
@@ -25,3 +26,10 @@ is builder-owned input, not stored evidence.
 
 86832 is the held-out event. It appears only in the held-out tests, and no
 source file names it.
+
+145916 is the entertainment contrast (Authority's 2026-10-12 gate), chosen by a
+rule fixed before its members were read: Gamma `GET /events?tag_slug=movies&closed=false&limit=200`,
+keep `negRisk` false with at least 3 markets, at least one closed and at least one
+open, take the lowest id. The file is then a direct `GET /events/145916` (the
+roster basis `polymarket-gamma-getEvent-v1`), not the list row. It too appears
+only in the held-out tests.
