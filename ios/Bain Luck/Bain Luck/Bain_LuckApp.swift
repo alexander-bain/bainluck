@@ -254,9 +254,11 @@ struct Bain_LuckApp: App {
         .commands {
             CommandGroup(replacing: .newItem) { }
             CommandMenu("Navigate") {
+                Button("Discover") { navCoordinator.selectedTab = .discover }
+                    .keyboardShortcut("5", modifiers: .command)
                 Button("Sports") { navCoordinator.selectedTab = .feed }
                     .keyboardShortcut("1", modifiers: .command)
-                Button("Leagues") { navCoordinator.selectedTab = .leagues }
+                Button("Browse") { navCoordinator.selectedTab = .leagues }
                     .keyboardShortcut("2", modifiers: .command)
                 Button("Search") { navCoordinator.selectedTab = .search }
                     .keyboardShortcut("3", modifiers: .command)
