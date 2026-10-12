@@ -770,6 +770,10 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
   }
 
   const isResolved = market.status === "resolved";
+  // #1541 — the provider stopped offering it. NOT `isResolved`: nothing proved
+  // the competition finished, so no "Final Results", no settled hero. It only
+  // stands down the furniture that reads as a live market below.
+  const isWithdrawn = market.status === "withdrawn";
   // #8135 / #10074: the Probability Trend card's ONE cadence sentence. Printed by the
   // range controls on a sparse board; the chart's empty state is told it is already
   // on screen so "Final — prices no longer update" does not appear twice.
@@ -1055,7 +1059,7 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
         // /api/futures/browse (200 sampled) or /api/events/search (10 queries).
         // This lands for the mechanism — one formatter, no third copy — not on a
         // prevalence claim.
-        resolveDate={isResolved ? undefined : formatResolvesLabel(market.resolution_date) || undefined}
+        resolveDate={isResolved || isWithdrawn ? undefined : formatResolvesLabel(market.resolution_date) || undefined}
         categoryEmoji={getCategoryEmoji(market.llm_sport_category)}
         // #8290 — a null `sport_name` used to hand the raw key to the eyebrow,
         // which printed `TABLE_TENNIS`. The key goes through the category map.
@@ -1442,11 +1446,12 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
         </div>
       )}
 
-      {/* Games This Week — withheld on a settled market (#8282); a duel's
-          price is its one contest's, so its rows print none (#2553) */}
+      {/* Games This Week — withheld on a settled market (#8282) and on a
+          withdrawn one (#1541); a duel's price is its one contest's, so its
+          rows print none (#2553) */}
       <GamesThisWeek
         events={relatedEvents}
-        marketResolved={isResolved}
+        marketResolved={isResolved || isWithdrawn}
         marketIsDuel={marketShape === SHAPE_DUEL}
       />
 

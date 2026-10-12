@@ -62,6 +62,7 @@
     "Futures price writer contract (real Postgres)",
     "#9484 the Kalshi socket signals only a quote that moved (real Postgres)",
     "#5869 a vanished futures leg retires to NULL (real Postgres)",
+    "#1541 a championship the provider closed stops reading as open (real Postgres)",
     "Polymarket price-crown venue re-grade (real Postgres)",
     "Polymarket settlement sweep SQL (real Postgres)",
     "Polymarket false-settled reopen repair apply/drift/restore (real Postgres)",

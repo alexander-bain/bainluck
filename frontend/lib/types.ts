@@ -979,7 +979,8 @@ export interface FuturesMarket {
   sport_name: string | null;
   category: string | null;
   llm_sport_category: string | null;
-  status: "open" | "resolved" | "closed";
+  // #1541: "withdrawn" = the provider stopped offering it. Not a settlement.
+  status: "open" | "resolved" | "closed" | "withdrawn";
   source: string | null;
   external_id: string | null;
   /**
