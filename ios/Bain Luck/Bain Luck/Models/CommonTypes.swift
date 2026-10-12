@@ -304,17 +304,28 @@ enum WinProbSourceCatalog {
     ]
 
     /// One contributing source: key, label, and its HOME win probability.
+    /// `detail` is an optional short second line under the label.
     struct Entry: Identifiable, Equatable {
         let key: String
         let label: String
         let homeProbability: Double
+        var detail: String? = nil
         var id: String { key }
     }
 
     /// The real, readable sources behind the blended number, biggest-name-first
     /// order made deterministic by key so two renders never disagree.
-    /// `bookCount`, when the map carries `betting_book_count`, is folded into the
-    /// sportsbook row's label so "Sportsbooks" says how many.
+    ///
+    /// #10863 — `betting_book_count` is how many sportsbooks the odds poll
+    /// that wrote `betting` took its median from. It is NOT the length of the
+    /// book table under this row: that table keeps each book's latest price,
+    /// older ones included, so on Texas–Oklahoma (14792837) the row read
+    /// "Sportsbooks (6)" above ten rows, five of them hours old, and nothing
+    /// said the two numbers counted different things. The count now says what
+    /// it is on its own line ("Based on 6 sportsbooks") and the label stays
+    /// "Sportsbooks". It says "based on", not "average of" or "live", because
+    /// the writer takes a median and the count does not record how fresh each
+    /// of those prices was.
     static func entries(from sources: [String: WinProbSource]?) -> [Entry] {
         guard let sources else { return [] }
         let bookCount = sources["betting_book_count"]?.value?.doubleValue.map { Int($0) }
@@ -323,12 +334,20 @@ enum WinProbSourceCatalog {
             .compactMap { key, source -> Entry? in
                 guard let probability = source.value?.doubleValue else { return nil }
                 var label = source.displayName ?? fallbackNames[key] ?? key.capitalized
+                var detail: String?
                 if key == "betting", let bookCount, bookCount > 0 {
-                    label = "Sportsbooks (\(bookCount))"
+                    label = "Sportsbooks"
+                    detail = consensusCountLine(bookCount)
                 }
-                return Entry(key: key, label: label, homeProbability: probability)
+                return Entry(
+                    key: key, label: label, homeProbability: probability, detail: detail)
             }
             .sorted { $0.key < $1.key }
+    }
+
+    /// #10863 — the sportsbook row's second line.
+    static func consensusCountLine(_ bookCount: Int) -> String {
+        bookCount == 1 ? "Based on 1 sportsbook" : "Based on \(bookCount) sportsbooks"
     }
 }
 

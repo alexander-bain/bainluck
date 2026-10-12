@@ -70,7 +70,15 @@ final class WinProbSourceCatalogTests: XCTestCase {
     /// is the honest place for "how many books".
     func testBookCountBecomesTheSportsbookRowsDetail() throws {
         let entries = WinProbSourceCatalog.entries(from: try sheltonSources())
-        XCTAssertEqual(entries.first { $0.key == "betting" }?.label, "Sportsbooks (10)")
+        // #10863 — the count rides its own line, worded as what it is (how
+        // many sportsbooks the figure is based on), not folded into the label
+        // where it read as the length of the table underneath.
+        let betting = entries.first { $0.key == "betting" }
+        XCTAssertEqual(betting?.label, "Sportsbooks")
+        XCTAssertEqual(betting?.detail, "Based on 10 sportsbooks")
+        XCTAssertTrue(
+            entries.filter { $0.key != "betting" }.allSatisfy { $0.detail == nil },
+            "only the sportsbook row carries a count line")
     }
 
     func testSportsbookRowFallsBackWhenNoCountIsCarried() throws {
