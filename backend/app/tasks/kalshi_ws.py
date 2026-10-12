@@ -289,16 +289,28 @@ class _FlushTimings:
     `max`; the rest is unattributed, not a stage. The refresh's own work on
     its task is not here. `db_phase` is that flush's slowest phase: its time,
     live or nonlive, and rows.
+
+    INSIDE `db` (#10090): `slowest_db` splits that same flush's `db` into
+    spans NESTED in it, so they are part of `db`, never added to it:
+    `set_lock` the phase's first execute (the lock-timeout SET; an
+    AsyncSession checks its connection out lazily, so pool checkout and
+    connection setup land here), `save` the price pipeline (the `save` bucket's
+    own time, the row writes and their lock waits), `rerank` the field
+    re-rank execute. `unknown` is `db` minus those three: session enter, the
+    buffer re-read, exit and commit, and anything else. It is not commit. A
+    final drain sets no lock timeout, so its checkout lands in `save`.
     """
 
     BUCKETS = ("save", "publish", "stamp")
     WAITS = ("db", "publish", "stamp_wait")
+    WITHIN_DB = ("set_lock", "save", "rerank")
 
     def __init__(self):
         self.in_flight = dict.fromkeys(self.BUCKETS, 0.0)
         self.in_flight_phases = 0
         self.waiting = dict.fromkeys(self.WAITS, 0.0)
         self.waiting_phase = None
+        self.waiting_db = dict.fromkeys(self.WITHIN_DB, 0.0)
         self.reset()
 
     def reset(self):
@@ -309,6 +321,7 @@ class _FlushTimings:
         self.longest = 0.0
         self.spent = dict.fromkeys(self.BUCKETS, 0.0)
         self.slowest = None
+        self.slowest_db = None
 
     def add(self, bucket, seconds, *, phase=False):
         self.in_flight[bucket] += seconds
@@ -322,17 +335,26 @@ class _FlushTimings:
             yield
         finally:
             seconds = time.monotonic() - started
-            self.waiting[bucket] += seconds
+            if bucket in self.WITHIN_DB:
+                self.within_db(bucket, seconds)
+            else:
+                self.waiting[bucket] += seconds
             if bucket == "db" and (
                 self.waiting_phase is None or seconds > self.waiting_phase[0]
             ):
                 self.waiting_phase = (seconds, live, rows)
 
+    def within_db(self, bucket, seconds):
+        """Time the current flush spent in ``bucket``, nested inside its `db`."""
+        self.waiting_db[bucket] += seconds
+
     def flushed(self, seconds):
         if self.slowest is None or seconds > self.longest:
             self.slowest = (self.waiting, self.waiting_phase)
+            self.slowest_db = self.waiting_db
         self.waiting = dict.fromkeys(self.WAITS, 0.0)
         self.waiting_phase = None
+        self.waiting_db = dict.fromkeys(self.WITHIN_DB, 0.0)
         self.flushes += 1
         self.total += seconds
         self.longest = max(self.longest, seconds)
@@ -371,9 +393,17 @@ class _FlushTimings:
         waits, phase = self.slowest
         split = " ".join(f"{name}={waits[name]:.2f}s" for name in self.WAITS)
         if phase is None:
-            return f"{split} db_phase=-"
-        seconds, live, rows = phase
-        return f"{split} db_phase={seconds:.2f}s/{'live' if live else 'nonlive'}/{rows}"
+            split = f"{split} db_phase=-"
+        else:
+            seconds, live, rows = phase
+            split = (
+                f"{split} db_phase={seconds:.2f}s/"
+                f"{'live' if live else 'nonlive'}/{rows}"
+            )
+        inside = self.slowest_db
+        unknown = max(0.0, waits["db"] - sum(inside.values()))
+        nested = " ".join(f"db.{name}={inside[name]:.2f}s" for name in self.WITHIN_DB)
+        return f"{split} {nested} db.unknown={unknown:.2f}s"
 
 
 class _KalshiPriceOwner:
@@ -471,7 +501,9 @@ class _KalshiPriceOwner:
                     yield result
         finally:
             if self.timings is not None:
-                self.timings.add("save", time.monotonic() - started, phase=True)
+                seconds = time.monotonic() - started
+                self.timings.add("save", seconds, phase=True)
+                self.timings.within_db("save", seconds)
 
     def waited(self, bucket, **phase):
         """#10090 — this flush's own await, when timed (`_FlushTimings.waited`)."""
@@ -1400,10 +1432,11 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
                         # #10661: bound each lock acquisition in this transaction.
                         # Pool checkout and total phase duration have separate costs.
                         if not final_drain:
-                            await session.execute(
-                                SET_LOCK_TIMEOUT_SQL,
-                                {"ms": lock_timeout_value(PRICE_PHASE_LOCK_TIMEOUT_MS)},
-                            )
+                            async with prices.waited("set_lock"):
+                                await session.execute(
+                                    SET_LOCK_TIMEOUT_SQL,
+                                    {"ms": lock_timeout_value(PRICE_PHASE_LOCK_TIMEOUT_MS)},
+                                )
                         # The admitted whole-question phase keeps its IDs and
                         # ordering, but takes the newest eligible tuple and its
                         # matching receipt before writing. A concurrent open-leg
@@ -1522,11 +1555,12 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
                             if oid in market_id_by_outcome
                         }
                         if reranked_markets:
-                            stats["ranks_rederived"] += (
-                                await session.execute(
-                                    rerank_market_fields_stmt(sorted(reranked_markets))
-                                )
-                            ).rowcount
+                            async with prices.waited("rerank"):
+                                stats["ranks_rederived"] += (
+                                    await session.execute(
+                                        rerank_market_fields_stmt(sorted(reranked_markets))
+                                    )
+                                ).rowcount
                     if not flush_counted:
                         stats["flushes"] += 1
                         flush_counted = True

@@ -9,6 +9,10 @@ clock. This file drives the SHIPPED `flush_prices` (AST-exec'd, as the #10655
 rig does) with real sleeps injected at one seam at a time and checks each
 lands in its own field, a stamp the flush did not wait for lands in none, and
 a stats-line reset mid-flush keeps the flush whole.
+
+Inside `db`, `slowest_db` nests the lock-timeout SET (lazy checkout), the price
+pipeline and the re-rank execute; `db.unknown` is the rest (enter, exit,
+commit). The nested spans are part of `db`, never added to it.
 """
 
 import ast
@@ -24,6 +28,7 @@ from types import SimpleNamespace
 import pytest
 
 from app.tasks.kalshi_ws import (  # noqa: F401 — the exec'd flush reads these
+    PRICE_FLUSH_SECONDS,
     PRICE_PHASE_LOCK_TIMEOUT_MS,
     _FlushTimings,
     _KalshiPriceOwner,
@@ -32,7 +37,7 @@ from app.tasks.kalshi_ws import (  # noqa: F401 — the exec'd flush reads these
     live_preempts_tail,
     yield_written_nonlive_tail,
 )
-from app.tasks.live_blend_refresh import event_ids_for_outcomes  # noqa: F401
+from app.tasks.live_blend_refresh import _mono, event_ids_for_outcomes  # noqa: F401
 from app.utils.futures_rank import rerank_market_fields_stmt  # noqa: F401
 from app.utils.repair_lock_budget import (  # noqa: F401 — read by the exec'd flush
     SET_LOCK_TIMEOUT_SQL,
@@ -51,7 +56,8 @@ QUIET = 0.1
 
 def rig(*, games=2, live=None, delays=None, on_commit=None, commits=()):
     """The shipped flush; ``delays`` sleeps at one seam: prepare, commit,
-    publish, stamp (the refresh task's own work) or pending (inline refresh).
+    publish, stamp (the refresh task's own work) or pending (inline refresh);
+    inside the transaction set_lock, write (each price row) or rerank.
     ``commits`` overrides the commit sleep per transaction, in order."""
     delays = defaultdict(float, delays or {})
     commits = list(commits)
@@ -64,10 +70,13 @@ def rig(*, games=2, live=None, delays=None, on_commit=None, commits=()):
 
         async def execute(self, stmt, bind=None):
             if stmt is SET_LOCK_TIMEOUT_SQL:
+                await asyncio.sleep(delays["set_lock"])
                 return SimpleNamespace(rowcount=1)
             pairs = price_writes(stmt, statement_params(stmt, bind))
             if not pairs:
+                await asyncio.sleep(delays["rerank"])
                 return SimpleNamespace(rowcount=0)  # the field re-rank
+            await asyncio.sleep(delays["write"])
             (oid, _prob), = pairs
             self.rows.append(oid)
             row = SimpleNamespace(id=oid, market_id=markets[oid],
@@ -220,7 +229,7 @@ async def test_the_slowest_phase_is_named_live_or_nonlive_with_its_rows(commits,
     waits, (phase_s, _, rows) = slowest(r)
     assert rows == 2 and phase_s >= SLOW and waits["db"] >= SLOW
     assert waits["db"] - phase_s < QUIET  # the other phase was quick
-    assert r.timings.line().endswith(f"/{named}/2")
+    assert f"/{named}/2 db.set_lock=" in r.timings.line()
 
 
 # ------------------------------- a stamp the flush did not wait for ----
@@ -286,7 +295,8 @@ def test_the_unit_shape_and_longest_selection():
     assert t.line() == (
         "flush n=2 total=3.0s max=2.0s phases=0 save=0.0s rank_commit=3.0s "
         "publish=0.0s stamp=0.0s slowest db=1.25s publish=0.00s "
-        "stamp_wait=0.50s db_phase=1.25s/live/12"
+        "stamp_wait=0.50s db_phase=1.25s/live/12 db.set_lock=0.00s "
+        "db.save=0.00s db.rerank=0.00s db.unknown=1.25s"
     )
     t.reset()
     assert t.line().endswith(" slowest -")
@@ -300,3 +310,111 @@ async def test_untimed_owner_waits_nothing():
     prices = _KalshiPriceOwner()
     async with prices.waited("db", rows=1, live=False):
         pass
+
+
+# --------------------------------------------- inside db, nested ----
+
+
+@pytest.mark.parametrize("seam,named", [
+    ("set_lock", "set_lock"),  # the first execute: lazy checkout lands here
+    ("write", "save"),
+    ("rerank", "rerank"),
+    ("commit", "unknown"),     # never named commit: it is what is left
+    ("prepare", "unknown"),    # an eager enter is not the first execute
+])
+async def test_each_db_seam_lands_in_its_nested_span_and_db_stays_whole(seam, named):
+    r = rig(games=1, delays={seam: SLOW})
+    tick(r, 0)
+    assert await r.flush() is True
+    waits, _ = slowest(r)
+    inside = r.timings.slowest_db
+    line = r.timings.line()
+    assert waits["db"] >= SLOW  # db is inclusive: the parent still carries it
+    assert waits["publish"] < QUIET and waits["stamp_wait"] < QUIET
+    for other in ("set_lock", "save", "rerank"):
+        if other == named:
+            assert inside[other] >= SLOW
+            assert inside[other] <= waits["db"]
+        else:
+            assert inside[other] < QUIET
+    unknown = float(line.split("db.unknown=")[1].rstrip("s"))
+    if named == "unknown":
+        assert unknown >= SLOW - 0.01
+    else:
+        assert unknown < QUIET
+    # Nested, never summed with their parent: the trio never exceeds the flush.
+    assert sum(waits.values()) <= r.timings.longest + 0.01
+
+
+async def test_nested_spans_sum_across_the_flushs_phases_like_db():
+    r = rig(games=2, delays={"write": SLOW / 2})
+    tick(r, 0, 1)
+    await r.flush()
+    waits, (phase_s, _, _) = slowest(r)
+    inside = r.timings.slowest_db
+    assert inside["save"] >= 4 * SLOW / 2  # four rows, two phases
+    assert inside["save"] <= waits["db"] and phase_s < waits["db"]
+    assert r.timings.spent["save"] == pytest.approx(inside["save"])  # same span
+
+
+async def test_nested_spans_belong_to_the_longest_flush_only():
+    r = rig(games=1, delays={"rerank": SLOW})
+    tick(r, 0)
+    await r.flush()
+    r.delays["rerank"] = 0.0
+    tick(r, 0)
+    await r.flush()  # quicker: not the minute's slowest
+    assert r.timings.flushes == 2
+    assert r.timings.slowest_db["rerank"] >= SLOW
+    await settle(r)
+
+
+async def test_a_lock_timeout_in_the_write_still_books_its_nested_time():
+    """The phase rolls back and its prices stay buffered; the time it spent
+    is still that flush's db and its save, so a lock-wait flush is visible."""
+
+    class LockTimeout(Exception):
+        sqlstate = "55P03"
+
+    r = rig(games=1)
+    tick(r, 0)
+
+    async def slow_then_refused(*_a, **_k):
+        await asyncio.sleep(SLOW)
+        raise LockTimeout("canceling statement due to lock timeout")
+        yield  # pragma: no cover
+
+    r.prices.pipeline = SimpleNamespace(iter_phase=slow_then_refused)
+    await r.flush()
+    waits, _ = slowest(r)
+    assert waits["db"] >= SLOW and r.timings.slowest_db["save"] >= SLOW
+    assert set(r.buffer) == {0, 1}  # retained for the next flush
+
+
+def test_nested_waits_stay_with_their_flush_across_a_minute_reset():
+    t = _FlushTimings()
+    t.within_db("save", 0.5)
+    t.waiting["db"] = 0.75
+    t.reset()  # mid-flush
+    t.flushed(1.0)
+    assert t.slowest_db["save"] == 0.5
+    assert t.line().endswith(
+        "db.set_lock=0.00s db.save=0.50s db.rerank=0.00s db.unknown=0.25s"
+    )
+
+
+def test_a_shorter_flush_never_adds_into_the_slowest_nested_split():
+    t = _FlushTimings()
+    t.within_db("save", 0.5)
+    t.flushed(2.0)
+    t.within_db("save", 0.25)  # a shorter flush later in the minute
+    t.flushed(1.0)
+    assert t.slowest_db == {"set_lock": 0.0, "save": 0.5, "rerank": 0.0}
+
+
+async def test_a_nested_span_never_swallows_the_error_it_times():
+    t = _FlushTimings()
+    with pytest.raises(RuntimeError):
+        async with t.waited("rerank"):
+            raise RuntimeError("the re-rank failed")
+    assert t.waiting_db["rerank"] >= 0.0 and t.waiting["db"] == 0.0
