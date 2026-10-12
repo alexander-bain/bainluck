@@ -1561,6 +1561,36 @@ DATAGOLF_OPENING_TIMING_RULE_TEXT = (
 # Read-side only (gotcha #21) — never mutates is_winner / calibration_probability.
 # The bid check uses SNAPSHOT provenance (evidence captured over the outcome's
 # life), not the current bid — live bids can clear on resolution.
+#
+# #1523 — A BID THAT CANNOT SUPPORT THE PRICE IS NOT EVIDENCE FOR IT. The #151
+# test above accepted ANY snapshot bid, so a leg whose book was 0.03 / 0.97 for
+# its whole captured life, never traded, kept a stored 0.50 and was graded as a
+# coin flip. Specimens (production, read-only, 2026-10-12): outcome 217613510
+# (market 58635840) — 11 snapshots, bid 0.03–0.06, ask 0.94–0.97, last_price
+# NULL, stored 0.505; outcomes 229038158/159 (market 61012117) — bid 0.02–0.03,
+# ask 0.97–0.98, no trade, both stored 0.500. A book that wide offers no price at
+# its midpoint. A snapshot is now evidence only when it shows a TRADE
+# (`last_price > 0`) or a bid whose book does not refute it.
+#
+# THE NEW EXCLUSION FIRES ONLY ON POSITIVE EVIDENCE OF A WIDE BOOK, and that is
+# deliberate. A snapshot with a bid and NO recorded ask (NULL or non-positive,
+# e.g. an Under leg written before CAL-P097's mirror, or a mirrored ask whose Yes
+# bid was absent) is UNKNOWN, not refuted. It keeps supporting the leg exactly as
+# it did before #1523, so this change cannot remove a row whose book we never
+# captured. A refuting snapshot shows bid > 0 AND ask > 0 AND ask - bid >= 0.50.
+# The 0.50 boundary is the Kalshi writer's bar (KALSHI_WRITER_MAX_SPREAD) used as
+# a hypothesis for Polymarket, not a value measured on this venue. It is written
+# as a literal here, not imported, so the Kalshi bar can move without silently
+# moving this rule. The per-category affected and control counts are the
+# measurement receipt's job (issue #1523), not this comment's.
+#
+# What this does NOT claim: that the leg never traded. Our snapshots are samples,
+# so "no snapshot shows a trade" is all the predicate knows, and the disclosure
+# says exactly that.
+#
+# The band, the pair-symmetry clause below, and every other rung are unchanged.
+# The partner clause applies the SAME evidence test, so the two legs of a pair
+# are always judged by one rule.
 POLY_PLACEHOLDER_EXCLUDE = (
     "((vm.source = 'polymarket'\n"
     "     AND COALESCE(fo.calibration_probability, fo.opening_probability) >= 0.45\n"
@@ -1568,7 +1598,10 @@ POLY_PLACEHOLDER_EXCLUDE = (
     "     AND NOT EXISTS (\n"
     "        SELECT 1 FROM futures_odds_snapshots fos\n"
     "        WHERE fos.outcome_id = fo.id\n"
-    "          AND (fos.yes_bid > 0 OR fos.last_price > 0)))"
+    "          AND (fos.last_price > 0\n"
+    "               OR (fos.yes_bid > 0\n"
+    "                   AND (fos.yes_ask IS NULL OR fos.yes_ask <= 0\n"
+    "                        OR fos.yes_ask - fos.yes_bid < 0.50)))))"
     # -- CAL-P992 (#1978, calibration-027 option A, Alex 2026-09-02): PAIR SYMMETRY.
     #
     # The clause above is per LEG on a market that has two of them, and Polymarket's
@@ -1624,7 +1657,10 @@ POLY_PLACEHOLDER_EXCLUDE = (
     "          AND NOT EXISTS (\n"
     "             SELECT 1 FROM futures_odds_snapshots fos9\n"
     "             WHERE fos9.outcome_id = fo9.id\n"
-    "               AND (fos9.yes_bid > 0 OR fos9.last_price > 0))))"
+    "               AND (fos9.last_price > 0\n"
+    "                    OR (fos9.yes_bid > 0\n"
+    "                        AND (fos9.yes_ask IS NULL OR fos9.yes_ask <= 0\n"
+    "                             OR fos9.yes_ask - fos9.yes_bid < 0.50))))))"
     # The closing paren of the doubled opener. Load-bearing: this string is
     # interpolated as a bare expression (`{POLY_PLACEHOLDER_EXCLUDE} AS
     # is_poly_placeholder`), so an unwrapped top-level OR would bind against
@@ -1633,13 +1669,55 @@ POLY_PLACEHOLDER_EXCLUDE = (
 )
 
 POLY_PLACEHOLDER_RULE_TEXT = (
-    "Excludes Polymarket outcomes near 0.50 (cp in [0.45, 0.55]) that never showed "
-    "a real bid or trade in any snapshot — Gamma synthetic placeholder prices, not "
-    "genuine coin-flips (#151 census: no-bid near-0.50 resolve at 0.10–0.28 vs "
-    "has-bid at 0.43–0.55). Pair-symmetric: on a two-outcome market the partner of "
+    "Excludes Polymarket outcomes near 0.50 (cp in [0.45, 0.55]) where no captured "
+    "snapshot shows a trade or a supported bid — Gamma synthetic placeholder "
+    "prices, not genuine coin-flips (#151 census: no-bid near-0.50 resolve at "
+    "0.10–0.28 vs has-bid at 0.43–0.55). A bid counts unless the same snapshot "
+    "shows an ask 0.50 or more above it (#1523: a 0.03 bid against a 0.97 ask is "
+    "no price at its midpoint); a snapshot with no recorded ask still counts. "
+    "Pair-symmetric: on a two-outcome market the partner of "
     "an excluded leg is excluded with it, because Polymarket writes only the Over "
     "side from a real sportsbook and publishing the survivor alone grades half a pair. "
     "Read-side only; never mutates resolutions."
+)
+
+# #1523 — the placeholder rule AS IT STOOD BEFORE #1523, kept ONLY to count
+# what #1523 changed. It does NOT gate the curve. ``is_poly_placeholder`` (the
+# rule above) does that; this flag exists so the artifact can state how many
+# outcomes the new evidence test removes beyond the old one
+# (``poly_placeholder_filter.unsupported_bid_excluded``). Every outcome the old
+# rule excluded the new one excludes too (a snapshot that supports a leg under
+# the new test supported it under the old), so the count is
+# ``is_poly_placeholder AND NOT is_poly_placeholder_pre1523`` and never negative.
+# The publish gate needs THAT number, not the total, to measure the narrowing a
+# predicate succession declares; the total also carries every row #151 has
+# excluded for months.
+#
+# Census-only, the same standing as ``POLY_NEVER_TRADED`` below. Retire it with
+# the succession it measures once a published artifact carries the new rule.
+POLY_PLACEHOLDER_PRE1523_EXCLUDE = (
+    "((vm.source = 'polymarket'\n"
+    "     AND COALESCE(fo.calibration_probability, fo.opening_probability) >= 0.45\n"
+    "     AND COALESCE(fo.calibration_probability, fo.opening_probability) <= 0.55\n"
+    "     AND NOT EXISTS (\n"
+    "        SELECT 1 FROM futures_odds_snapshots fos\n"
+    "        WHERE fos.outcome_id = fo.id\n"
+    "          AND (fos.yes_bid > 0 OR fos.last_price > 0)))"
+    "\n     OR (vm.source = 'polymarket'\n"
+    "     AND (SELECT COUNT(*) FROM futures_outcomes fo8\n"
+    "          WHERE fo8.market_id = fo.market_id) = 2\n"
+    "     AND EXISTS (\n"
+    "        SELECT 1 FROM futures_outcomes fo9\n"
+    "        WHERE fo9.market_id = fo.market_id AND fo9.id <> fo.id\n"
+    "          AND COALESCE(fo9.calibration_probability,\n"
+    "                       fo9.opening_probability) >= 0.45\n"
+    "          AND COALESCE(fo9.calibration_probability,\n"
+    "                       fo9.opening_probability) <= 0.55\n"
+    "          AND NOT EXISTS (\n"
+    "             SELECT 1 FROM futures_odds_snapshots fos9\n"
+    "             WHERE fos9.outcome_id = fo9.id\n"
+    "               AND (fos9.yes_bid > 0 OR fos9.last_price > 0))))"
+    ")"
 )
 
 # Queue #220/221 Item 3 — the EXCLUSION-SYMMETRY census.
@@ -4843,6 +4921,9 @@ def _calibration_population_ctes(
                     -- its own value is not a forecast (rule above the return).
                     {datagolf_opening_after_start} AS is_datagolf_opening_after_start,
                     {POLY_PLACEHOLDER_EXCLUDE} AS is_poly_placeholder,
+                    -- #1523: the pre-#1523 rule, for the disclosure count only
+                    -- (does NOT gate the curve; see the constant).
+                    {POLY_PLACEHOLDER_PRE1523_EXCLUDE} AS is_poly_placeholder_pre1523,
                     -- Queue #220/221 Item 3: all-bands poly never-traded flag (for
                     -- the exclusion-symmetry census; does NOT gate the curve).
                     {POLY_NEVER_TRADED} AS is_poly_never_traded,
@@ -5724,6 +5805,9 @@ def _main_futures_sql(*, frozen: bool = False) -> str:
                     COUNT(*) FILTER (WHERE source = 'kalshi' AND NOT is_below_writer_bar) AS writer_bar_included,
                     COUNT(*) FILTER (WHERE source = 'kalshi' AND is_below_writer_bar) AS writer_bar_excluded,
                     COUNT(*) FILTER (WHERE source = 'polymarket' AND is_poly_placeholder) AS poly_placeholder_excluded,
+                    -- #1523: what the new evidence test removes BEYOND the old
+                    -- one. A subset of poly_placeholder_excluded.
+                    COUNT(*) FILTER (WHERE source = 'polymarket' AND is_poly_placeholder AND NOT is_poly_placeholder_pre1523) AS poly_unsupported_bid_excluded,
                     COUNT(*) FILTER (WHERE source = 'polymarket' AND NOT is_poly_placeholder) AS poly_included,
                     -- Queue #220/221 Item 3: exclusion-symmetry census. Poly
                     -- never-traded across ALL bands, and the asymmetry cohort
@@ -5879,6 +5963,7 @@ def _main_futures_sql(*, frozen: bool = False) -> str:
                 MAX(ls.writer_bar_included) AS writer_bar_included,
                 MAX(ls.writer_bar_excluded) AS writer_bar_excluded,
                 MAX(ls.poly_placeholder_excluded) AS poly_placeholder_excluded,
+                MAX(ls.poly_unsupported_bid_excluded) AS poly_unsupported_bid_excluded,
                 MAX(ls.poly_included) AS poly_included,
                 MAX(ls.poly_never_traded_total) AS poly_never_traded_total,
                 MAX(ls.poly_never_traded_in_curve) AS poly_never_traded_in_curve,
@@ -7370,6 +7455,14 @@ async def compute_calibration_payload(db, *, runner=None) -> dict:
             if rows and rows[0].poly_placeholder_excluded is not None
             else 0
         )
+        # #1523: read defensively — an artifact built by code that predates
+        # the column states None (unmeasured), never a zero it did not count.
+        _unsupported_bid = (
+            getattr(rows[0], "poly_unsupported_bid_excluded", None) if rows else None
+        )
+        poly_unsupported_bid_excluded = (
+            int(_unsupported_bid) if _unsupported_bid is not None else None
+        )
         poly_included = (
             int(rows[0].poly_included)
             if rows and rows[0].poly_included is not None
@@ -8466,6 +8559,9 @@ async def compute_calibration_payload(db, *, runner=None) -> dict:
             "rule": POLY_PLACEHOLDER_RULE_TEXT,
             "included": poly_included,
             "excluded": poly_placeholder_excluded,
+            # #1523: the part of `excluded` the bid-support test adds beyond
+            # the #151 rule (a subset, counted over the same candidate pool).
+            "unsupported_bid_excluded": poly_unsupported_bid_excluded,
         },
         "exclusion_symmetry": {  # Queue #220/221 Item 3
             "note": (
@@ -9080,6 +9176,13 @@ def population_predicate_fingerprint() -> str:
             + inspect.getsource(category_has_score_unit_mismatch)
             + inspect.getsource(split_score_unit_mismatch)
             + f"score_unit_families={SCORE_UNIT_MISMATCH_FAMILIES}"
+            # #1523: the placeholder rule is a module-level SQL string
+            # interpolated into `_calibration_population_ctes`, so that
+            # function's source hashes the `{POLY_PLACEHOLDER_EXCLUDE}`
+            # placeholder and never the predicate. #1523 changes which
+            # Polymarket rows qualify, so the VALUE is hashed here; without it
+            # this digest would call the new population the old one.
+            + f"poly_placeholder_exclude={POLY_PLACEHOLDER_EXCLUDE}"
         )
     except Exception:  # noqa: BLE001 — no source => never claim a match
         # A digest nothing can equal (``_same_predicate`` requires equality), so
@@ -9255,16 +9358,25 @@ def _main_input_fingerprint() -> str:
         # cursor banked under one bar must not stay resumable by code carrying
         # another.
         #
-        # Its two nearest siblings — `KALSHI_LIQUIDITY_EXISTS` and
-        # `POLY_PLACEHOLDER_EXCLUDE` — are NOT on this list, and that is a real
-        # gap rather than a precedent to copy. They are static text that has not
-        # moved in months; this one is pinned to another file's constant. The
-        # gap is filed rather than widened here (#5430).
+        # Its nearest sibling `KALSHI_LIQUIDITY_EXISTS` is NOT on this list, and
+        # that is a real gap rather than a precedent to copy: static text that
+        # has not moved in months, while this one is pinned to another file's
+        # constant. The gap is filed rather than widened here (#5430).
         f"kalshi_writer_bar={KALSHI_WRITER_BAR_MET}",
         # #1010 — hashed by name and by value like its neighbours. Applied after
         # the phase read, so a carried output cannot encode an old value; it is
         # here so the census covers it rather than counting it as a hole.
         f"score_unit_families={SCORE_UNIT_MISMATCH_FAMILIES}",
+        # #1523 — `POLY_PLACEHOLDER_EXCLUDE`, the other half of #5430, closed on
+        # the deploy that moves it. Its evidence clause changes which Polymarket
+        # rows publish, and it is interpolated into
+        # `_calibration_population_ctes`, so the template hash below never sees
+        # it. A cursor banked under the old evidence rule must not be resumed by
+        # code carrying the new one.
+        f"poly_placeholder_exclude={POLY_PLACEHOLDER_EXCLUDE}",
+        # Its census-only twin shapes a carried COUNT, not which rows publish,
+        # so it is here and deliberately NOT in the population predicate.
+        f"poly_placeholder_pre1523={POLY_PLACEHOLDER_PRE1523_EXCLUDE}",
         source,
     )
 

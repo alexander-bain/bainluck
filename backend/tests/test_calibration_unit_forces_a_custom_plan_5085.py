@@ -310,7 +310,15 @@ from app.tasks.calibration_main_build import UNIT_PLAN_CACHE_MODE
 #: what the rule removed per cell (``score_unit_filter.excluded_by_cell``) so the
 #: publish gate can bound its disclosure. Counting only — ``staged_unit_fingerprint``
 #: (``dec3026b…``) and the published identity (``da21d87f…``) are both unmoved.
-LIVE_INPUT_FINGERPRINT = "39846d26d06f2567e5871a36a07770a2"
+#:
+#: RE-ANCHORED for #1523 (stacked on #1010): ``39846d26…`` -> ``82c06d4c…``. The
+#: placeholder rule's evidence test changed and it is now hashed BY VALUE here,
+#: with its census-only pre-#1523 twin; both also change the futures statement,
+#: so WHAT IT COSTS is the opposite of #1010's: ``staged_unit_fingerprint`` moves
+#: (``dec3026b…`` -> ``5834ba12…``) and every banked unit is discarded at deploy.
+#: The published identity moves ``da21d87f…`` -> ``33c8759a…``, to be declared to
+#: the gate once the measurement receipt sets its cap.
+LIVE_INPUT_FINGERPRINT = "82c06d4cf1953c397cb31fb504d0fd6e"
 
 
 class _Db:

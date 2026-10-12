@@ -308,7 +308,11 @@ class TestTheHandMapIsGoneAndTheArtifactIsAuthority:
         # is counted covered) and `SCORE_UNIT_MISMATCH_RULE_TEXT` (disclosure
         # prose, uncovered like its rule-text siblings). `uncovered_sql_shaping`
         # holds at 27. `staged_unit_fingerprint` is identical across the change.
-        assert artifact["input_count"] == 83
+        # #1523: 83 -> 84. `POLY_PLACEHOLDER_PRE1523_EXCLUDE`, the census-only
+        # twin of the placeholder rule that counts what #1523 adds. Hashed by
+        # value into this digest on the deploy that creates it, so it arrives
+        # covered.
+        assert artifact["input_count"] == 84
         # CAL-P162: 4 -> 5. `MEX_NORMALIZE_THRESHOLD` joined the by-value set on
         # the deploy that made it decide PUBLICATION rather than only pricing.
         # CAL-P164 added no by-value input, so this stands still.
@@ -323,7 +327,10 @@ class TestTheHandMapIsGoneAndTheArtifactIsAuthority:
         # did not grow.
         # #1010: 13 -> 14. `SCORE_UNIT_MISMATCH_FAMILIES`, closed on the deploy
         # that creates it.
-        assert len(artifact["covered_by_value"]) == 14
+        # #1523: 14 -> 16. `POLY_PLACEHOLDER_EXCLUDE` (half of #5430, closed
+        # on the deploy that changes its evidence test, and hashed into
+        # `population_predicate_fingerprint` too) and its census twin above.
+        assert len(artifact["covered_by_value"]) == 16
         # CAL-P1121 (#5401): 54 -> 55, the prose disclosure string. See the
         # docstring — covered_by_value deliberately does NOT move with it.
         # CAL-P1138 (q271, D112 #997): 55 -> 56, `calibration_truth_eligible_sql`.
@@ -354,7 +361,9 @@ class TestTheHandMapIsGoneAndTheArtifactIsAuthority:
         # #1010: 68 -> 69, `SCORE_UNIT_MISMATCH_RULE_TEXT`, prose. Not a
         # predicate; its sibling `SCORE_UNIT_MISMATCH_FAMILIES` IS one and is
         # covered by value (above), so it does not widen this count.
-        assert artifact["uncovered_count"] == 69
+        # #1523: 69 -> 68. `POLY_PLACEHOLDER_EXCLUDE` leaves the uncovered
+        # set; its new twin arrives covered and adds nothing to it.
+        assert artifact["uncovered_count"] == 68
         assert artifact["uncovered_count"] == artifact["input_count"] - len(
             artifact["covered_by_value"]
         )
@@ -496,7 +505,9 @@ class TestTheHandMapIsGoneAndTheArtifactIsAuthority:
         # already earned an exemption for, and counted here rather than argued
         # away. `identity_quarantine_ctes` is flagged and IS SQL, and is covered
         # as a hashed root.
-        assert artifact["uncovered_sql_shaping"] == 27
+        # #1523: 27 -> 26. `POLY_PLACEHOLDER_EXCLUDE` is now covered by
+        # value; `KALSHI_LIQUIDITY_EXISTS`, the other half of #5430, is not.
+        assert artifact["uncovered_sql_shaping"] == 26
 
     def test_the_five_hashed_roots_are_derived_not_declared_here(self, artifact):
         # D119 / CAL-P1090 added the fifth: `_roster_pushdown_predicates`, the
@@ -685,7 +696,10 @@ class TestTheHandMapIsGoneAndTheArtifactIsAuthority:
         # 56 -> 57 at #1010: `SCORE_UNIT_MISMATCH_RULE_TEXT` is same-module
         # prose, so it lands in the non-cross tier and the cross list is
         # unchanged.
-        assert len(cross) + 57 == artifact["uncovered_count"]
+        # 57 -> 56 at #1523: `POLY_PLACEHOLDER_EXCLUDE` is a same-module
+        # input that leaves the uncovered set, so the non-cross tier shrinks
+        # by one and the cross list is unchanged.
+        assert len(cross) + 56 == artifact["uncovered_count"]
 
 
 class TestInterpolationDetectionCoversNonFStringSql:

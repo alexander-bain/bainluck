@@ -330,6 +330,10 @@ DEFAULT_CENSUS_COLUMNS: tuple[str, ...] = (
     "writer_bar_included",
     "writer_bar_excluded",
     "poly_placeholder_excluded",
+    # #1523: the subset of the count above that the bid-support test adds.
+    # A plain COUNT(*), summed across units like its neighbour; declared in
+    # the same commit that emits it (the CAL-P162 lesson recorded below).
+    "poly_unsupported_bid_excluded",
     "poly_included",
     "poly_never_traded_total",
     "poly_never_traded_in_curve",

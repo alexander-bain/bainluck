@@ -1,0 +1,56 @@
+{
+  "issue": 1523,
+  "provenance": "Production rows read with POST /api/admin/db-query (read-only) by the calibration lane, 2026-10-12T02:31:42Z-02:32:48Z. Transcribed from the saved tool outputs (raw copy: ~/bainluck/artifacts/calibration/1523-specimens/RAW-DB-QUERY-OUTPUTS-20261012T0231Z.json, sha256 029a60cbe800a6506bf05f7ac9bb353c6c4b8853b33c97ac2288c9a7ffbee50f), not re-queried. Snapshot columns are exactly as returned; a null is a NULL in production. Outcomes 217613512-514 returned nsnap 11 and no bid or trade in any snapshot, but their per-snapshot rows were not read, so they carry one snapshot with no bid, ask or trade: that is everything the read established about them.",
+  "category": "table_tennis",
+  "markets": [
+    {
+      "market_id": 58635840,
+      "shape": "field (5 legs, resolved with 2 winners)",
+      "outcomes": [
+        {
+          "id": 217613510,
+          "name": "Ivasiv Volodymyr S.",
+          "cp": 0.505,
+          "is_winner": false,
+          "snapshots": [
+            [0.04, 0.97, null], [0.03, 0.97, null], [0.03, 0.97, null], [0.03, 0.97, null],
+            [0.03, 0.97, null], [0.04, 0.96, null], [0.04, 0.96, null], [0.06, 0.94, null],
+            [0.04, 0.96, null], [0.04, 0.96, null], [0.04, 0.96, null]
+          ]
+        },
+        {
+          "id": 217613511,
+          "name": "Ivasiv Volodymyr S. vs. Khomen",
+          "cp": 0.5,
+          "is_winner": true,
+          "snapshots": [
+            [null, 1.0, null], [null, 1.0, null], [null, 1.0, null], [null, 1.0, null],
+            [null, 1.0, null], [null, 1.0, null], [null, 1.0, null], [null, 1.0, null],
+            [null, 1.0, null], [null, 1.0, null], [null, 1.0, null]
+          ]
+        },
+        {"id": 217613512, "name": "Ivasiv Volodymyr S. vs. Khomen", "cp": 0.5, "is_winner": false, "snapshots": [[null, null, null]]},
+        {"id": 217613513, "name": "Ivasiv Volodymyr S. vs. Khomen", "cp": 0.5, "is_winner": false, "snapshots": [[null, null, null]]},
+        {"id": 217613514, "name": "Ivasiv Volodymyr S. vs. Khomen", "cp": 0.5, "is_winner": true, "snapshots": [[null, null, null]]}
+      ]
+    },
+    {
+      "market_id": 61012117,
+      "shape": "binary Yes/No",
+      "outcomes": [
+        {"id": 229038158, "name": "Yes", "cp": 0.5, "is_winner": false, "snapshots": [[0.03, 0.98, null], [0.03, 0.98, null]]},
+        {"id": 229038159, "name": "No", "cp": 0.5, "is_winner": true, "snapshots": [[0.02, 0.97, null], [0.02, 0.97, null]]}
+      ]
+    },
+    {
+      "market_id": 61003785,
+      "shape": "binary Yes/No; the Yes leg shows a trade (last_price 0.50) beside a wide book",
+      "outcomes": [
+        {"id": 228977428, "name": "Yes", "cp": 0.5, "is_winner": false, "snapshots": [[0.08, 0.69, 0.5]]},
+        {"id": 228977429, "name": "No", "cp": 0.615, "is_winner": true, "snapshots": [[0.31, null, 0.5]]}
+      ]
+    }
+  ],
+  "snapshot_columns": ["yes_bid", "yes_ask", "last_price"],
+  "note_228977429": "The read returned maxbid 0.31 and maxlp 0.50 for this leg but its per-snapshot row was not in the snapshot read. yes_ask is therefore unknown and stored as null. The leg sits outside [0.45, 0.55], so no rule here can reach it whatever its ask was."
+}

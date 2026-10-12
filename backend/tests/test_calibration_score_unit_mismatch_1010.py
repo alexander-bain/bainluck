@@ -279,8 +279,14 @@ class TestPredicateIdentity:
 
     def test_futures_unit_reuse_is_unaffected(self):
         """The staged UNIT digest keys on the futures statement's bytes, which
-        this rule does not touch, so banked units stay resumable."""
-        assert pc.staged_unit_fingerprint() == "dec3026b97c1f61cda6ce65c70459fe5"
+        this rule does not touch, so banked units stay resumable.
+
+        #1523 (stacked on this change) DOES move it, ``dec3026b…`` ->
+        ``5834ba12…``: the placeholder rule is in the futures statement, so a
+        deploy of #1523 discards the banked units and rebuilds. #1010's own
+        claim is unchanged: the rule this file tests adds no bytes to that
+        statement, which the census-only arm of #1523's tests also checks."""
+        assert pc.staged_unit_fingerprint() == "5834ba12c2eb56c04fee4a2a92197940"
 
 
 def _gate_payload(*, outcomes, predicate, categories, score_unit=None, cells=None):

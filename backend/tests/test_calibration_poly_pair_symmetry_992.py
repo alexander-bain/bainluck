@@ -67,6 +67,7 @@ CREATE = """
         id INTEGER PRIMARY KEY,
         outcome_id INTEGER,
         yes_bid REAL,
+        yes_ask REAL,
         last_price REAL
     );
     CREATE TABLE vm (market_id INTEGER, source TEXT);
@@ -250,8 +251,17 @@ class TestTheRuleIsWiredTheWayTheProducerReadsIt:
     """The expression must survive being interpolated bare into the big query."""
 
     def test_the_shipped_expression_still_contains_the_leg_rule(self):
-        """Pair symmetry ADDS a clause; it must not have replaced the original one."""
-        assert LEG_ONLY_DEFECT_SQL in POLY_PLACEHOLDER_EXCLUDE, (
+        """Pair symmetry ADDS a clause; it must not have replaced the original one.
+
+        #1523 changed the leg clause's EVIDENCE test (a bid the book refutes no
+        longer counts), so the whole pre-CAL-P992 literal is no longer a
+        substring. The leg clause itself must still be there: the band and the
+        per-leg snapshot test, ahead of the partner clause. The evidence test is
+        guarded in ``test_calibration_poly_unsupported_midpoint_1523.py``.
+        """
+        leg_head = LEG_ONLY_DEFECT_SQL.split("          AND (fos.yes_bid")[0]
+        assert leg_head.endswith("WHERE fos.outcome_id = fo.id\n")
+        assert POLY_PLACEHOLDER_EXCLUDE.startswith("(" + leg_head), (
             "#151's per-leg census is still the reason a bookless near-0.50 poly "
             "outcome leaves the curve. Symmetry is a second clause, not a swap."
         )
