@@ -5576,6 +5576,82 @@ def _trade_backfill_terminal(stats: dict) -> str:
     return "complete"
 
 
+#: #683: outcome ids whose trade read got a 429 and is owed a retry. The cursor
+#: walks past them, so without this carry a rate-limited candidate was skipped
+#: until the next wrap — weeks later, inside a window that purges at 86 days.
+_TRADE_BACKFILL_RETRY_KEY = "bainluck:trade_backfill_retry"
+#: Ceiling on the carry so a long rate-limit storm cannot grow the key without
+#: bound. Never enforced by dropping an id: when the carry is full, a refused
+#: cursor candidate stops the run with the cursor held BEFORE it (resumable).
+_TRADE_BACKFILL_RETRY_MAX = 5000
+#: The pre-#683 fixed sleep, kept as the wait when Kalshi sends no Retry-After.
+_TRADE_429_DEFAULT_WAIT_S = 5.0
+#: The longest cooldown a run will wait out in place. A longer Retry-After is
+#: honored by NOT asking again this run: the candidate is carried and the run
+#: stops, so nothing is re-asked before the provider's cooldown ends.
+_TRADE_429_MAX_WAIT_S = 30.0
+#: Wall-clock epoch seconds before which no trade request may be sent. Kalshi's
+#: Retry-After binds the NEXT trade request, whichever outcome it is for and
+#: whichever caller sends it (`backfill_kalshi_trades` and backfill_winners
+#: Phase 0 both run this function), so it is shared state, not a local sleep.
+_TRADE_BACKFILL_COOLDOWN_KEY = "bainluck:trade_backfill_cooldown_until"
+
+
+def _trade_cooldown_clock() -> float:
+    """Wall clock for the shared cooldown (a seam so tests can move it)."""
+    return datetime.now(timezone.utc).timestamp()
+
+
+def _kalshi_trade_429_wait(exc: BaseException) -> float | None:
+    """The cooldown Kalshi asked for after a 429, in seconds; ``None`` if not a 429.
+
+    Reads ``Retry-After`` in both of its forms (delta-seconds and HTTP-date) and
+    returns it UNCLAMPED above (floored at 0): whether the run can afford to
+    wait is the caller's decision, and shortening the provider's cooldown would
+    re-ask early. A 429 with no usable header gets the old fixed 5 s. An
+    exception with no response object falls back to the old ``"429" in str(e)``
+    test so nothing that read as a 429 before stops reading as one.
+    """
+    import math
+    from email.utils import parsedate_to_datetime
+
+    response = getattr(exc, "response", None)
+    status = getattr(response, "status_code", None)
+    if status is None:
+        return _TRADE_429_DEFAULT_WAIT_S if "429" in str(exc) else None
+    if status != 429:
+        return None
+
+    raw = (response.headers.get("Retry-After") or "").strip()
+    wait = _TRADE_429_DEFAULT_WAIT_S
+    if raw:
+        try:
+            wait = float(raw)
+        except ValueError:
+            try:
+                when = parsedate_to_datetime(raw)
+                if when.tzinfo is None:
+                    when = when.replace(tzinfo=timezone.utc)
+                wait = (when - datetime.now(timezone.utc)).total_seconds()
+            except (TypeError, ValueError, IndexError):
+                wait = _TRADE_429_DEFAULT_WAIT_S
+    if not math.isfinite(wait):
+        wait = _TRADE_429_DEFAULT_WAIT_S
+    return max(wait, 0.0)
+
+
+def _load_trade_retry_ids(rc) -> list[int]:
+    """The carried 429 ids, ascending. Unreadable carry reads as empty."""
+    try:
+        raw = rc.get(_TRADE_BACKFILL_RETRY_KEY)
+        if not raw:
+            return []
+        return sorted({int(i) for i in json.loads(raw)})
+    except Exception as e:
+        logger.warning("Trade backfill: unreadable retry carry (%s), ignoring", e)
+        return []
+
+
 async def _backfill_trade_history(limit: int = 100, deadline: float | None = None):
     """Backfill trade history and tag outcomes with proven zero pre-game trading.
 
@@ -5585,6 +5661,16 @@ async def _backfill_trade_history(limit: int = 100, deadline: float | None = Non
     #107: ``deadline`` (a ``time.monotonic()`` from the caller's cycle budget) makes
     the batch loop early-return at the cycle wall, not just at the local 480s cap —
     so a long run can't bust the soft limit mid-flight (resumable via the cursor).
+
+    #683: the cursor only ever passes candidates this run actually ATTEMPTED, and
+    is saved after each batch rather than once, up front, before any HTTP. A 429
+    is waited out once (``Retry-After``, bounded by the remaining budget); a
+    candidate still refused is carried in ``_TRADE_BACKFILL_RETRY_KEY`` and asked
+    first next run, through the same in-window predicate. A 429 the run cannot
+    wait out in place ends the HTTP pass and records the provider's cooldown in
+    ``_TRADE_BACKFILL_COOLDOWN_KEY``; an invocation that starts inside it sends
+    no trade request and moves neither the cursor nor the carry. A 429 is never
+    counted as fetched, empty or no-pregame.
     """
     import asyncio
     from app.tasks.redis_state import get_redis_client
@@ -5610,12 +5696,34 @@ async def _backfill_trade_history(limit: int = 100, deadline: float | None = Non
         "trade_pages": 0,
         "expiring_soon": 0,
         "window_days": PROVABLY_PURGED_AGE_DAYS,
+        "rate_limited": 0,
+        "rate_limit_waits": 0,
+        "retry_carried": 0,
         "errors": [],
     }
 
     _rc = get_redis_client()
+    try:
+        _cooldown_left = float(_rc.get(_TRADE_BACKFILL_COOLDOWN_KEY) or 0) - (
+            _trade_cooldown_clock()
+        )
+    except (TypeError, ValueError):
+        _cooldown_left = 0.0
+    if _cooldown_left > 0:
+        # Kalshi asked us not to send a trade request yet. Not one is sent, and
+        # the cursor and the carry are left exactly as they are. Not green:
+        # nothing was done, and the run says so.
+        stats["cooldown_remaining_s"] = round(_cooldown_left, 1)
+        stats["terminal"] = "partial"
+        logger.info("Trade backfill: provider cooldown, %.0fs left; no requests", _cooldown_left)
+        return stats
+
     _cursor_key = "bainluck:trade_backfill_cursor"
     _last_id = int(_rc.get(_cursor_key) or 0)
+    _carried = _load_trade_retry_ids(_rc)
+    # At most half the batch, so a long storm of carried 429s can never stall
+    # the cursor walk; the rest stay carried for the run after.
+    _retry_ask = _carried[: max(1, limit // 2)]
 
     try:
         async with get_task_session() as session:
@@ -5631,8 +5739,10 @@ async def _backfill_trade_history(limit: int = 100, deadline: float | None = Non
             # Fail-open on both edges: a NULL settlement time is still attempted,
             # and the bound is the UPPER observed purge age, so the uncertain
             # 74-86 day band is tried rather than written off.
-            result = await session.execute(
-                text("""
+            #
+            # #683: one predicate, asked twice — once for carried 429 retries by
+            # id, once for the cursor walk — so the two can never drift apart.
+            candidate_sql = """
                     SELECT fo.id, fo.external_id,
                            COALESCE(e.commence_time, fm.commence_time),
                            COALESCE(fm.resolution_date, e.commence_time, fm.commence_time)
@@ -5642,7 +5752,7 @@ async def _backfill_trade_history(limit: int = 100, deadline: float | None = Non
                     WHERE fm.status = 'resolved'
                       AND fm.source = 'kalshi'
                       AND fo.external_id LIKE 'KX%%-%%-%%'
-                      AND fo.id > :last_id
+                      AND {id_clause}
                       AND COALESCE(fo.resolution_source, '') NOT IN
                           ('no_pregame_trading', 'did_not_play', 'withdrew')
                       AND (
@@ -5662,15 +5772,36 @@ async def _backfill_trade_history(limit: int = 100, deadline: float | None = Non
                                     OR fo.opening_probability <= 0.10)))
                     ORDER BY fo.id ASC
                     LIMIT :lim
-                """),
-                {
-                    "lim": limit,
-                    "last_id": _last_id,
-                    "purge_days": PROVABLY_PURGED_AGE_DAYS,
-                },
+                """
+
+            async def _select(id_clause: str, params: dict, lim: int):
+                if lim <= 0:
+                    return []
+                result = await session.execute(
+                    text(candidate_sql.replace("{id_clause}", id_clause)),
+                    {"lim": lim, "purge_days": PROVABLY_PURGED_AGE_DAYS, **params},
+                )
+                return result.fetchall()
+
+            # Carried 429s first, re-checked against the same predicate: one that
+            # aged past the window or got tagged since simply does not come back.
+            retry_rows = (
+                await _select("fo.id = ANY(:retry_ids)", {"retry_ids": _retry_ask}, limit)
+                if _retry_ask
+                else []
             )
-            rows = result.fetchall()
-            candidates = [(r[0], r[1], r[2]) for r in rows]
+            _retried = {r[0] for r in retry_rows}
+            walk_rows = await _select(
+                "fo.id > :last_id", {"last_id": _last_id}, limit - len(retry_rows)
+            )
+            # The walk has ended only when the cursor query itself came back
+            # empty, not when every row it returned was already a carried retry.
+            _walk_ended = len(retry_rows) < limit and not walk_rows
+            cursor_rows = [r for r in walk_rows if r[0] not in _retried]
+            rows = list(retry_rows) + cursor_rows
+            candidates = [(r[0], r[1], r[2], False) for r in retry_rows] + [
+                (r[0], r[1], r[2], True) for r in cursor_rows
+            ]
             # Early warning: how much of this batch is about to become permanently
             # unrecoverable. A backfill that stalls turns this number into loss,
             # so it is reported every run rather than discovered ten weeks later.
@@ -5678,19 +5809,45 @@ async def _backfill_trade_history(limit: int = 100, deadline: float | None = Non
             stats["at_risk_days"] = AT_RISK_AGE_DAYS
 
         stats["candidates"] = len(candidates)
-        if not candidates:
+        stats["retry_carried"] = len(retry_rows)
+        # Still owed after this run: every carried id not asked this run, plus the
+        # asked ones the predicate returned (each is discarded once attempted).
+        # An asked id the predicate dropped is no longer a candidate at all.
+        pending_retry = (set(_carried) - set(_retry_ask)) | _retried
+        deferred: set[int] = set()
+        attempted_cursor_max = _last_id
+
+        def _persist_progress() -> None:
+            # Carry FIRST, cursor second. If the carry write fails the cursor has
+            # not moved, so a refused id is still ahead of it; if the cursor write
+            # fails after the carry landed, the id is asked twice — harmless, as
+            # every write is idempotent. The other order loses the id.
+            # Bounded by construction (a full carry stops the run instead of
+            # deferring), so it is never sliced: slicing would drop an owed id.
+            carry = sorted(pending_retry | deferred)
+            if carry:
+                _rc.setex(_TRADE_BACKFILL_RETRY_KEY, 86400 * 7, json.dumps(carry))
+            else:
+                _rc.delete(_TRADE_BACKFILL_RETRY_KEY)
+            if attempted_cursor_max > _last_id:
+                _rc.setex(_cursor_key, 86400 * 7, str(attempted_cursor_max))
+
+        if _walk_ended:
             _rc.delete(_cursor_key)
             logger.info("Trade backfill: wrapped around, reset cursor")
+        if not candidates:
+            _persist_progress()
             # Nothing recoverable left to fetch IS this task's finished state, not
             # an idle no-op: the backlog inside the retention window is drained.
             stats["terminal"] = "complete"
             return stats
 
-        # Save cursor for next run (highest outcome ID in this batch)
-        max_oid = max(c[0] for c in candidates)
-        _rc.setex(_cursor_key, 86400 * 7, str(max_oid))
-
-        logger.info("Trade backfill: %d candidates (cursor %d→%d)", len(candidates), _last_id, max_oid)
+        logger.info(
+            "Trade backfill: %d candidates (%d carried 429 retries, cursor from %d)",
+            len(candidates),
+            len(retry_rows),
+            _last_id,
+        )
 
         import gc
         import time as _time
@@ -5698,10 +5855,18 @@ async def _backfill_trade_history(limit: int = 100, deadline: float | None = Non
         _start = _time.monotonic()
         BATCH = 10
 
+        def _budget_left() -> float:
+            if deadline and _time.monotonic() >= deadline:
+                return 0.0
+            now = _time.monotonic()
+            left = 480 - (now - _start)
+            if deadline:
+                left = min(left, deadline - now)
+            return left
+
+        stopped = False
         for batch_start in range(0, len(candidates), BATCH):
-            if (deadline and _time.monotonic() >= deadline) or (
-                _time.monotonic() - _start
-            ) > 480:
+            if _budget_left() <= 0:
                 logger.info(
                     "Trade backfill: budget/deadline at %d/%d",
                     stats["fetched"],
@@ -5718,16 +5883,60 @@ async def _backfill_trade_history(limit: int = 100, deadline: float | None = Non
             pregame_ids: list[int] = []
             no_pregame_ids: list[int] = []
 
-            for oid, ticker, commence in batch:
-                try:
-                    trades = await _fetch_kalshi_trade_pages(svc, ticker)
-                    stats["fetched"] += 1
-                    stats["trade_pages"] += max(1, (len(trades) + 99) // 100)
-                except Exception as e:
-                    if "429" in str(e):
-                        await asyncio.sleep(5)
-                    stats["errors"].append(str(e)[:80])
+            for oid, ticker, commence, from_cursor in batch:
+                # A candidate never reached is never passed: the cursor and the
+                # carry only move for ones attempted below.
+                if _budget_left() <= 0:
+                    stopped = True
+                    break
+                trades = None
+                refused = False
+                for _attempt in range(2):
+                    try:
+                        trades = await _fetch_kalshi_trade_pages(svc, ticker)
+                        break
+                    except Exception as e:
+                        wait = _kalshi_trade_429_wait(e)
+                        if wait is None:
+                            stats["errors"].append(str(e)[:80])
+                            break
+                        can_wait = wait <= _TRADE_429_MAX_WAIT_S and wait < _budget_left()
+                        if _attempt == 0 and can_wait:
+                            stats["rate_limit_waits"] += 1
+                            await asyncio.sleep(wait)
+                            continue
+                        # Still refused, or a cooldown this run cannot honor in
+                        # place: owed, never empty. The cooldown binds the NEXT
+                        # trade request for ANY outcome and from either caller, so
+                        # it is recorded and the HTTP pass ends here.
+                        refused = True
+                        stats["rate_limited"] += 1
+                        stats["errors"].append(str(e)[:80])
+                        _rc.setex(
+                            _TRADE_BACKFILL_COOLDOWN_KEY,
+                            int(wait) + 2,
+                            str(_trade_cooldown_clock() + wait),
+                        )
+                        stats["stopped_on_cooldown_s"] = wait
+                        stopped = True
+                        break
+                if from_cursor:
+                    if refused:
+                        if len(pending_retry | deferred) >= _TRADE_BACKFILL_RETRY_MAX:
+                            # Carry full: hold the cursor BEFORE this id and stop.
+                            stats["retry_carry_full"] = True
+                            stopped = True
+                            break
+                        deferred.add(oid)
+                    attempted_cursor_max = max(attempted_cursor_max, oid)
+                elif not refused:
+                    pending_retry.discard(oid)
+                if stopped:
+                    break
+                if trades is None:
                     continue
+                stats["fetched"] += 1
+                stats["trade_pages"] += max(1, (len(trades) + 99) // 100)
 
                 if not trades:
                     stats["api_empty"] += 1
@@ -5800,7 +6009,17 @@ async def _backfill_trade_history(limit: int = 100, deadline: float | None = Non
                         )
                     await session.commit()
 
+            # After the batch's writes, so a failed write leaves its candidates
+            # ahead of the cursor to be asked again (every write is idempotent).
+            _persist_progress()
             gc.collect()
+            if stopped:
+                logger.info(
+                    "Trade backfill: budget/deadline at %d/%d",
+                    stats["fetched"],
+                    len(candidates),
+                )
+                break
             await asyncio.sleep(1)
 
     except Exception as e:
@@ -5812,7 +6031,7 @@ async def _backfill_trade_history(limit: int = 100, deadline: float | None = Non
     logger.info(
         "Trade backfill: %d candidates, %d fetched, %d pages, "
         "%d pregame_snaps, %d no_pregame, %d missing_commence, "
-        "%d api_empty, %d errors",
+        "%d api_empty, %d rate_limited (carried), %d errors",
         stats["candidates"],
         stats["fetched"],
         stats["trade_pages"],
@@ -5820,6 +6039,7 @@ async def _backfill_trade_history(limit: int = 100, deadline: float | None = Non
         stats["no_pregame"],
         stats["missing_commence"],
         stats["api_empty"],
+        stats["rate_limited"],
         len(stats["errors"]),
     )
     return stats
