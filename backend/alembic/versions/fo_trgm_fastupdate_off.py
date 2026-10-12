@@ -14,15 +14,17 @@ regularly pay the merge. The worker-ws minute line at 16:01:53Z on release 5671
 recorded a nonlive phase with `db.rerank=2.02s` while its price saves took
 0.02s.
 
-MEASURED (local PG14, 1.98M-row copy carrying all nine production indexes,
-artifacts/live-iteration-goal-20261011/rerank-10090/). On 60,000 single-row
-price writes, the max was 1,493 ms with fastupdate on and 85 ms with it off.
-Rank-only writes reached 2,416 ms. A smaller `gin_pending_list_limit` only
-splits the merge: 512 kB still produced ~400 ms stops and 128 kB 611 ms.
-Dropping the unused `ix_futures_outcomes_rank` made only about half the rank
-writes HOT, and they still reached 2,259 ms. The median single write rose
-from 0.41 ms to 0.75 ms. That is the price of the merge being paid evenly
-instead of all at once.
+MEASURED (local PG14, a SYNTHETIC 1.98M-row table, not a production copy,
+carrying the nine production index definitions;
+artifacts/live-iteration-goal-20261011/rerank-10090/). 60,000 single-row price
+writes: max 1,556 ms with fastupdate on, 38 ms with it off; median 0.37 ms to
+0.47 ms. The shipped Kalshi flush on that table, with a live leg changing every
+500 ms while 79 non-live markets were written every 250 ms, rerank plan held
+constant: in two parent runs the merge stalled single statements for up to
+2.7 s and the live price waited up to 2.67 s; in two candidate runs no price or
+nested-loop rerank statement exceeded 0.4 s and the live price waited at most
+0.90 s. The median phase rose from about 12 ms to 45 ms. That is the price of
+the merge being paid evenly instead of all at once.
 
 WHAT THIS DOES, EXHAUSTIVELY: one storage parameter on one index. No column,
 no data, no scan, no index build (gotcha #31 does not apply). The entries already

@@ -7024,9 +7024,21 @@ jobs:
         # upgrade (zero pending, fastupdate=off) + its downgrade (parent restored).
         if: matrix.group == 'shared-tail'
         run: |
-          set -o pipefail
+          set +e
           python -m pytest tests/integration/test_futures_outcome_writes_never_merge_a_search_backlog_10090_pg.py \
-            -v -rs 2>&1 | tee /tmp/ginbacklog10090.txt
+            -v -rs > /tmp/ginbacklog10090.txt 2>&1
+          RC=$?
+          set -e
+          cat /tmp/ginbacklog10090.txt
+          echo "PYTEST EXIT CODE: $RC"
+          if [ "$RC" -ne 0 ] && [ "$RC" -ne 1 ]; then
+            echo "::error::#10090 GIN backlog gate: pytest exit $RC is a harness story, not a result"
+            exit 1
+          fi
+          if [ "$RC" -ne 0 ]; then
+            echo "::error::#10090 GIN backlog gate RED"
+            exit 1
+          fi
           if grep -qiE "[0-9]+ skipped" /tmp/ginbacklog10090.txt; then
             echo "::error::#10090 GIN backlog gate SKIPPED — the gate did not run"
             exit 1
