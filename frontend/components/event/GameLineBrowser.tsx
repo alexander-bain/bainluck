@@ -91,20 +91,19 @@ export default function GameLineBrowser({
               <div className="text-sm font-medium">{row.market_name}</div>
               <div className="flex justify-between gap-4 mt-1 text-sm">
                 <span>{row.outcome_name}</span>
-                {verdict === "won" && (
+                {verdict != null && (
+                  // Same mark as the page's other settled rows
+                  // (SpecialEventMarkets): a green Won, a muted Lost.
                   <span
                     data-testid="outcome-verdict"
-                    className="text-sm text-emerald-600 font-medium"
+                    data-verdict={verdict}
+                    className={
+                      verdict === "won"
+                        ? "font-mono tabular-nums font-bold text-emerald-600"
+                        : "font-mono tabular-nums text-text-muted"
+                    }
                   >
-                    Won
-                  </span>
-                )}
-                {verdict === "lost" && (
-                  <span
-                    data-testid="outcome-verdict"
-                    className="text-sm text-red-400 font-medium"
-                  >
-                    Lost
+                    {verdict === "won" ? "Won" : "Lost"}
                   </span>
                 )}
                 {verdict == null && probability != null && (
