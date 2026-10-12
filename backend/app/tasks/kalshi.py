@@ -1945,6 +1945,11 @@ async def _poll_kalshi_markets(event_ticker: Optional[str] = None):
                         discipline = extract_olympic_discipline(market_name)
                         if discipline:
                             canon_category = discipline
+                    # #10776: a head-to-head match is not its sport's title race.
+                    canon_category = (
+                        _kalshi_match_market_type(event.event_ticker)
+                        or canon_category
+                    )
                     canonical_key = compute_canonical_market_key(
                         sport_category,
                         league,
@@ -3624,6 +3629,27 @@ _DATED_FIXTURE_SERIES_RE = _re.compile(
     + r")-\d{2}[A-Z]{3}\d{2}[A-Z]",
     _re.I,
 )
+
+
+def _kalshi_match_market_type(event_ticker: Optional[str]) -> Optional[str]:
+    """#10776. ``match_<ticker>`` for a dated head-to-head ticker, else ``None``.
+
+    ``detect_market_type`` finds no competition in "Bayerlova vs Kupres" and
+    returns its ``championship`` default, so every Kalshi match keyed
+    ``tennis::championship:2026`` — the key of "2026 Men's US Open Winner".
+    My Stuff read that type as the "Champion" stage, and the feed's canonical
+    dedupe folded Polymarket's set handicap for the same match into the match
+    winner (same default key, same two names). Each match is its own question,
+    so its type carries the match, as #9113 does for a player's destination.
+
+    Gated on the venue's MATCH/DOUBLES series — the shape
+    ``_TENNIS_MATCH_SERIES_RE`` already trusts — never on the name. KEY ONLY:
+    it admits no event, infers no start or state, and leaves ``category``
+    alone (``is_game_level_market`` reads it).
+    """
+    if not event_ticker or not _TENNIS_MATCH_SERIES_RE.match(event_ticker):
+        return None
+    return "match_" + _re.sub(r"[^a-z0-9]+", "_", event_ticker.lower()).strip("_")
 
 
 def _is_dated_fixture_ticker(event_ticker: Optional[str]) -> bool:
