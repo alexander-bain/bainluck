@@ -7122,6 +7122,27 @@ jobs:
             exit 1
           }
 
+      - name: "#2351 an MLB team-total leg is re-graded from its own team's score, and the undo round-trips (real Postgres)"
+        # PILLAR TRUTH. SHIP: MLB team-total questions show each team's own
+        # correct Won/Lost result. The attended repair's plan, its pinned apply
+        # (which re-asks final status, chronology, score and clubs under lock),
+        # the drift refusal and the row-version-exact restore are compare-and-
+        # swaps a session double reads green on. Runs in its own throwaway
+        # database. 9 cases (8 tests, one parametrized over two event drifts).
+        if: matrix.group == 'shared-tail'
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_repair_team_total_game_score_2351_pg.py \
+            -v -rs 2>&1 | tee /tmp/teamtotal2351.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/teamtotal2351.txt; then
+            echo "::error::#2351 team-total repair gate SKIPPED — the gate did not run"
+            exit 1
+          fi
+          grep -qE "[^0-9]9 passed[,[:space:]]" /tmp/teamtotal2351.txt || {
+            echo "::error::#2351 team-total repair gate did not run all nine cases"
+            exit 1
+          }
+
       - name: "#8910 a newer WebSocket stamp survives the two-minute poll (real Postgres)"
         # #8910 / CERT-3585's required guard. The REAL live poll against real
         # Postgres, paused after its compared read, while a second session sends

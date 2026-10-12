@@ -42,7 +42,8 @@ transactional session and RETURNS its own before/after census in the response bo
              | polymarket-club-noun-category | kalshi-club-noun-category
              | kalshi-venue-topic-badges
              | kalshi-venue-sport-correction
-             | poly-total-scope | poly-total-scope-restore }
+             | poly-total-scope | poly-total-scope-restore
+             | team-total-game-score | team-total-game-score-restore }
     (the registry below is authoritative; this list had already drifted two
      censuses behind it, so a reader who trusted it would have concluded a
      deployed rail did not exist — the same class of error as trusting a
@@ -89,7 +90,8 @@ transactional session and RETURNS its own before/after census in the response bo
      comment has earned its keep rather than decorated the file. Re-synced
      again 2026-09-27, calibration/#9083, adding the two
      polymarket-empty-book-openings entries in the commit that registered
-     them.)
+     them. Re-synced again 2026-10-12, calibration/#2351, adding the two
+     team-total-game-score entries in the commit that registered them.)
 
 Repairs whose signature declares ``limit`` / ``sport`` / ``newest_first`` /
 ``offset`` / ``after_id`` / ``after_date`` / ``plan_hash`` / ``expected_blank`` /
@@ -1236,6 +1238,23 @@ _REPAIRS = {
     # ATTENDED ONLY: never wire this to a beat.
     "poly-total-scope": ("app.tasks.repair_poly_total_scope", "repair"),
     "poly-total-scope-restore": ("app.tasks.repair_poly_total_scope", "restore"),
+    # #2351: `KXMLBTEAMTOTAL` legs the pre-CERT-495 writer graded off ONE leg
+    # and copied to every sibling. Each `game_score` leg is re-graded by the
+    # shipped `_team_total_outcome_is_winner` against its linked final score and
+    # written only where it contradicts it; correct siblings, other sources and
+    # unattributable legs are counted and left alone. The whole market is
+    # skipped when the event is not final, the score breaks gotcha #46, or the
+    # venue's own `api_settlement` legs on the same event disagree with the
+    # score. Apply is bound to the dry run's `plan_hash`; every write is a
+    # compare-and-set on the facts it rests on. Keyset `after_id`, `limit`
+    # markets, optional `only_ids`. D51: backup in
+    # `bak_2351_team_total_game_score`, undo is the `-restore` name.
+    # ATTENDED ONLY: never wire this to a beat.
+    "team-total-game-score": ("app.tasks.repair_team_total_game_score", "repair"),
+    "team-total-game-score-restore": (
+        "app.tasks.repair_team_total_game_score",
+        "restore",
+    ),
 }
 
 
