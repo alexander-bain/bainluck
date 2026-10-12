@@ -278,13 +278,39 @@ class _FlushTimings:
     time joins whichever flush returns after it ends, so `stamp` is the
     minute's refresh time, not any one flush's own: never read it, or
     `rank_commit`, as a per-flush or per-origin stage time.
+
+    WHERE THE LONGEST FLUSH WAITED (#10090): `slowest` is the minute's longest
+    flush's own awaits, timed on that flush's clock around its own calls
+    (`waited`): `db` from opening a phase's session to its commit returning
+    (checkout, lock waits, writes, re-rank and commit, indistinguishable here),
+    `publish` its market invalidation call, `stamp_wait` its waits on the
+    blend refresh (a join, or the inline refresh of an empty batch). They are
+    sequential awaits of one coroutine, so they never overlap and never exceed
+    `max`; the rest is unattributed, not a stage. The refresh's own work on
+    its task is not here. `db_phase` is that flush's slowest phase: its time,
+    live or nonlive, and rows.
+
+    INSIDE `db` (#10090): `slowest_db` splits that same flush's `db` into
+    spans NESTED in it, so they are part of `db`, never added to it:
+    `set_lock` the phase's first execute (the lock-timeout SET; an
+    AsyncSession checks its connection out lazily, so pool checkout and
+    connection setup land here), `save` the price pipeline (the `save` bucket's
+    own time, the row writes and their lock waits), `rerank` the field
+    re-rank execute. `unknown` is `db` minus those three: session enter, the
+    buffer re-read, exit and commit, and anything else. It is not commit. A
+    final drain sets no lock timeout, so its checkout lands in `save`.
     """
 
     BUCKETS = ("save", "publish", "stamp")
+    WAITS = ("db", "publish", "stamp_wait")
+    WITHIN_DB = ("set_lock", "save", "rerank")
 
     def __init__(self):
         self.in_flight = dict.fromkeys(self.BUCKETS, 0.0)
         self.in_flight_phases = 0
+        self.waiting = dict.fromkeys(self.WAITS, 0.0)
+        self.waiting_phase = None
+        self.waiting_db = dict.fromkeys(self.WITHIN_DB, 0.0)
         self.reset()
 
     def reset(self):
@@ -294,12 +320,41 @@ class _FlushTimings:
         self.total = 0.0
         self.longest = 0.0
         self.spent = dict.fromkeys(self.BUCKETS, 0.0)
+        self.slowest = None
+        self.slowest_db = None
 
     def add(self, bucket, seconds, *, phase=False):
         self.in_flight[bucket] += seconds
         self.in_flight_phases += int(phase)
 
+    @contextlib.asynccontextmanager
+    async def waited(self, bucket, *, rows=0, live=False):
+        """The current flush awaiting ``bucket``; joins `slowest` at `flushed`."""
+        started = time.monotonic()
+        try:
+            yield
+        finally:
+            seconds = time.monotonic() - started
+            if bucket in self.WITHIN_DB:
+                self.within_db(bucket, seconds)
+            else:
+                self.waiting[bucket] += seconds
+            if bucket == "db" and (
+                self.waiting_phase is None or seconds > self.waiting_phase[0]
+            ):
+                self.waiting_phase = (seconds, live, rows)
+
+    def within_db(self, bucket, seconds):
+        """Time the current flush spent in ``bucket``, nested inside its `db`."""
+        self.waiting_db[bucket] += seconds
+
     def flushed(self, seconds):
+        if self.slowest is None or seconds > self.longest:
+            self.slowest = (self.waiting, self.waiting_phase)
+            self.slowest_db = self.waiting_db
+        self.waiting = dict.fromkeys(self.WAITS, 0.0)
+        self.waiting_phase = None
+        self.waiting_db = dict.fromkeys(self.WITHIN_DB, 0.0)
         self.flushes += 1
         self.total += seconds
         self.longest = max(self.longest, seconds)
@@ -329,7 +384,26 @@ class _FlushTimings:
             f"max={self.longest:.1f}s phases={self.phases} "
             f"save={self.spent['save']:.1f}s rank_commit={rank_commit:.1f}s "
             f"publish={self.spent['publish']:.1f}s stamp={self.spent['stamp']:.1f}s"
+            f" slowest {self._slowest()}"
         )
+
+    def _slowest(self):
+        if self.slowest is None:
+            return "-"
+        waits, phase = self.slowest
+        split = " ".join(f"{name}={waits[name]:.2f}s" for name in self.WAITS)
+        if phase is None:
+            split = f"{split} db_phase=-"
+        else:
+            seconds, live, rows = phase
+            split = (
+                f"{split} db_phase={seconds:.2f}s/"
+                f"{'live' if live else 'nonlive'}/{rows}"
+            )
+        inside = self.slowest_db
+        unknown = max(0.0, waits["db"] - sum(inside.values()))
+        nested = " ".join(f"db.{name}={inside[name]:.2f}s" for name in self.WITHIN_DB)
+        return f"{split} {nested} db.unknown={unknown:.2f}s"
 
 
 class _KalshiPriceOwner:
@@ -427,7 +501,15 @@ class _KalshiPriceOwner:
                     yield result
         finally:
             if self.timings is not None:
-                self.timings.add("save", time.monotonic() - started, phase=True)
+                seconds = time.monotonic() - started
+                self.timings.add("save", seconds, phase=True)
+                self.timings.within_db("save", seconds)
+
+    def waited(self, bucket, **phase):
+        """#10090 — this flush's own await, when timed (`_FlushTimings.waited`)."""
+        if self.timings is None:
+            return contextlib.nullcontext()
+        return self.timings.waited(bucket, **phase)
 
     def close(self):
         if self.pipeline is not None:
@@ -1162,12 +1244,13 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
             # nothing is queued (no session is opened). #10090: while an earlier
             # flush's refresh still runs, the debt stays owed for a later flush:
             # two refreshes never share the refresher.
-            if prices.stamping is not None and prices.stamping.done():
-                await prices.join_stamp(blend_refresher)
-            if prices.stamping is None:
-                if blend_refresher.pending_event_ids():
-                    prices.flush_work += 1  # owed stamps are actual work
-                await blend_refresher.refresh_pending(flush_started=flush_started)
+            async with prices.waited("stamp_wait"):
+                if prices.stamping is not None and prices.stamping.done():
+                    await prices.join_stamp(blend_refresher)
+                if prices.stamping is None:
+                    if blend_refresher.pending_event_ids():
+                        prices.flush_work += 1  # owed stamps are actual work
+                    await blend_refresher.refresh_pending(flush_started=flush_started)
             return True
         # #10090: a snapshot with prices is actual work, held cohorts included,
         # so a held game's quotes cannot buy more than one flush per period.
@@ -1216,7 +1299,8 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
 
         async def stamp_done(*, cancel=False):
             # Repeated cancellation cannot let a task escape beside the drain.
-            await prices.join_stamp(blend_refresher, cancel=cancel)
+            async with prices.waited("stamp_wait"):
+                await prices.join_stamp(blend_refresher, cancel=cancel)
 
         async def stamp_start():
             nonlocal queued_refresh
@@ -1314,9 +1398,10 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
                 ):
                     stats["budget_deferred"] += sum(len(p) for p in phases[index:])
                     break
-                if live_event_ids and not final_drain and not any(
+                phase_live = bool(live_event_ids) and any(
                     cohort_event_ids.get(oid) in live_event_ids for oid in phase
-                ):
+                )
+                if live_event_ids and not final_drain and not phase_live:
                     if live_preempts_tail(
                         flush_started, flush_period, nonlive_started, price_buffer,
                         batch, cohort_event_ids, live_event_ids,
@@ -1340,14 +1425,18 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
                 written_outcome_ids: list[int] = []
                 written_observations: dict = {}
                 try:
-                    async with get_task_session() as session:
+                    async with (
+                        prices.waited("db", rows=len(phase), live=phase_live),
+                        get_task_session() as session,
+                    ):
                         # #10661: bound each lock acquisition in this transaction.
                         # Pool checkout and total phase duration have separate costs.
                         if not final_drain:
-                            await session.execute(
-                                SET_LOCK_TIMEOUT_SQL,
-                                {"ms": lock_timeout_value(PRICE_PHASE_LOCK_TIMEOUT_MS)},
-                            )
+                            async with prices.waited("set_lock"):
+                                await session.execute(
+                                    SET_LOCK_TIMEOUT_SQL,
+                                    {"ms": lock_timeout_value(PRICE_PHASE_LOCK_TIMEOUT_MS)},
+                                )
                         # The admitted whole-question phase keeps its IDs and
                         # ordering, but takes the newest eligible tuple and its
                         # matching receipt before writing. A concurrent open-leg
@@ -1466,11 +1555,12 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
                             if oid in market_id_by_outcome
                         }
                         if reranked_markets:
-                            stats["ranks_rederived"] += (
-                                await session.execute(
-                                    rerank_market_fields_stmt(sorted(reranked_markets))
-                                )
-                            ).rowcount
+                            async with prices.waited("rerank"):
+                                stats["ranks_rederived"] += (
+                                    await session.execute(
+                                        rerank_market_fields_stmt(sorted(reranked_markets))
+                                    )
+                                ).rowcount
                     if not flush_counted:
                         stats["flushes"] += 1
                         flush_counted = True
@@ -1559,7 +1649,8 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
 
                 # #9484: keep every committed MARKET notification, including
                 # standalone futures/props which have no event blend.
-                await blend_refresher.publish_market_changes(session)
+                async with prices.waited("publish"):
+                    await blend_refresher.publish_market_changes(session)
 
                 # Q491 repair 2 — the write landed, so and only so do these entries
                 # leave the buffer. The `== prob` test is what used to be `setdefault`:
