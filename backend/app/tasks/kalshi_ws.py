@@ -439,6 +439,18 @@ class _KalshiPriceOwner:
         # probe leaves the next accepted winner quote free to start at once.
         self.flush_work = 0
 
+    def held_events(self, refresher):
+        """#10090 — the events the run's refresh is still stamping.
+
+        Its own fence (`holding_event_ids`) once it reports one; until then,
+        everything it was started with or admitted (``stamping_events``).
+        """
+        reader = getattr(refresher, "holding_event_ids", None)
+        holding = reader() if reader is not None else None
+        if holding is None:
+            return self.stamping_events
+        return self.stamping_events.intersection(holding)
+
     async def join_stamp(self, refresher, *, cancel=False):
         """Wait for the run's blend refresh, if any, and retrieve its outcome.
 
@@ -840,35 +852,6 @@ def linked_first_phases(
     )
 
 
-def live_unfenced_first(phases, event_id_by_outcome, live_events, held_events):
-    """#10090 — reorder the leading live phases: games the running refresh
-    does not hold go first.
-
-    A phase whose game the running refresh holds (``held_events``) joins that
-    WHOLE refresh before its write (the same-event fence in `flush_prices`),
-    so every live game planned after it waited too, though the refresh never
-    held it. Moved first, an independent live game's whole cohort commits and
-    joins the running refresh. Order only: each held phase keeps its fence and
-    their relative order; non-live phases and their oldest-first order stay.
-    """
-    def held(phase):
-        return not held_events.isdisjoint(
-            event_id_by_outcome.get(oid) for oid in phase
-        )
-
-    live = 0
-    while live < len(phases) and any(
-        event_id_by_outcome.get(oid) in live_events for oid in phases[live]
-    ):
-        live += 1
-    head = phases[:live]
-    return (
-        [phase for phase in head if not held(phase)]
-        + [phase for phase in head if held(phase)]
-        + phases[live:]
-    )
-
-
 @owns_consumer_sessions("kalshi")
 @_owns_kalshi_price_lifetime  # #10693: inside, so the engine is disposed last
 async def _run_kalshi_ws_consumer(*, sessions, prices):
@@ -1142,6 +1125,10 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
         # one because a live game had new input waiting (`live_input_waiting`).
         # Deferred like `budget_deferred`, never dropped.
         "live_preempted": 0,
+        # #10090: buffered prices a periodic flush left for the next one
+        # because their event's stamp was still queued or running in the run's
+        # refresh. Deferred like `budget_deferred`, never dropped.
+        "stamp_fenced": 0,
     }
 
     # -- Buffered price updates --
@@ -1275,7 +1262,10 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
             # flush's refresh still runs, the debt stays owed for a later flush:
             # two refreshes never share the refresher.
             async with prices.waited("stamp_wait"):
-                if prices.stamping is not None and prices.stamping.done():
+                # The drain has no next flush: a running stamp is joined first.
+                if prices.stamping is not None and (
+                    prices.stamping.done() or final_drain
+                ):
                     await prices.join_stamp(blend_refresher)
                 if prices.stamping is None:
                     owed = blend_refresher.pending_event_ids()
@@ -1290,7 +1280,13 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
                         prices.stamping_fresh = set()
                         prices.stamping_events = set(owed)
                         prices.stamping = asyncio.create_task(stamp)
-                        await asyncio.sleep(0)
+                        try:
+                            await asyncio.sleep(0)  # its first turn takes the debt
+                        except asyncio.CancelledError:
+                            # As a price flush's cancellation: cancelled and
+                            # joined; debt it had not taken was never moved.
+                            await prices.join_stamp(blend_refresher, cancel=True)
+                            raise
                     else:
                         await stamp
             return True
@@ -1313,14 +1309,6 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
             live_events=live_event_ids,
             pending_events_fenced=True,
         )
-        if (
-            live_event_ids and not final_drain
-            and prices.stamping is not None and not prices.stamping.done()
-        ):
-            # #10090: independent live games do not wait at a held game's fence.
-            phases = live_unfenced_first(
-                phases, cohort_event_ids, live_event_ids, prices.stamping_events,
-            )
         # Includes failed/budget-deferred phases until a whole phase commits.
         # Re-resolve through the current map at each launch for late bridges.
         unfinished_price_ids = set(batch)
@@ -1467,10 +1455,22 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
                 # late bridge may name an event in a later phase; implicit debt
                 # captured by the active refresh must obey the same fence. So
                 # must an event an earlier flush's refresh still holds.
-                if not prices.stamping_events.isdisjoint(
-                    event_ids_for_outcomes(cohort_event_ids, phase.keys())
-                ):
-                    await stamp_done()
+                phase_events = event_ids_for_outcomes(cohort_event_ids, phase.keys())
+                if not prices.stamping_events.isdisjoint(phase_events):
+                    if final_drain:
+                        await stamp_done()
+                    elif not prices.held_events(blend_refresher).isdisjoint(
+                        phase_events
+                    ):
+                        # #10090: that event's stamp is still queued or running.
+                        # Joining waited for the WHOLE refresh and held every
+                        # later phase and flush with it, independent games
+                        # included. The whole cohort stays buffered at the head
+                        # instead, like a lock retry; the next flush writes it
+                        # once its stamp has returned. An event whose stamp has
+                        # returned writes now and is admitted again.
+                        stats["stamp_fenced"] += len(phase)
+                        continue
                 declined = 0
                 written_outcome_ids: list[int] = []
                 written_observations: dict = {}
@@ -2459,7 +2459,7 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
                 "Kalshi WS: %d updates, %d flushes, %d settlements, %d errors, "
                 "%d msgs | blend stamped=%d no_reading=%d throttled=%d errors=%d "
                 "lock_skipped=%d unobserved=%d stale=%d | %s deferred=%d "
-                "preempted=%d live=%d book=%d quotes=%d resnapshots=%d "
+                "preempted=%d fenced=%d live=%d book=%d quotes=%d resnapshots=%d "
                 "quote_priority=%d",
                 stats["price_updates"], stats["flushes"],
                 stats["settlements"], stats["errors"],
@@ -2472,7 +2472,7 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
                 blend.get("stale_readings_refused", 0),
                 # #10090: this minute's flush phases, then cumulative deferrals.
                 flush_timings.line(), stats["budget_deferred"],
-                stats["live_preempted"], len(live_event_ids),
+                stats["live_preempted"], stats["stamp_fenced"], len(live_event_ids),
                 # #10090 direct book: tickers carried, quotes taken, resyncs.
                 stats.get("book_tickers", 0),
                 sum(c.sock.stats.get("book_quotes", 0) for c in game_clients),

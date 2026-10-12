@@ -111,7 +111,8 @@ class _SerialOwner(_KalshiPriceOwner):
 
 async def test_strawman_the_serial_owner_holds_the_next_write():
     """The rig can tell: with the serial owner, game 200's disjoint write does
-    not begin while game 100's stamp is held, and starts once it is released."""
+    not begin while game 100's stamp is held (#10090: it stays buffered rather
+    than waiting), and the first flush after the release writes it."""
     r = rig()
     r.release.set()
     r.ns["prices"] = _SerialOwner()
@@ -123,9 +124,15 @@ async def test_strawman_the_serial_owner_holds_the_next_write():
     assert r.ns["prices"].stamping_events == {100}, "the owner holds only game 100"
     assert not r.entered.is_set() and r.committed == [1, 2]
     assert ("write", 3) not in r.trace
-    gate.set()
     assert await asyncio.wait_for(flush, 2) is True
+    assert ("write", 3) not in r.trace and set(r.batch) == {3, 9}
+    gate.set()
+    await asyncio.wait({r.ns["prices"].stamping})
+    assert await asyncio.wait_for(r.flush(), 2) is True
     assert r.trace.index(("refresh", (100,))) < r.trace.index(("write", 3))
+    # Its fence overlaps even the standalone phase: one more flush for that.
+    await asyncio.wait({r.ns["prices"].stamping})
+    assert await asyncio.wait_for(r.flush(), 2) is True
     assert r.committed == [1, 2, 3, 9] and calls["most_running"] == 1
 
 

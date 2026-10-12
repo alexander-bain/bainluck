@@ -141,16 +141,16 @@ def rig(*, games=2, live=None, delays=None, on_commit=None, commits=()):
                if isinstance(n, ast.AsyncFunctionDef) and n.name == "flush_prices"]
     exec(compile(ast.Module(body=[node], type_ignores=[]), str(path), "exec"), ns)
 
-    async def timed_flush():
+    async def timed_flush(**kwargs):
         # What the consumer's `timed_flush` does around the shipped flush.
         started = time.monotonic()
         try:
-            return await ns["flush_prices"](None)
+            return await ns["flush_prices"](None, **kwargs)
         finally:
             timings.flushed(time.monotonic() - started)
 
     return SimpleNamespace(flush=timed_flush, buffer=buffer, prices=prices,
-                           timings=timings, delays=delays)
+                           timings=timings, delays=delays, stats=ns["stats"])
 
 
 def tick(r, *games):
@@ -194,8 +194,10 @@ async def test_a_slow_publish_is_publish():
 
 
 async def test_joining_a_held_refresh_is_stamp_wait():
-    """The second flush's game is the one the first flush's refresh holds, so
-    it joins it (the same-event fence): that wait is its own, on its clock."""
+    """The second flush's game is the one the first flush's refresh holds (the
+    same-event fence). #10090: a periodic flush leaves its cohort buffered and
+    waits for nothing; the final drain joins it, and that wait is its own
+    stamp_wait, on its clock."""
     r = rig(games=1, delays={"stamp": SLOW})
     tick(r, 0)
     await r.flush()
@@ -205,8 +207,13 @@ async def test_joining_a_held_refresh_is_stamp_wait():
     tick(r, 0)
     await r.flush()
     waits, _ = slowest(r)
+    assert waits["stamp_wait"] < QUIET and waits["db"] < QUIET
+    assert r.stats["stamp_fenced"] == 2 and set(r.buffer) == {0, 1}
+    r.timings.reset()
+    await r.flush(final_drain=True)
+    waits, _ = slowest(r)
     assert waits["stamp_wait"] >= SLOW - QUIET
-    assert waits["db"] < QUIET and waits["publish"] < QUIET
+    assert waits["publish"] < QUIET and not r.buffer
     await settle(r)
 
 

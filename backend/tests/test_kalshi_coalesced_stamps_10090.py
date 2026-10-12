@@ -94,13 +94,23 @@ async def test_late_bridge_respects_active_explicit_and_implicit_event_fence(imp
     refresher.publish_market_changes = late_bridge
     flush = asyncio.create_task(r.flush())
     try:
-        await wait_committed(r, [1, 2, 3])
+        # #10090: the fenced late-bridge cohort stays buffered; the unrelated
+        # standalone phase behind it no longer waits for the held refresh.
+        # (This refresher refuses admission, so the flush's last step still
+        # joins it to launch game 200's stamp.)
+        await wait_committed(r, [1, 2, 3, 9])
         for _ in range(20):
             await asyncio.sleep(0)
         assert 4 not in r.committed and calls["started"] == [(100,)]
     finally:
         gate.set()
         assert await asyncio.wait_for(flush, 2) is True
+    assert set(r.batch) == {4}
+    await asyncio.wait({r.ns["prices"].stamping})
+    # Its event's stamp has returned: the next flush writes it and stamps it.
+    assert await asyncio.wait_for(r.flush(), 2) is True
+    await asyncio.wait_for(r.ns["prices"].join_stamp(refresher), 2)
+    assert r.committed == [1, 2, 3, 9, 4] and not r.batch
     assert calls["most_running"] == 1
     assert (999 if implicit else 100) in calls["finished"][-1]
 
