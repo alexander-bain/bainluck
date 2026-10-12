@@ -43,6 +43,28 @@ graded as two losses on a drawn match.
 (equal scores). Drawn matches are IN the population; a two-way arm drops them,
 which is only honest for a pair that was renormalized conditional on no draw.
 
+**THE SCORE MUST BE THE 90-MINUTE SCORE (CERT-4066).** A soccer game winner
+settles on regulation time. A knockout tie that is level after 90 minutes and
+won in extra time or on penalties is a DRAW for this market, but its stored
+final score names a winner. We store no regulation score, and guessing one
+from the final is not allowed, so a match is admitted only when its own row
+says it ENDED at full time:
+
+* ``events.period == "FT"`` — the sync writes ESPN's ``status.type.detail``
+  into ``period`` (``espn_helpers._sanitize_period``); #2908 records it writing
+  ``FT`` on a match ESPN finished at full time. Extra-time and shootout
+  finishes are separate ESPN statuses (``STATUS_FINAL_AET``,
+  ``STATUS_FINAL_PEN``; census in ``services/espn_api.espn_terminal_state``:
+  5,572 full time, 7 after extra time, 57 on penalties), and exact equality
+  refuses whatever detail they carry; or
+* ``box_score_data.provider_box_evidence.provider_status.name ==
+  "STATUS_FULL_TIME"`` — ESPN's own status name, stored with a fresh box.
+
+Anything else — an extra-time or penalty finish, a row no provider finished
+with a status, a period left at a live token — is regulation UNPROVEN and stays
+excluded, counted with the rest. Exact equality is the fail-closed form: a new
+or unexpected spelling refuses rather than admits.
+
 Pure module: no app imports, no I/O. The SQL that applies this contract binds
 :data:`SOCCER_THREE_WAY_PARAMS`, and the Python twin below is what the unit
 tests pin it against.
@@ -61,12 +83,23 @@ SOCCER_THREE_WAY_SINCE = datetime(2026, 9, 16, 17, 43, 41, tzinfo=timezone.utc)
 #: renormalized pair leaves at most 0.0001 (four-place rounding of two legs).
 SOCCER_DRAW_RESIDUAL_MIN = 0.01
 
+#: ESPN's ``status.type.detail`` for a match that ended at full time, as the
+#: sync stores it in ``events.period``. Matched exactly, so any other detail —
+#: an extra-time or shootout finish, a live token — refuses.
+SOCCER_REGULATION_FINISH_PERIOD = "FT"
+
+#: ESPN's ``status.type.name`` for the same, as a fresh box stores it in
+#: ``box_score_data.provider_box_evidence.provider_status.name``.
+SOCCER_REGULATION_FINISH_STATUS = "STATUS_FULL_TIME"
+
 #: Bind parameters for every SQL statement that applies the contract. Bound,
 #: never interpolated, so the statement text names the contract and the values
 #: live in exactly one place.
 SOCCER_THREE_WAY_PARAMS = {
     "soccer_three_way_since": SOCCER_THREE_WAY_SINCE,
     "soccer_draw_residual_min": SOCCER_DRAW_RESIDUAL_MIN,
+    "soccer_regulation_period": SOCCER_REGULATION_FINISH_PERIOD,
+    "soccer_regulation_status": SOCCER_REGULATION_FINISH_STATUS,
 }
 
 #: Stamped on every per-sportsbook bucket built under this contract. The curve
@@ -100,24 +133,41 @@ def pair_keeps_the_draw(home: Optional[float], away: Optional[float]) -> bool:
     return residual is not None and residual >= SOCCER_DRAW_RESIDUAL_MIN
 
 
+def regulation_finish_proven(
+    period: Optional[str], provider_status_name: Optional[str] = None
+) -> bool:
+    """True when the row itself says the match ended at full time (module doc)."""
+    return (
+        period == SOCCER_REGULATION_FINISH_PERIOD
+        or provider_status_name == SOCCER_REGULATION_FINISH_STATUS
+    )
+
+
 def three_way_outcomes(
     home: Optional[float],
     away: Optional[float],
     home_score: Optional[float],
     away_score: Optional[float],
     observed_at: Optional[datetime] = None,
+    *,
+    regulation_proven: bool,
 ) -> Optional[list[tuple[float, bool]]]:
     """The three graded outcomes of one soccer reading, or None if it is not one.
 
     ``observed_at`` is when the reading was taken (a snapshot's capture time,
-    or the match's kickoff for the last pre-kickoff consensus). Returns
-    ``[(p_home, home_won), (p_away, away_won), (p_draw, drawn)]``, or None when
-    the reading predates the cutoff, does not keep the draw, or the match has
-    no score.
+    or the match's kickoff for the last pre-kickoff consensus).
+    ``regulation_proven`` is :func:`regulation_finish_proven` for the match —
+    keyword-only and required, so no caller can grade a final score it has not
+    shown to be the 90-minute one. Returns ``[(p_home, home_won), (p_away,
+    away_won), (p_draw, drawn)]``, or None when the reading predates the cutoff,
+    does not keep the draw, the match has no score, or its score is not proven
+    to be the regulation score.
     """
     if observed_at is not None and observed_at < SOCCER_THREE_WAY_SINCE:
         return None
     if home_score is None or away_score is None:
+        return None
+    if not regulation_proven:
         return None
     if not pair_keeps_the_draw(home, away):
         return None

@@ -11282,11 +11282,14 @@ GROUP BY bucket_idx, category
 #:
 #: Same slice shape as the two-way statement — DISTINCT ON the last pre-kickoff
 #: snapshot per (event, bookmaker), same per-outcome ``0.01 < p < 0.99`` band —
-#: with four differences, each a clause of the contract:
+#: with these differences, each a clause of the contract:
 #:
 #: * soccer keys only, kickoff and capture both on or after the cutoff — a
 #:   reading from before v4636 has no draw in it;
-#: * ``home_score != away_score`` is gone: a draw is an outcome here;
+#: * ``home_score != away_score`` is gone: a draw is an outcome here — and the
+#:   match must be proven to have ENDED at full time (CERT-4066), because a
+#:   game winner settles on the 90-minute score and an extra-time final is not
+#:   it;
 #: * the draw-remainder test sits OUTSIDE the DISTINCT ON, so it judges the LAST
 #:   reading. A book whose closing reading is two-way-shaped is skipped, never
 #:   replaced by an earlier reading that happened to keep the draw;
@@ -11322,6 +11325,10 @@ FROM (
               AND s.key LIKE 'soccer_%'
               AND e.commence_time >= :lo AND e.commence_time < :hi
               AND e.commence_time >= :soccer_three_way_since
+              AND (e.period = :soccer_regulation_period
+                   OR e.box_score_data->'provider_box_evidence'
+                          ->'provider_status'->>'name'
+                      = :soccer_regulation_status)
         ) ee
         JOIN odds_snapshots os ON os.event_id = ee.id
         WHERE os.captured_at < ee.commence_time

@@ -3,7 +3,7 @@
 Admitting soccer moneyline priced since the 3-way capture changes which rows the
 accuracy page counts, so the contract is hashed into
 ``population_predicate_fingerprint`` and the digest moves ``da21d87f…`` ->
-``08ad0277…``. Every earlier declared move was a narrowing — rows removed, added
+``598e0ed8…``. Every earlier declared move was a narrowing — rows removed, added
 back before judging growth. This one ADMITS rows, so the gate takes the
 candidate's own count of what it admitted out and judges the rest as
 same-predicate growth (``_judge_widening``).
@@ -31,7 +31,7 @@ from app.utils.calibration_publish_gate import (
 )
 
 PUBLISHED_PREDICATE = "da21d87f0f001c635a813eefb3eb9532"
-CANDIDATE_PREDICATE = "08ad02779dc9e3bbd89c506f8ae40323"
+CANDIDATE_PREDICATE = "598e0ed820277a9748363a4d7a276a63"
 PAIR = (PUBLISHED_PREDICATE, CANDIDATE_PREDICATE)
 
 #: The 2026-10-11 23:08Z published size #1010 measured; the candidate grows

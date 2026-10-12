@@ -2062,6 +2062,10 @@ async def calibration_examples(
                       AND ev.sport_id IN (SELECT id FROM sports WHERE key LIKE 'soccer_%')
                       AND ev.commence_time >= :soccer_three_way_since
                       AND ev.home_score IS NOT NULL AND ev.away_score IS NOT NULL
+                      AND (ev.period = :soccer_regulation_period
+                           OR ev.box_score_data->'provider_box_evidence'
+                                  ->'provider_status'->>'name'
+                              = :soccer_regulation_status)
                       AND ev.opening_home_probability > 0
                       AND ev.opening_away_probability > 0
                       AND 1.0 - ev.opening_home_probability::float

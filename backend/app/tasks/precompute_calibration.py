@@ -49,6 +49,8 @@ from app.utils.resolution_authority import (
 from app.utils import soccer_three_way as _soccer_three_way_module
 from app.utils.soccer_three_way import (
     SOCCER_DRAW_RESIDUAL_MIN,
+    SOCCER_REGULATION_FINISH_PERIOD,
+    SOCCER_REGULATION_FINISH_STATUS,
     SOCCER_THREE_WAY_CONTRACT,
     SOCCER_THREE_WAY_CONTRACT_KEY,
     SOCCER_THREE_WAY_PARAMS,
@@ -1237,9 +1239,10 @@ CALIBRATION_CORRECTIONS = [
                        "Those readings are graded as the three-way question "
                        "they are — home, draw and away, drawn matches included "
                        "— in both the events aggregate and the per-sportsbook "
-                       "curve. Earlier soccer moneyline stays excluded; it was "
-                       "never captured with the draw. Read-side only, no "
-                       "regrade.",
+                       "curve, for matches recorded as ending at full time (the "
+                       "market settles on the 90-minute score). Earlier soccer "
+                       "moneyline stays excluded; it was never captured with "
+                       "the draw. Read-side only, no regrade.",
     },
     {
         "date": "2026-07-12",
@@ -2014,7 +2017,9 @@ SOCCER_THREE_WAY_RULE_TEXT = (
     "with drawn matches included, using the draw the price left room for. A "
     "reading is graded 3-way only when its own numbers keep the draw (home + away "
     "at least 1pp under 100%); one that does not stays excluded rather than being "
-    "graded as two losses on a draw. Earlier soccer moneyline stays excluded. "
+    "graded as two losses on a draw. The market settles on the 90-minute score, "
+    "so only a match recorded as ending at full time is graded; an extra-time or "
+    "penalty finish stays excluded. Earlier soccer moneyline stays excluded. "
     "Read-side only; never mutates resolutions."
 )
 
@@ -7655,6 +7660,13 @@ async def compute_calibration_payload(db, *, runner=None) -> dict:
                   AND ev.sport_id IN (SELECT id FROM sports WHERE key LIKE 'soccer_%')
                   AND ev.commence_time >= :soccer_three_way_since
                   AND ev.home_score IS NOT NULL AND ev.away_score IS NOT NULL
+                  -- CERT-4066: the score graded must be the 90-minute score.
+                  -- Admitted only when the row says the match ENDED at full
+                  -- time; an extra-time or shootout finish is unproven.
+                  AND (ev.period = :soccer_regulation_period
+                       OR ev.box_score_data->'provider_box_evidence'
+                              ->'provider_status'->>'name'
+                          = :soccer_regulation_status)
                   AND ev.opening_home_probability > 0
                   AND ev.opening_away_probability > 0
                   AND 1.0 - ev.opening_home_probability::float
@@ -7979,6 +7991,10 @@ async def compute_calibration_payload(db, *, runner=None) -> dict:
                   AND home_score != away_score
                   AND NOT COALESCE(
                       commence_time >= :soccer_three_way_since
+                      AND (period = :soccer_regulation_period
+                           OR box_score_data->'provider_box_evidence'
+                                  ->'provider_status'->>'name'
+                              = :soccer_regulation_status)
                       AND opening_home_probability > 0
                       AND opening_away_probability > 0
                       AND 1.0 - opening_home_probability::float
@@ -7996,6 +8012,10 @@ async def compute_calibration_payload(db, *, runner=None) -> dict:
                   AND home_score != away_score
                   AND NOT COALESCE(
                       commence_time >= :soccer_three_way_since
+                      AND (period = :soccer_regulation_period
+                           OR box_score_data->'provider_box_evidence'
+                                  ->'provider_status'->>'name'
+                              = :soccer_regulation_status)
                       AND opening_home_probability > 0
                       AND opening_away_probability > 0
                       AND 1.0 - opening_home_probability::float
@@ -9402,6 +9422,9 @@ def _main_input_fingerprint() -> str:
         # values; both decide which soccer rows the curve publishes.
         f"soccer_three_way_since={SOCCER_THREE_WAY_SINCE.isoformat()}",
         f"soccer_draw_residual_min={SOCCER_DRAW_RESIDUAL_MIN}",
+        # CERT-4066: the regulation-finish proof, bound the same way.
+        f"soccer_regulation_period={SOCCER_REGULATION_FINISH_PERIOD}",
+        f"soccer_regulation_status={SOCCER_REGULATION_FINISH_STATUS}",
         source,
     )
 

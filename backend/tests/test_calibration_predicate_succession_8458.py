@@ -256,7 +256,7 @@ SCORE_UNIT_PREDICATE = "da21d87f0f001c635a813eefb3eb9532"
 #: 3-way capture forward), declared as ``(SCORE_UNIT_PREDICATE,
 #: SOCCER_THREE_WAY_PREDICATE)`` with a ``widening`` key and exercised in
 #: ``tests/test_calibration_soccer_three_way_succession_1011.py``.
-SOCCER_THREE_WAY_PREDICATE = "08ad02779dc9e3bbd89c506f8ae40323"
+SOCCER_THREE_WAY_PREDICATE = "598e0ed820277a9748363a4d7a276a63"
 PINNED_PREDICATE = ("q271", SOCCER_THREE_WAY_PREDICATE)
 
 

@@ -201,7 +201,7 @@ DECLARATION_MAX_TOLERANCE_PCT = 5.0
 #: (2026-09-16T17:43:41Z), when the sportsbook writer began keeping the draw, is
 #: graded three-way (home, draw, away; drawn matches in) instead of excluded.
 #: The contract is hashed into the predicate digest, moving it ``da21d87f…`` ->
-#: ``08ad0277…``, unbumped, for #8458's reason. A widening ADMITS rows, so it is
+#: ``598e0ed8…``, unbumped, for #8458's reason. A widening ADMITS rows, so it is
 #: judged by :func:`_judge_widening`: the candidate's own count of what it
 #: admitted (``soccer_2way_filter.three_way``) is taken out and the rest must
 #: clear Rule 2 as same-predicate growth.
@@ -240,7 +240,7 @@ DECLARED_PREDICATE_SUCCESSIONS: dict[tuple[str, str], dict] = {
         "max_narrowing_pct": 0.5,
         "listed": False,
     },
-    ("da21d87f0f001c635a813eefb3eb9532", "08ad02779dc9e3bbd89c506f8ae40323"): {
+    ("da21d87f0f001c635a813eefb3eb9532", "598e0ed820277a9748363a4d7a276a63"): {
         "cause": "#1011 soccer graded three-way from the 3-way capture forward",
         "issue": 1011,
         "widening": "soccer_three_way",

@@ -20,7 +20,7 @@
     "_main_futures_sql": "5f399959e521e053",
     "_roster_pushdown_predicates": "9b4afb101a88cb8a",
     "_virtual_market_ctes": "d03415be9c36d5cb",
-    "compute_calibration_payload": "b8d9dedca4aa0c65",
+    "compute_calibration_payload": "c397cf7ee13985ef",
     "identity_quarantine_ctes": "178dd31b64f3e836"
   },
   "hashed_roots": [
@@ -806,7 +806,7 @@
     },
     {
       "covered_by_value": false,
-      "definition_sha16": "c6dd6108bd0e83d1",
+      "definition_sha16": "8967af724bcf3769",
       "impact": "behavior_or_evidence",
       "name": "SOCCER_THREE_WAY_PARAMS",
       "origin": "app.utils.soccer_three_way:SOCCER_THREE_WAY_PARAMS",
@@ -1064,7 +1064,7 @@
   ],
   "schema": "calibration-fingerprint-derived/v1",
   "source": "backend/app/tasks/precompute_calibration.py",
-  "source_sha256": "862ae3a9d6574d9664249a6059a60cd178abf9ffcb6147d4dbfa578d7f374fc4",
+  "source_sha256": "031582399707f0469cd563e98dcda626e1910731f32015ffbe7ee0aebf9be37b",
   "uncovered_behavior_or_evidence": 49,
   "uncovered_count": 76,
   "uncovered_sql_shaping": 27

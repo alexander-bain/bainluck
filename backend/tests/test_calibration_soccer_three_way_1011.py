@@ -77,7 +77,8 @@ def test_the_writer_stores_a_soccer_pair_that_keeps_the_draw():
 def test_one_reading_grades_three_outcomes_and_exactly_one_wins(
         home_score, away_score, winner):
     home, away = _stored(SOCCER_BOARD)
-    graded = stw.three_way_outcomes(home, away, home_score, away_score, AFTER)
+    graded = stw.three_way_outcomes(home, away, home_score, away_score, AFTER,
+                                    regulation_proven=True)
     assert graded is not None and len(graded) == 3
     assert sum(p for p, _ in graded) == pytest.approx(1.0)
     assert [won for _, won in graded] == [i == winner for i in range(3)]
@@ -85,7 +86,7 @@ def test_one_reading_grades_three_outcomes_and_exactly_one_wins(
 
 def test_a_drawn_match_is_a_win_for_the_draw_not_two_losses():
     home, away = _stored(SOCCER_BOARD)
-    graded = stw.three_way_outcomes(home, away, 1, 1, AFTER)
+    graded = stw.three_way_outcomes(home, away, 1, 1, AFTER, regulation_proven=True)
     assert graded[2] == (pytest.approx(stw.draw_residual(home, away)), True)
     assert not graded[0][1] and not graded[1][1]
 
@@ -94,7 +95,8 @@ def test_a_two_way_board_is_never_graded_three_way():
     home, away = _stored(CRICKET_BOARD)
     assert home + away == pytest.approx(1.0, abs=1e-4)
     assert not stw.pair_keeps_the_draw(home, away)
-    assert stw.three_way_outcomes(home, away, 250, 240, AFTER) is None
+    assert stw.three_way_outcomes(home, away, 250, 240, AFTER,
+                                  regulation_proven=True) is None
 
 
 def test_a_pre_v4636_renormalized_pair_is_not_three_way():
@@ -103,14 +105,17 @@ def test_a_pre_v4636_renormalized_pair_is_not_three_way():
     h, a = 0.4545, 0.3030
     home, away = round(h / (h + a), 4), round(a / (h + a), 4)
     assert abs(stw.draw_residual(home, away)) <= 1e-4
-    assert stw.three_way_outcomes(home, away, 1, 1, AFTER) is None
+    assert stw.three_way_outcomes(home, away, 1, 1, AFTER,
+                                  regulation_proven=True) is None
 
 
 def test_a_reading_from_before_the_cutoff_is_refused_even_if_it_keeps_the_draw():
     home, away = _stored(SOCCER_BOARD)
-    assert stw.three_way_outcomes(home, away, 2, 0, BEFORE) is None
+    assert stw.three_way_outcomes(home, away, 2, 0, BEFORE,
+                                  regulation_proven=True) is None
     assert stw.three_way_outcomes(
-        home, away, 2, 0, stw.SOCCER_THREE_WAY_SINCE) is not None
+        home, away, 2, 0, stw.SOCCER_THREE_WAY_SINCE,
+        regulation_proven=True) is not None
 
 
 def test_the_draw_remainder_floor_is_inclusive_and_separates_rounding():
@@ -118,7 +123,8 @@ def test_the_draw_remainder_floor_is_inclusive_and_separates_rounding():
     assert not stw.pair_keeps_the_draw(0.50, 0.4901)
     assert not stw.pair_keeps_the_draw(0.0, 0.5)          # a missing leg
     assert not stw.pair_keeps_the_draw(None, 0.3)
-    assert stw.three_way_outcomes(0.45, 0.30, None, 1, AFTER) is None
+    assert stw.three_way_outcomes(0.45, 0.30, None, 1, AFTER,
+                                  regulation_proven=True) is None
 
 
 def test_the_cutoff_is_the_v4636_release_minute():
@@ -127,7 +133,39 @@ def test_the_cutoff_is_the_v4636_release_minute():
     assert stw.SOCCER_THREE_WAY_PARAMS == {
         "soccer_three_way_since": stw.SOCCER_THREE_WAY_SINCE,
         "soccer_draw_residual_min": stw.SOCCER_DRAW_RESIDUAL_MIN,
+        "soccer_regulation_period": "FT",
+        "soccer_regulation_status": "STATUS_FULL_TIME",
     }
+
+
+# --- CERT-4066: the score graded is the 90-minute score ----------------------
+
+
+def test_an_extra_time_final_is_not_graded_even_when_everything_else_holds():
+    """Level 1-1 after 90, won 2-1 in extra time: the market's answer is the
+    draw, the stored final says home. Without a full-time proof, no grade."""
+    home, away = _stored(SOCCER_BOARD)
+    assert stw.three_way_outcomes(home, away, 2, 1, AFTER,
+                                  regulation_proven=False) is None
+    with pytest.raises(TypeError):
+        stw.three_way_outcomes(home, away, 2, 1, AFTER)  # the proof is required
+
+
+@pytest.mark.parametrize("period,status,proven", [
+    ("FT", None, True),
+    (None, "STATUS_FULL_TIME", True),
+    ("FT", "STATUS_FULL_TIME", True),
+    ("AET", "STATUS_FINAL_AET", False),
+    (None, "STATUS_FINAL_PEN", False),
+    ("ft", None, False),            # exact: an unexpected spelling refuses
+    ("FT ", None, False),
+    ("90+4", None, False),          # a live token left behind
+    (None, None, False),            # nothing says how the match ended
+    ("2nd Half", "STATUS_IN_PROGRESS", False),
+])
+def test_only_the_rows_own_full_time_statement_proves_regulation(
+        period, status, proven):
+    assert stw.regulation_finish_proven(period, status) is proven
 
 
 # --- the curve reader -------------------------------------------------------
