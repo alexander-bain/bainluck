@@ -179,7 +179,7 @@ _REQUIRED_ASSIGNED_TERM = {
     "app.utils.event_combat": ["assigned_settled=card_settled"],
     "app.utils.event_cycling": ['assigned_settled=event_status == "settled"'],
     "app.utils.event_tennis": ['event_status == "settled"', "market_assigned_settled(m, outs)"],
-    "app.utils.event_awards": ["ceremony_graded", "market_assigned_settled(m, outs)"],
+    "app.utils.event_awards": ["market_assigned_settled(m)"],
     "app.utils.event_election": ["market_assigned_settled(m, outs)"],
 }
 
@@ -218,39 +218,27 @@ def test_no_adapter_re_inlines_the_convergence_band(modname):
 # --- the anti-chaining guard ------------------------------------------------
 
 
-def test_awards_does_not_pass_a_price_derived_term_as_assigned_state():
-    """Monotonicity protects the direction, NOT the input.
-
-    `event_awards.event_status` is itself set from `marquee_top >=
-    _WON_PRICE_THRESHOLD`, so passing it as `assigned_settled` would chain two
-    inferences — and would newly mark every category settled the moment one
-    runaway favourite crossed 0.97. The term must be the graded one.
-    """
+def test_awards_does_not_pass_price_or_sibling_state_as_assigned_state():
+    """#5349 reverses the obsolete ceremony_graded sibling-settlement assumption."""
     from app.utils import event_awards
 
     src = inspect.getsource(event_awards)
     call = src[src.index("settled = settled_under_assigned_state(") :][:400]
-    assert "ceremony_graded" in call, "awards must pass the graded term"
-    assert "event_status" not in call, (
-        "awards passed `event_status` as assigned state — it is price-derived "
-        "(the `marquee_top >= _WON_PRICE_THRESHOLD` arm)."
-    )
-    assert "_WON_PRICE_THRESHOLD" not in call
+    assert "market_assigned_settled(m)" in call
+    assert "inferred=False" in call
+    for unrelated in ("ceremony_graded", "event_status", "competitors", "marquee", "price_converged"):
+        assert unrelated not in call
 
 
-def test_the_awards_graded_term_is_captured_BEFORE_the_price_crown_writes_won():
-    """Ordering, asserted — the crown block writes `won = True` onto a
-    price-settled leader, so reading `any(c["won"])` after it would silently
-    re-admit the inference the term exists to exclude."""
+def test_awards_won_is_only_authoritative_and_never_a_price_crown():
+    """The former crown-order guard now forbids the obsolete crown itself."""
     from app.utils import event_awards
 
     src = inspect.getsource(event_awards)
-    capture = src.index("ceremony_graded = any(")
-    crown = src.index('if event_status == "settled" and not any(c["won"] for c in competitors):')
-    assert capture < crown, (
-        "`ceremony_graded` is now read AFTER the price-crown block, so it includes "
-        "price-settled leaders. Move it back above the crown."
-    )
+    assert '"won": bool(getattr(o, "is_winner", False))' in src
+    assert 'top["won"] = True' not in src
+    assert "_WON_PRICE_THRESHOLD" not in src
+    assert "ceremony_graded" not in src
 
 
 def test_election_does_not_pass_a_price_derived_term_as_assigned_state():
