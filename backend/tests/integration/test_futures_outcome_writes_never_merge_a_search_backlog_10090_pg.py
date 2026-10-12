@@ -6,9 +6,10 @@ stops for one to two seconds to empty a search index's backlog.
 With the GIN default `fastupdate = on`, every new row version of
 `futures_outcomes` is appended to `ix_futures_outcomes_name_trgm`'s pending
 list. The writer whose append crosses `gin_pending_list_limit` merges the whole
-list inside its own statement. Locally that statement took 0.66 to 2.4 s
-(`alembic/versions/fo_trgm_fastupdate_off.py`). The production minute line at
-16:01:53Z on release 5671 recorded a 2.02 s rerank beside 0.02 s of saves.
+list inside its own statement. On a synthetic local table that statement took
+1.3 to 1.6 s (`alembic/versions/fo_trgm_fastupdate_off.py`). The production
+minute line at 16:01:53Z on release 5671 recorded a 2.02 s rerank beside 0.02 s
+of saves; that line is the symptom, not an exact attribution to the merge.
 
 The stall is timing, so the gate does not time anything. It reads the
 precondition straight from the server: `gin_clean_pending_list()` returns the

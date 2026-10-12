@@ -7017,8 +7017,9 @@ jobs:
         # #10090. With GIN's default fastupdate, every non-HOT futures_outcomes
         # write appended to ix_futures_outcomes_name_trgm's pending list, and the
         # write that crossed 4 MB merged it inside its own statement. Production
-        # 16:01:53Z on release 5671: rerank 2.02 s beside 0.02 s of saves. The
-        # gate reads the pending page count from the server, so it times nothing.
+        # 16:01:53Z on release 5671 showed the symptom (rerank 2.02 s beside
+        # 0.02 s of saves), not an exact attribution. The gate reads the pending
+        # page count from the server, so it times nothing.
         #
         # 3 = the parent strawman (writes leave pages pending) + the migration's
         # upgrade (zero pending, fastupdate=off) + its downgrade (parent restored).
