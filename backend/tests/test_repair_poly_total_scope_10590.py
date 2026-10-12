@@ -80,6 +80,10 @@ class _Res:
     def scalar_one(self):
         return self._rows[0][0]
 
+    def one(self):
+        assert len(self._rows) == 1, self._rows
+        return self._rows[0]
+
 
 def _mrow(**kw):
     m = MagicMock()
@@ -95,14 +99,20 @@ def _legrow(d):
 
 
 class _Session:
-    """Answers the page, the legs, the backup copy and the write; records writes.
+    """Answers the window, the page, the legs, the backup copy and the write.
+
+    ``page`` holds the ``futures_markets`` rows that satisfy ``_PAGE_SQL``'s
+    predicate; ``others`` are ids of rows in the same table that do not. The
+    window reads both (it walks the pk, matching or not); the page reads only
+    the first, bounded by the cursor and the window's end.
 
     ``cas_refuses`` names leg ids another writer graded between our backup and
     our write: the compare-and-set skips them, so they must be pruned.
     """
 
-    def __init__(self, page, legs_by_market, cas_refuses=()):
+    def __init__(self, page, legs_by_market, cas_refuses=(), others=()):
         self.page = page
+        self.others = set(others)
         self.legs = legs_by_market
         self.cas_refuses = set(cas_refuses)
         self.writes = []
@@ -113,8 +123,15 @@ class _Session:
     async def execute(self, stmt, params=None):
         sql = str(getattr(stmt, "text", stmt))
         self.sql.append(sql)
+        if "LIMIT :window" in sql:
+            ids = sorted({r.market_id for r in self.page} | self.others)
+            walked = [i for i in ids if i > params["after_id"]][: params["window"]]
+            return _Res([_mrow(window_end=max(walked) if walked else None,
+                               walked=len(walked))])
         if "FROM futures_markets m" in sql:
-            return _Res(self.page)
+            lo, hi = params["after_id"], params["window_end"]
+            hits = [r for r in self.page if lo < r.market_id <= hi]
+            return _Res(hits[: params["scan"]])
         if "FROM futures_outcomes\n    WHERE market_id = :mid" in sql:
             return _Res([_legrow(d) for d in self.legs[params["mid"]]])
         if sql.lstrip().startswith(f"INSERT INTO {rp.BAK_TABLE}"):
@@ -374,8 +391,8 @@ async def test_evidence_costs_no_extra_request_or_query_and_a_dry_run_writes_not
     assert [e["evidence"]["condition_id_requested"] for e in out["ledger"]] == [COND, cond2]
     # one CLOB fetch per in-scope market, none for the full-game row
     assert clob["clob"].asked == [COND, cond2]
-    # SET LOCAL + the page + one legs read per in-scope market; nothing else
-    assert len(s.sql) == 1 + 1 + 2
+    # SET LOCAL + the window + the page + one legs read per in-scope market
+    assert len(s.sql) == 1 + 1 + 1 + 2
     assert not any(
         q.lstrip().upper().startswith(("INSERT", "UPDATE", "DELETE", "CREATE"))
         for q in s.sql
@@ -514,3 +531,101 @@ async def test_one_foreign_reply_does_not_stop_the_markets_after_it(clob):
         "clob_condition_id_mismatch", "regrade"]
     assert s.writes == [([241493308, 241493309], 241493309)]
     assert out["next_after_id"] == 64157612
+
+
+# ---------------------------------------------------------------------------
+# the row window: a sparse stretch is walked in bounded calls, never skipped
+# ---------------------------------------------------------------------------
+
+async def _walk(session, *, apply=False, limit=100):
+    """Re-invoke the rail from 0 until ``exhausted``, as the attended runner does."""
+    cursor, pages = 0, []
+    while True:
+        out = await rp.repair(session, apply=apply, limit=limit, after_id=cursor)
+        pages.append(out)
+        assert out["next_after_id"] >= cursor, "the cursor never moves backwards"
+        if out["exhausted"]:
+            return pages
+        assert out["next_after_id"] > cursor, f"no progress at {cursor}: {out}"
+        cursor = out["next_after_id"]
+
+
+async def test_a_qualifying_row_past_a_sparse_window_is_reached(clob, monkeypatch):
+    """The page-49 shape: no qualifying row in the first window, one after it."""
+    monkeypatch.setattr(rp, "ROW_WINDOW", 5)
+    clob["clob"] = _Clob({COND: CLOB})
+    sparse = range(59466462, 59466474)  # 12 rows that never match
+    s = _Session([_mrow(market_id=59466480, market_ext=COND, market_name=NAME)],
+                 {59466480: _legs()}, others=sparse)
+    pages = await _walk(s)
+    # 13 table rows, 5 per window: two empty windows, then the hit
+    assert [p["markets_examined"] for p in pages] == [0, 0, 1]
+    assert [p["rows_walked"] for p in pages] == [5, 5, 3]
+    assert [p["next_after_id"] for p in pages] == [59466466, 59466471, 59466480]
+    assert sum(p["regraded"] for p in pages) == 1
+    assert clob["clob"].asked == [COND]
+
+
+async def test_the_window_never_lets_a_page_cross_it(clob, monkeypatch):
+    """A qualifying row just past the window's end waits for the next call."""
+    monkeypatch.setattr(rp, "ROW_WINDOW", 3)
+    clob["clob"] = _Clob({COND: CLOB})
+    s = _Session([_mrow(market_id=13, market_ext=COND, market_name=NAME)],
+                 {13: _legs()}, others=[10, 11, 12, 14])
+    first = await rp.repair(s, apply=False, limit=100, after_id=0)
+    assert first["window_end"] == 12 and first["markets_examined"] == 0
+    assert first["exhausted"] is False and first["next_after_id"] == 12
+    second = await rp.repair(s, apply=False, limit=100, after_id=12)
+    assert second["markets_examined"] == 1 and second["regraded"] == 1
+    assert second["exhausted"] is True and second["next_after_id"] == 14
+
+
+async def test_a_full_page_resumes_after_its_last_row_not_the_window_end(
+    clob, monkeypatch,
+):
+    """``limit`` filled before the window ran out: the rest of the window is unread."""
+    monkeypatch.setattr(rp, "ROW_WINDOW", 50)
+    conds = {i: "0x%064x" % i for i in (21, 22, 23)}
+    page = [_mrow(market_id=i, market_ext=c, market_name=NAME) for i, c in conds.items()]
+    legs = {i: [{**leg, "external_id": leg["external_id"].replace(COND, c)}
+                for leg in _legs()] for i, c in conds.items()}
+    clob["clob"] = _Clob({c: {**CLOB, "condition_id": c} for c in conds.values()})
+    s = _Session(page, legs, others=[20, 24, 25])
+    out = await rp.repair(s, apply=False, limit=2, after_id=0)
+    assert out["markets_examined"] == 2 and out["window_end"] == 25
+    assert out["next_after_id"] == 22 and out["exhausted"] is False
+    pages = await _walk(s, limit=2)
+    assert sum(p["regraded"] for p in pages) == 3
+
+
+async def test_a_stop_inside_the_window_resumes_at_the_failed_market(clob, monkeypatch):
+    """A CLOB error never advances the cursor to the window's end."""
+    monkeypatch.setattr(rp, "ROW_WINDOW", 50)
+    clob["clob"] = _Clob({}, raise_on={COND})
+    s = _Session(_page(), {64157611: _legs()}, others=[64157620, 64157630])
+    out = await rp.repair(s, apply=True, limit=100, after_id=0)
+    assert out["stopped_on"].startswith("clob_error")
+    assert out["window_end"] == 64157630
+    assert out["next_after_id"] == 64157600 and out["exhausted"] is False
+
+
+async def test_past_the_last_row_the_page_is_not_read(clob):
+    clob["clob"] = _Clob({})
+    s = _Session(_page(), {}, others=())
+    out = await rp.repair(s, apply=False, limit=100, after_id=64157611)
+    assert out["window_end"] is None and out["rows_walked"] == 0
+    assert out["exhausted"] is True and out["next_after_id"] == 64157611
+    assert not any("FROM futures_markets m" in q for q in s.sql)
+
+
+def test_the_page_is_bounded_by_the_window_and_keeps_the_old_predicate():
+    sql = " ".join(rp._PAGE_SQL.split())
+    for clause in (
+        "m.source = 'polymarket'", "m.status = 'resolved'",
+        "m.name ~* ':[[:space:]]*o/u'", "m.id > :after_id",
+        "m.id <= :window_end", "o.resolution_source = 'poly_total_score'",
+        "ORDER BY m.id", "LIMIT :scan",
+    ):
+        assert clause in sql, clause
+    window = " ".join(rp._WINDOW_SQL.split())
+    assert "FROM futures_markets WHERE id > :after_id ORDER BY id LIMIT :window" in window

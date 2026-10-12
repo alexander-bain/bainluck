@@ -77,6 +77,16 @@ fetch. A call that stops on the clock returns the last market it finished as
 retried, never skipped (gotcha #36). Re-invoke until ``exhausted``.
 ATTENDED ONLY: never wire this to a beat.
 
+Each call also walks at most ``ROW_WINDOW`` ``futures_markets`` rows past the
+cursor. Above id 59,466,461 fewer than 2% of the regex candidates carry a
+``poly_total_score`` leg, so ``LIMIT :scan`` alone walked the pk for more than
+1M ids looking for 100 and hit the 20 s statement cap on every retry (#10590
+dry run, 2026-10-12). The window bounds the walk by ROWS, not ids, so a dense
+id range costs the same as a sparse one. A call that examines the whole window
+without filling ``limit`` returns the window's last id as ``next_after_id``:
+every row up to it has been through the full predicate. ``exhausted`` means the
+window reached the end of the table.
+
 ## ledger evidence
 
 Every ledger entry carries ``evidence`` (:func:`mapping_evidence`): the market
@@ -110,6 +120,10 @@ WRITE_SOURCE = "clob_authoritative"
 
 DEFAULT_SCAN = 500
 MAX_SCAN = 2000
+#: ``futures_markets`` rows walked per call, matching or not. Measured
+#: 2026-10-12 on production: 69,340 rows above id 59,466,461 took 5.9 s through
+#: the full predicate, so 50,000 stays well inside the 20 s statement cap.
+ROW_WINDOW = 50_000
 #: Wall clock per call. Below the router's 30 s with room for the commit.
 WALL_BUDGET_S = 20.0
 
@@ -124,12 +138,25 @@ _PAGE_SQL = f"""
       AND m.status = 'resolved'
       AND m.name ~* ':[[:space:]]*o/u'
       AND m.id > :after_id
+      AND m.id <= :window_end
       AND EXISTS (
           SELECT 1 FROM futures_outcomes o
           WHERE o.market_id = m.id AND o.resolution_source = '{READ_SOURCE}'
       )
     ORDER BY m.id
     LIMIT :scan
+"""
+
+#: The last id within ``ROW_WINDOW`` rows of the cursor, from the pk alone
+#: (index-only), and how many rows that window holds. NULL past the table's end.
+_WINDOW_SQL = """
+    SELECT max(w.id) AS window_end, count(*) AS walked
+    FROM (
+        SELECT id FROM futures_markets
+        WHERE id > :after_id
+        ORDER BY id
+        LIMIT :window
+    ) w
 """
 
 _LEGS_SQL = """
@@ -404,9 +431,16 @@ async def repair(
     cursor = int(after_id or 0)
 
     await session.execute(text("SET LOCAL statement_timeout = '20s'"))
+    window = (
+        await session.execute(text(_WINDOW_SQL), {"after_id": cursor, "window": ROW_WINDOW})
+    ).one()
+    window_end, walked = window.window_end, int(window.walked or 0)
     page = (
-        await session.execute(text(_PAGE_SQL), {"after_id": cursor, "scan": scan})
-    ).all()
+        await session.execute(
+            text(_PAGE_SQL),
+            {"after_id": cursor, "window_end": window_end, "scan": scan},
+        )
+    ).all() if window_end is not None else []
 
     skip_reasons: dict[str, int] = {}
     ledger: list[dict] = []
@@ -482,7 +516,12 @@ async def repair(
         ledger.append(entry)
         next_after_id = row.market_id
 
-    exhausted = stopped_on is None and len(page) < scan
+    window_examined = stopped_on is None and len(page) < scan
+    if window_examined and window_end is not None:
+        # Every row up to the window's end went through the predicate; the
+        # ones that are not in ``page`` did not qualify.
+        next_after_id = window_end
+    exhausted = window_examined and walked < ROW_WINDOW
     result = {
         "issue": ISSUE,
         "apply": apply,
@@ -498,6 +537,8 @@ async def repair(
         "stopped_on": stopped_on,
         "exhausted": exhausted,
         "next_after_id": next_after_id,
+        "rows_walked": walked,
+        "window_end": window_end,
         "backup_table": BAK_TABLE,
         "restore_command": restore_command(),
         "ledger": ledger[:100],
