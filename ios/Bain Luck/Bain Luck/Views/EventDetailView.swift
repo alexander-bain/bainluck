@@ -591,6 +591,11 @@ struct EventDetailView: View {
                             // stat, probability or observation into the sheet.
                             props: vm.gameMarkets?.duringPlayerProps
                                 ?? DuringPlayerProps(contract: nil, stats: [], rows: [], coverage: nil),
+                            // #10486 — a sheet open at the final follows the
+                            // After question or says the game is over.
+                            afterProps: AfterPropsMatrixLayout.drawable(vm.gameMarkets?.afterPlayerProps),
+                            gameEnded: isFinished
+                                || AfterPropsMatrixLayout.drawable(vm.gameMarkets?.afterPlayerProps) != nil,
                             onDetailPresentationChanged: { presented in
                                 if presented {
                                     duringPageAnchor.capture(eventID: eventId)
