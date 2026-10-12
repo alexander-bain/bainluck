@@ -6925,6 +6925,31 @@ jobs:
             exit 1
           }
 
+      - name: "#10090 an odds pass releases each game's row before the next game's snapshot bookkeeping (real Postgres)"
+        # #10090. Inside one sport, `_ingest_event_odds` stamps `betting` on game
+        # N's `events` row and the same transaction then ran games N+1…'s
+        # registry lookups and snapshot `reading_count` updates before the
+        # sport's commit. Production (2026-10-12 03:38:29Z, BAL @ ATL): the
+        # venue stamp waited 1.4 s behind that idle transaction and re-queued.
+        # The gate blocks a real pass on a held snapshot row in game B and runs
+        # the real LiveBlendRefresher against game A.
+        #
+        # 3 = the ship arm + the refresher-bound control + the failed-game
+        # rollback/publication control.
+        if: matrix.group == 'shared-tail'
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_a_poll_releases_each_game_before_the_next_games_snapshots_10090_pg.py \
+            -v -rs 2>&1 | tee /tmp/pergame10090.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/pergame10090.txt; then
+            echo "::error::#10090 per-game commit gate SKIPPED — the gate did not run"
+            exit 1
+          fi
+          grep -qE "[^0-9]3 passed[,[:space:]]" /tmp/pergame10090.txt || {
+            echo "::error::#10090 per-game commit gate did not run all three cases"
+            exit 1
+          }
+
       - name: "#837 a failed sport no longer aborts the sports after it, and the scores loop releases per sport (real Postgres)"
         # #837, the three gaps the per-sport commit above left. (1) A failed
         # statement (production: a 40P01 at 03:05:27Z) left the transaction

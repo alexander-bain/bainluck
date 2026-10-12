@@ -498,6 +498,11 @@ COVERED = (
     # not resolve the payload to the seeded row, nothing writes `betting`, and
     # the probe finds a free row for the wrong reason.
     "test_a_poll_releases_its_event_rows_per_sport_837_pg.py",
+    # #10090: seeds `sports`, `teams`, two live `events` rows in one sport and
+    # one Polymarket `futures_markets` row by raw INSERT. As in the #837 file,
+    # the nullable `external_id` is the reach: without it the registry does not
+    # resolve the payload to the seeded rows and nothing writes `betting`.
+    "test_a_poll_releases_each_game_before_the_next_games_snapshots_10090_pg.py",
     # #10305: the anchor-schedule rail's one-row mode (lock, fence, reach).
     "test_reconcile_anchor_schedule_member_10305_pg.py",
     # #837 follow-up: seeds two invented sports, their teams and four `events`

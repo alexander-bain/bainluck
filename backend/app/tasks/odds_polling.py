@@ -1713,6 +1713,18 @@ async def _poll_all_odds():
                         total_snapshots += await _ingest_event_odds(
                             session, event, event_data, commence_time, snapshot_cache,
                         )
+                        # #10090: release THIS game's row before the next game's
+                        # registry lookup and snapshot bookkeeping. The `betting`
+                        # stamp is the last write `_ingest_event_odds` makes, and a
+                        # per-sport commit kept that lock through every later
+                        # game's snapshot reads and `reading_count` updates — about
+                        # 1.4 s on an NFL slate. Production caught one at 03:38:29Z
+                        # on 2026-10-12: BAL @ ATL's venue stamp waited on this
+                        # pass while the pass was idle in transaction after an
+                        # `UPDATE odds_snapshots`, and the stamp gave up after
+                        # 500 ms and re-queued. Each game's writes stand on their
+                        # own, so no later game needs this one uncommitted.
+                        await session.commit()
 
                     # #837: release this sport's rows BEFORE the next sport's
                     # network call. `_ingest_event_odds` has just updated every
