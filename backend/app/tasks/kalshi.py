@@ -5818,8 +5818,10 @@ async def _backfill_trade_history(limit: int = 100, deadline: float | None = Non
         attempted_cursor_max = _last_id
 
         def _persist_progress() -> None:
-            if attempted_cursor_max > _last_id:
-                _rc.setex(_cursor_key, 86400 * 7, str(attempted_cursor_max))
+            # Carry FIRST, cursor second. If the carry write fails the cursor has
+            # not moved, so a refused id is still ahead of it; if the cursor write
+            # fails after the carry landed, the id is asked twice — harmless, as
+            # every write is idempotent. The other order loses the id.
             # Bounded by construction (a full carry stops the run instead of
             # deferring), so it is never sliced: slicing would drop an owed id.
             carry = sorted(pending_retry | deferred)
@@ -5827,6 +5829,8 @@ async def _backfill_trade_history(limit: int = 100, deadline: float | None = Non
                 _rc.setex(_TRADE_BACKFILL_RETRY_KEY, 86400 * 7, json.dumps(carry))
             else:
                 _rc.delete(_TRADE_BACKFILL_RETRY_KEY)
+            if attempted_cursor_max > _last_id:
+                _rc.setex(_cursor_key, 86400 * 7, str(attempted_cursor_max))
 
         if _walk_ended:
             _rc.delete(_cursor_key)

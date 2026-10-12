@@ -526,6 +526,40 @@ class TestProviderCooldown:
         assert redis.carry() is None and redis.cursor() == 2
 
 
+class TestPersistOrder:
+    """Root audit of db4dfa4b52: cursor written before carry lost an owed id."""
+
+    @pytest.mark.asyncio
+    async def test_a_failed_carry_write_leaves_the_refused_id_ahead_of_the_cursor(self):
+        class CarryWriteFails(FakeRedis):
+            def setex(self, key, ttl, value):
+                if key == _TRADE_BACKFILL_RETRY_KEY:
+                    raise RuntimeError("injected carry write failure")
+                super().setex(key, ttl, value)
+
+        db, redis = FakeDB([1, 2]), CarryWriteFails({CURSOR_KEY: "0"})
+        stats, calls, _, _ = await _run(db, redis, {1: [_http_429("120")], 2: [[]]})
+        assert calls == [1]
+        assert redis.carry() is None          # the write failed...
+        assert redis.cursor() == 0            # ...so the cursor did not pass 1
+        assert any("injected carry write failure" in e for e in stats["errors"])
+        assert stats["terminal"] != "complete"
+
+    @pytest.mark.asyncio
+    async def test_a_failed_cursor_write_only_duplicates_never_loses(self):
+        class CursorWriteFails(FakeRedis):
+            def setex(self, key, ttl, value):
+                if key == CURSOR_KEY:
+                    raise RuntimeError("injected cursor write failure")
+                super().setex(key, ttl, value)
+
+        db, redis = FakeDB([1, 2]), CursorWriteFails({CURSOR_KEY: "0"})
+        _, calls, _, _ = await _run(db, redis, {1: [_http_429("120")], 2: [[]]})
+        assert calls == [1]
+        assert redis.carry() == [1]           # owed id is carried
+        assert redis.cursor() == 0            # and also still ahead: asked twice, safe
+
+
 class TestCarryCapacity:
     @pytest.mark.asyncio
     async def test_a_full_carry_stops_the_run_instead_of_dropping_an_owed_id(self):
