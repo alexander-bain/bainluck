@@ -23,7 +23,11 @@ from typing import Optional
 
 from app.utils.game_market_class import classify_game_market_class
 
-CLASSES = ["moneyline", "spread", "total", "player_prop", "team_prop", "other"]
+# #1529: `segment_winner` (map/set/half/F5 winners) is its own row — counted in
+# every sport's denominator, never in `moneyline` and never in `other`.
+CLASSES = [
+    "moneyline", "segment_winner", "spread", "total", "player_prop", "team_prop", "other",
+]
 
 # Absolute impossibility rules (a class that MUST exist per game, or a bucket
 # that means the classifier is failing rather than the markets being exotic).

@@ -18,7 +18,13 @@ consumer — the game-markets endpoint, the calibration cohorts, and the capture
 census — can call it instead of re-implementing recognition and drifting.
 
 Coarse taxonomy (what the capture census counts):
-    moneyline | spread | total | player_prop | team_prop | other
+    moneyline | segment_winner | spread | total | player_prop | team_prop | other
+
+`segment_winner` (#1529) is the winner of a PART of the match — a numbered map,
+set, half, quarter, period or first-N-innings window. It is never `moneyline`:
+every consumer that asks "does this market decide the game?" compares against
+`moneyline` exactly (settlement, blend admission, container exclusion), so a
+segment named here can neither speak for nor settle the whole match.
 
 Consumers that need a finer taxonomy (period winners/totals, h2h/3ball) can keep
 their own logic and use `is_game_winner_market()` only to close the specific
@@ -302,6 +308,14 @@ _SEGMENT_SCOPED_MONEYLINE_RE = re.compile(
     rf"|{_SEGMENT_ORDINAL}\s+(?:{_MONEYLINE_SCOPE_ALT})"
     rf"|{_COMPRESSED_SEGMENT})\b",
     re.IGNORECASE,
+)
+
+# Two sides joined by a matchup separator anywhere in a title (#1529's segment
+# arm). Deliberately looser than `_BARE_MATCHUP_RE` — the segment titles carry
+# a qualifier by definition — and used only to keep a side-less stage winner
+# out of `segment_winner`; it never admits anything to `moneyline`.
+_NAMES_TWO_SIDES_RE = re.compile(
+    r"[^\W_]\s+(?:vs\.?|v\.|@|at)\s+[^\W_]", re.IGNORECASE
 )
 
 # Every pattern that disqualifies a leading prefix from being read as a
@@ -606,6 +620,16 @@ def is_game_winner_market(
          "winner" ticker) — for ALL leagues, not just the few hard-coded ones.
     """
     name = name or ""
+    # A KALSHI PERIOD SERIES NEVER DECIDES THE GAME (#1529). Kalshi titles its
+    # first-five-innings book with the game's own bare matchup — "Boston Red Sox
+    # at Baltimore Orioles" on `KXMLBF5-26SEP061335BOSBAL`, identical to the
+    # `KXMLBGAME` title — so every name-based door below admits it. Its series
+    # token is the only thing that says it covers innings 1-5, and the grader
+    # (`tasks/backfill_winners.py::_PERIOD_SERIES_RE`) already reads that token
+    # as a period. Refused FIRST and terminally, for the reason the winner
+    # branch records: a later door would re-admit it.
+    if kalshi_series_period(external_id) is not None:
+        return False
     # EXPLICIT MATCH WORDING MUST ALSO SAY WHICH PART (#5743). "Moneyline" was
     # trusted outright on the reasoning that it names the whole contest — true
     # of the phrase, false of the title it sits in: the venue writes "76ers vs.
@@ -657,7 +681,8 @@ def classify_game_market_class(
 ) -> str:
     """Classify a per-game market into the coarse census taxonomy.
 
-    Returns one of: moneyline | spread | total | player_prop | team_prop | other.
+    Returns one of: moneyline | segment_winner | spread | total | player_prop |
+    team_prop | other.
 
     Order matters and mirrors the production read-side intent: the most specific
     tells (player/team props, totals, spreads) win before the game-winner
@@ -689,7 +714,23 @@ def classify_game_market_class(
                 return "spread"
             if "total" in t:
                 return "total"
+    # #1529: a Kalshi period series that is not a spread/total (taken above) is
+    # a segment book — the F5/1H/1Q winner — or the first-inning run, whose name
+    # vocabulary (`NRFI`) is already `team_prop`. Read BEFORE the moneyline
+    # catch, which `is_game_winner_market` now refuses for these tickers anyway.
+    period = kalshi_series_period(external_id)
+    if period is not None:
+        return "team_prop" if period == "rfi" else "segment_winner"
     if is_game_winner_market(name, external_id, sport):
         return "moneyline"
+    # #1529: a matchup title that names a numbered part of the match — "Counter-
+    # Strike: 1WIN vs B8 - Map 1 Winner", "Phantom Academy vs. Noir Verse: Map 1",
+    # "Set 1 Winner: Aboian vs Martin" — is a segment winner, not "other". Only
+    # titles the moneyline door already REFUSED reach here, so no whole-match
+    # answer moves (the "Round 2: Who will win Celtics vs. Bucks?" games stay
+    # moneyline above). The matchup is required so a tournament-stage winner
+    # with no sides ("… Election First Round Winner") stays "other".
+    if names_a_scoped_segment(name) and _NAMES_TWO_SIDES_RE.search(name):
+        return "segment_winner"
     _ = lower  # reserved for future sport-specific disambiguation
     return "other"

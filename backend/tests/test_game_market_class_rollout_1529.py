@@ -114,16 +114,28 @@ def test_the_game_page_labels_each_sports_markets(sport, name, external_id, expe
 # public helpers and changes NONE of its answers; these pin that.
 SHARED_UNCHANGED = [
     ("Yankees vs. Red Sox", PM_HASH, "moneyline"),
-    ("Philadelphia vs Atlanta: First 5 Innings", "KXMLBF5-26SEP291400PHIATL", "other"),
-    ("Phantom Academy vs. Noir Verse: Map 1", PM_HASH, "other"),
-    ("Counter-Strike: 1WIN vs B8 - Map 1 Winner", PM_HASH, "other"),
     ("Celtics vs. Knicks - Player Props", PM_HASH, "other"),
     ("New York Y vs Boston", "KXMLBGAME-26SEP011910NYYBOS", "moneyline"),
+]
+
+# The three rows this file used to pin as `other`, MOVED on purpose by the census
+# follow-up (review of #10936: the route's `segment_winner` never reached the
+# shared classifier, so the census could not see it). Their full guard, both
+# directions, is `test_segment_winner_is_a_shared_class_1529.py`.
+SHARED_MOVED_TO_SEGMENT = [
+    ("Philadelphia vs Atlanta: First 5 Innings", "KXMLBF5-26SEP291400PHIATL", "segment_winner"),
+    ("Phantom Academy vs. Noir Verse: Map 1", PM_HASH, "segment_winner"),
+    ("Counter-Strike: 1WIN vs B8 - Map 1 Winner", PM_HASH, "segment_winner"),
 ]
 
 
 @pytest.mark.parametrize("name,external_id,expected", SHARED_UNCHANGED)
 def test_the_shared_classifier_answers_exactly_as_before(name, external_id, expected):
+    assert classify_game_market_class(name, external_id) == expected
+
+
+@pytest.mark.parametrize("name,external_id,expected", SHARED_MOVED_TO_SEGMENT)
+def test_the_named_segments_reach_the_shared_class(name, external_id, expected):
     assert classify_game_market_class(name, external_id) == expected
 
 
