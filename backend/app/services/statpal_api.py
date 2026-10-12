@@ -416,6 +416,94 @@ class StatPalFixtureFetch:
         return self.reason in ("fetch_failed", "partial_fetch")
 
 
+# --- NFL schedule receipts (#5344 M1; closed set, tests read these names) -----
+
+#: A node the walk could not read: not the dict/list it must be, or a required
+#: child key absent. An explicit empty list is NOT this — it is a read answer.
+SKIP_MALFORMED_NODE = "malformed_node"
+#: A game row with no name for one or both sides (`_parse_single_fixture` → None).
+SKIP_MISSING_TEAM = "missing_team"
+#: A game row whose parse raised.
+SKIP_PARSE_EXCEPTION = "parse_exception"
+#: A game row that parsed but carries no contest id. It stays in `fixtures`
+#: (the old parser keeps it), but it cannot be told apart from a copy of any
+#: contest, so the read is not complete.
+REFUSE_NO_CONTEST_ID = "no_contest_id"
+#: The read parsed to zero fixtures. An answered empty schedule is not a roster.
+REFUSE_NO_FIXTURES = "no_fixtures"
+
+
+@dataclass(frozen=True)
+class StatPalScheduleReceipt:
+    """One row or node of the NFL schedule the walk could not vouch for."""
+
+    reason: str
+    #: Where in the payload, e.g. ``stage[1]/week[0]/matches[2]/match[1]``. A
+    #: dict served where a list is allowed is indexed ``[0]``.
+    path: str
+    stage: Optional[str] = None
+    week: Optional[str] = None
+    #: Read from the raw row when it has one, so a refused copy of a contest is
+    #: still attributable to that contest.
+    contest_id: Optional[str] = None
+    detail: Optional[str] = None
+
+
+@dataclass(frozen=True)
+class StatPalScheduleDuplicate:
+    """A contest id served by more than one game row, refused rows included.
+
+    Reported, not refused: StatPal's postseason bracket slots legitimately
+    repeat one contest id across rounds (46 repeats in the 2026-09-09 capture).
+    Whether a duplicate blocks a placement is a per-member decision downstream.
+    """
+
+    contest_id: str
+    paths: tuple[str, ...]
+    #: Distinct ``"<stage> / <week>"`` labels the rows sit under, sorted.
+    rounds: tuple[str, ...]
+
+
+@dataclass
+class StatPalNflScheduleRead:
+    """What one NFL season-schedule read proves, not just what it returned (#5344).
+
+    `fixtures` is exactly what `get_schedule_fixtures("nfl")` returns for the
+    same payload. Everything that read drops or cannot identify is a receipt
+    here. A transport failure is never a read — it raises.
+    """
+
+    fixtures: list[StatPalFixture]
+    #: Rows and nodes that did not become a fixture.
+    skipped: list[StatPalScheduleReceipt]
+    #: Fixtures kept for parity with the old read that carry no contest id.
+    unidentified: list[StatPalScheduleReceipt]
+    duplicates: list[StatPalScheduleDuplicate]
+    #: Game rows seen, whether or not they parsed.
+    rows_seen: int
+    endpoint: str = "season-schedule"
+
+    @property
+    def parse_skipped(self) -> int:
+        return len(self.skipped)
+
+    @property
+    def refusals(self) -> tuple[str, ...]:
+        """Every reason this read is not a complete parse, one per receipt."""
+        reasons = [r.reason for r in self.skipped]
+        reasons += [r.reason for r in self.unidentified]
+        if not self.fixtures:
+            reasons.append(REFUSE_NO_FIXTURES)
+        return tuple(reasons)
+
+    @property
+    def parse_complete(self) -> bool:
+        """True only when every row became an identified fixture and there was
+        at least one. This is the parse half of C5; season, edition and the
+        per-member duplicate check are the caller's."""
+        return not self.refusals
+
+
 #: The sports that CANNOT BE ASKED THROUGH THIS METHOD. Measured 2026-09-10
 #: (#4732): `GET /v2/soccer/standings` and `GET /v1/tennis/standings` both answer
 #: **HTTP 404**, while nfl/mlb/nba/nhl answer 200 with a full table. That is nine
@@ -974,6 +1062,29 @@ class StatPalAPIService(BaseAPIClient):
             return self._parse_v1_season_schedule(data, sport)
 
         return await self.get_fixtures(sport)
+
+    async def get_nfl_schedule_read(self) -> StatPalNflScheduleRead:
+        """The NFL season schedule WITH receipts, for automatic membership
+        correction (#5344 M1).
+
+        `get_schedule_fixtures("nfl")` drops a row with a missing team, a row
+        whose parse raised, and any node of the wrong shape, all in silence. A
+        correction that moves a game out of a week cannot run on that: a
+        dropped second copy of a contest makes a conflicting placement look
+        clean. This read returns the same fixtures and names every drop.
+
+        Caller contract:
+          - Move nothing unless `parse_complete`. Then apply season, edition and
+            the per-member duplicate check (`duplicates`) yourself.
+          - This read has no provider generation. StatPal's payload carries no
+            update stamp or revision, so nothing here orders two reads.
+
+        Raises:
+            StatPalUpstreamError: StatPal did not answer with data.
+        """
+        data = await self._get("nfl", "season-schedule")
+        self._require_answer("nfl", "season-schedule", data)
+        return self._parse_nfl_season_schedule_read(data)
 
     async def get_live_fixtures(self, sport: str) -> list[StatPalFixture]:
         """`livescores` through the authority door — the half `daily` cannot serve.
@@ -1549,6 +1660,143 @@ class StatPalAPIService(BaseAPIClient):
 
         return fixtures
 
+    def _parse_nfl_season_schedule_read(self, data) -> StatPalNflScheduleRead:
+        """`_parse_nfl_season_schedule` with a receipt for everything it drops.
+
+        A second walk on purpose, not a refactor of the first: every existing
+        caller keeps the old code byte for byte, and
+        `test_statpal_nfl_schedule_receipts_5344.py` pins the two to the same
+        fixtures on every payload it has.
+        """
+        fixtures: list[StatPalFixture] = []
+        skipped: list[StatPalScheduleReceipt] = []
+        unidentified: list[StatPalScheduleReceipt] = []
+        rows: dict[str, list[tuple[str, Optional[str]]]] = {}
+        rows_seen = 0
+
+        def children(node: dict, key: str, path: str, stage=None, week=None):
+            value = node.get(key)
+            if isinstance(value, dict):
+                return [value]
+            if isinstance(value, list):
+                return value
+            skipped.append(StatPalScheduleReceipt(
+                SKIP_MALFORMED_NODE, f"{path}/{key}" if path else key, stage, week,
+                detail=f"{key} is {_node_type(value, key in node)}",
+            ))
+            return None
+
+        def malformed(path: str, node, stage=None, week=None) -> None:
+            skipped.append(StatPalScheduleReceipt(
+                SKIP_MALFORMED_NODE, path, stage, week, detail=_node_type(node, True),
+            ))
+
+        def read():
+            return StatPalNflScheduleRead(
+                fixtures=fixtures,
+                skipped=skipped,
+                unidentified=unidentified,
+                duplicates=[
+                    StatPalScheduleDuplicate(
+                        contest_id=cid,
+                        paths=tuple(p for p, _ in seen),
+                        rounds=tuple(sorted({r or "" for _, r in seen})),
+                    )
+                    for cid, seen in rows.items()
+                    if len(seen) > 1
+                ],
+                rows_seen=rows_seen,
+            )
+
+        if not isinstance(data, dict):
+            malformed("$", data)
+            return read()
+        # `scores` and `tournament` are dicts or nothing, as in the old walk; a
+        # list there is not wrapped the way a stage/week/day list is.
+        section = data.get("scores")
+        if not isinstance(section, dict):
+            skipped.append(StatPalScheduleReceipt(
+                SKIP_MALFORMED_NODE, "scores",
+                detail=f"scores is {_node_type(section, 'scores' in data)}",
+            ))
+            return read()
+        tournament = section.get("tournament")
+        if not isinstance(tournament, dict):
+            skipped.append(StatPalScheduleReceipt(
+                SKIP_MALFORMED_NODE, "scores/tournament",
+                detail=f"tournament is {_node_type(tournament, 'tournament' in section)}",
+            ))
+            return read()
+        league_name = tournament.get("name")
+        stages = children(tournament, "stage", "scores/tournament")
+        if stages is None:
+            return read()
+
+        for i, stage in enumerate(stages):
+            stage_path = f"stage[{i}]"
+            if not isinstance(stage, dict):
+                malformed(stage_path, stage)
+                continue
+            stage_name = stage.get("name")
+            weeks = children(stage, "week", stage_path, stage_name)
+            if weeks is None:
+                continue
+            for j, week in enumerate(weeks):
+                week_path = f"{stage_path}/week[{j}]"
+                if not isinstance(week, dict):
+                    malformed(week_path, week, stage_name)
+                    continue
+                week_name = week.get("name")
+                days = children(week, "matches", week_path, stage_name, week_name)
+                if days is None:
+                    continue
+                round_info = " / ".join(
+                    part for part in (stage_name, week_name) if part
+                ) or None
+                for k, day in enumerate(days):
+                    day_path = f"{week_path}/matches[{k}]"
+                    if not isinstance(day, dict):
+                        malformed(day_path, day, stage_name, week_name)
+                        continue
+                    games = children(day, "match", day_path, stage_name, week_name)
+                    if games is None:
+                        continue
+                    for m, game in enumerate(games):
+                        rows_seen += 1
+                        game_path = f"{day_path}/match[{m}]"
+                        if not isinstance(game, dict):
+                            malformed(game_path, game, stage_name, week_name)
+                            continue
+                        contest_id = str(
+                            game.get("id") or game.get("contestid")
+                            or game.get("fixture_id") or ""
+                        ).strip() or None
+                        if contest_id:
+                            rows.setdefault(contest_id, []).append((game_path, round_info))
+                        try:
+                            fixture = self._parse_single_fixture(game)
+                        except Exception as e:
+                            skipped.append(StatPalScheduleReceipt(
+                                SKIP_PARSE_EXCEPTION, game_path, stage_name, week_name,
+                                contest_id, f"{type(e).__name__}: {e}"[:200],
+                            ))
+                            continue
+                        if not fixture:
+                            skipped.append(StatPalScheduleReceipt(
+                                SKIP_MISSING_TEAM, game_path, stage_name, week_name,
+                                contest_id,
+                            ))
+                            continue
+                        fixture.league = fixture.league or league_name
+                        fixture.round_info = fixture.round_info or round_info
+                        if not (fixture.fixture_id or "").strip():
+                            unidentified.append(StatPalScheduleReceipt(
+                                REFUSE_NO_CONTEST_ID, game_path, stage_name, week_name,
+                            ))
+                        fixtures.append(fixture)
+
+        return read()
+
     def _parse_fixtures(self, data: dict, sport: str) -> list[StatPalFixture]:
         """Parse fixture/livescore/season-schedule response into StatPalFixture objects.
 
@@ -2117,6 +2365,11 @@ def _parse_injuries_suspensions(data: dict) -> list[StatPalInjury]:
                             fixture_fallback_ids=fallbacks,
                         ))
     return injuries
+
+
+def _node_type(value, present: bool) -> str:
+    """How a schedule node that is not a dict/list reads in a receipt."""
+    return type(value).__name__ if present else "absent"
 
 
 def _safe_int(val) -> Optional[int]:
