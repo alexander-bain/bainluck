@@ -1231,7 +1231,7 @@ CALIBRATION_CORRECTIONS = [
     },
     {
         "date": "2026-10-12",
-        "title": "Soccer graded three-way from the 3-way capture forward",
+        "title": "Soccer prices since September 16 are scored as home, draw or away",
         "rows": None,  # live counts in payload.soccer_2way_filter.three_way
         "description": "Since 2026-09-16 17:43:41 UTC the sportsbook writer "
                        "keeps the draw (#1011): a soccer price now leaves room "
