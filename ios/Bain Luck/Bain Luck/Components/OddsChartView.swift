@@ -2902,8 +2902,10 @@ struct OddsChartView: View {
             if let period = point.period, !period.isEmpty { parts.append(period) }
             if let clock = point.clock, !clock.isEmpty { parts.append(clock) }
         }
-        if phase == .final,
-           ![point.period, point.clock].contains(where: { $0?.localizedCaseInsensitiveContains("final") == true }) {
+        func saysFinal(_ text: String?) -> Bool {
+            text?.localizedCaseInsensitiveContains("final") == true
+        }
+        if phase == .final, !saysFinal(point.period), !saysFinal(point.clock) {
             parts.append(ChartReadoutPhase9483.final.word)
         }
         if let context { parts.append(context.spokenTime(point.date)) }
