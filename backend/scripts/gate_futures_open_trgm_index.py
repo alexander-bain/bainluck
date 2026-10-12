@@ -434,22 +434,107 @@ def budget_verdict(terms: dict) -> tuple[bool, dict[str, float], str]:
     )
 
 
-def _ids_for(term: str) -> list[int] | str:
-    """The FULL production arm's id set -- the semantics check's subject.
+#: The same-instant semantics variants. Each rewrites ONE predicate into a form
+#: with identical truth value (`x || ''` is `x` for a non-null value and NULL for
+#: a null one, exactly as `x` is) that no index can serve:
+#:  * `no_partial`: `status || '' = 'open'` no longer implies the partial
+#:    indexes' `WHERE status = 'open'`, so neither open-only partial (the new
+#:    `ix_futures_name_trgm_open` nor `ix_futures_name_fts_open`) can be chosen;
+#:  * `no_trgm`: `name || '' ILIKE` cannot use any trigram index on `name`.
+#: The arm with every index usable must return the same ORDERED ids as both, read
+#: at the same instant from ONE compiled statement (one `resolution_date` cutoff).
+SEMANTICS_VARIANTS = {
+    "no_partial": ("futures_markets.status = 'open'", "futures_markets.status || '' = 'open'"),
+    "no_trgm": ("futures_markets.name ILIKE", "futures_markets.name || '' ILIKE"),
+}
 
-    Returns a sorted id list, or the STRING reason it could not be read. A
+
+def disabled_variant(sql: str, variant: str) -> str:
+    """`sql` with `variant`'s predicate rewritten so no index can serve it.
+
+    Exits 2 if the predicate is absent: an unrewritten "disabled" arm is the
+    usable arm again, and comparing a query with itself passes by construction.
+    """
+    old, new = SEMANTICS_VARIANTS[variant]
+    if old not in sql:
+        print(
+            f"ERROR: {variant}: {old!r} not in the compiled arm -- the route's "
+            "predicate changed, so the disabled variant would equal the subject",
+            file=sys.stderr,
+        )
+        sys.exit(2)
+    return sql.replace(old, new)
+
+
+def _ids_for(term: str, sql: str | None = None) -> list[int] | str:
+    """The FULL production arm's ids, in the route's order.
+
+    Returns an ordered id list, or the STRING reason it could not be read. A
     timeout is recorded as a distinct value rather than as an empty list,
     because "no rows" and "could not ask" must not arrive in the same shape
-    (gotcha #53). `champion` and `winner` genuinely exceed the endpoint's 10 s
-    row-path timeout today -- which is itself the finding that the route sheds
-    the futures stage on these terms (`events.py:2920`), not a harness bug.
+    (gotcha #53). `champion`'s `no_partial` variant genuinely exceeds the
+    endpoint's 10 s row path (measured 2026-10-12) -- the slowness the index
+    removes, not a harness bug.
     """
     try:
-        payload = _post(_sql_for(term, "all"), analyze=False, fatal=False)
+        payload = _post(sql or _sql_for(term, "all"), analyze=False, fatal=False)
     except DbQueryFailed as exc:
         return f"UNREAD:{exc.reason}"
     rows = payload.get("rows") or []
-    return sorted(int(r[0]) for r in rows)
+    return [int(r[0]) for r in rows]
+
+
+def same_instant_ids(term: str) -> dict[str, list[int] | str]:
+    """The usable arm and every disabled variant, read back to back."""
+    sql = _sql_for(term, "all")
+    reads = {"usable": _ids_for(term, sql)}
+    for variant in SEMANTICS_VARIANTS:
+        reads[variant] = _ids_for(term, disabled_variant(sql, variant))
+    return reads
+
+
+def semantics_verdict(ids_now: dict, base_ids: dict) -> tuple[bool, str]:
+    """(passed, note) for an `after` run.
+
+    `ids_now[term]` is `same_instant_ids(term)`. The index must not change WHICH
+    markets the arm returns, judged against the same moment with the index made
+    unusable -- not against the recorded before, whose ids open/close churn moves
+    on its own (the 10/12 after-run "CHANGED" 6 of 8 terms with recall intact).
+
+    FAIL: any readable variant differs from the usable arm; the usable arm is
+    unreadable now but was readable in the recorded before (it got slower past
+    the timeout); or no term had a single readable comparison. A pair with an
+    unreadable side is excluded and listed, never counted as a pass.
+    """
+    changed: list[str] = []
+    excluded: list[str] = []
+    compared = 0
+    newly_unread: list[str] = []
+    for term, reads in ids_now.items():
+        usable = reads["usable"]
+        if isinstance(usable, str):
+            if not isinstance(base_ids.get(term), str):
+                newly_unread.append(term)
+            excluded.append(f"{term}:usable")
+            continue
+        for variant in SEMANTICS_VARIANTS:
+            other = reads[variant]
+            if isinstance(other, str):
+                excluded.append(f"{term}:{variant}")
+            elif other != usable:
+                changed.append(f"{term}:{variant}")
+            else:
+                compared += 1
+    if changed:
+        return False, f"ordered ids DIFFER from the index-disabled arm for {changed}"
+    if newly_unread:
+        return False, f"newly UNREADABLE (slower past the timeout): {newly_unread}"
+    if not compared:
+        return False, "NO comparison was readable -- semantics unproven, not passed"
+    return True, (
+        f"{compared} same-instant comparisons identical (usable vs index-disabled); "
+        f"unreadable (excluded, not passed): {excluded}"
+    )
 
 
 def main() -> int:
@@ -543,42 +628,19 @@ def main() -> int:
         )
 
     # --- SEMANTICS -----------------------------------------------------------
-    # The index must not change WHICH markets the arm returns. Recorded on
-    # `before`, compared on `after`. A speedup that changes recall is a bug
-    # wearing a benchmark's clothes.
-    ids_now = {term: _ids_for(term) for term in TERMS}
-    record["ids"] = ids_now
+    # The index must not change WHICH markets the arm returns. A speedup that
+    # changes recall is a bug wearing a benchmark's clothes. Compared at the
+    # same instant against the arm with the index made unusable
+    # (`semantics_verdict`); a `before` run records the usable ids only.
     semantics_ok = True
-    semantics_note = ""
     if args.label == "before":
+        record["ids"] = {term: _ids_for(term) for term in TERMS}
         semantics_note = "recorded (no baseline to compare on a before run)"
     else:
-        base_ids = baseline.get("ids") or {}
-        comparable = [
-            t
-            for t in TERMS
-            if not isinstance(base_ids.get(t), str) and not isinstance(ids_now[t], str)
-        ]
-        unread_now = [t for t in TERMS if isinstance(ids_now[t], str)]
-        unread_before = [t for t in TERMS if isinstance(base_ids.get(t), str)]
-        newly_unread = sorted(set(unread_now) - set(unread_before))
-        changed = [t for t in comparable if base_ids.get(t) != ids_now[t]]
-        if changed:
-            semantics_ok = False
-            semantics_note = f"id set CHANGED for {changed}"
-        elif newly_unread:
-            # A term that was readable before and is not now got SLOWER past the
-            # endpoint's timeout. That is a regression, not an unknown.
-            semantics_ok = False
-            semantics_note = f"newly UNREADABLE (slower past the timeout): {newly_unread}"
-        elif not comparable:
-            semantics_ok = False
-            semantics_note = "NO term was comparable -- semantics unproven, not passed"
-        else:
-            semantics_note = (
-                f"{len(comparable)}/{len(TERMS)} id sets identical to the recorded "
-                f"before; unread in BOTH runs (excluded, not passed): {unread_before}"
-            )
+        ids_now = {term: same_instant_ids(term) for term in TERMS}
+        record["ids"] = {term: reads["usable"] for term, reads in ids_now.items()}
+        record["same_instant_ids"] = ids_now
+        semantics_ok, semantics_note = semantics_verdict(ids_now, baseline.get("ids") or {})
     record["semantics_ok"] = semantics_ok
     record["semantics_note"] = semantics_note
     print(f"\n  semantics: {'PASS' if semantics_ok else 'FAIL'} -- {semantics_note}")
