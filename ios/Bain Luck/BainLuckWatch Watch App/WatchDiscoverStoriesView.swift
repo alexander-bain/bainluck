@@ -114,7 +114,7 @@ struct WatchDiscoverStoriesView: View {
 
     private var discoveryRecovery: some View {
         VStack(alignment: .leading, spacing: 6) {
-            if discoveries.isSavedReading {
+            if discoveries.isSavedReading && !discoveries.readings.isEmpty {
                 Text("Saved stories · refresh to confirm")
                     .font(.footnote).foregroundStyle(.secondary)
                     .accessibilityIdentifier("watch.discovery.saved")
