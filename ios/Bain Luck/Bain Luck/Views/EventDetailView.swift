@@ -125,6 +125,15 @@ struct EventDetailView: View {
     }
     private var isIPad: Bool { sizeClass == .regular }
     private var logoSize: CGFloat { isIPad ? 80 : 56 }
+
+    /// #9483 — the crest once the hero restacks: the probabilities lead and the
+    /// teams follow as compact identity, so a crest no longer takes a row of
+    /// its own above them. Text is never shrunk to buy the room.
+    static let stackedHeroLogoSize: CGFloat = 32
+
+    static func heroLogoSize(stacked: Bool, regular: CGFloat) -> CGFloat {
+        stacked ? min(regular, stackedHeroLogoSize) : regular
+    }
     private var scoreFontSize: CGFloat { isIPad ? 52 : 40 }
     private var contentMaxWidth: CGFloat {
         #if os(macOS)
@@ -1223,6 +1232,7 @@ struct EventDetailView: View {
             ? AnyLayout(EventHeroTeamLayout())
             : AnyLayout(HStackLayout(spacing: 0))
         let captionRidesPadding = stacked && !dynamicTypeSize.isAccessibilitySize
+        let heroLogo = Self.heroLogoSize(stacked: stacked, regular: logoSize)
         let metaLayout = stacked
             ? AnyLayout(VStackLayout(alignment: .leading, spacing: 4))
             : AnyLayout(HStackLayout(spacing: 8))
@@ -1301,8 +1311,9 @@ struct EventDetailView: View {
                 }
             }
 
-            // At larger text sizes keep the competitors together, then give
-            // the probability its own full-width row (#10796).
+            // At larger text sizes the probability takes its own full-width
+            // row FIRST and the competitors share the row beneath it (#10796;
+            // #9483 put the pair on top — `EventHeroTeamLayout`).
             heroLayout {
                 // Away team logo + score
                 VStack(spacing: 6) {
@@ -1310,7 +1321,7 @@ struct EventDetailView: View {
                         url: event.awayTeamData?.logoLarge ?? event.awayTeamData?.logoSmall,
                         teamName: event.awayTeam,
                         color: colors.away,
-                        size: logoSize,
+                        size: heroLogo,
                         // #4624 — the hero knew the sport and did not pass it,
                         // so a tennis player's circle took the compound-CLUB
                         // fork and drew their initials instead of their surname.
@@ -1781,7 +1792,7 @@ struct EventDetailView: View {
                         url: event.homeTeamData?.logoLarge ?? event.homeTeamData?.logoSmall,
                         teamName: event.homeTeam,
                         color: colors.home,
-                        size: logoSize,
+                        size: heroLogo,
                         sportKey: event.sport,
                         opponentName: event.awayTeam
                     )
