@@ -399,7 +399,7 @@ async def get_week_navigation(
     try:
         return await asyncio.wait_for(read_week_navigation(db, slug), timeout=3)
     except Exception:
-        logger.exception("container week navigation unavailable for %s", slug)
+        logger.exception("container week navigation unavailable")
         return {"slug": slug, "state": "unavailable", "previous": None, "next": None}
 
 

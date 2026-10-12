@@ -175,3 +175,28 @@ def test_navigation_route_has_bounded_timeout(monkeypatch):
             ]
             == "unavailable"
         )
+
+
+def test_navigation_failure_does_not_log_untrusted_slug(monkeypatch, caplog):
+    import asyncio
+    from fastapi import Response
+    from app.utils import container_week_navigation
+
+    async def failed(*args):
+        raise RuntimeError("fixture read failure")
+
+    monkeypatch.setenv("CONTAINERS_READ_ENABLED", "true")
+    monkeypatch.setattr(container_week_navigation, "read_week_navigation", failed)
+    slug = "nfl-2026-week-4\nFORGED LOG ENTRY"
+    answer = asyncio.run(containers.get_week_navigation(Response(), slug, Session([])))
+
+    assert answer == {
+        "slug": slug,
+        "state": "unavailable",
+        "previous": None,
+        "next": None,
+    }
+    records = [record for record in caplog.records if record.name == containers.logger.name]
+    assert len(records) == 1
+    assert records[0].getMessage() == "container week navigation unavailable"
+    assert "FORGED LOG ENTRY" not in caplog.text
