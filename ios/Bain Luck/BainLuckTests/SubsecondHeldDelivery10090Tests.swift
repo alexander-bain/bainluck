@@ -246,12 +246,12 @@ final class SubsecondHeldDelivery10090Tests: XCTestCase {
         }
 
         /// The final page as drawn, taken after the measured burst.
-        func capture(to path: String) throws {
+        func capture(to url: URL) throws {
             window.layoutIfNeeded()
             let image = UIGraphicsImageRenderer(bounds: window.bounds).image { _ in
                 _ = window.drawHierarchy(in: window.bounds, afterScreenUpdates: true)
             }
-            try XCTUnwrap(image.pngData()).write(to: URL(fileURLWithPath: path))
+            try XCTUnwrap(image.pngData()).write(to: url)
         }
 
         func close() {
@@ -319,9 +319,11 @@ final class SubsecondHeldDelivery10090Tests: XCTestCase {
         let measured = marks.count
         if let page {
             XCTAssertNotNil(vm.history, "the hosted chart drew from the supplied history, not production")
-            let path = "/Users/bain/bainluck/artifacts/native-10090-subsecond-hosted/final-\(quarter ? "250ms" : "1s").png"
-            try page.capture(to: path)
-            print("SUBSECOND-10090 capture=\(path)")
+            let dir = FileManager.default.temporaryDirectory.appendingPathComponent("native-10090-subsecond-hosted")
+            try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+            let url = dir.appendingPathComponent("final-\(quarter ? "250ms" : "1s").png")
+            try page.capture(to: url)
+            print("SUBSECOND-10090 capture=\(url.path)")
         }
         marks = Array(marks.prefix(measured))
 
