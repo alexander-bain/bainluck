@@ -45,10 +45,14 @@ source name would be invisible on web and iOS until both allowlists learned it).
 Only ``is_winner`` and ``resolution_source`` change. The stored prices are
 already the venue's settled prices.
 
-Fail closed: a 404, a void (no single winner), a discordant question, any shape
-other than a direct Over/Under mapping, a leg that does not carry
+Fail closed: a 404, a void (no single winner), a discordant question, a reply
+whose own ``condition_id`` is missing or is not exactly the one we asked for,
+any shape other than a direct Over/Under mapping, a leg that does not carry
 ``poly_total_score``, or a tier-3 source already on the market are all SKIPPED
-by name and leave the row exactly as it is.
+by name and leave the row exactly as it is. The identity check is the reply's,
+not the question's: a different market with the same title and Over/Under
+labels would pass the name guard and the mapper, so only the id proves the
+answer is about this market.
 
 ## D51: backup and restore
 
@@ -223,11 +227,17 @@ def condition_id_of(market_ext: Optional[str], legs: list[dict]) -> Optional[str
 
 
 def _decide_and_map(
-    market_name: str, legs: list[dict], clob: Optional[dict]
+    market_name: str,
+    legs: list[dict],
+    clob: Optional[dict],
+    requested_condition_id: Optional[str],
 ) -> tuple[dict, Optional[dict]]:
     """:func:`decide` plus the mapper result it acted on (``None`` when a gate
     refused before the mapper ran). One mapping call, shared by the decision
-    and the ledger evidence, so the evidence is the answer that was used."""
+    and the ledger evidence, so the evidence is the answer that was used.
+
+    ``requested_condition_id`` is the id the CLOB was asked for. The reply's
+    own ``condition_id`` must equal it exactly, or nothing is graded."""
     foreign = sorted({
         leg["resolution_source"] for leg in legs
         if leg["resolution_source"] in AUTHORITATIVE_SOURCES
@@ -241,6 +251,13 @@ def _decide_and_map(
     if not _name_concordance_ok(market_name, clob.get("question") or ""):
         return {"action": "skip", "reason": "name_discordant",
                 "detail": clob.get("question")}, None
+    returned = clob.get("condition_id")
+    if not isinstance(returned, str) or not returned:
+        return {"action": "skip", "reason": "clob_condition_id_missing"}, None
+    if returned != requested_condition_id:
+        return {"action": "skip", "reason": "clob_condition_id_mismatch",
+                "detail": {"requested": requested_condition_id,
+                           "returned": returned[:_EVIDENCE_STR_CAP]}}, None
     res = map_clob_to_outcome(clob, legs, event_linked=True)
     if res.get("tier") != "resolved_direct":
         return {"action": "skip", "reason": res.get("skip") or res.get("tier"),
@@ -254,12 +271,17 @@ def _decide_and_map(
     }, res
 
 
-def decide(market_name: str, legs: list[dict], clob: Optional[dict]) -> dict:
+def decide(
+    market_name: str,
+    legs: list[dict],
+    clob: Optional[dict],
+    requested_condition_id: Optional[str],
+) -> dict:
     """Pure decision for one in-scope market: re-grade from the venue, or skip.
 
     ``legs``: ``{"id","name","external_id","is_winner","resolution_source"}``.
     """
-    return _decide_and_map(market_name, legs, clob)[0]
+    return _decide_and_map(market_name, legs, clob, requested_condition_id)[0]
 
 
 # ---------------------------------------------------------------------------
@@ -419,7 +441,7 @@ async def repair(
                 stopped_on = f"clob_error: {str(e)[:80]}"
                 in_scope -= 1
                 break
-            decision, mapping = _decide_and_map(row.market_name, legs, clob)
+            decision, mapping = _decide_and_map(row.market_name, legs, clob, cond)
 
         entry = {
             "market_id": row.market_id, "name": row.market_name, **decision,
