@@ -170,6 +170,7 @@ def derive_market_concept_key(
     llm_sport_category: str | None = None,
     n_outcomes: int | None = None,
     now: datetime | None = None,
+    edition_instant: datetime | None = None,
 ) -> str | None:
     """Resolve a market to its event-concept key (`event:<domain>:<slug>`) or None.
 
@@ -178,7 +179,14 @@ def derive_market_concept_key(
     category; the winner-field domains gate on category + a winner-market name.
 
     `now` is injectable so the #7792 edition guard below is testable without the
-    calendar (gotcha #44); callers leave it unset and get the real clock."""
+    calendar (gotcha #44); callers leave it unset and get the real clock.
+
+    `edition_instant` is the provider's OWN dated edition when the caller holds a
+    verified one (#1541: an odds_api row's current event, read through
+    `futures_verified_title.read_odds_api_anchor`). A rolling sportsbook key keeps
+    its bare name — "US Open Winner" — after the provider moves it to next year's
+    event, so the name alone cannot make the #7792 claim. The instant makes it, on
+    the same rule: an edition year that is not the one in play gets no link."""
     cat = (llm_sport_category or "").lower()
 
     # 1. Awards ceremonies — ticker stem (unambiguous) then name keyword.
@@ -264,7 +272,10 @@ def derive_market_concept_key(
     # 3. Winner-field domains — name-slug (adapters resolve token-tolerantly).
     #    #7792: token-tolerant means EDITION-BLIND here (the adapters' stopword lists
     #    hold the years), so a board naming another edition gets no link at all.
-    foreign_edition = _names_a_foreign_edition(name, now)
+    foreign_edition = _names_a_foreign_edition(name, now) or (
+        edition_instant is not None
+        and edition_instant.year != (now or datetime.now(timezone.utc)).year
+    )
 
     if cat == "tennis":
         try:

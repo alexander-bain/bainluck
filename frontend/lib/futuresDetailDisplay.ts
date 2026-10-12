@@ -1503,3 +1503,19 @@ export const NO_PRICED_OUTCOMES_NOTE = "No current prices for this market.";
 export function noPricedOutcomesNote(listedCount: number): string | null {
   return listedCount === 0 ? NO_PRICED_OUTCOMES_NOTE : null;
 }
+
+/**
+ * #1541 — the board's title, carrying the provider's edition year when the name
+ * does not. A rolling sportsbook key keeps its bare name ("US Open Winner") after
+ * the provider moves it to next year's event; `/futures/7` read as the settled
+ * 2026 US Open while every quote was for the 2027 edition. `edition_year` is
+ * served only from the provider's own verified current event, so a null year
+ * leaves the name exactly as it was, and a name that already states a year is
+ * never given a second one.
+ */
+export function editionTitle(name: string, editionYear?: string | null): string {
+  const year = typeof editionYear === "string" ? editionYear.trim() : "";
+  if (!/^(?:19|20)\d{2}$/.test(year)) return name;
+  if (/\b(?:19|20)\d{2}\b/.test(name)) return name;
+  return `${year} ${name}`;
+}

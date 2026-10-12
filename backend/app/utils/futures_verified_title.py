@@ -199,6 +199,39 @@ def parse_aware(value: Any) -> Optional[datetime]:
     return dt.astimezone(timezone.utc)
 
 
+def read_odds_api_anchor(
+    metadata: Any, external_id: Optional[str], now: datetime
+) -> "tuple[datetime, datetime] | Refusal":
+    """``(commence, polled_at)`` of an odds_api row's retained current event.
+
+    The one reading of ``odds_api_current_event`` (written by
+    ``futures_quote_identity.current_quote_identity``): the anchor must be scoped
+    to current quotes, name this row's own sport key and a provider event id,
+    carry aware stamps, and have been observed within ``ANCHOR_MAX_AGE``. Any
+    failure is a ``Refusal`` — never a guessed edition. #1541's detail-route
+    edition label reads it through here so it cannot disagree with ``member_of``.
+    """
+    meta = metadata if isinstance(metadata, Mapping) else {}
+    anchor = meta.get("odds_api_current_event")
+    if not isinstance(anchor, Mapping):
+        return Refusal("anchor_missing")
+    event_id = anchor.get("event_id")
+    if (
+        anchor.get("scope") != "current_quotes_only"
+        or anchor.get("sport_key") != external_id
+        or not isinstance(event_id, str)
+        or not event_id.strip()
+    ):
+        return Refusal("anchor_malformed")
+    commence = parse_aware(anchor.get("commence_time"))
+    polled = parse_aware(anchor.get("polled_at"))
+    if commence is None or polled is None:
+        return Refusal("anchor_malformed")
+    if polled > now + _FUTURE_SKEW or now - polled > ANCHOR_MAX_AGE:
+        return Refusal("anchor_stale")
+    return commence, polled
+
+
 def question_for(facts: MarketFacts) -> Optional[TitleQuestion]:
     """The title question this row's own venue identity names, if any."""
     source = (facts.source or "").lower()
@@ -228,23 +261,10 @@ def member_of(
     if source == "odds_api":
         if facts.external_id != spec.odds_api_sport_key:
             return Refusal("not_this_question")
-        anchor = meta.get("odds_api_current_event")
-        if not isinstance(anchor, Mapping):
-            return Refusal("anchor_missing")
-        event_id = anchor.get("event_id")
-        if (
-            anchor.get("scope") != "current_quotes_only"
-            or anchor.get("sport_key") != facts.external_id
-            or not isinstance(event_id, str)
-            or not event_id.strip()
-        ):
-            return Refusal("anchor_malformed")
-        commence = parse_aware(anchor.get("commence_time"))
-        polled = parse_aware(anchor.get("polled_at"))
-        if commence is None or polled is None:
-            return Refusal("anchor_malformed")
-        if polled > now + _FUTURE_SKEW or now - polled > ANCHOR_MAX_AGE:
-            return Refusal("anchor_stale")
+        read = read_odds_api_anchor(meta, facts.external_id, now)
+        if isinstance(read, Refusal):
+            return read
+        commence, polled = read
         return Member(
             "odds_api", facts.market_id, str(commence.year),
             instant=commence, support_since=polled,

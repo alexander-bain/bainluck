@@ -1052,6 +1052,9 @@ export interface FuturesMarket {
   // B7 (L2-91): up-link mesh — the richer event-concept page + competition hub this
   // market belongs to (null where no mapping exists). Server-derived so links resolve.
   event_concept_key?: string | null;
+  // #1541: provider edition year of an odds_api board's current quotes (null when
+  // no verified provider event names one). Titles the board via `editionTitle`.
+  edition_year?: string | null;
   hub_slug?: string | null;
   // L2-94: mesh fallbacks below the hub — themed section page (politics/economics/
   // weather/entertainment) then a hub-less sport's sport page (soccer, …).

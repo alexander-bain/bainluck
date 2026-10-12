@@ -10272,6 +10272,27 @@ def _format_market_detail(
     hub_slug = None
     category_page = None
     sport_page_key = None
+    # #1541: a rolling sportsbook key ("US Open Winner") keeps its bare name when
+    # the provider moves it to next year's event — /futures/7 read as the 2026
+    # US Open and linked the settled June page while every quote was for the
+    # 2027 edition (provider commence 2027-06-17). The provider's own retained
+    # event names the edition; read only through the verified-title reader, so
+    # a missing, malformed or stale anchor serves no year and makes no claim.
+    edition_instant = None
+    if (market.source or "").lower() == "odds_api":
+        try:
+            from app.utils.futures_verified_title import read_odds_api_anchor
+
+            anchor_read = read_odds_api_anchor(
+                getattr(market, "market_metadata", None),
+                market.external_id,
+                datetime.now(timezone.utc),
+            )
+            if isinstance(anchor_read, tuple):
+                edition_instant = anchor_read[0]
+        except Exception:
+            edition_instant = None
+    edition_year = str(edition_instant.year) if edition_instant else None
     try:
         from app.utils.concept_links import (
             derive_market_category_page,
@@ -10285,6 +10306,7 @@ def _format_market_detail(
             market.name,
             market.llm_sport_category,
             concept_outcome_count,  # UX-P164: pre-drop; see note above
+            edition_instant=edition_instant,
         )
         hub_slug = derive_market_hub_slug(market.llm_sport_category)
         # L2-94: fallbacks below the hub — themed section page then hub-less sport
@@ -10372,6 +10394,10 @@ def _format_market_detail(
         "image_url": market.image_url,
         # B7 (L2-91): up-link mesh — concept page + competition hub (null where none).
         "event_concept_key": event_concept_key,
+        # #1541: the provider edition year of an odds_api board's current quotes,
+        # or null when no verified anchor names one. The page titles the board
+        # with it; nothing else reads it.
+        "edition_year": edition_year,
         "hub_slug": hub_slug,
         # L2-94: mesh fallbacks — themed section page then hub-less sport page.
         "category_page": category_page,
