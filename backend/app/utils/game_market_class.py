@@ -546,6 +546,54 @@ def outcomes_refute_game_winner(outcome_names: Optional[Iterable[Optional[str]]]
     )
 
 
+# A Kalshi SERIES token that binds its question to a PART of the game: halves
+# (`KXEPL1H`, `KXNCAAMB1HWINNER`), quarters (`KXNBA1QWINNER`), the MLB
+# first-N-innings windows (`KXMLBF5`, `KXMLBF5TOTAL`, `KXMLBF3`, `KXMLBF7`) and
+# the first-inning run (`KXMLBRFI`). Measured over all 899 event-linked Kalshi
+# series on production 2026-09-10; the reasoning behind every alternative —
+# the `(?<!h)` that keeps `KXEPLH2H` a whole-game market, the END anchor that
+# keeps `KXNCAAF3QSPREAD` out of the `f[357]` arm — is written once, beside the
+# grader that has used it since: `tasks/backfill_winners.py::_PERIOD_SERIES_RE`.
+#
+# 🔴 IT IS THAT PATTERN, CHARACTER FOR CHARACTER, AND A GUARD SAYS SO
+# (test_game_market_class_rollout_1529.py). It is restated here rather than
+# imported because this module imports nothing but stdlib, and it is not moved
+# out of the grader because that file settles markets and this one does not
+# need to touch it to read the same grammar. Two copies that may never differ
+# is the #1951 drift risk made checkable instead of silent.
+KALSHI_PERIOD_SERIES_RE = re.compile(r"(?<!h)[1-4]h|[1-4]q|f[357](?:spread|total)?$|rfi$")
+
+
+def names_a_scoped_segment(name: Optional[str]) -> bool:
+    """True if ``name`` pins an ordinal to a segment word: "Set 1", "2nd Period",
+    "Map 1", "1H" — the test the winner door refuses a "Winner" title on (#5698).
+
+    Public so a consumer with a finer taxonomy can LABEL the segment rather than
+    re-derive the vocabulary (#1529). It answers nothing about the whole-match
+    phrasing: "Game Winner", "Match Winner" and "Round of 16" stay unscoped here
+    exactly as they do in `is_game_winner_market`.
+    """
+    return bool(_SEGMENT_SCOPED_WINNER_RE.search(name or ""))
+
+
+def kalshi_series_period(external_id: Optional[str]) -> Optional[str]:
+    """The period token a Kalshi ticker's SERIES names (``"1h"``, ``"f5"`` …), else None.
+
+    Reads the series token only — the part before the first ``-`` — because the
+    suffix is a date and two club codes and carries accidental matches
+    (`KXWTAMATCH-26JUL11HODCHA` holds a "1h" and is a whole tennis match).
+    A non-Kalshi id (a Polymarket integer or condition hash) is never read:
+    it is opaque, and "no period" is the only honest answer about it.
+    """
+    if not external_id:
+        return None
+    series = external_id.split("-", 1)[0].lower()
+    if not series.startswith("kx"):
+        return None
+    match = KALSHI_PERIOD_SERIES_RE.search(series)
+    return match.group(0) if match else None
+
+
 def is_game_winner_market(
     name: str, external_id: Optional[str] = None, sport: Optional[str] = None
 ) -> bool:

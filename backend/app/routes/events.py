@@ -96,7 +96,11 @@ from app.utils.served_period_scores import served_period_scores
 from app.utils.final_score_margin import margin_verdict_from_final_score
 from app.utils.resolution_authority import authority_tier, is_authoritative
 from app.utils.box_score_capture import BOX_SCORE_SOURCES, box_is_live_capture
-from app.utils.prop_window import prop_window_closed, prop_window_span
+from app.utils.prop_window import (
+    names_a_contest_segment,
+    prop_window_closed,
+    prop_window_span,
+)
 from app.utils.event_rails import (
     live_first_order,
     live_scheduled_settled_order,
@@ -126,6 +130,8 @@ from app.utils.draw_priced_winner import printable_away, sport_prices_a_draw
 from app.utils.market_identity import ticker_game_date
 from app.utils.game_market_class import (
     is_game_winner_market,
+    kalshi_series_period,
+    names_a_scoped_segment,
     outcomes_refute_game_winner,
 )
 from app.utils.graded_card import rendered_duel_percents
@@ -22595,6 +22601,18 @@ def _is_kalshi_game_winner_series(external_id: Optional[str]) -> bool:
     return series.startswith("KX") and series.endswith("GAME")
 
 
+def _names_a_match_segment(name: str) -> bool:
+    """True if a title scopes itself to a PART of the match (#1529).
+
+    Two shipped readers, either of which is positive evidence on its own:
+    `names_a_contest_segment` ("Map 1", "Set #1", "Halftime", "Q1", plus every
+    window `prop_window_span` knows) and the shared winner door's ordinal test,
+    which also reads the ordinal in FRONT of the word ("2nd Period", "1st Set").
+    Neither reads "Game Winner", "Match Winner" or "Round of 16" as a segment.
+    """
+    return names_a_contest_segment(name) or names_a_scoped_segment(name)
+
+
 def _classify_game_market(name: str, external_id: Optional[str] = None) -> str:
     """Classify a game-level market name into a type.
 
@@ -22741,6 +22759,15 @@ def _classify_game_market(name: str, external_id: Optional[str] = None) -> str:
         ticker_type = _classify_from_ticker(external_id) if external_id else None
         if ticker_type and ticker_type.endswith("_winner"):
             return ticker_type  # half_winner or quarter_winner
+        # A winner of a MAP, SET, LEG, FRAME or PERIOD is not the game's winner
+        # (#1529). The half/quarter/inning arms above have no name for those
+        # segments, so "Counter-Strike: 1WIN vs B8 - Map 1 Winner", "Set 1
+        # Winner: A vs B" and an NHL "2nd Period Winner" all fell through to
+        # "moneyline". `names_a_contest_segment` is the scope test the
+        # Polymarket condition refresh already asks (#4983); it is read off the
+        # name only, so "Game Winner" and "Match Winner" stay moneylines.
+        if _names_a_match_segment(name):
+            return "segment_winner"
         return "moneyline"
 
     # ── Ticker-only fallback ───────────────────────────────────────────
@@ -22750,6 +22777,39 @@ def _classify_game_market(name: str, external_id: Optional[str] = None) -> str:
         ticker_type = _classify_from_ticker(external_id)
         if ticker_type != "other":
             return ticker_type
+
+    # ── A title that is only the matchup (#1529) ───────────────────────
+    # A segment-scoped matchup first: "Phantom Academy vs. Noir Verse: Map 1"
+    # carries no "winner" word and its outcomes are the two sides, so it is the
+    # map's winner — never the match's. It stays in the same `other` section it
+    # was served in; only the label stops claiming nothing about it.
+    if _names_a_match_segment(name):
+        return "segment_winner"
+    # Then the dominant real game-winner phrasing, which carries no English
+    # winner word at all: Polymarket's "Yankees vs. Red Sox" on a condition hash.
+    # This classifier only rescued it through a Kalshi `…GAME` ticker, so every
+    # Polymarket bare-matchup winner was labelled `other`. The shared recognizer
+    # decides it, so this route and the blend cannot disagree about one title.
+    #
+    # NOT when a Kalshi ticker names a period. Kalshi titles some period books
+    # with the matchup alone ("Rays at Braves" on `KXMLBRFI`, the first inning),
+    # and the ticker is then the only thing that says which part of the game is
+    # priced; the shared recognizer reads the title first and would call it the
+    # game. This refuses the whole measured period grammar (`KXMLBF5`, `KXEPL1H`,
+    # `KXMLBRFI` …), so such a book is never labelled the game — and keeps its
+    # place in the section the reader already sees it in. (Kalshi's F5 winner,
+    # "Los Angeles Dodgers vs Milwaukee: First 5 Innings", is labelled a segment
+    # just above and reads in `other` as a three-way card; `period_markets`
+    # would put it behind the collapsed line browser.)
+    #
+    # Outcomes are not read here, and do not need to be: the player-contract
+    # rescue in `_build_game_markets` and the projection's outcome pass both
+    # treat `moneyline` exactly as they treat `other`, so a bare-matchup
+    # CONTAINER whose legs are "Jaylen Brown: 25+" still serves them as props.
+    if kalshi_series_period(external_id) is None and is_game_winner_market(
+        name, external_id
+    ):
+        return "moneyline"
     return "other"
 
 
@@ -22836,6 +22896,10 @@ _PM_PERIOD_SCOPES = frozenset({
     # (0.5, 30) and every contaminating rung sits inside it. Only the scope label
     # can, which is what that guard's own comment says scope labels are for.
     "inning_total", "inning_spread", "inning_winner",
+    # A map, set, leg, frame or numbered period (#1529). Before it had a label
+    # these books wore `moneyline`/`other` and so handed the question to their
+    # outcomes; a segment prices a fraction of the match whatever its legs say.
+    "segment_winner",
 })
 
 #: Market labels that price NEITHER arm of the game — dropped outright, not just
