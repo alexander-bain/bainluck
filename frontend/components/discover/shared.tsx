@@ -1,13 +1,16 @@
 "use client";
 
 import { useState, useRef, useCallback, useEffect } from "react";
-import { Check, Heart, Share2 } from "lucide-react";
+import Link from "next/link";
+import { Check, ChevronRight, Heart, Share2 } from "lucide-react";
 import { trackEvent } from "@/lib/analytics";
 import { sentencePreview } from "./utils";
 import { PinButton } from "@/components/PinButton";
 import { PriceAgeMark } from "@/components/event/PriceAgeMark";
 import type { ActionBarProps } from "./types";
 import type { ForYouCue } from "@/lib/discover/forYouCue";
+import type { FeedThemeCollectionRef } from "@/lib/types";
+import { collectionPath } from "@/lib/collections";
 import {
   CONFIDENCE_TIER_BARS,
   CONFIDENCE_TIER_LABEL,
@@ -681,4 +684,82 @@ export function useSwipe(
       onClick,
     },
   };
+}
+
+// ── Theme card → its collection page (#9925) ──
+
+export interface AdmittedCollectionRef {
+  href: string;
+  name: string;
+  count: number;
+}
+
+const isPositiveInt = (value: unknown): value is number =>
+  typeof value === "number" && Number.isInteger(value) && value > 0;
+
+/**
+ * The link a theme card may draw, or null. The server only sends a ref it has
+ * proved (published, complete, the whole preview on the page at that revision);
+ * this refuses anything malformed rather than linking somewhere unproven. The
+ * destination is the canonical `/collections/{slug}` and nothing else — never
+ * derived from the card's header or its members.
+ */
+export function admitCollectionRef(ref: FeedThemeCollectionRef | null | undefined): AdmittedCollectionRef | null {
+  if (!ref || typeof ref !== "object") return null;
+  const href = collectionPath(ref.slug);
+  const name = typeof ref.name === "string" ? ref.name.trim() : "";
+  if (!href || !name || !isPositiveInt(ref.revision) || !isPositiveInt(ref.collection_count)) return null;
+  return { href, name, count: ref.collection_count };
+}
+
+const THEME_RETURN_KEY = "discover-theme-collection-return";
+/** A Back long after the tap is a new visit, not a return. */
+export const THEME_RETURN_MAX_AGE_MS = 30 * 60 * 1000;
+
+/**
+ * Remember which theme card the reader left from, and whether it was open.
+ * The page already restores the deck and the scroll offset on Back (#7417);
+ * an expanded card that came back collapsed would make that offset land on
+ * the wrong card.
+ */
+export function rememberThemeCollectionReturn(bundleId: string, expanded: boolean, now = Date.now()): void {
+  try {
+    sessionStorage.setItem(THEME_RETURN_KEY, JSON.stringify({ id: bundleId, expanded, at: now }));
+  } catch { /* storage blocked: Back still works, the card just comes back closed */ }
+}
+
+/** Read once by the card it names, then forgotten. True = reopen it. */
+export function consumeThemeCollectionReturn(bundleId: string, now = Date.now()): boolean {
+  try {
+    const raw = sessionStorage.getItem(THEME_RETURN_KEY);
+    if (!raw) return false;
+    const mark = JSON.parse(raw) as { id?: unknown; expanded?: unknown; at?: unknown };
+    if (mark?.id !== bundleId) return false;
+    sessionStorage.removeItem(THEME_RETURN_KEY);
+    return mark.expanded === true && typeof mark.at === "number" && now - mark.at >= 0 && now - mark.at <= THEME_RETURN_MAX_AGE_MS;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * "View the Oscars 2027 collection · 86 questions". Its own row under the
+ * card's members, in both states, so the inline peek, "All N questions" and
+ * the member cards all keep working beside it. The count is the page's, the
+ * name is the collection's.
+ */
+export function CollectionEntryLink({ entry, onOpen }: { entry: AdmittedCollectionRef; onOpen?: () => void }) {
+  return (
+    <Link
+      href={entry.href}
+      onClick={onOpen}
+      className="flex items-center justify-between gap-3 px-4 py-2.5 border-t border-surface-border text-xs font-medium text-accent-brand hover:text-accent-brand/80"
+    >
+      <span className="min-w-0 truncate">View the {entry.name} collection</span>
+      <span className="flex shrink-0 items-center gap-0.5 text-text-secondary">
+        {entry.count} {entry.count === 1 ? "question" : "questions"}
+        <ChevronRight className="h-3.5 w-3.5" aria-hidden="true" />
+      </span>
+    </Link>
+  );
 }

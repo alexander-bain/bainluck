@@ -1957,6 +1957,22 @@ export interface FeedBundleData {
   // Member feed items, ranked — rendered as the mini-ranked-peek + on expand.
   items: FeedItem[];
   entities?: string[];
+  // #9925: theme bundles only, and only when the server proved the whole
+  // preview sits on that collection's published, complete page at `revision`
+  // (`backend/app/utils/theme_collection_ref.py`). Absent = no link; the card
+  // never guesses a destination.
+  collection_ref?: FeedThemeCollectionRef | null;
+}
+
+// #9925: where a theme card's "View collection" goes. `name` is the
+// collection's own name ("Oscars 2027"), not the card's header;
+// `collection_count` is the page's full shown count, distinct from the
+// card's preview `item_count`.
+export interface FeedThemeCollectionRef {
+  slug: string;
+  name: string;
+  revision: number;
+  collection_count: number;
 }
 
 // #9653 / #9905: a published NFL-week or MLB-postseason hub the feed placed

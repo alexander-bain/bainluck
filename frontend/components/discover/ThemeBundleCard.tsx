@@ -1,13 +1,19 @@
 "use client";
 
-import { useState } from "react";
+import { useLayoutEffect, useState } from "react";
 import { trackEvent } from "@/lib/analytics";
 import { getDiscoverItemAnalytics, recordDiscoverInteraction, sendDiscoverInteraction } from "@/lib/discoverInteractions";
-import type { FeedItem, FeedFuturesData } from "@/lib/types";
+import type { FeedItem, FeedFuturesData, FeedThemeCollectionRef } from "@/lib/types";
 import { BundleActionBar } from "./BundleActionBar";
 import { BundleHeader } from "./BundleHeader";
 import { bundleSeatCount } from "./constants";
 import { FuturesCard, FuturesCompactRow } from "./FuturesCard";
+import {
+  CollectionEntryLink,
+  admitCollectionRef,
+  consumeThemeCollectionReturn,
+  rememberThemeCollectionReturn,
+} from "./shared";
 
 interface ThemeBundleCardProps {
   items: FeedItem[];
@@ -21,6 +27,13 @@ interface ThemeBundleCardProps {
   sharedQuestion?: string | null;
   storyKey?: string | null;
   positionIndex?: number;
+  /** The served bundle id: names this card when the reader comes Back. */
+  bundleId?: string;
+  /**
+   * #9925: the collection page this theme belongs to, when the server proved
+   * it. Absent ⇒ no link, and the card is exactly what it was.
+   */
+  collectionRef?: FeedThemeCollectionRef | null;
 }
 
 // Members shown in the collapsed mini-ranked-peek come from `bundleSeatCount`,
@@ -41,8 +54,17 @@ interface ThemeBundleCardProps {
  * The count has not been lost: the peek rows beneath are the members, and
  * "All N questions" still prints it.
  */
-export function ThemeBundleCard({ items, title, sharedQuestion, storyKey, positionIndex }: ThemeBundleCardProps) {
+export function ThemeBundleCard({ items, title, sharedQuestion, storyKey, positionIndex, bundleId, collectionRef }: ThemeBundleCardProps) {
   const [expanded, setExpanded] = useState(false);
+  const collection = admitCollectionRef(collectionRef);
+
+  // #9925: a reader who opened the collection from this card and came Back
+  // finds it as they left it. A layout effect (not a lazy initializer, which
+  // would mismatch the server render) so the card is at full height before the
+  // page lands the restored scroll offset.
+  useLayoutEffect(() => {
+    if (bundleId && consumeThemeCollectionReturn(bundleId)) setExpanded(true);
+  }, [bundleId]);
   const primary = items[0];
   const cat = primary?.type === "futures" ? (primary.data as FeedFuturesData).llm_sport_category : null;
   const analytics = primary ? getDiscoverItemAnalytics(primary) : { category: "geopolitics" };
@@ -62,6 +84,13 @@ export function ThemeBundleCard({ items, title, sharedQuestion, storyKey, positi
       recordDiscoverInteraction(analytics.category, "group_expand");
       sendDiscoverInteraction(analytics, "group_expand", positionIndex);
     }
+  };
+
+  // No analytics event of its own, like the hub card it mirrors
+  // (`DiscoverCollectionCard`): a new event name needs the typed map and the
+  // sanitizer allowlist, or its keys are stripped in silence.
+  const openCollection = () => {
+    if (bundleId) rememberThemeCollectionReturn(bundleId, expanded);
   };
 
   return (
@@ -107,6 +136,10 @@ export function ThemeBundleCard({ items, title, sharedQuestion, storyKey, positi
           ))}
         </div>
       )}
+
+      {/* #9925 — outside both branches too: the whole collection is one tap
+          away whether the reader is peeking or reading every member. */}
+      {collection && <CollectionEntryLink entry={collection} onOpen={openCollection} />}
 
       {/* #4428 — OUTSIDE both branches, so the bundle has a Like and a Share in
           either state. Collapsed it was the only thing in the subtree that could
