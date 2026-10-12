@@ -70,6 +70,11 @@ SENTINEL_NEW_FORMAT_DAYS = 30
 # A cohort whose flagged outcomes are >= this fraction explained by a shipped
 # exclusion is "already covered" and is suppressed in a live run.
 SENTINEL_COVERAGE_THRESHOLD = 0.40  # calibration:sentinel_coverage_threshold
+# #1905 — a cohort whose coverage LOWER bound sits within this many points under
+# the threshold is PARTIALLY explained: it still files (the threshold and the
+# lower-bound decision are unchanged), but the body must not call it a candidate
+# NEW break. #1896 was filed as one at 39.6% vs 40.0%.
+SENTINEL_COVERAGE_MARGIN = 0.05
 
 # The known-class vocabulary, in ONE place. Everything that walks the overlap
 # classes — the fold, the coverage decision, the issue renderer — reads this
@@ -430,6 +435,35 @@ def coverage_bounds(overlap_fractions: dict[str, float]) -> tuple[float, float]:
     lower = max([exact, placeholder] + (singles or [0.0]))
     upper = max(lower, min(1.0, exact + placeholder))
     return lower, upper
+
+
+COVERAGE_EXPLAINED = "explained"
+COVERAGE_AMBIGUOUS = "ambiguous"
+COVERAGE_PARTIAL = "partial"
+COVERAGE_UNEXPLAINED = "unexplained"
+
+
+def coverage_band(overlap_fractions: dict[str, float]) -> str:
+    """Which diagnosis a cohort's coverage supports. Reads the same bounds the
+    automatic decision does and never changes it: only ``explained`` is
+    suppressed; the other three all file and differ only in what the body says.
+
+    * ``ambiguous`` — the threshold falls INSIDE [lower, upper] (#1895's shape).
+    * ``partial`` — #1905's second sub-defect. Even an exact union is a hand-set
+      cliff: 39.6% vs 40.0% must not read the same as 0%. A lower bound within
+      ``SENTINEL_COVERAGE_MARGIN`` under the threshold is partially explained.
+    * ``unexplained`` — everything below the band: a candidate NEW break.
+    """
+    lower, upper = coverage_bounds(overlap_fractions)
+    if lower >= SENTINEL_COVERAGE_THRESHOLD:
+        return COVERAGE_EXPLAINED
+    if upper >= SENTINEL_COVERAGE_THRESHOLD:
+        return COVERAGE_AMBIGUOUS
+    # Rounded: 0.40 - 0.05 is 0.35000000000000003 in floats, which would push
+    # an exact 35.0% out of its own band.
+    if lower >= round(SENTINEL_COVERAGE_THRESHOLD - SENTINEL_COVERAGE_MARGIN, 9):
+        return COVERAGE_PARTIAL
+    return COVERAGE_UNEXPLAINED
 
 
 # The cohort "views" — each maps a fine-grained scan row to a cohort key, or None
@@ -1140,7 +1174,8 @@ def build_issue_body(cohort: dict, explained_by: str | None, coverage: float) ->
         ]
     else:
         lower, upper = coverage_bounds(fracs)
-        if upper >= SENTINEL_COVERAGE_THRESHOLD > lower:
+        band = coverage_band(fracs)
+        if band == COVERAGE_AMBIGUOUS:
             # #1905: the threshold sits INSIDE the coverage interval, so neither
             # "explained" nor "unexplained" is a true statement. #1895 is exactly
             # this: malformed_binary 30.2% + poly_placeholder 14.0% => [30.2%,
@@ -1161,6 +1196,35 @@ def build_issue_body(cohort: dict, explained_by: str | None, coverage: float) ->
                 "same rows as the winner-count != 1 markets, or different ones?). If "
                 "the union clears the threshold, close with the exclusion reference "
                 "rather than opening an investigation.",
+            ]
+        elif band == COVERAGE_PARTIAL:
+            # #1905: #1896 filed as a candidate NEW break at 39.6% vs 40.0%. It
+            # still files — the threshold is unchanged and the lower bound still
+            # governs — but a cohort a shipped exclusion covers just under the
+            # line is sent to that exclusion first, not to a new-break hunt.
+            dominant = max(
+                (k for k in fracs if k != _UNION_KEY), key=lambda k: fracs[k], default=None
+            )
+            branch = _PLAYBOOK_BRANCHES.get(dominant, "see docs/calibration-diagnosis-playbooks.md")
+            # Only the counted union itself, unwidened by a sampled class, is a
+            # measured point. A missing union (absent key, or a scan row with no
+            # any_known_n, which folds as 0) leaves the largest class: a floor.
+            exact = lower == upper == fracs.get(_UNION_KEY)
+            parts += [
+                "### Diagnosis: PARTIALLY EXPLAINED — verify the exclusion covers this cohort",
+                f"Shipped exclusions cover {'' if exact else 'at least '}"
+                f"**{lower*100:.1f}%** of outcomes"
+                + ("" if exact else " (a lower bound — no exact union for this cohort)")
+                + f", within "
+                f"{SENTINEL_COVERAGE_MARGIN*100:.0f} points of the "
+                f"{SENTINEL_COVERAGE_THRESHOLD*100:.0f}% threshold"
+                + (f"; the dominant class is **{dominant}**" if dominant else "")
+                + ".",
+                f"Playbook branch: {branch}.",
+                "",
+                "Check whether that exclusion reaches the rest of this cohort (a new "
+                "series/source the guard misses) before opening an investigation. If it "
+                "does, close with the exclusion reference.",
             ]
         else:
             parts += [
