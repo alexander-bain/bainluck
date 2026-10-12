@@ -10,11 +10,14 @@ Pinned here, against the real function with fakes only at the I/O edges
 (session, Redis, Kalshi client, clock):
   * an interleaved 429 / success / empty run counts each outcome once and
     honestly — a 429 is never fetched, empty or no-pregame;
-  * ``Retry-After`` is honored (both forms), bounded, and charged to the budget;
+  * ``Retry-After`` is honored (both forms) and charged to the budget; a cooldown
+    the run cannot wait out in place carries the candidate and ENDS the run, so
+    nothing is re-asked before the provider's cooldown is over;
   * a still-refused candidate is carried and asked FIRST next run, through the
     same in-window predicate (an aged-out or tagged one does not come back);
   * the cursor never passes a candidate the run did not attempt (budget stop);
-  * zero-yield accounting: 475-empty + 25-429 is still a FAILED run.
+  * zero-yield accounting: 475-empty + 25-429 is still a FAILED run;
+  * a full carry never drops an owed id: the run stops with the cursor before it.
 """
 
 from __future__ import annotations
@@ -212,8 +215,10 @@ class TestRetryAfter:
     def test_garbage_or_non_finite_header_falls_back_to_the_fixed_wait(self, raw):
         assert _kalshi_trade_429_wait(_http_429(raw)) == _TRADE_429_DEFAULT_WAIT_S
 
-    def test_huge_wait_is_clamped_and_past_dates_are_zero(self):
-        assert _kalshi_trade_429_wait(_http_429("86400")) == _TRADE_429_MAX_WAIT_S
+    def test_long_cooldown_is_returned_unclamped_and_past_dates_are_zero(self):
+        """Root HOLD on b9ffe0d023: clamping 120 to 30 re-asked 90 s early."""
+        assert _kalshi_trade_429_wait(_http_429("120")) == 120.0
+        assert _kalshi_trade_429_wait(_http_429("86400")) == 86400.0
         past = datetime.now(timezone.utc) - timedelta(minutes=5)
         assert _kalshi_trade_429_wait(_http_429(format_datetime(past, usegmt=True))) == 0.0
 
@@ -375,18 +380,18 @@ class TestBudgetStop:
         assert stats["fetched"] == 2 and stats["terminal"] == "failed"
 
     @pytest.mark.asyncio
-    async def test_retry_after_past_the_budget_is_carried_without_waiting(self):
+    async def test_retry_after_past_the_budget_is_carried_and_the_run_stops(self):
         clock = FakeClock()
         db, redis = FakeDB([1, 2]), FakeRedis()
         stats, calls, _, _ = await _run(
             db, redis, {1: [_http_429("20")], 2: [[PREGAME_TRADE]]},
             deadline=clock.t + 10, clock=clock,
         )
-        assert stats["rate_limit_waits"] == 0
-        assert 20 not in clock.sleeps and 20.0 not in clock.sleeps
-        assert calls == [1, 2]                # the sibling still runs
+        assert stats["rate_limit_waits"] == 0 and clock.sleeps == []
+        assert calls == [1]                   # nobody asked inside the cooldown
         assert redis.carry() == [1]
-        assert stats["pregame_snaps"] == 1
+        assert redis.cursor() == 1            # 2 stays ahead of the cursor
+        assert stats["stopped_on_cooldown_s"] == 20.0
 
     @pytest.mark.asyncio
     async def test_unattempted_carried_ids_stay_carried(self):
@@ -397,6 +402,71 @@ class TestBudgetStop:
                    deadline=clock.t + 5, clock=clock, per_call_cost=10.0)
         assert redis.carry() == [2, 3]        # 1 attempted; 2 and 3 never reached
         assert redis.cursor() == 8            # the walk never started
+
+
+class TestProviderCooldown:
+    """The exact controls from root's HOLD on b9ffe0d023."""
+
+    @pytest.mark.asyncio
+    async def test_a_120_second_cooldown_is_never_cut_short(self):
+        db, redis = FakeDB([1, 2, 3]), FakeRedis({CURSOR_KEY: "0"})
+        script = {1: [_http_429("120"), [PREGAME_TRADE]], 2: [[PREGAME_TRADE]], 3: [[]]}
+        stats, calls, _, clock = await _run(db, redis, script)
+
+        assert calls == [1]                   # asked once; not re-asked 90 s early
+        assert clock.sleeps == []             # pre-repair: slept 30, then re-asked
+        assert stats["rate_limit_waits"] == 0
+        assert stats["rate_limited"] == 1
+        assert stats["fetched"] == 0 and stats["api_empty"] == 0
+        assert stats["stopped_on_cooldown_s"] == 120.0
+        assert redis.carry() == [1]           # owed to the next run
+        assert redis.cursor() == 1            # 2 and 3 untouched, still ahead
+        assert stats["terminal"] != "complete"
+
+    @pytest.mark.asyncio
+    async def test_a_short_cooldown_at_the_boundary_is_waited_in_place(self):
+        db, redis = FakeDB([1, 2]), FakeRedis()
+        script = {
+            1: [_http_429(str(int(_TRADE_429_MAX_WAIT_S))), [PREGAME_TRADE]],
+            2: [[]],
+        }
+        stats, calls, _, clock = await _run(db, redis, script)
+        assert clock.sleeps[0] == _TRADE_429_MAX_WAIT_S
+        assert calls == [1, 1, 2]
+        assert stats["rate_limit_waits"] == 1 and stats["rate_limited"] == 0
+        assert stats["pregame_snaps"] == 1
+        assert redis.carry() is None and redis.cursor() == 2
+
+    @pytest.mark.asyncio
+    async def test_a_carried_id_refused_with_a_long_cooldown_stays_carried(self):
+        db = FakeDB([4, 8])
+        redis = FakeRedis({CURSOR_KEY: "7", _TRADE_BACKFILL_RETRY_KEY: json.dumps([4])})
+        stats, calls, _, _ = await _run(db, redis, {4: [_http_429("120")], 8: [[]]})
+        assert calls == [4]
+        assert redis.carry() == [4] and redis.cursor() == 7
+
+
+class TestCarryCapacity:
+    @pytest.mark.asyncio
+    async def test_a_full_carry_stops_the_run_instead_of_dropping_an_owed_id(self):
+        db, redis = FakeDB([1, 2, 3]), FakeRedis({CURSOR_KEY: "0"})
+        script = {i: [_http_429("1")] for i in (1, 2, 3)}
+        with patch.object(kalshi, "_TRADE_BACKFILL_RETRY_MAX", 1):
+            stats, calls, _, _ = await _run(db, redis, script)
+        assert redis.carry() == [1]           # the one that fit
+        assert redis.cursor() == 1            # held BEFORE 2: 2 is still owed
+        assert 3 not in calls                 # the run stopped at 2
+        assert stats["retry_carry_full"] is True
+
+    @pytest.mark.asyncio
+    async def test_both_callers_limits_keep_the_whole_carry(self):
+        """The 500-limit task writes a carry the 100-limit Phase 0 then reads."""
+        carried = list(range(1, 121))
+        db = FakeDB(carried)                  # nothing behind the walk
+        redis = FakeRedis({CURSOR_KEY: "500", _TRADE_BACKFILL_RETRY_KEY: json.dumps(carried)})
+        stats, calls, _, _ = await _run(db, redis, {i: [[]] for i in carried}, limit=100)
+        assert calls == list(range(1, 51))    # half of 100 asked
+        assert redis.carry() == list(range(51, 121))  # all 70 others still owed
 
 
 class TestZeroYieldAccounting:
