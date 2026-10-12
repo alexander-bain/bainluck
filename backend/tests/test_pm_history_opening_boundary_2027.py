@@ -297,3 +297,108 @@ def test_token_choice_follows_the_outcome_side():
     assert history_token_for_outcome("0xee_yes", {"0x": ["wrong"], **ids}) == "y"
     assert history_token_for_outcome("0xee_no", {"0xee": ["y"]}) is None
     assert history_token_for_outcome("0xff_yes", ids) is None
+
+
+# ── open_sparse identity + one bad event never aborts its siblings ──────────
+# Production 2026-10-12 15:18Z: open_sparse sent `fm.external_id` (a condition
+# hash) to Gamma's /events/{id}, Gamma answered 422, `get_event_by_id` re-raised
+# outside any per-event guard, and the task-level catch ended the pass with zero
+# work for every healthy event behind it.
+
+import httpx  # noqa: E402
+
+GOOD_QUOTE_AT = BOUNDARY - timedelta(days=2)
+
+
+def _http_error(code: int) -> httpx.HTTPStatusError:
+    req = httpx.Request("GET", "https://gamma-api.polymarket.com/events/x")
+    return httpx.HTTPStatusError("refused", request=req, response=httpx.Response(code, request=req))
+
+
+class _RefusingService(_Service):
+    """Raises the given status for the named event ids, answers the rest."""
+
+    def __init__(self, refusals: dict, *args):
+        super().__init__(*args)
+        self.refusals = refusals
+        self.events_asked: list = []
+
+    async def get_event_by_id(self, event_id):
+        self.events_asked.append(event_id)
+        if event_id in self.refusals:
+            raise _http_error(self.refusals[event_id])
+        return await super().get_event_by_id(event_id)
+
+
+def _run_refusing(monkeypatch, rows, refusals, mode="open_sparse"):
+    session = _Session(rows, 1)
+    service = _RefusingService(
+        refusals, '["tok_yes","tok_no"]', {"tok_yes": [{"t": _ts(GOOD_QUOTE_AT), "p": 0.4}]}
+    )
+
+    @asynccontextmanager
+    async def fake_session():
+        yield session
+
+    async def no_sleep(_):
+        return None
+
+    monkeypatch.setattr(pm, "get_task_session", fake_session)
+    monkeypatch.setattr(pm_api, "PolymarketAPIService", lambda: service)
+    monkeypatch.setattr(asyncio, "sleep", no_sleep)
+    stats = asyncio.run(pm._backfill_polymarket_price_history(limit=10, mode=mode))
+    return stats, session, service
+
+
+def _event_row(oid: int, event_id):
+    return Row(oid, f"{CID}_yes", event_id, BOUNDARY, None)
+
+
+@pytest.mark.parametrize("mode", ["open_sparse", "resolved_zero"])
+def test_a_provider_422_on_one_event_leaves_the_healthy_sibling_done(monkeypatch, mode):
+    stats, session, service = _run_refusing(
+        monkeypatch, [_event_row(1, "0xconditionhash"), _event_row(2, "12345")],
+        {"0xconditionhash": 422}, mode=mode,
+    )
+    assert service.events_asked == ["0xconditionhash", "12345"]
+    assert stats["events_provider_refused"] == 1
+    assert stats["events_fetched"] == 1
+    assert stats["outcomes_processed"] == 1
+    assert stats["opening_written"] == 1
+    assert [u[1]["oid"] for u in session.updates] == [2]
+    assert session.committed is True
+    assert not any(e.startswith("task_error") for e in stats["errors"])
+
+
+def test_a_429_ends_the_pass_but_keeps_the_work_already_done(monkeypatch):
+    stats, session, service = _run_refusing(
+        monkeypatch,
+        [_event_row(1, "111"), _event_row(2, "222"), _event_row(3, "333")],
+        {"222": 429},
+    )
+    assert service.events_asked == ["111", "222"]  # 333 never asked
+    assert stats["rate_limited"] is True
+    assert stats["events_provider_refused"] == 0
+    assert stats["opening_written"] == 1
+    assert session.committed is True
+
+
+@pytest.mark.parametrize("missing", [None, ""])
+def test_a_row_with_no_event_id_is_skipped_not_guessed(monkeypatch, missing):
+    stats, session, service = _run_refusing(
+        monkeypatch, [_event_row(1, missing), _event_row(2, "12345")], {},
+    )
+    assert service.events_asked == ["12345"]
+    assert stats["outcomes_skipped_no_event_id"] == 1
+    assert stats["opening_written"] == 1
+
+
+def test_open_sparse_reads_the_gamma_event_identity_not_the_condition_hash(monkeypatch):
+    stats, session, _ = _run_refusing(monkeypatch, [_event_row(1, "12345")], {})
+    sql = " ".join(session.selects[0].split())
+    assert "fm.external_id AS market_external_id" not in sql
+    assert "market_metadata->>'polymarket_event_id'" in sql
+    assert "left(fm.group_id, 11) = 'polymarket:'" in sql
+    # identity-less rows never take a LIMIT slot
+    where = sql.split("WHERE", 1)[1]
+    assert "polymarket_event_id' IS NOT NULL" in where
