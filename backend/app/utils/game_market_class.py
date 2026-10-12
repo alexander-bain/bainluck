@@ -728,7 +728,15 @@ def _names_one_player_threshold(
     if m is None:
         return False
     who = m.group("who")
-    if _NAMES_TWO_SIDES_RE.search(who) or _QUESTION_HEAD_RE.match(who):
+    # A matchup subject is a match threshold, in every separator the module
+    # admits as a matchup — the bare "Spurs v Wolves" too, which the segment
+    # arm's `_NAMES_TWO_SIDES_RE` (v. only) does not read (CERT-4062). Aliases
+    # share no word with the sides, so the side check below cannot hold them.
+    if (
+        _NAMES_TWO_SIDES_RE.search(who)
+        or is_bare_matchup(who)
+        or _QUESTION_HEAD_RE.match(who)
+    ):
         return False
     words = _distinctive_words(who)
     # A person is named by at least two words; a club shares one with a side,

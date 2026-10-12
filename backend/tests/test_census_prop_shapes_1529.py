@@ -103,6 +103,13 @@ UNMOVED = [
     # aliases share no word with the sides: only the matchup refusal holds it
     ("Spurs vs Wolves: 3+ goals", HEX, "soccer_epl",
      ("Tottenham Hotspur", "Wolverhampton Wanderers"), "other"),
+    # ...in every matchup separator the module admits — bare "v" too (CERT-4062)
+    ("Spurs v Wolves: 3+ goals", HEX, "soccer_epl",
+     ("Tottenham Hotspur", "Wolverhampton Wanderers"), "other"),
+    ("Spurs at Wolves: 2+ shots on target", HEX, "soccer_epl",
+     ("Tottenham Hotspur", "Wolverhampton Wanderers"), "other"),
+    ("Spurs @ Wolves: 3+ goals", HEX, "soccer_epl",
+     ("Tottenham Hotspur", "Wolverhampton Wanderers"), "other"),
     # a TEAM threshold has the player shape; the sides refuse it (19:30Z)
     ("Arsenal: 3+ goals", HEX, "soccer_epl", ("Arsenal", "Chelsea"), "other"),
     ("Manchester City: 3+ goals", HEX, "soccer_epl",
@@ -184,3 +191,23 @@ def test_the_census_sql_carries_the_sides():
     sql = " ".join(cc.market_rows_sql(30).split())
     assert "e.home_team_name, e.away_team_name" in sql
     assert "{_ARTIFACT}" not in sql and sql.count("g.home_team_name, g.away_team_name") == 2
+
+
+def test_an_alias_bare_v_threshold_stays_other_in_the_real_census():
+    """CERT-4062: the alias matchup with a bare "v" is a match threshold.
+
+    The same alias pair is a moneyline without the count, so the two titles
+    are one game; the count must not leave "other" for player_prop.
+    """
+    sides = ("Tottenham Hotspur", "Wolverhampton Wanderers")
+    assert classify_game_market_class("Spurs v Wolves", None, "soccer_epl") == "moneyline"
+    rows = [
+        ("soccer_epl", "Spurs v Wolves: 3+ goals", HEX, 2, 0, 0, 0, 0, *sides),
+        # healthy sibling: a genuine player count in the same game still moves
+        ("soccer_epl", "Richarlison de Andrade: 2+ goals", HEX, 2, 0, 0, 0, 0, *sides),
+    ]
+    by_sc, other_names = cc.tally_market_rows(rows)
+    epl = by_sc["soccer_epl"]
+    assert epl["other"].markets == 1 and epl["other"].outcomes == 2
+    assert epl["player_prop"].markets == 1
+    assert other_names["soccer_epl"] == {"Spurs v Wolves: 3+ goals": 1}
