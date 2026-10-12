@@ -2970,6 +2970,26 @@ jobs:
             exit 1
           fi
 
+      - name: Calibration soccer three-way grade (real Postgres)
+        # #1011. Since release v4636 a soccer sportsbook pair keeps the draw as
+        # 1 - home - away, and the accuracy curve grades it as the home/draw/
+        # away question it is instead of excluding it. A population claim, so
+        # rows rather than strings: the events curve, the exclusion count, the
+        # per-sportsbook slice and the drill-down sample all execute against
+        # seeded matches, judged by the three-way invariant (n = 3k, winners =
+        # k, sum_prob = k) beside a drawn match, a closing pair, a two-way-shaped
+        # pair, a pre-cutoff match and a pre-release reading.
+        if: matrix.group == 'shared-middle'
+        run: |
+          set -o pipefail
+          python -m pytest \
+            tests/integration/test_calibration_soccer_three_way_1011_pg.py \
+            -v -s -rs 2>&1 | tee /tmp/soccer3way.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/soccer3way.txt; then
+            echo "::error::soccer three-way calibration contract SKIPPED — the gate did not run"
+            exit 1
+          fi
+
       - name: Calibration trade-evidence Polymarket receipt (real Postgres)
         # #1870 consumer half. `fo.volume` is an integer and Polymarket's traded
         # amount is not, so both writers carry the fact in

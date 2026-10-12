@@ -78,6 +78,13 @@ COVERED = (
     #     identical except for it — so a seed that dropped it would compare a
     #     market against itself and pass.
     "test_calibration_datagolf_symmetric_exclusion_pg.py",
+    # #1011. Seeds `sports`, `events` and `odds_snapshots` by raw INSERT to
+    # prove soccer is graded three-way. The opening and closing PAIRS are the
+    # subject — the closing pair is seeded the way its writer stores it (away =
+    # 1 - home) so a statement reading it breaks the three-way invariant — and
+    # `odds_snapshots.reading_count` (NOT NULL, client-side default only) is
+    # named on every snapshot.
+    "test_calibration_soccer_three_way_1011_pg.py",
     # #1870 consumer half. Seeds Polymarket markets by raw INSERT whose
     # `market_metadata` is the whole subject — including deliberately malformed
     # receipts, a JSON `null` (bound as the string 'null', distinct from SQL

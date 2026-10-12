@@ -252,7 +252,12 @@ DATAGOLF_OPENING_PREDICATE = "3944c947edb78d220ed3bef7defcc526"
 #: declared as ``(DATAGOLF_OPENING_PREDICATE, SCORE_UNIT_PREDICATE)`` and
 #: exercised in ``tests/test_calibration_score_unit_mismatch_1010.py``.
 SCORE_UNIT_PREDICATE = "da21d87f0f001c635a813eefb3eb9532"
-PINNED_PREDICATE = ("q271", SCORE_UNIT_PREDICATE)
+#: #1011 moved it again — the first WIDENING (soccer graded three-way from the
+#: 3-way capture forward), declared as ``(SCORE_UNIT_PREDICATE,
+#: SOCCER_THREE_WAY_PREDICATE)`` with a ``widening`` key and exercised in
+#: ``tests/test_calibration_soccer_three_way_succession_1011.py``.
+SOCCER_THREE_WAY_PREDICATE = "08ad02779dc9e3bbd89c506f8ae40323"
+PINNED_PREDICATE = ("q271", SOCCER_THREE_WAY_PREDICATE)
 
 
 def test_population_predicate_is_pinned_8458():
