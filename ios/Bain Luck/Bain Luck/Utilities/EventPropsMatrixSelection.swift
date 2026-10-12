@@ -235,6 +235,9 @@ nonisolated struct EventPropsMatrixSelection: Equatable {
 
     var statKey: String?
     var openQuestion: OpenQuestion?
+    /// #10486 — the player's name as the reader tapped it. Never a key: the
+    /// open sheet keeps it as its title when the row leaves the payload.
+    var openedSubjectLabel: String?
 
     /// The reader opens one exact question. Opening a question on the
     /// default statistic is a choice of that statistic too: pin it, so a newer
@@ -244,6 +247,7 @@ nonisolated struct EventPropsMatrixSelection: Equatable {
         let open = OpenQuestion(row)
         statKey = open.statKey
         openQuestion = open
+        openedSubjectLabel = row.subject.label
         return open
     }
 

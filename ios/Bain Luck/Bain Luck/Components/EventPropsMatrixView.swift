@@ -10,6 +10,13 @@ import SwiftUI
 /// (``DuringPlayerProps``); see ``EventPropsMatrixLayout`` for every rule.
 struct EventPropsMatrixView: View {
     let props: DuringPlayerProps
+    /// #10486 — the finished game's After payload, so an open question whose
+    /// During row ends with the game can follow its After version.
+    var afterProps: AfterPlayerProps? = nil
+    /// #10486 — the game is over (the page's finished status, or a served
+    /// After payload). A question missing then ended with the game; missing
+    /// before then, it was withdrawn.
+    var gameEnded = false
     var onDetailPresentationChanged: (Bool) -> Void = { _ in }
     var onMatrixUnavailableDismissed: () -> Void = {}
 
@@ -57,7 +64,10 @@ struct EventPropsMatrixView: View {
         .background(Color.cardBackground)
         .clipShape(RoundedRectangle(cornerRadius: 16))
         .sheet(item: $selection.openQuestion, onDismiss: restoreQuestionFocus) { open in
-            EventPropsMatrixDetailView(open: open, props: props)
+            EventPropsMatrixDetailView(
+                open: open, subjectLabel: selection.openedSubjectLabel,
+                props: props, afterProps: afterProps, gameEnded: gameEnded
+            )
         }
     }
 
@@ -248,22 +258,63 @@ struct EventPropsMatrixView: View {
     }
 }
 
+/// #10486 — what an open During sheet shows. The exact question while the
+/// server carries it. Once it is gone: after the game, the same question's
+/// After version (same question, player and statistic keys — never a
+/// sibling), else that the game is over; before the game ends, that it is
+/// not offered right now.
+nonisolated enum EventPropsMatrixDetailContent: Equatable {
+    case live(DuringPropRow)
+    case after(AfterPropQuestion)
+    case gameEnded
+    case withdrawn
+
+    static func resolve(
+        _ open: EventPropsMatrixSelection.OpenQuestion,
+        during props: DuringPlayerProps,
+        after: AfterPlayerProps?,
+        gameEnded: Bool
+    ) -> EventPropsMatrixDetailContent {
+        if let row = EventPropsMatrixSelection.resolve(open, in: props) { return .live(row) }
+        guard gameEnded else { return .withdrawn }
+        if let after = AfterPropsMatrixLayout.drawable(after),
+           let question = AfterPropsMatrixLayout.resolve(open, in: after) {
+            return .after(question)
+        }
+        return .gameEnded
+    }
+}
+
 /// One question, exactly: its current chance, where it comes from, the
 /// pregame comparison when the server proved one, and the other side when the
-/// server paired one. A question the server stops carrying reads as
-/// unavailable here; the sheet never moves to a sibling.
+/// server paired one. A question the server stops carrying keeps the player's
+/// name and reads per ``EventPropsMatrixDetailContent``; the sheet never moves
+/// to a sibling.
 struct EventPropsMatrixDetailView: View {
     let open: EventPropsMatrixSelection.OpenQuestion
+    var subjectLabel: String? = nil
     let props: DuringPlayerProps
+    var afterProps: AfterPlayerProps? = nil
+    var gameEnded = false
     @Environment(\.dismiss) private var dismiss
     @Environment(\.dynamicTypeSize) private var typeSize
 
     private var stat: DuringPropStat? { props.stats.first { $0.statKey == open.statKey } }
 
     var body: some View {
+        let content = EventPropsMatrixDetailContent.resolve(
+            open, during: props, after: afterProps, gameEnded: gameEnded)
+        if case .after = content, let afterProps {
+            AfterPropsDetailView(open: open, props: afterProps)
+        } else {
+            liveBody(content)
+        }
+    }
+
+    private func liveBody(_ content: EventPropsMatrixDetailContent) -> some View {
         NavigationStack {
             List {
-                if let row = EventPropsMatrixSelection.resolve(open, in: props) {
+                if case .live(let row) = content {
                     summary(row)
                     sources(row)
                     if let other = EventPropsMatrixLayout.otherSide(of: row, in: props) {
@@ -283,12 +334,15 @@ struct EventPropsMatrixDetailView: View {
                             .accessibilityElement(children: .combine)
                         }
                     }
+                } else if content == .gameEnded {
+                    Text("This game is over.")
+                        .foregroundStyle(.secondary)
                 } else {
                     Text("This question isn't being offered right now.")
                         .foregroundStyle(.secondary)
                 }
             }
-            .navigationTitle(EventPropsMatrixSelection.resolve(open, in: props)?.subject.label ?? "Player prop")
+            .navigationTitle(liveTitle(content))
             #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
             #endif
@@ -299,6 +353,11 @@ struct EventPropsMatrixDetailView: View {
             }
         }
         .presentationDetents([.medium, .large])
+    }
+
+    private func liveTitle(_ content: EventPropsMatrixDetailContent) -> String {
+        if case .live(let row) = content { return row.subject.label }
+        return subjectLabel ?? "Player prop"
     }
 
     private func summary(_ row: DuringPropRow) -> some View {

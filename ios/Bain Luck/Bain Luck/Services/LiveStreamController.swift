@@ -462,6 +462,7 @@ final class LiveStreamController {
                 // hero.
                 guard var frame = try? decoder.decode(LiveStreamFrame.self, from: data) else { return }
                 frame.foldedResult = foldedResult
+                LiveTimingSeam.frameReceived(frame)
                 // TRANSPORT clock only (above), exactly like a heartbeat. Decoding a
                 // frame is not delivering a price: the owner may refuse it (wrong
                 // event, an old or equal revision, no usable value), and a stream of
