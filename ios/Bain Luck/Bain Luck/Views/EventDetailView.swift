@@ -719,6 +719,12 @@ struct EventDetailView: View {
                         matrix: vm.gameMarkets?.gameQuestionMatrix, scope: .game)
                     EventQuestionMatrixSection10238(
                         matrix: vm.relatedFutures?.seriesQuestionMatrix, scope: .series)
+                    // #9483 — the one route to every original market, including
+                    // the ones no card above can draw (web's All markets).
+                    if let gameMarkets = vm.gameMarkets {
+                        AllMarketsCatalogView9483(gameMarkets: gameMarkets, eventStatus: event.status)
+                            .equatable()
+                    }
                     // Graceful empty state: a market-less game (e.g. an aged-out
                     // closed game whose Kalshi/odds markets have expired) has no
                     // market sections to show. Say so rather than leaving a gap or
