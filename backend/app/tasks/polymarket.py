@@ -5204,6 +5204,10 @@ async def _backfill_polymarket_price_history(
         "opening_write_unconfirmed": 0,
         "opening_refused_hindsight": 0, "opening_refused_no_boundary": 0,
         "opening_no_interior_quote": 0,
+        # #2027 open_sparse: a row with no proved Gamma event id is skipped, and a
+        # provider refusal of one event is bounded to that event.
+        "outcomes_skipped_no_event_id": 0, "events_provider_refused": 0,
+        "rate_limited": False,
     }
 
     try:
@@ -5214,12 +5218,19 @@ async def _backfill_polymarket_price_history(
                 result = await session.execute(
                     text("""
                         SELECT fo.id, fo.external_id,
-                               fm.external_id AS market_external_id,
+                               COALESCE(
+                                   fm.market_metadata->>'polymarket_event_id',
+                                   CASE WHEN left(fm.group_id, 11) = 'polymarket:'
+                                        THEN substr(fm.group_id, 12) END
+                               ) AS market_external_id,
                                fm.resolution_date, fm.settled_at
                         FROM futures_outcomes fo
                         JOIN futures_markets fm ON fo.market_id = fm.id
                         WHERE fm.source = 'polymarket'
                           AND fm.status IN ('open', 'active')
+                          -- #2027: no proved Gamma event id, no slot in the LIMIT
+                          AND (fm.market_metadata->>'polymarket_event_id' IS NOT NULL
+                               OR left(fm.group_id, 11) = 'polymarket:')
                           AND (fm.image_url IS NOT NULL
                                OR fm.hook_description IS NOT NULL)
                           AND NOT EXISTS (
@@ -5276,8 +5287,26 @@ async def _backfill_polymarket_price_history(
 
             service = PolymarketAPIService()
             try:
+                import httpx
+
                 for event_id, outcomes in by_event.items():
-                    event_data = await service.get_event_by_id(event_id)
+                    if not event_id:
+                        stats["outcomes_skipped_no_event_id"] += len(outcomes)
+                        continue
+                    try:
+                        event_data = await service.get_event_by_id(event_id)
+                    except httpx.HTTPStatusError as e:
+                        code = e.response.status_code if e.response is not None else None
+                        if code == 429:
+                            # Gotcha #36: back off — end the pass, keep what is done.
+                            stats["rate_limited"] = True
+                            stats["errors"].append(f"event_{event_id}: 429")
+                            break
+                        # One bad identity (Gamma 422 on a condition hash) must not
+                        # abort its healthy siblings.
+                        stats["events_provider_refused"] += 1
+                        stats["errors"].append(f"event_{event_id}: http_{code}")
+                        continue
                     if not event_data:
                         stats["errors"].append(f"event_{event_id}: not_found")
                         continue
