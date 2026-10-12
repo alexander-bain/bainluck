@@ -121,6 +121,25 @@ def _db(markets):
     return session
 
 
+# #10906: the specimen's capture instant. `get_golf` reads `datetime.now(timezone.utc)`
+# through the module's own `datetime` name (golf.py: `from datetime import ... datetime`)
+# and its 7-day stale filter drops a tournament whose resolution_date is older than
+# that. On the real clock the fixed dates below aged out (Kalshi from Oct 12, Polymarket
+# from Oct 13) and the file went red, then vacuous. Pin the clock; never move the dates.
+CAPTURED_AT = _dt("2026-09-30 06:58:00")
+
+
+class _CapturedClock(datetime):
+    @classmethod
+    def now(cls, tz=None):
+        return CAPTURED_AT if tz is None else CAPTURED_AT.astimezone(tz)
+
+
+@pytest.fixture(autouse=True)
+def _clock_at_capture(monkeypatch):
+    monkeypatch.setattr(golf_route, "datetime", _CapturedClock)
+
+
 @pytest.fixture(autouse=True)
 def _no_schedule(monkeypatch):
     async def _empty():
