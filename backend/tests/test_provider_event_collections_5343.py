@@ -307,13 +307,45 @@ class TestHeldOutEvent:
         assert a.complete
         assert publication_eligibility(a, now=NOW).eligible
 
+    def test_a_held_out_entertainment_event_needs_no_source_edit(self):
+        """Authority's contrast gate: a real getEvent capture of an entertainment
+        event (``movies`` tag, negRisk false, closed legs), chosen by structure —
+        the lowest open id meeting it — and put through the same test unchanged.
+
+        Today's ingestion skips its ten closed legs (Yes = 0), so the two open
+        legs assemble and the collection is truthfully incomplete, naming exactly
+        the unstored legs. With mount 2's narrow arm storing resolved zero legs it
+        is complete and eligible, still with no source edit."""
+        event = load_gamma("145916")
+        assert event["negRisk"] is False and "movies" in {t["slug"] for t in event["tags"]}
+        closed = {m["conditionId"] for m in event["markets"] if m["closed"]}
+        assert len(event["markets"]) == 12 and len(closed) == 10
+
+        today, rows = _rows("145916", "entertainment", first_id=6000)
+        a = assemble_event(_identity("145916"), rows)
+        assert len(a.admitted) == 2 and a.domain == "entertainment"
+        assert not a.complete and set(a.roster_unstored) == closed
+        assert publication_eligibility(a, now=NOW).reasons == (
+            pec.INELIGIBLE_ROSTER_UNSTORED,
+        )
+
+        _, stored = _rows(
+            "145916", "entertainment", first_id=6000, store_resolved_zero=True
+        )
+        b = assemble_event(_identity("145916"), stored)
+        assert len(b.admitted) == 12 and b.complete
+        assert publication_eligibility(b, now=NOW).eligible
+        assert sorted(
+            d.evidence["provider_closed"] for d in b.decisions if d.outcome == "admitted"
+        ) == [False] * 2 + [True] * 10
+
     def test_no_source_file_names_an_event_or_market(self):
         root = Path(__file__).resolve().parents[1] / "app"
         sources = [
             root / "utils" / "provider_event_collections.py",
             root / "tasks" / "provider_event_collection_assembly.py",
         ]
-        events = ("86832", "1038648", "106884")
+        events = ("86832", "1038648", "106884", "145916")
         ids = set(events)
         for event_id in events:
             ids |= {m["conditionId"] for m in load_gamma(event_id)["markets"]}
