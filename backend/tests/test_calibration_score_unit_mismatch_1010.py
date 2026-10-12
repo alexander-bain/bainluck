@@ -282,11 +282,11 @@ class TestPredicateIdentity:
         this rule does not touch, so banked units stay resumable.
 
         #1523 (stacked on this change) DOES move it, ``dec3026b…`` ->
-        ``5834ba12…``: the placeholder rule is in the futures statement, so a
+        ``ebc37b14…``: the placeholder rule is in the futures statement, so a
         deploy of #1523 discards the banked units and rebuilds. #1010's own
         claim is unchanged: the rule this file tests adds no bytes to that
         statement, which the census-only arm of #1523's tests also checks."""
-        assert pc.staged_unit_fingerprint() == "5834ba12c2eb56c04fee4a2a92197940"
+        assert pc.staged_unit_fingerprint() == "ebc37b143186f5b6c89319256f951ec5"
 
 
 def _gate_payload(*, outcomes, predicate, categories, score_unit=None, cells=None):

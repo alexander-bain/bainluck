@@ -2892,6 +2892,24 @@ jobs:
             exit 1
           fi
 
+      - name: Calibration Polymarket bid-support count (real Postgres)
+        # #1523. The placeholder rule's new evidence test, and the count of what
+        # it removes from the PUBLISHED curve, live in SQL that only means
+        # something inside the full chain on Postgres (`deduped_eligible`, the
+        # `jsonb_object_agg` per-cell map). This runs the real main statement on
+        # four seeded markets: a wide-book pair is counted, a pair #151 already
+        # excluded is not, and the tight-book and traded pairs publish. Same
+        # skip-detection as every gate in this job.
+        if: matrix.group == 'shared-middle'
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_calibration_poly_unsupported_bid_1523_pg.py \
+            -v -s -rs 2>&1 | tee /tmp/polybid1523.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/polybid1523.txt; then
+            echo "::error::calibration Polymarket bid-support count SKIPPED — the gate did not run"
+            exit 1
+          fi
+
       - name: Calibration threshold-ladder collapse (real Postgres)
         # #5305. A cumulative Kalshi ladder ("Above $0.77" .. "Above $1.15", 40
         # nested rungs, 38 of them true) was published as ~36 independent

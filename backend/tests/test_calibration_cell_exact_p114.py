@@ -57,8 +57,11 @@ class TestTheChainIsTheProducers:
         # were re-implemented locally they could be spelled anything.
         for cte in ("market_info", "market_result_shape", "virtual_market",
                     "nonexclusive_bundle_markets", "mex_field_divisor",
-                    "normalized", "mode_prices", "deduped"):
+                    "normalized", "mode_prices"):
             assert f"{cte} AS (" in sql, f"{cte} missing — chain not imported"
+        # #1523 split `deduped` in two and set each one's materialization.
+        for cte in ("deduped_eligible AS MATERIALIZED (", "deduped AS NOT MATERIALIZED ("):
+            assert cte in sql, f"{cte} missing — chain not imported"
 
     def test_the_population_function_is_imported_not_copied(self):
         src = (SCRIPTS / "calibration_cell_exact.py").read_text()

@@ -70,7 +70,9 @@ class TestTheExclusionIsActuallyApplied:
         ``deduped`` IS the final published population. A flag that is computed
         and carried but never filtered on is the defect wearing a fix.
         """
-        deduped = population_sql[population_sql.index("deduped AS ("):]
+        # #1523: the published filters live in `deduped_eligible`; `deduped`
+        # is that set minus the placeholder rule.
+        deduped = population_sql[population_sql.index("deduped_eligible AS MATERIALIZED ("):]
         assert "AND NOT ro.is_identity_disputed" in deduped, (
             "is_identity_disputed is computed but `deduped` does not filter on "
             "it, so the disputed rows are still published"

@@ -1572,12 +1572,21 @@ DATAGOLF_OPENING_TIMING_RULE_TEXT = (
 # its midpoint. A snapshot is now evidence only when it shows a TRADE
 # (`last_price > 0`) or a bid whose book does not refute it.
 #
-# THE NEW EXCLUSION FIRES ONLY ON POSITIVE EVIDENCE OF A WIDE BOOK, and that is
-# deliberate. A snapshot with a bid and NO recorded ask (NULL or non-positive,
-# e.g. an Under leg written before CAL-P097's mirror, or a mirrored ask whose Yes
-# bid was absent) is UNKNOWN, not refuted. It keeps supporting the leg exactly as
-# it did before #1523, so this change cannot remove a row whose book we never
-# captured. A refuting snapshot shows bid > 0 AND ask > 0 AND ask - bid >= 0.50.
+# A BID SUPPORTS ONLY INSIDE A VALID BOOK. The bid must be a price (0 < bid <= 1)
+# and, when an ask was recorded, the book must be ordered and in range
+# (bid <= ask <= 1) with ask - bid < 0.50. A crossed book (ask below bid, which
+# includes a zero or negative ask) or a price above 1 is not evidence for
+# anything, however small its "spread" reads: nothing upstream enforces these
+# facts (no CHECK on futures_odds_snapshots in models or migrations; the
+# Polymarket writer stores Gamma's best_bid / best_ask as given).
+#
+# A snapshot with a valid bid and NO recorded ask (NULL — e.g. a mirrored Under
+# ask whose Yes bid was absent, CAL-P097) is UNKNOWN, not refuted, and keeps
+# supporting the leg as it did before #1523. That is a deliberate choice: this
+# change removes a leg only on positive evidence that its book could not carry
+# the price, never on a book we did not capture. A receipt measured with a
+# strict "ask must be present" predicate is therefore an UPPER bound on what
+# this rule removes, not its count.
 # The 0.50 boundary is the Kalshi writer's bar (KALSHI_WRITER_MAX_SPREAD) used as
 # a hypothesis for Polymarket, not a value measured on this venue. It is written
 # as a literal here, not imported, so the Kalshi bar can move without silently
@@ -1599,9 +1608,10 @@ POLY_PLACEHOLDER_EXCLUDE = (
     "        SELECT 1 FROM futures_odds_snapshots fos\n"
     "        WHERE fos.outcome_id = fo.id\n"
     "          AND (fos.last_price > 0\n"
-    "               OR (fos.yes_bid > 0\n"
-    "                   AND (fos.yes_ask IS NULL OR fos.yes_ask <= 0\n"
-    "                        OR fos.yes_ask - fos.yes_bid < 0.50)))))"
+    "               OR (fos.yes_bid > 0 AND fos.yes_bid <= 1\n"
+    "                   AND (fos.yes_ask IS NULL\n"
+    "                        OR (fos.yes_ask >= fos.yes_bid AND fos.yes_ask <= 1\n"
+    "                            AND fos.yes_ask - fos.yes_bid < 0.50))))))"
     # -- CAL-P992 (#1978, calibration-027 option A, Alex 2026-09-02): PAIR SYMMETRY.
     #
     # The clause above is per LEG on a market that has two of them, and Polymarket's
@@ -1658,9 +1668,10 @@ POLY_PLACEHOLDER_EXCLUDE = (
     "             SELECT 1 FROM futures_odds_snapshots fos9\n"
     "             WHERE fos9.outcome_id = fo9.id\n"
     "               AND (fos9.last_price > 0\n"
-    "                    OR (fos9.yes_bid > 0\n"
-    "                        AND (fos9.yes_ask IS NULL OR fos9.yes_ask <= 0\n"
-    "                             OR fos9.yes_ask - fos9.yes_bid < 0.50))))))"
+    "                    OR (fos9.yes_bid > 0 AND fos9.yes_bid <= 1\n"
+    "                        AND (fos9.yes_ask IS NULL\n"
+    "                             OR (fos9.yes_ask >= fos9.yes_bid AND fos9.yes_ask <= 1\n"
+    "                                 AND fos9.yes_ask - fos9.yes_bid < 0.50)))))))"
     # The closing paren of the doubled opener. Load-bearing: this string is
     # interpolated as a bare expression (`{POLY_PLACEHOLDER_EXCLUDE} AS
     # is_poly_placeholder`), so an unwrapped top-level OR would bind against
@@ -1672,9 +1683,11 @@ POLY_PLACEHOLDER_RULE_TEXT = (
     "Excludes Polymarket outcomes near 0.50 (cp in [0.45, 0.55]) where no captured "
     "snapshot shows a trade or a supported bid — Gamma synthetic placeholder "
     "prices, not genuine coin-flips (#151 census: no-bid near-0.50 resolve at "
-    "0.10–0.28 vs has-bid at 0.43–0.55). A bid counts unless the same snapshot "
-    "shows an ask 0.50 or more above it (#1523: a 0.03 bid against a 0.97 ask is "
-    "no price at its midpoint); a snapshot with no recorded ask still counts. "
+    "0.10–0.28 vs has-bid at 0.43–0.55). A bid counts only when the same "
+    "snapshot's ask, if recorded, is at or above the bid, at most 1, and less "
+    "than 0.50 above it, so an ask 0.50 or more above the bid does not count "
+    "(#1523: a 0.03 bid against a 0.97 ask is no price at its midpoint); a "
+    "snapshot with no recorded ask still counts. "
     "Pair-symmetric: on a two-outcome market the partner of "
     "an excluded leg is excluded with it, because Polymarket writes only the Over "
     "side from a real sportsbook and publishing the survivor alone grades half a pair. "
@@ -5301,13 +5314,21 @@ def _calibration_population_ctes(
                 GROUP BY vm_id, source, adj_opening_probability, eligible
                 HAVING COUNT(*) > GREATEST(eligible * 0.5, 2)
             ),
-            deduped AS (
+            -- #1523: `deduped` is split in two so the artifact can count what
+            -- the placeholder rule's new evidence test removes from the
+            -- PUBLISHED curve, not from the candidate pool. `deduped_eligible`
+            -- is every published filter EXCEPT the placeholder rule;
+            -- `deduped` below applies it. Same rows as the single CTE it
+            -- replaces. MATERIALIZED here and NOT MATERIALIZED there keeps ONE
+            -- materialization, as before: `deduped` is a boolean filter over
+            -- this tuplestore at each of its readers.
+            deduped_eligible AS MATERIALIZED (
                 SELECT ro.* FROM normalized ro
                 LEFT JOIN mode_prices mp
                   ON mp.vm_id = ro.vm_id
                   AND mp.source = ro.source
                   AND mp.mode_price = ro.adj_opening_probability
-                WHERE ro.is_liquid AND NOT ro.is_poly_placeholder
+                WHERE ro.is_liquid
                     -- #5401: an opening the writer would have refused is not a
                     -- forecast. Read-side only (gotcha #21) — the row is
                     -- dropped, never re-graded; `is_winner` is truth and stays.
@@ -5366,6 +5387,10 @@ def _calibration_population_ctes(
                              AND mp.vm_id IS NULL
                         ELSE ro.rn = 1
                     END
+            ),
+            deduped AS NOT MATERIALIZED (
+                SELECT * FROM deduped_eligible
+                WHERE NOT is_poly_placeholder
             )"""
 
 
@@ -5805,9 +5830,6 @@ def _main_futures_sql(*, frozen: bool = False) -> str:
                     COUNT(*) FILTER (WHERE source = 'kalshi' AND NOT is_below_writer_bar) AS writer_bar_included,
                     COUNT(*) FILTER (WHERE source = 'kalshi' AND is_below_writer_bar) AS writer_bar_excluded,
                     COUNT(*) FILTER (WHERE source = 'polymarket' AND is_poly_placeholder) AS poly_placeholder_excluded,
-                    -- #1523: what the new evidence test removes BEYOND the old
-                    -- one. A subset of poly_placeholder_excluded.
-                    COUNT(*) FILTER (WHERE source = 'polymarket' AND is_poly_placeholder AND NOT is_poly_placeholder_pre1523) AS poly_unsupported_bid_excluded,
                     COUNT(*) FILTER (WHERE source = 'polymarket' AND NOT is_poly_placeholder) AS poly_included,
                     -- Queue #220/221 Item 3: exclusion-symmetry census. Poly
                     -- never-traded across ALL bands, and the asymmetry cohort
@@ -5930,6 +5952,33 @@ def _main_futures_sql(*, frozen: bool = False) -> str:
                     COUNT(*) AS published_outcomes,
                     COUNT(DISTINCT vm_id) AS published_questions
                 FROM deduped
+            ),
+            -- #1523: the outcomes the bid-support test removes from the
+            -- PUBLISHED curve — rows that pass every other published filter
+            -- (`deduped_eligible`), that the new placeholder rule excludes and
+            -- the pre-#1523 rule did not. Per (source, category) as JSON text
+            -- so the publish gate can bound a category's loss by what this
+            -- rule removed there (a map of counts banks as one string, and
+            -- the staged merge sums it per key). '{}' is a COUNTED zero.
+            -- Fields made incomplete by the change are a consequence this does
+            -- not count, so the gate's bound errs toward refusing.
+            poly_unsupported_bid_summary AS (
+                SELECT
+                    (SELECT COUNT(*) FROM deduped_eligible
+                      WHERE source = 'polymarket' AND is_poly_placeholder
+                        AND NOT is_poly_placeholder_pre1523)
+                        AS poly_unsupported_bid_excluded,
+                    COALESCE((
+                        SELECT jsonb_object_agg(cell, n ORDER BY cell)::text
+                        FROM (
+                            SELECT source || '/' || COALESCE(category, '') AS cell,
+                                   COUNT(*) AS n
+                            FROM deduped_eligible
+                            WHERE source = 'polymarket' AND is_poly_placeholder
+                              AND NOT is_poly_placeholder_pre1523
+                            GROUP BY source, category
+                        ) by_cell
+                    ), '{}') AS poly_unsupported_bid_by_cell
             )"""
             + _coverage_bridge_ctes(
                 frozen=frozen, roster_predicate=mi_roster_predicate
@@ -5963,7 +6012,8 @@ def _main_futures_sql(*, frozen: bool = False) -> str:
                 MAX(ls.writer_bar_included) AS writer_bar_included,
                 MAX(ls.writer_bar_excluded) AS writer_bar_excluded,
                 MAX(ls.poly_placeholder_excluded) AS poly_placeholder_excluded,
-                MAX(ls.poly_unsupported_bid_excluded) AS poly_unsupported_bid_excluded,
+                MAX(ubs.poly_unsupported_bid_excluded) AS poly_unsupported_bid_excluded,
+                MAX(ubs.poly_unsupported_bid_by_cell) AS poly_unsupported_bid_by_cell,
                 MAX(ls.poly_included) AS poly_included,
                 MAX(ls.poly_never_traded_total) AS poly_never_traded_total,
                 MAX(ls.poly_never_traded_in_curve) AS poly_never_traded_in_curve,
@@ -6033,10 +6083,12 @@ def _main_futures_sql(*, frozen: bool = False) -> str:
             + ("""
             FROM liq_summary ls
             CROSS JOIN published_summary ps
+            CROSS JOIN poly_unsupported_bid_summary ubs
             LEFT JOIN bucketed ON true""" if frozen else """
             FROM bucketed
             CROSS JOIN liq_summary ls
-            CROSS JOIN published_summary ps""")
+            CROSS JOIN published_summary ps
+            CROSS JOIN poly_unsupported_bid_summary ubs""")
             + _coverage_bridge_join()
             + """
             GROUP BY bucket_idx, source, category, price_moved, is_nonexclusive_bundle
@@ -7455,13 +7507,19 @@ async def compute_calibration_payload(db, *, runner=None) -> dict:
             if rows and rows[0].poly_placeholder_excluded is not None
             else 0
         )
-        # #1523: read defensively — an artifact built by code that predates
-        # the column states None (unmeasured), never a zero it did not count.
+        # #1523: read defensively — a row from code that predates the columns
+        # states None (unmeasured), never a zero it did not count. The per-cell
+        # map arrives as JSON text (see `poly_unsupported_bid_summary`); one
+        # that does not parse to {cell: count} is None, and the publish gate
+        # refuses on a None rather than reading it as zero.
         _unsupported_bid = (
             getattr(rows[0], "poly_unsupported_bid_excluded", None) if rows else None
         )
         poly_unsupported_bid_excluded = (
             int(_unsupported_bid) if _unsupported_bid is not None else None
+        )
+        poly_unsupported_bid_by_cell = _parse_count_map(
+            getattr(rows[0], "poly_unsupported_bid_by_cell", None) if rows else None
         )
         poly_included = (
             int(rows[0].poly_included)
@@ -8559,9 +8617,22 @@ async def compute_calibration_payload(db, *, runner=None) -> dict:
             "rule": POLY_PLACEHOLDER_RULE_TEXT,
             "included": poly_included,
             "excluded": poly_placeholder_excluded,
-            # #1523: the part of `excluded` the bid-support test adds beyond
-            # the #151 rule (a subset, counted over the same candidate pool).
-            "unsupported_bid_excluded": poly_unsupported_bid_excluded,
+        },
+        # #1523: what the placeholder rule's bid-support test removes from the
+        # PUBLISHED curve beyond the #151 rule, in total and per cell. Its own
+        # section because the publish gate reads `excluded_by_cell` off any
+        # section as a disclosure, and this one must be the DELTA: rows the
+        # #151 rule already excluded must never excuse a new loss.
+        "poly_unsupported_bid_filter": {
+            "applies_to": "polymarket",
+            "rule": (
+                "Part of the Polymarket near-0.50 rule above: outcomes whose "
+                "only captured bids sat 0.50 or more below the ask in the same "
+                "snapshot, with no captured trade (#1523). Counted against the "
+                "published curve; never mutates resolutions."
+            ),
+            "excluded": poly_unsupported_bid_excluded,
+            "excluded_by_cell": poly_unsupported_bid_by_cell,
         },
         "exclusion_symmetry": {  # Queue #220/221 Item 3
             "note": (
@@ -9107,6 +9178,28 @@ def _publish_calibration_main(rc, payload_json: str) -> dict:
             stages[f"{label}_error"] = str(exc)[:200]
             logger.warning("calibration publish: %s SET failed: %s", label, exc)
     return stages
+
+
+def _parse_count_map(raw: Any) -> dict[str, int] | None:
+    """``{cell: count}`` from the JSON text a census column carries, or None.
+
+    #1523. None for an absent, unparseable or non-count map — never ``{}``,
+    which is a COUNTED zero the SQL writes deliberately.
+    """
+    if raw is None:
+        return None
+    try:
+        value = json.loads(raw) if isinstance(raw, str) else raw
+    except ValueError:
+        return None
+    if not isinstance(value, dict):
+        return None
+    out: dict[str, int] = {}
+    for key, n in value.items():
+        if not isinstance(key, str) or isinstance(n, bool) or not isinstance(n, int) or n < 0:
+            return None
+        out[key] = n
+    return out
 
 
 def population_predicate_fingerprint() -> str:

@@ -76,11 +76,15 @@ PRE_1523_SQL = (
     ")"
 )
 
-#: The leg clause's "a missing ask is unknown" carve-out, as it appears in the
-#: shipped string. The mutation arm removes exactly this text.
-LEG_UNKNOWN_ASK = "fos.yes_ask IS NULL OR fos.yes_ask <= 0\n                        OR "
-PARTNER_UNKNOWN_ASK = (
-    "fos9.yes_ask IS NULL OR fos9.yes_ask <= 0\n                             OR "
+#: Clauses of the shipped leg/partner evidence test, verbatim, so each mutation
+#: arm removes exactly one of them.
+LEG_UNKNOWN_ASK = "fos.yes_ask IS NULL\n                        OR "
+PARTNER_EVIDENCE = (
+    "               AND (fos9.last_price > 0\n"
+    "                    OR (fos9.yes_bid > 0 AND fos9.yes_bid <= 1\n"
+    "                        AND (fos9.yes_ask IS NULL\n"
+    "                             OR (fos9.yes_ask >= fos9.yes_bid AND fos9.yes_ask <= 1\n"
+    "                                 AND fos9.yes_ask - fos9.yes_bid < 0.50)))))"
 )
 
 CREATE = """
@@ -114,8 +118,14 @@ TIGHT_BOOK = 900001  # bid 0.47 / ask 0.53, no trade: a real coin flip
 TIGHT_BOOK_PARTNER = 900002
 UNKNOWN_ASK = 900011  # bid 0.48, no ask recorded, no trade
 UNKNOWN_ASK_PARTNER = 900012
-ZERO_ASK = 900021  # bid 0.48, ask 0 (not a real ask), no trade
+ZERO_ASK = 900021  # bid 0.48, ask 0: a crossed book, not a missing one
 ZERO_ASK_PARTNER = 900022
+CROSSED = 900101  # bid 0.55 / ask 0.45: "spread" -0.10, no trade
+CROSSED_PARTNER = 900102
+ASK_ABOVE_ONE = 900111  # bid 0.80 / ask 1.20, no trade
+ASK_ABOVE_ONE_PARTNER = 900112
+BID_ABOVE_ONE = 900121  # bid 1.50, no ask, no trade
+BID_ABOVE_ONE_PARTNER = 900122
 AT_BOUNDARY = 900031  # bid 0.25 / ask 0.75: spread exactly 0.50, no trade
 AT_BOUNDARY_PARTNER = 900032
 INSIDE_BOUNDARY = 900041  # bid 0.255 / ask 0.745: spread 0.49, no trade
@@ -217,6 +227,18 @@ def seeded():
                 (NO_SNAPSHOTS, 0.50, []),
                 (NO_SNAPSHOTS_PARTNER, 0.50, []),
             ]),
+            (800011, "polymarket", [
+                (CROSSED, 0.50, [(0.55, 0.45, None)]),
+                (CROSSED_PARTNER, 0.50, [(0.55, 0.45, None)]),
+            ]),
+            (800012, "polymarket", [
+                (ASK_ABOVE_ONE, 0.50, [(0.80, 1.20, None)]),
+                (ASK_ABOVE_ONE_PARTNER, 0.50, [(0.80, 1.20, None)]),
+            ]),
+            (800013, "polymarket", [
+                (BID_ABOVE_ONE, 0.50, [(1.50, None, None)]),
+                (BID_ABOVE_ONE_PARTNER, 0.50, [(1.50, None, None)]),
+            ]),
         ]
         for market_id, source, legs in synthetic:
             _insert_market(conn, market_id, source)
@@ -287,9 +309,27 @@ class TestMissingEvidenceStaysUnknown:
         assert before[UNKNOWN_ASK] is False
         assert shipped[UNKNOWN_ASK] is False and shipped[UNKNOWN_ASK_PARTNER] is False
 
-    def test_a_zero_ask_is_not_a_book(self, shipped, before):
+
+
+class TestAnInvalidBookIsNotEvidence:
+    """Root's quote-validity constraint: a small "spread" on a crossed or
+    out-of-range book supports nothing. Nothing upstream enforces these facts."""
+
+    def test_a_crossed_book_does_not_support(self, shipped, before):
+        assert before[CROSSED] is False
+        assert shipped[CROSSED] is True and shipped[CROSSED_PARTNER] is True
+
+    def test_a_zero_ask_is_crossed_not_missing(self, shipped, before):
         assert before[ZERO_ASK] is False
-        assert shipped[ZERO_ASK] is False
+        assert shipped[ZERO_ASK] is True and shipped[ZERO_ASK_PARTNER] is True
+
+    def test_an_ask_above_one_does_not_support(self, shipped, before):
+        assert before[ASK_ABOVE_ONE] is False
+        assert shipped[ASK_ABOVE_ONE] is True
+
+    def test_a_bid_above_one_does_not_support_even_without_an_ask(self, shipped, before):
+        assert before[BID_ABOVE_ONE] is False
+        assert shipped[BID_ABOVE_ONE] is True
 
     def test_no_snapshot_at_all_is_handled_exactly_as_before(self, shipped, before):
         # Excluded before #1523 and after; #1523 changes nothing about it.
@@ -338,6 +378,14 @@ class TestTheOnlyRowsThatMoveAreBidBearing:
             AT_BOUNDARY_PARTNER,
             WIDE_LEG,
             TRADED_PARTNER,
+            ZERO_ASK,
+            ZERO_ASK_PARTNER,
+            CROSSED,
+            CROSSED_PARTNER,
+            ASK_ABOVE_ONE,
+            ASK_ABOVE_ONE_PARTNER,
+            BID_ABOVE_ONE,
+            BID_ABOVE_ONE_PARTNER,
         }
 
 
@@ -355,16 +403,12 @@ class TestTheDisclosedCountIsTheDifference:
         assert delta == {i for i, v in shipped.items() if v and not before[i]}
         assert delta, "fixture moved nothing; the count would be vacuously zero"
 
-    def test_the_producer_counts_it_from_both_flags(self):
+    def test_the_producer_flags_rows_with_the_twin(self):
         sql = pc._calibration_population_ctes()
         assert "AS is_poly_placeholder_pre1523" in sql
         assert POLY_PLACEHOLDER_PRE1523_EXCLUDE in sql
         main = pc._main_futures_sql(frozen=False)
-        assert (
-            "is_poly_placeholder AND NOT is_poly_placeholder_pre1523) "
-            "AS poly_unsupported_bid_excluded" in main
-        )
-        assert "MAX(ls.poly_unsupported_bid_excluded) AS poly_unsupported_bid_excluded" in main
+        assert "MAX(ubs.poly_unsupported_bid_excluded) AS poly_unsupported_bid_excluded" in main
 
     def test_the_count_is_a_declared_staged_census_column(self):
         from app.utils.calibration_staged_futures import (
@@ -409,16 +453,34 @@ class TestMutationsAreVisible:
         flags = _flags(seeded, mutant)
         assert flags[UNKNOWN_ASK] is True, "the guard cannot see the carve-out"
 
-    def test_dropping_the_partner_carve_out_breaks_symmetry_of_evidence(self, seeded):
+    @pytest.mark.parametrize(
+        "clause, row",
+        [
+            ("{a}.yes_ask >= {a}.yes_bid AND ", CROSSED),
+            (" AND {a}.yes_ask <= 1", ASK_ABOVE_ONE),
+            (" AND {a}.yes_bid <= 1", BID_ABOVE_ONE),
+        ],
+        ids=["ordered", "ask_in_range", "bid_in_range"],
+    )
+    def test_each_validity_clause_is_load_bearing(self, seeded, clause, row):
+        # Removed from the leg AND the partner clause together: pair symmetry
+        # would otherwise re-exclude the row through its untouched partner.
+        mutant = POLY_PLACEHOLDER_EXCLUDE
+        for alias in ("fos", "fos9"):
+            text_ = clause.format(a=alias)
+            assert mutant.count(text_) == 1, text_
+            mutant = mutant.replace(text_, "")
+        assert _flags(seeded, mutant)[row] is False, (
+            f"the guard cannot see the {clause!r} clause"
+        )
+
+    def test_dropping_the_partner_evidence_breaks_symmetry_of_evidence(self, seeded):
         # With the partner clause still on the OLD evidence test, the traded
         # partner of a wide leg would publish alone.
-        assert PARTNER_UNKNOWN_ASK in POLY_PLACEHOLDER_EXCLUDE
+        assert POLY_PLACEHOLDER_EXCLUDE.count(PARTNER_EVIDENCE) == 1
         mutant = POLY_PLACEHOLDER_EXCLUDE.replace(
-            "               AND (fos9.last_price > 0\n"
-            "                    OR (fos9.yes_bid > 0\n"
-            "                        AND (" + PARTNER_UNKNOWN_ASK
-            + "fos9.yes_ask - fos9.yes_bid < 0.50)))))",
-            "               AND (fos9.yes_bid > 0 OR fos9.last_price > 0)))",
+            PARTNER_EVIDENCE,
+            "               AND (fos9.yes_bid > 0 OR fos9.last_price > 0))",
         )
         assert mutant != POLY_PLACEHOLDER_EXCLUDE, "partner clause text moved"
         flags = _flags(seeded, mutant)
@@ -443,8 +505,244 @@ class TestMutationsAreVisible:
 class TestDisclosure:
     def test_the_rule_text_says_what_the_evidence_test_is(self):
         lowered = POLY_PLACEHOLDER_RULE_TEXT.lower()
-        assert "0.50 or more above it" in lowered
+        assert "0.50 or more above the bid" in lowered
+        assert "at or above the bid, at most 1" in lowered
         assert "no recorded ask still counts" in lowered
         # It says what our snapshots show, never that the market never traded.
         assert "no captured snapshot shows a trade" in lowered
         assert "never traded" not in lowered
+
+
+# ---------------------------------------------------------------------------
+# The publish gate: a table-tennis collapse is excused ONLY up to what this rule
+# says it removed there (Root's 1523 disclosure-loss probe: one declared row
+# must never excuse 5,132 more).
+# ---------------------------------------------------------------------------
+
+from datetime import datetime, timezone  # noqa: E402
+
+from app.utils.calibration_publish_gate import (  # noqa: E402
+    PREDICATE_FIELD,
+    census,
+    evaluate_publish,
+)
+
+TT_PUBLISHED = 10_256  # served 2026-10-12 01:42Z, all Polymarket
+TT_REMOVED = 5_133  # the size of Root's probe; any count exercises the bound
+OTHER = {"soccer": {"polymarket": 206_925, "kalshi": 40_000}}
+BASE_POP = sum(sum(c.values()) for c in OTHER.values()) + TT_PUBLISHED
+
+
+def _payload(*, tt_cells, predicate, block=None):
+    cells = dict(OTHER, table_tennis=tt_cells)
+    buckets = []
+    for category, by_source in sorted(cells.items()):
+        for source, n in sorted(by_source.items()):
+            for idx, (part, moved) in enumerate(((n // 2, True), (n - n // 2, False))):
+                buckets.append({
+                    "bucket_idx": 4 + idx, "source": source, "category": category,
+                    "n": part, "winners": part // 2, "sum_prob": part * 0.5,
+                    "price_moved": moved,
+                })
+    total = sum(sum(c.values()) for c in cells.values())
+    payload = {
+        "buckets": buckets,
+        "by_category": [
+            {"category": name, "outcomes": sum(c.values()), "ece": 1.5}
+            for name, c in cells.items()
+        ],
+        "by_source": [{"source": "polymarket", "outcomes": total}],
+        "total_outcomes": total,
+        "total_markets": total - 100,
+        "total_winners": total // 3,
+        "generated_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+        "liquidity_filter": {"applies_to": "kalshi"},
+        "mex_normalization": {"applied": True},
+        "truth_evidence": {"rungs": []},
+        "population_version": "q271",
+        PREDICATE_FIELD: predicate,
+    }
+    if block is not None:
+        payload["poly_unsupported_bid_filter"] = block
+    return payload
+
+
+def _block(excluded=TT_REMOVED, by_cell=None):
+    return {
+        "applies_to": "polymarket",
+        "rule": "r",
+        "excluded": excluded,
+        "excluded_by_cell": (
+            {"polymarket/table_tennis": excluded} if by_cell is None else by_cell
+        ),
+    }
+
+
+def _gate(*, lost_extra=0, block=None):
+    prev = _payload(tt_cells={"polymarket": TT_PUBLISHED}, predicate="a" * 32)
+    cand = _payload(
+        tt_cells={"polymarket": TT_PUBLISHED - TT_REMOVED - lost_extra},
+        predicate="b" * 32,
+        block=_block() if block is None else block,
+    )
+    return evaluate_publish(cand, prev)
+
+
+def _record(verdict, code, *, rejections=False):
+    items = verdict.rejections if rejections else verdict.observations
+    return {r.get("category"): r for r in items if r.get("code") == code}
+
+
+class TestTheGateBoundsTheDisclosure:
+    def test_the_rules_own_removal_publishes_with_its_arithmetic(self):
+        verdict = _gate()
+        assert verdict.ok, verdict.summary()
+        obs = _record(verdict, "category_collapse_disclosed_exclusion")["table_tennis"]
+        assert obs["magnitude_uncheckable"] is False
+        acct = obs["score_unit_accounting"]
+        assert (acct["explained"], acct["unexplained"]) == (TT_REMOVED, 0)
+        assert acct["sources"] == [f"polymarket {TT_REMOVED:,}"]
+
+    def test_valid_forecasts_lost_beside_the_rule_refuse(self):
+        # 2,000 more of the same cell vanished: 39% of what the rule left.
+        verdict = _gate(lost_extra=2_000)
+        assert not verdict.ok
+        acct = _record(verdict, "category_collapse", rejections=True)[
+            "table_tennis"]["score_unit_accounting"]
+        assert (acct["explained"], acct["unexplained"]) == (TT_REMOVED, 2_000)
+
+    def test_one_declared_row_cannot_excuse_the_rest(self):
+        """Root's probe, against this rung: a count of 1 explains 1."""
+        verdict = _gate(block=_block(excluded=1))
+        assert not verdict.ok
+        acct = _record(verdict, "category_collapse", rejections=True)[
+            "table_tennis"]["score_unit_accounting"]
+        assert (acct["explained"], acct["unexplained"]) == (1, TT_REMOVED - 1)
+
+    def test_the_twenty_percent_tolerance_holds_on_what_the_rule_left(self):
+        retained = TT_PUBLISHED - TT_REMOVED  # 5,123; 20% is 1,024.6
+        assert _gate(lost_extra=1_024).ok
+        assert not _gate(lost_extra=1_025).ok
+        assert retained == 5_123
+
+    @pytest.mark.parametrize(
+        "block",
+        [
+            _block(excluded=TT_REMOVED + 1,
+                   by_cell={"polymarket/table_tennis": TT_REMOVED}),  # cells do not sum
+            _block(by_cell={"table_tennis": TT_REMOVED}),  # no source in the key
+            _block(by_cell={"polymarket/table_tennis": -5}),  # not a count
+            _block(by_cell={"polymarket/soccer": TT_REMOVED}),  # names another cell
+        ],
+        ids=["not_summing", "sourceless_key", "negative", "other_cell"],
+    )
+    def test_fails_closed_when_the_per_cell_count_is_unusable(self, block):
+        verdict = _gate(block=block)
+        assert not verdict.ok
+        assert "table_tennis" in _record(verdict, "category_collapse", rejections=True)
+
+    def test_a_missing_per_cell_map_discloses_nothing_and_refuses(self):
+        block = _block()
+        block.pop("excluded_by_cell")
+        verdict = _gate(block=block)
+        assert not verdict.ok
+        assert "table_tennis" in _record(verdict, "category_collapse", rejections=True)
+
+    def test_the_census_reads_the_delta_section(self):
+        cand = _payload(tt_cells={"polymarket": 1}, predicate="b" * 32, block=_block())
+        got = census(cand)["poly_unsupported_bid"]
+        assert got["excluded"] == TT_REMOVED
+        assert got["by_cell"] == {"table_tennis": {"polymarket": TT_REMOVED}}
+
+
+# ---------------------------------------------------------------------------
+# The producer half of that count.
+# ---------------------------------------------------------------------------
+
+
+class TestTheProducerCountsWhatWouldHavePublished:
+    def test_deduped_is_split_and_materialized_once(self):
+        sql = pc._calibration_population_ctes()
+        assert "deduped_eligible AS MATERIALIZED (" in sql
+        assert "deduped AS NOT MATERIALIZED (" in sql
+        eligible = sql.split("deduped_eligible AS MATERIALIZED (", 1)[1].split(
+            "deduped AS NOT MATERIALIZED (", 1)[0]
+        # The placeholder rule is the ONE filter moved out of the eligible set.
+        assert "is_poly_placeholder" not in eligible
+        assert "WHERE NOT is_poly_placeholder" in sql.split(
+            "deduped AS NOT MATERIALIZED (", 1)[1]
+
+    def test_the_count_is_taken_from_the_eligible_set_in_both_plans(self):
+        for frozen in (False, True):
+            main = pc._main_futures_sql(frozen=frozen)
+            summary = main.split("poly_unsupported_bid_summary AS (", 1)[1].split(
+                "\n            )", 1)[0]
+            assert summary.count("FROM deduped_eligible") == 2
+            assert summary.count(
+                "is_poly_placeholder\n                        AND NOT is_poly_placeholder_pre1523"
+            ) == 1
+            assert "CROSS JOIN poly_unsupported_bid_summary ubs" in main
+            assert "MAX(ubs.poly_unsupported_bid_by_cell) AS poly_unsupported_bid_by_cell" in main
+            assert "'{}') AS poly_unsupported_bid_by_cell" in main
+
+    @pytest.mark.parametrize(
+        "raw, expected",
+        [
+            ('{"polymarket/table_tennis": 3}', {"polymarket/table_tennis": 3}),
+            ("{}", {}),
+            (None, None),
+            ("not json", None),
+            ('{"polymarket/x": -1}', None),
+            ('{"polymarket/x": 1.5}', None),
+            ('["polymarket/x"]', None),
+        ],
+    )
+    def test_the_payload_reads_the_map_or_states_unknown(self, raw, expected):
+        assert pc._parse_count_map(raw) == expected
+
+
+class TestTheStagedMergeSumsTheMapPerKey:
+    def _rows(self, by_cell, excluded):
+        from types import SimpleNamespace
+
+        from app.utils.calibration_staged_futures import DEFAULT_CENSUS_COLUMNS
+
+        base = {name: 0 for name in DEFAULT_CENSUS_COLUMNS}
+        base.update(poly_unsupported_bid_by_cell=by_cell,
+                    poly_unsupported_bid_excluded=excluded)
+        return [SimpleNamespace(
+            bucket_idx=5, source="polymarket", category="table_tennis",
+            price_moved=False, is_nonexclusive_bundle=False,
+            n=1, winners=0, sum_prob=0.5, sum_sq_err=0.25, avg_prob=0.5, **base)]
+
+    def test_units_sum_per_key(self):
+        from app.utils.calibration_staged_futures import merge_futures_rows
+
+        merged = merge_futures_rows([
+            self._rows('{"polymarket/table_tennis":2}', 2),
+            self._rows('{"polymarket/table_tennis":3,"polymarket/chess":1}', 4),
+            self._rows("{}", 0),
+        ])
+        row = merged[0]
+        assert json.loads(row.poly_unsupported_bid_by_cell) == {
+            "polymarket/chess": 1, "polymarket/table_tennis": 5}
+        assert row.poly_unsupported_bid_excluded == 6
+
+    def test_an_unreadable_unit_makes_the_map_unknown_not_partial(self):
+        from app.utils.calibration_staged_futures import merge_futures_rows
+
+        merged = merge_futures_rows([
+            self._rows('{"polymarket/table_tennis":2}', 2),
+            self._rows("garbage", 1),
+        ])
+        assert merged[0].poly_unsupported_bid_by_cell is None
+
+    def test_the_map_banks_as_a_string(self):
+        from app.utils.calibration_staged_futures import (
+            decode_unit_rows,
+            encode_unit_rows,
+        )
+
+        rows = self._rows('{"polymarket/table_tennis":2}', 2)
+        back = decode_unit_rows(json.loads(json.dumps(encode_unit_rows(rows))))
+        assert back[0].poly_unsupported_bid_by_cell == '{"polymarket/table_tennis":2}'

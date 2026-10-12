@@ -86,6 +86,7 @@ so, rather than guessing.
 from __future__ import annotations
 
 import hashlib
+import json
 import math
 from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
@@ -330,10 +331,6 @@ DEFAULT_CENSUS_COLUMNS: tuple[str, ...] = (
     "writer_bar_included",
     "writer_bar_excluded",
     "poly_placeholder_excluded",
-    # #1523: the subset of the count above that the bid-support test adds.
-    # A plain COUNT(*), summed across units like its neighbour; declared in
-    # the same commit that emits it (the CAL-P162 lesson recorded below).
-    "poly_unsupported_bid_excluded",
     "poly_included",
     "poly_never_traded_total",
     "poly_never_traded_in_curve",
@@ -371,6 +368,12 @@ DEFAULT_CENSUS_COLUMNS: tuple[str, ...] = (
     "mex_published_outcomes",
     "published_outcomes",
     "published_questions",
+    # #1523: what the placeholder rule's bid-support test removes from the
+    # published curve, in total (a plain COUNT(*), summed across units) and per
+    # cell (JSON text, summed PER KEY: see MAP_CENSUS_COLUMNS). Declared in the
+    # same commit that emits them, for the CAL-P162 reason recorded below.
+    "poly_unsupported_bid_excluded",
+    "poly_unsupported_bid_by_cell",
     # CAL-P168 (#1978) rank 1: K''s totals. Declared in the SAME commit that
     # emits them — CAL-P162 emitted its columns and declared them nowhere, and
     # the first banked unit raised UndeclaredColumnError so no generation could
@@ -425,6 +428,32 @@ DISTINCT_CENSUS_COLUMNS = frozenset(
         "player_props_placeholder_temporary_markets",
     }
 )
+
+#: Census columns whose value is a ``{key: count}`` map carried as JSON TEXT
+#: (#1523). Text because a unit banks scalars only (:func:`_encode_scalar`
+#: refuses a dict, and that refusal is CAL-P033's lesson, not an obstacle). A
+#: unit's map counts that unit's rows, and units partition the markets, so the
+#: merged map is the per-key SUM, written back as canonical JSON text so a
+#: merged row and a monolith row carry the same type. A map that does not parse
+#: makes the merged value None (unknown), never a partial sum.
+MAP_CENSUS_COLUMNS = frozenset({"poly_unsupported_bid_by_cell"})
+
+
+def _sum_count_maps(values: Sequence[Any]) -> Optional[str]:
+    total: dict[str, int] = {}
+    for raw in values:
+        try:
+            parsed = json.loads(raw) if isinstance(raw, str) else None
+        except ValueError:
+            return None
+        if not isinstance(parsed, dict):
+            return None
+        for key, n in parsed.items():
+            if not isinstance(key, str) or isinstance(n, bool) or not isinstance(n, int):
+                return None
+            total[key] = total.get(key, 0) + n
+    return json.dumps(dict(sorted(total.items())), separators=(",", ":"))
+
 
 #: Always emitted by the statement (Queue 300D Item 1), so unlike the ``cb_*``
 #: rungs it is not conditional and belongs in the default declared set.
@@ -1633,6 +1662,8 @@ def merge_futures_rows(
             # Either nobody reported it, or everybody reported unknown. Both are
             # unknown, and unknown is None.
             census_total[name] = None
+        elif name in MAP_CENSUS_COLUMNS:
+            census_total[name] = _sum_count_maps(known_values)
         elif all(
             isinstance(value, int) and not isinstance(value, bool) for value in known_values
         ):

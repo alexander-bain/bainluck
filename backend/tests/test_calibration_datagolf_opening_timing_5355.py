@@ -70,7 +70,9 @@ def test_the_headline_price_is_written_inside_the_hashed_builder():
 
 def test_deduped_and_both_survivor_counters_name_the_flag():
     sql = _headline()
-    deduped = sql[sql.index("deduped AS (") :]
+    # #1523: the published filters live in `deduped_eligible`; `deduped` is
+    # that set minus the placeholder rule.
+    deduped = sql[sql.index("deduped_eligible AS MATERIALIZED (") :]
     assert f"AND NOT ro.{FLAG}" in deduped
     completeness = sql[sql.index("field_completeness AS (") : sql.index("normalized AS (")]
     assert completeness.count(f"AND NOT ro.{FLAG}") == 2

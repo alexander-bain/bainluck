@@ -65,7 +65,7 @@ rebuild that accompanied the change, and say so.
 ## 2026-10-12 (DRAFT) — a 50/50 Polymarket price the order book never supported is not scored
 
 **Population version:** `q271` (planned unchanged — to be declared as an exact predicate succession
-from #1010's `da21d87f…` to `33c8759a…`; the cap on that succession is set from the measurement
+from #1010's `da21d87f…` to `70c48c82…`; the cap on that succession is set from the measurement
 receipt, not before it) · **Code:** _pending_ · **Issue:** #1523
 **Ruled by:** pending. The rule is a hypothesis until the measurement receipt and an independent review
 have read its affected and control counts.
@@ -73,10 +73,12 @@ have read its affected and control counts.
 **What changed.** A Polymarket outcome priced between 0.45 and 0.55 was already left out when no
 snapshot ever showed a bid or a trade (#151). Any bid counted, however far from the price. Table
 tennis legs sit at a bid of about 0.03 and an ask of about 0.97 for their whole life, never trade,
-and keep a stored 0.50. A book that wide offers no price at its midpoint, so a bid now counts only when
-the same snapshot does not show an ask 0.50 or more above it. A trade still counts on its own. A
-snapshot with a bid and no recorded ask still counts, as before, because a missing ask has not shown
-the book was wide. The two legs of a two-outcome market still leave together.
+and keep a stored 0.50. A book that wide offers no price at its midpoint, so a bid now counts only inside a valid book: when the
+same snapshot records an ask, it must be at or above the bid, no higher than 1, and less than 0.50
+above it. A crossed book (an ask below the bid, including a zero ask) or a price above 1 supports
+nothing; nothing upstream rules those out. A trade still counts on its own. A snapshot with a valid
+bid and no recorded ask still counts, as before, because a missing ask has not shown the book was
+wide. The two legs of a two-outcome market still leave together.
 
 **Why.** Specimens read from production on 2026-10-12 (table tennis): outcome 217613510, 11
 snapshots at bid 0.03–0.06 / ask 0.94–0.97, never traded, stored 0.505; outcomes 229038158/159, bid
@@ -84,8 +86,11 @@ snapshots at bid 0.03–0.06 / ask 0.94–0.97, never traded, stored 0.505; outc
 ECE 7.1 over 10,256 outcomes, with the 0.5–0.6 bucket winning 41.5%.
 
 **What it affected.** _Pending the measurement receipt and the first publish under this rule._ The
-published count will be `poly_placeholder_filter.unsupported_bid_excluded`: the outcomes this test
-removes beyond #151's (a subset of `excluded`). The 0.50 spread is the Kalshi writer's bar used as a
+published count will be `poly_unsupported_bid_filter.excluded`, with `excluded_by_cell` per
+category: the outcomes this test removes from the published curve beyond #151's rule. The publish
+gate excuses a category's drop only up to that per-category count; any further loss in the same
+category is held to the ordinary 20% limit, and a missing or inconsistent count refuses. Fields that
+become incomplete because one member left are not in the count, so the gate errs toward refusing. The 0.50 spread is the Kalshi writer's bar used as a
 hypothesis for Polymarket. If the receipt shows it removing supported forecasts, the rule is corrected
 or withdrawn, not tightened to reach a score.
 

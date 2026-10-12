@@ -18,11 +18,11 @@
     "SUM_ARM_ONLY_EXCLUDED_CELLS"
   ],
   "hashed_root_sha16": {
-    "_calibration_population_ctes": "e187450f217327e5",
-    "_main_futures_sql": "0432d282a1e59b69",
+    "_calibration_population_ctes": "ed5fe1325946ad7b",
+    "_main_futures_sql": "48f539199f3806b0",
     "_roster_pushdown_predicates": "9b4afb101a88cb8a",
     "_virtual_market_ctes": "d03415be9c36d5cb",
-    "compute_calibration_payload": "4dce79f28d024eac",
+    "compute_calibration_payload": "2534a8043b14c334",
     "identity_quarantine_ctes": "178dd31b64f3e836"
   },
   "hashed_roots": [
@@ -1001,7 +1001,7 @@
   ],
   "schema": "calibration-fingerprint-derived/v1",
   "source": "backend/app/tasks/precompute_calibration.py",
-  "source_sha256": "17ca8f3bd3bdfc1ce98b937a12918711110caaba8746e2afc9a14fbd54389952",
+  "source_sha256": "6efd9260a4dab45c3ead5c2c959d141376551c8956f363cd343c007801940fed",
   "uncovered_behavior_or_evidence": 42,
   "uncovered_count": 68,
   "uncovered_sql_shaping": 26

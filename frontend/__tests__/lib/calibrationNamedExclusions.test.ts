@@ -94,6 +94,18 @@ const ALREADY_BULLETED = {
     excluded_markets: 56,
     excluded_cells: [["kalshi", "politics"]],
   },
+  // #1523 — not a live reading either, for #7627's reason: the build emits it
+  // and the served payload will carry it once `bainluck-heavy` publishes a
+  // curve built with it. Shape transcribed from `precompute_calibration.py`'s
+  // `poly_unsupported_bid_filter` literal; the count is a stand-in nothing
+  // asserts. It is skipped because its outcomes are already inside
+  // `poly_placeholder_filter`'s count, not because it has a bullet.
+  poly_unsupported_bid_filter: {
+    applies_to: "polymarket",
+    rule: "Part of the Polymarket near-0.50 rule above…",
+    excluded: 321,
+    excluded_by_cell: { "polymarket/table_tennis": 321 },
+  },
 };
 
 /** The nine that were named nowhere in `frontend/` before this change. */

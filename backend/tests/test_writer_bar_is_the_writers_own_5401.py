@@ -249,8 +249,11 @@ class TestTheFlagIsWiredIntoThePopulation:
     def test_the_representative_selection_filters_on_it(self) -> None:
         """`deduped` is the clause that decides what a reader sees."""
         sql = _calibration_population_ctes()
-        deduped = sql.split("deduped AS (", 1)
-        assert len(deduped) == 2, "the `deduped` CTE was renamed"
+        # #1523: the published filters live in `deduped_eligible`; `deduped`
+        # is that set minus the placeholder rule.
+        deduped = sql.split("deduped_eligible AS MATERIALIZED (", 1)
+        assert len(deduped) == 2, "the `deduped_eligible` CTE was renamed"
+        assert "deduped AS NOT MATERIALIZED (\n                SELECT * FROM deduped_eligible" in sql
         body = deduped[1]
         assert "NOT ro.is_below_writer_bar" in body.split("),", 1)[0]
 

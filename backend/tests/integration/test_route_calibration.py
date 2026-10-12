@@ -368,6 +368,7 @@ class TestCalibrationPublicEndpoint:
             # this whole family exists to prevent.
             "writer_bar_filter",
             "poly_placeholder_filter",  # L2-76 (#151/#997)
+            "poly_unsupported_bid_filter",  # #1523: what the bid-support test removed
             "exclusion_symmetry",  # Queue #220/221 Item 3
             "malformed_binary_filter",  # L2-79 Item 1 (#997/#1010)
             "golf_placeholder_filter",  # L2-79 Item 2 (#940/#762)

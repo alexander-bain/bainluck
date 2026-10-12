@@ -91,6 +91,11 @@ export const EXCLUSIONS_WITH_THEIR_OWN_BULLET: ReadonlySet<string> = new Set([
   // makes this an own-bullet rule rather than a silent drop, so it is pinned
   // against the backend source in the suite rather than trusted.
   "identity_quarantine_filter",
+  // #1523. Not a rule of its own: the part of `poly_placeholder_filter`'s
+  // count that its bid-support test added, published so the publish gate can
+  // bound a category's drop. Those outcomes are already in the Polymarket
+  // filler row; a second row would print them twice under two names.
+  "poly_unsupported_bid_filter",
 ]);
 
 /**

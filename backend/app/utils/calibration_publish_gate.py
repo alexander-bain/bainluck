@@ -665,6 +665,7 @@ def census(payload: Any) -> dict:
             "identity_quarantine": None,
             "datagolf_opening_timing": None,
             "score_unit": None,
+            "poly_unsupported_bid": None,
             "cell_counts": None,
         }
 
@@ -742,6 +743,9 @@ def census(payload: Any) -> dict:
         "datagolf_opening_timing": _datagolf_opening_timing_census(payload),
         # #1010: the score-unit rule's size, stated once.
         "score_unit": _score_unit_census(payload),
+        # #1523: what the Polymarket bid-support test removed from the published
+        # curve, in total and per cell — the DELTA beyond the #151 rule.
+        "poly_unsupported_bid": _cell_bounded_census(payload, POLY_UNSUPPORTED_BID_SECTION),
         # #1010: per-cell published counts, so a disclosed exclusion can be
         # bounded by what it removed (`_judge_score_unit_disclosure`).
         "cell_counts": _bucket_cell_counts(buckets),
@@ -803,7 +807,16 @@ def _score_unit_census(payload: dict) -> dict:
     or entries that do not add up to ``excluded``. ``None`` is never read as
     zero — :func:`_judge_score_unit_disclosure` refuses on it.
     """
-    section = payload.get("score_unit_filter")
+    return _cell_bounded_census(payload, SCORE_UNIT_SECTION)
+
+
+def _cell_bounded_census(payload: dict, section_name: str) -> dict:
+    """A bounded rung's size, in total and per cell (#1010's shape, #1523 reuse).
+
+    See :func:`_score_unit_census` for the contract; ``section_name`` is one of
+    :data:`BOUNDED_DISCLOSURE_SECTIONS`.
+    """
+    section = payload.get(section_name)
     excluded = section.get("excluded") if isinstance(section, dict) else None
     by_cell: Optional[dict[str, dict[str, int]]] = None
     raw = section.get(DISCLOSED_CELL_MAP_KEY) if isinstance(section, dict) else None
@@ -1236,6 +1249,20 @@ def _newly_excluded_in(cand: dict, prev: dict, category: str) -> list[dict]:
 #: The filter section #1010's rung discloses its cells under.
 SCORE_UNIT_SECTION = "score_unit_filter"
 
+#: #1523: the section the Polymarket bid-support test discloses its cells under.
+#: Its counts are the DELTA beyond the #151 placeholder rule, against the
+#: published curve, so a row #151 already excluded can never excuse a new loss.
+POLY_UNSUPPORTED_BID_SECTION = "poly_unsupported_bid_filter"
+
+#: Sections whose disclosure excuses a category collapse only up to what they
+#: state they removed per cell, mapped to the census key holding those counts.
+#: Every other section keeps the inherited label-only excuse (Rule 3 below);
+#: widening this map is how a rung joins the bounded form, one rung at a time.
+BOUNDED_DISCLOSURE_SECTIONS: dict[str, str] = {
+    SCORE_UNIT_SECTION: "score_unit",
+    POLY_UNSUPPORTED_BID_SECTION: "poly_unsupported_bid",
+}
+
 
 def _judge_score_unit_disclosure(
     category: str, prev_n: int, cand: dict, prev: dict, disclosed: list[dict]
@@ -1267,11 +1294,18 @@ def _judge_score_unit_disclosure(
     prev_cells = (prev.get("cell_counts") or {}).get(category)
     cand_counts = cand.get("cell_counts")
     cand_cells = (cand_counts or {}).get(category, {})
-    by_cell = (cand.get("score_unit") or {}).get("by_cell")
+    # #1523: each disclosed row is bounded by ITS OWN section's counts. One
+    # rung's per-cell number never answers for another rung's cell.
+    sections = sorted({row["section"] for row in disclosed})
+    label = " + ".join(sections)
+    by_section = {
+        name: (cand.get(BOUNDED_DISCLOSURE_SECTIONS[name]) or {}).get("by_cell")
+        for name in sections
+    }
 
     if prev_cells is None or sum(prev_cells.values()) != prev_n:
         return None, (
-            f"{SCORE_UNIT_SECTION} discloses this category but the published "
+            f"{label} discloses this category but the published "
             "artifact's buckets do not sum to its stated count, so what the "
             "rule removed cannot be told from what was lost"
         )
@@ -1279,27 +1313,35 @@ def _judge_score_unit_disclosure(
     listed = cand.get("categories", {}).get(category)
     if cand_total is None or (listed is not None and listed != cand_total):
         return None, (
-            f"{SCORE_UNIT_SECTION} discloses this category but the candidate's "
+            f"{label} discloses this category but the candidate's "
             "buckets do not sum to its stated count, so what the rule removed "
             "cannot be told from what was lost"
         )
-    if by_cell is None:
-        return None, (
-            f"{SCORE_UNIT_SECTION} discloses this category but carries no usable "
-            "per-cell count (excluded_by_cell absent, malformed, or not summing "
-            "to excluded), so its share of the drop is unbounded"
-        )
+    for name, by_cell in by_section.items():
+        if by_cell is None:
+            return None, (
+                f"{name} discloses this category but carries no usable "
+                "per-cell count (excluded_by_cell absent, malformed, or not summing "
+                "to excluded), so its share of the drop is unbounded"
+            )
+
+    # Two rungs can name the same (source, category) cell. Their removals are
+    # summed before the cap, and the cap is the cell's own fall, so one cell's
+    # loss is explained at most once however many rungs claim it.
+    removed_by_source: dict[str, int] = {}
+    for row in disclosed:
+        source = row["source"]
+        removed = (by_section[row["section"]].get(category) or {}).get(source)
+        if removed is None:
+            return None, (
+                f"{row['section']} names {source}/{category} as excluded but "
+                "states no count for that cell"
+            )
+        removed_by_source[source] = removed_by_source.get(source, 0) + removed
 
     explained = 0
     sources = []
-    for row in disclosed:
-        source = row["source"]
-        removed = (by_cell.get(category) or {}).get(source)
-        if removed is None:
-            return None, (
-                f"{SCORE_UNIT_SECTION} names {source}/{category} as excluded but "
-                "states no count for that cell"
-            )
+    for source, removed in sorted(removed_by_source.items()):
         fell = max(prev_cells.get(source, 0) - cand_cells.get(source, 0), 0)
         explained += min(fell, removed)
         sources.append(f"{source} {min(fell, removed):,}")
@@ -1319,7 +1361,7 @@ def _judge_score_unit_disclosure(
     }
     if unexplained_drop > CATEGORY_DROP_TOLERANCE:
         return accounting, (
-            f"{SCORE_UNIT_SECTION} explains {explained:,} of the "
+            f"{label} explains {explained:,} of the "
             f"{prev_n - cand_total:,} lost outcomes ({', '.join(sources)}); the "
             f"other {unexplained:,} are {unexplained_drop * 100:.1f}% of the "
             f"{retained:,} the rule does not touch, past the "
@@ -1927,10 +1969,11 @@ def evaluate_publish(
             # for three days while both artifacts said why in a published key.
             disclosed = _newly_excluded_in(cand, prev, name)
             if disclosed and all(
-                r["section"] == SCORE_UNIT_SECTION for r in disclosed
+                r["section"] in BOUNDED_DISCLOSURE_SECTIONS for r in disclosed
             ):
                 # #1010: the score-unit rung publishes what it removed per cell,
                 # so its excuse is bounded by that, not granted by its label.
+                # #1523: the Polymarket bid-support rung joins on the same terms.
                 accounting, refusal = _judge_score_unit_disclosure(
                     name, prev_n, cand, prev, disclosed
                 )
@@ -1940,7 +1983,8 @@ def evaluate_publish(
                         f"category {name!r} fell {drop * 100:.1f}% "
                         f"({prev_n:,} -> {accounting['candidate']:,}), past the "
                         f"{CATEGORY_DROP_TOLERANCE * 100:.0f}% limit, and is "
-                        f"RECORDED rather than refused: {SCORE_UNIT_SECTION} "
+                        f"RECORDED rather than refused: "
+                        f"{' + '.join(sorted({r['section'] for r in disclosed}))} "
                         f"removed {accounting['explained']:,} of its outcomes "
                         f"({', '.join(accounting['sources'])}) and the "
                         f"{accounting['retained_baseline']:,} it did not touch "

@@ -90,6 +90,12 @@ COVERED = (
     # other — so both are named on every row, and `reading_count` (NOT NULL, no
     # server default) is named on every snapshot.
     "test_calibration_datagolf_post_start_opening_pg.py",
+    # #1523. Seeds Polymarket markets, outcomes and snapshots by raw INSERT.
+    # The snapshot book (`yes_bid`, `yes_ask`, `last_price`) IS the subject, so
+    # all three are named on every snapshot, with `reading_count` (NOT NULL,
+    # no server default); `llm_sport_category` is the cell the count is keyed
+    # on, so a seed that dropped it would read a vacuous empty map.
+    "test_calibration_poly_unsupported_bid_1523_pg.py",
     # #2927. Added the same night this check would have saved the trip: the
     # containers gate seeded `INSERT INTO sports (key, name)` and died on
     # `NotNullViolation: null value in column "active"` in CI, because
