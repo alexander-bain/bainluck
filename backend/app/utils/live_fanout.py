@@ -106,6 +106,24 @@ class _Closed:
 CLOSED = _Closed()
 
 
+class _Confirmed:
+    """Redis has registered this channel; frames published from here arrive."""
+
+    __slots__ = ()
+
+    def __repr__(self) -> str:  # pragma: no cover - debugging aid
+        return "<live_fanout.CONFIRMED>"
+
+
+#: Offered once to a subscriber that asked for it when Redis acknowledges the
+#: SUBSCRIBE its join sent. ``subscribe()`` returns once the command is written,
+#: and a reader's catch-up read travels on another connection, which Redis does
+#: not order against this one: a quote published between that read and Redis
+#: reading a late SUBSCRIBE is in neither place (#10090). This is the point from
+#: which a catch-up read can no longer miss one.
+CONFIRMED = _Confirmed()
+
+
 @dataclass(frozen=True)
 class Recovery:
     """Internal resubscription completed; read authoritative state once."""
@@ -116,12 +134,14 @@ class Recovery:
 class Subscription:
     """One stream's view of one channel: a bounded, drop-oldest mailbox."""
 
-    __slots__ = ("channel", "_queue", "_dropped")
+    __slots__ = ("channel", "_queue", "_dropped", "awaiting_confirmation")
 
     def __init__(self, channel: str) -> None:
         self.channel = channel
         self._queue: asyncio.Queue = asyncio.Queue(maxsize=QUEUE_MAX)
         self._dropped = 0
+        #: True until ``CONFIRMED`` is offered; only for subscribers that asked.
+        self.awaiting_confirmation = False
 
     @property
     def dropped(self) -> int:
@@ -175,6 +195,8 @@ class LiveFanout:
         self._reader: Optional[asyncio.Task] = None
         self._recovery_generation = 0
         self._recovery_pending: Set[str] = set()
+        # SUBSCRIBE replies still owed per channel on the current connection.
+        self._awaiting_ack: Dict[str, int] = {}
         self._quote_projector = None
 
     # -- what a guard test reads -------------------------------------------
@@ -208,14 +230,29 @@ class LiveFanout:
             try:
                 await self._connect_locked()
                 if not already:
+                    # Owed BEFORE the write: the reader may consume the reply
+                    # while this await is still returning.
+                    self._owe_ack(channel)
                     await self._pubsub.subscribe(channel)
             except BaseException:
                 # Nothing partially joined: a caller that saw an exception must
                 # not leave a subscriber behind holding the hub open.
-                self._forget(sub)
+                if self._forget(sub):
+                    self._awaiting_ack.pop(channel, None)
                 raise
             self._start_reader_locked()
         return sub
+
+    def watch_confirmation(self, sub: Subscription) -> None:
+        """Offer ``sub`` ``CONFIRMED`` once Redis acknowledges its channel.
+
+        Nothing is offered when no reply is owed: Redis already serves the
+        channel, so any read the caller makes from here cannot miss a quote.
+        """
+        sub.awaiting_confirmation = (
+            sub.channel in self._awaiting_ack
+            and sub in self._subscribers.get(sub.channel, ())
+        )
 
     def release(self, sub: Subscription) -> None:
         """Give up a subscription. SYNCHRONOUS on purpose (module docstring)."""
@@ -289,6 +326,7 @@ class LiveFanout:
                     pubsub = replacement
                     continue
                 if message is not None and message.get("type") == "subscribe":
+                    self._confirm_subscription(message)
                     self._confirm_recovery(message)
                 elif message is not None and message.get("type") == "message":
                     self._dispatch(message)
@@ -348,6 +386,7 @@ class LiveFanout:
                 # already serving is a confirmation, not a second delivery.
                 await self._connect_locked()
                 for channel in channels:
+                    self._owe_ack(channel)
                     await self._pubsub.subscribe(channel)
                 # subscribe() writes a command; it does not await Redis' ACK.
                 # Signalling now could race a REST read ahead of resubscription.
@@ -364,6 +403,26 @@ class LiveFanout:
                 )
                 await self._release_connection_locked()
                 return None
+
+    def _owe_ack(self, channel: str) -> None:
+        self._awaiting_ack[channel] = self._awaiting_ack.get(channel, 0) + 1
+
+    def _confirm_subscription(self, message: dict) -> None:
+        # Counted, not flagged: a channel re-joined while its UNSUBSCRIBE and
+        # the earlier SUBSCRIBE are still in flight owes two replies, and the
+        # first of them does not cover the later join.
+        channel = _as_text(message.get("channel"))
+        owed = self._awaiting_ack.get(channel)
+        if not owed:
+            return
+        if owed > 1:
+            self._awaiting_ack[channel] = owed - 1
+            return
+        del self._awaiting_ack[channel]
+        for sub in tuple(self._subscribers.get(channel, ())):
+            if sub.awaiting_confirmation:
+                sub.awaiting_confirmation = False
+                sub.offer(CONFIRMED)
 
     def _confirm_recovery(self, message: dict) -> None:
         channel = message.get("channel")
@@ -423,6 +482,8 @@ class LiveFanout:
         self._pubsub = self._client = None
         self._pending_unsubscribe.clear()
         self._recovery_pending.clear()
+        # Replies owed on a discarded socket never arrive; a rebuild owes anew.
+        self._awaiting_ack.clear()
         for closeable in (pubsub, client):
             if closeable is None:
                 continue
