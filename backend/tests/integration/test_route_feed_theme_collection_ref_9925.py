@@ -18,7 +18,6 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from app.utils import feed_collections as consumer
 from app.utils import request_cache as _rc
 from app.utils import theme_collection_ref as tcr
 
