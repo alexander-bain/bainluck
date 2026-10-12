@@ -1962,6 +1962,31 @@ jobs:
             exit 1
           fi
 
+      - name: "#1541 a championship the provider closed stops reading as open (real Postgres)"
+        # /futures/10 (FIFA World Cup Winner, odds_api) read as an open question
+        # for three months after the final: The Odds API stopped listing its key,
+        # so the poller stopped visiting the row and nothing else ever closes one.
+        # The real poll now resolves such a row under a NAMED no-winner reason,
+        # releases the rolling key for the next edition, and grades no leg.
+        #
+        # Real Postgres because the retirement and the same-edition reopen are
+        # Core UPDATEs over JSONB (a JSON-null metadata merge turned the stamp
+        # into an array in the first cut — only a real database showed it), and
+        # the crowner arm runs the real `_backfill_from_current_probability`.
+        # Controls ride in the same file: a listed live field, an unlisted board
+        # quoted two days ago, a listed-but-silent board (flagged, never closed),
+        # a board carrying a venue verdict, and resolved boards WITHOUT the stamp
+        # that the price crowners must still grade.
+        if: matrix.group == 'shared-middle'
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_provider_delisted_championship_retires_1541_pg.py \
+            -v -s -rs 2>&1 | tee /tmp/provider_closed_1541.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/provider_closed_1541.txt; then
+            echo "::error::#1541 provider-closed championship gate SKIPPED — the gate did not run"
+            exit 1
+          fi
+
       - name: Polymarket price-crown venue re-grade (real Postgres)
         # #9394. The Gamma winner rail selected only markets holding a row that
         # was neither `api_settlement` nor `clean_resolution`, so a field Pass 1
