@@ -9249,24 +9249,41 @@ def _concept_serves_provider_edition(
 ) -> bool:
     """#1541: does the concept page behind ``concept_key`` serve this edition?
 
-    Reads the concept tier's own cached envelope (primary, else the 24h mirror)
-    through its validating reader and lets the pure
-    ``concept_links.concept_serves_edition`` decide. Never builds the concept and
-    never raises: a cold cache, an unreachable Redis or a malformed payload all
-    answer False, which withholds the link rather than guessing an edition.
+    Reads the concept tier's own cached envelope in the order
+    ``routes/event.py::get_event_concept`` serves it — primary, then the negative
+    marker (the page 404s before it reads the mirror), then the 24h mirror — and
+    lets the pure ``concept_links.concept_serves_edition`` decide. A live mirror
+    past its serve ceiling is rebuilt by the route before it is served, so it
+    proves nothing about the edition the reader will land on: False. Never builds
+    the concept and never raises: a cold cache, an unreachable Redis or a
+    malformed payload all answer False, which withholds the link rather than
+    guessing an edition.
     """
     if edition_instant is None:
         return False
     try:
         from app.utils.concept_links import concept_serves_edition
-        from app.utils.event_concept_cache import cache_keys, get_client, read_slot
+        from app.utils.event_concept_cache import (
+            cache_keys,
+            get_client,
+            has_negative,
+            live_mirror_past_ceiling,
+            read_slot,
+        )
 
         rc = get_client()
         if rc is None:
             return False
         keys = cache_keys(concept_key)
-        envelope = read_slot(rc, keys.primary) or read_slot(rc, keys.stale)
-        return concept_serves_edition(envelope, edition_instant)
+        primary = read_slot(rc, keys.primary)
+        if primary is not None:
+            return concept_serves_edition(primary, edition_instant)
+        if has_negative(rc, keys):
+            return False
+        stale = read_slot(rc, keys.stale)
+        if stale is None or live_mirror_past_ceiling(stale):
+            return False
+        return concept_serves_edition(stale, edition_instant)
     except Exception:
         return False
 

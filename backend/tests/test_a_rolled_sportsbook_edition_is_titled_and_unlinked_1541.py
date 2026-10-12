@@ -35,7 +35,13 @@ from types import SimpleNamespace
 import pytest
 
 from app.utils.concept_links import concept_serves_edition
-from app.utils.event_concept_cache import cache_keys, encode_payload, stamp_envelope
+from app.utils.event_concept_cache import (
+    LIVE_STALE_SERVE_CEILING,
+    NEGATIVE_SENTINEL,
+    cache_keys,
+    encode_payload,
+    stamp_envelope,
+)
 from app.utils.futures_verified_title import Refusal, read_odds_api_anchor
 
 KEY = "golf_us_open_winner"
@@ -153,9 +159,11 @@ class _FakeRedis:
         return self.store.get(key)
 
 
-def _cached(envelope: dict, slot: str = "primary") -> dict:
+def _cached(envelope: dict, slot: str = "primary", *, age_s: float = 0) -> dict:
     stamped = stamp_envelope(
-        envelope, created_at=datetime.now(timezone.utc), lifecycle_watermark=None
+        envelope,
+        created_at=datetime.now(timezone.utc) - timedelta(seconds=age_s),
+        lifecycle_watermark=None,
     )
     return {getattr(cache_keys(CONCEPT), slot): encode_payload(stamped)}
 
@@ -249,6 +257,59 @@ def test_the_destination_serving_the_provider_edition_keeps_the_link(concept_cac
 def test_the_24h_mirror_is_read_when_the_primary_has_expired(concept_cache):
     commence = datetime.now(timezone.utc) + timedelta(days=2)
     concept_cache.update(_cached(_window_around(commence, days_before=0), slot="stale"))
+    assert _serve(_fresh(commence))["event_concept_key"] == CONCEPT
+
+
+# Root's 18:15Z/18:22Z hold: the helper must read the cache in the ROUTE's order
+# (`get_event_concept`: primary, then the negative marker -> 404, then the mirror;
+# a live mirror past its ceiling is rebuilt before it is served).
+
+
+def _negative() -> dict:
+    return {cache_keys(CONCEPT).negative: NEGATIVE_SENTINEL}
+
+
+def test_a_negative_marker_hides_a_matching_mirror_as_the_page_does(concept_cache):
+    """Primary absent + live negative + matching mirror: the page 404s, so no link."""
+    commence = datetime.now(timezone.utc) + timedelta(days=2)
+    concept_cache.update(_cached(_window_around(commence, days_before=0), slot="stale"))
+    concept_cache.update(_negative())
+    assert _serve(_fresh(commence))["event_concept_key"] is None
+
+
+def test_the_primary_wins_over_a_negative_marker_as_the_page_does(concept_cache):
+    """Control: the route serves primary before it reads the negative."""
+    commence = datetime.now(timezone.utc) + timedelta(days=2)
+    concept_cache.update(_cached(_window_around(commence, days_before=0)))
+    concept_cache.update(_negative())
+    assert _serve(_fresh(commence))["event_concept_key"] == CONCEPT
+
+
+def test_a_prior_edition_primary_is_not_rescued_by_a_matching_mirror(concept_cache):
+    """The page serves primary when it exists; the mirror never overrides it."""
+    commence = datetime.now(timezone.utc) + timedelta(days=2)
+    concept_cache.update(_cached(_window_around(commence, days_before=365)))
+    concept_cache.update(_cached(_window_around(commence, days_before=0), slot="stale"))
+    assert _serve(_fresh(commence))["event_concept_key"] is None
+
+
+def test_a_live_mirror_past_its_ceiling_proves_nothing(concept_cache):
+    """The route rebuilds it before serving, and the rebuild may differ or 404."""
+    commence = datetime.now(timezone.utc) + timedelta(days=1)
+    concept_cache.update(_cached(
+        _window_around(commence, days_before=1, status="live"),
+        slot="stale", age_s=LIVE_STALE_SERVE_CEILING + 60,
+    ))
+    assert _serve(_fresh(commence))["event_concept_key"] is None
+
+
+def test_a_live_mirror_inside_its_ceiling_keeps_the_link(concept_cache):
+    """Control for the ceiling arm: the same mirror, young enough to be served as-is."""
+    commence = datetime.now(timezone.utc) + timedelta(days=1)
+    concept_cache.update(_cached(
+        _window_around(commence, days_before=1, status="live"),
+        slot="stale", age_s=LIVE_STALE_SERVE_CEILING - 60,
+    ))
     assert _serve(_fresh(commence))["event_concept_key"] == CONCEPT
 
 
