@@ -5590,6 +5590,16 @@ _TRADE_429_DEFAULT_WAIT_S = 5.0
 #: honored by NOT asking again this run: the candidate is carried and the run
 #: stops, so nothing is re-asked before the provider's cooldown ends.
 _TRADE_429_MAX_WAIT_S = 30.0
+#: Wall-clock epoch seconds before which no trade request may be sent. Kalshi's
+#: Retry-After binds the NEXT trade request, whichever outcome it is for and
+#: whichever caller sends it (`backfill_kalshi_trades` and backfill_winners
+#: Phase 0 both run this function), so it is shared state, not a local sleep.
+_TRADE_BACKFILL_COOLDOWN_KEY = "bainluck:trade_backfill_cooldown_until"
+
+
+def _trade_cooldown_clock() -> float:
+    """Wall clock for the shared cooldown (a seam so tests can move it)."""
+    return datetime.now(timezone.utc).timestamp()
 
 
 def _kalshi_trade_429_wait(exc: BaseException) -> float | None:
@@ -5656,10 +5666,11 @@ async def _backfill_trade_history(limit: int = 100, deadline: float | None = Non
     is saved after each batch rather than once, up front, before any HTTP. A 429
     is waited out once (``Retry-After``, bounded by the remaining budget); a
     candidate still refused is carried in ``_TRADE_BACKFILL_RETRY_KEY`` and asked
-    first next run, through the same in-window predicate. A cooldown longer than
-    the run may wait carries the candidate and stops the run, so nothing is
-    re-asked before it ends. A 429 is never counted as fetched, empty or
-    no-pregame.
+    first next run, through the same in-window predicate. A 429 the run cannot
+    wait out in place ends the HTTP pass and records the provider's cooldown in
+    ``_TRADE_BACKFILL_COOLDOWN_KEY``; an invocation that starts inside it sends
+    no trade request and moves neither the cursor nor the carry. A 429 is never
+    counted as fetched, empty or no-pregame.
     """
     import asyncio
     from app.tasks.redis_state import get_redis_client
@@ -5692,6 +5703,21 @@ async def _backfill_trade_history(limit: int = 100, deadline: float | None = Non
     }
 
     _rc = get_redis_client()
+    try:
+        _cooldown_left = float(_rc.get(_TRADE_BACKFILL_COOLDOWN_KEY) or 0) - (
+            _trade_cooldown_clock()
+        )
+    except (TypeError, ValueError):
+        _cooldown_left = 0.0
+    if _cooldown_left > 0:
+        # Kalshi asked us not to send a trade request yet. Not one is sent, and
+        # the cursor and the carry are left exactly as they are. Not green:
+        # nothing was done, and the run says so.
+        stats["cooldown_remaining_s"] = round(_cooldown_left, 1)
+        stats["terminal"] = "partial"
+        logger.info("Trade backfill: provider cooldown, %.0fs left; no requests", _cooldown_left)
+        return stats
+
     _cursor_key = "bainluck:trade_backfill_cursor"
     _last_id = int(_rc.get(_cursor_key) or 0)
     _carried = _load_trade_retry_ids(_rc)
@@ -5876,14 +5902,19 @@ async def _backfill_trade_history(limit: int = 100, deadline: float | None = Non
                             await asyncio.sleep(wait)
                             continue
                         # Still refused, or a cooldown this run cannot honor in
-                        # place: owed, never empty. A cooldown longer than the run
-                        # may wait also ends the run, so no one is re-asked early.
+                        # place: owed, never empty. The cooldown binds the NEXT
+                        # trade request for ANY outcome and from either caller, so
+                        # it is recorded and the HTTP pass ends here.
                         refused = True
                         stats["rate_limited"] += 1
                         stats["errors"].append(str(e)[:80])
-                        if not can_wait:
-                            stats["stopped_on_cooldown_s"] = wait
-                            stopped = True
+                        _rc.setex(
+                            _TRADE_BACKFILL_COOLDOWN_KEY,
+                            int(wait) + 2,
+                            str(_trade_cooldown_clock() + wait),
+                        )
+                        stats["stopped_on_cooldown_s"] = wait
+                        stopped = True
                         break
                 if from_cursor:
                     if refused:
