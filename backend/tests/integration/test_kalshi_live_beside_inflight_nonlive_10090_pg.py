@@ -72,12 +72,10 @@ PERIOD = 0.25  # production's KALSHI_WS_PRICE_FLUSH_SECONDS
 FAILED_RETRY = 2.0
 #: How long the non-live transaction sleeps inside its price UPDATE.
 SLOW_S = 4.0
-#: The gate's bound, arrival -> committed, published and read back. The ship's
-#: bound is one second; this gate runs on shared CI runners, so it asserts the
-#: ORDER that bound needs (served while the non-live row is still uncommitted)
-#: and half the slow phase, which the shape before this change cannot meet
-#: (strawman). Measured ages are printed (`EVIDENCE`) and reported, not gated.
-BOUND_S = SLOW_S / 2
+#: The ship's bound, arrival -> committed, published and read back. Asserted
+#: together with the ORDER it needs: served while the non-live row is still
+#: uncommitted. Measured ages are also printed (`EVIDENCE`).
+BOUND_S = 1.0
 
 TABLES = (
     "sports", "teams", "venues", "events", "futures_markets", "futures_outcomes",
@@ -526,7 +524,7 @@ async def test_a_live_quote_arriving_inside_a_slow_nonlive_transaction_publishes
     ages, evidence = m.ages, m.evidence
 
     # Observed from outside (PgSleep seen, commit seen), so it reads short.
-    assert m.released - m.in_flight >= BOUND_S, "the non-live transaction was not slow"
+    assert m.released - m.in_flight >= SLOW_S / 2, "the non-live transaction was not slow"
     assert ages["control"] is not None and ages["control"] < BOUND_S, evidence
     # Neither changed live quote waits for — or is coalesced behind — the
     # non-live commit: each is published, itself, inside the bound, before it.
@@ -607,7 +605,7 @@ async def test_continuing_live_input_never_starves_the_nonlive_phase(pg):
         released = time.monotonic()
         await asyncio.sleep(BOUND_S)
 
-    assert released - in_flight < SLOW_S + BOUND_S, "live work starved the non-live phase"
+    assert released - in_flight < SLOW_S + 1.0, "live work starved the non-live phase"
     live_pubs = [(t, v[home]) for t, mk, v in record.publications if mk == live]
     # Each quote is served, or superseded by a later one that is served,
     # inside the bound: the age of the oldest still-owed quote. Intermediate
