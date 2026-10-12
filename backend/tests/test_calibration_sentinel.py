@@ -140,10 +140,14 @@ class TestHookSignature:
 
 
 class TestClassifyCoverage:
-    def test_soccer_events_is_structural_draw_class(self):
-        by, cov = classify_coverage({}, "soccer_epl", "events")
+    def test_soccer_events_draw_class_is_counted_not_structural(self):
+        # #1011: explained by the counted historical two-way rows only.
+        by, cov = classify_coverage(
+            {"soccer_2way": 1.0, "__any_known__": 1.0}, "soccer", "events"
+        )
         assert by == "soccer_2way"
         assert cov == 1.0
+        assert classify_coverage({}, "soccer", "events") == (None, 0.0)
 
     def test_esports_bundle_majority_explains(self):
         by, cov = classify_coverage(

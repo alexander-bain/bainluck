@@ -388,3 +388,67 @@ async def test_an_extra_time_win_is_never_graded_as_the_markets_answer(pg_engine
         result = await rc.calibration_examples(
             db=session, source="odds_api", bucket=3, well_traded=1, limit=10)
     assert all(e["price"] != et_draw for e in result["examples"]), result
+
+
+async def test_the_sentinel_scan_admits_the_curves_rows_and_counts_only_the_excluded(pg_engine):
+    """Root's 21:34Z hold: the calibration sentinel must not explain away a
+    broken three-way soccer curve.
+
+    The sentinel's events scan is executed here on the same seed as the curve.
+    The admitted matches (9101101-03) must arrive under ``structure_class =
+    'three_way'`` bucket for bucket as the curve grades them (opening pair,
+    draw included, closing pair never read) with no ``soccer_2way`` count; every
+    other finished soccer row with a price is the historical exclusion, counted
+    outcome by outcome and absent from the published view. Folded into cohorts,
+    the three-way cohort has nothing explaining it and the two-way one is fully
+    explained by its counted rows.
+    """
+    import app.tasks.calibration_sentinel as cs
+
+    async with pg_engine.connect() as conn:
+        rows = [dict(r) for r in (await conn.execute(
+            text(cs._EVENTS_MINING_SQL), cs._MINING_SCAN_PARAMS["events"],
+        )).mappings()]
+
+    three_way = [r for r in rows if r["category"] == "soccer"
+                 and r["structure_class"] == "three_way"]
+    got = {int(r["bucket"]): (int(r["n"]), int(r["winners"])) for r in three_way}
+    assert got == _expected_buckets([(H1, "home"), (H2, "draw"), (H3, "away")])
+    assert sum(float(r["sum_prob"]) for r in three_way) == pytest.approx(3.0, abs=1e-6)
+    assert sum(int(r["soccer_2way_n"]) for r in three_way) == 0
+    assert sum(int(r["pub_n"]) for r in three_way) == 9
+
+    # 9101104, 9101109, 9101105, 9101110 (extra time), 9101111 (penalties),
+    # 9101112 (unproven): two sides each. 9101106 is unfinished and 9101108 has
+    # no price. Every one is the counted exclusion; none is published.
+    two_way = [r for r in rows if r["category"] == "soccer"
+               and r["structure_class"] == "binary"]
+    assert sum(int(r["n"]) for r in two_way) == 12
+    assert sum(int(r["soccer_2way_n"]) for r in two_way) == 12
+    assert sum(int(r["any_known_n"]) for r in two_way) == 12
+    assert sum(int(r["pub_n"]) for r in two_way) == 0
+
+    # Control: a two-way sport is untouched and never counted as soccer_2way.
+    nba = [r for r in rows if r["category"] == "basketball"]
+    assert {r["structure_class"] for r in nba} == {"binary"}
+    assert sum(int(r["n"]) for r in nba) == 2
+    assert sum(int(r["soccer_2way_n"]) for r in nba) == 0
+    assert sum(int(r["pub_n"]) for r in nba) == 2
+
+    cohorts = {}
+    for row in rows:
+        for ck in cs._cohort_views(row):
+            c = cohorts.get(ck)
+            if c is None:
+                c = cohorts[ck] = cs._new_cohort(ck, row)
+            cs._fold_row_into_cohort(c, row)
+    for c in cohorts.values():
+        cs._finalize_cohort(c, 1_800_000_000.0)
+
+    def _classify(key):
+        c = cohorts[key]
+        return cs.classify_coverage(c["overlap_fractions"], c["category"], c["provenance"])
+
+    prov, cat = ("provenance", "events"), ("category", "soccer")
+    assert _classify((prov, cat, ("structure", "three_way"))) == (None, 0.0)
+    assert _classify((prov, cat, ("structure", "binary"))) == ("soccer_2way", 1.0)
