@@ -344,6 +344,27 @@ def _fold_invalidation(frame: dict, event_id: int, origin_id: int) -> Optional[d
     }
 
 
+async def _await_honouring_cancel(awaitable):
+    """Await ``awaitable``; if this task was cancelled meanwhile, stay cancelled.
+
+    Python 3.11's ``asyncio.wait_for`` (production and CI) returns the inner
+    result and DROPS the outer ``CancelledError`` when the cancel lands in the
+    same loop turn as the inner awaitable finishing (CPython gh-86296; 3.12
+    rewrote it). Both of this stream's waits go through it — the replay MGET via
+    ``bounded_redis_call`` and the hub mailbox via ``Subscription.next`` — so a
+    leaving reader could keep its stream, and its hub refcount, until
+    ``MAX_CONNECTION_S``. A swallowed cancel still leaves ``cancelling()`` raised,
+    so compare it across THIS wait only: anything that cancels and properly
+    uncancels (a timeout scope, Starlette's ``is_disconnected`` probe) nets zero.
+    """
+    task = asyncio.current_task()
+    before = task.cancelling() if task is not None else 0
+    result = await awaitable
+    if task is not None and task.cancelling() > before:
+        raise asyncio.CancelledError()
+    return result
+
+
 async def _stream(
     event_id: int, request: Request, contributor_ids: Optional[list[int]] = None,
 ) -> AsyncIterator[str]:
@@ -364,7 +385,9 @@ async def _stream(
         # Replay immediately after initiating subscription. This is best-effort:
         # Redis may not have acknowledged SUBSCRIBE yet. The existing live path
         # and client revision guards handle later and duplicate frames.
-        replay = deque(await latest_frames([event_id, *(contributor_ids or [])]))
+        replay = deque(await _await_honouring_cancel(
+            latest_frames([event_id, *(contributor_ids or [])])
+        ))
         last_beat = started
         recovery_generation = 0
         while True:
@@ -386,7 +409,9 @@ async def _stream(
             if replay:
                 origin_id, payload = replay.popleft()
             else:
-                origin_id, payload = await subscription.next(timeout=FRAME_WAIT_S)
+                origin_id, payload = await _await_honouring_cancel(
+                    subscription.next(timeout=FRAME_WAIT_S)
+                )
             if isinstance(payload, Recovery):
                 # Fold subscriptions share a hub generation; emit it only once.
                 if payload.generation > recovery_generation:
