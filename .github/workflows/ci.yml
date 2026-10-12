@@ -3787,6 +3787,25 @@ jobs:
             exit 1
           fi
 
+      - name: "#5343 a provider event becomes one collection and a correction stays corrected (real Postgres)"
+        # The provider-event writer (#5343) takes the same container row lock as
+        # every correction and reads withdrawals, edges, decisions and rows inside
+        # it. Only a server shows a pass that waited on the lock honouring a
+        # withdrawal committed meanwhile, two concurrent passes serializing to one
+        # container and one revision bump, and a stale roster on two consecutive
+        # passes never resurrecting a member a newer roster removed.
+        #
+        # Same skip-detection as every gate in this job.
+        if: matrix.group == 'shared-tail'
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_provider_event_collections_5343_pg.py \
+            -v -s -rs 2>&1 | tee /tmp/provider5343.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/provider5343.txt; then
+            echo "::error::#5343 provider event collections SKIPPED — the gate did not run"
+            exit 1
+          fi
+
       - name: "#4229 Kalshi senate backfill moves the stored row (real Postgres)"
         # CERT-2372 blocked the classifier-only SHA because the diff made these
         # markets CLASSIFY as politics while every stored row stayed `hockey`:
