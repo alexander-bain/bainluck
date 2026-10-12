@@ -290,9 +290,16 @@ final class OddsChartViewModel: ObservableObject {
     @Published var error: String?
 
     let eventId: Int
+    /// The chart's own history read, when the page has not handed it one yet.
+    /// A seam so a test can hold the read open; the app always uses the default.
+    private let fetchHistory: @Sendable (Int) async throws -> EventHistoryResponse
 
-    init(eventId: Int, preloaded: EventHistoryResponse? = nil) {
+    init(eventId: Int, preloaded: EventHistoryResponse? = nil,
+         fetchHistory: @escaping @Sendable (Int) async throws -> EventHistoryResponse = {
+             try await APIClient.shared.fetchEventHistory(id: $0, hours: 168)
+         }) {
         self.eventId = eventId
+        self.fetchHistory = fetchHistory
         if let preloaded {
             self.history = preloaded
             self.loading = false
@@ -330,13 +337,18 @@ final class OddsChartViewModel: ObservableObject {
         guard history == nil else { return }  // Skip if preloaded
         loading = true
         do {
-            history = try await APIClient.shared.fetchEventHistory(id: eventId, hours: 168)
+            history = try await fetchHistory(eventId)
             error = nil
             loading = false
         } catch {
-            self.error = error.localizedDescription
             loading = false
             logger.error("Failed to load history for event \(self.eventId): \(error)")
+            // #10090 — a fresh page mounts its chart before its own history
+            // read lands, so this read is usually still in flight when the page
+            // hands the chart that payload (`adopt`). Its late failure must not
+            // print "couldn't load" over a chart that already has data.
+            guard history == nil else { return }
+            self.error = error.localizedDescription
         }
     }
 }
