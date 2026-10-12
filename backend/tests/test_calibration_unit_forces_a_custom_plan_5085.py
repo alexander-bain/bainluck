@@ -305,7 +305,12 @@ from app.tasks.calibration_main_build import UNIT_PLAN_CACHE_MODE
 #: discarded; only a carried PHASE output in flight at deploy is re-read. The
 #: PUBLISHED population identity does move (``3944c947…`` -> ``da21d87f…``), as it
 #: must for a rule that changes which rows publish, and is declared to the gate.
-LIVE_INPUT_FINGERPRINT = "0c9350ca8dbd22da8aa2a4ce92cbafdc"
+#:
+#: Same unmerged change, ``0c9350ca…`` -> ``39846d26…``: the root also counts
+#: what the rule removed per cell (``score_unit_filter.excluded_by_cell``) so the
+#: publish gate can bound its disclosure. Counting only — ``staged_unit_fingerprint``
+#: (``dec3026b…``) and the published identity (``da21d87f…``) are both unmoved.
+LIVE_INPUT_FINGERPRINT = "39846d26d06f2567e5871a36a07770a2"
 
 
 class _Db:

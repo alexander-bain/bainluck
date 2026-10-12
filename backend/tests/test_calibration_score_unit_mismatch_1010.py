@@ -164,11 +164,28 @@ class TestPublishedCurve:
         assert payload["spreads_summary"]["outcomes"] == 565
 
     @pytest.mark.asyncio
+    async def test_the_exclusion_is_counted_per_cell(self, payload):
+        block = payload["score_unit_filter"]
+        assert block["excluded_by_cell"] == {
+            "odds_api_spreads/mma_mixed_martial_arts": 67,
+            "odds_api_spreads/tennis_wta_canadian_open": 25,
+            "odds_api_totals/mma_mixed_martial_arts": 100,
+            "odds_api_totals/tennis_wta_canadian_open": 30 + 41,
+        }
+        assert sum(block["excluded_by_cell"].values()) == block["excluded"]
+        # The gate reads it back as stated.
+        assert census(payload)["score_unit"]["by_cell"] == {
+            "mma_mixed_martial_arts": {"odds_api_spreads": 67, "odds_api_totals": 100},
+            "tennis_wta_canadian_open": {"odds_api_spreads": 25, "odds_api_totals": 71},
+        }
+
+    @pytest.mark.asyncio
     async def test_a_build_with_no_such_rows_reports_a_checked_zero(self):
         db = _FakeDB(spreads_rows=SPREADS[2:], totals_rows=TOTALS[3:])
         payload = await pc.compute_calibration_payload(db)
         assert payload["score_unit_filter"]["excluded"] == 0
         assert payload["score_unit_filter"]["excluded_cells"] == []
+        assert payload["score_unit_filter"]["excluded_by_cell"] == {}
 
     def test_the_corrections_log_points_at_the_live_count(self):
         entry = [c for c in pc.CALIBRATION_CORRECTIONS if c["date"] == "2026-10-11"]
@@ -266,13 +283,22 @@ class TestPredicateIdentity:
         assert pc.staged_unit_fingerprint() == "dec3026b97c1f61cda6ce65c70459fe5"
 
 
-def _gate_payload(*, outcomes, predicate, categories, score_unit=None):
+def _gate_payload(*, outcomes, predicate, categories, score_unit=None, cells=None):
+    """``cells`` is ``{category: {source: n}}``, the canonical bucket rows; by
+    default each listed category is one Kalshi cell of its stated size."""
+    if cells is None:
+        cells = {name: {"kalshi": n} for name, n in categories.items()}
+    buckets = []
+    for category, by_source in sorted(cells.items()):
+        for source, n in sorted(by_source.items()):
+            for idx, (part, moved) in enumerate(((n // 2, True), (n - n // 2, False))):
+                buckets.append({
+                    "bucket_idx": 4 + idx, "source": source, "category": category,
+                    "n": part, "winners": part // 2, "sum_prob": part * 0.5,
+                    "price_moved": moved,
+                })
     payload = {
-        "buckets": [
-            {"bucket_idx": i, "n": max(1, outcomes // 20), "winners": max(1, outcomes // 40),
-             "sum_prob": max(1, outcomes // 40) * 1.0, "price_moved": i % 2 == 0}
-            for i in range(10)
-        ],
+        "buckets": buckets,
         "by_category": [
             {"category": name, "outcomes": n, "ece": 1.5} for name, n in categories.items()
         ],
@@ -292,23 +318,63 @@ def _gate_payload(*, outcomes, predicate, categories, score_unit=None):
     return payload
 
 
-# The served 23:08Z artifact's two categories this rule takes under the 1,000
-# publish bar, beside one that stays published.
+# The served 23:08Z artifact's tennis_atp_canadian_open, cell by cell: the rule
+# removes its 89 spreads and 90 totals outcomes; its 796 sportsbook and 180
+# moneyline outcomes say who won the match and must stay.
+CANADIAN_PUBLISHED = {"odds_api_bookmaker": 796, "odds_api": 180,
+                      "odds_api_totals": 90, "odds_api_spreads": 89}
+CANADIAN_KEPT = {"odds_api_bookmaker": 796, "odds_api": 180}
+# A second category the rule takes under the 1,000 publish bar.
+CINCINNATI_PUBLISHED = {"odds_api_bookmaker": 700, "odds_api": 258, "odds_api_totals": 150}
+CINCINNATI_KEPT = {"odds_api_bookmaker": 700, "odds_api": 258}
+
 PUBLISHED_CATS = {"soccer": 250_323, "tennis_atp_canadian_open": 1_155,
                   "tennis_wta_cincinnati_open": 1_108}
 CANDIDATE_CATS = {"soccer": 250_323}
+PUBLISHED_CELLS = {"soccer": {"kalshi": 250_323},
+                   "tennis_atp_canadian_open": CANADIAN_PUBLISHED,
+                   "tennis_wta_cincinnati_open": CINCINNATI_PUBLISHED}
+# Both tennis categories are parked under the bar: absent from by_category,
+# present in the buckets.
+CANDIDATE_CELLS = {"soccer": {"kalshi": 250_323},
+                   "tennis_atp_canadian_open": CANADIAN_KEPT,
+                   "tennis_wta_cincinnati_open": CINCINNATI_KEPT}
 SCORE_UNIT_BLOCK = {
     "applies_to": "odds_api_spreads, odds_api_totals (tennis, mma)",
     "rule": "r",
-    "excluded": 1_120,
-    "spreads_excluded": 547,
-    "totals_excluded": 573,
+    "excluded": 329,
+    "spreads_excluded": 89,
+    "totals_excluded": 240,
     "excluded_cells": [
         ["odds_api_spreads", "tennis_atp_canadian_open"],
         ["odds_api_totals", "tennis_atp_canadian_open"],
         ["odds_api_totals", "tennis_wta_cincinnati_open"],
     ],
+    "excluded_by_cell": {
+        "odds_api_spreads/tennis_atp_canadian_open": 89,
+        "odds_api_totals/tennis_atp_canadian_open": 90,
+        "odds_api_totals/tennis_wta_cincinnati_open": 150,
+    },
 }
+PUBLISHED_POP = 1_154_060
+CANDIDATE_POP = PUBLISHED_POP - 329
+
+
+def _pair(*, cand_cells=None, cand_cats=None, block=SCORE_UNIT_BLOCK, prev_cells=None,
+          cand_pop=CANDIDATE_POP):
+    prev = _gate_payload(outcomes=PUBLISHED_POP, predicate=PUBLISHED_PREDICATE,
+                         categories=PUBLISHED_CATS,
+                         cells=PUBLISHED_CELLS if prev_cells is None else prev_cells)
+    cand = _gate_payload(outcomes=cand_pop, predicate=CANDIDATE_PREDICATE,
+                         categories=CANDIDATE_CATS if cand_cats is None else cand_cats,
+                         cells=CANDIDATE_CELLS if cand_cells is None else cand_cells,
+                         score_unit=block)
+    return cand, prev
+
+
+def _by_code(verdict, code, *, rejections=False):
+    rows = verdict.rejections if rejections else verdict.observations
+    return {r["category"]: r for r in rows if r["code"] == code}
 
 
 class TestPublishGate:
@@ -321,18 +387,44 @@ class TestPublishGate:
         assert 0.097 < entry["max_narrowing_pct"] < 2.65
 
     def test_the_census_reads_the_section(self):
-        cand = _gate_payload(outcomes=1_000_000, predicate=CANDIDATE_PREDICATE,
-                             categories=CANDIDATE_CATS, score_unit=SCORE_UNIT_BLOCK)
+        cand, _ = _pair()
         assert census(cand)["score_unit"] == {
-            "excluded": 1_120, "listed_outcomes": None, "section_present": True,
+            "excluded": 329, "listed_outcomes": None, "section_present": True,
+            "by_cell": {
+                "tennis_atp_canadian_open": {"odds_api_spreads": 89, "odds_api_totals": 90},
+                "tennis_wta_cincinnati_open": {"odds_api_totals": 150},
+            },
         }
+        assert census(cand)["cell_counts"]["tennis_atp_canadian_open"] == CANADIAN_KEPT
         assert census(None)["score_unit"] is None
+        assert census(None)["cell_counts"] is None
+
+    @pytest.mark.parametrize(
+        "by_cell",
+        [
+            None,  # absent
+            {"odds_api_totals/tennis_wta_cincinnati_open": 329},  # sums, wrong cells ok
+            {"tennis_wta_cincinnati_open": 329},  # no source
+            {"odds_api_totals/tennis_wta_cincinnati_open": -1},
+            {"odds_api_totals/tennis_wta_cincinnati_open": True},
+            {"odds_api_totals/tennis_wta_cincinnati_open": 328},  # does not sum
+        ],
+    )
+    def test_an_unusable_per_cell_count_reads_none(self, by_cell):
+        block = {k: v for k, v in SCORE_UNIT_BLOCK.items() if k != "excluded_by_cell"}
+        if by_cell is not None:
+            block["excluded_by_cell"] = by_cell
+        cand, _ = _pair(block=block)
+        parsed = census(cand)["score_unit"]["by_cell"]
+        if by_cell == {"odds_api_totals/tennis_wta_cincinnati_open": 329}:
+            # Well-formed and summing: read as stated. Whether it covers the
+            # disclosed cells is the judge's question, not the census's.
+            assert parsed == {"tennis_wta_cincinnati_open": {"odds_api_totals": 329}}
+        else:
+            assert parsed is None
 
     def test_the_first_build_publishes_with_its_parked_categories_disclosed(self):
-        prev = _gate_payload(outcomes=1_154_060, predicate=PUBLISHED_PREDICATE,
-                             categories=PUBLISHED_CATS)
-        cand = _gate_payload(outcomes=1_152_940, predicate=CANDIDATE_PREDICATE,
-                             categories=CANDIDATE_CATS, score_unit=SCORE_UNIT_BLOCK)
+        cand, prev = _pair()
         verdict = evaluate_publish(cand, prev)
         assert verdict.ok, verdict.summary()
         disclosed = sorted(
@@ -342,11 +434,9 @@ class TestPublishGate:
         assert disclosed == ["tennis_atp_canadian_open", "tennis_wta_cincinnati_open"]
 
     def test_control_the_same_drop_undisclosed_refuses(self):
-        prev = _gate_payload(outcomes=1_154_060, predicate=PUBLISHED_PREDICATE,
-                             categories=PUBLISHED_CATS)
-        block = {k: v for k, v in SCORE_UNIT_BLOCK.items() if k != "excluded_cells"}
-        cand = _gate_payload(outcomes=1_152_940, predicate=CANDIDATE_PREDICATE,
-                             categories=CANDIDATE_CATS, score_unit=block)
+        block = {k: v for k, v in SCORE_UNIT_BLOCK.items()
+                 if k not in ("excluded_cells", "excluded_by_cell")}
+        cand, prev = _pair(block=block)
         verdict = evaluate_publish(cand, prev)
         assert not verdict.ok
         refused = sorted(
@@ -379,3 +469,155 @@ class TestPublishGate:
         verdict = evaluate_publish(cand, prev)
         assert verdict.codes == ["population_drift"]
         assert "cap" in verdict.summary()
+
+
+class TestTheDisclosureIsBoundedByWhatTheRuleRemoved:
+    """The 2187ed78 probe: 796 sportsbook outcomes vanished from
+    tennis_atp_canadian_open beside the 179 the rule removed, and the gate read
+    OK because the score-unit section named the category. A label explains its
+    own cells, up to the count it states for them, and nothing else."""
+
+    def test_healthy_the_rule_alone_publishes_with_its_arithmetic(self):
+        cand, prev = _pair()
+        verdict = evaluate_publish(cand, prev)
+        assert verdict.ok, verdict.summary()
+        obs = _by_code(verdict, "category_collapse_disclosed_exclusion")
+        canadian = obs["tennis_atp_canadian_open"]
+        assert canadian["magnitude_uncheckable"] is False
+        assert canadian["score_unit_accounting"] == {
+            "previous": 1_155,
+            "candidate": 976,
+            "candidate_listed": False,
+            "explained": 179,
+            "sources": ["odds_api_spreads 89", "odds_api_totals 90"],
+            "retained_baseline": 976,
+            "unexplained": 0,
+            "unexplained_drop_pct": 0.0,
+        }
+        assert obs["tennis_wta_cincinnati_open"]["score_unit_accounting"]["explained"] == 150
+
+    def test_negative_a_lost_sportsbook_beside_the_rule_refuses(self):
+        lost = dict(CANDIDATE_CELLS, tennis_atp_canadian_open={"odds_api": 180})
+        cand, prev = _pair(cand_cells=lost, cand_pop=CANDIDATE_POP - 796)
+        verdict = evaluate_publish(cand, prev)
+        assert not verdict.ok
+        refused = _by_code(verdict, "category_collapse", rejections=True)
+        assert list(refused) == ["tennis_atp_canadian_open"]
+        acct = refused["tennis_atp_canadian_open"]["score_unit_accounting"]
+        assert (acct["explained"], acct["unexplained"], acct["retained_baseline"]) == (179, 796, 976)
+        assert acct["unexplained_drop_pct"] == 81.56
+        # The healthy sibling the same rule took under the bar still publishes
+        # its own arithmetic; the refusal is the category that lost a source.
+        assert "tennis_wta_cincinnati_open" in _by_code(
+            verdict, "category_collapse_disclosed_exclusion")
+
+    def test_the_twenty_percent_tolerance_holds_on_what_the_rule_left(self):
+        # 976 untouched outcomes; 20% of them is 195.2.
+        for lost, ok in ((195, True), (196, False)):
+            kept = {"odds_api_bookmaker": 796 - lost, "odds_api": 180}
+            cells = dict(CANDIDATE_CELLS, tennis_atp_canadian_open=kept)
+            cand, prev = _pair(cand_cells=cells, cand_pop=CANDIDATE_POP - lost)
+            verdict = evaluate_publish(cand, prev)
+            assert verdict.ok is ok, (lost, verdict.summary())
+
+    def test_a_cell_falls_further_than_the_rule_says_it_removed(self):
+        # The rule says 40 spreads left; the cell lost all 89. 49 are not its.
+        block = dict(SCORE_UNIT_BLOCK, excluded=280, spreads_excluded=40, excluded_by_cell={
+            "odds_api_spreads/tennis_atp_canadian_open": 40,
+            "odds_api_totals/tennis_atp_canadian_open": 90,
+            "odds_api_totals/tennis_wta_cincinnati_open": 150,
+        })
+        cand, prev = _pair(block=block)
+        verdict = evaluate_publish(cand, prev)
+        acct = _by_code(verdict, "category_collapse_disclosed_exclusion")[
+            "tennis_atp_canadian_open"]["score_unit_accounting"]
+        assert (acct["explained"], acct["unexplained"]) == (130, 49)
+        # The cap decides a verdict: 60 sportsbook outcomes lost is 6.1% of
+        # what the rule left when it states its true counts, and 20.6% when it
+        # says it removed one outcome per cell (the other 177 are not its).
+        cells = dict(CANDIDATE_CELLS, tennis_atp_canadian_open={
+            "odds_api_bookmaker": 736, "odds_api": 180})
+        cand, prev = _pair(cand_cells=cells, cand_pop=CANDIDATE_POP - 60)
+        assert evaluate_publish(cand, prev).ok
+        understated = dict(SCORE_UNIT_BLOCK, excluded=152, excluded_by_cell=dict(
+            SCORE_UNIT_BLOCK["excluded_by_cell"], **{
+                "odds_api_spreads/tennis_atp_canadian_open": 1,
+                "odds_api_totals/tennis_atp_canadian_open": 1}))
+        cand, prev = _pair(cand_cells=cells, cand_pop=CANDIDATE_POP - 60, block=understated)
+        refused = _by_code(evaluate_publish(cand, prev), "category_collapse", rejections=True)
+        acct = refused["tennis_atp_canadian_open"]["score_unit_accounting"]
+        assert (acct["explained"], acct["unexplained"], acct["unexplained_drop_pct"]) == (
+            2, 237, 20.56)
+
+    def test_a_category_still_listed_is_read_from_its_stated_count(self):
+        # The rule leaves a big category above the bar: by_category lists it,
+        # and its count must equal the bucket sum it was built from.
+        big_prev = {"odds_api_bookmaker": 5_000, "odds_api_totals": 2_000}
+        big_cand = {"odds_api_bookmaker": 5_000}
+        prev_cells = dict(PUBLISHED_CELLS, tennis_atp_us_open=big_prev)
+        cand_cells = dict(CANDIDATE_CELLS, tennis_atp_us_open=big_cand)
+        block = dict(SCORE_UNIT_BLOCK, excluded=2_329, totals_excluded=2_240,
+                     excluded_cells=SCORE_UNIT_BLOCK["excluded_cells"]
+                     + [["odds_api_totals", "tennis_atp_us_open"]],
+                     excluded_by_cell=dict(SCORE_UNIT_BLOCK["excluded_by_cell"],
+                                           **{"odds_api_totals/tennis_atp_us_open": 2_000}))
+        prev = _gate_payload(outcomes=PUBLISHED_POP, predicate=PUBLISHED_PREDICATE,
+                             categories=dict(PUBLISHED_CATS, tennis_atp_us_open=7_000),
+                             cells=prev_cells)
+        for listed, ok in ((5_000, True), (4_999, False)):
+            cand = _gate_payload(outcomes=PUBLISHED_POP - 2_329,
+                                 predicate=CANDIDATE_PREDICATE,
+                                 categories=dict(CANDIDATE_CATS, tennis_atp_us_open=listed),
+                                 cells=cand_cells, score_unit=block)
+            verdict = evaluate_publish(cand, prev)
+            assert verdict.ok is ok, (listed, verdict.summary())
+
+    @pytest.mark.parametrize(
+        "case",
+        ["no_per_cell_count", "per_cell_not_summing", "cell_not_counted",
+         "baseline_buckets_disagree", "candidate_buckets_unreadable"],
+    )
+    def test_fails_closed_when_the_quantities_are_unavailable(self, case):
+        block = dict(SCORE_UNIT_BLOCK)
+        prev_cells = None
+        cand_cells = None
+        if case == "no_per_cell_count":
+            block.pop("excluded_by_cell")
+        elif case == "per_cell_not_summing":
+            block["excluded"] = 330
+        elif case == "cell_not_counted":
+            block["excluded_by_cell"] = {
+                "odds_api_totals/tennis_atp_canadian_open": 179,
+                "odds_api_totals/tennis_wta_cincinnati_open": 150,
+            }
+        elif case == "baseline_buckets_disagree":
+            prev_cells = dict(PUBLISHED_CELLS, tennis_atp_canadian_open=dict(
+                CANADIAN_PUBLISHED, odds_api_bookmaker=795))
+        cand, prev = _pair(block=block, prev_cells=prev_cells, cand_cells=cand_cells)
+        if case == "candidate_buckets_unreadable":
+            cand["buckets"][0] = dict(cand["buckets"][0], source=None)
+        verdict = evaluate_publish(cand, prev)
+        assert not verdict.ok
+        assert "tennis_atp_canadian_open" in _by_code(
+            verdict, "category_collapse", rejections=True)
+
+    def test_another_rung_keeps_its_own_path(self):
+        """Only the score-unit rung is bounded here; a category another rung
+        newly discloses is judged exactly as before (no general rewrite)."""
+        cand, prev = _pair()
+        cand["esports_multi_bundle_filter"] = {
+            "excluded_cells": [["kalshi", "tennis_atp_canadian_open"]]}
+        verdict = evaluate_publish(cand, prev)
+        obs = _by_code(verdict, "category_collapse_disclosed_exclusion")
+        assert obs["tennis_atp_canadian_open"]["magnitude_uncheckable"] is True
+        assert "score_unit_accounting" not in obs["tennis_atp_canadian_open"]
+
+    def test_the_ledger_record_carries_the_arithmetic(self):
+        from app.utils.calibration_publish_gate import gate_ledger_record
+        import json
+
+        cand, prev = _pair()
+        record = gate_ledger_record(evaluate_publish(cand, prev))
+        rows = {r["category"]: r for r in record["disclosed_exclusions"]}
+        assert rows["tennis_atp_canadian_open"]["score_unit_accounting"]["explained"] == 179
+        json.dumps(record)

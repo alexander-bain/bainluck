@@ -2058,6 +2058,22 @@ def split_score_unit_mismatch(rows) -> tuple[list, int, set]:
     return kept, excluded, cells
 
 
+def score_unit_excluded_by_cell(rows) -> dict[str, int]:
+    """Outcomes the score-unit rule removes, per ``"source/category"`` cell.
+
+    The publish gate bounds a category collapse the rule discloses by these
+    counts: the rule may explain a cell's loss only up to what it says it
+    removed there. Counting only — membership is decided by the hashed
+    :func:`category_has_score_unit_mismatch`, so this is outside the digest.
+    """
+    out: dict[str, int] = {}
+    for r in rows:
+        if category_has_score_unit_mismatch(r.category):
+            key = f"{r.source}/{r.category}"
+            out[key] = out.get(key, 0) + r.n
+    return dict(sorted(out.items()))
+
+
 # Queue #159 (#1010): esports malformed-MULTI "match bundle" curve exclusion.
 #
 # Polymarket packs a whole esports match into ONE non-partition market —
@@ -7682,6 +7698,8 @@ async def compute_calibration_payload(db, *, runner=None) -> dict:
             runner.record(PHASE_SPORTS, "totals_rows", totals_rows, kind="rows")
 
         # #1010: after record/reuse, so a carried read is judged by today's rule.
+        score_unit_by_cell = score_unit_excluded_by_cell(
+            list(spreads_rows) + list(totals_rows))
         spreads_rows, score_unit_spreads_excluded, _su_spread_cells = (
             split_score_unit_mismatch(spreads_rows))
         totals_rows, score_unit_totals_excluded, _su_total_cells = (
@@ -8759,6 +8777,9 @@ async def compute_calibration_payload(db, *, runner=None) -> dict:
             # Read by the publish gate (`_disclosed_excluded_cells`): a category
             # this rule takes under the publish bar is a disclosed exclusion.
             "excluded_cells": [list(c) for c in score_unit_cells],
+            # Per-cell counts summing to `excluded`: the gate bounds the
+            # disclosed-exclusion excuse by them (`_judge_score_unit_disclosure`).
+            "excluded_by_cell": score_unit_by_cell,
         },
         "heuristic_filter": {
             "applies_to": "polymarket",

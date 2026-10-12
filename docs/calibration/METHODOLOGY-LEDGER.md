@@ -84,11 +84,15 @@ about 50 points. MMA: stored score sum always 1, over/under lines 0.5–4.5, 100
 so these rows cannot be re-graded.
 
 **What it affected.** _Pending the first publish under this rule_: the published count is
-`score_unit_filter.excluded` (with `spreads_excluded` / `totals_excluded`, and the cells it removes in
-`excluded_cells`). Rescoring the 23:08Z artifact gives 1,120 outcomes (0.097% of 1,154,060). Two
-categories fall under the 1,000-outcome publish bar and move to the small-sample list:
-`tennis_atp_canadian_open` (1,155 → 976) and `tennis_wta_cincinnati_open` (1,108 → 938). The
-publish gate records both as disclosed exclusions rather than collapses.
+`score_unit_filter.excluded` (with `spreads_excluded` / `totals_excluded`, the cells it removes in
+`excluded_cells`, and how many outcomes it removes from each in `excluded_by_cell`). Rescoring the
+23:08Z artifact gives 1,120 outcomes (0.097% of 1,154,060). Two categories fall under the
+1,000-outcome publish bar and move to the small-sample list: `tennis_atp_canadian_open`
+(1,155 → 976) and `tennis_wta_cincinnati_open` (1,108 → 938). The publish gate records both as
+disclosed exclusions rather than collapses — but only for the outcomes the rule says it removed from
+each spreads/totals cell. The sportsbook and moneyline forecasts in the same tournament are not the
+rule's to explain: if they fall by more than the ordinary 20% of what the rule left, the publish is
+refused, and it is refused too if the per-cell counts are missing.
 
 ---
 

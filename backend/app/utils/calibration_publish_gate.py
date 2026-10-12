@@ -196,6 +196,11 @@ DECLARATION_MAX_TOLERANCE_PCT = 5.0
 #: 2026-10-11 23:08Z artifact, out of 30,607 spreads+totals outcomes (2.65%).
 #: 0.5% is about five times the measured mass and under a fifth of both curves
 #: together; a narrowing past it is not this rule.
+#:
+#: That cap bounds the GLOBAL narrowing. Per category, the rule's disclosed
+#: cells excuse a collapse only up to its per-cell counts
+#: (``score_unit_filter.excluded_by_cell``); see
+#: :func:`_judge_score_unit_disclosure`.
 DECLARED_PREDICATE_SUCCESSIONS: dict[tuple[str, str], dict] = {
     ("e67d771bbd7a92dfd8d1a0f4bd79b4c2", "27b49126ac461fce9d5f078b471bb17f"): {
         "cause": "#6275 identity quarantine (Alex ruling; 22a99a734d, heavy v27)",
@@ -660,6 +665,7 @@ def census(payload: Any) -> dict:
             "identity_quarantine": None,
             "datagolf_opening_timing": None,
             "score_unit": None,
+            "cell_counts": None,
         }
 
     buckets = payload.get("buckets") if isinstance(payload.get("buckets"), list) else []
@@ -736,6 +742,9 @@ def census(payload: Any) -> dict:
         "datagolf_opening_timing": _datagolf_opening_timing_census(payload),
         # #1010: the score-unit rule's size, stated once.
         "score_unit": _score_unit_census(payload),
+        # #1010: per-cell published counts, so a disclosed exclusion can be
+        # bounded by what it removed (`_judge_score_unit_disclosure`).
+        "cell_counts": _bucket_cell_counts(buckets),
     }
 
 
@@ -786,13 +795,62 @@ def _datagolf_opening_timing_census(payload: dict) -> dict:
 
 
 def _score_unit_census(payload: dict) -> dict:
-    """#1010's one statement of its size, ``score_unit_filter.excluded``."""
+    """#1010's one statement of its size, ``score_unit_filter.excluded``, and
+    the same size per cell, ``score_unit_filter.excluded_by_cell``.
+
+    ``by_cell`` is ``{category: {source: outcomes}}``, or ``None`` when the
+    section does not carry a usable per-cell count: absent, any malformed entry,
+    or entries that do not add up to ``excluded``. ``None`` is never read as
+    zero — :func:`_judge_score_unit_disclosure` refuses on it.
+    """
     section = payload.get("score_unit_filter")
+    excluded = section.get("excluded") if isinstance(section, dict) else None
+    by_cell: Optional[dict[str, dict[str, int]]] = None
+    raw = section.get(DISCLOSED_CELL_MAP_KEY) if isinstance(section, dict) else None
+    if isinstance(raw, dict) and _is_count(excluded):
+        by_cell = {}
+        total = 0
+        for key, n in raw.items():
+            cell = _split_cell(key)
+            if cell is None or not cell[0] or not _is_count(n):
+                by_cell = None
+                break
+            source, category = cell
+            slot = by_cell.setdefault(category, {})
+            slot[source] = slot.get(source, 0) + n
+            total += n
+        if by_cell is not None and total != excluded:
+            by_cell = None
     return {
-        "excluded": section.get("excluded") if isinstance(section, dict) else None,
+        "excluded": excluded,
         "listed_outcomes": None,
         "section_present": isinstance(section, dict),
+        "by_cell": by_cell,
     }
+
+
+def _is_count(value: Any) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool) and value >= 0
+
+
+def _bucket_cell_counts(buckets: list) -> Optional[dict[str, dict[str, int]]]:
+    """Published outcomes per ``{category: {source: n}}``, from the buckets.
+
+    The buckets are the canonical rows every other count is summed from, and
+    unlike ``by_category`` they keep a category the build parked under its
+    publish bar. ``None`` if any row lacks a usable source, category or count:
+    a partial tally would under-state some cell and read as a loss.
+    """
+    out: dict[str, dict[str, int]] = {}
+    for b in buckets:
+        if not isinstance(b, dict):
+            return None
+        source, category, n = b.get("source"), b.get("category"), b.get("n")
+        if not isinstance(source, str) or not isinstance(category, str) or not _is_count(n):
+            return None
+        slot = out.setdefault(category, {})
+        slot[source] = slot.get(source, 0) + n
+    return out
 
 
 def _ordering(well: dict, thin: dict) -> Optional[str]:
@@ -1173,6 +1231,101 @@ def _newly_excluded_in(cand: dict, prev: dict, category: str) -> list[dict]:
                 continue
             rows.append({"section": section, "source": source, "category": cat})
     return rows
+
+
+#: The filter section #1010's rung discloses its cells under.
+SCORE_UNIT_SECTION = "score_unit_filter"
+
+
+def _judge_score_unit_disclosure(
+    category: str, prev_n: int, cand: dict, prev: dict, disclosed: list[dict]
+) -> tuple[Optional[dict], Optional[str]]:
+    """Bound a collapse the score-unit rung discloses by what it removed.
+
+    The rung only ever deletes ``odds_api_spreads`` / ``odds_api_totals`` cells
+    in tennis and MMA, and it states how many outcomes per cell
+    (``excluded_by_cell``). So the loss it explains in a category is, per
+    disclosed cell, the cell's published drop capped at the count the rung says
+    it removed there. Every other source in the category — the moneyline, the
+    sportsbook lines, Kalshi — is untouched by the rule, and its loss is judged
+    by the ordinary :data:`CATEGORY_DROP_TOLERANCE` against the part of the
+    baseline the rule left. A label naming the category excuses nothing on its
+    own (the 2187ed78 probe: 796 sportsbook outcomes lost beside 179 the rule
+    removed read OK).
+
+    Both category totals are the canonical bucket sums, and each must equal the
+    total the artifact states — ``by_category`` when the category is listed
+    there. A candidate category the rule took under the publish bar is absent
+    from ``by_category``, so its bucket sum is the only count it has; reading
+    it as 0 would charge the rule's honest remainder as a loss.
+
+    Returns ``(accounting, refusal)``; ``refusal`` is ``None`` when the drop is
+    explained. Any quantity it needs that the artifacts do not carry is a
+    refusal, never a pass — this exists to bound an excuse, and an unbounded
+    one is what it replaces.
+    """
+    prev_cells = (prev.get("cell_counts") or {}).get(category)
+    cand_counts = cand.get("cell_counts")
+    cand_cells = (cand_counts or {}).get(category, {})
+    by_cell = (cand.get("score_unit") or {}).get("by_cell")
+
+    if prev_cells is None or sum(prev_cells.values()) != prev_n:
+        return None, (
+            f"{SCORE_UNIT_SECTION} discloses this category but the published "
+            "artifact's buckets do not sum to its stated count, so what the "
+            "rule removed cannot be told from what was lost"
+        )
+    cand_total = sum(cand_cells.values()) if cand_counts is not None else None
+    listed = cand.get("categories", {}).get(category)
+    if cand_total is None or (listed is not None and listed != cand_total):
+        return None, (
+            f"{SCORE_UNIT_SECTION} discloses this category but the candidate's "
+            "buckets do not sum to its stated count, so what the rule removed "
+            "cannot be told from what was lost"
+        )
+    if by_cell is None:
+        return None, (
+            f"{SCORE_UNIT_SECTION} discloses this category but carries no usable "
+            "per-cell count (excluded_by_cell absent, malformed, or not summing "
+            "to excluded), so its share of the drop is unbounded"
+        )
+
+    explained = 0
+    sources = []
+    for row in disclosed:
+        source = row["source"]
+        removed = (by_cell.get(category) or {}).get(source)
+        if removed is None:
+            return None, (
+                f"{SCORE_UNIT_SECTION} names {source}/{category} as excluded but "
+                "states no count for that cell"
+            )
+        fell = max(prev_cells.get(source, 0) - cand_cells.get(source, 0), 0)
+        explained += min(fell, removed)
+        sources.append(f"{source} {min(fell, removed):,}")
+
+    retained = prev_n - explained
+    unexplained = max(prev_n - cand_total - explained, 0)
+    unexplained_drop = unexplained / retained if retained > 0 else 0.0
+    accounting = {
+        "previous": prev_n,
+        "candidate": cand_total,
+        "candidate_listed": listed is not None,
+        "explained": explained,
+        "sources": sources,
+        "retained_baseline": retained,
+        "unexplained": unexplained,
+        "unexplained_drop_pct": round(unexplained_drop * 100, 2),
+    }
+    if unexplained_drop > CATEGORY_DROP_TOLERANCE:
+        return accounting, (
+            f"{SCORE_UNIT_SECTION} explains {explained:,} of the "
+            f"{prev_n - cand_total:,} lost outcomes ({', '.join(sources)}); the "
+            f"other {unexplained:,} are {unexplained_drop * 100:.1f}% of the "
+            f"{retained:,} the rule does not touch, past the "
+            f"{CATEGORY_DROP_TOLERANCE * 100:.0f}% limit"
+        )
+    return accounting, None
 
 
 def _judge_recategorization(
@@ -1773,6 +1926,48 @@ def evaluate_publish(
             # candidate against a pre-ruling baseline and refusing every hour
             # for three days while both artifacts said why in a published key.
             disclosed = _newly_excluded_in(cand, prev, name)
+            if disclosed and all(
+                r["section"] == SCORE_UNIT_SECTION for r in disclosed
+            ):
+                # #1010: the score-unit rung publishes what it removed per cell,
+                # so its excuse is bounded by that, not granted by its label.
+                accounting, refusal = _judge_score_unit_disclosure(
+                    name, prev_n, cand, prev, disclosed
+                )
+                if refusal is None:
+                    observe(
+                        "category_collapse_disclosed_exclusion",
+                        f"category {name!r} fell {drop * 100:.1f}% "
+                        f"({prev_n:,} -> {accounting['candidate']:,}), past the "
+                        f"{CATEGORY_DROP_TOLERANCE * 100:.0f}% limit, and is "
+                        f"RECORDED rather than refused: {SCORE_UNIT_SECTION} "
+                        f"removed {accounting['explained']:,} of its outcomes "
+                        f"({', '.join(accounting['sources'])}) and the "
+                        f"{accounting['retained_baseline']:,} it did not touch "
+                        f"lost {accounting['unexplained_drop_pct']:.1f}%",
+                        category=name,
+                        previous=prev_n,
+                        candidate=cand_n,
+                        drop_pct=round(drop * 100, 2),
+                        disclosed_by=disclosed,
+                        magnitude_uncheckable=False,
+                        score_unit_accounting=accounting,
+                    )
+                    continue
+                reject(
+                    "category_collapse",
+                    f"category {name!r} fell {drop * 100:.1f}% "
+                    f"({prev_n:,} -> {cand_n:,}), limit "
+                    f"{CATEGORY_DROP_TOLERANCE * 100:.0f}%, without a version "
+                    f"bump; {refusal}",
+                    category=name,
+                    previous=prev_n,
+                    candidate=cand_n,
+                    drop_pct=round(drop * 100, 2),
+                    disclosed_by=disclosed,
+                    score_unit_accounting=accounting,
+                )
+                continue
             if disclosed:
                 observe(
                     "category_collapse_disclosed_exclusion",
@@ -1793,12 +1988,13 @@ def evaluate_publish(
                     candidate=cand_n,
                     drop_pct=round(drop * 100, 2),
                     disclosed_by=disclosed,
-                    # No rung publishes a PER-CELL count today, so the size of
+                    # These rungs publish no PER-CELL count, so the size of
                     # the drop is explained in kind but not in magnitude. Said
                     # out loud: an unchecked read must never pass as a clean
                     # one. Bounding this needs the build to disclose per-cell
                     # counts, which is a change to the artifact contract and
-                    # belongs to its own ship, not to this alarm.
+                    # belongs to its own ship, not to this alarm (#1010's
+                    # score-unit rung does, and is bounded above).
                     magnitude_uncheckable=True,
                 )
                 # The ECE comparison below is skipped for the same reason the
@@ -1910,6 +2106,12 @@ def gate_ledger_record(verdict: PublishVerdict) -> dict:
             "drop_pct": o.get("drop_pct"),
             "disclosed_by": o.get("disclosed_by"),
             "magnitude_uncheckable": o.get("magnitude_uncheckable"),
+            # #1010: the bounded rung's arithmetic, where it was checked.
+            **(
+                {"score_unit_accounting": o["score_unit_accounting"]}
+                if o.get("score_unit_accounting") is not None
+                else {}
+            ),
         }
         for o in verdict.observations
         if o.get("code") == "category_collapse_disclosed_exclusion"

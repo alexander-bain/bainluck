@@ -20,7 +20,7 @@
     "_main_futures_sql": "5f399959e521e053",
     "_roster_pushdown_predicates": "9b4afb101a88cb8a",
     "_virtual_market_ctes": "d03415be9c36d5cb",
-    "compute_calibration_payload": "a9519b691a4d8b43",
+    "compute_calibration_payload": "69a00ad9660e7c5e",
     "identity_quarantine_ctes": "178dd31b64f3e836"
   },
   "hashed_roots": [
@@ -987,7 +987,7 @@
   ],
   "schema": "calibration-fingerprint-derived/v1",
   "source": "backend/app/tasks/precompute_calibration.py",
-  "source_sha256": "7c2af9f9efab9a37cd28db0258d85a728509cfe7267e427b86667322228e9f5b",
+  "source_sha256": "ff1b9f4db7d1bbd1c47ca99432ef38ec50af4898e0d7d56ee51e1a36776d7f0d",
   "uncovered_behavior_or_evidence": 42,
   "uncovered_count": 69,
   "uncovered_sql_shaping": 27
