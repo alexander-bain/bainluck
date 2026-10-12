@@ -13,6 +13,13 @@ a stats-line reset mid-flush keeps the flush whole.
 Inside `db`, `slowest_db` nests the lock-timeout SET (lazy checkout), the price
 pipeline and the re-rank execute; `db.unknown` is the rest (enter, exit,
 commit). The nested spans are part of `db`, never added to it.
+
+VIRTUAL TIME (#10090, integrator 2001Z: `db=0.31 s` against a 0.1 s bound on a
+loaded CI runner). Every test here runs on `_VirtualClockLoop`, and the timings
+read that loop's clock: time stands still while anything is runnable and jumps
+to the next timer when nothing is. An injected sleep measures exactly, a seam
+nothing was injected into measures zero, and a runner stall moves neither
+(`test_a_runner_stall_lands_in_no_field`).
 """
 
 import ast
@@ -49,6 +56,60 @@ from tests.pm_bulk_test_support import price_writes, statement_params
 
 pytestmark = pytest.mark.asyncio
 
+
+class _JumpingSelector:
+    """The loop's selector, except that a wait for the next timer is not
+    slept: the loop's clock moves to that timer and the poll returns."""
+
+    def __init__(self, selector, loop):
+        self._selector, self._loop = selector, loop
+
+    def select(self, timeout=None):
+        if timeout is not None and timeout > 0:
+            self._loop.virtual_now += timeout
+            timeout = 0
+        return self._selector.select(timeout)
+
+    def __getattr__(self, name):
+        return getattr(self._selector, name)
+
+
+class _VirtualClockLoop(asyncio.SelectorEventLoop):
+    def __init__(self):
+        super().__init__()
+        self.virtual_now = 0.0
+        self._selector = _JumpingSelector(self._selector, self)
+
+    def time(self):
+        return self.virtual_now
+
+
+class _VirtualClockPolicy(asyncio.DefaultEventLoopPolicy):
+    def new_event_loop(self):
+        return _VirtualClockLoop()
+
+
+@pytest.fixture(scope="module")
+def event_loop_policy():
+    # Deprecated in pytest-asyncio 1.x in favour of a 1.x-only hook; kept
+    # because `requirements.txt` admits >=0.23.3, which has only this.
+    return _VirtualClockPolicy()
+
+
+def _now():
+    try:
+        return asyncio.get_running_loop().time()
+    except RuntimeError:  # the synchronous unit tests: no loop, no timing
+        return time.monotonic()
+
+
+@pytest.fixture(autouse=True)
+def _timings_read_the_loop_clock(monkeypatch):
+    import app.tasks.kalshi_ws as module
+
+    monkeypatch.setattr(module, "time", SimpleNamespace(monotonic=_now))
+
+
 SLOW = 0.25
 #: Everything not injected is in-memory; well under this on any runner.
 QUIET = 0.1
@@ -80,7 +141,7 @@ def rig(*, games=2, live=None, delays=None, on_commit=None, commits=()):
             (oid, _prob), = pairs
             self.rows.append(oid)
             row = SimpleNamespace(id=oid, market_id=markets[oid],
-                                  last_updated=time.monotonic(), quote_moved=True)
+                                  last_updated=_now(), quote_moved=True)
             return SimpleNamespace(rowcount=1, all=lambda: [row])
 
     engine = consumer_engine()
@@ -143,11 +204,11 @@ def rig(*, games=2, live=None, delays=None, on_commit=None, commits=()):
 
     async def timed_flush():
         # What the consumer's `timed_flush` does around the shipped flush.
-        started = time.monotonic()
+        started = _now()
         try:
             return await ns["flush_prices"](None)
         finally:
-            timings.flushed(time.monotonic() - started)
+            timings.flushed(_now() - started)
 
     return SimpleNamespace(flush=timed_flush, buffer=buffer, prices=prices,
                            timings=timings, delays=delays)
@@ -191,6 +252,20 @@ async def test_a_slow_publish_is_publish():
     waits, _ = slowest(r)
     assert waits["publish"] >= SLOW
     assert waits["db"] < QUIET and waits["stamp_wait"] < QUIET
+
+
+async def test_a_runner_stall_lands_in_no_field():
+    """The CI failure (integrator 2001Z): a loaded runner stalled the process
+    ~0.3 s inside a seam nothing was injected into, and `db` read 0.31 s. The
+    loop clock does not move while the process is stalled, so the injected
+    publish still reads SLOW and the stalled db seam still reads zero."""
+    assert isinstance(asyncio.get_running_loop(), _VirtualClockLoop)
+    r = rig(games=1, delays={"publish": SLOW}, on_commit=lambda: time.sleep(0.3))
+    tick(r, 0)
+    await r.flush()
+    waits, _ = slowest(r)
+    assert waits["db"] < QUIET and waits["stamp_wait"] < QUIET
+    assert waits["publish"] == pytest.approx(SLOW)
 
 
 async def test_joining_a_held_refresh_is_stamp_wait():
@@ -246,9 +321,9 @@ async def test_a_refresh_outliving_its_flush_is_in_no_flushs_waits():
     await settle(r)  # the refresh ends between the two flushes
     r.timings.reset()
     tick(r, 1)
-    started = time.monotonic()
+    started = _now()
     await r.flush()
-    assert time.monotonic() - started < QUIET
+    assert _now() - started < QUIET
     waits, _ = slowest(r)
     assert waits["stamp_wait"] < QUIET
     assert r.timings.spent["stamp"] >= SLOW  # the old bucket: not this flush's
