@@ -607,3 +607,116 @@ async def test_9936_a_settled_answer_without_a_time_keeps_its_card_across_passes
     assert card["status"] == "resolved"
     yes = next(o for o in card["top_outcomes"] if o["name"] == "Yes")
     assert (yes["is_winner"], yes["resolution_source"]) == (True, "polymarket")
+
+
+# ---------------------------------------------------------------------------
+# #9925 — the Discover card's `collection_ref`, against the real producer, the
+# real publication correction and the page's own snapshot read. SHIP: tap
+# "View collection" on an eligible theme and open the page the card counted.
+# ---------------------------------------------------------------------------
+
+
+def _ai_bundle(ids):
+    return {
+        "type": "bundle",
+        "data": {
+            "id": "theme:story:ai:" + "-".join(map(str, ids)),
+            "kind": "theme", "story_key": "story:ai", "title": "AI",
+            "item_count": len(ids), "member_ids": list(ids),
+            "items": [{"type": "futures", "data": {"id": i}} for i in ids],
+            "debug_bundles": {"grouped_by": "story_key"},
+        },
+    }
+
+
+async def _card(world, ids):
+    from app.utils import theme_collection_ref as tcr
+
+    reports = []
+    # Both reads take their own session from the factory, as the route's do.
+    published = await tcr.read_published_themes(
+        budget_seconds=5.0, session_factory=world["Session"]
+    )
+    (out,) = await tcr.attach_theme_collection_refs(
+        [_ai_bundle(ids)], published=published, budget_seconds=5.0,
+        observe=reports.append, session_factory=world["Session"],
+    )
+    reason = reports[0][out["data"]["id"]] if reports else None
+    return out["data"].get("collection_ref"), reason, published
+
+
+@pytest.mark.asyncio
+async def test_9925_the_card_links_to_the_page_it_counts_and_only_while_it_can(world):
+    from app.tasks.theme_assembly import (
+        _run_assemble_theme_collections,
+        _run_rebuild_theme_snapshot,
+    )
+    from app.utils import container_corrections as cc
+    from app.utils import theme_collection_ref as tcr
+
+    async with world["Session"]() as db:
+        ids = await _seed_ai_markets(db)
+    preview = [ids["KXCLAUDE-27-C6"], ids["PM-OAI-IPO"], ids["PM-GROK5"]]
+
+    # Assembled but unpublished: the card has no link (and no read happens).
+    report = await _run_assemble_theme_collections(only=AI_SLUG)
+    assert report["terminal"] == "complete", report
+    ref, reason, published = await _card(world, preview)
+    assert published == tcr.PublishedThemes() and ref is None and reason is None
+
+    cid = await _container_id(world, AI_SLUG)
+    async with world["Session"]() as db:
+        await cc.publish_container(db, container_id=cid, reason="reviewed", actor="test")
+        await db.commit()
+    world["sent"].clear()
+
+    # Published, but the rebuild has not written the live revision's snapshot:
+    # the page is "building", so the card does not link.
+    assert _is_building(await _get(world, AI_SLUG))
+    ref, reason, _ = await _card(world, preview)
+    assert ref is None and reason == tcr.SNAPSHOT_STALE
+
+    assert (await _run_rebuild_theme_snapshot(cid))["terminal"] == "complete"
+    live = await _live_revision(world, cid)
+    page = await _get(world, AI_SLUG)
+    ref, reason, _ = await _card(world, preview)
+    assert reason == tcr.EMITTED
+    assert ref == {
+        "slug": AI_SLUG,
+        "name": page["container"]["name"],
+        "revision": live,
+        "collection_count": page["counts"]["shown_count"],
+    }
+    assert page["revision"] == live
+    assert set(preview) <= set(_page_ids(page))
+
+    # A false friend in the preview: ai does not admit it, and the map never
+    # falls back, so no link.
+    ref, reason, _ = await _card(world, [*preview, ids["PM-MONET"]])
+    assert ref is None and reason == "mapped_target_absent"
+
+    # A member withdrawal moves the revision: no link while the page builds,
+    # then the new revision's link, counting one fewer.
+    async with world["Session"]() as db:
+        await cc.withdraw_member(
+            db, container_id=cid, child_type="market", child_id=ids["PM-GEM3"],
+            reason="test", actor="test",
+        )
+        await db.commit()
+    world["sent"].clear()
+    ref, reason, _ = await _card(world, preview)
+    assert ref is None and reason == tcr.SNAPSHOT_STALE
+    assert (await _run_rebuild_theme_snapshot(cid))["terminal"] == "complete"
+    after = await _get(world, AI_SLUG)
+    ref, _, _ = await _card(world, preview)
+    assert ref["revision"] == after["revision"] > live
+    assert ref["collection_count"] == after["counts"]["shown_count"] == (
+        page["counts"]["shown_count"] - 1
+    )
+
+    # Publication withdrawn: no link.
+    async with world["Session"]() as db:
+        await cc.withdraw_publication(db, container_id=cid, reason="test", actor="test")
+        await db.commit()
+    ref, reason, published = await _card(world, preview)
+    assert ref is None and published == tcr.PublishedThemes()
