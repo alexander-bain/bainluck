@@ -42,6 +42,10 @@ enum PlayerMilestoneProfile {
         /// The stat axis: half a step of padding either side, never below zero
         /// for a ladder that starts at or above zero.
         let domain: ClosedRange<Double>
+
+        /// The x-axis ticks: the quoted lines and nothing between them, so
+        /// every axis label is a label some chip prints.
+        var axisLines: [Double] { milestones.map(\.threshold) }
     }
 
     /// nil means "draw the chips only".

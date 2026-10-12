@@ -12,6 +12,7 @@ import XCTest
 /// - lose the chip index (picked chip ≠ large dot) → `testEachMarkKeepsItsChipIndex`
 /// - lower the three-line floor → `testTwoPricedLinesAreAChoiceNotAShape`
 /// - let the axis run below zero → `testTheAxisPadsHalfAStepAndNeverGoesBelowZero`
+/// - tick between the lines ("0.5" under touchdowns) → `testAxisTicksAreTheQuotedLinesOnly`
 final class PlayerMilestoneProfile10868Tests: XCTestCase {
 
     /// D'Andre Swift rushing yards, the atlas's first NFL profile, as rungs.
@@ -80,6 +81,16 @@ final class PlayerMilestoneProfile10868Tests: XCTestCase {
         let halfLines = try XCTUnwrap(PlayerMilestoneProfile.profile(
             thresholds: [0.5, 1.5, 2.5], probabilities: [0.36, 0.08, 0.02]))
         XCTAssertEqual(halfLines.domain.lowerBound, 0, accuracy: 1e-9)
+    }
+
+    func testAxisTicksAreTheQuotedLinesOnly() throws {
+        var withHole: [Double?] = [0.36, 0.08, 0.02, 0.01]
+        withHole[3] = nil
+        let touchdowns = try XCTUnwrap(PlayerMilestoneProfile.profile(
+            thresholds: [1, 2, 3, 4], probabilities: withHole))
+        XCTAssertEqual(touchdowns.axisLines, [1, 2, 3],
+                       "no tick between lines and none for an unpriced line")
+        XCTAssertEqual(touchdowns.axisLines.map(PlayerPropsFamily.targetLabel), ["1+", "2+", "3+"])
     }
 
     func testMismatchedInputsDrawNothing() {

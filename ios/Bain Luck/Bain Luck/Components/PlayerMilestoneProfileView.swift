@@ -59,12 +59,14 @@ struct PlayerMilestoneProfileView: View {
                 }
             }
         }
+        // Ticks only at the quoted lines, labelled as the chips are ("1+"):
+        // automatic ticks put "0.5" and "1.5" under a touchdown ladder.
         .chartXAxis {
-            AxisMarks(values: .automatic(desiredCount: 5)) { value in
+            AxisMarks(values: profile.axisLines) { value in
                 AxisTick()
-                AxisValueLabel {
+                AxisValueLabel(collisionResolution: .greedy) {
                     if let line = value.as(Double.self) {
-                        Text(PlayerPropsCardView.formatStatValue(line))
+                        Text(PlayerPropsFamily.targetLabel(line))
                     }
                 }
             }
