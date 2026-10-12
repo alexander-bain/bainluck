@@ -152,6 +152,25 @@ final class HeadlineDisclosure9483Tests: XCTestCase {
             status: "scheduled", commenceTime: nil, isOpeningLine: false), .lastRecorded)
     }
 
+    func testAnInterruptedPairIsOnlyTheLastRecordedChance() {
+        // The status line beside it says "Update interrupted"; the subject
+        // must not call the same pair current.
+        for status in ["live", "scheduled"] {
+            XCTAssertEqual(EventHeadlinePhase9483.resolve(
+                status: status, commenceTime: kickoff, isOpeningLine: false,
+                deliveryInterrupted: true, now: kickoff.addingTimeInterval(-60)),
+                .lastRecorded, status)
+        }
+        // Control: the same live pair, delivery not interrupted, is current.
+        XCTAssertEqual(EventHeadlinePhase9483.resolve(
+            status: "live", commenceTime: kickoff, isOpeningLine: false,
+            deliveryInterrupted: false, now: kickoff.addingTimeInterval(600)), .current)
+        // A final keeps no phase label whatever the delivery state.
+        XCTAssertNil(EventHeadlinePhase9483.resolve(
+            status: "completed", commenceTime: kickoff, isOpeningLine: false,
+            deliveryInterrupted: true, now: kickoff.addingTimeInterval(9000)))
+    }
+
     func testAnOpeningLineOrAFinalGetsNoSecondLabel() {
         XCTAssertNil(EventHeadlinePhase9483.resolve(
             status: "scheduled", commenceTime: kickoff, isOpeningLine: true,

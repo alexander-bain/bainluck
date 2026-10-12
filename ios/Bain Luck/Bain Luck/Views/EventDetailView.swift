@@ -1589,7 +1589,8 @@ struct EventDetailView: View {
                         // since-open caption below already carries it).
                         if let phase = EventHeadlinePhase9483.resolve(
                             status: event.status, commenceTime: event.commenceTime?.asDate,
-                            isOpeningLine: shown.isOpeningLine) {
+                            isOpeningLine: shown.isOpeningLine,
+                            deliveryInterrupted: vm.liveUpdateStatus == .interrupted) {
                             EventHeadlinePhaseLabel9483(
                                 phase: phase,
                                 baseline: event.status == "live"

@@ -8,7 +8,9 @@ import SwiftUI
 /// or is live is the CURRENT chance; a game that started and is neither live
 /// nor final (suspended, delayed, a status that has not caught up) still
 /// draws the pair, but nothing says it is current, so it is the LAST RECORDED
-/// one. An opening-line hero (#9470) already says "Opening line" and gets no
+/// one. Nor is a live pair CURRENT while its own status line says
+/// "Update interrupted": the page stopped receiving prices, so the pair is the
+/// last one it recorded. An opening-line hero (#9470) already says "Opening line" and gets no
 /// second label. A finished hero is a verdict and does not use this.
 ///
 /// Presentation only. It reads the same status, clock and opening-line flag the
@@ -25,9 +27,11 @@ nonisolated enum EventHeadlinePhase9483: Equatable, Sendable {
     }
 
     static func resolve(
-        status: String?, commenceTime: Date?, isOpeningLine: Bool, now: Date = Date()
+        status: String?, commenceTime: Date?, isOpeningLine: Bool,
+        deliveryInterrupted: Bool = false, now: Date = Date()
     ) -> EventHeadlinePhase9483? {
         guard !isOpeningLine, !EventState.isFinished(status) else { return nil }
+        if deliveryInterrupted { return .lastRecorded }
         if status == "live" { return .current }
         // `hasStarted` treats a missing clock as started, so an undated game
         // fails toward "last recorded", never toward "current".
