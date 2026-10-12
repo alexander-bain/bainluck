@@ -1027,12 +1027,17 @@ def _typed_question(proposition_key: str, slot: dict, shared: dict) -> dict:
 def _unblended_option(entries: list, side: str, lifecycle_state: str, shared: dict) -> dict:
     """U5 / §4.2 — ≥2 served rows typed to one proposition the route did NOT
     blend. One option, value null, basis unknown; every contributor's raw
-    value stays in ``source_evidence``. Blending them is another reviewed ship."""
+    value stays in ``source_evidence``. Blending them is another reviewed ship.
+
+    #10590: when every row's grade agrees on won/lost the option publishes
+    ``result``, as `_game_option` does for one row — a grade is not a blend,
+    and clients render Won/Lost only on ``value_state == "result"``."""
     contributors = sorted({cid for e in entries for cid in e["contributor_ids"]})
     results = [_game_result(e, lifecycle_state, shared) for e in entries]
     states = {r["state"] for r in results}
     result = results[0] if len(states) == 1 else {"state": "unknown", "evidence_kind": "none"}
     evidence = [ev for e in entries for ev in _game_evidence(e, side, shared)]
+    graded = result["state"] in ("won", "lost")
     return {
         "option_key": "o:" + "+".join(str(c) for c in contributors),
         "label": _axis_label(entries[0]),
@@ -1041,8 +1046,8 @@ def _unblended_option(entries: list, side: str, lifecycle_state: str, shared: di
         "contributor_outcome_ids": contributors,
         "published": {
             "value": None,
-            "value_state": "unblended_equivalents",
-            "basis": "unknown",
+            "value_state": "result" if graded else "unblended_equivalents",
+            "basis": "result" if graded else "unknown",
             "source": None,
             "observed_at": None,
         },
