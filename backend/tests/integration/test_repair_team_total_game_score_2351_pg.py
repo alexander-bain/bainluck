@@ -100,31 +100,42 @@ async def db(isolated_database):
         for t in (rt.BAK_TABLE, "futures_outcomes", "futures_markets", "events"):
             await s.execute(text(f"DROP TABLE IF EXISTS {t}"))
         await s.execute(text(
-            "CREATE TABLE events (id BIGINT PRIMARY KEY, status TEXT, home_team_name TEXT,"
-            " away_team_name TEXT, home_score INT, away_score INT,"
-            " commence_time TIMESTAMPTZ, completed_at TIMESTAMPTZ, score_source TEXT)"))
+            "CREATE TABLE events (id BIGINT PRIMARY KEY, sport_id INT NOT NULL,"
+            " status TEXT NOT NULL, home_team_name TEXT NOT NULL,"
+            " away_team_name TEXT NOT NULL, home_score INT, away_score INT,"
+            " commence_time TIMESTAMPTZ NOT NULL, completed_at TIMESTAMPTZ,"
+            " score_source TEXT)"))
         await s.execute(text(
-            "CREATE TABLE futures_markets (id BIGINT PRIMARY KEY, source TEXT,"
-            " external_id TEXT, name TEXT, event_id BIGINT,"
+            "CREATE TABLE futures_markets (id BIGINT PRIMARY KEY, source TEXT NOT NULL,"
+            " external_id TEXT NOT NULL, name TEXT NOT NULL, category TEXT NOT NULL,"
+            " mutually_exclusive BOOLEAN NOT NULL, status TEXT NOT NULL, event_id BIGINT,"
             " UNIQUE (source, external_id))"))
         await s.execute(text(
-            "CREATE TABLE futures_outcomes (id BIGINT PRIMARY KEY, market_id BIGINT,"
-            " name TEXT, is_winner BOOLEAN, resolution_source TEXT,"
+            "CREATE TABLE futures_outcomes (id BIGINT PRIMARY KEY, market_id BIGINT NOT NULL,"
+            " external_id TEXT NOT NULL, name TEXT NOT NULL, is_winner BOOLEAN,"
+            " resolution_source TEXT,"
             " last_updated TIMESTAMPTZ DEFAULT '2026-01-01T00:00:00Z')"))
+        # Every NOT NULL column the ORM declares is named, as the seed check
+        # requires. `completed_at` stays NULL, so the chronology refusal is
+        # inert here and only the test that sets both clocks exercises it.
         for eid, (status, home, away, hs, as_) in EVENTS.items():
             await s.execute(text(
-                "INSERT INTO events (id, status, home_team_name, away_team_name, home_score, away_score)"
-                " VALUES (:i,:s,:h,:a,:hs,:as_)"),
+                "INSERT INTO events (id, sport_id, status, home_team_name, away_team_name,"
+                " home_score, away_score, commence_time)"
+                " VALUES (:i, 1, :s, :h, :a, :hs, :as_, '2026-06-05T23:05:00Z')"),
                 dict(i=eid, s=status, h=home, a=away, hs=hs, as_=as_))
         markets, outcomes = _rows()
         for mid, ext, name, eid in markets:
             await s.execute(text(
-                "INSERT INTO futures_markets VALUES (:i,'kalshi',:x,:n,:e)"),
+                "INSERT INTO futures_markets (id, source, external_id, name, category,"
+                " mutually_exclusive, status, event_id)"
+                " VALUES (:i, 'kalshi', :x, :n, 'sports', false, 'resolved', :e)"),
                 dict(i=mid, x=ext, n=name, e=eid))
         for oid, mid, name, won, src in outcomes:
             await s.execute(text(
-                "INSERT INTO futures_outcomes (id, market_id, name, is_winner, resolution_source)"
-                " VALUES (:i,:m,:n,:w,:s)"), dict(i=oid, m=mid, n=name, w=won, s=src))
+                "INSERT INTO futures_outcomes (id, market_id, external_id, name, is_winner,"
+                " resolution_source) VALUES (:i, :m, :x, :n, :w, :s)"),
+                dict(i=oid, m=mid, x=f"leg-{oid}", n=name, w=won, s=src))
         await s.commit()
     yield maker
     await engine.dispose()

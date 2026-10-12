@@ -620,6 +620,15 @@ COVERED = (
     # INSERT, in a private schema, to drive the capture-verdict apply, re-run,
     # `--restore`, `--restore-undrifted` and refusals.
     "test_settlement_capture_verdicts_repair_8126_pg.py",
+    # #2351 (MLB team totals graded from the team's own score). Seeds `events`,
+    # `futures_markets` and `futures_outcomes` by raw INSERT into a throwaway
+    # database. `events.sport_id`, `.commence_time` and the market's
+    # `category` / `mutually_exclusive` / `status` and the leg's `external_id`
+    # are named only to match the ORM. The subject is `is_winner` /
+    # `resolution_source` on each leg and the event's status and score, all
+    # named explicitly. `completed_at` stays NULL so the chronology refusal
+    # only fires in the test that sets both clocks.
+    "test_repair_team_total_game_score_2351_pg.py",
 )
 
 INTEGRATION_DIR = Path(__file__).parent / "integration"
