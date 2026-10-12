@@ -3806,6 +3806,25 @@ jobs:
             exit 1
           fi
 
+      - name: "#5341 a complete NFL week publishes itself; partial or corrected weeks never do (real Postgres)"
+        # The automatic publication rides #9651's chain lock, ledger and revision
+        # column inside the collection pass's own transaction. Only a server
+        # shows the publish landing in the assembly's commit, a second pass
+        # adding no ledger row, a withdrawn hub or member staying withdrawn
+        # across a commit, an edge left by a game the authority moved, and a
+        # schedule outage leaving the published hub untouched.
+        #
+        # Same skip-detection as every gate in this job.
+        if: matrix.group == 'shared-tail'
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_container_nfl_publication_5341_pg.py \
+            -v -s -rs 2>&1 | tee /tmp/nflpublication5341.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/nflpublication5341.txt; then
+            echo "::error::#5341 NFL week publication SKIPPED — the gate did not run"
+            exit 1
+          fi
+
       - name: "#4229 Kalshi senate backfill moves the stored row (real Postgres)"
         # CERT-2372 blocked the classifier-only SHA because the diff made these
         # markets CLASSIFY as politics while every stored row stayed `hockey`:

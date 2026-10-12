@@ -9,7 +9,9 @@ the candidates to `container_assembly.assemble_container`, which writes the
 DARK. Nothing schedules this and nothing reads its edges yet. It creates no
 container, claims no anchor, writes no event and no market: the one write it
 can cause is `assemble_container`'s own, and only with ``apply=True`` on a
-container the caller already resolved. The caller owns the transaction — this
+container the caller already resolved — plus, only with
+``CONTAINER_NFL_AUTO_PUBLISH_ENABLED`` on, the publication of a week this pass
+proved complete (`app/utils/container_nfl_publication.py`, #5341). The caller owns the transaction — this
 never commits — so the dispatch that eventually runs it decides when a pass is
 kept, and `container_assembly.UNDO_LINE` undoes it.
 
@@ -47,6 +49,7 @@ from app.utils.container_nfl import (
     select_week_contests,
     week_incompleteness,
 )
+from app.utils.container_nfl_publication import publish_complete_week
 
 logger = logging.getLogger(__name__)
 
@@ -256,6 +259,7 @@ async def run_nfl_week_assembly(
         )
         return report
 
+    fixtures = list(fixtures)  # read twice: the harvest, then the publication policy
     harvest = await gather_nfl_week_candidates(session, fixtures, target, limit=limit)
     report["harvest"] = harvest.summary()
     report["games"] = harvest.members.games
@@ -265,14 +269,20 @@ async def run_nfl_week_assembly(
 
     if harvest.selection.unavailable:
         report.update(terminal="unavailable", reason=harvest.selection.unavailable)
+        # #5341: an unreadable week publishes nothing and unpublishes nothing.
+        report["publication"] = await publish_complete_week(
+            session, container, target, harvest, None,
+            fixtures=fixtures, unidentified_limit=REPORT_LIMIT, apply=apply,
+        )
         return report
 
     # Members admitted around a gap are still right, so they are kept; what a
     # gap changes is the claim, below — the same shape as the tennis pass, which
     # assembles what it has and says `partial` when that is not everything.
+    assembly = None
     if apply and harvest.candidates:
         result = await assemble_container(session, container, harvest.candidates)
-        report["assembly"] = result.as_dict()
+        assembly = report["assembly"] = result.as_dict()
 
     # gotcha #53: `complete` means every game the authority files under this
     # week is a member and its questions were read in full. Zero members, a
@@ -286,6 +296,11 @@ async def run_nfl_week_assembly(
         report.update(terminal="partial", reason=incomplete[0])
     else:
         report.update(terminal="complete", reason=None)
+    # #5341: dark unless CONTAINER_NFL_AUTO_PUBLISH_ENABLED; same transaction.
+    report["publication"] = await publish_complete_week(
+        session, container, target, harvest, assembly,
+        fixtures=fixtures, unidentified_limit=REPORT_LIMIT, apply=apply,
+    )
     return report
 
 
