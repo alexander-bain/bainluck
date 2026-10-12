@@ -1772,7 +1772,7 @@ async def test_theme_publish_refuses_a_page_readers_could_not_be_served(
 
     preview, code = await operator.run(
         operator.Options(slug="ai"),
-        lambda: theme_session(),
+        theme_session,
         read_snapshot=SnapshotReader(snap),
     )
     assert code == 0 and preview["status"] == "preview"
@@ -1795,9 +1795,7 @@ async def test_sports_hubs_never_consult_the_theme_page():
     async def refuse(*_):
         raise AssertionError("an NFL hub has no theme snapshot")
 
-    receipt, code = await operator.run(
-        apply_options(), lambda: Session(), read_snapshot=refuse
-    )
+    receipt, code = await operator.run(apply_options(), Session, read_snapshot=refuse)
     assert code == 0 and receipt["status"] == "applied"
     assert "theme_snapshot" not in receipt
 
@@ -1813,9 +1811,7 @@ async def test_the_default_reader_is_the_pages_own(monkeypatch):
         return None
 
     monkeypatch.setattr(containers, "_read_theme_snapshot", page_reader)
-    receipt, code = await operator.run(
-        operator.Options(slug="ai"), lambda: theme_session()
-    )
+    receipt, code = await operator.run(operator.Options(slug="ai"), theme_session)
     assert (
         code == 0
         and receipt["publish_refusal"] == operator.THEME_REFUSED_SNAPSHOT_ABSENT
