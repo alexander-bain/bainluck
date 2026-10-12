@@ -37,8 +37,8 @@ final class WatchDiscoveryStore: ObservableObject {
         }
     }
 
-    func visibleReadings(hasSelectedGame: Bool) -> [WatchDiscoveryReading] {
-        Array(readings.prefix(hasSelectedGame ? 2 : 3))
+    func visibleReadings() -> [WatchDiscoveryReading] {
+        Array(readings.prefix(3))
     }
 
     /// Cancel a dismissed page's request without erasing a saved reading/error.

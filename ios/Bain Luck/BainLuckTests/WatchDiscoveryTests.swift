@@ -76,10 +76,11 @@ final class WatchDiscoveryTests: XCTestCase {
         try await transport.waitFor(1)
         await transport.finish(1, .success(readings))
         await first.value
-        XCTAssertEqual(store.visibleReadings(hasSelectedGame: true).count, 2)
-        XCTAssertEqual(store.visibleReadings(hasSelectedGame: false).count, 3)
+        XCTAssertEqual(store.visibleReadings().map(\.id), [1, 2, 3],
+                       "All three server-selected stories remain available below the selected game")
         let restored = WatchDiscoveryStore(transport: transport, defaults: defaults)
         XCTAssertTrue(restored.isSavedReading)
+        XCTAssertEqual(restored.visibleReadings().map(\.id), [1, 2, 3])
         XCTAssertEqual(restored.readings.first?.observedAt, observedAt)
         XCTAssertEqual(restored.fetchedAt, receivedAt)
         let failure = Task { await store.refresh() }
@@ -105,6 +106,26 @@ final class WatchDiscoveryTests: XCTestCase {
         XCTAssertFalse(store.isSavedReading)
         XCTAssertNil(store.errorMessage)
         XCTAssertTrue(WatchDiscoveryStore(transport: transport, defaults: defaults).readings.isEmpty)
+    }
+
+    @MainActor func testThreeStoriesKeepServerOrderAndCapAcrossCacheReload() async throws {
+        let suite = "watch-discovery-three-test-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let transport = DiscoveryTestTransport()
+        // Inject more than three including a repeated ID at the transport boundary.
+        let readings = try [5, 2, 5, 9, 1].map { try XCTUnwrap(decode(row($0)).first) }
+        let store = WatchDiscoveryStore(transport: transport, defaults: defaults)
+        let request = Task { await store.refresh() }
+        try await transport.waitFor(1)
+        await transport.finish(1, .success(readings))
+        await request.value
+        XCTAssertEqual(store.visibleReadings().map(\.id), [5, 2, 9])
+        XCTAssertEqual(store.readings.map(\.id), [5, 2, 9])
+        let restored = WatchDiscoveryStore(transport: transport, defaults: defaults)
+        XCTAssertEqual(restored.visibleReadings(), store.visibleReadings())
+        XCTAssertTrue(restored.isSavedReading)
+        XCTAssertEqual(restored.readings.map(\.observedAt), store.readings.map(\.observedAt))
     }
 
     @MainActor func testLateDismissedAndSupersededResponsesCannotReplaceCurrentReading() async throws {

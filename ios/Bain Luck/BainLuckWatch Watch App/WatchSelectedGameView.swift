@@ -15,6 +15,7 @@ struct WatchSelectedGameView: View {
     @StateObject private var picker: WatchGamePickerStore
     @State private var choosingGame = false
     @State private var showingHandoffHelp = false
+    @State private var discoveryContinuation: StoryContinuationDestination?
     #if DEBUG
     @State private var launcherOpenCount = 0
     #endif
@@ -53,7 +54,7 @@ struct WatchSelectedGameView: View {
     }
 
     private var continuationEventID: Int? {
-        guard scenePhase == .active, !choosingGame else { return nil }
+        guard scenePhase == .active, !choosingGame, discoveryContinuation == nil else { return nil }
         return store.game?.id
     }
 
@@ -170,6 +171,7 @@ struct WatchSelectedGameView: View {
                         if store.game != nil {
                             Button {
                                 WatchTelemetry.shared.action(.phoneContinuation, surface: .game)
+                                discoveryContinuation = nil
                                 showingHandoffHelp = true
                             } label: {
                                 Text("Continue on iPhone")
@@ -205,6 +207,11 @@ struct WatchSelectedGameView: View {
                     .buttonStyle(.plain)
                     .accessibilityIdentifier("watch.clear-selection")
                 }
+                Divider()
+                WatchDiscoverStoriesView(
+                    isActive: !choosingGame && !showingHandoffHelp,
+                    continuation: $discoveryContinuation
+                )
                 #if DEBUG
                 if WatchFirstOpenUIFixture.enabled, store.selectedEventID != nil, store.game == nil {
                     Button("Deliver test detail") {
@@ -239,6 +246,7 @@ struct WatchSelectedGameView: View {
             // Existing foreground refresh rules still own all network scheduling.
             choosingGame = false
             showingHandoffHelp = false
+            discoveryContinuation = nil
             scroll.scrollTo("watch.game.top", anchor: .top)
         }
         .onAppear {
@@ -312,10 +320,12 @@ struct WatchSelectedGameView: View {
             #endif
         }
         .onChange(of: store.selectedEventID) { _, _ in
+            discoveryContinuation = nil
             // A new choice must reveal its identity, not inherit the old game's scroll.
             scroll.scrollTo("watch.game.top", anchor: .top)
         }
         .onChange(of: choosingGame) { wasChoosing, isChoosing in
+            if isChoosing { discoveryContinuation = nil }
             if wasChoosing && !isChoosing && store.selectedEventID != nil {
                 // Returning from the picker reveals the retained game's identity.
                 scroll.scrollTo("watch.game.top", anchor: .top)
