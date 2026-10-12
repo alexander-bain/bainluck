@@ -28,6 +28,12 @@ PUBLISH MEANS ALL OF THESE, AND FAILS CLOSED ON EACH:
   contest lacking a row of ours, no two rows for one game, no contest also filed
   under another week, no capped question read, and no id-less or placeholder
   slot filed under this week;
+* nothing the authority listed could be this week's without saying so: no
+  contest with an id but an unreadable round whose kickoff is unknown or near
+  the week's own kickoffs;
+* nothing WE hold says the read is short: none of our rows inside the week's
+  kickoff span carries a contest id this schedule read omits entirely, and that
+  read of our rows was not capped (a second signal for an absence, gotcha #53);
 * the hub is ``unpublished`` and its ledger holds no publication decision and
   no member withdrawal: a person who has touched the hub decides for it;
 * the stored ``contains`` edges ARE the members this pass proved: the event set
@@ -40,7 +46,10 @@ WHAT IT NEVER DOES. It never withdraws, never unpublishes and never re-publishes
 a ``withdrawn`` hub. A published week that a later pass cannot vouch for — a
 schedule outage, a game that lost its row — keeps its published state and says
 so (``retained``): a degraded read is not a retirement, and taking a hub back is
-a named decision (`withdraw_publication`). It adds no member, writes no edge,
+a named decision (`withdraw_publication`). That includes a published hub whose
+stored edges no longer match what the pass proved — a game the authority moved
+to another week — which reads ``retained: stored_members_differ`` with the ids,
+never ``already_published``. It adds no member, writes no edge,
 and never commits; the caller's transaction keeps or drops the publish together
 with the assembly that proved it.
 """
@@ -49,7 +58,8 @@ from __future__ import annotations
 
 import logging
 import os
-from typing import Optional
+from datetime import timedelta
+from typing import Iterable, Optional
 
 from sqlalchemy import text
 
@@ -64,6 +74,7 @@ from app.utils.container_corrections import (
 )
 from app.utils.container_nfl import (
     EXCLUDED_NO_CONTEST_ID,
+    EXCLUDED_NO_WEEK_IDENTITY,
     EXCLUDED_PLACEHOLDER,
     UNAVAILABLE_SEASON_MISMATCH,
     UNAVAILABLE_WEEK_NOT_SCHEDULED,
@@ -98,6 +109,9 @@ REFUSED_SEASON_MISMATCH = UNAVAILABLE_SEASON_MISMATCH
 REFUSED_CONTESTS_UNACCOUNTED = "contests_not_exactly_members"
 REFUSED_ID_LESS_SLOT = "week_slot_without_contest_id"
 REFUSED_PLACEHOLDER_SLOT = "week_slot_is_placeholder"
+REFUSED_NO_IDENTITY_SLOT = "week_slot_without_week_identity"
+REFUSED_STAMPED_MISSING = "stamped_game_missing_from_schedule"
+REFUSED_UNIDENTIFIED_CAPPED = "unidentified_read_truncated"
 REFUSED_SCHEMA_ABSENT = "publication_schema_absent"
 REFUSED_ROW_ABSENT = "container_row_absent"
 REFUSED_WITHDRAWN = "publication_withdrawn"
@@ -112,6 +126,12 @@ REFUSED_READER_PREFIX = "reader_ineligible:"
 
 _TRUTHY = frozenset({"1", "true", "yes", "on"})
 
+#: How far outside this week's own known kickoffs a contest with an id but an
+#: unreadable round still counts as possibly this week's. A flexed or Thursday
+#: game sits within a day or two of its week; the next week's games, the Hall
+#: of Fame game and the Wild Card round sit five days or more away.
+NO_IDENTITY_SLACK = timedelta(hours=48)
+
 
 def auto_publish_enabled() -> bool:
     """Read at call time, so it flips without a restart, and off unless set."""
@@ -123,14 +143,22 @@ def auto_publish_enabled() -> bool:
 # ---------------------------------------------------------------------------
 
 
-def harvest_refusal(harvest, target: NflWeek) -> Optional[str]:
+def harvest_refusal(
+    harvest, target: NflWeek, fixtures: Iterable, *, unidentified_limit: Optional[int]
+) -> Optional[str]:
     """None when this read accounts for every game the authority files under
     ``target``; otherwise the first reason it does not. Pure.
 
+    ``fixtures`` is the same schedule read the harvest was cut from; it is
+    required, because the last two checks are about what that read omitted.
+    ``unidentified_limit`` is the cap the pass put on its read of our in-span
+    rows (`container_nfl_assembly.REPORT_LIMIT`).
+
     The authority's own words first (`schedule_season_unknown`, …), then
-    `week_incompleteness`'s, then the two set checks those leave open: the
-    contest ids against the member games' ids, and the schedule slots that never
-    reached the contest list because they carry no id or no real teams.
+    `week_incompleteness`'s, then the set checks those leave open: the contest
+    ids against the member games' ids; the schedule slots that never reached the
+    contest list because they carry no id, no real teams or no readable round;
+    and our own stamped rows in the week's span that the read does not list.
     """
     selection = harvest.selection
     if selection.unavailable:
@@ -165,15 +193,45 @@ def harvest_refusal(harvest, target: NflWeek) -> Optional[str]:
         # is a game the authority has not named yet.
         if parse_round_identity(receipt.get("round")) == here:
             return REFUSED_PLACEHOLDER_SLOT
+
+    fixtures = list(fixtures)
+    kickoffs: dict = {}
+    for fixture in fixtures:
+        contest_id = (fixture.fixture_id or "").strip()
+        if contest_id and contest_id not in kickoffs:
+            known = fixture.start_time is not None and not getattr(
+                fixture, "start_is_placeholder", False
+            )
+            kickoffs[contest_id] = fixture.start_time if known else None
+    week_kickoffs = [c.kickoff for c in selection.contests if c.start_known]
+    for receipt in selection.excluded.get(EXCLUDED_NO_WEEK_IDENTITY, ()):
+        # An id, real teams, and a round we cannot read: this week's unless its
+        # own kickoff places it well away from this week's games.
+        kickoff = kickoffs.get((receipt.get("statpal_id") or "").strip())
+        if kickoff is None or not week_kickoffs:
+            return REFUSED_NO_IDENTITY_SLOT
+        if min(week_kickoffs) - NO_IDENTITY_SLACK <= kickoff <= max(week_kickoffs) + NO_IDENTITY_SLACK:
+            return REFUSED_NO_IDENTITY_SLOT
+
+    unidentified = list(getattr(harvest, "unidentified_in_span", ()) or ())
+    for row in unidentified:
+        # Stamped with a contest id this read lists nowhere — not under this
+        # week, not under another, not even as an exclusion. The authority used
+        # to list a game in this week's span and this read dropped it.
+        stamped = (row.get("statpal_fixture_id") or "").strip()
+        if stamped and stamped not in kickoffs:
+            return REFUSED_STAMPED_MISSING
+    if unidentified_limit is not None and len(unidentified) >= unidentified_limit:
+        return REFUSED_UNIDENTIFIED_CAPPED
     return None
 
 
-def _assembly_refusal(assembly: Optional[dict]) -> Optional[str]:
+def _assembly_refusal(assembly: Optional[dict], *, withdrawn_ok: bool = False) -> Optional[str]:
     if not assembly:
         return REFUSED_NOT_ASSEMBLED
     if assembly.get("errors") or assembly.get("unresolved"):
         return REFUSED_ASSEMBLY_ERRORS
-    if assembly.get("withdrawn"):
+    if assembly.get("withdrawn") and not withdrawn_ok:
         return REFUSED_MEMBER_WITHDRAWN
     return None
 
@@ -205,16 +263,20 @@ _HUB_FACTS_SQL = (
 )
 
 
-def _stored_difference(stored: dict, candidates: list) -> Optional[dict]:
-    """What the stored edges hold that this pass did not prove, or lack. None = same."""
+def _stored_difference(stored: dict, candidates: list, withdrawn: set) -> Optional[dict]:
+    """What the stored edges hold that this pass did not prove, or lack. None = same.
+
+    A member a person withdrew is expected to be absent, so it is never missing.
+    """
     events = {c.child_id for c in candidates if c.child_type == "event"}
     markets = {c.child_id for c in candidates if c.child_type == "market"}
+    withdrawn_events = {cid for (ct, cid) in withdrawn if ct == "event"}
     stored_events = {cid for (ct, cid) in stored if ct == "event"}
     stored_markets = {cid for (ct, cid) in stored if ct == "market"}
     other = sorted(f"{ct}:{cid}" for (ct, cid) in stored if ct not in ("event", "market"))
     diff = {
         "events_not_proved": sorted(stored_events - events),
-        "events_missing": sorted(events - stored_events),
+        "events_missing": sorted(events - withdrawn_events - stored_events),
         "markets_not_proved": sorted(stored_markets - markets),
         "other_children": other,
     }
@@ -232,15 +294,19 @@ async def publish_complete_week(
     harvest,
     assembly: Optional[dict],
     *,
+    fixtures: Iterable,
+    unidentified_limit: Optional[int],
     apply: bool,
 ) -> dict:
     """The publication decision for one NFL week, after its assembly. Never commits.
 
-    ``harvest`` is the pass's `NflWeekHarvest`; ``assembly`` is its
-    ``assemble_container`` report as a dict (None when nothing was assembled).
-    Returns the ``publication`` block of the week's report.
+    ``harvest`` is the pass's `NflWeekHarvest` and ``fixtures`` the schedule read
+    it was cut from; ``assembly`` is its ``assemble_container`` report as a dict
+    (None when nothing was assembled). Returns the week report's ``publication``.
     """
-    refusal = harvest_refusal(harvest, target)
+    refusal = harvest_refusal(
+        harvest, target, fixtures, unidentified_limit=unidentified_limit
+    )
     if not auto_publish_enabled():
         return _report(
             DECISION_DISABLED,
@@ -274,8 +340,22 @@ async def publish_complete_week(
         # A named decision took it back. Only another named decision restores it.
         return _report(DECISION_WITHHELD, REFUSED_WITHDRAWN, **held)
     if state == "published":
+        # Readers have it. Nothing below writes; it only says whether what they
+        # have is still exactly what this pass proved.
         if refusal is not None:
             return _report(DECISION_RETAINED, refusal, **held)
+        assembly_refusal = _assembly_refusal(assembly, withdrawn_ok=True)
+        if assembly_refusal is not None:
+            return _report(DECISION_RETAINED, assembly_refusal, **held)
+        difference = _stored_difference(
+            await current_members(session, container_id),
+            harvest.candidates,
+            await withdrawn_members(session, container_id),
+        )
+        if difference is not None:
+            return _report(
+                DECISION_RETAINED, REFUSED_STORED_DIFFER, difference=difference, **held
+            )
         return _report(DECISION_ALREADY_PUBLISHED, None, **held)
     if state != "unpublished":
         return _report(DECISION_WITHHELD, REFUSED_UNKNOWN_STATE, **held)
@@ -295,7 +375,7 @@ async def publish_complete_week(
         return _report(DECISION_WITHHELD, assembly_refusal, **held)
 
     difference = _stored_difference(
-        await current_members(session, container_id), harvest.candidates
+        await current_members(session, container_id), harvest.candidates, set()
     )
     if difference is not None:
         return _report(DECISION_WITHHELD, REFUSED_STORED_DIFFER, difference=difference, **held)

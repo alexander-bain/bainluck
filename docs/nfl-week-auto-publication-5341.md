@@ -36,6 +36,8 @@ It publishes only when all of these hold (each refusal is named in the report):
 | every contest is exactly one member game — compared as sets of contest ids, never counts | `contest_without_event_row`, `contest_with_duplicate_event_rows`, `week_contest_with_conflicting_identity`, `contests_not_exactly_members` |
 | question read was not capped | `market_read_truncated` |
 | no id-less or placeholder slot filed under this week | `week_slot_without_contest_id`, `week_slot_is_placeholder` |
+| no contest with an id but an unreadable round whose kickoff is unknown or within 48 h of this week's known kickoffs | `week_slot_without_week_identity` |
+| none of our rows in the week's kickoff span is stamped with a contest id this read lists nowhere, and that read of our rows was not capped (unstamped rows stay report-only — #2693 symptoms) | `stamped_game_missing_from_schedule`, `unidentified_read_truncated` |
 | hub is `unpublished`, no prior publication decision, no member withdrawal | `publication_withdrawn`, `prior_publication_decision`, `member_withdrawn` |
 | assembly ran clean, and the stored edges equal what this pass proved | `not_assembled`, `assembly_errors`, `stored_members_differ` (with the ids) |
 | the reader's own eligibility (`collection_card`) accepts it as this exact week | `reader_ineligible:<why>`, `not_this_week_edition` |
@@ -44,6 +46,18 @@ Decisions: `published`, `already_published` (no write), `retained` (published
 hub, this pass could not vouch — nothing changed), `withheld`, `not_applied`
 (dry run), `disabled`.
 
+A published hub is checked too, read-only: the harvest, a clean assembly, and
+its stored edges against what the pass proved (a member a person withdrew is
+expected absent, not drift). Any difference reads `retained` with the reason —
+`retained: stored_members_differ` plus the ids is THE published-hub drift
+signal. Acting on it belongs to #5344; this policy only names it.
+
+A dry run (`apply=False`) returns `not_applied` before any read; there is no
+zero-write preview of the stored checks (Authority's optional D3, not taken:
+before a write pass the stored edges are not yet the pass's, so a preview could
+say "would publish" where the real pass refuses). The A3 operator preview below
+and the first switch-on pass are the preview.
+
 ## What it never does
 
 Never withdraws, unpublishes, re-publishes a `withdrawn` hub, adds a member or
@@ -51,9 +65,10 @@ commits. A schedule outage or a partial re-read of a published week leaves it
 published (`retained`, or the collection's own `schedule_unreadable` run).
 Taking a hub back remains a named decision: the operator's `withdraw`.
 
-`stored_members_differ` is the expected refusal when the authority moves a game
-to another week after it was edged: assembly never retires an edge, so the old
-week holds a game that is no longer its own. Correct it with the operator's
+`stored_members_differ` is the expected answer when the authority moves a game
+to another week after it was edged — `withheld` on an unpublished week,
+`retained` on a published one: assembly never retires an edge, so the old week
+holds a game that is no longer its own. Correct it with the operator's
 reviewed `withdraw-members`; the policy then still waits for a person
 (`member_withdrawn`), by design.
 
@@ -63,8 +78,10 @@ Authority owns the activation decision. Preconditions, in order:
 
 1. #9651's correction schema is applied on the target database (else every
    decision is `withheld: publication_schema_absent`).
-2. The hourly pass is running the NFL collection (`CONTAINER_COLLECTIONS_ENABLED`
-   on, or an explicit `only=nfl-<season>` dispatch).
+2. The hourly pass is running the NFL collection: `CONTAINER_COLLECTIONS_ENABLED`
+   on (a one-off `only=nfl-<season>` dispatch is not automatic). That switch is
+   its own decision: it ALSO starts the hourly MLB-postseason collection's edge
+   writes, so approve it as a separate line item with its own undo.
 3. Read at least one pass report with the switch off and check `publication`
    for the current week reads `harvest_complete: true` where expected.
 4. Set `CONTAINER_NFL_AUTO_PUBLISH_ENABLED=true` on the main app (`bainluck`):

@@ -259,6 +259,7 @@ async def run_nfl_week_assembly(
         )
         return report
 
+    fixtures = list(fixtures)  # read twice: the harvest, then the publication policy
     harvest = await gather_nfl_week_candidates(session, fixtures, target, limit=limit)
     report["harvest"] = harvest.summary()
     report["games"] = harvest.members.games
@@ -270,7 +271,8 @@ async def run_nfl_week_assembly(
         report.update(terminal="unavailable", reason=harvest.selection.unavailable)
         # #5341: an unreadable week publishes nothing and unpublishes nothing.
         report["publication"] = await publish_complete_week(
-            session, container, target, harvest, None, apply=apply
+            session, container, target, harvest, None,
+            fixtures=fixtures, unidentified_limit=REPORT_LIMIT, apply=apply,
         )
         return report
 
@@ -296,7 +298,8 @@ async def run_nfl_week_assembly(
         report.update(terminal="complete", reason=None)
     # #5341: dark unless CONTAINER_NFL_AUTO_PUBLISH_ENABLED; same transaction.
     report["publication"] = await publish_complete_week(
-        session, container, target, harvest, assembly, apply=apply
+        session, container, target, harvest, assembly,
+        fixtures=fixtures, unidentified_limit=REPORT_LIMIT, apply=apply,
     )
     return report
 

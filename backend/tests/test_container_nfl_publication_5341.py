@@ -57,28 +57,54 @@ def _rows(fixtures, *, skip=(), twice=()):
     return rows
 
 
-def _harvest(fixtures, target=WEEK_1, *, truncated=False, **rows):
+LIMIT = 200
+
+
+def _harvest(fixtures, target=WEEK_1, *, truncated=False, unidentified=(), **rows):
     selection = select_week_contests(fixtures, target)
     members = (
         WeekMembers()
         if selection.unavailable
         else resolve_week_members(selection, _rows(fixtures, **rows), [])
     )
-    return NflWeekHarvest(selection=selection, members=members, markets_truncated=truncated)
+    harvest = NflWeekHarvest(
+        selection=selection,
+        members=members,
+        markets_truncated=truncated,
+        unidentified_in_span=list(unidentified),
+    )
+    harvest.read = list(fixtures)  # the schedule read it was cut from
+    return harvest
+
+
+def _refusal(harvest, target=WEEK_1):
+    return pub.harvest_refusal(harvest, target, harvest.read, unidentified_limit=LIMIT)
 
 
 def _week_1_ids(real):
     return [f.fixture_id for f in real if (f.round_info or "").endswith("/ Week 1")]
 
 
-def _extra(fixture_id, round_info, *, home="Bears", away="Packers", home_id="h", away_id="a"):
+SEP_13 = datetime(2026, 9, 13, 17, tzinfo=timezone.utc)
+
+
+def _extra(
+    fixture_id,
+    round_info,
+    *,
+    home="Bears",
+    away="Packers",
+    home_id="h",
+    away_id="a",
+    start=SEP_13,
+):
     return StatPalFixture(
         fixture_id=fixture_id,
         home_team=home,
         away_team=away,
-        home_team_id=home_id,
-        away_team_id=away_id,
-        start_time=datetime(2026, 9, 13, 17, tzinfo=timezone.utc),
+        home_team_id=home_id or "",
+        away_team_id=away_id or "",
+        start_time=start,
         round_info=round_info,
     )
 
@@ -89,7 +115,7 @@ def _extra(fixture_id, round_info, *, home="Bears", away="Packers", home_id="h",
 def test_a_fully_accounted_week_passes(real):
     harvest = _harvest(real)
     assert len(harvest.selection.contests) == 16
-    assert pub.harvest_refusal(harvest, WEEK_1) is None
+    assert _refusal(harvest) is None
 
 
 @pytest.mark.parametrize(
@@ -138,12 +164,12 @@ def test_a_fully_accounted_week_passes(real):
     ],
 )
 def test_every_partial_or_unknowable_week_refuses(real, build, reason):
-    assert pub.harvest_refusal(build(real), WEEK_1) == reason
+    assert _refusal(build(real)) == reason
 
 
 def test_a_placeholder_in_another_round_does_not_hold_this_week(real):
     bracket = _extra("tbd2", "Post Season / Week 1", home="TBD", away="TBD", home_id="", away_id="")
-    assert pub.harvest_refusal(_harvest(real + [bracket]), WEEK_1) is None
+    assert _refusal(_harvest(real + [bracket])) is None
 
 
 def test_completeness_is_the_contest_set_never_a_count(real):
@@ -156,7 +182,7 @@ def test_completeness_is_the_contest_set_never_a_count(real):
     swapped = dict(harvest.members.games[0], statpal_id="not-this-week")
     harvest.members.games[0] = swapped
     assert len(harvest.members.games) == len(harvest.selection.contests)
-    assert pub.harvest_refusal(harvest, WEEK_1) == "contests_not_exactly_members"
+    assert _refusal(harvest) == "contests_not_exactly_members"
 
 
 def test_two_games_on_one_event_row_is_not_sixteen_members(real):
@@ -166,7 +192,7 @@ def test_two_games_on_one_event_row_is_not_sixteen_members(real):
     candidates[second] = dataclasses.replace(
         candidates[second], child_id=candidates[first].child_id
     )
-    assert pub.harvest_refusal(harvest, WEEK_1) == "contests_not_exactly_members"
+    assert _refusal(harvest) == "contests_not_exactly_members"
 
 
 # --- dark: off and dry runs issue no statement -----------------------------------------
@@ -202,7 +228,14 @@ def test_it_is_not_the_assembly_switch():
 async def test_switch_off_reports_the_harvest_verdict_and_touches_nothing(real, monkeypatch):
     monkeypatch.delenv(pub.AUTO_PUBLISH_ENV, raising=False)
     report = await pub.publish_complete_week(
-        _Refuses(), SimpleNamespace(id=7, slug=WEEK_1.slug), WEEK_1, _harvest(real), {}, apply=True
+        _Refuses(),
+        SimpleNamespace(id=7, slug=WEEK_1.slug),
+        WEEK_1,
+        _harvest(real),
+        {},
+        fixtures=real,
+        unidentified_limit=LIMIT,
+        apply=True,
     )
     assert report["decision"] == pub.DECISION_DISABLED
     assert report["harvest_complete"] is True
@@ -219,6 +252,8 @@ async def test_a_dry_run_or_a_stand_in_row_touches_nothing(real, monkeypatch, ap
         WEEK_1,
         _harvest(real, skip={_week_1_ids(real)[0]}),
         None,
+        fixtures=real,
+        unidentified_limit=LIMIT,
         apply=apply,
     )
     assert report["decision"] == pub.DECISION_NOT_APPLIED
@@ -261,3 +296,93 @@ def test_the_only_correction_it_calls_is_publish():
 def test_the_actor_fits_the_ledger_and_names_no_person():
     assert 0 < len(pub.ACTOR) <= 64
     assert pub.ACTOR.startswith("auto:")
+
+
+# --- D2: an id with an unreadable round may be this week's (Authority 10/12) ---------
+
+
+def _at(y, m, d, h=17, minute=0):
+    return datetime(y, m, d, h, minute, tzinfo=timezone.utc)
+
+
+def test_an_id_bearing_contest_with_an_unreadable_round_inside_the_week_refuses(real):
+    first = min(f.start_time for f in real if (f.round_info or "").endswith("/ Week 1"))
+    odd = _extra("w1x", "Regular Season / Week One", start=first)
+    assert _refusal(_harvest(real + [odd])) == "week_slot_without_week_identity"
+
+
+def test_an_unreadable_round_with_no_known_kickoff_refuses(real):
+    odd = _extra("w1y", "Regular Season / Week One", start=None)
+    assert _refusal(_harvest(real + [odd])) == "week_slot_without_week_identity"
+
+
+def test_the_hall_of_fame_game_does_not_hold_preseason_week_1(real):
+    preseason = NflWeek(season=2026, week=1, stage="Pre Season")
+    week = [
+        _extra(f"p1{i}", "Pre Season / Week 1", home=f"H{i}", away=f"A{i}",
+               home_id=f"h{i}", away_id=f"a{i}", start=_at(2026, 8, 13 + i, 23))
+        for i in range(3)
+    ]
+    harvest = _harvest(real + week, preseason)
+    hof = harvest.selection.excluded["no_week_identity"]
+    assert [r["round"] for r in hof] == ["Pre Season / Hall of Fame Weekend"]
+    assert _refusal(harvest, preseason) is None
+
+
+def _week_18_and_wild_card():
+    week_18 = [
+        _extra(f"r18{i}", "Regular Season / Week 18", home=f"H{i}", away=f"A{i}",
+               home_id=f"h{i}", away_id=f"a{i}", start=_at(2027, 1, 3, 18 + i))
+        for i in range(3)
+    ]
+    wild_card = _extra("wc1", "Post Season / Wild Card", home="Bills", away="Steelers",
+                       home_id="hb", away_id="as", start=_at(2027, 1, 9, 21, 30))
+    return week_18, wild_card
+
+
+def test_a_known_wild_card_kickoff_does_not_hold_week_18(real):
+    week_18, wild_card = _week_18_and_wild_card()
+    target = NflWeek(season=2026, week=18)
+    assert _refusal(_harvest(real + week_18 + [wild_card], target), target) is None
+
+
+def test_the_bound_bites_a_day_after_the_weeks_last_game(real):
+    week_18, _ = _week_18_and_wild_card()
+    target = NflWeek(season=2026, week=18)
+    odd = _extra("r18x", "Regular Season / Week Eighteen", start=_at(2027, 1, 4, 20))
+    assert _refusal(_harvest(real + week_18 + [odd], target), target) == (
+        "week_slot_without_week_identity"
+    )
+
+
+# --- D4: our own stamped row in the span says the read is short ---------------------
+
+
+def _row(statpal_id):
+    return {"event_id": 1, "statpal_fixture_id": statpal_id, "teams": ["A", "B"]}
+
+
+def test_a_stamped_row_whose_contest_the_read_omits_refuses(real):
+    harvest = _harvest(real, unidentified=[_row("999999")])
+    assert _refusal(harvest) == "stamped_game_missing_from_schedule"
+
+
+@pytest.mark.parametrize("statpal_id", [None, "", "280493"], ids=["unstamped", "blank", "other-week"])
+def test_unstamped_rows_and_other_week_contests_stay_report_only(real, statpal_id):
+    """280493 is the banked Hall of Fame contest: in the read, filed elsewhere."""
+    assert _refusal(_harvest(real, unidentified=[_row(statpal_id)])) is None
+
+
+def test_a_capped_read_of_our_in_span_rows_refuses(real):
+    harvest = _harvest(real, unidentified=[_row(None)] * LIMIT)
+    assert _refusal(harvest) == "unidentified_read_truncated"
+    harvest = _harvest(real, unidentified=[_row(None)] * (LIMIT - 1))
+    assert _refusal(harvest) is None
+
+
+def test_the_omission_checks_cannot_be_skipped_by_leaving_out_the_read():
+    params = inspect.signature(pub.harvest_refusal).parameters
+    assert params["fixtures"].default is inspect.Parameter.empty
+    assert params["unidentified_limit"].default is inspect.Parameter.empty
+    hook = inspect.signature(pub.publish_complete_week).parameters
+    assert hook["fixtures"].default is inspect.Parameter.empty

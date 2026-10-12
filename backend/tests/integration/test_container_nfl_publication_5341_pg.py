@@ -466,11 +466,92 @@ async def test_a_member_withdrawn_from_a_published_hub_is_not_resurrected(world)
         )
         await session.commit()
 
-    await _pass(Session, fixtures, WEEK_7_NOW)
+    runs = await _pass(Session, fixtures, WEEK_7_NOW)
 
     assert events["s702"] not in await _event_edges(Session, hub_id)
+    # A person's withdrawal is not drift: the published hub reads healthy.
+    assert runs[WEEK_7]["publication"]["decision"] == "already_published"
     assert (await _hub(Session, WEEK_7))[1] == "published"
     assert [r[0] for r in await _ledger(Session, hub_id)] == ["publication", "member"]
+
+
+@pytest.mark.asyncio
+async def test_a_published_week_holding_a_game_the_authority_moved_says_so_and_changes_nothing(
+    world,
+):
+    """Authority D1. Week 7 is published; the authority refiles s703 under Week 8.
+    Week 8 publishes with it. Week 7 still holds its old edge — assembly never
+    retires one — so it must read `retained: stored_members_differ`, never
+    `already_published`, and must not write."""
+    Session, sport_id = world
+    fixtures = _week_7()
+    s801 = _fixture("s801", "Rams", "Seahawks", _at(10, 30, 0, 15), W8)
+    events = await _seed(Session, sport_id, _games(fixtures + [s801]))
+    await _pass(Session, fixtures, WEEK_7_NOW)
+    week_7_before = await _hub(Session, WEEK_7)
+    assert week_7_before[1] == "published"
+
+    refiled = fixtures[:2] + [
+        _fixture("s703", "Eagles", "Giants", fixtures[2].start_time, W8),
+        s801,
+    ]
+    runs = await _pass(Session, refiled, WEEK_7_NOW)
+
+    publication = runs[WEEK_7]["publication"]
+    assert publication["decision"] == "retained"
+    assert publication["reason"] == "stored_members_differ"
+    assert publication["difference"]["events_not_proved"] == [events["s703"]]
+    assert await _hub(Session, WEEK_7) == week_7_before
+    assert len(await _ledger(Session, week_7_before[0])) == 1
+
+    assert runs["nfl-2026-week-8"]["publication"]["decision"] == "published"
+    week_8 = await _hub(Session, "nfl-2026-week-8")
+    assert await _event_edges(Session, week_8[0]) == {events["s703"], events["s801"]}
+
+
+# --- our own rows say the schedule read is short (Authority D4) -----------------------
+
+
+@pytest.mark.asyncio
+async def test_a_stamped_game_in_the_week_that_the_read_omits_withholds(world):
+    Session, sport_id = world
+    fixtures = _week_7()
+    await _seed(Session, sport_id, _games(fixtures))
+    # Our row, stamped with a contest this read lists nowhere, at a Week 7 kickoff.
+    await _seed(Session, sport_id, [("s799", "Cowboys", "Commanders", _at(10, 25, 20, 25))])
+
+    runs = await _pass(Session, fixtures, WEEK_7_NOW)
+
+    assert runs[WEEK_7]["terminal"] == "complete"
+    assert runs[WEEK_7]["publication"]["decision"] == "withheld"
+    assert runs[WEEK_7]["publication"]["reason"] == "stamped_game_missing_from_schedule"
+    assert (await _hub(Session, WEEK_7))[1] == "unpublished"
+
+
+@pytest.mark.asyncio
+async def test_unstamped_and_other_week_rows_in_the_span_stay_report_only(world):
+    from app.models.models import Event
+
+    Session, sport_id = world
+    other_week = _fixture("s810", "Saints", "Falcons", _at(10, 25, 20, 25), W8)
+    fixtures = _week_7() + [other_week]
+    await _seed(Session, sport_id, _games(fixtures))
+    async with Session() as session:  # a #2693 matching symptom: no contest id at all
+        session.add(
+            Event(
+                sport_id=sport_id,
+                home_team_name="Cardinals",
+                away_team_name="Rams",
+                commence_time=_at(10, 25),
+                status="scheduled",
+            )
+        )
+        await session.commit()
+
+    runs = await _pass(Session, fixtures, WEEK_7_NOW)
+
+    assert runs[WEEK_7]["harvest"]["unidentified_in_span"] == 2
+    assert runs[WEEK_7]["publication"]["decision"] == "published"
 
 
 # --- a source outage keeps what readers already have ----------------------------------
