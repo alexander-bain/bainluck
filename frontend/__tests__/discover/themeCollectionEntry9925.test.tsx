@@ -12,7 +12,7 @@
  *
  * - ADMISSION: a well-formed ref draws one link to the canonical
  *   `/collections/{slug}`, named for the collection (never the card header) and
- *   counting the page's questions (never the preview's). Anything malformed draws
+ *   counting the page's markets (never the preview's). Anything malformed draws
  *   nothing, and a card with no ref is exactly the card it was.
  * - INLINE KEPT: the peek rows, "All N questions" and expand all still work
  *   beside the link, in both states.
@@ -108,14 +108,15 @@ describe("#9925 admission — one canonical link, or none", () => {
     const html = card({ collectionRef: REF });
     expect(collectionLinks(html)).toEqual(["/collections/oscars-2027"]);
     expect(html).toContain("View the Oscars 2027 collection");
-    expect(html).toContain("86 questions");
+    expect(html).toContain("86 markets");
+    expect(html).not.toContain("86 questions");
     // The header is the card's; the link names the collection, not the header.
     expect(html).not.toContain(`View the ${TITLE} collection`);
   });
 
-  it("says one question, not one questions", () => {
-    expect(card({ collectionRef: { ...REF, collection_count: 1 } })).toMatch(/>1 question<|1 question</);
-    expect(card({ collectionRef: { ...REF, collection_count: 1 } })).not.toContain("1 questions");
+  it("says one market, not one markets", () => {
+    expect(card({ collectionRef: { ...REF, collection_count: 1 } })).toMatch(/>1 market<|1 market</);
+    expect(card({ collectionRef: { ...REF, collection_count: 1 } })).not.toContain("1 markets");
   });
 
   it("a card with no ref is exactly the card it was", () => {

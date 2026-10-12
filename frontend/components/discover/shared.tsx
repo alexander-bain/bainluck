@@ -743,10 +743,11 @@ export function consumeThemeCollectionReturn(bundleId: string, now = Date.now())
 }
 
 /**
- * "View the Oscars 2027 collection · 86 questions". Its own row under the
+ * "View the Oscars 2027 collection · 86 markets". Its own row under the
  * card's members, in both states, so the inline peek, "All N questions" and
  * the member cards all keep working beside it. The count is the page's, the
- * name is the collection's.
+ * name is the collection's. #10877: a theme collection counts markets; the
+ * noun is contextual (NFL hubs keep games and props), never "questions".
  */
 export function CollectionEntryLink({ entry, onOpen }: { entry: AdmittedCollectionRef; onOpen?: () => void }) {
   return (
@@ -757,7 +758,7 @@ export function CollectionEntryLink({ entry, onOpen }: { entry: AdmittedCollecti
     >
       <span className="min-w-0 truncate">View the {entry.name} collection</span>
       <span className="flex shrink-0 items-center gap-0.5 text-text-secondary">
-        {entry.count} {entry.count === 1 ? "question" : "questions"}
+        {entry.count} {entry.count === 1 ? "market" : "markets"}
         <ChevronRight className="h-3.5 w-3.5" aria-hidden="true" />
       </span>
     </Link>
