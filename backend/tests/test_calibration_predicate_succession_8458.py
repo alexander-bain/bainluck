@@ -248,7 +248,11 @@ class TestTheBankSurvives:
 #: ``DECLARED_PREDICATE_SUCCESSIONS`` and exercised in
 #: ``tests/test_calibration_datagolf_opening_succession_5355.py``.
 DATAGOLF_OPENING_PREDICATE = "3944c947edb78d220ed3bef7defcc526"
-PINNED_PREDICATE = ("q271", DATAGOLF_OPENING_PREDICATE)
+#: #1010 moved it again (tennis/MMA over/unders the stored score cannot settle),
+#: declared as ``(DATAGOLF_OPENING_PREDICATE, SCORE_UNIT_PREDICATE)`` and
+#: exercised in ``tests/test_calibration_score_unit_mismatch_1010.py``.
+SCORE_UNIT_PREDICATE = "da21d87f0f001c635a813eefb3eb9532"
+PINNED_PREDICATE = ("q271", SCORE_UNIT_PREDICATE)
 
 
 def test_population_predicate_is_pinned_8458():

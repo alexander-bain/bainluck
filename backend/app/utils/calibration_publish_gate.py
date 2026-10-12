@@ -181,6 +181,21 @@ DECLARATION_MAX_TOLERANCE_PCT = 5.0
 #: (before the tail and representative filters), so it can exceed the published
 #: share; 6.0% is a little over twice DataGolf's whole published share. A
 #: narrowing past it is not this rule.
+#:
+#: #1010. Tennis and MMA over/under and handicap lines leave the spreads and
+#: totals curves: the stored score (sets; a 1-0 winner flag) cannot settle a
+#: games or rounds line. The rule is applied after the phase read, outside the
+#: SQL roots, so its helpers and family tuple were added to the predicate digest
+#: in the same commit — moving it ``3944c947…`` -> ``da21d87f…``, unbumped, for
+#: #8458's reason. Stated once (``"listed": False``): its only statement is
+#: ``score_unit_filter.excluded``.
+#:
+#: ``max_narrowing_pct`` is BOUNDED by what the rule can touch. It removes only
+#: ``odds_api_spreads`` / ``odds_api_totals`` rows whose sport family is tennis
+#: or mma: measured at 1,120 of 1,154,060 published outcomes (0.097%) on the
+#: 2026-10-11 23:08Z artifact, out of 30,607 spreads+totals outcomes (2.65%).
+#: 0.5% is about five times the measured mass and under a fifth of both curves
+#: together; a narrowing past it is not this rule.
 DECLARED_PREDICATE_SUCCESSIONS: dict[tuple[str, str], dict] = {
     ("e67d771bbd7a92dfd8d1a0f4bd79b4c2", "27b49126ac461fce9d5f078b471bb17f"): {
         "cause": "#6275 identity quarantine (Alex ruling; 22a99a734d, heavy v27)",
@@ -193,6 +208,13 @@ DECLARED_PREDICATE_SUCCESSIONS: dict[tuple[str, str], dict] = {
         "issue": 5355,
         "narrowing": "datagolf_opening_timing",
         "max_narrowing_pct": 6.0,
+        "listed": False,
+    },
+    ("3944c947edb78d220ed3bef7defcc526", "da21d87f0f001c635a813eefb3eb9532"): {
+        "cause": "#1010 tennis/MMA over/unders the stored score cannot settle",
+        "issue": 1010,
+        "narrowing": "score_unit",
+        "max_narrowing_pct": 0.5,
         "listed": False,
     },
 }
@@ -637,6 +659,7 @@ def census(payload: Any) -> dict:
             "excluded_cells": {},
             "identity_quarantine": None,
             "datagolf_opening_timing": None,
+            "score_unit": None,
         }
 
     buckets = payload.get("buckets") if isinstance(payload.get("buckets"), list) else []
@@ -711,6 +734,8 @@ def census(payload: Any) -> dict:
         "identity_quarantine": _identity_quarantine_census(payload),
         # #5355: the DataGolf opening-timing rule's size, stated once.
         "datagolf_opening_timing": _datagolf_opening_timing_census(payload),
+        # #1010: the score-unit rule's size, stated once.
+        "score_unit": _score_unit_census(payload),
     }
 
 
@@ -753,6 +778,16 @@ def _datagolf_opening_timing_census(payload: dict) -> dict:
     says ``"listed": False`` so :func:`_judge_succession` does not ask for one.
     """
     section = payload.get("datagolf_opening_timing_filter")
+    return {
+        "excluded": section.get("excluded") if isinstance(section, dict) else None,
+        "listed_outcomes": None,
+        "section_present": isinstance(section, dict),
+    }
+
+
+def _score_unit_census(payload: dict) -> dict:
+    """#1010's one statement of its size, ``score_unit_filter.excluded``."""
+    section = payload.get("score_unit_filter")
     return {
         "excluded": section.get("excluded") if isinstance(section, dict) else None,
         "listed_outcomes": None,

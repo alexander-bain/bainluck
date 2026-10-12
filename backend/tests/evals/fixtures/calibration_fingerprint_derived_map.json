@@ -12,6 +12,7 @@
     "PLAYER_PROPS_NAME_PATTERN",
     "PLAYER_PROPS_PLACEHOLDER_EXCLUDED_CELLS",
     "REPRESENTATIVE_TIE_AUTHORITY",
+    "SCORE_UNIT_MISMATCH_FAMILIES",
     "SUM_ARM_ONLY_EXCLUDED_CELLS"
   ],
   "hashed_root_sha16": {
@@ -19,7 +20,7 @@
     "_main_futures_sql": "5f399959e521e053",
     "_roster_pushdown_predicates": "9b4afb101a88cb8a",
     "_virtual_market_ctes": "d03415be9c36d5cb",
-    "compute_calibration_payload": "69a381dfa1dda617",
+    "compute_calibration_payload": "a9519b691a4d8b43",
     "identity_quarantine_ctes": "178dd31b64f3e836"
   },
   "hashed_roots": [
@@ -737,14 +738,15 @@
       ]
     },
     {
-      "covered_by_value": false,
+      "covered_by_value": true,
       "definition_sha16": null,
-      "impact": "behavior_or_evidence",
+      "impact": "sql_shaping",
       "name": "SCORE_UNIT_MISMATCH_FAMILIES",
       "origin": "app.tasks.precompute_calibration:SCORE_UNIT_MISMATCH_FAMILIES",
-      "sql_interpolated": false,
+      "sql_interpolated": true,
       "used_in": [
-        "category_has_score_unit_mismatch"
+        "category_has_score_unit_mismatch",
+        "population_predicate_fingerprint"
       ]
     },
     {
@@ -985,8 +987,8 @@
   ],
   "schema": "calibration-fingerprint-derived/v1",
   "source": "backend/app/tasks/precompute_calibration.py",
-  "source_sha256": "216883c7571ebb61acca6f84494826064d11833df21a326bedd70f4399595a57",
-  "uncovered_behavior_or_evidence": 43,
-  "uncovered_count": 70,
+  "source_sha256": "7c2af9f9efab9a37cd28db0258d85a728509cfe7267e427b86667322228e9f5b",
+  "uncovered_behavior_or_evidence": 42,
+  "uncovered_count": 69,
   "uncovered_sql_shaping": 27
 }

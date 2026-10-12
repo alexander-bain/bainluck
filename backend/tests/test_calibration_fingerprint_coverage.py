@@ -302,14 +302,12 @@ class TestTheHandMapIsGoneAndTheArtifactIsAuthority:
         # which rows — the roster's rows, order and digest are pinned identical
         # in `test_calibration_roster_is_read_lean_r15.py`. No hashed root moved,
         # and `_main_input_fingerprint` is identical across the change.
-        # #1010: 81 -> 83. `SCORE_UNIT_MISMATCH_FAMILIES` (read by
-        # `category_has_score_unit_mismatch`, a Python partition applied AFTER
-        # the spreads/totals phase read, so a carried read is re-judged by the
-        # current tuple) and `SCORE_UNIT_MISMATCH_RULE_TEXT` (disclosure prose).
-        # Both same-module, `behavior_or_evidence`, `sql_interpolated: false`;
-        # `uncovered_sql_shaping` holds at 27. `compute_calibration_payload`
-        # moved, so the wide digest moves; `staged_unit_fingerprint` and
-        # `population_predicate_fingerprint` are identical across the change.
+        # #1010: 81 -> 83. `SCORE_UNIT_MISMATCH_FAMILIES` (the tennis/mma
+        # family tuple, hashed BY VALUE into this digest and into
+        # `population_predicate_fingerprint` on the deploy that creates it, so it
+        # is counted covered) and `SCORE_UNIT_MISMATCH_RULE_TEXT` (disclosure
+        # prose, uncovered like its rule-text siblings). `uncovered_sql_shaping`
+        # holds at 27. `staged_unit_fingerprint` is identical across the change.
         assert artifact["input_count"] == 83
         # CAL-P162: 4 -> 5. `MEX_NORMALIZE_THRESHOLD` joined the by-value set on
         # the deploy that made it decide PUBLICATION rather than only pricing.
@@ -323,7 +321,9 @@ class TestTheHandMapIsGoneAndTheArtifactIsAuthority:
         # on the deploy that creates it. `uncovered_count` again does not move,
         # which is the claim the docstring above makes: the unguarded surface
         # did not grow.
-        assert len(artifact["covered_by_value"]) == 13
+        # #1010: 13 -> 14. `SCORE_UNIT_MISMATCH_FAMILIES`, closed on the deploy
+        # that creates it.
+        assert len(artifact["covered_by_value"]) == 14
         # CAL-P1121 (#5401): 54 -> 55, the prose disclosure string. See the
         # docstring — covered_by_value deliberately does NOT move with it.
         # CAL-P1138 (q271, D112 #997): 55 -> 56, `calibration_truth_eligible_sql`.
@@ -351,14 +351,10 @@ class TestTheHandMapIsGoneAndTheArtifactIsAuthority:
         # #5355: 66 -> 67, the prose rule text above. Not a predicate.
         # #10697: 67 -> 68, `ROSTER_STREAM_BATCH` above. A fetch size, not a
         # predicate; no row changes.
-        # #1010: 68 -> 70. `SCORE_UNIT_MISMATCH_RULE_TEXT` is prose.
-        # `SCORE_UNIT_MISMATCH_FAMILIES` DOES decide which rows two sportsbook
-        # curves publish, said plainly — but it cannot open the hazard this
-        # census tracks, because it is applied to the spreads/totals rows AFTER
-        # the phase read/reuse: a carried read holds the raw rows and is
-        # re-partitioned by the current tuple, so no carried output can encode
-        # an old value of it. It never reaches SQL.
-        assert artifact["uncovered_count"] == 70
+        # #1010: 68 -> 69, `SCORE_UNIT_MISMATCH_RULE_TEXT`, prose. Not a
+        # predicate; its sibling `SCORE_UNIT_MISMATCH_FAMILIES` IS one and is
+        # covered by value (above), so it does not widen this count.
+        assert artifact["uncovered_count"] == 69
         assert artifact["uncovered_count"] == artifact["input_count"] - len(
             artifact["covered_by_value"]
         )
@@ -686,10 +682,10 @@ class TestTheHandMapIsGoneAndTheArtifactIsAuthority:
         # unchanged.
         # 55 -> 56 at #10697: `ROSTER_STREAM_BATCH` is a same-module fetch size,
         # so it lands in the non-cross tier and the cross list is unchanged.
-        # 56 -> 58 at #1010: `SCORE_UNIT_MISMATCH_FAMILIES` and
-        # `SCORE_UNIT_MISMATCH_RULE_TEXT` are same-module, so they land in the
-        # non-cross tier and the cross list is unchanged.
-        assert len(cross) + 58 == artifact["uncovered_count"]
+        # 56 -> 57 at #1010: `SCORE_UNIT_MISMATCH_RULE_TEXT` is same-module
+        # prose, so it lands in the non-cross tier and the cross list is
+        # unchanged.
+        assert len(cross) + 57 == artifact["uncovered_count"]
 
 
 class TestInterpolationDetectionCoversNonFStringSql:

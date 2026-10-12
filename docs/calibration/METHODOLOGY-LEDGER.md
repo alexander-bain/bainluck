@@ -64,8 +64,9 @@ rebuild that accompanied the change, and say so.
 
 ## 2026-10-11 — tennis and fight over/unders our recorded result cannot settle are not scored
 
-**Population version:** `q271` (unchanged — the futures population and its predicate fingerprint do
-not move; this narrows two sportsbook curves) · **Code:** _pending merge_ · **Issue:** #1010
+**Population version:** `q271` (unchanged — declared instead as an exact predicate succession,
+`3944c947…` → `da21d87f…`, so the finished rebuild bank is kept; the published population identity
+does move, because which rows publish moved) · **Code:** _pending merge_ · **Issue:** #1010
 **Ruled by:** the standing calibration-truth bar — an outcome the stored result cannot decide is
 unknown, not a loss; no separate Alex ruling required.
 
@@ -83,8 +84,11 @@ about 50 points. MMA: stored score sum always 1, over/under lines 0.5–4.5, 100
 so these rows cannot be re-graded.
 
 **What it affected.** _Pending the first publish under this rule_: the published count is
-`score_unit_filter.excluded` (with `spreads_excluded` / `totals_excluded`). The upper bound from the
-row read is 580 totals and 547 handicap events before the price and push filters both curves apply.
+`score_unit_filter.excluded` (with `spreads_excluded` / `totals_excluded`, and the cells it removes in
+`excluded_cells`). Rescoring the 23:08Z artifact gives 1,120 outcomes (0.097% of 1,154,060). Two
+categories fall under the 1,000-outcome publish bar and move to the small-sample list:
+`tennis_atp_canadian_open` (1,155 → 976) and `tennis_wta_cincinnati_open` (1,108 → 938). The
+publish gate records both as disclosed exclusions rather than collapses.
 
 ---
 

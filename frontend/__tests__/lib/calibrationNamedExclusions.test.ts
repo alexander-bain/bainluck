@@ -174,6 +174,7 @@ const NOT_YET_SERVED = {
     excluded: 1_127,
     spreads_excluded: 547,
     totals_excluded: 580,
+    excluded_cells: [["odds_api_totals", "tennis_atp_us_open"]],
   },
 };
 

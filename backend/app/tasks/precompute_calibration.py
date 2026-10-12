@@ -2004,6 +2004,15 @@ def category_is_soccer_2way_excluded(category: str | None) -> bool:
 # phase read/reuse, so a carried read is always judged by the current rule and
 # nothing is interpolated into the fingerprinted SQL. Read-side only (gotcha
 # #21) — never mutates scores or lines.
+#
+# IT CHANGES WHICH ROWS PUBLISH, so it is part of the published population's
+# identity: both helpers below and the family tuple are hashed into
+# :func:`population_predicate_fingerprint`, and the move is declared to the
+# publish gate as an exact predicate succession (#1010 in
+# ``calibration_publish_gate.DECLARED_PREDICATE_SUCCESSIONS``). The cells it
+# removes are published as ``score_unit_filter.excluded_cells`` so a category
+# that drops under the publish bar reads as a disclosed exclusion, not a
+# collapse.
 SCORE_UNIT_MISMATCH_FAMILIES = ("mma", "tennis")
 
 SCORE_UNIT_MISMATCH_RULE_TEXT = (
@@ -2031,16 +2040,22 @@ def score_unit_mismatch_sql(key_column: str) -> str:
     return f"split_part({key_column}, '_', 1) IN ({families})"
 
 
-def split_score_unit_mismatch(rows) -> tuple[list, int]:
-    """Spreads/totals bucket rows -> (gradeable rows, outcomes excluded)."""
+def split_score_unit_mismatch(rows) -> tuple[list, int, set]:
+    """Spreads/totals bucket rows -> (gradeable rows, outcomes excluded, cells).
+
+    ``cells`` is the set of ``(source, category)`` pairs the rule removed, for
+    the publish gate's disclosed-exclusion read.
+    """
     kept = []
     excluded = 0
+    cells = set()
     for r in rows:
         if category_has_score_unit_mismatch(r.category):
             excluded += r.n
+            cells.add((r.source, r.category))
         else:
             kept.append(r)
-    return kept, excluded
+    return kept, excluded, cells
 
 
 # Queue #159 (#1010): esports malformed-MULTI "match bundle" curve exclusion.
@@ -7667,8 +7682,11 @@ async def compute_calibration_payload(db, *, runner=None) -> dict:
             runner.record(PHASE_SPORTS, "totals_rows", totals_rows, kind="rows")
 
         # #1010: after record/reuse, so a carried read is judged by today's rule.
-        spreads_rows, score_unit_spreads_excluded = split_score_unit_mismatch(spreads_rows)
-        totals_rows, score_unit_totals_excluded = split_score_unit_mismatch(totals_rows)
+        spreads_rows, score_unit_spreads_excluded, _su_spread_cells = (
+            split_score_unit_mismatch(spreads_rows))
+        totals_rows, score_unit_totals_excluded, _su_total_cells = (
+            split_score_unit_mismatch(totals_rows))
+        score_unit_cells = sorted(_su_spread_cells | _su_total_cells)
 
         if not _sports_carried:
             await runner.commit(db)
@@ -8738,6 +8756,9 @@ async def compute_calibration_payload(db, *, runner=None) -> dict:
             "excluded": score_unit_spreads_excluded + score_unit_totals_excluded,
             "spreads_excluded": score_unit_spreads_excluded,
             "totals_excluded": score_unit_totals_excluded,
+            # Read by the publish gate (`_disclosed_excluded_cells`): a category
+            # this rule takes under the publish bar is a disclosed exclusion.
+            "excluded_cells": [list(c) for c in score_unit_cells],
         },
         "heuristic_filter": {
             "applies_to": "polymarket",
@@ -9031,6 +9052,13 @@ def population_predicate_fingerprint() -> str:
             # change which rows qualify while this digest went on claiming the
             # predicate had not moved.
             + inspect.getsource(identity_quarantine_ctes)
+            # #1010: the score-unit rule removes published spreads/totals rows
+            # after the read, outside every SQL root above, so its helpers and
+            # its family tuple (by value — a tuple's VALUE never appears in a
+            # function's source) are hashed here explicitly.
+            + inspect.getsource(category_has_score_unit_mismatch)
+            + inspect.getsource(split_score_unit_mismatch)
+            + f"score_unit_families={SCORE_UNIT_MISMATCH_FAMILIES}"
         )
     except Exception:  # noqa: BLE001 — no source => never claim a match
         # A digest nothing can equal (``_same_predicate`` requires equality), so
@@ -9212,6 +9240,10 @@ def _main_input_fingerprint() -> str:
         # moved in months; this one is pinned to another file's constant. The
         # gap is filed rather than widened here (#5430).
         f"kalshi_writer_bar={KALSHI_WRITER_BAR_MET}",
+        # #1010 — hashed by name and by value like its neighbours. Applied after
+        # the phase read, so a carried output cannot encode an old value; it is
+        # here so the census covers it rather than counting it as a hole.
+        f"score_unit_families={SCORE_UNIT_MISMATCH_FAMILIES}",
         source,
     )
 

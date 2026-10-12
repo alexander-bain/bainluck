@@ -296,15 +296,16 @@ from app.tasks.calibration_main_build import UNIT_PLAN_CACHE_MODE
 #: twice.
 #:
 #: RE-ANCHORED for #1010 (tennis/MMA spreads and totals the stored score cannot
-#: settle): ``5c2987db…`` -> ``7a6dc6bf…``. The only moved root is
-#: ``compute_calibration_payload`` — a Python partition of the spreads/totals
-#: rows after their phase read, plus its ``score_unit_filter`` disclosure.
-#: WHAT IT COSTS, measured on both trees: ``staged_unit_fingerprint`` is
-#: ``dec3026b…`` on master and on this change, and the staged cursor keys on that
-#: narrow digest (CAL-P205), so no banked unit is discarded; only a carried PHASE
-#: output in flight at deploy is re-read. ``population_predicate_fingerprint`` is
-#: ``3944c947…`` on both, so the publish gate reads the same predicate.
-LIVE_INPUT_FINGERPRINT = "7a6dc6bf4e608e37adf4e8e1a17e53a1"
+#: settle): ``5c2987db…`` -> ``0c9350ca…``. Moved: the root
+#: ``compute_calibration_payload`` (a Python partition of the spreads/totals rows
+#: after their phase read, plus the ``score_unit_filter`` disclosure) and the
+#: family tuple hashed by value. WHAT IT COSTS, measured on both trees:
+#: ``staged_unit_fingerprint`` is ``dec3026b…`` on master and on this change, and
+#: the staged cursor keys on that narrow digest (CAL-P205), so no banked unit is
+#: discarded; only a carried PHASE output in flight at deploy is re-read. The
+#: PUBLISHED population identity does move (``3944c947…`` -> ``da21d87f…``), as it
+#: must for a rule that changes which rows publish, and is declared to the gate.
+LIVE_INPUT_FINGERPRINT = "0c9350ca8dbd22da8aa2a4ce92cbafdc"
 
 
 class _Db:
