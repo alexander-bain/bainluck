@@ -1,5 +1,6 @@
 "use client";
 
+import { outcomeRowVerdict } from "@/components/futures/OutcomeRow";
 import type { GameMarketsResponse } from "@/lib/api";
 import { formatProbabilityPercent } from "@/lib/probabilityDisplay";
 import { isPregameStatus, isSettledStatus } from "@/lib/settledQuote";
@@ -26,6 +27,10 @@ export default function GameLineBrowser({
   const live = !settled && !isPregameStatus(status);
   const now = Date.now();
   const isOver = (outcome: string) => /\bover\b/i.test(outcome);
+  // Mirrors the server's `_inverted` (routes/events.py): an Under/No leg that
+  // is not also an Over-style name.
+  const isUnderLeg = (outcome: string) =>
+    !isOver(outcome) && /^\s*(under\b|no\s*$)/i.test(outcome);
   const lineKey = (row: {
     market_name: string;
     threshold: number | null;
@@ -58,6 +63,21 @@ export default function GameLineBrowser({
           : isOver(row.outcome_name)
             ? row.over_probability
             : null;
+      // #10590 — A SETTLED LINE PRINTS ITS RESULT, NOT ITS LEFTOVER QUOTE.
+      // The verdict comes from the one settled-state rule (`outcomeRowVerdict`,
+      // #4788), never from a 0%/100% price. A row priced on the OVER axis
+      // (team totals, period totals) carries the OVER's verdict even when its
+      // source leg is named Under (#6239), so an Under row reads the opposite
+      // result. A row with its own `probability` is graded on its own leg.
+      const served = outcomeRowVerdict(row, settled);
+      const verdict =
+        served != null &&
+        !("probability" in row) &&
+        isUnderLeg(row.outcome_name)
+          ? served === "won"
+            ? "lost"
+            : "won"
+          : served;
       return [
         {
           key: `${group.label}-${index}`,
@@ -71,7 +91,23 @@ export default function GameLineBrowser({
               <div className="text-sm font-medium">{row.market_name}</div>
               <div className="flex justify-between gap-4 mt-1 text-sm">
                 <span>{row.outcome_name}</span>
-                {probability != null && (
+                {verdict === "won" && (
+                  <span
+                    data-testid="outcome-verdict"
+                    className="text-sm text-emerald-600 font-medium"
+                  >
+                    Won
+                  </span>
+                )}
+                {verdict === "lost" && (
+                  <span
+                    data-testid="outcome-verdict"
+                    className="text-sm text-red-400 font-medium"
+                  >
+                    Lost
+                  </span>
+                )}
+                {verdict == null && probability != null && (
                   <strong className="font-mono tabular-nums whitespace-nowrap">
                     {settled ? "Last quote " : ""}
                     {formatProbabilityPercent(probability)}
