@@ -87,6 +87,35 @@ def _stamps(line):
             for s in line["stamps"].split(";")]
 
 
+def _outcome_ids(lines):
+    """The outcome ids across lines. A minute with messages but no accepted
+    price writes `outcomes=-` — the placeholder, not an outcome (#10933: a
+    real-consumer run that crossed a UTC minute read it as one)."""
+    return {o.split(":")[0] for x in lines if x["outcomes"] != "-"
+            for o in x["outcomes"].split(",")}
+
+
+@pytest.fixture(params=["production_clock", "every_message_a_new_minute"])
+def receipt_wall(request, monkeypatch):
+    """The real consumers run on the production wall clock, so a run that
+    straddles a UTC minute (~1.3% of ~0.8 s runs) splits its receipt across two
+    lines (#10933). The second arm makes that the certain case: every venue
+    message moves the clock one minute on, so each lands in its own line and a
+    refused message writes a line with no accepted price."""
+    if request.param == "production_clock":
+        return False
+    minute = {"n": 0}
+    real_note_raw = TailReceipts.note_raw
+
+    def _note_raw(self, event_id):
+        minute["n"] += 1
+        return real_note_raw(self, event_id)
+
+    monkeypatch.setattr(TailReceipts, "note_raw", _note_raw)
+    monkeypatch.setattr(blend_mod, "_wall", lambda: EPOCH + 30.0 + 60.0 * minute["n"])
+    return True
+
+
 def _refresher(status="live", previously_live=(1,)):
     """A real refresher whose batch stamps without a database; each stamp
     publishes the next `rev` with the given event status. `previously_live`
@@ -282,7 +311,7 @@ def _ticker(**msg):
 class TestTheRealKalshiConsumer:
     @pytest.mark.asyncio
     async def test_ticker_inputs_reach_the_stamp_that_published_them(
-        self, monkeypatch, caplog,
+        self, monkeypatch, caplog, receipt_wall,
     ):
         seen = {}
 
@@ -349,15 +378,15 @@ class TestTheRealKalshiConsumer:
         assert sum(int(s["covered"]) for s in stamps) == 3
         assert all(s["stamped_at"] == f"stamp-{s['rev']}" for s in stamps)
         assert all(s["newest"] != "-" for s in stamps if s["covered"] != "0")
-        assert {o.split(":")[0] for x in lines for o in x["outcomes"].split(",")} == {
-            str(KALSHI_OUTCOME_ID)
-        }
+        assert _outcome_ids(lines) == {str(KALSHI_OUTCOME_ID)}
+        if receipt_wall:  # the one-sided message's minute has no accepted price
+            assert any(x["outcomes"] == "-" for x in lines), lines
 
 
 class TestTheRealPolymarketConsumer:
     @pytest.mark.asyncio
     async def test_a_refused_wide_book_is_raw_but_not_an_input(
-        self, monkeypatch, caplog,
+        self, monkeypatch, caplog, receipt_wall,
     ):
         """Two book messages for the game's token: a tradeable one (raw and an
         input) and a wide one #1578 refuses (raw only)."""
@@ -405,8 +434,9 @@ class TestTheRealPolymarketConsumer:
         assert lines, [m.getMessage() for m in caplog.records][-20:]
         assert sum(int(x["raw"]) for x in lines) == 2
         assert sum(int(x["accepted"]) for x in lines) == 1
-        outcomes = {o.split(":")[0] for x in lines for o in x["outcomes"].split(",")}
-        assert outcomes == {str(YES_OUTCOME_ID)}
+        assert _outcome_ids(lines) == {str(YES_OUTCOME_ID)}
+        if receipt_wall:  # the refused book's minute has no accepted price
+            assert any(x["outcomes"] == "-" for x in lines), lines
         assert sum(int(s["covered"]) for x in lines for s in _stamps(x)) == 1
 
 
