@@ -122,7 +122,7 @@ from app.utils.event_completion import (
     started_without_result,
 )
 from app.utils.current_odds_probability import current_odds_probability
-from app.utils.draw_priced_winner import printable_away
+from app.utils.draw_priced_winner import printable_away, sport_prices_a_draw
 from app.utils.market_identity import ticker_game_date
 from app.utils.game_market_class import (
     is_game_winner_market,
@@ -21844,6 +21844,33 @@ def venue_settled_home_won(result: str | None, home_team_name, away_team_name) -
     return None
 
 
+def scored_tie_ends_level(home_score, away_score, sport_key) -> bool:
+    """Does a finished, LEVEL score end the chart at 50/50 with a Final row (#10929)?
+
+    Seen on production 2026-10-12, ``/events/14780555`` (Commanders 27-27 Giants,
+    NFL, settled in overtime). The terminal point below fired only for a winner,
+    so a tie got no ``espn_history`` row reading ``Final``: the resting readout
+    printed the last live sighting ("0:55 - OT") and the line ended on the
+    Commanders at 72% under a header that already said the game was over.
+
+    A two-way winner market has no winning side on a tie — the sportsbook bet is
+    a push and the venue's two win legs settle alike — so the line ends level and
+    the Final row carries the level score. Two cases keep the old behaviour:
+
+    * a draw-priced sport (soccer): the line there is "the home side wins", whose
+      settled value on a draw is not one half, and the away slot is withheld
+      (``app/utils/draw_priced_winner.py``). That ending is its own decision;
+    * 0-0: in a sport without a priced draw, a "final" with no score at all is a
+      called-off game far more often than a played one, and printing Final over
+      it would claim a game happened.
+    """
+    if home_score is None or away_score is None or home_score != away_score:
+        return False
+    if home_score == 0:
+        return False
+    return not sport_prices_a_draw(sport_key)
+
+
 def _withhold_partial_field_markets(other_rows: list, markets: list) -> list:
     """A field card accounts for the whole question, or it is not shown (#3721).
 
@@ -33327,19 +33354,32 @@ async def get_event_odds_history(
     # the hero's own sentence (`_settled_hero_result`), so the chart can only end
     # on a result the page is already printing; a draw, a score sentence or an
     # unorientable name keeps the line unchanged.
+    #
+    # #10929: a LEVEL scored final in a two-way sport ends at 50/50 with the same
+    # Final row — see `scored_tie_ends_level`.
     home_won = None
+    ends_level = False
     if is_finished and event.home_score is not None and event.away_score is not None:
-        if event.home_score != event.away_score:  # Skip ties
+        if event.home_score != event.away_score:
             home_won = event.home_score > event.away_score
+        else:
+            ends_level = scored_tie_ends_level(
+                event.home_score,
+                event.away_score,
+                event.sport.key if event.sport else None,
+            )
     elif aggregate_line or history or any(win_prob_history.values()):
         home_won = venue_settled_home_won(
             await _settled_hero_result(db, event, now),
             event.home_team_name,
             event.away_team_name,
         )
-    if home_won is not None:
-        resolved_home_prob = 1.0 if home_won else 0.0
-        resolved_away_prob = 0.0 if home_won else 1.0
+    if home_won is not None or ends_level:
+        if ends_level:
+            resolved_home_prob = resolved_away_prob = 0.5
+        else:
+            resolved_home_prob = 1.0 if home_won else 0.0
+            resolved_away_prob = 0.0 if home_won else 1.0
 
         # Determine terminal timestamp: completed_at if available,
         # otherwise last data point + 1 minute. #1833: a completed_at no game
