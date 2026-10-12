@@ -13,8 +13,19 @@ import SwiftUI
 /// last one it recorded. An opening-line hero (#9470) already says "Opening line" and gets no
 /// second label. A finished hero is a verdict and does not use this.
 ///
-/// Presentation only. It reads the same status, clock and opening-line flag the
-/// hero already decided on, and never changes which pair is drawn.
+/// Nor does a pair earn CURRENT by loading: the quote carries its own clock
+/// (`hero_probability_observed_at`), and a quote older than
+/// `SourceAge.liveStaleAfter` — before the off or during play — is the last
+/// recorded one. Native's review of 5f542c7b96 mounted archived replays and
+/// read "Current win chance" on quotes 11.5 h, 26 h and 36 h old. A pair with
+/// no readable clock fails the same way an undated game does: toward "last
+/// recorded", never toward "current". (`SourceAge.isStale` answers FALSE for
+/// an undatable stamp because a mark must not draw on a guess; a claim of
+/// "current" must not be made on one either, so the absent case is decided
+/// here, not there.)
+///
+/// Presentation only. It reads the same status, clocks and opening-line flag
+/// the hero already decided on, and never changes which pair is drawn.
 nonisolated enum EventHeadlinePhase9483: Equatable, Sendable {
     case current
     case lastRecorded
@@ -26,12 +37,24 @@ nonisolated enum EventHeadlinePhase9483: Equatable, Sendable {
         }
     }
 
+    /// Whether the pair gets a phase label at all. Time-free, so the page can
+    /// mount the label's minute tick only where a label can be drawn.
+    static func applies(status: String?, isOpeningLine: Bool) -> Bool {
+        !isOpeningLine && !EventState.isFinished(status)
+    }
+
+    /// `observedAt` has no default on purpose: a caller that forgets the
+    /// quote's clock must not compile into a page that calls every pair current.
     static func resolve(
         status: String?, commenceTime: Date?, isOpeningLine: Bool,
+        observedAt: Date?,
         deliveryInterrupted: Bool = false, now: Date = Date()
     ) -> EventHeadlinePhase9483? {
-        guard !isOpeningLine, !EventState.isFinished(status) else { return nil }
+        guard applies(status: status, isOpeningLine: isOpeningLine) else { return nil }
         if deliveryInterrupted { return .lastRecorded }
+        guard let observedAt,
+              now.timeIntervalSince(observedAt) <= SourceAge.liveStaleAfter
+        else { return .lastRecorded }
         if status == "live" { return .current }
         // `hasStarted` treats a missing clock as started, so an undated game
         // fails toward "last recorded", never toward "current".

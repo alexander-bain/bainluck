@@ -129,55 +129,118 @@ final class HeadlineDisclosure9483Tests: XCTestCase {
 
     // MARK: Phase label
 
+    /// A quote one minute older than the instant it is read at.
+    private func fresh(_ now: Date) -> Date { now.addingTimeInterval(-60) }
+
     func testALiveQuoteIsTheCurrentChance() {
+        let now = kickoff.addingTimeInterval(3600)
         XCTAssertEqual(EventHeadlinePhase9483.resolve(
             status: "live", commenceTime: kickoff, isOpeningLine: false,
-            now: kickoff.addingTimeInterval(3600)), .current)
+            observedAt: fresh(now), now: now), .current)
     }
 
     func testAQuoteBeforeTheOffIsTheCurrentChance() {
+        let now = kickoff.addingTimeInterval(-3600)
         XCTAssertEqual(EventHeadlinePhase9483.resolve(
             status: "scheduled", commenceTime: kickoff, isOpeningLine: false,
-            now: kickoff.addingTimeInterval(-3600)), .current)
+            observedAt: fresh(now), now: now), .current)
     }
 
     func testAStartedGameThatIsNotLiveIsOnlyTheLastRecordedChance() {
+        let now = kickoff.addingTimeInterval(600)
         for status in ["suspended", "scheduled", "delayed", nil] {
             XCTAssertEqual(EventHeadlinePhase9483.resolve(
                 status: status, commenceTime: kickoff, isOpeningLine: false,
-                now: kickoff.addingTimeInterval(600)), .lastRecorded, "\(status ?? "nil")")
+                observedAt: fresh(now), now: now), .lastRecorded, "\(status ?? "nil")")
         }
         // No clock at all fails toward "last recorded", never "current".
         XCTAssertEqual(EventHeadlinePhase9483.resolve(
-            status: "scheduled", commenceTime: nil, isOpeningLine: false), .lastRecorded)
+            status: "scheduled", commenceTime: nil, isOpeningLine: false,
+            observedAt: fresh(Date())), .lastRecorded)
     }
 
     func testAnInterruptedPairIsOnlyTheLastRecordedChance() {
         // The status line beside it says "Update interrupted"; the subject
         // must not call the same pair current.
+        let before = kickoff.addingTimeInterval(-60)
         for status in ["live", "scheduled"] {
             XCTAssertEqual(EventHeadlinePhase9483.resolve(
                 status: status, commenceTime: kickoff, isOpeningLine: false,
-                deliveryInterrupted: true, now: kickoff.addingTimeInterval(-60)),
+                observedAt: fresh(before), deliveryInterrupted: true, now: before),
                 .lastRecorded, status)
         }
         // Control: the same live pair, delivery not interrupted, is current.
+        let during = kickoff.addingTimeInterval(600)
         XCTAssertEqual(EventHeadlinePhase9483.resolve(
             status: "live", commenceTime: kickoff, isOpeningLine: false,
-            deliveryInterrupted: false, now: kickoff.addingTimeInterval(600)), .current)
+            observedAt: fresh(during), deliveryInterrupted: false, now: during), .current)
         // A final keeps no phase label whatever the delivery state.
+        let after = kickoff.addingTimeInterval(9000)
         XCTAssertNil(EventHeadlinePhase9483.resolve(
             status: "completed", commenceTime: kickoff, isOpeningLine: false,
-            deliveryInterrupted: true, now: kickoff.addingTimeInterval(9000)))
+            observedAt: fresh(after), deliveryInterrupted: true, now: after))
+    }
+
+    // MARK: The quote's own clock (native review of 5f542c7b96, F1)
+
+    func testAnAgedLiveQuoteIsOnlyTheLastRecordedChance() {
+        // The acceptance-pack replays: PHI–JAX live at ~26 h, SA–PHX at ~36 h.
+        let now = kickoff.addingTimeInterval(3600)
+        for age: TimeInterval in [26 * 3600, 36 * 3600] {
+            XCTAssertEqual(EventHeadlinePhase9483.resolve(
+                status: "live", commenceTime: kickoff, isOpeningLine: false,
+                observedAt: now.addingTimeInterval(-age), now: now),
+                .lastRecorded, "live quote \(age / 3600)h old")
+        }
+    }
+
+    func testAnAgedPregameQuoteIsOnlyTheLastRecordedChance() {
+        // The acceptance-pack replay: BUF–LAR pregame at ~11.5 h.
+        let now = kickoff.addingTimeInterval(-3600)
+        XCTAssertEqual(EventHeadlinePhase9483.resolve(
+            status: "scheduled", commenceTime: kickoff, isOpeningLine: false,
+            observedAt: now.addingTimeInterval(-11.5 * 3600), now: now), .lastRecorded)
+    }
+
+    func testAPairWithNoQuoteClockIsOnlyTheLastRecordedChance() {
+        for (status, now) in [("live", kickoff.addingTimeInterval(600)),
+                              ("scheduled", kickoff.addingTimeInterval(-3600))] {
+            XCTAssertEqual(EventHeadlinePhase9483.resolve(
+                status: status, commenceTime: kickoff, isOpeningLine: false,
+                observedAt: nil, now: now), .lastRecorded, status)
+        }
+    }
+
+    func testTheStaleBoundIsTheLiveSourceBoundInclusive() {
+        // Production 14780558 read 0.4 min old: current. The bound is
+        // `SourceAge.liveStaleAfter` with `isStale`'s strict `>`, so exactly
+        // 30 minutes is still current and one second past it is not.
+        let bound = SourceAge.liveStaleAfter
+        XCTAssertEqual(bound, 30 * 60)
+        for (status, now) in [("live", kickoff.addingTimeInterval(3600)),
+                              ("scheduled", kickoff.addingTimeInterval(-3600))] {
+            XCTAssertEqual(EventHeadlinePhase9483.resolve(
+                status: status, commenceTime: kickoff, isOpeningLine: false,
+                observedAt: now.addingTimeInterval(-24), now: now), .current, "\(status) 0.4 min")
+            XCTAssertEqual(EventHeadlinePhase9483.resolve(
+                status: status, commenceTime: kickoff, isOpeningLine: false,
+                observedAt: now.addingTimeInterval(-bound), now: now), .current, "\(status) at bound")
+            XCTAssertEqual(EventHeadlinePhase9483.resolve(
+                status: status, commenceTime: kickoff, isOpeningLine: false,
+                observedAt: now.addingTimeInterval(-bound - 1), now: now), .lastRecorded, "\(status) past bound")
+        }
     }
 
     func testAnOpeningLineOrAFinalGetsNoSecondLabel() {
         XCTAssertNil(EventHeadlinePhase9483.resolve(
             status: "scheduled", commenceTime: kickoff, isOpeningLine: true,
-            now: kickoff.addingTimeInterval(-3600)))
+            observedAt: nil, now: kickoff.addingTimeInterval(-3600)))
         XCTAssertNil(EventHeadlinePhase9483.resolve(
             status: "completed", commenceTime: kickoff, isOpeningLine: false,
-            now: kickoff.addingTimeInterval(9000)))
+            observedAt: nil, now: kickoff.addingTimeInterval(9000)))
+        XCTAssertFalse(EventHeadlinePhase9483.applies(status: "scheduled", isOpeningLine: true))
+        XCTAssertFalse(EventHeadlinePhase9483.applies(status: "completed", isOpeningLine: false))
+        XCTAssertTrue(EventHeadlinePhase9483.applies(status: "live", isOpeningLine: false))
     }
 
     func testTheLabelsNameTheirReading() {
@@ -216,5 +279,16 @@ final class HeadlineDisclosure9483Tests: XCTestCase {
         let text = try page()
         XCTAssertEqual(text.components(separatedBy: "EventHeadlinePhaseLabel9483(").count - 1, 1)
         XCTAssertEqual(text.components(separatedBy: "EventHeadlinePhase9483.resolve(").count - 1, 1)
+    }
+
+    func testThePageResolvesThePhaseOnTheQuotesOwnClockEachMinute() throws {
+        let text = try page()
+        let call = try XCTUnwrap(text.range(of: "EventHeadlinePhase9483.resolve("))
+        let args = String(text[call.upperBound...].prefix(500))
+        XCTAssertTrue(args.contains("observedAt: event.heroProbabilityObservedAt?.asDate"),
+                      "the phase must read the hero quote's own clock")
+        XCTAssertTrue(args.contains("now: tick.date"), "the phase must age on the minute tick")
+        let before = String(text[..<call.lowerBound].suffix(300))
+        XCTAssertTrue(before.contains("TimelineView(.periodic(from: .now, by: 60)) { tick in"))
     }
 }

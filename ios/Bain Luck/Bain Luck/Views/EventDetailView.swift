@@ -1587,19 +1587,28 @@ struct EventDetailView: View {
                         // sits behind the info button. Live, the pre-game
                         // baseline rides under it (before the off the
                         // since-open caption below already carries it).
-                        if let phase = EventHeadlinePhase9483.resolve(
-                            status: event.status, commenceTime: event.commenceTime?.asDate,
-                            isOpeningLine: shown.isOpeningLine,
-                            deliveryInterrupted: vm.liveUpdateStatus == .interrupted) {
-                            EventHeadlinePhaseLabel9483(
-                                phase: phase,
-                                baseline: event.status == "live"
-                                    ? EventHeadlinePhase9483.baselineText(
-                                        prematch: event.prematchOdds, opening: event.openingOdds,
-                                        sport: event.sport,
-                                        awayTeam: event.awayTeam, homeTeam: event.homeTeam)
-                                    : nil,
-                                maxWidth: Self.heroVerdictWidth(at: dynamicTypeSize))
+                        // The minute tick lets a quote age into "last
+                        // recorded" on a page left open with no new price.
+                        if EventHeadlinePhase9483.applies(
+                            status: event.status, isOpeningLine: shown.isOpeningLine) {
+                            TimelineView(.periodic(from: .now, by: 60)) { tick in
+                                if let phase = EventHeadlinePhase9483.resolve(
+                                    status: event.status, commenceTime: event.commenceTime?.asDate,
+                                    isOpeningLine: shown.isOpeningLine,
+                                    observedAt: event.heroProbabilityObservedAt?.asDate,
+                                    deliveryInterrupted: vm.liveUpdateStatus == .interrupted,
+                                    now: tick.date) {
+                                    EventHeadlinePhaseLabel9483(
+                                        phase: phase,
+                                        baseline: event.status == "live"
+                                            ? EventHeadlinePhase9483.baselineText(
+                                                prematch: event.prematchOdds, opening: event.openingOdds,
+                                                sport: event.sport,
+                                                awayTeam: event.awayTeam, homeTeam: event.homeTeam)
+                                            : nil,
+                                        maxWidth: Self.heroVerdictWidth(at: dynamicTypeSize))
+                                }
+                            }
                         }
                         // Trend indicator (change since opening).
                         //
