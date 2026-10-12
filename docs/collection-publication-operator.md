@@ -89,3 +89,29 @@ Focused tests use the real helpers through a SQL double for CLI/default-no-write
 identity/revision/eligibility guards, transaction outcomes and receipts. They do
 not establish Postgres isolation/lock behavior or production completeness; the
 existing Authority real-Postgres correction coverage retains that responsibility.
+
+## Theme collections (#9935)
+
+The same `publish` / `withdraw` operations accept the two theme slugs the
+registry builds, `ai` (continuing) and `oscars-2027` (finite edition). Any other
+spelling (`ai-2026`, `oscars-27`) has no edition and is refused. A theme page is
+served from the producer's immutable snapshot at the live revision, so stored
+edges alone cannot show that the page will render. Preview and apply read that
+snapshot at the target's revision, under the lock for an apply, using the
+page's own bounded reader. Publication is refused when:
+
+- `theme_snapshot_absent_at_revision`: there is no snapshot, so readers would
+  get 503 "building".
+- `theme_inventory_incomplete`: the pass behind it did not see the whole
+  population.
+- `theme_snapshot_empty`: the snapshot shows no members.
+- `theme_snapshot_disagrees_with_membership`: a shown id has no edge, so the
+  page would be served as "building".
+
+None of these refuse a withdrawal. The receipt's `theme_snapshot` shows the
+revision and the shown, eligible and withheld counts that would go live. A
+publish or withdrawal bumps the revision and sends one `rebuild_theme_snapshot`,
+so the page answers "building" until that rebuild writes the new revision's
+snapshot on `worker-background` (main app; the apply dyno shares its Redis).
+Member operations (`withdraw-members` / `readmit-members`) still accept NFL/MLB
+hubs only.
