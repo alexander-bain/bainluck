@@ -227,8 +227,8 @@ struct GamePlayCardView: View {
 
     @ViewBuilder
     private func stateParts(_ point: GamePlayPoint) -> some View {
-        if !point.timeDisplay.isEmpty {
-            Text(point.timeDisplay)
+        if !point.badgeDisplay.isEmpty {
+            Text(point.badgeDisplay)
                 .font(.caption2)
                 .fontWeight(.medium)
                 .foregroundStyle(.secondary)
@@ -392,6 +392,9 @@ struct GamePlayPoint {
     var periodApprox: Bool = false
     var clockApprox: Bool = false
     var scoreApprox: Bool = false
+    /// #9483 — the reading's phase where the chart can prove it
+    /// (`ChartReadoutContext9483`). Nil leaves the badge to the state.
+    var phase: ChartReadoutPhase9483? = nil
 
     var hasScore: Bool {
         homeScore != nil && awayScore != nil
@@ -534,5 +537,21 @@ struct GamePlayPoint {
             text = "~" + text
         }
         return text
+    }
+
+    /// #9483 — the badge the card prints: "Pregame" on a reading before play
+    /// began, whatever state rode onto it; "Final" on a finished line's
+    /// settled end unless the state already says so ("Final/OT" stays);
+    /// otherwise the period/clock badge, unchanged.
+    var badgeDisplay: String {
+        switch phase {
+        case .pregame?:
+            return ChartReadoutPhase9483.pregame.word
+        case .final?:
+            return timeDisplay.localizedCaseInsensitiveContains("final")
+                ? timeDisplay : ChartReadoutPhase9483.final.word
+        case nil:
+            return timeDisplay
+        }
     }
 }

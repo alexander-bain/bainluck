@@ -193,6 +193,12 @@ nonisolated struct GameMarketPlayerProp: Decodable, Equatable, Identifiable, Sen
     /// on. No prop reaching this card is an inverted leg (measured: 0 of 141),
     /// because the card only builds rungs from "Player: N+" outcomes.
     let pregameMark: Double?
+    /// #9483 — the venue's observation clock and inverted-leg flag, served on
+    /// every prop row and read only by the All markets catalog
+    /// (`QuestionCatalog9483`), which applies web's freshness and side rules.
+    /// Absent on older payloads, decoding to `nil`.
+    var observedAt: String? = nil
+    var _inverted: Bool? = nil
 }
 
 /// Generic game market outcome used for spreads, totals, team totals, and periods.
@@ -217,6 +223,10 @@ nonisolated struct GameMarketOutcome: Decodable, Equatable, Identifiable, Sendab
     /// ``HalfScoresFromGrades``; absent on older payloads, decoding to `nil`.
     let isWinner: Bool?
     let resolutionSource: String?
+    /// #9483 — as on ``GameMarketPlayerProp``: read only by the All markets
+    /// catalog. Absent on older payloads, decoding to `nil`.
+    var observedAt: String? = nil
+    var _inverted: Bool? = nil
 }
 
 /// #10850 — one `closed_period_markets` row: the period row as served, plus

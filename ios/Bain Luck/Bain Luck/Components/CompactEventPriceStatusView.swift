@@ -12,13 +12,22 @@ import SwiftUI
 /// is the status owner's call, not this renderer's), no price arithmetic.
 nonisolated struct CompactEventPriceStatus: Equatable {
     let status: LiveUpdateStatus
+    var isDisclosure: Bool = false
 
-    var isVisible: Bool { status != .hidden }
+    var isVisible: Bool { isDisclosure || status != .hidden }
+
+    /// Routine status lives in details; uncertainty remains beside the price.
+    var showsTitle: Bool {
+        !isDisclosure || (status != .live && status != .hidden)
+    }
+
+    var showsTrailingInfo: Bool { isDisclosure && showsTitle }
 
     var title: String { status.title }
 
     /// Only proven delivery is green; every other state is neutral or a warning.
     var glyph: String {
+        if isDisclosure && !showsTitle { return "info.circle" }
         switch status {
         case .hidden: return ""
         case .live: return "circle.fill"
@@ -44,6 +53,9 @@ struct CompactEventPriceStatusView: View {
     let status: LiveUpdateStatus
     let sequence: Int
     let receivedAt: Date?
+    /// The owning button opens the existing details popover. Default preserves
+    /// every other caller's delivery-status presentation.
+    var isDisclosure: Bool = false
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var cue = LivePriceReceiptCue()
@@ -56,21 +68,34 @@ struct CompactEventPriceStatusView: View {
         let reduceMotion: Bool
     }
 
-    private var presentation: CompactEventPriceStatus { CompactEventPriceStatus(status: status) }
+    private var presentation: CompactEventPriceStatus { CompactEventPriceStatus(status: status, isDisclosure: isDisclosure) }
 
     private var tint: Color {
-        if acknowledged || status == .live { return DS.emerald }
+        if acknowledged || (!isDisclosure && status == .live) { return DS.emerald }
         return status == .interrupted ? DS.amber : DS.textSecondary
     }
 
     var body: some View {
         if presentation.isVisible {
             HStack(spacing: 4) {
-                Image(systemName: acknowledged ? CompactEventPriceStatus.receiptGlyph : presentation.glyph)
-                    .imageScale(.small)
-                    .accessibilityHidden(true)
-                Text(presentation.title)
-                    .fixedSize(horizontal: false, vertical: true)
+                // #9483 — one glyph slot in the disclosure: a labelled state
+                // carries only the trailing info mark (two glyphs wrapped
+                // "Waiting for update" inside the hero's 150pt slot), and the
+                // receipt checkmark takes that same slot while acknowledged.
+                if !presentation.showsTrailingInfo {
+                    Image(systemName: acknowledged ? CompactEventPriceStatus.receiptGlyph : presentation.glyph)
+                        .imageScale(.small)
+                        .accessibilityHidden(true)
+                }
+                if presentation.showsTitle {
+                    Text(presentation.title)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                if presentation.showsTrailingInfo {
+                    Image(systemName: acknowledged ? CompactEventPriceStatus.receiptGlyph : "info.circle")
+                        .imageScale(.small)
+                        .accessibilityHidden(true)
+                }
             }
             .font(.caption.weight(.semibold))
             .foregroundStyle(tint)
