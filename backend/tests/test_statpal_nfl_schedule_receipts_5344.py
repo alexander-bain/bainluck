@@ -19,6 +19,7 @@ silent there (gotcha #43: both directions).
 """
 import copy
 import json
+import sys
 from pathlib import Path
 
 import httpx
@@ -410,7 +411,7 @@ class TestOldCallersUnchanged:
 def test_every_reason_is_emitted_by_the_walk(service):
     """The closed set is exactly what the walk emits: each reason is produced
     by a real payload here, and no other SKIP_/REFUSE_ name exists."""
-    import app.services.statpal_api as mod
+    mod = sys.modules[StatPalAPIService.__module__]
 
     def emitted(payload):
         return set(service._parse_nfl_season_schedule_read(payload).refusals)
