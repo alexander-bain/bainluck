@@ -4762,6 +4762,35 @@ jobs:
             exit 1
           }
 
+      - name: "#10090 a live quote is written beside a slow non-live transaction (real Postgres)"
+        # A Kalshi flush decided live preemption only BEFORE a non-live phase
+        # opened; a live quote arriving once that transaction ran waited for all
+        # of it (production 2026-10-12: one 200-row non-live phase held 3.50 s).
+        # The live input is now written beside it, on its own pooled session.
+        # Only real transactions show it: a pg_sleep trigger holds the non-live
+        # UPDATE open while live quotes enter through the shipped handle_ticker,
+        # the shipped cadence and flush write them, and publication reads the
+        # committed rows on an independent connection. Cases: promptness before
+        # the non-live commit (with strawman), continuing input without
+        # starvation, an in-flight event never split, cancellation inside both
+        # transactions then the final drain, and Root's three liveness cases:
+        # the last quote inside the stamp floor, a quote fenced behind its own
+        # running stamp, a bridged open-contract winner. Reuses the #837
+        # database; same skip detection plus a count.
+        if: matrix.group == 'isolated'
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_kalshi_live_beside_inflight_nonlive_10090_pg.py \
+            -v -rs 2>&1 | tee /tmp/livebeside10090.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/livebeside10090.txt; then
+            echo "::error::#10090 live-beside gate SKIPPED — the gate did not run"
+            exit 1
+          fi
+          grep -qE "[^0-9]8 passed," /tmp/livebeside10090.txt || {
+            echo "::error::#10090 live-beside gate did not run all eight cases"
+            exit 1
+          }
+
       - name: "#1927 a negative rank term never excludes, at the route (real Postgres)"
         # The wide half of #1927. Discover judges a live game "exceptional" by
         # reading its personalised `score`, so a stored Nah (×0.4) or eight real
