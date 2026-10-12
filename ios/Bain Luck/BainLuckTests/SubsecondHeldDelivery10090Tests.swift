@@ -141,28 +141,56 @@ final class SubsecondHeldDelivery10090Tests: XCTestCase {
     private final class Client: EventDetailProviding {
         struct Missing: Error {}
         let response: EventDetail
+        let history: EventHistoryResponse?
         private(set) var reads = 0
-        init(_ response: EventDetail) { self.response = response }
+        init(_ response: EventDetail, history: EventHistoryResponse? = nil) {
+            self.response = response; self.history = history
+        }
         func fetchEvent(id: Int) async throws -> EventDetail { reads += 1; return response }
-        func fetchEventHistory(id: Int, hours: Int) async throws -> EventHistoryResponse { throw Missing() }
+        func fetchEventHistory(id: Int, hours: Int) async throws -> EventHistoryResponse {
+            guard let history else { throw Missing() }
+            return history
+        }
         func fetchRelatedFutures(eventId: Int) async throws -> RelatedFuturesResponse { throw Missing() }
         func fetchTeamProgression(eventId: Int) async throws -> TeamProgressionResponse { throw Missing() }
         func fetchGameMarkets(eventId: Int) async throws -> GameMarketsResponse { throw Missing() }
         func fetchLineMovement(eventId: Int) async throws -> LineMovementResponse { throw Missing() }
     }
 
-    /// The held page: a folded blend hero at revision 20, older than every quote.
-    private func held() throws -> EventDetail {
+    private static func decoder() -> JSONDecoder {
         let decoder = JSONDecoder()
         decoder.keyDecodingStrategy = .convertFromSnakeCase
-        return try decoder.decode(EventDetail.self, from: Data("""
-        {"id":4242,"sport":"basketball_nba","home_team":"Celtics","away_team":"Knicks","status":"live",
+        return decoder
+    }
+
+    /// The held page: a folded blend hero at revision 20, older than every quote.
+    /// The hosted page also carries a tip-off, so its chart has a start.
+    private func held(hosted: Bool = false) throws -> EventDetail {
+        let tip = hosted ? #""commence_time":"2026-09-25T16:00:00Z","# : ""
+        return try Self.decoder().decode(EventDetail.self, from: Data("""
+        {"id":4242,"sport":"basketball_nba","home_team":"Celtics","away_team":"Knicks","status":"live",\(tip)
          "home_score":50,"away_score":48,
          "current_odds":{"home_probability":0.6,"away_probability":0.4},
          "hero_probability":0.6,"hero_probability_source":"blend",
          "hero_probability_observed_at":"2026-09-25T17:10:00Z",
          "blend_fold_revision":{"4242":20,"999":5},
          "win_probability_sources":{"polymarket":{"value":0.6,"updated_at":"2026-09-25T17:10:00Z"}}}
+        """.utf8))
+    }
+
+    /// The hosted page's history: a blend line from tip-off that ends on the
+    /// held hero, 60% at 17:10:00, so the chart draws before the burst and the
+    /// page never falls through to the production history read.
+    private func heldHistory() throws -> EventHistoryResponse {
+        let rows: [(String, Double)] = [("16:00:00", 0.50), ("16:30:00", 0.54), ("17:00:00", 0.58), ("17:10:00", 0.60)]
+        func points() -> String {
+            rows.map { #"{"timestamp":"2026-09-25T\#($0.0)Z","home_probability":\#($0.1)}"# }
+                .joined(separator: ",")
+        }
+        return try Self.decoder().decode(EventHistoryResponse.self, from: Data("""
+        {"event_id":4242,"home_team":"Celtics","away_team":"Knicks","status":"live",
+         "history":[\(points())],"aggregate_line":[\(points())],
+         "win_prob_history":{"polymarket":[\(points())]}}
         """.utf8))
     }
 
@@ -204,6 +232,15 @@ final class SubsecondHeldDelivery10090Tests: XCTestCase {
             window.makeKeyAndVisible()
         }
 
+        /// The final page as drawn, taken after the measured burst.
+        func capture(to path: String) throws {
+            window.layoutIfNeeded()
+            let image = UIGraphicsImageRenderer(bounds: window.bounds).image { _ in
+                _ = window.drawHierarchy(in: window.bounds, afterScreenUpdates: true)
+            }
+            try XCTUnwrap(image.pngData()).write(to: URL(fileURLWithPath: path))
+        }
+
         func close() {
             window.isHidden = true
             previousKeyWindow?.makeKey()
@@ -227,7 +264,9 @@ final class SubsecondHeldDelivery10090Tests: XCTestCase {
         let config = URLSessionConfiguration.ephemeral
         config.protocolClasses = [PacedStream.self]
         let session = URLSession(configuration: config)
-        let client = Client(try held())
+        // Only the hosted page gets a successful history; the model cases keep
+        // the original throwing one.
+        let client = hosted ? Client(try held(hosted: true), history: try heldHistory()) : Client(try held())
         let vm = EventDetailViewModel(
             eventId: 4242, client: client,
             makeStreamHandle: { id in
@@ -261,6 +300,16 @@ final class SubsecondHeldDelivery10090Tests: XCTestCase {
         }
         await poll.value
         try? await Task.sleep(nanoseconds: 300_000_000)
+
+        // Everything measured is already marked; the capture can't move it.
+        let measured = marks.count
+        if let page {
+            XCTAssertNotNil(vm.history, "the hosted chart drew from the supplied history, not production")
+            let path = "/Users/bain/bainluck/artifacts/native-10090-subsecond-hosted/final-\(quarter ? "250ms" : "1s").png"
+            try page.capture(to: path)
+            print("SUBSECOND-10090 capture=\(path)")
+        }
+        marks = Array(marks.prefix(measured))
 
         return Run(
             adopted: marks.filter { $0.mark.name == .modelHeadlineAdopted },
