@@ -506,10 +506,10 @@ describe("the rendered pager", () => {
     respond([200, AI_P1()]);
     await refresh("ai");
     const html = frame("ai");
-    expect(html).toContain("2 of 6 questions");
+    expect(html).toContain("2 of 6 markets");
     expect(html).toContain("Load more");
     expect(html).toContain("AI · Ongoing");
-    expect(html).not.toContain("may not include every question");
+    expect(html).not.toContain("may not include every market");
   });
   test("no Load more once the last page is in", async () => {
     respond([200, OSC_P1()]);
@@ -517,14 +517,14 @@ describe("the rendered pager", () => {
     respond([200, OSC_P2()]);
     await loadMore("oscars-2027", hub);
     const html = frame("oscars-2027");
-    expect(html).toContain("4 of 4 questions");
+    expect(html).toContain("4 of 4 markets");
     expect(html).not.toContain("Load more");
   });
   test("incomplete inventory is said plainly, without a source or health claim", async () => {
     respond([200, AI_P1(5, { complete: false })]);
     await refresh("ai");
     const html = frame("ai");
-    expect(html).toContain("This list may not include every question yet.");
+    expect(html).toContain("This list may not include every market yet.");
     expect(html).not.toMatch(/provider|source|outage|health/i);
   });
   test("no aggregate number for unrelated questions: every percentage on the page belongs to a card", async () => {

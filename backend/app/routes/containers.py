@@ -384,6 +384,25 @@ def _base_empty() -> dict:
     }
 
 
+@router.get("/{slug}/week-navigation")
+async def get_week_navigation(
+    response: Response,
+    slug: str = Path(..., min_length=1, max_length=200),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Optional fresh links: adjacent publications do not change this hub's revision."""
+    from app.utils.container_week_navigation import read_week_navigation
+
+    response.headers["Cache-Control"] = "no-store"
+    if not containers_read_enabled():
+        raise HTTPException(status_code=404, detail="Not found")
+    try:
+        return await asyncio.wait_for(read_week_navigation(db, slug), timeout=3)
+    except Exception:
+        logger.exception("container week navigation unavailable for %s", slug)
+        return {"slug": slug, "state": "unavailable", "previous": None, "next": None}
+
+
 @router.get("/{slug}")
 async def get_container(
     slug: str = Path(..., min_length=1, max_length=200),
