@@ -47,6 +47,10 @@ struct ContainerHubView: View {
                 if let note = presentation.note {
                     Text(note).font(.subheadline).foregroundStyle(DS.textSecondary)
                 }
+                if presentation.response.edition?.isTheme == true, presentation.isPartial {
+                    Button("Retry unavailable markets") { Task { await vm.load() } }
+                        .disabled(vm.isRefreshing)
+                }
                 if let counts = presentation.countLabel {
                     Text(counts).font(.subheadline).foregroundStyle(DS.textSecondary)
                         .accessibilityIdentifier("hub.loadedCount")

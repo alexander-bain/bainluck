@@ -23,6 +23,11 @@ final class ContainerHubViewModel: ObservableObject {
     private var refreshVersion = 0
     private var pageVersion = 0
     private var highestRevision: Int?
+    private struct HeldPage {
+        let cursor: String?
+        let response: ContainerHubResponse
+    }
+    private var heldPages: [HeldPage] = []
 
     init(slug: String, service: any ContainerHubLoading = ContainerHubService()) {
         self.slug = slug
@@ -43,19 +48,34 @@ final class ContainerHubViewModel: ObservableObject {
             guard version == refreshVersion, admitted(ticket), !Task.isCancelled else { return }
             try validate(response)
             guard revisionAdmitted(response) else { return }
-            var next = response
-            // Returning from a later page keeps the already accepted inventory and
-            // cursor. A new revision replaces it atomically, never appends to it.
             if case .loaded(let current) = state, current.response.edition?.isTheme == true,
-               sameRevision(current.response, response) {
-                next = merged(current.response, response, append: false)
+               sameRevision(current.response, response), !response.revisionMoved {
+                // Each visited window owns its server position, including failed
+                // hydration. Re-read those windows so a later-page missing card
+                // can recover without a membership revision or fabricated cursor.
+                let visited = heldPages.dropFirst().map { ($0.cursor, $0.response.page?.limit ?? 50) }
+                replacePage(response, cursor: nil)
+                for (cursor, limit) in visited {
+                    guard let cursor else { continue }
+                    let page = try await service.loadPage(slug: slug, cursor: cursor, revision: response.revision!, limit: limit)
+                    guard version == refreshVersion, admitted(ticket), !Task.isCancelled else { return }
+                    try validate(page)
+                    guard revisionAdmitted(page) else { return }
+                    guard sameRevision(response, page), !page.revisionMoved else {
+                        accept(page)
+                        return
+                    }
+                    replacePage(page, cursor: cursor)
+                }
+            } else {
+                accept(response)
             }
-            accept(next)
         } catch {
             guard version == refreshVersion, admitted(ticket), !Task.isCancelled, !isCancellation(error) else { return }
             if isMissing(error) {
                 closeReads()
                 context = ContainerHubReadingContext()
+                heldPages = []
                 state = .unavailable
             } else if case .loaded(let current) = state, current.response.state == .published {
                 // Last-good cards remain readable, explicitly marked as a failed
@@ -94,7 +114,7 @@ final class ContainerHubViewModel: ObservableObject {
                 // Server cursors must advance. Retrying a malformed loop must not
                 // silently append or offer an endless successful Load more.
                 guard response.page?.nextCursor != cursor else { throw APIError.decodingError(underlying: URLError(.cannotParseResponse)) }
-                accept(merged(now.response, response, append: true))
+                replacePage(response, cursor: cursor)
             } else {
                 accept(response)
             }
@@ -103,6 +123,7 @@ final class ContainerHubViewModel: ObservableObject {
             if isMissing(error) {
                 closeReads()
                 context = ContainerHubReadingContext()
+                heldPages = []
                 state = .unavailable
             } else if case .loaded(let now) = state,
                       now.response.revision == revision, now.response.page?.nextCursor == cursor {
@@ -136,40 +157,48 @@ final class ContainerHubViewModel: ObservableObject {
     @MainActor
     private func accept(_ response: ContainerHubResponse) {
         if let revision = response.revision { highestRevision = max(highestRevision ?? revision, revision) }
-        if response.state != .published { closeReads() }
+        if response.state != .published {
+            closeReads()
+            heldPages = []
+        } else {
+            heldPages = response.edition?.isTheme == true ? [HeldPage(cursor: nil, response: response)] : []
+        }
         let presentation = ContainerHubPresentation(response: response)
         context.accept(presentation)
         state = .loaded(presentation)
     }
 
-    /// Same-revision pages are immutable membership; fresh hydrated cards may
-    /// replace old cards. Keep server order and one home for each member.
-    private func merged(_ held: ContainerHubResponse, _ fresh: ContainerHubResponse, append: Bool) -> ContainerHubResponse {
-        let updates = Dictionary(fresh.sections.flatMap(\.slots).compactMap { slot in slot.member.map { ($0.id, slot) } }, uniquingKeysWith: { _, last in last })
-        let withheld = Set(fresh.withheld.compactMap { row in row.id.flatMap { id in row.type.map { "\($0):\(id)" } } })
+    /// Reconstruct from the server's visited window order, never hydrated
+    /// arrival order. An empty/withheld window keeps its position and can retry.
+    @MainActor
+    private func replacePage(_ response: ContainerHubResponse, cursor: String?) {
+        if let index = heldPages.firstIndex(where: { $0.cursor == cursor }) {
+            heldPages[index] = HeldPage(cursor: cursor, response: response)
+        } else { heldPages.append(HeldPage(cursor: cursor, response: response)) }
+        var sections: [ContainerHubSection] = []
         var seen = Set<String>()
-        var sections = held.sections.map { section in
-            let slots = section.slots.compactMap { slot -> ContainerHubMemberSlot? in
-                guard let member = slot.member else { return slot }
-                guard !withheld.contains(member.id), seen.insert(member.id).inserted else { return nil }
-                return updates[member.id] ?? slot
-            }
-            return ContainerHubSection(sectionClass: section.sectionClass, count: slots.count, slots: slots)
-        }
-        for section in fresh.sections {
-            let additions = section.slots.filter { slot in
-                guard let member = slot.member else { return append }
-                return seen.insert(member.id).inserted
-            }
-            guard !additions.isEmpty else { continue }
-            if let index = sections.firstIndex(where: { $0.sectionClass == section.sectionClass }) {
-                let slots = sections[index].slots + additions
-                sections[index] = ContainerHubSection(sectionClass: section.sectionClass, count: slots.count, slots: slots)
-            } else {
-                sections.append(ContainerHubSection(sectionClass: section.sectionClass, count: additions.count, slots: additions))
+        for page in heldPages {
+            for section in page.response.sections {
+                let slots = section.slots.filter { slot in
+                    guard let member = slot.member else { return true }
+                    return seen.insert(member.id).inserted
+                }
+                guard !slots.isEmpty else { continue }
+                if let index = sections.firstIndex(where: { $0.sectionClass == section.sectionClass }) {
+                    let joined = sections[index].slots + slots
+                    sections[index] = ContainerHubSection(sectionClass: section.sectionClass, count: joined.count, slots: joined)
+                } else {
+                    sections.append(ContainerHubSection(sectionClass: section.sectionClass, count: slots.count, slots: slots))
+                }
             }
         }
-        return ContainerHubResponse(envelope: fresh, sections: sections, memberCount: sections.reduce(0) { $0 + $1.count }, page: append ? fresh.page : held.page, previous: held)
+        let pages = heldPages.map(\.response)
+        let combined = ContainerHubResponse(envelope: response, sections: sections,
+            memberCount: pages.reduce(0) { $0 + $1.memberCount }, page: pages.last?.page,
+            withheld: pages.flatMap(\.withheld), withheldCount: pages.reduce(0) { $0 + $1.withheldCount })
+        let presentation = ContainerHubPresentation(response: combined)
+        context.accept(presentation)
+        state = .loaded(presentation)
     }
 
     private func isMissing(_ error: Error) -> Bool {

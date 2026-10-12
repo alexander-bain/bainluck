@@ -68,20 +68,11 @@ nonisolated struct ContainerHubResponse: Decodable, Sendable {
     }
 
     /// Preserve the accepted page inventory while replacing its fresh envelope.
-    init(envelope: ContainerHubResponse, sections: [ContainerHubSection], memberCount: Int, page: ContainerHubPage?, previous: ContainerHubResponse) {
+    init(envelope: ContainerHubResponse, sections: [ContainerHubSection], memberCount: Int, page: ContainerHubPage?, withheld: [ContainerHubWithheld], withheldCount: Int) {
         state = envelope.state; slug = envelope.slug; revision = envelope.revision; reason = envelope.reason
         edition = envelope.edition; container = envelope.container; children = envelope.children
         self.sections = sections; self.memberCount = memberCount; self.page = page
-        let refreshedIds = Set(envelope.sections.flatMap(\.members).map(\.id))
-        let unresolved = previous.withheld.filter { row in
-            guard let id = row.id, let type = row.type else { return true }
-            return !refreshedIds.contains("\(type):\(id)")
-        }
-        let candidates = unresolved + envelope.withheld
-        var seen = Set<String>()
-        withheld = candidates.filter { seen.insert("\($0.type ?? ""):\($0.id ?? 0):\($0.reason)").inserted }
-        withheldCount = withheld.count
-        assembled = envelope.assembled
+        self.withheld = withheld; self.withheldCount = withheldCount; assembled = envelope.assembled
         knownClasses = envelope.knownClasses; counts = envelope.counts; revisionMoved = envelope.revisionMoved
     }
 

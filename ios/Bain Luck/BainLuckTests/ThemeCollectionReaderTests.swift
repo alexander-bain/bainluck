@@ -82,7 +82,8 @@ final class ThemeCollectionReaderTests: XCTestCase {
         let member = try XCTUnwrap(loaded(hub).members.last)
         hub.opened(member); hub.scrolled(to: member.id)
         let back = Task { await hub.load() }; await service.wait(3)
-        await service.reply(2, try page()); await back.value
+        await service.reply(2, try page()); await service.wait(4)
+        await service.reply(3, try page(2)); await back.value
         XCTAssertEqual(try loaded(hub).members.map(\.memberId), [9201, 9202])
         XCTAssertNil(try loaded(hub).response.page?.nextCursor)
         XCTAssertEqual(hub.context.selectedMemberId, member.id); XCTAssertEqual(hub.context.scrollMemberId, member.id)
@@ -172,7 +173,8 @@ final class ThemeCollectionReaderTests: XCTestCase {
         let first = try XCTUnwrap(loaded(vm).members.first)
         vm.opened(first); vm.scrolled(to: first.id)
         let back = Task { await vm.load() }; await service.wait(4)
-        await service.reply(3, try page()); await back.value
+        await service.reply(3, try page()); await service.wait(5)
+        await service.reply(4, try page(2)); await back.value
         XCTAssertEqual(try loaded(vm).members.map(\.memberId), [9201, 9202])
         XCTAssertEqual(vm.context.scrollMemberId, first.id)
         XCTAssertEqual(try loaded(vm).countLabel, "2 of 2 markets loaded")
@@ -190,6 +192,76 @@ final class ThemeCollectionReaderTests: XCTestCase {
         let retry = Task { await vm.loadMore() }; await service.wait(3)
         await service.reply(2, try page(2)); await retry.value
         XCTAssertNil(vm.pageError); XCTAssertEqual(try loaded(vm).members.count, 2)
+    }
+
+    private func withheldPage(_ number: Int) throws -> ContainerHubResponse {
+        try page(number) { value in
+            let sections = value["sections"] as! [[String: Any]]
+            let members = sections[0]["members"] as! [[String: Any]]
+            value["sections"] = []
+            value["member_count"] = 0
+            value["withheld_count"] = 1
+            value["withheld"] = [["type": "market", "id": members[0]["id"]!, "reason": "hydrate_failed"]]
+        }
+    }
+
+    @MainActor
+    func testFinalPageHydrationFailureRecoversWithoutRevisionBumpOrNextCursor() async throws {
+        let service = ThemeReaderService()
+        let vm = ContainerHubViewModel(slug: "ai", service: service)
+        try await seed(vm, service)
+        let more = Task { await vm.loadMore() }; await service.wait(2)
+        await service.reply(1, try withheldPage(2)); await more.value
+        XCTAssertNil(try loaded(vm).response.page?.nextCursor)
+        XCTAssertEqual(try loaded(vm).members.map(\.memberId), [9201])
+        XCTAssertTrue(try loaded(vm).isPartial)
+        let refresh = Task { await vm.load() }; await service.wait(3)
+        await service.reply(2, try page()); await service.wait(4)
+        let retry = await service.request(3)
+        XCTAssertEqual(retry.cursor, try page().page?.nextCursor)
+        XCTAssertEqual(retry.revision, 7)
+        await service.reply(3, try page(2)); await refresh.value
+        XCTAssertEqual(try loaded(vm).members.map(\.memberId), [9201, 9202])
+        XCTAssertFalse(try loaded(vm).isPartial)
+    }
+
+    @MainActor
+    func testRestoringEarlierWithheldPageKeepsServerWindowOrder() async throws {
+        let service = ThemeReaderService()
+        let vm = ContainerHubViewModel(slug: "ai", service: service)
+        try await seed(vm, service)
+        let more = Task { await vm.loadMore() }; await service.wait(2)
+        await service.reply(1, try page(2)); await more.value
+        let withheld = Task { await vm.load() }; await service.wait(3)
+        await service.reply(2, try withheldPage(1)); await service.wait(4)
+        await service.reply(3, try page(2)); await withheld.value
+        XCTAssertEqual(try loaded(vm).members.map(\.memberId), [9202])
+        let restored = Task { await vm.load() }; await service.wait(5)
+        await service.reply(4, try page()); await service.wait(6)
+        await service.reply(5, try page(2)); await restored.value
+        XCTAssertEqual(try loaded(vm).members.map(\.memberId), [9201, 9202])
+        XCTAssertEqual(try loaded(vm).response.revision, 7)
+    }
+
+    @MainActor
+    func testInflightWindowRecoveryCannotReplaceNewRevisionOrWithdrawal() async throws {
+        for terminal in [false, true] {
+            let service = ThemeReaderService()
+            let vm = ContainerHubViewModel(slug: "ai", service: service)
+            try await seed(vm, service)
+            let more = Task { await vm.loadMore() }; await service.wait(2)
+            await service.reply(1, try withheldPage(2)); await more.value
+            let recovery = Task { await vm.load() }; await service.wait(3)
+            await service.reply(2, try page()); await service.wait(4)
+            let newer = Task { await vm.load() }; await service.wait(5)
+            await service.reply(4, try page { value in
+                value["revision"] = 8
+                if terminal { value["state"] = "withdrawn" }
+            }); await newer.value
+            await service.reply(3, try page(2)); await recovery.value
+            XCTAssertEqual(try loaded(vm).response.revision, 8)
+            XCTAssertEqual(try loaded(vm).members.map(\.memberId), terminal ? [] : [9201])
+        }
     }
 
 }
