@@ -142,6 +142,42 @@ _TEAM_PROP_RE = re.compile(
     re.IGNORECASE,
 )
 
+# #1529 census: prop shapes the vocabularies above miss, read ONLY for a title
+# that would otherwise be "other" (see the tail of `classify_game_market_class`),
+# so no answer already given moves — in particular nothing crosses `moneyline`
+# and nothing enters the refresh-budgeted `spread`/`total`. Measured on the
+# 30-day census of 2026-10-12 (main v5675): these were most of the `other` rows
+# behind the soccer and NHL ceiling breaches — Polymarket "Lyle Foster: 3+
+# goals" / "…: 2+ shots on target", Kalshi "St. Louis vs Chicago: Goals"
+# (KXNHLGOAL, outcomes "Adam Jiricek: 1+") and "…: First Goalscorer".
+_PLAYER_PROP_TAIL_RE = re.compile(
+    r"(?:\bgoal ?scorer\b|\bstarting (?:xi|11|eleven|line-?up)\b)",
+    re.IGNORECASE,
+)
+#: "Lyle Foster: 3+ goals" is a player ladder; "Arsenal vs Chelsea: 3+ goals"
+#: and "Will there be 3+ goals in Arsenal vs Chelsea?" are match thresholds,
+#: and "Arsenal: 3+ goals" is a TEAM threshold of the same shape. The title
+#: alone cannot tell a person from a club, so the count is a player contract
+#: only when the caller hands over the game's two ``sides`` and the single
+#: subject shares no distinctive word with either. Without sides (every
+#: consumer but the census) the shape stays "other" — fail closed.
+_PLAYER_THRESHOLD_RE = re.compile(
+    r"^\s*(?P<who>[^:?]+?)\s*:\s*\d+\+ (?:shots(?: on target)?|goals?)\s*$",
+    re.IGNORECASE,
+)
+_QUESTION_HEAD_RE = re.compile(r"^\s*(?:will|who|which|what|how)\b", re.IGNORECASE)
+#: Kalshi's player-goals ladder is titled with the matchup and a bare "Goals"
+#: tail; only its own series (``KXNHLGOAL``, ``…GOAL``) makes that a player book.
+_KALSHI_GOALS_TAIL_RE = re.compile(r":\s*goals\s*$", re.IGNORECASE)
+# Both-sides game derivatives (the BTTS precedent above): "…: Overtime"
+# (KX*OT), "…: Goal in First 10 Minutes", "…: Correct Score", corners.
+_GAME_PROP_TAIL_RE = re.compile(
+    r"(?:\bovertime\b|\bgoal in (?:the )?first \d+ minutes\b"
+    r"|\b(?:correct|exact) score\b|\bcorners\b)",
+    re.IGNORECASE,
+)
+
+
 # An OUTCOME label that can only belong to a derivative book — a handicap, a
 # total, a period, or a scoreline. Deliberately narrower than the market-name
 # patterns above: this one is asked of an outcome, where the alternative is a
@@ -676,8 +712,54 @@ def is_game_winner_market(
     return False
 
 
+_WORD_RE = re.compile(r"[^\W\d_]{3,}")
+
+
+def _distinctive_words(text: Optional[str]) -> set[str]:
+    return {w.casefold() for w in _WORD_RE.findall(text or "")} - {"the"}
+
+
+def _names_one_player_threshold(
+    name: str, sides: Optional[tuple[Optional[str], Optional[str]]]
+) -> bool:
+    if not sides or not all(sides):
+        return False
+    m = _PLAYER_THRESHOLD_RE.match(name)
+    if m is None:
+        return False
+    who = m.group("who")
+    # A matchup subject is a match threshold, in every separator the module
+    # admits as a matchup — the bare "Spurs v Wolves" too, which the segment
+    # arm's `_NAMES_TWO_SIDES_RE` (v. only) does not read (CERT-4062). Aliases
+    # share no word with the sides, so the side check below cannot hold them.
+    if (
+        _NAMES_TWO_SIDES_RE.search(who)
+        or is_bare_matchup(who)
+        or _QUESTION_HEAD_RE.match(who)
+    ):
+        return False
+    words = _distinctive_words(who)
+    # A person is named by at least two words; a club shares one with a side,
+    # whole or as a prefix ("Man Utd" / "Manchester United"). Either miss keeps
+    # the title "other".
+    if len(words) < 2:
+        return False
+    side_words = _distinctive_words(sides[0]) | _distinctive_words(sides[1])
+    return not any(
+        w.startswith(s) or s.startswith(w) for w in words for s in side_words
+    )
+
+
+def _kalshi_goal_series(external_id: Optional[str]) -> bool:
+    series = (external_id or "").split("-", 1)[0].upper()
+    return series.startswith("KX") and series.endswith("GOAL")
+
+
 def classify_game_market_class(
-    name: str, external_id: Optional[str] = None, sport: Optional[str] = None
+    name: str,
+    external_id: Optional[str] = None,
+    sport: Optional[str] = None,
+    sides: Optional[tuple[Optional[str], Optional[str]]] = None,
 ) -> str:
     """Classify a per-game market into the coarse census taxonomy.
 
@@ -732,5 +814,14 @@ def classify_game_market_class(
     # with no sides ("… Election First Round Winner") stays "other".
     if names_a_scoped_segment(name) and _NAMES_TWO_SIDES_RE.search(name):
         return "segment_winner"
+    # #1529 census: last, so only an "other" answer can move.
+    if (
+        _PLAYER_PROP_TAIL_RE.search(name)
+        or _names_one_player_threshold(name, sides)
+        or (_KALSHI_GOALS_TAIL_RE.search(name) and _kalshi_goal_series(external_id))
+    ):
+        return "player_prop"
+    if _GAME_PROP_TAIL_RE.search(name):
+        return "team_prop"
     _ = lower  # reserved for future sport-specific disambiguation
     return "other"
