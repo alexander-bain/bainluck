@@ -4169,12 +4169,35 @@ async def get_feed(
         _collections_fingerprint = await feed_collections_cache_fingerprint(
             db, max_age_seconds=0.0 if _prewarm_rebuild else 5.0
         )
+    # #9925: a theme card's `collection_ref` is publication-bound the same way.
+    # The published themes join the same key part (unchanged while none is
+    # published) and are what the build checks each target's revision against.
+    # None = could not tell: no links, and the page is not cached.
+    from app.utils.theme_collection_ref import (
+        attach_theme_collection_refs,
+        compose_collections_fingerprint,
+        read_published_themes,
+        theme_collection_refs_enabled,
+    )
+
+    _theme_refs_enabled = theme_collection_refs_enabled(
+        mode=mode, include_futures=include_futures
+    )
+    _published_themes = None
+    if _theme_refs_enabled:
+        _published_themes = await read_published_themes(
+            db, max_age_seconds=0.0 if _prewarm_rebuild else 5.0
+        )
     if (
         not debug
         and not exclude_reviewed
         and (not _collections_enabled or _collections_fingerprint is not None)
+        and (not _theme_refs_enabled or _published_themes is not None)
     ):
         _cache_status = "miss"
+        _collections_key = compose_collections_fingerprint(
+            _collections_fingerprint, _published_themes
+        )
         # LAT-P089: the request SHAPE, held once. The private key and the
         # principal-independent key differ only in the principal, so deriving
         # both from one dict is what stops them drifting apart — the same class
@@ -4191,7 +4214,7 @@ async def get_feed(
             mode=mode,
             category=category,
             edition=_edition_request,
-            collections=_collections_fingerprint,
+            collections=_collections_key,
             opening_seating=_opening_seating,
         )
         # LAT-P001: shared key builder — the pre-warm beat writes through the
@@ -5961,6 +5984,21 @@ async def get_feed(
                     _capture.record_collections if _capture is not None else None
                 ),
             )
+
+        if _theme_refs_enabled:
+            # #9925: on the full deck, before the pin and seating take bodies
+            # from it. Returns `feed_items` itself when no theme is published.
+            _before_theme_refs = feed_items
+            feed_items = await attach_theme_collection_refs(
+                db,
+                feed_items,
+                published=_published_themes,
+                budget_seconds=_feed_budget_remaining_s(),
+            )
+            if _capture is not None and feed_items is not _before_theme_refs:
+                # The offline replay does not run this stage, so a deck it
+                # touched could never verify.
+                _capture.abandon("theme_collection_refs")
 
         # T4-B2 / #5102: the pin, on the BUILD path. Applied to ``feed_items``
         # before the slice below, which is the only placement that works —
