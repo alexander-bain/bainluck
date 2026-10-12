@@ -210,3 +210,518 @@ final class MacMainWindow10878Tests: XCTestCase {
         }
     }
 }
+
+/// #10878 correction — the Mac window keeps a reader's place on Discover, Search
+/// and My Stuff while it mounts only one screen at a time.
+///
+/// The window used to drop each screen's state on every sidebar switch: the
+/// screens own their view models and navigation paths, and the window's detail
+/// switch unmounts whatever is not selected. `MacReadingState10878` now holds
+/// that state above the mount and the screens adopt it when they mount again.
+///
+/// Covered here: the store and the place (identity resets, keep/release), the
+/// scroll keeper's two decisions, and the REAL `SearchView` mounted, unmounted
+/// and remounted the way the window does it — keeping its query and results,
+/// and still stopping its work when it leaves. The scroll keeper's AppKit half
+/// runs only on a Mac; it is proved there, not here.
+@MainActor
+final class MacReadingPlace10878Tests: XCTestCase {
+
+    // MARK: - One reader's places
+
+    func testTheSameReaderGetsTheSamePlacesBack() {
+        let state = MacReadingState10878()
+        let first = state.places(for: "reader-1")
+        first.search.path.append(Route.about)
+        let again = state.places(for: "reader-1")
+        XCTAssertTrue(first === again)
+        XCTAssertEqual(again.generation, first.generation)
+        XCTAssertEqual(again.search.path.count, 1)
+    }
+
+    func testAGuestStaysTheSameGuest() {
+        let state = MacReadingState10878()
+        let guest = state.places(for: nil)
+        XCTAssertTrue(state.places(for: nil) === guest)
+    }
+
+    /// An account change discards everything kept for the previous account —
+    /// including screens that were offscreen when it changed, which cannot see
+    /// the change themselves.
+    func testAnAccountChangeDiscardsEveryKeptPlace() {
+        let state = MacReadingState10878()
+        let first = state.places(for: "reader-1")
+        _ = first.search.models(orMake: { SearchViewModel() })
+        first.search.path.append(Route.about)
+        first.discover.revealedCount = 60
+        first.myStuff.scrollPlace = MacScrollPlace(offset: 900, row: 3, offsetInRow: 40)
+
+        let next = state.places(for: "reader-2")
+        XCTAssertFalse(next === first)
+        XCTAssertNotEqual(next.generation, first.generation, "the window rebuilds the screen on view")
+        XCTAssertNil(next.search.models)
+        XCTAssertTrue(next.search.path.isEmpty)
+        XCTAssertNil(next.discover.revealedCount)
+        XCTAssertEqual(next.myStuff.scrollPlace, MacScrollPlace())
+    }
+
+    /// Signing out and signing back in are both changes, and coming back to the
+    /// first account does not bring its old places back.
+    func testSigningOutAndBackInStartsFresh() {
+        let state = MacReadingState10878()
+        let signedIn = state.places(for: "reader-1")
+        signedIn.search.path.append(Route.about)
+        let guest = state.places(for: nil)
+        XCTAssertFalse(guest === signedIn)
+        XCTAssertTrue(guest.search.path.isEmpty)
+        let back = state.places(for: "reader-1")
+        XCTAssertFalse(back === signedIn)
+        XCTAssertFalse(back === guest)
+        XCTAssertTrue(back.search.path.isEmpty)
+        XCTAssertEqual(Set([signedIn.generation, guest.generation, back.generation]).count, 3)
+    }
+
+    /// Two windows each own a store, so they never share a place.
+    func testTwoWindowsKeepSeparatePlaces() {
+        let a = MacReadingState10878(), b = MacReadingState10878()
+        a.places(for: "reader-1").search.path.append(Route.about)
+        XCTAssertTrue(b.places(for: "reader-1").search.path.isEmpty)
+    }
+
+    // MARK: - A screen's place
+
+    func testAPlaceMakesItsModelsOnceAndKeepsThem() {
+        let place = MacReadingPlace<SearchViewModel>()
+        var made = 0
+        let first = place.models(orMake: { made += 1; return SearchViewModel() })
+        let second = place.models(orMake: { made += 1; return SearchViewModel() })
+        XCTAssertTrue(first === second)
+        XCTAssertEqual(made, 1)
+    }
+
+    /// Discover's first load can still be running when the reader leaves (it
+    /// outlives the screen on purpose, #10399 / #10094). Coming back joins it:
+    /// no second load starts beside it, and both waits end when it does.
+    func testComingBackMidLoadJoinsTheLoadAlreadyRunning() async {
+        let place = MacReadingPlace<SearchViewModel>()
+        let gate = LoadGate()
+        let started = Tally()
+        let first = Task { await place.runInitialLoad { started.count += 1; await gate.wait() } }
+        await gate.waitUntilWaiting()
+        let returned = Task { await place.runInitialLoad { started.count += 1; await gate.wait() } }
+        await Task.yield(); await Task.yield()
+        XCTAssertEqual(started.count, 1, "coming back started a second load beside the first")
+        gate.open()
+        await first.value
+        await returned.value
+        XCTAssertEqual(started.count, 1)
+
+        // Control: once it has finished, a later first load runs.
+        await place.runInitialLoad { started.count += 1 }
+        XCTAssertEqual(started.count, 2)
+    }
+
+    /// Leaving tears down the screen's appearance task; the first load it
+    /// started must not be cancelled with it.
+    func testLeavingDoesNotCancelTheFirstLoad() async {
+        let place = MacReadingPlace<SearchViewModel>()
+        let gate = LoadGate()
+        let cancelled = Tally()
+        let finished = Tally()
+        let appearance = Task {
+            await place.runInitialLoad {
+                await gate.wait()
+                if Task.isCancelled { cancelled.count += 1 }
+                finished.count += 1
+            }
+        }
+        await gate.waitUntilWaiting()
+        appearance.cancel()   // the reader left
+        gate.open()
+        await appearance.value
+        XCTAssertEqual(finished.count, 1, "control: the load ran to the end")
+        XCTAssertEqual(cancelled.count, 0, "leaving cancelled the first load")
+    }
+
+    /// Discover's appearance task goes through the place on the Mac, and leaves
+    /// a model that is running its cold-start recovery to it. (Wiring: the
+    /// joining itself is proved above; Discover cannot be mounted in this
+    /// target without a live sign-in manager.)
+    func testDiscoverJoinsTheKeptLoadInsteadOfStartingAnother() throws {
+        let source = try Self.appSource("Views/DiscoverView.swift")
+        XCTAssertTrue(source.contains("if !vm.isRecovering { await macPlace.runInitialLoad(initialLoad) }"))
+        XCTAssertTrue(source.contains("} else {\n                    await initialLoad()\n                }"),
+                      "the iPhone/iPad path no longer runs its first load directly")
+        XCTAssertFalse(source.contains("releaseModels"), "Discover lets its model go while its load can still run")
+    }
+
+    /// The window hands each reading screen its place, keyed on the account,
+    /// and keeps one store per window. (Wiring only: the mounted tests below
+    /// and the Mac runtime check prove the places are actually used.)
+    func testTheMacWindowHandsEachReadingScreenItsPlace() throws {
+        let source = try Self.appSource("Views/MacMainWindowView.swift")
+        XCTAssertTrue(source.contains("@State private var readingState = MacReadingState10878()"))
+        XCTAssertTrue(source.contains("readingState.places(for: authManager.activeFeedUserId)"))
+        XCTAssertTrue(source.contains(".id(places.generation)"))
+        for call in ["DiscoverView(macPlace: places.discover)",
+                     "SearchView(macPlace: places.search)",
+                     "MyStuffView(macPlace: places.myStuff)"] {
+            XCTAssertTrue(source.contains(call), "the Mac window no longer passes \(call)")
+        }
+        // Every other caller keeps today's screens, with no place.
+        let tabs = try Self.appSource("Views/MainTabView.swift")
+        XCTAssertFalse(tabs.contains("macPlace"))
+        for call in ["DiscoverView()", "SearchView()", "MyStuffView()"] {
+            XCTAssertTrue(tabs.contains(call), "\(call) left the iPhone/iPad layouts")
+        }
+    }
+
+    // MARK: - The scroll keeper's decisions
+
+    /// A scroll view being torn down reports offset 0 over an empty document.
+    /// Recording it would erase the reader's place on the way out (measured on
+    /// macOS 26: every List leave reported exactly that).
+    func testATornDownScrollViewNeverOverwritesThePlace() {
+        XCTAssertFalse(MacReadingOffset10878.shouldRecord(documentHeight: 0, visibleHeight: 700, restorePending: false))
+        XCTAssertFalse(MacReadingOffset10878.shouldRecord(documentHeight: 700, visibleHeight: 700, restorePending: false))
+        XCTAssertTrue(MacReadingOffset10878.shouldRecord(documentHeight: 701, visibleHeight: 700, restorePending: false))
+    }
+
+    func testNothingIsRecordedOverAPendingRestore() {
+        XCTAssertFalse(MacReadingOffset10878.shouldRecord(documentHeight: 10_000, visibleHeight: 700, restorePending: true))
+    }
+
+    func testRestoreWaitsForLazyContentThenGoesAsFarAsItCan() {
+        typealias R = MacReadingOffset10878
+        XCTAssertEqual(R.restore(saved: 4000, documentHeight: 10_000, visibleHeight: 700, attempts: 0), .scroll(to: 4000))
+        XCTAssertEqual(R.restore(saved: 4000, documentHeight: 4700, visibleHeight: 700, attempts: 0), .scroll(to: 4000))
+        XCTAssertEqual(R.restore(saved: 4000, documentHeight: 3000, visibleHeight: 700, attempts: 0), .wait)
+        XCTAssertEqual(R.restore(saved: 4000, documentHeight: 3000, visibleHeight: 700, attempts: R.maxAttempts - 1), .wait)
+        XCTAssertEqual(R.restore(saved: 4000, documentHeight: 3000, visibleHeight: 700, attempts: R.maxAttempts), .scroll(to: 2300))
+        XCTAssertEqual(R.restore(saved: 4000, documentHeight: 500, visibleHeight: 700, attempts: R.maxAttempts), .nothing)
+    }
+
+    /// A List returns to the row the reader was on, wherever that row is laid
+    /// out after the remount, plus how far into it they were. With no row (a
+    /// ScrollView) or no table to ask, the plain offset is used.
+    func testAListReturnsToTheRowNotThePixel() {
+        let inRow = MacScrollPlace(offset: 4014, row: 143, offsetInRow: 10)
+        XCTAssertEqual(inRow.target(rowTop: 4004), 4014)
+        XCTAssertEqual(inRow.target(rowTop: 3990), 4000, "the row moved; the reader goes with it")
+        XCTAssertEqual(inRow.target(rowTop: nil), 4014)
+        XCTAssertEqual(MacScrollPlace(offset: 4000).target(rowTop: 3990), 4000)
+        XCTAssertEqual(MacScrollPlace(offset: 5, row: 0, offsetInRow: -20).target(rowTop: 0), 0)
+    }
+
+    func testNoSavedOffsetMeansNoScroll() {
+        XCTAssertEqual(MacReadingOffset10878.restore(saved: 0, documentHeight: 10_000, visibleHeight: 700, attempts: 0), .nothing)
+    }
+
+    // MARK: - Mounted: the real Search screen
+
+    /// Leave Search for another screen and come back: the query and the results
+    /// are still there, because the screen remounted on the kept model.
+    func testSearchKeepsItsQueryAndResultsAcrossALeaveAndReturn() async throws {
+        let place = MacReadingState10878().places(for: "reader-1").search
+        let answer = try Self.searchAnswer("patriots")
+        let model = place.models(orMake: { SearchViewModel(searchFetch: { _, _ in answer }) })
+        let host = MountHost { SearchView(macPlace: place).environmentObject(NavigationCoordinator()) }
+        defer { host.close() }
+
+        await host.mount(true)
+        model.query = "patriots"
+        await model.search()
+        XCTAssertEqual(model.results?.query, "patriots", "control: the search answered")
+
+        await host.settle()
+        XCTAssertEqual(host.textFieldValues(), ["patriots"], "control: the field shows the query")
+
+        await host.mount(false)   // to another screen
+        XCTAssertEqual(host.textFieldValues(), [], "control: the screen really left")
+        await host.mount(true)    // and back
+
+        // Read from the REMOUNTED screen, not from the test's own reference.
+        XCTAssertEqual(host.textFieldValues(), ["patriots"], "the returned screen lost the query")
+        XCTAssertTrue(place.models === model)
+        XCTAssertEqual(model.results?.query, "patriots")
+    }
+
+    /// The detail the reader had open is open again when they come back, and
+    /// with no detail kept the screen opens on its own root. (The path a reader
+    /// builds by tapping is written back by the same `onChange` on all three
+    /// screens; the Mac runtime check walks that by hand.)
+    func testSearchReopensTheDetailTheReaderHadOpen() async throws {
+        let place = MacReadingState10878().places(for: "reader-1").search
+        let answer = try Self.searchAnswer("patriots")
+        let model = place.models(orMake: { SearchViewModel(searchFetch: { _, _ in answer }) })
+        model.query = "patriots"
+        let host = MountHost { SearchView(macPlace: place).environmentObject(NavigationCoordinator()) }
+        defer { host.close() }
+
+        place.path.append(Route.about)
+        await host.mount(true)
+        XCTAssertEqual(host.textFieldValues(), [], "the kept detail did not reopen over the results")
+        await host.mount(false)
+
+        place.path = NavigationPath()
+        await host.mount(true)
+        XCTAssertEqual(host.textFieldValues(), ["patriots"], "control: with no detail kept, the root shows")
+    }
+
+    /// Keeping the model must not keep its work: leaving still runs the screen's
+    /// own `onDisappear`, which stops the search in flight, so an answer that
+    /// lands after the reader left is not published. Run twice — the second
+    /// leave is from the REMOUNTED screen, which proves that screen holds the
+    /// kept model (its `onDisappear` acts on it).
+    func testLeavingSearchStillStopsTheKeptModelsWork() async throws {
+        let place = MacReadingState10878().places(for: "reader-1").search
+        let gate = SearchGate()
+        let model = place.models(orMake: { SearchViewModel(searchFetch: { query, _ in try await gate.answer(for: query) }) })
+        let host = MountHost { SearchView(macPlace: place).environmentObject(NavigationCoordinator()) }
+        defer { host.close() }
+        let answer = try Self.searchAnswer("patriots")
+
+        await host.mount(true)
+        model.query = "patriots"
+        for round in ["first mount", "remount"] {
+            let search = Task { await model.search() }
+            await gate.waitForRequest()
+            XCTAssertTrue(model.loading, "\(round): control — the search is in flight")
+            await host.mount(false)
+            XCTAssertFalse(model.loading, "\(round): leaving did not stop the search")
+            gate.release(with: answer)
+            await search.value
+            XCTAssertNil(model.results, "\(round): an answer that landed after the reader left was published")
+            XCTAssertEqual(model.query, "patriots", "\(round): what they typed is kept")
+            await host.mount(true)
+        }
+
+        // Control: on screen, the same late answer does publish.
+        let search = Task { await model.search() }
+        await gate.waitForRequest()
+        gate.release(with: answer)
+        await search.value
+        XCTAssertEqual(model.results?.query, "patriots")
+    }
+
+    #if os(macOS)
+    // MARK: - Mounted on a Mac: the scroll keeper
+
+    /// The keeper's AppKit half, on both containers the reading screens use:
+    /// Search's results and My Stuff's feed are Lists, Discover is a lazy
+    /// ScrollView. Scroll, leave, return — the reader is where they were.
+    /// Compiled only on macOS (this target runs on iOS today).
+    func testTheMacKeeperPutsTheReaderBackInAListAndAScrollView() async throws {
+        for useList in [true, false] {
+            let kind = useList ? "List" : "ScrollView"
+            let place = MacReadingPlace<SearchViewModel>()
+            let host = MountHost { KeeperScreen(useList: useList, place: place) }
+            defer { host.close() }
+
+            await host.mount(true)
+            let scroll = try XCTUnwrap(host.largestScrollView(), "\(kind): no scroll view")
+            scroll.contentView.scroll(to: NSPoint(x: 0, y: 4000))
+            scroll.reflectScrolledClipView(scroll.contentView)
+            await host.settle()
+            // Where the reader actually is: a List's clip view may move the
+            // request a little.
+            let reading = scroll.contentView.bounds.origin.y
+            XCTAssertGreaterThan(reading, 3000, "\(kind): control — the scroll happened")
+            XCTAssertEqual(place.scrollPlace.offset, reading, accuracy: 1, "\(kind): the keeper did not record the offset")
+            XCTAssertEqual(place.scrollPlace.row != nil, useList, "\(kind): a List is anchored by row, a ScrollView by offset")
+
+            for trip in 1...2 {
+                await host.mount(false)
+                XCTAssertEqual(place.scrollPlace.offset, reading, accuracy: 1, "\(kind) trip \(trip): leaving overwrote the reader's place")
+                await host.mount(true)
+
+                let returned = try XCTUnwrap(host.largestScrollView(), "\(kind): no scroll view after return")
+                XCTAssertFalse(returned === scroll, "\(kind): control — the screen really remounted")
+                // Exactly where they were, on every trip — no creep.
+                XCTAssertEqual(returned.contentView.bounds.origin.y, reading, accuracy: 1, "\(kind) trip \(trip): the reader was not put back")
+            }
+        }
+    }
+
+    /// A screen with nothing kept opens at the top.
+    func testTheMacKeeperLeavesAFreshScreenAtTheTop() async throws {
+        let place = MacReadingPlace<SearchViewModel>()
+        let host = MountHost { KeeperScreen(useList: true, place: place) }
+        defer { host.close() }
+        await host.mount(true)
+        let scroll = try XCTUnwrap(host.largestScrollView())
+        XCTAssertLessThanOrEqual(scroll.contentView.bounds.origin.y, 1)
+    }
+    #endif
+
+    // MARK: - Helpers
+
+    private static func searchAnswer(_ query: String) throws -> SearchResponse {
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
+        return try decoder.decode(SearchResponse.self, from: Data(#"{"query":"\#(query)","results":[],"futures":[]}"#.utf8))
+    }
+
+    private static func appSource(_ relativePath: String) throws -> String {
+        let appRoot = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()   // BainLuckTests
+            .deletingLastPathComponent()   // Bain Luck (project dir)
+            .appendingPathComponent("Bain Luck")
+        return try String(contentsOf: appRoot.appendingPathComponent(relativePath), encoding: .utf8)
+    }
+}
+
+@MainActor
+private final class Tally {
+    var count = 0
+}
+
+/// A first load that holds until the test opens it.
+@MainActor
+private final class LoadGate {
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+    private var isOpen = false
+
+    func wait() async {
+        guard !isOpen else { return }
+        await withCheckedContinuation { waiters.append($0) }
+    }
+
+    func waitUntilWaiting() async {
+        while waiters.isEmpty { await Task.yield() }
+    }
+
+    func open() {
+        isOpen = true
+        let resuming = waiters
+        waiters = []
+        resuming.forEach { $0.resume() }
+    }
+}
+
+/// A search transport that holds each request until the test answers it.
+@MainActor
+private final class SearchGate {
+    private var waiting: CheckedContinuation<SearchResponse, Error>?
+
+    func answer(for query: String) async throws -> SearchResponse {
+        try await withCheckedThrowingContinuation { waiting = $0 }
+    }
+
+    func waitForRequest() async {
+        while waiting == nil { await Task.yield() }
+    }
+
+    func release(with response: SearchResponse) {
+        let continuation = waiting
+        waiting = nil
+        continuation?.resume(returning: response)
+    }
+}
+
+/// Mounts a screen the way the Mac window's detail switch does: one hosting
+/// view whose content is either the screen or nothing.
+@MainActor
+private final class MountHost {
+    private final class Switch: ObservableObject {
+        @Published var mounted = false
+    }
+
+    private struct Conditional<Screen: View>: View {
+        @ObservedObject var toggle: Switch
+        let screen: () -> Screen
+        var body: some View {
+            if toggle.mounted { screen() } else { Color.clear }
+        }
+    }
+
+    private let toggle = Switch()
+    #if os(macOS)
+    private let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1000, height: 800),
+                                  styleMask: [.titled], backing: .buffered, defer: false)
+    #else
+    private let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 1000, height: 800))
+    #endif
+
+    init<Screen: View>(_ screen: @escaping () -> Screen) {
+        let root = Conditional(toggle: toggle, screen: screen)
+        #if os(macOS)
+        window.contentView = NSHostingView(rootView: root)
+        window.orderFrontRegardless()
+        #else
+        window.rootViewController = UIHostingController(rootView: root)
+        window.isHidden = false
+        #endif
+    }
+
+    func mount(_ mounted: Bool) async {
+        toggle.mounted = mounted
+        await settle()
+    }
+
+    /// Lets SwiftUI apply a change and run appear/disappear.
+    func settle() async {
+        for _ in 0..<10 {
+            try? await Task.sleep(nanoseconds: 30_000_000)
+        }
+    }
+
+    /// What every text field in the window holds — the Search field is the only
+    /// one these screens draw, so this reads what the MOUNTED screen shows.
+    func textFieldValues() -> [String] {
+        #if os(macOS)
+        guard let root = window.contentView else { return [] }
+        return Self.descendants(of: root).compactMap { ($0 as? NSTextField).flatMap { $0.isEditable ? $0.stringValue : nil } }
+        #else
+        return Self.descendants(of: window).compactMap { ($0 as? UITextField)?.text }
+        #endif
+    }
+
+    #if os(macOS)
+    /// The tallest scroll view in the window: the screen's own, not the window
+    /// chrome's.
+    func largestScrollView() -> NSScrollView? {
+        guard let root = window.contentView else { return nil }
+        return Self.descendants(of: root).compactMap { $0 as? NSScrollView }
+            .max { ($0.documentView?.frame.height ?? 0) < ($1.documentView?.frame.height ?? 0) }
+    }
+
+    private static func descendants(of view: NSView) -> [NSView] {
+        [view] + view.subviews.flatMap { descendants(of: $0) }
+    }
+    #else
+    private static func descendants(of view: UIView) -> [UIView] {
+        [view] + view.subviews.flatMap { descendants(of: $0) }
+    }
+    #endif
+
+    func close() {
+        toggle.mounted = false
+        #if os(macOS)
+        window.orderOut(nil)
+        #else
+        window.isHidden = true
+        #endif
+    }
+}
+
+#if os(macOS)
+/// A long List or lazy ScrollView carrying the real `macReadingOffset` keeper —
+/// the two containers the reading screens put it on.
+private struct KeeperScreen: View {
+    let useList: Bool
+    let place: MacReadingPlace<SearchViewModel>
+
+    var body: some View {
+        if useList {
+            List(0..<400, id: \.self) { Text("row \($0)").frame(height: 30) }
+                .macReadingOffset(place)
+        } else {
+            ScrollView {
+                LazyVStack { ForEach(0..<400, id: \.self) { Text("row \($0)").frame(height: 30) } }
+            }
+            .macReadingOffset(place)
+        }
+    }
+}
+#endif

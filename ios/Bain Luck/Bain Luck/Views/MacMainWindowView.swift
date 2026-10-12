@@ -109,9 +109,16 @@ enum MacMainWindow10878 {
 /// and the iPad's Quick Links, and one destination mounted at a time in a
 /// readable detail column. Only the selected screen is mounted, as on iPad, so
 /// no offscreen screen keeps its tasks or subscriptions alive.
+///
+/// What a reader had on Discover, Search and My Stuff — results, the open
+/// detail, how far they had read — is kept for them in `readingState`, above
+/// the mount, so switching away and back returns them to the same place.
 struct MacMainWindowView: View {
     @EnvironmentObject private var navCoordinator: NavigationCoordinator
+    @EnvironmentObject private var authManager: AuthManager
     @State private var columnVisibility = NavigationSplitViewVisibility.all
+    /// Per window, so a second window keeps its own places.
+    @State private var readingState = MacReadingState10878()
 
     private var selection: Binding<AppTab?> {
         Binding(
@@ -142,7 +149,11 @@ struct MacMainWindowView: View {
                 max: MacMainWindow10878.sidebarMaxWidth
             )
         } detail: {
-            destination(for: navCoordinator.selectedTab)
+            let places = readingState.places(for: authManager.activeFeedUserId)
+            destination(for: navCoordinator.selectedTab, places: places)
+                // A new account rebuilds the screen on view too, so nothing the
+                // previous account had open survives on it.
+                .id(places.generation)
                 .environment(\.horizontalSizeClass, MacMainWindow10878.detailSizeClass)
                 .frame(maxWidth: MacMainWindow10878.readableContentWidth)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -166,18 +177,18 @@ struct MacMainWindowView: View {
     /// The iPad detail switch, destination for destination. Exhaustive, so a
     /// new `AppTab` cannot be added without deciding what the Mac shows.
     @ViewBuilder
-    private func destination(for tab: AppTab) -> some View {
+    private func destination(for tab: AppTab, places: MacReadingState10878.Places) -> some View {
         switch tab {
         case .feed:
             FeedView()
         case .discover:
-            DiscoverView()
+            DiscoverView(macPlace: places.discover)
         case .leagues:
             LeaguesView()
         case .search:
-            SearchView()
+            SearchView(macPlace: places.search)
         case .myStuff:
-            MyStuffView()
+            MyStuffView(macPlace: places.myStuff)
         case .futures:
             NavigationStack { FuturesListView().navigationDestination(for: Route.self) { RouteDestination(route: $0) } }
         case .weather:
