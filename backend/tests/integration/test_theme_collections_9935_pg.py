@@ -633,12 +633,14 @@ async def _card(world, ids):
     from app.utils import theme_collection_ref as tcr
 
     reports = []
-    async with world["Session"]() as db:
-        published = await tcr.read_published_themes(db)
-        (out,) = await tcr.attach_theme_collection_refs(
-            db, [_ai_bundle(ids)], published=published, budget_seconds=5.0,
-            observe=reports.append,
-        )
+    # Both reads take their own session from the factory, as the route's do.
+    published = await tcr.read_published_themes(
+        budget_seconds=5.0, session_factory=world["Session"]
+    )
+    (out,) = await tcr.attach_theme_collection_refs(
+        [_ai_bundle(ids)], published=published, budget_seconds=5.0,
+        observe=reports.append, session_factory=world["Session"],
+    )
     reason = reports[0][out["data"]["id"]] if reports else None
     return out["data"].get("collection_ref"), reason, published
 

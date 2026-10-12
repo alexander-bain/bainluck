@@ -44,16 +44,23 @@ class _Rows:
 
 class _Session:
     """Answers the two statements this module issues, by their SQL, and
-    records every statement and whether a SAVEPOINT held it."""
+    records every statement and how the session was released.
 
-    def __init__(self, *, published=(), edges=(), error=None, delay=0.0):
+    ``delay``/``error`` act on the statement; ``rollback_delay``/
+    ``rollback_error`` on the release after a failed or timed-out read."""
+
+    def __init__(self, *, published=(), edges=(), error=None, delay=0.0,
+                 rollback_delay=0.0, rollback_error=None):
         self.published = list(published)
         self.edges = list(edges)
         self.error = error
         self.delay = delay
+        self.rollback_delay = rollback_delay
+        self.rollback_error = rollback_error
         self.statements = []
         self.in_savepoint = []
         self.rollbacks = 0
+        self.released = []  # "rollback" / "close" / "invalidate", in order
         self._nested = False
 
     @asynccontextmanager
@@ -79,6 +86,35 @@ class _Session:
 
     async def rollback(self):
         self.rollbacks += 1
+        self.released.append("rollback")
+        if self.rollback_delay:
+            await asyncio.sleep(self.rollback_delay)
+        if self.rollback_error:
+            raise self.rollback_error
+
+    async def close(self):
+        self.released.append("close")
+
+    async def invalidate(self):
+        self.released.append("invalidate")
+
+
+def factory(session):
+    """A session factory that hands out ``session`` and counts the hand-outs."""
+    def make():
+        make.calls += 1
+        return session
+    make.calls = 0
+    return make
+
+
+async def _drain_abandoned():
+    """Let every read the caller stopped waiting for finish its cleanup. The
+    set empties from each task's done callback, which needs a loop turn (an
+    await on already-finished tasks does not yield)."""
+    while tcr._abandoned_reads:
+        await asyncio.gather(*list(tcr._abandoned_reads), return_exceptions=True)
+        await asyncio.sleep(0)
 
 
 def edge(cid, slug, child, *, pub="published", rev=18, name=None):
@@ -153,7 +189,8 @@ async def _attach(items, *, edges, pub, snaps=SNAPS, **kw):
     reader = _Snapshots(snaps)
     reports = []
     out = await tcr.attach_theme_collection_refs(
-        db, items, published=pub, read_snapshot=reader, observe=reports.append, **kw
+        items, published=pub, read_snapshot=reader, observe=reports.append,
+        session_factory=factory(db), **kw
     )
     return out, (reports[0] if reports else None), db, reader
 
@@ -481,12 +518,131 @@ async def test_a_failed_or_slow_read_keeps_every_card_without_a_link(failure):
     )
     items = [story_bundle("story:ai", AI_IDS)]
     out = await tcr.attach_theme_collection_refs(
-        db, items, published=published((AI_CID, 18)), budget_seconds=0.05,
-        read_snapshot=_Snapshots(SNAPS),
+        items, published=published((AI_CID, 18)), budget_seconds=0.05,
+        read_snapshot=_Snapshots(SNAPS), session_factory=factory(db),
     )
     assert ref_of(out[0]) is None and reason_of(out[0]) == tcr.READ_FAILED
-    assert db.rollbacks == 1
     assert out[0]["data"]["items"] == items[0]["data"]["items"]
+    await _drain_abandoned()
+    # The read's own session is rolled back and closed, never left open.
+    assert db.released == ["rollback", "close"]
+
+
+async def test_a_successful_read_closes_its_own_session_without_a_rollback():
+    out, report, db, _ = await _attach(
+        [story_bundle("story:ai", AI_IDS)], edges=AI_EDGES, pub=published((AI_CID, 18))
+    )
+    assert set(report.values()) == {tcr.EMITTED}
+    assert db.released == ["close"]
+
+
+# ---------------------------------------------------------------------------
+# The review's two bounds (#9925 independent review, P1 ×2): a stalled read or a
+# stalled/failing cleanup never holds the request past its budget, never
+# escapes, and never touches the request's session.
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def short_cleanup(monkeypatch):
+    monkeypatch.setattr(tcr, "THEME_REF_CLEANUP_STEP_SECONDS", 0.05)
+
+
+async def _timed(coro):
+    loop = asyncio.get_running_loop()
+    started = loop.time()
+    value = await coro
+    return value, loop.time() - started
+
+
+async def test_a_slow_rollback_after_a_timeout_does_not_extend_the_wait(short_cleanup):
+    # The statement outlives the 50 ms budget, and its rollback would take 5 s:
+    # the caller is back at the budget, and the read's own cleanup gives up on
+    # the rollback at its step bound and invalidates the connection instead.
+    db = _Session(edges=AI_EDGES, delay=5.0, rollback_delay=5.0)
+    items = [story_bundle("story:ai", AI_IDS)]
+    out, elapsed = await _timed(tcr.attach_theme_collection_refs(
+        items, published=published((AI_CID, 18)), budget_seconds=0.05,
+        read_snapshot=_Snapshots(SNAPS), session_factory=factory(db),
+    ))
+    assert elapsed < 0.5, elapsed
+    assert reason_of(out[0]) == tcr.READ_FAILED and ref_of(out[0]) is None
+    tail, tail_elapsed = await _timed(_drain_abandoned())
+    assert tail_elapsed < 0.5, tail_elapsed
+    assert db.released == ["rollback", "invalidate"]
+
+
+async def test_a_rollback_error_never_escapes_into_the_feed(short_cleanup):
+    db = _Session(
+        edges=AI_EDGES, error=RuntimeError("statement failed"),
+        rollback_error=RuntimeError("connection is closed"),
+    )
+    items = [story_bundle("story:ai", AI_IDS), {"type": "event", "data": {"id": 7}}]
+    out = await tcr.attach_theme_collection_refs(
+        items, published=published((AI_CID, 18)), budget_seconds=0.25,
+        read_snapshot=_Snapshots(SNAPS), session_factory=factory(db),
+    )
+    assert reason_of(out[0]) == tcr.READ_FAILED and ref_of(out[0]) is None
+    assert out[1] is items[1]
+    assert db.released == ["rollback", "invalidate"]
+
+
+async def test_cleanup_that_cannot_even_invalidate_is_abandoned_not_raised(short_cleanup):
+    class _Stuck(_Session):
+        async def invalidate(self):
+            self.released.append("invalidate")
+            await asyncio.sleep(5.0)
+
+    db = _Stuck(edges=AI_EDGES, error=RuntimeError("x"), rollback_delay=5.0)
+    out, elapsed = await _timed(tcr.attach_theme_collection_refs(
+        [story_bundle("story:ai", AI_IDS)], published=published((AI_CID, 18)),
+        budget_seconds=0.05, read_snapshot=_Snapshots(SNAPS), session_factory=factory(db),
+    ))
+    assert elapsed < 0.5 and reason_of(out[0]) == tcr.READ_FAILED
+    _, tail_elapsed = await _timed(_drain_abandoned())
+    assert tail_elapsed < 0.5
+    assert db.released == ["rollback", "invalidate"]
+    assert tcr._abandoned_reads == set()
+
+
+async def test_cancelling_the_request_cancels_the_read_and_still_releases_it(short_cleanup):
+    db = _Session(edges=AI_EDGES, delay=5.0)
+    task = asyncio.ensure_future(tcr.attach_theme_collection_refs(
+        [story_bundle("story:ai", AI_IDS)], published=published((AI_CID, 18)),
+        budget_seconds=0.25, read_snapshot=_Snapshots(SNAPS), session_factory=factory(db),
+    ))
+    await asyncio.sleep(0.02)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    await _drain_abandoned()
+    assert db.released == ["rollback", "close"]
+
+
+async def test_a_stalled_publication_read_returns_could_not_tell_inside_its_budget(short_cleanup):
+    tcr._reset_published_cache_for_tests()
+    db = _Session(published=[(AI_CID, "ai", 18)], delay=5.0, rollback_delay=5.0)
+    got, elapsed = await _timed(
+        tcr.read_published_themes(budget_seconds=0.05, session_factory=factory(db))
+    )
+    assert got is None and elapsed < 0.5, elapsed
+    # Could-not-tell is never cached: the next request reads again, and a
+    # healthy read is believed at once.
+    fresh = _Session(published=[(AI_CID, "ai", 19)])
+    got = await tcr.read_published_themes(max_age_seconds=5, session_factory=factory(fresh))
+    assert got.revision_of(AI_CID) == 19 and len(fresh.statements) == 1
+    await _drain_abandoned()
+    assert db.released == ["rollback", "invalidate"]
+    tcr._reset_published_cache_for_tests()
+
+
+async def test_the_publication_read_draws_only_the_requests_remaining_budget():
+    tcr._reset_published_cache_for_tests()
+    db = _Session(published=[(AI_CID, "ai", 18)])
+    make = factory(db)
+    assert await tcr.read_published_themes(budget_seconds=0.0, session_factory=make) is None
+    assert make.calls == 0 and db.statements == []
+    tcr._reset_published_cache_for_tests()
 
 
 # ---------------------------------------------------------------------------
@@ -494,13 +650,14 @@ async def test_a_failed_or_slow_read_keeps_every_card_without_a_link(failure):
 # ---------------------------------------------------------------------------
 
 
-async def test_the_published_read_is_one_savepointed_statement_over_registry_slugs():
+async def test_the_published_read_is_one_statement_on_its_own_session_over_registry_slugs():
     tcr._reset_published_cache_for_tests()
     db = _Session(published=[(AI_CID, "ai", 18)])
-    got = await tcr.read_published_themes(db)
+    make = factory(db)
+    got = await tcr.read_published_themes(session_factory=make)
     assert got == tcr.PublishedThemes((tcr.PublishedTheme(AI_CID, "ai", 18),))
     (sql, params), = db.statements
-    assert db.in_savepoint == [True]
+    assert make.calls == 1 and db.released == ["close"]
     assert "publication_state = :published" in sql and "membership_revision" in sql
     assert params == {"published": "published", "slugs": sorted(td.REGISTRY)}
 
@@ -508,19 +665,24 @@ async def test_the_published_read_is_one_savepointed_statement_over_registry_slu
 async def test_a_failed_published_read_means_no_cache_and_no_links():
     tcr._reset_published_cache_for_tests()
     db = _Session(error=RuntimeError('column "publication_state" does not exist'))
-    assert await tcr.read_published_themes(db) is None
+    assert await tcr.read_published_themes(session_factory=factory(db)) is None
+    assert db.released == ["rollback", "close"]
     assert tcr.compose_collections_fingerprint("abc", None) == "abc"
 
 
 async def test_the_published_read_is_reused_for_at_most_five_seconds():
     tcr._reset_published_cache_for_tests()
     first = _Session(published=[(AI_CID, "ai", 18)])
-    await tcr.read_published_themes(first, max_age_seconds=60)
+    await tcr.read_published_themes(max_age_seconds=60, session_factory=factory(first))
     second = _Session(published=[(AI_CID, "ai", 19)])
-    assert (await tcr.read_published_themes(second, max_age_seconds=5)).revision_of(AI_CID) == 18
+    assert (await tcr.read_published_themes(
+        max_age_seconds=5, session_factory=factory(second)
+    )).revision_of(AI_CID) == 18
     assert second.statements == []
     third = _Session(published=[(AI_CID, "ai", 19)])
-    assert (await tcr.read_published_themes(third, max_age_seconds=0)).revision_of(AI_CID) == 19
+    assert (await tcr.read_published_themes(
+        max_age_seconds=0, session_factory=factory(third)
+    )).revision_of(AI_CID) == 19
     tcr._reset_published_cache_for_tests()
 
 
@@ -600,6 +762,23 @@ def test_the_cache_key_and_the_cache_gate_carry_the_published_themes():
         "        )"
     ) in gate
     assert "(not _theme_refs_enabled or _published_themes is not None)" in gate
+
+
+def test_the_route_hands_neither_read_its_own_session_and_bounds_the_publication_read():
+    """The review's P1: the publication read sits before the cache gate, so it
+    must draw the request's remaining budget; and neither theme read may run on
+    the request's session (a cancelled statement would leave it aborted)."""
+    src = _get_feed_source()
+    at = src.index("await read_published_themes(")
+    call = src[at: src.index(")\n", at)]
+    assert "budget_seconds=_feed_budget_remaining_s()" in call
+    assert "db" not in call.replace("budget", "")
+    at = src.index("attach_theme_collection_refs(\n")
+    call = src[at: src.index(")\n", at)]
+    assert "budget_seconds=_feed_budget_remaining_s()" in call
+    assert "db," not in call
+    assert "db" not in inspect.signature(tcr.attach_theme_collection_refs).parameters
+    assert "db" not in inspect.signature(tcr.read_published_themes).parameters
 
 
 def test_the_route_never_imports_the_producer_or_calls_an_llm_here():

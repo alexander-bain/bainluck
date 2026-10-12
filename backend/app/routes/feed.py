@@ -4172,7 +4172,9 @@ async def get_feed(
     # #9925: a theme card's `collection_ref` is publication-bound the same way.
     # The published themes join the same key part (unchanged while none is
     # published) and are what the build checks each target's revision against.
-    # None = could not tell: no links, and the page is not cached.
+    # None = could not tell: no links, and the page is not cached. The read is
+    # on its own session and bounded by the request's remaining budget, so it
+    # can neither stall the cache gate nor leave this request's session aborted.
     from app.utils.theme_collection_ref import (
         attach_theme_collection_refs,
         compose_collections_fingerprint,
@@ -4186,7 +4188,8 @@ async def get_feed(
     _published_themes = None
     if _theme_refs_enabled:
         _published_themes = await read_published_themes(
-            db, max_age_seconds=0.0 if _prewarm_rebuild else 5.0
+            max_age_seconds=0.0 if _prewarm_rebuild else 5.0,
+            budget_seconds=_feed_budget_remaining_s(),
         )
     if (
         not debug
@@ -5990,7 +5993,6 @@ async def get_feed(
             # from it. Returns `feed_items` itself when no theme is published.
             _before_theme_refs = feed_items
             feed_items = await attach_theme_collection_refs(
-                db,
                 feed_items,
                 published=_published_themes,
                 budget_seconds=_feed_budget_remaining_s(),

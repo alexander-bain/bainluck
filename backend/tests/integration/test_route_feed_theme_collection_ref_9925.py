@@ -11,7 +11,13 @@ page. Pillars DISCOVER / TRUTH. These drive the real route through the ASGI app
    the new ref (or none). An old ref never outlives its revision.
 4. Nothing published leaves the response key byte-identical and does no
    per-build read.
+5. A stalled publication read or a stalled collection read (with a stalled
+   rollback behind it) costs the link and, for publication, the cache. The
+   feed is served whole, inside the budget, and the request's own session is
+   never touched by either read (the independent review's two P1s).
 """
+
+import asyncio
 
 import copy
 from unittest.mock import AsyncMock
@@ -23,6 +29,7 @@ from app.utils import theme_collection_ref as tcr
 
 AI_IDS = [61461524, 13791997, 5550001]
 AI_CID = 10
+_REAL_READ_CANDIDATE_ROWS = tcr.read_candidate_rows
 
 
 def _bundle():
@@ -119,7 +126,7 @@ def world(monkeypatch):
     monkeypatch.setenv("CONTAINER_DISCOVERY_ENABLED", "false")
     state = {"pub": "published", "rev": 18, "shown": [*AI_IDS, 777, 778]}
 
-    async def published(db, *, max_age_seconds=0.0):
+    async def published(*, max_age_seconds=0.0, budget_seconds=0.0, session_factory=None):
         if state["pub"] != "published":
             return tcr.PublishedThemes()
         return tcr.PublishedThemes((tcr.PublishedTheme(AI_CID, "ai", state["rev"]),))
@@ -145,7 +152,43 @@ def world(monkeypatch):
     monkeypatch.setattr(tcr, "read_published_themes", read_published)
     monkeypatch.setattr(tcr, "read_candidate_rows", read_rows)
     monkeypatch.setattr(tcr, "_hub_snapshot", snap)
+    # The reads' own sessions: never a real connection in a route test.
+    monkeypatch.setattr(tcr, "_default_session_factory", lambda: _SideSession())
     return state, read_published, read_rows
+
+
+class _SideSession:
+    """A read's own session. ``stall`` makes every statement and rollback hang
+    until cancelled, the shape of a cancelled asyncpg query."""
+
+    def __init__(self, *, stall=False, published=()):
+        self.stall = stall
+        self.published = list(published)
+        self.released = []
+
+    async def execute(self, statement, params=None):
+        if self.stall:
+            await asyncio.sleep(60)
+
+        class _R:
+            def __init__(self, rows):
+                self._rows = rows
+
+            def fetchall(self):
+                return list(self._rows)
+
+        return _R(self.published)
+
+    async def rollback(self):
+        self.released.append("rollback")
+        if self.stall:
+            await asyncio.sleep(60)
+
+    async def close(self):
+        self.released.append("close")
+
+    async def invalidate(self):
+        self.released.append("invalidate")
 
 
 def _theme(body):
@@ -228,3 +271,81 @@ async def test_an_unreadable_publication_state_is_never_cached_and_never_links(
         await _drain(scheduled)
     read_rows.assert_not_awaited()
     assert not any(k.startswith("feed_cache:") for k in fake.store)
+
+
+def _theme_sql_on(session_mock) -> list:
+    return [
+        c for c in session_mock.execute.await_args_list
+        if "event_edges" in str(c.args[0]) or "publication_state" in str(c.args[0])
+    ]
+
+
+async def _timed_get(client, url):
+    loop = asyncio.get_running_loop()
+    started = loop.time()
+    response = await client.get(url)
+    return response, loop.time() - started
+
+
+async def test_a_stalled_collection_read_serves_the_whole_feed_without_the_link(
+    client, deck, redis, world, monkeypatch, mock_db
+):
+    """P1 #2: the read stalls and so does its rollback. The request is back at
+    the stage budget, every card is served, the theme card simply has no link,
+    and the request's session saw neither the statement nor a rollback."""
+    monkeypatch.setattr(tcr, "THEME_REF_CLEANUP_STEP_SECONDS", 0.05)
+    side = _SideSession(stall=True)
+    monkeypatch.setattr(tcr, "_default_session_factory", lambda: side)
+
+    # The real edge read, on the read's own (stalling) session.
+    monkeypatch.setattr(tcr, "read_candidate_rows", _REAL_READ_CANDIDATE_ROWS)
+    fake, scheduled = redis
+    response, elapsed = await _timed_get(client, "/api/feed?limit=10")
+    assert response.status_code == 200
+    assert elapsed < tcr.THEME_REF_READ_BUDGET_SECONDS + 2.0, elapsed
+    body = response.json()
+    data = _theme(body)
+    assert "collection_ref" not in data
+    assert [m["data"]["id"] for m in data["items"]] == AI_IDS
+    assert sum(1 for i in body["items"] if i["type"] == "event") >= 9
+    assert _theme_sql_on(mock_db) == []
+    mock_db.rollback.assert_not_awaited()
+    await _drain(scheduled)
+    while tcr._abandoned_reads:
+        await asyncio.gather(*list(tcr._abandoned_reads), return_exceptions=True)
+        await asyncio.sleep(0)
+    assert side.released == ["rollback", "invalidate"]
+
+
+async def test_a_stalled_publication_read_serves_uncached_inside_the_budget(
+    client, deck, redis, monkeypatch, mock_db
+):
+    """P1 #1: the publication read sits before the cache gate. Stalled, it
+    returns could-not-tell at its budget; the page is served whole, uncached and
+    without links, and the request's session is untouched."""
+    monkeypatch.setenv("CONTAINERS_READ_ENABLED", "true")
+    monkeypatch.setenv("CONTAINER_DISCOVERY_ENABLED", "false")
+    monkeypatch.setattr(tcr, "THEME_REF_CLEANUP_STEP_SECONDS", 0.05)
+    tcr._reset_published_cache_for_tests()
+    side = _SideSession(stall=True)
+    monkeypatch.setattr(tcr, "_default_session_factory", lambda: side)
+    read_rows = AsyncMock()
+    monkeypatch.setattr(tcr, "read_candidate_rows", read_rows)
+    fake, scheduled = redis
+    response, elapsed = await _timed_get(client, "/api/feed?limit=10")
+    assert response.status_code == 200
+    assert response.headers["x-feed-cache"] == "disabled"
+    assert elapsed < tcr.THEME_PUBLICATION_READ_BUDGET_SECONDS + 2.0, elapsed
+    body = response.json()
+    assert "collection_ref" not in _theme(body)
+    assert sum(1 for i in body["items"] if i["type"] == "event") >= 9
+    read_rows.assert_not_awaited()
+    assert _theme_sql_on(mock_db) == []
+    mock_db.rollback.assert_not_awaited()
+    await _drain(scheduled)
+    while tcr._abandoned_reads:
+        await asyncio.gather(*list(tcr._abandoned_reads), return_exceptions=True)
+        await asyncio.sleep(0)
+    assert side.released == ["rollback", "invalidate"]
+    assert not any(k.startswith("feed_cache:") for k in fake.store)
+    tcr._reset_published_cache_for_tests()

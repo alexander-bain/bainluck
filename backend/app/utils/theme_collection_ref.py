@@ -41,8 +41,17 @@ is one statement over ``event_edges`` keyed by the page's preview ids
 (``ix_event_edge_child``), and at most one snapshot GET per resolved target,
 all inside ``THEME_REF_READ_BUDGET_SECONDS``. No inventory scan, no LLM, no
 assembly. The containers' published read is one statement over the registry's
-few slugs. It is reused process-wide for at most five seconds, like
-``feed_collections_cache_fingerprint``.
+few slugs, inside ``THEME_PUBLICATION_READ_BUDGET_SECONDS``. It is reused
+process-wide for at most five seconds, like ``feed_collections_cache_fingerprint``.
+
+OWN SESSION. Both reads are optional enrichment, so neither runs on the
+request's session. Each takes its own short-lived session (``_side_read``). The
+request waits at most the budget and never waits on cleanup. A read it stopped
+waiting for is cancelled, and its session is released off the request path: a
+rollback, then invalidation if that does not land, each step bounded. A
+timed-out or failed read therefore cannot leave the feed's transaction aborted,
+or its connection waiting on a cancelled query. It only costs the link (and, for
+the publication read, the cache).
 
 CACHE. ``compose_collections_fingerprint`` folds the published themes'
 ``id:revision`` into the response-cache key the route already has
@@ -72,6 +81,12 @@ from app.utils.theme_definitions import (
 logger = logging.getLogger(__name__)
 
 THEME_REF_READ_BUDGET_SECONDS = 0.25
+#: The publication read gates the response cache, so a timeout costs a cold
+#: build, not just a link. It gets a little more room than the per-build read.
+THEME_PUBLICATION_READ_BUDGET_SECONDS = 0.5
+#: Each cleanup step (rollback/close, then invalidate) on a read's own session.
+#: Off the request path, so this only bounds how long a connection is held.
+THEME_REF_CLEANUP_STEP_SECONDS = 1.0
 PUBLISHED = "published"
 EDGE_SOURCE = "theme_rule"
 
@@ -135,6 +150,133 @@ def theme_collection_refs_enabled(*, mode: Optional[str], include_futures: bool)
     )
 
 
+# ---------------------------------------------------------------------------
+# The reads' own sessions: bounded wait, bounded cleanup, nothing escapes.
+# ---------------------------------------------------------------------------
+
+SessionFactory = Callable[[], Any]
+
+
+def _default_session_factory():
+    from app.services.database import async_session_maker
+
+    return async_session_maker()
+
+
+#: Reads the request stopped waiting for, held until their bounded cleanup
+#: ends. The loop keeps only a weak reference to a task.
+_abandoned_reads: set = set()
+
+
+async def _dispose_session(session, *, clean: bool) -> str:
+    """Release a read's own session within two bounded steps. Never raises
+    anything but cancellation, and only after both steps have run.
+
+    Step one closes the session, after a rollback when the read did not finish
+    (``clean`` False). A cancelled asyncpg query leaves its connection waiting
+    for the server's cancel to land, so that step may not. Step two then
+    invalidates the connection instead of returning it to the pool in an
+    unknown state: the same two steps as the route's
+    ``_release_cancelled_review_session``.
+    Returns ``closed`` / ``rolled_back`` / ``invalidated`` / ``abandoned``.
+    """
+    cancelled = False
+    try:
+        async with asyncio.timeout(THEME_REF_CLEANUP_STEP_SECONDS):
+            if not clean:
+                await session.rollback()
+            await session.close()
+        return "closed" if clean else "rolled_back"
+    except asyncio.CancelledError:
+        cancelled = True
+    except Exception:  # noqa: BLE001 — cleanup must never become the failure
+        logger.warning(
+            "Discover theme read: session release did not land inside %.1fs; "
+            "invalidating its connection",
+            THEME_REF_CLEANUP_STEP_SECONDS,
+            exc_info=True,
+        )
+    outcome = "abandoned"
+    try:
+        async with asyncio.timeout(THEME_REF_CLEANUP_STEP_SECONDS):
+            await session.invalidate()
+        outcome = "invalidated"
+    except asyncio.CancelledError:
+        cancelled = True
+    except Exception:  # noqa: BLE001 — there is nothing further to try
+        logger.warning(
+            "Discover theme read: could not invalidate its connection", exc_info=True
+        )
+    if cancelled:
+        raise asyncio.CancelledError
+    return outcome
+
+
+async def _side_read(
+    work: Callable[[Any], Awaitable[Any]],
+    *,
+    budget_seconds: float,
+    session_factory: Optional[SessionFactory],
+    what: str,
+) -> tuple[bool, Any]:
+    """``(True, work(session))`` on a session of its own, or ``(False, None)``.
+
+    The caller waits at most ``budget_seconds``, including the session's
+    release. Past that, the read is cancelled and left to release its session
+    on its own (``_dispose_session``, itself bounded), while the caller goes on
+    without it. A failure or timeout is logged and returned, never raised.
+    Cancelling the caller cancels the read and propagates.
+    """
+    factory = session_factory or _default_session_factory
+
+    async def _job():
+        session = factory()
+        try:
+            value = await work(session)
+        except BaseException:
+            await _dispose_session(session, clean=False)
+            raise
+        await _dispose_session(session, clean=True)
+        return value
+
+    task = asyncio.ensure_future(_job())
+    try:
+        await asyncio.wait({task}, timeout=max(0.0, budget_seconds))
+    except asyncio.CancelledError:
+        task.cancel()
+        _abandon(task)
+        raise
+    if not task.done():
+        task.cancel()
+        _abandon(task)
+        logger.warning(
+            "Discover theme %s read did not finish inside %.0f ms; going on without it",
+            what,
+            budget_seconds * 1000,
+        )
+        return False, None
+    if task.cancelled():
+        return False, None
+    exc = task.exception()
+    if exc is not None:
+        logger.warning(
+            "Discover theme %s read failed; going on without it", what, exc_info=exc
+        )
+        return False, None
+    return True, task.result()
+
+
+def _abandon(task) -> None:
+    _abandoned_reads.add(task)
+
+    def _done(t) -> None:
+        _abandoned_reads.discard(t)
+        if not t.cancelled() and t.exception() is not None:
+            logger.debug("Discover theme read ended after it was abandoned", exc_info=t.exception())
+
+    task.add_done_callback(_done)
+
+
 def maintained_slugs() -> list[str]:
     return sorted(REGISTRY)
 
@@ -148,13 +290,20 @@ _PUBLISHED_SQL = text(
 _published_cache: Optional[tuple[float, PublishedThemes]] = None
 
 
-async def read_published_themes(db, *, max_age_seconds: float = 0.0) -> Optional[PublishedThemes]:
+async def read_published_themes(
+    *,
+    max_age_seconds: float = 0.0,
+    budget_seconds: float = THEME_PUBLICATION_READ_BUDGET_SECONDS,
+    session_factory: Optional[SessionFactory] = None,
+) -> Optional[PublishedThemes]:
     """The published, registry-maintained theme containers, or None.
 
     None means "could not tell": the caller must not cache the page and emits
-    no ref, so a failure costs speed, never truth. The statement runs in a
-    SAVEPOINT so a failure (an un-migrated database has no
-    ``publication_state``) rolls back alone.
+    no ref, so a failure costs speed, never truth. The statement runs on its
+    own session inside ``budget_seconds`` (capped at
+    ``THEME_PUBLICATION_READ_BUDGET_SECONDS``), so neither a failure (an
+    un-migrated database has no ``publication_state``) nor a stall can touch
+    the request's transaction or hold up its cache gate past the budget.
     """
     global _published_cache
     now = time.monotonic()
@@ -165,20 +314,22 @@ async def read_published_themes(db, *, max_age_seconds: float = 0.0) -> Optional
         and now - _published_cache[0] < max_age_seconds
     ):
         return _published_cache[1]
-    try:
-        async with db.begin_nested():
-            rows = (
-                await db.execute(
-                    _PUBLISHED_SQL, {"published": PUBLISHED, "slugs": maintained_slugs()}
-                )
-            ).fetchall()
-    except asyncio.CancelledError:
-        raise
-    except Exception:
-        logger.warning(
-            "Discover theme publication read failed; serving uncached, no collection links",
-            exc_info=True,
-        )
+    budget = min(budget_seconds, THEME_PUBLICATION_READ_BUDGET_SECONDS)
+    if budget <= 0:
+        return None
+
+    async def _read(session):
+        return (
+            await session.execute(
+                _PUBLISHED_SQL, {"published": PUBLISHED, "slugs": maintained_slugs()}
+            )
+        ).fetchall()
+
+    ok, rows = await _side_read(
+        _read, budget_seconds=budget, session_factory=session_factory, what="publication"
+    )
+    if not ok:
+        # Logged by _side_read: serving uncached, no collection links.
         return None
     published = PublishedThemes(
         tuple(PublishedTheme(int(r[0]), str(r[1]), int(r[2])) for r in rows)
@@ -371,13 +522,13 @@ def _with_ref(item: dict, ref: Optional[dict], reason: str) -> dict:
 
 
 async def attach_theme_collection_refs(
-    db,
     items: list,
     *,
     published: Optional[PublishedThemes],
     budget_seconds: float = THEME_REF_READ_BUDGET_SECONDS,
     read_snapshot: Optional[SnapshotReader] = None,
     observe: Optional[Callable[[dict], None]] = None,
+    session_factory: Optional[SessionFactory] = None,
 ) -> list:
     """Give each eligible theme bundle its ``collection_ref``.
 
@@ -385,7 +536,8 @@ async def attach_theme_collection_refs(
     is no theme bundle, or the budget is spent. Otherwise returns a new list in
     which every theme bundle is a copy carrying its §5 reason in
     ``debug_bundles`` and, when every check passed, ``collection_ref``.
-    ``observe`` receives ``{bundle id: reason}``.
+    ``observe`` receives ``{bundle id: reason}``. The reads run on their own
+    session (``_side_read``), never the request's.
     """
     bundles = [i for i, item in enumerate(items) if _is_theme_bundle(item)]
     if not bundles or published is None or not published.themes or budget_seconds <= 0:
@@ -395,8 +547,8 @@ async def attach_theme_collection_refs(
     for i in bundles:
         preview_union.update(bundle_preview_ids(items[i]["data"]) or ())
 
-    async def _decide() -> dict[int, tuple[Optional[dict], str]]:
-        rows = await read_candidate_rows(db, preview_union)
+    async def _decide(session) -> dict[int, tuple[Optional[dict], str]]:
+        rows = await read_candidate_rows(session, preview_union)
         candidates = candidates_for(rows)
         memo: dict[tuple[int, int], Optional[dict]] = {}
 
@@ -412,18 +564,14 @@ async def attach_theme_collection_refs(
             )
         return out
 
-    try:
-        decided = await asyncio.wait_for(
-            _decide(), timeout=min(budget_seconds, THEME_REF_READ_BUDGET_SECONDS)
-        )
-    except Exception:
-        # A cancelled or failed statement can leave the session aborted; the
-        # cards are already serialized, so restore it for later feed reads.
-        await db.rollback()
-        logger.warning(
-            "Discover theme collection read failed; keeping cards without links",
-            exc_info=True,
-        )
+    ok, decided = await _side_read(
+        _decide,
+        budget_seconds=min(budget_seconds, THEME_REF_READ_BUDGET_SECONDS),
+        session_factory=session_factory,
+        what="collection",
+    )
+    if not ok:
+        # Keeping every card, without a link (logged by _side_read).
         decided = {i: (None, READ_FAILED) for i in bundles}
 
     out = list(items)
