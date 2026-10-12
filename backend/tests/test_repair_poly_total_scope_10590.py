@@ -35,14 +35,14 @@ def _legs(src="poly_total_score", over_won=True):
 
 
 def test_the_specimen_regrades_to_under_from_the_venue():
-    d = rp.decide(NAME, _legs(), CLOB)
+    d = rp.decide(NAME, _legs(), CLOB, COND)
     assert d["action"] == "regrade"
     assert d["winner_id"] == 241493299 and d["winner"] == "Under"
     assert d["verdict_changes"] is True
 
 
 def test_a_venue_answer_that_agrees_is_a_confirmation_not_a_flip():
-    d = rp.decide(NAME, _legs(over_won=False), CLOB)
+    d = rp.decide(NAME, _legs(over_won=False), CLOB, COND)
     assert d["action"] == "regrade" and d["verdict_changes"] is False
 
 
@@ -55,7 +55,7 @@ def test_a_venue_answer_that_agrees_is_a_confirmation_not_a_flip():
     (_legs(), {**CLOB, "tokens": [{**t, "winner": False} for t in CLOB["tokens"]]}, "void"),
 ])
 def test_every_unprovable_market_is_skipped_by_name(legs, clob, reason):
-    d = rp.decide(NAME, legs, clob)
+    d = rp.decide(NAME, legs, clob, COND)
     assert d == {**d, "action": "skip", "reason": reason}, d
 
 
@@ -393,10 +393,12 @@ async def test_evidence_costs_no_extra_request_or_query_and_a_dry_run_writes_not
     (_legs(), {**CLOB, "tokens": [{**t, "winner": False} for t in CLOB["tokens"]]}),
     ([{**leg, "name": "Yes" if i == 0 else "No"} for i, leg in enumerate(_legs())],
      CLOB),
+    (_legs(), {**OVER_WON, "condition_id": "0x" + "bb" * 32}),
+    (_legs(), {k: v for k, v in CLOB.items() if k != "condition_id"}),
 ])
 def test_decide_is_exactly_the_helpers_decision(legs, clob_payload):
-    decision, _ = rp._decide_and_map(NAME, legs, clob_payload)
-    assert rp.decide(NAME, legs, clob_payload) == decision
+    decision, _ = rp._decide_and_map(NAME, legs, clob_payload, COND)
+    assert rp.decide(NAME, legs, clob_payload, COND) == decision
 
 
 async def test_yes_no_stored_legs_stay_refused_and_the_entry_says_why(clob):
@@ -412,3 +414,103 @@ async def test_yes_no_stored_legs_stay_refused_and_the_entry_says_why(clob):
     assert entry["evidence"]["mapping"] == {
         "skip": "ambiguous_skipped", "why": "totals_stored_yesno"}
     assert s.writes == [] and s.commits == 0
+
+
+# ---------------------------------------------------------------------------
+# reply identity: the CLOB's own condition_id must be the one we asked for
+# ---------------------------------------------------------------------------
+
+OTHER_COND = "0x" + "bb" * 32
+#: A different market's reply: same question, same Over/Under labels, a marked
+#: winner, under another condition id. The name guard and the mapper both
+#: accept it; only the id says it answers a different market.
+FOREIGN_REPLY = {**OVER_WON, "condition_id": OTHER_COND}
+NO_ID_REPLY = {k: v for k, v in OVER_WON.items() if k != "condition_id"}
+
+
+@pytest.mark.parametrize("clob_payload,reason", [
+    (FOREIGN_REPLY, "clob_condition_id_mismatch"),
+    ({**OVER_WON, "condition_id": COND.upper()}, "clob_condition_id_mismatch"),
+    ({**OVER_WON, "condition_id": COND[:-1]}, "clob_condition_id_mismatch"),
+    (NO_ID_REPLY, "clob_condition_id_missing"),
+    ({**OVER_WON, "condition_id": None}, "clob_condition_id_missing"),
+    ({**OVER_WON, "condition_id": ""}, "clob_condition_id_missing"),
+    ({**OVER_WON, "condition_id": 12345}, "clob_condition_id_missing"),
+])
+def test_a_reply_that_is_not_provably_this_market_is_never_graded(clob_payload, reason):
+    decision, mapping = rp._decide_and_map(NAME, _legs(), clob_payload, COND)
+    assert decision["action"] == "skip" and decision["reason"] == reason, decision
+    assert "winner_id" not in decision and mapping is None
+
+
+def test_the_mismatch_names_both_ids():
+    d = rp.decide(NAME, _legs(), FOREIGN_REPLY, COND)
+    assert d["detail"] == {"requested": COND, "returned": OTHER_COND}
+
+
+def test_an_unrequested_id_never_matches_a_reply():
+    # ``repair`` never asks without an id; if anything ever does, it refuses.
+    assert rp.decide(NAME, _legs(), CLOB, None)["reason"] == "clob_condition_id_mismatch"
+
+
+def test_the_same_reply_under_the_right_id_still_regrades():
+    """Control: the foreign reply is refused for its id alone."""
+    d = rp.decide(NAME, _legs(), {**FOREIGN_REPLY, "condition_id": COND}, COND)
+    assert d["action"] == "regrade" and d["winner_id"] == 241493298
+
+
+async def test_a_healthy_reply_is_applied_behind_its_backup(clob):
+    clob["clob"] = _Clob({COND: OVER_WON})
+    s = _Session(_page(), {64157611: _legs(over_won=False)})
+    out = await rp.repair(s, apply=True)
+    (entry,) = out["ledger"]
+    assert entry["action"] == "regrade" and entry["winner_id"] == 241493298
+    assert s.writes == [([241493298, 241493299], 241493298)] and s.commits == 1
+    assert any(q.lstrip().startswith(f"INSERT INTO {rp.BAK_TABLE}") for q in s.sql)
+    assert entry["evidence"]["provider"]["condition_id_agrees"] is True
+
+
+@pytest.mark.parametrize("payload,reason,agrees", [
+    (FOREIGN_REPLY, "clob_condition_id_mismatch", False),
+    (NO_ID_REPLY, "clob_condition_id_missing", None),
+])
+async def test_a_foreign_or_unnamed_reply_writes_no_backup_and_no_grade(
+    clob, payload, reason, agrees,
+):
+    """The review's reproduction, on the apply path: legs under ``COND``, a reply
+    that is not provably about ``COND``, a marked Over winner. Nothing is
+    backed up, nothing is written, nothing commits, and the cursor moves on."""
+    clob["clob"] = _Clob({COND: payload})
+    s = _Session(_page(), {64157611: _legs(over_won=False)})
+    out = await rp.repair(s, apply=True)
+    (entry,) = out["ledger"]
+    assert entry["action"] == "skip" and entry["reason"] == reason
+    assert out["skip_reasons"] == {reason: 1}
+    assert out["regraded"] == 0 and out["legs_written"] == 0
+    assert s.writes == [] and s.commits == 0 and s.pruned == []
+    assert not any(
+        q.lstrip().upper().startswith(("INSERT", "UPDATE", "DELETE", "CREATE"))
+        for q in s.sql
+    )
+    assert out["exhausted"] is True and out["next_after_id"] == 64157611
+    ev = entry["evidence"]
+    assert ev["condition_id_requested"] == COND
+    assert ev["provider"]["condition_id_agrees"] is agrees
+    assert ev["mapping"] is None
+
+
+async def test_one_foreign_reply_does_not_stop_the_markets_after_it(clob):
+    cond2 = "0x" + "cd" * 32
+    name2 = "Milwaukee Brewers Team Total: O/U 4.5"
+    legs2 = [{**leg, "id": leg["id"] + 10,
+              "external_id": leg["external_id"].replace(COND, cond2)}
+             for leg in _legs()]
+    page = _page() + [_mrow(market_id=64157612, market_ext=cond2, market_name=name2)]
+    clob["clob"] = _Clob({COND: FOREIGN_REPLY,
+                          cond2: {**CLOB, "question": name2, "condition_id": cond2}})
+    s = _Session(page, {64157611: _legs(), 64157612: legs2})
+    out = await rp.repair(s, apply=True)
+    assert [e.get("reason", e["action"]) for e in out["ledger"]] == [
+        "clob_condition_id_mismatch", "regrade"]
+    assert s.writes == [([241493308, 241493309], 241493309)]
+    assert out["next_after_id"] == 64157612
