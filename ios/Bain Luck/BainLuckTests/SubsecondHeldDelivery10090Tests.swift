@@ -56,9 +56,20 @@ final class SubsecondHeldDelivery10090Tests: XCTestCase {
     /// Quote `i`'s observation clock: `i` seconds after the held read, or
     /// `i` quarter-seconds after it.
     nonisolated private static func clock(_ i: Int, quarter: Bool) -> String {
-        guard quarter else { return String(format: "2026-09-25T17:10:%02dZ", i) }
-        let ms = i * 250
-        return String(format: "2026-09-25T17:10:%02d.%03dZ", ms / 1000, ms % 1000)
+        stamp(quarter ? Double(i) * 0.25 : Double(i), fractional: quarter)
+    }
+
+    /// The held read's clock. The model cases keep 2026-09-25T17:10:00Z. The
+    /// hosted page uses half a minute ago, because a live chart's axis ends at
+    /// the real now and a September line would be squeezed against its left
+    /// edge.
+    nonisolated private static let fixedBase: TimeInterval = 1_790_356_200
+    nonisolated private static func recentBase() -> TimeInterval { floor(Date().timeIntervalSince1970) - 30 }
+
+    nonisolated private static func stamp(_ offset: TimeInterval, fractional: Bool = false) -> String {
+        let f = ISO8601DateFormatter()
+        f.formatOptions = fractional ? [.withInternetDateTime, .withFractionalSeconds] : [.withInternetDateTime]
+        return f.string(from: Date(timeIntervalSince1970: PacedStream.base + offset))
     }
 
     nonisolated private static func raw(_ i: Int, quarter: Bool) -> String {
@@ -84,12 +95,14 @@ final class SubsecondHeldDelivery10090Tests: XCTestCase {
         nonisolated(unsafe) private static var emitted: [String: UInt64] = [:]
         nonisolated(unsafe) private static var finished = false
         nonisolated(unsafe) private static var quarter = false
+        nonisolated(unsafe) private static var baseEpoch = SubsecondHeldDelivery10090Tests.fixedBase
         private let queue = DispatchQueue(label: "paced-stream")
         private var stopped = false
 
-        static func reset(quarter: Bool) {
-            lock.lock(); emitted = [:]; finished = false; Self.quarter = quarter; lock.unlock()
+        static func reset(quarter: Bool, base: TimeInterval) {
+            lock.lock(); emitted = [:]; finished = false; Self.quarter = quarter; baseEpoch = base; lock.unlock()
         }
+        static var base: TimeInterval { lock.lock(); defer { lock.unlock() }; return baseEpoch }
         static var emittedAt: [String: UInt64] { lock.lock(); defer { lock.unlock() }; return emitted }
         static var done: Bool { lock.lock(); defer { lock.unlock() }; return finished }
         private static var isQuarter: Bool { lock.lock(); defer { lock.unlock() }; return quarter }
@@ -166,25 +179,25 @@ final class SubsecondHeldDelivery10090Tests: XCTestCase {
     /// The held page: a folded blend hero at revision 20, older than every quote.
     /// The hosted page also carries a tip-off, so its chart has a start.
     private func held(hosted: Bool = false) throws -> EventDetail {
-        let tip = hosted ? #""commence_time":"2026-09-25T16:00:00Z","# : ""
+        let tip = hosted ? #""commence_time":"\#(Self.stamp(-4200))","# : ""
         return try Self.decoder().decode(EventDetail.self, from: Data("""
         {"id":4242,"sport":"basketball_nba","home_team":"Celtics","away_team":"Knicks","status":"live",\(tip)
          "home_score":50,"away_score":48,
          "current_odds":{"home_probability":0.6,"away_probability":0.4},
          "hero_probability":0.6,"hero_probability_source":"blend",
-         "hero_probability_observed_at":"2026-09-25T17:10:00Z",
+         "hero_probability_observed_at":"\(Self.stamp(0))",
          "blend_fold_revision":{"4242":20,"999":5},
-         "win_probability_sources":{"polymarket":{"value":0.6,"updated_at":"2026-09-25T17:10:00Z"}}}
+         "win_probability_sources":{"polymarket":{"value":0.6,"updated_at":"\(Self.stamp(0))"}}}
         """.utf8))
     }
 
     /// The hosted page's history: a blend line from tip-off that ends on the
-    /// held hero, 60% at 17:10:00, so the chart draws before the burst and the
+    /// held hero, 60% at the held clock, so the chart draws before the burst and the
     /// page never falls through to the production history read.
     private func heldHistory() throws -> EventHistoryResponse {
-        let rows: [(String, Double)] = [("16:00:00", 0.50), ("16:30:00", 0.54), ("17:00:00", 0.58), ("17:10:00", 0.60)]
+        let rows: [(TimeInterval, Double)] = [(-4200, 0.50), (-2400, 0.54), (-600, 0.58), (0, 0.60)]
         func points() -> String {
-            rows.map { #"{"timestamp":"2026-09-25T\#($0.0)Z","home_probability":\#($0.1)}"# }
+            rows.map { #"{"timestamp":"\#(Self.stamp($0.0))","home_probability":\#($0.1)}"# }
                 .joined(separator: ",")
         }
         return try Self.decoder().decode(EventHistoryResponse.self, from: Data("""
@@ -260,7 +273,8 @@ final class SubsecondHeldDelivery10090Tests: XCTestCase {
     }
 
     private func run(quarter: Bool, hosted: Bool) async throws -> Run {
-        PacedStream.reset(quarter: quarter)
+        PacedStream.reset(quarter: quarter, base: hosted ? Self.recentBase() : Self.fixedBase)
+        let base = PacedStream.base
         let config = URLSessionConfiguration.ephemeral
         config.protocolClasses = [PacedStream.self]
         let session = URLSession(configuration: config)
@@ -274,7 +288,7 @@ final class SubsecondHeldDelivery10090Tests: XCTestCase {
                 t.connect()
                 return t
             },
-            now: { 1_790_355_605 },
+            now: { base - 595 },
             sleep: { _ in try? await Task.sleep(nanoseconds: 60_000_000_000) }
         )
         var page: MountedPage?
