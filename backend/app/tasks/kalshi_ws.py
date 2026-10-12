@@ -284,7 +284,8 @@ class _FlushTimings:
     (`waited`): `db` from opening a phase's session to its commit returning
     (checkout, lock waits, writes, re-rank and commit, indistinguishable here),
     `publish` its market invalidation call, `stamp_wait` its waits on the
-    blend refresh (a join, or the inline refresh of an empty batch). They are
+    blend refresh (a join, or the final drain's inline refresh of an empty
+    batch; a periodic empty batch starts owed stamps on a task). They are
     sequential awaits of one coroutine, so they never overlap and never exceed
     `max`; the rest is unattributed, not a stage. The refresh's own work on
     its task is not here. `db_phase` is that flush's slowest phase: its time,
@@ -839,6 +840,35 @@ def linked_first_phases(
     )
 
 
+def live_unfenced_first(phases, event_id_by_outcome, live_events, held_events):
+    """#10090 — reorder the leading live phases: games the running refresh
+    does not hold go first.
+
+    A phase whose game the running refresh holds (``held_events``) joins that
+    WHOLE refresh before its write (the same-event fence in `flush_prices`),
+    so every live game planned after it waited too, though the refresh never
+    held it. Moved first, an independent live game's whole cohort commits and
+    joins the running refresh. Order only: each held phase keeps its fence and
+    their relative order; non-live phases and their oldest-first order stay.
+    """
+    def held(phase):
+        return not held_events.isdisjoint(
+            event_id_by_outcome.get(oid) for oid in phase
+        )
+
+    live = 0
+    while live < len(phases) and any(
+        event_id_by_outcome.get(oid) in live_events for oid in phases[live]
+    ):
+        live += 1
+    head = phases[:live]
+    return (
+        [phase for phase in head if not held(phase)]
+        + [phase for phase in head if held(phase)]
+        + phases[live:]
+    )
+
+
 @owns_consumer_sessions("kalshi")
 @_owns_kalshi_price_lifetime  # #10693: inside, so the engine is disposed last
 async def _run_kalshi_ws_consumer(*, sessions, prices):
@@ -1248,9 +1278,21 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
                 if prices.stamping is not None and prices.stamping.done():
                     await prices.join_stamp(blend_refresher)
                 if prices.stamping is None:
-                    if blend_refresher.pending_event_ids():
+                    owed = blend_refresher.pending_event_ids()
+                    if owed:
                         prices.flush_work += 1  # owed stamps are actual work
-                    await blend_refresher.refresh_pending(flush_started=flush_started)
+                    stamp = blend_refresher.refresh_pending(flush_started=flush_started)
+                    if owed and not final_drain:
+                        # #10090: the debt is the run's refresh, as a price
+                        # flush's is, so the next flush's fresh cohort joins
+                        # it instead of waiting for it to return. The drain
+                        # has no next flush and stamps inline.
+                        prices.stamping_fresh = set()
+                        prices.stamping_events = set(owed)
+                        prices.stamping = asyncio.create_task(stamp)
+                        await asyncio.sleep(0)
+                    else:
+                        await stamp
             return True
         # #10090: a snapshot with prices is actual work, held cohorts included,
         # so a held game's quotes cannot buy more than one flush per period.
@@ -1271,6 +1313,14 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
             live_events=live_event_ids,
             pending_events_fenced=True,
         )
+        if (
+            live_event_ids and not final_drain
+            and prices.stamping is not None and not prices.stamping.done()
+        ):
+            # #10090: independent live games do not wait at a held game's fence.
+            phases = live_unfenced_first(
+                phases, cohort_event_ids, live_event_ids, prices.stamping_events,
+            )
         # Includes failed/budget-deferred phases until a whole phase commits.
         # Re-resolve through the current map at each launch for late bridges.
         unfinished_price_ids = set(batch)
