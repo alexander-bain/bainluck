@@ -113,6 +113,11 @@ async def world(monkeypatch):
         sport_id = sport.id
 
     yield Session, sport_id
+    async with engine.begin() as conn:
+        # Leave no FK onto `containers` behind: the next gate in the same job
+        # runs a plain `drop_all`, which cannot drop `containers` past it.
+        await conn.execute(text("DROP TABLE IF EXISTS container_member_decisions"))
+        await conn.execute(text("DROP TABLE IF EXISTS container_corrections"))
     await engine.dispose()
 
 
