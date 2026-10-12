@@ -117,6 +117,14 @@ class PolymarketMarket(BaseModel):
     description: Optional[str] = None
     resolution_source: Optional[str] = None
 
+    #: #5343 — Gamma's ``umaResolutionStatus``: where the UMA oracle stands on
+    #: this market's result. ``closed`` alone cannot tell a settled leg from one
+    #: whose result is still proposed or disputed; event 106884's six closed
+    #: legs all read ``"resolved"`` beside ``outcomePrices ["0","1"]``. Parse
+    #: only: a string is kept stripped, anything else (absent, null, a number)
+    #: is None, and None never admits anything.
+    uma_resolution_status: Optional[str] = None
+
 
 #: The ONLY `sportsMarketType` value that denotes a full-contest winner.
 #: Deliberately a one-element frozenset rather than a string, so that widening
@@ -855,6 +863,17 @@ class PolymarketAPIService:
             logger.warning("Error parsing Polymarket event: %s", e)
             return None
 
+    @staticmethod
+    def _uma_resolution_status(raw) -> Optional[str]:
+        """#5343: a non-blank string, stripped; anything else is None.
+
+        A malformed status must not cost us the market (the parse below is
+        all-or-nothing), so this never raises.
+        """
+        if isinstance(raw, str) and raw.strip():
+            return raw.strip()
+        return None
+
     def _parse_market(self, market_data: dict) -> Optional[PolymarketMarket]:
         """Parse raw market data into PolymarketMarket."""
         try:
@@ -902,6 +921,9 @@ class PolymarketAPIService:
                 line=self._safe_float(market_data.get("line")),
                 description=market_data.get("description"),
                 resolution_source=market_data.get("resolutionSource"),
+                uma_resolution_status=self._uma_resolution_status(
+                    market_data.get("umaResolutionStatus")
+                ),
             )
         except Exception as e:
             logger.warning("Error parsing Polymarket market: %s", e)

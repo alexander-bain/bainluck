@@ -124,6 +124,7 @@
     "#9543 the Kalshi beat reaches the existing rows it wrote longest ago first (real Postgres)",
     "#3569 The live poll speaks the venue's current price dialect (real Postgres)",
     "#9399 A Polymarket leg we refuse to price stops keeping a number its own book prices out (real Postgres)",
+    "#5343 A Polymarket leg the venue settled No is stored as a resolved row (real Postgres)",
     "#3518+#3569 A low-value future game ends up showing a price (real Postgres)",
     "#3613 The dark-Polymarket selector, executed (real Postgres)",
     "#4896 A game about to be played leads the refresh queue (real Postgres)",
