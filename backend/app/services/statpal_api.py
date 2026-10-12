@@ -418,8 +418,11 @@ class StatPalFixtureFetch:
 
 # --- NFL schedule receipts (#5344 M1; closed set, tests read these names) -----
 
-#: A node the walk could not read: not the dict/list it must be, or a required
-#: child key absent. An explicit empty list is NOT this — it is a read answer.
+#: A node the walk could not read: not the dict/list it must be, a required
+#: child key absent, or a stage/week `name` that is not a string. An explicit
+#: empty list where a list is accepted (stage, week, matches, match) is NOT
+#: this — it is a read answer. `scores` and `tournament` accept only a dict, so
+#: `[]` there IS this.
 SKIP_MALFORMED_NODE = "malformed_node"
 #: A game row with no name for one or both sides (`_parse_single_fixture` → None).
 SKIP_MISSING_TEAM = "missing_team"
@@ -429,6 +432,11 @@ SKIP_PARSE_EXCEPTION = "parse_exception"
 #: (the old parser keeps it), but it cannot be told apart from a copy of any
 #: contest, so the read is not complete.
 REFUSE_NO_CONTEST_ID = "no_contest_id"
+#: A game row that parsed but whose contest id is not a string or an integer
+#: (a dict, a list, a float, a bool). The old parser stringifies it and keeps
+#: the fixture, so it stays in `fixtures`, but `"{'bad': '123'}"` is not an
+#: identity: it is never counted in `duplicates` and the read is not complete.
+REFUSE_MALFORMED_CONTEST_ID = "malformed_contest_id"
 #: The read parsed to zero fixtures. An answered empty schedule is not a roster.
 REFUSE_NO_FIXTURES = "no_fixtures"
 
@@ -469,14 +477,18 @@ class StatPalNflScheduleRead:
     """What one NFL season-schedule read proves, not just what it returned (#5344).
 
     `fixtures` is exactly what `get_schedule_fixtures("nfl")` returns for the
-    same payload. Everything that read drops or cannot identify is a receipt
-    here. A transport failure is never a read — it raises.
+    same payload, wherever that read returns at all. (A stage or week `name`
+    that is a truthy non-string raises TypeError in the old walk; here it is a
+    receipt, the label is dropped, and the games under it are still read.)
+    Everything that read drops or cannot identify is a receipt here. A
+    transport failure is never a read — it raises.
     """
 
     fixtures: list[StatPalFixture]
     #: Rows and nodes that did not become a fixture.
     skipped: list[StatPalScheduleReceipt]
-    #: Fixtures kept for parity with the old read that carry no contest id.
+    #: Fixtures kept for parity with the old read whose contest id is missing
+    #: (`no_contest_id`) or not a string/integer (`malformed_contest_id`).
     unidentified: list[StatPalScheduleReceipt]
     duplicates: list[StatPalScheduleDuplicate]
     #: Game rows seen, whether or not they parsed.
@@ -1691,6 +1703,19 @@ class StatPalAPIService(BaseAPIClient):
                 SKIP_MALFORMED_NODE, path, stage, week, detail=_node_type(node, True),
             ))
 
+        def label(node: dict, path: str, stage=None) -> Optional[str]:
+            """A stage/week `name`: a string, or absent/None. Anything else is a
+            receipt and reads as no label, so the games under it are still
+            walked and accounted for instead of the whole read raising."""
+            value = node.get("name")
+            if value is None or isinstance(value, str):
+                return value
+            skipped.append(StatPalScheduleReceipt(
+                SKIP_MALFORMED_NODE, f"{path}/name", stage,
+                detail=f"name is {_node_type(value, True)}",
+            ))
+            return None
+
         def read():
             return StatPalNflScheduleRead(
                 fixtures=fixtures,
@@ -1737,7 +1762,7 @@ class StatPalAPIService(BaseAPIClient):
             if not isinstance(stage, dict):
                 malformed(stage_path, stage)
                 continue
-            stage_name = stage.get("name")
+            stage_name = label(stage, stage_path)
             weeks = children(stage, "week", stage_path, stage_name)
             if weeks is None:
                 continue
@@ -1746,7 +1771,7 @@ class StatPalAPIService(BaseAPIClient):
                 if not isinstance(week, dict):
                     malformed(week_path, week, stage_name)
                     continue
-                week_name = week.get("name")
+                week_name = label(week, week_path, stage_name)
                 days = children(week, "matches", week_path, stage_name, week_name)
                 if days is None:
                     continue
@@ -1767,10 +1792,23 @@ class StatPalAPIService(BaseAPIClient):
                         if not isinstance(game, dict):
                             malformed(game_path, game, stage_name, week_name)
                             continue
-                        contest_id = str(
-                            game.get("id") or game.get("contestid")
-                            or game.get("fixture_id") or ""
-                        ).strip() or None
+                        # The same precedence as `_parse_single_fixture`, but
+                        # only a string or an integer can name a contest.
+                        id_key = next(
+                            (k for k in ("id", "contestid", "fixture_id") if game.get(k)),
+                            None,
+                        )
+                        raw_id = game.get(id_key) if id_key else None
+                        bad_id = None
+                        if raw_id is None:
+                            contest_id = None
+                        elif isinstance(raw_id, str) or (
+                            isinstance(raw_id, int) and not isinstance(raw_id, bool)
+                        ):
+                            contest_id = str(raw_id).strip() or None
+                        else:
+                            contest_id = None
+                            bad_id = f"{id_key} is {type(raw_id).__name__}: {raw_id!r}"[:200]
                         if contest_id:
                             rows.setdefault(contest_id, []).append((game_path, round_info))
                         try:
@@ -1784,12 +1822,17 @@ class StatPalAPIService(BaseAPIClient):
                         if not fixture:
                             skipped.append(StatPalScheduleReceipt(
                                 SKIP_MISSING_TEAM, game_path, stage_name, week_name,
-                                contest_id,
+                                contest_id, bad_id,
                             ))
                             continue
                         fixture.league = fixture.league or league_name
                         fixture.round_info = fixture.round_info or round_info
-                        if not (fixture.fixture_id or "").strip():
+                        if bad_id:
+                            unidentified.append(StatPalScheduleReceipt(
+                                REFUSE_MALFORMED_CONTEST_ID, game_path, stage_name,
+                                week_name, detail=bad_id,
+                            ))
+                        elif not (fixture.fixture_id or "").strip():
                             unidentified.append(StatPalScheduleReceipt(
                                 REFUSE_NO_CONTEST_ID, game_path, stage_name, week_name,
                             ))

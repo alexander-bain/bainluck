@@ -26,6 +26,7 @@ import httpx
 import pytest
 
 from app.services.statpal_api import (
+    REFUSE_MALFORMED_CONTEST_ID,
     REFUSE_NO_CONTEST_ID,
     REFUSE_NO_FIXTURES,
     SKIP_MALFORMED_NODE,
@@ -223,6 +224,8 @@ class TestEachSilentDropIsNamed:
         self._assert_dropped_and_named(service, payload, SKIP_MALFORMED_NODE)
 
     def test_an_explicit_empty_list_is_an_answer_not_a_skip(self, service):
+        """Only where a list is accepted (stage, week, matches, match). At
+        `scores`/`tournament` a `[]` is malformed: see the next class."""
         payload = _load(REGULAR)
         payload["scores"]["tournament"]["stage"][0]["week"] = []
         old, new = _both(service, payload)
@@ -262,6 +265,14 @@ class TestTheWholePayloadUnreadable:
             (lambda p: {"scores": {"tournament": []}}, "scores/tournament", "tournament is list"),
             (lambda p: {"scores": [None]}, "scores", "scores is list"),
             (lambda p: {"scores": {"tournament": ["x"]}}, "scores/tournament", "tournament is list"),
+            # A valid first sibling never certifies the read alone (review
+            # demonstration `silent_second_tournament`): a malformed or a
+            # duplicate second tournament refuses the whole node.
+            (lambda p: {"scores": {"tournament": [p["scores"]["tournament"], "x"]}},
+             "scores/tournament", "tournament is list"),
+            (lambda p: {"scores": {"tournament": [p["scores"]["tournament"]] * 2}},
+             "scores/tournament", "tournament is list"),
+            (lambda p: {"scores": [p["scores"], p["scores"]]}, "scores", "scores is list"),
         ],
     )
     def test_structure_missing_is_a_receipt_not_an_empty_schedule(
@@ -334,6 +345,159 @@ class TestMalformedDuplicate:
         assert new.skipped == [] and new.parse_complete is True
         dup = {d.contest_id: d for d in new.duplicates}[contest]
         assert dup.rounds == (WEEK_ONE, "Regular Season / Week 2")
+
+
+# =============================================================================
+# A malformed context label or contest id is a receipt, never an escape or an
+# identity (independent review 98540b1d, P2 ×2; still open on bf7a4d42)
+# =============================================================================
+
+
+class TestMalformedStageOrWeekName:
+    """The old walk joins the two names into `round_info`; a truthy
+    non-string raises TypeError there and the whole read is lost. Here the
+    label is a receipt and the games under it are still read."""
+
+    @pytest.mark.parametrize("value", [7, ["Regular Season"], {"en": "Week 1"}, 1.5, True])
+    @pytest.mark.parametrize("level", ["stage", "week"])
+    def test_a_truthy_wrong_type_name_is_a_receipt_not_an_exception(
+        self, service, level, value
+    ):
+        payload = _load(REGULAR)
+        stage = payload["scores"]["tournament"]["stage"][1]
+        node = stage if level == "stage" else stage["week"][0]
+        node["name"] = value
+        with pytest.raises(TypeError):
+            service._parse_nfl_season_schedule(copy.deepcopy(payload))
+        new = service._parse_nfl_season_schedule_read(copy.deepcopy(payload))
+
+        path = "stage[1]/name" if level == "stage" else "stage[1]/week[0]/name"
+        assert [(r.reason, r.path) for r in new.skipped] == [(SKIP_MALFORMED_NODE, path)]
+        assert new.skipped[0].detail == f"name is {type(value).__name__}"
+        assert new.refusals == (SKIP_MALFORMED_NODE,)
+        assert new.parse_complete is False
+        # Healthy siblings and the games under the bad label are all still read.
+        clean = service._parse_nfl_season_schedule(_load(REGULAR))
+        assert [f.fixture_id for f in new.fixtures] == [f.fixture_id for f in clean]
+        assert new.rows_seen == 17
+        # No non-string ever reaches a receipt's or a fixture's label.
+        assert all(isinstance(r.stage, (str, type(None))) for r in new.skipped)
+        dropped = "Regular Season" if level == "stage" else "Week 1"
+        assert all(dropped not in (f.round_info or "") for f in new.fixtures[1:])
+
+    @pytest.mark.parametrize("value", [0, [], {}, False])
+    def test_a_falsy_wrong_type_name_keeps_old_fixtures_and_refuses(self, service, value):
+        """The old walk skips a falsy label and returns; parity holds, and the
+        read still says the node is malformed."""
+        payload = _load(REGULAR)
+        payload["scores"]["tournament"]["stage"][1]["week"][0]["name"] = value
+        old, new = _both(service, payload)
+        assert new.fixtures == old and len(old) == 17
+        assert [(r.reason, r.path) for r in new.skipped] == [
+            (SKIP_MALFORMED_NODE, "stage[1]/week[0]/name")
+        ]
+        assert new.parse_complete is False
+
+    @pytest.mark.parametrize("value", [None, ""])
+    def test_an_absent_or_empty_name_is_not_malformed(self, service, value):
+        payload = _load(REGULAR)
+        payload["scores"]["tournament"]["stage"][1]["week"][0]["name"] = value
+        old, new = _both(service, payload)
+        assert new.fixtures == old
+        assert new.skipped == [] and new.parse_complete is True
+
+    def test_a_second_copy_under_a_bad_label_still_counts_as_a_duplicate(self, service):
+        payload = _load(REGULAR)
+        opener = copy.deepcopy(_week_one_games(payload)[0])
+        payload["scores"]["tournament"]["stage"][1]["week"].append(
+            {"name": ["Week 2"], "matches": {"date": "Sunday", "match": opener}}
+        )
+        new = service._parse_nfl_season_schedule_read(payload)
+        assert opener["contestid"] in {d.contest_id for d in new.duplicates}
+        assert new.rows_seen == 18
+        assert new.parse_complete is False
+
+
+class TestMalformedContestId:
+    """`_parse_single_fixture` stringifies any truthy id, so the old read keeps
+    `{"bad": "123"}` as fixture_id `"{'bad': '123'}"`. The fixture stays for
+    parity; the new read refuses to treat it as a contest."""
+
+    @pytest.mark.parametrize(
+        "key, value",
+        [
+            ("contestid", {"bad": "123"}),
+            ("contestid", ["280445"]),
+            ("contestid", 280445.0),
+            ("contestid", True),
+            ("id", {"bad": "123"}),
+            ("fixture_id", ["280445"]),
+        ],
+    )
+    def test_a_structured_id_is_kept_but_never_an_identity(self, service, key, value):
+        payload = _load(REGULAR)
+        game = _week_one_games(payload)[0]
+        del game["contestid"]
+        game[key] = value
+        old, new = _both(service, payload)
+        assert len(old) == 17 and new.fixtures == old
+        # old[0] is the lone Pre Season game; old[1] is Week 1's opener.
+        assert old[1].fixture_id == str(value), "the old read vouches for it"
+        assert new.skipped == []
+        receipt = new.unidentified[0]
+        assert [r.reason for r in new.unidentified] == [REFUSE_MALFORMED_CONTEST_ID]
+        assert receipt.contest_id is None
+        assert receipt.detail == f"{key} is {type(value).__name__}: {value!r}"
+        assert receipt.path.endswith("/match[0]") and receipt.week == "Week 1"
+        assert new.refusals == (REFUSE_MALFORMED_CONTEST_ID,)
+        assert new.parse_complete is False
+
+    def test_a_structured_id_never_enters_duplicates(self, service):
+        payload = _load(REGULAR)
+        games = _week_one_games(payload)
+        games[0]["contestid"] = {"bad": "123"}
+        games[1]["contestid"] = {"bad": "123"}
+        new = service._parse_nfl_season_schedule_read(payload)
+        assert new.duplicates == []
+        assert [r.reason for r in new.unidentified] == [REFUSE_MALFORMED_CONTEST_ID] * 2
+
+    def test_precedence_matches_the_fixture_parser(self, service):
+        """`id` wins over `contestid` when truthy, as in `_parse_single_fixture`;
+        a falsy `id` falls through to a valid `contestid`."""
+        payload = _load(REGULAR)
+        games = _week_one_games(payload)
+        games[0]["id"] = {"bad": "1"}
+        games[1]["id"] = 0
+        old, new = _both(service, payload)
+        assert new.fixtures == old
+        assert [r.path for r in new.unidentified] == [new.unidentified[0].path]
+        assert new.unidentified[0].detail.startswith("id is dict")
+        assert old[1].fixture_id == "{'bad': '1'}"
+        assert old[2].fixture_id == games[1]["contestid"]
+
+    @pytest.mark.parametrize("value", ["280445", 280445])
+    def test_string_and_integer_ids_stay_identities(self, service, value):
+        payload = _load(REGULAR)
+        games = _week_one_games(payload)
+        games[0]["contestid"] = value
+        copy_ = copy.deepcopy(games[0])
+        payload["scores"]["tournament"]["stage"][1]["week"].append(
+            {"name": "Week 2", "matches": {"date": "Sunday", "match": copy_}}
+        )
+        old, new = _both(service, payload)
+        assert new.fixtures == old
+        assert new.unidentified == [] and new.parse_complete is True
+        assert "280445" in {d.contest_id for d in new.duplicates}
+
+    def test_a_refused_row_with_a_structured_id_names_it(self, service):
+        payload = _load(REGULAR)
+        game = _week_one_games(payload)[0]
+        game["contestid"] = {"bad": "123"}
+        game["home"]["name"] = ""
+        new = service._parse_nfl_season_schedule_read(payload)
+        assert [(r.reason, r.contest_id) for r in new.skipped] == [(SKIP_MISSING_TEAM, None)]
+        assert new.skipped[0].detail == "contestid is dict: {'bad': '123'}"
+        assert new.duplicates == []
 
 
 # =============================================================================
@@ -425,12 +589,15 @@ def test_every_reason_is_emitted_by_the_walk(service):
     )
     no_id = _load(REGULAR)
     del _week_one_games(no_id)[0]["contestid"]
+    bad_id = _load(REGULAR)
+    _week_one_games(bad_id)[0]["contestid"] = {"bad": "123"}
 
     seen = (
         emitted({"scores": None})
         | emitted(missing_team)
         | emitted(raises)
         | emitted(no_id)
+        | emitted(bad_id)
     )
     declared = {
         getattr(mod, name) for name in dir(mod) if name.startswith(("SKIP_", "REFUSE_"))
@@ -440,5 +607,6 @@ def test_every_reason_is_emitted_by_the_walk(service):
         SKIP_MISSING_TEAM,
         SKIP_PARSE_EXCEPTION,
         REFUSE_NO_CONTEST_ID,
+        REFUSE_MALFORMED_CONTEST_ID,
         REFUSE_NO_FIXTURES,
     }
