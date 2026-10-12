@@ -356,3 +356,133 @@ async def test_a_replayed_quote_also_arriving_live_is_sent_once(monkeypatch):
     # Only the first live copy is the in-flight twin of the replay; a later
     # repeat is the publisher's, and is passed through as before.
     assert [f["rev"] for f in sent] == [{"42": 41}, {"42": 41}, {"42": 42}]
+
+
+# --- the same race with no Redis binary: a scripted protocol peer -------------
+# The private-Redis arms above skip where no ``redis-server`` is installed (CI).
+# This arm runs everywhere. It drives the real route and the real hub — the
+# hub's own ``_read_loop`` consumes the ACK and ``_FoldSubscription.subscribe``
+# arms the watch — over a scripted peer that keeps Redis' one relevant rule:
+# a channel delivers only once Redis has READ its SUBSCRIBE, and the ACK is
+# queued on the hub's connection at that moment. The test decides when Redis
+# reads it (``up``), or lets Redis read it at once and holds only the ACK
+# (``down``, the null control).
+from tests.test_event_stream_lost_cancel_10090 import (  # noqa: E402
+    _Reader, _ScriptedClient, _ScriptedPubSub,
+)
+
+
+class _ScriptedRedis(_ScriptedPubSub):
+    """One hub connection plus the shared store, ordered as Redis orders them."""
+
+    def __init__(self):
+        super().__init__()
+        self.registered: set[str] = set()
+        self.retained: dict[str, str] = {}
+        self.unread: list[str] = []
+        self.held_ack: list[str] = []
+        self.hold: dict[str, str] = {}
+        self.mgets: list[list[str]] = []
+
+    async def subscribe(self, channel):
+        await super().subscribe(channel)
+        self.unread.append(channel)
+        if self.hold.get(channel) != "up":
+            self.redis_reads_subscribe(channel)
+
+    def redis_reads_subscribe(self, channel):
+        self.unread.remove(channel)
+        self.registered.add(channel)
+        if self.hold.get(channel) == "down":
+            self.held_ack.append(channel)
+        else:
+            self.ack(channel)
+
+    def ack(self, channel):
+        self._queue.put_nowait({"type": "subscribe", "channel": channel.encode(),
+                                "data": len(self.registered)})
+
+    async def unsubscribe(self, channel):
+        await super().unsubscribe(channel)
+        self.registered.discard(channel)
+
+    def publish(self, frame) -> int:
+        """RETAIN_AND_PUBLISH: keep a newer revision, deliver to registered."""
+        key, channel = live_push.latest_frame_key(frame["event_id"]), live_push.event_channel(frame["event_id"])
+        prior = json.loads(self.retained[key]) if key in self.retained else None
+        rev = frame["rev"][str(frame["event_id"])]
+        if prior is None or prior["rev"][str(frame["event_id"])] < rev:
+            self.retained[key] = json.dumps(frame)
+        if channel not in self.registered:
+            return 0
+        self.deliver(channel.encode(), json.dumps(frame).encode())
+        return 1
+
+    async def mget(self, keys):
+        self.mgets.append(list(keys))
+        return [self.retained.get(key) for key in keys]
+
+
+@pytest.fixture
+async def scripted(monkeypatch):
+    redis = _ScriptedRedis()
+    monkeypatch.setattr(redis_state, "get_async_redis_client",
+                        lambda: _ScriptedClient(redis))
+    monkeypatch.setattr(request_cache, "get_shared_async_redis",
+                        AsyncMock(return_value=redis))
+    monkeypatch.setattr(live_fanout, "READ_TIMEOUT_S", 0.01)
+    monkeypatch.setattr(route, "FRAME_WAIT_S", 0.02)
+    monkeypatch.setattr(route, "HEARTBEAT_INTERVAL_S", 0.05)
+    await live_fanout.reset_fanout()
+    readers = []
+    try:
+        yield redis, readers
+    finally:
+        for reader in readers:
+            await reader.stop()
+        hub = live_fanout.fanout()
+        await live_fanout.reset_fanout()
+    assert hub.subscriber_count == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("warm_hub", [False, True], ids=["first_reader", "running_hub"])
+@pytest.mark.parametrize("direction", ["up", "down"], ids=["late_subscribe", "late_ack_control"])
+async def test_scripted_redis_the_sole_quote_published_before_redis_reads_subscribe_arrives(
+    scripted, direction, warm_hub
+):
+    redis, readers = scripted
+    if warm_hub:
+        # Another page already holds the shared connection open...
+        readers.append(_Reader(7))
+        await readers[-1].opened()
+        # ...and the hub's reader has already taken channel 7's ACK.
+        await until(lambda: live_fanout.fanout()._reader is not None
+                    and redis._queue.empty())
+    channel = live_push.event_channel(42)
+    # The page already rendered rev 40 before it opened.
+    assert redis.publish(quote(42, 40, 0.30)) == 0
+    redis.hold[channel] = direction
+    reader = _Reader(42)
+    readers.append(reader)
+    await until(lambda: [live_push.latest_frame_key(42)] in redis.mgets)
+    assert channel in redis.subscribed
+    # The open-time replay ran and caught rev 40, not rev 41.
+    assert [f["rev"] for f in probabilities(reader.chunks)] in ([], [{"42": 40}])
+    receivers = redis.publish(quote(42, 41, 0.62))
+    if direction == "up":
+        assert receivers == 0  # Redis has not read SUBSCRIBE: nobody receives it
+        redis.redis_reads_subscribe(channel)
+    else:
+        assert receivers == 1  # Redis already serves the channel
+        redis.ack(redis.held_ack.pop())
+    # The market stays quiet: no further quote is ever published.
+    await asyncio.sleep(0.3)
+    assert len(reader.events("heartbeat")) >= 2
+    sent = probabilities(reader.chunks)
+    revs = [f["rev"] for f in sent]
+    assert revs[-1:] == [{"42": 41}], revs
+    assert sent[-1]["p"] == 0.62
+    assert revs.count({"42": 41}) == 1
+    # The hub's own reader consumed the ACK.
+    assert not live_fanout.fanout()._awaiting_ack
