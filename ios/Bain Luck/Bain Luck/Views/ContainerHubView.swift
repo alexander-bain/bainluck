@@ -51,8 +51,8 @@ struct ContainerHubView: View {
                     Text(counts).font(.subheadline).foregroundStyle(DS.textSecondary)
                         .accessibilityIdentifier("hub.loadedCount")
                 }
-                if let error = vm.refreshError {
-                    Text("Couldn’t refresh. Showing the last loaded collection. \(error)")
+                if vm.refreshError != nil {
+                    Text("Couldn’t refresh. Showing the last loaded collection.")
                         .font(.subheadline).foregroundStyle(DS.textSecondary)
                     Button("Try refresh again") { Task { await vm.load() } }
                 }
@@ -85,8 +85,8 @@ struct ContainerHubView: View {
                             .padding(.top, 8)
                     }
                 }
-                if let error = vm.pageError {
-                    Text(error).font(.subheadline).foregroundStyle(DS.textSecondary)
+                if vm.pageError != nil {
+                    Text("Couldn’t load more markets. Try again.").font(.subheadline).foregroundStyle(DS.textSecondary)
                 }
                 if presentation.response.state == .published, presentation.response.page?.nextCursor != nil {
                     Button {
