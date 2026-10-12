@@ -26,7 +26,8 @@ graphs, and keeping them lazy holds this module circular-import safe + cheap.
 from __future__ import annotations
 
 import re
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+from typing import Any
 
 # Golf major -> a phrase that must appear in the market name for the concept link to
 # fire. `_normalize_tournament` is tuned for markets already KNOWN to be golf, so its
@@ -131,6 +132,58 @@ def _names_a_foreign_edition(name: str | None, now: datetime | None = None) -> b
     return (now or datetime.now(timezone.utc)).year not in years
 
 
+#: How far outside a concept's served [start, end] window a provider edition's
+#: commence instant may sit and still be "that edition" (#1541). Two days covers a
+#: date-only `start_date` stamped at 00:00 UTC against a 10:00 UTC tee time and
+#: an end date stamped at midnight; two editions of an annual event are a year
+#: apart, so the slack cannot bridge them.
+CONCEPT_EDITION_SLACK = timedelta(days=2)
+
+
+def concept_serves_edition(
+    envelope: Any, edition_instant: datetime | None
+) -> bool:
+    """True only when a concept page's OWN served event window holds this edition.
+
+    #1541: a rolling sportsbook key ("US Open Winner", odds_api) moves to next
+    year's provider event while the edition-blind golf/tennis/F1 concept keys —
+    `event:golf:u-s-open` — keep serving the edition they last built, and after
+    a major ends that is the SETTLED one. Neither the market name nor the
+    calendar year proves which edition the destination shows; the destination's
+    envelope does (`event.start_date` / `event.end_date`, the dates the page
+    prints). Fails closed: no envelope, no dates, unparseable dates, or no
+    provider instant all answer False, and the caller withholds the link.
+
+    Pure: the caller reads the envelope (the concept tier's cache), this decides.
+    """
+    if edition_instant is None or not isinstance(envelope, dict):
+        return False
+    event = envelope.get("event")
+    if not isinstance(event, dict):
+        return False
+
+    def _aware(value: Any) -> datetime | None:
+        if not isinstance(value, str) or not value.strip():
+            return None
+        try:
+            dt = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
+        except ValueError:
+            return None
+        if dt.tzinfo is None or dt.utcoffset() is None:
+            return None
+        return dt.astimezone(timezone.utc)
+
+    start = _aware(event.get("start_date"))
+    end = _aware(event.get("end_date")) or start
+    if start is None or end is None or end < start:
+        return False
+    return (
+        start - CONCEPT_EDITION_SLACK
+        <= edition_instant.astimezone(timezone.utc)
+        <= end + CONCEPT_EDITION_SLACK
+    )
+
+
 def _golf_major_concept_key(name: str | None) -> str | None:
     """`event:golf:<slug>` for a golf MAJOR winner/prop market, else None.
 
@@ -170,7 +223,6 @@ def derive_market_concept_key(
     llm_sport_category: str | None = None,
     n_outcomes: int | None = None,
     now: datetime | None = None,
-    edition_instant: datetime | None = None,
 ) -> str | None:
     """Resolve a market to its event-concept key (`event:<domain>:<slug>`) or None.
 
@@ -179,14 +231,7 @@ def derive_market_concept_key(
     category; the winner-field domains gate on category + a winner-market name.
 
     `now` is injectable so the #7792 edition guard below is testable without the
-    calendar (gotcha #44); callers leave it unset and get the real clock.
-
-    `edition_instant` is the provider's OWN dated edition when the caller holds a
-    verified one (#1541: an odds_api row's current event, read through
-    `futures_verified_title.read_odds_api_anchor`). A rolling sportsbook key keeps
-    its bare name — "US Open Winner" — after the provider moves it to next year's
-    event, so the name alone cannot make the #7792 claim. The instant makes it, on
-    the same rule: an edition year that is not the one in play gets no link."""
+    calendar (gotcha #44); callers leave it unset and get the real clock."""
     cat = (llm_sport_category or "").lower()
 
     # 1. Awards ceremonies — ticker stem (unambiguous) then name keyword.
@@ -272,10 +317,7 @@ def derive_market_concept_key(
     # 3. Winner-field domains — name-slug (adapters resolve token-tolerantly).
     #    #7792: token-tolerant means EDITION-BLIND here (the adapters' stopword lists
     #    hold the years), so a board naming another edition gets no link at all.
-    foreign_edition = _names_a_foreign_edition(name, now) or (
-        edition_instant is not None
-        and edition_instant.year != (now or datetime.now(timezone.utc)).year
-    )
+    foreign_edition = _names_a_foreign_edition(name, now)
 
     if cat == "tennis":
         try:

@@ -9244,6 +9244,33 @@ async def _get_source_breakdown(
     return sorted(by_bookmaker.values(), key=lambda s: s["source"])
 
 
+def _concept_serves_provider_edition(
+    concept_key: str, edition_instant: Optional[datetime]
+) -> bool:
+    """#1541: does the concept page behind ``concept_key`` serve this edition?
+
+    Reads the concept tier's own cached envelope (primary, else the 24h mirror)
+    through its validating reader and lets the pure
+    ``concept_links.concept_serves_edition`` decide. Never builds the concept and
+    never raises: a cold cache, an unreachable Redis or a malformed payload all
+    answer False, which withholds the link rather than guessing an edition.
+    """
+    if edition_instant is None:
+        return False
+    try:
+        from app.utils.concept_links import concept_serves_edition
+        from app.utils.event_concept_cache import cache_keys, get_client, read_slot
+
+        rc = get_client()
+        if rc is None:
+            return False
+        keys = cache_keys(concept_key)
+        envelope = read_slot(rc, keys.primary) or read_slot(rc, keys.stale)
+        return concept_serves_edition(envelope, edition_instant)
+    except Exception:
+        return False
+
+
 def _format_market_detail(
     market: FuturesMarket,
     bookmakers: list[str] = None,
@@ -10306,8 +10333,17 @@ def _format_market_detail(
             market.name,
             market.llm_sport_category,
             concept_outcome_count,  # UX-P164: pre-drop; see note above
-            edition_instant=edition_instant,
         )
+        # #1541: an odds_api board's key ROLLS to next year's provider event, and
+        # the edition-blind concept it names keeps serving the edition it last
+        # built — after the June 2026 US Open, the settled one. So the link is
+        # kept only when the destination's own served window (the concept tier's
+        # cached envelope: primary, else its 24h mirror) holds the provider's
+        # verified edition. No anchor, no envelope, or a different edition: no
+        # link. The hub link below is not edition-specific and is unaffected.
+        if event_concept_key and (market.source or "").lower() == "odds_api":
+            if not _concept_serves_provider_edition(event_concept_key, edition_instant):
+                event_concept_key = None
         hub_slug = derive_market_hub_slug(market.llm_sport_category)
         # L2-94: fallbacks below the hub — themed section page then hub-less sport
         # page. The frontend picks the first of concept/hub/category/sport that's set.
