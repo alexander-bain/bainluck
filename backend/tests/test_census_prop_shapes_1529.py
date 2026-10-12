@@ -13,6 +13,10 @@ why: the bucket was genuine props the vocabularies did not know.
     "Montreal vs Toronto: Overtime"                 KXNHLOT-…
     "FC Cincinnati vs Charlotte FC: Correct Score"  KXMLSSCORE-…
 
+A count ("3+ goals") is a player contract only behind ONE named subject:
+"Arsenal vs Chelsea: 3+ goals" and "Will there be 3+ goals in …?" are
+match-wide thresholds and stay where they were (source review 19:26Z).
+
 The new arms sit at the very end of `classify_game_market_class`, so they are
 read only for a title that would otherwise be `other`. That is the whole safety
 argument — no answer already given moves, nothing crosses `moneyline` (the five
@@ -82,6 +86,11 @@ UNMOVED = [
     # already a prop upstream
     ("Lyle Foster: Anytime Goalscorer", HEX, "soccer_usa_mls", "player_prop"),
     ("Arsenal vs Chelsea: Both Teams to Score", HEX, "soccer_epl", "team_prop"),
+    # a count is a player contract only behind ONE named subject: match-wide
+    # thresholds are not player props (source review, 2026-10-12 19:26Z)
+    ("Will there be 3+ goals in Arsenal vs Chelsea?", None, "soccer_epl", "other"),
+    ("Arsenal vs Chelsea: 3+ goals", HEX, "soccer_epl", "other"),
+    ("Arsenal vs. Chelsea: 2+ shots on target", HEX, "soccer_epl", "other"),
     # containers and an unanchored "Goals" tail stay "other"
     ("Chicago White Sox vs. Cleveland Guardians - Player Props", HEX, "baseball_mlb",
      "other"),
@@ -89,6 +98,7 @@ UNMOVED = [
      "other"),
     ("St. Louis vs Chicago: Goals", HEX, "icehockey_nhl", "other"),
     ("St. Louis vs Chicago: Goals", None, "icehockey_nhl", "other"),
+    ("St. Louis vs Chicago: Goals", "KXNHLSOG-26OCT06STLCHI", "icehockey_nhl", "other"),
 ]
 
 
@@ -108,7 +118,8 @@ _NEVER = re.compile(r"(?!)")
 def test_only_an_other_answer_moves(monkeypatch):
     """Switch the new arms off: every difference must be other -> a prop."""
     on = {(n, e, s): classify_game_market_class(n, e, s) for n, e, s, _ in MOVED + UNMOVED}
-    for attr in ("_PLAYER_PROP_TAIL_RE", "_KALSHI_GOALS_TAIL_RE", "_GAME_PROP_TAIL_RE"):
+    for attr in ("_PLAYER_PROP_TAIL_RE", "_PLAYER_THRESHOLD_RE", "_KALSHI_GOALS_TAIL_RE",
+                 "_GAME_PROP_TAIL_RE"):
         monkeypatch.setattr(gmc, attr, _NEVER)
     off = {k: classify_game_market_class(*k) for k in on}
     moved = {k: (off[k], on[k]) for k in on if off[k] != on[k]}

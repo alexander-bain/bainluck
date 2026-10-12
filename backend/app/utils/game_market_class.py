@@ -151,13 +151,20 @@ _TEAM_PROP_RE = re.compile(
 # goals" / "…: 2+ shots on target", Kalshi "St. Louis vs Chicago: Goals"
 # (KXNHLGOAL, outcomes "Adam Jiricek: 1+") and "…: First Goalscorer".
 _PLAYER_PROP_TAIL_RE = re.compile(
-    r"(?:\bgoal ?scorer\b"
-    r"|\b\d+\+ (?:shots(?: on target)?|goals?)\b"
-    r"|\bstarting (?:xi|11|eleven|line-?up)\b)",
+    r"(?:\bgoal ?scorer\b|\bstarting (?:xi|11|eleven|line-?up)\b)",
     re.IGNORECASE,
 )
+#: "Lyle Foster: 3+ goals" is a player ladder; "Arsenal vs Chelsea: 3+ goals"
+#: and "Will there be 3+ goals in Arsenal vs Chelsea?" are match thresholds.
+#: The count is a player contract only behind ONE named subject — a whole-title
+#: "Who: N+ stat", where Who names no matchup and is not a question.
+_PLAYER_THRESHOLD_RE = re.compile(
+    r"^\s*(?P<who>[^:?]+?)\s*:\s*\d+\+ (?:shots(?: on target)?|goals?)\s*$",
+    re.IGNORECASE,
+)
+_QUESTION_HEAD_RE = re.compile(r"^\s*(?:will|who|which|what|how)\b", re.IGNORECASE)
 #: Kalshi's player-goals ladder is titled with the matchup and a bare "Goals"
-#: tail; only a Kalshi ticker makes that tail a player book.
+#: tail; only its own series (``KXNHLGOAL``, ``…GOAL``) makes that a player book.
 _KALSHI_GOALS_TAIL_RE = re.compile(r":\s*goals\s*$", re.IGNORECASE)
 # Both-sides game derivatives (the BTTS precedent above): "…: Overtime"
 # (KX*OT), "…: Goal in First 10 Minutes", "…: Correct Score", corners.
@@ -702,6 +709,19 @@ def is_game_winner_market(
     return False
 
 
+def _names_one_player_threshold(name: str) -> bool:
+    m = _PLAYER_THRESHOLD_RE.match(name)
+    if m is None:
+        return False
+    who = m.group("who")
+    return not (_NAMES_TWO_SIDES_RE.search(who) or _QUESTION_HEAD_RE.match(who))
+
+
+def _kalshi_goal_series(external_id: Optional[str]) -> bool:
+    series = (external_id or "").split("-", 1)[0].upper()
+    return series.startswith("KX") and series.endswith("GOAL")
+
+
 def classify_game_market_class(
     name: str, external_id: Optional[str] = None, sport: Optional[str] = None
 ) -> str:
@@ -759,9 +779,10 @@ def classify_game_market_class(
     if names_a_scoped_segment(name) and _NAMES_TWO_SIDES_RE.search(name):
         return "segment_winner"
     # #1529 census: last, so only an "other" answer can move.
-    if _PLAYER_PROP_TAIL_RE.search(name) or (
-        _KALSHI_GOALS_TAIL_RE.search(name)
-        and (external_id or "").lower().startswith("kx")
+    if (
+        _PLAYER_PROP_TAIL_RE.search(name)
+        or _names_one_player_threshold(name)
+        or (_KALSHI_GOALS_TAIL_RE.search(name) and _kalshi_goal_series(external_id))
     ):
         return "player_prop"
     if _GAME_PROP_TAIL_RE.search(name):
