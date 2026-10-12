@@ -1239,6 +1239,9 @@ export interface GameMarketsResponse {
     outcome_name: string;
     movement: number | null;
     observed_at?: string | null;
+    // #10590: the OVER's settled verdict (#6239), even on an Under-named leg.
+    is_winner?: boolean | null;
+    resolution_source?: string | null;
   }[];
   spreads: {
     market_name: string;
@@ -1258,6 +1261,10 @@ export interface GameMarketsResponse {
     movement?: number | null;
     period?: string | null;
     observed_at?: string | null;
+    // #10590: own-leg verdict on a `probability` row; the OVER's on an
+    // over-axis row.
+    is_winner?: boolean | null;
+    resolution_source?: string | null;
   }[];
   /** #10850: closed, not-yet-graded period rows — never priced, graded from `period_score`. */
   closed_period_markets?: ClosedPeriodRow[] | null;
