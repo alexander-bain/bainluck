@@ -321,7 +321,12 @@ extension CompactEventPriceStatusTests {
             defer { vm.stopRefresh(); win.isHidden = true }
             settle(host, 0.4)
             let recognized = try text(shot(host, name))
-            XCTAssertTrue(recognized.contains("Win Probability"), recognized)
+            // #9483 — the hero no longer prints "Win Probability" (it sits
+            // behind the info control with the confidence bars; the chart
+            // header below still names the chart). What the hero must carry
+            // instead: the pair's subject. The info control itself is
+            // rendered and measured in `HeadlineDisclosure9483Tests`.
+            XCTAssertTrue(recognized.contains("Current win chance"), recognized)
             XCTAssertTrue(recognized.contains("Waiting for update"), recognized)
             // #10830 — read as the hero's adjacent pair. With Start Live Activity
             // moved under the chart, page-wide OCR reads the pixel-identical hero

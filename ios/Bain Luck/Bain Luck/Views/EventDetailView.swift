@@ -910,23 +910,17 @@ struct EventDetailView: View {
         return "\(names.home) \(delta > 0 ? "↑" : "↓")\(abs(delta)) \(abs(delta) == 1 ? "pt" : "pts")"
     }
 
-    /// One visible delivery status directly beside the probabilities, including
-    /// accepted receipts whose rounded percentage does not move. The exact device
-    /// receipt time is disclosed on tap only (#8320 v24: one compact line).
+    /// Routine delivery/confidence details open through the info control.
+    /// Waiting, fallback refresh and interruption stay visible, as does the
+    /// finite acknowledgement of an accepted receipt whose percent did not move.
     private func probabilityDetails(confidenceTier: String?) -> some View {
         Button { showProbabilityDetails.toggle() } label: {
-            VStack(spacing: 4) {
-                HStack(spacing: 6) {
-                    Text("Win Probability")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    SignalBarsView(tier: confidenceTier)
-                }
-                CompactEventPriceStatusView(status: vm.liveUpdateStatus,
-                    sequence: vm.priceActivity?.sequence ?? 0,
-                    receivedAt: vm.priceActivity?.receivedAt)
-            }
+            CompactEventPriceStatusView(status: vm.liveUpdateStatus,
+                sequence: vm.priceActivity?.sequence ?? 0,
+                receivedAt: vm.priceActivity?.receivedAt,
+                isDisclosure: true)
             .frame(maxWidth: Self.heroVerdictWidth(at: dynamicTypeSize), minHeight: 44)
+            .frame(minWidth: 44)
             .fixedSize(horizontal: false, vertical: true)
             .contentShape(Rectangle())
         }
@@ -1582,6 +1576,23 @@ struct EventDetailView: View {
                                                              valueChanged: vm.priceActivity.map { $0.previousHomeLabel != $0.homeLabel } ?? false,
                                                              color: colors.home, isEnabled: priceStreamingEligible && vm.liveUpdateStatus != .interrupted)
                             }
+                        }
+                        // #9483 — the pair's subject, now that "Win Probability"
+                        // sits behind the info button. Live, the pre-game
+                        // baseline rides under it (before the off the
+                        // since-open caption below already carries it).
+                        if let phase = EventHeadlinePhase9483.resolve(
+                            status: event.status, commenceTime: event.commenceTime?.asDate,
+                            isOpeningLine: shown.isOpeningLine) {
+                            EventHeadlinePhaseLabel9483(
+                                phase: phase,
+                                baseline: event.status == "live"
+                                    ? EventHeadlinePhase9483.baselineText(
+                                        prematch: event.prematchOdds, opening: event.openingOdds,
+                                        sport: event.sport,
+                                        awayTeam: event.awayTeam, homeTeam: event.homeTeam)
+                                    : nil,
+                                maxWidth: Self.heroVerdictWidth(at: dynamicTypeSize))
                         }
                         // Trend indicator (change since opening).
                         //

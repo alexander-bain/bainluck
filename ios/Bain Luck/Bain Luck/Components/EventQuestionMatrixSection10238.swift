@@ -50,7 +50,7 @@ struct EventQuestionMatrixSection10238: View {
                     .accessibilityAddTraits(.isHeader)
                     .accessibilityFocused($focus, equals: .heading)
                 if rows.isEmpty {
-                    Text("Questions are unavailable right now")
+                    Text("Markets are unavailable right now")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -87,7 +87,7 @@ struct EventQuestionMatrixSection10238: View {
 
     /// The family a question is browsed under, read from its typed kind and
     /// its own words. Navigation only: every question keeps its own card and
-    /// options, and one the rules do not recognise is "More questions" rather
+    /// options, and one the rules do not recognise is "More markets" rather
     /// than guessed into a family.
     static func family(_ row: EventQuestionMatrixAdapter.Row) -> String {
         let label = row.label.lowercased()
@@ -99,7 +99,7 @@ struct EventQuestionMatrixSection10238: View {
             return "Totals"
         }
         if label.contains("moneyline") || label.contains("winner") { return "Winners" }
-        return "More questions"
+        return "More markets"
     }
 
     /// What a search over one question reads: its words, its period and every
@@ -296,9 +296,9 @@ struct EventQuestionMatrixSection10238: View {
                     sourceSection(resolved.sources)
                 case .unavailable:
                     Section {
-                        Text("This question is unavailable")
+                        Text("This market is unavailable")
                             .font(.headline)
-                        Text("Its latest details are no longer available. Close to return to the questions.")
+                        Text("Its latest details are no longer available. Close to return to the markets.")
                             .font(.subheadline).foregroundStyle(.secondary)
                     }
                 }

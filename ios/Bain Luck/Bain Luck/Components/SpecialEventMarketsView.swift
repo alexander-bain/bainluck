@@ -443,7 +443,7 @@ struct SpecialEventMarketsView: View {
                     // Open page printed, because a tennis event's props all
                     // arrive under one market name. The count is right; the
                     // noun was not agreeing with it.
-                    let noun = rows.count == 1 ? "question" : "questions"
+                    let noun = rows.count == 1 ? "market" : "markets"
                     Text(
                         isGameFinished
                             ? "\(rows.count) \(noun) · \(SettledQuote.sectionNote)"
