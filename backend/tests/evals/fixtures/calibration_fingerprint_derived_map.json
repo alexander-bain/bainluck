@@ -12,6 +12,7 @@
     "PLAYER_PROPS_NAME_PATTERN",
     "PLAYER_PROPS_PLACEHOLDER_EXCLUDED_CELLS",
     "REPRESENTATIVE_TIE_AUTHORITY",
+    "SCORE_UNIT_MISMATCH_FAMILIES",
     "SUM_ARM_ONLY_EXCLUDED_CELLS"
   ],
   "hashed_root_sha16": {
@@ -19,7 +20,7 @@
     "_main_futures_sql": "5f399959e521e053",
     "_roster_pushdown_predicates": "9b4afb101a88cb8a",
     "_virtual_market_ctes": "d03415be9c36d5cb",
-    "compute_calibration_payload": "1a4bb1b0d246dc2b",
+    "compute_calibration_payload": "69a00ad9660e7c5e",
     "identity_quarantine_ctes": "178dd31b64f3e836"
   },
   "hashed_roots": [
@@ -30,7 +31,7 @@
     "compute_calibration_payload",
     "identity_quarantine_ctes"
   ],
-  "input_count": 81,
+  "input_count": 83,
   "inputs": [
     {
       "covered_by_value": false,
@@ -737,6 +738,29 @@
       ]
     },
     {
+      "covered_by_value": true,
+      "definition_sha16": null,
+      "impact": "sql_shaping",
+      "name": "SCORE_UNIT_MISMATCH_FAMILIES",
+      "origin": "app.tasks.precompute_calibration:SCORE_UNIT_MISMATCH_FAMILIES",
+      "sql_interpolated": true,
+      "used_in": [
+        "category_has_score_unit_mismatch",
+        "population_predicate_fingerprint"
+      ]
+    },
+    {
+      "covered_by_value": false,
+      "definition_sha16": null,
+      "impact": "behavior_or_evidence",
+      "name": "SCORE_UNIT_MISMATCH_RULE_TEXT",
+      "origin": "app.tasks.precompute_calibration:SCORE_UNIT_MISMATCH_RULE_TEXT",
+      "sql_interpolated": false,
+      "used_in": [
+        "compute_calibration_payload"
+      ]
+    },
+    {
       "covered_by_value": false,
       "definition_sha16": null,
       "impact": "behavior_or_evidence",
@@ -963,8 +987,8 @@
   ],
   "schema": "calibration-fingerprint-derived/v1",
   "source": "backend/app/tasks/precompute_calibration.py",
-  "source_sha256": "47c36d9a6dec6ce172866dbae7f42cf4d22525b48735fb0b6ea0a4002bba6719",
-  "uncovered_behavior_or_evidence": 41,
-  "uncovered_count": 68,
+  "source_sha256": "ff1b9f4db7d1bbd1c47ca99432ef38ec50af4898e0d7d56ee51e1a36776d7f0d",
+  "uncovered_behavior_or_evidence": 42,
+  "uncovered_count": 69,
   "uncovered_sql_shaping": 27
 }

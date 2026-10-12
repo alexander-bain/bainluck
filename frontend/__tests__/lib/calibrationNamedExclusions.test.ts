@@ -167,6 +167,15 @@ const NOT_YET_SERVED = {
     excluded_markets: 12,
     excluded_cells: [["datagolf", "golf"]],
   },
+  // #1010 — same situation: emitted by the build, served once heavy publishes.
+  score_unit_filter: {
+    applies_to: "odds_api_spreads, odds_api_totals (tennis, mma)",
+    rule: "Excludes tennis and MMA over/under and handicap lines from the spreads and totals curves…",
+    excluded: 1_127,
+    spreads_excluded: 547,
+    totals_excluded: 580,
+    excluded_cells: [["odds_api_totals", "tennis_atp_us_open"]],
+  },
 };
 
 /** The payload, near enough: the sixteen filter blocks plus noise around them. */

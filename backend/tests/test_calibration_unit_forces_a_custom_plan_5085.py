@@ -294,7 +294,23 @@ from app.tasks.calibration_main_build import UNIT_PLAN_CACHE_MODE
 #: exact predicate succession instead (#8458's mechanism), so the rebuild's
 #: growth is not folded into a "methodology move" and the bank is not discarded
 #: twice.
-LIVE_INPUT_FINGERPRINT = "5c2987db39cf5ab3fe0efd65d636720c"
+#:
+#: RE-ANCHORED for #1010 (tennis/MMA spreads and totals the stored score cannot
+#: settle): ``5c2987db…`` -> ``0c9350ca…``. Moved: the root
+#: ``compute_calibration_payload`` (a Python partition of the spreads/totals rows
+#: after their phase read, plus the ``score_unit_filter`` disclosure) and the
+#: family tuple hashed by value. WHAT IT COSTS, measured on both trees:
+#: ``staged_unit_fingerprint`` is ``dec3026b…`` on master and on this change, and
+#: the staged cursor keys on that narrow digest (CAL-P205), so no banked unit is
+#: discarded; only a carried PHASE output in flight at deploy is re-read. The
+#: PUBLISHED population identity does move (``3944c947…`` -> ``da21d87f…``), as it
+#: must for a rule that changes which rows publish, and is declared to the gate.
+#:
+#: Same unmerged change, ``0c9350ca…`` -> ``39846d26…``: the root also counts
+#: what the rule removed per cell (``score_unit_filter.excluded_by_cell``) so the
+#: publish gate can bound its disclosure. Counting only — ``staged_unit_fingerprint``
+#: (``dec3026b…``) and the published identity (``da21d87f…``) are both unmoved.
+LIVE_INPUT_FINGERPRINT = "39846d26d06f2567e5871a36a07770a2"
 
 
 class _Db:

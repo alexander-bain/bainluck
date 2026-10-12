@@ -1325,6 +1325,19 @@ CALIBRATION_CORRECTIONS = [
                        "earlier numbers here were incomplete rather than "
                        "wrong.",
     },
+    {
+        "date": "2026-10-11",
+        "title": "Tennis and fight over/unders we had no way to settle",
+        "rows": None,  # live count in payload.score_unit_filter.excluded
+        "description": "Over/under and handicap lines in tennis count games, "
+                       "and in MMA they count rounds. The result we keep for a "
+                       "tennis match is the sets each player won, and for a "
+                       "fight only who won, so it cannot say whether a line "
+                       "went over or under. We were scoring them anyway, and "
+                       "every tennis over/under came out as a miss. Those lines "
+                       "are no longer scored; who won the match or the fight "
+                       "still is. No result was re-graded.",
+    },
 ]
 
 # Horizons: (label, days_before_resolution)
@@ -1966,6 +1979,99 @@ def category_is_soccer_2way_excluded(category: str | None) -> bool:
     published moneyline curve. Read-side only (gotcha #21).
     """
     return bool(category) and category.startswith("soccer_")
+
+
+# #1010: tennis and MMA over/under and handicap lines cannot be graded from the
+# score we store.
+#
+# The spreads and totals curves grade every event the same way:
+# ``home_score + away_score > closing_over_under`` and
+# ``(home_score - away_score) + closing_home_spread > 0``. That is only a grade
+# when the stored score is in the same unit as the line. For these two sport
+# families it is not, measured on production 2026-10-11:
+#
+#   tennis  stored score = SETS (sum 2..5); lines = GAMES (O/U 15.5..42.5,
+#           handicap 0..8.5). Over can never win, so every Over was a loss:
+#           winner rate 0.000 in all nine published tennis tournaments, ECE ~50.
+#   mma     stored score = a 1-0 WINNER FLAG (sum always 1); lines = ROUNDS
+#           (O/U 0.5..4.5). Its 2 "winners" in 100 were 0.5 lines a 1-0 flag
+#           happens to clear.
+#
+# The real game or round count was never stored, so the outcome is UNKNOWN, not
+# a loss, and the rows are excluded rather than re-graded. Moneyline is
+# unaffected: the winner of a tennis match or a fight is exactly what the stored
+# score does say. Partitioned in Python on the rows' own ``category`` AFTER the
+# phase read/reuse, so a carried read is always judged by the current rule and
+# nothing is interpolated into the fingerprinted SQL. Read-side only (gotcha
+# #21) — never mutates scores or lines.
+#
+# IT CHANGES WHICH ROWS PUBLISH, so it is part of the published population's
+# identity: both helpers below and the family tuple are hashed into
+# :func:`population_predicate_fingerprint`, and the move is declared to the
+# publish gate as an exact predicate succession (#1010 in
+# ``calibration_publish_gate.DECLARED_PREDICATE_SUCCESSIONS``). The cells it
+# removes are published as ``score_unit_filter.excluded_cells`` so a category
+# that drops under the publish bar reads as a disclosed exclusion, not a
+# collapse.
+SCORE_UNIT_MISMATCH_FAMILIES = ("mma", "tennis")
+
+SCORE_UNIT_MISMATCH_RULE_TEXT = (
+    "Excludes tennis and MMA over/under and handicap lines from the spreads and "
+    "totals curves. The stored score counts sets (tennis) or is a 1-0 winner "
+    "flag (MMA), while those lines count games or rounds, so the score cannot "
+    "settle them: every tennis Over was graded a loss. The game/round count was "
+    "never stored, so these rows are ungradeable, not losses, and are not "
+    "re-graded. Moneyline for both sports is kept. Read-side only (#1010)."
+)
+
+
+def category_has_score_unit_mismatch(category: str | None) -> bool:
+    """True if an events-table sport key's stored score cannot grade its lines.
+
+    The family is the key's first ``_`` segment (``tennis_atp_us_open`` ->
+    ``tennis``), matching :func:`score_unit_mismatch_sql`.
+    """
+    return bool(category) and category.split("_", 1)[0] in SCORE_UNIT_MISMATCH_FAMILIES
+
+
+def score_unit_mismatch_sql(key_column: str) -> str:
+    """The same family test as SQL, for the drill-down route's sample reads."""
+    families = ", ".join(f"'{f}'" for f in SCORE_UNIT_MISMATCH_FAMILIES)
+    return f"split_part({key_column}, '_', 1) IN ({families})"
+
+
+def split_score_unit_mismatch(rows) -> tuple[list, int, set]:
+    """Spreads/totals bucket rows -> (gradeable rows, outcomes excluded, cells).
+
+    ``cells`` is the set of ``(source, category)`` pairs the rule removed, for
+    the publish gate's disclosed-exclusion read.
+    """
+    kept = []
+    excluded = 0
+    cells = set()
+    for r in rows:
+        if category_has_score_unit_mismatch(r.category):
+            excluded += r.n
+            cells.add((r.source, r.category))
+        else:
+            kept.append(r)
+    return kept, excluded, cells
+
+
+def score_unit_excluded_by_cell(rows) -> dict[str, int]:
+    """Outcomes the score-unit rule removes, per ``"source/category"`` cell.
+
+    The publish gate bounds a category collapse the rule discloses by these
+    counts: the rule may explain a cell's loss only up to what it says it
+    removed there. Counting only — membership is decided by the hashed
+    :func:`category_has_score_unit_mismatch`, so this is outside the digest.
+    """
+    out: dict[str, int] = {}
+    for r in rows:
+        if category_has_score_unit_mismatch(r.category):
+            key = f"{r.source}/{r.category}"
+            out[key] = out.get(key, 0) + r.n
+    return dict(sorted(out.items()))
 
 
 # Queue #159 (#1010): esports malformed-MULTI "match bundle" curve exclusion.
@@ -7591,6 +7697,15 @@ async def compute_calibration_payload(db, *, runner=None) -> dict:
                 totals_rows = totals_result.all()
             runner.record(PHASE_SPORTS, "totals_rows", totals_rows, kind="rows")
 
+        # #1010: after record/reuse, so a carried read is judged by today's rule.
+        score_unit_by_cell = score_unit_excluded_by_cell(
+            list(spreads_rows) + list(totals_rows))
+        spreads_rows, score_unit_spreads_excluded, _su_spread_cells = (
+            split_score_unit_mismatch(spreads_rows))
+        totals_rows, score_unit_totals_excluded, _su_total_cells = (
+            split_score_unit_mismatch(totals_rows))
+        score_unit_cells = sorted(_su_spread_cells | _su_total_cells)
+
         if not _sports_carried:
             await runner.commit(db)
             runner.complete(PHASE_SPORTS)
@@ -8653,6 +8768,19 @@ async def compute_calibration_payload(db, *, runner=None) -> dict:
             # (gotcha #53).
             "bookmaker_curve_degraded": bookmaker_curve_degraded,
         },
+        "score_unit_filter": {  # #1010
+            "applies_to": "odds_api_spreads, odds_api_totals (tennis, mma)",
+            "rule": SCORE_UNIT_MISMATCH_RULE_TEXT,
+            "excluded": score_unit_spreads_excluded + score_unit_totals_excluded,
+            "spreads_excluded": score_unit_spreads_excluded,
+            "totals_excluded": score_unit_totals_excluded,
+            # Read by the publish gate (`_disclosed_excluded_cells`): a category
+            # this rule takes under the publish bar is a disclosed exclusion.
+            "excluded_cells": [list(c) for c in score_unit_cells],
+            # Per-cell counts summing to `excluded`: the gate bounds the
+            # disclosed-exclusion excuse by them (`_judge_score_unit_disclosure`).
+            "excluded_by_cell": score_unit_by_cell,
+        },
         "heuristic_filter": {
             "applies_to": "polymarket",
             "rule": (
@@ -8945,6 +9073,13 @@ def population_predicate_fingerprint() -> str:
             # change which rows qualify while this digest went on claiming the
             # predicate had not moved.
             + inspect.getsource(identity_quarantine_ctes)
+            # #1010: the score-unit rule removes published spreads/totals rows
+            # after the read, outside every SQL root above, so its helpers and
+            # its family tuple (by value — a tuple's VALUE never appears in a
+            # function's source) are hashed here explicitly.
+            + inspect.getsource(category_has_score_unit_mismatch)
+            + inspect.getsource(split_score_unit_mismatch)
+            + f"score_unit_families={SCORE_UNIT_MISMATCH_FAMILIES}"
         )
     except Exception:  # noqa: BLE001 — no source => never claim a match
         # A digest nothing can equal (``_same_predicate`` requires equality), so
@@ -9126,6 +9261,10 @@ def _main_input_fingerprint() -> str:
         # moved in months; this one is pinned to another file's constant. The
         # gap is filed rather than widened here (#5430).
         f"kalshi_writer_bar={KALSHI_WRITER_BAR_MET}",
+        # #1010 — hashed by name and by value like its neighbours. Applied after
+        # the phase read, so a carried output cannot encode an old value; it is
+        # here so the census covers it rather than counting it as a hole.
+        f"score_unit_families={SCORE_UNIT_MISMATCH_FAMILIES}",
         source,
     )
 
