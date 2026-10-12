@@ -61,6 +61,8 @@ final class ContainerHubViewModel: ObservableObject {
                     guard version == refreshVersion, admitted(ticket), !Task.isCancelled else { return }
                     try validate(page)
                     guard revisionAdmitted(page) else { return }
+                    if page.state != .published { accept(page); return }
+                    guard case .loaded(let now) = state, now.response.revision == response.revision else { return }
                     guard sameRevision(response, page), !page.revisionMoved else {
                         accept(page)
                         return

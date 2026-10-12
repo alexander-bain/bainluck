@@ -236,6 +236,8 @@ final class ThemeCollectionReaderTests: XCTestCase {
         await service.reply(2, try withheldPage(1)); await service.wait(4)
         await service.reply(3, try page(2)); await withheld.value
         XCTAssertEqual(try loaded(vm).members.map(\.memberId), [9202])
+        XCTAssertEqual(try loaded(vm).response.withheldCount, 1)
+        XCTAssertTrue(try loaded(vm).isPartial)
         let restored = Task { await vm.load() }; await service.wait(5)
         await service.reply(4, try page()); await service.wait(6)
         await service.reply(5, try page(2)); await restored.value
@@ -262,6 +264,36 @@ final class ThemeCollectionReaderTests: XCTestCase {
             XCTAssertEqual(try loaded(vm).response.revision, 8)
             XCTAssertEqual(try loaded(vm).members.map(\.memberId), terminal ? [] : [9201])
         }
+    }
+
+    @MainActor
+    func testRecoveringEarlierClassKeepsSectionOrderAcrossVisitedWindows() async throws {
+        let first = try page { value in
+            var sections = value["sections"] as! [[String: Any]]
+            sections[0]["class"] = "title"; value["sections"] = sections
+            value["page"] = ["limit": 1, "next_cursor": "WzAsOTIwMV0"]
+        }
+        let missing = try page { value in
+            value["sections"] = []; value["member_count"] = 0
+            value["withheld_count"] = 1
+            value["withheld"] = [["type": "market", "id": 9201, "reason": "hydrate_failed"]]
+            value["page"] = ["limit": 1, "next_cursor": "WzAsOTIwMV0"]
+        }
+        let service = ThemeReaderService()
+        let vm = ContainerHubViewModel(slug: "ai", service: service)
+        let initial = Task { await vm.load() }; await service.wait(1)
+        await service.reply(0, first); await initial.value
+        let more = Task { await vm.loadMore() }; await service.wait(2)
+        await service.reply(1, try page(2)); await more.value
+        let failure = Task { await vm.load() }; await service.wait(3)
+        await service.reply(2, missing); await service.wait(4)
+        await service.reply(3, try page(2)); await failure.value
+        XCTAssertEqual(try loaded(vm).sections.map(\.sectionClass), ["side_question"])
+        let recovery = Task { await vm.load() }; await service.wait(5)
+        await service.reply(4, first); await service.wait(6)
+        await service.reply(5, try page(2)); await recovery.value
+        XCTAssertEqual(try loaded(vm).sections.map(\.sectionClass), ["title", "side_question"])
+        XCTAssertEqual(try loaded(vm).members.map(\.memberId), [9201, 9202])
     }
 
 }
