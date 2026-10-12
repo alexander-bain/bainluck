@@ -142,6 +142,32 @@ _TEAM_PROP_RE = re.compile(
     re.IGNORECASE,
 )
 
+# #1529 census: prop shapes the vocabularies above miss, read ONLY for a title
+# that would otherwise be "other" (see the tail of `classify_game_market_class`),
+# so no answer already given moves — in particular nothing crosses `moneyline`
+# and nothing enters the refresh-budgeted `spread`/`total`. Measured on the
+# 30-day census of 2026-10-12 (main v5675): these were most of the `other` rows
+# behind the soccer and NHL ceiling breaches — Polymarket "Lyle Foster: 3+
+# goals" / "…: 2+ shots on target", Kalshi "St. Louis vs Chicago: Goals"
+# (KXNHLGOAL, outcomes "Adam Jiricek: 1+") and "…: First Goalscorer".
+_PLAYER_PROP_TAIL_RE = re.compile(
+    r"(?:\bgoal ?scorer\b"
+    r"|\b\d+\+ (?:shots(?: on target)?|goals?)\b"
+    r"|\bstarting (?:xi|11|eleven|line-?up)\b)",
+    re.IGNORECASE,
+)
+#: Kalshi's player-goals ladder is titled with the matchup and a bare "Goals"
+#: tail; only a Kalshi ticker makes that tail a player book.
+_KALSHI_GOALS_TAIL_RE = re.compile(r":\s*goals\s*$", re.IGNORECASE)
+# Both-sides game derivatives (the BTTS precedent above): "…: Overtime"
+# (KX*OT), "…: Goal in First 10 Minutes", "…: Correct Score", corners.
+_GAME_PROP_TAIL_RE = re.compile(
+    r"(?:\bovertime\b|\bgoal in (?:the )?first \d+ minutes\b"
+    r"|\b(?:correct|exact) score\b|\bcorners\b)",
+    re.IGNORECASE,
+)
+
+
 # An OUTCOME label that can only belong to a derivative book — a handicap, a
 # total, a period, or a scoreline. Deliberately narrower than the market-name
 # patterns above: this one is asked of an outcome, where the alternative is a
@@ -732,5 +758,13 @@ def classify_game_market_class(
     # with no sides ("… Election First Round Winner") stays "other".
     if names_a_scoped_segment(name) and _NAMES_TWO_SIDES_RE.search(name):
         return "segment_winner"
+    # #1529 census: last, so only an "other" answer can move.
+    if _PLAYER_PROP_TAIL_RE.search(name) or (
+        _KALSHI_GOALS_TAIL_RE.search(name)
+        and (external_id or "").lower().startswith("kx")
+    ):
+        return "player_prop"
+    if _GAME_PROP_TAIL_RE.search(name):
+        return "team_prop"
     _ = lower  # reserved for future sport-specific disambiguation
     return "other"
