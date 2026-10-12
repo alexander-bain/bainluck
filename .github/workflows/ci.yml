@@ -7013,6 +7013,42 @@ jobs:
             exit 1
           }
 
+      - name: "#10090 a futures_outcomes write never adds to or merges a search-index backlog (real Postgres)"
+        # #10090. With GIN's default fastupdate, every non-HOT futures_outcomes
+        # write appended to ix_futures_outcomes_name_trgm's pending list, and the
+        # write that crossed 4 MB merged it inside its own statement. Production
+        # 16:01:53Z on release 5671 showed the symptom (rerank 2.02 s beside
+        # 0.02 s of saves), not an exact attribution. The gate reads the pending
+        # page count from the server, so it times nothing.
+        #
+        # 3 = the parent strawman (writes leave pages pending) + the migration's
+        # upgrade (zero pending, fastupdate=off) + its downgrade (parent restored).
+        if: matrix.group == 'shared-tail'
+        run: |
+          set +e
+          python -m pytest tests/integration/test_futures_outcome_writes_never_merge_a_search_backlog_10090_pg.py \
+            -v -rs > /tmp/ginbacklog10090.txt 2>&1
+          RC=$?
+          set -e
+          cat /tmp/ginbacklog10090.txt
+          echo "PYTEST EXIT CODE: $RC"
+          if [ "$RC" -ne 0 ] && [ "$RC" -ne 1 ]; then
+            echo "::error::#10090 GIN backlog gate: pytest exit $RC is a harness story, not a result"
+            exit 1
+          fi
+          if [ "$RC" -ne 0 ]; then
+            echo "::error::#10090 GIN backlog gate RED"
+            exit 1
+          fi
+          if grep -qiE "[0-9]+ skipped" /tmp/ginbacklog10090.txt; then
+            echo "::error::#10090 GIN backlog gate SKIPPED — the gate did not run"
+            exit 1
+          fi
+          grep -qE "[^0-9]3 passed[,[:space:]]" /tmp/ginbacklog10090.txt || {
+            echo "::error::#10090 GIN backlog gate did not run all three cases"
+            exit 1
+          }
+
       - name: "#837 a failed sport no longer aborts the sports after it, and the scores loop releases per sport (real Postgres)"
         # #837, the three gaps the per-sport commit above left. (1) A failed
         # statement (production: a 40P01 at 03:05:27Z) left the transaction
