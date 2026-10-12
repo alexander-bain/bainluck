@@ -426,6 +426,107 @@ class TestStability:
         assert member in await _edges(world, c["id"])
 
 
+class TestCert4043Repairs:
+    """The reviewer's three reproductions, on the server the writer runs on."""
+
+    async def test_an_expired_roster_carries_and_a_fresh_one_removes(self, world):
+        event = load_gamma(POLITICS)
+        rows = await _seed(world, POLITICS, "geopolitics", first_id=1000)
+        await _run(world)
+        c = await _container(world, POLITICS)
+        dropped = event["markets"][2]["conditionId"]
+        member = next(r["id"] for r in rows if r["external_id"] == dropped)
+        late = OBSERVED + timedelta(hours=8)
+
+        await _set_roster(
+            world,
+            1000,
+            roster_payload(event, OBSERVED + timedelta(minutes=1), drop=(dropped,)),
+        )
+        report = _event(await _run(world, now=late), POLITICS)
+        assert report["edges_deleted"] == 0 and report["bumped"] is False
+        assert member in await _edges(world, c["id"])
+        assert (await _container(world, POLITICS))["revision"] == c["revision"]
+        reasons = report["eligibility"]["reasons"]
+        assert "roster_expired" in reasons and "members_carried" in reasons
+
+        # A fresh roster that still omits it is a confirmed removal.
+        await _set_roster(
+            world,
+            1000,
+            roster_payload(event, late - timedelta(hours=1), drop=(dropped,)),
+        )
+        report = _event(await _run(world, now=late), POLITICS)
+        assert report["edges_deleted"] == 1 and report["bumped"] is True
+        assert member not in await _edges(world, c["id"])
+
+    async def test_a_parent_naming_another_event_is_never_eligible(self, world):
+        await _seed(world, POLITICS, "geopolitics", first_id=1000)
+        async with world["Session"]() as db:
+            await db.execute(
+                text(
+                    "UPDATE futures_markets SET market_metadata = jsonb_set("
+                    "market_metadata, '{polymarket_event_id}', to_jsonb(CAST(:o AS text))) "
+                    "WHERE id = 1000"
+                ),
+                {"o": HELD_OUT},
+            )
+            await db.commit()
+        report = _event(await _run(world), POLITICS)
+        assert report["identity_conflicts"] == 1
+        assert report["roster_state"] == "roster_parent_identity_conflict"
+        assert report["eligibility"]["eligible"] is False
+
+    async def test_the_preflight_proves_every_stored_slot(self, world):
+        from app.tasks.provider_event_collection_assembly import (
+            evaluate_provider_event_collection,
+        )
+
+        await _seed(world, POLITICS, "geopolitics", first_id=1000)
+        await _run(world)
+        c = await _container(world, POLITICS)
+        slug = f"polymarket-event-{POLITICS}"
+
+        async def verdict():
+            async with world["Session"]() as db:
+                return await evaluate_provider_event_collection(db, slug, now=NOW)
+
+        async def execute(sql, **params):
+            async with world["Session"]() as db:
+                await db.execute(text(sql), params)
+                await db.commit()
+
+        assert (await verdict())["eligible"] is True  # exact: the control
+
+        await execute(
+            "DELETE FROM event_edges WHERE parent_id = :c AND child_id = 1001",
+            c=c["id"],
+        )
+        v = await verdict()
+        assert v["eligible"] is False and v["reasons"] == ["stored_members_missing"]
+        await _run(world)  # the pass writes it back
+        assert (await verdict())["eligible"] is True
+
+        await execute(
+            "INSERT INTO event_edges (parent_type, parent_id, child_type, child_id, "
+            "kind, class, source, confidence) VALUES ('container', :c, 'market', "
+            "999999, 'contains', 'unclassified', 'human', 1.000)",
+            c=c["id"],
+        )
+        v = await verdict()
+        assert v["eligible"] is False and v["reasons"] == ["stored_slots_unproved"]
+        await execute("DELETE FROM event_edges WHERE child_id = 999999")
+        assert (await verdict())["eligible"] is True
+
+        await execute(
+            "INSERT INTO containers (kind, name, slug, status, parent_container_id) "
+            "VALUES ('theme', 'stray child', 'stray-child-5343', 'scheduled', :c)",
+            c=c["id"],
+        )
+        v = await verdict()
+        assert v["eligible"] is False and v["reasons"] == ["stored_slots_unproved"]
+
+
 class TestCorrections:
     async def test_a_withdrawn_member_stays_out_until_readmitted(self, world):
         from app.utils.container_corrections import readmit_member, withdraw_member

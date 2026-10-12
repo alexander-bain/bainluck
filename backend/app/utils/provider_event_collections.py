@@ -14,7 +14,9 @@ WHAT A PROVIDER EVENT PROVES, AND WHAT IT DOES NOT.
 * Polymarket's immutable ``event.id`` is the identity. Ingestion already writes it
   twice: ``group_id = 'polymarket:{id}'`` on every row of the event, and
   ``market_metadata.polymarket_event_id`` on the parent and (since Queue 390) on
-  each decomposed child. Both are read; when both are present they must agree.
+  each decomposed child. Both are read, on the parent as on every child; when
+  both are present they must agree. A parent whose metadata names another event
+  is a conflict: its roster and its header are not this event's evidence.
 * Sharing an event proves the markets are RELATED. It never proves they are
   mutually exclusive or that two of them ask the same question, so nothing here
   folds members, averages a price, or pairs a market with another provider's.
@@ -32,11 +34,14 @@ collection still assembles from row evidence, but it is never complete and so
 never eligible for publication.
 
 WHAT A PASS MAY SUBTRACT. A member leaves only when (a) a correction withdrew it,
-(b) its own row now names a different event, or (c) a usable roster — at least as
-new as the last one applied — no longer lists it. An outage (no roster, an older
-roster, an expired roster, a row we cannot see) never retires anything: the last
-good membership is carried. A member a roster removed is not re-admitted until a
-NEWER roster lists it again, so a regressed observation cannot resurrect it.
+(b) its own row now names a different event, or (c) a usable roster — FRESH at the
+pass instant and at least as new as the last one applied — no longer lists it.
+An outage (no roster, an older roster, an expired roster, a roster whose age the
+pass cannot tell, a parent that names another event, a row we cannot see) never
+retires anything: the last good membership is carried, and a carried member
+keeps the collection off publication until a fresh roster decides it. A member a
+roster removed is not re-admitted until a NEWER roster lists it again, so a
+regressed observation cannot resurrect it.
 """
 
 from __future__ import annotations
@@ -80,8 +85,9 @@ SUPPORTED_DOMAINS = frozenset(
 #: A collection of one card is that card.
 MIN_MEMBERS = 2
 
-#: Ingestion polls Polymarket hourly. A roster older than this still decides
-#: membership (it is the newest word we have) but cannot make a collection
+#: Ingestion polls Polymarket hourly. A roster older than this may still ADD a
+#: member (it is the newest word we have) but never removes one — an expired
+#: roster is an outage, and an outage carries — and it cannot make a collection
 #: eligible for publication.
 ROSTER_MAX_AGE = timedelta(hours=6)
 
@@ -107,6 +113,7 @@ ADMITTED_ROSTER_MEMBER = "admitted_roster_member"
 ADMITTED_ROW_IDENTITY = "admitted_row_identity"
 CARRIED_ROW_ABSENT = "carried_member_row_absent"
 CARRIED_DOMAIN_UNSUPPORTED = "carried_domain_unsupported"
+CARRIED_ROSTER_NOT_FRESH = "carried_roster_not_fresh"
 EXCLUDED_GROUP_ANCHOR = "provider_group_anchor"
 EXCLUDED_NOT_IN_ROSTER = "not_in_provider_roster"
 EXCLUDED_IDENTITY_CONFLICT = "provider_identity_conflict"
@@ -122,6 +129,7 @@ MEMBER_REASONS = frozenset(
         ADMITTED_ROW_IDENTITY,
         CARRIED_ROW_ABSENT,
         CARRIED_DOMAIN_UNSUPPORTED,
+        CARRIED_ROSTER_NOT_FRESH,
         EXCLUDED_GROUP_ANCHOR,
         EXCLUDED_NOT_IN_ROSTER,
         EXCLUDED_IDENTITY_CONFLICT,
@@ -138,6 +146,7 @@ ROSTER_USABLE = "usable"
 ROSTER_ABSENT = "roster_absent"
 ROSTER_MALFORMED = "roster_malformed"
 ROSTER_OLDER_THAN_APPLIED = "roster_older_than_applied"
+ROSTER_PARENT_CONFLICT = "roster_parent_identity_conflict"
 
 # Domain states.
 DOMAIN_UNKNOWN = "domain_unknown"
@@ -152,6 +161,9 @@ INELIGIBLE_TOO_FEW_MEMBERS = "too_few_members"
 INELIGIBLE_LABEL_ABSENT = "label_absent"
 INELIGIBLE_RETIRED = "retired"
 INELIGIBLE_PUBLICATION_WITHDRAWN = "publication_withdrawn"
+INELIGIBLE_MEMBERS_CARRIED = "members_carried"
+INELIGIBLE_STORED_MISSING = "stored_members_missing"
+INELIGIBLE_STORED_UNPROVED = "stored_slots_unproved"
 
 # ---------------------------------------------------------------------------
 # Identity
@@ -432,6 +444,8 @@ class EventAssembly:
     roster_unstored: tuple[str, ...]
     identity_conflicts: tuple[int, ...]
     complete: bool
+    #: The roster may retire members: usable AND fresh at the pass instant.
+    roster_subtracts: bool = False
 
     @property
     def admitted(self) -> tuple[int, ...]:
@@ -493,6 +507,7 @@ def assemble_event(
     withdrawn: Iterable[int] = (),
     prior: Optional[Mapping[int, PriorDecision]] = None,
     current_status: Optional[str] = None,
+    now: Optional[datetime] = None,
 ) -> EventAssembly:
     """Decide every child this pass can see, plus every child already edged.
 
@@ -501,6 +516,10 @@ def assemble_event(
     ``edged`` is the children holding this adapter's edge now; ``withdrawn`` the
     children whose latest correction is a withdrawal; ``prior`` the last pass's
     decision rows. Duplicate rows collapse by id; nothing collapses by name.
+
+    ``now`` is the pass instant, supplied by the caller (this module reads no
+    clock). A roster retires a member only when it is fresh at ``now``. Without
+    ``now`` its age is unknown, so it may add and complete but never remove.
     """
     prior = dict(prior or {})
     edged_ids = frozenset(int(i) for i in edged)
@@ -519,16 +538,31 @@ def assemble_event(
     parent = next((r for r in claimants if r.external_id == identity.event_id), None)
     children = [r for r in claimants if r is not parent]
     domain, domain_state = _event_domain(claimants)
-
-    roster, roster_state = parse_roster(
-        parent.roster_raw if parent is not None else None
+    # The parent is checked like every child, BEFORE its roster or title is read:
+    # a parent whose metadata names another event carries that event's evidence.
+    parent_conflict = (
+        parent is not None
+        and parent.metadata_event_id is not None
+        and parent.metadata_event_id != identity.event_id
     )
+
+    if parent_conflict:
+        roster, roster_state = None, ROSTER_PARENT_CONFLICT
+    else:
+        roster, roster_state = parse_roster(
+            parent.roster_raw if parent is not None else None
+        )
     applied = latest_roster_epoch(prior)
     if roster is not None and applied is not None and roster.observed_at < applied:
         roster, roster_state = None, ROSTER_OLDER_THAN_APPLIED
     else:
         roster_state = roster_state or ROSTER_USABLE
     roster_ids = roster.external_ids if roster is not None else frozenset()
+    roster_subtracts = (
+        roster is not None
+        and now is not None
+        and now - roster.observed_at <= ROSTER_MAX_AGE
+    )
     # The newest roster ever applied travels on every decision row, including the
     # rows a roster-less or older-roster pass writes — otherwise that pass would
     # erase the epoch and the pass after it would take a stale roster as new.
@@ -565,7 +599,7 @@ def assemble_event(
             # Gone from our store. Only a usable roster that no longer lists it may
             # retire the edge; anything less is an outage and the edge is carried.
             known = before.external_id if before else None
-            if roster is not None and known and known not in roster_ids:
+            if roster_subtracts and known and known not in roster_ids:
                 decide(
                     child_id,
                     OUTCOME_EXCLUDED,
@@ -612,7 +646,20 @@ def assemble_event(
             )
             continue
         if row is parent:
-            decide(child_id, OUTCOME_EXCLUDED, EXCLUDED_GROUP_ANCHOR, False, **evidence)
+            if parent_conflict:
+                conflicts.append(child_id)
+                decide(
+                    child_id,
+                    OUTCOME_EXCLUDED,
+                    EXCLUDED_IDENTITY_CONFLICT,
+                    False,
+                    **evidence,
+                    metadata_event_id=row.metadata_event_id,
+                )
+            else:
+                decide(
+                    child_id, OUTCOME_EXCLUDED, EXCLUDED_GROUP_ANCHOR, False, **evidence
+                )
             continue
         if (
             row.metadata_event_id is not None
@@ -664,7 +711,16 @@ def assemble_event(
             member = next(
                 (m for m in roster.members if m.external_id == external_id), None
             )
-            if member is None:
+            if member is None and was_edged and not roster_subtracts:
+                # Expired, or of unknown age: an outage. It cannot retire a member.
+                decide(
+                    child_id,
+                    OUTCOME_WITHHELD,
+                    CARRIED_ROSTER_NOT_FRESH,
+                    True,
+                    **evidence,
+                )
+            elif member is None:
                 decide(
                     child_id,
                     OUTCOME_EXCLUDED,
@@ -697,16 +753,25 @@ def assemble_event(
         decide(child_id, OUTCOME_ADMITTED, ADMITTED_ROW_IDENTITY, True, **evidence)
 
     unstored = tuple(sorted(roster_ids - stored_ids)) if roster is not None else ()
+    carried = any(d.keep_edge and d.outcome != OUTCOME_ADMITTED for d in decisions)
     complete = (
-        roster is not None and not unstored and not conflicts and domain_state is None
+        roster is not None
+        and not unstored
+        and not conflicts
+        and not carried
+        and domain_state is None
     )
-    header = Header(
-        name=_label(parent, children),
-        category=domain,
-        status=_status(roster, current_status),
-        window_start=parent.commence_time if parent is not None else None,
-        window_end=parent.resolution_date if parent is not None else None,
-    )
+    if parent_conflict:
+        # Which event the parent describes is in dispute: change nothing.
+        header = Header(None, None, current_status, None, None)
+    else:
+        header = Header(
+            name=_label(parent, children),
+            category=domain,
+            status=_status(roster, current_status),
+            window_start=parent.commence_time if parent is not None else None,
+            window_end=parent.resolution_date if parent is not None else None,
+        )
     return EventAssembly(
         identity,
         tuple(decisions),
@@ -718,6 +783,7 @@ def assemble_event(
         unstored,
         tuple(conflicts),
         complete,
+        roster_subtracts,
     )
 
 
@@ -809,16 +875,46 @@ class Eligibility:
         }
 
 
+def stored_membership_refusals(
+    assembly: EventAssembly, stored_slots: Mapping[tuple, Optional[str]]
+) -> tuple[str, ...]:
+    """Is what is STORED exactly what this assembly proves? Every refusal named.
+
+    ``stored_slots`` is every slot the published reader would serve for this
+    container, whatever wrote it: ``{(child_type, child_id): class}`` for each
+    ``contains`` edge, plus ``("container", id): None`` for each child container.
+    Readers are served the stored edges, never this assembly, so publication
+    needs the two to agree slot for slot: a proved member with no stored slot is
+    missing; a stored slot no member proves, or one in another class, is
+    unproved.
+    """
+    expected = {(CHILD_TYPE, int(c)): cls for c, cls in assembly.kept.items()}
+    stored = {(str(t), int(i)): cls for (t, i), cls in stored_slots.items()}
+    reasons: list[str] = []
+    if any(key not in stored for key in expected):
+        reasons.append(INELIGIBLE_STORED_MISSING)
+    if any(key not in expected or expected[key] != cls for key, cls in stored.items()):
+        reasons.append(INELIGIBLE_STORED_UNPROVED)
+    return tuple(reasons)
+
+
 def publication_eligibility(
-    assembly: EventAssembly, *, now: datetime, publication_state: Optional[str] = None
+    assembly: EventAssembly,
+    *,
+    now: datetime,
+    publication_state: Optional[str] = None,
+    stored_slots: Optional[Mapping[tuple, Optional[str]]] = None,
 ) -> Eligibility:
     """May this collection be offered to readers? Every refusal is named.
 
     Structural only: the provider's complete roster, every listed market held,
-    one supported domain, a label, at least ``MIN_MEMBERS`` members with rows, a
-    fresh roster, and not past ``RETIRE_AFTER`` beyond a closed provider window.
-    A withdrawn publication is never re-offered by this answer; lifting it is a
-    named decision. Eligibility publishes nothing — the publication operator does.
+    one supported domain, a label, at least ``MIN_MEMBERS`` members with rows, no
+    member carried through an outage, a fresh roster, and not past
+    ``RETIRE_AFTER`` beyond a closed provider window. With ``stored_slots`` (the
+    publication preflight) the stored membership must also equal the assembly
+    (``stored_membership_refusals``). A withdrawn publication is never re-offered
+    by this answer; lifting it is a named decision. Eligibility publishes
+    nothing — the publication operator does.
     """
     reasons: list[str] = []
     if assembly.domain_state is not None:
@@ -837,6 +933,8 @@ def publication_eligibility(
     )
     if shown < MIN_MEMBERS:
         reasons.append(INELIGIBLE_TOO_FEW_MEMBERS)
+    if any(d.keep_edge and d.outcome != OUTCOME_ADMITTED for d in assembly.decisions):
+        reasons.append(INELIGIBLE_MEMBERS_CARRIED)
     if not assembly.header.name:
         reasons.append(INELIGIBLE_LABEL_ABSENT)
     retire_at = None
@@ -846,4 +944,6 @@ def publication_eligibility(
             reasons.append(INELIGIBLE_RETIRED)
     if publication_state == "withdrawn":
         reasons.append(INELIGIBLE_PUBLICATION_WITHDRAWN)
+    if stored_slots is not None:
+        reasons.extend(stored_membership_refusals(assembly, stored_slots))
     return Eligibility(not reasons, tuple(reasons), shown, retire_at)

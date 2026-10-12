@@ -50,6 +50,7 @@ from sqlalchemy import text
 
 from app.tasks.container_assembly import containers_tables_present
 from app.utils.container_corrections import (
+    PUBLICATION_COLUMN,
     bump_revision,
     correction_schema_present,
     lock_container_chain,
@@ -124,10 +125,17 @@ _SELECT_GROUP_ROWS = (
     "WHERE (source = 'polymarket' AND group_id = :gid) OR id = ANY(:ids)"
 )
 
-_SELECT_MARKET_EDGES = (
-    "SELECT child_id, class, source FROM event_edges "
-    "WHERE parent_type = 'container' AND parent_id = :cid "
-    "  AND kind = 'contains' AND child_type = 'market'"
+#: Every ``contains`` edge, whatever its child type or source: the published
+#: reader serves all of them, so the preflight must see all of them.
+_SELECT_EDGES = (
+    "SELECT child_type, child_id, class, source FROM event_edges "
+    "WHERE parent_type = 'container' AND parent_id = :cid AND kind = 'contains'"
+)
+
+#: Child containers the published reader folds in (it skips withdrawn ones).
+_SELECT_CHILD_CONTAINERS = (
+    f"SELECT id FROM containers WHERE parent_container_id = :cid "
+    f"  AND {PUBLICATION_COLUMN} <> 'withdrawn'"
 )
 
 _SELECT_PRIOR = (
@@ -284,10 +292,23 @@ async def _read_rows(
 class _EventState:
     edges: dict[int, str] = field(default_factory=dict)
     foreign: set[int] = field(default_factory=set)
+    foreign_classes: dict[int, str] = field(default_factory=dict)
+    other_slots: dict[tuple, str] = field(default_factory=dict)
+    child_containers: list[int] = field(default_factory=list)
     withdrawn: set[int] = field(default_factory=set)
     prior: dict[int, PriorDecision] = field(default_factory=dict)
     prior_rows: dict[int, tuple] = field(default_factory=dict)
     rows: list = field(default_factory=list)
+
+    def stored_slots(self) -> dict:
+        """Every slot the published reader would serve, as the pure rule takes it."""
+        slots: dict = {(CHILD_TYPE, c): cls for c, cls in self.edges.items()}
+        slots.update(
+            {(CHILD_TYPE, c): self.foreign_classes.get(c) for c in self.foreign}
+        )
+        slots.update(self.other_slots)
+        slots.update({("container", c): None for c in self.child_containers})
+        return slots
 
 
 async def _read_state(
@@ -295,13 +316,24 @@ async def _read_state(
 ) -> _EventState:
     state = _EventState()
     if container_id is not None:
-        for child_id, edge_class, source in (
-            await session.execute(text(_SELECT_MARKET_EDGES), {"cid": container_id})
+        for child_type, child_id, edge_class, source in (
+            await session.execute(text(_SELECT_EDGES), {"cid": container_id})
         ).fetchall():
-            if source == EDGE_SOURCE:
+            if child_type != CHILD_TYPE:
+                state.other_slots[(child_type, int(child_id))] = edge_class
+            elif source == EDGE_SOURCE:
                 state.edges[int(child_id)] = edge_class
             else:
                 state.foreign.add(int(child_id))
+                state.foreign_classes[int(child_id)] = edge_class
+        state.child_containers = [
+            int(r[0])
+            for r in (
+                await session.execute(
+                    text(_SELECT_CHILD_CONTAINERS), {"cid": container_id}
+                )
+            ).fetchall()
+        ]
         state.withdrawn = {
             cid
             for ctype, cid in await withdrawn_members(session, container_id)
@@ -325,7 +357,10 @@ async def _read_state(
 
 
 def _assemble(
-    identity: ProviderEventIdentity, state: _EventState, current_status: Optional[str]
+    identity: ProviderEventIdentity,
+    state: _EventState,
+    current_status: Optional[str],
+    now: datetime,
 ) -> EventAssembly:
     return assemble_event(
         identity,
@@ -334,6 +369,7 @@ def _assemble(
         withdrawn=state.withdrawn,
         prior=state.prior,
         current_status=current_status,
+        now=now,
     )
 
 
@@ -465,7 +501,7 @@ async def assemble_provider_event(
     container = await _select_container(session, identity.slug)
     if container is None:
         state = _EventState(rows=await _read_rows(session, identity, ()))
-        assembly = _assemble(identity, state, None)
+        assembly = _assemble(identity, state, None, now)
         if len(assembly.admitted) < MIN_MEMBERS:
             await session.rollback()
             return {
@@ -510,7 +546,7 @@ async def assemble_provider_event(
         container["revision"],
     )
     state = await _read_state(session, identity, container_id)
-    assembly = _assemble(identity, state, container["status"])
+    assembly = _assemble(identity, state, container["status"], now)
     plan = plan_event_pass(assembly, state.edges, foreign_held=state.foreign)
     changes = header_changes(assembly.header, container)
     eligibility = publication_eligibility(
@@ -574,6 +610,11 @@ async def evaluate_provider_event_collection(
     Takes no lock and writes nothing: a publisher that must not race assembly
     holds ``lock_container_chain`` itself, then calls this in the same
     transaction, so the answer describes what it is about to publish.
+
+    Publication serves the STORED edges, not this re-assembly, so the answer is
+    eligible only when the two agree slot for slot (every edge of any source or
+    child type, and any child container): a pass that has not yet written what
+    it now proves — a missing, extra or reclassified slot — refuses, by name.
     """
     identity = parse_collection_slug(slug)
     if identity is None:
@@ -593,9 +634,12 @@ async def evaluate_provider_event_collection(
             "reasons": ["container_absent"],
         }
     state = await _read_state(session, identity, container["id"])
-    assembly = _assemble(identity, state, container["status"])
+    assembly = _assemble(identity, state, container["status"], now)
     eligibility = publication_eligibility(
-        assembly, now=now, publication_state=container["publication_state"]
+        assembly,
+        now=now,
+        publication_state=container["publication_state"],
+        stored_slots=state.stored_slots(),
     )
     return {
         "slug": slug,

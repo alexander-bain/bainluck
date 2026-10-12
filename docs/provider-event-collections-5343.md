@@ -47,8 +47,10 @@ event. Ids must be condition ids, each listed once, and the list must not be
 empty. Any doubt reads as `roster_malformed`.
 
 Complete means: a usable roster (no older than the newest roster already
-applied), every listed market held as a row of this event, no identity conflicts,
-and one supported domain.
+applied), every listed market held as a row of this event, no identity conflicts
+(the parent row's own `polymarket_event_id` included), no member carried through
+an outage, and one supported domain. A parent whose metadata names another event
+is `roster_parent_identity_conflict`: its roster and header are not read.
 
 ## 3. What a pass changes (correction policy, #5344)
 
@@ -56,10 +58,13 @@ and one supported domain.
   no usable roster, it admits on row identity alone. The collection still
   assembles, but it is never complete.
 - **Removes** a member only when (a) a correction withdrew it, (b) its own row now
-  names another event, or (c) a usable roster no older than the last one applied
-  no longer lists it.
+  names another event, or (c) a usable roster, no older than the last one applied
+  AND fresh (at most 6 h old) at the pass instant, no longer lists it.
 - **Never removes** anything because of an outage: no roster, an older roster, an
-  expired roster, or a row we cannot see. The last good membership is carried.
+  expired roster (or one the pass cannot date), a parent naming another event, or
+  a row we cannot see. The last good membership is carried
+  (`carried_roster_not_fresh` / `carried_member_row_absent`), and a carried
+  member keeps the collection off publication until a fresh roster decides it.
 - **Never resurrects**: a member a roster removed stays out until a newer roster
   lists it again. Every decision row carries the newest applied roster instant
   (`applied_roster_at`), so a stale pass cannot reset it.
@@ -77,9 +82,13 @@ and one supported domain.
 the named refusals: `domain_unknown|domain_ambiguous|domain_unsupported`,
 `roster_absent|roster_malformed|roster_older_than_applied`, `roster_expired`
 (older than 6 h), `roster_members_unstored`, `identity_conflicts`,
-`too_few_members` (fewer than 2), `label_absent`, `retired` (14 days after a
-closed provider window), and `publication_withdrawn` (re-publishing is a named
-decision). A publisher calls it inside its own `lock_container_chain`
+`too_few_members` (fewer than 2), `members_carried`, `label_absent`, `retired`
+(14 days after a closed provider window), and `publication_withdrawn`
+(re-publishing is a named decision). Readers are served the STORED edges, so the
+preflight also compares every stored slot (any source, any child type, and child
+containers) with the re-assembly: `stored_members_missing` for a proved member
+with no slot, `stored_slots_unproved` for a slot no member proves or one in
+another class. A publisher calls it inside its own `lock_container_chain`
 transaction.
 
 ## 5. Reader contract

@@ -600,6 +600,7 @@ class TestCorrectionsAndOutages:
             [provider_row(r) for r in raw],
             edged=a.kept,
             prior=_prior_from(a),
+            now=OBSERVED + timedelta(hours=2),  # fresh: a confirmed removal
         )
         plan = plan_event_pass(b, a.kept)
         assert len(plan.deletes) == 1
@@ -623,7 +624,11 @@ class TestCorrectionsAndOutages:
             return [provider_row(r) for r in raw]
 
         b = assemble_event(
-            _identity("1038648"), at(r2, (dropped,)), edged=a.kept, prior=_prior_from(a)
+            _identity("1038648"),
+            at(r2, (dropped,)),
+            edged=a.kept,
+            prior=_prior_from(a),
+            now=r2,
         )
         member = next(
             d.child_id for d in b.decisions if d.evidence.get("external_id") == dropped
@@ -682,6 +687,7 @@ class TestCorrectionsAndOutages:
             [provider_row(r) for r in raw if r["id"] != 1004],
             edged=a.kept,
             prior=_prior_from(a),
+            now=OBSERVED + timedelta(hours=2),
         )
         assert 1004 not in b.kept
         assert b.complete

@@ -98,6 +98,10 @@ COVERED = (
     # raw INSERT added to it is checked before a runner finds out.
     "test_container_assembly_real_postgres.py",
     "test_containers_migration_real_postgres.py",
+    # #5343 (CERT-4043 repair). Seeds a stray `event_edges` slot and a child
+    # `containers` row by raw INSERT to prove the publication preflight refuses
+    # stored membership the pass never proved.
+    "test_provider_event_collections_5343_pg.py",
     "test_create_wave_insert_bind_contract.py",
     "test_feed_static_tag_filter_pg.py",
     "test_futures_outcome_grade_schema_parity_pg.py",
