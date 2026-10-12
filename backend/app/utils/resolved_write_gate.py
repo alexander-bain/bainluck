@@ -80,19 +80,11 @@ REASON_CLOSED_WITHOUT_TERMINAL_PRICE = "closed_without_terminal_price"
 #: Distinct from "we do not know": this one is finished and needs no drain.
 REASON_VENUE_VOID = "venue_void"
 
-#: #1541 — The Odds API no longer lists this rolling outright AND has not
-#: quoted it for a debounce window (`odds_api_retirement`). The provider closed
-#: the question; it never tells us who won, so this is "finished, winner not
-#: known from this source" — never a set of losers. What would drain it: a
-#: winner write from an evidenced, id-linked source. Nothing does today.
-REASON_PROVIDER_DELISTED = "provider_delisted_no_venue_result"
-
 ALLOWED_REASONS = frozenset(
     {
         REASON_RESOLUTION_DATE_ELAPSED,
         REASON_CLOSED_WITHOUT_TERMINAL_PRICE,
         REASON_VENUE_VOID,
-        REASON_PROVIDER_DELISTED,
     }
 )
 

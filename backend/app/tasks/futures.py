@@ -177,7 +177,7 @@ async def _poll_futures_odds():
             )
             sport_map = {row.key: row.id for row in sport_result.all()}
 
-            # #1541: rows this task retired when the provider stopped listing
+            # #1541: rows this task withdrew when the provider stopped listing
             # their key, so a relisting of the SAME provider edition can reopen
             # its own row instead of starting a duplicate (odds_api_retirement).
             # A failed read costs only the reopen check, never the poll.
@@ -479,7 +479,7 @@ async def _poll_futures_odds():
 
             await session.commit()
 
-        # #1541: after this poll's writes are committed, close the rows whose
+        # #1541: after this poll's writes are committed, withdraw the rows whose
         # key the provider no longer lists. Gated on THIS poll's listing having
         # testified (odds_api_retirement.listing_is_usable).
         from app.utils.odds_api_retirement import listing_is_usable
@@ -518,18 +518,18 @@ def _metadata_or_empty(column):
 async def _load_retired_rolling_keys(session) -> dict:
     """``rolling_key -> (id, retired external_id, market_metadata)`` (#1541).
 
-    The newest retirement per key wins: it is the only one a relisting could
+    The newest withdrawal per key wins: it is the only one a relisting could
     be the continuation of. Plain values, never live ORM rows (gotcha #6).
     """
     from sqlalchemy import select
     from app.models import FuturesMarket
-    from app.utils.odds_api_retirement import RETIREMENT_METADATA_KEY
+    from app.utils.odds_api_retirement import RETIREMENT_METADATA_KEY, WITHDRAWN_STATUS
 
     result = await session.execute(
         select(FuturesMarket.id, FuturesMarket.external_id, FuturesMarket.market_metadata)
         .where(
             FuturesMarket.source == "odds_api",
-            FuturesMarket.status == "resolved",
+            FuturesMarket.status == WITHDRAWN_STATUS,
             FuturesMarket.market_metadata.has_key(RETIREMENT_METADATA_KEY),
         )
         .order_by(FuturesMarket.id)
@@ -544,10 +544,10 @@ async def _load_retired_rolling_keys(session) -> dict:
 
 
 async def _reopen_same_edition(session, sport_key, retired, incoming_identity, now, stats):
-    """Undo a retirement when the provider resumes the SAME edition (#1541).
+    """Undo a withdrawal when the provider resumes the SAME edition (#1541).
 
     Decided by the provider's own event id (``same_edition_reopens``); an
-    unknown identity on either side leaves the finished row finished and lets
+    unknown identity on either side leaves the withdrawn row withdrawn and lets
     the upsert below create the new edition's row. The UPDATE refuses if any
     row already holds the key, so it can never collide with the unique index.
     """
@@ -556,8 +556,11 @@ async def _reopen_same_edition(session, sport_key, retired, incoming_identity, n
     from sqlalchemy.dialects.postgresql import JSONB
     from sqlalchemy.orm import aliased
     from app.models import FuturesMarket
-    from app.utils.odds_api_retirement import RETIREMENT_METADATA_KEY, same_edition_reopens
-    from app.utils.resolved_write_gate import GATE_KEY
+    from app.utils.odds_api_retirement import (
+        RETIREMENT_METADATA_KEY,
+        WITHDRAWN_STATUS,
+        same_edition_reopens,
+    )
 
     market_id, retired_external_id, metadata = retired
     if not same_edition_reopens(metadata.get("odds_api_current_event"), incoming_identity):
@@ -569,17 +572,14 @@ async def _reopen_same_edition(session, sport_key, retired, incoming_identity, n
         update(FuturesMarket)
         .where(
             FuturesMarket.id == market_id,
-            FuturesMarket.status == "resolved",
+            FuturesMarket.status == WITHDRAWN_STATUS,
             FuturesMarket.external_id == retired_external_id,
             ~exists().where(holder.source == "odds_api", holder.external_id == sport_key),
         )
         .values(
             status="open",
             external_id=sport_key,
-            settled_at=None,
-            market_metadata=_metadata_or_empty(
-                FuturesMarket.market_metadata
-            ).op("-")(GATE_KEY).op("||")(
+            market_metadata=_metadata_or_empty(FuturesMarket.market_metadata).op("||")(
                 cast(literal(_json.dumps({RETIREMENT_METADATA_KEY: record})), JSONB)
             ),
         )
@@ -589,9 +589,10 @@ async def _reopen_same_edition(session, sport_key, retired, incoming_identity, n
 
 
 async def _retire_provider_delisted_boards(listed_keys: frozenset, stats: dict) -> None:
-    """Resolve, under a named no-winner reason, the open odds_api rows whose key
-    the provider has closed (#1541; the evidence is argued in
-    ``app/utils/odds_api_retirement.py``). Never writes a leg.
+    """Withdraw the open odds_api rows whose key the provider no longer offers
+    (#1541; the evidence, and why it proves unavailable rather than finished, is
+    argued in ``app/utils/odds_api_retirement.py``). Never writes a leg, never
+    writes ``resolved`` or ``settled_at``.
 
     Per-market commit and per-market try/except (gotcha #42 / #13): one row
     that refuses must not cost its siblings their transition. Also the
@@ -606,11 +607,12 @@ async def _retire_provider_delisted_boards(listed_keys: frozenset, stats: dict) 
         LISTED,
         RETIRE,
         STALE_UNSETTLED_VERDICTS,
+        WITHDRAWN_REASON,
+        WITHDRAWN_STATUS,
         classify_board,
         retired_external_id,
         retirement_metadata,
     )
-    from app.utils.resolved_write_gate import REASON_PROVIDER_DELISTED, gate_stamp
 
     retired: list[int] = []
     flagged: list[dict] = []
@@ -652,16 +654,11 @@ async def _retire_provider_delisted_boards(listed_keys: frozenset, stats: dict) 
                         waiting += 1
                     continue
                 try:
-                    stamp = gate_stamp(
-                        task="poll_futures_provider_delisted",
-                        reason=REASON_PROVIDER_DELISTED,
-                        at=checked_at,
-                    )
-                    stamp.update(retirement_metadata(
+                    stamp = retirement_metadata(
                         rolling_key=external_id,
                         last_observed_at=newest_leg,
                         checked_at=checked_at,
-                    ))
+                    )
                     done = await session.execute(
                         update(FuturesMarket)
                         .where(
@@ -670,9 +667,8 @@ async def _retire_provider_delisted_boards(listed_keys: frozenset, stats: dict) 
                             FuturesMarket.external_id == external_id,
                         )
                         .values(
-                            status="resolved",
+                            status=WITHDRAWN_STATUS,
                             external_id=retired_external_id(external_id, newest_leg),
-                            **settled_values(FuturesMarket.settled_at),
                             market_metadata=_metadata_or_empty(
                                 FuturesMarket.market_metadata
                             ).op("||")(cast(literal(_json.dumps(stamp)), JSONB)),
@@ -692,9 +688,9 @@ async def _retire_provider_delisted_boards(listed_keys: frozenset, stats: dict) 
     stats["stale_unsettled"] = flagged
     if retired:
         logger.info(
-            "poll_futures: retired %d odds_api rows the provider no longer lists "
-            "(resolved, no winner, reason %r): %s",
-            len(retired), REASON_PROVIDER_DELISTED, retired,
+            "poll_futures: withdrew %d odds_api rows the provider no longer lists "
+            "(status %r, no winner, reason %r): %s",
+            len(retired), WITHDRAWN_STATUS, WITHDRAWN_REASON, retired,
         )
     if flagged:
         logger.warning(

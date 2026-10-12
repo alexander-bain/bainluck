@@ -42,7 +42,6 @@ from app.utils.resolution_authority import (
 from app.utils.kalshi_fabricated_loss import RETRACTION_SOURCE
 from app.utils.box_score_capture import box_is_live_capture
 from app.utils.price_change_stamp import price_changed_at_value
-from app.utils.odds_api_retirement import NOT_RETIRED_BY_PROVIDER_SQL  # #1541
 from app.utils.settled_price import (
     SETTLED_NO_PRICE,
     SETTLED_YES_PRICE,
@@ -7611,9 +7610,6 @@ async def _backfill_from_current_probability():
                         FROM futures_markets fm
                         JOIN futures_outcomes fo ON fo.market_id = fm.id
                         WHERE fm.status = 'resolved'
-                          -- #1541: a board the provider closed without a result
-                          -- is not settled by its last quote (see the import).
-                          AND """ + NOT_RETIRED_BY_PROVIDER_SQL + """
                           -- Q487: a duplicate condition leg must not supply the
                           -- terminality that makes this field look cleanly
                           -- resolved. Measured specimen 59835854: without the
@@ -7693,11 +7689,6 @@ async def _backfill_from_current_probability():
                         -- owns golf grading.
                         WHERE fm.status = 'resolved'
                           AND fm.source != 'datagolf'
-                          -- #1541: a provider-closed odds_api board lists the
-                          -- WHOLE field, champion included, so "the winner isn't
-                          -- in our DB" is false there and this would stamp the
-                          -- real champion Lost. Its result is unknown, not lost.
-                          AND """ + NOT_RETIRED_BY_PROVIDER_SQL + """
                           AND fo.current_probability IS NOT NULL
                         GROUP BY fm.id
                         HAVING SUM(CASE WHEN fo.is_winner THEN 1 ELSE 0 END) = 0

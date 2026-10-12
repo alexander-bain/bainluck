@@ -1,4 +1,4 @@
-"""#1541 — an Odds API outright the provider has CLOSED becomes a finished question. Pure.
+"""#1541 — an Odds API outright the provider stopped offering stops reading as live. Pure.
 
 ═══ WHAT A READER SAW ═══
 
@@ -18,16 +18,16 @@ simply stopped visiting the row, and nothing else owns an ``odds_api`` futures
 row: ``resolution_date`` is NULL (so ``mark_resolved_futures`` never fires),
 there is no ticker for any venue grader to join, and the row is a ROLLING key
 (one row per sport key, overwritten edition after edition — #1541 premise
-correction of 2026-08-12), so a settlement bolted onto it would also be
-overwritten by the next edition the provider lists under the same key.
+correction of 2026-08-12), so anything bolted onto it would also be overwritten
+by the next edition the provider lists under the same key.
 
-═══ THE EVIDENCE, AND WHY IT IS NOT A TITLE HEURISTIC ═══
+═══ THE EVIDENCE, AND WHAT IT DOES NOT PROVE ═══
 
 Two facts, both from our own provider reads, never from the market's name:
 
 1. **The provider no longer lists the key.** The same successful ``/sports``
    read the poll is driven by. Absence from a listing that DID come back, in a
-   poll that DID write at least one market, is the provider closing the
+   poll that DID write at least one market, is the provider withdrawing the
    question — not our outage (a failed read raises before anything here runs;
    an empty listing or a poll that wrote nothing refuses the pass).
 2. **Nothing has been quoted for the quiet window**, on BOTH clocks #8011
@@ -36,32 +36,41 @@ Two facts, both from our own provider reads, never from the market's name:
    prices for the key). That turns a one-poll listing blip into a non-event —
    a key the provider really offers is re-quoted every 4 hours.
 
-What it does NOT know is who won. So the transition is ``resolved`` under the
-enumerated no-winner reason ``REASON_PROVIDER_DELISTED`` (CAL-P086A's gate:
-resolving without a winner is allowed only when it SAYS so), and nothing here
-writes ``is_winner`` or ``resolution_source``. Every leg keeps
-``resolution_source = NULL``, which every reader already treats as "no verdict"
-(``OutcomeRow.outcomeRowVerdict``; calibration's truth-eligibility allowlist) —
-the page goes to its settled view without crowning anybody or marking anybody
-Lost.
+Together they prove the market is UNAVAILABLE. They do not prove the
+tournament ENDED: a provider can drop a future championship for a week and the
+competition is still ahead (independent review of PR #10938). Nor do they say
+who won. So the transition is to ``WITHDRAWN_STATUS``, never ``resolved``:
 
-═══ THE ROLLING KEY IS RELEASED, SO THE FINISHED EDITION STAYS FINISHED ═══
+* ``resolved`` is the settlement word every reader keys on — the futures page
+  titles its table "Final Results" and every price-derived crowner in
+  ``backfill_winners`` runs over it. A withdrawn row reaches neither.
+* Not ``closed`` either: production holds no futures row in ``closed``, and
+  the web Discover/collection cards and the native settled-quote set read
+  ``closed`` as settled. ``withdrawn`` is a word no reader treats as a result.
+* ``settled_at`` stays NULL and no leg is written: ``is_winner`` and
+  ``resolution_source`` keep their ungraded values.
 
-The retired row's ``external_id`` gains a ``:retired:<last-quote-date>`` suffix
-(the original is kept in ``market_metadata.odds_api_retirement.rolling_key``).
+Every surface that lists live futures already filters ``status = 'open'``; the
+two that filtered ``!= 'resolved'`` (the league grids in ``routes/playoffs.py``)
+add ``!= WITHDRAWN_STATUS`` beside it. The detail route withholds every price on a
+withdrawn board, and the page says the market is no longer offered.
+
+═══ THE ROLLING KEY IS RELEASED, SO A NEW EDITION GETS ITS OWN ROW ═══
+
+The withdrawn row's ``external_id`` gains a ``:retired:<last-quote-date>``
+suffix (the original is kept in ``market_metadata.odds_api_retirement.rolling_key``).
 When the provider lists the key again — the 2030 World Cup — the poll's upsert
 finds no row on the key and inserts a fresh one with its own openings, instead
-of pouring the next edition's prices onto the finished 2026 page. The suffix
-keeps the sport-key PREFIX intact, so prefix readers (``grid_sentinel``,
-``golf.py``) still classify the row.
+of pouring the next edition's prices onto the 2026 page. The suffix keeps the
+sport-key PREFIX intact, so prefix readers (``grid_sentinel``, ``golf.py``)
+still classify the row.
 
-The one case where a release is wrong is a false retirement: the provider
-stopped listing a key for longer than the quiet window and then resumed the
-SAME edition. ``same_edition_reopens`` decides that from the provider's own
-event identity (#9387's ``odds_api_current_event``): the retired row reopens
-only when both sides carry an identity and the provider event id matches. An
-unknown identity on either side is not a match — the finished row stays
-finished and the new listing gets its own row.
+When the provider resumes the SAME edition (it paused a future championship
+longer than the quiet window), ``same_edition_reopens`` decides that from the
+provider's own event identity (#9387's ``odds_api_current_event``): the
+withdrawn row reopens only when both sides carry an identity and the provider
+event id matches. An unknown identity on either side is not a match — the
+withdrawn row stays withdrawn and the new listing gets its own row.
 
 Pure: no DB, no network, no clock of its own.
 """
@@ -70,8 +79,6 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from typing import Any, Iterable
-
-from app.utils.resolved_write_gate import REASON_PROVIDER_DELISTED
 
 #: How long an unlisted key must have gone unquoted, on both clocks, before its
 #: row is retired. The poll runs every 4 hours (``poll-futures-every-4h``), so
@@ -84,6 +91,17 @@ from app.utils.resolved_write_gate import REASON_PROVIDER_DELISTED
 #: ``same_edition_reopens`` is the repair for that case, so the window only
 #: has to make a resumption rare, not impossible.
 PROVIDER_DELISTED_QUIET_DAYS = 7
+
+#: The status a provider-withdrawn row moves to. Not a settlement: see the module
+#: docstring for why it is neither ``resolved`` nor ``closed``.
+WITHDRAWN_STATUS = "withdrawn"
+
+#: Statuses that are no longer a live question: the detail route's hook and
+#: lead-pick gates, which used to say ``status != 'resolved'``.
+NOT_LIVE_STATUSES = ("resolved", WITHDRAWN_STATUS)
+
+#: Why the row was withdrawn, recorded in its retirement metadata.
+WITHDRAWN_REASON = "provider_stopped_listing"
 
 #: The suffix that releases a rolling key. ``:`` never appears in an Odds API
 #: sport key, so a retired id cannot collide with a live one.
@@ -105,18 +123,6 @@ GRADED = "graded"
 #: next market the provider drops while still LISTING it is not caught by
 #: nobody, the way market 10 was for three months.
 STALE_UNSETTLED_VERDICTS = frozenset({STALE_LISTED, NO_EVIDENCE, GRADED})
-
-#: Price-derived crowners in ``backfill_winners`` (``clean_resolution`` and
-#: ``all_losers``) run over every resolved market of every source. A retired
-#: board's last quote is not a settlement: the provider closed the question and
-#: never said who won, and it lists the WHOLE field, so the "winning outcome
-#: isn't in our DB" premise of ``all_losers`` is false here — it would stamp the
-#: real champion Lost. Spliced into both passes' market predicate.
-NOT_RETIRED_BY_PROVIDER_SQL = (
-    "COALESCE(fm.market_metadata -> 'resolution_gate' ->> 'reason', '') <> '"
-    + REASON_PROVIDER_DELISTED
-    + "'"
-)
 
 
 def _as_utc(value: Any) -> datetime | None:
@@ -167,8 +173,8 @@ def classify_board(
             return STALE_LISTED
         return LISTED
     if has_graded_leg:
-        # Somebody already put a verdict on a leg; resolving it under a
-        # no-winner reason would contradict that. Not this writer's question.
+        # Somebody already put a verdict on a leg; calling the board merely
+        # unavailable would contradict that. Not this writer's question.
         return GRADED
     if leg is None or parent is None or clock is None:
         # No evidence is not evidence of closure.
@@ -179,7 +185,7 @@ def classify_board(
 
 
 def retired_external_id(external_id: str, last_observed_at: datetime) -> str:
-    """The key the retired row moves to, freeing ``external_id`` for the next edition."""
+    """The key the withdrawn row moves to, freeing ``external_id`` for the next edition."""
     stamp = _as_utc(last_observed_at)
     return f"{external_id}{RETIRED_KEY_INFIX}{stamp.date().isoformat()}"
 
@@ -190,6 +196,7 @@ def retirement_metadata(
     """What the retirement knew, merged into ``market_metadata`` with ``||``."""
     return {
         RETIREMENT_METADATA_KEY: {
+            "reason": WITHDRAWN_REASON,
             "rolling_key": rolling_key,
             "last_observed_at": _as_utc(last_observed_at).isoformat(),
             "provider_listing_checked_at": _as_utc(checked_at).isoformat(),
@@ -212,7 +219,7 @@ def same_edition_reopens(retired_identity: Any, incoming_identity: Any) -> bool:
 
     True only when both identities are present and name the same provider
     event id. Unknown on either side is "not shown to be the same", and the
-    finished row stays finished.
+    withdrawn row stays withdrawn.
     """
     retired = _event_id(retired_identity)
     incoming = _event_id(incoming_identity)

@@ -1,4 +1,4 @@
-"""#1541 — a championship the provider CLOSED stops reading as an open question.
+"""#1541 — a championship the provider WITHDREW stops reading as live, and is never called final.
 
 WHAT A READER SEES TODAY. ``https://bainluck.com/futures/10`` (390px, 2026-10-12
 14:08Z): *FIFA World Cup Winner*, no settled language, "No current prices", and a
@@ -6,6 +6,12 @@ WHAT A READER SEES TODAY. ``https://bainluck.com/futures/10`` (390px, 2026-10-12
 2026-07-19. The row is ``odds_api``, ``status='open'``, last written
 2026-07-19 20:38Z; The Odds API stopped listing its sport key after the final, so
 the poller stopped visiting it, and nothing else ever owns an odds_api futures row.
+
+WHAT IT MUST NOT BECOME (review of PR #10938): a listing gap plus quote silence
+proves the market is unavailable, not that the tournament ended — a FUTURE
+championship the provider drops for eight days meets the same evidence. So the
+transition is ``status='withdrawn'`` (never ``resolved``, never ``settled_at``),
+and the 2027 board below proves it end to end, through the served detail payload.
 
 The round trip is the REAL ``_poll_futures_odds`` (and, for the crowner arms, the
 REAL ``_backfill_from_current_probability``) against REAL Postgres, with two
@@ -45,8 +51,14 @@ LIVE = "golf_t1541_masters_tournament_winner"   # control: listed and priced thi
 RECENT = "basketball_t1541_championship_winner"  # control: unlisted, quoted 2 days ago
 QUIET_LISTED = "icehockey_t1541_stanley_cup_winner"  # guard: listed, nothing quoted for weeks
 GRADED_KEY = "americanfootball_t1541_super_bowl_winner"  # guard: unlisted + quiet, but already graded
+FUTURE = "basketball_t1541_nba_championship_winner"  # THE COUNTEREXAMPLE: 2027 Finals ahead, unlisted + quiet 8 days
 CROWN_KEYS = ("t1541_crown_retired_a", "t1541_crown_retired_b", "t1541_crown_control_a", "t1541_crown_control_b")
-ALL_KEYS = (DEAD, LIVE, RECENT, QUIET_LISTED, GRADED_KEY) + CROWN_KEYS
+ALL_KEYS = (DEAD, LIVE, RECENT, QUIET_LISTED, GRADED_KEY, FUTURE) + CROWN_KEYS
+
+#: The 2027 board's provider identity, shaped like production market 2's
+#: (read 2026-10-12): the decisive game is eight months away.
+FUTURE_IDENTITY = {"scope": "current_quotes_only", "event_id": "t1541-nba-2027",
+                   "sport_key": FUTURE, "commence_time": "2027-06-19T00:40:00+00:00"}
 
 FINAL_DAY_AGO = 85  # 2026-07-19 → 2026-10-12
 
@@ -146,8 +158,31 @@ async def _seed_the_board(session):
              "WHERE market_id = :i AND name = 'Eagles'"),
         {"i": ids[GRADED_KEY]},
     )
+    eight_days = now - timedelta(days=8)
+    ids[FUTURE] = await _seed_market(
+        session, FUTURE, touched=eight_days, metadata={"odds_api_current_event": FUTURE_IDENTITY},
+        legs=[("Thunder", 0.31, eight_days), ("Nuggets", 0.12, eight_days), ("Celtics", 0.09, eight_days)],
+    )
     await session.commit()
     return ids
+
+
+async def _served_detail(session, market_id):
+    """What `/api/futures/{id}` formats for this row: the REAL formatter over the
+    REAL row and its legs, as the route loads them."""
+    from sqlalchemy import select
+    from sqlalchemy.orm import selectinload
+
+    from app.models.models import FuturesMarket
+    from app.routes.futures import _format_market_detail
+
+    session.expire_all()
+    market = (await session.execute(
+        select(FuturesMarket).options(selectinload(FuturesMarket.outcomes),
+                                      selectinload(FuturesMarket.sport))
+        .where(FuturesMarket.id == market_id)
+    )).scalar_one()
+    return _format_market_detail(market, None, set())
 
 
 async def _run_poll(session, *, listed, responses):
@@ -251,19 +286,19 @@ def _responses():
     return {LIVE: [_book([("Scottie Scheffler", 0.14), ("Rory McIlroy", 0.08)])]}
 
 
-class TestTheClosedChampionshipStopsBeingOpen:
-    async def test_the_specimen_resolves_under_the_named_no_winner_reason(self, pg_session):
+class TestTheWithdrawnChampionshipStopsBeingLive:
+    async def test_the_specimen_is_withdrawn_not_settled(self, pg_session):
         ids = await _seed_the_board(pg_session)
         stats = await _run_poll(pg_session, listed=LISTING, responses=_responses())
 
         assert ids[DEAD] in stats["provider_delisted_retired"], stats
         got = await _market(pg_session, ids[DEAD])
-        assert got["status"] == "resolved"
-        assert got["settled_at"] is not None
-        gate = got["meta"]["resolution_gate"]
-        assert gate["proof_kind"] == "named_reason"
-        assert gate["reason"] == "provider_delisted_no_venue_result"
-        assert got["meta"]["odds_api_retirement"]["rolling_key"] == DEAD
+        assert got["status"] == "withdrawn"
+        assert got["settled_at"] is None
+        assert "resolution_gate" not in got["meta"]
+        record = got["meta"]["odds_api_retirement"]
+        assert record["rolling_key"] == DEAD
+        assert record["reason"] == "provider_stopped_listing"
 
     async def test_the_rolling_key_is_released(self, pg_session):
         ids = await _seed_the_board(pg_session)
@@ -280,10 +315,48 @@ class TestTheClosedChampionshipStopsBeingOpen:
         await _run_poll(pg_session, listed=LISTING, responses=_responses())
 
         legs = await _legs(pg_session, ids[DEAD])
-        assert {n: l["source"] for n, l in legs.items()} == {"Spain": None, "Argentina": None, "England": None}
+        assert {n: leg["source"] for n, leg in legs.items()} == {"Spain": None, "Argentina": None, "England": None}
         assert legs["Spain"]["prob"] == pytest.approx(0.587142)
         assert legs["Argentina"]["prob"] == pytest.approx(0.412858)
-        assert all(l["won"] is False for l in legs.values())
+        assert all(leg["won"] is False for leg in legs.values())
+
+
+class TestAFutureChampionshipIsNeverCalledFinal:
+    """THE REVIEW COUNTEREXAMPLE. Same evidence as market 10, competition ahead."""
+
+    async def test_it_is_withdrawn_never_resolved(self, pg_session):
+        ids = await _seed_the_board(pg_session)
+        stats = await _run_poll(pg_session, listed=LISTING, responses=_responses())
+
+        assert ids[FUTURE] in stats["provider_delisted_retired"], stats
+        got = await _market(pg_session, ids[FUTURE])
+        assert got["status"] == "withdrawn" and got["status"] != "resolved"
+        assert got["settled_at"] is None
+        assert "resolution_gate" not in got["meta"]
+        legs = await _legs(pg_session, ids[FUTURE])
+        assert {leg["source"] for leg in legs.values()} == {None}
+        assert all(leg["won"] is False for leg in legs.values())
+
+    async def test_the_served_detail_is_unavailable_not_final(self, pg_session):
+        """The reader seam: status `withdrawn` (the page's "Final Results" and
+        settled hero key on `resolved` only), every price withheld, rows kept."""
+        ids = await _seed_the_board(pg_session)
+        await _run_poll(pg_session, listed=LISTING, responses=_responses())
+
+        detail = await _served_detail(pg_session, ids[FUTURE])
+        assert detail["status"] == "withdrawn"
+        assert {o["name"] for o in detail["outcomes"]} == {"Thunder", "Nuggets", "Celtics"}
+        assert {o["probability"] for o in detail["outcomes"]} == {None}
+        assert detail["prices_withheld"] == 3
+
+    async def test_the_live_control_is_served_with_prices(self, pg_session):
+        """Anti-vacuity for the arm above, same poll, same formatter."""
+        ids = await _seed_the_board(pg_session)
+        await _run_poll(pg_session, listed=LISTING, responses=_responses())
+
+        detail = await _served_detail(pg_session, ids[LIVE])
+        assert detail["status"] == "open"
+        assert any(o["probability"] is not None for o in detail["outcomes"])
 
 
 class TestHealthyAndFutureTournamentsStayOpen:
@@ -347,7 +420,7 @@ class TestTheNextEditionGetsItsOwnRow:
         on_key = await _ids_on_key(pg_session, DEAD)
         assert len(on_key) == 1 and on_key[0][0] != ids[DEAD] and on_key[0][1] == "open"
         finished = await _market(pg_session, ids[DEAD])
-        assert finished["status"] == "resolved"
+        assert finished["status"] == "withdrawn"
         assert (await _legs(pg_session, ids[DEAD]))["Spain"]["prob"] == pytest.approx(0.587142)
         assert ids[DEAD] not in stats.get("provider_delisted_reopened", [])
 
@@ -362,7 +435,7 @@ class TestTheNextEditionGetsItsOwnRow:
             legs=[("Spain", 0.55, final), ("Argentina", 0.45, final)],
         )
         await _run_poll(pg_session, listed=LISTING, responses=_responses())
-        assert (await _market(pg_session, dead))["status"] == "resolved"
+        assert (await _market(pg_session, dead))["status"] == "withdrawn"
 
         resumed = {**_responses(), DEAD: [_book([("Spain", 0.6), ("Argentina", 0.4)],
                                                 event_id="same-edition", commence="2026-06-11T19:00:00Z", sport_key=DEAD)]}
@@ -371,38 +444,38 @@ class TestTheNextEditionGetsItsOwnRow:
         assert dead in stats.get("provider_delisted_reopened", []), stats
         got = await _market(pg_session, dead)
         assert got["status"] == "open" and got["external_id"] == DEAD and got["settled_at"] is None
-        assert "resolution_gate" not in got["meta"]
         assert got["meta"]["odds_api_retirement"]["reopened_at"]
         assert await _ids_on_key(pg_session, DEAD) == [(dead, "open")]
         assert (await _legs(pg_session, dead))["Spain"]["prob"] == pytest.approx(0.6, abs=0.02)
 
 
-class TestPriceCrownersLeaveARetiredBoardUngraded:
+class TestPriceCrownersLeaveAWithdrawnBoardUngraded:
     """``clean_resolution`` (all legs >=0.95/<=0.05) and ``all_losers`` (max <=0.10)
-    run over every resolved market. A provider-closed board's last quote is not a
-    result; the controls — same shapes, resolved without the stamp — prove both
-    passes ran in this very call."""
+    run over every RESOLVED market. A withdrawn board's last quote is not a result,
+    and its status keeps it out of both; the controls — same shapes, resolved —
+    prove both passes ran in this very call."""
 
-    async def test_neither_crowner_grades_a_retired_board(self, pg_session):
-        from app.utils.odds_api_retirement import retired_external_id, retirement_metadata
-        from app.utils.resolved_write_gate import REASON_PROVIDER_DELISTED, gate_stamp
+    async def test_neither_crowner_grades_a_withdrawn_board(self, pg_session):
+        from app.utils.odds_api_retirement import (
+            WITHDRAWN_STATUS,
+            retired_external_id,
+            retirement_metadata,
+        )
 
         now = datetime.now(timezone.utc)
         old = now - timedelta(days=40)
         clean_shape = [("A", 0.04, old), ("B", 0.03, old)]   # Pass 1 shape (and Pass 4)
         losers_shape = [("A", 0.08, old), ("B", 0.06, old)]  # Pass 4 only
 
-        def retired_meta(key):
-            stamp = gate_stamp(task="poll_futures_provider_delisted", reason=REASON_PROVIDER_DELISTED, at=now)
-            stamp.update(retirement_metadata(rolling_key=key, last_observed_at=old, checked_at=now))
-            return stamp
+        def withdrawn_meta(key):
+            return retirement_metadata(rolling_key=key, last_observed_at=old, checked_at=now)
 
         ra, rb, ca, cb = CROWN_KEYS
         ids = {
-            "ra": await _seed_market(pg_session, ra, status="resolved", touched=old, legs=clean_shape,
-                                     metadata=retired_meta(ra), external_id=retired_external_id(ra, old)),
-            "rb": await _seed_market(pg_session, rb, status="resolved", touched=old, legs=losers_shape,
-                                     metadata=retired_meta(rb), external_id=retired_external_id(rb, old)),
+            "ra": await _seed_market(pg_session, ra, status=WITHDRAWN_STATUS, touched=old, legs=clean_shape,
+                                     metadata=withdrawn_meta(ra), external_id=retired_external_id(ra, old)),
+            "rb": await _seed_market(pg_session, rb, status=WITHDRAWN_STATUS, touched=old, legs=losers_shape,
+                                     metadata=withdrawn_meta(rb), external_id=retired_external_id(rb, old)),
             "ca": await _seed_market(pg_session, ca, status="resolved", touched=old, legs=clean_shape),
             "cb": await _seed_market(pg_session, cb, status="resolved", touched=old, legs=losers_shape),
         }
@@ -419,11 +492,11 @@ class TestPriceCrownersLeaveARetiredBoardUngraded:
         assert stats["errors"] == [], stats["errors"]
 
         for control in ("ca", "cb"):
-            sources = {l["source"] for l in (await _legs(pg_session, ids[control])).values()}
+            sources = {leg["source"] for leg in (await _legs(pg_session, ids[control])).values()}
             assert None not in sources, f"control {control} was not graded, so the pass never ran: {sources}"
-        for retired in ("ra", "rb"):
-            legs = await _legs(pg_session, ids[retired])
-            assert {l["source"] for l in legs.values()} == {None}, (
-                f"retired board {retired} was price-graded {legs} — a provider-closed "
+        for withdrawn in ("ra", "rb"):
+            legs = await _legs(pg_session, ids[withdrawn])
+            assert {leg["source"] for leg in legs.values()} == {None}, (
+                f"withdrawn board {withdrawn} was price-graded {legs} — a provider-withdrawn "
                 "board's last quote is not a result"
             )

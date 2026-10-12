@@ -1,4 +1,4 @@
-"""#1541 — the pure decisions behind retiring a provider-closed odds_api row.
+"""#1541 — the pure decisions behind withdrawing a provider-dropped odds_api row.
 
 The round trip (real task, real Postgres) is
 ``tests/integration/test_provider_delisted_championship_retires_1541_pg.py``;
@@ -13,24 +13,20 @@ from app.utils.odds_api_retirement import (
     GRADED,
     LISTED,
     NO_EVIDENCE,
-    NOT_RETIRED_BY_PROVIDER_SQL,
+    NOT_LIVE_STATUSES,
     PROVIDER_DELISTED_QUIET_DAYS,
     RECENTLY_QUOTED,
     RETIRE,
     RETIREMENT_METADATA_KEY,
     STALE_LISTED,
     STALE_UNSETTLED_VERDICTS,
+    WITHDRAWN_REASON,
+    WITHDRAWN_STATUS,
     classify_board,
     listing_is_usable,
     retired_external_id,
     retirement_metadata,
     same_edition_reopens,
-)
-from app.utils.resolved_write_gate import (
-    ALLOWED_REASONS,
-    REASON_PROVIDER_DELISTED,
-    classify_resolved_write,
-    gate_stamp,
 )
 
 CLOCK = datetime(2026, 10, 12, 14, 30, tzinfo=timezone.utc)
@@ -55,6 +51,15 @@ def verdict(external_id=WC, *, leg=WC_LAST_QUOTE, parent=WC_PARENT, graded=False
 class TestTheSpecimenRetires:
     def test_market_10_unlisted_and_unquoted_since_the_final_retires(self):
         assert verdict() == RETIRE
+
+    def test_a_future_championship_dropped_for_eight_days_gets_the_same_verdict(self):
+        """THE REVIEW COUNTEREXAMPLE (PR #10938). The 2027 NBA Finals board,
+        unlisted and unquoted for eight days. The classifier has no event-end
+        input and cannot tell it from market 10 — which is why RETIRE may only
+        ever mean WITHDRAWN, never resolved. The transition is pinned below and
+        on real Postgres."""
+        eight = CLOCK - timedelta(days=8)
+        assert verdict("basketball_nba_championship_winner", leg=eight, parent=eight, listed=frozenset({"golf_masters_tournament_winner"})) == RETIRE
 
     def test_naive_stamps_are_read_as_utc_not_refused(self):
         assert verdict(leg=WC_LAST_QUOTE.replace(tzinfo=None), parent=WC_PARENT.replace(tzinfo=None)) == RETIRE
@@ -114,12 +119,21 @@ class TestNoEvidenceAndContradictions:
 
 
 class TestTheTransitionSaysWhatItIs:
-    def test_the_reason_is_enumerated_so_the_gate_accepts_it(self):
-        assert REASON_PROVIDER_DELISTED in ALLOWED_REASONS
-        v = classify_resolved_write(has_winner_proof=False, named_reason=REASON_PROVIDER_DELISTED)
-        assert v.permitted and v.proof_kind == "named_reason"
-        stamp = gate_stamp(task="t", reason=REASON_PROVIDER_DELISTED)
-        assert stamp["resolution_gate"]["reason"] == REASON_PROVIDER_DELISTED
+    def test_withdrawn_is_not_a_settlement_word(self):
+        """Every reader keys "Final Results"/settled language on `resolved`, and
+        the web Discover/collection cards and native read `closed` as settled.
+        A listing gap proves unavailable, not finished."""
+        assert WITHDRAWN_STATUS not in {"resolved", "closed", "settled", "finalized", "final", "completed"}
+        assert WITHDRAWN_STATUS == "withdrawn"
+
+    def test_not_live_names_both_resolved_and_withdrawn(self):
+        assert set(NOT_LIVE_STATUSES) == {"resolved", WITHDRAWN_STATUS}
+        assert "open" not in NOT_LIVE_STATUSES
+
+    def test_the_withdrawal_records_its_reason_and_no_resolution_gate(self):
+        meta = retirement_metadata(rolling_key=WC, last_observed_at=WC_LAST_QUOTE, checked_at=CLOCK)
+        assert meta[RETIREMENT_METADATA_KEY]["reason"] == WITHDRAWN_REASON
+        assert "resolution_gate" not in meta
 
     def test_the_rolling_key_is_released_with_its_prefix_intact(self):
         new = retired_external_id(WC, WC_LAST_QUOTE)
@@ -131,12 +145,6 @@ class TestTheTransitionSaysWhatItIs:
         record = meta[RETIREMENT_METADATA_KEY]
         assert record["rolling_key"] == WC
         assert record["last_observed_at"].startswith("2026-07-19T20:30:08")
-
-    def test_the_crowner_exclusion_names_the_same_reason(self):
-        assert f"'{REASON_PROVIDER_DELISTED}'" in NOT_RETIRED_BY_PROVIDER_SQL
-        assert "resolution_gate" in NOT_RETIRED_BY_PROVIDER_SQL
-        # Gotcha #45: a `:name` inside text() becomes a bind param.
-        assert ":" not in NOT_RETIRED_BY_PROVIDER_SQL.replace("::", "")
 
 
 class TestSameEditionReopens:
@@ -155,19 +163,28 @@ class TestSameEditionReopens:
         assert same_edition_reopens(retired, incoming) is False
 
 
-class TestTheCrownersCarryTheExclusion:
-    """Both price-derived crowners must splice the predicate into their market filter."""
+class TestTheLeagueGridsDoNotListAWithdrawnRow:
+    """The two readers that filtered `status != 'resolved'` would have listed a
+    withdrawn row as live. Compiled, so the assertion is on the SQL they run."""
 
-    def test_clean_resolution_and_all_losers_exclude_retired_boards(self):
-        import importlib
+    def test_the_golf_candidate_filter_excludes_withdrawn(self):
+        from sqlalchemy.dialects import postgresql
+
+        from app.config.league_configs import LEAGUE_CONFIGS
+        from app.routes.playoffs import _build_golf_candidate_filters
+
+        golf = next(c for c in LEAGUE_CONFIGS.values() if c.slug == "golf")
+        sql = " ".join(
+            str(f.compile(dialect=postgresql.dialect(), compile_kwargs={"literal_binds": True}))
+            for f in _build_golf_candidate_filters(golf)
+        )
+        assert "futures_markets.status != 'resolved'" in sql, sql
+        assert "futures_markets.status != 'withdrawn'" in sql, sql
+
+    def test_the_team_progression_query_excludes_withdrawn(self):
         import inspect
 
-        # `app.tasks.backfill_winners` is also a Celery task attribute on the
-        # package, so `from app.tasks import backfill_winners` gets the task.
-        backfill_winners = importlib.import_module("app.tasks.backfill_winners")
+        from app.routes import playoffs
 
-        src = inspect.getsource(backfill_winners._backfill_from_current_probability)
-        cte_clean = src[src.index("WITH cleanly_resolved AS"):src.index("UPDATE futures_outcomes fo", src.index("WITH cleanly_resolved AS"))]
-        cte_losers = src[src.index("WITH all_loser_markets AS"):src.index("UPDATE futures_outcomes fo", src.index("WITH all_loser_markets AS"))]
-        assert "NOT_RETIRED_BY_PROVIDER_SQL" in cte_clean
-        assert "NOT_RETIRED_BY_PROVIDER_SQL" in cte_losers
+        src = inspect.getsource(playoffs._get_team_progression_for_event_uncached)
+        assert "FuturesMarket.status != WITHDRAWN_STATUS" in src

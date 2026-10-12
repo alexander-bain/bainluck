@@ -9270,6 +9270,7 @@ def _format_market_detail(
     from app.utils.duplicate_condition_outcomes import drop_duplicate_legs
     from app.utils.superseded_name_twins import drop_superseded_name_twins
     from app.utils.field_opening_coherence import field_openings_publishable
+    from app.utils.odds_api_retirement import NOT_LIVE_STATUSES, WITHDRAWN_STATUS
     from app.utils.market_staleness import (
         expired_ladder_rungs,
         stale_observation_keys,
@@ -9879,6 +9880,14 @@ def _format_market_detail(
             board_has_a_verdict=_board_verdict,
         )
 
+    # #1541: a board the provider WITHDREW (`odds_api_retirement`) is neither
+    # live nor a result. Its last quote is no longer sourced, so no price on it
+    # is current, and it is not a settled board's "what ran" either: the
+    # withdrawal never established that the competition finished. Every leg is
+    # withheld; the rows, names and history stay.
+    if _board_status == WITHDRAWN_STATUS:
+        withheld = withheld | {o.id for o in sorted_outcomes}
+
     prices_withheld = 0
     if withheld:
         for o in outcomes:
@@ -10205,7 +10214,9 @@ def _format_market_detail(
         # Chicken Coop Esports are scheduled to compete on September 25, 2026."
         # Keyed on the same flag the page reads for its settled view
         # (`app/futures/[id]/page.tsx`, `isResolved = market.status === "resolved"`).
-        market.status == "resolved"
+        # #1541: a WITHDRAWN board's hook was written the same way, while it
+        # was live, and nothing will replace it either.
+        market.status in NOT_LIVE_STATUSES
         or is_hook_stale(
             hook_description=hook_description,
             hook_generated_at=getattr(market, "hook_generated_at", None),
@@ -10247,7 +10258,7 @@ def _format_market_detail(
     # #9531: a cumulative ladder leads with the rung the `/weather` card quotes
     # (#9283), not its loosest one. Set only when that rung is not already the
     # price leader, so a board whose hero is right serves null as before.
-    if lead_outcome_id is None and market.status != "resolved":
+    if lead_outcome_id is None and market.status not in NOT_LIVE_STATUSES:
         from app.utils.ladder_headline import ladder_headline_outcome_id
 
         lead_outcome_id = ladder_headline_outcome_id(outcomes, market.name)
