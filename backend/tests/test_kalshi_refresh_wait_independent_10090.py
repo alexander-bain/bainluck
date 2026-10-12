@@ -349,3 +349,47 @@ async def test_final_drain_quiet_flush_joins_a_running_stamp_then_stamps_its_deb
     assert await asyncio.wait_for(drain, 2) is True
     assert r.ns["prices"].stamping is None
     assert sorted(x.published) == [1, 2] and not x.r.pending_event_ids()
+
+
+@pytest.mark.parametrize("prior", ["completed", "failed"])
+async def test_a_throttled_readmission_is_debt_not_an_unfinished_attempt(
+    monkeypatch, prior,
+):
+    # Root 2010Z: game 2's earlier admitted attempt has returned (committed,
+    # or failed); its newer price is admitted again but THROTTLED, so no new
+    # attempt starts. A normal close must leave it owed as throttled debt,
+    # never re-owe the retired attempt as cancelled on its old clock.
+    x = refresher_rig(monkeypatch, count=2, block=True, blocked=(1,))
+    stamp = x.r._refresh_batch
+
+    async def second_fails(ids, *args, **kwargs):
+        if prior == "failed" and ids == [2]:
+            raise RuntimeError("game 2's first admitted stamp failed")
+        return await stamp(ids, *args, **kwargs)
+
+    x.r._refresh_batch = second_fails
+    recovered, refresh_failed = [], x.r._refresh_failed
+
+    def spied(due, retry, clock, *args, **kwargs):
+        recovered.append((sorted(due), clock))
+        return refresh_failed(due, retry, clock, *args, **kwargs)
+
+    x.r._refresh_failed = spied
+    running = asyncio.create_task(x.r.refresh([1], flush_started=1000))
+    try:
+        await settle_until(lambda: "update" in x.commands)
+        assert x.r.admit_fresh([2], flush_started=1002) == {2}
+        await settle_until(lambda: all(t.done() for t in x.r._admission.workers))
+        assert recovered == ([([2], 1002)] if prior == "failed" else [])
+        # Inside the floor (completed) or its failure hold (failed).
+        x.r.min_refresh_interval_s = 10
+        assert x.r.admit_fresh([2], flush_started=1004) == {2}, "taken, throttled"
+        assert not x.r._admission.queue and 2 in x.r.pending_event_ids()
+    finally:
+        x.release.set()
+    await asyncio.wait_for(running, 2)
+    assert recovered == ([([2], 1002)] if prior == "failed" else []), (
+        "a normal close re-owed the retired attempt"
+    )
+    assert 2 in x.r._throttle_deferred and x.r._admission is None
+    assert (2 in x.r._failed_hold_until) == (prior == "failed")

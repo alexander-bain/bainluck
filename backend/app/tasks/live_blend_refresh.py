@@ -1996,13 +1996,15 @@ class LiveBlendRefresher:
         if not taken:
             return frozenset()
         # #10090: an event whose earlier stamp in this call has returned is
-        # admitted again for its newer committed price. That attempt's outcome,
-        # retry origin and input mark are settled; none pays for this one.
+        # admitted again for its newer committed price. That attempt is retired
+        # whole: its admission, outcome, clock, retry origin and input mark are
+        # settled, none pays for this one, and a throttled newer price is debt,
+        # never an unfinished attempt at close.
         again = taken.intersection(window.events)
-        window.completed.difference_update(again)
-        window.failed.difference_update(again)
-        window.retry.difference_update(again)
+        for attempt in (window.admitted, window.completed, window.failed, window.retry):
+            attempt.difference_update(again)
         for event_id in again:
+            window.clocks.pop(event_id, None)
             window.staged.pop(event_id, None)
             window.stored_wall.pop(event_id, None)
         clock = flush_started
