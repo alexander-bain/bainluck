@@ -294,7 +294,17 @@ from app.tasks.calibration_main_build import UNIT_PLAN_CACHE_MODE
 #: exact predicate succession instead (#8458's mechanism), so the rebuild's
 #: growth is not folded into a "methodology move" and the bank is not discarded
 #: twice.
-LIVE_INPUT_FINGERPRINT = "5c2987db39cf5ab3fe0efd65d636720c"
+#:
+#: RE-ANCHORED for #1010 (tennis/MMA spreads and totals the stored score cannot
+#: settle): ``5c2987db…`` -> ``7a6dc6bf…``. The only moved root is
+#: ``compute_calibration_payload`` — a Python partition of the spreads/totals
+#: rows after their phase read, plus its ``score_unit_filter`` disclosure.
+#: WHAT IT COSTS, measured on both trees: ``staged_unit_fingerprint`` is
+#: ``dec3026b…`` on master and on this change, and the staged cursor keys on that
+#: narrow digest (CAL-P205), so no banked unit is discarded; only a carried PHASE
+#: output in flight at deploy is re-read. ``population_predicate_fingerprint`` is
+#: ``3944c947…`` on both, so the publish gate reads the same predicate.
+LIVE_INPUT_FINGERPRINT = "7a6dc6bf4e608e37adf4e8e1a17e53a1"
 
 
 class _Db:

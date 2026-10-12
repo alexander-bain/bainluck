@@ -395,6 +395,7 @@ class TestCalibrationPublicEndpoint:
             "weather_wide_spread_filter",  # Queue #183 Item 4 (#182 twin)
             "void_filter",
             "soccer_2way_filter",  # Queue #158 (#1011): soccer 2-way exclusion
+            "score_unit_filter",  # #1010: tennis/MMA lines the score cannot settle
             "heuristic_filter",  # #754 heuristic-exclusion transparency
             "truth_evidence",  # Queue #261 Item 3: calibration-truth census + contract
             # Queue 300C (Alex 2026-08-02): the supporting coverage census + the

@@ -62,6 +62,32 @@ rebuild that accompanied the change, and say so.
 
 ---
 
+## 2026-10-11 — tennis and fight over/unders our recorded result cannot settle are not scored
+
+**Population version:** `q271` (unchanged — the futures population and its predicate fingerprint do
+not move; this narrows two sportsbook curves) · **Code:** _pending merge_ · **Issue:** #1010
+**Ruled by:** the standing calibration-truth bar — an outcome the stored result cannot decide is
+unknown, not a loss; no separate Alex ruling required.
+
+**What changed.** Over/under and handicap lines in tennis count games, and in MMA they count rounds.
+The result we store for a tennis match is the sets each player won, and for a fight only who won (a
+1–0). Neither can say whether a games or rounds line went over or under, but both curves graded them
+anyway with the same arithmetic used for points and runs. Those lines are no longer scored. Who won
+the match or the fight still is: that is exactly what the stored result says.
+
+**Why.** Measured on the 2026-10-11 23:08Z publish and on production rows. Tennis: stored score sum
+2–5, over/under lines 15.5–42.5, handicaps 0–8.5, 480 matches — an Over could never win, so the
+totals winner rate was **0.000 in all nine published tennis tournaments** and each cell's error was
+about 50 points. MMA: stored score sum always 1, over/under lines 0.5–4.5, 100 fights; its 2
+"winners" were 0.5 lines a 1–0 happens to clear. The real game and round counts were never stored,
+so these rows cannot be re-graded.
+
+**What it affected.** _Pending the first publish under this rule_: the published count is
+`score_unit_filter.excluded` (with `spreads_excluded` / `totals_excluded`). The upper bound from the
+row read is 580 totals and 547 handicap events before the price and push filters both curves apply.
+
+---
+
 ## 2026-09-13 — a one-question market its venue settled is graded, not thrown away
 
 **Population version:** `q271` (from `q270`) · **Code:** `5def08cb4` (the wiring) and `31de29e1b`

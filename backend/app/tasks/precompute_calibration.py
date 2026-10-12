@@ -1325,6 +1325,19 @@ CALIBRATION_CORRECTIONS = [
                        "earlier numbers here were incomplete rather than "
                        "wrong.",
     },
+    {
+        "date": "2026-10-11",
+        "title": "Tennis and fight over/unders we had no way to settle",
+        "rows": None,  # live count in payload.score_unit_filter.excluded
+        "description": "Over/under and handicap lines in tennis count games, "
+                       "and in MMA they count rounds. The result we keep for a "
+                       "tennis match is the sets each player won, and for a "
+                       "fight only who won, so it cannot say whether a line "
+                       "went over or under. We were scoring them anyway, and "
+                       "every tennis over/under came out as a miss. Those lines "
+                       "are no longer scored; who won the match or the fight "
+                       "still is. No result was re-graded.",
+    },
 ]
 
 # Horizons: (label, days_before_resolution)
@@ -1966,6 +1979,68 @@ def category_is_soccer_2way_excluded(category: str | None) -> bool:
     published moneyline curve. Read-side only (gotcha #21).
     """
     return bool(category) and category.startswith("soccer_")
+
+
+# #1010: tennis and MMA over/under and handicap lines cannot be graded from the
+# score we store.
+#
+# The spreads and totals curves grade every event the same way:
+# ``home_score + away_score > closing_over_under`` and
+# ``(home_score - away_score) + closing_home_spread > 0``. That is only a grade
+# when the stored score is in the same unit as the line. For these two sport
+# families it is not, measured on production 2026-10-11:
+#
+#   tennis  stored score = SETS (sum 2..5); lines = GAMES (O/U 15.5..42.5,
+#           handicap 0..8.5). Over can never win, so every Over was a loss:
+#           winner rate 0.000 in all nine published tennis tournaments, ECE ~50.
+#   mma     stored score = a 1-0 WINNER FLAG (sum always 1); lines = ROUNDS
+#           (O/U 0.5..4.5). Its 2 "winners" in 100 were 0.5 lines a 1-0 flag
+#           happens to clear.
+#
+# The real game or round count was never stored, so the outcome is UNKNOWN, not
+# a loss, and the rows are excluded rather than re-graded. Moneyline is
+# unaffected: the winner of a tennis match or a fight is exactly what the stored
+# score does say. Partitioned in Python on the rows' own ``category`` AFTER the
+# phase read/reuse, so a carried read is always judged by the current rule and
+# nothing is interpolated into the fingerprinted SQL. Read-side only (gotcha
+# #21) — never mutates scores or lines.
+SCORE_UNIT_MISMATCH_FAMILIES = ("mma", "tennis")
+
+SCORE_UNIT_MISMATCH_RULE_TEXT = (
+    "Excludes tennis and MMA over/under and handicap lines from the spreads and "
+    "totals curves. The stored score counts sets (tennis) or is a 1-0 winner "
+    "flag (MMA), while those lines count games or rounds, so the score cannot "
+    "settle them: every tennis Over was graded a loss. The game/round count was "
+    "never stored, so these rows are ungradeable, not losses, and are not "
+    "re-graded. Moneyline for both sports is kept. Read-side only (#1010)."
+)
+
+
+def category_has_score_unit_mismatch(category: str | None) -> bool:
+    """True if an events-table sport key's stored score cannot grade its lines.
+
+    The family is the key's first ``_`` segment (``tennis_atp_us_open`` ->
+    ``tennis``), matching :func:`score_unit_mismatch_sql`.
+    """
+    return bool(category) and category.split("_", 1)[0] in SCORE_UNIT_MISMATCH_FAMILIES
+
+
+def score_unit_mismatch_sql(key_column: str) -> str:
+    """The same family test as SQL, for the drill-down route's sample reads."""
+    families = ", ".join(f"'{f}'" for f in SCORE_UNIT_MISMATCH_FAMILIES)
+    return f"split_part({key_column}, '_', 1) IN ({families})"
+
+
+def split_score_unit_mismatch(rows) -> tuple[list, int]:
+    """Spreads/totals bucket rows -> (gradeable rows, outcomes excluded)."""
+    kept = []
+    excluded = 0
+    for r in rows:
+        if category_has_score_unit_mismatch(r.category):
+            excluded += r.n
+        else:
+            kept.append(r)
+    return kept, excluded
 
 
 # Queue #159 (#1010): esports malformed-MULTI "match bundle" curve exclusion.
@@ -7591,6 +7666,10 @@ async def compute_calibration_payload(db, *, runner=None) -> dict:
                 totals_rows = totals_result.all()
             runner.record(PHASE_SPORTS, "totals_rows", totals_rows, kind="rows")
 
+        # #1010: after record/reuse, so a carried read is judged by today's rule.
+        spreads_rows, score_unit_spreads_excluded = split_score_unit_mismatch(spreads_rows)
+        totals_rows, score_unit_totals_excluded = split_score_unit_mismatch(totals_rows)
+
         if not _sports_carried:
             await runner.commit(db)
             runner.complete(PHASE_SPORTS)
@@ -8652,6 +8731,13 @@ async def compute_calibration_payload(db, *, runner=None) -> dict:
             # cannot be told from an absence is a response shape, not an answer
             # (gotcha #53).
             "bookmaker_curve_degraded": bookmaker_curve_degraded,
+        },
+        "score_unit_filter": {  # #1010
+            "applies_to": "odds_api_spreads, odds_api_totals (tennis, mma)",
+            "rule": SCORE_UNIT_MISMATCH_RULE_TEXT,
+            "excluded": score_unit_spreads_excluded + score_unit_totals_excluded,
+            "spreads_excluded": score_unit_spreads_excluded,
+            "totals_excluded": score_unit_totals_excluded,
         },
         "heuristic_filter": {
             "applies_to": "polymarket",

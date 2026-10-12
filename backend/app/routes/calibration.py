@@ -2009,6 +2009,11 @@ async def calibration_examples(
 
     elif source in ("odds_api", "odds_api_spreads", "odds_api_totals"):
         # Event-sourced markets: reconstruct the same outcome rows the curve buckets.
+        from app.tasks.precompute_calibration import score_unit_mismatch_sql
+
+        # #1010: the curve drops tennis/MMA spreads and totals (the stored score
+        # cannot settle a games/rounds line), so their samples must not either.
+        score_unit_ok = f"NOT ({score_unit_mismatch_sql('s.key')})"
         if source == "odds_api":
             sql = text("""
                 SELECT market_name, outcome_name, price, won AS is_winner, settle_date FROM (
@@ -2041,7 +2046,7 @@ async def calibration_examples(
                 LIMIT :limit
             """)
         elif source == "odds_api_spreads":
-            sql = text("""
+            sql = text(f"""
                 SELECT market_name, outcome_name, price, won AS is_winner, settle_date FROM (
                     SELECT (home_team_name || ' vs ' || away_team_name) AS market_name,
                         (home_team_name || ' ' ||
@@ -2069,12 +2074,13 @@ async def calibration_examples(
                 ) o
                 JOIN sports s ON s.id = o.sport_id
                 WHERE price > 0 AND price < 1
+                  AND {score_unit_ok}
                   AND LEAST(FLOOR(price * 10)::int, 9) = :bucket
                 ORDER BY RANDOM()
                 LIMIT :limit
             """)
         else:  # odds_api_totals
-            sql = text("""
+            sql = text(f"""
                 SELECT market_name, outcome_name, price, won AS is_winner, settle_date FROM (
                     SELECT (home_team_name || ' vs ' || away_team_name) AS market_name,
                         ('Over ' || closing_over_under::text) AS outcome_name,
@@ -2100,6 +2106,7 @@ async def calibration_examples(
                 ) o
                 JOIN sports s ON s.id = o.sport_id
                 WHERE price > 0 AND price < 1
+                  AND {score_unit_ok}
                   AND LEAST(FLOOR(price * 10)::int, 9) = :bucket
                 ORDER BY RANDOM()
                 LIMIT :limit
