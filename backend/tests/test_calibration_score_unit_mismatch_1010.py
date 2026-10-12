@@ -608,15 +608,54 @@ class TestTheDisclosureIsBoundedByWhatTheRuleRemoved:
             verdict, "category_collapse", rejections=True)
 
     def test_another_rung_keeps_its_own_path(self):
-        """Only the score-unit rung is bounded here; a category another rung
+        """Only the bounded rungs are bounded; a category ONLY another rung
         newly discloses is judged exactly as before (no general rewrite)."""
+        prev_cats = dict(PUBLISHED_CATS, soccer=250_323 - 1_000, esports_lol=1_000)
+        prev_cells = dict(PUBLISHED_CELLS, soccer={"kalshi": 250_323 - 1_000},
+                          esports_lol={"kalshi": 1_000})
+        # esports_lol loses 900 to the label; soccer gains them, so the
+        # population and the declared narrowing are untouched.
+        cand_cats = dict(CANDIDATE_CATS, soccer=250_323 - 100, esports_lol=100)
+        cand_cells = dict(CANDIDATE_CELLS, soccer={"kalshi": 250_323 - 100},
+                          esports_lol={"kalshi": 100})
+        prev = _gate_payload(outcomes=PUBLISHED_POP, predicate=PUBLISHED_PREDICATE,
+                             categories=prev_cats, cells=prev_cells)
+        cand = _gate_payload(outcomes=CANDIDATE_POP, predicate=CANDIDATE_PREDICATE,
+                             categories=cand_cats, cells=cand_cells,
+                             score_unit=SCORE_UNIT_BLOCK)
+        cand["esports_multi_bundle_filter"] = {
+            "excluded_cells": [["kalshi", "esports_lol"]]}
+        verdict = evaluate_publish(cand, prev)
+        assert verdict.ok, verdict.summary()
+        obs = _by_code(verdict, "category_collapse_disclosed_exclusion")
+        assert obs["esports_lol"]["magnitude_uncheckable"] is True
+        assert "score_unit_accounting" not in obs["esports_lol"]
+        assert obs["tennis_atp_canadian_open"]["magnitude_uncheckable"] is False
+
+    def test_another_rungs_label_beside_this_rung_explains_nothing(self):
+        """#1523 (mixed): once this rung names a category, another rung's label
+        there never reaches the label excuse — it explains none of the drop."""
         cand, prev = _pair()
         cand["esports_multi_bundle_filter"] = {
             "excluded_cells": [["kalshi", "tennis_atp_canadian_open"]]}
         verdict = evaluate_publish(cand, prev)
-        obs = _by_code(verdict, "category_collapse_disclosed_exclusion")
-        assert obs["tennis_atp_canadian_open"]["magnitude_uncheckable"] is True
-        assert "score_unit_accounting" not in obs["tennis_atp_canadian_open"]
+        assert verdict.ok, verdict.summary()
+        canadian = _by_code(verdict, "category_collapse_disclosed_exclusion")[
+            "tennis_atp_canadian_open"]
+        assert canadian["magnitude_uncheckable"] is False
+        acct = canadian["score_unit_accounting"]
+        assert (acct["explained"], acct["unexplained"]) == (179, 0)
+        assert acct["unbounded_disclosures"] == ["esports_multi_bundle_filter"]
+
+        lost = dict(CANDIDATE_CELLS, tennis_atp_canadian_open={"odds_api": 180})
+        cand, prev = _pair(cand_cells=lost, cand_pop=CANDIDATE_POP - 796)
+        cand["esports_multi_bundle_filter"] = {
+            "excluded_cells": [["kalshi", "tennis_atp_canadian_open"]]}
+        verdict = evaluate_publish(cand, prev)
+        assert not verdict.ok
+        acct = _by_code(verdict, "category_collapse", rejections=True)[
+            "tennis_atp_canadian_open"]["score_unit_accounting"]
+        assert (acct["explained"], acct["unexplained"]) == (179, 796)
 
     def test_the_ledger_record_carries_the_arithmetic(self):
         from app.utils.calibration_publish_gate import gate_ledger_record

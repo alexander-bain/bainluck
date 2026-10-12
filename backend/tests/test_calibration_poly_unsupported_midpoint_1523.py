@@ -655,6 +655,97 @@ class TestTheGateBoundsTheDisclosure:
         assert got["by_cell"] == {"table_tennis": {"polymarket": TT_REMOVED}}
 
 
+def _bundle(n=1):
+    """The unbounded rung newly naming the same cell, as Root's replay did.
+
+    Its own per-cell number is a candidate-side total (overlaps other rungs and
+    the baseline's exclusions); the gate must not add it to the bounded count.
+    """
+    return {"applies_to": "polymarket", "excluded": n,
+            "excluded_by_cell": {"polymarket/table_tennis": n}}
+
+
+def _mixed_gate(*, lost_extra=0, block=None, bundle_n=1):
+    prev = _payload(tt_cells={"polymarket": TT_PUBLISHED}, predicate="a" * 32)
+    cand = _payload(
+        tt_cells={"polymarket": TT_PUBLISHED - TT_REMOVED - lost_extra},
+        predicate="b" * 32,
+        block=_block() if block is None else block,
+    )
+    cand["nonexclusive_bundle_filter"] = _bundle(bundle_n)
+    return evaluate_publish(cand, prev)
+
+
+class TestAnUnboundedLabelBesideTheRuleExcusesNothing:
+    """Root's 50e8 replay: 1 declared bid row + a bundle label naming the same
+    category read PASS / magnitude_uncheckable over 5,133 lost. A bounded rung in
+    the category means the label waiver is never reached; only bounded counts
+    explain, and the unbounded rung explains none of the drop."""
+
+    def test_the_exact_count_still_publishes_and_names_the_uncounted_rung(self):
+        verdict = _mixed_gate()
+        assert verdict.ok, verdict.summary()
+        obs = _record(verdict, "category_collapse_disclosed_exclusion")["table_tennis"]
+        assert obs["magnitude_uncheckable"] is False
+        acct = obs["score_unit_accounting"]
+        assert (acct["explained"], acct["unexplained"]) == (TT_REMOVED, 0)
+        assert acct["unbounded_disclosures"] == ["nonexclusive_bundle_filter"]
+        assert "explains none of the drop" in obs["detail"]
+
+    def test_one_declared_row_plus_a_label_refuses(self):
+        verdict = _mixed_gate(block=_block(excluded=1))
+        assert not verdict.ok
+        rej = _record(verdict, "category_collapse", rejections=True)["table_tennis"]
+        acct = rej["score_unit_accounting"]
+        assert (acct["explained"], acct["unexplained"]) == (1, TT_REMOVED - 1)
+        assert "nonexclusive_bundle_filter also names this category" in rej["detail"]
+        assert not _record(verdict, "category_collapse_disclosed_exclusion")
+
+    def test_extra_same_category_loss_plus_a_label_refuses(self):
+        verdict = _mixed_gate(lost_extra=2_000)
+        assert not verdict.ok
+        acct = _record(verdict, "category_collapse", rejections=True)[
+            "table_tennis"]["score_unit_accounting"]
+        assert (acct["explained"], acct["unexplained"]) == (TT_REMOVED, 2_000)
+
+    def test_the_labels_own_count_is_never_added(self):
+        # The bundle states the whole loss; a count that cannot be deduped
+        # against the bid set or the baseline buys nothing.
+        verdict = _mixed_gate(block=_block(excluded=1), bundle_n=TT_REMOVED)
+        assert not verdict.ok
+        acct = _record(verdict, "category_collapse", rejections=True)[
+            "table_tennis"]["score_unit_accounting"]
+        assert acct["explained"] == 1
+
+    @pytest.mark.parametrize("listed", [False, True], ids=["no_cells", "cell_listed"])
+    def test_missing_counts_plus_a_label_refuse(self, listed):
+        # cell_listed is Root's replay shape; no_cells names no cell at all, so
+        # the rung is absent from the disclosure and must still refuse.
+        block = _block()
+        block.pop("excluded_by_cell")
+        if listed:
+            block["excluded_cells"] = [["polymarket", "table_tennis"]]
+        verdict = _mixed_gate(block=block)
+        assert not verdict.ok
+        assert "table_tennis" in _record(verdict, "category_collapse", rejections=True)
+
+    def test_the_tolerance_is_unchanged_on_the_mixed_path(self):
+        assert _mixed_gate(lost_extra=1_024).ok
+        assert not _mixed_gate(lost_extra=1_025).ok
+
+    def test_a_label_alone_keeps_its_inherited_excuse(self):
+        """Pure legacy, outside this path: no bounded rung names the category."""
+        prev = _payload(tt_cells={"polymarket": TT_PUBLISHED}, predicate="a" * 32)
+        cand = _payload(tt_cells={"polymarket": TT_PUBLISHED - TT_REMOVED},
+                        predicate="b" * 32)
+        cand["nonexclusive_bundle_filter"] = _bundle()
+        verdict = evaluate_publish(cand, prev)
+        assert verdict.ok, verdict.summary()
+        obs = _record(verdict, "category_collapse_disclosed_exclusion")["table_tennis"]
+        assert obs["magnitude_uncheckable"] is True
+        assert "score_unit_accounting" not in obs
+
+
 # ---------------------------------------------------------------------------
 # The producer half of that count.
 # ---------------------------------------------------------------------------

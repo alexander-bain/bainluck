@@ -1968,15 +1968,60 @@ def evaluate_publish(
             # candidate against a pre-ruling baseline and refusing every hour
             # for three days while both artifacts said why in a published key.
             disclosed = _newly_excluded_in(cand, prev, name)
-            if disclosed and all(
-                r["section"] in BOUNDED_DISCLOSURE_SECTIONS for r in disclosed
-            ):
+            bounded = [
+                r for r in disclosed if r["section"] in BOUNDED_DISCLOSURE_SECTIONS
+            ]
+            # #1523: a bounded rung published with no usable per-cell map names
+            # no cell at all, so it never appears in ``disclosed`` — and an
+            # unbounded label in the same category would then reach the label
+            # excuse alone. Where it removed rows is unknown, so it may have
+            # removed them here: that is a refusal, not a silence.
+            unaccounted = sorted(
+                name
+                for name, key in BOUNDED_DISCLOSURE_SECTIONS.items()
+                if name not in {r["section"] for r in bounded}
+                and (cand.get(key) or {}).get("section_present")
+                and (cand.get(key) or {}).get("by_cell") is None
+            )
+            if bounded or (disclosed and unaccounted):
                 # #1010: the score-unit rung publishes what it removed per cell,
                 # so its excuse is bounded by that, not granted by its label.
                 # #1523: the Polymarket bid-support rung joins on the same terms.
-                accounting, refusal = _judge_score_unit_disclosure(
-                    name, prev_n, cand, prev, disclosed
+                #
+                # #1523 (mixed): once ANY bounded rung names this category, the
+                # label excuse below is never reached, even if an unbounded rung
+                # names it too. Only the bounded rungs' own counts explain loss;
+                # the unbounded label explains NONE of it. Its per-cell numbers,
+                # where it has any, are candidate-side totals that overlap other
+                # rungs and the baseline's own exclusions, so they cannot be
+                # deduped into the new union and are not added. (Root's replay:
+                # 1 declared bid row plus a bundle label excused 5,132 more.)
+                unbounded = sorted(
+                    {r["section"] for r in disclosed} - {r["section"] for r in bounded}
                 )
+                if unaccounted:
+                    accounting, refusal = None, (
+                        f"{' + '.join(unaccounted)} is published without a "
+                        "usable per-cell count (excluded_by_cell absent, "
+                        "malformed, or not summing to excluded), so how much of "
+                        "this category it removed is unbounded"
+                    )
+                else:
+                    accounting, refusal = _judge_score_unit_disclosure(
+                        name, prev_n, cand, prev, bounded
+                    )
+                if unbounded:
+                    if accounting is not None:
+                        accounting["unbounded_disclosures"] = unbounded
+                    uncounted = (
+                        f"; {' + '.join(unbounded)} also names this category but "
+                        "states no deduped count of what it newly removed, so it "
+                        "explains none of the drop"
+                    )
+                    if refusal is not None:
+                        refusal += uncounted
+                else:
+                    uncounted = ""
                 if refusal is None:
                     observe(
                         "category_collapse_disclosed_exclusion",
@@ -1984,11 +2029,12 @@ def evaluate_publish(
                         f"({prev_n:,} -> {accounting['candidate']:,}), past the "
                         f"{CATEGORY_DROP_TOLERANCE * 100:.0f}% limit, and is "
                         f"RECORDED rather than refused: "
-                        f"{' + '.join(sorted({r['section'] for r in disclosed}))} "
+                        f"{' + '.join(sorted({r['section'] for r in bounded}))} "
                         f"removed {accounting['explained']:,} of its outcomes "
                         f"({', '.join(accounting['sources'])}) and the "
                         f"{accounting['retained_baseline']:,} it did not touch "
-                        f"lost {accounting['unexplained_drop_pct']:.1f}%",
+                        f"lost {accounting['unexplained_drop_pct']:.1f}%"
+                        f"{uncounted}",
                         category=name,
                         previous=prev_n,
                         candidate=cand_n,

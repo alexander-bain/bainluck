@@ -89,7 +89,9 @@ ECE 7.1 over 10,256 outcomes, with the 0.5–0.6 bucket winning 41.5%.
 published count will be `poly_unsupported_bid_filter.excluded`, with `excluded_by_cell` per
 category: the outcomes this test removes from the published curve beyond #151's rule. The publish
 gate excuses a category's drop only up to that per-category count; any further loss in the same
-category is held to the ordinary 20% limit, and a missing or inconsistent count refuses. Fields that
+category is held to the ordinary 20% limit, and a missing or inconsistent count refuses. Another
+rule that names the same category without its own deduplicated count explains none of the drop, so it
+cannot turn a refusal into a publish. Fields that
 become incomplete because one member left are not in the count, so the gate errs toward refusing. The 0.50 spread is the Kalshi writer's bar used as a
 hypothesis for Polymarket. If the receipt shows it removing supported forecasts, the rule is corrected
 or withdrawn, not tightened to reach a score.
