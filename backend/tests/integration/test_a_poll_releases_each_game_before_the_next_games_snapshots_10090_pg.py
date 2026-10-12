@@ -17,8 +17,13 @@ the capture does NOT show that pid 2661383 was writing event 14780557. The two
 records are concurrent and relevant. They are not joined, and nothing here
 claims the 1.386 s was that game's delay.
 
-What the source shows: that snapshot-writer shape is ``_poll_all_odds``. #837
-made it commit once per SPORT. Inside a sport, ``_ingest_event_odds`` stamps
+Nor does the SQL name its caller. ``_ingest_event_odds`` writes that
+snapshot UPDATE for three callers: ``_poll_all_odds``, the MLB pre-game tier,
+and discovery (``tasks/sports.py``). This file reproduces the first one. It is
+not the established production caller, and it is not the screenshot's cause.
+
+What the source shows for ``_poll_all_odds``: #837 made it commit once per
+SPORT. Inside a sport, ``_ingest_event_odds`` stamps
 ``betting`` on game N's ``events`` row, and then the same transaction goes on
 to games N+1…: registry lookups, snapshot SELECTs, and the autoflushed
 ``reading_count``/``valid_until`` updates of every book that did not move.
