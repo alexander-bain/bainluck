@@ -429,6 +429,10 @@ class KalshiWebSocket:
                                         self.exact_trace.response(connection, data)
                                         if msg_type == "ticker":
                                             self.exact_trace.received(connection, payload)
+                                        elif msg_type in (
+                                            "orderbook_snapshot", "orderbook_delta",
+                                        ):
+                                            self.exact_trace.book_received(connection, data)
                                     except Exception:
                                         pass
                                 if msg_type in ("subscribed", "error", "ok"):
@@ -439,7 +443,18 @@ class KalshiWebSocket:
                                     await self._handle_book_frame(ws, data, dispatch)
                                 elif msg_type == "ticker" and self.on_ticker:
                                     if self._book is not None:
-                                        payload = self._overlay_ticker(payload)
+                                        received, payload = (
+                                            payload, self._overlay_ticker(payload),
+                                        )
+                                        if self.exact_trace is not None:
+                                            try:
+                                                self.exact_trace.derived(
+                                                    received, payload,
+                                                    "TICKER_BOOK_OVERLAY",
+                                                )
+                                            except Exception:
+                                                pass
+                                        received = None
                                     await dispatch.submit(
                                         self.on_ticker, payload, "Ticker"
                                     )
@@ -569,6 +584,11 @@ class KalshiWebSocket:
             self._book.forget([ticker])
             quote = None
         await self._request_resnapshots(ws)
+        if self.exact_trace is not None:
+            try:
+                self.exact_trace.derived(data, quote, "ORDERBOOK_DERIVED")
+            except Exception:
+                pass
         if quote is None or not self.on_ticker:
             return
         last = self._last_trade.get(quote["market_ticker"])

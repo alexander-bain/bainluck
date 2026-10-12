@@ -9,6 +9,14 @@ Identical repeats retain exact receive/InputMark identities without spending
 lines. A commit, failure or event basis materializes its required input chain;
 received clocks stay original even when the evidence is emitted later.
 
+Provenance (#10090): RECEIVED.source says what arrived — a TICKER summary
+(its own whitelisted prices) or an ORDERBOOK_FRAME (no prices: book levels
+are not a quote). DECISION.dispatch says what the handler actually read:
+TICKER_AS_RECEIVED, TICKER_BOOK_OVERLAY (a copy carrying the book's BBO) or
+ORDERBOOK_DERIVED (the book's changed best quote), with dispatched_prices
+from that object. A pending receipt holds its object, so a recycled id can
+never hand one frame's receipt to another; no exact link is UNAVAILABLE.
+
 Post-deploy procedure (owner-controlled; this module changes no configuration):
 use the existing bounded worker log session and arrange owner-controlled
 activation of the two exact outcome tickers and an absolute expiry <=600s away.
@@ -259,7 +267,8 @@ class ExactKalshiTrace:
             supplied_fields=[f for f in FIELDS if f in msg],
             prices={f: number(msg[f]) for f in FIELDS if f in msg},
             vendor_clock={f: number(msg[f]) for f in CLOCK_FIELDS if f in msg}
-            or "UNAVAILABLE"
+            or "UNAVAILABLE",
+            source="TICKER",
         )
         signature = (connection, tuple(record["prices"].items()))
         changed = self.last_quotes.get(identity["ticker"]) != signature
@@ -267,10 +276,73 @@ class ExactKalshiTrace:
         self._put(
             self.receives,
             id(msg),
-            dict(identity=identity, record=record, logged=changed),
+            dict(
+                identity=identity,
+                record=record,
+                logged=changed,
+                obj=msg,  # pins id(msg) while pending: never recycled
+                dispatch="TICKER_AS_RECEIVED",
+            ),
         )
         if changed:
             self._record(**record)
+
+    def book_received(self, connection, frame):
+        """An order book frame's own receipt, before the book is applied.
+        Logged only when a dispatched quote's decision materializes it."""
+        if not self.active() or not isinstance(frame, dict):
+            return
+        msg = frame.get("msg")
+        ticker = msg.get("market_ticker") if isinstance(msg, dict) else None
+        if not isinstance(ticker, str) or ticker.upper() not in self.targets:
+            return
+        self.receive_seq += 1
+        identity = dict(
+            connection=connection, receive_id=self.receive_seq, ticker=ticker.upper()
+        )
+        record = dict(
+            stage="RECEIVED",
+            **identity,
+            receive_wall=self.wall(),
+            receive_mono=self.mono(),
+            source="ORDERBOOK_FRAME",
+            book_kind=frame.get("type"),
+            sid=number(frame.get("sid")),
+            seq=number(frame.get("seq")),
+            supplied_fields=[],
+            prices={},
+            vendor_clock={f: number(msg[f]) for f in CLOCK_FIELDS if f in msg}
+            or "UNAVAILABLE",
+        )
+        self._put(
+            self.receives,
+            id(frame),
+            dict(
+                identity=identity,
+                record=record,
+                logged=False,
+                obj=frame,
+                dispatch="UNDISPATCHED",
+            ),
+        )
+
+    def _take(self, obj):
+        entry = self.receives.get(id(obj))
+        if entry is None or entry["obj"] is not obj:
+            return None
+        return self.receives.pop(id(obj))
+
+    def derived(self, original, dispatched, dispatch):
+        """Move a receipt onto the object the handler will actually read.
+        ``dispatched`` None (no quote) drops it; the same object keeps it."""
+        if not self.active():
+            return
+        entry = self._take(original)
+        if entry is None or dispatched is None:
+            return
+        if dispatched is not original:
+            entry = dict(entry, obj=dispatched, dispatch=dispatch)
+        self._put(self.receives, id(dispatched), entry)
 
     @staticmethod
     def _fields(entry):
@@ -334,14 +406,18 @@ class ExactKalshiTrace:
         ticker = msg.get("market_ticker") or msg.get("ticker")
         if not isinstance(ticker, str) or ticker.upper() not in self.targets:
             return
-        received = self.receives.pop(id(msg), None)
+        received = self._take(msg)
         identity = (
             received["identity"]
             if received
             else dict(ticker=ticker.upper(), receive_id="UNAVAILABLE")
         )
+        dispatched_prices = {f: number(msg[f]) for f in FIELDS if f in msg}
         fields = dict(
             **identity,
+            source=received["record"]["source"] if received else "UNAVAILABLE",
+            dispatch=received["dispatch"] if received else "UNAVAILABLE",
+            dispatched_prices=dispatched_prices,
             reason=reason,
             market=market,
             outcome=outcome,
@@ -355,6 +431,9 @@ class ExactKalshiTrace:
             identity["ticker"],
             identity.get("connection"),
             tuple(received["record"]["prices"].items()) if received else None,
+            fields["source"],
+            fields["dispatch"],
+            tuple(dispatched_prices.items()),
             reason,
             market,
             outcome,
