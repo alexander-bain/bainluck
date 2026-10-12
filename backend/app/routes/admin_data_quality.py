@@ -6050,6 +6050,19 @@ async def audit_clean_resolution_candidates(
             "total_outcomes": sum(c["outcomes"] for c in candidates)}
 
 
+#: The calibration-by-type split's "game" bucket: every Kalshi game-winner
+#: series, not one league's (#1529). The CASE named only `KXNHLGAME`, so MLB, NBA
+#: and NFL winners (`KXMLBGAME-…`, `KXNBAGAME-…`, `KXNFLGAME-…`) were counted as
+#: `prop`, and the three prop read-outs below mixed their outcomes in. The test
+#: is the SERIES token ending in GAME, the rule `routes/events.py::
+#: _is_kalshi_game_winner_series` reads in Python (80 of 80 such series are the
+#: game's winner, measured 2026-10-02), never "game" anywhere in the ticker.
+#: Plain SQL with no bind parameter and no colon, so `text()` reads it verbatim.
+_KALSHI_GAME_WINNER_SERIES_SQL = (
+    "(fm.source = 'kalshi' AND split_part(fm.external_id, '-', 1) LIKE 'KX%GAME')"
+)
+
+
 @router.get("/calibration-mce-by-sport")
 async def calibration_mce_by_sport(
     request: Request, secret: str = Query(None),
@@ -6222,7 +6235,7 @@ async def calibration_mce_by_sport(
                 SELECT fo.calibration_probability, fo.is_winner,
                     fm.source,
                     CASE
-                        WHEN fm.external_id LIKE 'KXNHLGAME%' THEN 'game'
+                        WHEN """ + _KALSHI_GAME_WINNER_SERIES_SQL + """ THEN 'game'
                         WHEN fm.external_id LIKE 'KX%' AND fm.source = 'kalshi' THEN 'prop'
                         WHEN fm.source = 'polymarket' AND fm.event_id IS NOT NULL THEN 'pm_game'
                         ELSE 'pm_futures'
@@ -6278,7 +6291,7 @@ async def calibration_mce_by_sport(
                 WHERE fm.status = 'resolved'
                   AND fm.llm_sport_category = :sport
                   AND fm.source = 'kalshi'
-                  AND fm.external_id NOT LIKE 'KXNHLGAME%%'
+                  AND NOT """ + _KALSHI_GAME_WINNER_SERIES_SQL + """
                   AND fo.calibration_probability IS NOT NULL
                   AND fo.is_winner IS NOT NULL
             )
@@ -6324,7 +6337,7 @@ async def calibration_mce_by_sport(
                 WHERE fm.status = 'resolved'
                   AND fm.llm_sport_category = :sport
                   AND fm.source = 'kalshi'
-                  AND fm.external_id NOT LIKE 'KXNHLGAME%%'
+                  AND NOT """ + _KALSHI_GAME_WINNER_SERIES_SQL + """
                   AND fo.opening_probability IS NOT NULL
                   AND fo.is_winner IS NOT NULL
             ),
@@ -6353,7 +6366,7 @@ async def calibration_mce_by_sport(
             WHERE fm.status = 'resolved'
               AND fm.llm_sport_category = :sport
               AND fm.source = 'kalshi'
-              AND fm.external_id NOT LIKE 'KXNHLGAME%%'
+              AND NOT """ + _KALSHI_GAME_WINNER_SERIES_SQL + """
               AND fo.calibration_probability IS NOT NULL
               AND fo.is_winner IS NOT NULL
         """), {"sport": detail_sport})
