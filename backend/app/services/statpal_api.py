@@ -1711,13 +1711,22 @@ class StatPalAPIService(BaseAPIClient):
         if not isinstance(data, dict):
             malformed("$", data)
             return read()
-        section = children(data, "scores", "")
-        if section is None:
+        # `scores` and `tournament` are dicts or nothing, as in the old walk; a
+        # list there is not wrapped the way a stage/week/day list is.
+        section = data.get("scores")
+        if not isinstance(section, dict):
+            skipped.append(StatPalScheduleReceipt(
+                SKIP_MALFORMED_NODE, "scores",
+                detail=f"scores is {_node_type(section, 'scores' in data)}",
+            ))
             return read()
-        tournament = children(section[0], "tournament", "scores")
-        if tournament is None:
+        tournament = section.get("tournament")
+        if not isinstance(tournament, dict):
+            skipped.append(StatPalScheduleReceipt(
+                SKIP_MALFORMED_NODE, "scores/tournament",
+                detail=f"tournament is {_node_type(tournament, 'tournament' in section)}",
+            ))
             return read()
-        tournament = tournament[0]
         league_name = tournament.get("name")
         stages = children(tournament, "stage", "scores/tournament")
         if stages is None:

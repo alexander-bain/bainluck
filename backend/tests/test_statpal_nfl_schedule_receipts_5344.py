@@ -252,6 +252,15 @@ class TestTheWholePayloadUnreadable:
              "scores/tournament", "tournament is str"),
             (lambda p: {"scores": {"tournament": {"name": "USA: NFL"}}},
              "scores/tournament/stage", "stage is absent"),
+            # A list is wrapped at stage/week/day level, never at these two
+            # (independent review, 98540b1d): the old walk reads them as empty.
+            (lambda p: {"scores": [p["scores"]]}, "scores", "scores is list"),
+            (lambda p: {"scores": {"tournament": [p["scores"]["tournament"]]}},
+             "scores/tournament", "tournament is list"),
+            (lambda p: {"scores": []}, "scores", "scores is list"),
+            (lambda p: {"scores": {"tournament": []}}, "scores/tournament", "tournament is list"),
+            (lambda p: {"scores": [None]}, "scores", "scores is list"),
+            (lambda p: {"scores": {"tournament": ["x"]}}, "scores/tournament", "tournament is list"),
         ],
     )
     def test_structure_missing_is_a_receipt_not_an_empty_schedule(
@@ -398,16 +407,34 @@ class TestOldCallersUnchanged:
         assert calls == []
 
 
-def test_every_reason_is_exercised():
-    """The closed set above is the whole set the walk can emit."""
+def test_every_reason_is_emitted_by_the_walk(service):
+    """The closed set is exactly what the walk emits: each reason is produced
+    by a real payload here, and no other SKIP_/REFUSE_ name exists."""
     import app.services.statpal_api as mod
 
-    emitted = {
-        getattr(mod, name)
-        for name in dir(mod)
-        if name.startswith(("SKIP_", "REFUSE_"))
+    def emitted(payload):
+        return set(service._parse_nfl_season_schedule_read(payload).refusals)
+
+    missing_team = _load(REGULAR)
+    _week_one_games(missing_team)[0]["home"]["name"] = ""
+    raises = _load(REGULAR)
+    _week_one_games(raises)[0].pop("datetime_utc")
+    _week_one_games(raises)[0].update(
+        timezone="EST", date="13.09.2026", time="1:00 PM", away=[], away_team="X"
+    )
+    no_id = _load(REGULAR)
+    del _week_one_games(no_id)[0]["contestid"]
+
+    seen = (
+        emitted({"scores": None})
+        | emitted(missing_team)
+        | emitted(raises)
+        | emitted(no_id)
+    )
+    declared = {
+        getattr(mod, name) for name in dir(mod) if name.startswith(("SKIP_", "REFUSE_"))
     }
-    assert emitted == {
+    assert seen == declared == {
         SKIP_MALFORMED_NODE,
         SKIP_MISSING_TEAM,
         SKIP_PARSE_EXCEPTION,
