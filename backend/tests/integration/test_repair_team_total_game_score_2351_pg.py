@@ -294,3 +294,55 @@ async def test_a_moved_prior_is_drift_even_when_a_backup_row_already_exists(db, 
             f"SELECT prior_is_winner FROM {rt.BAK_TABLE} WHERE outcome_id = 201010271"
         ))).scalar_one()
     assert kept is True, "the first backup, from before the rail, is never overwritten"
+
+
+async def test_restore_never_undoes_a_later_write_that_restates_the_same_verdict(db):
+    """Root's restore hole: a later writer re-states the rail's own boolean and
+    source (here, a resolver touching `last_updated`). Same values, newer write
+    — the restore must count it as diverged and leave it, never revert it."""
+    plan = await _run(db, rt.repair)
+    await _run(db, rt.repair, apply=True, plan_hash=plan["plan_hash"])
+    before_restore = await _state(db)
+    async with db() as other:
+        await other.execute(text(
+            "UPDATE futures_outcomes SET is_winner = false, resolution_source = 'game_score',"
+            " last_updated = NOW() WHERE id = 201010272"))
+        await other.commit()
+    dry = await _run(db, rt.restore)
+    assert dry["restorable"] == 14 and dry["diverged"] == 1
+    await _run(db, rt.restore, apply=True)
+    after = await _state(db)
+    assert after[201010272][:2] == (False, "game_score"), "the later write stands"
+    assert after[201010272][2] != before_restore[201010272][2]
+    assert after[201010273][:2] == (True, "game_score"), "an untouched leg is restored"
+
+
+@pytest.mark.parametrize("event_sql", [
+    "UPDATE events SET status = 'in_progress' WHERE id = 14788069",
+    "UPDATE events SET commence_time = '2026-09-22T23:05:00Z',"
+    " completed_at = '2026-09-22T20:00:00Z' WHERE id = 14788069",
+])
+async def test_an_event_that_stops_being_a_valid_final_after_the_plan_gets_no_write(
+    db, monkeypatch, event_sql
+):
+    """Root's apply hole: the planner refuses a non-final event and a completion
+    before the start; the write must re-ask both, not just score and clubs."""
+    plan = await _run(db, rt.repair)
+    real = rt._plan_page
+
+    async def plan_then_event_changes(*a, **k):
+        result = await real(*a, **k)
+        async with db() as other:
+            await other.execute(text(event_sql))
+            await other.commit()
+        return result
+
+    monkeypatch.setattr(rt, "_plan_page", plan_then_event_changes)
+    out = await _run(db, rt.repair, apply=True, plan_hash=plan["plan_hash"])
+    assert out["legs_written"] == 8 and out["drift_refused"] == 7  # CIN lands, NYY refused
+    after = await _state(db)
+    assert all(after[oid][0] is True for oid in range(201010270, 201010277))
+    async with db() as s:
+        backed = {r[0] for r in (await s.execute(text(
+            f"SELECT outcome_id FROM {rt.BAK_TABLE}"))).all()}
+    assert not backed & set(range(201010270, 201010277)), "no backup row for a refused leg"

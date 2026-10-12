@@ -50,20 +50,26 @@ the score both rest on). An apply recomputes the plan with the same
 ``after_id``/``limit``/``only_ids`` and REFUSES, writing nothing, unless the hash
 matches. Each write then compare-and-sets on the same facts: the row still
 carries `game_score`, the prior verdict and the same name, and its event still
-carries the same score and clubs. A row that moved is left alone, counted as
-``drift_refused``, and its backup row is pruned.
+carries the same score and clubs and is still final with a completion no earlier
+than its start — the planner's own validity test, re-asked at the write. A row
+that moved is left alone, counted as ``drift_refused``, and its backup row is
+pruned.
 
 ## D51: backup and restore
 
 Each leg is copied into :data:`BAK_TABLE` (prior grade + the grade this rail
 wrote) in the same transaction as its write, and the write joins to that row, so
-an unbacked leg cannot be written. The undo is one statement::
+an unbacked leg cannot be written. The backup also records the ROW VERSION the
+write produced (``xmin``) and the ``last_updated`` stamp it set. The undo is one statement::
 
     curl -X POST -H "Authorization: Bearer $ADMIN_TOKEN" \\
       "$BAINLUCK_API/api/admin/repairs/team-total-game-score-restore?apply=true"
 
-It puts back only legs that still carry exactly what this rail wrote; a leg any
-other writer has graded since is reported as diverged and left alone.
+It puts back only legs whose row is still the exact version this rail wrote:
+``xmin`` changes on EVERY later UPDATE, including one that re-states the same
+verdict and source, so a later writer is never undone — its leg is reported as
+diverged and left alone. A table rewrite that re-mints tuples (dump/restore,
+pg_repack) also moves ``xmin``; the restore then refuses rather than guesses.
 
 ATTENDED ONLY: never wire this to a beat.
 """
@@ -159,7 +165,9 @@ _BAK_CREATE = f"""
         written_is_winner BOOLEAN NOT NULL,
         home_score INTEGER NOT NULL,
         away_score INTEGER NOT NULL,
-        backed_up_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        backed_up_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        written_xmin TEXT,
+        written_last_updated TIMESTAMPTZ
     )
 """
 
@@ -179,8 +187,9 @@ _BAK_COPY = f"""
     RETURNING outcome_id
 """
 
-#: Compare-and-set on every fact the verdict rests on. Joined to the backup, so
-#: an unbacked row has nothing to join to.
+#: Compare-and-set on every fact the verdict rests on, including the planner's
+#: event-validity test (final, and `completed_at >= commence_time` when both are
+#: set). Joined to the backup, so an unbacked row has nothing to join to.
 _APPLY_SQL = f"""
     UPDATE futures_outcomes fo
     SET is_winner = :won, last_updated = NOW()
@@ -195,17 +204,22 @@ _APPLY_SQL = f"""
       AND e.away_score = :as_
       AND e.home_team_name IS NOT DISTINCT FROM :home
       AND e.away_team_name IS NOT DISTINCT FROM :away
+      AND e.status IN {FINAL_STATUSES!r}
+      AND NOT (e.commence_time IS NOT NULL AND e.completed_at IS NOT NULL
+               AND e.completed_at < e.commence_time)
       AND fo.resolution_source = '{READ_SOURCE}'
       AND fo.is_winner IS NOT DISTINCT FROM :prior
       AND fo.name IS NOT DISTINCT FROM :name
-    RETURNING fo.id
+    RETURNING fo.id, fo.xmin::text AS row_version, fo.last_updated
 """
 
-#: A backup row that pre-dated this call keeps its prior; it learns what was
-#: written now, so the restore recognises the leg as this rail's.
+#: Every successful write stamps its backup row with what was written and the
+#: row version it produced. A backup row that pre-dated this call keeps its
+#: prior — the FIRST copy is the one from before the rail.
 _BAK_MARK_WRITTEN = f"""
     UPDATE {BAK_TABLE}
-    SET written_is_winner = :won, home_score = :hs, away_score = :as_
+    SET written_is_winner = :won, home_score = :hs, away_score = :as_,
+        written_xmin = :row_version, written_last_updated = :stamp
     WHERE outcome_id = :oid
 """
 
@@ -216,6 +230,8 @@ _BAK_EXISTS = f"SELECT to_regclass('{BAK_TABLE}') IS NOT NULL"
 _RESTORE_WHERE = f"""
     FROM {BAK_TABLE} b
     WHERE fo.id = b.outcome_id
+      AND b.written_xmin IS NOT NULL
+      AND fo.xmin::text = b.written_xmin
       AND fo.resolution_source = '{READ_SOURCE}'
       AND fo.is_winner IS NOT DISTINCT FROM b.written_is_winner
       AND b.prior_is_winner IS DISTINCT FROM b.written_is_winner
@@ -230,7 +246,9 @@ _RESTORE_SQL = f"""
 _RESTORE_CENSUS = f"""
     SELECT count(*) AS backed_up,
            count(*) FILTER (
-               WHERE fo.resolution_source = '{READ_SOURCE}'
+               WHERE b.written_xmin IS NOT NULL
+                 AND fo.xmin::text = b.written_xmin
+                 AND fo.resolution_source = '{READ_SOURCE}'
                  AND fo.is_winner IS NOT DISTINCT FROM b.written_is_winner
                  AND b.prior_is_winner IS DISTINCT FROM b.written_is_winner
            ) AS restorable,
@@ -458,12 +476,14 @@ async def _write_leg(session, p: dict) -> bool:
               "as_": p["away_score"], "home": p["home"], "away": p["away"],
               "name": p["name"]}
     inserted = bool((await session.execute(text(_BAK_COPY), params)).all())
-    changed = bool((await session.execute(text(_APPLY_SQL), params)).all())
-    if changed and not inserted:
-        await session.execute(text(_BAK_MARK_WRITTEN), params)
-    if inserted and not changed:
+    hit = (await session.execute(text(_APPLY_SQL), params)).all()
+    if hit:
+        await session.execute(text(_BAK_MARK_WRITTEN), {
+            **params, "row_version": hit[0].row_version, "stamp": hit[0].last_updated,
+        })
+    elif inserted:
         await session.execute(text(_BAK_PRUNE), params)
-    return changed
+    return bool(hit)
 
 
 async def repair(
