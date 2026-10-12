@@ -952,10 +952,20 @@ export default function EventPage({ params }: EventPageProps) {
   // was OBSERVED after the headline's blend (PR #8758's clocks — never the
   // edge's serve minute) moves the headline, through the same cache a frame
   // writes; the next poll is reconciled against the same edge in the fetcher.
+  //
+  // #10090: and only once a headline is HELD. Before the first detail read
+  // lands there is nothing to adopt the edge into, and the write is not a
+  // no-op: swr drops an in-flight fetch that a later mutation post-dates, even
+  // one whose updater returns `undefined`. A history body that beat the first
+  // detail by a millisecond left the page with no headline and no quote stream
+  // until the next 32s poll (production, 15327809). That first read reconciles
+  // against `latestBlendEdgeRef` in its own fetcher; the dependency below
+  // re-runs this once a headline is held, for a read that resolved first.
+  const holdsHeadline = event !== undefined;
   useEffect(() => {
     const edge = servedBlendEdgeObservation(servedHistory);
     latestBlendEdgeRef.current = edge;
-    if (!edge) return;
+    if (!edge || !holdsHeadline) return;
     // #9051: an edge from a fold the held one cannot be ordered against (a twin
     // joined or left) is refused; only a fresh detail read can settle it, so ask
     // for one and write nothing this tick (same swr hazard as the push effect).
@@ -964,7 +974,7 @@ export default function EventPage({ params }: EventPageProps) {
       return;
     }
     refreshEvent((prev) => adoptNewerBlendEdge(prev, edge), { revalidate: false });
-  }, [servedHistory, refreshEvent, foldedRefetch]);
+  }, [servedHistory, refreshEvent, foldedRefetch, holdsHeadline]);
 
   /* #8066: the chart's blend line must be the BACKEND's blend, and after #920
      `historyData.aggregate_line` can no longer answer that — it holds the
