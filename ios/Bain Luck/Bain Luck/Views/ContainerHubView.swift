@@ -47,6 +47,15 @@ struct ContainerHubView: View {
                 if let note = presentation.note {
                     Text(note).font(.subheadline).foregroundStyle(DS.textSecondary)
                 }
+                if let counts = presentation.countLabel {
+                    Text(counts).font(.subheadline).foregroundStyle(DS.textSecondary)
+                        .accessibilityIdentifier("hub.loadedCount")
+                }
+                if let error = vm.refreshError {
+                    Text("Couldn’t refresh. Showing the last loaded collection. \(error)")
+                        .font(.subheadline).foregroundStyle(DS.textSecondary)
+                    Button("Try refresh again") { Task { await vm.load() } }
+                }
                 ForEach(presentation.children) { child in
                     NavigationLink(value: Route.containerHub(slug: child.slug, name: child.name)) {
                         HStack {
@@ -70,11 +79,28 @@ struct ContainerHubView: View {
                                 .id(member.id)
                         }
                     } header: {
-                        Text(ContainerHubPresentation.sectionTitle(section.sectionClass))
+                        Text(presentation.sectionTitle(section.sectionClass))
                             .font(.headline)
                             .foregroundStyle(DS.textPrimary)
                             .padding(.top, 8)
                     }
+                }
+                if let error = vm.pageError {
+                    Text(error).font(.subheadline).foregroundStyle(DS.textSecondary)
+                }
+                if presentation.response.state == .published, presentation.response.page?.nextCursor != nil {
+                    Button {
+                        Task { await vm.loadMore() }
+                    } label: {
+                        HStack {
+                            if vm.isLoadingMore { ProgressView() }
+                            Text(vm.isLoadingMore ? "Loading more markets…" : "Load more markets")
+                        }
+                        .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.bordered)
+                    .disabled(vm.isLoadingMore)
+                    .accessibilityIdentifier("hub.loadMore")
                 }
             }
             .scrollTargetLayout()
