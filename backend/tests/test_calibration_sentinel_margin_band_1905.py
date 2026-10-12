@@ -14,6 +14,8 @@ still files (a suppressed real break is the worse error). Only the diagnosis the
 reader is handed changes.
 """
 
+import app.tasks.bug_report_github as gh
+import app.tasks.calibration_sentinel as cs
 from app.tasks.calibration_sentinel import (
     COVERAGE_AMBIGUOUS,
     COVERAGE_EXPLAINED,
@@ -27,6 +29,7 @@ from app.tasks.calibration_sentinel import (
     classify_coverage,
     coverage_band,
     coverage_bounds,
+    file_cohort_issue,
 )
 
 UNEXPLAINED_HEADING = "UNEXPLAINED by any shipped exclusion"
@@ -81,6 +84,68 @@ class TestPure396Control:
         assert UNEXPLAINED_HEADING in body
         assert "candidate NEW break" in body
         assert PARTIAL_HEADING not in body
+
+
+class TestPartialFilesThroughTheRealFilingPath:
+    """Partial is NOT suppression: the run loop's ``_suppressed`` reads
+    ``bool(explained_by)``, so a partial cohort must reach ``file_cohort_issue``
+    with ``explained_by=None`` and be FILED, carrying the partial body."""
+
+    def _file(self, monkeypatch, overlap_counts):
+        c, by, cov, _ = _filed_body(overlap_counts)
+        created = {}
+
+        def fake_create(title, body, labels):
+            created.update(title=title, body=body, labels=labels)
+            return 4242, "NODE_4242"
+
+        monkeypatch.setattr(gh, "GITHUB_TOKEN", "tok")
+        monkeypatch.setattr(gh, "create_github_issue", fake_create)
+        monkeypatch.setattr(gh, "add_to_project_board", lambda nid: None)
+        monkeypatch.setattr(cs, "_find_open_issue_by_fingerprint", lambda fp: None)
+        return by, file_cohort_issue(c, by, cov), created
+
+    def test_exact_396_is_filed_with_the_partial_body(self, monkeypatch):
+        by, res, created = self._file(monkeypatch, {_UNION_KEY: 792, "malformed_binary": 792})
+        assert by is None, "explained_by must stay None or _suppressed() drops it"
+        assert res["action"] == "filed"
+        assert PARTIAL_HEADING in created["body"]
+        assert "candidate NEW break" not in created["body"]
+        assert any(lbl.startswith("priority:") for lbl in created["labels"])
+
+    def test_zero_coverage_is_filed_as_a_new_break(self, monkeypatch):
+        by, res, created = self._file(monkeypatch, {})
+        assert res["action"] == "filed"
+        assert "candidate NEW break" in created["body"]
+        assert PARTIAL_HEADING not in created["body"]
+
+
+class TestPartialNeverClaimsMeasuredCertaintyItLacks:
+    def test_exact_union_reads_as_a_measured_point(self):
+        _, _, _, body = _filed_body({_UNION_KEY: 792, "malformed_binary": 792})
+        assert "cover **39.6%**" in body
+        assert "lower bound" not in body
+
+    def test_missing_union_reads_as_a_floor(self):
+        # A scan row with no any_known_n folds the union as 0, so the largest
+        # single class is a floor on the true union, not a count of it.
+        _, _, _, body = _filed_body({"malformed_binary": 792})
+        assert PARTIAL_HEADING in body
+        assert "cover at least **39.6%**" in body
+        assert "no exact union" in body
+
+    def test_sampled_class_reads_as_a_floor(self):
+        # A sampled class that can lift the union over the line is AMBIGUOUS;
+        # a placeholder-only 38% (no counted union) is partial, but a floor.
+        c, _, _, _ = _filed_body({_UNION_KEY: 700, "void": 700})
+        c["overlap_fractions"]["poly_placeholder"] = 0.36
+        assert coverage_bounds(c["overlap_fractions"])[1] >= SENTINEL_COVERAGE_THRESHOLD
+        assert coverage_band(c["overlap_fractions"]) == COVERAGE_AMBIGUOUS
+        c["overlap_fractions"]["poly_placeholder"] = 0.38
+        c["overlap_fractions"][_UNION_KEY] = 0.0
+        c["overlap_fractions"]["void"] = 0.0
+        body = build_issue_body(c, explained_by=None, coverage=0.38)
+        assert "cover at least **38.0%**" in body
 
 
 class TestBandEdges:

@@ -1206,9 +1206,16 @@ def build_issue_body(cohort: dict, explained_by: str | None, coverage: float) ->
                 (k for k in fracs if k != _UNION_KEY), key=lambda k: fracs[k], default=None
             )
             branch = _PLAYBOOK_BRANCHES.get(dominant, "see docs/calibration-diagnosis-playbooks.md")
+            # Only the counted union itself, unwidened by a sampled class, is a
+            # measured point. A missing union (absent key, or a scan row with no
+            # any_known_n, which folds as 0) leaves the largest class: a floor.
+            exact = lower == upper == fracs.get(_UNION_KEY)
             parts += [
                 "### Diagnosis: PARTIALLY EXPLAINED — verify the exclusion covers this cohort",
-                f"Shipped exclusions cover **{lower*100:.1f}%** of outcomes, within "
+                f"Shipped exclusions cover {'' if exact else 'at least '}"
+                f"**{lower*100:.1f}%** of outcomes"
+                + ("" if exact else " (a lower bound — no exact union for this cohort)")
+                + f", within "
                 f"{SENTINEL_COVERAGE_MARGIN*100:.0f} points of the "
                 f"{SENTINEL_COVERAGE_THRESHOLD*100:.0f}% threshold"
                 + (f"; the dominant class is **{dominant}**" if dominant else "")
