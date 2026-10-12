@@ -16,7 +16,7 @@ nonisolated struct WatchDiscoveryCardPresentation {
             probability = nil
             let winner = reading.winner?.trimmingCharacters(in: .whitespacesAndNewlines)
             result = winner.flatMap { $0.isEmpty ? nil : "Result: \($0)" }
-                ?? "Settled · result unavailable"
+                ?? (reading.resultUnconfirmed == true ? "Result unconfirmed" : "Settled · result unavailable")
         } else {
             result = nil
             let validProbability = reading.probability.flatMap {

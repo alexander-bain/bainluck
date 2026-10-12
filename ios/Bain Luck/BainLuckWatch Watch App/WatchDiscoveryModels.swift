@@ -9,10 +9,13 @@ nonisolated struct WatchDiscoveryReading: Codable, Identifiable, Sendable, Equat
     let observedAt: Date?
     let isSettled: Bool
     let winner: String?
+    // Optional so saved readings from older versions remain decodable.
+    var resultUnconfirmed: Bool? = nil
 
     var resultLabel: String? {
         guard isSettled else { return nil }
-        return winner.map { "Result: \($0)" } ?? "Settled · Result unavailable"
+        return winner.map { "Result: \($0)" }
+            ?? (resultUnconfirmed == true ? "Result unconfirmed" : "Settled · Result unavailable")
     }
 
     func observationLabel(now: Date = Date()) -> String {
@@ -68,7 +71,9 @@ nonisolated enum WatchDiscoveryDecoder {
                 probability: settled ? nil : leader?.probability,
                 // A price observation is not a result observation clock.
                 observedAt: settled ? nil : leader?.priceObservedAt.flatMap(Self.date),
-                isSettled: settled, winner: winner
+                isSettled: settled, winner: winner,
+                resultUnconfirmed: status?.lowercased() == "closed" && resolved != true && winner == nil
+                    ? true : nil
             )
             return reading.isValid ? reading : nil
         }
