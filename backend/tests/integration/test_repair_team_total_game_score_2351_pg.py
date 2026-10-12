@@ -7,6 +7,7 @@ the module's own.
 """
 
 import os
+from datetime import datetime
 from uuid import uuid4
 
 import pytest
@@ -26,24 +27,35 @@ pytestmark = [
 
 _LINES = (1.5, 2.5, 3.5, 4.5, 5.5, 6.5, 7.5)
 
-#: event id -> (status, home, away, home runs, away runs)
+#: event id -> (status, home, away, home runs, away runs, commence_time UTC).
+#: Each start is the minute its market's ticker names, in US Eastern.
 EVENTS = {
-    42: ("completed", "Cincinnati Reds", "St. Louis Cardinals", 3, 5),
-    14788069: ("completed", "New York Yankees", "Tampa Bay Rays", 2, 0),
+    42: ("completed", "Cincinnati Reds", "St. Louis Cardinals", 3, 5,
+         "2026-06-06T00:15:00Z"),
+    14788069: ("completed", "New York Yankees", "Tampa Bay Rays", 2, 0,
+               "2026-09-22T17:05:00Z"),
     # The doubleheader shape: a wrong stored score the venue contradicts.
-    77: ("completed", "Boston Red Sox", "Tampa Bay Rays", 9, 8),
-    88: ("in_progress", "Chicago Cubs", "Milwaukee Brewers", 1, 0),
+    77: ("completed", "Boston Red Sox", "Tampa Bay Rays", 9, 8,
+         "2026-08-01T23:10:00Z"),
+    88: ("in_progress", "Chicago Cubs", "Milwaukee Brewers", 1, 0,
+         "2026-10-13T00:10:00Z"),
+    # Root's 2026-10-12 specimen: market 54069118's May 5 21:40 ET ticker is
+    # linked to the May 6 16:10 ET game. Clubs and score agree; the game does not.
+    99: ("completed", "Seattle Mariners", "Atlanta Braves", 6, 2,
+         "2026-05-06T20:10:00Z"),
 }
 CIN_MARKET, NYY_MARKET, BOS_MARKET, LIVE_MARKET = 7, 53667298, 900, 901
+MISLINKED_MARKET = 54069118
 CONTROL_TOTAL, CONTROL_LOOKALIKE, WITNESS_TOTAL, BOS_WITNESS = 910, 911, 912, 913
 
 
 def _rows():
     markets = [
         (CIN_MARKET, "KXMLBTEAMTOTAL-26JUN052015CINSTL", "Cincinnati vs St. Louis: Team Total", 42),
-        (NYY_MARKET, "KXMLBTEAMTOTAL-26SEP22TBNYY", "Tampa Bay vs New York Y: Team Total", 14788069),
-        (BOS_MARKET, "KXMLBTEAMTOTAL-26AUG01TBBOS", "Tampa Bay vs Boston: Team Total", 77),
-        (LIVE_MARKET, "KXMLBTEAMTOTAL-26OCT12MILCHC", "Milwaukee vs Chicago C: Team Total", 88),
+        (NYY_MARKET, "KXMLBTEAMTOTAL-26SEP221305TBNYY", "Tampa Bay vs New York Y: Team Total", 14788069),
+        (BOS_MARKET, "KXMLBTEAMTOTAL-26AUG011910TBBOS", "Tampa Bay vs Boston: Team Total", 77),
+        (LIVE_MARKET, "KXMLBTEAMTOTAL-26OCT122010MILCHC", "Milwaukee vs Chicago C: Team Total", 88),
+        (MISLINKED_MARKET, "KXMLBTEAMTOTAL-26MAY052140ATLSEA", "Atlanta vs Seattle: Team Total", 99),
         # Never in scope: a game total, and a family that only shares a prefix.
         (CONTROL_TOTAL, "KXMLBTOTAL-26JUN052015CINSTL", "Total runs", 42),
         (CONTROL_LOOKALIKE, "KXMLBTEAMTOTALX-26JUN052015CINSTL", "Lookalike", 42),
@@ -72,6 +84,9 @@ def _rows():
         (2005, WITNESS_TOTAL, "Over 6.5 runs scored", False, "api_settlement"),
         # 9 + 8 = 17 says Over 9.5 won; the venue says it lost. Score untrusted.
         (2006, BOS_WITNESS, "Over 9.5 runs scored", False, "api_settlement"),
+        # Atlanta scored 2 in the LINKED game: without the start check this
+        # leg would be planned False on another game's score.
+        (2007, MISLINKED_MARKET, "Atlanta over 4.5 runs scored", True, "game_score"),
     ]
     return markets, outcomes
 
@@ -118,12 +133,13 @@ async def db(isolated_database):
         # Every NOT NULL column the ORM declares is named, as the seed check
         # requires. `completed_at` stays NULL, so the chronology refusal is
         # inert here and only the test that sets both clocks exercises it.
-        for eid, (status, home, away, hs, as_) in EVENTS.items():
+        for eid, (status, home, away, hs, as_, start) in EVENTS.items():
             await s.execute(text(
                 "INSERT INTO events (id, sport_id, status, home_team_name, away_team_name,"
                 " home_score, away_score, commence_time)"
-                " VALUES (:i, 1, :s, :h, :a, :hs, :as_, '2026-06-05T23:05:00Z')"),
-                dict(i=eid, s=status, h=home, a=away, hs=hs, as_=as_))
+                " VALUES (:i, 1, :s, :h, :a, :hs, :as_, :start)"),
+                dict(i=eid, s=status, h=home, a=away, hs=hs, as_=as_,
+                     start=datetime.fromisoformat(start.replace("Z", "+00:00"))))
         markets, outcomes = _rows()
         for mid, ext, name, eid in markets:
             await s.execute(text(
@@ -170,7 +186,8 @@ async def test_dry_run_plans_only_contradicted_legs_and_writes_nothing(db):
     cin_wrong = {k for k, v in _expected_cin().items() if v is False}
     nyy = set(range(201010270, 201010277))
     assert plan["legs_contradicted"] == len(cin_wrong) + len(nyy) == 15
-    assert plan["market_skips"] == {"score_contradicted_by_venue": 1, "event_not_final": 1}
+    assert plan["market_skips"] == {"score_contradicted_by_venue": 1, "event_not_final": 1,
+                                    "event_time_not_ticker_time": 1}
     assert plan["markets_with_venue_witness"] == 1  # NYY: concordant total leg
     assert await _state(db) == before
 
@@ -197,7 +214,7 @@ async def test_apply_needs_the_reviewed_hash_and_then_writes_exactly_the_plan(db
     changed = {oid for oid in after if after[oid] != before[oid]}
     assert changed == {k for k, v in expected.items() if before[k][0] != v}
     # Correct siblings, untrusted score, live game, other families: untouched.
-    for oid in (2001, 2002, 2003, 2004, 2005, 2006):
+    for oid in (2001, 2002, 2003, 2004, 2005, 2006, 2007):
         assert after[oid] == before[oid]
 
     again = await _run(db, rt.repair)
@@ -332,6 +349,8 @@ async def test_restore_never_undoes_a_later_write_that_restates_the_same_verdict
     "UPDATE events SET status = 'in_progress' WHERE id = 14788069",
     "UPDATE events SET commence_time = '2026-09-22T23:05:00Z',"
     " completed_at = '2026-09-22T20:00:00Z' WHERE id = 14788069",
+    # Re-timed after the dry run: the write re-asks the start the ticker named.
+    "UPDATE events SET commence_time = '2026-09-22T18:05:00Z' WHERE id = 14788069",
 ])
 async def test_an_event_that_stops_being_a_valid_final_after_the_plan_gets_no_write(
     db, monkeypatch, event_sql
@@ -357,3 +376,22 @@ async def test_an_event_that_stops_being_a_valid_final_after_the_plan_gets_no_wr
         backed = {r[0] for r in (await s.execute(text(
             f"SELECT outcome_id FROM {rt.BAK_TABLE}"))).all()}
     assert not backed & set(range(201010270, 201010277)), "no backup row for a refused leg"
+
+
+async def test_a_market_linked_to_another_game_is_refused_and_never_written(db):
+    """Root's production finding, on rows: the link's clubs and score agree, its
+    start is not the ticker's, so the market is skipped by name and its leg is
+    neither planned, backed up nor written."""
+    before = await _state(db)
+    plan = await _run(db, rt.repair)
+    skipped = [e for e in plan["ledger"] if e["market_id"] == MISLINKED_MARKET]
+    assert len(skipped) == 1 and skipped[0]["reason"] == "event_time_not_ticker_time"
+    assert skipped[0]["detail"]["ticker_start_et"].startswith("2026-05-05T21:40")
+    assert skipped[0]["detail"]["event_start_et"].startswith("2026-05-06T16:10")
+    out = await _run(db, rt.repair, apply=True, plan_hash=plan["plan_hash"])
+    assert out["terminal"] == "applied"
+    assert (await _state(db))[2007] == before[2007]
+    async with db() as s:
+        backed = {r[0] for r in (await s.execute(text(
+            f"SELECT outcome_id FROM {rt.BAK_TABLE}"))).all()}
+    assert 2007 not in backed

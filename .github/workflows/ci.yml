@@ -7148,7 +7148,7 @@ jobs:
         # (which re-asks final status, chronology, score and clubs under lock),
         # the drift refusal and the row-version-exact restore are compare-and-
         # swaps a session double reads green on. Runs in its own throwaway
-        # database. 9 cases (8 tests, one parametrized over two event drifts).
+        # database. 11 cases (9 tests, one parametrized over three event drifts).
         if: matrix.group == 'shared-tail'
         run: |
           set -o pipefail
@@ -7158,8 +7158,8 @@ jobs:
             echo "::error::#2351 team-total repair gate SKIPPED — the gate did not run"
             exit 1
           fi
-          grep -qE "[^0-9]9 passed[,[:space:]]" /tmp/teamtotal2351.txt || {
-            echo "::error::#2351 team-total repair gate did not run all nine cases"
+          grep -qE "[^0-9]11 passed[,[:space:]]" /tmp/teamtotal2351.txt || {
+            echo "::error::#2351 team-total repair gate did not run all eleven cases"
             exit 1
           }
 
