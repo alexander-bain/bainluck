@@ -83,6 +83,7 @@ import {
   sortFuturesOutcomes,
   visibleChartOutcomes,
   withoutBoardNamePrefix,
+  editionTitle,
 } from "@/lib/futuresDetailDisplay";
 import type { FuturesSortField, FuturesSortDirection } from "@/lib/futuresDetailDisplay";
 import { PinButton } from "@/components/PinButton";
@@ -1001,14 +1002,16 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
           the only place a guard test can reach them. A `resolution_date` is a
           SCHEDULE and never reaches this render. */}
       {settlementBanner && (
-        <div className="bg-amber-500/10 border border-amber-500/20 rounded-lg px-4 py-3 text-sm text-amber-400">
+        // #1541 — primary text on the warning tint. `text-amber-400` measured
+        // ~1.43:1 on production at 390px; the sentence is the whole message.
+        <div className="bg-accent-warning/10 border border-accent-warning/30 rounded-lg px-4 py-3 text-sm text-text-primary">
           {settlementBanner}
         </div>
       )}
 
       {/* Probability Hero — design spec FD-1 (resolved-aware, #883 L2-49) */}
       <FuturesHero
-        name={market.name}
+        name={editionTitle(market.name, market.edition_year)}
         probability={heroNamesNobody ? null : heroOutcome?.probability ?? null}
         // #8482 — the hero is the same outcome as one of the rows below, so it
         // prints that row's decided integer, not a second rounding of its own.

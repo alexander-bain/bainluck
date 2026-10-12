@@ -9244,6 +9244,50 @@ async def _get_source_breakdown(
     return sorted(by_bookmaker.values(), key=lambda s: s["source"])
 
 
+def _concept_serves_provider_edition(
+    concept_key: str, edition_instant: Optional[datetime]
+) -> bool:
+    """#1541: does the concept page behind ``concept_key`` serve this edition?
+
+    Reads the concept tier's own cached envelope in the order
+    ``routes/event.py::get_event_concept`` serves it — primary, then the negative
+    marker (the page 404s before it reads the mirror), then the 24h mirror — and
+    lets the pure ``concept_links.concept_serves_edition`` decide. A live mirror
+    past its serve ceiling is rebuilt by the route before it is served, so it
+    proves nothing about the edition the reader will land on: False. Never builds
+    the concept and never raises: a cold cache, an unreachable Redis or a
+    malformed payload all answer False, which withholds the link rather than
+    guessing an edition.
+    """
+    if edition_instant is None:
+        return False
+    try:
+        from app.utils.concept_links import concept_serves_edition
+        from app.utils.event_concept_cache import (
+            cache_keys,
+            get_client,
+            has_negative,
+            live_mirror_past_ceiling,
+            read_slot,
+        )
+
+        rc = get_client()
+        if rc is None:
+            return False
+        keys = cache_keys(concept_key)
+        primary = read_slot(rc, keys.primary)
+        if primary is not None:
+            return concept_serves_edition(primary, edition_instant)
+        if has_negative(rc, keys):
+            return False
+        stale = read_slot(rc, keys.stale)
+        if stale is None or live_mirror_past_ceiling(stale):
+            return False
+        return concept_serves_edition(stale, edition_instant)
+    except Exception:
+        return False
+
+
 def _format_market_detail(
     market: FuturesMarket,
     bookmakers: list[str] = None,
@@ -10272,6 +10316,27 @@ def _format_market_detail(
     hub_slug = None
     category_page = None
     sport_page_key = None
+    # #1541: a rolling sportsbook key ("US Open Winner") keeps its bare name when
+    # the provider moves it to next year's event — /futures/7 read as the 2026
+    # US Open and linked the settled June page while every quote was for the
+    # 2027 edition (provider commence 2027-06-17). The provider's own retained
+    # event names the edition; read only through the verified-title reader, so
+    # a missing, malformed or stale anchor serves no year and makes no claim.
+    edition_instant = None
+    if (market.source or "").lower() == "odds_api":
+        try:
+            from app.utils.futures_verified_title import read_odds_api_anchor
+
+            anchor_read = read_odds_api_anchor(
+                getattr(market, "market_metadata", None),
+                market.external_id,
+                datetime.now(timezone.utc),
+            )
+            if isinstance(anchor_read, tuple):
+                edition_instant = anchor_read[0]
+        except Exception:
+            edition_instant = None
+    edition_year = str(edition_instant.year) if edition_instant else None
     try:
         from app.utils.concept_links import (
             derive_market_category_page,
@@ -10286,6 +10351,16 @@ def _format_market_detail(
             market.llm_sport_category,
             concept_outcome_count,  # UX-P164: pre-drop; see note above
         )
+        # #1541: an odds_api board's key ROLLS to next year's provider event, and
+        # the edition-blind concept it names keeps serving the edition it last
+        # built — after the June 2026 US Open, the settled one. So the link is
+        # kept only when the destination's own served window (the concept tier's
+        # cached envelope: primary, else its 24h mirror) holds the provider's
+        # verified edition. No anchor, no envelope, or a different edition: no
+        # link. The hub link below is not edition-specific and is unaffected.
+        if event_concept_key and (market.source or "").lower() == "odds_api":
+            if not _concept_serves_provider_edition(event_concept_key, edition_instant):
+                event_concept_key = None
         hub_slug = derive_market_hub_slug(market.llm_sport_category)
         # L2-94: fallbacks below the hub — themed section page then hub-less sport
         # page. The frontend picks the first of concept/hub/category/sport that's set.
@@ -10372,6 +10447,10 @@ def _format_market_detail(
         "image_url": market.image_url,
         # B7 (L2-91): up-link mesh — concept page + competition hub (null where none).
         "event_concept_key": event_concept_key,
+        # #1541: the provider edition year of an odds_api board's current quotes,
+        # or null when no verified anchor names one. The page titles the board
+        # with it; nothing else reads it.
+        "edition_year": edition_year,
         "hub_slug": hub_slug,
         # L2-94: mesh fallbacks — themed section page then hub-less sport page.
         "category_page": category_page,
