@@ -26,10 +26,12 @@ struct DiscoverCollectionCard: View {
                     .foregroundStyle(DS.textMuted)
                     .accessibilityHidden(true)
             }
-            Text(DiscoverCollectionFeed.editionLabel(for: entry))
-                .font(.caption)
-                .foregroundStyle(DS.textSecondary)
-                .fixedSize(horizontal: false, vertical: true)
+            if let edition = DiscoverCollectionFeed.editionLabel(for: entry) {
+                Text(edition)
+                    .font(.caption)
+                    .foregroundStyle(DS.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
             Text(entry.subtitle)
                 .font(.subheadline)
                 .foregroundStyle(DS.textPrimary)
