@@ -118,18 +118,14 @@ struct Bain_LuckApp: App {
     }
 
     var body: some Scene {
-        WindowGroup {
-            #if os(macOS)
+        #if os(macOS)
+        Window("Bain Luck", id: MacNotificationDelivery10878.primaryWindowID) {
             MacSceneNavigationRoot(sharedLiveNavigation: navCoordinator) { navigation in
                 mainWindowContent(navigation: navigation)
             }
             .environmentObject(authManager)
             .environmentObject(pinManager)
-            #else
-            mainWindowContent(navigation: navCoordinator)
-            #endif
         }
-        #if os(macOS)
         .defaultSize(width: 1200, height: 800)
         .commands {
             CommandGroup(replacing: .newItem) { }
@@ -164,6 +160,10 @@ struct Bain_LuckApp: App {
         }
         .onChange(of: macBrowsingCommandsEnabled) { _, _ in
             bindFocusedMacNavigation()
+        }
+        #else
+        WindowGroup {
+            mainWindowContent(navigation: navCoordinator)
         }
         #endif
 
@@ -277,7 +277,7 @@ struct Bain_LuckApp: App {
                 // Wire up notification deep linking and request permission
                 #if os(macOS)
                 if focusedMacNavigation === navCoordinator {
-                    NotificationManager.shared.navCoordinator = navCoordinator
+                    bindFocusedMacNavigation()
                 }
                 #else
                 NotificationManager.shared.navCoordinator = navCoordinator
@@ -350,8 +350,9 @@ struct Bain_LuckApp: App {
     /// Keep external notification routing on the eligible focused main scene,
     /// rather than whichever background window happened to finish its task last.
     private func bindFocusedMacNavigation() {
-        guard macBrowsingCommandsEnabled == true, let navigation = focusedMacNavigation else { return }
-        NotificationManager.shared.navCoordinator = navigation
+        NotificationManager.shared.bindMacNavigation(
+            macBrowsingCommandsEnabled == true ? focusedMacNavigation : nil
+        )
     }
 
     private func selectMacTab(_ tab: AppTab) {

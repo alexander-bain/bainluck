@@ -45,6 +45,7 @@ extension FocusedValues {
 /// Mounted once inside each WindowGroup. StateObject keeps navigation owned by
 /// that scene while shared services and authentication remain app-owned.
 struct MacSceneNavigationRoot<Content: View>: View {
+    @Environment(\.openWindow) private var openWindow
     @StateObject private var navigation: NavigationCoordinator
     @ObservedObject private var sharedLiveNavigation: NavigationCoordinator
     @State private var bugScreenshot: ScreenshotWrapper?
@@ -71,6 +72,13 @@ struct MacSceneNavigationRoot<Content: View>: View {
             .environmentObject(navigation)
             .focusedSceneObject(navigation)
             .focusedSceneValue(\.macBrowsingCommandsEnabled, permitsBrowsingCommands)
+            .onAppear {
+                guard permitsBrowsingCommands else { return }
+                let action = openWindow
+                MacNotificationDelivery10878.shared.installWindowRequest {
+                    action(id: MacNotificationDelivery10878.primaryWindowID)
+                }
+            }
             .onReceive(sharedLiveNavigation.$liveGameCount) { count in
                 guard permitsBrowsingCommands, navigation.liveGameCount != count else { return }
                 navigation.liveGameCount = count
