@@ -598,8 +598,8 @@ jobs:
             echo "::error::#10305 D2 participant-fill gate SKIPPED — the gate did not run"
             exit 1
           fi
-          if ! grep -qE "\b92 passed\b" /tmp/fill10305.txt; then
-            echo "::error::#10305 D2 participant-fill gate did not pass exactly 92 tests"
+          if ! grep -qE "\b94 passed\b" /tmp/fill10305.txt; then
+            echo "::error::#10305 D2 participant-fill gate did not pass exactly 94 tests"
             exit 1
           fi
 

@@ -117,6 +117,29 @@ class Rig:
             ), {"i": event_id})).mappings().first()
             return dict(r)
 
+    async def heap_order(self, table) -> list[int]:
+        """This sport's rows of ``table`` in physical (ctid) order — the order the
+        pass's unordered loads return them in, whatever plan Postgres picks."""
+        rows = await self.sql(f"SELECT id FROM {table} WHERE sport_id = :s ORDER BY ctid", s=self.sport_id)
+        return [r[0] for r in rows.all()]
+
+    async def pin_heap_order(self):
+        """Rewrite ``events`` and ``teams`` in primary-key order, so the pass's
+        unordered loads read rows in the order this rig inserted them. Without it
+        that order is the heap's: an UPDATE moves a row behind later inserts, and
+        on CI's shared database a row lands in whatever slot an earlier file's
+        DELETE freed (master 7f3e2ad7bf read ``[50, 49]`` for ids inserted 49, 50)."""
+        async with self.engine.begin() as conn:
+            for table in ("events", "teams"):
+                pkey = (await conn.execute(text(
+                    "SELECT indexrelid::regclass::text FROM pg_index "
+                    "WHERE indrelid = CAST(:t AS regclass) AND indisprimary"
+                ), {"t": table})).scalar_one()
+                await conn.execute(text(f'CLUSTER {table} USING "{pkey}"'))
+        for table in ("events", "teams"):
+            ids = await self.heap_order(table)
+            assert ids == sorted(ids), (table, ids)
+
     # ── the board ──
     def board_s(self, *, sides=None, home=None, away=None, espn_id=ESPN_S):
         from app.services.espn_api import ESPNEvent
@@ -684,6 +707,7 @@ async def test_a_same_name_row_in_the_pass_cache_cannot_take_a_filled_side(rig, 
     eid = await rig.add_event()
     before = await rig.row(eid)
     teams_before = await _team_espn_ids(rig)
+    await rig.pin_heap_order()  # the same-name row loads after the anchored one, as stated
     stats = await rig.run_pass([rig.board_s()])
     row = await rig.row(eid)
     r = parse_fill_tag(fill_tags(row)[0])
@@ -743,6 +767,7 @@ async def test_a_same_pass_row_that_stamps_espns_id_on_a_same_name_row(rig, case
         eid = await rig.add_event()
         named = await rig.add_event(espn_id=ESPN_H, home="Golden State Valkyries", away="Dallas Wings")
     before = await rig.row(eid)
+    await rig.pin_heap_order()  # both orders below are inserted, never left to the heap
     rig.hook(before=before_fill)
     stats = await rig.run_pass([rig.board_s(), _named_s2(rig)])
     rig.unhook()
@@ -766,6 +791,40 @@ async def test_a_same_pass_row_that_stamps_espns_id_on_a_same_name_row(rig, case
     assert {c: restored[c] for c in COLS if c != "event_tags"} == {
         c: before[c] for c in COLS if c != "event_tags"
     }
+
+
+async def _move_behind_later_rows(rig, table, row_id, espn_id):
+    """Round-trip the row's indexed ``espn_id``: two non-HOT updates, so the live
+    version sits behind every later insert in the heap AND in every index — the
+    reorder holds whichever plan the pass's load gets."""
+    for value in (f"moved-{row_id}", espn_id):
+        await rig.sql(f"UPDATE {table} SET espn_id = :v WHERE id = :i", v=value, i=row_id)
+
+
+@pytest.mark.parametrize("pinned", [False, True], ids=["heap_order", "pinned"])
+async def test_the_rig_pins_the_pass_load_order_the_heap_does_not_keep(rig, pinned):
+    """Guard for the master 7f3e2ad7bf red: the pass loads events and teams with
+    no ORDER BY, so insertion order is not load order. Unpinned, a moved row is
+    read last by the REAL pass (the hazard reproduces, so this guard is not
+    vacuous); pinned, the pass reads the rig's insertion order again."""
+    seen = []
+
+    async def before_fill(session, event):
+        seen.append(event.id)
+
+    eid = await rig.add_event()
+    named = await rig.add_event(espn_id=ESPN_H, home="Golden State Valkyries", away="Dallas Wings")
+    await _move_behind_later_rows(rig, "events", eid, ESPN_S)
+    await _move_behind_later_rows(rig, "teams", rig.teams["valk"], HOME_TID)
+    assert await rig.heap_order("events") == [named, eid]
+    assert (await rig.heap_order("teams"))[-1] == rig.teams["valk"]
+    if pinned:
+        await rig.pin_heap_order()
+        assert await rig.heap_order("teams") == sorted(rig.teams.values())
+    rig.hook(before=before_fill)
+    await rig.run_pass([rig.board_s(), _named_s2(rig)])
+    rig.unhook()
+    assert seen == ([eid, named] if pinned else [named, eid]), seen
 
 
 async def test_w10_a_second_pass_does_not_fill_again(rig):
