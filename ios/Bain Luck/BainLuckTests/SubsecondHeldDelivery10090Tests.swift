@@ -1,3 +1,5 @@
+import SwiftUI
+import UIKit
 import XCTest
 @testable import Bain_Luck
 
@@ -10,8 +12,22 @@ import XCTest
 /// `URLSession` byte stream through a stubbed `URLProtocol` (the
 /// `AReleaseDoesNotEndPushForTheMatch920Tests` seam). From there they go through
 /// the real controller and `EventDetailViewModel`, and every timing is read on
-/// one process clock. Model adoption only: SwiftUI view evaluation and paint are
-/// outside this test.
+/// one process clock.
+///
+/// Two observation cadences. Whole-second clocks are the retained control. The
+/// quarter-second clocks are the case: each quote's own observation stamp is
+/// 250 ms after the last, so the chart has to admit points closer together than
+/// a second.
+///
+/// Two depths. The model cases stop at the view model's adoption marks. The
+/// hosted cases mount the real `EventDetailView` in a key window on the
+/// foreground-active scene at phone width. The page's own `.task` runs the load,
+/// and the existing `LiveTimingSeam` view marks report what the hero and chart
+/// were handed. Those marks are view INPUTS, not pixels.
+///
+/// History always throws here. The `reads >= 2` check only proves the page was
+/// read again mid-burst (the poll alone pays it) and nothing rolled back. It does
+/// not prove a resync or history recovery succeeded.
 @MainActor
 final class SubsecondHeldDelivery10090Tests: XCTestCase {
 
@@ -37,16 +53,23 @@ final class SubsecondHeldDelivery10090Tests: XCTestCase {
 
     nonisolated private static func probability(_ i: Int) -> Double { 0.40 + 0.01 * Double(i) }
 
-    nonisolated private static func clock(_ i: Int) -> String { String(format: "2026-09-25T17:10:%02dZ", i) }
-
-    nonisolated private static func raw(_ i: Int) -> String {
-        #"{"event_id":4242,"p":0.9,"source":"polymarket","source_value":0.9,"updated_at":"\#(clock(i))","status":"live","rev":{"4242":\#(20 + i)},"folded_quote_pending":true}"#
+    /// Quote `i`'s observation clock: `i` seconds after the held read, or
+    /// `i` quarter-seconds after it.
+    nonisolated private static func clock(_ i: Int, quarter: Bool) -> String {
+        guard quarter else { return String(format: "2026-09-25T17:10:%02dZ", i) }
+        let ms = i * 250
+        return String(format: "2026-09-25T17:10:%02d.%03dZ", ms / 1000, ms % 1000)
     }
 
-    nonisolated private static func folded(_ i: Int) -> String {
+    nonisolated private static func raw(_ i: Int, quarter: Bool) -> String {
+        #"{"event_id":4242,"p":0.9,"source":"polymarket","source_value":0.9,"updated_at":"\#(clock(i, quarter: quarter))","status":"live","rev":{"4242":\#(20 + i)},"folded_quote_pending":true}"#
+    }
+
+    nonisolated private static func folded(_ i: Int, quarter: Bool) -> String {
         let p = probability(i)
-        let quote = ##"{"event_id":4242,"hero_probability":\##(p),"hero_probability_away":\##(1 - p),"hero_probability_source":"blend","hero_probability_observed_at":"\##(clock(i))","blend_fold_revision":{"4242":\##(20 + i),"999":5},"win_probability_sources":{"polymarket":{"value":\##(p),"display_name":"Polymarket","type":"market","color":"#000","updated_at":"\##(clock(i))"}},"hero_sportsbook_count":null,"status":"live","sport":"basketball_nba","hero_settled_result":null}"##
-        return String(raw(i).dropLast()) + #","folded_quote":\#(quote)}"#
+        let c = clock(i, quarter: quarter)
+        let quote = ##"{"event_id":4242,"hero_probability":\##(p),"hero_probability_away":\##(1 - p),"hero_probability_source":"blend","hero_probability_observed_at":"\##(c)","blend_fold_revision":{"4242":\##(20 + i),"999":5},"win_probability_sources":{"polymarket":{"value":\##(p),"display_name":"Polymarket","type":"market","color":"#000","updated_at":"\##(c)"}},"hero_sportsbook_count":null,"status":"live","sport":"basketball_nba","hero_settled_result":null}"##
+        return String(raw(i, quarter: quarter).dropLast()) + #","folded_quote":\#(quote)}"#
     }
 
     nonisolated private static func frame(_ event: String, _ data: String) -> Data {
@@ -60,12 +83,16 @@ final class SubsecondHeldDelivery10090Tests: XCTestCase {
         private static let lock = NSLock()
         nonisolated(unsafe) private static var emitted: [String: UInt64] = [:]
         nonisolated(unsafe) private static var finished = false
+        nonisolated(unsafe) private static var quarter = false
         private let queue = DispatchQueue(label: "paced-stream")
         private var stopped = false
 
-        static func reset() { lock.lock(); emitted = [:]; finished = false; lock.unlock() }
+        static func reset(quarter: Bool) {
+            lock.lock(); emitted = [:]; finished = false; Self.quarter = quarter; lock.unlock()
+        }
         static var emittedAt: [String: UInt64] { lock.lock(); defer { lock.unlock() }; return emitted }
         static var done: Bool { lock.lock(); defer { lock.unlock() }; return finished }
+        private static var isQuarter: Bool { lock.lock(); defer { lock.unlock() }; return quarter }
 
         override class func canInit(with request: URLRequest) -> Bool {
             request.url?.path.hasSuffix("/stream") == true
@@ -73,6 +100,7 @@ final class SubsecondHeldDelivery10090Tests: XCTestCase {
         override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
 
         override func startLoading() {
+            let quarter = Self.isQuarter
             let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: "HTTP/1.1",
                                            headerFields: ["Content-Type": "text/event-stream"])!
             client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
@@ -83,7 +111,7 @@ final class SubsecondHeldDelivery10090Tests: XCTestCase {
                 queue.asyncAfter(deadline: start + at) { [self] in
                     guard !stopped else { return }
                     client?.urlProtocol(self, didLoad: SubsecondHeldDelivery10090Tests.frame(
-                        "probability", SubsecondHeldDelivery10090Tests.raw(i)))
+                        "probability", SubsecondHeldDelivery10090Tests.raw(i, quarter: quarter)))
                     if i == SubsecondHeldDelivery10090Tests.resyncAfter {
                         client?.urlProtocol(self, didLoad: SubsecondHeldDelivery10090Tests.frame(
                             "resync", #"{"generation":1}"#))
@@ -94,7 +122,7 @@ final class SubsecondHeldDelivery10090Tests: XCTestCase {
                     let basis = "rev:4242=\(20 + i);999=5"
                     Self.lock.lock(); Self.emitted[basis] = DispatchTime.now().uptimeNanoseconds; Self.lock.unlock()
                     client?.urlProtocol(self, didLoad: SubsecondHeldDelivery10090Tests.frame(
-                        "folded_probability", SubsecondHeldDelivery10090Tests.folded(i)))
+                        "folded_probability", SubsecondHeldDelivery10090Tests.folded(i, quarter: quarter)))
                     if i == SubsecondHeldDelivery10090Tests.quotes {
                         Self.lock.lock(); Self.finished = true; Self.lock.unlock()
                     }
@@ -143,10 +171,59 @@ final class SubsecondHeldDelivery10090Tests: XCTestCase {
         while !done(), Date() < deadline { try? await Task.sleep(nanoseconds: 10_000_000) }
     }
 
-    // MARK: - Case
+    /// The real page in a key window on the foreground-active scene, at phone
+    /// width, so SwiftUI appears it and runs its own `.task` load. The
+    /// `EventPublicationCaller4974Tests.MountedPage` pattern: no sceneless
+    /// fallback. The test never forces a layout during the burst, so view
+    /// updates happen on the run loop's own schedule.
+    @MainActor
+    private final class MountedPage {
+        let window: UIWindow
+        private let previousKeyWindow: UIWindow?
 
-    func testFourQuotesASecondEachReachTheHeadlineAndChartBeforeTheNextArrives() async throws {
-        PacedStream.reset()
+        init(_ vm: EventDetailViewModel) async throws {
+            let deadline = CACurrentMediaTime() + 10
+            func activeScene() -> UIWindowScene? {
+                UIApplication.shared.connectedScenes
+                    .compactMap { $0 as? UIWindowScene }
+                    .first { $0.activationState == .foregroundActive }
+            }
+            while activeScene() == nil && CACurrentMediaTime() < deadline {
+                try await Task.sleep(nanoseconds: 50_000_000)
+            }
+            let scene = try XCTUnwrap(activeScene(), "the hosted page needs a foreground-active window scene")
+            previousKeyWindow = scene.windows.first { $0.isKeyWindow }
+            let page = NavigationStack { EventDetailView(eventId: 4242, viewModel: vm) }
+                .environmentObject(PinManager())
+                .environment(\.colorScheme, .light)
+            let host = hostForMeasurement(page, at: .large)
+            host.view.frame = CGRect(x: 0, y: 0, width: 390, height: 844)
+            window = UIWindow(windowScene: scene)
+            window.frame = host.view.frame
+            window.rootViewController = host
+            window.makeKeyAndVisible()
+        }
+
+        func close() {
+            window.isHidden = true
+            previousKeyWindow?.makeKey()
+        }
+    }
+
+    // MARK: - Run
+
+    private struct Run {
+        let adopted: [(mark: LiveTimingSeam.Mark, at: UInt64)]
+        let charted: [(mark: LiveTimingSeam.Mark, at: UInt64)]
+        let viewHeadline: [(mark: LiveTimingSeam.Mark, at: UInt64)]
+        let viewChart: [(mark: LiveTimingSeam.Mark, at: UInt64)]
+        let emitted: [String: UInt64]
+        let reads: Int
+        let vm: EventDetailViewModel
+    }
+
+    private func run(quarter: Bool, hosted: Bool) async throws -> Run {
+        PacedStream.reset(quarter: quarter)
         let config = URLSessionConfiguration.ephemeral
         config.protocolClasses = [PacedStream.self]
         let session = URLSession(configuration: config)
@@ -161,45 +238,123 @@ final class SubsecondHeldDelivery10090Tests: XCTestCase {
             now: { 1_790_355_605 },
             sleep: { _ in try? await Task.sleep(nanoseconds: 60_000_000_000) }
         )
-        await vm.load()
-        defer { vm.stopRefresh() }
+        var page: MountedPage?
+        if hosted {
+            // The page's own `.task` loads it; the test does not call load().
+            page = try await MountedPage(vm)
+            await waitUntil(10) { vm.event != nil }
+            XCTAssertNotNil(vm.event, "the mounted page ran its own load")
+        } else {
+            await vm.load()
+        }
+        defer { page?.close(); vm.stopRefresh() }
 
         // A periodic poll lands mid-burst, carrying the older held read.
         let poll = Task { @MainActor in
             try? await Task.sleep(nanoseconds: 2_100_000_000)
             await vm.load()
         }
+        let doneMark: LiveTimingSeam.Name = hosted ? .viewHeadlineUpdated : .modelHeadlineAdopted
         await waitUntil(Double(Self.quotes) * Self.spacing + 3) {
-            PacedStream.done && marks.filter { $0.mark.name == .modelHeadlineAdopted && $0.mark.path == "folded" }
+            PacedStream.done && marks.filter { $0.mark.name == doneMark && $0.mark.basis.hasPrefix("rev:") }
                 .count >= Self.quotes
         }
         await poll.value
         try? await Task.sleep(nanoseconds: 300_000_000)
 
-        let adopted = marks.filter { $0.mark.name == .modelHeadlineAdopted }
-        let charted = marks.filter { $0.mark.name == .modelChartAppended }
-        let expected = (1...Self.quotes).map { "rev:4242=\(20 + $0);999=5" }
+        return Run(
+            adopted: marks.filter { $0.mark.name == .modelHeadlineAdopted },
+            charted: marks.filter { $0.mark.name == .modelChartAppended },
+            viewHeadline: marks.filter { $0.mark.name == .viewHeadlineUpdated },
+            viewChart: marks.filter { $0.mark.name == .viewChartUpdated },
+            emitted: PacedStream.emittedAt, reads: client.reads, vm: vm)
+    }
 
-        XCTAssertEqual(adopted.map(\.mark.basis), expected,
-                       "every changed quote is adopted once, in revision order, and nothing rolls it back")
-        XCTAssertEqual(adopted.map(\.mark.path), Array(repeating: "folded", count: Self.quotes))
-        XCTAssertEqual(charted.map(\.mark.basis), expected, "every adopted quote also gets its own chart point")
-        XCTAssertEqual(vm.event?.currentOdds?.homeProbability ?? -1, Self.probability(Self.quotes), accuracy: 1e-9)
-        XCTAssertEqual(vm.liveBlend.last?.homeProbability ?? -1, Self.probability(Self.quotes), accuracy: 1e-9,
-                       "the chart edge agrees with the headline")
-        XCTAssertGreaterThanOrEqual(client.reads, 2, "the resync or the poll actually read the page again")
+    private var expected: [String] { (1...Self.quotes).map { "rev:4242=\(20 + $0);999=5" } }
 
-        // Emit → adoption on one clock. Each quote should be adopted well before
-        // the next one is sent, so nothing piles up behind it.
-        let emitted = PacedStream.emittedAt
-        let lags = adopted.compactMap { a in emitted[a.mark.basis].map { Double(a.at &- $0) / 1e6 } }
-        XCTAssertEqual(lags.count, Self.quotes)
+    /// Emit → mark lags on one clock. A missing mark is simply absent here, so
+    /// the count assertion beside it is what fails a dropped quote.
+    private func lags(_ list: [(mark: LiveTimingSeam.Mark, at: UInt64)], basis: (LiveTimingSeam.Mark) -> String?,
+                      emitted: [String: UInt64]) -> [Double] {
+        list.compactMap { m in basis(m.mark).flatMap { emitted[$0] }.map { Double(m.at &- $0) / 1e6 } }
+    }
+
+    private func summary(_ name: String, _ lags: [Double]) -> String {
         let sorted = lags.sorted()
-        let line = String(format: "SUBSECOND-10090 n=%d emit_to_model_ms min=%.2f p50=%.2f max=%.2f spacing_ms=%.0f reads=%d",
-                          sorted.count, sorted.first ?? -1, sorted[sorted.count / 2], sorted.last ?? -1,
-                          Self.spacing * 1000, client.reads)
+        guard let first = sorted.first, let last = sorted.last else { return "\(name) n=0" }
+        return String(format: "%@ n=%d min=%.2f p50=%.2f max=%.2f", name, sorted.count, first,
+                      sorted[sorted.count / 2], last)
+    }
+
+    private func assertModel(_ r: Run, quarter: Bool) -> [Double] {
+        XCTAssertEqual(r.adopted.map(\.mark.basis), expected,
+                       "every changed quote is adopted once, in revision order, and nothing rolls it back")
+        XCTAssertEqual(r.adopted.map(\.mark.path), Array(repeating: "folded", count: Self.quotes))
+        XCTAssertEqual(r.charted.map(\.mark.basis), expected, "every adopted quote also gets its own chart point")
+        XCTAssertEqual(r.vm.event?.currentOdds?.homeProbability ?? -1, Self.probability(Self.quotes), accuracy: 1e-9)
+        XCTAssertEqual(r.vm.liveBlend.last?.homeProbability ?? -1, Self.probability(Self.quotes), accuracy: 1e-9,
+                       "the chart edge agrees with the headline")
+        XCTAssertGreaterThanOrEqual(r.reads, 2, "the page was read again mid-burst and did not roll back")
+        let lags = lags(r.adopted, basis: { $0.basis }, emitted: r.emitted)
+        XCTAssertEqual(lags.count, Self.quotes)
+        return lags
+    }
+
+    // MARK: - Model cases
+
+    private func modelCase(quarter: Bool) async throws {
+        let r = try await run(quarter: quarter, hosted: false)
+        let lags = assertModel(r, quarter: quarter)
+        let line = "SUBSECOND-10090 depth=model clocks=\(quarter ? "250ms" : "1s") "
+            + summary("emit_to_model_ms", lags) + " spacing_ms=250 reads=\(r.reads)"
         print(line)
-        XCTAssertLessThan(sorted.last ?? .infinity, Self.spacing * 1000,
+        XCTAssertLessThan(lags.max() ?? .infinity, Self.spacing * 1000,
                           "a quote was still unadopted when the next one was sent: \(line)")
+    }
+
+    /// The retained control: whole-second observation clocks.
+    func testFourQuotesASecondEachReachTheHeadlineAndChartBeforeTheNextArrives() async throws {
+        try await modelCase(quarter: false)
+    }
+
+    func testQuarterSecondObservationClocksEachGetTheirOwnHeadlineAndChartPoint() async throws {
+        try await modelCase(quarter: true)
+    }
+
+    // MARK: - Hosted cases
+
+    private func hostedCase(quarter: Bool) async throws {
+        let r = try await run(quarter: quarter, hosted: true)
+        let modelLags = assertModel(r, quarter: quarter)
+
+        // The hero's input: one view mark per quote, in revision order.
+        let headline = r.viewHeadline.filter { $0.mark.basis.hasPrefix("rev:") }
+        XCTAssertEqual(headline.map(\.mark.basis), expected,
+                       "every adopted quote reaches the hero's input once, in order")
+        // The chart's input: one new edge per quote, the edges the model appended.
+        let stampToBasis = Dictionary(r.charted.map { ($0.mark.stamp, $0.mark.basis) }, uniquingKeysWith: { a, _ in a })
+        XCTAssertEqual(r.viewChart.map { stampToBasis[$0.mark.stamp] ?? "unmatched:\($0.mark.stamp)" }, expected,
+                       "every appended point reaches the chart's input once, in order")
+
+        let headLags = lags(headline, basis: { $0.basis }, emitted: r.emitted)
+        let chartLags = lags(r.viewChart, basis: { stampToBasis[$0.stamp] }, emitted: r.emitted)
+        XCTAssertEqual(headLags.count, Self.quotes)
+        XCTAssertEqual(chartLags.count, Self.quotes)
+        let line = "SUBSECOND-10090 depth=view-input clocks=\(quarter ? "250ms" : "1s") width=390 "
+            + summary("emit_to_model_ms", modelLags) + " "
+            + summary("emit_to_view_headline_ms", headLags) + " "
+            + summary("emit_to_view_chart_ms", chartLags)
+            + " view_headline_marks=\(r.viewHeadline.count) view_chart_marks=\(r.viewChart.count) reads=\(r.reads)"
+        print(line)
+        XCTAssertLessThan(max(headLags.max() ?? .infinity, chartLags.max() ?? .infinity), Self.spacing * 1000,
+                          "a quote had not reached the view's inputs when the next one was sent: \(line)")
+    }
+
+    func testHostedPageHandsEveryWholeSecondQuoteToTheHeroAndChartInOrder() async throws {
+        try await hostedCase(quarter: false)
+    }
+
+    func testHostedPageHandsEveryQuarterSecondQuoteToTheHeroAndChartInOrder() async throws {
+        try await hostedCase(quarter: true)
     }
 }
