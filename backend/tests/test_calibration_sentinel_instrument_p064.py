@@ -179,8 +179,13 @@ class TestCoverageUsesTheUnion:
         assert by == "poly_placeholder"
         assert cov == 0.6
 
-    def test_soccer_events_shortcut_is_unchanged(self):
-        assert classify_coverage({}, "soccer_epl", "events") == ("soccer_2way", 1.0)
+    def test_soccer_events_explained_only_by_counted_two_way_rows(self):
+        # #1011: the structural shortcut is gone; historical two-way soccer is a
+        # counted class and explains through the same union path as the rest.
+        assert classify_coverage(
+            {"soccer_2way": 1.0, _UNION_KEY: 1.0}, "soccer", "events"
+        ) == ("soccer_2way", 1.0)
+        assert classify_coverage({}, "soccer", "events") == (None, 0.0)
 
     def test_union_folds_additively_across_scan_rows(self):
         # The mining scan groups by (source, category, series, structure, bucket),

@@ -308,7 +308,15 @@ class TestTheHandMapIsGoneAndTheArtifactIsAuthority:
         # is counted covered) and `SCORE_UNIT_MISMATCH_RULE_TEXT` (disclosure
         # prose, uncovered like its rule-text siblings). `uncovered_sql_shaping`
         # holds at 27. `staged_unit_fingerprint` is identical across the change.
-        assert artifact["input_count"] == 83
+        # #1011: 83 -> 90. Six names from `app.utils.soccer_three_way` (the
+        # soccer three-way contract: cutoff, draw floor, the dict that binds
+        # them, the bookmaker stamp and its key, and the module itself, whose
+        # source is hashed into `population_predicate_fingerprint`) plus
+        # `SOCCER_THREE_WAY_RULE_TEXT`, same-module disclosure prose. All seven
+        # are `sql_interpolated: false` — the two values are BOUND into the
+        # soccer statements, never interpolated — so `uncovered_sql_shaping`
+        # holds at 27. `staged_unit_fingerprint` is identical across the change.
+        assert artifact["input_count"] == 90
         # CAL-P162: 4 -> 5. `MEX_NORMALIZE_THRESHOLD` joined the by-value set on
         # the deploy that made it decide PUBLICATION rather than only pricing.
         # CAL-P164 added no by-value input, so this stands still.
@@ -354,7 +362,13 @@ class TestTheHandMapIsGoneAndTheArtifactIsAuthority:
         # #1010: 68 -> 69, `SCORE_UNIT_MISMATCH_RULE_TEXT`, prose. Not a
         # predicate; its sibling `SCORE_UNIT_MISMATCH_FAMILIES` IS one and is
         # covered by value (above), so it does not widen this count.
-        assert artifact["uncovered_count"] == 69
+        # #1011: 69 -> 76, the seven names above. The detector credits no
+        # cross-module value as covered, so all seven count here, although the
+        # cutoff and the draw floor ARE hashed by value in
+        # `_main_input_fingerprint` (as `PAIR_SUM_TOLERANCE` is) and the whole
+        # contract module is hashed into the predicate digest. See the
+        # cross-module test below for what bounds each.
+        assert artifact["uncovered_count"] == 76
         assert artifact["uncovered_count"] == artifact["input_count"] - len(
             artifact["covered_by_value"]
         )
@@ -617,8 +631,28 @@ class TestTheHandMapIsGoneAndTheArtifactIsAuthority:
             "QUARANTINE_READER_REASON",
             "QUARANTINE_REASON",
             "QUARANTINE_RULE_TEXT",
+            # #1011 TAKES IT TO EIGHTEEN: the soccer three-way contract, imported
+            # from `app.utils.soccer_three_way` so the events curve, the
+            # per-sportsbook writer (another module) and the drill-down samples
+            # bind ONE cutoff and ONE draw floor. What bounds each:
+            #   * `SOCCER_THREE_WAY_SINCE`, `SOCCER_DRAW_RESIDUAL_MIN` — hashed BY
+            #     VALUE in `_main_input_fingerprint`, same as PAIR_SUM_TOLERANCE;
+            #   * `SOCCER_THREE_WAY_PARAMS` — the dict that binds exactly those two;
+            #   * `SOCCER_THREE_WAY_CONTRACT`, `SOCCER_THREE_WAY_CONTRACT_KEY` —
+            #     the stamp the bookmaker reader requires on a soccer bucket. Not
+            #     in the main digest because that read is never carried (one
+            #     Redis GET per beat), so no unit can hold an old stamp;
+            #   * `_soccer_three_way_module` — the module whose SOURCE is hashed
+            #     into `population_predicate_fingerprint`, which is what moves
+            #     the published identity (declared to the gate as a widening).
+            "SOCCER_DRAW_RESIDUAL_MIN",
+            "SOCCER_THREE_WAY_CONTRACT",
+            "SOCCER_THREE_WAY_CONTRACT_KEY",
+            "SOCCER_THREE_WAY_PARAMS",
+            "SOCCER_THREE_WAY_SINCE",
             "_COVERAGE_RUNG_KEYS",
             "_build_coverage_census",
+            "_soccer_three_way_module",
             "calibration_truth_eligible_sql",
             "identity_quarantine_ctes",
         ]
@@ -685,7 +719,10 @@ class TestTheHandMapIsGoneAndTheArtifactIsAuthority:
         # 56 -> 57 at #1010: `SCORE_UNIT_MISMATCH_RULE_TEXT` is same-module
         # prose, so it lands in the non-cross tier and the cross list is
         # unchanged.
-        assert len(cross) + 57 == artifact["uncovered_count"]
+        # 57 -> 58 at #1011: `SOCCER_THREE_WAY_RULE_TEXT` is same-module prose;
+        # the six contract names it arrived with are the cross-tier entries
+        # listed above.
+        assert len(cross) + 58 == artifact["uncovered_count"]
 
 
 class TestInterpolationDetectionCoversNonFStringSql:

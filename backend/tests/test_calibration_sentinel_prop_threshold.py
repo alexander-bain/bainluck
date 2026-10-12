@@ -122,9 +122,11 @@ class TestFoldingAndClassification:
         key, frac = classify_coverage({}, category="table_tennis", provenance="futures")
         assert key is None
 
-    def test_does_not_hijack_the_structural_soccer_class(self):
+    def test_does_not_hijack_the_counted_soccer_class(self):
+        # #1011: soccer_2way is counted per outcome now; when it dominates it
+        # names the cohort, whatever else is present.
         key, _ = classify_coverage(
-            {"kalshi_prop_threshold": 0.99},
+            {"kalshi_prop_threshold": 0.30, "soccer_2way": 0.95, "__any_known__": 0.95},
             category="soccer",
             provenance="events",
         )

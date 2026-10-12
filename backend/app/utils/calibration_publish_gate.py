@@ -197,6 +197,24 @@ DECLARATION_MAX_TOLERANCE_PCT = 5.0
 #: 0.5% is about five times the measured mass and under a fifth of both curves
 #: together; a narrowing past it is not this rule.
 #:
+#: #1011 — the first WIDENING. Soccer moneyline read since release v4636
+#: (2026-09-16T17:43:41Z), when the sportsbook writer began keeping the draw, is
+#: graded three-way (home, draw, away; drawn matches in) instead of excluded.
+#: The contract is hashed into the predicate digest, moving it ``da21d87f…`` ->
+#: ``598e0ed8…``, unbumped, for #8458's reason. A widening ADMITS rows, so it is
+#: judged by :func:`_judge_widening`: the candidate's own count of what it
+#: admitted (``soccer_2way_filter.three_way``) is taken out and the rest must
+#: clear Rule 2 as same-predicate growth.
+#:
+#: ``max_widening_pct`` is BOUNDED, not measured — build lanes do not read the
+#: live table (ruling 134). The rule can only admit soccer moneyline priced after
+#: the cutoff. Its counterfactual ceiling is the whole of soccer's history graded
+#: three-way: July's two-way exclusion counted 48,567 soccer moneyline outcomes
+#: across both sources (Queue #158), ~4.2% of the 1,154,060 published on
+#: 2026-10-11, and a three-way grade of the same matches adds the draw outcome
+#: and the drawn matches (~2x), ~8.5%. 8.0% sits under that, so a widening that
+#: large means the cutoff or the stamp failed open, not this rule.
+#:
 #: That cap bounds the GLOBAL narrowing. Per category, the rule's disclosed
 #: cells excuse a collapse only up to its per-cell counts
 #: (``score_unit_filter.excluded_by_cell``); see
@@ -221,6 +239,12 @@ DECLARED_PREDICATE_SUCCESSIONS: dict[tuple[str, str], dict] = {
         "narrowing": "score_unit",
         "max_narrowing_pct": 0.5,
         "listed": False,
+    },
+    ("da21d87f0f001c635a813eefb3eb9532", "598e0ed820277a9748363a4d7a276a63"): {
+        "cause": "#1011 soccer graded three-way from the 3-way capture forward",
+        "issue": 1011,
+        "widening": "soccer_three_way",
+        "max_widening_pct": 8.0,
     },
 }
 
@@ -665,6 +689,7 @@ def census(payload: Any) -> dict:
             "identity_quarantine": None,
             "datagolf_opening_timing": None,
             "score_unit": None,
+            "soccer_three_way": None,
             "cell_counts": None,
         }
 
@@ -742,6 +767,8 @@ def census(payload: Any) -> dict:
         "datagolf_opening_timing": _datagolf_opening_timing_census(payload),
         # #1010: the score-unit rule's size, stated once.
         "score_unit": _score_unit_census(payload),
+        # #1011: the soccer three-way rule's size — the rows it ADMITS.
+        "soccer_three_way": _soccer_three_way_census(payload),
         # #1010: per-cell published counts, so a disclosed exclusion can be
         # bounded by what it removed (`_judge_score_unit_disclosure`).
         "cell_counts": _bucket_cell_counts(buckets),
@@ -827,6 +854,24 @@ def _score_unit_census(payload: dict) -> dict:
         "section_present": isinstance(section, dict),
         "by_cell": by_cell,
     }
+
+
+def _soccer_three_way_census(payload: dict) -> dict:
+    """#1011's one statement of its size: the soccer outcomes graded three-way.
+
+    ``soccer_2way_filter.three_way`` carries ``events_included`` and
+    ``bookmaker_included``, each counted by the build off the rows that entered
+    the curve. ``included`` is their sum, or ``None`` when either is missing or
+    not a count — never read as zero.
+    """
+    section = payload.get("soccer_2way_filter")
+    three_way = section.get("three_way") if isinstance(section, dict) else None
+    events = three_way.get("events_included") if isinstance(three_way, dict) else None
+    bookmaker = (
+        three_way.get("bookmaker_included") if isinstance(three_way, dict) else None
+    )
+    included = events + bookmaker if _is_count(events) and _is_count(bookmaker) else None
+    return {"included": included, "section_present": isinstance(three_way, dict)}
 
 
 def _is_count(value: Any) -> bool:
@@ -1131,6 +1176,87 @@ def _judge_succession(
             f"{entry['max_narrowing_pct']:.1f}% cap"
         )
     return record, None
+
+
+def _judge_widening(
+    entry: dict, cand: dict, prev_pop: float, cand_pop: float
+) -> tuple[Optional[dict], Optional[str]]:
+    """Measure a declared WIDENING off the candidate (#1011).
+
+    The mirror of :func:`_judge_succession`. A narrowing removed rows, so it is
+    added back; a widening ADMITTED rows the old predicate did not count, so its
+    stated count is taken out and the remainder is judged as same-predicate
+    growth. Same discipline: the count is read off the candidate's own artifact
+    (``widening`` names the census key, whose ``included`` the build counted off
+    the rows that entered the curve), must be present and positive, and may be no
+    larger than ``max_widening_pct`` of the candidate — a widening past that is
+    not this rule.
+
+    The record carries the move under the narrowing keys as well, SIGNED
+    (``narrowing`` is ``-included``), so the growth branch and the persisted
+    ledger read one shape whichever direction the predicate moved.
+    """
+    stated = cand.get(entry["widening"]) or {}
+    included = stated.get("included")
+    record: dict = {
+        "published_predicate": None,
+        "candidate_predicate": None,
+        "cause": entry["cause"],
+        "issue": entry["issue"],
+        "widening": included if _is_count(included) else None,
+        "max_widening_pct": entry["max_widening_pct"],
+        "narrowing": -included if _is_count(included) else None,
+        "narrowing_listed": None,
+    }
+    if not _is_count(included):
+        return record, (
+            f"the candidate does not state the declared widening "
+            f"({entry['widening']}.included is {included!r}), so the move it "
+            "declares cannot be measured"
+        )
+    if included <= 0:
+        return record, (
+            "the candidate states a widening of 0: the ruled cause the "
+            "succession declares is absent from this artifact, so the predicate "
+            "moved for some other reason"
+        )
+    widening_pct = included / cand_pop * 100 if cand_pop else 100.0
+    pre_widening = cand_pop - included
+    record["widening_pct"] = round(widening_pct, 2)
+    record["narrowing_pct"] = -round(widening_pct, 2)
+    record["pre_narrowing_population"] = int(pre_widening)
+    record["pre_narrowing_drift_pct"] = round(
+        (pre_widening - prev_pop) / prev_pop * 100, 2
+    )
+    if widening_pct > entry["max_widening_pct"]:
+        return record, (
+            f"the declared widening admitted {widening_pct:.2f}% "
+            f"({included:,} of {int(cand_pop):,}), past its "
+            f"{entry['max_widening_pct']:.1f}% cap"
+        )
+    return record, None
+
+
+def _declared_move_phrase(record: dict) -> str:
+    """'with the declared narrowing of N added back' — or the widening's mirror."""
+    if record.get("widening") is not None:
+        return f"with the declared widening of {record['widening']:,} taken out"
+    return f"with the declared narrowing of {record['narrowing']:,} added back"
+
+
+def _declared_size_phrase(record: dict) -> str:
+    """How big the declared move was, in the direction it went."""
+    if record.get("widening") is not None:
+        return (
+            f"the widening as {record['widening']:,} outcomes "
+            f"({record['widening_pct']:.2f}% of {int(record['pre_narrowing_population'] + record['widening']):,}, "
+            f"cap {record['max_widening_pct']:.1f}%)"
+        )
+    return (
+        f"the narrowing as {record['narrowing']:,} outcomes "
+        f"({record['narrowing_pct']:.2f}% of {record['pre_narrowing_population']:,}, "
+        f"cap {record['max_narrowing_pct']:.1f}%)"
+    )
 
 
 #: Keys under which an artifact's filter sections disclose WHICH (source,
@@ -1782,7 +1908,9 @@ def evaluate_publish(
             # #8458: a RULED predicate move, declared by its exact digest pair.
             # The narrowing is added back and the growth judged as if the
             # predicate had not moved; shrink never reaches this branch.
-            record, why_not = _judge_succession(succession, cand, prev_pop, cand_pop)
+            judge = (_judge_widening if "widening" in succession
+                     else _judge_succession)
+            record, why_not = judge(succession, cand, prev_pop, cand_pop)
             record["published_predicate"] = prev["population_predicate"]
             record["candidate_predicate"] = cand["population_predicate"]
             record["admitted"] = False
@@ -1805,14 +1933,13 @@ def evaluate_publish(
                     predicate_succession=record,
                 )
             else:
-                pre_drift = (cand_pop + record["narrowing"] - prev_pop) / prev_pop
+                pre_drift = (record["pre_narrowing_population"] - prev_pop) / prev_pop
                 if pre_drift > POPULATION_GROWTH_CEILING:
                     reject(
                         "population_growth_unexplained",
                         f"population grew {pre_drift * 100:+.1f}% "
                         f"({prev_pop:,} -> {record['pre_narrowing_population']:,} "
-                        f"with the declared narrowing of {record['narrowing']:,} "
-                        f"added back) across a declared predicate succession, past "
+                        f"{_declared_move_phrase(record)}) across a declared predicate succession, past "
                         f"the {POPULATION_GROWTH_CEILING * 100:.0f}% ceiling — the "
                         "same rule counting this many more rows is duplication or "
                         "a bad merge, not a backfill",
@@ -1829,17 +1956,14 @@ def evaluate_publish(
                         f"the population predicate moved {_predicate_label(prev)} "
                         f"-> {_predicate_label(cand)}, a DECLARED succession "
                         f"({succession['cause']}, #{succession['issue']}): the "
-                        f"candidate states the narrowing as {record['narrowing']:,} "
-                        f"outcomes ({record['narrowing_pct']:.2f}% of "
-                        f"{record['pre_narrowing_population']:,}, cap "
-                        f"{succession['max_narrowing_pct']:.1f}%)",
+                        f"candidate states {_declared_size_phrase(record)}",
                         **record,
                     )
                     observe(
                         "population_growth_acknowledged",
                         f"population grew {drift * 100:+.1f}% "
-                        f"({prev_pop:,} -> {int(cand_pop):,}); with the declared "
-                        f"narrowing added back it grew {pre_drift * 100:+.1f}% "
+                        f"({prev_pop:,} -> {int(cand_pop):,}); "
+                        f"{_declared_move_phrase(record)} it grew {pre_drift * 100:+.1f}% "
                         f"({prev_pop:,} -> {record['pre_narrowing_population']:,}) "
                         f"under the {POPULATION_GROWTH_CEILING * 100:.0f}% ceiling "
                         "— ADMITTED as growth across a declared predicate "

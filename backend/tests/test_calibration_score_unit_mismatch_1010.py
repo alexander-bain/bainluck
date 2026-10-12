@@ -247,7 +247,12 @@ PAIR = (PUBLISHED_PREDICATE, CANDIDATE_PREDICATE)
 
 class TestPredicateIdentity:
     def test_this_tree_states_the_declared_candidate(self):
-        assert pc.population_predicate_fingerprint() == CANDIDATE_PREDICATE
+        # #1011 moved the digest on, as a declared WIDENING; this rule's
+        # candidate is that succession's predecessor, so the chain is unbroken.
+        current = pc.population_predicate_fingerprint()
+        assert current == CANDIDATE_PREDICATE or (
+            (CANDIDATE_PREDICATE, current) in DECLARED_PREDICATE_SUCCESSIONS
+        )
 
     def test_the_family_value_is_in_the_digest(self, monkeypatch):
         before = pc.population_predicate_fingerprint()

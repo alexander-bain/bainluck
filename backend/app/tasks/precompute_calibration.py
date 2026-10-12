@@ -44,6 +44,18 @@ from app.utils.resolution_authority import (
     PRICE_DERIVED_SOURCES_SQL,
     calibration_truth_eligible_sql,
 )
+# #1011: the soccer three-way contract. Imported, never restated — the events
+# arm, the per-sportsbook writer and the drill-down samples bind the same values.
+from app.utils import soccer_three_way as _soccer_three_way_module
+from app.utils.soccer_three_way import (
+    SOCCER_DRAW_RESIDUAL_MIN,
+    SOCCER_REGULATION_FINISH_PERIOD,
+    SOCCER_REGULATION_FINISH_STATUS,
+    SOCCER_THREE_WAY_CONTRACT,
+    SOCCER_THREE_WAY_CONTRACT_KEY,
+    SOCCER_THREE_WAY_PARAMS,
+    SOCCER_THREE_WAY_SINCE,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -614,10 +626,19 @@ def read_bookmaker_curve_rows(rc, *, refuse: bool, json_module=None, durable=Non
     # Left in, it dominates the soccer_* by_category lines (~40K draw-inflated
     # outcomes). Dropped here, read-side, so the exclusion holds even though the
     # 6 h source keeps writing them.
+    #
+    # #1011: the writer now ALSO emits soccer buckets graded three-way (home,
+    # draw, away; drawn matches in) from readings taken since release v4636, and
+    # stamps each one with the contract. Only a stamped bucket is published. The
+    # stamp is the whole discrimination, on purpose: a bucket from an older
+    # writer — from Redis or the durable survivor — carries no stamp, so the
+    # two-way reading can never be read as the three-way one during a rollout.
     rows = []
     soccer_excluded = 0
     for row in raw:
-        if category_is_soccer_2way_excluded(row.get("category")):
+        if category_is_soccer_2way_excluded(row.get("category")) and (
+            row.get(SOCCER_THREE_WAY_CONTRACT_KEY) != SOCCER_THREE_WAY_CONTRACT
+        ):
             soccer_excluded += int(row.get("n") or 0)
             continue
         rows.append(SimpleNamespace(**row))
@@ -1207,6 +1228,21 @@ CALIBRATION_CORRECTIONS = [
                        "from the curve (league-scoped by the soccer_* key); soccer "
                        "spreads/totals are kept. Forward fix = 3-way capture "
                        "(#1011 draw column). Read-side only, no regrade.",
+    },
+    {
+        "date": "2026-10-12",
+        "title": "Soccer prices since September 16 are scored as home, draw or away",
+        "rows": None,  # live counts in payload.soccer_2way_filter.three_way
+        "description": "Since 2026-09-16 17:43:41 UTC the sportsbook writer "
+                       "keeps the draw (#1011): a soccer price now leaves room "
+                       "for it instead of splitting it between the two teams. "
+                       "Those readings are graded as the three-way question "
+                       "they are — home, draw and away, drawn matches included "
+                       "— in both the events aggregate and the per-sportsbook "
+                       "curve, for matches recorded as ending at full time (the "
+                       "market settles on the 90-minute score). Earlier soccer "
+                       "moneyline stays excluded; it was never captured with "
+                       "the draw. Read-side only, no regrade.",
     },
     {
         "date": "2026-07-12",
@@ -1965,7 +2001,25 @@ SOCCER_2WAY_RULE_TEXT = (
     "split summing to ~1.0, dropping the ~25% draw mass and over-predicting "
     "home/away by 7-18pp uniformly across ~20 leagues (#1011). The draw was never "
     "captured so these rows can't be re-graded; league-scoped by the soccer_* key. "
-    "Soccer spreads/totals (genuinely 2-way) are kept. Forward fix = 3-way capture. "
+    "Soccer spreads/totals (genuinely 2-way) are kept. Soccer moneyline read since "
+    "the 3-way capture (2026-09-16) is graded 3-way instead — see three_way. "
+    "Read-side only; never mutates resolutions."
+)
+
+# #1011 — the forward half. Since release v4636 (2026-09-16T17:43:41Z) the
+# sportsbook writer de-vigs over every outcome the book quotes, so a soccer pair
+# keeps the draw as ``1 - home - away``. Those readings are graded as the
+# three-way question they are. Contract, evidence and the per-row proof:
+# ``app/utils/soccer_three_way.py``.
+SOCCER_THREE_WAY_RULE_TEXT = (
+    "Soccer game winners priced since the 3-way capture went live "
+    "(2026-09-16 17:43:41 UTC) are graded as three outcomes — home, draw, away — "
+    "with drawn matches included, using the draw the price left room for. A "
+    "reading is graded 3-way only when its own numbers keep the draw (home + away "
+    "at least 1pp under 100%); one that does not stays excluded rather than being "
+    "graded as two losses on a draw. The market settles on the 90-minute score, "
+    "so only a match recorded as ending at full time is graded; an extra-time or "
+    "penalty finish stays excluded. Earlier soccer moneyline stays excluded. "
     "Read-side only; never mutates resolutions."
 )
 
@@ -1977,6 +2031,11 @@ def category_is_soccer_2way_excluded(category: str | None) -> bool:
     ``s.key NOT LIKE 'soccer_%'`` events-curve filter: every soccer league game-odds
     row was captured 2-way (draw dropped at ingest), so it is excluded from the
     published moneyline curve. Read-side only (gotcha #21).
+
+    #1011: names the soccer CATEGORY, not the verdict. A soccer row graded
+    three-way under ``app/utils/soccer_three_way.py`` is published; every caller
+    pairs this with that contract's own test (the events branch, the bookmaker
+    stamp) rather than reading True as "drop".
     """
     return bool(category) and category.startswith("soccer_")
 
@@ -7562,7 +7621,7 @@ async def compute_calibration_payload(db, *, runner=None) -> dict:
                 SUM((prob::float - CASE WHEN won THEN 1.0 ELSE 0.0 END)^2) AS sum_sq_err
             FROM (
                 SELECT COALESCE(closing_home_probability, opening_home_probability) AS prob,
-                       (home_score > away_score) AS won, sport_id
+                       (home_score > away_score) AS won, sport_id, FALSE AS three_way
                 FROM events
                 WHERE status IN ('completed', 'closed')
                   AND COALESCE(closing_home_probability, opening_home_probability) IS NOT NULL
@@ -7572,7 +7631,7 @@ async def compute_calibration_payload(db, *, runner=None) -> dict:
                   AND home_score != away_score
                 UNION ALL
                 SELECT COALESCE(closing_away_probability, opening_away_probability) AS prob,
-                       (away_score > home_score) AS won, sport_id
+                       (away_score > home_score) AS won, sport_id, FALSE AS three_way
                 FROM events
                 WHERE status IN ('completed', 'closed')
                   AND COALESCE(closing_away_probability, opening_away_probability) IS NOT NULL
@@ -7580,17 +7639,50 @@ async def compute_calibration_payload(db, *, runner=None) -> dict:
                   AND COALESCE(closing_away_probability, opening_away_probability) < 1
                   AND home_score IS NOT NULL AND away_score IS NOT NULL
                   AND home_score != away_score
+                UNION ALL
+                -- #1011: soccer graded THREE-WAY (app/utils/soccer_three_way.py).
+                -- The last pre-kickoff consensus pair, which since release v4636
+                -- keeps the draw as 1 - home - away. The CLOSING pair is not
+                -- read: its away leg is written as 1 - home, so it cannot hold
+                -- the draw. Drawn matches stay in — the draw is an outcome here.
+                SELECT tw.prob, tw.won, ev.sport_id, TRUE AS three_way
+                FROM events ev
+                CROSS JOIN LATERAL (VALUES
+                    (ev.opening_home_probability::float,
+                     ev.home_score > ev.away_score),
+                    (ev.opening_away_probability::float,
+                     ev.away_score > ev.home_score),
+                    (1.0 - ev.opening_home_probability::float
+                         - ev.opening_away_probability::float,
+                     ev.home_score = ev.away_score)
+                ) AS tw(prob, won)
+                WHERE ev.status IN ('completed', 'closed')
+                  AND ev.sport_id IN (SELECT id FROM sports WHERE key LIKE 'soccer_%')
+                  AND ev.commence_time >= :soccer_three_way_since
+                  AND ev.home_score IS NOT NULL AND ev.away_score IS NOT NULL
+                  -- CERT-4066: the score graded must be the 90-minute score.
+                  -- Admitted only when the row says the match ENDED at full
+                  -- time; an extra-time or shootout finish is unproven.
+                  AND (ev.period = :soccer_regulation_period
+                       OR ev.box_score_data->'provider_box_evidence'
+                              ->'provider_status'->>'name'
+                          = :soccer_regulation_status)
+                  AND ev.opening_home_probability > 0
+                  AND ev.opening_away_probability > 0
+                  AND 1.0 - ev.opening_home_probability::float
+                          - ev.opening_away_probability::float
+                      >= :soccer_draw_residual_min
             ) outcomes
             JOIN sports s ON s.id = outcomes.sport_id
-            -- Queue #158 (#1011): soccer game-odds were captured 2-way (draw
-            -- dropped at ingest — no draw column) so every soccer moneyline row
-            -- sums to ~1.0 and over-predicts home/away by 7-18pp. Excluded from
-            -- the published curve, league-scoped by the soccer_* key. Read-side
-            -- only (gotcha #21); forward fix = 3-way capture (#1011).
-            WHERE s.key NOT LIKE 'soccer_%'
+            -- Queue #158 (#1011): soccer read as a TWO-way pair is excluded —
+            -- before v4636 the draw was dropped at ingest and the pair summed to
+            -- ~1.0, over-predicting home/away by 7-18pp, and that cannot be
+            -- re-graded. Only the three-way branch above reaches the curve for
+            -- soccer. Read-side only (gotcha #21).
+            WHERE (s.key NOT LIKE 'soccer_%' OR outcomes.three_way)
             GROUP BY bucket_idx, s.key
             ORDER BY bucket_idx, s.key
-        """)
+        """).bindparams(**SOCCER_THREE_WAY_PARAMS)
         events_rows = runner.reuse(PHASE_SPORTS, "events_rows")
         if events_rows is None:
             await runner.apply_statement_timeout(db, PHASE_SPORTS)
@@ -7879,6 +7971,12 @@ async def compute_calibration_payload(db, *, runner=None) -> dict:
         # drops from the published curve. Mirrors the events_sql population
         # (same eligibility, both home + away outcomes) so the count is honest,
         # never silent — the same contract as the #762 void_filter count.
+        #
+        # #1011: a match the three-way branch of events_sql grades is NOT
+        # excluded, so it is not counted here. The admission test is that
+        # branch's own, wrapped in COALESCE(..., FALSE): a NULL kickoff or a
+        # NULL opening leg is "not admitted", never a row silently dropped from
+        # the count by a NULL comparison.
         # -----------------------------------------------------------
         soccer_2way_sql = text("""
             SELECT COUNT(*) AS excluded
@@ -7891,6 +7989,18 @@ async def compute_calibration_payload(db, *, runner=None) -> dict:
                   AND COALESCE(closing_home_probability, opening_home_probability) < 1
                   AND home_score IS NOT NULL AND away_score IS NOT NULL
                   AND home_score != away_score
+                  AND NOT COALESCE(
+                      commence_time >= :soccer_three_way_since
+                      AND (period = :soccer_regulation_period
+                           OR box_score_data->'provider_box_evidence'
+                                  ->'provider_status'->>'name'
+                              = :soccer_regulation_status)
+                      AND opening_home_probability > 0
+                      AND opening_away_probability > 0
+                      AND 1.0 - opening_home_probability::float
+                              - opening_away_probability::float
+                          >= :soccer_draw_residual_min,
+                      FALSE)
                 UNION ALL
                 SELECT sport_id
                 FROM events
@@ -7900,10 +8010,22 @@ async def compute_calibration_payload(db, *, runner=None) -> dict:
                   AND COALESCE(closing_away_probability, opening_away_probability) < 1
                   AND home_score IS NOT NULL AND away_score IS NOT NULL
                   AND home_score != away_score
+                  AND NOT COALESCE(
+                      commence_time >= :soccer_three_way_since
+                      AND (period = :soccer_regulation_period
+                           OR box_score_data->'provider_box_evidence'
+                                  ->'provider_status'->>'name'
+                              = :soccer_regulation_status)
+                      AND opening_home_probability > 0
+                      AND opening_away_probability > 0
+                      AND 1.0 - opening_home_probability::float
+                              - opening_away_probability::float
+                          >= :soccer_draw_residual_min,
+                      FALSE)
             ) outcomes
             JOIN sports s ON s.id = outcomes.sport_id
             WHERE s.key LIKE 'soccer_%'
-        """)
+        """).bindparams(**SOCCER_THREE_WAY_PARAMS)
         soccer_2way_excluded = runner.reuse(PHASE_DIAGNOSTICS, "soccer_2way_excluded")
         if soccer_2way_excluded is None:
             with runner.stage("read:soccer_2way"):
@@ -8758,6 +8880,25 @@ async def compute_calibration_payload(db, *, runner=None) -> dict:
             "excluded": soccer_2way_excluded + bookmaker_soccer_excluded,
             "events_excluded": soccer_2way_excluded,
             "bookmaker_excluded": bookmaker_soccer_excluded,
+            # #1011: what IS published for soccer moneyline, graded three-way.
+            # Counted off the rows that actually entered the curve, so the
+            # disclosure cannot claim an inclusion the build did not make. Every
+            # soccer row that survives to here is three-way by construction:
+            # events_sql admits soccer only through its three-way branch, and
+            # the bookmaker reader keeps only contract-stamped soccer buckets.
+            "three_way": {
+                "since": SOCCER_THREE_WAY_SINCE.isoformat(),
+                "draw_residual_min": SOCCER_DRAW_RESIDUAL_MIN,
+                "rule": SOCCER_THREE_WAY_RULE_TEXT,
+                "events_included": sum(
+                    int(r.n) for r in events_rows
+                    if category_is_soccer_2way_excluded(r.category)
+                ),
+                "bookmaker_included": sum(
+                    int(r.n) for r in bookmaker_rows
+                    if category_is_soccer_2way_excluded(r.category)
+                ),
+            },
             # D21 (#1978, CAL-P150). None on a normal read; one of the two
             # reason codes when the per-bookmaker curve could not be assembled
             # and this response was served anyway. Only the serve path can ever
@@ -9080,6 +9221,16 @@ def population_predicate_fingerprint() -> str:
             + inspect.getsource(category_has_score_unit_mismatch)
             + inspect.getsource(split_score_unit_mismatch)
             + f"score_unit_families={SCORE_UNIT_MISMATCH_FAMILIES}"
+            # #1011: soccer moneyline is admitted three-way from the capture
+            # forward — a WIDENING of which rows qualify, decided outside every
+            # SQL root above (events_sql's soccer branch, the soccer exclusion
+            # count, the bookmaker reader's stamp test), so the contract is
+            # hashed explicitly: its module source (cutoff, draw floor, stamp
+            # version, the Python twin of the grade) and the reader predicate
+            # that keeps a soccer bucket. Declared to the publish gate as a
+            # widening by its exact digest pair, never by a version bump.
+            + inspect.getsource(_soccer_three_way_module)
+            + inspect.getsource(category_is_soccer_2way_excluded)
         )
     except Exception:  # noqa: BLE001 — no source => never claim a match
         # A digest nothing can equal (``_same_predicate`` requires equality), so
@@ -9265,6 +9416,15 @@ def _main_input_fingerprint() -> str:
         # the phase read, so a carried output cannot encode an old value; it is
         # here so the census covers it rather than counting it as a hole.
         f"score_unit_families={SCORE_UNIT_MISMATCH_FAMILIES}",
+        # #1011 — hashed by name and by value like its neighbours. BOUND into
+        # events_sql and the soccer exclusion count rather than interpolated,
+        # so the source hash above sees the parameter NAMES and never these
+        # values; both decide which soccer rows the curve publishes.
+        f"soccer_three_way_since={SOCCER_THREE_WAY_SINCE.isoformat()}",
+        f"soccer_draw_residual_min={SOCCER_DRAW_RESIDUAL_MIN}",
+        # CERT-4066: the regulation-finish proof, bound the same way.
+        f"soccer_regulation_period={SOCCER_REGULATION_FINISH_PERIOD}",
+        f"soccer_regulation_status={SOCCER_REGULATION_FINISH_STATUS}",
         source,
     )
 

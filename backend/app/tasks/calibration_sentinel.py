@@ -54,6 +54,9 @@ from app.utils.calibration_provability import (
     PROVABILITY_NOT_PROVABLE,
     provability_from_share,
 )
+# #1011: the soccer three-way contract, bound into the events scan so the
+# sentinel admits exactly the matches the curve grades three-way.
+from app.utils.soccer_three_way import SOCCER_THREE_WAY_PARAMS
 
 logger = logging.getLogger(__name__)
 
@@ -91,6 +94,9 @@ KNOWN_CLASS_KEYS: tuple[str, ...] = (
     "kalshi_prop_threshold",
     "void",
     "heuristic",
+    # #1011: counted per outcome by the events scan (a soccer moneyline row NOT
+    # graded three-way), no longer a structural shortcut keyed on the category.
+    "soccer_2way",
 )
 
 # Exact union of the SCAN-COUNTED known classes, computed in SQL on the same pass
@@ -351,9 +357,17 @@ def classify_coverage(
     must stay a SUPERSET of what the curve actually excludes: any exclusion the
     curve ships but this cannot name reads as a fully unexplained break and files
     a P1 against a cohort that is already handled (CAL-P013 — six such issues were
-    open at once). The soccer 2-way draw class is
-    structural (an events-table soccer moneyline), so it's keyed off category +
-    provenance rather than a per-outcome flag.
+    open at once).
+
+    #1011 — ``soccer_2way`` is a COUNTED class like the rest. It used to be a
+    structural shortcut: every events-table soccer cohort returned
+    ``('soccer_2way', 1.0)``. Once the curve admits soccer graded three-way
+    (matches since the v4636 capture that keep the draw and ended at full
+    time), that shortcut would mark a newly broken three-way cohort fully
+    EXPLAINED and hide the very regression #1011 must surface. The events scan
+    now counts, per outcome, only the rows the curve still excludes, and grades
+    the admitted ones three-way under their own ``structure=three_way`` cohort,
+    where no shipped exclusion applies.
 
     #1905 — COVERAGE IS THE UNION, NOT THE MAX. This used to pick the single
     largest class and compare *that* to the threshold, so a cohort two shipped
@@ -377,12 +391,6 @@ def classify_coverage(
     The RETURNED NAME stays the dominant class, because that is what selects the
     playbook branch a reader follows. Only the number being thresholded changes.
     """
-    # Structural known class: events-table soccer moneyline == the draw-omission
-    # (soccer_2way) exclusion. Events are grouped by sport family (soccer_epl ->
-    # "soccer") so all leagues aggregate past the n-floor; match either form.
-    if provenance == "events" and (category or "").startswith("soccer"):
-        return "soccer_2way", 1.0
-
     best_key = None
     best_frac = 0.0
     for key, frac in overlap_fractions.items():
@@ -586,32 +594,82 @@ _KNOWN_UNION_SQL = """(
 # LEFT IN as losses for both sides — that's exactly what surfaces the soccer
 # draw-omission (soccer_2way) miscalibration. Events has no created_at column
 # (schema drift), so new-format detection does not apply here.
+#
+# #1011 — a soccer match the curve grades THREE-WAY is graded the same way here:
+# the last pre-kickoff consensus pair (which keeps the draw as 1 - home - away)
+# yields home, away AND draw outcomes, drawn matches included, under its own
+# ``structure_class = 'three_way'``. The admission test is the curve's own
+# (``app/utils/soccer_three_way.py``, bound from SOCCER_THREE_WAY_PARAMS): kicked
+# off since v4636, the pair keeps the draw, and the row says the match ended at
+# full time. Every OTHER soccer row is the historical two-way exclusion and is
+# counted per outcome as ``soccer_2way_n``, with the published view built from
+# its complement — so an events/soccer cohort is explained only by the rows the
+# curve actually drops, and a bad three-way cohort reads as a real break.
 _EVENTS_MINING_SQL = """
-WITH sides AS (
+WITH ev AS (
     SELECT split_part(s.key, '_', 1) AS category,
-           CASE WHEN e.home_score > e.away_score THEN 1 ELSE 0 END AS win,
-           COALESCE(e.closing_home_probability, e.opening_home_probability) AS cp
+           s.key LIKE 'soccer_%' AS is_soccer,
+           e.home_score, e.away_score,
+           e.opening_home_probability, e.opening_away_probability,
+           COALESCE(e.closing_home_probability, e.opening_home_probability) AS home_cp,
+           COALESCE(e.closing_away_probability, e.opening_away_probability) AS away_cp,
+           s.key LIKE 'soccer_%' AND COALESCE(
+               e.commence_time >= :soccer_three_way_since
+               AND (e.period = :soccer_regulation_period
+                    OR e.box_score_data->'provider_box_evidence'
+                           ->'provider_status'->>'name'
+                       = :soccer_regulation_status)
+               AND e.opening_home_probability > 0
+               AND e.opening_away_probability > 0
+               AND 1.0 - e.opening_home_probability::float
+                       - e.opening_away_probability::float
+                   >= :soccer_draw_residual_min,
+               FALSE) AS three_way
     FROM events e
     JOIN sports s ON s.id = e.sport_id
     WHERE e.status IN ('completed', 'closed')
       AND e.home_score IS NOT NULL AND e.away_score IS NOT NULL
-      AND COALESCE(e.closing_home_probability, e.opening_home_probability) IS NOT NULL
+),
+sides AS (
+    SELECT category,
+           'binary' AS structure_class,
+           CASE WHEN home_score > away_score THEN 1 ELSE 0 END AS win,
+           home_cp::float AS cp,
+           is_soccer AS soccer_2way
+    FROM ev
+    WHERE NOT three_way AND home_cp IS NOT NULL
     UNION ALL
-    SELECT split_part(s.key, '_', 1) AS category,
-           CASE WHEN e.away_score > e.home_score THEN 1 ELSE 0 END AS win,
-           COALESCE(e.closing_away_probability, e.opening_away_probability) AS cp
-    FROM events e
-    JOIN sports s ON s.id = e.sport_id
-    WHERE e.status IN ('completed', 'closed')
-      AND e.home_score IS NOT NULL AND e.away_score IS NOT NULL
-      AND COALESCE(e.closing_away_probability, e.opening_away_probability) IS NOT NULL
+    SELECT category,
+           'binary' AS structure_class,
+           CASE WHEN away_score > home_score THEN 1 ELSE 0 END AS win,
+           away_cp::float AS cp,
+           is_soccer AS soccer_2way
+    FROM ev
+    WHERE NOT three_way AND away_cp IS NOT NULL
+    UNION ALL
+    SELECT ev.category,
+           'three_way' AS structure_class,
+           tw.win,
+           tw.cp,
+           FALSE AS soccer_2way
+    FROM ev
+    CROSS JOIN LATERAL (VALUES
+        (ev.opening_home_probability::float,
+         CASE WHEN ev.home_score > ev.away_score THEN 1 ELSE 0 END),
+        (ev.opening_away_probability::float,
+         CASE WHEN ev.away_score > ev.home_score THEN 1 ELSE 0 END),
+        (1.0 - ev.opening_home_probability::float
+             - ev.opening_away_probability::float,
+         CASE WHEN ev.home_score = ev.away_score THEN 1 ELSE 0 END)
+    ) AS tw(cp, win)
+    WHERE ev.three_way
 )
 SELECT
     'events' AS provenance,
     'odds_api' AS source,
     category AS category,
     'events_moneyline' AS series_family,
-    'binary' AS structure_class,
+    structure_class,
     LEAST(FLOOR(cp * 10)::int, 9) AS bucket,
     COUNT(*) AS n,
     SUM(win) AS winners,
@@ -622,18 +680,27 @@ SELECT
     0 AS void_n,
     0 AS heuristic_n,
     0 AS kalshi_prop_threshold_n,
-    0 AS any_known_n,
-    -- #1911: events carry no per-outcome exclusion flags, so the published
-    -- population IS the raw one. Emitted explicitly rather than left to a
-    -- default, so an events cohort reports a real published MCE equal to its
-    -- raw one instead of a missing number that reads as "under threshold".
-    COUNT(*) AS pub_n,
-    SUM(win) AS pub_winners,
-    SUM(cp) AS pub_sum_prob,
+    SUM(CASE WHEN soccer_2way THEN 1 ELSE 0 END) AS soccer_2way_n,
+    -- soccer_2way is the only shipped exclusion on events, so it IS the union.
+    SUM(CASE WHEN soccer_2way THEN 1 ELSE 0 END) AS any_known_n,
+    -- #1911: the published population is the complement of the exclusion.
+    -- Emitted explicitly rather than left to a default, so an events cohort
+    -- reports a real published MCE instead of a missing number that reads as
+    -- "under threshold".
+    SUM(CASE WHEN soccer_2way THEN 0 ELSE 1 END) AS pub_n,
+    SUM(CASE WHEN soccer_2way THEN 0 ELSE win END) AS pub_winners,
+    SUM(CASE WHEN soccer_2way THEN 0 ELSE cp END) AS pub_sum_prob,
     NULL::timestamptz AS min_created_at
 FROM sides
-GROUP BY category, bucket
+GROUP BY category, structure_class, bucket
 """
+
+#: Bind parameters per mining scan. Only the events scan applies the #1011
+#: contract; the futures scan has no bound parameters.
+_MINING_SCAN_PARAMS: dict[str, dict] = {
+    "futures": {},
+    "events": SOCCER_THREE_WAY_PARAMS,
+}
 
 
 def _in_list(items: tuple[str, ...]) -> str:
@@ -682,6 +749,8 @@ def _fold_row_into_cohort(cohort: dict, row: dict) -> None:
     cohort["overlap_counts"]["void"] += row["void_n"]
     cohort["overlap_counts"]["heuristic"] += row["heuristic_n"]
     cohort["overlap_counts"]["kalshi_prop_threshold"] += row["kalshi_prop_threshold_n"]
+    # #1011: emitted by the events scan only; a futures row folds as 0.
+    cohort["overlap_counts"]["soccer_2way"] += row.get("soccer_2way_n") or 0
     # Exact per-scan-row union folds additively across rows: the mining scan
     # groups by (source, category, series, structure, bucket), so no OUTCOME is
     # counted by two rows and summing the per-row unions IS the cohort union.
@@ -717,6 +786,7 @@ def _new_cohort(cohort_key: tuple[tuple[str, str], ...], sample_row: dict) -> di
             "void": 0,
             "kalshi_prop_threshold": 0,
             "heuristic": 0,
+            "soccer_2way": 0,
             _UNION_KEY: 0,
         },
         "min_created_at": None,
@@ -1139,8 +1209,6 @@ def build_issue_body(cohort: dict, explained_by: str | None, coverage: float) ->
             f"{fracs[_UNION_KEY]*100:.1f}% of outcomes** — this is the figure "
             f"compared against the {SENTINEL_COVERAGE_THRESHOLD*100:.0f}% coverage threshold"
         )
-    if cohort["provenance"] == "events" and (cohort["category"] or "").startswith("soccer_"):
-        parts.append("- soccer_2way (draw omission): structural — events soccer moneyline")
     parts.append("")
 
     if cohort.get("disposition") == DISP_EXCLUSION_HARMS:
@@ -1554,7 +1622,7 @@ async def _run_calibration_sentinel(
         # --- Mining scan: fold both populations into every cohort view ---
         for label, sql in (("futures", _FUTURES_MINING_SQL), ("events", _EVENTS_MINING_SQL)):
             try:
-                result = await session.execute(text(sql))
+                result = await session.execute(text(sql), _MINING_SCAN_PARAMS[label])
                 for r in result.mappings():
                     row = dict(r)
                     # series_family / structure_class are computed in SQL (bounded

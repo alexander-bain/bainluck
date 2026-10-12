@@ -20,7 +20,7 @@
     "_main_futures_sql": "5f399959e521e053",
     "_roster_pushdown_predicates": "9b4afb101a88cb8a",
     "_virtual_market_ctes": "d03415be9c36d5cb",
-    "compute_calibration_payload": "69a00ad9660e7c5e",
+    "compute_calibration_payload": "c397cf7ee13985ef",
     "identity_quarantine_ctes": "178dd31b64f3e836"
   },
   "hashed_roots": [
@@ -31,7 +31,7 @@
     "compute_calibration_payload",
     "identity_quarantine_ctes"
   ],
-  "input_count": 83,
+  "input_count": 90,
   "inputs": [
     {
       "covered_by_value": false,
@@ -773,6 +773,72 @@
     },
     {
       "covered_by_value": false,
+      "definition_sha16": "0d2b16bd8704e743",
+      "impact": "behavior_or_evidence",
+      "name": "SOCCER_DRAW_RESIDUAL_MIN",
+      "origin": "app.utils.soccer_three_way:SOCCER_DRAW_RESIDUAL_MIN",
+      "sql_interpolated": false,
+      "used_in": [
+        "compute_calibration_payload"
+      ]
+    },
+    {
+      "covered_by_value": false,
+      "definition_sha16": "21168ca45ef4dc4f",
+      "impact": "behavior_or_evidence",
+      "name": "SOCCER_THREE_WAY_CONTRACT",
+      "origin": "app.utils.soccer_three_way:SOCCER_THREE_WAY_CONTRACT",
+      "sql_interpolated": false,
+      "used_in": [
+        "read_bookmaker_curve_rows"
+      ]
+    },
+    {
+      "covered_by_value": false,
+      "definition_sha16": "85f5f96a920e7bfb",
+      "impact": "behavior_or_evidence",
+      "name": "SOCCER_THREE_WAY_CONTRACT_KEY",
+      "origin": "app.utils.soccer_three_way:SOCCER_THREE_WAY_CONTRACT_KEY",
+      "sql_interpolated": false,
+      "used_in": [
+        "read_bookmaker_curve_rows"
+      ]
+    },
+    {
+      "covered_by_value": false,
+      "definition_sha16": "8967af724bcf3769",
+      "impact": "behavior_or_evidence",
+      "name": "SOCCER_THREE_WAY_PARAMS",
+      "origin": "app.utils.soccer_three_way:SOCCER_THREE_WAY_PARAMS",
+      "sql_interpolated": false,
+      "used_in": [
+        "compute_calibration_payload"
+      ]
+    },
+    {
+      "covered_by_value": false,
+      "definition_sha16": null,
+      "impact": "behavior_or_evidence",
+      "name": "SOCCER_THREE_WAY_RULE_TEXT",
+      "origin": "app.tasks.precompute_calibration:SOCCER_THREE_WAY_RULE_TEXT",
+      "sql_interpolated": false,
+      "used_in": [
+        "compute_calibration_payload"
+      ]
+    },
+    {
+      "covered_by_value": false,
+      "definition_sha16": "183a920333ca700b",
+      "impact": "behavior_or_evidence",
+      "name": "SOCCER_THREE_WAY_SINCE",
+      "origin": "app.utils.soccer_three_way:SOCCER_THREE_WAY_SINCE",
+      "sql_interpolated": false,
+      "used_in": [
+        "compute_calibration_payload"
+      ]
+    },
+    {
+      "covered_by_value": false,
       "definition_sha16": null,
       "impact": "behavior_or_evidence",
       "name": "SOURCE_LIQUIDITY_EXCLUSIONS",
@@ -962,6 +1028,17 @@
     },
     {
       "covered_by_value": false,
+      "definition_sha16": null,
+      "impact": "behavior_or_evidence",
+      "name": "_soccer_three_way_module",
+      "origin": "app.utils:soccer_three_way",
+      "sql_interpolated": false,
+      "used_in": [
+        "population_predicate_fingerprint"
+      ]
+    },
+    {
+      "covered_by_value": false,
       "definition_sha16": "2fb697d83204f6c7",
       "impact": "sql_shaping",
       "name": "calibration_truth_eligible_sql",
@@ -987,8 +1064,8 @@
   ],
   "schema": "calibration-fingerprint-derived/v1",
   "source": "backend/app/tasks/precompute_calibration.py",
-  "source_sha256": "ff1b9f4db7d1bbd1c47ca99432ef38ec50af4898e0d7d56ee51e1a36776d7f0d",
-  "uncovered_behavior_or_evidence": 42,
-  "uncovered_count": 69,
+  "source_sha256": "e5d62a70fe1244af6d0b8f57d4dd5ed1212b39d9f5354e7cfc1ed6e6511e1f0a",
+  "uncovered_behavior_or_evidence": 49,
+  "uncovered_count": 76,
   "uncovered_sql_shaping": 27
 }

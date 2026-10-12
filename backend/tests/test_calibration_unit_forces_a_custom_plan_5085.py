@@ -310,7 +310,18 @@ from app.tasks.calibration_main_build import UNIT_PLAN_CACHE_MODE
 #: what the rule removed per cell (``score_unit_filter.excluded_by_cell``) so the
 #: publish gate can bound its disclosure. Counting only — ``staged_unit_fingerprint``
 #: (``dec3026b…``) and the published identity (``da21d87f…``) are both unmoved.
-LIVE_INPUT_FINGERPRINT = "39846d26d06f2567e5871a36a07770a2"
+#:
+#: RE-ANCHORED for #1011 (soccer graded three-way from the 3-way capture
+#: forward): ``39846d26…`` -> ``6a1aa8ac…`` (CERT-4066's repair adds the
+#: regulation-finish proof and its two bound values). Moved: the root
+#: ``compute_calibration_payload`` (events_sql's soccer three-way branch and the
+#: soccer exclusion count, both with bound contract values, plus the
+#: ``soccer_2way_filter.three_way`` disclosure) and the contract values hashed
+#: by name and value (four, with the regulation pair). ``staged_unit_fingerprint`` is ``dec3026b…`` on master and on
+#: this change, so no banked unit is discarded; only a carried PHASE output in
+#: flight at deploy is re-read. The published predicate moves ``da21d87f…`` ->
+#: ``598e0ed8…`` and is declared to the gate as a widening succession.
+LIVE_INPUT_FINGERPRINT = "6a1aa8ac0bdba3399b876890dd9bfe1d"
 
 
 class _Db:
