@@ -167,7 +167,12 @@ extension CompactEventPriceStatusTests {
         let event: EventDetail
         init() throws {
             let decoder = JSONDecoder(); decoder.keyDecodingStrategy = .convertFromSnakeCase
-            event = try decoder.decode(EventDetail.self, from: Data(#"{"id":4243,"home_team":"Dallas Cowboys","away_team":"Baltimore Ravens","sport":"americanfootball_nfl","status":"live","home_score":24,"away_score":27,"current_odds":{"home_probability":0.45,"away_probability":0.55,"home_rendered_percent":45,"away_rendered_percent":55},"hero_probability":0.45,"hero_probability_source":"blend","blend_fold_revision":{"4243":20},"win_probability_sources":{"kalshi":{"value":0.45,"updated_at":"2026-09-27T23:44:48Z"}}}"#.utf8))
+            var decoded = try decoder.decode(EventDetail.self, from: Data(#"{"id":4243,"home_team":"Dallas Cowboys","away_team":"Baltimore Ravens","sport":"americanfootball_nfl","status":"live","home_score":24,"away_score":27,"current_odds":{"home_probability":0.45,"away_probability":0.55,"home_rendered_percent":45,"away_rendered_percent":55},"hero_probability":0.45,"hero_probability_source":"blend","blend_fold_revision":{"4243":20},"win_probability_sources":{"kalshi":{"value":0.45,"updated_at":"2026-09-27T23:44:48Z"}}}"#.utf8))
+            // #9483 F1 — the hero's phase reads the quote's own clock, and a
+            // pair with no clock is only "last recorded". This page is a
+            // fresh live quote, so it carries one minted at the real clock.
+            decoded.heroProbabilityObservedAt = ISO8601DateFormatter().string(from: Date())
+            event = decoded
         }
         func fetchEvent(id: Int) async throws -> EventDetail { event }
         func fetchEventHistory(id: Int, hours: Int) async throws -> EventHistoryResponse { throw Missing() }
