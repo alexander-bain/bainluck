@@ -34,7 +34,6 @@ from app.utils.provider_event_collections import (
     EXCLUDED_WITHDRAWN,
     PriorDecision,
     ProviderEventIdentity,
-    assemble_event,
     header_changes,
     identity_from_group_id,
     parse_collection_slug,
@@ -47,6 +46,13 @@ from tests.provider_event_fixtures_5343 import ingested_rows, load_gamma, roster
 
 OBSERVED = datetime(2026, 10, 12, 0, 49, 13, tzinfo=timezone.utc)
 NOW = OBSERVED + timedelta(hours=1)
+
+
+def assemble_event(*args, now=NOW, **kwargs):
+    """The writer always supplies the pass instant (the database clock); a pass
+    with none refuses every roster (#5344 B1). These tests pass at ``NOW``
+    unless they name another instant."""
+    return pec.assemble_event(*args, now=now, **kwargs)
 
 
 def _identity(event_id: str) -> ProviderEventIdentity:
@@ -84,6 +90,7 @@ def _prior_from(assembly) -> dict:
                 if d.evidence.get("applied_roster_at")
                 else None
             ),
+            d.evidence.get("applied_roster_digest"),
         )
         for d in assembly.decisions
     }
@@ -138,10 +145,35 @@ class TestIdentity:
 
     @pytest.mark.parametrize("event_id", ["1038648", "2026", "86832", "1"])
     def test_a_provider_slug_is_never_an_nfl_mlb_or_theme_edition(self, event_id):
-        """So the route serves it through the simple published envelope. A
-        four-digit id has the theme slug's SHAPE (``subject-YYYY``) and is still
-        refused, because the theme parser answers only for its own registry."""
-        assert edition_for_slug(_identity(event_id).slug) is None
+        """Its edition is the admitted identity (R1: a reader cannot parse
+        ``edition: null``), and never a sports or theme kind, so the route serves
+        it through the simple published envelope. A four-digit id has the theme
+        slug's SHAPE (``subject-YYYY``) and is still not a theme edition."""
+        from app.routes.containers import THEME_EDITION_KINDS
+        from app.services.container_discovery import DISCOVERABLE_EDITIONS
+
+        edition = edition_for_slug(_identity(event_id).slug)
+        assert edition == {
+            "kind": "provider_event",
+            "provider": "polymarket",
+            "event_id": event_id,
+        }
+        # Not listed by discovery and not paged as a theme until a mount names it.
+        assert edition["kind"] not in DISCOVERABLE_EDITIONS
+        assert edition["kind"] not in THEME_EDITION_KINDS
+
+    @pytest.mark.parametrize(
+        "slug",
+        [
+            "polymarket-event-01038648",
+            "polymarket-event-1038648 ",
+            "polymarket-event-",
+            "Polymarket-event-1038648",
+            "polymarket-event-1038648-x",
+        ],
+    )
+    def test_a_slug_the_builder_would_not_write_has_no_edition(self, slug):
+        assert edition_for_slug(slug) is None
 
 
 # ---------------------------------------------------------------------------
@@ -642,6 +674,7 @@ class TestCorrectionsAndOutages:
                 at(OBSERVED + timedelta(hours=1)),
                 edged=c.kept,
                 prior=_prior_from(c),
+                now=r2 + timedelta(minutes=10),
             )
             assert c.roster_state == pec.ROSTER_OLDER_THAN_APPLIED
             assert member not in c.kept
@@ -656,6 +689,7 @@ class TestCorrectionsAndOutages:
             at(r2 + timedelta(hours=1)),
             edged=c.kept,
             prior=_prior_from(c),
+            now=r2 + timedelta(hours=1, minutes=1),
         )
         assert member in d.kept
 

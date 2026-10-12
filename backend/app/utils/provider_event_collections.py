@@ -7,7 +7,8 @@ declaration, no registry row. The NFL/MLB adapters and the theme registry are
 untouched; this is a third, provider-shaped source of collections.
 
 No database, no network, no clock: every rule below is gradeable from a fixture.
-The writer is ``app.tasks.provider_event_collection_assembly``.
+The writer is ``app.tasks.provider_event_collection_assembly``; it supplies the pass
+instant from the DATABASE clock, the same clock ingestion stamps rosters with.
 
 WHAT A PROVIDER EVENT PROVES, AND WHAT IT DOES NOT.
 
@@ -42,10 +43,19 @@ retires anything: the last good membership is carried, and a carried member
 keeps the collection off publication until a fresh roster decides it. A member a
 roster removed is not re-admitted until a NEWER roster lists it again, so a
 regressed observation cannot resurrect it.
+
+THE BARRIER (#5344). The newest roster applied — its instant AND its content
+digest — travels on every decision row. A roster stamped in the future (past
+``ROSTER_FUTURE_SKEW``) is refused outright: it would otherwise become the barrier
+and freeze correction until that instant arrived. A roster at the barrier's own
+instant is a repeat when its digest matches (a no-op) and a conflict when it does
+not: the conflicting pass changes no membership and bumps no revision.
 """
 
 from __future__ import annotations
 
+import hashlib
+import json
 import re
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -59,7 +69,7 @@ from app.utils.container_graph import CLASS_UNCLASSIFIED
 
 #: Written on every decision row (``container_member_decisions.rule_version``,
 #: VARCHAR(32)). Bump when a rule below changes what a pass decides.
-RULE_VERSION = "provider-event-v1"
+RULE_VERSION = "provider-event-v2"
 
 #: ``containers.kind``. The closed vocabulary has no provider-event kind;
 #: ``theme`` ("a continuing subject collection") is the nearest existing word, and
@@ -91,6 +101,10 @@ MIN_MEMBERS = 2
 #: eligible for publication.
 ROSTER_MAX_AGE = timedelta(hours=6)
 
+#: The most a roster's ``observed_at`` may lead the pass instant (both read from
+#: the database clock). Further ahead is a writer clock fault, never evidence.
+ROSTER_FUTURE_SKEW = timedelta(minutes=2)
+
 #: How long after the provider's own window closes a finished collection stays
 #: eligible for discovery. Its page and members are kept either way.
 RETIRE_AFTER = timedelta(days=14)
@@ -114,6 +128,7 @@ ADMITTED_ROW_IDENTITY = "admitted_row_identity"
 CARRIED_ROW_ABSENT = "carried_member_row_absent"
 CARRIED_DOMAIN_UNSUPPORTED = "carried_domain_unsupported"
 CARRIED_ROSTER_NOT_FRESH = "carried_roster_not_fresh"
+CARRIED_ROSTER_CONFLICT = "carried_roster_conflicting_equal"
 EXCLUDED_GROUP_ANCHOR = "provider_group_anchor"
 EXCLUDED_NOT_IN_ROSTER = "not_in_provider_roster"
 EXCLUDED_IDENTITY_CONFLICT = "provider_identity_conflict"
@@ -122,6 +137,7 @@ EXCLUDED_MALFORMED_MEMBER = "malformed_provider_member_id"
 EXCLUDED_UNSUPPORTED_DOMAIN = "unsupported_domain"
 EXCLUDED_WITHDRAWN = "container_member_withdrawn"
 EXCLUDED_ROW_ABSENT = "member_row_absent"
+EXCLUDED_ROSTER_CONFLICT = "excluded_roster_conflicting_equal"
 
 MEMBER_REASONS = frozenset(
     {
@@ -130,6 +146,7 @@ MEMBER_REASONS = frozenset(
         CARRIED_ROW_ABSENT,
         CARRIED_DOMAIN_UNSUPPORTED,
         CARRIED_ROSTER_NOT_FRESH,
+        CARRIED_ROSTER_CONFLICT,
         EXCLUDED_GROUP_ANCHOR,
         EXCLUDED_NOT_IN_ROSTER,
         EXCLUDED_IDENTITY_CONFLICT,
@@ -138,6 +155,7 @@ MEMBER_REASONS = frozenset(
         EXCLUDED_UNSUPPORTED_DOMAIN,
         EXCLUDED_WITHDRAWN,
         EXCLUDED_ROW_ABSENT,
+        EXCLUDED_ROSTER_CONFLICT,
     }
 )
 
@@ -147,6 +165,9 @@ ROSTER_ABSENT = "roster_absent"
 ROSTER_MALFORMED = "roster_malformed"
 ROSTER_OLDER_THAN_APPLIED = "roster_older_than_applied"
 ROSTER_PARENT_CONFLICT = "roster_parent_identity_conflict"
+ROSTER_FROM_FUTURE = "roster_from_future"
+ROSTER_PASS_UNDATED = "roster_pass_instant_absent"
+ROSTER_CONFLICTING_EQUAL = "roster_conflicting_equal_barrier"
 
 # Domain states.
 DOMAIN_UNKNOWN = "domain_unknown"
@@ -225,8 +246,9 @@ def slug_for(identity: ProviderEventIdentity) -> str:
 
     ``polymarket-event-<id>`` cannot be an NFL/MLB slug (``nfl-``/``mlb-``) and is
     never a theme slug: the theme parser only answers for its registry's subjects
-    and ``polymarket-event`` is not one, so ``edition_for_slug`` returns None and
-    the route serves the simple published envelope.
+    and ``polymarket-event`` is not one. ``edition_for_slug`` answers
+    ``{"kind": "provider_event", "provider", "event_id"}`` from this module's own
+    parser, and the route serves the simple published envelope (not theme paging).
     """
     return f"{_SLUG_PREFIX}{identity.event_id}"
 
@@ -330,6 +352,21 @@ class ProviderEventRoster:
     def external_ids(self) -> frozenset:
         return frozenset(m.external_id for m in self.members)
 
+    @property
+    def digest(self) -> str:
+        """sha256 of what the roster SAYS: the sorted ``(id, closed)`` pairs and
+        the event flag. Two observations at one instant are the same observation
+        only when this matches; the instant alone cannot tell them apart."""
+        canonical = json.dumps(
+            {
+                "event_closed": self.event_closed,
+                "markets": sorted([m.external_id, m.closed] for m in self.members),
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
 
 def _parse_instant(raw: Any) -> Optional[datetime]:
     if isinstance(raw, datetime):
@@ -405,13 +442,14 @@ def parse_roster(raw: Any) -> tuple[Optional[ProviderEventRoster], Optional[str]
 class PriorDecision:
     """What the last pass recorded about a child (its decision row).
 
-    ``applied_roster_at`` is the newest roster applied to the container as of that
-    row — the evidence's ``applied_roster_at``."""
+    ``applied_roster_at`` / ``applied_roster_digest`` are the newest roster
+    applied to the container as of that row — the evidence's keys of those names."""
 
     child_id: int
     reason: Optional[str]
     external_id: Optional[str]
     applied_roster_at: Optional[datetime]
+    applied_roster_digest: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -466,6 +504,23 @@ def latest_roster_epoch(prior: Mapping[int, PriorDecision]) -> Optional[datetime
     return max(stamps) if stamps else None
 
 
+def latest_roster_barrier(
+    prior: Mapping[int, PriorDecision],
+) -> tuple[Optional[datetime], Optional[str]]:
+    """``(instant, digest)`` of the newest roster applied. The digest is None when
+    the rows at that instant carry none or disagree — then no roster at that
+    instant can be proved a repeat, and it is refused as a conflict."""
+    applied = latest_roster_epoch(prior)
+    if applied is None:
+        return None, None
+    digests = {
+        p.applied_roster_digest
+        for p in prior.values()
+        if p.applied_roster_at == applied
+    }
+    return applied, next(iter(digests)) if len(digests) == 1 else None
+
+
 def _event_domain(rows: Iterable[ProviderRow]) -> tuple[Optional[str], Optional[str]]:
     domains = {r.domain for r in rows if r.domain}
     if not domains:
@@ -517,9 +572,12 @@ def assemble_event(
     children whose latest correction is a withdrawal; ``prior`` the last pass's
     decision rows. Duplicate rows collapse by id; nothing collapses by name.
 
-    ``now`` is the pass instant, supplied by the caller (this module reads no
-    clock). A roster retires a member only when it is fresh at ``now``. Without
-    ``now`` its age is unknown, so it may add and complete but never remove.
+    ``now`` is the pass instant, supplied by the caller from the database clock
+    (this module reads no clock). A roster retires a member only when it is fresh
+    at ``now``, and a roster stamped more than ``ROSTER_FUTURE_SKEW`` after ``now``
+    is refused. Without ``now`` a roster's age is unknown — it can be proved
+    neither fresh nor not-from-the-future — so it is refused too: a pass that
+    cannot read the clock changes nothing a roster would decide.
     """
     prior = dict(prior or {})
     edged_ids = frozenset(int(i) for i in edged)
@@ -552,9 +610,25 @@ def assemble_event(
         roster, roster_state = parse_roster(
             parent.roster_raw if parent is not None else None
         )
-    applied = latest_roster_epoch(prior)
-    if roster is not None and applied is not None and roster.observed_at < applied:
+    applied, applied_digest = latest_roster_barrier(prior)
+    # True when a roster at the barrier's own instant says something else: the
+    # pass then holds every member exactly where it stands.
+    frozen = False
+    if roster is not None and now is None:
+        roster, roster_state = None, ROSTER_PASS_UNDATED
+    elif roster is not None and roster.observed_at > now + ROSTER_FUTURE_SKEW:
+        # Accepted, it would become the barrier and refuse every real roster
+        # until its instant arrived. A clock fault is never evidence.
+        roster, roster_state = None, ROSTER_FROM_FUTURE
+    elif roster is not None and applied is not None and roster.observed_at < applied:
         roster, roster_state = None, ROSTER_OLDER_THAN_APPLIED
+    elif (
+        roster is not None
+        and applied is not None
+        and roster.observed_at == applied
+        and roster.digest != applied_digest
+    ):
+        roster, roster_state, frozen = None, ROSTER_CONFLICTING_EQUAL, True
     else:
         roster_state = roster_state or ROSTER_USABLE
     roster_ids = roster.external_ids if roster is not None else frozenset()
@@ -565,8 +639,11 @@ def assemble_event(
     )
     # The newest roster ever applied travels on every decision row, including the
     # rows a roster-less or older-roster pass writes — otherwise that pass would
-    # erase the epoch and the pass after it would take a stale roster as new.
-    applied_at = roster.observed_at if roster is not None else applied
+    # erase the barrier and the pass after it would take a stale roster as new.
+    if roster is not None:
+        applied_at, applied_digest = roster.observed_at, roster.digest
+    else:
+        applied_at = applied
 
     base = {
         "provider": identity.provider,
@@ -576,6 +653,7 @@ def assemble_event(
         "roster_state": roster_state,
         "roster_observed_at": roster.observed_at.isoformat() if roster else None,
         "applied_roster_at": applied_at.isoformat() if applied_at else None,
+        "applied_roster_digest": applied_digest if applied_at else None,
     }
     decisions: list[MemberDecision] = []
     conflicts: list[int] = []
@@ -707,6 +785,36 @@ def assemble_event(
                     domain_state=domain_state,
                 )
             continue
+        if frozen:
+            # Same instant, different roster: which is right is unknown, so this
+            # pass neither admits nor removes. A member an earlier roster removed
+            # keeps that reason, so the hold survives this pass.
+            if was_edged:
+                decide(
+                    child_id,
+                    OUTCOME_WITHHELD,
+                    CARRIED_ROSTER_CONFLICT,
+                    True,
+                    **evidence,
+                )
+            elif before is not None and before.reason == EXCLUDED_NOT_IN_ROSTER:
+                decide(
+                    child_id,
+                    OUTCOME_EXCLUDED,
+                    EXCLUDED_NOT_IN_ROSTER,
+                    False,
+                    **evidence,
+                    held=True,
+                )
+            else:
+                decide(
+                    child_id,
+                    OUTCOME_EXCLUDED,
+                    EXCLUDED_ROSTER_CONFLICT,
+                    False,
+                    **evidence,
+                )
+            continue
         if roster is not None:
             member = next(
                 (m for m in roster.members if m.external_id == external_id), None
@@ -761,8 +869,9 @@ def assemble_event(
         and not carried
         and domain_state is None
     )
-    if parent_conflict:
-        # Which event the parent describes is in dispute: change nothing.
+    if parent_conflict or frozen:
+        # Which event the parent describes, or which roster is right, is in
+        # dispute: change nothing, so the pass bumps no revision on it.
         header = Header(None, None, current_status, None, None)
     else:
         header = Header(

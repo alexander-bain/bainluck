@@ -303,7 +303,12 @@ class TestThePass:
                 db=db,
             )
         assert body["state"] == "unpublished" and body["sections"] == []
-        assert body["edition"] is None
+        # R1: the edition is the admitted identity, never null, in every state.
+        assert body["edition"] == {
+            "kind": "provider_event",
+            "provider": "polymarket",
+            "event_id": POLITICS,
+        }
 
         async with world["Session"]() as db:
             verdict = await evaluate_provider_event_collection(db, slug, now=NOW)
@@ -407,7 +412,7 @@ class TestStability:
             1000,
             roster_payload(event, OBSERVED + timedelta(hours=2), drop=(dropped,)),
         )
-        await _run(world)
+        await _run(world, now=OBSERVED + timedelta(hours=2, minutes=1))
         c = await _container(world, POLITICS)
         assert member not in await _edges(world, c["id"])
 
@@ -415,14 +420,17 @@ class TestStability:
             world, 1000, roster_payload(event, OBSERVED + timedelta(hours=1))
         )
         for _ in range(2):
-            report = _event(await _run(world), POLITICS)
+            report = _event(
+                await _run(world, now=OBSERVED + timedelta(hours=2, minutes=10)),
+                POLITICS,
+            )
             assert report["roster_state"] == "roster_older_than_applied"
             assert member not in await _edges(world, c["id"])
 
         await _set_roster(
             world, 1000, roster_payload(event, OBSERVED + timedelta(hours=3))
         )
-        await _run(world)
+        await _run(world, now=OBSERVED + timedelta(hours=3, minutes=1))
         assert member in await _edges(world, c["id"])
 
 
@@ -666,3 +674,136 @@ class TestCorrections:
         assert c["revision"] == 1
         assert sorted([a["bumped"], b["bumped"]]) == [False, True]
         await _agrees(world, POLITICS)
+
+
+class TestBarrier5344:
+    """Authority's B1/B2 (2026-10-12 03:22Z) on the server the writer runs on."""
+
+    @pytest.mark.parametrize("dropping_first", [True, False], ids=["drop-first", "full-first"])
+    async def test_a_conflicting_equal_roster_committing_second_changes_nothing(
+        self, world, dropping_first
+    ):
+        """Two observations at ONE instant that disagree (one drops a member).
+        Whichever applies first stands; the other commits second — here while
+        waiting on the container lock, the roster replaced inside the holder's
+        transaction — and moves no edge, writes no header and bumps no revision.
+        Both orders."""
+        from app.tasks.provider_event_collection_assembly import assemble_provider_event
+        from app.utils.container_corrections import lock_container_chain
+        from app.utils.provider_event_collections import identity_from_group_id
+
+        event = load_gamma(POLITICS)
+        rows = await _seed(world, POLITICS, "geopolitics", first_id=1000)
+        await _run(world)
+        c = await _container(world, POLITICS)
+        dropped = event["markets"][3]["conditionId"]
+        member = next(r["id"] for r in rows if r["external_id"] == dropped)
+        instant = OBSERVED + timedelta(minutes=5)
+        full = roster_payload(event, instant)
+        dropping = roster_payload(event, instant, drop=(dropped,))
+        first, second = (dropping, full) if dropping_first else (full, dropping)
+
+        await _set_roster(world, 1000, first)
+        await _run(world)
+        before = await _container(world, POLITICS)
+        edges_before = await _edges(world, c["id"])
+        assert (member in edges_before) is (not dropping_first)
+
+        identity = identity_from_group_id(f"polymarket:{POLITICS}")
+        async with world["Session"]() as holder:
+            assert await lock_container_chain(holder, c["id"]) is not None
+
+            async def waiting_pass():
+                async with world["Session"]() as s:
+                    return await assemble_provider_event(
+                        s, identity, apply=True, now=NOW
+                    )
+
+            task = asyncio.create_task(waiting_pass())
+            await asyncio.sleep(0.5)
+            assert not task.done(), "the pass did not wait for the container lock"
+            await holder.execute(
+                text(
+                    "UPDATE futures_markets SET market_metadata = jsonb_set("
+                    "market_metadata, '{polymarket_event_roster}', CAST(:p AS jsonb)) "
+                    "WHERE id = 1000"
+                ),
+                {"p": json.dumps(second)},
+            )
+            await holder.commit()
+        report = await asyncio.wait_for(task, timeout=10)
+
+        assert report["roster_state"] == "roster_conflicting_equal_barrier"
+        assert report["edges_upserted"] == 0 and report["edges_deleted"] == 0
+        assert report["header_changes"] == []
+        assert report["bumped"] is False
+        after = await _container(world, POLITICS)
+        assert after["revision"] == before["revision"]
+        assert await _edges(world, c["id"]) == edges_before
+        assert report["eligibility"]["eligible"] is False
+        # The stored barrier is still the first roster's.
+        digests = {
+            r[0]
+            for r in (
+                await _rows_evidence(world, c["id"], "applied_roster_digest")
+            )
+        }
+        assert len(digests) == 1 and None not in digests
+        await _agrees(world, POLITICS)
+
+        # The stored roster again: usable, no edge or revision moves (its
+        # decision rows return from "carried" to their roster reasons), and the
+        # identical repeat after that writes nothing at all.
+        await _set_roster(world, 1000, first)
+        restored = _event(await _run(world), POLITICS)
+        assert restored["roster_state"] == "usable" and restored["bumped"] is False
+        assert await _edges(world, c["id"]) == edges_before
+        repeat = _event(await _run(world), POLITICS)
+        assert repeat["roster_state"] == "usable"
+        assert repeat["decisions_written"] == 0 and repeat["bumped"] is False
+
+    async def test_the_pass_instant_is_the_database_clock(self, world):
+        """B1 on the real clock: no ``now`` supplied, as in production. A roster
+        stamped at the database's own instant applies; one stamped a day ahead
+        of it is refused and the next real roster still corrects."""
+        event = load_gamma(POLITICS)
+        rows = await _seed(world, POLITICS, "geopolitics", first_id=1000)
+        db_now = await _scalar(world, "SELECT clock_timestamp()")
+        dropped = event["markets"][2]["conditionId"]
+        member = next(r["id"] for r in rows if r["external_id"] == dropped)
+
+        await _set_roster(world, 1000, roster_payload(event, db_now))
+        first = _event(await _run(world, now=None), POLITICS)
+        assert first["roster_state"] == "usable" and first["complete"] is True
+        c = await _container(world, POLITICS)
+        assert member in await _edges(world, c["id"])
+
+        await _set_roster(
+            world,
+            1000,
+            roster_payload(event, db_now + timedelta(days=1), drop=(dropped,)),
+        )
+        future = _event(await _run(world, now=None), POLITICS)
+        assert future["roster_state"] == "roster_from_future"
+        assert member in await _edges(world, c["id"])
+
+        real = await _scalar(world, "SELECT clock_timestamp()")
+        await _set_roster(
+            world, 1000, roster_payload(event, real, drop=(dropped,))
+        )
+        fixed = _event(await _run(world, now=None), POLITICS)
+        assert fixed["roster_state"] == "usable"
+        assert member not in await _edges(world, c["id"])
+
+
+async def _rows_evidence(world, container_id: int, key: str):
+    async with world["Session"]() as db:
+        return (
+            await db.execute(
+                text(
+                    "SELECT evidence ->> :k FROM container_member_decisions "
+                    "WHERE container_id = :c"
+                ),
+                {"k": key, "c": container_id},
+            )
+        ).fetchall()

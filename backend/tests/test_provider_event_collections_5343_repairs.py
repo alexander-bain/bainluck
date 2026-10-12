@@ -73,6 +73,7 @@ def _prior(assembly) -> dict:
                 if d.evidence.get("applied_roster_at")
                 else None
             ),
+            d.evidence.get("applied_roster_digest"),
         )
         for d in assembly.decisions
     }

@@ -232,6 +232,18 @@ def _instant(value: Any) -> Optional[datetime]:
     return parsed if parsed.tzinfo is not None else None
 
 
+async def _db_now(session) -> datetime:
+    """The pass instant, from the DATABASE clock in this transaction — the clock
+    ingestion stamps ``observed_at`` with, so a worker's drift can neither make a
+    real roster look future-dated nor let a future-dated one pass (#5344 B1).
+    Read after the rows: any roster this pass can see was committed, so stamped,
+    before it."""
+    value = (await session.execute(text("SELECT clock_timestamp()"))).scalar_one()
+    if not isinstance(value, datetime) or value.tzinfo is None:
+        raise RuntimeError(f"database clock returned {value!r}, not a tz-aware instant")
+    return value.astimezone(timezone.utc)
+
+
 async def _schema_gate(session) -> Optional[str]:
     if not await containers_tables_present(session):
         return "containers_tables_absent"
@@ -349,6 +361,11 @@ async def _read_state(
                 reason=reason,
                 external_id=evidence.get("external_id"),
                 applied_roster_at=_instant(evidence.get("applied_roster_at")),
+                applied_roster_digest=(
+                    evidence.get("applied_roster_digest")
+                    if isinstance(evidence.get("applied_roster_digest"), str)
+                    else None
+                ),
             )
     state.rows = await _read_rows(
         session, identity, list(state.edges) + list(state.prior)
@@ -494,13 +511,22 @@ def _summary(assembly: EventAssembly, eligibility) -> dict:
 
 
 async def assemble_provider_event(
-    session, identity: ProviderEventIdentity, *, apply: bool, now: datetime
+    session,
+    identity: ProviderEventIdentity,
+    *,
+    apply: bool,
+    now: Optional[datetime] = None,
 ) -> dict:
-    """Assemble one provider event. Commits on ``apply``; rolls back otherwise."""
+    """Assemble one provider event. Commits on ``apply``; rolls back otherwise.
+
+    ``now`` is for tests that drive time; production passes None and the pass
+    instant is read from the database clock after the rows (``_db_now``)."""
+    fixed_now = now
     report: dict[str, Any] = {"slug": identity.slug, "group_id": identity.group_id}
     container = await _select_container(session, identity.slug)
     if container is None:
         state = _EventState(rows=await _read_rows(session, identity, ()))
+        now = fixed_now or await _db_now(session)
         assembly = _assemble(identity, state, None, now)
         if len(assembly.admitted) < MIN_MEMBERS:
             await session.rollback()
@@ -546,6 +572,8 @@ async def assemble_provider_event(
         container["revision"],
     )
     state = await _read_state(session, identity, container_id)
+    # Re-read: the rows above may be newer than an instant read before the insert.
+    now = fixed_now or await _db_now(session)
     assembly = _assemble(identity, state, container["status"], now)
     plan = plan_event_pass(assembly, state.edges, foreign_held=state.foreign)
     changes = header_changes(assembly.header, container)
@@ -603,7 +631,7 @@ async def assemble_provider_event(
 
 
 async def evaluate_provider_event_collection(
-    session, slug: str, *, now: datetime
+    session, slug: str, *, now: Optional[datetime] = None
 ) -> dict:
     """Read-only eligibility for one collection, for a publication preflight.
 
@@ -634,6 +662,7 @@ async def evaluate_provider_event_collection(
             "reasons": ["container_absent"],
         }
     state = await _read_state(session, identity, container["id"])
+    now = now or await _db_now(session)
     assembly = _assemble(identity, state, container["status"], now)
     eligibility = publication_eligibility(
         assembly,
@@ -705,8 +734,9 @@ async def _run_assemble_provider_event_collections(
     report so the tail is not starved (gotcha #41). A truncated pass is
     ``partial``, never ``complete``.
     """
+    # ``started`` times the run only. The pass instant is the database clock,
+    # read per event inside its own transaction, unless a test supplies ``now``.
     started = datetime.now(timezone.utc)
-    now = now or started
     if not provider_event_collections_enabled():
         return {
             "terminal": "skipped",

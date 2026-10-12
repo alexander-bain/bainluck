@@ -61,13 +61,25 @@ is `roster_parent_identity_conflict`: its roster and header are not read.
   names another event, or (c) a usable roster, no older than the last one applied
   AND fresh (at most 6 h old) at the pass instant, no longer lists it.
 - **Never removes** anything because of an outage: no roster, an older roster, an
-  expired roster (or one the pass cannot date), a parent naming another event, or
+  expired roster (or one the pass cannot date), a roster stamped more than 2 min
+  after the pass instant (`roster_from_future`), a parent naming another event, or
   a row we cannot see. The last good membership is carried
   (`carried_roster_not_fresh` / `carried_member_row_absent`), and a carried
   member keeps the collection off publication until a fresh roster decides it.
 - **Never resurrects**: a member a roster removed stays out until a newer roster
-  lists it again. Every decision row carries the newest applied roster instant
-  (`applied_roster_at`), so a stale pass cannot reset it.
+  lists it again. Every decision row carries the newest applied roster's instant
+  AND content digest (`applied_roster_at`, `applied_roster_digest` = sha256 of the
+  sorted `(id, closed)` pairs plus `event_closed`), so a stale pass cannot reset it.
+- **The barrier (#5344 B1/B2).** The pass instant is the DATABASE clock
+  (`clock_timestamp()` in the pass's own transaction, after the rows), the clock
+  ingestion stamps `observed_at` with; never the worker's. A future-dated roster
+  is refused outright, so a writer clock fault cannot freeze correction. A roster
+  at the barrier's own instant is a repeat when its digest matches (no-op) and
+  `roster_conflicting_equal_barrier` when it does not: that pass admits nothing,
+  removes nothing by roster, leaves the header alone and bumps no revision
+  (`carried_roster_conflicting_equal` / `excluded_roster_conflicting_equal`). A
+  person's withdrawal and a row that moved to another event still apply: neither
+  is roster evidence.
 - **Corrections** use the existing ledger (`container_corrections`) and the
   existing row lock. A withdrawn member is excluded on every later pass, and
   `readmit_member` writes no edge (the next pass re-proves the member).
@@ -80,7 +92,7 @@ is `roster_parent_identity_conflict`: its roster and header are not read.
 
 `evaluate_provider_event_collection(session, slug, now=…)` returns `eligible` and
 the named refusals: `domain_unknown|domain_ambiguous|domain_unsupported`,
-`roster_absent|roster_malformed|roster_older_than_applied`, `roster_expired`
+`roster_absent|roster_malformed|roster_older_than_applied|roster_from_future|roster_pass_instant_absent|roster_conflicting_equal_barrier`, `roster_expired`
 (older than 6 h), `roster_members_unstored`, `identity_conflicts`,
 `too_few_members` (fewer than 2), `members_carried`, `label_absent`, `retired`
 (14 days after a closed provider window), and `publication_withdrawn`
@@ -94,8 +106,14 @@ transaction.
 ## 5. Reader contract
 
 The existing route serves a published collection through the simple envelope
-with no change. `edition: null`, one section `unclassified` holding every member
-as a market card, and `withheld` naming members whose row is gone. Readers should
+(not theme paging), with `edition: {"kind": "provider_event", "provider":
+"polymarket", "event_id": "<id>"}` from `edition_for_slug`, which round-trips the
+slug through this adapter's own parser (a malformed slug is still None). One
+section `unclassified` holds every member as a market card, and `withheld` names
+members whose row is gone. Discovery's `DISCOVERABLE_EDITIONS` and the
+publication operator do not list the kind, so it is neither listed nor operable
+until mounts 4 and 5 name it. Web `parseCollection`/`editionLabel` and native
+`ContainerHubCollection.edition` must accept the kind before any publication. Readers should
 present `unclassified` here as the collection's single list. It means "the
 provider grouped these", not "we could not place this". Nothing in a collection
 is a blended or averaged number. Members are independent questions.
@@ -110,7 +128,7 @@ is a blended or averaged number. Members are independent questions.
 | 4 | `backend/scripts/collection_publication.py` (#9916 operator; PR #10902 in flight) | Authority | A `polymarket-event-*` preflight that calls `evaluate_provider_event_collection` under the lock. |
 | 5 | `backend/app/services/container_discovery.py` / `routes/containers.py` `/discover` (`league` is NFL/MLB only) | Containers / Discover (#9925) | List published provider-event collections. |
 | 6 | web `/collections/[slug]`, native hub (#9652 / #9653) | ux / native | Render the §5 envelope. |
-| 7 | `backend/app/utils/container_graph.py` (optional) | Authority | A `provider_event` container kind and an `event` anchor id kind, so the immutable id can live in `container_provider_anchors`. Until then the unique slug is the identity. |
+| 7 | `backend/app/utils/container_graph.py` (optional) | Authority | A `provider_event` value in `CONTAINER_KINDS` (app-level vocabulary only; no DB CHECK, no migration). **No anchor kind:** the slug is the identity, and nothing ever writes `container_provider_anchors` for a `polymarket-event-*` container — `container_assembly.py` also writes `venue_grouping` edges to any container it resolves through that table, and two writers sharing one source name delete each other's edges. |
 
 ## 7. Activation and rollback
 
