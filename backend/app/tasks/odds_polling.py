@@ -1713,18 +1713,28 @@ async def _poll_all_odds():
                         total_snapshots += await _ingest_event_odds(
                             session, event, event_data, commence_time, snapshot_cache,
                         )
-                        # #10090: release THIS game's row before the next game's
-                        # registry lookup and snapshot bookkeeping. The `betting`
-                        # stamp is the last write `_ingest_event_odds` makes, and a
-                        # per-sport commit kept that lock through every later
-                        # game's snapshot reads and `reading_count` updates — about
-                        # 1.4 s on an NFL slate. Production caught one at 03:38:29Z
-                        # on 2026-10-12: BAL @ ATL's venue stamp waited on this
-                        # pass while the pass was idle in transaction after an
-                        # `UPDATE odds_snapshots`, and the stamp gave up after
-                        # 500 ms and re-queued. Each game's writes stand on their
-                        # own, so no later game needs this one uncommitted.
+                        # #10090: commit AND publish this game before the next
+                        # game's registry lookup and snapshot bookkeeping. The
+                        # `betting` stamp is the last write `_ingest_event_odds`
+                        # makes. With one commit per sport, this game's row lock
+                        # and its betting frame both waited on every later game's
+                        # snapshot reads and `reading_count` updates. In the
+                        # real-PG gate, game B's bookkeeping blocks on a held
+                        # snapshot row; on the per-sport commit, game A's venue
+                        # stamp gives up at its 500 ms bound, and A's frame is
+                        # not published until B finishes. Production at 03:38:29Z
+                        # on 2026-10-12 recorded a venue `UPDATE events` waiting
+                        # behind an odds pass that was idle in transaction after
+                        # `UPDATE odds_snapshots`. That statement's event id was a
+                        # bound parameter, so which game it was is not known.
+                        # The game is now the transaction unit. The error unit is
+                        # still the sport: a failed game rolls back only its own
+                        # writes, and the `except` below ends that sport. Publish
+                        # pops what `after_commit` confirmed, so each frame is
+                        # sent once and a rolled-back frame is never sent.
                         await session.commit()
+                        from app.utils.nonvenue_live_push import publish_committed_nonvenue_frames
+                        await publish_committed_nonvenue_frames(session)
 
                     # #837: release this sport's rows BEFORE the next sport's
                     # network call. `_ingest_event_odds` has just updated every
@@ -1743,7 +1753,7 @@ async def _poll_all_odds():
                     # 03:05:27Z) leaves the transaction aborted, and `continue`
                     # carried it into every later sport: each logged
                     # PendingRollbackError and the pass died at the scores
-                    # query. Sports committed above are kept.
+                    # query. Sports and games committed above are kept.
                     await _rollback_quietly(session)
                     # Cache 404 sports to avoid retrying for 24h
                     if hasattr(e, "response") and getattr(e.response, "status_code", 0) == 404:

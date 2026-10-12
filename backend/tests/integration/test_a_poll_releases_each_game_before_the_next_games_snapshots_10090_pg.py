@@ -1,22 +1,29 @@
-"""#10090: an odds pass releases a live game's row before the NEXT game's bookkeeping.
+"""#10090: an odds pass commits and publishes a live game before the NEXT game's bookkeeping.
 
-THE DEFECT, AS PRODUCTION RECORDED IT
--------------------------------------
+WHAT PRODUCTION RECORDED, AND WHAT IT DOES NOT PROVE
+----------------------------------------------------
 Alex's screenshot on 2026-10-12: BAL @ ATL (event 14780557), Q4, 23–23, a held
 page whose last receipt was 21 s old. The goal owner's bounded lock capture
 (``artifacts/live-iteration-goal-20261011/user-21s-14780557/blocking-window.jsonl``)
-caught the venue stamp's own ``UPDATE events SET win_probability_sources`` for
-that game (pid 2661383) waiting on ``transactionid`` behind pid 2662097 at
-03:38:29.906863Z. 2662097 was ``idle in transaction`` 1.386 s in, and its last
-statement was ``UPDATE odds_snapshots SET reading_count=…, valid_until=…``.
-worker-ws logged ``PM event 14780557 row locked >500ms, re-queued`` at 03:38:30.160.
+caught a venue-source ``UPDATE events SET win_probability_sources`` (pid
+2661383) waiting on ``transactionid`` behind pid 2662097 at 03:38:29.906863Z.
+2662097 was ``idle in transaction`` 1.386 s in, and its last statement was
+``UPDATE odds_snapshots SET reading_count=…, valid_until=…``. Separately,
+worker-ws logged ``PM event 14780557 row locked >500ms, re-queued`` at
+03:38:30.160.
 
-That is ``_poll_all_odds``. #837 made it commit once per SPORT, but inside a
-sport ``_ingest_event_odds`` stamps ``betting`` on game N's ``events`` row and
-then the same transaction goes on to games N+1…: registry lookups, snapshot
-SELECTs, and the autoflushed ``reading_count``/``valid_until`` updates of every
-book that did not move. On an NFL slate that is ~1.4 s of round trips with game
-N's row lock held, and the stamp's 500 ms ``lock_timeout`` gives up inside it.
+The captured statement carried its event id as a bound parameter (``$8``), so
+the capture does NOT show that pid 2661383 was writing event 14780557. The two
+records are concurrent and relevant. They are not joined, and nothing here
+claims the 1.386 s was that game's delay.
+
+What the source shows: that snapshot-writer shape is ``_poll_all_odds``. #837
+made it commit once per SPORT. Inside a sport, ``_ingest_event_odds`` stamps
+``betting`` on game N's ``events`` row, and then the same transaction goes on
+to games N+1…: registry lookups, snapshot SELECTs, and the autoflushed
+``reading_count``/``valid_until`` updates of every book that did not move.
+Game N's row lock is held for all of it. Game N's betting frame waited too,
+because it was published only after the sport's commit.
 
 WHAT THIS FILE DRIVES
 ---------------------
@@ -34,20 +41,24 @@ While the pass is held there, the REAL ``LiveBlendRefresher`` (Polymarket arm,
 production's 500 ms stamp bound) refreshes game A.
 
 * ``test_a_venue_stamp_is_not_held_by_the_next_games_snapshots``: the ship.
-  A's stamp lands and A's frame is published while B's bookkeeping is blocked.
-  On the parent (per-sport commit only) the stamp reads ``lock_skipped`` and A
-  is re-queued, which is production's line.
+  While B's bookkeeping is still blocked, A's committed betting frame has
+  already been published, and A's venue stamp lands. Both are read BEFORE the
+  blocker is released. On 604c032cc0 (per-game commit, per-sport publish), the
+  stamp lands but no betting frame has been published yet. On the per-sport
+  commit parent, the stamp also reads ``lock_skipped`` and A is re-queued.
 * ``test_the_refresher_bound_binds_in_this_rig``: control. The same refresher
   against a row a foreign transaction really holds reports ``lock_skipped``. A
   rig where the bound never binds would make the ship case vacuous.
 * ``test_a_failed_game_rolls_back_alone_and_publishes_nothing``: failure and
   rollback control. Game B raises a real Postgres error AFTER its snapshot
   updates and ``betting`` stamp. Every one of those writes rolls back, and B's
-  frame is never published. A's committed writes and A's frame stand. The pass
-  goes on and finishes. This is the one behaviour the fix moves on purpose:
-  on the parent the SPORT was the unit, so B's error also rolled back A's
-  already-finished writes. The game is now the unit, the same direction #837
-  took when it stopped one sport's failure taking the next sport down.
+  frame is never published. A's committed writes stand, and A's frame was
+  already published before B's ingest began. A is published exactly once. The
+  pass finishes. This is the one behaviour the fix moves on purpose: on the
+  parent the SPORT was the transaction unit, so B's error also rolled back A's
+  already-finished writes. The game is now the transaction unit. The error
+  unit is unchanged: a failed game still ends its sport (the ``except`` after
+  the game loop), and later sports still run, as #837 established.
 
 Every arm checks snapshot counts and ``betting_book_count`` so that a "free"
 row can never come from a pass that simply wrote less.
@@ -428,6 +439,8 @@ async def test_a_venue_stamp_is_not_held_by_the_next_games_snapshots(pg_engine, 
         # The pass is inside game B's bookkeeping, as production's pid was.
         assert waiting.lstrip().upper().startswith("UPDATE ODDS_SNAPSHOTS"), waiting
         sources_mid = await _sources(pg_engine, GAME_A)
+        # Read while B is still blocked, before the holder releases its row.
+        published_while_b_blocked = list(published)
 
         started = time.monotonic()
         stats = dict(await asyncio.wait_for(arm.refresh([GAME_A]), 30))
@@ -435,6 +448,14 @@ async def test_a_venue_stamp_is_not_held_by_the_next_games_snapshots(pg_engine, 
 
     result = await asyncio.wait_for(task, 60)
 
+    assert [(f["event_id"], f["source"]) for f in published_while_b_blocked] == [
+        (GAME_A, "betting")
+    ], (
+        f"game A was committed, but its betting frame was not published while game "
+        f"B's snapshot bookkeeping was blocked ({published_while_b_blocked}). The "
+        "pass publishes only after the whole sport, so a committed probability "
+        "waits on later games' bookkeeping (#10090)."
+    )
     assert stats["stamped"] == 1 and stats["lock_skipped"] == 0 and stats["errors"] == 0, (
         f"game A's venue stamp could not take its row while the pass was blocked "
         f"in game B's snapshot bookkeeping ({stats}, {elapsed:.2f}s). The pass still "
@@ -459,7 +480,8 @@ async def test_a_venue_stamp_is_not_held_by_the_next_games_snapshots(pg_engine, 
     final_a = await _sources(pg_engine, GAME_A)
     assert final_a["polymarket"]["value"] == pytest.approx(0.565), final_a
     assert final_a["betting"] == sources_mid["betting"], (sources_mid, final_a)
-    # Publication follows commit: one betting frame per committed game.
+    # Publication follows commit: one betting frame per committed game, each
+    # exactly once (A's early publish is not repeated by the sport-end publish).
     assert sorted(f["event_id"] for f in published) == EVENT_IDS, published
     assert {f["source"] for f in published} == {"betting"}
 
@@ -490,8 +512,11 @@ async def test_a_failed_game_rolls_back_alone_and_publishes_nothing(pg_engine, m
 
     real = odds_polling._ingest_event_odds
     failed: list[int] = []
+    published_before_b: list[list[int]] = []
 
     async def _ingest(session, event, *args, **kwargs):
+        if event.id == GAME_B:
+            published_before_b.append([f["event_id"] for f in published])
         processed = await real(session, event, *args, **kwargs)
         if event.id == GAME_B:
             failed.append(event.id)
@@ -502,11 +527,14 @@ async def test_a_failed_game_rolls_back_alone_and_publishes_nothing(pg_engine, m
     await _pass(monkeypatch, service)  # must not raise
 
     assert failed == [GAME_B]
+    # A's frame was out before B's ingest began, so B's failure cannot hold it.
+    assert published_before_b == [[GAME_A]], published_before_b
     # B: its snapshot bookkeeping and its betting stamp roll back together.
     assert [r.reading_count for r in await _snapshots(pg_engine, GAME_B)] == [1] * len(BOOKS)
     assert await _sources(pg_engine, GAME_B) == before_b
     # A: committed before B started, so it stands.
     assert [r.reading_count for r in await _snapshots(pg_engine, GAME_A)] == [2] * len(BOOKS)
-    # Only the committed game's frame is ever published; the pass reached its
-    # final publish, so a frame still queued would have been sent there.
+    # Only the committed game's frame is ever published, exactly once. B's frame
+    # was dropped with its rollback. A later publish in the pass would have sent
+    # it if it were still queued.
     assert [f["event_id"] for f in published] == [GAME_A], published
