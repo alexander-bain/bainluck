@@ -636,6 +636,13 @@ COVERED = (
     # named explicitly. `completed_at` stays NULL so the chronology refusal
     # only fires in the test that sets both clocks.
     "test_repair_team_total_game_score_2351_pg.py",
+    # #2027 (Under legs priced from the Over token). Seeds `futures_markets`,
+    # `futures_outcomes` and `futures_odds_snapshots` by raw INSERT into a
+    # throwaway database. Every snapshot names `reading_count` (NOT NULL, no
+    # server default). The subject is each row's id (the era bound), stamp
+    # (whole second or not) and odds/book columns (the history shape), and each
+    # leg's opening/calibration fields — all named on every seed.
+    "test_repair_pm_under_inverted_history_2027_pg.py",
 )
 
 INTEGRATION_DIR = Path(__file__).parent / "integration"
