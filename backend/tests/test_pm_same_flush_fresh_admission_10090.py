@@ -104,7 +104,7 @@ async def test_new_committed_binary_frame_publishes_before_old_stamp_releases(mo
     assert not p.ns["price_buffer"]
 
 
-async def test_late_same_event_withdrawal_joins_owner_before_fresh_admission(monkeypatch):
+async def test_late_same_event_withdrawal_waits_for_its_owner_not_the_next_cohort(monkeypatch):
     p, x = paired(monkeypatch)
     write = p.ns["write_chunk"]
 
@@ -118,16 +118,20 @@ async def test_late_same_event_withdrawal_joins_owner_before_fresh_admission(mon
     p.ns["write_chunk"] = late_book
     flush = asyncio.create_task(p.ns["flush_prices"](flush_started=1000))
     try:
-        await settle_until(lambda: 900 not in p.ns["price_buffer"])
-        assert 2 not in x.published
-        assert ("withdraw", [1]) not in p.trace
-        assert not flush.done()
+        # #10090: event 2's committed cohort does not wait behind event 1's
+        # withdrawal, which waits (buffered) for event 1's own stamp only.
+        await settle_until(lambda: 2 in x.published)
+        assert await asyncio.wait_for(flush, 2)
+        assert 1 not in x.committed and not x.release.is_set()
+        assert ("withdraw", [1]) not in p.trace and p.books == {1: (0.2, 0.8)}
     finally:
         x.release.set()
-        assert await asyncio.wait_for(flush, 2)
+        await asyncio.wait_for(flush, 2)
         await p.ns["catalog_boundary"].join_stamps()
+    assert await p.ns["flush_prices"](flush_started=1001)
+    await p.ns["catalog_boundary"].join_stamps()
     assert p.trace.index(("event_frame", 1)) < p.trace.index(("withdraw", [1]))
-    assert p.trace.index(("withdraw", [1])) < p.trace.index(("event_frame", 2))
+    assert x.published[:2] == [2, 1] and not p.books
     assert not x.r.pending_event_ids()
 
 

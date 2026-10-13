@@ -114,6 +114,23 @@ class _PMStampOwner:
         self.task: Optional[asyncio.Task] = None
         self.events: Optional[set[int]] = None
         self.fresh: set[int] = set()
+        #: #10090: seconds flushes spent waiting here on a running refresh.
+        self.waited_s = 0.0
+
+    def held_events(self) -> Optional[set[int]]:
+        """#10090 — the events the running refresh is still stamping.
+
+        The refresher's own fence (`holding_event_ids`) once it reports one;
+        until then everything the call was started with or admitted. None
+        while membership is unknown. Twin of the Kalshi owner's.
+        """
+        if self.events is None:
+            return None
+        reader = getattr(self.refresher, "holding_event_ids", None)
+        holding = reader() if reader is not None else None
+        if holding is None:
+            return self.events
+        return self.events.intersection(holding)
 
     async def join(self, *, cancel=False) -> None:
         if self.task is None:
@@ -122,6 +139,7 @@ class _PMStampOwner:
         if cancel and not task.cancelling():
             task.cancel()
         interrupted = None
+        started = time.monotonic()
         while not task.done():
             try:
                 await asyncio.wait({task})
@@ -129,6 +147,7 @@ class _PMStampOwner:
                 interrupted = exc
                 if not task.cancelling():
                     task.cancel()
+        self.waited_s += time.monotonic() - started
         self.task = None
         fresh, self.fresh = self.fresh, set()
         self.events = None
@@ -1185,7 +1204,7 @@ def _log_stats_line(stats: dict, ws_stats: dict, blend: dict) -> None:
         "%d msgs | coverage shards=%d/%d served=%d/%d wire=%d by_shard=%s "
         "| blend stamped=%d no_reading=%d throttled=%d errors=%d lock_skipped=%d "
         "unobserved=%d stale=%d | trades refused below_min=%d outside_wide_book=%d "
-        "| held withdrawn=%d lock_probes_refused=%d",
+        "| held withdrawn=%d lock_probes_refused=%d fenced=%d stamp_wait_s=%.1f",
         stats["price_updates"], stats["trade_updates"],
         stats["resolutions"], stats["errors"],
         ws_stats.get("messages", 0),
@@ -1210,6 +1229,10 @@ def _log_stats_line(stats: dict, ws_stats: dict, blend: dict) -> None:
         stats.get("held_prices_withdrawn", 0),
         # #10090: still-held NOWAIT probes, kept out of `errors`.
         stats.get("price_lock_probes_refused", 0),
+        # #10090: prices/books left buffered behind their own event's running
+        # stamp, and the seconds flushes still spent joining a running refresh.
+        stats.get("stamp_fenced", 0),
+        stats.get("stamp_wait_s", 0.0),
     )
 
 
@@ -1740,6 +1763,10 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
         "open_contract_admission_error": False,
         "open_contract_prices_written": 0,
         "open_contract_flush_deferred": 0,
+        # #10090, twin of the Kalshi socket's: buffered prices a periodic flush
+        # left for the next one because their event's stamp was still queued
+        # or running in the run's refresh. Deferred, never dropped.
+        "stamp_fenced": 0,
         # #10091 event bridge, twin of the Kalshi socket's: admitted game-winner
         # legs (and their distinct events) whose flushed price re-stamps the
         # event blend. 0 with no error is "no such contract this run".
@@ -2052,7 +2079,13 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
         if not books:
             return []
         if before_write is not None:
-            await before_write(books)
+            kept = await before_write(books)
+            if kept is not None:
+                # #10090: books on an event whose stamp is still queued or
+                # running stay buffered for a later flush (`join_stamp_reading`).
+                books = kept
+                if not books:
+                    return []
         try:
             async with get_task_session() as session:
                 if not final:
@@ -2119,11 +2152,36 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
             # in it is one no blend reads (a venue-refuted prop) and the
             # stamp's membership is known. Judged on the transaction's own
             # snapshot, so a book arriving after it belongs to a later pass.
-            if stamp_owner.task is not None and (
-                stamp_owner.events is None
-                or event_ids_for_outcomes(headline_event_ids, books)
-            ):
+            # Returns the books to withdraw now (None: all of them).
+            if stamp_owner.task is None:
+                return None
+            speaking = event_ids_for_outcomes(headline_event_ids, books)
+            if stamp_owner.events is not None and not speaking:
+                return None
+            held = (
+                None
+                if final or flush_started is None or stamp_owner.task.done()
+                else stamp_owner.held_events()
+            )
+            if held is None:
                 await stamp_owner.join()
+                return None
+            # #10090, as the price fence: joining here waited for the WHOLE
+            # refresh whenever any game's wide book was buffered, so every
+            # flush with a withdrawal held every independent game behind the
+            # slowest stamp in the call. Only a book on an event whose stamp
+            # is still queued or running waits now, buffered for a later
+            # flush; the rest withdraw, and their stamp is ordered after the
+            # returned one (admitted again, or the joined path below).
+            fenced = held.intersection(speaking)
+            if not fenced:
+                return books
+            kept = {
+                oid: book for oid, book in books.items()
+                if headline_event_ids.get(oid) not in fenced
+            }
+            stats["stamp_fenced"] += len(books) - len(kept)
+            return kept
 
         async with buffer_lock:
             batch = dict(price_buffer)
@@ -2161,6 +2219,9 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
         attempted_withdraw_events: set[int] = set()
         failed_price_events: set[int] = set()
         lock_deferred_events: set[int] = set()
+        # #10090: events whose stamp the running refresh still held when their
+        # chunk came up; their prices stay buffered for a later flush.
+        fenced_events: set[int] = set()
         if batch:
             # #9484: every linked row, then a bounded number of open-contract
             # chunks, oldest-dirty first (the buffer's insertion order). Open
@@ -2289,15 +2350,49 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                             eid for eid, last in last_chunk_of_event.items()
                             if last >= index
                         }
-                        # refresh() also admits retry/deferred events. Their
-                        # read must stay before the next write if any cohort
-                        # or withdrawal of a leg it reads is still unfinished.
-                        # Unknown debt retains the serial path rather than
-                        # assuming safety.
-                        if stamp_owner.events is None or not stamp_owner.events.isdisjoint(
-                            unwritten_events | speaking_withdrawals
-                        ):
-                            await stamp_done()
+                        held = (
+                            None
+                            if final or flush_started is None or stamp_owner.task.done()
+                            else stamp_owner.held_events()
+                        )
+                        if held is None:
+                            # refresh() also admits retry/deferred events. Their
+                            # read must stay before the next write if any cohort
+                            # or withdrawal of a leg it reads is still unfinished.
+                            # Unknown debt retains the serial path rather than
+                            # assuming safety.
+                            if stamp_owner.events is None or not stamp_owner.events.isdisjoint(
+                                unwritten_events | speaking_withdrawals
+                            ):
+                                await stamp_done()
+                        else:
+                            # #10090, twin of the Kalshi socket's: joining here
+                            # waited for the WHOLE refresh — every stamp it took
+                            # or admitted — and held this write, the rest of the
+                            # flush and every later flush with it. One chunk
+                            # carries the whole slate, so any game in the call
+                            # ticking again (its stamp returned or not) stalled
+                            # every independent game. Only an event whose stamp
+                            # is still queued or running is fenced now: its whole
+                            # cohort stays buffered (like a lock retry, counted
+                            # `stamp_fenced`) and the first flush after its stamp
+                            # returns writes it. Sticky for this flush, so no
+                            # event is written half. An event whose stamp has
+                            # returned is written and admitted again. Its
+                            # withdrawals wait the same way
+                            # (`join_stamp_reading`).
+                            fenced_events.update(held.intersection(
+                                event_ids_for_outcomes(headline_event_ids, chunk_ids)
+                            ))
+                    if fenced_events:
+                        kept = [
+                            oid for oid in chunk_ids
+                            if headline_event_ids.get(oid) not in fenced_events
+                        ]
+                        stats["stamp_fenced"] += len(chunk_ids) - len(kept)
+                        chunk_ids = kept
+                        if not chunk_ids:
+                            continue
                     # The plan freezes membership/caps, not a later chunk's
                     # prices. Adopt the newest values and their matching input
                     # marks together, after any preceding stamp has joined.
@@ -2355,6 +2450,7 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                         for eid in withdraw_events - attempted_withdraw_events
                         if last_price_chunk_of_event.get(eid, len(chunks)) <= index
                         and eid not in failed_price_events
+                        and eid not in fenced_events
                     }
                     if mature:
                         # Withdrawals retain their existing order after a
@@ -2483,7 +2579,8 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
         withdrawn = await flush_withdrawals(
             # A withdrawal on the held cohort would immediately reacquire its
             # blocked outcome locks and bypass the price eligibility cooldown.
-            exclude_events=attempted_withdraw_events | lock_deferred_events,
+            # A fenced event's prices are still buffered: its withdrawal waits too.
+            exclude_events=attempted_withdraw_events | lock_deferred_events | fenced_events,
             standalone=None if final else False,
             final=final,
             before_write=join_stamp_reading,
@@ -2539,6 +2636,28 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
             return wrote_all
         # The prices held for a withdrawal, and the withdrawal itself: one
         # refresh, never a second for an event the chunks already refreshed.
+        tail_events = event_ids_for_outcomes(headline_event_ids, owed) | withdrawn_events
+        if (
+            not final and flush_started is not None
+            and stamp_owner.task is not None and not stamp_owner.task.done()
+        ):
+            # #10090: a committed tail cohort takes a free worker of the running
+            # call, exactly as a chunk's ready cohort does, instead of joining
+            # the WHOLE call and then stamping inline. A held or refused event
+            # keeps the joined path below.
+            admitted = blend_refresher.admit_fresh(
+                tail_events, flush_started=flush_started,
+                marks=[batch_marks[oid] for oid in owed if oid in batch_marks
+                       and oid not in headline_event_ids.non_speakers],
+                defer_event_ids=unfinished_events,
+            )
+            stamp_owner.fresh.update(admitted)
+            if stamp_owner.events is not None:
+                stamp_owner.events.update(admitted)
+            owed = [oid for oid in owed if headline_event_ids.get(oid) not in admitted]
+            tail_events.difference_update(admitted)
+            if not tail_events:
+                return wrote_all
         await stamp_owner.join()
         if owed:
             tail_receipts.stage(
@@ -2546,7 +2665,7 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                  and oid not in headline_event_ids.non_speakers]
             )
         await blend_refresher.refresh(
-            event_ids_for_outcomes(headline_event_ids, owed) | withdrawn_events,
+            tail_events,
             flush_started=flush_started,
             defer_event_ids=unfinished_events,
         )
@@ -3059,6 +3178,8 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
             # is the same silent-fraction defect and is invisible to it. So the
             # ratio is stated every minute, whether or not anything is wrong.
             ws_stats = ws.stats
+            owner = catalog_boundary.stamps
+            stats["stamp_wait_s"] = owner.waited_s if owner is not None else 0.0
             _log_stats_line(stats, ws_stats, blend)
             open_connected = any(s.is_connected for s in open_sockets)
             if open_sockets:

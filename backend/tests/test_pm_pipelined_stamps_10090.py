@@ -130,19 +130,42 @@ async def test_strawman_the_serial_flush_holds_the_next_write():
     assert r.trace.index(("refresh", [10])) < r.trace.index(("write", [900]))
 
 
-async def test_a_tail_withdrawal_still_follows_the_last_stamp():
+async def test_another_events_tail_withdrawal_goes_beside_the_last_stamp():
     # 44 is event 20's leg, not in this batch: the ordinary tail withdraws it.
+    # #10090: event 20 is no part of event 90's running stamp, so its
+    # withdrawal no longer waits for that stamp; its own stamp still follows.
     r = rig(books={44: (0.2, 0.8)}, mapping={1: 10, 2: 10, 900: 90, 44: 20})
     r.release.set()
     gate, calls = held_refresher(r, hold_ids=(90,))
     flush = asyncio.create_task(r.ns["flush_prices"](flush_started=100))
-    await settle(r, lambda: calls["started"] == [(10,), (90,)])
-    assert calls["running"] == 1
-    assert ("withdraw", [44]) not in r.trace
+    await settle(r, lambda: ("withdraw", [44]) in r.trace)
+    assert ("withdraw", [44]) in r.trace, "an unrelated stamp held the withdrawal"
+    assert calls["started"] == [(10,), (90,)] and calls["running"] == 1
     gate.set()
     assert await asyncio.wait_for(flush, 2) is True
-    assert r.trace.index(("refresh", [90])) < r.trace.index(("withdraw", [44]))
+    assert r.trace.index(("refresh", [90])) < r.trace.index(("refresh", [20]))
     assert calls["started"][-1] == (20,) and calls["most_running"] == 1
+
+
+async def test_the_held_events_own_tail_withdrawal_waits_buffered():
+    # Control: a book on event 90, whose stamp is still running, is neither
+    # withdrawn under it nor holds the flush; it stays for a later flush.
+    r = rig(books={}, mapping={1: 10, 2: 10, 900: 90, 44: 90})
+    r.release.set()
+    gate, calls = held_refresher(r, hold_ids=(90,))
+    try:
+        assert await asyncio.wait_for(r.ns["flush_prices"](flush_started=100), 2)
+        assert calls["started"] == [(10,), (90,)] and calls["running"] == 1
+        r.books[44] = (0.2, 0.8)  # arrives while event 90's stamp runs
+        assert await asyncio.wait_for(r.ns["flush_prices"](flush_started=100.25), 2)
+        assert calls["running"] == 1 and ("withdraw", [44]) not in r.trace
+        assert r.books == {44: (0.2, 0.8)} and r.ns["stats"]["stamp_fenced"] == 1
+    finally:
+        gate.set()
+        await r.ns["catalog_boundary"].join_stamps()
+    assert await r.ns["flush_prices"](flush_started=100.5)
+    assert r.trace.index(("refresh", [90])) < r.trace.index(("withdraw", [44]))
+    assert calls["most_running"] == 1
 
 
 async def test_cancellation_cancels_the_running_stamp_before_returning():
@@ -204,8 +227,8 @@ async def test_unfinished_pending_cohort_stays_owed_while_independent_stamp_over
         assert r.trace.index(("write", [901])) < r.trace.index(("withdraw", [44]))
         if future_event == 20:
             # Debt90 only overlaps an unfinished withdrawal; next writes are
-            # independent. This makes the withdrawal exclusion load-bearing.
-            assert r.trace.index(("refresh", [20])) < r.trace.index(("withdraw", [44]))
+            # independent. No refresh reads event 90 before its withdrawal.
+            assert [a for a in calls["admitted"] if 90 in a] == [calls["admitted"][-1]]
         assert r.trace.index(("withdraw", [44])) < r.trace.index(("refresh", [90]))
         assert calls["most_running"] == 1
         assert r.marks == [1, 2, 900, 901]

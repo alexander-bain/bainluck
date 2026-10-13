@@ -119,27 +119,43 @@ async def test_later_batch_implicit_debt_waits_for_complete_cohort(
 
 
 @pytest.mark.parametrize("withdrawal", [False, True])
-async def test_next_batch_same_event_write_or_withdrawal_joins_old_owner(
+async def test_next_batch_same_event_write_or_withdrawal_waits_buffered_for_old_owner(
     monkeypatch, withdrawal
 ):
+    # #10090: event 1's stamp is still running. Its newer price or wide book
+    # neither lands under that read nor holds the batch: it stays buffered,
+    # and the first flush after the stamp returns writes it.
     p, x, _ = cross_batch(monkeypatch)
     assert await p.ns["flush_prices"](flush_started=1000)
     if withdrawal:
         p.books[1] = (0.2, 0.8)
     else:
         p.ns["price_buffer"].update({1: 0.5, 2: 0.5})
-    task = asyncio.create_task(p.ns["flush_prices"](flush_started=1001))
     try:
-        await asyncio.sleep(0)
-        await asyncio.sleep(0)
-        assert not task.done()
+        assert await asyncio.wait_for(p.ns["flush_prices"](flush_started=1001), 2)
+        assert 1 not in x.committed and not x.release.is_set()
         assert p.trace.count(("write", [1, 2])) == 1
         assert ("withdraw", [1]) not in p.trace
+        if withdrawal:
+            assert p.books == {1: (0.2, 0.8)}
+        else:
+            assert p.ns["price_buffer"] == {1: 0.5, 2: 0.5}
+        assert p.ns["stats"]["stamp_fenced"] == (1 if withdrawal else 2)
     finally:
         await finish(p, x)
-        await asyncio.wait_for(task, 2)
+    assert x.published == [1]
+    assert await p.ns["flush_prices"](flush_started=1002)
+    await p.ns["catalog_boundary"].join_stamps()
+    frame = p.trace.index(("event_frame", 1))
     if withdrawal:
-        assert p.trace.index(("event_frame", 1)) < p.trace.index(("withdraw", [1]))
+        assert frame < p.trace.index(("withdraw", [1]))
+        assert not p.books
+    else:
+        writes = [i for i, step in enumerate(p.trace) if step == ("write", [1, 2])]
+        assert len(writes) == 2 and frame < writes[1]
+        assert not p.ns["price_buffer"]
+    # The re-stamp reads the rig's unchanged board, so it owes no new frame.
+    assert not x.r.pending_event_ids() and x.r.stats["errors"] == 0
 
 
 async def test_quiet_batch_does_not_overlap_refresh_and_debt_progresses_after_join(
@@ -321,3 +337,85 @@ async def test_repeated_shutdown_cancel_joins_old_owner_then_still_drains_prices
         x.release.set()
         await asyncio.gather(task, return_exceptions=True)
         await finish(p, x)
+
+
+async def test_a_tail_withdrawal_stamp_takes_the_running_calls_free_worker(monkeypatch):
+    # #10090: a later batch carries only a wide book on event 2's leg. Its
+    # withdrawal commits at the tail; event 2's stamp joins the running call
+    # (event 1's stamp still held) instead of the batch joining that whole
+    # call and then stamping inline.
+    p, x, later = cross_batch(monkeypatch)
+    first = asyncio.create_task(p.ns["flush_prices"](flush_started=1000))
+    try:
+        await settle_until(first.done)
+        assert first.result() is True and not x.release.is_set()
+        assert await p.ns["write_chunk"](later)  # stored earlier, already stamped
+        calls = []
+        admit = x.r.admit_fresh
+
+        def record(ids, **kwargs):
+            owned = admit(ids, **kwargs)
+            calls.append((set(ids), owned))
+            return owned
+
+        x.r.admit_fresh = record
+        p.books[900] = (0.01, 0.99)
+        assert await asyncio.wait_for(p.ns["flush_prices"](flush_started=1001), 2)
+        await settle_until(lambda: 2 in x.published)
+        assert 1 not in x.committed and not x.release.is_set()
+        assert ("withdraw", [900]) in p.trace
+        assert calls == [({2}, frozenset({2}))]
+    finally:
+        x.release.set()
+        await asyncio.gather(first, return_exceptions=True)
+        await finish(p, x)
+    assert x.published == [2, 1] and not x.r.pending_event_ids()
+    assert x.r.stats["errors"] == 0
+
+
+async def test_a_held_games_tick_in_the_same_chunk_does_not_hold_an_independent_game(
+    monkeypatch,
+):
+    # #10090 post-v5710 residual: one 500-row chunk carries the slate, so any
+    # tick of a game whose stamp is still running joined that WHOLE refresh
+    # before the write, and every independent game in the chunk waited too.
+    p, x, later = cross_batch(monkeypatch)
+    assert await p.ns["flush_prices"](flush_started=1000)
+    p.ns["price_buffer"].update({1: 0.5, 2: 0.5, **later})
+    try:
+        assert await asyncio.wait_for(p.ns["flush_prices"](flush_started=1001), 2)
+        await settle_until(lambda: 2 in x.published)
+        assert 1 not in x.committed and not x.release.is_set()
+        assert ("write", [900, 901]) in p.trace
+        assert p.ns["price_buffer"] == {1: 0.5, 2: 0.5}  # fenced, not dropped
+    finally:
+        await finish(p, x)
+    assert await p.ns["flush_prices"](flush_started=1002)
+    await p.ns["catalog_boundary"].join_stamps()
+    assert p.trace.count(("write", [1, 2])) == 2 and not p.ns["price_buffer"]
+    assert x.published == [2, 1] and not x.r.pending_event_ids()
+
+
+async def test_the_fence_and_the_remaining_join_wait_reach_the_minute_line(caplog):
+    from app.tasks import polymarket_ws as poly_task
+
+    stats = {"price_updates": 0, "trade_updates": 0, "resolutions": 0, "errors": 0,
+             "stamp_fenced": 3, "stamp_wait_s": 1.26}
+    blend_stats = {"stamped": 0, "no_reading": 0, "throttled": 0, "errors": 0}
+    with caplog.at_level("INFO", logger=poly_task.logger.name):
+        poly_task._log_stats_line(stats, {}, blend_stats)
+    assert "fenced=3 stamp_wait_s=1.3" in caplog.text
+
+
+async def test_the_owner_counts_only_time_spent_waiting_on_a_running_refresh():
+    from app.tasks.polymarket_ws import _PMStampOwner
+
+    owner = _PMStampOwner(refresher=None)
+    owner.task = asyncio.create_task(asyncio.sleep(0.05))
+    await owner.join()
+    waited = owner.waited_s
+    assert 0.04 <= waited < 1
+    owner.task = asyncio.create_task(asyncio.sleep(0))
+    await asyncio.sleep(0.01)  # already finished: a reap, not a wait
+    await owner.join()
+    assert owner.waited_s - waited < 0.005
