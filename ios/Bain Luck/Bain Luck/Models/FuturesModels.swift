@@ -324,6 +324,10 @@ nonisolated struct FuturesOutcome: Decodable, Identifiable, Sendable {
     let openingProbability: Double?
     let openingAmericanOdds: Int?
     let isWinner: Bool?
+    /// #10964: who wrote `is_winner`. Read only through
+    /// ``FuturesDetailRowValue`` / ``OutcomeVerdict`` — `is_winner` alone is not
+    /// a grade. `var` with a default so the memberwise init keeps its shape.
+    var resolutionSource: String? = nil
     let lastUpdated: String?
     /// #9387, verified responses only: this outcome's actual source keys, the
     /// OLDEST included observation (ISO), and the resolver rule that combined
@@ -336,7 +340,7 @@ nonisolated struct FuturesOutcome: Decodable, Identifiable, Sendable {
         case id, name, probability, americanOdds, rank
         case rankChange24h = "rankChange24H"
         case probabilityChange24h = "probabilityChange24H"
-        case openingProbability, openingAmericanOdds, isWinner, lastUpdated
+        case openingProbability, openingAmericanOdds, isWinner, resolutionSource, lastUpdated
         case contributingSources, observedAt, aggregationRule
     }
 }

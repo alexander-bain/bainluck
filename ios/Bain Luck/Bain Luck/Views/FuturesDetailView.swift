@@ -666,7 +666,8 @@ struct FuturesDetailView: View {
                     rank: index + 1,
                     color: color,
                     leaderId: sorted.first?.id,
-                    percent: percents[outcome.id]
+                    percent: percents[outcome.id],
+                    marketStatus: market.status
                 )
                 if index < displayed.count - 1 {
                     Divider()
@@ -772,10 +773,13 @@ struct FuturesDetailView: View {
         rank: Int,
         color: Color,
         leaderId: Int?,
-        percent: Int?
+        percent: Int?,
+        marketStatus: String?
     ) -> some View {
         let isLeader = outcome.id == leaderId
         let probPct = (outcome.probability ?? 0) * 100
+        // #10964: a graded row names its result instead of its last quote.
+        let value = FuturesDetailRowValue.of(outcome, marketStatus: marketStatus)
 
         return VStack(spacing: 6) {
             HStack(alignment: .top) {
@@ -804,26 +808,29 @@ struct FuturesDetailView: View {
                         Text(outcome.name)
                             .font(.system(size: 15, weight: isLeader ? .semibold : .medium))
                             .foregroundStyle(DS.textPrimary)
-                        if outcome.isWinner == true {
+                        if value == .verdict(.won) {
                             Image(systemName: "checkmark.circle.fill")
                                 .font(.system(size: 13))
                                 .foregroundStyle(DS.emerald)
                         }
                     }
 
-                    HStack(spacing: 8) {
-                        // L2-48: American moneyline removed — probability only
-                        // (no-odds thesis: "60% vs 40%", never "-150/+130").
-                        // 24h movement via DeltaBadge
-                        if let change = outcome.probabilityChange24h, abs(change) >= 0.005 {
-                            DeltaBadge(value: change * 100)
-                        }
-                        if let opening = outcome.openingProbability, let current = outcome.probability {
-                            let diff = current - opening
-                            if abs(diff) >= 0.005 {
-                                Text("from \(formatProbability(opening))")
-                                    .font(.system(size: 11, design: .monospaced))
-                                    .foregroundStyle(DS.textMuted)
+                    // A settled row prints its result, never a move (#10964).
+                    if value.printsMovement {
+                        HStack(spacing: 8) {
+                            // L2-48: American moneyline removed — probability only
+                            // (no-odds thesis: "60% vs 40%", never "-150/+130").
+                            // 24h movement via DeltaBadge
+                            if let change = outcome.probabilityChange24h, abs(change) >= 0.005 {
+                                DeltaBadge(value: change * 100)
+                            }
+                            if let opening = outcome.openingProbability, let current = outcome.probability {
+                                let diff = current - opening
+                                if abs(diff) >= 0.005 {
+                                    Text("from \(formatProbability(opening))")
+                                        .font(.system(size: 11, design: .monospaced))
+                                        .foregroundStyle(DS.textMuted)
+                                }
                             }
                         }
                     }
@@ -831,8 +838,15 @@ struct FuturesDetailView: View {
 
                 Spacer()
 
-                // Lead probability via ProbabilityNumber
-                if let prob = outcome.probability {
+                switch value {
+                case .verdict(let verdict):
+                    // Search's and the event page's vocabulary: a win in the
+                    // live accent, a loss muted.
+                    Text(verdict.label)
+                        .font(.system(size: 18, weight: verdict == .won ? .semibold : .regular))
+                        .foregroundStyle(verdict == .won ? DS.emerald : DS.textSecondary)
+                case .price(let prob):
+                    // Lead probability via ProbabilityNumber
                     if isLeader {
                         ProbabilityNumber(
                             value: prob * 100,
@@ -845,11 +859,13 @@ struct FuturesDetailView: View {
                             .font(.system(size: 18, weight: .semibold, design: .monospaced))
                             .foregroundStyle(DS.probColor(probPct))
                     }
+                case .none:
+                    EmptyView()
                 }
             }
 
             // Probability bar via DSProbabilityBar
-            if outcome.probability != nil {
+            if case .price = value {
                 DSProbabilityBar(
                     value: probPct,
                     maxValue: 100,
