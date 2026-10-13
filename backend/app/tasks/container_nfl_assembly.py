@@ -11,9 +11,13 @@ container, claims no anchor, writes no event and no market: the one write it
 can cause is `assemble_container`'s own, and only with ``apply=True`` on a
 container the caller already resolved — plus, only with
 ``CONTAINER_NFL_AUTO_PUBLISH_ENABLED`` on, the publication of a week this pass
-proved complete (`app/utils/container_nfl_publication.py`, #5341). The caller owns the transaction — this
-never commits — so the dispatch that eventually runs it decides when a pass is
-kept, and `container_assembly.UNDO_LINE` undoes it.
+proved complete (`app/utils/container_nfl_publication.py`, #5341) — plus, with
+a season pass's `NflRelocation` (#5344, below), the move of a game the authority
+re-filed under another week: this adapter's own edges deleted from the old
+week, a revision bump there, and a `container_member_decisions` row on each
+side. The caller owns the transaction — this never commits — so the dispatch
+that eventually runs it decides when a pass is kept, and
+`container_assembly.UNDO_LINE` undoes the edges.
 
 READ-ONLY QUERIES, ALL ID-KEYED EXCEPT ONE REPORT.
 * our events holding the week's contest ids (the membership join);
