@@ -861,8 +861,25 @@ final class CalibrationViewModel: ObservableObject {
 
     // MARK: - Payload-v2 trust content
 
+    /// #10992 — the parked list, joined to the vocabulary the reader is shown,
+    /// as web's `parkedCategories` has been since #7325.
+    ///
+    /// `small_sample_categories` is keyed on RAW payload categories; `categories`
+    /// is keyed on `normalizedCategory`. This sorted the raw list unjoined, so a
+    /// sub-league sat in "still accumulating" while its own parent carried a
+    /// published row above it. On the payload served 2026-10-13 07:29Z the phone
+    /// said 115 categories / 27.8K outcomes led by Serie A 977 (inside Soccer)
+    /// while web, on the same bytes, said 42 led by Rugby 427.
+    ///
+    /// Read off `categories` rather than recomputing the bar, so the two lists
+    /// are a partition by construction. The backend list is untouched — the
+    /// join is the fix, not a re-count — and the bar stays all-cohort (#7195),
+    /// so toggling traded/all moves neither list.
     var smallSampleCategories: [SmallSampleCategory] {
-        (data?.smallSampleCategories ?? []).sorted { $0.outcomes > $1.outcomes }
+        let published = Set(categories)
+        return (data?.smallSampleCategories ?? [])
+            .filter { !published.contains(Self.normalizedCategory($0.category)) }
+            .sorted { $0.outcomes > $1.outcomes }
     }
     var smallSampleTotal: Int { smallSampleCategories.reduce(0) { $0 + $1.outcomes } }
     var corrections: [CalibrationCorrection] { data?.corrections ?? [] }
@@ -1033,6 +1050,11 @@ final class CalibrationViewModel: ObservableObject {
         "soccer_france_ligue_one": "soccer", "soccer_uefa_europa_league": "soccer",
         "mma_mixed_martial_arts": "mma", "golf_pga": "golf", "golf_lpga": "golf",
         "cricket_ipl": "cricket", "cricket_test_match": "cricket",
+        // #10992 — web's `SPORT_KEY_MAP` carries this and this map did not, so
+        // a raw `mlb` row was its own category here and Baseball on web. The
+        // two maps are pinned key-for-key in
+        // `calibrationParkedPartitionParity10992.test.ts`.
+        "mlb": "baseball",
     ]
 
     private static let categoryDisplayNames: [String: String] = [
@@ -1050,6 +1072,11 @@ final class CalibrationViewModel: ObservableObject {
         // exists on one surface and is derived on the other is a drift waiting
         // for one of the two derivations to change.
         "table_tennis": "Table Tennis",
+        // #10992 — on web since the lacrosse buckets arrived; missing here, so
+        // `lacrosse_ncaa` (829) and `lacrosse_pll` (538) never rolled up. Web
+        // published Lacrosse and the phone did not, and the phone's niche card
+        // led with two leagues whose parent web was grading.
+        "lacrosse": "Lacrosse",
     ]
 
     /// **This map is what the phone prints, not the server's vocabulary.**
