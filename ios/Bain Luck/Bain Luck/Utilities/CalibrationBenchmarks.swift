@@ -19,8 +19,8 @@ import Foundation
 ///     'excellent' for a range whose top half the footnote itself excluded. A
 ///     range is drawn as a band between its ends."*
 ///   - **Every row colour-graded on OUR thresholds.** `eceColor` was applied to
-///     all four figures with no condition; `eceColor` is `< 4 ? .green`, and all
-///     four values were under 4, so all four printed green. The colour carried
+///     all four figures with no condition; `eceColor` was then `< 4 ? .green`, and
+///     all four values were under 4, so all four printed green. The colour carried
 ///     no information, and it published a verdict on Metaculus's and two 2008
 ///     papers' calibration that we cannot support.
 ///   - **Our own row untagged.** The label was the bare `"Bain Luck"` while its
