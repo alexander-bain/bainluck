@@ -232,18 +232,22 @@ async def test_next_flush_cohort_publishes_while_an_earlier_flush_stamp_is_held(
     assert x.r.stats["errors"] == 0
 
 
-async def test_later_flush_is_admitted_on_its_clock_only_while_own_stamps_run(
+async def test_later_flush_is_admitted_only_while_own_or_frontier_stamps_run(
     monkeypatch,
 ):
-    # Bounded: a later flush joins while the call's own stamp is unfinished.
-    # Once it has returned the call only drains what it admitted, so a later
-    # flush is refused and stays with its caller.
-    x = refresher_rig(monkeypatch, count=3, block=True, blocked=(1,))
-    hold_two, read_groups = asyncio.Event(), x.r._read_groups
+    # Bounded: a later flush joins while the call's own stamp is unfinished,
+    # or (#10090) while an admitted stamp that was outstanding when the own
+    # stamps returned still runs — the fixed frontier the drain waits for
+    # anyway. Once those have returned the call only drains what it admitted:
+    # a later flush is refused and stays with its caller, and neither a stamp
+    # admitted after own_done nor a re-admission of a frontier event extends it.
+    x = refresher_rig(monkeypatch, count=4, block=True, blocked=(1,))
+    holds = {2: asyncio.Event(), 3: asyncio.Event()}
+    read_groups = x.r._read_groups
 
     async def held_read(session, event_ids):
-        if event_ids == [2]:
-            await hold_two.wait()
+        if len(event_ids) == 1 and event_ids[0] in holds:
+            await holds[event_ids[0]].wait()
         return await read_groups(session, event_ids)
 
     x.r._read_groups = held_read
@@ -254,12 +258,21 @@ async def test_later_flush_is_admitted_on_its_clock_only_while_own_stamps_run(
         assert x.r._admission.clocks == {2: 1002}
         x.release.set()
         await settle_until(lambda: 1 in x.published)
-        assert x.r._admission.own_done and not running.done()
-        assert x.r.admit_fresh([3], flush_started=1004) == frozenset()
+        window = x.r._admission
+        assert window.own_done and window.frontier == {2} and not running.done()
+        # An unrelated later flush while the held admitted stamp runs: admitted.
+        assert x.r.admit_fresh([3], flush_started=1004) == {3}
+        assert window.frontier == {2}  # never grown by a later attempt
+        holds[2].set()
+        await settle_until(lambda: 2 in x.published)
+        assert window.refuses_later_flushes() and 3 not in x.published
+        assert x.r.admit_fresh([4], flush_started=1006) == frozenset()
+        assert x.r.admit_fresh([2], flush_started=1006) == frozenset()
     finally:
         x.release.set()
-        hold_two.set()
+        for hold in holds.values():
+            hold.set()
     await asyncio.wait_for(running, 2)
-    assert x.published == [1, 2]
-    assert x.r._last_refresh_at == {1: 1000, 2: 1002}
+    assert x.published == [1, 2, 3]
+    assert x.r._last_refresh_at == {1: 1000, 2: 1002, 3: 1004}
     assert x.r.pending_event_ids() == frozenset() and x.r._admission is None

@@ -1158,6 +1158,13 @@ class _FreshAdmission:
         #: Set once the call's own stamps have returned; later flushes are
         #: refused from then on, so the call ends after a bounded drain.
         self.own_done = False
+        #: #10090 — the admitted attempts still queued or running when
+        #: `own_done` was set, fixed then: it only shrinks as each returns
+        #: (`release`), and a later attempt of the same event never rejoins it.
+        #: Later flushes are admitted while any of them is outstanding — the
+        #: drain was waiting for them anyway — and refused once the last one
+        #: returns, so the drain stays bounded.
+        self.frontier: Optional[set[int]] = None
         self.closed = False
         self.publish: Optional[Callable[[list[dict]], Awaitable[None]]] = None
         self.publish_inline: Optional[Callable[[list[dict]], Awaitable[None]]] = None
@@ -1165,6 +1172,13 @@ class _FreshAdmission:
     def release(self, event_ids) -> None:
         """These events' stamps returned, or went back to debt unstamped."""
         self.holding.difference_update(event_ids)
+        if self.frontier is not None:
+            self.frontier.difference_update(event_ids)
+
+    def refuses_later_flushes(self) -> bool:
+        """The call's own stamps have returned and no attempt outstanding at
+        that moment is still running: from here the drain is bounded."""
+        return self.own_done and not self.frontier
 
 
 class LiveBlendRefresher:
@@ -1797,6 +1811,10 @@ class LiveBlendRefresher:
             # no turn between its last worker ending and the close. From here
             # no later flush is admitted, so the remaining drain is bounded.
             window.own_done = True
+            # #10090: an admitted stamp still held here (a row lock, a slow
+            # frame) kept every later flush's cohort out until it returned,
+            # though the call waits for it regardless. Fixed now, never grown.
+            window.frontier = set(window.holding)
             await self._admission_join(window)
             await publication_done()
         except CancelledError as exc:
@@ -1986,12 +2004,13 @@ class LiveBlendRefresher:
         owed exactly as a `refresh` would leave it (throttled). Each is due,
         stamped and held on ITS flush's clock (``flush_started``): a cohort of
         a LATER flush than the running call's joins while that call's own
-        stamps are still unfinished, so a new batch does not wait for an
-        unrelated older stamp; once they have returned, later flushes are
-        refused and the call ends after its bounded drain. Empty means the
-        caller keeps them for its next `refresh`, as before: no call is
-        running, the clock is earlier, a later one arrived after the call's
-        own stamps returned, or there is none (the final drain keeps its own
+        stamps — or the admitted stamps outstanding when those returned (its
+        fixed ``frontier``) — are still unfinished, so a new batch does not
+        wait for an unrelated older stamp; once all of them have returned,
+        later flushes are refused and the call ends after its bounded drain.
+        Empty means the caller keeps them for its next `refresh`, as before:
+        no call is running, the clock is earlier, a later one arrived after
+        that point, or there is none (the final drain keeps its own
         contract), or the event is fenced — the running call is
         still stamping it (an earlier attempt that has returned does not
         fence a newer price, #10090), or the caller is still writing its cohort
@@ -2007,7 +2026,7 @@ class LiveBlendRefresher:
         ):
             return frozenset()
         if flush_started != window.flush_started and (
-            flush_started < window.flush_started or window.own_done
+            flush_started < window.flush_started or window.refuses_later_flushes()
         ):
             return frozenset()
         excluded = set(defer_event_ids)

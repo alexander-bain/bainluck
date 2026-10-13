@@ -524,3 +524,68 @@ async def test_keep_owed_records_the_debt_a_deferring_refresh_records(monkeypatc
     assert r.stats["throttled"] == before + 1  # once per owed event
     assert set(receipts._open) == {2}  # the cohort's input opens its chain
     assert (receipts._staged, receipts._staged_wall) == staged  # slot untouched
+
+
+async def test_an_unrelated_price_publishes_while_an_admitted_holder_outlives_own_done(
+    monkeypatch,
+):
+    # #10090, Root's closed-admission counterexample (1.504 s FAIL on a23a6c9680):
+    # event 1's own stamp returns while admitted event 2's stamp is still held.
+    # The drain waits for event 2 regardless, so event 3's committed price joins
+    # the call (the fixed frontier) and publishes before event 2's holder lets
+    # go, instead of waiting it out. Its mark stays the admission's own.
+    from tests import test_polymarket_withdrawal_speed_10651 as fixtures
+    from tests.test_single_event_commit_10090 import rig as stamp_rig
+
+    p = fixtures.rig(batch={10: 0.6}, mapping={10: 1, 20: 2, 30: 3}, books={})
+    p.release.set()
+    x = stamp_rig(monkeypatch, count=3, block=True, blocked=(2,))
+    p.ns["blend_refresher"] = x.r
+    receipts = p.ns["tail_receipts"] = x.r.receipts = blend.TailReceipts("polymarket")
+    p.ns["input_marks"] = {
+        oid: blend.InputMark(
+            seq=n, event_id=n, outcome_id=oid, probability=value, kind="price",
+            recv_wall=1000 + n, recv_mono=100 + n, venue_ts_ms=None, event_ordinal=n,
+        )
+        for n, (oid, value) in enumerate([(10, 0.6), (20, 0.7), (30, 0.8)], 1)
+    }
+
+    async def no_market_publish(session):
+        return 0
+
+    x.r.publish_market_changes = no_market_publish
+    first_entered, first_release = asyncio.Event(), asyncio.Event()
+    batch = x.r._refresh_batch
+
+    async def first_gate(ids, *a, **kw):
+        if ids == [1]:
+            first_entered.set()
+            await first_release.wait()
+        return await batch(ids, *a, **kw)
+
+    x.r._refresh_batch = first_gate
+    try:
+        assert await p.ns["flush_prices"](flush_started=1000)
+        await asyncio.wait_for(first_entered.wait(), 1)
+        p.ns["price_buffer"][20] = 0.7
+        assert await asyncio.wait_for(p.ns["flush_prices"](flush_started=1000.25), 1)
+        await asyncio.wait_for(x.second_stamp.wait(), 1)
+        first_release.set()
+        await settle_until(lambda: x.r._admission is not None and x.r._admission.own_done)
+        window = x.r._admission
+        assert x.r.holding_event_ids() == frozenset({2}) and window.frontier == {2}
+        assert x.published == [1]
+        slot = (receipts._staged, receipts._staged_wall)
+        p.ns["price_buffer"][30] = 0.8
+        assert await asyncio.wait_for(p.ns["flush_prices"](flush_started=1000.5), 1)
+        await settle_until(lambda: 3 in x.published)
+        assert not x.release.is_set() and 2 not in x.committed  # holder still held
+        assert window.staged[3].seq == 3 and window.frontier == {2}
+        assert (receipts._staged, receipts._staged_wall) == slot
+    finally:
+        first_release.set()
+        x.release.set()
+        await p.ns["catalog_boundary"].join_stamps()
+    assert x.published == [1, 3, 2] and not p.ns["price_buffer"]
+    assert not x.r.pending_event_ids() and x.r._admission is None
+    assert x.r.stats["errors"] == 0
