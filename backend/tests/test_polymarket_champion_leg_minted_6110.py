@@ -441,8 +441,13 @@ async def test_open_high_price_leg_is_never_minted_6110(monkeypatch, open_price)
 
     assert recorder.inserts == [], recorder.inserts
     assert stats["champions_minted"] == 0, stats
-    # And it says WHY, rather than reporting a silent zero (gotcha #53).
-    assert stats["champion_mint"] == {REFUSED_NOT_CLOSED: 1}, stats["champion_mint"]
+    # And it says WHY, rather than reporting a silent zero (gotcha #53). Since
+    # #11007 the rail refuses an open leg BEFORE grading it at all, so the
+    # refusal is counted there and the mint is never consulted; the mint's own
+    # REFUSED_NOT_CLOSED stays as defence in depth and is pinned on the pure
+    # decision in this file.
+    assert stats["legs_open_at_venue"] == 1, stats
+    assert stats["champion_mint"] == {}, stats["champion_mint"]
 
 
 @pytest.mark.asyncio
@@ -480,7 +485,9 @@ async def test_a_leg_with_no_closed_flag_at_all_is_refused_not_assumed(monkeypat
     stats = await bw._backfill_polymarket_winners_from_api(limit=10)
 
     assert recorder.inserts == []
-    assert stats["champion_mint"] == {REFUSED_NOT_CLOSED: 1}
+    # #11007: refused by the rail's grading gate, before the mint (see above).
+    assert stats["legs_open_at_venue"] == 1, stats
+    assert stats["champion_mint"] == {}, stats["champion_mint"]
 
 
 # ---------------------------------------------------------------------------
