@@ -29,7 +29,8 @@ SAME refusing writer as every other band.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+import asyncio
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
@@ -121,6 +122,7 @@ async def _drive(
     limit=2000,
     fast_lane_only=False,
     session=None,
+    venue=None,
 ):
     """The real `_backfill_kalshi_winners`, every selection stubbed.
 
@@ -146,7 +148,7 @@ async def _drive(
     if expiring_cursor is not None:
         rc.store[_KEY] = expiring_cursor
     session = session or _LoopSession()
-    venue = _FakeKalshi(answers)
+    venue = venue or _FakeKalshi(answers)
 
     monkeypatch.setattr(bw, "_select_kalshi_settlement_tickers", _fake_select)
     monkeypatch.setattr(bw, "_select_kalshi_expiring_ungraded_tickers", _fake_expiring)
@@ -314,6 +316,129 @@ async def test_a_short_batch_wraps_so_the_next_cycle_restarts_at_the_oldest(monk
 async def test_a_cold_empty_band_deletes_nothing(monkeypatch):
     _stats, rc, _venue, _seen = await _drive(monkeypatch, tail=["KXT-1"], expiring=[])
     assert _KEY not in rc.deleted
+
+
+# ---------------------------------------------------------------------------
+# the cursor moves only past rows whose fetch FINISHED (review HOLD on 586e7fa81b)
+# ---------------------------------------------------------------------------
+
+class _FailingKalshi(_FakeKalshi):
+    """The venue, failing on one ticker with the exception the caller chooses."""
+
+    def __init__(self, fail_on: str, exc: BaseException):
+        super().__init__()
+        self._fail_on, self._exc = fail_on, exc
+
+    async def get_event(self, ticker):
+        self.asked.append(ticker)
+        if ticker == self._fail_on:
+            raise self._exc
+        return None
+
+
+def _full_rows(n: int) -> list[tuple[str, datetime]]:
+    """n band-7 rows, oldest first, distinct ages so each cursor is unique."""
+    return [(f"KXEXP{i:03d}-26JUL", _OLD + timedelta(hours=i)) for i in range(n)]
+
+
+_PROD_BAND = bw._settlement_band_budgets(2000)[1]  # 200: two fetch batches of 100
+
+
+@pytest.mark.asyncio
+async def test_a_venue_error_on_the_first_fetch_leaves_band_sevens_cursor_where_it_was(monkeypatch):
+    """A full selection, then the first venue call raises (swallowed by the
+    loop's `except`). Not one of the 200 near-purge markets was asked about, so
+    the next cycle must select them again — the cursor stays put."""
+    stored = bw._encode_expiring_cursor(_OLD - timedelta(days=1), "KXBEFORE")
+    rows = _full_rows(_PROD_BAND)
+    stats, rc, _venue, _seen = await _drive(
+        monkeypatch,
+        expiring=rows,
+        expiring_cursor=stored,
+        venue=_FailingKalshi(rows[0][0], RuntimeError("venue 500")),
+    )
+    assert stats["errors"], "the failure must be recorded, not silently absorbed"
+    assert rc.store[_KEY] == stored
+    assert not any(k == _KEY for k, _t, _v in rc.setex_calls)
+    assert _KEY not in rc.deleted
+
+
+@pytest.mark.asyncio
+async def test_a_cancelled_phase_leaves_band_sevens_cursor_where_it_was(monkeypatch):
+    """The phase wall (#4740) CANCELS rather than raises: CancelledError is not
+    an Exception, so it escapes the loop. The cursor must not have moved."""
+    rows = _full_rows(_PROD_BAND)
+    venue = _FailingKalshi(rows[0][0], asyncio.CancelledError())
+    with pytest.raises(asyncio.CancelledError):
+        await _drive(monkeypatch, expiring=rows, venue=venue)
+    import app.tasks.redis_state as rs
+
+    rc = rs.get_redis_client()  # the drive's fake, still patched in
+    assert _KEY not in rc.store
+    assert not any(k == _KEY for k, _t, _v in rc.setex_calls)
+
+
+@pytest.mark.asyncio
+async def test_a_failure_in_the_second_batch_keeps_its_rows_reachable(monkeypatch):
+    """Rows 0-99 were fetched and committed; row 150 raises. The cursor steps to
+    row 99 and no further, so rows 100-199 head the next cycle's selection."""
+    rows = _full_rows(_PROD_BAND)
+    _stats, rc, venue, _seen = await _drive(
+        monkeypatch,
+        expiring=rows,
+        venue=_FailingKalshi(rows[150][0], RuntimeError("venue 500")),
+    )
+    assert rows[150][0] in venue.asked
+    assert rc.store[_KEY] == bw._encode_expiring_cursor(rows[99][1], rows[99][0])
+
+
+@pytest.mark.asyncio
+async def test_a_clean_multi_batch_cycle_advances_to_the_last_row(monkeypatch):
+    """Control for the three arms above: when every fetch finishes, the cursor
+    lands on the last selected row exactly as before, across two batches."""
+    rows = _full_rows(_PROD_BAND)
+    _stats, rc, venue, _seen = await _drive(monkeypatch, expiring=rows)
+    assert len(venue.asked) == _PROD_BAND
+    assert rc.store[_KEY] == bw._encode_expiring_cursor(rows[-1][1], rows[-1][0])
+    # Stepped once per batch, never past an unfetched row.
+    steps = [v for k, _t, v in rc.setex_calls if k == _KEY]
+    assert steps == [
+        bw._encode_expiring_cursor(rows[99][1], rows[99][0]),
+        bw._encode_expiring_cursor(rows[-1][1], rows[-1][0]),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_a_short_batch_that_fails_does_not_wrap(monkeypatch):
+    """A short selection wraps only once every row was asked about; a failure
+    first keeps the stored position so the unasked rows are not skipped."""
+    stored = bw._encode_expiring_cursor(_OLD, "KXOLD-26JUL20")
+    rows = [("KXMID-26SEP01", _MID)]
+    _stats, rc, _venue, _seen = await _drive(
+        monkeypatch,
+        expiring_cursor=stored,
+        expiring=rows,
+        venue=_FailingKalshi(rows[0][0], RuntimeError("venue 500")),
+    )
+    assert rc.store[_KEY] == stored
+    assert _KEY not in rc.deleted
+
+
+@pytest.mark.asyncio
+async def test_a_row_shared_with_band_one_is_counted_where_it_was_fetched(monkeypatch):
+    """Band 7's row 150 is also a fresh ticker, so it is fetched FIRST, in band
+    1's slot. The first batch then holds it plus rows 0-98; a failure on row 120
+    must leave the cursor at row 98 — row 150 being done does not make 99-149
+    done."""
+    rows = _full_rows(_PROD_BAND)
+    _stats, rc, venue, _seen = await _drive(
+        monkeypatch,
+        fresh=[rows[150][0]],
+        expiring=rows,
+        venue=_FailingKalshi(rows[120][0], RuntimeError("venue 500")),
+    )
+    assert venue.asked[0] == rows[150][0]
+    assert rc.store[_KEY] == bw._encode_expiring_cursor(rows[98][1], rows[98][0])
 
 
 def test_the_cursor_round_trips_and_a_garbled_key_reads_as_cold():

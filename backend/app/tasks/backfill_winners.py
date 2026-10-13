@@ -12,6 +12,7 @@ Risk mitigations:
    outcomes at 0 or 1). This IS the settlement price, not an inference.
 """
 
+import bisect
 import logging
 import re
 from datetime import datetime, timezone
@@ -1522,16 +1523,17 @@ async def _backfill_kalshi_winners(
     # of the window, so it wraps and the next cycle starts at the purge edge
     # again. (Band 4 wraps only on an EMPTY batch, which spends one cycle asking
     # nothing per wrap; here the batch size is a fact the caller knows.)
-    if not _run_expiring_band:
-        pass
-    elif expiring_rows and len(expiring_rows) >= _expiring_limit:
-        _last_ticker, _last_age = expiring_rows[-1][0], expiring_rows[-1][1]
-        _rc.setex(
-            _EXPIRING_UNGRADED_CURSOR_KEY,
-            86400 * 14,
-            _encode_expiring_cursor(_last_age, _last_ticker),
-        )
-    elif _expiring_cursor is not None:
+    #
+    # 🔴 Unlike bands 2/4/5/6 it is NOT written here, before the fetch: it moves
+    # only past rows whose fetch batch has finished (`_advance_expiring_cursor`,
+    # called after each batch). A venue error swallowed by the `except` below,
+    # a wall cancellation (#4740) or a crash mid-list would otherwise leave the
+    # cursor past 200 markets nobody asked about, and these are the markets
+    # about to become unprovable — the next visit would be a full wrap later.
+    # An EMPTY band has nothing at risk, so its wrap is immediate.
+    _expiring_full = bool(expiring_rows) and len(expiring_rows) >= _expiring_limit
+    _expiring_written = -1
+    if _run_expiring_band and not expiring_rows and _expiring_cursor is not None:
         _rc.delete(_EXPIRING_UNGRADED_CURSOR_KEY)
         logger.info(
             "Kalshi winner backfill: expiring-ungraded cursor wrapped, will restart next run"
@@ -1644,6 +1646,43 @@ async def _backfill_kalshi_winners(
         len(early_tickers),
         len(longdated_tickers),
     )
+
+    # Band 7's row k is safe to step past once every row 0..k has been fetched.
+    # A row shared with band 1 sits EARLIER in `tickers` than band 7's own slots,
+    # so the reach is a running max of positions, not the row's own position.
+    _ticker_pos = {t: i for i, t in enumerate(tickers)}
+    _expiring_reach: list[int] = []
+    for _t, _age in expiring_rows:
+        _p = _ticker_pos[_t]
+        _expiring_reach.append(max(_p, _expiring_reach[-1]) if _expiring_reach else _p)
+
+    def _advance_expiring_cursor(fetched_upto: int) -> None:
+        """Move band 7's cursor past the rows whose fetch has FINISHED.
+
+        Called after each batch with the count of `tickers` attempted so far. A
+        full selection steps the key to the last fully-attempted row; a short
+        one wraps (deletes) only once every one of its rows has been attempted.
+        """
+        nonlocal _expiring_written
+        if not _run_expiring_band or not expiring_rows:
+            return
+        k = bisect.bisect_left(_expiring_reach, fetched_upto) - 1
+        if k <= _expiring_written:
+            return
+        if _expiring_full:
+            _rc.setex(
+                _EXPIRING_UNGRADED_CURSOR_KEY,
+                86400 * 14,
+                _encode_expiring_cursor(expiring_rows[k][1], expiring_rows[k][0]),
+            )
+        elif k == len(expiring_rows) - 1 and _expiring_cursor is not None:
+            _rc.delete(_EXPIRING_UNGRADED_CURSOR_KEY)
+            logger.info(
+                "Kalshi winner backfill: expiring-ungraded cursor wrapped, will restart next run"
+            )
+        else:
+            return
+        _expiring_written = k
 
     service = KalshiAPIService()
     try:
@@ -1979,6 +2018,10 @@ async def _backfill_kalshi_winners(
 
                 if not dry_run:
                     await session.commit()
+
+            # #1853: only now, with this batch fetched and committed, may band 7's
+            # cursor step past its rows.
+            _advance_expiring_cursor(batch_start + len(batch))
 
             logger.info(
                 "Kalshi backfill: %d/%d tickers, %d found, %d winners, %d losers",
