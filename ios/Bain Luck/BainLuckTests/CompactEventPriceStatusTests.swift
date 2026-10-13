@@ -146,7 +146,7 @@ final class CompactEventPriceStatusTests: XCTestCase {
         XCTAssertTrue(body.contains("minHeight:44"), "the 44pt tap target")
         XCTAssertTrue(body.contains(".popover(isPresented:$showProbabilityDetails,arrowEdge:.top){FreshnessRevealView(status:vm.liveUpdateStatus,lastReceivedAt:vm.priceActivity?.receivedAt"))
         XCTAssertTrue(body.contains("LivePriceReceiptCue.accessibilityText(status:vm.liveUpdateStatus"))
-        XCTAssertTrue(body.contains(".accessibilityHint(\"Showsconnectionstatusandwhenthelastpriceupdatereachedthisphone\")"))
+        XCTAssertTrue(body.contains(".accessibilityHint(\"Showsconnectionstatusandwhenthelastprobabilityupdatereachedthisphone\")"))
     }
 
     func testTheLeafHasNoButtonNoClockAndNoLoop() throws {
