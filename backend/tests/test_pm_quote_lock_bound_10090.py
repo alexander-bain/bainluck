@@ -4,9 +4,13 @@ import asyncio
 from contextlib import asynccontextmanager
 from types import SimpleNamespace
 
+import asyncpg.exceptions
+import pytest
+from sqlalchemy.exc import OperationalError
+
 from app.tasks.polymarket_ws import (
-    PRICE_CHUNK_LOCK_TIMEOUT_MS, _PMPriceWriteResult, _pm_lock_isolated_chunks,
-    chunk_price_update_stmt,
+    PRICE_CHUNK_LOCK_TIMEOUT_MS, PRICE_ROW_LOCK_REFUSAL_MESSAGE, _PMPriceWriteResult,
+    _pm_lock_isolated_chunks, chunk_price_update_stmt, is_price_row_lock_refusal,
 )
 from app.tasks.kalshi_ws import PRICE_FLUSH_SECONDS
 from app.tasks.live_blend_refresh import run_flush_cadence
@@ -15,15 +19,25 @@ from tests.test_polymarket_withdrawal_speed_10651 import ROOT, compile_functions
 from tests.test_ws_flush_cadence_10090 import _FakeTime
 
 
+LOCK_TIMEOUT_MESSAGE = "canceling statement due to lock timeout"
+
+
 class LockHeld(Exception):
+    """Shaped like asyncpg's 55P03: the SQLSTATE and server message together."""
+
     sqlstate = "55P03"
+
+    def __init__(self, message=LOCK_TIMEOUT_MESSAGE):
+        super().__init__(message)
+        self.message = message
 
 
 def writer_rig(clock, *, error=None, database=None, **kwargs):
     r = rig(**({"books": {1: (0.2, 0.8)}} | kwargs))
     r.release.set()
     state = SimpleNamespace(held=True, attempts=[], settings=[], commits=[], pending=set(),
-                            forced=[], ranks=[], values={})
+                            forced=[], ranks=[], values={}, nowait=[],
+                            refusal_delay=0.0, refusal_message=PRICE_ROW_LOCK_REFUSAL_MESSAGE)
 
     class Session:
         async def execute(self, stmt, params=None):
@@ -35,14 +49,19 @@ def writer_rig(clock, *, error=None, database=None, **kwargs):
             if kind == "rank":
                 state.ranks.append(tuple(values))
                 return SimpleNamespace(rowcount=len(values))
-            chunk, forced = values
+            chunk, forced, nowait = values
             state.forced.append(set(forced))
+            state.nowait.append(nowait)
             state.attempts.append((clock.t, tuple(chunk)))
             if 1 in chunk and state.held:
                 # A newer accepted quote survives the whole transaction rollback.
                 r.ns["price_buffer"][1] = 0.9
-                clock.t += 0.5
-                raise error or LockHeld()
+                # NOWAIT is refused without waiting (its answer may still
+                # arrive late); otherwise the lock budget is spent.
+                clock.t += state.refusal_delay if nowait else 0.5
+                raise error or (
+                    LockHeld(state.refusal_message) if nowait else LockHeld()
+                )
             written = {
                 oid: value for oid, value in chunk.items()
                 if database is None or oid in forced
@@ -78,7 +97,10 @@ def writer_rig(clock, *, error=None, database=None, **kwargs):
         PRICE_CHUNK_LOCK_TIMEOUT_MS=PRICE_CHUNK_LOCK_TIMEOUT_MS,
         PRICE_FLUSH_SECONDS=PRICE_FLUSH_SECONDS, SET_LOCK_TIMEOUT_SQL=SET_LOCK_TIMEOUT_SQL,
         is_lock_timeout=is_lock_timeout, lock_timeout_value=lock_timeout_value,
-        chunk_price_update_stmt=lambda chunk, force_ids: ("price", (chunk, force_ids)),
+        is_price_row_lock_refusal=is_price_row_lock_refusal,
+        chunk_price_update_stmt=lambda chunk, force_ids, nowait=False: (
+            "price", (chunk, force_ids, nowait)
+        ),
         rerank_market_fields_stmt=lambda ids: ("rank", ids),
         market_by_outcome={oid: oid for oid in r.ns["price_buffer"]},
     )
@@ -152,6 +174,75 @@ async def test_final_drain_ignores_hold_and_does_not_set_periodic_lock_budget(mo
     assert (await r.ns["write_chunk"]({1: 0.9, 2: 0.4}, final=True)).written_ids == (1, 2)
     assert len(state.settings) == 1  # no SET in the final transaction
     assert state.commits == [1, 2] and not r.ns["lock_retry_until"]
+    assert state.nowait == [False, False], "the final drain still waits for its locks"
+
+
+async def test_a_probe_refusal_received_late_still_re_arms_no_cooldown(monkeypatch):
+    # #10090 (Root's review_pg_delayed_refusal control): the database refused
+    # the NOWAIT row lock at once, but the answer reached the task 60 ms later.
+    # Judged by elapsed time it re-armed the two-second cooldown and the pair
+    # sat unwritten 2.18 s after its holder let go. Judged by the error, it is
+    # a refusal: the rows stay known-held and due for the next flush.
+    clock = _FakeTime(monkeypatch, t=1000)
+    r, state = writer_rig(clock)
+    r.ns["lock_retry_until"].update({1: 0, 2: 0})
+    state.refusal_delay = 0.06
+    assert await r.ns["write_chunk"]({1: 0.6, 2: 0.4}) is None
+    assert state.nowait == [True]
+    assert r.ns["lock_retry_until"] == {1: 0, 2: 0}
+    assert r.ns["stats"]["price_lock_probes_refused"] == 1
+    assert not r.ns["stats"].get("errors")
+    state.held = False
+    clock.t = 1000.25
+    assert (await r.ns["write_chunk"]({1: 0.9, 2: 0.4})).written_ids == (1, 2)
+    assert not r.ns["lock_retry_until"]
+
+
+@pytest.mark.parametrize("message", [
+    LOCK_TIMEOUT_MESSAGE,  # a table lock the probe queued on, budget spent
+    'konnte Sperre für Zeile in Relation "futures_outcomes" nicht setzen',
+    'could not obtain lock on row in relation "futures_markets"',
+])
+async def test_a_probe_55p03_that_is_not_the_known_row_refusal_keeps_the_cooldown(
+    monkeypatch, message,
+):
+    # Narrowly positive: an unrecognised 55P03 (lock timeout, a localised
+    # server, another relation) falls back to the ordinary cooldown and error.
+    clock = _FakeTime(monkeypatch, t=1000)
+    r, state = writer_rig(clock)
+    r.ns["lock_retry_until"].update({1: 0, 2: 0})
+    state.refusal_message = message
+    assert await r.ns["write_chunk"]({1: 0.6, 2: 0.4}) is None
+    assert state.nowait == [True]
+    assert r.ns["lock_retry_until"] == {1: 1002, 2: 1002}
+    assert r.ns["stats"]["errors"] == 1
+    assert not r.ns["stats"].get("price_lock_probes_refused")
+
+
+def _wrapped(fields):
+    """asyncpg's error as SQLAlchemy's asyncpg dialect delivers it."""
+    raw = asyncpg.exceptions.LockNotAvailableError.new(fields)
+
+    class Adapted(Exception):
+        sqlstate = pgcode = raw.sqlstate
+
+    try:
+        try:
+            raise Adapted(f"{type(raw).__name__}: {raw}") from raw
+        except Adapted as adapted:
+            raise OperationalError("UPDATE futures_outcomes ...", {}, adapted) from adapted
+    except OperationalError as exc:
+        return exc
+
+
+def test_row_refusal_is_identified_by_sqlstate_and_server_message_together():
+    refusal = {"C": "55P03", "S": "ERROR", "M": PRICE_ROW_LOCK_REFUSAL_MESSAGE}
+    assert is_price_row_lock_refusal(_wrapped(refusal))
+    timeout = refusal | {"M": LOCK_TIMEOUT_MESSAGE}
+    assert is_lock_timeout(_wrapped(timeout))
+    assert not is_price_row_lock_refusal(_wrapped(timeout))
+    assert not is_price_row_lock_refusal(_wrapped(refusal | {"C": "40P01"}))
+    assert not is_price_row_lock_refusal(RuntimeError(PRICE_ROW_LOCK_REFUSAL_MESSAGE))
 
 
 async def test_non_lock_error_retains_existing_global_failure_result(monkeypatch):
@@ -211,7 +302,10 @@ async def test_mixed_lock_failure_retries_events_separately_and_keeps_full_fence
     # A new question for the held event is part of this admitted cohort too.
     r.ns["price_buffer"][3] = 0.85
     assert await r.ns["flush_prices"](flush_started=1003)
-    assert state.attempts[-2:] == [(1003, (1, 2, 3)), (1003.5, (900, 901))]
+    # #10090: the cohort a lock already refused is probed NOWAIT, so the
+    # healthy event behind it no longer waits out a second 500 ms budget.
+    assert state.attempts[-2:] == [(1003, (1, 2, 3)), (1003, (900, 901))]
+    assert state.nowait[-2:] == [True, True]
     assert state.commits == [3, 902, 900, 901]
     assert r.ns["price_buffer"] == {1: 0.9, 2: 0.4, 3: 0.85}
     assert r.ns["lock_retry_events"] == {10}
@@ -223,7 +317,13 @@ async def test_mixed_lock_failure_retries_events_separately_and_keeps_full_fence
     clock.t = 1004
     r.ns["price_buffer"][900] = 0.75
     assert await r.ns["flush_prices"](flush_started=1004)
-    assert state.attempts[-1] == (1004, (900,)), "healthy event keeps ordinary eligibility"
+    # A refused probe re-arms no cooldown: the held cohort is probed again
+    # (NOWAIT, no wait spent), after the healthy event, which keeps its
+    # ordinary eligibility.
+    assert state.attempts[-2:] == [(1004, (900,)), (1004, (1, 2, 3))]
+    assert state.nowait[-2:] == [False, True]
+    assert set(r.ns["lock_retry_until"]) == {1, 2, 3}
+    assert r.ns["stats"]["price_lock_probes_refused"] == 2
     state.held = False
     clock.t = 1006
     assert await r.ns["flush_prices"](flush_started=1006)
@@ -279,6 +379,8 @@ async def test_fresh_unrelated_event_writes_before_a_still_held_retried_cohort(m
     # Event 20 commits at the flush start, not after event 10's 500 ms wait,
     # and its stamp is not held behind that retry.
     assert state.attempts == [(1000, (1, 2)), (1003, (5,)), (1003, (1, 2))]
+    # Only rows a lock already refused skip the wait; a fresh chunk keeps it.
+    assert state.nowait == [False, False, True]
     assert state.commits == [5]
     assert r.trace.index(("refresh", [20])) < r.trace.index(("rollback", None))
     # The held cohort was still attempted this flush and keeps its debt.
@@ -378,7 +480,7 @@ async def test_later_admitted_pair_adopts_latest_values_marks_and_new_withdrawal
 
         async def execute(self, stmt, params=None):
             if isinstance(stmt, tuple) and stmt[0] == "price":
-                chunk, _forced = stmt[1]
+                chunk = stmt[1][0]
                 observed.append(dict(chunk))
                 if 900 in chunk:
                     first_started.set()

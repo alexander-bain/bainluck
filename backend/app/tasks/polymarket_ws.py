@@ -30,6 +30,7 @@ from app.tasks.ws_consumer_sessions import owns_consumer_sessions  # #2471
 from app.utils.market_quote_push import queue_market_change
 from app.utils.market_settlement import settled_values
 from app.utils.repair_lock_budget import (
+    LOCK_NOT_AVAILABLE_SQLSTATE,
     SET_LOCK_TIMEOUT_SQL,
     is_lock_timeout,
     lock_timeout_value,
@@ -371,8 +372,43 @@ class _PMPriceWriteResult:
 
 PM_QUOTE_LIVENESS_SECONDS = 30.0
 
+#: #10090: PostgreSQL's server message when a NOWAIT row lock on the price
+#: table is refused. A lock_timeout cancellation shares its SQLSTATE (55P03)
+#: but reads "canceling statement due to lock timeout".
+PRICE_ROW_LOCK_REFUSAL_MESSAGE = (
+    'could not obtain lock on row in relation "futures_outcomes"'
+)
 
-def chunk_price_update_stmt(chunk: dict, force_ids=None):
+
+def is_price_row_lock_refusal(exc: BaseException) -> bool:
+    """True iff ``exc`` is PostgreSQL refusing a NOWAIT row lock on the price table.
+
+    Identified by what the database said, not by how long the answer took to
+    arrive: a refusal received 60 ms late is still a refusal that waited for
+    nothing. Narrowly positive — the SQLSTATE and the exact server message must
+    sit on the same driver exception (asyncpg's ``message``, psycopg's
+    ``diag.message_primary``). A lock_timeout cancellation, a localised or
+    unrecognised message, or any other error returns False and keeps the
+    caller's ordinary cooldown. ``is_lock_timeout`` is unchanged.
+    """
+    seen: set[int] = set()
+    cur: BaseException | None = exc
+    while cur is not None and id(cur) not in seen:
+        seen.add(id(cur))
+        code = getattr(cur, "sqlstate", None) or getattr(cur, "pgcode", None)
+        message = getattr(cur, "message", None)
+        if not isinstance(message, str):
+            message = getattr(getattr(cur, "diag", None), "message_primary", None)
+        if code == LOCK_NOT_AVAILABLE_SQLSTATE and message == PRICE_ROW_LOCK_REFUSAL_MESSAGE:
+            return True
+        nxt = getattr(cur, "orig", None)
+        if nxt is None or nxt is cur:
+            nxt = cur.__cause__
+        cur = nxt
+    return False
+
+
+def chunk_price_update_stmt(chunk: dict, force_ids=None, nowait=False):
     """#10664: a flush chunk's price writes as ONE UPDATE ... RETURNING.
 
     ``write_chunk`` awaited one UPDATE per outcome — 500 round trips for a full
@@ -392,6 +428,10 @@ def chunk_price_update_stmt(chunk: dict, force_ids=None):
 
     One parameter per column (arrays), so the prepared statement is shared by
     every chunk size.
+
+    #10090 ``nowait``: take the row locks ``NOWAIT``. A refusal raises the same
+    ``lock_not_available`` (55P03) as a lock timeout, so the caller's retained
+    rows, cooldown and rollback boundary are unchanged; only the wait is gone.
     """
     from sqlalchemy import (
         ARRAY,
@@ -442,7 +482,7 @@ def chunk_price_update_stmt(chunk: dict, force_ids=None):
             ),
         ))
         .order_by(given.c.ord)
-        .with_for_update(of=table)
+        .with_for_update(of=table, nowait=nowait)
         .cte("locked")
         .prefix_with("MATERIALIZED")
     )
@@ -1145,7 +1185,7 @@ def _log_stats_line(stats: dict, ws_stats: dict, blend: dict) -> None:
         "%d msgs | coverage shards=%d/%d served=%d/%d wire=%d by_shard=%s "
         "| blend stamped=%d no_reading=%d throttled=%d errors=%d lock_skipped=%d "
         "unobserved=%d stale=%d | trades refused below_min=%d outside_wide_book=%d "
-        "| held withdrawn=%d",
+        "| held withdrawn=%d lock_probes_refused=%d",
         stats["price_updates"], stats["trade_updates"],
         stats["resolutions"], stats["errors"],
         ws_stats.get("messages", 0),
@@ -1168,6 +1208,8 @@ def _log_stats_line(stats: dict, ws_stats: dict, blend: dict) -> None:
         stats.get("trades_outside_wide_book", 0),
         # #9934: held prices a wide book priced out, withdrawn.
         stats.get("held_prices_withdrawn", 0),
+        # #10090: still-held NOWAIT probes, kept out of `errors`.
+        stats.get("price_lock_probes_refused", 0),
     )
 
 
@@ -1710,6 +1752,9 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
         # price statements. A failed atomic statement adds none; a later
         # rerank/commit failure may still leave these observations counted.
         "quotes_unchanged": 0,
+        # #10090: NOWAIT probes of a known-held cohort that its holder still
+        # refused. Not `errors`: one per flush while the hold lasts.
+        "price_lock_probes_refused": 0,
     }
 
     # Buffered price updates
@@ -1802,6 +1847,15 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
         # Newer ticks on its rows cannot bypass the existing two-second hold.
         if not final and any(lock_retry_until.get(oid, 0) > _mono() for oid in chunk):
             return None
+        # #10090: a row a lock already refused stays in `lock_retry_until`
+        # until a write lands, and it is the one most likely still held.
+        # Waiting the full lock budget on it again bought nothing: production's
+        # held 2- and 6-row cohorts failed about once a second, each spending
+        # 500 ms that every later chunk and the next flush waited out in turn.
+        # Probe it NOWAIT instead. A first refusal keeps the budget, so a brief
+        # holder still costs no retry; the final drain still waits.
+        probe = not final and any(oid in lock_retry_until for oid in chunk)
+        probe_refused = False
         try:
             async with get_task_session() as session:
                 if not final:
@@ -1818,7 +1872,20 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                     if final or oid not in successful_price_write_at
                     or now - successful_price_write_at[oid] >= PM_QUOTE_LIVENESS_SECONDS
                 }
-                result = await session.execute(chunk_price_update_stmt(chunk, force_ids=forced))
+                try:
+                    result = await session.execute(
+                        chunk_price_update_stmt(chunk, force_ids=forced, nowait=probe)
+                    )
+                except Exception as exc:
+                    # Only the probe's own statement, and only PostgreSQL's
+                    # NOWAIT row refusal by its message — never elapsed time: a
+                    # refusal delivered 60 ms late re-armed the cooldown and
+                    # left the pair unwritten 2.18 s after its holder let go
+                    # (Root, real PG). A lock_timeout cancellation (a table
+                    # lock this statement queued on) and any unrecognised
+                    # error keep the cooldown below.
+                    probe_refused = probe and is_price_row_lock_refusal(exc)
+                    raise
                 written_rows = sorted(result.all(), key=lambda r: r.ord)
                 # #9484: only a row the UPDATE returned is evidence — a
                 # buffered id whose row is gone signals nothing. And only
@@ -1871,6 +1938,27 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
             # Bounded by construction: the buffer is keyed by outcome_id over a
             # fixed subscription, so a long outage holds at most one entry per
             # subscribed outcome however many attempts are burned.
+            if probe_refused:
+                # #10090 recovery: a refused probe waited for nothing, so it
+                # re-arms no cooldown. Re-arming the two seconds left a pair
+                # whose holder let go 100 ms later unwritten for 2.2 s on real
+                # PostgreSQL (parent: 0.62 s). The rows stay known-held and due,
+                # so each flush probes them once, NOWAIT, at a round trip's
+                # cost; the first after the holder lets go writes the pair.
+                # Counted apart from `errors` and not logged per refusal: it
+                # recurs every flush the holder keeps the row. A lock failure
+                # anywhere else (rerank, commit, a timed-out wait) spent real
+                # time and keeps the cooldown and error accounting.
+                stats["price_lock_probes_refused"] = (
+                    stats.get("price_lock_probes_refused", 0) + 1
+                )
+                lock_retry_until.update(
+                    {oid: lock_retry_until.get(oid, 0) for oid in chunk}
+                )
+                lock_retry_events.update(
+                    event_ids_for_outcomes(event_id_by_outcome, chunk)
+                )
+                return None
             stats["errors"] += 1
             stats["requeued"] += len(chunk)
             logger.exception(

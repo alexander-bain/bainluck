@@ -141,6 +141,8 @@ async def rig():
         fail_rerank=False,
         fail_commit=False,
         price_started=asyncio.Event(),
+        price_error_delay=0.0,
+        price_errors=[],
     )
     stats = dict(
         price_updates=0,
@@ -171,6 +173,13 @@ async def rig():
             if "chunk_ids" in stmt.compile().params:
                 r.price_pid = await self.real.scalar(text("SELECT pg_backend_pid()"))
                 r.price_started.set()
+                try:
+                    return await self.real.execute(stmt)
+                except Exception as exc:
+                    r.price_errors.append(exc)
+                    # Late receipt of the database's actual answer.
+                    await asyncio.sleep(r.price_error_delay)
+                    raise
             elif r.fail_rerank:
                 # New input during the failed transaction must survive too.
                 r.buffer[2] = 0.8
@@ -214,6 +223,7 @@ async def rig():
         PRICE_FLUSH_SECONDS=module.PRICE_FLUSH_SECONDS,
         SET_LOCK_TIMEOUT_SQL=SET_LOCK_TIMEOUT_SQL,
         is_lock_timeout=is_lock_timeout,
+        is_price_row_lock_refusal=module.is_price_row_lock_refusal,
         lock_timeout_value=lock_timeout_value,
         _PMPriceWriteResult=module._PMPriceWriteResult,
     )
@@ -429,3 +439,188 @@ async def test_cancelled_real_lock_wait_keeps_latest_input_and_publishes_nothing
     assert (
         rig.stats["errors"] == rig.stats["requeued"] == rig.stats["price_updates"] == 0
     )
+
+
+async def test_a_row_a_lock_already_refused_is_probed_nowait_and_a_fresh_chunk_still_waits(rig):
+    # #10090: production's held 2- and 6-row cohorts failed about once a
+    # second, each retry spending the whole 500 ms budget that every later
+    # chunk and the next flush waited out. A known-held row is probed NOWAIT.
+    async with rig.engine.connect() as holder:
+        txn = await holder.begin()
+        await holder.execute(
+            text("SELECT id FROM futures_outcomes WHERE id IN (1, 3) FOR UPDATE")
+        )
+        fresh = None
+        try:
+            # The first refusal keeps the ordinary budget (actual lock timeout).
+            assert await asyncio.wait_for(_write(rig, {1: 0.6, 2: 0.7}), 5) is None
+            assert set(rig.ns["lock_retry_until"]) == {1, 2}
+            # Any wait is now unmistakable: only NOWAIT can return in time.
+            rig.ns["PRICE_CHUNK_LOCK_TIMEOUT_MS"] = 60_000
+            rig.ns["lock_retry_until"].update({1: 0, 2: 0})  # cooldown expired
+            rig.price_started.clear()
+            written = await asyncio.wait_for(rig.write({1: 0.6, 2: 0.7}), 5)
+            assert written is None
+            # A refused probe waited for nothing: no new cooldown, still due.
+            assert rig.ns["lock_retry_until"] == {1: 0, 2: 0}
+            assert rig.buffer == {1: 0.6, 2: 0.7}
+            assert rig.stats["errors"] == rig.stats["requeued"] // 2 == 1
+            assert rig.stats["price_lock_probes_refused"] == 1
+            # A row no lock has refused still waits out a brief holder.
+            rig.price_started.clear()
+            fresh = asyncio.create_task(_write(rig, {3: 0.8}))
+            await asyncio.wait_for(rig.price_started.wait(), 2)
+            await _wait_for_lock(rig)
+            assert not fresh.done()
+            await txn.rollback()
+            assert (await asyncio.wait_for(fresh, 5)).written_ids == (3,)
+        finally:
+            if txn.is_active:
+                await txn.rollback()
+            if fresh is not None and not fresh.done():
+                fresh.cancel()
+                await asyncio.gather(fresh, return_exceptions=True)
+    assert rig.publisher.frames[0][1]["outcome_ids"] == [3]
+    # Released: the probe writes the retained pair atomically and clears it.
+    rig.ns["lock_retry_until"].update({1: 0, 2: 0})
+    written = await rig.write(dict(rig.buffer))
+    assert written.written_ids == (1, 2)
+    assert rig.buffer == {} and rig.ns["lock_retry_until"] == {}
+    assert await _prices(rig) == {
+        1: Decimal(".600000"), 2: Decimal(".700000"), 3: Decimal(".800000"),
+    }
+
+
+@pytest.mark.parametrize("refusal_delivery_delay", [0.0, 0.06])
+async def test_a_known_held_pair_is_written_by_the_first_flush_after_a_brief_holder_lets_go(
+    rig, refusal_delivery_delay,
+):
+    # #10090 recovery (Root's review_pg_transient_retry control): the pair's
+    # cooldown is due and its holder lets go 100 ms after the probe starts,
+    # under the production 500 ms budget and the 250 ms flush cadence. A
+    # refused probe used to re-arm the two-second cooldown, so every flush
+    # skipped the pair for 2.2 s after the holder had gone (parent: 0.62 s).
+    # 60 ms (Root's review_pg_delayed_refusal control): the same refusal,
+    # received late. An elapsed-time test re-armed the cooldown (2.18 s).
+    loop = asyncio.get_running_loop()
+    rig.price_error_delay = refusal_delivery_delay
+    rig.buffer.update({1: 0.6, 2: 0.4})
+    rig.ns["lock_retry_until"].update({1: 0, 2: 0})
+    rig.ns["lock_retry_events"].add(10)
+    published = []
+    record = rig.publisher.record
+
+    async def stamped(channel, payload):
+        await record(channel, payload)
+        published.append(loop.time())
+
+    rig.publisher.record = stamped
+    released = []
+    async with rig.engine.connect() as holder:
+        txn = await holder.begin()
+        await holder.execute(text("SELECT id FROM futures_outcomes WHERE id = 1 FOR UPDATE"))
+
+        async def let_go():
+            await asyncio.wait_for(rig.price_started.wait(), 2)
+            await asyncio.sleep(0.1)
+            await txn.rollback()
+            released.append(loop.time())
+
+        letting_go = asyncio.create_task(let_go())
+        attempts = []
+        start = loop.time()
+        try:
+            while rig.buffer.keys() & {1, 2} and len(attempts) < 16:
+                await asyncio.sleep(max(0, start + 0.25 * len(attempts) - loop.time()))
+                began = loop.time()
+                if not released:
+                    rig.buffer[1] = 0.61 + len(attempts) / 100  # latest input wins
+                pair = {oid: rig.buffer[oid] for oid in (1, 2)}
+                attempts.append((began, await rig.write(pair), loop.time()))
+                # A row no lock refused, written in the same flush, never waits.
+                fresh_write = await rig.write({3: 0.5 + len(attempts) / 100})
+                assert fresh_write.written_ids == (3,)
+            await letting_go
+        finally:
+            if txn.is_active:
+                await txn.rollback()
+            await asyncio.gather(letting_go, return_exceptions=True)
+
+    (released_at,) = released
+    refused = [a for a in attempts if a[0] < released_at]
+    after = [a for a in attempts if a[0] >= released_at]
+    # Not vacuous: the holder refused the probe at once, NOWAIT, before it let go.
+    assert refused and all(result is None and done < released_at for _, result, done in refused)
+    # The FIRST flush after it let go writes the whole pair, newest values.
+    assert after[0][1].written_ids == (1, 2) and len(after) == 1
+    pair_frames = [f for _, f in rig.publisher.frames if f["outcome_ids"] == [1, 2]]
+    assert len(pair_frames) == 1
+    assert published[[f["outcome_ids"] for _, f in rig.publisher.frames].index([1, 2])] - released_at < 1.0
+    assert rig.buffer == {} and rig.ns["lock_retry_until"] == {}
+    assert rig.stats["price_lock_probes_refused"] == len(refused)
+    assert rig.price_errors and all(
+        module.is_price_row_lock_refusal(exc) for exc in rig.price_errors
+    ), "classified by the database's own refusal"
+    assert (await _prices(rig))[1] == Decimal(str(round(0.61 + (len(refused) - 1) / 100, 6)))
+
+
+async def test_a_probe_whose_rerank_times_out_keeps_the_cooldown(rig):
+    # #10090 (Root's review_pg_rerank_retry control): only the probe's own
+    # immediate row refusal is retried next flush. Here the NOWAIT price write
+    # succeeds and the rerank waits out the 500 ms budget on row 3, which must
+    # move rank 3 -> 2. Treated as a refusal, that real wait would recur every
+    # 250 ms flush with no error counted.
+    rig.buffer.update({1: 0.6, 2: 0.1})
+    rig.ns["lock_retry_until"].update({1: 0, 2: 0})
+    rig.ns["lock_retry_events"].add(10)
+    async with rig.engine.connect() as holder:
+        txn = await holder.begin()
+        await holder.execute(text("SELECT id FROM futures_outcomes WHERE id = 3 FOR UPDATE"))
+        try:
+            rig.price_started.clear()
+            written = await asyncio.wait_for(rig.write(dict(rig.buffer)), 5)
+            assert written is None
+            assert rig.price_started.is_set(), "the probe's price statement ran"
+            assert rig.stats["errors"] == 1 and rig.stats["requeued"] == 2
+            assert not rig.stats.get("price_lock_probes_refused")
+            assert min(rig.ns["lock_retry_until"].values()) > 0, "rerank timeout keeps the cooldown"
+            # The next flush skips the pair without touching the database.
+            await asyncio.sleep(0.25)
+            rig.price_started.clear()
+            written = await rig.write(dict(rig.buffer))
+            assert written is None
+            assert not rig.price_started.is_set()
+            assert rig.stats["errors"] == 1
+        finally:
+            await txn.rollback()
+    assert rig.buffer == {1: 0.6, 2: 0.1} and not rig.publisher.frames
+    assert (await _prices(rig))[1] == Decimal(".300000")
+
+
+async def test_a_probe_queued_behind_a_table_lock_keeps_the_cooldown(rig):
+    # #10090: NOWAIT covers row locks only; the statement's table lock is still
+    # queued for, and the 500 ms budget ends it as "canceling statement due to
+    # lock timeout" — the same SQLSTATE as a row refusal, but real time spent.
+    # Retried every 250 ms flush it would repeat that wait, so it keeps the
+    # cooldown and counts as an error.
+    rig.buffer.update({1: 0.6, 2: 0.4})
+    rig.ns["lock_retry_until"].update({1: 0, 2: 0})
+    rig.ns["lock_retry_events"].add(10)
+    async with rig.engine.connect() as holder:
+        txn = await holder.begin()
+        await holder.execute(text("LOCK TABLE futures_outcomes IN EXCLUSIVE MODE"))
+        try:
+            written = await asyncio.wait_for(rig.write(dict(rig.buffer)), 5)
+            assert written is None
+            (exc,) = rig.price_errors
+            assert is_lock_timeout(exc) and not module.is_price_row_lock_refusal(exc)
+            assert rig.stats["errors"] == 1 and rig.stats["requeued"] == 2
+            assert not rig.stats.get("price_lock_probes_refused")
+            assert min(rig.ns["lock_retry_until"].values()) > 0, "the cooldown is re-armed"
+            rig.price_started.clear()
+            written = await rig.write(dict(rig.buffer))
+            assert written is None
+            assert not rig.price_started.is_set(), "the next flush skips the pair"
+        finally:
+            await txn.rollback()
+    assert rig.buffer == {1: 0.6, 2: 0.4} and not rig.publisher.frames

@@ -12,7 +12,9 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Iterable, Mapping, Optional
 
-from app.tasks.polymarket_ws import PRICE_CHUNK_LOCK_TIMEOUT_MS, _PMCatalogFlushBoundary
+from app.tasks.polymarket_ws import (
+    PRICE_CHUNK_LOCK_TIMEOUT_MS, _PMCatalogFlushBoundary, is_price_row_lock_refusal,
+)
 from app.utils.repair_lock_budget import SET_LOCK_TIMEOUT_SQL, is_lock_timeout, lock_timeout_value
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -124,6 +126,7 @@ def rig(
         "SET_LOCK_TIMEOUT_SQL": SET_LOCK_TIMEOUT_SQL,
         "lock_timeout_value": lock_timeout_value,
         "is_lock_timeout": is_lock_timeout,
+        "is_price_row_lock_refusal": is_price_row_lock_refusal,
         "PRICE_FLUSH_SECONDS": 2,
         "input_marks": {oid: oid for oid in batch},
         "event_id_by_outcome": mapping,
