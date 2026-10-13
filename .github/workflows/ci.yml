@@ -7192,6 +7192,27 @@ jobs:
             exit 1
           }
 
+      - name: "#2027 a Polymarket Under leg stops showing the Over contract's history, and the undo round-trips (real Postgres)"
+        # PILLAR TRUTH. SHIP: a settled Under contract shows its own probability
+        # history and opening, or an honest gap. The attended repair's classifier
+        # (era bound, same-second and nearest-observation witnesses), its pinned
+        # apply (rows and priors re-read under lock, one leg per transaction) and
+        # a restore that never overwrites a later writer are SQL a session double
+        # reads green on. Runs in its own throwaway database. 9 cases.
+        if: matrix.group == 'shared-tail'
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_repair_pm_under_inverted_history_2027_pg.py \
+            -v -rs 2>&1 | tee /tmp/underhistory2027.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/underhistory2027.txt; then
+            echo "::error::#2027 Under-history repair gate SKIPPED — the gate did not run"
+            exit 1
+          fi
+          grep -qE "[^0-9]9 passed[,[:space:]]" /tmp/underhistory2027.txt || {
+            echo "::error::#2027 Under-history repair gate did not run all nine cases"
+            exit 1
+          }
+
       - name: "#8910 a newer WebSocket stamp survives the two-minute poll (real Postgres)"
         # #8910 / CERT-3585's required guard. The REAL live poll against real
         # Postgres, paused after its compared read, while a second session sends
