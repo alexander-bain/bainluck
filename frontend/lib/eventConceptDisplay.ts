@@ -1137,13 +1137,17 @@ export function awardsResult(child: EventConceptChild): { state: "announced" | "
   return { state: names.length ? "announced" : child.settled === true ? "closed" : "pending", names, prop: child.kind === "prop" };
 }
 
-export function awardsRefreshInterval(latest: { event?: { domain?: string; key?: string; status?: string | null; end_date?: string | null }; children?: EventConceptChild[] } | null | undefined, openedAt: number, now = Date.now()): number {
-  if (latest?.event?.domain !== "awards" || latest.event.status === "settled" || now < openedAt || now - openedAt >= 30 * 60 * 1000) return 0;
-  const edition = /^event:awards:[a-z-]+-(20\d{2})$/.exec(latest.event.key ?? "");
+export function awardsRefreshInterval(latest: { event?: { domain?: string; key?: string; status?: string | null; end_date?: string | null }; children?: EventConceptChild[] } | null | undefined, openedAt: number, now = Date.now(), routeKey?: string): number {
+  if (latest === null || (latest && latest.event?.domain !== "awards") || (!latest && !routeKey) || latest?.event?.status === "settled" || now < openedAt || now - openedAt >= 30 * 60 * 1000) return 0;
+  const edition = /^event:awards:[a-z-]+-(20\d{2})$/.exec(latest?.event?.key ?? routeKey ?? "");
   const year = new Date(now).getUTCFullYear();
   if (!edition || Number(edition[1]) < year || Number(edition[1]) > year + 1) return 0;
-  const date = latest.event.end_date ? Date.parse(latest.event.end_date) : NaN;
+  const date = latest?.event?.end_date ? Date.parse(latest.event.end_date) : NaN;
   if (Number.isFinite(date) && (date - now > 24 * 60 * 60 * 1000 || now - date > 12 * 60 * 60 * 1000)) return 0;
+  // SWR computes its first interval before asynchronous data exists. A zero at
+  // that point never starts polling. Arm only this eligible route's bounded
+  // reading window; the first real envelope then supplies all stop conditions.
+  if (latest === undefined) return 30000;
   const children = latest.children ?? [];
   if (!children.length || children.every((child) => awardsResult(child).state === "announced")) return 0;
   // Existing live cadence, only while this current/next edition is being read;

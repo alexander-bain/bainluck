@@ -30,3 +30,11 @@ test("historical, remote future, dated out-of-window, missing identity and non-a
   expect(awardsRefreshInterval({ ...edition(), event: { ...edition().event, domain: "ufc", status: "live" } }, NOW, NOW)).toBe(0);
   expect(awardsRefreshInterval(edition([]), NOW, NOW)).toBe(0);
 });
+
+test("initial missing data arms only an eligible awards route, never null/invalid/historical data", () => {
+  expect(awardsRefreshInterval(undefined, NOW, NOW, "event:awards:oscars-2026")).toBe(30000);
+  expect(awardsRefreshInterval(undefined, NOW, NOW, "event:awards:oscars-2025")).toBe(0);
+  expect(awardsRefreshInterval(undefined, NOW, NOW, "event:ufc:oscars-2026")).toBe(0);
+  expect(awardsRefreshInterval(null, NOW, NOW, "event:awards:oscars-2026")).toBe(0);
+  expect(awardsRefreshInterval(undefined, NOW, NOW + 30 * 60 * 1000, "event:awards:oscars-2026")).toBe(0);
+});

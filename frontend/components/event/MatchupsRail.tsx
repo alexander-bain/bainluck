@@ -173,7 +173,7 @@ export function AwardsCategoryCard({ child }: { child: EventConceptChild }) {
   const result = awardsResult(child);
   const display = (name: string) => name.toLowerCase() === "other" ? "Another nominee" : name;
   const title = child.market_name || child.name || "Category";
-  return <article id={`awards-category-${child.market_id}`} className="min-w-0 rounded-card border border-surface-border bg-surface-card p-4 space-y-2">
+  return <article id={`awards-category-${child.market_id}`} className="scroll-mt-20 min-w-0 rounded-card border border-surface-border bg-surface-card p-4 space-y-2">
     <h3 className="text-sm font-semibold text-text-primary">{typeof child.market_id === "number" ? <Link href={`/futures/${child.market_id}`} className="hover:underline">{title}</Link> : title}</h3>
     {result.state === "announced" ? <>
       <p className="text-xs font-semibold text-text-secondary">{result.prop ? "Result" : result.names.length > 1 ? "Joint winners" : "Winner"}</p>
@@ -200,7 +200,7 @@ interface MatchupsRailProps {
 export default function MatchupsRail({ items, exclude, title, sport }: MatchupsRailProps) {
   const shown = (items || []).filter((c) => c !== exclude);
   if (shown.length === 0) return null;
-  if (sport === "awards") return <section id={title === "Nominations and more" ? "props" : "matchups"} className="rounded-card bg-surface-card p-4 sm:p-6 space-y-4">
+  if (sport === "awards") return <section id={title === "Nominations and more" ? "props" : "matchups"} className="scroll-mt-20 rounded-card bg-surface-card p-4 sm:p-6 space-y-4">
     <h2 className="text-title-3 font-semibold text-text-primary">{title || "Categories"}</h2>
     <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">{shown.map((child, index) => <AwardsCategoryCard key={childReactKey(child, index)} child={child} />)}</div>
   </section>;

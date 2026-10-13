@@ -104,7 +104,7 @@ export default function EventConceptPage() {
   const refreshInterval = useMemo(() => {
     if (domain !== "awards") return conceptRefreshInterval;
     const openedAt = Date.now();
-    return (latest: Parameters<typeof awardsRefreshInterval>[0]) => awardsRefreshInterval(latest, openedAt);
+    return (latest: Parameters<typeof awardsRefreshInterval>[0]) => awardsRefreshInterval(latest, openedAt, Date.now(), decodedKey);
   }, [domain, decodedKey]);
   const [awardsHistoryOpen, setAwardsHistoryOpen] = useState(false);
 
