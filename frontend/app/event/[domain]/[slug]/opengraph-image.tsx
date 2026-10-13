@@ -142,7 +142,31 @@ export default async function Image({
     );
   }
 
-  const { name, label, where, priced, settled, winner } = eventConceptShareFacts(concept);
+  const { name, label, where, priced, settled, winner, category } =
+    eventConceptShareFacts(concept);
+
+  // ── AN AWARDS CATEGORY ANNOUNCED OR CLOSED (#10987) ─────────────────────────
+  // The caption's branches, in the caption's order: its own winners with no
+  // number, or a closed category with no price. A parent result outranks only
+  // the closed arm, exactly as in `buildEventConceptShareCopy`. "moving", not
+  // "settled": the parent is not over, and a regrade must reach the picture.
+  if (category && (category.state === "announced" || !winner)) {
+    const announced = category.state === "announced";
+    return new ImageResponse(
+      (
+        <UnfurlCard
+          eyebrow={eyebrow}
+          title={name}
+          subtitle={label ?? where}
+          rows={[]}
+          verdict={announced ? `${category.names} won` : "Trading closed"}
+          note={announced ? (category.winners.length > 1 ? "Joint winners" : null) : "Result not announced yet"}
+          accent={accent}
+        />
+      ),
+      unfurlImageOptions(size, "moving"),
+    );
+  }
 
   // ── SETTLED ────────────────────────────────────────────────────────────────
   // A result, or an honest admission that we do not have one. No numbers either

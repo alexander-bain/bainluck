@@ -1,0 +1,444 @@
+{
+  "event": {
+    "key": "event:awards:oscars-2026",
+    "domain": "awards",
+    "name": "The Oscars 2026",
+    "status": "unknown",
+    "start_date": null,
+    "end_date": null,
+    "venue": null,
+    "location": null,
+    "is_major": true
+  },
+  "primary": {
+    "kind": "co_equal_list",
+    "label": "Best Picture",
+    "competitors": [
+      {
+        "name": "Forecast nominee 0",
+        "probability": 0.9,
+        "won": false
+      },
+      {
+        "name": "Forecast nominee 1",
+        "probability": 0.89,
+        "won": false
+      },
+      {
+        "name": "Forecast nominee 2",
+        "probability": 0.88,
+        "won": false
+      },
+      {
+        "name": "Forecast nominee 3",
+        "probability": 0.87,
+        "won": false
+      },
+      {
+        "name": "Forecast nominee 4",
+        "probability": 0.86,
+        "won": false
+      },
+      {
+        "name": "Forecast nominee 5",
+        "probability": 0.85,
+        "won": false
+      },
+      {
+        "name": "Forecast nominee 6",
+        "probability": 0.84,
+        "won": false
+      },
+      {
+        "name": "Forecast nominee 7",
+        "probability": 0.83,
+        "won": false
+      },
+      {
+        "name": "Forecast nominee 8",
+        "probability": 0.82,
+        "won": false
+      },
+      {
+        "name": "Forecast nominee 9",
+        "probability": 0.81,
+        "won": false
+      },
+      {
+        "name": "Forecast nominee 10",
+        "probability": 0.8,
+        "won": false
+      },
+      {
+        "name": "Forecast nominee 11",
+        "probability": 0.79,
+        "won": false
+      },
+      {
+        "name": "Forecast nominee 12",
+        "probability": 0.78,
+        "won": false
+      },
+      {
+        "name": "Forecast nominee 13",
+        "probability": 0.77,
+        "won": false
+      },
+      {
+        "name": "Forecast nominee 14",
+        "probability": 0.76,
+        "won": false
+      },
+      {
+        "name": "Forecast nominee 15",
+        "probability": 0.75,
+        "won": false
+      },
+      {
+        "name": "Forecast nominee 16",
+        "probability": 0.74,
+        "won": false
+      },
+      {
+        "name": "Forecast nominee 17",
+        "probability": 0.73,
+        "won": false
+      },
+      {
+        "name": "Forecast nominee 18",
+        "probability": 0.72,
+        "won": false
+      },
+      {
+        "name": "Forecast nominee 19",
+        "probability": 0.71,
+        "won": false
+      },
+      {
+        "name": "Forecast nominee 20",
+        "probability": 0.7,
+        "won": false
+      },
+      {
+        "name": "Forecast nominee 21",
+        "probability": 0.69,
+        "won": false
+      },
+      {
+        "name": "Forecast nominee 22",
+        "probability": 0.68,
+        "won": false
+      },
+      {
+        "name": "Forecast nominee 23",
+        "probability": 0.67,
+        "won": false
+      },
+      {
+        "name": "Forecast nominee 24",
+        "probability": 0.66,
+        "won": false
+      },
+      {
+        "name": "Forecast nominee 25",
+        "probability": 0.65,
+        "won": false
+      },
+      {
+        "name": "Forecast nominee 26",
+        "probability": 0.64,
+        "won": false
+      },
+      {
+        "name": "Forecast nominee 27",
+        "probability": 0.63,
+        "won": false
+      },
+      {
+        "name": "Forecast nominee 28",
+        "probability": 0.62,
+        "won": false
+      },
+      {
+        "name": "Forecast nominee 29",
+        "probability": 0.61,
+        "won": false
+      },
+      {
+        "name": "Forecast nominee 30",
+        "probability": 0.6,
+        "won": false
+      },
+      {
+        "name": "Forecast nominee 31",
+        "probability": 0.59,
+        "won": false
+      },
+      {
+        "name": "Forecast nominee 32",
+        "probability": 0.58,
+        "won": false
+      },
+      {
+        "name": "Forecast nominee 33",
+        "probability": 0.57,
+        "won": false
+      },
+      {
+        "name": "Forecast nominee 34",
+        "probability": 0.56,
+        "won": false
+      },
+      {
+        "name": "Forecast nominee 35",
+        "probability": 0.55,
+        "won": false
+      },
+      {
+        "name": "Forecast nominee 36",
+        "probability": 0.54,
+        "won": false
+      },
+      {
+        "name": "Forecast nominee 37",
+        "probability": 0.53,
+        "won": false
+      },
+      {
+        "name": "Forecast nominee 38",
+        "probability": 0.52,
+        "won": false
+      },
+      {
+        "name": "Forecast nominee 39",
+        "probability": 0.51,
+        "won": false
+      },
+      {
+        "name": "Actual unpriced winner",
+        "probability": null,
+        "won": true
+      }
+    ],
+    "evolution_market_id": 1,
+    "price_observed_at": null
+  },
+  "sections": [
+    {
+      "type": "categories",
+      "label": "Categories",
+      "market_ids": [
+        1,
+        2,
+        3,
+        4,
+        5
+      ]
+    },
+    {
+      "type": "props",
+      "label": "Nominations & props",
+      "market_ids": [
+        7,
+        6
+      ]
+    }
+  ],
+  "children": [
+    {
+      "market_id": 1,
+      "market_name": "Best Picture",
+      "source": "kalshi",
+      "settled": true,
+      "graded_winner": "Actual unpriced winner",
+      "probability": 0.9,
+      "outcomes": [
+        {
+          "name": "Forecast nominee 0",
+          "won": false,
+          "probability": 0.9
+        },
+        {
+          "name": "Forecast nominee 1",
+          "won": false,
+          "probability": 0.89
+        },
+        {
+          "name": "Forecast nominee 2",
+          "won": false,
+          "probability": 0.88
+        },
+        {
+          "name": "Forecast nominee 3",
+          "won": false,
+          "probability": 0.87
+        },
+        {
+          "name": "Forecast nominee 4",
+          "won": false,
+          "probability": 0.86
+        },
+        {
+          "name": "Forecast nominee 5",
+          "won": false,
+          "probability": 0.85
+        },
+        {
+          "name": "Forecast nominee 6",
+          "won": false,
+          "probability": 0.84
+        },
+        {
+          "name": "Forecast nominee 7",
+          "won": false,
+          "probability": 0.83
+        },
+        {
+          "name": "Actual unpriced winner",
+          "won": true,
+          "probability": null
+        }
+      ]
+    },
+    {
+      "market_id": 2,
+      "market_name": "Best Director",
+      "source": "kalshi",
+      "settled": false,
+      "graded_winner": null,
+      "probability": 0.99,
+      "outcomes": [
+        {
+          "name": "Undecided favorite",
+          "won": false,
+          "probability": 0.99
+        },
+        {
+          "name": "Another director",
+          "won": false,
+          "probability": 0.01
+        }
+      ]
+    },
+    {
+      "market_id": 3,
+      "market_name": "Best Actor",
+      "source": "kalshi",
+      "settled": true,
+      "graded_winner": null,
+      "probability": 0.99,
+      "outcomes": [
+        {
+          "name": "Closed favorite",
+          "won": false,
+          "probability": 0.99
+        },
+        {
+          "name": "Another actor",
+          "won": false,
+          "probability": 0.01
+        }
+      ]
+    },
+    {
+      "market_id": 4,
+      "market_name": "Best Score",
+      "source": "kalshi",
+      "settled": true,
+      "graded_winner": null,
+      "probability": 0.99,
+      "outcomes": [
+        {
+          "name": "Score favorite",
+          "won": false,
+          "probability": 0.99
+        },
+        {
+          "name": "Composer A",
+          "won": true,
+          "probability": 0.5
+        },
+        {
+          "name": "Composer B",
+          "won": true,
+          "probability": null
+        }
+      ]
+    },
+    {
+      "market_id": 5,
+      "market_name": "Best Costume",
+      "source": "kalshi",
+      "settled": true,
+      "graded_winner": "Other",
+      "probability": 0.99,
+      "outcomes": [
+        {
+          "name": "Costume favorite",
+          "won": false,
+          "probability": 0.99
+        },
+        {
+          "name": "Another costume",
+          "won": false,
+          "probability": 0.01
+        },
+        {
+          "name": "Other",
+          "won": true,
+          "probability": null
+        }
+      ]
+    },
+    {
+      "market_id": 7,
+      "market_name": "Best Picture",
+      "source": "kalshi",
+      "settled": true,
+      "graded_winner": null,
+      "probability": 0.99,
+      "outcomes": [
+        {
+          "name": "Nomination favorite",
+          "won": false,
+          "probability": 0.99
+        },
+        {
+          "name": "Nominated film A",
+          "won": true,
+          "probability": 0.8
+        },
+        {
+          "name": "Nominated film B",
+          "won": true,
+          "probability": null
+        }
+      ],
+      "kind": "prop",
+      "prop_type": "nominations"
+    },
+    {
+      "market_id": 6,
+      "market_name": "Who will attend the Oscars",
+      "source": "kalshi",
+      "settled": true,
+      "graded_winner": "Guest1",
+      "probability": 0.9,
+      "outcomes": [
+        {
+          "name": "Guest2",
+          "won": false,
+          "probability": 0.9
+        },
+        {
+          "name": "Guest1",
+          "won": true,
+          "probability": null
+        }
+      ],
+      "kind": "prop",
+      "prop_type": "occurrence"
+    }
+  ],
+  "movers": []
+}
