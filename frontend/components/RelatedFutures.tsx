@@ -1183,7 +1183,14 @@ function StatPropsSection({
                 const playerStats = ((isFinished || isLive) && boxScore && row.playerName)
                   ? matchPlayerToBoxScore(row.playerName, boxScore)
                   : null;
-                const actualValue = playerStats ? playerStats[statKey] : null;
+                // A family the map does not name ("Receiving Yards (Protected)")
+                // looks up a key the box score does not have, and `undefined`
+                // passed `!== null`: live tiles printed `NaN%`, finished ones
+                // `PUSH` (Bills @ Rams, `/events/14780558`, at the final). No
+                // finite stat means no actual — the tile keeps its price.
+                const rawActual = playerStats ? playerStats[statKey] : null;
+                const actualValue =
+                  typeof rawActual === "number" && Number.isFinite(rawActual) ? rawActual : null;
                 const threshold = parseThreshold(row.line);
                 const hasSettledData = isFinished && actualValue !== null && threshold !== null;
                 const hasLiveData = isLive && actualValue !== null && threshold !== null;

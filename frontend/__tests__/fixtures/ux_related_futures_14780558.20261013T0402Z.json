@@ -1,0 +1,137 @@
+{
+ "_banked": "GET /api/events/14780558/related-futures, 2026-10-13T04:02Z (Bills 37-34 Rams, Final OT). Three game_prop rows verbatim + those players' box_score entries verbatim; every other row and player dropped.",
+ "event_id": 14780558,
+ "home_team": "Los Angeles Rams",
+ "away_team": "Buffalo Bills",
+ "home_team_futures": [
+  {
+   "market_id": 65080209,
+   "market_name": "Buffalo vs Los Angeles R: Receiving Yards (Protected)",
+   "clean_label": "Buffalo vs Los Angeles R: Receiving Yards (Protected)",
+   "display_category": "game_prop",
+   "merge_group": null,
+   "playoff_stage": null,
+   "playoff_stage_type": null,
+   "stage_order": null,
+   "market_tier": 5,
+   "category": "game_prop",
+   "source": "kalshi",
+   "outcome_id": 244727411,
+   "outcome_name": "Puka Nacua: 120+",
+   "external_id": "KXNFLRECYDSPROT-26OCT12BUFLAR-LARPNACUA12-120",
+   "probability": 0.5,
+   "american_odds": -100,
+   "probability_change_24h": -0.005,
+   "opening_probability": 0.24,
+   "rank": 22,
+   "relevance_score": 46.0,
+   "relevance_reason": "shifting",
+   "last_updated": "2026-10-13T02:52:16.118528+00:00",
+   "next_update_expected": "2026-10-13T04:45:00+00:00",
+   "resolution_date": "2026-10-15T00:15:00+00:00",
+   "bookmaker_count": 1,
+   "matched_player": {
+    "name": "Puka Nacua",
+    "espn_id": "4426515",
+    "headshot": "https://a.espncdn.com/i/headshots/nfl/players/full/4426515.png"
+   }
+  }
+ ],
+ "away_team_futures": [
+  {
+   "market_id": 64924007,
+   "market_name": "Buffalo vs Los Angeles R: Touchdowns (Protected)",
+   "clean_label": "Buffalo vs Los Angeles R: Touchdowns (Protected)",
+   "display_category": "game_prop",
+   "merge_group": null,
+   "playoff_stage": null,
+   "playoff_stage_type": null,
+   "stage_order": null,
+   "market_tier": 5,
+   "category": "game_prop",
+   "source": "kalshi",
+   "outcome_id": 244141379,
+   "outcome_name": "Keon Coleman: 1+",
+   "external_id": "KXNFLTDPROT-26OCT12BUFLAR-BUFKCOLEMAN0-1",
+   "probability": 0.795,
+   "american_odds": -388,
+   "probability_change_24h": null,
+   "opening_probability": 0.215,
+   "rank": 10,
+   "relevance_score": 41.6,
+   "relevance_reason": "near threshold",
+   "last_updated": "2026-10-13T03:47:16.868168+00:00",
+   "next_update_expected": "2026-10-13T04:45:00+00:00",
+   "resolution_date": "2026-10-13T06:15:00+00:00",
+   "bookmaker_count": 1,
+   "matched_player": {
+    "name": "Keon Coleman",
+    "espn_id": "4635008",
+    "headshot": "https://a.espncdn.com/i/headshots/nfl/players/full/4635008.png"
+   }
+  },
+  {
+   "market_id": 64805331,
+   "market_name": "Buffalo vs Los Angeles R: Receiving Yards",
+   "clean_label": "Buffalo vs Los Angeles R: Receiving Yards",
+   "display_category": "game_prop",
+   "merge_group": null,
+   "playoff_stage": null,
+   "playoff_stage_type": null,
+   "stage_order": null,
+   "market_tier": 5,
+   "category": "game_prop",
+   "source": "kalshi",
+   "outcome_id": 244196219,
+   "outcome_name": "Khalil Shakir: 80+",
+   "external_id": "KXNFLRECYDS-26OCT12BUFLAR-BUFKSHAKIR10-80",
+   "probability": 0.915,
+   "american_odds": -1076,
+   "probability_change_24h": null,
+   "opening_probability": 0.105,
+   "rank": 38,
+   "relevance_score": 38.5,
+   "relevance_reason": "near threshold",
+   "last_updated": "2026-10-13T03:48:32.805645+00:00",
+   "next_update_expected": "2026-10-13T04:45:00+00:00",
+   "resolution_date": "2026-10-15T00:15:00+00:00",
+   "bookmaker_count": 1,
+   "matched_player": {
+    "name": "Khalil Shakir",
+    "espn_id": "4373678",
+    "headshot": "https://a.espncdn.com/i/headshots/nfl/players/full/4373678.png"
+   }
+  }
+ ],
+ "series_markets": [],
+ "total_count": 3,
+ "summary": null,
+ "event_status": "completed",
+ "box_score": {
+  "Puka Nacua": {
+   "carries": 2.0,
+   "targets": 24.0,
+   "long rush": 9.0,
+   "receptions": 17.0,
+   "rushing yards": 9.0,
+   "long reception": 21.0,
+   "receiving yards": 138.0,
+   "rushing touchdowns": 0.0,
+   "receiving touchdowns": 1.0
+  },
+  "Keon Coleman": {
+   "targets": 2.0,
+   "receptions": 1.0,
+   "long reception": 7.0,
+   "receiving yards": 7.0,
+   "receiving touchdowns": 1.0
+  },
+  "Khalil Shakir": {
+   "targets": 3.0,
+   "receptions": 3.0,
+   "long reception": 57.0,
+   "receiving yards": 80.0,
+   "receiving touchdowns": 0.0
+  }
+ }
+}
