@@ -129,7 +129,7 @@ export default function CollectionHub({ slug }: { slug: string }) {
     </div>
     <header className="space-y-2">
       <p className="text-xs font-semibold uppercase tracking-wide text-text-secondary">Collection</p>
-      <h1 className="text-2xl font-bold text-text-primary">{shown?.title ?? "Collection"}</h1>
+      <h1 id="collection-title" className="text-2xl font-bold text-text-primary">{shown?.title ?? "Collection"}</h1>
       {shown?.edition && <p className="text-sm text-text-secondary">{shown.edition}</p>}
     </header>
     {fetching && !shown && !error && <p role="status" className="py-8 text-text-secondary">Loading collection…</p>}
@@ -148,8 +148,12 @@ export default function CollectionHub({ slug }: { slug: string }) {
     {shown?.note && <p role="status" className="text-sm text-text-secondary">{shown.note}</p>}
     {shown?.theme && !shown.theme.inventoryComplete && <p className="text-sm text-text-secondary">This list may not include every market yet.</p>}
     {shown?.children.map((child) => <Link key={child.key} id={collectionMemberDomId(child.key)} href={child.href} onClick={() => remember(child.key)} className="flex justify-between gap-4 rounded-card border border-surface-border bg-surface-card p-4 font-semibold text-text-primary hover:bg-surface-elevated">{child.name}<span aria-hidden>›</span></Link>)}
-    {shown?.sections.map((section) => <section key={section.key} className="space-y-3" aria-labelledby={`section-${section.key}`}>
-      <h2 id={`section-${section.key}`} className="text-lg font-semibold text-text-primary">{section.title}</h2>
+    {/* #10985: a hub served as one unclassified list (every provider event) has no
+        section to name, so "More" would follow nothing; the page title names it. */}
+    {shown?.sections.map((section) => {
+      const lone = shown.sections.length === 1 && section.cls === "unclassified";
+      return <section key={section.key} className="space-y-3" aria-labelledby={lone ? "collection-title" : `section-${section.key}`}>
+      {!lone && <h2 id={`section-${section.key}`} className="text-lg font-semibold text-text-primary">{section.title}</h2>}
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 items-start">
         {section.members.map((member) => <div key={member.key} className="min-w-0 space-y-3">
           {card(member)}
@@ -157,7 +161,8 @@ export default function CollectionHub({ slug }: { slug: string }) {
           {!!shown.related[member.key]?.length && <Link href={member.href} data-more-on-game={member.key} onClick={() => remember(member.key)} className="flex justify-between gap-4 rounded-card border border-surface-border bg-surface-card px-4 py-2.5 text-sm font-semibold text-text-secondary hover:bg-surface-elevated hover:text-text-primary">More on this game<span aria-hidden>›</span></Link>}
         </div>)}
       </div>
-    </section>)}
+    </section>;
+    })}
     {shown?.theme && shown.members.length > 0 && <div className="flex flex-col items-center gap-2 pb-6" data-collection-pager={shown.revision ?? ""}>
       <p className="text-sm text-text-secondary">{shown.members.length} of {Math.max(shown.theme.totalCount, shown.members.length)} markets</p>
       {shown.theme.nextCursor && <button type="button" disabled={paging} onClick={() => void loadMore()} className="rounded-card border border-surface-border bg-surface-card px-4 py-2 text-sm font-semibold text-text-primary hover:bg-surface-elevated disabled:text-text-muted">{paging ? "Loading…" : "Load more"}</button>}
