@@ -138,6 +138,7 @@
     "#9935 a theme collection pages one revision and rebuilds after a correction (real Postgres)",
     "#5343 a provider event becomes one collection and a correction stays corrected (real Postgres)",
     "#5341 a complete NFL week publishes itself; partial or corrected weeks never do (real Postgres)",
+    "#5344 a game the authority moves to another week moves hubs; an older read never moves it back (real Postgres)",
     "#4229 Kalshi senate backfill moves the stored row (real Postgres)",
     "#4229 Polymarket senate repair preserves the observation clock (real Postgres)",
     "#4253 a delisted Kalshi leg stops claiming 100% (real Postgres)",
