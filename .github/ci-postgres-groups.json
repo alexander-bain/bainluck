@@ -221,7 +221,8 @@
     "#2027 a Polymarket Under leg stops showing the Over contract's history, and the undo round-trips (real Postgres)",
     "#1527 a settled soccer fixture's three-winner repair writes only a reviewed exact plan, and the undo round-trips (real Postgres)",
     "#1527 a settled soccer fixture's market leaves open on a reviewed exact plan, and the undo round-trips (real Postgres)",
-    "#1527 a repaired settled soccer field survives the real poll and reads as a result (real Postgres)"
+    "#1527 a repaired settled soccer field survives the real poll and reads as a result (real Postgres)",
+    "#11007 an undecided Polymarket leg stops reading as settled and Lost, and the undo round-trips (real Postgres)"
   ],
   "isolated": [
     "#10702 exact Kalshi trace commit and rollback controls (real Postgres)",

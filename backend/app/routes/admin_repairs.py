@@ -46,7 +46,8 @@ transactional session and RETURNS its own before/after census in the response bo
              | poly-total-scope | poly-total-scope-restore
              | team-total-game-score | team-total-game-score-restore
              | pm-under-inverted-history | pm-under-inverted-history-restore
-             | settled-status-repair | settled-status-repair-restore }
+             | settled-status-repair | settled-status-repair-restore
+             | pm-open-leg-false-grade | pm-open-leg-false-grade-restore }
     (the registry below is authoritative; this list had already drifted two
      censuses behind it, so a reader who trusted it would have concluded a
      deployed rail did not exist — the same class of error as trusting a
@@ -100,7 +101,9 @@ transactional session and RETURNS its own before/after census in the response bo
      Re-synced again 2026-10-13, calibration/#1527, adding
      winner-field-repair-restore in the commit that registered it. Re-synced
      again 2026-10-13, calibration/#1527, adding the two settled-status-repair
-     entries in the commit that registered them.)
+     entries in the commit that registered them. Re-synced again 2026-10-13,
+     calibration/#11007, adding the two pm-open-leg-false-grade entries in the
+     commit that registered them.)
 
 Repairs whose signature declares ``limit`` / ``sport`` / ``newest_first`` /
 ``offset`` / ``after_id`` / ``after_date`` / ``plan_hash`` / ``expected_blank`` /
@@ -273,6 +276,23 @@ _REPAIRS = {
     # and the version-guarded undo. ATTENDED ONLY: never wire this to a beat.
     "settled-status-repair": ("app.tasks.repair_settled_status_1527", "repair"),
     "settled-status-repair-restore": ("app.tasks.repair_settled_status_1527", "restore"),
+    # #11007: a Polymarket question the venue has not closed stops reading as
+    # settled and Lost. Per named parent (exact ids, ?only_ids=, at most
+    # APPLY_PARENT_CAP), one fresh direct Gamma read; for each stored leg the
+    # venue lists `closed: false`, clears that leg's `api_settlement` grades to
+    # is_winner/resolution_source NULL and re-opens its market row; re-opens the
+    # parent of an open event with the venue's own end date, which is what puts it
+    # back in the sunk-event recovery pass. Venue-closed legs are controls and
+    # never written; no winner is ever written; anything absent, malformed or
+    # graded by another source refuses the parent by name. Apply needs the dry
+    # run's ?plan_hash=, which binds every written row's version, every control
+    # grade and the venue's flags and dates; one parent per transaction. D51:
+    # before-images in `bak_11007_open_leg_markets` / `bak_11007_open_leg_outcomes`
+    # in the write's own transaction; the `-restore` name is the audit (dry run)
+    # and the version-guarded, whole-parent undo. ATTENDED ONLY: never wire this
+    # to a beat.
+    "pm-open-leg-false-grade": ("app.tasks.repair_pm_open_leg_grade_11007", "repair"),
+    "pm-open-leg-false-grade-restore": ("app.tasks.repair_pm_open_leg_grade_11007", "restore"),
     # #1798: events whose home/away ``team_id`` dereferences to a DIFFERENT club
     # than the row's own ``*_team_name`` (153 sides measured across the 2026 MLB
     # season), or to the right club's ``baseball_mlb_preseason`` twin. Detection
