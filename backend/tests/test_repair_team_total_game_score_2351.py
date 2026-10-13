@@ -16,6 +16,8 @@ Three specimens, all from the issue record:
   graded; that question goes to the measurement lane, not into this file.
 """
 
+from datetime import datetime, timezone
+
 import pytest
 
 import app.tasks.repair_team_total_game_score as rt
@@ -30,7 +32,9 @@ CINSTL = {
     "market_name": "Cincinnati vs St. Louis: Team Total", "event_id": 42,
     "event_status": "completed", "home_team_name": "Cincinnati Reds",
     "away_team_name": "St. Louis Cardinals", "home_score": 3, "away_score": 5,
-    "commence_time": None, "completed_at": None, "score_source": None,
+    # 20:15 ET on Jun 5, the minute the ticker names.
+    "commence_time": datetime(2026, 6, 6, 0, 15, tzinfo=timezone.utc),
+    "completed_at": None, "score_source": None,
 }
 CINSTL_LEGS = [
     {"id": 100 + i, "name": f"{team} over {line} runs scored",
@@ -47,11 +51,13 @@ def _truth(name, home_runs, away_runs, home_city):
 
 
 RAYS_YANKEES = {
-    "market_id": 53667298, "ticker": "KXMLBTEAMTOTAL-26SEP22TBNYY",
+    "market_id": 53667298, "ticker": "KXMLBTEAMTOTAL-26SEP221305TBNYY",
     "market_name": "Tampa Bay vs New York Y: Team Total", "event_id": 14788069,
     "event_status": "completed", "home_team_name": "New York Yankees",
     "away_team_name": "Tampa Bay Rays", "home_score": 2, "away_score": 0,
-    "commence_time": None, "completed_at": None, "score_source": "mlb_statsapi",
+    # Game 1 at 13:05 ET (Root's 2026-10-12 event read of 14788069).
+    "commence_time": datetime(2026, 9, 22, 17, 5, tzinfo=timezone.utc),
+    "completed_at": None, "score_source": "mlb_statsapi",
 }
 RAYS_YANKEES_LEGS = [
     {"id": oid, "name": name, "is_winner": True, "resolution_source": "game_score"}
@@ -94,7 +100,8 @@ class TestOnlyContradictedLegsAreWritten:
         assert d["action"] == "plan" and d["writes"] == []
 
     def test_the_issues_boston_example(self):
-        m = {**CINSTL, "ticker": "KXMLBTEAMTOTAL-26AUG01BOSTB",
+        m = {**CINSTL, "ticker": "KXMLBTEAMTOTAL-26AUG011910BOSTB",
+             "commence_time": datetime(2026, 8, 1, 23, 10, tzinfo=timezone.utc),
              "home_team_name": "Boston Red Sox", "away_team_name": "Tampa Bay Rays",
              "home_score": 1, "away_score": 4}
         legs = [
@@ -339,3 +346,73 @@ async def test_the_shipped_writer_never_writes_the_rays_yankees_ladder(
     }
     assert rec.writes == expected
     assert not all(rec.writes.values()), "the all-True ladder is not a score this writer can produce"
+
+
+# ---------------------------------------------------------------------------
+# the ticker names the game; a link to another game is refused (Root, 2026-10-12)
+# ---------------------------------------------------------------------------
+
+class TestTheTickerNamesTheGame:
+    """Root's production dry run: 8 of 29 planned markets were linked to an event
+    at a different time, with clubs and scores that agreed. Rows from
+    ``2351-readonly-host-20261012/PROVENANCE-AUDIT.md``."""
+
+    @pytest.mark.parametrize("market_id,ticker,event_start_utc", [
+        # May 5 21:40 ET ticker, linked to the May 6 16:10 ET game.
+        (54069118, "KXMLBTEAMTOTAL-26MAY052140ATLSEA",
+         datetime(2026, 5, 6, 20, 10, tzinfo=timezone.utc)),
+        # May 23 ticker on the Sep 22 Rays @ Yankees game 1 (event 14788069).
+        (53667298, "KXMLBTEAMTOTAL-26MAY231335TBNYY",
+         datetime(2026, 9, 22, 17, 5, tzinfo=timezone.utc)),
+        # Same day, different start: Apr 21 20:40 ET vs Apr 22 20:40 ET.
+        (12234671, "KXMLBTEAMTOTAL-26APR212040SDCOL",
+         datetime(2026, 4, 23, 0, 40, tzinfo=timezone.utc)),
+    ])
+    def test_a_market_linked_to_another_game_is_skipped_with_both_times(
+        self, market_id, ticker, event_start_utc
+    ):
+        m = {**CINSTL, "market_id": market_id, "ticker": ticker,
+             "commence_time": event_start_utc}
+        d = rt.decide_market(m, CINSTL_LEGS, [])
+        assert d["action"] == "skip"
+        assert d["reason"] == "event_time_not_ticker_time"
+        assert d["detail"]["ticker_start_et"] == rt.ticker_start(ticker).isoformat()
+        assert d["detail"]["event_start_et"] != d["detail"]["ticker_start_et"]
+
+    def test_the_exact_minute_in_eastern_plans_and_seconds_do_not_matter(self):
+        m = {**CINSTL, "commence_time": datetime(2026, 6, 6, 0, 15, 42, tzinfo=timezone.utc)}
+        assert rt.decide_market(m, CINSTL_LEGS, [])["action"] == "plan"
+
+    def test_eastern_is_read_across_the_dst_change(self):
+        # Nov 1 2026 19:10 ET is EST (UTC-5) — 00:10Z Nov 2, not 23:10Z.
+        assert rt.ticker_start("KXMLBTEAMTOTAL-26NOV011910LADTOR").astimezone(
+            timezone.utc) == datetime(2026, 11, 2, 0, 10, tzinfo=timezone.utc)
+        assert rt.start_matches_ticker(
+            "KXMLBTEAMTOTAL-26NOV011910LADTOR",
+            datetime(2026, 11, 1, 23, 10, tzinfo=timezone.utc),
+        ) == "event_time_not_ticker_time"
+
+    @pytest.mark.parametrize("ticker,commence,reason", [
+        ("KXMLBTEAMTOTAL-26SEP22TBNYY",
+         datetime(2026, 9, 22, 17, 5, tzinfo=timezone.utc), "ticker_start_unparseable"),
+        ("KXMLBTEAMTOTAL", datetime(2026, 9, 22, 17, 5, tzinfo=timezone.utc),
+         "ticker_start_unparseable"),
+        ("KXMLBTEAMTOTAL-26XYZ221305TBNYY",
+         datetime(2026, 9, 22, 17, 5, tzinfo=timezone.utc), "ticker_start_unparseable"),
+        ("KXMLBTEAMTOTAL-26SEP221305TBNYY", None, "no_commence_time"),
+    ])
+    def test_no_provable_start_is_a_refusal_not_a_pass(self, ticker, commence, reason):
+        m = {**RAYS_YANKEES, "ticker": ticker, "commence_time": commence}
+        d = rt.decide_market(m, RAYS_YANKEES_LEGS, [])
+        assert (d["action"], d["reason"]) == ("skip", reason)
+
+    def test_the_start_rides_the_write_but_not_the_reviewed_hash(self):
+        planned = [{"outcome_id": 1, "market_id": 7, "event_id": 42, "prior": True,
+                    "verdict": False, "home_score": 3, "away_score": 5,
+                    "name": "Cincinnati over 3.5 runs scored", "home": "Cincinnati Reds",
+                    "away": "St. Louis Cardinals"}]
+        with_start = [{**planned[0], "commence": CINSTL["commence_time"]}]
+        # Root's scoped candidate (7b8ca8bf…) was hashed before this check existed.
+        assert rt.plan_hash_for(with_start) == rt.plan_hash_for(planned)
+        assert ":commence" in rt._APPLY_SQL
+        assert "e.commence_time = :commence" in rt._APPLY_SQL

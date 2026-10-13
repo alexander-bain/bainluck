@@ -36,11 +36,27 @@ The whole market is SKIPPED, by name, when: it has no linked event; the event is
 not final or has no score; `completed_at` precedes `commence_time` (gotcha #46,
 a cross-event merge); the market is period-scoped; or any `api_settlement` leg
 the venue graded on the SAME event, in this series or in `KXMLBTOTAL`,
-disagrees with what the stored score implies for it. That last check is the
+disagrees with what the stored score implies for it; or the linked event does
+not start at the minute the TICKER names (below). The venue check is the
 venue testifying about our score: a doubleheader whose game-2 final was written
 onto game 1 (#8278, event 14788069) fails it, and a repair over that score would
 replace one wrong verdict with another. Markets with no venue witness on the
 event are still graded, and the ledger says ``witness: none``.
+
+## the ticker names the game; the link must agree
+
+A ``KXMLBTEAMTOTAL`` ticker carries its game's scheduled first pitch in US
+Eastern: ``KXMLBTEAMTOTAL-26APR212040SDCOL`` is 2026-04-21 20:40 ET. Root's
+production dry run (2026-10-12) found 8 of 29 planned markets linked to an event
+at a different time — three May 5 tickers on a May 6 game whose own May 6
+markets also exist. Names and scores agreed; the GAME did not. Grading such a
+market from its linked score assigns another game's result to it, so the market
+is SKIPPED as ``event_time_not_ticker_time`` unless the linked event's
+``commence_time``, read in Eastern to the minute, equals the ticker's. A ticker
+with no time, an unparseable one, or an event with no start is refused by name
+too. The link itself is matching's to repair (#2693); this rail only declines
+to trust it. The write re-asks the same start (``e.commence_time``), so an event
+re-timed between the dry run and the apply is drift, not a write.
 
 ## pinned identity and drift
 
@@ -79,8 +95,11 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import re
 import time
+from datetime import datetime, timezone
 from typing import Any, Optional
+from zoneinfo import ZoneInfo
 
 from sqlalchemy import text
 
@@ -111,6 +130,16 @@ FINAL_STATUSES = ("completed", "closed")
 
 #: Legs and witnesses kept per ledger entry; a longer list says it was cut.
 _EVIDENCE_LIST_CAP = 16
+
+#: The zone Kalshi writes a game's start into the ticker in.
+TICKER_TZ = ZoneInfo("America/New_York")
+#: ``26APR212040`` = yy, MON, dd, HHMM at the head of the ticker's event segment.
+#: A segment with only a date (``26SEP22TBNYY``) carries no start and is refused.
+_TICKER_START_RE = re.compile(r"^(\d{2})([A-Z]{3})(\d{2})(\d{2})(\d{2})(?=[A-Z])")
+#: Explicit, so the parse never depends on the process locale (``%b``).
+_TICKER_MONTHS = {m: i for i, m in enumerate(
+    ("JAN", "FEB", "MAR", "APR", "MAY", "JUN",
+     "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"), start=1)}
 
 # The btree range is on the (source, external_id) unique index; the family test
 # is the exact predicate. Both bounds end in a letter, so the range holds under
@@ -207,6 +236,7 @@ _APPLY_SQL = f"""
       AND e.status IN {FINAL_STATUSES!r}
       AND NOT (e.commence_time IS NOT NULL AND e.completed_at IS NOT NULL
                AND e.completed_at < e.commence_time)
+      AND e.commence_time = :commence
       AND fo.resolution_source = '{READ_SOURCE}'
       AND fo.is_winner IS NOT DISTINCT FROM :prior
       AND fo.name IS NOT DISTINCT FROM :name
@@ -276,6 +306,37 @@ def restore_command() -> str:
 # pure decisions
 # ---------------------------------------------------------------------------
 
+def ticker_start(ticker: Optional[str]) -> Optional[datetime]:
+    """The scheduled start a ``KXMLBTEAMTOTAL`` ticker names, in Eastern, or
+    None when its event segment carries no parseable date AND time."""
+    parts = (ticker or "").upper().split("-")
+    if len(parts) < 2:
+        return None
+    m = _TICKER_START_RE.match(parts[1])
+    if not m or m.group(2) not in _TICKER_MONTHS:
+        return None
+    yy, mon, dd, hh, mm = m.groups()
+    try:
+        return datetime(2000 + int(yy), _TICKER_MONTHS[mon], int(dd), int(hh), int(mm),
+                        tzinfo=TICKER_TZ)
+    except ValueError:
+        return None
+
+
+def start_matches_ticker(ticker: Optional[str], started: Optional[datetime]) -> Optional[str]:
+    """None when the event's start is the ticker's, to the minute in Eastern;
+    otherwise the refusal reason."""
+    expected = ticker_start(ticker)
+    if expected is None:
+        return "ticker_start_unparseable"
+    if started is None:
+        return "no_commence_time"
+    if started.tzinfo is None:  # a stored timestamptz always carries one
+        started = started.replace(tzinfo=timezone.utc)
+    actual = started.astimezone(TICKER_TZ).replace(second=0, microsecond=0)
+    return None if actual == expected else "event_time_not_ticker_time"
+
+
 def grade_leg(name, home, away, home_score, away_score) -> tuple[str, Optional[bool]]:
     """One leg through the SHIPPED grader: ``("graded", bool)``,
     ``("unresolved_identity", None)`` or ``("unparseable", None)``."""
@@ -320,6 +381,15 @@ def decide_market(m: dict, legs: list[dict], witnesses: list[dict]) -> dict:
         return {"action": "skip", "reason": "completed_before_commence"}
     if _market_period(m.get("ticker"), m.get("market_name")) is not None:
         return {"action": "skip", "reason": "period_market"}
+    mismatch = start_matches_ticker(m.get("ticker"), started)
+    if mismatch is not None:
+        expected = ticker_start(m.get("ticker"))
+        return {"action": "skip", "reason": mismatch, "detail": {
+            "ticker_start_et": expected.isoformat() if expected else None,
+            "event_start_et": (started.astimezone(TICKER_TZ).isoformat()
+                               if started is not None and started.tzinfo else
+                               (str(started) if started is not None else None)),
+        }}
 
     home, away = m.get("home_team_name"), m.get("away_team_name")
     contradictions = []
@@ -448,6 +518,9 @@ async def _plan_page(session, cursor: int, scan: int, pinned: Optional[set[int]]
                 "market_id": m["market_id"], "event_id": m["event_id"],
                 "home_score": m["home_score"], "away_score": m["away_score"],
                 "home": m.get("home_team_name"), "away": m.get("away_team_name"),
+                # Re-asked by the write; deliberately NOT in plan_hash_for, so a
+                # plan reviewed before this check existed keeps its hash.
+                "commence": m.get("commence_time"),
             })
         unknown = [g for g in decision["legs"]
                    if g["state"] in ("unresolved_identity", "unparseable", "prior_unknown")]
@@ -474,7 +547,7 @@ async def _write_leg(session, p: dict) -> bool:
     params = {"oid": p["outcome_id"], "mid": p["market_id"], "eid": p["event_id"],
               "prior": p["prior"], "won": p["verdict"], "hs": p["home_score"],
               "as_": p["away_score"], "home": p["home"], "away": p["away"],
-              "name": p["name"]}
+              "name": p["name"], "commence": p["commence"]}
     inserted = bool((await session.execute(text(_BAK_COPY), params)).all())
     hit = (await session.execute(text(_APPLY_SQL), params)).all()
     if hit:
