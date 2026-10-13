@@ -417,6 +417,92 @@ final class MacReadingPlace10878Tests: XCTestCase {
         XCTAssertEqual(MacReadingOffset10878.restore(saved: 0, documentHeight: 10_000, visibleHeight: 700, attempts: 0), .nothing)
     }
 
+    // MARK: - A pending restore and the reader
+
+    /// Control: nobody touches the scroll view while lazy content grows, and the
+    /// restore still lands on the saved place once the content can hold it.
+    func testAPassiveRestoreWaitsThroughGrowthAndLands() {
+        var restoring = MacScrollRestore10878()
+        let ticket = restoring.begin(MacScrollPlace(offset: 4000))
+        for height: CGFloat in [1500, 3000, 4500] {
+            XCTAssertEqual(restoring.step(ticket: ticket, rowTop: nil, documentHeight: height, visibleHeight: 700), .wait)
+            XCTAssertTrue(restoring.isPending, "layout alone never ends a restore")
+            XCTAssertFalse(MacReadingOffset10878.shouldRecord(documentHeight: height, visibleHeight: 700, restorePending: restoring.isPending),
+                           "a layout pass is not recorded as the reader's place")
+        }
+        XCTAssertEqual(restoring.step(ticket: ticket, rowTop: nil, documentHeight: 6000, visibleHeight: 700), .scroll(to: 4000))
+        XCTAssertTrue(restoring.isPending, "still pending while the keeper moves, so the move is not recorded")
+        XCTAssertTrue(restoring.end())
+        XCTAssertNil(restoring.step(ticket: ticket, rowTop: nil, documentHeight: 6000, visibleHeight: 700), "a landed restore never scrolls again")
+    }
+
+    /// The review's case (#10903, P2): the restore is still waiting for content
+    /// when the reader scrolls. Their scroll is recorded, and the retry already
+    /// queued under the old restore does nothing once the content has grown —
+    /// no jump back to the old place.
+    func testAReaderScrollDuringAPendingRestoreWinsOverTheQueuedRetry() {
+        var restoring = MacScrollRestore10878()
+        let ticket = restoring.begin(MacScrollPlace(offset: 4000))
+        XCTAssertEqual(restoring.step(ticket: ticket, rowTop: nil, documentHeight: 1500, visibleHeight: 700), .wait,
+                       "control — the restore is waiting, so a retry is queued")
+
+        XCTAssertTrue(restoring.end(), "the reader's scroll ends the waiting restore")
+        XCTAssertTrue(MacReadingOffset10878.shouldRecord(documentHeight: 1500, visibleHeight: 700, restorePending: restoring.isPending),
+                      "the reader's scroll is recorded")
+
+        XCTAssertNil(restoring.step(ticket: ticket, rowTop: nil, documentHeight: 10_000, visibleHeight: 700),
+                     "the queued retry would have pulled the reader back to 4000")
+        XCTAssertFalse(restoring.end(), "a second scroll finds nothing waiting")
+    }
+
+    /// Leave and return while a restore waits: the new visit restores the place
+    /// recorded since, and retries queued during the earlier visit neither move
+    /// the reader nor use up the new restore's patience.
+    func testRetriesFromAnEarlierVisitCannotTouchTheNewRestore() {
+        var restoring = MacScrollRestore10878()
+        let first = restoring.begin(MacScrollPlace(offset: 4000))
+        XCTAssertEqual(restoring.step(ticket: first, rowTop: nil, documentHeight: 1500, visibleHeight: 700), .wait)
+        restoring.end()                                        // left the window
+        let second = restoring.begin(MacScrollPlace(offset: 3000))   // back, with a newer place
+        XCTAssertNotEqual(first, second)
+
+        for _ in 0...MacReadingOffset10878.maxAttempts {
+            XCTAssertNil(restoring.step(ticket: first, rowTop: nil, documentHeight: 1500, visibleHeight: 700))
+        }
+        XCTAssertEqual(restoring.step(ticket: second, rowTop: nil, documentHeight: 1500, visibleHeight: 700), .wait,
+                       "stale retries spent the new restore's attempts and it gave up early")
+        XCTAssertEqual(restoring.step(ticket: second, rowTop: nil, documentHeight: 5000, visibleHeight: 700), .scroll(to: 3000))
+    }
+
+    /// A restore that begins over one still waiting starts with its own full
+    /// patience, not the old one's spent attempts.
+    func testANewRestoreReplacesOneStillWaiting() {
+        var restoring = MacScrollRestore10878()
+        let old = restoring.begin(MacScrollPlace(offset: 4000))
+        for _ in 0..<MacReadingOffset10878.maxAttempts {
+            XCTAssertEqual(restoring.step(ticket: old, rowTop: nil, documentHeight: 1500, visibleHeight: 700), .wait)
+        }
+        let new = restoring.begin(MacScrollPlace(offset: 3000))
+        XCTAssertEqual(restoring.step(ticket: new, rowTop: nil, documentHeight: 1500, visibleHeight: 700), .wait)
+        XCTAssertNil(restoring.step(ticket: old, rowTop: nil, documentHeight: 10_000, visibleHeight: 700))
+    }
+
+    /// The row anchor still decides where a List restore lands.
+    func testAPendingListRestoreLandsOnItsRow() {
+        var restoring = MacScrollRestore10878()
+        let ticket = restoring.begin(MacScrollPlace(offset: 4014, row: 143, offsetInRow: 10))
+        XCTAssertEqual(restoring.step(ticket: ticket, rowTop: 3990, documentHeight: 10_000, visibleHeight: 700), .scroll(to: 4000))
+    }
+
+    /// A screen with no saved place ends its restore on the first pass, so
+    /// recording starts at once.
+    func testANothingRestoreEndsAtOnce() {
+        var restoring = MacScrollRestore10878()
+        let ticket = restoring.begin(MacScrollPlace())
+        XCTAssertEqual(restoring.step(ticket: ticket, rowTop: nil, documentHeight: 10_000, visibleHeight: 700), .nothing)
+        XCTAssertFalse(restoring.isPending)
+    }
+
     // MARK: - Mounted: the real Search screen
 
     /// Leave Search for another screen and come back: the query and the results
@@ -539,6 +625,59 @@ final class MacReadingPlace10878Tests: XCTestCase {
                 XCTAssertFalse(returned === scroll, "\(kind): control — the screen really remounted")
                 // Exactly where they were, on every trip — no creep.
                 XCTAssertEqual(returned.contentView.bounds.origin.y, reading, accuracy: 1, "\(kind) trip \(trip): the reader was not put back")
+            }
+        }
+    }
+
+    /// The review's case, mounted: a restore is waiting for lazy content to
+    /// grow, and the reader scrolls before it can land. Their scroll wins — the
+    /// content then grows well past the old place and nothing pulls them back.
+    /// The control is the same mount with no scroll, where the restore still
+    /// lands. The scroll is announced the way AppKit announces a trackpad or
+    /// scroller scroll (`willStartLiveScroll`); a real wheel and trackpad on a
+    /// Mac stay in the interactive acceptance.
+    func testAReaderWhoScrollsDuringAPendingRestoreStaysWhereTheyScrolled() async throws {
+        for useList in [true, false] {
+            for readerScrolls in [false, true] {
+                let kind = "\(useList ? "List" : "ScrollView"), \(readerScrolls ? "reader scrolls" : "control")"
+                let place = MacReadingPlace<SearchViewModel>()
+                place.scrollPlace = useList ? MacScrollPlace(offset: 4000, row: 120, offsetInRow: 10) : MacScrollPlace(offset: 4000)
+                let rows = GrowingRows(count: 60)
+                let host = MountHost { GrowingKeeperScreen(useList: useList, rows: rows, place: place) }
+                defer { host.close() }
+
+                await host.mount(true)
+                let scroll = try XCTUnwrap(host.largestScrollView(), "\(kind): no scroll view")
+                XCTAssertLessThanOrEqual(scroll.contentView.bounds.origin.y, 1, "\(kind): control — the restore is still waiting for content")
+
+                if readerScrolls {
+                    NotificationCenter.default.post(name: NSScrollView.willStartLiveScrollNotification, object: scroll)
+                    scroll.contentView.scroll(to: NSPoint(x: 0, y: 600))
+                    scroll.reflectScrolledClipView(scroll.contentView)
+                    NotificationCenter.default.post(name: NSScrollView.didEndLiveScrollNotification, object: scroll)
+                    await host.settle()
+                }
+                let reading = scroll.contentView.bounds.origin.y
+
+                rows.count = 400
+                // Past every retry the restore had left.
+                for _ in 0..<5 { await host.settle() }
+                XCTAssertGreaterThan(scroll.documentView?.frame.height ?? 0, 6000, "\(kind): control — the content grew past the old place")
+                let now = scroll.contentView.bounds.origin.y
+
+                if readerScrolls {
+                    XCTAssertGreaterThan(reading, 300, "\(kind): control — the reader's scroll happened")
+                    XCTAssertEqual(now, reading, accuracy: 1, "\(kind): a queued retry pulled the reader back")
+                    XCTAssertEqual(place.scrollPlace.offset, reading, accuracy: 1, "\(kind): the reader's scroll was not recorded")
+                } else {
+                    let landing: CGFloat
+                    if useList, let table = scroll.documentView as? NSTableView {
+                        landing = table.rect(ofRow: 120).minY + 10
+                    } else {
+                        landing = 4000
+                    }
+                    XCTAssertEqual(now, landing, accuracy: 1, "\(kind): the restore did not land once the content could hold it")
+                }
             }
         }
     }
@@ -719,6 +858,32 @@ private struct KeeperScreen: View {
         } else {
             ScrollView {
                 LazyVStack { ForEach(0..<400, id: \.self) { Text("row \($0)").frame(height: 30) } }
+            }
+            .macReadingOffset(place)
+        }
+    }
+}
+
+/// Rows a test adds while the screen is mounted, standing in for lazy content
+/// that arrives after the screen appears.
+private final class GrowingRows: ObservableObject {
+    @Published var count: Int
+    init(count: Int) { self.count = count }
+}
+
+/// `KeeperScreen` whose row count the test grows while a restore waits.
+private struct GrowingKeeperScreen: View {
+    let useList: Bool
+    @ObservedObject var rows: GrowingRows
+    let place: MacReadingPlace<SearchViewModel>
+
+    var body: some View {
+        if useList {
+            List(0..<rows.count, id: \.self) { Text("row \($0)").frame(height: 30) }
+                .macReadingOffset(place)
+        } else {
+            ScrollView {
+                LazyVStack { ForEach(0..<rows.count, id: \.self) { Text("row \($0)").frame(height: 30) } }
             }
             .macReadingOffset(place)
         }

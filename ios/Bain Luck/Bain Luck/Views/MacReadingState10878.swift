@@ -148,7 +148,10 @@ enum MacReadingOffset10878 {
     /// Record a scroll position only when the content is really there. A scroll
     /// view being torn down (or not yet laid out) reports offset 0 over an empty
     /// document; recording that would overwrite the reader's place on the way
-    /// out. Nothing is recorded while a restore is still pending either.
+    /// out. Nothing is recorded while a restore is still pending either: until
+    /// then every bounds change is layout or the restore itself. A reader who
+    /// scrolls ends the pending restore first (`MacScrollRestore10878`), so their
+    /// scroll is recorded.
     static func shouldRecord(documentHeight: CGFloat, visibleHeight: CGFloat, restorePending: Bool) -> Bool {
         !restorePending && documentHeight > visibleHeight
     }
@@ -172,6 +175,64 @@ enum MacReadingOffset10878 {
         return furthest > 0 ? .scroll(to: furthest) : .nothing
     }
 
+}
+
+/// #10878 — one pending return to a saved place, as plain state so its rules are
+/// testable away from AppKit.
+///
+/// A restore waits for lazy content over several layout passes, retrying on a
+/// timer. Two things end it early: the reader scrolling (their new place wins —
+/// a later retry must not pull them back to the old one) and the screen leaving
+/// the window. A retry carries the `ticket` of the restore it was queued for,
+/// and does nothing once that restore has ended or a newer one has begun, so a
+/// retry queued before the reader scrolled, or before a leave and return, can
+/// never move the reader.
+struct MacScrollRestore10878 {
+    private(set) var pending: MacScrollPlace?
+    private(set) var ticket = 0
+    private var attempts = 0
+
+    var isPending: Bool { pending != nil }
+
+    /// Starts returning to `place`, replacing any restore already waiting.
+    @discardableResult
+    mutating func begin(_ place: MacScrollPlace) -> Int {
+        ticket &+= 1
+        pending = place
+        attempts = 0
+        return ticket
+    }
+
+    /// The reader scrolled, the screen left the window, or the restore has
+    /// moved the reader. Returns whether a restore was still waiting.
+    @discardableResult
+    mutating func end() -> Bool {
+        let wasPending = pending != nil
+        pending = nil
+        attempts = 0
+        return wasPending
+    }
+
+    /// One pass of the restore `ticket` names, against the layout as it is now
+    /// (`rowTop` is where `pending.row` is laid out, when it is). `nil` when that
+    /// restore has since ended: the caller does nothing. On `.scroll` the restore
+    /// stays pending while the caller moves, so the bounds change the move causes
+    /// is not recorded as the reader's; the caller then calls `end()`.
+    mutating func step(ticket: Int, rowTop: CGFloat?, documentHeight: CGFloat, visibleHeight: CGFloat) -> MacReadingOffset10878.Restore? {
+        guard ticket == self.ticket, let pending else { return nil }
+        let decision = MacReadingOffset10878.restore(
+            saved: pending.target(rowTop: rowTop),
+            documentHeight: documentHeight,
+            visibleHeight: visibleHeight,
+            attempts: attempts
+        )
+        switch decision {
+        case .wait: attempts += 1
+        case .nothing: self.pending = nil
+        case .scroll: break
+        }
+        return decision
+    }
 }
 
 extension View {
@@ -213,21 +274,23 @@ private struct MacScrollOffsetKeeper: NSViewRepresentable {
     final class KeeperView: NSView {
         weak var place: (any MacScrollOffsetHolding)?
         private weak var scrollView: NSScrollView?
-        nonisolated(unsafe) private var observer: NSObjectProtocol?
-        private var pendingPlace: MacScrollPlace?
-        private var attempts = 0
+        nonisolated(unsafe) private var observers: [NSObjectProtocol] = []
+        nonisolated(unsafe) private var inputMonitor: Any?
+        private var restoring = MacScrollRestore10878()
+        /// Changes every time the keeper enters or leaves a window, so a find
+        /// queued during an earlier visit does nothing.
+        private var visit = 0
         private var findAttempts = 0
 
         override func viewDidMoveToWindow() {
             super.viewDidMoveToWindow()
-            guard window != nil else {
-                stopObserving()
-                return
-            }
-            pendingPlace = place?.scrollPlace
-            attempts = 0
+            visit &+= 1
+            detach()
+            guard window != nil else { return }
+            if let saved = place?.scrollPlace { restoring.begin(saved) }
             findAttempts = 0
-            DispatchQueue.main.async { [weak self] in self?.attach() }
+            let visit = self.visit
+            DispatchQueue.main.async { [weak self] in self?.attach(visit: visit) }
         }
 
         override func hitTest(_ point: NSPoint) -> NSView? { nil }
@@ -236,31 +299,36 @@ private struct MacScrollOffsetKeeper: NSViewRepresentable {
         /// the window whose frame contains the keeper's. A pushed detail's scroll
         /// view cannot be picked, because the screen's own root — and this
         /// keeper with it — is out of the window while a detail is showing.
-        private func attach() {
-            guard let window, let root = window.contentView else { return }
+        private func attach(visit: Int) {
+            guard visit == self.visit, let window, let root = window.contentView else { return }
             let mine = convert(bounds, to: nil)
-            guard mine.width > 0, mine.height > 0 else { return retryAttach() }
+            guard mine.width > 0, mine.height > 0 else { return retryAttach(visit: visit) }
             let found = Self.scrollViews(in: root)
                 .filter { !$0.isHiddenOrHasHiddenAncestor && $0.convert($0.bounds, to: nil).insetBy(dx: -1, dy: -1).contains(mine) }
                 .min { Self.area($0) < Self.area($1) }
-            guard let found else { return retryAttach() }
+            guard let found else { return retryAttach(visit: visit) }
             stopObserving()
             scrollView = found
             found.contentView.postsBoundsChangedNotifications = true
-            observer = NotificationCenter.default.addObserver(
-                forName: NSView.boundsDidChangeNotification,
-                object: found.contentView,
-                queue: .main
-            ) { [weak self] _ in
-                MainActor.assumeIsolated { self?.record() }
-            }
-            restore()
+            let center = NotificationCenter.default
+            observers = [
+                center.addObserver(forName: NSView.boundsDidChangeNotification, object: found.contentView, queue: .main) { [weak self] _ in
+                    MainActor.assumeIsolated { self?.record() }
+                },
+                // A trackpad gesture or a scroller drag. AppKit posts this
+                // before the first bounds change of the reader's scroll.
+                center.addObserver(forName: NSScrollView.willStartLiveScrollNotification, object: found, queue: .main) { [weak self] _ in
+                    MainActor.assumeIsolated { self?.readerScrolled() }
+                },
+            ]
+            if restoring.isPending { watchForReaderInput() }
+            restore(ticket: restoring.ticket)
         }
 
-        private func retryAttach() {
+        private func retryAttach(visit: Int) {
             findAttempts += 1
             guard findAttempts <= MacReadingOffset10878.maxAttempts else { return }
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in self?.attach() }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in self?.attach(visit: visit) }
         }
 
         private func record() {
@@ -269,7 +337,7 @@ private struct MacScrollOffsetKeeper: NSViewRepresentable {
             guard MacReadingOffset10878.shouldRecord(
                 documentHeight: scrollView.documentView?.frame.height ?? 0,
                 visibleHeight: clip.bounds.height,
-                restorePending: pendingPlace != nil
+                restorePending: restoring.isPending
             ) else { return }
             let y = clip.bounds.origin.y
             var recorded = MacScrollPlace(offset: y)
@@ -283,34 +351,86 @@ private struct MacScrollOffsetKeeper: NSViewRepresentable {
             place?.scrollPlace = recorded
         }
 
-        private func restore() {
-            guard let scrollView, let pending = pendingPlace else { return }
+        private func restore(ticket: Int) {
+            guard let scrollView else { return }
             let clip = scrollView.contentView
             var rowTop: CGFloat?
-            if let row = pending.row, let table = scrollView.documentView as? NSTableView, row < table.numberOfRows {
+            if let row = restoring.pending?.row, let table = scrollView.documentView as? NSTableView, row < table.numberOfRows {
                 rowTop = table.rect(ofRow: row).minY
             }
-            switch MacReadingOffset10878.restore(
-                saved: pending.target(rowTop: rowTop),
+            switch restoring.step(
+                ticket: ticket,
+                rowTop: rowTop,
                 documentHeight: scrollView.documentView?.frame.height ?? 0,
-                visibleHeight: clip.bounds.height,
-                attempts: attempts
+                visibleHeight: clip.bounds.height
             ) {
+            case nil:
+                return
             case .nothing:
-                pendingPlace = nil
+                stopWatchingForReaderInput()
             case .wait:
-                attempts += 1
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in self?.restore() }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in self?.restore(ticket: ticket) }
             case .scroll(let y):
                 clip.scroll(to: NSPoint(x: clip.bounds.origin.x, y: y))
                 scrollView.reflectScrolledClipView(clip)
-                pendingPlace = nil
+                restoring.end()
+                stopWatchingForReaderInput()
             }
         }
 
+        /// The reader moved the scroll view while a restore was waiting: their
+        /// new place wins. The waiting restore is dropped — any retry already
+        /// queued finds its ticket gone — and recording resumes, so this scroll
+        /// and everything after it is kept.
+        private func readerScrolled() {
+            guard restoring.end() else { return }
+            stopWatchingForReaderInput()
+            record()
+        }
+
+        /// Scrolling that posts no live-scroll notification — a mouse wheel, or
+        /// the scrolling keys with focus inside this scroll view — is seen here,
+        /// before AppKit acts on it. Installed only while a restore waits.
+        private func watchForReaderInput() {
+            guard inputMonitor == nil else { return }
+            inputMonitor = NSEvent.addLocalMonitorForEvents(matching: [.scrollWheel, .keyDown]) { [weak self] event in
+                let input = MacReaderInput(event)
+                MainActor.assumeIsolated { self?.noteInput(input) }
+                return event
+            }
+        }
+
+        private func noteInput(_ input: MacReaderInput) {
+            guard restoring.isPending, let scrollView, let window = scrollView.window,
+                  input.windowNumber == window.windowNumber else { return }
+            if input.isWheel {
+                guard scrollView.bounds.contains(scrollView.convert(input.locationInWindow, from: nil)) else { return }
+            } else {
+                guard input.isScrollingKey,
+                      let focused = window.firstResponder as? NSView,
+                      !(focused is NSText),
+                      focused.isDescendant(of: scrollView) else { return }
+            }
+            readerScrolled()
+        }
+
+        private func stopWatchingForReaderInput() {
+            if let inputMonitor { NSEvent.removeMonitor(inputMonitor) }
+            inputMonitor = nil
+        }
+
+        /// Leaving the window ends everything this visit started: observers,
+        /// the input watch, and any restore still waiting.
+        private func detach() {
+            stopObserving()
+            restoring.end()
+            scrollView = nil
+        }
+
         private func stopObserving() {
-            if let observer { NotificationCenter.default.removeObserver(observer) }
-            observer = nil
+            observers.forEach { NotificationCenter.default.removeObserver($0) }
+            observers = []
+            stopWatchingForReaderInput()
         }
 
         private static func scrollViews(in view: NSView) -> [NSScrollView] {
@@ -326,7 +446,29 @@ private struct MacScrollOffsetKeeper: NSViewRepresentable {
         }
 
         deinit {
-            if let observer { NotificationCenter.default.removeObserver(observer) }
+            observers.forEach { NotificationCenter.default.removeObserver($0) }
+            if let inputMonitor { NSEvent.removeMonitor(inputMonitor) }
+        }
+    }
+}
+
+/// The parts of an input event the keeper reads, copied out of the monitor so
+/// nothing non-sendable crosses into main-actor code.
+nonisolated private struct MacReaderInput: Sendable {
+    let windowNumber: Int
+    let locationInWindow: NSPoint
+    let isWheel: Bool
+    let isScrollingKey: Bool
+
+    init(_ event: NSEvent) {
+        windowNumber = event.windowNumber
+        locationInWindow = event.locationInWindow
+        isWheel = event.type == .scrollWheel
+        // Key properties throw on any other event type, so read them only for a key.
+        if event.type == .keyDown, let key = event.specialKey {
+            isScrollingKey = [.pageUp, .pageDown, .home, .end, .upArrow, .downArrow].contains(key)
+        } else {
+            isScrollingKey = false
         }
     }
 }
