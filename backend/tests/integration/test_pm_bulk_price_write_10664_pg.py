@@ -459,7 +459,8 @@ async def test_a_row_a_lock_already_refused_is_probed_nowait_and_a_fresh_chunk_s
             rig.ns["PRICE_CHUNK_LOCK_TIMEOUT_MS"] = 60_000
             rig.ns["lock_retry_until"].update({1: 0, 2: 0})  # cooldown expired
             rig.price_started.clear()
-            assert await asyncio.wait_for(rig.write({1: 0.6, 2: 0.7}), 5) is None
+            written = await asyncio.wait_for(rig.write({1: 0.6, 2: 0.7}), 5)
+            assert written is None
             # A refused probe waited for nothing: no new cooldown, still due.
             assert rig.ns["lock_retry_until"] == {1: 0, 2: 0}
             assert rig.buffer == {1: 0.6, 2: 0.7}
@@ -482,7 +483,8 @@ async def test_a_row_a_lock_already_refused_is_probed_nowait_and_a_fresh_chunk_s
     assert rig.publisher.frames[0][1]["outcome_ids"] == [3]
     # Released: the probe writes the retained pair atomically and clears it.
     rig.ns["lock_retry_until"].update({1: 0, 2: 0})
-    assert (await rig.write(dict(rig.buffer))).written_ids == (1, 2)
+    written = await rig.write(dict(rig.buffer))
+    assert written.written_ids == (1, 2)
     assert rig.buffer == {} and rig.ns["lock_retry_until"] == {}
     assert await _prices(rig) == {
         1: Decimal(".600000"), 2: Decimal(".700000"), 3: Decimal(".800000"),
@@ -536,7 +538,8 @@ async def test_a_known_held_pair_is_written_by_the_first_flush_after_a_brief_hol
                 pair = {oid: rig.buffer[oid] for oid in (1, 2)}
                 attempts.append((began, await rig.write(pair), loop.time()))
                 # A row no lock refused, written in the same flush, never waits.
-                assert (await rig.write({3: 0.5 + len(attempts) / 100})).written_ids == (3,)
+                fresh_write = await rig.write({3: 0.5 + len(attempts) / 100})
+                assert fresh_write.written_ids == (3,)
             await letting_go
         finally:
             if txn.is_active:
@@ -575,7 +578,8 @@ async def test_a_probe_whose_rerank_times_out_keeps_the_cooldown(rig):
         await holder.execute(text("SELECT id FROM futures_outcomes WHERE id = 3 FOR UPDATE"))
         try:
             rig.price_started.clear()
-            assert await asyncio.wait_for(rig.write(dict(rig.buffer)), 5) is None
+            written = await asyncio.wait_for(rig.write(dict(rig.buffer)), 5)
+            assert written is None
             assert rig.price_started.is_set(), "the probe's price statement ran"
             assert rig.stats["errors"] == 1 and rig.stats["requeued"] == 2
             assert not rig.stats.get("price_lock_probes_refused")
@@ -583,7 +587,8 @@ async def test_a_probe_whose_rerank_times_out_keeps_the_cooldown(rig):
             # The next flush skips the pair without touching the database.
             await asyncio.sleep(0.25)
             rig.price_started.clear()
-            assert await rig.write(dict(rig.buffer)) is None
+            written = await rig.write(dict(rig.buffer))
+            assert written is None
             assert not rig.price_started.is_set()
             assert rig.stats["errors"] == 1
         finally:
@@ -605,14 +610,16 @@ async def test_a_probe_queued_behind_a_table_lock_keeps_the_cooldown(rig):
         txn = await holder.begin()
         await holder.execute(text("LOCK TABLE futures_outcomes IN EXCLUSIVE MODE"))
         try:
-            assert await asyncio.wait_for(rig.write(dict(rig.buffer)), 5) is None
+            written = await asyncio.wait_for(rig.write(dict(rig.buffer)), 5)
+            assert written is None
             (exc,) = rig.price_errors
             assert is_lock_timeout(exc) and not module.is_price_row_lock_refusal(exc)
             assert rig.stats["errors"] == 1 and rig.stats["requeued"] == 2
             assert not rig.stats.get("price_lock_probes_refused")
             assert min(rig.ns["lock_retry_until"].values()) > 0, "the cooldown is re-armed"
             rig.price_started.clear()
-            assert await rig.write(dict(rig.buffer)) is None
+            written = await rig.write(dict(rig.buffer))
+            assert written is None
             assert not rig.price_started.is_set(), "the next flush skips the pair"
         finally:
             await txn.rollback()
