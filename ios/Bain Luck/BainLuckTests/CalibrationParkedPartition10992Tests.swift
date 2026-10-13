@@ -76,6 +76,8 @@ final class CalibrationParkedPartition10992Tests: XCTestCase {
                        "the niche card lists a category whose parent is published, or drops a held-out one")
         XCTAssertEqual(vm.smallSampleCategories.map(\.outcomes), Self.expectedParked.map(\.outcomes))
         XCTAssertEqual(vm.smallSampleTotal, 1113, "the card's 'N outcomes' must sum the joined list, not the raw one")
+        XCTAssertEqual(vm.nicheCount(vm.smallSampleTotal), "1,113",
+                       "web prints the total in full; a compact '1.1K' is not the same number to a reader")
         XCTAssertEqual(vm.smallSampleCategories.map { CalibrationViewModel.nicheDisplayName($0.category) },
                        Self.expectedParked.map(\.label))
     }

@@ -852,8 +852,8 @@ struct CalibrationSurfaceView: View {
         if !thin.isEmpty {
             let examples = Array(thin.prefix(8))
             cardSection("What About Niche & Long-Shot Markets?",
-                        sub: "A calibration curve is only honest with enough resolved outcomes behind it, so we don't publish one for any category below \(fmtN(viewModel.minCategoryOutcomes)) resolved outcomes. Right now \(thin.count) \(thin.count == 1 ? "category is" : "categories are") still accumulating (\(fmtN(viewModel.smallSampleTotal)) outcomes). The moment one crosses the bar it appears above automatically.") {
-                FlowChips(chips: examples.map { "\(CalibrationViewModel.nicheDisplayName($0.category)) \(fmtN($0.outcomes))" })
+                        sub: "A calibration curve is only honest with enough resolved outcomes behind it, so we don't publish one for any category below \(fmtN(viewModel.minCategoryOutcomes)) resolved outcomes. Right now \(thin.count) \(thin.count == 1 ? "category is" : "categories are") still accumulating (\(viewModel.nicheCount(viewModel.smallSampleTotal)) outcomes). The moment one crosses the bar it appears above automatically.") {
+                FlowChips(chips: examples.map { "\(CalibrationViewModel.nicheDisplayName($0.category)) \(viewModel.nicheCount($0.outcomes))" })
                 if thin.count > examples.count {
                     Text("+\(fmtN(thin.count - examples.count)) more")
                         .font(.caption2).foregroundStyle(.tertiary)

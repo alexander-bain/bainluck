@@ -882,6 +882,11 @@ final class CalibrationViewModel: ObservableObject {
             .sorted { $0.outcomes > $1.outcomes }
     }
     var smallSampleTotal: Int { smallSampleCategories.reduce(0) { $0 + $1.outcomes } }
+
+    /// #10992 — the niche card's total and chip counts in full ("2,751"), as
+    /// web prints them (`toLocaleString()`); `compactCount`'s "2.8K" is not the
+    /// same number to a reader comparing the two screens. `quarantineCount`'s rule.
+    func nicheCount(_ n: Int) -> String { Self.fmt(n) }
     var corrections: [CalibrationCorrection] { data?.corrections ?? [] }
 
     // MARK: - Held out, under review (#8476)
