@@ -957,6 +957,7 @@ def _categorize_kalshi_market(
     from app.utils.futures_categorization import (
         categorize_by_rules,
         detect_league,
+        football_evidence_is_generic_only,
         infer_sport_from_league,
     )
 
@@ -1026,6 +1027,18 @@ def _categorize_kalshi_market(
     # are answered at step 1b and never arrive here. 27 corrected, 2 untouched,
     # and the 2 are chosen by the venue rather than by an exception list.
     result = categorize_by_rules(market_name)
+    # 🔴 #1109 — "playoff spot", "coach of the year", "wins total", "draft
+    # pick" answer football inside the rules because the NFL is the commonest
+    # case, not because the phrase names it. Here the ticker is unmapped and
+    # the venue published no sport tag, so that phrase would be the ONLY
+    # evidence, and #1888's coalesce upsert keeps the first non-`other` label
+    # for good: a Hawks playoff market stamped football stays football. Treat
+    # the generic answer as no answer and let league detection and the venue's
+    # own category speak; with neither, `other` is the one value a later poll
+    # may upgrade. Any specific football word (team, NFL, bowl, passing yards)
+    # keeps the football answer.
+    if result == "football" and football_evidence_is_generic_only(market_name):
+        result = None
     if result:
         if result not in NON_SPORT_LLM_CATEGORIES:
             topic = _venue_topic(kalshi_category, series_category)
