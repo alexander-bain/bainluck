@@ -7254,6 +7254,28 @@ jobs:
             exit 1
           }
 
+      - name: "#1527 a settled soccer fixture's three-winner repair writes only a reviewed exact plan, and the undo round-trips (real Postgres)"
+        # PILLAR TRUTH. SHIP: a settled soccer fixture stops showing every side,
+        # including Draw, as a 100% winner. The attended repair's exact-id plan
+        # hash, its compare-and-set under row locks (values AND row version),
+        # per-transaction timeouts, row-count refusal, D51 backup, the audit of a
+        # stopped run and a restore that never overwrites a later writer are SQL
+        # a session double reads green on. Golf, football, two-leg, Kalshi and
+        # no-Draw controls must never move. Runs in its own throwaway database.
+        if: matrix.group == 'shared-tail'
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_repair_winner_field_guarded_apply_1527_pg.py \
+            -v -rs 2>&1 | tee /tmp/winnerfield1527.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/winnerfield1527.txt; then
+            echo "::error::#1527 winner-field repair gate SKIPPED — the gate did not run"
+            exit 1
+          fi
+          grep -qE "[^0-9]17 passed[,[:space:]]" /tmp/winnerfield1527.txt || {
+            echo "::error::#1527 winner-field repair gate did not run all seventeen cases"
+            exit 1
+          }
+
       - name: "#8910 a newer WebSocket stamp survives the two-minute poll (real Postgres)"
         # #8910 / CERT-3585's required guard. The REAL live poll against real
         # Postgres, paused after its compared read, while a second session sends
