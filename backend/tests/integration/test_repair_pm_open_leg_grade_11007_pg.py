@@ -556,6 +556,34 @@ async def test_restore_never_overwrites_a_later_writer(db, touch):
     assert await _markets(db) == later_m and await _outcomes(db) == later_o
 
 
+async def test_leg_rows_stored_on_the_parent_are_controls_through_apply_and_restore(db):
+    """Production 2026-10-13 21:08Z: 113883 also holds April's ``_yes`` / ``_no``
+    rows (84295247/84295248, ungraded, 2026-05-24) and the dry run refused it as
+    ``unexpected_parent_outcome``. April is closed at the venue, so both rows are
+    controls: the parent repairs, and neither row moves on apply or restore."""
+    from app.models.models import FuturesOutcome
+
+    april = LEG_BY_TITLE["April Meeting"]["conditionId"]
+    stray = (84295247, 84295248)
+    async with db() as s:
+        for oid, side in zip(stray, ("yes", "no")):
+            s.add(FuturesOutcome(id=oid, market_id=PARENT, external_id=f"{april}_{side}",
+                                 name=side.title(), current_probability=0.5))
+        await s.commit()
+    before = await _outcomes(db)
+    assert [before[o][1:3] for o in stray] == [(False, None), (False, None)]
+    plan, out = await _apply_specimen(db)
+    assert (out["markets_reopened"], out["outcomes_cleared"]) == (3, 2)
+    applied = await _outcomes(db)
+    assert [applied[o] for o in stray] == [before[o] for o in stray]
+    for cid in OPEN:
+        assert applied[P_OUT[cid]][1:3] == (None, None)
+    done = await _run(db, fn=rr.restore, apply=True, plan_hash=plan["plan_hash"])
+    assert done["restored_parents"] == 1, done
+    restored = await _outcomes(db)
+    assert [restored[o] for o in stray] == [before[o] for o in stray]
+
+
 async def test_restore_apply_needs_a_plan_hash_and_writes_nothing_without_one(db):
     """An unscoped restore apply would put back every group of every historical
     run still in ``written`` state; like the repair apply, it must name the one
