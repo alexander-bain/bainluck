@@ -267,7 +267,7 @@ class FakeSession:
     """
 
     def __init__(self, links, *, markets=(ATL_SD,), cands=None, bank_short=False,
-                 retired=(), readback_drop=()):
+                 retired=(), readback_drop=(), readback_raises=False, commit_fault=None):
         self.links = dict(links)
         self.bank: dict[int, tuple[int, int, bool]] = {}
         self.markets = list(markets)
@@ -275,6 +275,11 @@ class FakeSession:
         self.bank_short = bank_short
         self.retired = set(retired)
         self.readback_drop = set(readback_drop)
+        self.readback_raises = readback_raises
+        # ``(n, lands)``: the n-th commit raises; ``lands`` = the server had
+        # committed it and only the answer was lost.
+        self.commit_fault = commit_fault
+        self.commits = 0
         self.updates = 0
         self.statements: list[str] = []
         self.on_update = None
@@ -336,11 +341,18 @@ class FakeSession:
                     n += 1
             return _Result(rowcount=n)
         if sql.startswith("SELECT fm.id FROM futures_markets"):
+            if self.readback_raises:
+                raise RuntimeError("read-back connection reset")
             return _Result([(i,) for i, e in zip(params["ids"], params["evs"])
                             if self.links.get(i) == e and i not in self.readback_drop])
         raise AssertionError(f"unexpected statement: {sql[:80]}")
 
     async def commit(self):
+        self.commits += 1
+        if self.commit_fault and self.commit_fault[0] == self.commits:
+            if self.commit_fault[1]:
+                self._commit_state()
+            raise ConnectionError("connection closed awaiting COMMIT reply")
         self._commit_state()
 
     async def rollback(self):
@@ -566,12 +578,149 @@ class TestAfterTheCommitIsExplicit:
         assert out["readback_on_target"] == 1 and out["undo"] == rp.UNDO_LINE
 
 
+@pytest.fixture
+def receipts_raise(monkeypatch):
+    async def boom(rows, **kw):
+        raise RuntimeError("receipt store unavailable")
+
+    import app.utils.match_receipts as mr
+    monkeypatch.setattr(mr, "record_link_change_receipts", boom)
+
+
+def _never_rolled_back(out):
+    assert out["outcome"] not in (rp.ROLLED_BACK_ERROR, rp.ROLLED_BACK_CHANGED_UNDER_RUN)
+    assert out["outcome"] not in rp.CLEAN_OUTCOMES
+    assert out["undo"] == rp.UNDO_LINE
+
+
+class TestAfterTheCommitNothingRaises:
+    """#10960 audit of 74033d87fe: once the move committed, a raising receipt
+    store or read-back must not turn the run into a traceback with no ids."""
+
+    def test_a_raised_receipt_store_reports_the_committed_ids_and_the_undo(self, receipts_raise):
+        s = _two_market_session()
+        out = _run(s, boards=JUN22_23, apply=True, expected_digest=_reviewed(s, JUN22_23))
+        assert s.links == {53104746: 14956089, 53104747: 14956090}  # it DID land
+        assert out["outcome"] == rp.APPLIED_POSTCOMMIT_UNVERIFIED
+        assert out["committed"] is True
+        assert out["landed_ids"] == [53104746, 53104747] and out["written"] == 2
+        assert out["receipts"] is None
+        assert "receipt store unavailable" in out["postcommit_errors"]["receipts"]
+        assert out["readback_on_target"] == 2 and out["readback_off_target_ids"] == []
+        _never_rolled_back(out)
+
+    def test_a_raised_readback_reports_the_committed_ids_and_the_undo(self, no_receipts):
+        s = _two_market_session(readback_raises=True)
+        out = _run(s, boards=JUN22_23, apply=True, expected_digest=_reviewed(s, JUN22_23))
+        assert s.links == {53104746: 14956089, 53104747: 14956090}
+        assert out["outcome"] == rp.APPLIED_POSTCOMMIT_UNVERIFIED
+        assert out["committed"] is True
+        assert out["landed_ids"] == [53104746, 53104747]
+        assert out["receipts"] == 2
+        assert "read-back connection reset" in out["postcommit_errors"]["readback"]
+        assert "readback_on_target" not in out  # unknown is not zero
+        _never_rolled_back(out)
+
+    def test_both_raising_still_reports_both(self, receipts_raise):
+        s = _two_market_session(readback_raises=True)
+        out = _run(s, boards=JUN22_23, apply=True, expected_digest=_reviewed(s, JUN22_23))
+        assert set(out["postcommit_errors"]) == {"receipts", "readback"}
+        assert out["landed_ids"] == [53104746, 53104747]
+        _never_rolled_back(out)
+
+    def test_the_undo_after_an_unverified_apply_moves_everything_back(self, receipts_raise):
+        s = _two_market_session()
+        _run(s, boards=JUN22_23, apply=True, expected_digest=_reviewed(s, JUN22_23))
+        r = _RestoreSession.adopt(s)
+        asyncio.run(rp.restore(r))
+        assert r.links == {53104746: 15165211, 53104747: 15165211}
+
+
+class TestALostCommitAnswerIsUncertain:
+    """A COMMIT that raises may have landed on the server; never 'rolled back'.
+    Commit 1 is the bank's, commit 2 the move's."""
+
+    @pytest.mark.parametrize("lands", [True, False])
+    def test_it_is_uncertain_whether_or_not_it_landed(self, no_receipts, lands):
+        s = _two_market_session()
+        reviewed = _reviewed(s, JUN22_23)
+        s.commit_fault = (2, lands)
+        out = _run(s, boards=JUN22_23, apply=True, expected_digest=reviewed)
+        assert out["outcome"] == rp.COMMIT_UNCERTAIN
+        assert out["committed"] == "unknown"
+        assert out["uncertain_ids"] == [53104746, 53104747]
+        assert "COMMIT reply" in out["error"]
+        assert "remaining_ids" not in out
+        assert out["readback_on_target_ids"] == ([53104746, 53104747] if lands else [])
+        assert no_receipts == []
+        _never_rolled_back(out)
+
+    @pytest.mark.parametrize("lands", [True, False])
+    def test_the_undo_is_right_either_way(self, no_receipts, lands):
+        s = _two_market_session()
+        reviewed = _reviewed(s, JUN22_23)
+        s.commit_fault = (2, lands)
+        _run(s, boards=JUN22_23, apply=True, expected_digest=reviewed)
+        r = _RestoreSession.adopt(s)
+        out = asyncio.run(rp.restore(r))
+        assert r.links == {53104746: 15165211, 53104747: 15165211}
+        assert out["written"] == (2 if lands else 0)
+
+    def test_an_uncertain_commit_with_a_dead_readback_still_names_the_ids(self, no_receipts):
+        s = _two_market_session(readback_raises=True)
+        reviewed = _reviewed(s, JUN22_23)
+        s.commit_fault = (2, True)
+        out = _run(s, boards=JUN22_23, apply=True, expected_digest=reviewed)
+        assert out["outcome"] == rp.COMMIT_UNCERTAIN
+        assert out["uncertain_ids"] == [53104746, 53104747]
+        assert "read-back connection reset" in out["readback_error"]
+        _never_rolled_back(out)
+
+
 class TestTheCli:
     def test_apply_without_a_digest_refuses_at_the_door(self, monkeypatch, capsys):
         monkeypatch.setattr(sys, "argv", ["repair", "--apply"])
         monkeypatch.setenv("HEROKU_APP_NAME", "bainluck")
         assert asyncio.run(rp.main()) == 2
         assert "--plan-digest" in capsys.readouterr().out
+
+    def _main_on(self, monkeypatch, s, *, exit_raises):
+        import contextlib
+        import json
+
+        import app.tasks.base as base
+
+        @contextlib.asynccontextmanager
+        async def session_cm():
+            yield s
+            if exit_raises:  # get_task_session commits on exit; that can raise too
+                raise ConnectionError("commit on session exit failed")
+
+        monkeypatch.setattr(base, "get_task_session", session_cm)
+        monkeypatch.setattr(rp, "read_boards", _boards_for(JUN22_23))
+        monkeypatch.setenv("HEROKU_APP_NAME", "bainluck")
+        monkeypatch.setattr(sys, "argv", ["repair", "--apply", "--plan-digest",
+                                          _reviewed(s, JUN22_23)])
+        return json
+
+    @pytest.mark.parametrize("exit_raises", [False, True])
+    def test_the_operator_gets_ids_and_undo_when_every_after_step_raises(
+            self, monkeypatch, capsys, receipts_raise, exit_raises):
+        s = _two_market_session(readback_raises=True)
+        json = self._main_on(monkeypatch, s, exit_raises=exit_raises)
+        if exit_raises:
+            with pytest.raises(ConnectionError):
+                asyncio.run(rp.main())
+        else:
+            assert asyncio.run(rp.main()) == 3
+        printed = capsys.readouterr().out
+        body = json.loads(printed[printed.index("{"):printed.rindex("}") + 1])
+        assert body["outcome"] == rp.APPLIED_POSTCOMMIT_UNVERIFIED
+        assert body["committed"] is True
+        assert body["landed_ids"] == [53104746, 53104747]
+        assert set(body["postcommit_errors"]) == {"receipts", "readback"}
+        assert f"UNDO: {rp.UNDO_LINE}" in printed
+        assert "ROLLED_BACK" not in printed
 
 
 class _RestoreSession(FakeSession):
@@ -615,6 +764,24 @@ class TestRestore:
         out = asyncio.run(rp.restore(s))
         assert s.links == {1: 555}
         assert out["changed_under_restore"] == [1] and out["outcome"] == rp.RESTORE_SHORT
+
+    def test_a_raised_receipt_or_readback_after_the_restore_commit_still_names_the_ids(
+            self, receipts_raise):
+        s = _RestoreSession({1: 20, 2: 21}, readback_raises=True)
+        s.bank = {1: (10, 20, True), 2: (11, 21, True)}
+        out = asyncio.run(rp.restore(s))
+        assert s.links == {1: 10, 2: 11}
+        assert out["outcome"] == rp.RESTORED_POSTCOMMIT_UNVERIFIED
+        assert out["committed"] is True and out["restored_ids"] == [1, 2]
+        assert set(out["postcommit_errors"]) == {"receipts", "readback"}
+
+    def test_a_lost_restore_commit_answer_is_uncertain(self, no_receipts):
+        s = _RestoreSession({1: 20}, commit_fault=(1, True))
+        s.bank = {1: (10, 20, True)}
+        out = asyncio.run(rp.restore(s))
+        assert out["outcome"] == rp.RESTORE_COMMIT_UNCERTAIN
+        assert out["committed"] == "unknown" and out["restored_ids"] == [1]
+        assert out["readback_on_before_ids"] == [1]
 
     def test_restore_without_a_bank_refuses(self):
         with pytest.raises(rp.Refused):

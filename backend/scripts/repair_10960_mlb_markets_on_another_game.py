@@ -78,6 +78,20 @@ never acts on. After the commit, a short receipt count or a row read back off
 its target is reported by id with its own outcome and a non-zero exit — never
 as a clean whole-cohort apply.
 
+AFTER THE COMMIT, NOTHING RAISES
+--------------------------------
+
+Once the move has committed, a receipt store or read-back that RAISES is caught
+and reported beside the committed ids and the undo line
+(``APPLIED_POSTCOMMIT_UNVERIFIED``, ``committed: true``) — never a traceback
+that hides a landed write, and never a rollback. A COMMIT whose answer is lost
+may or may not have landed on the server: that is ``COMMIT_UNCERTAIN``
+(``committed: "unknown"``), with whatever read-back the session can still give
+and the undo line, which is safe either way — ``--restore`` acts only on bank
+rows marked applied inside the move's own transaction. Only a failure BEFORE
+the COMMIT is reported as rolled back. The JSON is printed inside the session,
+so an error closing it cannot swallow the outcome either.
+
 THE BACKUP AND THE UNDO
 -----------------------
 
@@ -142,8 +156,12 @@ ROLLED_BACK_CHANGED_UNDER_RUN = "ROLLED_BACK_CHANGED_UNDER_RUN"
 ROLLED_BACK_ERROR = "ROLLED_BACK_ERROR"
 APPLIED_RECEIPTS_SHORT = "APPLIED_RECEIPTS_SHORT"
 APPLIED_READBACK_SHORT = "APPLIED_READBACK_SHORT"
+APPLIED_POSTCOMMIT_UNVERIFIED = "APPLIED_POSTCOMMIT_UNVERIFIED"
+COMMIT_UNCERTAIN = "COMMIT_UNCERTAIN"
 RESTORED = "RESTORED"
 RESTORE_SHORT = "RESTORE_SHORT"
+RESTORED_POSTCOMMIT_UNVERIFIED = "RESTORED_POSTCOMMIT_UNVERIFIED"
+RESTORE_COMMIT_UNCERTAIN = "RESTORE_COMMIT_UNCERTAIN"
 CLEAN_OUTCOMES = frozenset({DRY_RUN, NOTHING_TO_MOVE, APPLIED, RESTORED})
 
 #: The fields of one move that the digest binds: the write and its witness.
@@ -575,12 +593,48 @@ async def _write_all_or_nothing(session, triples: list[tuple[int, int, int]]) ->
             await session.rollback()
             return {"outcome": ROLLED_BACK_ERROR, "landed": [], "changed_under_run": [],
                     "error": f"bank marked {marked.rowcount} of {len(landed)} rows applied"}
-        await session.commit()
-    except Exception as exc:  # nothing has committed: the transaction is the unit
+    except Exception as exc:  # before the COMMIT: the transaction is the unit
         await session.rollback()
         return {"outcome": ROLLED_BACK_ERROR, "landed": [], "changed_under_run": [],
-                "error": f"{type(exc).__name__}: {exc}"}
+                "error": _err(exc)}
+    try:
+        await session.commit()
+    except Exception as exc:
+        # The COMMIT was sent and its answer lost: the server may have landed
+        # all of it. Never reported as rolled back.
+        await _quiet_rollback(session)
+        return {"outcome": COMMIT_UNCERTAIN, "landed": [], "changed_under_run": [],
+                "error": _err(exc)}
     return {"outcome": APPLIED, "landed": landed, "changed_under_run": []}
+
+
+def _err(exc: BaseException) -> str:
+    return f"{type(exc).__name__}: {exc}"
+
+
+async def _quiet_rollback(session) -> None:
+    """End a failed transaction so the session can still read; never raises."""
+    try:
+        await session.rollback()
+    except Exception:
+        pass
+
+
+async def _readback(session, triples: list[tuple[int, int, int]]) -> tuple[Optional[set], Optional[str]]:
+    """:func:`_ids_on`, but a raise is returned as an error string, never thrown."""
+    try:
+        return await _ids_on(session, triples), None
+    except Exception as exc:
+        await _quiet_rollback(session)
+        return None, _err(exc)
+
+
+async def _receipts_after_commit(landed, names) -> tuple[Optional[int], Optional[str]]:
+    """:func:`_receipt`, but a raise is returned as an error string, never thrown."""
+    try:
+        return await _receipt(landed, names), None
+    except Exception as exc:
+        return None, _err(exc)
 
 
 async def _receipt(landed: list[tuple[int, int, int]], names: dict[int, tuple]) -> int:
@@ -602,10 +656,10 @@ async def _receipt(landed: list[tuple[int, int, int]], names: dict[int, tuple]) 
 
 
 async def run(session, *, series_list: list[str], apply: bool, max_moves: int,
-              expected_digest: Optional[str] = None, boards_reader=read_boards) -> dict:
+              expected_digest: Optional[str] = None, boards_reader=None) -> dict:
     markets = await read_markets(session, series_list)
     candidates = await read_candidates(session, markets)
-    boards = await boards_reader(board_days(markets, candidates))
+    boards = await (boards_reader or read_boards)(board_days(markets, candidates))
     plan = plan_moves(markets, candidates, boards)
     digest = plan_digest(series_list, plan.moves)
     out = {
@@ -646,9 +700,8 @@ async def run(session, *, series_list: list[str], apply: bool, max_moves: int,
     if banked < len(plan.moves):
         raise Refused(f"backup holds {banked} of {len(plan.moves)} moves; refusing to move")
     out["banked_ids"] = planned
-    write = await _write_all_or_nothing(
-        session, [(m["market_id"], m["from_event_id"], m["to_event_id"]) for m in plan.moves]
-    )
+    triples = [(m["market_id"], m["from_event_id"], m["to_event_id"]) for m in plan.moves]
+    write = await _write_all_or_nothing(session, triples)
     landed = write["landed"]
     out["outcome"] = write["outcome"]
     out["landed_ids"] = sorted(t[0] for t in landed)
@@ -657,21 +710,44 @@ async def run(session, *, series_list: list[str], apply: bool, max_moves: int,
     if "error" in write:
         out["error"] = write["error"]
     out["written"] = len(landed)
+    if write["outcome"] == COMMIT_UNCERTAIN:
+        # Neither landed nor rolled back: say so, show what can be read, and
+        # hand over the undo — it only acts on rows the move marked applied.
+        out["committed"] = "unknown"
+        out["uncertain_ids"] = planned
+        del out["remaining_ids"]
+        on_target, err = await _readback(session, triples)
+        if err:
+            out["readback_error"] = err
+        else:
+            out["readback_on_target_ids"] = sorted(on_target)
+        out["undo"] = UNDO_LINE
+        return out
     if write["outcome"] != APPLIED:
-        # Rolled back: nothing moved and no bank row is marked applied, so
-        # --restore has nothing to undo. The bank rows stay for the record.
+        # Rolled back before the COMMIT: nothing moved and no bank row is marked
+        # applied, so --restore has nothing to undo. The bank rows stay.
+        out["committed"] = False
         out["undo"] = "nothing moved; no restore needed"
         return out
+    # COMMITTED. From here nothing raises: the ids and the undo line are already
+    # in ``out``, and a failing receipt or read-back is reported beside them.
+    out["committed"] = True
+    out["undo"] = UNDO_LINE
     names = {m.market_id: (m.external_id, m.name) for m in markets}
-    out["receipts"] = await _receipt(landed, names)
-    on_target = await _ids_on(session, landed)
-    out["readback_on_target"] = len(on_target)
-    out["readback_off_target_ids"] = sorted(set(out["landed_ids"]) - on_target)
-    if out["readback_off_target_ids"]:
+    out["receipts"], receipt_error = await _receipts_after_commit(landed, names)
+    on_target, readback_error = await _readback(session, landed)
+    errors = {k: v for k, v in (("receipts", receipt_error), ("readback", readback_error)) if v}
+    if errors:
+        out["postcommit_errors"] = errors
+    if on_target is not None:
+        out["readback_on_target"] = len(on_target)
+        out["readback_off_target_ids"] = sorted(set(out["landed_ids"]) - on_target)
+    if errors:
+        out["outcome"] = APPLIED_POSTCOMMIT_UNVERIFIED
+    elif out["readback_off_target_ids"]:
         out["outcome"] = APPLIED_READBACK_SHORT
     elif out["receipts"] < len(landed):
         out["outcome"] = APPLIED_RECEIPTS_SHORT
-    out["undo"] = UNDO_LINE
     return out
 
 
@@ -714,23 +790,42 @@ async def restore(session) -> dict:
     # The undo lands what it can: a market that moved between the read and the
     # write is reported by id, not forced.
     landed, missed = await _cas(session, back)
-    await session.commit()
-    names = {int(r.market_id): (r.external_id, r.name) for r in rows}
-    on_before = await _ids_on(session, landed)
-    receipts = await _receipt(landed, names)
-    short = missed or len(on_before) < len(landed) or receipts < len(landed)
-    return {
+    out = {
         "mode": "restore",
-        "outcome": RESTORE_SHORT if short else RESTORED,
         "banked": len(rows),
         "written": len(landed),
         "restored_ids": sorted(t[0] for t in landed),
         "not_on_after_left_alone": moved_since,
         "never_applied_left_alone": never_applied,
         "changed_under_restore": sorted(t[0] for t in missed),
-        "receipts": receipts,
-        "readback_on_before": len(on_before),
     }
+    try:
+        await session.commit()
+    except Exception as exc:
+        await _quiet_rollback(session)
+        on_before, err = await _readback(session, landed)
+        out.update(outcome=RESTORE_COMMIT_UNCERTAIN, committed="unknown", error=_err(exc))
+        if err:
+            out["readback_error"] = err
+        else:
+            out["readback_on_before_ids"] = sorted(on_before)
+        return out
+    # COMMITTED: as in run(), nothing below raises.
+    out["committed"] = True
+    names = {int(r.market_id): (r.external_id, r.name) for r in rows}
+    on_before, readback_error = await _readback(session, landed)
+    receipts, receipt_error = await _receipts_after_commit(landed, names)
+    errors = {k: v for k, v in (("receipts", receipt_error), ("readback", readback_error)) if v}
+    out["receipts"] = receipts
+    if on_before is not None:
+        out["readback_on_before"] = len(on_before)
+    if errors:
+        out["postcommit_errors"] = errors
+        out["outcome"] = RESTORED_POSTCOMMIT_UNVERIFIED
+    else:
+        short = missed or len(on_before) < len(landed) or receipts < len(landed)
+        out["outcome"] = RESTORE_SHORT if short else RESTORED
+    return out
 
 
 #: ``--all-series`` reads the whole KXMLB range. Non-game tickers (futures,
@@ -777,6 +872,12 @@ async def main() -> int:
             await session.rollback()
             print(f"REFUSED: {exc}")
             return 2
+        # Printed INSIDE the session: closing it commits, and an error there
+        # must not swallow an outcome whose write already landed.
+        return _emit(out, args)
+
+
+def _emit(out: dict, args) -> int:
     if not args.full:
         for key in ("moves", "kept"):
             if key in out and len(out[key]) > 40:
@@ -795,8 +896,9 @@ async def main() -> int:
             f"scripts/repair_10960_mlb_markets_on_another_game.py {scope} "
             f"--apply --plan-digest {out['plan_digest']}"
         )
-    if out["mode"] == "apply" and out.get("written"):
+    if out.get("undo") == UNDO_LINE:
         print(f"UNDO: {UNDO_LINE}")
+    sys.stdout.flush()
     return 0 if out.get("outcome", DRY_RUN) in CLEAN_OUTCOMES else 3
 
 
