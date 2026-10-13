@@ -133,6 +133,12 @@ final class CalibrationNicheChipLabelTests: XCTestCase {
     /// 5 "Football", 4 "Tennis", 2 "Hockey", 1 "Basketball". If a future edit
     /// makes this number 0, the legacy reproduction has drifted and the test
     /// above has stopped proving anything.
+    ///
+    /// #10992 (2026-10-13) — 70, not 67, under today's maps. Nothing in the frozen
+    /// fixture changed; `normalizedCategory` gained web's `lacrosse` and `mlb`
+    /// entries, so the old rule now also collapses `lacrosse_ncaa`/`lacrosse_pll`
+    /// onto "Lacrosse" and `mlb` onto "Baseball". The 67 above is the measurement
+    /// on the maps of the day; the reproduction still stands.
     func testTheOldRuleCollapsedSixtySevenOfTheHundredAndNine() {
         let collapsed = Self.servedParkedCategories.filter { key in
             let parent = CalibrationViewModel.normalizedCategory(key)
@@ -140,12 +146,12 @@ final class CalibrationNicheChipLabelTests: XCTestCase {
             return Self.legacyNicheDisplayName(key)
                 == CalibrationViewModel.categoryDisplayName(parent)
         }
-        XCTAssertEqual(collapsed.count, 67,
+        XCTAssertEqual(collapsed.count, 70,
                        "the defect this suite guards is not reproducible any more")
         XCTAssertEqual(
             Set(collapsed.map { CalibrationViewModel.categoryDisplayName(
                 CalibrationViewModel.normalizedCategory($0)) }),
-            ["Soccer", "Football", "Tennis", "Hockey", "Basketball"]
+            ["Soccer", "Football", "Tennis", "Hockey", "Basketball", "Lacrosse", "Baseball"]
         )
     }
 
