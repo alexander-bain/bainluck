@@ -1051,7 +1051,16 @@ def resolve_event_category(
         rules_result = categorize_by_rules(title)
         if rules_result and rules_result not in _NON_SPORT:
             return "championship", rules_result, "promoted"
-        _league = _detect_league(title)
+        # #2169: only when the scored title read found nothing. `detect_league` is
+        # first-match regex with no evidence weighting, so a lone ambiguous word
+        # wins it outright: `"Masters of the Universe" Opening Weekend Box Office`
+        # (Polymarket 552897, tagged Movies/Culture/Box Office) scores
+        # `entertainment` on box office + opening weekend, then the bare
+        # `masters` -> PGA league pattern promoted it to golf — and every settled
+        # re-ingest wrote that back over the repaired row. Arm 2 already trusts a
+        # rules answer over the league guess; this is the same order here. A
+        # league-only title ("Ligue 1 Top Scorer", rules None) still promotes.
+        _league = None if rules_result else _detect_league(title)
         if _league:
             _sport = _infer(_league)
             if _sport and _sport not in _NON_SPORT:
