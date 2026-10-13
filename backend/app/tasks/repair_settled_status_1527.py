@@ -300,13 +300,11 @@ def leg_authority_refusal(legs: list[dict]) -> Optional[tuple[str, list]]:
 
 
 def venue_leg(condition_id: str, clob_market: dict | None) -> dict:
-    """What the CLOB says about this one condition id. A body naming another id
-    is not testimony: both fields read as unknown."""
-    if clob_market:
-        echoed = clob_market.get("condition_id")
-        if echoed and str(echoed).lower() != str(condition_id).lower():
-            return {"condition_id": condition_id, "closed": None, "yes_winner": None}
-    closed = clob_market.get("closed") if clob_market else None
+    """What the CLOB says about this one condition id. A body naming another id,
+    or none, is not testimony: both fields read as unknown."""
+    if not rwf.names_condition(condition_id, clob_market):
+        return {"condition_id": condition_id, "closed": None, "yes_winner": None}
+    closed = clob_market.get("closed")
     return {
         "condition_id": condition_id,
         "closed": closed if isinstance(closed, bool) else None,
