@@ -286,3 +286,55 @@ def test_arm_3_still_beats_arm_4_on_the_weather_shelf():
         "championship",
         "basketball",
     )
+
+
+# --------------------------------------------------------------------------
+# #2169 — arm 3's league guess never overrules the scored title read
+# --------------------------------------------------------------------------
+#
+# Venue specimen, read off Gamma 2026-10-13 (measurement report
+# `artifacts/calibration/2169-identity-read-20261013T0900Z/`): Polymarket event
+# 552897, DB row 31169677, tagged exactly Movies / Culture / Box Office. Its
+# repaired `entertainment` was written back to `golf` by every settled re-ingest
+# because the bare `masters` league pattern promoted it.
+
+_MASTERS_OF_THE_UNIVERSE = '"Masters of the Universe" Opening Weekend Box Office'
+
+
+def test_the_box_office_specimen_stays_entertainment_on_reingest():
+    tags = ["Movies", "Culture", "Box Office"]
+    assert _tags_to_category(tags) == ("entertainment", "entertainment"), "precondition"
+    assert _resolve(tags, _MASTERS_OF_THE_UNIVERSE) == ("entertainment", "entertainment")
+    assert _arm_for(tags, _MASTERS_OF_THE_UNIVERSE) == "tag"
+
+
+def test_the_specimen_title_still_trips_the_league_pattern():
+    """Strawman: without this, the guard above could pass because `detect_league`
+    stopped reading "Masters" as PGA, not because arm 3 now defers to the rules."""
+    from app.utils.futures_categorization import categorize_by_rules, detect_league
+
+    assert categorize_by_rules(_MASTERS_OF_THE_UNIVERSE) == "entertainment"
+    assert detect_league(_MASTERS_OF_THE_UNIVERSE) == "PGA"
+
+
+@pytest.mark.parametrize(
+    "tags,title,expected",
+    [
+        # The true golf Masters on a non-sport shelf: rules say golf, promote.
+        (["Culture"], "Masters Tournament Winner", ("championship", "golf")),
+        (["Awards"], "Who will win the 2026 Masters?", ("championship", "golf")),
+        # The legitimate league arm: rules find nothing, the league names the sport.
+        (["Awards"], "Ligue 1 Top Scorer", ("championship", "soccer")),
+    ],
+)
+def test_arm_3_still_promotes_a_real_sport_title(tags, title, expected):
+    assert _tags_to_category(tags)[0] != "championship", "precondition: a non-sport tag"
+    assert _resolve(tags, title) == expected
+    assert _arm_for(tags, title) == "promoted"
+
+
+def test_a_golf_tagged_masters_market_is_untouched():
+    assert _resolve(["Sports", "Golf", "Masters"], "Masters Tournament Winner") == (
+        "championship",
+        "golf",
+    )
