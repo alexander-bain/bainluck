@@ -257,7 +257,12 @@ SCORE_UNIT_PREDICATE = "da21d87f0f001c635a813eefb3eb9532"
 #: SOCCER_THREE_WAY_PREDICATE)`` with a ``widening`` key and exercised in
 #: ``tests/test_calibration_soccer_three_way_succession_1011.py``.
 SOCCER_THREE_WAY_PREDICATE = "598e0ed820277a9748363a4d7a276a63"
-PINNED_PREDICATE = ("q271", SOCCER_THREE_WAY_PREDICATE)
+#: #938 moved it again (Kalshi golf round prices no stored time places before
+#: the round), declared as ``(SOCCER_THREE_WAY_PREDICATE,
+#: GOLF_ROUND_TIMING_PREDICATE)`` and exercised in
+#: ``tests/test_calibration_golf_round_timing_938.py``.
+GOLF_ROUND_TIMING_PREDICATE = "ea3ef49d2a15568e11d7d8e54240bfdb"
+PINNED_PREDICATE = ("q271", GOLF_ROUND_TIMING_PREDICATE)
 
 
 def test_population_predicate_is_pinned_8458():

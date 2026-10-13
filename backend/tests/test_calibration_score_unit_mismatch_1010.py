@@ -247,12 +247,16 @@ PAIR = (PUBLISHED_PREDICATE, CANDIDATE_PREDICATE)
 
 class TestPredicateIdentity:
     def test_this_tree_states_the_declared_candidate(self):
-        # #1011 moved the digest on, as a declared WIDENING; this rule's
-        # candidate is that succession's predecessor, so the chain is unbroken.
+        # #1011 (a declared WIDENING) and #938 (a declared narrowing) moved the
+        # digest on. Walk the declared chain from this rule's candidate: every
+        # step must be declared, so the chain is unbroken to this tree.
         current = pc.population_predicate_fingerprint()
-        assert current == CANDIDATE_PREDICATE or (
-            (CANDIDATE_PREDICATE, current) in DECLARED_PREDICATE_SUCCESSIONS
-        )
+        successor = {old: new for old, new in DECLARED_PREDICATE_SUCCESSIONS}
+        step, seen = CANDIDATE_PREDICATE, set()
+        while step != current and step not in seen:
+            seen.add(step)
+            step = successor.get(step, step)
+        assert step == current
 
     def test_the_family_value_is_in_the_digest(self, monkeypatch):
         before = pc.population_predicate_fingerprint()
@@ -284,8 +288,10 @@ class TestPredicateIdentity:
 
     def test_futures_unit_reuse_is_unaffected(self):
         """The staged UNIT digest keys on the futures statement's bytes, which
-        this rule does not touch, so banked units stay resumable."""
-        assert pc.staged_unit_fingerprint() == "dec3026b97c1f61cda6ce65c70459fe5"
+        this rule does not touch, so banked units stay resumable. #938 later
+        moved it (``dec3026b…`` -> ``5de54fd2…``) by adding a per-outcome flag
+        to ``_calibration_population_ctes``; this rule still does not touch it."""
+        assert pc.staged_unit_fingerprint() == "5de54fd27524df3c6af470d7f3c15bb9"
 
 
 def _gate_payload(*, outcomes, predicate, categories, score_unit=None, cells=None):

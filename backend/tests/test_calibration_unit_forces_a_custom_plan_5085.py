@@ -321,7 +321,18 @@ from app.tasks.calibration_main_build import UNIT_PLAN_CACHE_MODE
 #: this change, so no banked unit is discarded; only a carried PHASE output in
 #: flight at deploy is re-read. The published predicate moves ``da21d87f…`` ->
 #: ``598e0ed8…`` and is declared to the gate as a widening succession.
-LIVE_INPUT_FINGERPRINT = "6a1aa8ac0bdba3399b876890dd9bfe1d"
+#:
+#: RE-ANCHORED for #938 (Kalshi golf round markets whose price no stored time
+#: places before the round): ``6a1aa8ac…`` -> ``dc2df778…``. Moved: the root
+#: ``_calibration_population_ctes`` (a per-outcome flag, withheld in ``deduped``
+#: and in the field-completeness survivor set) and ``compute_calibration_payload``
+#: (its ``golf_round_timing_filter`` disclosure). The rows change, so
+#: ``staged_unit_fingerprint`` moves too (``dec3026b…`` -> ``5de54fd2…``): the
+#: next ``bainluck-heavy`` release that carries this re-keys the bank it finds,
+#: the same cost #5355 named and NOT MEASURED for the same reason (ruling 134).
+#: The published predicate moves ``598e0ed8…`` -> ``ea3ef49d…`` and is declared
+#: to the gate as a narrowing succession; the version is not bumped.
+LIVE_INPUT_FINGERPRINT = "dc2df778434ef3322f0b124214589736"
 
 
 class _Db:

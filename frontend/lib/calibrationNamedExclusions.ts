@@ -111,6 +111,8 @@ export const NAMED_EXCLUSION_LABELS: Readonly<Record<string, string>> = {
   orphan_partition_filter: "One runner kept from a field whose rivals were never recorded",
   datagolf_opening_timing_filter:
     "Golf model readings first taken after the tournament had started (DataGolf)",
+  golf_round_timing_filter:
+    "Golf round prices with no time showing they came before the round (Kalshi)",
   score_unit_filter: "Tennis and fight over/unders and handicaps our recorded result can't settle",
 };
 

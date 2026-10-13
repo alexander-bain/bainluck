@@ -143,6 +143,10 @@ def _futures_row(**overrides):
         # bucket holds no DataGolf row. The rung is given a real count by the
         # `datagolf-opening-after-start-is-its-own-rung` corpus case.
         "cb_datagolf_opening_after_start": 0,
+        # #938. A checked zero: this synthetic bucket is NBA, not Kalshi golf.
+        # The rung is given a real count by the
+        # `golf-round-price-unanchored-is-its-own-rung` corpus case.
+        "cb_golf_round_price_unanchored": 0,
         "cb_structural_artifact": 4,
         "cb_field_incomplete": 2,
         "cb_representative_not_selected": 5,

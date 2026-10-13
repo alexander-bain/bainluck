@@ -316,7 +316,11 @@ class TestTheHandMapIsGoneAndTheArtifactIsAuthority:
         # are `sql_interpolated: false` — the two values are BOUND into the
         # soccer statements, never interpolated — so `uncovered_sql_shaping`
         # holds at 27. `staged_unit_fingerprint` is identical across the change.
-        assert artifact["input_count"] == 90
+        # #938: 90 -> 91. `GOLF_ROUND_TIMING_RULE_TEXT`, the disclosure sentence
+        # beside the golf round-timing count. Same-module prose,
+        # `sql_interpolated: false`; the rule's SQL is written inside
+        # `_calibration_population_ctes`, a hashed root, so it adds no input.
+        assert artifact["input_count"] == 91
         # CAL-P162: 4 -> 5. `MEX_NORMALIZE_THRESHOLD` joined the by-value set on
         # the deploy that made it decide PUBLICATION rather than only pricing.
         # CAL-P164 added no by-value input, so this stands still.
@@ -368,7 +372,8 @@ class TestTheHandMapIsGoneAndTheArtifactIsAuthority:
         # `_main_input_fingerprint` (as `PAIR_SUM_TOLERANCE` is) and the whole
         # contract module is hashed into the predicate digest. See the
         # cross-module test below for what bounds each.
-        assert artifact["uncovered_count"] == 76
+        # #938: 76 -> 77, `GOLF_ROUND_TIMING_RULE_TEXT` (prose, see above).
+        assert artifact["uncovered_count"] == 77
         assert artifact["uncovered_count"] == artifact["input_count"] - len(
             artifact["covered_by_value"]
         )
@@ -722,7 +727,9 @@ class TestTheHandMapIsGoneAndTheArtifactIsAuthority:
         # 57 -> 58 at #1011: `SOCCER_THREE_WAY_RULE_TEXT` is same-module prose;
         # the six contract names it arrived with are the cross-tier entries
         # listed above.
-        assert len(cross) + 58 == artifact["uncovered_count"]
+        # 58 -> 59 at #938: `GOLF_ROUND_TIMING_RULE_TEXT` is same-module prose,
+        # so it lands in the non-cross tier and the cross list is unchanged.
+        assert len(cross) + 59 == artifact["uncovered_count"]
 
 
 class TestInterpolationDetectionCoversNonFStringSql:

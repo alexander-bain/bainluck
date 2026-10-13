@@ -219,6 +219,21 @@ DECLARATION_MAX_TOLERANCE_PCT = 5.0
 #: cells excuse a collapse only up to its per-cell counts
 #: (``score_unit_filter.excluded_by_cell``); see
 #: :func:`_judge_score_unit_disclosure`.
+#:
+#: #938. Kalshi golf ROUND markets (round leader, round top-N) leave the curve:
+#: Kalshi gives them only the round's close as a start time, so no stored time
+#: places their price before the round, and the specimen
+#: (``KXPGAR3TOP10-THOC26``) stores 0.99 on every winner and 0.01 on every loser
+#: from quotes taken after the round settled. It moves the digest from
+#: ``598e0ed8…`` (the served artifact of 2026-10-13 09:17Z and master's pin since
+#: #1011) to ``ea3ef49d…``, unbumped, for #8458's reason. Stated once
+#: (``"listed": False``): its only statement is ``golf_round_timing_filter.excluded``.
+#:
+#: ``max_narrowing_pct`` is BOUNDED by what the rule can touch, not measured.
+#: Its SQL keys on ``cv.source = 'kalshi' AND cv.category = 'golf'``, and that
+#: cell published 17,302 of 1,160,981 outcomes (1.49%) on the same artifact.
+#: ``excluded`` is counted over ``normalized`` and can exceed the published share,
+#: so 3.0% is about twice the whole cell; a narrowing past it is not this rule.
 DECLARED_PREDICATE_SUCCESSIONS: dict[tuple[str, str], dict] = {
     ("e67d771bbd7a92dfd8d1a0f4bd79b4c2", "27b49126ac461fce9d5f078b471bb17f"): {
         "cause": "#6275 identity quarantine (Alex ruling; 22a99a734d, heavy v27)",
@@ -245,6 +260,13 @@ DECLARED_PREDICATE_SUCCESSIONS: dict[tuple[str, str], dict] = {
         "issue": 1011,
         "widening": "soccer_three_way",
         "max_widening_pct": 8.0,
+    },
+    ("598e0ed820277a9748363a4d7a276a63", "ea3ef49d2a15568e11d7d8e54240bfdb"): {
+        "cause": "#938 Kalshi golf round prices no stored time places before the round",
+        "issue": 938,
+        "narrowing": "golf_round_timing",
+        "max_narrowing_pct": 3.0,
+        "listed": False,
     },
 }
 
@@ -688,6 +710,7 @@ def census(payload: Any) -> dict:
             "excluded_cells": {},
             "identity_quarantine": None,
             "datagolf_opening_timing": None,
+            "golf_round_timing": None,
             "score_unit": None,
             "soccer_three_way": None,
             "cell_counts": None,
@@ -765,6 +788,8 @@ def census(payload: Any) -> dict:
         "identity_quarantine": _identity_quarantine_census(payload),
         # #5355: the DataGolf opening-timing rule's size, stated once.
         "datagolf_opening_timing": _datagolf_opening_timing_census(payload),
+        # #938: the golf round-timing rule's size, stated once.
+        "golf_round_timing": _golf_round_timing_census(payload),
         # #1010: the score-unit rule's size, stated once.
         "score_unit": _score_unit_census(payload),
         # #1011: the soccer three-way rule's size — the rows it ADMITS.
@@ -814,6 +839,21 @@ def _datagolf_opening_timing_census(payload: dict) -> dict:
     says ``"listed": False`` so :func:`_judge_succession` does not ask for one.
     """
     section = payload.get("datagolf_opening_timing_filter")
+    return {
+        "excluded": section.get("excluded") if isinstance(section, dict) else None,
+        "listed_outcomes": None,
+        "section_present": isinstance(section, dict),
+    }
+
+
+def _golf_round_timing_census(payload: dict) -> dict:
+    """The golf round-timing rule's size, unvalidated (#938).
+
+    One statement, ``golf_round_timing_filter.excluded``, with no reader-facing
+    list beside it — the same shape as :func:`_datagolf_opening_timing_census`,
+    and its succession entry says ``"listed": False`` for the same reason.
+    """
+    section = payload.get("golf_round_timing_filter")
     return {
         "excluded": section.get("excluded") if isinstance(section, dict) else None,
         "listed_outcomes": None,

@@ -416,6 +416,9 @@ class TestCalibrationPublicEndpoint:
             # gate reads its `excluded` to admit the predicate move the rule
             # makes, so it is part of the served contract, not decoration.
             "datagolf_opening_timing_filter",
+            # #938: the golf round-timing rule's disclosure, read by the gate
+            # for its declared succession in the same way.
+            "golf_round_timing_filter",
             "date_range",  # L2-78 Item 0: resolved-data span for the hero
             "generated_at",
             # Queue 324 / ruling 025: the serve-time declaration. Not a payload
