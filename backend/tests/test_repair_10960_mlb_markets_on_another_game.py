@@ -180,6 +180,39 @@ class TestRails:
         rp.refuse_unless_production({"HEROKU_APP_NAME": "bainluck"})
 
 
+class TestThePlanDigest:
+    """The apply binds the plan a person read, not a count of it."""
+
+    def _plan(self):
+        return rp.plan_moves([ATL_SD], {ATL_SD.market_id: [ATL_SD_GAME]}, JUN22)
+
+    def test_the_digest_is_order_free_and_binds_the_scope(self):
+        a = {"market_id": 1, "to_event_id": 2}
+        b = {"market_id": 3, "to_event_id": 4}
+        assert rp.plan_digest(["KXMLBTEAMTOTAL"], [a, b]) == rp.plan_digest(
+            ["KXMLBTEAMTOTAL"], [b, a])
+        # A team-total digest never authorises the all-series plan.
+        assert rp.plan_digest(["KXMLBTEAMTOTAL"], [a]) != rp.plan_digest([rp.ALL_SERIES], [a])
+
+    def test_the_digest_binds_the_write_and_its_witness(self):
+        assert set(rp.DIGEST_FIELDS) == {
+            "market_id", "external_id", "from_event_id", "to_event_id",
+            "ticker_start", "target_start", "espn_id", "espn_start", "espn_status",
+        }
+
+    @pytest.mark.parametrize("field", rp.DIGEST_FIELDS)
+    def test_every_bound_field_changes_the_digest(self, field):
+        move = dict(self._plan().moves[0])
+        before = rp.plan_digest(["KXMLBTEAMTOTAL"], [move])
+        move[field] = "changed"
+        assert rp.plan_digest(["KXMLBTEAMTOTAL"], [move]) != before
+
+    def test_a_move_carries_its_espn_witness(self):
+        move = self._plan().moves[0]
+        assert {k for k in rp.DIGEST_FIELDS if move.get(k) is None} == set()
+        assert move["espn_start"] == "2026-06-23T02:10:00+00:00"
+
+
 # ── The apply path, on a fake session that answers by statement ──────────────
 
 
@@ -214,61 +247,111 @@ class _Row:
         return list(self.__dict__.values())[i]
 
 
-class FakeSession:
-    """Holds ``futures_markets.event_id`` and a backup bank; nothing else."""
+# A second wrong-game team total, so a batch can miss in the MIDDLE.
+# KXMLBTEAMTOTAL-26JUN232210ATLSD = Jun 23 22:10 ET = Jun 24 02:10Z.
+ATL_SD_2 = market(53104747, "KXMLBTEAMTOTAL-26JUN232210ATLSD", 15165211,
+                  "2026-07-22T23:15:00", ATL, SD)
+ATL_SD_GAME_2 = cand(14956090, "2026-06-24T02:10:00", SD, ATL, "401815880")
+JUN22_23 = {
+    **JUN22,
+    date(2026, 6, 23): board(("401815880", "2026-06-24T02:10:00", "STATUS_FINAL")),
+}
 
-    def __init__(self, links, *, bank_short=False):
+
+class FakeSession:
+    """``futures_markets.event_id`` plus the backup bank, with transactions.
+
+    Writes are live until ``rollback()`` restores the last committed state, so
+    an all-or-nothing claim is tested against a store that can tell the two
+    apart. ``external_write`` is another session's COMMITTED write.
+    """
+
+    def __init__(self, links, *, markets=(ATL_SD,), cands=None, bank_short=False,
+                 retired=(), readback_drop=()):
         self.links = dict(links)
-        self.bank: dict[int, tuple[int, int]] = {}
+        self.bank: dict[int, tuple[int, int, bool]] = {}
+        self.markets = list(markets)
+        self.cands = cands if cands is not None else {ATL_SD.market_id: [ATL_SD_GAME]}
         self.bank_short = bank_short
+        self.retired = set(retired)
+        self.readback_drop = set(readback_drop)
         self.updates = 0
+        self.statements: list[str] = []
+        self.on_update = None
+        self._commit_state()
+
+    def _commit_state(self):
+        self._links_c, self._bank_c = dict(self.links), dict(self.bank)
+
+    def external_write(self, mid, event_id):
+        self.links[mid] = event_id
+        self._links_c[mid] = event_id
 
     async def execute(self, stmt, params=None):
         sql = str(stmt)
         params = params or {}
+        self.statements.append(sql)
         if "FROM futures_markets fm\n  JOIN events e" in sql:
-            return _Result([_Row(id=53104746, external_id=ATL_SD.external_id, name="n",
-                                 event_id=self.links[53104746],
-                                 commence_time=ATL_SD.event_start,
-                                 home_team_id=ATL, away_team_id=SD)])
+            return _Result([
+                _Row(id=m.market_id, external_id=m.external_id, name="n",
+                     event_id=self.links[m.market_id], commence_time=m.event_start,
+                     home_team_id=m.home_team_id, away_team_id=m.away_team_id)
+                for m in self.markets
+            ])
         if "FROM unnest" in sql and "JOIN events e" in sql:
-            return _Result([_Row(market_id=53104746, id=14956089,
-                                 commence_time=ATL_SD_GAME.start, home_team_id=SD,
-                                 away_team_id=ATL, espn_id="401815865",
-                                 status="completed")])
+            return _Result([
+                _Row(market_id=mid, id=c.event_id, commence_time=c.start,
+                     home_team_id=c.home_team_id, away_team_id=c.away_team_id,
+                     espn_id=c.espn_id, status=c.status)
+                for mid in params["mids"] for c in self.cands.get(mid, [])
+            ])
         if sql.startswith("CREATE TABLE"):
+            assert "applied_at timestamptz" in sql
             return _Result()
         if sql.startswith(f"INSERT INTO {rp.BACKUP_TABLE}"):
             if not self.bank_short:
                 for i, b, a in zip(params["ids"], params["befores"], params["afters"]):
-                    self.bank.setdefault(i, (b, a))
+                    self.bank.setdefault(i, (b, a, False))
             return _Result()
         if sql.startswith("SELECT market_id, event_id_before"):
             return _Result([_Row(market_id=k, event_id_before=v[0], event_id_after=v[1])
                             for k, v in self.bank.items()])
         if sql.startswith("UPDATE futures_markets"):
-            # The fake can only honour a compare-and-swap the SQL actually asks for.
+            # The fake can only honour guards the SQL actually asks for.
             assert "AND event_id = :old" in sql, "the move must compare-and-swap"
-            if self.links.get(params["id"]) == params["old"]:
+            assert "status NOT IN ('merged', 'voided')" in sql
+            if self.on_update:
+                self.on_update(params)
+            if (self.links.get(params["id"]) == params["old"]
+                    and params["new"] not in self.retired):
                 self.links[params["id"]] = params["new"]
                 self.updates += 1
                 return _Result(rowcount=1)
             return _Result(rowcount=0)
-        if "SELECT count(*) FROM futures_markets" in sql:
-            n = sum(1 for i, e in zip(params["ids"], params["evs"]) if self.links.get(i) == e)
-            return _Result([(n,)])
+        if sql.startswith(f"UPDATE {rp.BACKUP_TABLE}"):
+            n = 0
+            for i, b, a in zip(params["ids"], params["befores"], params["afters"]):
+                if self.bank.get(i, (None, None))[:2] == (b, a):
+                    self.bank[i] = (b, a, True)
+                    n += 1
+            return _Result(rowcount=n)
+        if sql.startswith("SELECT fm.id FROM futures_markets"):
+            return _Result([(i,) for i, e in zip(params["ids"], params["evs"])
+                            if self.links.get(i) == e and i not in self.readback_drop])
         raise AssertionError(f"unexpected statement: {sql[:80]}")
 
     async def commit(self):
-        pass
+        self._commit_state()
 
     async def rollback(self):
-        pass
+        self.links, self.bank = dict(self._links_c), dict(self._bank_c)
 
 
-async def _boards(days):
-    assert days == {date(2026, 6, 22)}
-    return JUN22
+def _boards_for(boards):
+    async def reader(days):
+        assert days <= set(boards)
+        return {d: boards[d] for d in days}
+    return reader
 
 
 @pytest.fixture
@@ -285,55 +368,220 @@ def no_receipts(monkeypatch):
     return seen
 
 
-def _run(session, **kw):
+def _run(session, *, boards=JUN22, max_moves=10, **kw):
     return asyncio.run(rp.run(session, series_list=["KXMLBTEAMTOTAL"],
-                              boards_reader=_boards, **kw))
+                              boards_reader=_boards_for(boards), max_moves=max_moves, **kw))
+
+
+def _reviewed(session, boards=JUN22) -> str:
+    """The digest a person reads off the dry run."""
+    return _run(session, boards=boards, apply=False)["plan_digest"]
+
+
+def _wrote_nothing(s, links):
+    assert s.links == links and s.bank == {} and s.updates == 0
+    assert not any(x.startswith(("CREATE", "INSERT", "UPDATE")) for x in s.statements)
 
 
 class TestApply:
-    def test_a_dry_run_writes_nothing(self):
+    def test_a_dry_run_writes_nothing_and_prints_the_digest(self):
         s = FakeSession({53104746: 15165211})
-        out = _run(s, apply=False, max_moves=10)
-        assert out["counts"][rp.MOVE] == 1
-        assert s.links[53104746] == 15165211 and s.bank == {} and s.updates == 0
+        out = _run(s, apply=False)
+        assert out["counts"][rp.MOVE] == 1 and out["outcome"] == rp.DRY_RUN
+        assert out["plan_digest"] == rp.plan_digest(["KXMLBTEAMTOTAL"], out["moves"])
+        _wrote_nothing(s, {53104746: 15165211})
 
-    def test_apply_banks_moves_receipts_and_reads_back(self, no_receipts):
+    def test_apply_of_the_reviewed_plan_banks_moves_receipts_and_reads_back(self, no_receipts):
         s = FakeSession({53104746: 15165211})
-        out = _run(s, apply=True, max_moves=10)
-        assert s.bank == {53104746: (15165211, 14956089)}
+        out = _run(s, apply=True, expected_digest=_reviewed(s))
+        assert s.bank == {53104746: (15165211, 14956089, True)}
         assert s.links[53104746] == 14956089
+        assert out["outcome"] == rp.APPLIED
         assert out["written"] == 1 and out["readback_on_target"] == 1
+        assert out["banked_ids"] == out["landed_ids"] == [53104746]
+        assert out["remaining_ids"] == [] and out["readback_off_target_ids"] == []
+        assert out["undo"] == rp.UNDO_LINE
         assert no_receipts == [(15165211, 14956089, "admin_repair", "repair_10960", [53104746])]
+
+    def test_apply_without_a_reviewed_digest_refuses_before_any_write(self):
+        s = FakeSession({53104746: 15165211})
+        with pytest.raises(rp.Refused, match="--plan-digest"):
+            _run(s, apply=True)
+        _wrote_nothing(s, {53104746: 15165211})
+
+    def test_a_same_count_plan_with_a_different_target_refuses_before_the_backup(self):
+        # The dry run read 14956089 as the ticker's game. By the apply a second
+        # row (another ESPN id, same clubs, same time) replaced it: still ONE
+        # move, so a count ceiling passes it — the digest must not.
+        s = FakeSession({53104746: 15165211})
+        reviewed = _reviewed(s)
+        other = cand(14999999, "2026-06-23T02:10:00", SD, ATL, "401815999")
+        s.cands = {ATL_SD.market_id: [other]}
+        both = {date(2026, 6, 22): board(("401815865", "2026-06-23T02:10:00", "STATUS_FINAL"),
+                                         ("401815999", "2026-06-23T02:10:00", "STATUS_FINAL"))}
+        s.statements.clear()
+        drifted = _run(s, boards=both, apply=False)
+        assert drifted["counts"][rp.MOVE] == 1
+        assert drifted["moves"][0]["to_event_id"] == 14999999
+        with pytest.raises(rp.Refused, match="not the reviewed"):
+            _run(s, boards=both, apply=True, expected_digest=reviewed)
+        _wrote_nothing(s, {53104746: 15165211})
+
+    def test_a_twin_target_with_the_same_espn_witness_refuses(self):
+        # Two rows for one game: by the apply the reviewed target was replaced by
+        # another row carrying the SAME ESPN id at the same time. Only the event
+        # id differs — the write itself must be bound, not just its witness.
+        s = FakeSession({53104746: 15165211})
+        reviewed = _reviewed(s)
+        twin = cand(14999998, "2026-06-23T02:10:00", SD, ATL, "401815865")
+        s.cands = {ATL_SD.market_id: [twin]}
+        drifted = _run(s, apply=False)
+        assert {k: v for k, v in drifted["moves"][0].items() if k != "to_event_id"} == {
+            k: v for k, v in _run(FakeSession({53104746: 15165211}), apply=False)["moves"][0].items()
+            if k != "to_event_id"}
+        s.statements.clear()
+        with pytest.raises(rp.Refused, match="not the reviewed"):
+            _run(s, apply=True, expected_digest=reviewed)
+        _wrote_nothing(s, {53104746: 15165211})
+
+    def test_a_changed_espn_witness_on_the_same_triple_refuses(self):
+        # Same market, same from, same to — but ESPN now places the game 90
+        # minutes later (still in the window). The operator never read that.
+        s = FakeSession({53104746: 15165211})
+        reviewed = _reviewed(s)
+        moved = {date(2026, 6, 22): board(("401815865", "2026-06-23T03:40:00", "STATUS_FINAL"))}
+        assert _run(s, boards=moved, apply=False)["counts"][rp.MOVE] == 1
+        s.statements.clear()
+        with pytest.raises(rp.Refused, match="not the reviewed"):
+            _run(s, boards=moved, apply=True, expected_digest=reviewed)
+        _wrote_nothing(s, {53104746: 15165211})
 
     def test_a_plan_above_the_ceiling_refuses_before_any_write(self):
         s = FakeSession({53104746: 15165211})
+        reviewed = _reviewed(s)
+        s.statements.clear()
         with pytest.raises(rp.Refused):
-            _run(s, apply=True, max_moves=0)
-        assert s.bank == {} and s.updates == 0
+            _run(s, apply=True, max_moves=0, expected_digest=reviewed)
+        _wrote_nothing(s, {53104746: 15165211})
 
     def test_a_short_bank_refuses_before_any_write(self):
         s = FakeSession({53104746: 15165211}, bank_short=True)
         with pytest.raises(rp.Refused):
-            _run(s, apply=True, max_moves=10)
+            _run(s, apply=True, expected_digest=_reviewed(s))
         assert s.links[53104746] == 15165211 and s.updates == 0
 
-    def test_a_market_that_moved_under_the_run_is_left_alone(self, no_receipts, monkeypatch):
-        s = FakeSession({53104746: 15165211})
-        real = s.execute
 
-        async def racing(stmt, params=None):
-            if str(stmt).startswith("UPDATE futures_markets"):
-                s.links[53104746] = 777  # a matcher pass moved it first
-            return await real(stmt, params)
+def _two_market_session(**kw):
+    return FakeSession(
+        {53104746: 15165211, 53104747: 15165211},
+        markets=[ATL_SD, ATL_SD_2],
+        cands={ATL_SD.market_id: [ATL_SD_GAME], ATL_SD_2.market_id: [ATL_SD_GAME_2]},
+        **kw,
+    )
 
-        monkeypatch.setattr(s, "execute", racing)
-        out = _run(s, apply=True, max_moves=10)
-        assert s.links[53104746] == 777
-        assert out["written"] == 0 and out["changed_under_run"] == [53104746]
+
+class TestAllOrNothing:
+    def test_a_cas_miss_mid_batch_rolls_back_the_rows_that_already_landed(self, no_receipts):
+        s = _two_market_session()
+        reviewed = _reviewed(s, JUN22_23)
+
+        def matcher_moves_the_second(params):
+            if params["id"] == 53104747:
+                s.external_write(53104747, 777)  # a matcher pass committed first
+
+        s.on_update = matcher_moves_the_second
+        out = _run(s, boards=JUN22_23, apply=True, expected_digest=reviewed)
+        # 53104746's CAS landed before 53104747 missed — and is undone with it.
+        assert s.updates == 1
+        assert s.links == {53104746: 15165211, 53104747: 777}
+        assert out["outcome"] == rp.ROLLED_BACK_CHANGED_UNDER_RUN
+        assert out["written"] == 0 and out["landed_ids"] == []
+        assert out["changed_under_run"] == [53104747]
+        assert out["banked_ids"] == out["remaining_ids"] == [53104746, 53104747]
         assert no_receipts == []
+        # The bank stays, but no row of it is marked applied.
+        assert s.bank == {53104746: (15165211, 14956089, False),
+                          53104747: (15165211, 14956090, False)}
+
+    def test_a_restore_after_a_rolled_back_apply_moves_nothing(self, no_receipts):
+        s = _two_market_session()
+        reviewed = _reviewed(s, JUN22_23)
+        s.on_update = lambda p: p["id"] == 53104747 and s.external_write(53104747, 777)
+        _run(s, boards=JUN22_23, apply=True, expected_digest=reviewed)
+        # Later something legitimately puts 53104746 on the planned target; the
+        # undo must not "restore" a move the repair never made.
+        s.external_write(53104746, 14956089)
+        r = _RestoreSession.adopt(s)
+        out = asyncio.run(rp.restore(r))
+        assert r.links == {53104746: 14956089, 53104747: 777}
+        assert out["written"] == 0
+        assert out["never_applied_left_alone"] == [53104746, 53104747]
+
+    def test_a_target_retired_since_the_read_rolls_the_batch_back(self, no_receipts):
+        s = _two_market_session(retired={14956090})
+        out = _run(s, boards=JUN22_23, apply=True, expected_digest=_reviewed(s, JUN22_23))
+        assert out["outcome"] == rp.ROLLED_BACK_CHANGED_UNDER_RUN
+        assert out["changed_under_run"] == [53104747]
+        assert s.links == {53104746: 15165211, 53104747: 15165211}
+
+    def test_an_error_mid_batch_rolls_back(self, no_receipts):
+        s = _two_market_session()
+
+        def boom(params):
+            if params["id"] == 53104747:
+                raise RuntimeError("connection lost")
+
+        reviewed = _reviewed(s, JUN22_23)
+        s.on_update = boom
+        out = _run(s, boards=JUN22_23, apply=True, expected_digest=reviewed)
+        assert out["outcome"] == rp.ROLLED_BACK_ERROR and "connection lost" in out["error"]
+        assert s.links == {53104746: 15165211, 53104747: 15165211}
+        assert all(not v[2] for v in s.bank.values())
+
+    def test_a_whole_batch_lands_together(self, no_receipts):
+        s = _two_market_session()
+        out = _run(s, boards=JUN22_23, apply=True, expected_digest=_reviewed(s, JUN22_23))
+        assert out["outcome"] == rp.APPLIED
+        assert s.links == {53104746: 14956089, 53104747: 14956090}
+        assert out["landed_ids"] == [53104746, 53104747]
+
+
+class TestAfterTheCommitIsExplicit:
+    def test_a_short_receipt_count_is_its_own_outcome(self, monkeypatch):
+        async def none_written(rows, **kw):
+            return 0
+
+        import app.utils.match_receipts as mr
+        monkeypatch.setattr(mr, "record_link_change_receipts", none_written)
+        s = FakeSession({53104746: 15165211})
+        out = _run(s, apply=True, expected_digest=_reviewed(s))
+        assert out["outcome"] == rp.APPLIED_RECEIPTS_SHORT
+        assert out["landed_ids"] == [53104746] and out["undo"] == rp.UNDO_LINE
+
+    def test_a_row_read_back_off_target_is_named(self, no_receipts):
+        s = _two_market_session(readback_drop={53104747})
+        out = _run(s, boards=JUN22_23, apply=True, expected_digest=_reviewed(s, JUN22_23))
+        assert out["outcome"] == rp.APPLIED_READBACK_SHORT
+        assert out["readback_off_target_ids"] == [53104747]
+        assert out["readback_on_target"] == 1 and out["undo"] == rp.UNDO_LINE
+
+
+class TestTheCli:
+    def test_apply_without_a_digest_refuses_at_the_door(self, monkeypatch, capsys):
+        monkeypatch.setattr(sys, "argv", ["repair", "--apply"])
+        monkeypatch.setenv("HEROKU_APP_NAME", "bainluck")
+        assert asyncio.run(rp.main()) == 2
+        assert "--plan-digest" in capsys.readouterr().out
 
 
 class _RestoreSession(FakeSession):
+    @classmethod
+    def adopt(cls, other):
+        r = cls({})
+        r.links, r.bank = dict(other.links), dict(other.bank)
+        r._commit_state()
+        return r
+
     async def execute(self, stmt, params=None):
         sql = str(stmt)
         if sql.startswith("SELECT to_regclass"):
@@ -341,6 +589,7 @@ class _RestoreSession(FakeSession):
         if sql.startswith("SELECT b.market_id"):
             return _Result([
                 _Row(market_id=k, event_id_before=v[0], event_id_after=v[1],
+                     applied_at="t" if v[2] else None,
                      event_id=self.links.get(k), external_id="x", name="n")
                 for k, v in sorted(self.bank.items())
             ])
@@ -350,12 +599,22 @@ class _RestoreSession(FakeSession):
 class TestRestore:
     def test_restore_moves_back_only_what_is_still_where_the_repair_put_it(self, no_receipts):
         s = _RestoreSession({1: 20, 2: 999})
-        s.bank = {1: (10, 20), 2: (11, 21)}  # market 2 has moved again since
+        s.bank = {1: (10, 20, True), 2: (11, 21, True)}  # market 2 has moved again since
         out = asyncio.run(rp.restore(s))
         assert s.links == {1: 10, 2: 999}
         assert out["written"] == 1 and out["readback_on_before"] == 1
+        assert out["restored_ids"] == [1]
         assert out["not_on_after_left_alone"] == [2]
+        assert out["outcome"] == rp.RESTORED
         assert no_receipts == [(20, 10, "admin_repair", "repair_10960", [1])]
+
+    def test_restore_names_a_market_that_moved_under_it(self, no_receipts):
+        s = _RestoreSession({1: 20})
+        s.bank = {1: (10, 20, True)}
+        s.on_update = lambda p: s.external_write(1, 555)
+        out = asyncio.run(rp.restore(s))
+        assert s.links == {1: 555}
+        assert out["changed_under_restore"] == [1] and out["outcome"] == rp.RESTORE_SHORT
 
     def test_restore_without_a_bank_refuses(self):
         with pytest.raises(rp.Refused):
