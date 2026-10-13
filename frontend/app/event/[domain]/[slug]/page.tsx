@@ -373,15 +373,17 @@ export default function EventConceptPage() {
   // actually render (TwoSidedTimeline needs ≥2 competitors), and label it to MATCH
   // the section heading (primary.label — "Main event" for UFC) so the pill isn't
   // dead chrome pointing at a mistitled/absent anchor.
-  if (isCoEqual && competitors.length >= 2)
+  if (isCoEqual && event.domain === "awards" && typeof primary.evolution_market_id === "number")
+    nav.push({ id: `awards-category-${primary.evolution_market_id}`, label: primary.label || "Category" });
+  else if (isCoEqual && competitors.length >= 2)
     nav.push({ id: "head-to-head", label: primary.label || "Head to head" });
   if (hasWinnerField) nav.push({ id: "leaderboard", label: "Leaderboard" });
   if (showBubbleWatch) nav.push({ id: "bubble-watch", label: "Bubble Watch" });
   if (showWinnerEvolution) nav.push({ id: "evolution", label: "Evolution" });
   if (fightChildren.length > 0)
-    nav.push({ id: "matchups", label: isSoccer ? "Matches" : "Matchups" });
+    nav.push({ id: "matchups", label: event.domain === "awards" ? "Categories" : isSoccer ? "Matches" : "Matchups" });
   if (hasPropsScript) nav.push({ id: "props-script", label: "Props" });
-  else if (propChildren.length > 0) nav.push({ id: "props", label: "Props" });
+  else if (propChildren.length > 0) nav.push({ id: "props", label: event.domain === "awards" ? "Nominations and more" : "Props" });
   // L2-148: golf's per-round Top-N props surface in a secondary EventProps section
   // ALONGSIDE the props-script — give it its own nav anchor when both render.
   //

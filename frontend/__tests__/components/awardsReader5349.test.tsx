@@ -31,6 +31,8 @@ test("actual page keeps the primary category visible and announces only its own 
   expect(html).not.toContain("Final"); expect(html).not.toContain("Completed (");
   expect(html).toContain("Probability history for Best Picture");
   expect(html).not.toContain("Two-sided");
+  expect(html).not.toContain('href="#head-to-head"');
+  expect(html).toMatch(/<a[^>]*href="#matchups"[^>]*>Categories<\/a>/);
 });
 test("closed-ungraded card never prints its favorite or standalone winner as a result", () => {
   const html = renderToStaticMarkup(<AwardsCategoryCard child={card({ settled: true, graded_winner: "Favorite" })} />);
