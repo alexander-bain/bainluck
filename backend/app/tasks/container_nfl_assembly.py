@@ -468,7 +468,10 @@ HOLDERS_SQL = (
 )
 
 #: The games stored in these weeks, with the contest id that names each — the
-#: read a pass makes to find games whose new week is outside its window.
+#: read a pass makes to find games whose new week is outside its window. A week
+#: holding only a question on a game (a person withdrew the game itself there)
+#: names that game by the question's CURRENT event, so the question leaves with
+#: the move even when the game's new week is outside the window (CERT-4089).
 STORED_GAMES_SQL = (
     "SELECT c.slug, ev.statpal_fixture_id "
     "FROM containers c "
@@ -476,7 +479,15 @@ STORED_GAMES_SQL = (
     "     AND ee.kind = 'contains' AND ee.child_type = 'event' "
     "JOIN events ev ON ev.id = ee.child_id "
     "WHERE c.slug = ANY(:slugs) AND ev.statpal_fixture_id IS NOT NULL "
-    "ORDER BY c.slug, ev.statpal_fixture_id"
+    "UNION "
+    "SELECT c.slug, ev.statpal_fixture_id "
+    "FROM containers c "
+    "JOIN event_edges ee ON ee.parent_type = 'container' AND ee.parent_id = c.id "
+    "     AND ee.kind = 'contains' AND ee.child_type = 'market' "
+    "JOIN futures_markets fm ON fm.id = ee.child_id "
+    "JOIN events ev ON ev.id = fm.event_id "
+    "WHERE c.slug = ANY(:slugs) AND ev.statpal_fixture_id IS NOT NULL "
+    "ORDER BY 1, 2"
 )
 
 PRIOR_DECISIONS_SQL = (

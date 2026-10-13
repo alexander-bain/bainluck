@@ -844,6 +844,42 @@ async def test_a_game_moved_to_a_week_outside_the_window_still_moves_in_one_run(
     assert state == "unpublished"  # not for readers until its own window proves it
 
 
+@pytest.mark.asyncio
+async def test_a_question_left_after_its_game_was_withdrawn_moves_outside_the_window(world):
+    """CERT-4089: a person withdrew s703 from Week 7 but not its question; the
+    authority then moves and re-dates s703 to Week 12, outside the window. Week 7
+    holds no edge to the game — only the question names it, by its CURRENT event
+    — and the question still leaves Week 7 and arrives in Week 12 in one pass,
+    while the person's withdrawal stays exactly where it was."""
+    Session, sport_id = world
+    events, markets = await _published_weeks_7_and_8(Session, sport_id)
+    async with Session() as session:
+        await _withdraw(session, WEEK_7, events["s703"])
+        await session.commit()
+    before = await _members(Session, WEEK_7)
+    assert ("event", events["s703"]) not in before
+    assert ("market", markets["s703"]) in before
+    ledger = await _ledger(Session, WEEK_7)
+
+    moved = [f for f in _schedule() if f.fixture_id != "s703"] + [
+        _fixture("s703", "Eagles", "Giants", _at(11, 23, 0, 15), W12)
+    ]
+    runs = await _pass(Session, moved)
+
+    assert list(runs)[0] == WEEK_12
+    run = runs[WEEK_12]
+    assert (run["terminal"], run["reason"]) == ("partial", "relocation_only")
+    assert run["relocation"]["only_contests"] == ["s703"]
+    assert run["relocation"]["moved"][0]["from_slugs"] == [WEEK_7]
+    assert run["relocation"]["moved"][0]["markets_removed"] == 1
+    assert ("market", markets["s703"]) not in await _members(Session, WEEK_7)
+    assert ("event", events["s703"]) not in await _members(Session, WEEK_7)
+    assert await _members(Session, WEEK_12) == _game(events, markets, "s703")
+    _, state, _ = await _hub(Session, WEEK_12)
+    assert state == "unpublished"
+    assert await _ledger(Session, WEEK_7) == ledger
+
+
 # --- P9: a held-out edition, no source edit --------------------------------------
 
 
