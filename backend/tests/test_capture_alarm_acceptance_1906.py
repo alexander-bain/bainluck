@@ -13,10 +13,19 @@ alarms. Two gaps survived it, and this file pins both:
    2026-09-14, 43 moneylines / 56 games). Each fixture is now placed by its OWN
    date with the same authority (``season_windows``), numerator and denominator
    through one predicate.
+3. The issue's own Ligue 1 case had no authority at all: Ligue 1 has no annual
+   band, so its August 6, 2026 fixture graded as in season. The league's
+   published 2026/27 calendar (opener August 21) and LFP's preseason list (July
+   25 – August 16, Monaco–Getafe on August 6) now place exactly the dates they
+   cover; every other date — another year included — fails open.
+
+The verdicts: REAL files; EXPLAINED is a shortfall a season calendar proves is an
+artifact (the issue's word, and the grid sentinel's); WATCH is one too thin to
+file on. Only REAL files (``capture_filing_split``).
 
 Every clock is pinned (gotcha #44). Both directions are asserted (gotcha #43):
 the artifact is downgraded AND a genuine in-season starvation still files. A
-downgrade is never a disappearance (gotcha #53): WATCH surfaces with its reason.
+downgrade is never a disappearance (gotcha #53): it surfaces with its reason.
 """
 
 from __future__ import annotations
@@ -42,6 +51,8 @@ NOV_15 = datetime(2026, 11, 15, tzinfo=UTC)   # NFL regular season, no preseason
 JAN_15 = datetime(2026, 1, 15, tzinfo=UTC)    # NHL regular season
 
 NFL = "americanfootball_nfl"
+L1 = "soccer_france_ligue_one"
+WNBA = "basketball_wnba"
 ML = ("Buffalo Bills at Miami Dolphins", "KXNFLGAME-26SEP13BUFMIA")
 SPREAD = ("Buffalo Bills at Miami Dolphins: Spread", "KXNFLSPREAD-26SEP13BUFMIA-BUF3")
 OTHER = ("Buffalo Bills at Miami Dolphins: Coin toss heads?", "KXNFLCOIN-26SEP13BUFMIA")
@@ -132,7 +143,20 @@ def test_the_game_floor_still_binds_the_leak():
         ("icehockey_nhl", date(2026, 10, 10), True),
         ("soccer_epl", date(2026, 7, 27), True),   # no band: never excluded
         ("soccer_epl", None, True),
-        ("soccer_france_ligue_one", date(2026, 8, 6), True),
+        # Ligue 1: only the published 2026/27 dates place a fixture (#1906).
+        (L1, date(2026, 8, 6), False),             # Monaco–Getafe, a listed friendly
+        (L1, date(2026, 7, 25), False),            # first listed preseason day
+        (L1, date(2026, 8, 16), False),            # last listed preseason day
+        (L1, date(2026, 8, 20), False),            # before the published opener
+        (L1, date(2026, 8, 21), True),             # the published opener
+        (L1, date(2026, 12, 23), True),            # winter break has no published days
+        (L1, date(2027, 5, 29), True),             # the published final day
+        (L1, date(2027, 5, 30), True),             # past the calendar: not established
+        (L1, date(2026, 7, 24), True),             # before the listed preseason: same
+        (L1, date(2027, 8, 6), True),              # 2027 is not 2026: no extrapolation
+        (L1, date(2025, 8, 6), True),              # nor backwards
+        (L1, None, True),                          # undated: not established
+        (WNBA, date(2026, 8, 6), True),            # no band, no calendar
     ],
 )
 def test_fixture_in_season(sport, day, expected):
@@ -173,7 +197,7 @@ def test_the_september_sweep_with_a_preseason_tail_is_not_real():
     """#1897's shape: 56 games, 43 moneylines, on 2026-09-14. 40 August preseason
     fixtures carry 27 moneylines; 16 Week-1 fixtures carry one each. The whole
     window reads 0.77/game; the regular-season slice reads 1.00. It SURFACES as
-    WATCH with the split named — and is not REAL."""
+    EXPLAINED with the split named — and is not REAL."""
     pre = [(d, [ML] if i < 27 else [SPREAD]) for i, d in enumerate(_days(date(2026, 8, 15), 40))]
     reg = [(d, [ML, SPREAD]) for d in _days(date(2026, 9, 10), 16)]
     games, by_sc, season = _window(pre + reg)
@@ -181,7 +205,7 @@ def test_the_september_sweep_with_a_preseason_tail_is_not_real():
 
     f = _of(capture_findings(games, by_sc, now=SEP_14, season=season), "starved_class")
     assert f is not None, "the whole-window breach must still surface"
-    assert f.severity == "WATCH"
+    assert f.severity == "EXPLAINED"
     assert "16 of the window's 56 games" in f.detail
     assert "40 fell outside NFL's regular season/postseason" in f.detail
 
@@ -232,11 +256,11 @@ def test_an_in_season_slice_under_the_game_floor_watches():
     assert "16 games is under the" in f.detail
 
 
-def test_a_window_with_no_in_season_fixture_watches_and_says_so():
+def test_a_window_with_no_in_season_fixture_is_explained_and_says_so():
     """Sweep on 9/14 of an all-preseason window (e.g. Week 1 not yet ingested)."""
     games, by_sc, season = _window([(d, [SPREAD]) for d in _days(date(2026, 8, 15), 40)])
     f = _of(capture_findings(games, by_sc, now=SEP_14, season=season), "starved_class")
-    assert f is not None and f.severity == "WATCH"
+    assert f is not None and f.severity == "EXPLAINED"
     assert "no fixture in the window is in the regular season/postseason" in f.detail
 
 
@@ -251,14 +275,14 @@ def test_a_clean_all_regular_season_window_is_unchanged():
     assert "fell outside" not in f.detail
 
 
-def test_a_leak_carried_by_preseason_fixtures_watches():
+def test_a_leak_carried_by_preseason_fixtures_is_explained():
     pre = [(d, [ML, OTHER]) for d in _days(date(2026, 8, 15), 30)]
     reg = [(d, [ML, SPREAD]) for d in _days(date(2026, 9, 10), 30)]
     games, by_sc, season = _window(pre + reg)
     assert _of(capture_findings(games, by_sc, now=SEP_30), "classifier_leak").severity == "REAL"
 
     leak = _of(capture_findings(games, by_sc, now=SEP_30, season=season), "classifier_leak")
-    assert leak is not None and leak.severity == "WATCH"
+    assert leak is not None and leak.severity == "EXPLAINED"
     assert "the in-season slice does not breach" in leak.detail
 
 
@@ -290,6 +314,145 @@ def test_an_unbanded_league_ignores_the_cohort():
 
 
 # ---------------------------------------------------------------------------
+# gap 3 — Ligue 1, placed by its published 2026/27 calendar; WNBA as the control
+# ---------------------------------------------------------------------------
+
+L1_ML = ("AS Monaco vs Getafe", "KXLIGUE1GAME-26AUG06MONGET")
+L1_TOTAL = ("AS Monaco vs Getafe: Total goals", "KXLIGUE1TOTAL-26AUG06MONGET-2")
+WNBA_ML = ("Las Vegas Aces at Seattle Storm", "KXWNBAGAME-26AUG06LVSEA")
+WNBA_SPREAD = ("Las Vegas Aces at Seattle Storm: Spread", "KXWNBASPREAD-26AUG06LVSEA-3")
+SIDES = {L1: ("AS Monaco", "Getafe"), WNBA: ("Las Vegas Aces", "Seattle Storm"),
+         NFL: ("Buffalo Bills", "Miami Dolphins")}
+SEP_30_27 = datetime(2027, 9, 30, tzinfo=UTC)
+
+
+def _sweep(fixtures):
+    """fixtures: list of (sport, day, [market (name, ext) ...]). The whole-window
+    games, class counts and season cohort, built as ``_window`` builds them but
+    across several sports in ONE sweep."""
+    day_counts: dict[tuple[str, date], int] = {}
+    market_rows = []
+    for sport, day, markets in fixtures:
+        day_counts[(sport, day)] = day_counts.get((sport, day), 0) + 1
+        for name, ext in markets:
+            market_rows.append((sport, name, ext, 2, 0, 0, 0, 0, *SIDES[sport], day))
+    games: dict[str, int] = {}
+    for (sport, _d), n in day_counts.items():
+        games[sport] = games.get(sport, 0) + n
+    by_sc, _ = cc.tally_market_rows(market_rows)
+    day_rows = [(sport, d, n) for (sport, d), n in day_counts.items()]
+    return games, by_sc, season_cohort(day_rows, market_rows)
+
+
+def _starved_of(findings, sport):
+    hits = [f for f in findings if f.kind == "starved_class" and f.cohort == f"{sport}/moneyline"]
+    assert len(hits) <= 1
+    return hits[0] if hits else None
+
+
+def test_the_issues_ligue1_cohort_is_explained_by_its_published_calendar():
+    """The issue's #1900 shape: an August 17 sweep whose Ligue 1 games are the
+    July 27 and August 6 friendlies, neither carrying a winner market. The
+    calendar places both outside the season, so it is EXPLAINED — named, counted,
+    never filed — rather than graded against the regular-season expectation."""
+    games, by_sc, season = _sweep([(L1, date(2026, 7, 27), [L1_TOTAL]),
+                                   (L1, date(2026, 8, 6), [L1_TOTAL])])
+    assert season.excluded_games == {L1: 2} and L1 not in season.games_by_sport
+    f = _starved_of(capture_findings(games, by_sc, now=AUG_17, season=season), L1)
+    assert f is not None, "the shortfall must still surface"
+    assert f.severity == "EXPLAINED"
+    assert "no fixture in the window is in the regular season/postseason" in f.detail
+    assert "2 fell outside LIGUE1's regular season/postseason" in f.detail
+    assert "per its published season calendar" in f.detail
+
+
+def test_a_full_ligue1_preseason_is_explained_by_the_calendar_not_the_floor():
+    """40 friendlies across the listed July 25 – August 16 preseason, swept on
+    August 17: well over every floor, so EXPLAINED is the calendar's verdict.
+    The control — the same input without the cohort — files REAL, so the
+    downgrade is the calendar's doing and nothing else's."""
+    fixtures = [(L1, d, [L1_TOTAL]) for d in _days(date(2026, 7, 25), 40)]
+    assert max(d for _s, d, _m in fixtures) <= date(2026, 8, 16)
+    games, by_sc, season = _sweep(fixtures)
+    f = _starved_of(capture_findings(games, by_sc, now=AUG_17, season=season), L1)
+    assert f is not None and f.severity == "EXPLAINED"
+    control = _starved_of(capture_findings(games, by_sc, now=AUG_17), L1)
+    assert control is not None and control.severity == "REAL"
+
+
+def test_a_starved_ligue1_regular_season_after_august_21_files_real():
+    """The genuine in-season control on a MIXED Ligue 1 window: 30 friendlies
+    (August 6–16, two moneylines each, which would lift the whole window over
+    the floor) plus 40 fixtures from the August 21 opener carrying 15 moneylines.
+    The slice is 15/40 — REAL — and the friendlies are named as excluded."""
+    pre = [(L1, d, [L1_ML, L1_ML]) for d in _days(date(2026, 8, 6), 22)]
+    pre += [(L1, date(2026, 8, 16), [L1_ML, L1_ML]) for _ in range(8)]
+    reg = [(L1, d, [L1_ML] if i < 15 else [L1_TOTAL])
+           for i, d in enumerate(_days(date(2026, 8, 21), 40))]
+    games, by_sc, season = _sweep(pre + reg)
+    assert games[L1] == 70 and by_sc[L1]["moneyline"].markets == 75
+    assert season.games_by_sport == {L1: 40} and season.excluded_games == {L1: 30}
+    assert _starved_of(capture_findings(games, by_sc, now=SEP_30), L1) is None
+
+    f = _starved_of(capture_findings(games, by_sc, now=SEP_30, season=season), L1)
+    assert f is not None and f.severity == "REAL"
+    assert "15 moneyline markets across 40 games" in f.detail
+    assert "30 fell outside LIGUE1's" in f.detail
+
+
+def test_the_ligue1_calendar_is_not_extrapolated_to_another_year():
+    """The same August-friendlies shape one year later: 2027 has no published
+    calendar in the table, so its dates are not established and the window is
+    graded whole, exactly as before #1906 — REAL, not EXPLAINED."""
+    fixtures = [(L1, d, [L1_TOTAL]) for d in _days(date(2027, 7, 25), 40)]
+    games, by_sc, season = _sweep(fixtures)
+    assert season.games_by_sport == {L1: 40} and not season.excluded_games
+    f = _starved_of(capture_findings(games, by_sc, now=datetime(2027, 8, 17, tzinfo=UTC),
+                                     season=season), L1)
+    assert f is not None and f.severity == "REAL"
+    assert "fell outside" not in f.detail
+
+
+def test_wnba_in_august_stays_real_beside_an_explained_ligue1_in_one_sweep():
+    """The issue's control: 73 WNBA games July 19 – August 16, mid-season, with a
+    starved winner market (50 of 73). Same August 17 sweep, same cohort, as the
+    Ligue 1 friendlies — the one survives REAL, the other is EXPLAINED."""
+    days = [date(2026, 7, 19) + timedelta(days=i // 3) for i in range(73)]  # 3 a day
+    wnba = [(WNBA, d, [WNBA_ML] if i < 50 else [WNBA_SPREAD]) for i, d in enumerate(days)]
+    assert max(d for _s, d, _m in wnba) <= date(2026, 8, 16)
+    l1 = [(L1, date(2026, 7, 27), [L1_TOTAL]), (L1, date(2026, 8, 6), [L1_TOTAL])]
+    games, by_sc, season = _sweep(wnba + l1)
+    assert WNBA not in season.games_by_sport and WNBA not in season.excluded_games
+
+    found = capture_findings(games, by_sc, now=AUG_17, season=season)
+    w = _starved_of(found, WNBA)
+    assert w is not None and w.severity == "REAL"
+    assert "50 moneyline markets across 73 games" in w.detail
+    assert _starved_of(found, L1).severity == "EXPLAINED"
+
+    import importlib
+
+    cs = importlib.import_module("app.tasks.calibration_sentinel")
+    filed, counts = cs.capture_filing_split(found)
+    assert [f.cohort for f in filed] == [f"{WNBA}/moneyline"]
+    assert counts["real_count"] == 1 and counts["explained_count"] >= 1
+
+
+def test_only_real_files_and_every_verdict_is_counted():
+    """The payload contract (#1906): REAL files; EXPLAINED and WATCH surface in
+    ``findings`` and are counted, and the three counts partition the list."""
+    import importlib
+
+    cs = importlib.import_module("app.tasks.calibration_sentinel")
+    mk = [cc.CaptureFinding(kind="starved_class", cohort=c, detail="d", severity=sev)
+          for c, sev in (("a", "REAL"), ("b", "EXPLAINED"), ("c", "WATCH"),
+                         ("d", "EXPLAINED"), ("e", "REAL"))]
+    filed, counts = cs.capture_filing_split(mk)
+    assert [f.cohort for f in filed] == ["a", "e"]
+    assert counts == {"real_count": 2, "explained_count": 2, "watch_count": 1}
+
+
+# ---------------------------------------------------------------------------
 # pinned multi-month guard: the same daily slate, swept on the 15th of each month
 # ---------------------------------------------------------------------------
 
@@ -300,8 +463,10 @@ def test_an_unbanded_league_ignores_the_cohort():
 #:  Mar–Aug — offseason sweep, and no in-season fixture in the window.
 #:  Sep — window 8/17..9/15: 12 band days (9/4..9/15) = 36 games >= 30.
 #:  Oct–Dec — regular season throughout.
-NFL_MONTHLY = {1: "REAL", 2: "WATCH", 3: "WATCH", 4: "WATCH", 5: "WATCH", 6: "WATCH",
-               7: "WATCH", 8: "WATCH", 9: "REAL", 10: "REAL", 11: "REAL", 12: "REAL"}
+#: Every non-REAL month is a calendar verdict, so EXPLAINED — never WATCH.
+NFL_MONTHLY = {1: "REAL", 2: "EXPLAINED", 3: "EXPLAINED", 4: "EXPLAINED",
+               5: "EXPLAINED", 6: "EXPLAINED", 7: "EXPLAINED", 8: "EXPLAINED",
+               9: "REAL", 10: "REAL", 11: "REAL", 12: "REAL"}
 
 
 def test_the_season_split_verdict_across_twelve_pinned_months():
@@ -390,7 +555,7 @@ class _CensusSession:
 @pytest.mark.asyncio
 async def test_the_sentinel_grades_the_in_season_slice():
     """The real `_mine_capture_cohorts`, fed #1897's September shape. Without
-    the wiring this files REAL (see the control above); with it, WATCH."""
+    the wiring this files REAL (see the control above); with it, EXPLAINED."""
     import importlib
 
     # `app.tasks` re-exports a task object under the module's name.
@@ -422,6 +587,6 @@ async def test_the_sentinel_grades_the_in_season_slice():
         mp.undo()
 
     starved = [f for f in out["_findings_objs"] if f.kind == "starved_class"]
-    assert len(starved) == 1 and starved[0].severity == "WATCH"
+    assert len(starved) == 1 and starved[0].severity == "EXPLAINED"
     assert out["in_season_games_by_sport"] == {NFL: 16}
     assert out["games_by_sport"] == {NFL: 56}

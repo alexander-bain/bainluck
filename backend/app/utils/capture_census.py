@@ -81,6 +81,16 @@ _SEASON_LEAGUE_SLUG = {
     "americanfootball_nfl": "nfl",
 }
 
+# odds-api sport key -> the league slug whose YEAR-SPECIFIC published calendar
+# (``season_windows.dated_phase``) places a fixture (#1906). These leagues have no
+# annual band: only dates a published season calendar covers are placed, and every
+# other date fails open exactly as an unbanded league does.
+_DATED_LEAGUE_SLUG = {
+    "soccer_france_ligue_one": "ligue1",
+}
+# Leagues whose window is split into an in-season slice (``season_cohort``).
+_SEASON_SPLIT_SPORTS = frozenset(_SEASON_LEAGUE_SLUG) | frozenset(_DATED_LEAGUE_SLUG)
+
 
 def _capture_severity(
     sport: str, games: int, now=None, *, markets: Optional[int] = None
@@ -110,8 +120,8 @@ def _capture_severity(
         from app.utils.season_windows import is_quiet, league_phase
 
         if is_quiet(slug, now):
-            return "WATCH", (
-                f" WATCH not REAL: {slug.upper()} is currently "
+            return "EXPLAINED", (
+                f" EXPLAINED, not REAL: {slug.upper()} is currently "
                 f"{league_phase(slug, now)} — a thin or absent slate is expected, "
                 f"and preseason/exhibition fixtures do not carry the same market "
                 f"coverage as the regular season."
@@ -134,10 +144,20 @@ def fixture_in_season(sport: str, day) -> bool:
     band is never excluded (every fixture is in season). ``day`` may be a date or
     a datetime; month/day is all the bands read. A fixture with NO date in a
     banded league cannot be placed, so it is out — it can never make a ratio REAL.
+
+    A league with a dated calendar instead (``_DATED_LEAGUE_SLUG``: Ligue 1's
+    published 2026/27 dates) is out only on a date that calendar names as outside
+    its season — August 6, 2026 is a listed preseason friendly. A date it does not
+    cover, or no date at all, is not established, so it stays in (fail open).
     """
     slug = _SEASON_LEAGUE_SLUG.get(sport)
     if not slug:
-        return True
+        dated = _DATED_LEAGUE_SLUG.get(sport)
+        if not dated:
+            return True
+        from app.utils.season_windows import dated_phase
+
+        return dated_phase(dated, day) in (None, "in_season", "postseason")
     if day is None:
         return False
     from app.utils.season_windows import is_active
@@ -335,12 +355,12 @@ def season_cohort(fixture_day_rows, market_rows) -> SeasonCohort:
     the one predicate, ``fixture_in_season``, on the one column."""
     cohort = SeasonCohort()
     for sport, day, n in fixture_day_rows:
-        if sport not in _SEASON_LEAGUE_SLUG:
+        if sport not in _SEASON_SPLIT_SPORTS:
             continue
         n = int(n or 0)
         bucket = cohort.games_by_sport if fixture_in_season(sport, day) else cohort.excluded_games
         bucket[sport] = bucket.get(sport, 0) + n
-    banded = [r for r in market_rows if r[0] in _SEASON_LEAGUE_SLUG]
+    banded = [r for r in market_rows if r[0] in _SEASON_SPLIT_SPORTS]
     cohort.by_sport_class, _ = tally_market_rows(banded, in_season_only=True)
     return cohort
 
@@ -364,7 +384,10 @@ class CaptureFinding:
     kind: str            # starved_class | classifier_leak | passrate_outlier | drift
     cohort: str          # human cohort label, e.g. "baseball_mlb/moneyline"
     detail: str
-    severity: str = "REAL"   # REAL (files) | WATCH (surfaces, no file)
+    # REAL (files) | EXPLAINED (a season calendar proves it an artifact: surfaces,
+    # never files) | WATCH (too thin or no settled expectation: surfaces, no file).
+    # The sentinel files `== "REAL"` only, so neither downgrade can file (#1906).
+    severity: str = "REAL"
     fingerprint: str = ""    # stable dedup key for the filing rail
 
     def as_fingerprint(self) -> str:
@@ -394,9 +417,10 @@ def capture_findings(
     rather than by removing the clock. Pass a real date; assert a real phase.
 
     ``season`` (#1906) is the window's in-season slice (``season_cohort``). When
-    given, a banded league's REAL verdict is computed on its in-season fixtures
-    only; a shortfall that lives in its preseason fixtures still SURFACES, as
-    WATCH, with the split named. Without it the whole window is graded, as before.
+    given, a banded or dated league's REAL verdict is computed on its in-season
+    fixtures only; a shortfall that lives in its preseason fixtures still SURFACES,
+    as EXPLAINED, with the split named. Without it the whole window is graded, as
+    before.
     """
     findings: list[CaptureFinding] = []
 
@@ -407,7 +431,7 @@ def capture_findings(
         total_markets = sum(mc.markets for mc in classes.values()) or 1
         ml = classes.get("moneyline", MassCounts()).markets
         other = classes.get("other", MassCounts()).markets
-        if season is not None and sport in _SEASON_LEAGUE_SLUG:
+        if season is not None and sport in _SEASON_SPLIT_SPORTS:
             findings.extend(_season_split_findings(
                 sport, games, ml, other, total_markets, season, now,
             ))
@@ -454,14 +478,14 @@ def _leak_finding(sport, other, total_markets, sev, suffix) -> CaptureFinding:
 def _season_split_findings(
     sport, games, ml, other, total_markets, season: SeasonCohort, now
 ) -> list[CaptureFinding]:
-    """starved_class / classifier_leak for a banded league, graded on its
-    in-season fixtures (#1906). Three outcomes per alarm:
+    """starved_class / classifier_leak for a banded or dated league, graded on
+    its in-season fixtures (#1906). Three outcomes per alarm:
 
     * the in-season slice breaches — the finding carries the slice's numbers and
       is REAL subject to every ``_capture_severity`` gate on the SLICE's counts;
-    * only the whole window breaches — the shortfall sits in fixtures outside
-      the regular season/postseason, so it SURFACES as WATCH with the split
-      named (never dropped: gotcha #53);
+    * only the whole window breaches — the shortfall sits in fixtures the season
+      calendar places outside the regular season/postseason, so it SURFACES as
+      EXPLAINED with the split named (never dropped: gotcha #53, never filed);
     * neither — nothing.
     """
     out: list[CaptureFinding] = []
@@ -471,11 +495,14 @@ def _season_split_findings(
     s_ml = s_classes.get("moneyline", MassCounts()).markets
     s_other = s_classes.get("other", MassCounts()).markets
     excluded = season.excluded_games.get(sport, 0)
-    slug = _SEASON_LEAGUE_SLUG[sport].upper()
+    if sport in _SEASON_LEAGUE_SLUG:
+        slug, authority = _SEASON_LEAGUE_SLUG[sport].upper(), "per season_windows"
+    else:
+        slug, authority = _DATED_LEAGUE_SLUG[sport].upper(), "per its published season calendar"
     split = (f" In-season slice: {s_games} of the window's {games} games; "
              f"{excluded} fell outside {slug}'s regular season/postseason "
-             f"(preseason/exhibition dates per season_windows) and are not graded.")
-    outside = (" WATCH not REAL: the breach is carried by fixtures outside the "
+             f"(preseason/exhibition dates {authority}) and are not graded.")
+    outside = (" EXPLAINED, not REAL: the breach is carried by fixtures outside the "
                "regular season/postseason, where the winner-market expectation "
                "does not hold; " + (
                    "the in-season slice does not breach." if s_games else
@@ -485,13 +512,13 @@ def _season_split_findings(
         sev, suffix = _capture_severity(sport, s_games, now)
         out.append(_starved_finding(sport, s_ml, s_games, sev, suffix + (split if excluded else "")))
     elif ml / games < MONEYLINE_PER_GAME_FLOOR:
-        out.append(_starved_finding(sport, ml, games, "WATCH", outside + split))
+        out.append(_starved_finding(sport, ml, games, "EXPLAINED", outside + split))
 
     if s_total and s_other / s_total > OTHER_SHARE_CEILING:
         sev, suffix = _capture_severity(sport, s_games, now, markets=s_total)
         out.append(_leak_finding(sport, s_other, s_total, sev, suffix + (split if excluded else "")))
     elif other / total_markets > OTHER_SHARE_CEILING:
-        out.append(_leak_finding(sport, other, total_markets, "WATCH", outside + split))
+        out.append(_leak_finding(sport, other, total_markets, "EXPLAINED", outside + split))
     return out
 
 

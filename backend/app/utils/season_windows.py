@@ -21,7 +21,7 @@ Phases:
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 
 # A window is (start_month, start_day) .. (end_month, end_day), inclusive, and may
 # wrap the new year (start after end, e.g. NBA regular season Oct→Apr).
@@ -61,6 +61,42 @@ _LEAGUE_BANDS: dict[str, list[tuple[str, _MD, _MD]]] = {
         ("in_season", (9, 4), (1, 8)),        # regular season (wraps)
     ],
 }
+
+# Year-specific, DATED phases for leagues with no annual band above (#1906). A
+# span is (first_day, last_day, phase), inclusive, UTC dates. Each span is one
+# season's published calendar and nothing more: a date no span covers is NOT
+# established, and `dated_phase` returns None for it — never extrapolate a span
+# to another year or another competition. Keyed by league slug.
+_DATED_PHASES: dict[str, list[tuple[date, date, str]]] = {
+    "ligue1": [
+        # LFP lists July 25 – August 16, 2026 as Ligue 1 clubs' preseason
+        # friendlies (AS Monaco–Getafe on August 6 among them), and the league's
+        # own 2026/27 calendar opens on August 21, so no league fixture falls in
+        # August 17–20 either.
+        # https://www.lfp.fr/article/ligue-1-prolonge-l-ete-du-football-avec-une-couverture-inedite-de-plus-de-30-matchs-de-pre-saison-des-clubs-de-ligue-1-mc-donald-s
+        (date(2026, 7, 25), date(2026, 8, 20), "preseason"),
+        # 2026/27 runs August 21, 2026 – May 29, 2027. The December–January
+        # winter break has no published day boundaries, so it is not carved out:
+        # a fixture inside it stays in season (the direction that never silences).
+        # https://ligue1.com/en/articles/l1_article_5292-the-2026-27-ligue-1-mcdonald-s-calendar-is-released
+        (date(2026, 8, 21), date(2027, 5, 29), "in_season"),
+    ],
+}
+
+
+def dated_phase(league: str, day: date | datetime | None) -> str | None:
+    """The published phase of a fixture on ``day`` in ``league``, or None when
+    no dated calendar establishes it (unknown league, undated fixture, or a
+    year the table does not cover). Callers treat None as "do not exclude"."""
+    spans = _DATED_PHASES.get((league or "").strip().lower())
+    if not spans or day is None:
+        return None
+    d = date(day.year, day.month, day.day)
+    for first, last, phase in spans:
+        if first <= d <= last:
+            return phase
+    return None
+
 
 # Golf (and other continuous individual tours) have no clean season window; the
 # grid sentinel judges golf illiquidity structurally instead of by the calendar.

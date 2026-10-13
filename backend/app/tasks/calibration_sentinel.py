@@ -1441,6 +1441,23 @@ def build_capture_issue_body(finding, fp: str) -> str:
     ])
 
 
+def capture_filing_split(findings) -> tuple[list, dict[str, int]]:
+    """(the findings that FILE, the run payload's per-verdict counts).
+
+    Only REAL files. EXPLAINED (#1906) is a shortfall a season calendar proves
+    is an artifact — the grid sentinel's word for the same verdict — and WATCH is
+    one too thin, or without a settled expectation, to file on. Both stay in the
+    payload's ``findings`` with their reason in ``detail``; neither ever files.
+    """
+    real = [f for f in findings if f.severity == "REAL"]
+    explained = sum(1 for f in findings if f.severity == "EXPLAINED")
+    return real, {
+        "real_count": len(real),
+        "explained_count": explained,
+        "watch_count": len(findings) - len(real) - explained,
+    }
+
+
 def file_capture_finding(finding) -> dict:
     """File OR update one capture finding, reusing the sentinel dedup path."""
     from app.tasks.bug_report_github import (
@@ -1519,9 +1536,9 @@ async def _mine_capture_cohorts(session, prev_baseline: dict | None) -> dict:
     games = {r[0]: r[1] for r in games_rows}
     market_rows = (await session.execute(text(cc.market_rows_sql(window)))).all()
     source_rows = (await session.execute(text(cc.source_split_sql(window)))).all()
-    # #1906: per-fixture days, so a banded league's alarm grades only the window
-    # fixtures played in its regular season/postseason (a September NFL window
-    # still holds August preseason games).
+    # #1906: per-fixture days, so a banded or dated league's alarm grades only the
+    # window fixtures played in its regular season/postseason (a September NFL
+    # window still holds August preseason games; Ligue 1's August 6 is a friendly).
     day_rows = (await session.execute(text(cc.fixture_days_sql(window)))).all()
 
     by_sc, other_names = cc.tally_market_rows(market_rows)
@@ -1794,12 +1811,10 @@ async def _run_calibration_sentinel(
             action = file_cohort_issue(c, c.get("explained_by"), c.get("coverage", 0.0))
             stats["filed"].append(action)
 
-    # --- Capture-axis filing: REAL findings file; WATCH only surfaces ---
+    # --- Capture-axis filing: REAL findings file; EXPLAINED and WATCH only surface ---
     capture_stats = stats.get("capture", {})
-    capture_real = [f for f in capture_findings_objs if f.severity == "REAL"]
-    capture_watch = [f for f in capture_findings_objs if f.severity != "REAL"]
-    capture_stats["real_count"] = len(capture_real)
-    capture_stats["watch_count"] = len(capture_watch)
+    capture_real, counts = capture_filing_split(capture_findings_objs)
+    capture_stats.update(counts)
     capture_stats["filed"] = []
     if file_issues:
         for f in capture_real[:SENTINEL_CAPTURE_MAX_ISSUES]:

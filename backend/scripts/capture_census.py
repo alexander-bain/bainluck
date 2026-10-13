@@ -70,7 +70,7 @@ def phase_a(cur, window):
     if not findings:
         print("  (none — every sport lands sane)")
     for f in findings:
-        print(f"  [{f.severity:5s}] {f.kind:16s} {f.cohort}")
+        print(f"  [{f.severity:9s}] {f.kind:16s} {f.cohort}")
         print(f"          {f.detail}")
 
     print("\n" + "=" * 80)
