@@ -32,7 +32,7 @@ final class MountedGameSeriesQuestionFollowsEvidence10238Tests: XCTestCase {
         "08-question-restored", "09-game-matrix-absent", "10-series-matrix-absent",
         "11-both-restored", "12-game-final-series-open", "13-series-absent-game-final"
     ]
-    private static let removedSentence = "This question is unavailable"
+    private static let removedSentence = "This market is unavailable"
 
     private struct Subject {
         let sheetTitle: String

@@ -125,6 +125,15 @@ struct EventDetailView: View {
     }
     private var isIPad: Bool { sizeClass == .regular }
     private var logoSize: CGFloat { isIPad ? 80 : 56 }
+
+    /// #9483 — the crest once the hero restacks: the probabilities lead and the
+    /// teams follow as compact identity, so a crest no longer takes a row of
+    /// its own above them. Text is never shrunk to buy the room.
+    static let stackedHeroLogoSize: CGFloat = 32
+
+    static func heroLogoSize(stacked: Bool, regular: CGFloat) -> CGFloat {
+        stacked ? min(regular, stackedHeroLogoSize) : regular
+    }
     private var scoreFontSize: CGFloat { isIPad ? 52 : 40 }
     private var contentMaxWidth: CGFloat {
         #if os(macOS)
@@ -591,6 +600,11 @@ struct EventDetailView: View {
                             // stat, probability or observation into the sheet.
                             props: vm.gameMarkets?.duringPlayerProps
                                 ?? DuringPlayerProps(contract: nil, stats: [], rows: [], coverage: nil),
+                            // #10486 — a sheet open at the final follows the
+                            // After question or says the game is over.
+                            afterProps: AfterPropsMatrixLayout.drawable(vm.gameMarkets?.afterPlayerProps),
+                            gameEnded: isFinished
+                                || AfterPropsMatrixLayout.drawable(vm.gameMarkets?.afterPlayerProps) != nil,
                             onDetailPresentationChanged: { presented in
                                 if presented {
                                     duringPageAnchor.capture(eventID: eventId)
@@ -714,6 +728,12 @@ struct EventDetailView: View {
                         matrix: vm.gameMarkets?.gameQuestionMatrix, scope: .game)
                     EventQuestionMatrixSection10238(
                         matrix: vm.relatedFutures?.seriesQuestionMatrix, scope: .series)
+                    // #9483 — the one route to every original market, including
+                    // the ones no card above can draw (web's All markets).
+                    if let gameMarkets = vm.gameMarkets {
+                        AllMarketsCatalogView9483(gameMarkets: gameMarkets, eventStatus: event.status)
+                            .equatable()
+                    }
                     // Graceful empty state: a market-less game (e.g. an aged-out
                     // closed game whose Kalshi/odds markets have expired) has no
                     // market sections to show. Say so rather than leaving a gap or
@@ -905,23 +925,17 @@ struct EventDetailView: View {
         return "\(names.home) \(delta > 0 ? "↑" : "↓")\(abs(delta)) \(abs(delta) == 1 ? "pt" : "pts")"
     }
 
-    /// One visible delivery status directly beside the probabilities, including
-    /// accepted receipts whose rounded percentage does not move. The exact device
-    /// receipt time is disclosed on tap only (#8320 v24: one compact line).
+    /// Routine delivery/confidence details open through the info control.
+    /// Waiting, fallback refresh and interruption stay visible, as does the
+    /// finite acknowledgement of an accepted receipt whose percent did not move.
     private func probabilityDetails(confidenceTier: String?) -> some View {
         Button { showProbabilityDetails.toggle() } label: {
-            VStack(spacing: 4) {
-                HStack(spacing: 6) {
-                    Text("Win Probability")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    SignalBarsView(tier: confidenceTier)
-                }
-                CompactEventPriceStatusView(status: vm.liveUpdateStatus,
-                    sequence: vm.priceActivity?.sequence ?? 0,
-                    receivedAt: vm.priceActivity?.receivedAt)
-            }
+            CompactEventPriceStatusView(status: vm.liveUpdateStatus,
+                sequence: vm.priceActivity?.sequence ?? 0,
+                receivedAt: vm.priceActivity?.receivedAt,
+                isDisclosure: true)
             .frame(maxWidth: Self.heroVerdictWidth(at: dynamicTypeSize), minHeight: 44)
+            .frame(minWidth: 44)
             .fixedSize(horizontal: false, vertical: true)
             .contentShape(Rectangle())
         }
@@ -1218,6 +1232,7 @@ struct EventDetailView: View {
             ? AnyLayout(EventHeroTeamLayout())
             : AnyLayout(HStackLayout(spacing: 0))
         let captionRidesPadding = stacked && !dynamicTypeSize.isAccessibilitySize
+        let heroLogo = Self.heroLogoSize(stacked: stacked, regular: logoSize)
         let metaLayout = stacked
             ? AnyLayout(VStackLayout(alignment: .leading, spacing: 4))
             : AnyLayout(HStackLayout(spacing: 8))
@@ -1296,8 +1311,9 @@ struct EventDetailView: View {
                 }
             }
 
-            // At larger text sizes keep the competitors together, then give
-            // the probability its own full-width row (#10796).
+            // At larger text sizes the probability takes its own full-width
+            // row FIRST and the competitors share the row beneath it (#10796;
+            // #9483 put the pair on top — `EventHeroTeamLayout`).
             heroLayout {
                 // Away team logo + score
                 VStack(spacing: 6) {
@@ -1305,7 +1321,7 @@ struct EventDetailView: View {
                         url: event.awayTeamData?.logoLarge ?? event.awayTeamData?.logoSmall,
                         teamName: event.awayTeam,
                         color: colors.away,
-                        size: logoSize,
+                        size: heroLogo,
                         // #4624 — the hero knew the sport and did not pass it,
                         // so a tennis player's circle took the compound-CLUB
                         // fork and drew their initials instead of their surname.
@@ -1578,6 +1594,33 @@ struct EventDetailView: View {
                                                              color: colors.home, isEnabled: priceStreamingEligible && vm.liveUpdateStatus != .interrupted)
                             }
                         }
+                        // #9483 — the pair's subject, now that "Win Probability"
+                        // sits behind the info button. Live, the pre-game
+                        // baseline rides under it (before the off the
+                        // since-open caption below already carries it).
+                        // The minute tick lets a quote age into "last
+                        // recorded" on a page left open with no new price.
+                        if EventHeadlinePhase9483.applies(
+                            status: event.status, isOpeningLine: shown.isOpeningLine) {
+                            TimelineView(.periodic(from: .now, by: 60)) { tick in
+                                if let phase = EventHeadlinePhase9483.resolve(
+                                    status: event.status, commenceTime: event.commenceTime?.asDate,
+                                    isOpeningLine: shown.isOpeningLine,
+                                    observedAt: event.heroProbabilityObservedAt?.asDate,
+                                    deliveryInterrupted: vm.liveUpdateStatus == .interrupted,
+                                    now: tick.date) {
+                                    EventHeadlinePhaseLabel9483(
+                                        phase: phase,
+                                        baseline: event.status == "live"
+                                            ? EventHeadlinePhase9483.baselineText(
+                                                prematch: event.prematchOdds, opening: event.openingOdds,
+                                                sport: event.sport,
+                                                awayTeam: event.awayTeam, homeTeam: event.homeTeam)
+                                            : nil,
+                                        maxWidth: Self.heroVerdictWidth(at: dynamicTypeSize))
+                                }
+                            }
+                        }
                         // Trend indicator (change since opening).
                         //
                         // #1830. The hero above reads "away – home" ("87 – 13"),
@@ -1749,7 +1792,7 @@ struct EventDetailView: View {
                         url: event.homeTeamData?.logoLarge ?? event.homeTeamData?.logoSmall,
                         teamName: event.homeTeam,
                         color: colors.home,
-                        size: logoSize,
+                        size: heroLogo,
                         sportKey: event.sport,
                         opponentName: event.awayTeam
                     )

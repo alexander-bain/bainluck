@@ -470,7 +470,9 @@ class TestTotalAxisEquivalentsAreOneOption:
         assert opt["contributor_outcome_ids"] == [240500334, 240500335]
         assert opt["label"] == "Over"
         assert opt["result"] == {"state": "lost", "evidence_kind": "verdict_is_provable"}
-        assert opt["published"]["value"] is None
+        # #10590: a graded fold publishes ``result`` — clients print Won/Lost only on it.
+        assert opt["published"] == {"value": None, "value_state": "result", "basis": "result",
+                                    "source": None, "observed_at": None}
         assert [(e["outcome_id"], e["leg_side"], e["raw_probability"]) for e in opt["source_evidence"]] == [
             (240500335, "under", 1.0), (240500334, "over", 0.0)]
         assert "Under" not in [o["label"] for o in q["options"]]
@@ -493,6 +495,19 @@ class TestTotalAxisEquivalentsAreOneOption:
         assert opt["published"]["value_state"] == "unblended_equivalents"
         assert opt["comparison"]["reason"] == "not_quoted"
 
+    def test_a_settled_fold_graded_won_publishes_result(self):
+        """#10590 — production `/events/15323985` (SD 3 – MIL 4): every graded
+        Polymarket team-total fold served ``unblended_equivalents`` and the app
+        read "Over · Unavailable"."""
+        legs = [_leg(240500335, 63854826, "Under", 0.0, is_winner=False),
+                _leg(240500334, 63854826, "Over", 1.0, is_winner=True)]
+        rows = _nyy_team_total(_grade(False, "api_settlement"), _grade(True, "api_settlement"))
+        (opt,) = _q(self._build(rows, legs), "m:63854826")["options"]
+        assert opt["result"]["state"] == "won"
+        assert (opt["published"]["value_state"], opt["published"]["basis"]) == ("result", "result")
+        assert opt["published"]["value"] is None
+        assert opt["comparison"]["reason"] == "not_quoted"
+
     def test_a_void_market_bare_false_is_never_lost(self):
         legs = [_leg(240500335, 63854826, "Under", 0.0, is_winner=False),
                 _leg(240500334, 63854826, "Over", 0.0, is_winner=False)]
@@ -500,6 +515,8 @@ class TestTotalAxisEquivalentsAreOneOption:
                                winners=False)
         (opt,) = _q(self._build(rows, legs), "m:63854826")["options"]
         assert opt["result"]["state"] == "unknown"
+        # An ungraded settled fold publishes no result it cannot prove.
+        assert opt["published"]["value_state"] == "unblended_equivalents"
 
     def test_disagreeing_supplied_grades_are_unknown(self):
         legs = [_leg(240500335, 63854826, "Under", 1.0, is_winner=True),
@@ -788,6 +805,29 @@ class TestUnblendedEquivalents:
         assert [e["raw_probability"] for e in opt["source_evidence"]] == [0.55, 0.40]
         assert [e["leg_side"] for e in opt["source_evidence"]] == ["over", "under"]
         assert opt["comparison"]["reason"] == "not_quoted"
+
+    def _settled_pair(self, over_grade, under_grade):
+        legs = [_leg(1, 10, "Over 4.5", 1.0), _leg(2, 10, "Under 4.5", 0.0)]
+        rows = [_total(10, 1, "Over 4.5", 4.5, None, market_type="team_total", **over_grade),
+                _total(10, 2, "Under 4.5", 4.5, None, market_type="team_total", **under_grade)]
+        for r in rows:
+            r["team_side"], r["team_name"] = "home", "Boston Red Sox"
+        m = _game({"team_totals": rows}, legs, {10: _facts("Red Sox Team Total Runs", status="resolved")},
+                  winners={10})
+        (opt,) = _q(m, "q:count|runs|home|full_game|ge:5")["options"]
+        return opt
+
+    def test_an_agreed_grade_publishes_result_not_unblended(self):
+        # #10590: a grade is not a blend — the multi-row typed option says Won.
+        opt = self._settled_pair(_grade(True, "api_settlement"), _grade(True, "api_settlement"))
+        assert opt["result"]["state"] == "won"
+        assert opt["published"] == {"value": None, "value_state": "result", "basis": "result",
+                                    "source": None, "observed_at": None}
+
+    def test_a_disagreeing_grade_stays_unblended(self):
+        opt = self._settled_pair(_grade(True, "api_settlement"), _grade(False, "api_settlement"))
+        assert opt["result"]["state"] == "unknown"
+        assert opt["published"]["value_state"] == "unblended_equivalents"
 
 
 class TestR4NoBlendBranch:

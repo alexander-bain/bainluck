@@ -1051,7 +1051,16 @@ def resolve_event_category(
         rules_result = categorize_by_rules(title)
         if rules_result and rules_result not in _NON_SPORT:
             return "championship", rules_result, "promoted"
-        _league = _detect_league(title)
+        # #2169: only when the scored title read found nothing. `detect_league` is
+        # first-match regex with no evidence weighting, so a lone ambiguous word
+        # wins it outright: `"Masters of the Universe" Opening Weekend Box Office`
+        # (Polymarket 552897, tagged Movies/Culture/Box Office) scores
+        # `entertainment` on box office + opening weekend, then the bare
+        # `masters` -> PGA league pattern promoted it to golf — and every settled
+        # re-ingest wrote that back over the repaired row. Arm 2 already trusts a
+        # rules answer over the league guess; this is the same order here. A
+        # league-only title ("Ligue 1 Top Scorer", rules None) still promotes.
+        _league = None if rules_result else _detect_league(title)
         if _league:
             _sport = _infer(_league)
             if _sport and _sport not in _NON_SPORT:
@@ -2558,6 +2567,95 @@ def opening_capture_is_hindsight(event, market, resolution_date, now) -> bool:
         except Exception:
             return False
     return False
+
+
+#: Verdicts of `choose_history_opening` (#2027, history rail). Each one is a
+#: stats key on `_backfill_polymarket_price_history`, so a run that wrote no
+#: opening says why instead of reading as "nothing to do" (gotcha #53).
+HISTORY_OPENING_OK = "ok"
+HISTORY_OPENING_NO_BOUNDARY = "no_boundary"
+HISTORY_OPENING_HINDSIGHT = "hindsight"
+HISTORY_OPENING_NO_INTERIOR_QUOTE = "no_interior_quote"
+_HISTORY_OPENING_REFUSAL_KEY = {
+    HISTORY_OPENING_HINDSIGHT: "opening_refused_hindsight",
+    HISTORY_OPENING_NO_BOUNDARY: "opening_refused_no_boundary",
+    HISTORY_OPENING_NO_INTERIOR_QUOTE: "opening_no_interior_quote",
+}
+
+
+def _as_utc(value) -> Optional[datetime]:
+    if not isinstance(value, datetime):
+        return None
+    return value if value.tzinfo is not None else value.replace(tzinfo=timezone.utc)
+
+
+def choose_history_opening(points, resolution_date, settled_at):
+    """Pick the CLOB-history quote that may be stamped as an opening (#2027).
+
+    Pure. ``points`` are ``(captured_at, probability)`` pairs. Returns
+    ``(verdict, point)``; ``point`` is set only when the verdict is ``ok``.
+
+    "The first history point" and "a price somebody could still take before
+    the answer was known" are different claims, and for a market first priced
+    after it settled they come apart completely: a single post-resolution
+    point at 0.99 used to be banked as the opening. So the opening is the
+    EARLIEST interior quote (0 < p < 1) captured at or before the boundary,
+    chosen by its own timestamp — never by list position, so the endpoint's
+    ordering is not an assumption.
+
+    The boundary is ``resolution_date`` (when trading stops, CAL-P989), and the
+    bound is ``<=`` because the read side classifies
+    ``opening_captured_at > fm.resolution_date`` as ``after_resolution``
+    (`app/utils/calibration_price_provenance.py`) — the same predicate
+    Phase 0c-repair (#7648) accepts. ``settled_at`` is when we OBSERVED the
+    settlement, so it is an upper bound on the true resolution: when it is
+    earlier than the schedule (a market resolved early), it tightens the
+    boundary. That can only refuse more, never pick a different quote.
+
+    Fails closed: no ``resolution_date`` means the writer cannot establish the
+    before-resolution fact, so it stamps nothing (``settled_at`` alone lags
+    the true resolution by an unknown amount and is not enough).
+    """
+    boundary = _as_utc(resolution_date)
+    if boundary is None:
+        return HISTORY_OPENING_NO_BOUNDARY, None
+    observed = _as_utc(settled_at)
+    if observed is not None and observed < boundary:
+        boundary = observed
+    interior = [
+        (at, p) for at, p in points
+        if isinstance(at, datetime) and p is not None and 0 < p < 1
+    ]
+    if not interior:
+        return HISTORY_OPENING_NO_INTERIOR_QUOTE, None
+    eligible = [(at, p) for at, p in interior if _as_utc(at) <= boundary]
+    if not eligible:
+        return HISTORY_OPENING_HINDSIGHT, None
+    return HISTORY_OPENING_OK, min(eligible, key=lambda pt: _as_utc(pt[0]))
+
+
+def history_token_for_outcome(external_id: str, token_ids: dict) -> Optional[str]:
+    """The CLOB token whose history prices this outcome row (#2027).
+
+    ``token_ids`` maps a conditionId to its ``clobTokenIds`` list, which runs
+    in the market's outcome order: ``[Yes/Over, No/Under]``. A ``{cid}_no``
+    row is the Under leg and is priced from ``outcome_prices[1]`` by the poll
+    writer, so its history is the SECOND token's. This used to strip the
+    suffix with ``rstrip`` (a character set, not a suffix) and hand every leg
+    the first token, so an Under leg stored the Over side's history. A side
+    whose token is absent returns None and the row is skipped, never priced
+    from the other side.
+    """
+    if external_id in token_ids:
+        ids = token_ids[external_id]
+        return ids[0] if ids else None
+    if external_id.endswith("_no"):
+        ids = token_ids.get(external_id.removesuffix("_no")) or []
+        return ids[1] if len(ids) > 1 else None
+    if external_id.endswith("_yes"):
+        ids = token_ids.get(external_id.removesuffix("_yes")) or []
+        return ids[0] if ids else None
+    return None
 
 
 async def _process_event_batch(
@@ -5110,6 +5208,15 @@ async def _backfill_polymarket_price_history(
         "outcomes_processed": 0, "outcomes_skipped": 0,
         "snapshots_created": 0, "events_fetched": 0,
         "api_empty": 0, "errors": [],
+        # #2027: every outcome with history lands in exactly one opening bucket.
+        "opening_written": 0, "opening_kept_existing": 0,
+        "opening_write_unconfirmed": 0,
+        "opening_refused_hindsight": 0, "opening_refused_no_boundary": 0,
+        "opening_no_interior_quote": 0,
+        # #2027 open_sparse: a row with no proved Gamma event id is skipped, and a
+        # provider refusal of one event is bounded to that event.
+        "outcomes_skipped_no_event_id": 0, "events_provider_refused": 0,
+        "rate_limited": False,
     }
 
     try:
@@ -5120,11 +5227,19 @@ async def _backfill_polymarket_price_history(
                 result = await session.execute(
                     text("""
                         SELECT fo.id, fo.external_id,
-                               fm.external_id AS market_external_id
+                               COALESCE(
+                                   fm.market_metadata->>'polymarket_event_id',
+                                   CASE WHEN left(fm.group_id, 11) = 'polymarket:'
+                                        THEN substr(fm.group_id, 12) END
+                               ) AS market_external_id,
+                               fm.resolution_date, fm.settled_at
                         FROM futures_outcomes fo
                         JOIN futures_markets fm ON fo.market_id = fm.id
                         WHERE fm.source = 'polymarket'
                           AND fm.status IN ('open', 'active')
+                          -- #2027: no proved Gamma event id, no slot in the LIMIT
+                          AND (fm.market_metadata->>'polymarket_event_id' IS NOT NULL
+                               OR left(fm.group_id, 11) = 'polymarket:')
                           AND (fm.image_url IS NOT NULL
                                OR fm.hook_description IS NOT NULL)
                           AND NOT EXISTS (
@@ -5145,7 +5260,8 @@ async def _backfill_polymarket_price_history(
                                    fm.market_metadata->>'polymarket_event_id',
                                    REPLACE(fm.group_id, 'polymarket:', ''),
                                    fm.external_id
-                               ) AS market_external_id
+                               ) AS market_external_id,
+                               fm.resolution_date, fm.settled_at
                         FROM futures_outcomes fo
                         JOIN futures_markets fm ON fo.market_id = fm.id
                         WHERE fm.source = 'polymarket'
@@ -5169,6 +5285,8 @@ async def _backfill_polymarket_price_history(
                 by_event.setdefault(row.market_external_id, []).append({
                     "outcome_id": row.id,
                     "condition_id": row.external_id,
+                    "resolution_date": row.resolution_date,
+                    "settled_at": row.settled_at,
                 })
 
             logger.info(
@@ -5178,14 +5296,32 @@ async def _backfill_polymarket_price_history(
 
             service = PolymarketAPIService()
             try:
+                import httpx
+
                 for event_id, outcomes in by_event.items():
-                    event_data = await service.get_event_by_id(event_id)
+                    if not event_id:
+                        stats["outcomes_skipped_no_event_id"] += len(outcomes)
+                        continue
+                    try:
+                        event_data = await service.get_event_by_id(event_id)
+                    except httpx.HTTPStatusError as e:
+                        code = e.response.status_code if e.response is not None else None
+                        if code == 429:
+                            # Gotcha #36: back off — end the pass, keep what is done.
+                            stats["rate_limited"] = True
+                            stats["errors"].append(f"event_{event_id}: 429")
+                            break
+                        # One bad identity (Gamma 422 on a condition hash) must not
+                        # abort its healthy siblings.
+                        stats["events_provider_refused"] += 1
+                        stats["errors"].append(f"event_{event_id}: http_{code}")
+                        continue
                     if not event_data:
                         stats["errors"].append(f"event_{event_id}: not_found")
                         continue
                     stats["events_fetched"] += 1
 
-                    token_map: dict[str, str] = {}
+                    token_map: dict[str, list] = {}
                     for market in event_data.get("markets", []):
                         cid = market.get("conditionId")
                         clob_ids_raw = market.get("clobTokenIds", "[]")
@@ -5194,14 +5330,11 @@ async def _backfill_polymarket_price_history(
                         except (json_module.JSONDecodeError, TypeError):
                             clob_ids = []
                         if cid and clob_ids:
-                            token_map[cid] = clob_ids[0]
+                            token_map[cid] = list(clob_ids)
 
                     for outcome in outcomes:
                         cid = outcome["condition_id"]
-                        token_id = (
-                            token_map.get(cid)
-                            or token_map.get(cid.rstrip("_yes").rstrip("_no"))
-                        )
+                        token_id = history_token_for_outcome(cid, token_map)
                         if not token_id:
                             stats["outcomes_skipped"] += 1
                             continue
@@ -5238,18 +5371,39 @@ async def _backfill_polymarket_price_history(
                                 await session.execute(stmt.on_conflict_do_nothing())
                             stats["snapshots_created"] += len(batch_values)
 
-                            first_price = batch_values[0]["probability"]
-                            if 0 < first_price < 1:
-                                await session.execute(
+                            verdict, chosen = choose_history_opening(
+                                [(v["captured_at"], v["probability"]) for v in batch_values],
+                                outcome["resolution_date"],
+                                outcome["settled_at"],
+                            )
+                            if verdict != HISTORY_OPENING_OK:
+                                stats[_HISTORY_OPENING_REFUSAL_KEY[verdict]] += 1
+                            else:
+                                # The price and its capture time are one fact
+                                # and are written together (#7648); an existing
+                                # opening is never rewritten.
+                                written = await session.execute(
                                     text("""
                                         UPDATE futures_outcomes
                                         SET opening_probability = :price,
-                                            opening_source = 'clob_history'
+                                            opening_source = 'clob_history',
+                                            opening_captured_at = :captured_at
                                         WHERE id = :oid
                                           AND opening_probability IS NULL
                                     """),
-                                    {"price": first_price, "oid": outcome["outcome_id"]},
+                                    {
+                                        "price": chosen[1],
+                                        "captured_at": chosen[0],
+                                        "oid": outcome["outcome_id"],
+                                    },
                                 )
+                                rowcount = getattr(written, "rowcount", None)
+                                if rowcount == 0:
+                                    stats["opening_kept_existing"] += 1
+                                elif isinstance(rowcount, int) and rowcount > 0:
+                                    stats["opening_written"] += 1
+                                else:
+                                    stats["opening_write_unconfirmed"] += 1
 
                         stats["outcomes_processed"] += 1
                         await asyncio.sleep(0.1)

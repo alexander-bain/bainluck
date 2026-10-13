@@ -104,7 +104,7 @@ function playMomentIfNotThisPoint(
   if (Number.isFinite(playMs) && Number.isFinite(pointMs) && Math.abs(pointMs - playMs) < PLAY_ATTACH_WINDOW_MS) {
     return "";
   }
-  const own = trustedLiveClock(formatPeriod(play.period), play.clock, sportKey);
+  const own = trustedLiveClock(formatPeriod(play.period, sportKey), play.clock, sportKey);
   const moment = [own.period, own.gameClock].filter(Boolean).join(" ");
   if (moment) return moment;
   return Number.isFinite(playMs) ? format(playMs, "h:mm a") : "";

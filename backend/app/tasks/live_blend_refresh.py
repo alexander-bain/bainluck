@@ -1128,8 +1128,10 @@ class _FreshAdmission:
     One refresh owns the refresher at a time. A whole cohort its caller
     COMMITS after that refresh began joins it here (`admit_fresh`) instead of
     waiting for every earlier stamp to return. Fixed for the call: its flush
-    clock, its same-event fence (``events``: everything the call took or
-    admitted), the FRESH_STAMP_WORKERS session slots every one of its stamp
+    clock, everything it took or admitted (``events``), its same-event fence
+    (``holding``: those whose stamp is still queued or running; one that has
+    returned may be admitted again, #10090), the FRESH_STAMP_WORKERS session
+    slots every one of its stamp
     and preparation sessions holds, and its one frame sender. Each admitted
     event keeps its own staged input mark, retry origin and flush clock: a
     LATER flush's cohort may join while the call's own stamps are unfinished
@@ -1142,6 +1144,7 @@ class _FreshAdmission:
         self.flush_started = flush_started
         self.clock = clock
         self.events: set[int] = set(events)
+        self.holding: set[int] = set(events)
         self.queue: deque = deque()
         self.workers: set = set()
         self.admitted: set[int] = set()
@@ -1158,6 +1161,10 @@ class _FreshAdmission:
         self.closed = False
         self.publish: Optional[Callable[[list[dict]], Awaitable[None]]] = None
         self.publish_inline: Optional[Callable[[list[dict]], Awaitable[None]]] = None
+
+    def release(self, event_ids) -> None:
+        """These events' stamps returned, or went back to debt unstamped."""
+        self.holding.difference_update(event_ids)
 
 
 class LiveBlendRefresher:
@@ -1280,6 +1287,9 @@ class LiveBlendRefresher:
         self._dispositions: dict[int, tuple] = {}
         #: #10090 — open only while a `refresh` runs (see `admit_fresh`).
         self._admission: Optional[_FreshAdmission] = None
+        #: #10090 — the running call's same-event fence (`holding_event_ids`).
+        #: None from a call's first turn until it opens its door.
+        self._holding: Optional[set[int]] = None
 
     # ── throttling ───────────────────────────────────────────────────────────
 
@@ -1352,6 +1362,7 @@ class LiveBlendRefresher:
         time the hold, not the schedule. Omitted, behaviour is unchanged.
         """
         self._start_history()
+        self._holding = None
         now = _mono()
         clock = now if flush_started is None else flush_started
         receipts = self.receipts
@@ -1512,6 +1523,7 @@ class LiveBlendRefresher:
         window.publish = publish_committed
         window.publish_inline = publish_inline
         self._admission = window
+        self._holding = window.holding
         interrupted = False
         try:
             # One event already owns its transaction. For multiple admitted events,
@@ -1572,6 +1584,8 @@ class LiveBlendRefresher:
                             stored_wall,
                             _mono(),
                         )
+                finally:
+                    window.release(due)
 
             # Read/stamp fresh prices before reading older debt. Each nonempty
             # population prepares one view for order and the initial worker
@@ -1591,6 +1605,7 @@ class LiveBlendRefresher:
                     budget_deferred.update(population)
                     self._lock_retry.update(population.intersection(retry))
                     self._throttle_deferred.update(population.difference(retry))
+                    window.release(population)
                     continue
                 if pending_only and flush_started is not None:
                     if self._pending_started_at is None:
@@ -1639,6 +1654,7 @@ class LiveBlendRefresher:
                         population, retry, clock, receipts, staged, stored_wall, exc,
                     )
                     failed_groups.update(population)
+                    window.release(population)
                     continue
 
                 # Preserve live-first order within each population and numeric
@@ -1698,6 +1714,8 @@ class LiveBlendRefresher:
                         # Empty/no-market groups also finished successfully.
                         if not completed.issuperset(group_ids):
                             committed(group_ids)
+                    finally:
+                        window.release(group_ids)
 
                 if head_only:
                     await stamp_event(head)
@@ -1705,6 +1723,7 @@ class LiveBlendRefresher:
                     budget_deferred.update(remaining)
                     self._lock_retry.update(remaining.intersection(retry))
                     self._throttle_deferred.update(remaining.difference(retry))
+                    window.release(remaining)
                     self._pending_continuation = carried[1:] + [
                         eid for eid in self._pending_continuation
                         if eid not in population
@@ -1767,6 +1786,7 @@ class LiveBlendRefresher:
                             budget_deferred.update(remaining)
                             self._lock_retry.update(remaining.intersection(retry))
                             self._throttle_deferred.update(remaining.difference(retry))
+                            window.release(remaining)
                             self._pending_continuation = ordered[index:] + [
                                 eid for eid in self._pending_continuation
                                 if eid not in population
@@ -1908,6 +1928,17 @@ class LiveBlendRefresher:
         """Every event this refresher still owes a stamp (#9462 review)."""
         return frozenset(self._lock_retry | self._throttle_deferred)
 
+    def holding_event_ids(self) -> Optional[frozenset]:
+        """#10090 — the running call's events whose stamp is queued or running.
+
+        A caller may write a newer price for any other event the call took:
+        its stamp has returned, so a new stamp is ordered after it (one frame
+        sender) and reads the newer board. None before the call's first turn
+        has opened its door (`refresh`'s first turn follows its task's
+        creation, so a caller that yields once after creating it sees the set).
+        """
+        return None if self._holding is None else frozenset(self._holding)
+
     def adopt_pending(self, event_ids: Iterable[int]) -> None:
         """Take over stamps a previous run of this source still owed.
 
@@ -1939,8 +1970,9 @@ class LiveBlendRefresher:
         caller keeps them for its next `refresh`, as before: no call is
         running, the clock is earlier, a later one arrived after the call's
         own stamps returned, or there is none (the final drain keeps its own
-        contract), or the event is fenced — the running call
-        already took it, or the caller is still writing its cohort
+        contract), or the event is fenced — the running call is
+        still stamping it (an earlier attempt that has returned does not
+        fence a newer price, #10090), or the caller is still writing its cohort
         (``defer_event_ids``) — so no partial board is read and no two stamps
         of one event overlap or reorder. ``marks`` are the cohort's committed
         inputs; they are kept with the admitted events, never staged over
@@ -1959,10 +1991,22 @@ class LiveBlendRefresher:
         excluded = set(defer_event_ids)
         taken = {
             eid for eid in event_ids
-            if eid not in excluded and eid not in window.events
+            if eid not in excluded and eid not in window.holding
         }
         if not taken:
             return frozenset()
+        # #10090: an event whose earlier stamp in this call has returned is
+        # admitted again for its newer committed price. That attempt is retired
+        # whole: its admission, outcome, clock, retry origin and input mark are
+        # settled, none pays for this one, and a throttled newer price is debt,
+        # never an unfinished attempt at close.
+        again = taken.intersection(window.events)
+        for attempt in (window.admitted, window.completed, window.failed, window.retry):
+            attempt.difference_update(again)
+        for event_id in again:
+            window.clocks.pop(event_id, None)
+            window.staged.pop(event_id, None)
+            window.stored_wall.pop(event_id, None)
         clock = flush_started
         due = sorted(eid for eid in taken if self._due(eid, clock))
         throttled = taken.difference(due, self._throttle_deferred)
@@ -1997,6 +2041,7 @@ class LiveBlendRefresher:
             import asyncio
 
             window.admitted.update(due)
+            window.holding.update(due)
             window.clocks.update(dict.fromkeys(due, clock))
             window.retry.update(retry)
             window.queue.extend(due)
@@ -2056,6 +2101,8 @@ class LiveBlendRefresher:
         else:
             if event_id not in window.completed:
                 committed(group_ids)
+        finally:
+            window.release(group_ids)
 
     async def _admission_join(self, window: _FreshAdmission) -> None:
         """Wait for every admitted stamp; close the door in the same turn the

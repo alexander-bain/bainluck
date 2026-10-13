@@ -122,6 +122,14 @@ const READER_READY_TITLES: ReadonlyArray<readonly [string, string]> = [
     "The one-question markets we were throwing away are now scored",
     "Written for a reader, and deliberately a whole sentence (D112 — the title is the whole disclosure on web).",
   ],
+  [
+    "Tennis and fight over/unders we had no way to settle",
+    "Written for a reader when the rule shipped (#1010); names the sports and the lines in words.",
+  ],
+  [
+    "Soccer prices since September 16 are scored as home, draw or away",
+    "Written for a reader when the rule shipped (#1011); a date a reader can place and the three answers, in words.",
+  ],
 ];
 
 const READER_READY = new Set(READER_READY_TITLES.map(([title]) => title));

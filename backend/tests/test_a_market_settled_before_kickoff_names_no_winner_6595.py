@@ -368,7 +368,9 @@ def test_every_grade_call_in_the_page_build_carries_the_event_context():
         "a call site inside the page build dropped `**_grade_ctx` — that "
         "serializer is now serving pre-kick-off verdicts again"
     )
-    assert body.count("_settled_grade_fields(market, o, **_grade_ctx)") == 5
+    # 7 = the original five + #10965's two team-total proofs (the withheld-price
+    # readmission and the all-unpriced admission), both carrying the context.
+    assert body.count("_settled_grade_fields(market, o, **_grade_ctx)") == 7
 
 
 # ── The route serves it, and the surface is still a surface ─────────────────

@@ -104,11 +104,15 @@ def test_the_pair_is_declared_with_a_bounded_cap():
     assert 2.53 < entry["max_narrowing_pct"] <= 10.0
 
 
-def test_the_candidate_digest_is_this_trees_digest():
-    """A pair keyed on a digest the code no longer produces admits nothing."""
-    from app.tasks.precompute_calibration import population_predicate_fingerprint
+def test_the_candidate_digest_is_where_the_next_succession_starts():
+    """A pair keyed on a digest the code no longer produces admits nothing.
 
-    assert population_predicate_fingerprint() == CANDIDATE_PREDICATE
+    #1010 moved this tree's digest on, so the check is now the chain's: this
+    pair's candidate side is the published side of #1010's declared pair, and
+    the tree's own digest is pinned in `test_calibration_predicate_succession_8458`.
+    """
+    starts = {a for (a, _b) in DECLARED_PREDICATE_SUCCESSIONS}
+    assert CANDIDATE_PREDICATE in starts
 
 
 def test_the_published_digest_is_where_the_6275_succession_lands():

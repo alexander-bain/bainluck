@@ -402,7 +402,8 @@ def test_the_page_build_hands_every_grade_call_the_score():
             f"`_grade_ctx` no longer carries {key!r} — the finished-game gate "
             "cannot fire and every test above passes anyway"
         )
-    assert body.count("_settled_grade_fields(market, o, **_grade_ctx)") == 5
+    # 7 = the original five + #10965's two team-total proofs, both with context.
+    assert body.count("_settled_grade_fields(market, o, **_grade_ctx)") == 7
 
 
 def test_the_two_unconverted_call_sites_are_inert_for_a_stated_reason():

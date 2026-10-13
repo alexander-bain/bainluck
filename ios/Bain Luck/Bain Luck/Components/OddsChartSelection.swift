@@ -68,6 +68,9 @@ struct OddsChartSelectionReadout: View {
     /// #4974 — set by `publicationCheckpoints(_:)`. Nil keeps this readout
     /// exactly as it was, resting fallback included.
     var checkpoints: PublicationCheckpointMount4974? = nil
+    /// #9483 — the chart's phase context, so the badge says "Pregame" / "Final"
+    /// where the chart can prove it. Nil reads as before.
+    var phaseContext: ChartReadoutContext9483? = nil
 
     var body: some View {
         if let checkpoints {
@@ -78,13 +81,16 @@ struct OddsChartSelectionReadout: View {
                 card: readout,
                 readout: checkpoints.readout(date: selection.date, scrub: selection.checkpoint),
                 sportKey: sportKey,
-                reserve: checkpoints.reservePoint(sportKey: sportKey))
+                reserve: checkpoints.reservePoint(sportKey: sportKey),
+                phaseContext: phaseContext)
         } else {
             readout
                 .resting(on: OddsChartView.fullscreenRestingPoint(
-                    in: dataPoints, sportKey: sportKey, pageGaveCard: pageGaveCard))
+                    in: dataPoints, sportKey: sportKey, pageGaveCard: pageGaveCard,
+                    context: phaseContext))
                 .showing(Self.selectedPoint(at: selection.date, in: dataPoints,
-                                            sportKey: sportKey, pageGaveCard: pageGaveCard))
+                                            sportKey: sportKey, pageGaveCard: pageGaveCard,
+                                            context: phaseContext))
         }
     }
 
@@ -96,12 +102,20 @@ struct OddsChartSelectionReadout: View {
         return copy
     }
 
+    /// #9483 — this readout naming each reading's phase (see `phaseContext`).
+    func readingPhases(_ context: ChartReadoutContext9483?) -> OddsChartSelectionReadout {
+        var copy = self
+        copy.phaseContext = context
+        return copy
+    }
+
     /// The scrubbed moment, on the same series the card rests on (#9185).
     static func selectedPoint(at date: Date?, in points: [ChartDataPoint], sportKey: String?,
-                              pageGaveCard: Bool) -> GamePlayPoint? {
+                              pageGaveCard: Bool,
+                              context: ChartReadoutContext9483? = nil) -> GamePlayPoint? {
         guard let date, let source = OddsChartView.readoutSource(in: points, pageGaveCard: pageGaveCard),
               let nearest = OddsChartView.nearestSnapshot(to: date, in: points, source: source) else { return nil }
-        return OddsChartView.playPoint(for: nearest, sportKey: sportKey)
+        return OddsChartView.playPoint(for: nearest, sportKey: sportKey, context: context)
     }
 }
 
@@ -129,6 +143,9 @@ struct OddsChartSelectionOverlay: View {
     /// appears". #9517 — it is the page's card too, which no longer rests above
     /// the plot (`OddsChartView.inlineScrubCard`).
     var floatingCard: GamePlayCardView? = nil
+    /// #9483 — see `OddsChartSelectionReadout.phaseContext`; VoiceOver also
+    /// hears the reading's time from it.
+    var phaseContext: ChartReadoutContext9483? = nil
 
     var body: some View {
         ZStack {
@@ -147,14 +164,15 @@ struct OddsChartSelectionOverlay: View {
                                     card: floatingCard,
                                     readout: checkpoints.readout(date: selection.date,
                                                                  scrub: selection.checkpoint),
-                                    sportKey: sportKey),
+                                    sportKey: sportKey, phaseContext: phaseContext),
                                 crosshairX: x)
                     }
                 }
             } else if let date = selection.date, let x = proxy.position(forX: date) {
                 crosshair(atX: x)
                 if let floatingCard, let point = OddsChartSelectionReadout.selectedPoint(
-                    at: date, in: dataPoints, sportKey: sportKey, pageGaveCard: pageGaveCard) {
+                    at: date, in: dataPoints, sportKey: sportKey, pageGaveCard: pageGaveCard,
+                    context: phaseContext) {
                     // Floats, so the plot never moves under the finger (#925), on
                     // the side away from the crosshair so it never covers it.
                     floated(floatingCard.showing(point), crosshairX: x)
@@ -168,12 +186,12 @@ struct OddsChartSelectionOverlay: View {
         .accessibilityValue(checkpoints?.accessibilityValue(
             date: selection.date, scrub: selection.checkpoint,
             homeShort: homeShort, awayShort: awayShort, moments: moments,
-            gameFinished: gameFinished, sportKey: sportKey)
+            gameFinished: gameFinished, sportKey: sportKey, context: phaseContext)
             ?? OddsChartView.accessibilityValue(
             dataPoints: dataPoints, selectedDate: selection.date,
             homeShort: homeShort, awayShort: awayShort, moments: moments,
             pageGaveCard: pageGaveCard, gameFinished: gameFinished,
-            sportKey: sportKey))
+            sportKey: sportKey, context: phaseContext))
     }
 
     private func crosshair(atX x: CGFloat) -> some View {
@@ -196,6 +214,14 @@ struct OddsChartSelectionOverlay: View {
                    alignment: x.map { Self.floatingCardAlignment(crosshairX: $0, plotWidth: plotFrame.width) }
                        ?? .topLeading)
             .position(x: plotFrame.midX, y: plotFrame.midY)
+    }
+
+    /// #9483 — this overlay naming each reading's phase and, to VoiceOver, its
+    /// time (see `phaseContext`).
+    func readingPhases(_ context: ChartReadoutContext9483?) -> OddsChartSelectionOverlay {
+        var copy = self
+        copy.phaseContext = context
+        return copy
     }
 
     /// The top corner opposite the crosshair.
@@ -222,6 +248,8 @@ struct PublicationCheckpointReadoutSlot4974: View {
     /// invisibly behind the checkpoint and withheld rows so the plot beneath
     /// keeps its place as the finger crosses the window's edge (#925).
     var reserve: GamePlayPoint? = nil
+    /// #9483 — names the reading's phase on the card's badge.
+    var phaseContext: ChartReadoutContext9483? = nil
 
     static let withheldText = "No reading here"
 
@@ -232,7 +260,7 @@ struct PublicationCheckpointReadoutSlot4974: View {
     var body: some View {
         switch readout {
         case .legacy(let point):
-            card.showing(OddsChartView.playPoint(for: point, sportKey: sportKey))
+            card.showing(OddsChartView.playPoint(for: point, sportKey: sportKey, context: phaseContext))
         case .checkpoint(let checkpoint):
             reserved {
                 VStack(alignment: .leading, spacing: 0) {
@@ -242,7 +270,8 @@ struct PublicationCheckpointReadoutSlot4974: View {
                         .foregroundStyle(.tertiary)
                         .lineLimit(1)
                         .fixedSize()
-                    card.showing(Self.playPoint(for: checkpoint, sportKey: sportKey))
+                    card.showing(Self.playPoint(for: checkpoint, sportKey: sportKey,
+                                                context: phaseContext))
                 }
             }
         case .withheld:
@@ -272,15 +301,19 @@ struct PublicationCheckpointReadoutSlot4974: View {
     /// timestamp is empty on purpose — the card would print it in the device's
     /// zone, and the row above prints the checkpoint's own Pacific minute.
     static func playPoint(for checkpoint: PublicationJourney4974.Checkpoint,
-                          sportKey: String?) -> GamePlayPoint {
+                          sportKey: String?,
+                          context: ChartReadoutContext9483? = nil) -> GamePlayPoint {
         let probability = checkpoint.vertex.p
-        return GamePlayPoint(
+        var point = GamePlayPoint(
             timestamp: "",
             homeProb: probability,
             awayProb: DrawPricedWinner.printablePair(
                 away: 1.0 - probability,
                 home: probability,
                 sport: sportKey)?.away)
+        // #9483 — a checkpoint records no state, so its phase is the only badge.
+        point.phase = context?.phase(at: checkpoint.date, probability: probability)
+        return point
     }
 
     /// "1:15 PM PT" — Pacific, to the minute. `dated` adds the weekday the

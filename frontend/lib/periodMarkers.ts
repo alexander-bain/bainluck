@@ -953,13 +953,22 @@ const BARE_PERIOD_UNIT: Array<{
   prefix: RegExp;
   regulation: number;
   format: (n: string) => string;
+  /** #10923 — the k-th period past regulation, or null where it is ambiguous. */
+  overtime?: (k: number) => string | null;
 }> = [
-  { prefix: /^americanfootball_/i, regulation: 4, format: (n) => `Q${n}` },
-  { prefix: /^icehockey_/i, regulation: 3, format: (n) => `P${n}` },
+  { prefix: /^americanfootball_/i, regulation: 4, format: (n) => `Q${n}`, overtime: numberedOvertime },
+  // Hockey's 4th is overtime in every format; its 5th is a regular-season
+  // shootout but a playoff second overtime, and the digit does not say which.
+  { prefix: /^icehockey_/i, regulation: 3, format: (n) => `P${n}`, overtime: (k) => (k === 1 ? "OT" : null) },
+  // Soccer's 3rd/4th are extra-time halves and its 5th is penalties: no overtime row.
   { prefix: /^soccer_/i, regulation: 2, format: (n) => `${n}H` },
-  { prefix: /^basketball_ncaab/i, regulation: 2, format: (n) => `${n}H` },
-  { prefix: /^basketball_/i, regulation: 4, format: (n) => `Q${n}` },
+  { prefix: /^basketball_ncaab/i, regulation: 2, format: (n) => `${n}H`, overtime: numberedOvertime },
+  { prefix: /^basketball_/i, regulation: 4, format: (n) => `Q${n}`, overtime: numberedOvertime },
 ];
+
+function numberedOvertime(k: number): string {
+  return k === 1 ? "OT" : `${k}OT`;
+}
 
 /** The sport-aware completion of a bare period number, or null to leave it be. */
 function labelBarePeriod(n: string, sport?: string | null): string | null {
@@ -973,6 +982,27 @@ function labelBarePeriod(n: string, sport?: string | null): string | null {
     return num <= regulation ? format(n) : null;
   }
   return null;
+}
+
+/**
+ * #10923 — a bare period number as a reader's label, OVERTIME INCLUDED: the
+ * NFL's `5` is `OT`, NCAAB's `4` is `2OT`. The play row and the live header
+ * (`formatPeriod`) read this; the chart's `normalizePeriodLabel` keeps #4955's
+ * bare digit past regulation and does not.
+ *
+ * Returns null when the table has no row for the sport — the caller keeps its
+ * own rendering — and "" when the sport is known but the number names no period
+ * we can say honestly (`0`, hockey's `5`, soccer's `3`): print nothing rather
+ * than a period that does not exist.
+ */
+export function barePeriodThroughOvertime(n: string, sport?: string | null): string | null {
+  if (!sport) return null;
+  const row = BARE_PERIOD_UNIT.find(({ prefix }) => prefix.test(sport));
+  if (!row) return null;
+  const num = Number(n);
+  if (!Number.isInteger(num) || num <= 0) return "";
+  if (num <= row.regulation) return row.format(String(num));
+  return row.overtime?.(num - row.regulation) ?? "";
 }
 
 /**

@@ -30,7 +30,8 @@
 //
 // `datagolf_opening_after_start` (#5355) is appended the same way and for the
 // same reason: at `outcomes: 0` with the server's verbatim `rule` text, because
-// the rung did not exist when the block was captured.
+// the rung did not exist when the block was captured. So is
+// `golf_round_price_unanchored` (#938).
 export const COMPLETE_CENSUS = {
   "schema_version": "calibration-coverage-bridge/v1",
   "status": "incomplete",
@@ -123,6 +124,13 @@ export const COMPLETE_CENSUS = {
         "outcomes": 0,
         "checked": true,
         "rule": "A DataGolf model price whose scored value is its opening, with no DataGolf reading of that value captured before the tournament's start date: first read while the tournament was being played, or read at a time that cannot be placed before it. It is not a forecast."
+      },
+      {
+        "key": "golf_round_price_unanchored",
+        "unit": "futures_outcome",
+        "outcomes": 0,
+        "checked": true,
+        "rule": "A Kalshi golf round market (round leader or round top-N). Kalshi gives these markets only the round's close as a start time, so no stored time places the price before the round began; it can be a quote taken during or after the round. It is not a forecast."
       },
       {
         "key": "structural_artifact",

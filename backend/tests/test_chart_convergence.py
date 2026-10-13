@@ -168,7 +168,14 @@ class TestChartConvergence:
         assert len(agg) == 0
 
     def test_tie_game_no_convergence_point(self):
-        """Tied games should NOT inject a convergence point."""
+        """The replica above never injects a point for a tie.
+
+        #10929 changed the ROUTE: a level scored final in a two-way sport now
+        ends at 50/50 with a Final row. That behaviour is pinned against
+        ``get_event_odds_history`` itself in
+        ``test_a_tied_final_ends_level_with_a_final_row_10929.py``; this replica
+        predates it and only describes its own copy.
+        """
         t0 = datetime(2026, 5, 28, 0, 0, tzinfo=timezone.utc)
         history = [
             {"timestamp": t0.isoformat(), "home_probability": 0.50, "away_probability": 0.50},

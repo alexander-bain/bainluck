@@ -140,7 +140,11 @@ struct LivePriceMovementCaption: View {
     var isEnabled: Bool = true
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.scenePhase) private var scenePhase
-    @ScaledMetric(relativeTo: .caption2) private var slotHeight: CGFloat = 32
+    /// #9483 — ONE line. The move reads "Rams ↑2 pts" on the pair's short
+    /// names; a two-line slot left an empty band under the delivery status at
+    /// enlarged text (Native, `mnf-axxl-01-top.png`) that pushed the chart off
+    /// the opening screen.
+    @ScaledMetric(relativeTo: .caption2) private var slotHeight: CGFloat = 16
     @State private var previousSequence: Int?
     @State private var shownText: String?
 
@@ -153,7 +157,7 @@ struct LivePriceMovementCaption: View {
         Text(shownText ?? " ")
             .font(.caption2)
             .foregroundStyle(color)
-            .lineLimit(2)
+            .lineLimit(1)
             .frame(height: slotHeight, alignment: .topLeading)
             .opacity(trigger.enabled && shownText != nil ? 1 : 0)
             .accessibilityHidden(!trigger.enabled || shownText == nil)

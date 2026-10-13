@@ -302,8 +302,12 @@ class _FoldSubscription:
         self.pending = {}
 
     async def subscribe(self, event_ids):
+        watch = getattr(self.hub, "watch_confirmation", None)
         for event_id in dict.fromkeys(event_ids):
-            self.subscriptions[event_id] = await self.hub.subscribe(event_channel(event_id))
+            subscription = await self.hub.subscribe(event_channel(event_id))
+            self.subscriptions[event_id] = subscription
+            if callable(watch):
+                watch(subscription)
 
     async def next(self, timeout):
         if len(self.subscriptions) == 1:
@@ -344,13 +348,40 @@ def _fold_invalidation(frame: dict, event_id: int, origin_id: int) -> Optional[d
     }
 
 
+def _origin_revision(frame: dict, origin_id: int) -> Optional[int]:
+    rev = frame.get("rev")
+    value = rev.get(str(origin_id)) if isinstance(rev, dict) else None
+    return value if type(value) is int else None
+
+
+async def _await_honouring_cancel(awaitable):
+    """Await ``awaitable``; if this task was cancelled meanwhile, stay cancelled.
+
+    Python 3.11's ``asyncio.wait_for`` (production and CI) returns the inner
+    result and DROPS the outer ``CancelledError`` when the cancel lands in the
+    same loop turn as the inner awaitable finishing (CPython gh-86296; 3.12
+    rewrote it). Both of this stream's waits go through it — the replay MGET via
+    ``bounded_redis_call`` and the hub mailbox via ``Subscription.next`` — so a
+    leaving reader could keep its stream, and its hub refcount, until
+    ``MAX_CONNECTION_S``. A swallowed cancel still leaves ``cancelling()`` raised,
+    so compare it across THIS wait only: anything that cancels and properly
+    uncancels (a timeout scope, Starlette's ``is_disconnected`` probe) nets zero.
+    """
+    task = asyncio.current_task()
+    before = task.cancelling() if task is not None else 0
+    result = await awaitable
+    if task is not None and task.cancelling() > before:
+        raise asyncio.CancelledError()
+    return result
+
+
 async def _stream(
     event_id: int, request: Request, contributor_ids: Optional[list[int]] = None,
 ) -> AsyncIterator[str]:
     """Yield SSE frames for one event until the client leaves or time is up."""
     global _open_connections
 
-    from app.utils.live_fanout import CLOSED, Recovery, fanout
+    from app.utils.live_fanout import CLOSED, CONFIRMED, Recovery, fanout
 
     hub = fanout()
     subscription = _FoldSubscription(hub)
@@ -361,12 +392,23 @@ async def _stream(
         yield f"retry: {RETRY_MS}\n\n"
         yield sse_encode(json.dumps({"event_id": event_id}), event="open")
 
-        # Replay immediately after initiating subscription. This is best-effort:
-        # Redis may not have acknowledged SUBSCRIBE yet. The existing live path
-        # and client revision guards handle later and duplicate frames.
-        replay = deque(await latest_frames([event_id, *(contributor_ids or [])]))
+        # Replay immediately after initiating subscription, so the first frame
+        # never waits on Redis. Redis may not have registered SUBSCRIBE yet,
+        # and this read travels on another connection: a quote published
+        # before Redis reads a late SUBSCRIBE is in neither place. The hub's
+        # CONFIRMED, below, owes one more read of that channel (#10090).
+        replay = deque(await _await_honouring_cancel(
+            latest_frames([event_id, *(contributor_ids or [])])
+        ))
         last_beat = started
         recovery_generation = 0
+        # Highest revision already sent per origin: a catch-up read that finds
+        # only what the open-time replay sent stays silent.
+        sent_revision: dict[int, int] = {}
+        # The last replayed frame per origin. A quote that is both retained and
+        # already in flight on the channel arrives once by each path; the first
+        # live frame after a replay is dropped only when it is that same frame.
+        replayed: dict[int, dict] = {}
         while True:
             # The client going away is the common exit, and it is the one that
             # actually frees the slot — check it every pass, not just on send.
@@ -383,10 +425,19 @@ async def _stream(
             # when the market is completely silent, and what keeps this
             # coroutine yielding control back to the loop that is also serving
             # `/api/feed`.
-            if replay:
+            from_replay = bool(replay)
+            if from_replay:
                 origin_id, payload = replay.popleft()
             else:
-                origin_id, payload = await subscription.next(timeout=FRAME_WAIT_S)
+                origin_id, payload = await _await_honouring_cancel(
+                    subscription.next(timeout=FRAME_WAIT_S)
+                )
+            if payload is CONFIRMED:
+                for item in await _await_honouring_cancel(latest_frames([origin_id])):
+                    rev = _origin_revision(json.loads(item[1]), item[0])
+                    if rev is not None and rev > sent_revision.get(item[0], -1):
+                        replay.append(item)
+                continue
             if isinstance(payload, Recovery):
                 # Fold subscriptions share a hub generation; emit it only once.
                 if payload.generation > recovery_generation:
@@ -414,6 +465,15 @@ async def _stream(
                             frame, datetime.now(timezone.utc)
                         )):
                     incoming = frame
+                    if from_replay:
+                        replayed[origin_id] = incoming
+                    elif replayed.pop(origin_id, None) == incoming:
+                        continue
+                    rev = _origin_revision(incoming, origin_id)
+                    if rev is not None:
+                        sent_revision[origin_id] = max(
+                            rev, sent_revision.get(origin_id, rev)
+                        )
                     if origin_id != event_id:
                         frame = _fold_invalidation(frame, event_id, origin_id)
                         if frame is None:

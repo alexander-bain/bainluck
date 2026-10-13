@@ -96,7 +96,11 @@ from app.utils.served_period_scores import served_period_scores
 from app.utils.final_score_margin import margin_verdict_from_final_score
 from app.utils.resolution_authority import authority_tier, is_authoritative
 from app.utils.box_score_capture import BOX_SCORE_SOURCES, box_is_live_capture
-from app.utils.prop_window import prop_window_closed, prop_window_span
+from app.utils.prop_window import (
+    names_a_contest_segment,
+    prop_window_closed,
+    prop_window_span,
+)
 from app.utils.event_rails import (
     live_first_order,
     live_scheduled_settled_order,
@@ -122,10 +126,12 @@ from app.utils.event_completion import (
     started_without_result,
 )
 from app.utils.current_odds_probability import current_odds_probability
-from app.utils.draw_priced_winner import printable_away
+from app.utils.draw_priced_winner import printable_away, sport_prices_a_draw
 from app.utils.market_identity import ticker_game_date
 from app.utils.game_market_class import (
     is_game_winner_market,
+    kalshi_series_period,
+    names_a_scoped_segment,
     outcomes_refute_game_winner,
 )
 from app.utils.graded_card import rendered_duel_percents
@@ -21844,6 +21850,33 @@ def venue_settled_home_won(result: str | None, home_team_name, away_team_name) -
     return None
 
 
+def scored_tie_ends_level(home_score, away_score, sport_key) -> bool:
+    """Does a finished, LEVEL score end the chart at 50/50 with a Final row (#10929)?
+
+    Seen on production 2026-10-12, ``/events/14780555`` (Commanders 27-27 Giants,
+    NFL, settled in overtime). The terminal point below fired only for a winner,
+    so a tie got no ``espn_history`` row reading ``Final``: the resting readout
+    printed the last live sighting ("0:55 - OT") and the line ended on the
+    Commanders at 72% under a header that already said the game was over.
+
+    A two-way winner market has no winning side on a tie — the sportsbook bet is
+    a push and the venue's two win legs settle alike — so the line ends level and
+    the Final row carries the level score. Two cases keep the old behaviour:
+
+    * a draw-priced sport (soccer): the line there is "the home side wins", whose
+      settled value on a draw is not one half, and the away slot is withheld
+      (``app/utils/draw_priced_winner.py``). That ending is its own decision;
+    * 0-0: in a sport without a priced draw, a "final" with no score at all is a
+      called-off game far more often than a played one, and printing Final over
+      it would claim a game happened.
+    """
+    if home_score is None or away_score is None or home_score != away_score:
+        return False
+    if home_score == 0:
+        return False
+    return not sport_prices_a_draw(sport_key)
+
+
 def _withhold_partial_field_markets(other_rows: list, markets: list) -> list:
     """A field card accounts for the whole question, or it is not shown (#3721).
 
@@ -22568,6 +22601,18 @@ def _is_kalshi_game_winner_series(external_id: Optional[str]) -> bool:
     return series.startswith("KX") and series.endswith("GAME")
 
 
+def _names_a_match_segment(name: str) -> bool:
+    """True if a title scopes itself to a PART of the match (#1529).
+
+    Two shipped readers, either of which is positive evidence on its own:
+    `names_a_contest_segment` ("Map 1", "Set #1", "Halftime", "Q1", plus every
+    window `prop_window_span` knows) and the shared winner door's ordinal test,
+    which also reads the ordinal in FRONT of the word ("2nd Period", "1st Set").
+    Neither reads "Game Winner", "Match Winner" or "Round of 16" as a segment.
+    """
+    return names_a_contest_segment(name) or names_a_scoped_segment(name)
+
+
 def _classify_game_market(name: str, external_id: Optional[str] = None) -> str:
     """Classify a game-level market name into a type.
 
@@ -22714,6 +22759,15 @@ def _classify_game_market(name: str, external_id: Optional[str] = None) -> str:
         ticker_type = _classify_from_ticker(external_id) if external_id else None
         if ticker_type and ticker_type.endswith("_winner"):
             return ticker_type  # half_winner or quarter_winner
+        # A winner of a MAP, SET, LEG, FRAME or PERIOD is not the game's winner
+        # (#1529). The half/quarter/inning arms above have no name for those
+        # segments, so "Counter-Strike: 1WIN vs B8 - Map 1 Winner", "Set 1
+        # Winner: A vs B" and an NHL "2nd Period Winner" all fell through to
+        # "moneyline". `names_a_contest_segment` is the scope test the
+        # Polymarket condition refresh already asks (#4983); it is read off the
+        # name only, so "Game Winner" and "Match Winner" stay moneylines.
+        if _names_a_match_segment(name):
+            return "segment_winner"
         return "moneyline"
 
     # ── Ticker-only fallback ───────────────────────────────────────────
@@ -22723,6 +22777,39 @@ def _classify_game_market(name: str, external_id: Optional[str] = None) -> str:
         ticker_type = _classify_from_ticker(external_id)
         if ticker_type != "other":
             return ticker_type
+
+    # ── A title that is only the matchup (#1529) ───────────────────────
+    # A segment-scoped matchup first: "Phantom Academy vs. Noir Verse: Map 1"
+    # carries no "winner" word and its outcomes are the two sides, so it is the
+    # map's winner — never the match's. It stays in the same `other` section it
+    # was served in; only the label stops claiming nothing about it.
+    if _names_a_match_segment(name):
+        return "segment_winner"
+    # Then the dominant real game-winner phrasing, which carries no English
+    # winner word at all: Polymarket's "Yankees vs. Red Sox" on a condition hash.
+    # This classifier only rescued it through a Kalshi `…GAME` ticker, so every
+    # Polymarket bare-matchup winner was labelled `other`. The shared recognizer
+    # decides it, so this route and the blend cannot disagree about one title.
+    #
+    # NOT when a Kalshi ticker names a period. Kalshi titles some period books
+    # with the matchup alone ("Rays at Braves" on `KXMLBRFI`, the first inning),
+    # and the ticker is then the only thing that says which part of the game is
+    # priced; the shared recognizer reads the title first and would call it the
+    # game. This refuses the whole measured period grammar (`KXMLBF5`, `KXEPL1H`,
+    # `KXMLBRFI` …), so such a book is never labelled the game — and keeps its
+    # place in the section the reader already sees it in. (Kalshi's F5 winner,
+    # "Los Angeles Dodgers vs Milwaukee: First 5 Innings", is labelled a segment
+    # just above and reads in `other` as a three-way card; `period_markets`
+    # would put it behind the collapsed line browser.)
+    #
+    # Outcomes are not read here, and do not need to be: the player-contract
+    # rescue in `_build_game_markets` and the projection's outcome pass both
+    # treat `moneyline` exactly as they treat `other`, so a bare-matchup
+    # CONTAINER whose legs are "Jaylen Brown: 25+" still serves them as props.
+    if kalshi_series_period(external_id) is None and is_game_winner_market(
+        name, external_id
+    ):
+        return "moneyline"
     return "other"
 
 
@@ -22809,6 +22896,10 @@ _PM_PERIOD_SCOPES = frozenset({
     # (0.5, 30) and every contaminating rung sits inside it. Only the scope label
     # can, which is what that guard's own comment says scope labels are for.
     "inning_total", "inning_spread", "inning_winner",
+    # A map, set, leg, frame or numbered period (#1529). Before it had a label
+    # these books wore `moneyline`/`other` and so handed the question to their
+    # outcomes; a segment prices a fraction of the match whatever its legs say.
+    "segment_winner",
 })
 
 #: Market labels that price NEITHER arm of the game — dropped outright, not just
@@ -23687,6 +23778,127 @@ def _score_proves_this_grade(event, event_is_finished, sport_key, market, outcom
         getattr(event, "away_score", None),
     )
     return proved is not None and proved is bool(grade["is_winner"])
+
+
+#: #10965: the unit a TEAM-TOTAL leg must count for its sport's score columns to
+#: answer it. Same families and same refusal as `final_score_margin`'s table —
+#: an unlisted sport (tennis: `home_score` is not proven to be sets) proves
+#: nothing — spelled in the plural the leg names use ("over 4.5 runs scored").
+_TEAM_TOTAL_SCORE_UNIT = {
+    "soccer": "goals",
+    "icehockey": "goals",
+    "baseball": "runs",
+    "basketball": "points",
+    "americanfootball": "points",
+}
+
+
+#: CERT-4083: a regulation-time question ("Team Total Goals (Regulation)",
+#: "90 minutes") is not answered by a final that may include overtime or extra
+#: time, and no segment reader names it — so the proof refuses it by name.
+_REGULATION_WINDOW_RE = re.compile(
+    r"\b(?:regulation|regular\s+time|90\s+min(?:ute)?s|excl(?:uding|\.)?\s+(?:overtime|ot))\b",
+    re.IGNORECASE,
+)
+
+
+def _score_proves_team_total_grade(
+    event, event_is_finished, sport_key, market, outcome, grade
+) -> bool:
+    """#10965: True when the FINAL SCORE recomputes this team-total leg's grade.
+
+    `_score_proves_this_grade`'s rule for the one family it cannot read: a
+    recomputation, never a second grader. `grade` is the leg's own
+    `_settled_grade_fields` (with the build's event context, so a pre-kick-off
+    settlement or a crown the score contradicts has already been withheld), and
+    it must be at verdict tier. The leg is then graded by the SHIPPED team-total
+    grader (`backfill_winners._team_total_outcome_is_winner`, the one that wrote
+    `game_score`) against the event's own scores, and must arrive at the same
+    answer. It refuses, and the leg keeps today's behaviour, whenever it cannot
+    positively identify the question:
+
+    * a live or scheduled game, or a score that is not two integers;
+    * a period market (a first-five total is not answered by the final score),
+      whether the ticker, the market name or the leg name says so (CERT-4083);
+    * a leg whose unit is not the sport's score unit, or a sport with none;
+    * an Under leg, which the totals ladder would draw on the wrong axis;
+    * a name the grader does not read as a team total, or a club it cannot
+      resolve to exactly one side (`_TEAM_TOTAL_UNRESOLVED` — shared cities);
+    * a grade the arithmetic disagrees with.
+    """
+    if not event_is_finished or not _row_is_graded_at_verdict_tier(grade):
+        return False
+    home_score = getattr(event, "home_score", None)
+    away_score = getattr(event, "away_score", None)
+    for score in (home_score, away_score):
+        if isinstance(score, bool) or not isinstance(score, int):
+            return False
+    unit = _TEAM_TOTAL_SCORE_UNIT.get(str(sport_key or "").split("_")[0].lower())
+    if unit is None:
+        return False
+    # Local import at function scope to avoid an import cycle with tasks/.
+    from app.tasks.backfill_winners import (
+        _TEAM_TOTAL_RE,
+        _market_period,
+        _team_total_outcome_is_winner,
+    )
+
+    name = str(getattr(outcome, "name", None) or "")
+    match = _TEAM_TOTAL_RE.match(name)
+    if match is None or not re.search(rf"\b{unit}\b", match.group(0), re.IGNORECASE):
+        return False
+    # CERT-4082: the totals ladder reads a leg as Under only when its name
+    # STARTS with "Under", so "Boston under 7.5 runs scored" is drawn on the Over
+    # axis and its loss would print as 0% Over at Boston 10. Until that parser
+    # reads team-named Unders (follow-up 10965-TEAM-NAMED-UNDER-AXIS), an Under
+    # leg is not admitted here and keeps today's behaviour.
+    if match.group("dir").lower() != "over":
+        return False
+    market_name = str(getattr(market, "name", None) or "")
+    if _market_period(getattr(market, "external_id", None), market_name):
+        return False
+    # CERT-4083: `_market_period` reads only halves out of a NAME, and a numeric
+    # provider id (Polymarket's `977353`) carries no ticker token, so "Boston vs
+    # Detroit: First 5 innings Team Total Runs" classified as full-game and its
+    # legs were proved against the FINAL score — Detroit over 1.5 served Won on
+    # runs nobody showed fell inside five innings. A final score answers only a
+    # full-game question, so any title — market or leg — that the shipped
+    # segment readers place in a PART of the game (first-N innings, one inning,
+    # a half, a quarter, a period) or that stops the clock at regulation is
+    # refused here, whatever its ticker says.
+    for title in (market_name, name):
+        if _names_a_match_segment(title) or _REGULATION_WINDOW_RE.search(title):
+            return False
+    won = _team_total_outcome_is_winner(
+        name,
+        getattr(event, "home_team_name", None),
+        getattr(event, "away_team_name", None),
+        home_score,
+        away_score,
+    )
+    return isinstance(won, bool) and won is bool(grade["is_winner"])
+
+
+class _PriceWithheldLeg:
+    """#10965: a stored leg seen with its refused price withheld.
+
+    `_build_game_markets` keeps a settled team-total leg whose result the final
+    score proves even when #5247/#8753 refuse its stored price; this read-only
+    view is how that leg reaches a reader that takes the raw legs (the Game
+    question matrix), so the refused number and its book are never served
+    beside the result. Every other attribute is the leg's own.
+    """
+
+    __slots__ = ("_leg",)
+    _WITHHELD = frozenset({"current_probability", "current_yes_bid", "current_yes_ask"})
+
+    def __init__(self, leg):
+        self._leg = leg
+
+    def __getattr__(self, name):
+        if name in _PriceWithheldLeg._WITHHELD:
+            return None
+        return getattr(self._leg, name)
 
 
 def _settled_over_probability(
@@ -26087,6 +26299,9 @@ async def _build_game_markets(
         if any(o.is_winner is True for o in outs)
     }
 
+    # #10965: every leg below whose price was refused but whose result is served.
+    _all_price_withheld_ids: set = set()
+
     for market in markets:
         market_outcomes = outcomes_by_market.get(market.id, [])
 
@@ -26101,9 +26316,25 @@ async def _build_game_markets(
         # it. A market whose legs are ALL empty-book then falls through the `if not
         # market_outcomes` guard below and its card leaves entirely -- which is the
         # specimen's case (one leg, one card) and the existing empty-state path.
-        market_outcomes = [
+        #
+        # #10965 — …BUT A REFUSED PRICE IS NOT A REFUSED RESULT. Both rules above
+        # are about the NUMBER, and they used to take the leg with it. On
+        # `/events/14626073` (Boston 10, Detroit 3) Kalshi's team total stored
+        # Detroit over 4.5 / 5.5 / 6.5 at 0.02 / 0.90 / 0.33 beside a 0.01 ask,
+        # all three graded `game_score` losers: #8753 rightly refused the prices
+        # and, with them, three answered lines from the middle of the settled
+        # ladder (`/futures/54069274` withholds the same numbers and keeps the
+        # results). So a settled TEAM-TOTAL leg whose grade the final score
+        # recomputes (`_score_proves_team_total_grade`) stays, with its price
+        # withheld: every read below treats it as priceless, so it reaches the
+        # totals ladder only through the #10965 per-leg gate and is served at the
+        # 0/1 its verdict implies, never at the refused number. Every other
+        # market type, and every live, ungraded, period, foreign-unit or
+        # unresolvable-club leg, is dropped exactly as before.
+        _price_withheld_ids: set = set()
+        _price_refused = [
             o for o in market_outcomes
-            if not is_empty_book_midpoint(
+            if is_empty_book_midpoint(
                 o.current_probability, o.current_yes_bid, o.current_yes_ask
             )
             # #8753 — and a price its own live book prices out (#6532's arm,
@@ -26113,8 +26344,25 @@ async def _build_game_markets(
             # summed to 139% while the board's detail page withheld that leg.
             # Same placement as #5247 so every section is covered by one rule;
             # the predicate owns the graded-winner exemption and the Kalshi scope.
-            and not _leg_price_refuted_by_its_book(market, o)
+            or _leg_price_refuted_by_its_book(market, o)
         ]
+        if (
+            _price_refused
+            and event_is_finished
+            and _classify_game_market(market.name, external_id=market.external_id)
+            == "team_total"
+        ):
+            _price_withheld_ids = {
+                o.id
+                for o in _price_refused
+                if _score_proves_team_total_grade(
+                    event, event_is_finished, sport_key, market, o,
+                    _settled_grade_fields(market, o, **_grade_ctx),
+                )
+            }
+        _all_price_withheld_ids |= _price_withheld_ids
+        _refused_ids = {o.id for o in _price_refused} - _price_withheld_ids
+        market_outcomes = [o for o in market_outcomes if o.id not in _refused_ids]
 
         if not market_outcomes:
             continue
@@ -26200,10 +26448,50 @@ async def _build_game_markets(
         # only when the SCOREBOARD has answered at least one of its legs, which
         # is a fact about the game and not a reading of the price; an unpriced
         # card with nothing proved on it is dropped exactly as it is today.
-        if has_no_real_price(
-            [o.current_probability for o in market_outcomes]
-        ) and not _score_proved_ids:
+        #
+        # #10965: and a TEAM TOTAL, whose legs `margin_verdict_from_final_score`
+        # cannot read, is readmitted on `_score_proves_team_total_grade`'s proof —
+        # so a settled ladder whose quotes are ALL gone (or all withheld above)
+        # still reaches the per-leg gate, and never prints a withheld number. Only
+        # that type: every other all-unpriced market is dropped exactly as before.
+        #
+        # CERT-4082: …AND ONLY THE LEGS THE SCORE PROVES COME IN WITH IT. One
+        # agreeing leg used to admit the whole market, and its siblings then met
+        # only `_verdict_is_provable`, which checks the market was decided — not
+        # that THIS leg's grade is right. Detroit 3 with an unpriced
+        # "Detroit over 2.5 runs scored" stored as a `game_score` loser was
+        # served Lost beside a correctly Won 1.5. So a market admitted on this
+        # proof keeps exactly the legs that pass it, each on its own score, unit,
+        # club and period; a contradicted or unprovable sibling leaves, as the
+        # whole market did before #10965. The stored verdict is never rewritten.
+        _no_real_price = has_no_real_price(
+            [
+                None if o.id in _price_withheld_ids else o.current_probability
+                for o in market_outcomes
+            ]
+        )
+        _team_total_proved_ids: set = set()
+        if (
+            _no_real_price
+            and not _score_proved_ids
+            and event_is_finished
+            and _classify_game_market(market.name, external_id=market.external_id)
+            == "team_total"
+        ):
+            _team_total_proved_ids = {
+                o.id
+                for o in market_outcomes
+                if _score_proves_team_total_grade(
+                    event, event_is_finished, sport_key, market, o,
+                    _settled_grade_fields(market, o, **_grade_ctx),
+                )
+            }
+        if _no_real_price and not _score_proved_ids and not _team_total_proved_ids:
             continue
+        if _team_total_proved_ids:
+            market_outcomes = [
+                o for o in market_outcomes if o.id in _team_total_proved_ids
+            ]
         if _PLACEHOLDER_TEAM_RE.search(market.name or ""):
             continue
 
@@ -26238,12 +26526,60 @@ async def _build_game_markets(
                     or re.match(r'^\d+\+', name_lower)  # "2+", "3+" = threshold-style over
                 )
                 is_under = name_lower.startswith("under") or name_lower == "no"
-                prob = float(o.current_probability) if o.current_probability is not None else None
-                if prob is None:
+                # #10965: a withheld price (refused above, result kept) is no price.
+                _price = None if o.id in _price_withheld_ids else o.current_probability
+                prob = float(_price) if _price is not None else None
+                # #10965 — A GRADED RUNG WITH NO QUOTE IS STILL A RESULT.
+                #
+                # This line used to drop every priceless leg before its verdict was
+                # read. On `/events/14626073` (Boston 10, Detroit 3) Kalshi's team
+                # total held Detroit over 4.5/5.5/6.5 at `is_winner=False`,
+                # `game_score`, `current_probability=NULL`, so the settled ladder
+                # read 1.5 Won, 2.5 Won, 3.5 Lost, 7.5 Lost — three answered lines
+                # gone from the middle, while 3.5 and 7.5 survived only because
+                # they still held a stale 0.01.
+                #
+                # A priceless leg is readmitted ONLY when `_verdict_is_provable`
+                # accepts its grade: authoritative tier AND a winner on its own
+                # market or the final score's own proof (the all-lost block just
+                # below), so an unproved all-lost market and an ungraded,
+                # retracted or pre-kick-off-settled row (`_settled_grade_fields`
+                # withholds those) are still dropped here exactly as before, and a
+                # live null-priced leg never qualifies. No price is invented: the
+                # served number is the 0/1 `_settled_over_probability` derives from
+                # the verdict, the same value a priced settled rung serves.
+                # The grade is read HERE, once, and reused by the append below.
+                _grade = _settled_grade_fields(market, o, **_grade_ctx)
+                # #10965 — AN ALL-LOST TEAM TOTAL IS DECIDED BY THE SCOREBOARD.
+                #
+                # `/events/14454995` (San Diego 1, Colorado 0): Kalshi's team
+                # total holds 14 legs, Colorado over 1.5 … San Diego over 7.5,
+                # every one a correct `game_score` loser still carrying a quote
+                # (Colorado over 1.5 at 0.86). No leg won, so `_verdict_is_provable`
+                # read the market as possibly voided: the ladder served the stale
+                # quotes and the Game question matrix — the iPhone's reader —
+                # printed all 14 as quoted, never Lost. This is #6312's spreads
+                # rule for the one family `_score_proves_this_grade` cannot
+                # read: a leg whose grade `_score_proves_team_total_grade`
+                # recomputes from the final score carries `_SCORE_PROVED_KEY`,
+                # so every gate below (and the matrix, which reads the served
+                # row) accepts it on its own evidence. It is an OR — an Under,
+                # period, foreign-unit, unresolved-club or contradicted leg
+                # carries no key and keeps the sibling-winner rule exactly.
+                if market_type == "team_total" and _score_proves_team_total_grade(
+                    event, event_is_finished, sport_key, market, o, _grade,
+                ):
+                    _grade = {**_grade, _SCORE_PROVED_KEY: True}
+                if prob is None and not _verdict_is_provable(
+                    _grade, market.id in markets_with_a_winner,
+                ):
                     continue
                 # For "Under X", convert to "probability of going OVER"
                 # For threshold outcomes ("2+", "3+"), prob IS the over probability
-                over_prob = prob if is_over or not is_under else 1.0 - prob
+                if prob is None:
+                    over_prob = None
+                else:
+                    over_prob = prob if is_over or not is_under else 1.0 - prob
 
                 # Detect player props hiding inside team_total markets.
                 # Kalshi names markets "Team at Team: Steals" but outcomes
@@ -26255,6 +26591,11 @@ async def _build_game_markets(
                 # `_SUBJECT_LADDER_LEG_RE`. State-independent on purpose — a leg
                 # must not change buckets when the whistle blows.
                 if market_type == "team_total" and _leg_names_its_own_subject(o.name):
+                    # #10965 readmits priceless legs for the totals ladder only; a
+                    # player-shaped leg keeps today's behaviour (no row without a
+                    # price) — its grade path is `_grade_settled_prop`, not this.
+                    if prob is None:
+                        continue
                     tt_opening_over = None
                     if o.opening_probability is not None:
                         tt_op = float(o.opening_probability)
@@ -26298,7 +26639,7 @@ async def _build_game_markets(
                 # `_inverted` is computed ONCE and handed to both helpers on
                 # purpose: the half-inverted row this repairs existed because
                 # the price was normalised here and the grade was spread raw.
-                _grade = _settled_grade_fields(market, o, **_grade_ctx)
+                # (`_grade` is read once above, before the #10965 priceless gate.)
 
                 # #6769 — A GRADED RUNG THE RANGE GUARD IS ABOUT TO DELETE IS
                 # SERVED AS A RESULT INSTEAD.
@@ -26359,7 +26700,10 @@ async def _build_game_markets(
                 totals_thresholds.append({
                     "threshold": threshold,
                     "over_probability": _settled_over_probability(
-                        _grade, _inverted, round(over_prob, 4), _market_settled,
+                        _grade,
+                        _inverted,
+                        round(over_prob, 4) if over_prob is not None else None,
+                        _market_settled,
                     ),
                     "source": market.source,
                     "market_type": market_type,
@@ -26368,8 +26712,8 @@ async def _build_game_markets(
                     "observed_at": _observed(o),
                     "contributor_outcome_ids": [o.id],
                     **_settled_over_verdict(_grade, _inverted, _market_settled),
-                    "movement": round(float(o.current_probability) - float(o.opening_probability), 4)
-                        if o.opening_probability is not None and o.current_probability is not None else None,
+                    "movement": round(float(_price) - float(o.opening_probability), 4)
+                        if o.opening_probability is not None and _price is not None else None,
                     "period": market_period,
                     "_market_id": market.id,
                     "_external_id": market.external_id,
@@ -27878,7 +28222,12 @@ async def _build_game_markets(
                 "matchups": matchups,
                 "other": other_markets,
             },
-            outcomes=outcomes,
+            # #10965: a leg served for its result with its refused price
+            # withheld reads priceless here too, so no evidence row carries it.
+            outcomes=[
+                _PriceWithheldLeg(o) if o.id in _all_price_withheld_ids else o
+                for o in outcomes
+            ],
             market_facts=_question_market_facts,
             observed=_observed,
             markets_with_a_winner=markets_with_a_winner,
@@ -33327,19 +33676,32 @@ async def get_event_odds_history(
     # the hero's own sentence (`_settled_hero_result`), so the chart can only end
     # on a result the page is already printing; a draw, a score sentence or an
     # unorientable name keeps the line unchanged.
+    #
+    # #10929: a LEVEL scored final in a two-way sport ends at 50/50 with the same
+    # Final row — see `scored_tie_ends_level`.
     home_won = None
+    ends_level = False
     if is_finished and event.home_score is not None and event.away_score is not None:
-        if event.home_score != event.away_score:  # Skip ties
+        if event.home_score != event.away_score:
             home_won = event.home_score > event.away_score
+        else:
+            ends_level = scored_tie_ends_level(
+                event.home_score,
+                event.away_score,
+                event.sport.key if event.sport else None,
+            )
     elif aggregate_line or history or any(win_prob_history.values()):
         home_won = venue_settled_home_won(
             await _settled_hero_result(db, event, now),
             event.home_team_name,
             event.away_team_name,
         )
-    if home_won is not None:
-        resolved_home_prob = 1.0 if home_won else 0.0
-        resolved_away_prob = 0.0 if home_won else 1.0
+    if home_won is not None or ends_level:
+        if ends_level:
+            resolved_home_prob = resolved_away_prob = 0.5
+        else:
+            resolved_home_prob = 1.0 if home_won else 0.0
+            resolved_away_prob = 0.0 if home_won else 1.0
 
         # Determine terminal timestamp: completed_at if available,
         # otherwise last data point + 1 minute. #1833: a completed_at no game

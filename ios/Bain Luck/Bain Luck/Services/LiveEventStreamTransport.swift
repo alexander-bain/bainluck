@@ -17,10 +17,15 @@ private let logger = Logger(subsystem: "com.bainluck", category: "liveStream")
 /// WHAT IT DOES DO, BECAUSE `EventSource` DOES (#920): a connection that DROPS —
 /// the byte stream ends, or the network errors, with no `closed`/`reconnect`
 /// frame — is retried after `retryDelay`, and `isConnecting` reads true until
-/// the next 200. The controller's lifecycle is a port of web's, and web's
-/// assumes a transport that reconnects underneath it: the browser does exactly
-/// this, which is why a release that restarts the web dyno costs a web reader a
-/// few seconds of push. This transport used to call that same cut closed-for-
+/// the next 200. ONE EXCEPTION (#10090): the first retry after a connection that
+/// stayed up at least `retryDelay` waits only `firstRetryDelay`. A release that
+/// ends a healthy stream otherwise cost five seconds of quotes (revs 1871–1875,
+/// 2026-10-12): the server replays only the latest frame on connect, never the
+/// ones published while the page was waiting.
+///
+/// The controller's lifecycle is a port of web's, and web's assumes a transport
+/// that reconnects underneath it: the browser does exactly this, which is why a
+/// release that restarts the web dyno costs a web reader a few seconds of push. This transport used to call that same cut closed-for-
 /// good, the controller's `stop()` is terminal, and a phone page polled for the
 /// rest of the match (native/319, release v5007). The controller still owns the
 /// ending: it retires a transport that stays silent past `retryGiveUp`, and its
@@ -93,10 +98,18 @@ final class LiveEventStreamTransport: LiveStreamHandle {
     private var closed = false
     private var connecting = true
     private let retryDelay: TimeInterval
+    private let firstRetryDelay: TimeInterval
 
     /// The wait before re-opening a dropped connection. The server's own
     /// `retry:` field (`SSE_RETRY_MS`, 5000), which is what a browser waits.
     nonisolated static let defaultRetryDelay: TimeInterval = 5
+
+    /// The wait before re-opening a connection that dropped after a healthy run,
+    /// plus up to the same again of jitter so every phone on a restarted dyno
+    /// does not arrive in the same instant. Only a connection that stayed up at
+    /// least `retryDelay` earns it, so one that answers 200 and ends at once is
+    /// still retried no faster than `retryDelay` — never a hammer.
+    nonisolated static let defaultFirstRetryDelay: TimeInterval = 0.25
 
     var isClosed: Bool { closed }
     /// `EventSource.readyState == CONNECTING`: before the first 200, and again
@@ -107,20 +120,23 @@ final class LiveEventStreamTransport: LiveStreamHandle {
         eventId: Int,
         baseURL: String = "https://api.bainluck.com",
         session: URLSession? = nil,
-        retryDelay: TimeInterval = LiveEventStreamTransport.defaultRetryDelay
+        retryDelay: TimeInterval = LiveEventStreamTransport.defaultRetryDelay,
+        firstRetryDelay: TimeInterval = LiveEventStreamTransport.defaultFirstRetryDelay
     ) throws {
         guard let url = URL(string: "\(baseURL)/api/events/\(eventId)/stream") else {
             throw URLError(.badURL)
         }
-        self.init(url: url, session: session, retryDelay: retryDelay)
+        self.init(url: url, session: session, retryDelay: retryDelay, firstRetryDelay: firstRetryDelay)
     }
 
     /// Reuse the same SSE transport for bounded market invalidation streams.
     /// The event initializer above retains its existing URL and behavior.
     init(url: URL, session: URLSession? = nil,
-         retryDelay: TimeInterval = LiveEventStreamTransport.defaultRetryDelay) {
+         retryDelay: TimeInterval = LiveEventStreamTransport.defaultRetryDelay,
+         firstRetryDelay: TimeInterval = LiveEventStreamTransport.defaultFirstRetryDelay) {
         self.url = url
         self.retryDelay = retryDelay
+        self.firstRetryDelay = min(firstRetryDelay, retryDelay)
         if let session {
             self.session = session
         } else {
@@ -149,17 +165,20 @@ final class LiveEventStreamTransport: LiveStreamHandle {
     }
 
     /// Open the connection and pump frames until it is refused, closed, or
-    /// cancelled — re-opening after `retryDelay` each time it merely drops.
+    /// cancelled — re-opening after `retryDelay` each time it merely drops, or
+    /// after `firstRetryDelay` when the connection that dropped had been healthy.
     func connect() {
         guard task == nil, !closed else { return }
         let delay = retryDelay
+        let first = firstRetryDelay
         task = Task { [weak self] in
             // `self` is held only for the length of one connection, never across
             // the wait: an owner that walked away without `close()` leaves a
             // loop that ends at its next turn instead of retrying forever.
             while !Task.isCancelled {
-                guard let outcome = await self?.pump(), outcome == .dropped else { return }
-                try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+                guard let outcome = await self?.pump(), case .dropped(let healthy) = outcome else { return }
+                let wait = healthy ? first * Double.random(in: 1...2) : delay
+                try? await Task.sleep(nanoseconds: UInt64(wait * 1_000_000_000))
             }
         }
     }
@@ -174,8 +193,9 @@ final class LiveEventStreamTransport: LiveStreamHandle {
     private enum Outcome {
         /// The server answered with a non-200: final, the transport is closed.
         case refused
-        /// The stream ended or the network failed, unasked: retry.
-        case dropped
+        /// The stream ended or the network failed, unasked: retry. `healthy`
+        /// when it had answered 200 and stayed up at least `retryDelay`.
+        case dropped(healthy: Bool)
         /// Closed or cancelled from this side.
         case ended
     }
@@ -187,6 +207,11 @@ final class LiveEventStreamTransport: LiveStreamHandle {
         // A cached SSE response is not a thing, and a proxy that buffers one
         // would deliver the whole match at once, at the end.
         request.setValue("no-cache", forHTTPHeaderField: "Cache-Control")
+        // When this connection answered 200; nil until it does.
+        var openedAt: TimeInterval?
+        func healthy() -> Bool {
+            openedAt.map { ProcessInfo.processInfo.systemUptime - $0 >= retryDelay } ?? false
+        }
 
         do {
             let (bytes, response) = try await session.bytes(for: request)
@@ -200,6 +225,7 @@ final class LiveEventStreamTransport: LiveStreamHandle {
                 return .refused
             }
             connecting = false
+            openedAt = ProcessInfo.processInfo.systemUptime
 
             // BYTES, NOT `bytes.lines`. MEASURED, not preferred:
             // `URLSession.AsyncBytes.lines` DROPS EMPTY LINES. The blank line is
@@ -236,15 +262,16 @@ final class LiveEventStreamTransport: LiveStreamHandle {
             // would. `connecting` is set BEFORE the error is reported, so the
             // controller reads it as a blip (polling) and not a death.
             if Task.isCancelled || closed { return .ended }
+            logger.info("live stream ended by the server, retrying: \(self.url.path)")
             connecting = true
             emit("error", "")
-            return .dropped
+            return .dropped(healthy: healthy())
         } catch {
             if Task.isCancelled || closed { return .ended }
             logger.info("live stream dropped, retrying: \(error.localizedDescription)")
             connecting = true
             emit("error", "")
-            return .dropped
+            return .dropped(healthy: healthy())
         }
     }
 }

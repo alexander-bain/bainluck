@@ -290,9 +290,16 @@ final class OddsChartViewModel: ObservableObject {
     @Published var error: String?
 
     let eventId: Int
+    /// The chart's own history read, when the page has not handed it one yet.
+    /// A seam so a test can hold the read open; the app always uses the default.
+    private let fetchHistory: @Sendable (Int) async throws -> EventHistoryResponse
 
-    init(eventId: Int, preloaded: EventHistoryResponse? = nil) {
+    init(eventId: Int, preloaded: EventHistoryResponse? = nil,
+         fetchHistory: @escaping @Sendable (Int) async throws -> EventHistoryResponse = {
+             try await APIClient.shared.fetchEventHistory(id: $0, hours: 168)
+         }) {
         self.eventId = eventId
+        self.fetchHistory = fetchHistory
         if let preloaded {
             self.history = preloaded
             self.loading = false
@@ -330,13 +337,18 @@ final class OddsChartViewModel: ObservableObject {
         guard history == nil else { return }  // Skip if preloaded
         loading = true
         do {
-            history = try await APIClient.shared.fetchEventHistory(id: eventId, hours: 168)
+            history = try await fetchHistory(eventId)
             error = nil
             loading = false
         } catch {
-            self.error = error.localizedDescription
             loading = false
             logger.error("Failed to load history for event \(self.eventId): \(error)")
+            // #10090 — a fresh page mounts its chart before its own history
+            // read lands, so this read is usually still in flight when the page
+            // hands the chart that payload (`adopt`). Its late failure must not
+            // print "couldn't load" over a chart that already has data.
+            guard history == nil else { return }
+            self.error = error.localizedDescription
         }
     }
 }
@@ -487,6 +499,19 @@ struct OddsChartView: View {
         guard let kickoffDate else { return nil }
         return ObservedPlayStart.cut(scheduled: kickoffDate, history: vm.history,
                                      sportKey: sportKey) ?? kickoffDate
+    }
+
+    /// #9483 — what names an inspected reading's phase: this chart's own Since
+    /// Start cut and, on a finished game, the end of the series the readout
+    /// names. One per body, shared by the card and VoiceOver.
+    private func readoutContext(dataPoints: [ChartDataPoint],
+                                checkpoints: PublicationCheckpointMount4974?,
+                                pageGaveCard: Bool) -> ChartReadoutContext9483 {
+        let source = Self.readoutSource(in: dataPoints, pageGaveCard: pageGaveCard)
+            ?? Self.primarySource(in: dataPoints)
+        return .chart(playStart: sinceStartDate, gameFinished: EventState.isFinished(status),
+                      readoutPoints: dataPoints.filter { $0.source == source },
+                      checkpoints: checkpoints)
     }
 
     /// Show the All / Since Start picker only when the game has started
@@ -966,6 +991,8 @@ struct OddsChartView: View {
                                                           dataPoints: dataPoints,
                                                           sportKey: sportKey, pageGaveCard: readout != nil)
                                     .publicationCheckpoints(checkpoints)
+                                    .readingPhases(readoutContext(dataPoints: dataPoints, checkpoints: checkpoints,
+                                                                  pageGaveCard: readout != nil))
                             }
                             HStack(spacing: 0) {
                                 // #2903 — fullscreen has no fixed chart height, so the
@@ -1875,6 +1902,8 @@ struct OddsChartView: View {
                                           gameFinished: EventState.isFinished(status),
                                           checkpoints: checkpoints,
                                           sportKey: sportKey, floatingCard: floatingCard)
+                    .readingPhases(readoutContext(dataPoints: dataPoints, checkpoints: checkpoints,
+                                                  pageGaveCard: pageGaveCard))
                 // #925 — the scrub. `chartXSelection` lost the touch to the
                 // page's scroll the moment a thumb drifted vertically (Alex's
                 // build-20 recording, 14781697). The futures chart solved the
@@ -2851,17 +2880,35 @@ struct OddsChartView: View {
     /// labels (`GamePlayCardView.printedLabels`) — so VoiceOver says ">99%" where
     /// the card prints it (a bare integer spoke a live 0.996 as "100%", #9015's
     /// class) and speaks no away number where the card withholds one (#5271).
+    ///
+    /// #9483 — with the chart's `context` it also says the reading's phase and
+    /// when it was observed, as the card prints them: "Pregame" in place of a
+    /// state on a reading before play began, "Final" on a finished line's
+    /// settled end unless the state already says it, and the card's clock.
+    /// Without one (callers that hold no chart) it reads as before.
     static func selectionReadout(for point: ChartDataPoint, homeShort: String, awayShort: String,
                                  moment: ChartMoment? = nil, gameFinished: Bool = false,
-                                 sportKey: String? = nil) -> String {
+                                 sportKey: String? = nil,
+                                 context: ChartReadoutContext9483? = nil) -> String {
         let play = playPoint(for: point, sportKey: sportKey)
         let printed = GamePlayCardView.printedLabels(home: play.homeProb, away: play.awayProb,
                                                      gameFinished: gameFinished)
+        let phase = context?.phase(at: point.date, probability: point.probability)
         var parts = ["\(homeShort) \(printed.home)"]
         if let away = printed.away { parts.append("\(awayShort) \(away)") }
+        if phase == .pregame { parts.append(ChartReadoutPhase9483.pregame.word) }
         if let hs = point.homeScore, let a = point.awayScore { parts.append("score \(hs)–\(a)") }
-        if let period = point.period, !period.isEmpty { parts.append(period) }
-        if let clock = point.clock, !clock.isEmpty { parts.append(clock) }
+        if phase != .pregame {
+            if let period = point.period, !period.isEmpty { parts.append(period) }
+            if let clock = point.clock, !clock.isEmpty { parts.append(clock) }
+        }
+        func saysFinal(_ text: String?) -> Bool {
+            text?.localizedCaseInsensitiveContains("final") == true
+        }
+        if phase == .final, !saysFinal(point.period), !saysFinal(point.clock) {
+            parts.append(ChartReadoutPhase9483.final.word)
+        }
+        if let context { parts.append(context.spokenTime(point.date)) }
         // The cause goes LAST: a VoiceOver reader wants the number first and the
         // story after it, the same order the sighted reader gets from the line and
         // then the caption.
@@ -2879,7 +2926,8 @@ struct OddsChartView: View {
                                    moments: [ChartMoment] = [],
                                    pageGaveCard: Bool = true,
                                    gameFinished: Bool = false,
-                                   sportKey: String? = nil) -> String {
+                                   sportKey: String? = nil,
+                                   context: ChartReadoutContext9483? = nil) -> String {
         let source = readoutSource(in: dataPoints, pageGaveCard: pageGaveCard)
             ?? primarySource(in: dataPoints)
         let point: ChartDataPoint?
@@ -2892,7 +2940,8 @@ struct OddsChartView: View {
         }
         guard let point else { return "No probability data" }
         return selectionReadout(for: point, homeShort: homeShort, awayShort: awayShort,
-                                moment: moment, gameFinished: gameFinished, sportKey: sportKey)
+                                moment: moment, gameFinished: gameFinished, sportKey: sportKey,
+                                context: context)
     }
 
     // MARK: - Game State Enrichment
@@ -3081,7 +3130,10 @@ struct OddsChartView: View {
 
     /// One chart point as the readout prints it — the scrubbed moment and the
     /// resting one (#8652) are the same read of the same kind of point.
-    static func playPoint(for point: ChartDataPoint, sportKey: String?) -> GamePlayPoint {
+    ///
+    /// #9483 — `context` names the reading's phase on the card's badge.
+    static func playPoint(for point: ChartDataPoint, sportKey: String?,
+                          context: ChartReadoutContext9483? = nil) -> GamePlayPoint {
         GamePlayPoint(
             timestamp: point.date.ISO8601Format(),
             homeProb: point.probability,
@@ -3100,7 +3152,8 @@ struct OddsChartView: View {
             scoreObservedAt: point.scoreObservedAt,
             periodApprox: point.periodApprox,
             clockApprox: point.clockApprox,
-            scoreApprox: point.scoreApprox
+            scoreApprox: point.scoreApprox,
+            phase: context?.phase(at: point.date, probability: point.probability)
         )
     }
 
@@ -3123,9 +3176,11 @@ struct OddsChartView: View {
     /// carry. Two or more unblended lines still rest on nothing — picking one
     /// venue's number is the comparison "the blend is the product" rules out.
     static func fullscreenRestingPoint(in points: [ChartDataPoint], sportKey: String?,
-                                       pageGaveCard: Bool) -> GamePlayPoint? {
+                                       pageGaveCard: Bool,
+                                       context: ChartReadoutContext9483? = nil) -> GamePlayPoint? {
         guard let source = readoutSource(in: points, pageGaveCard: pageGaveCard) else { return nil }
-        return latestPoint(in: points, source: source).map { playPoint(for: $0, sportKey: sportKey) }
+        return latestPoint(in: points, source: source)
+            .map { playPoint(for: $0, sportKey: sportKey, context: context) }
     }
 
     /// #9185 — the ONE series a readout card reads, resting AND scrubbing. The
@@ -3887,21 +3942,26 @@ struct PublicationCheckpointMount4974 {
     }
 
     /// VoiceOver's reading of the same readout the card shows.
+    /// #9483 — `context` adds the reading's phase, as the card's badge prints it.
     func accessibilityValue(date: Date?, scrub: PublicationCheckpointScrub4974?,
                             homeShort: String, awayShort: String, moments: [ChartMoment],
-                            gameFinished: Bool, sportKey: String?) -> String {
+                            gameFinished: Bool, sportKey: String?,
+                            context: ChartReadoutContext9483? = nil) -> String {
         switch readout(date: date, scrub: scrub) {
         case .legacy(let point):
             return OddsChartView.selectionReadout(
                 for: point, homeShort: homeShort, awayShort: awayShort,
                 moment: date.flatMap { OddsChartView.nearestMoment(to: $0, in: moments) },
-                gameFinished: gameFinished, sportKey: sportKey)
+                gameFinished: gameFinished, sportKey: sportKey, context: context)
         case .checkpoint(let checkpoint):
             let play = PublicationCheckpointReadoutSlot4974.playPoint(for: checkpoint, sportKey: sportKey)
             let printed = GamePlayCardView.printedLabels(home: play.homeProb, away: play.awayProb,
                                                          gameFinished: gameFinished)
             var parts = ["\(homeShort) \(printed.home)"]
             if let away = printed.away { parts.append("\(awayShort) \(away)") }
+            if let phase = context?.phase(at: checkpoint.date, probability: checkpoint.vertex.p) {
+                parts.append(phase.word)
+            }
             parts.append(PublicationCheckpointReadoutSlot4974.clock(checkpoint.date, dated: false))
             return parts.joined(separator: ", ")
         case .withheld:

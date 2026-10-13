@@ -49,6 +49,7 @@ from app.utils.feed_market_quality import (  # #8192
     book_has_a_buyer,
 )
 from app.utils.futures_liveness import leg_is_graded  # #7387
+from app.utils.odds_api_retirement import WITHDRAWN_STATUS  # #1541
 from app.utils.tournament_stages import classify_market_stage, get_stages_for_sport
 from app.utils.static_divisions import canonical_conference as _canonical_conference
 from app.utils.static_divisions import canonical_division as _canonical_division
@@ -2867,6 +2868,10 @@ def _build_golf_candidate_filters(config: LeagueConfig) -> list:
     return [
         market_filter,
         FuturesMarket.status != "resolved",
+        # #1541: a provider-withdrawn row is not live either; `!= 'resolved'`
+        # alone would list it on the grid. A SEPARATE clause, so the text above
+        # stays the one LAT-P130 explained on production.
+        FuturesMarket.status != WITHDRAWN_STATUS,
         FuturesMarket.source != "datagolf",
     ]
 
@@ -7438,6 +7443,8 @@ async def _get_team_progression_for_event_uncached(
         .where(
             market_filter,
             FuturesMarket.status != "resolved",
+            # #1541: a provider-withdrawn row is not live either.
+            FuturesMarket.status != WITHDRAWN_STATUS,
         )
         .options(selectinload(FuturesMarket.outcomes))
     )

@@ -194,7 +194,7 @@ import {
   computeLastChartPoint,
   defaultChartTimeRange,
 } from "@/lib/eventKeyStats";
-import { renderedPercent } from "@/lib/renderedPercent";
+import MatchupOutcomes from "@/components/event/MatchupOutcomes";
 import { settledPregameMark } from "@/lib/settledPregameMark";
 import { SPECIAL_MARKETS_MIN_WIRE_ROWS, specialMarketsDrawnIds } from "@/lib/gamePropsDrawnAbove";
 
@@ -952,10 +952,20 @@ export default function EventPage({ params }: EventPageProps) {
   // was OBSERVED after the headline's blend (PR #8758's clocks — never the
   // edge's serve minute) moves the headline, through the same cache a frame
   // writes; the next poll is reconciled against the same edge in the fetcher.
+  //
+  // #10090: and only once a headline is HELD. Before the first detail read
+  // lands there is nothing to adopt the edge into, and the write is not a
+  // no-op: swr drops an in-flight fetch that a later mutation post-dates, even
+  // one whose updater returns `undefined`. A history body that beat the first
+  // detail by a millisecond left the page with no headline and no quote stream
+  // until the next 32s poll (production, 15327809). That first read reconciles
+  // against `latestBlendEdgeRef` in its own fetcher; the dependency below
+  // re-runs this once a headline is held, for a read that resolved first.
+  const holdsHeadline = event !== undefined;
   useEffect(() => {
     const edge = servedBlendEdgeObservation(servedHistory);
     latestBlendEdgeRef.current = edge;
-    if (!edge) return;
+    if (!edge || !holdsHeadline) return;
     // #9051: an edge from a fold the held one cannot be ordered against (a twin
     // joined or left) is refused; only a fresh detail read can settle it, so ask
     // for one and write nothing this tick (same swr hazard as the push effect).
@@ -964,7 +974,7 @@ export default function EventPage({ params }: EventPageProps) {
       return;
     }
     refreshEvent((prev) => adoptNewerBlendEdge(prev, edge), { revalidate: false });
-  }, [servedHistory, refreshEvent, foldedRefetch]);
+  }, [servedHistory, refreshEvent, foldedRefetch, holdsHeadline]);
 
   /* #8066: the chart's blend line must be the BACKEND's blend, and after #920
      `historyData.aggregate_line` can no longer answer that — it holds the
@@ -3371,42 +3381,8 @@ export default function EventPage({ params }: EventPageProps) {
                 <MarketBrowser label="Matchups" items={gameMarkets.matchups!.map((matchup, idx) => ({
                   key: String(idx), group: matchup.type === "3ball" ? "Three ball" : "Head to head",
                   search: `${matchup.market_name} ${matchup.outcomes.map(o => o.name).join(" ")}`,
-                  content: (
-                  <div key={idx} className="px-4 sm:px-5 py-3">
-                    <div className="flex items-center justify-between mb-2.5">
-                      <span className="text-xs font-medium text-text-secondary">{matchup.market_name}{isFinished ? " · Last quotes" : ""}</span>
-                      {/* L2-52: source-name badge removed (blend-only). */}
-                    </div>
-                    <div className="space-y-2">
-                      {matchup.outcomes.map((outcome, oidx) => {
-                        // #3867 (CERT-2224 repair): the label routes through the
-                        // contract; `Math.max(pct, 2)` below is still the bar's geometry.
-                        const pct = renderedPercent(outcome.probability) ?? 0;
-                        const isLeader = outcome.probability === Math.max(...matchup.outcomes.map(o => o.probability));
-                        return (
-                          <div key={oidx} className="flex items-center gap-3">
-                            <span className={`text-xs font-medium w-[140px] sm:w-[180px] truncate ${isLeader ? "text-text-primary" : "text-text-secondary"}`}>
-                              {outcome.name}
-                            </span>
-                            <div className="flex-1 h-5 bg-surface-elevated rounded-full overflow-hidden relative">
-                              <div
-                                className="h-full rounded-full transition-all duration-300"
-                                style={{
-                                  width: `${Math.max(pct, 2)}%`,
-                                  backgroundColor: isLeader ? "#10B981" : "#94A3B8",
-                                  opacity: isLeader ? 1 : 0.5,
-                                }}
-                              />
-                            </div>
-                            <span className={`text-xs font-bold tabular-nums w-10 text-right ${isLeader ? "text-text-primary" : "text-text-muted"}`}>
-                              {pct}%
-                            </span>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </div>
-                )}))} />
+                  content: <MatchupOutcomes key={idx} matchup={matchup} finished={isFinished} />,
+                }))} />
               </div>
             </div>
             </SectionErrorBoundary>

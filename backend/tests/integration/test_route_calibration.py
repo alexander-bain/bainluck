@@ -395,6 +395,7 @@ class TestCalibrationPublicEndpoint:
             "weather_wide_spread_filter",  # Queue #183 Item 4 (#182 twin)
             "void_filter",
             "soccer_2way_filter",  # Queue #158 (#1011): soccer 2-way exclusion
+            "score_unit_filter",  # #1010: tennis/MMA lines the score cannot settle
             "heuristic_filter",  # #754 heuristic-exclusion transparency
             "truth_evidence",  # Queue #261 Item 3: calibration-truth census + contract
             # Queue 300C (Alex 2026-08-02): the supporting coverage census + the
@@ -415,6 +416,9 @@ class TestCalibrationPublicEndpoint:
             # gate reads its `excluded` to admit the predicate move the rule
             # makes, so it is part of the served contract, not decoration.
             "datagolf_opening_timing_filter",
+            # #938: the golf round-timing rule's disclosure, read by the gate
+            # for its declared succession in the same way.
+            "golf_round_timing_filter",
             "date_range",  # L2-78 Item 0: resolved-data span for the hero
             "generated_at",
             # Queue 324 / ruling 025: the serve-time declaration. Not a payload

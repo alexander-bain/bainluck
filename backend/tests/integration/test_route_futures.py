@@ -262,12 +262,17 @@ class TestFuturesMarketDetail:
             "hook_withheld",
             "image_url",
             "event_concept_key",
+            # #1541: the provider edition year of an odds_api board's verified
+            # current event. Always present; null on every other board — this
+            # one is Kalshi — and on an odds_api board with no verified anchor.
+            "edition_year",
             "hub_slug",
             "category_page",
             "sport_page_key",
             "source_breakdown",
         }
         assert set(body) == expected_keys
+        assert body["edition_year"] is None
         assert body["id"] == 42
         assert body["bookmakers"] == ["Kalshi", "Polymarket"]
         assert body["outcome_count"] == 1

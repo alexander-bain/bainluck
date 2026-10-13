@@ -62,7 +62,9 @@ describe("#8282 GamesThisWeek on a settled market", () => {
     );
     const mounts = src.match(/<GamesThisWeek\b[^>]*\/>/g) ?? [];
     expect(mounts).toHaveLength(1);
-    expect(mounts[0]).toContain("marketResolved={isResolved}");
+    // #1541 widened the flag: a withdrawn board stands the strip down too
+    // (`aWithdrawnMarketIsNotSettled1541.test.ts`). The settled half is unchanged.
+    expect(mounts[0]).toContain("marketResolved={isResolved || isWithdrawn}");
     expect(src).toMatch(/const isResolved = market\.status === "resolved";/);
   });
 });

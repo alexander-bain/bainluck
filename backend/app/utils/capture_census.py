@@ -23,7 +23,11 @@ from typing import Optional
 
 from app.utils.game_market_class import classify_game_market_class
 
-CLASSES = ["moneyline", "spread", "total", "player_prop", "team_prop", "other"]
+# #1529: `segment_winner` (map/set/half/F5 winners) is its own row — counted in
+# every sport's denominator, never in `moneyline` and never in `other`.
+CLASSES = [
+    "moneyline", "segment_winner", "spread", "total", "player_prop", "team_prop", "other",
+]
 
 # Absolute impossibility rules (a class that MUST exist per game, or a bucket
 # that means the classifier is failing rather than the markets being exotic).
@@ -122,7 +126,7 @@ CORE_TEAM_SPORTS = frozenset({
 # ---------------------------------------------------------------------------
 _GAME_CTE = """
 WITH g AS (
-  SELECT e.id, s.key AS sport_key
+  SELECT e.id, s.key AS sport_key, e.home_team_name, e.away_team_name
   FROM events e
   JOIN sports s ON s.id = e.sport_id
   WHERE e.status IN ('completed', 'closed')
@@ -154,15 +158,20 @@ def games_sql(window: int) -> str:
 
 def market_rows_sql(window: int) -> str:
     """One row per game-linked market: (sport, name, external_id, outcomes,
-    well_traded, vol_pos, vol_null, artifact)."""
+    well_traded, vol_pos, vol_null, artifact, home_team, away_team).
+
+    The two team names are the classifier's ``sides``: the only identity signal
+    that separates a player ladder ("Lyle Foster: 3+ goals") from a team one
+    ("Arsenal: 3+ goals") with the same shape (#1529)."""
     return _GAME_CTE % {"window": window} + f"""
         SELECT g.sport_key, fm.name, fm.external_id,
                COUNT(fo.id), {_WELL_TRADED}, {_VOLUME_POSITIVE},
-               {_VOLUME_NULL}, {_ARTIFACT}
+               {_VOLUME_NULL}, {_ARTIFACT}, g.home_team_name, g.away_team_name
         FROM futures_markets fm
         JOIN g ON g.id = fm.event_id
         LEFT JOIN futures_outcomes fo ON fo.market_id = fm.id
-        GROUP BY g.sport_key, fm.id, fm.name, fm.external_id;
+        GROUP BY g.sport_key, fm.id, fm.name, fm.external_id,
+                 g.home_team_name, g.away_team_name;
     """
 
 
@@ -221,11 +230,14 @@ class CaptureCohorts:
 
 
 def tally_market_rows(rows) -> tuple[dict[str, dict[str, MassCounts]], dict]:
-    """rows: (sport, name, external_id, outcomes, well, vol_pos, vol_null, art)."""
+    """rows: (sport, name, external_id, outcomes, well, vol_pos, vol_null, art)
+    with the game's (home_team, away_team) optionally appended as ``sides``."""
     by_sc: dict[str, dict[str, MassCounts]] = {}
     other_names: dict[str, dict[str, int]] = {}
-    for sport, name, ext, outc, well, volp, _voln, art in rows:
-        cls = classify_game_market_class(name or "", ext, sport)
+    for sport, name, ext, outc, well, volp, _voln, art, *sides in rows:
+        cls = classify_game_market_class(
+            name or "", ext, sport, sides=tuple(sides) if len(sides) == 2 else None
+        )
         mc = by_sc.setdefault(sport, {}).setdefault(cls, MassCounts())
         mc.markets += 1
         mc.outcomes += int(outc or 0)

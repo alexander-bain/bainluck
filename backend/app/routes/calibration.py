@@ -2009,6 +2009,11 @@ async def calibration_examples(
 
     elif source in ("odds_api", "odds_api_spreads", "odds_api_totals"):
         # Event-sourced markets: reconstruct the same outcome rows the curve buckets.
+        from app.tasks.precompute_calibration import score_unit_mismatch_sql
+
+        # #1010: the curve drops tennis/MMA spreads and totals (the stored score
+        # cannot settle a games/rounds line), so their samples must not either.
+        score_unit_ok = f"NOT ({score_unit_mismatch_sql('s.key')})"
         if source == "odds_api":
             sql = text("""
                 SELECT market_name, outcome_name, price, won AS is_winner, settle_date FROM (
@@ -2016,7 +2021,8 @@ async def calibration_examples(
                         home_team_name AS outcome_name,
                         COALESCE(closing_home_probability, opening_home_probability) AS price,
                         (home_score > away_score) AS won,
-                        COALESCE(completed_at, commence_time) AS settle_date, sport_id
+                        COALESCE(completed_at, commence_time) AS settle_date, sport_id,
+                        FALSE AS three_way
                     FROM events
                     WHERE status IN ('completed','closed')
                       AND COALESCE(closing_home_probability, opening_home_probability) > 0
@@ -2027,21 +2033,53 @@ async def calibration_examples(
                         away_team_name AS outcome_name,
                         COALESCE(closing_away_probability, opening_away_probability) AS price,
                         (away_score > home_score) AS won,
-                        COALESCE(completed_at, commence_time) AS settle_date, sport_id
+                        COALESCE(completed_at, commence_time) AS settle_date, sport_id,
+                        FALSE AS three_way
                     FROM events
                     WHERE status IN ('completed','closed')
                       AND COALESCE(closing_away_probability, opening_away_probability) > 0
                       AND COALESCE(closing_away_probability, opening_away_probability) < 1
                       AND home_score IS NOT NULL AND away_score IS NOT NULL AND home_score != away_score
+                    UNION ALL
+                    -- #1011: the curve's soccer three-way branch, row for row
+                    -- (precompute_calibration events_sql), so a soccer sample is
+                    -- drawn from the rows the bucket is built from — Draw included.
+                    SELECT (ev.home_team_name || ' vs ' || ev.away_team_name) AS market_name,
+                        tw.outcome_name, tw.price, tw.won,
+                        COALESCE(ev.completed_at, ev.commence_time) AS settle_date, ev.sport_id,
+                        TRUE AS three_way
+                    FROM events ev
+                    CROSS JOIN LATERAL (VALUES
+                        (ev.home_team_name, ev.opening_home_probability::float,
+                         ev.home_score > ev.away_score),
+                        (ev.away_team_name, ev.opening_away_probability::float,
+                         ev.away_score > ev.home_score),
+                        ('Draw', 1.0 - ev.opening_home_probability::float
+                                     - ev.opening_away_probability::float,
+                         ev.home_score = ev.away_score)
+                    ) AS tw(outcome_name, price, won)
+                    WHERE ev.status IN ('completed','closed')
+                      AND ev.sport_id IN (SELECT id FROM sports WHERE key LIKE 'soccer_%')
+                      AND ev.commence_time >= :soccer_three_way_since
+                      AND ev.home_score IS NOT NULL AND ev.away_score IS NOT NULL
+                      AND (ev.period = :soccer_regulation_period
+                           OR ev.box_score_data->'provider_box_evidence'
+                                  ->'provider_status'->>'name'
+                              = :soccer_regulation_status)
+                      AND ev.opening_home_probability > 0
+                      AND ev.opening_away_probability > 0
+                      AND 1.0 - ev.opening_home_probability::float
+                              - ev.opening_away_probability::float
+                          >= :soccer_draw_residual_min
                 ) o
                 JOIN sports s ON s.id = o.sport_id
-                WHERE s.key NOT LIKE 'soccer_%'
+                WHERE (s.key NOT LIKE 'soccer_%' OR o.three_way)
                   AND LEAST(FLOOR(price * 10)::int, 9) = :bucket
                 ORDER BY RANDOM()
                 LIMIT :limit
             """)
         elif source == "odds_api_spreads":
-            sql = text("""
+            sql = text(f"""
                 SELECT market_name, outcome_name, price, won AS is_winner, settle_date FROM (
                     SELECT (home_team_name || ' vs ' || away_team_name) AS market_name,
                         (home_team_name || ' ' ||
@@ -2069,12 +2107,13 @@ async def calibration_examples(
                 ) o
                 JOIN sports s ON s.id = o.sport_id
                 WHERE price > 0 AND price < 1
+                  AND {score_unit_ok}
                   AND LEAST(FLOOR(price * 10)::int, 9) = :bucket
                 ORDER BY RANDOM()
                 LIMIT :limit
             """)
         else:  # odds_api_totals
-            sql = text("""
+            sql = text(f"""
                 SELECT market_name, outcome_name, price, won AS is_winner, settle_date FROM (
                     SELECT (home_team_name || ' vs ' || away_team_name) AS market_name,
                         ('Over ' || closing_over_under::text) AS outcome_name,
@@ -2100,11 +2139,17 @@ async def calibration_examples(
                 ) o
                 JOIN sports s ON s.id = o.sport_id
                 WHERE price > 0 AND price < 1
+                  AND {score_unit_ok}
                   AND LEAST(FLOOR(price * 10)::int, 9) = :bucket
                 ORDER BY RANDOM()
                 LIMIT :limit
             """)
-        rows = (await db.execute(sql, {"bucket": bucket, "limit": limit})).all()
+        params = {"bucket": bucket, "limit": limit}
+        if source == "odds_api":
+            from app.utils.soccer_three_way import SOCCER_THREE_WAY_PARAMS
+
+            params.update(SOCCER_THREE_WAY_PARAMS)
+        rows = (await db.execute(sql, params)).all()
         examples = [
             {
                 "market_name": r.market_name or "—",

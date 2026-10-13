@@ -157,6 +157,26 @@ def _per_write_change(previous, prob: float) -> Optional[float]:
     return prob - float(previous)
 
 
+def _creation_opening(prob: float, commence_time, now: datetime) -> Optional[float]:
+    """`opening_probability` for a DataGolf outcome being CREATED now (#1106).
+
+    An opening is the price before the tournament began. An outcome first seen
+    after that — a make-cut leg the in-play beat meets after the cut, a player
+    the pre-tournament poll meets mid-event — has no opening, so it stores
+    NULL and movement reads empty instead of "100% at open, -X% since".
+
+    Judged on WHEN, never on the value: a pre-tournament 0.0 or 1.0 is a real
+    price and stays the opening. The line is `commence_time` (00:00 UTC on
+    DataGolf's start date), the same one the in-play writer refuses to cross
+    and the accuracy page's #5355 opening-timing rule reads. A NULL
+    `commence_time` cannot be placed before the start, so it fails closed, as
+    #5355 does.
+    """
+    if commence_time is None or now >= commence_time:
+        return None
+    return prob
+
+
 def _inplay_owned_events(r, tour: str) -> set[str]:
     """The datagolf event_ids the in-play beat last COMMITTED prices for (#7958).
 
@@ -534,7 +554,11 @@ async def _poll_datagolf_markets() -> dict:
                                     external_id=outcome_ext_id,
                                     name=player.player_name,
                                     current_probability=prob,
-                                    opening_probability=prob,
+                                    # #1106: NULL when created after the
+                                    # start — see `_creation_opening`.
+                                    opening_probability=_creation_opening(
+                                        prob, market.commence_time, now
+                                    ),
                                     # 🔴 `null()`, NOT `None`, AND THE
                                     # DIFFERENCE IS THE WHOLE FIX (#4788).
                                     # `is_winner` is `boolean NULL DEFAULT
@@ -1046,7 +1070,11 @@ async def _poll_datagolf_live() -> dict:
                                     external_id=outcome_ext_id,
                                     name=player.player_name,
                                     current_probability=prob,
-                                    opening_probability=prob,
+                                    # #1106: always after the start here
+                                    # (future markets are skipped above).
+                                    opening_probability=_creation_opening(
+                                        prob, market.commence_time, now
+                                    ),
                                     # `null()`, NOT `None` — an explicit `None`
                                     # on this ORM path stores a graded LOSS.
                                     # Full note at the outright-market creation

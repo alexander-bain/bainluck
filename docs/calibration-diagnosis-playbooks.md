@@ -60,7 +60,7 @@ the decision tree the sentinel attaches as `Playbook branch`):
 | mex ≥3, exactly 1 winner, cp-sum > 1.15 | mex_normalization | **normalize** per-market cp-sum (read-side; #157) |
 | resolution_source ∈ did_not_play/withdrew | void | **denominator fix** (read-side; #762) |
 | resolution_source ∈ guess-family | heuristic | **curve-exclude then authoritative re-resolve** (#754; gotcha #21) — never bulk re-grade |
-| events soccer moneyline (structural) | soccer_2way | **3-way capture** / historical exclude (#1011) — draw never stored |
+| events soccer moneyline NOT graded three-way (counted per outcome: pre-v4636, two-way-shaped pair, or not proven ended at full time) | soccer_2way | **3-way capture** / historical exclude (#1011) — draw never stored. Admitted three-way soccer is its own `structure=three_way` cohort with no shipped exclusion, so a break there is UNEXPLAINED |
 | high-cp band under-resolving, NO class ≥ threshold | **UNEXPLAINED** | row-trace (Step 2) first; assume-our-bug; verify-before-regrade |
 
 The **UNEXPLAINED** row is the one that matters — it's a candidate NEW break (a new

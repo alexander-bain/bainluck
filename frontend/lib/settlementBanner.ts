@@ -35,6 +35,8 @@
 // `status` is the only settlement evidence the payload carries, and it is
 // exhaustive: production holds exactly two values, `resolved` (1,026,367) and
 // `open` (42,839), measured the same minute. So the gate is `status`, alone.
+// (#1541 adds a third, `withdrawn`, which is deliberately NOT settlement — see
+// `WITHDRAWN_BANNER`.)
 //
 // ── WHY NO DATE AT ALL, RATHER THAN A BETTER ONE (#7058) ─────────────────────
 //
@@ -101,8 +103,20 @@ export interface SettlementBannerSubject {
 }
 
 /**
- * The sentence `/futures/[id]` prints above a settled market, or `null` when it
- * must print nothing.
+ * #1541 — the sentence for a market the provider WITHDREW (`status:
+ * "withdrawn"`, written by the backend's `odds_api_retirement`). The provider
+ * stopped listing it and stopped quoting it; that proves it is unavailable, not
+ * that the competition finished, so the words are about the MARKET and carry no
+ * settlement claim ("settled", "final", "result", "ended" are all refused by
+ * the guard test). Production first saw this status on a FIFA World Cup board
+ * the provider closed after the 2026 final — and a future championship dropped
+ * for a week would get the same words, which is why they cannot say "over".
+ */
+export const WITHDRAWN_BANNER = "This market is no longer offered.";
+
+/**
+ * The sentence `/futures/[id]` prints above a settled or withdrawn market, or
+ * `null` when it must print nothing.
  *
  * A scheduled date — passed, future or absent — never reaches this decision.
  */
@@ -110,5 +124,7 @@ export function settlementBannerText(
   market: SettlementBannerSubject | null | undefined,
 ): string | null {
   if (!market) return null;
-  return market.status === "resolved" ? "This market has been settled." : null;
+  if (market.status === "resolved") return "This market has been settled.";
+  if (market.status === "withdrawn") return WITHDRAWN_BANNER;
+  return null;
 }

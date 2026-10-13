@@ -483,3 +483,242 @@ def week_incompleteness(
     if markets_truncated:
         reasons.append(INCOMPLETE_MARKETS_TRUNCATED)
     return reasons
+
+
+# ---------------------------------------------------------------------------
+# #5344: the authority moved a game to another week — where it now belongs
+# ---------------------------------------------------------------------------
+#
+# SHIP: when the authoritative schedule moves a game to another week, the next
+# complete automatic pass moves it and its questions to the correct hub; old
+# links stay truthful and a person's withdrawal is never undone. (Pillars:
+# MATCHING / DISCOVER / TRUTH.) Contract:
+# `artifacts/containers-1.0.4-20261011/AUTHORITY-5344-CONTRACT-RETURN.md`,
+# policy A (`5344-CORRECTION-POLICY-DECISION.md`).
+#
+# The pure half. `placement_snapshot` reads one whole season schedule and says,
+# for every contest it can place, the ONE week the authority files it under —
+# or why it cannot. `admission_verdict` decides, from the decisions a container
+# already holds, whether a pass that started reading at ``barrier`` may change
+# that container at all. The task half (`container_nfl_assembly`) does the
+# reads, the locks and the move.
+#
+# A MOVE NEEDS A POSITIVE PLACEMENT, NEVER AN ABSENCE. A contest the schedule
+# does not list at all has no placement, so it is never moved out of anything:
+# StatPal publishes no cancelled-contest signal, and a missing row is an outage
+# until proved otherwise (gotcha #53).
+
+#: The feed and id space a placement comes from (contract C1).
+RELOCATION_SOURCE_KEY = "statpal:nfl:season-schedule"
+
+#: `container_member_decisions.rule_version` (VARCHAR(32)) for every decision
+#: this rule writes. The barrier gate reads only rows carrying it.
+RELOCATION_RULE_VERSION = "nfl-authority-relocation-v1"
+
+#: The edge sources this adapter owns on an NFL week (contract C7). An edge with
+#: any other source is another writer's, and a move never deletes it.
+OWNED_EDGE_SOURCES = frozenset({EVENT_EDGE_SOURCE, MARKET_EDGE_SOURCE})
+
+# --- decision reasons (`container_member_decisions.reason`, ≤ 40 chars) -------
+
+#: Positively placed in another week by a complete read: left this container,
+#: or (on the destination's row) arrived from another.
+DECISION_RELOCATED = "authority_relocated"
+#: Placed here, but a person withdrew it from here: it never arrives, and the
+#: week it left still loses it — the authority says it is not that week's.
+DECISION_RELOCATED_WITHDRAWN = "relocated_destination_withdrawn"
+
+# --- why a read cannot move anything (closed) ---------------------------------
+
+REFUSE_PARSE_INCOMPLETE = "schedule_parse_incomplete"
+REFUSE_DUPLICATE_CONTEST_ROWS = "duplicate_contest_rows"
+
+# --- the barrier gate's verdicts (closed) -------------------------------------
+
+ADMIT = "admit"
+#: An earlier-started read than one already applied here. Changes nothing.
+STALE_SNAPSHOT = "stale_snapshot"
+#: Two reads with the SAME barrier disagree about where a member belongs. Equal
+#: barriers do not say which is newer, so neither may change anything.
+CONFLICTING_EQUAL_BARRIER = "conflicting_equal_barrier"
+
+
+@dataclass(frozen=True)
+class PlacementSnapshot:
+    """One whole-season read, as the contract's C1–C6 (no database, no clock).
+
+    ``complete`` is the read half of C5: the parse dropped nothing and the read
+    is the declared season. Per-member checks (one row of ours, markets read in
+    full) are the task half's. ``barrier`` is the database instant taken BEFORE
+    the fetch began; it orders our reads, never the provider's data (RA).
+    """
+
+    edition: int
+    season: Optional[int]
+    barrier: Optional[datetime]
+    refusals: tuple
+    #: contest id → the one week it is filed under, for every placeable contest.
+    placements: dict
+    #: contest id → why it has no single week in this read.
+    refused: dict
+    #: Every week slug this read names for the edition (the reverse lookup's
+    #: bound: a move only ever touches containers this read itself names).
+    week_slugs: frozenset
+
+    @property
+    def complete(self) -> bool:
+        return not self.refusals
+
+    def destination(self, contest_id: Optional[str]) -> Optional[str]:
+        week = self.placements.get((contest_id or "").strip())
+        return week.slug if week is not None else None
+
+
+def placement_snapshot(
+    fixtures: Iterable,
+    *,
+    edition: int,
+    barrier: Optional[datetime],
+    parse_complete: bool,
+    duplicate_contest_ids: Iterable[str] = (),
+) -> PlacementSnapshot:
+    """Where the authority files every contest of one season read.
+
+    The rules are `select_week_contests`'s, applied to the whole season at once:
+    a contest under two week identities, a bracket placeholder, a round with no
+    numbered week and a kickoff in another season have no placement. A contest
+    the read counts as a duplicate row (`StatPalNflScheduleRead.duplicates`) is
+    refused too, even when every copy names the same week: C5 moves a member
+    only on one row.
+    """
+    fixtures = list(fixtures)
+    season = schedule_season(fixtures)
+    refusals: list[str] = []
+    if not parse_complete:
+        refusals.append(REFUSE_PARSE_INCOMPLETE)
+    if season is None:
+        refusals.append(UNAVAILABLE_SEASON_UNKNOWN)
+    elif season != edition:
+        refusals.append(UNAVAILABLE_SEASON_MISMATCH)
+
+    duplicates = {(c or "").strip() for c in duplicate_contest_ids}
+    identities: dict[str, set] = {}
+    first: dict[str, object] = {}
+    for fixture in fixtures:
+        contest_id = (fixture.fixture_id or "").strip()
+        if not contest_id:
+            continue
+        identities.setdefault(contest_id, set()).add(parse_round_identity(fixture.round_info))
+        first.setdefault(contest_id, fixture)
+
+    placements: dict[str, NflWeek] = {}
+    refused: dict[str, str] = {}
+    slugs: set[str] = set()
+    for contest_id, fixture in first.items():
+        seen = identities[contest_id]
+        for identity in seen:
+            if identity is not None:
+                slugs.add(NflWeek(season=edition, week=identity[1], stage=identity[0]).slug)
+        if is_placeholder_contest(fixture):
+            refused[contest_id] = EXCLUDED_PLACEHOLDER
+        elif contest_id in duplicates:
+            refused[contest_id] = REFUSE_DUPLICATE_CONTEST_ROWS
+        elif len(seen) > 1:
+            refused[contest_id] = EXCLUDED_CONFLICTING_IDENTITY
+        elif next(iter(seen)) is None:
+            refused[contest_id] = EXCLUDED_NO_WEEK_IDENTITY
+        elif _start_known(fixture) and nfl_season_for_kickoff(fixture.start_time) != edition:
+            refused[contest_id] = EXCLUDED_WRONG_SEASON
+        else:
+            stage, week = next(iter(seen))
+            placements[contest_id] = NflWeek(season=edition, week=week, stage=stage)
+
+    return PlacementSnapshot(
+        edition=edition,
+        season=season,
+        barrier=barrier,
+        refusals=tuple(refusals),
+        placements=placements if not refusals else {},
+        refused=refused,
+        week_slugs=frozenset(slugs) if not refusals else frozenset(),
+    )
+
+
+@dataclass(frozen=True)
+class PriorDecision:
+    """One `container_member_decisions` row this rule wrote, as the gate reads it."""
+
+    child_type: str
+    child_id: int
+    outcome: str
+    reason: str
+    evidence: dict
+
+    @property
+    def barrier(self) -> Optional[datetime]:
+        return parse_barrier((self.evidence or {}).get("barrier"))
+
+    @property
+    def to_slug(self) -> Optional[str]:
+        return (self.evidence or {}).get("to_slug")
+
+    @property
+    def contest_id(self) -> Optional[str]:
+        return (self.evidence or {}).get("contest_id")
+
+
+def parse_barrier(value) -> Optional[datetime]:
+    """An evidence barrier back to an instant; None for anything not tz-aware."""
+    if isinstance(value, datetime):
+        return value if value.tzinfo is not None else None
+    if not isinstance(value, str):
+        return None
+    try:
+        parsed = datetime.fromisoformat(value)
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo is not None else None
+
+
+def admission_verdict(
+    priors: Iterable[PriorDecision], snapshot: PlacementSnapshot
+) -> tuple[str, Optional[dict]]:
+    """May a pass that began reading at ``snapshot.barrier`` change this container?
+
+    * A row of this rule with a LATER barrier ⇒ ``stale_snapshot``: a read that
+      started after ours already decided here, so ours is older evidence.
+    * A row with the SAME barrier is the same instant's evidence. It agrees when
+      this read places that row's contest in the same week; then the pass may go
+      on (an identical repeat is a no-op by construction). It disagrees — or
+      this read cannot place it at all — ⇒ ``conflicting_equal_barrier``, and
+      nothing in the container may change.
+    * No barrier on the pass ⇒ ``admit`` only when the container holds no row of
+      this rule; a barrier-less pass can never be ordered against one that has.
+
+    Returns ``(verdict, detail)``; ``detail`` names the row that decided it.
+    """
+    barrier = snapshot.barrier
+    priors = [p for p in priors if p.barrier is not None]
+    if barrier is None:
+        if priors:
+            return STALE_SNAPSHOT, {"reason": "pass_has_no_barrier"}
+        return ADMIT, None
+    later = [p for p in priors if p.barrier > barrier]
+    if later:
+        newest = max(later, key=lambda p: p.barrier)
+        return STALE_SNAPSHOT, {
+            "applied_barrier": newest.barrier.isoformat(),
+            "child": f"{newest.child_type}:{newest.child_id}",
+        }
+    for prior in priors:
+        if prior.barrier != barrier:
+            continue
+        here = snapshot.destination(prior.contest_id) if snapshot.complete else None
+        if here is None or here != prior.to_slug:
+            return CONFLICTING_EQUAL_BARRIER, {
+                "child": f"{prior.child_type}:{prior.child_id}",
+                "contest_id": prior.contest_id,
+                "recorded_to_slug": prior.to_slug,
+                "this_read_to_slug": here,
+            }
+    return ADMIT, None

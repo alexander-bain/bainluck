@@ -267,7 +267,7 @@ final class CompactEventMarkets10830Tests: XCTestCase {
         XCTAssertEqual(family(question("LV Raiders vs NE Patriots: Team Total")), "Team totals")
         XCTAssertEqual(family(question("Raiders vs. Patriots: 1H Moneyline")), "Winners")
         XCTAssertEqual(family(question("LV Raiders vs NE Patriots: 1st Quarter Winner")), "Winners")
-        XCTAssertEqual(family(question("Both teams to score")), "More questions")
+        XCTAssertEqual(family(question("Both teams to score")), "More markets")
     }
 
     /// STRESS: 1,200 served questions are all reachable through the section's

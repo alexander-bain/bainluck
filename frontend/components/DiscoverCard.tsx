@@ -199,6 +199,8 @@ function SingleCard({ item, onDismiss, positionIndex, showProbabilityHint, pinFo
             sharedQuestion={(item.data as FeedBundleData).shared_question}
             storyKey={(item.data as FeedBundleData).story_key ?? (item.data as FeedBundleData).group_id}
             positionIndex={positionIndex}
+            bundleId={(item.data as FeedBundleData).id}
+            collectionRef={(item.data as FeedBundleData).collection_ref}
           />
         ) : item.type === "bundle" ? (
           // Every non-theme bundle — today that is `kind:"comparison"` — draws

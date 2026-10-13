@@ -83,6 +83,7 @@ import {
   sortFuturesOutcomes,
   visibleChartOutcomes,
   withoutBoardNamePrefix,
+  editionTitle,
 } from "@/lib/futuresDetailDisplay";
 import type { FuturesSortField, FuturesSortDirection } from "@/lib/futuresDetailDisplay";
 import { PinButton } from "@/components/PinButton";
@@ -770,6 +771,10 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
   }
 
   const isResolved = market.status === "resolved";
+  // #1541 — the provider stopped offering it. NOT `isResolved`: nothing proved
+  // the competition finished, so no "Final Results", no settled hero. It only
+  // stands down the furniture that reads as a live market below.
+  const isWithdrawn = market.status === "withdrawn";
   // #8135 / #10074: the Probability Trend card's ONE cadence sentence. Printed by the
   // range controls on a sparse board; the chart's empty state is told it is already
   // on screen so "Final — prices no longer update" does not appear twice.
@@ -997,14 +1002,16 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
           the only place a guard test can reach them. A `resolution_date` is a
           SCHEDULE and never reaches this render. */}
       {settlementBanner && (
-        <div className="bg-amber-500/10 border border-amber-500/20 rounded-lg px-4 py-3 text-sm text-amber-400">
+        // #1541 — primary text on the warning tint. `text-amber-400` measured
+        // ~1.43:1 on production at 390px; the sentence is the whole message.
+        <div className="bg-accent-warning/10 border border-accent-warning/30 rounded-lg px-4 py-3 text-sm text-text-primary">
           {settlementBanner}
         </div>
       )}
 
       {/* Probability Hero — design spec FD-1 (resolved-aware, #883 L2-49) */}
       <FuturesHero
-        name={market.name}
+        name={editionTitle(market.name, market.edition_year)}
         probability={heroNamesNobody ? null : heroOutcome?.probability ?? null}
         // #8482 — the hero is the same outcome as one of the rows below, so it
         // prints that row's decided integer, not a second rounding of its own.
@@ -1055,7 +1062,7 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
         // /api/futures/browse (200 sampled) or /api/events/search (10 queries).
         // This lands for the mechanism — one formatter, no third copy — not on a
         // prevalence claim.
-        resolveDate={isResolved ? undefined : formatResolvesLabel(market.resolution_date) || undefined}
+        resolveDate={isResolved || isWithdrawn ? undefined : formatResolvesLabel(market.resolution_date) || undefined}
         categoryEmoji={getCategoryEmoji(market.llm_sport_category)}
         // #8290 — a null `sport_name` used to hand the raw key to the eyebrow,
         // which printed `TABLE_TENNIS`. The key goes through the category map.
@@ -1442,11 +1449,12 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
         </div>
       )}
 
-      {/* Games This Week — withheld on a settled market (#8282); a duel's
-          price is its one contest's, so its rows print none (#2553) */}
+      {/* Games This Week — withheld on a settled market (#8282) and on a
+          withdrawn one (#1541); a duel's price is its one contest's, so its
+          rows print none (#2553) */}
       <GamesThisWeek
         events={relatedEvents}
-        marketResolved={isResolved}
+        marketResolved={isResolved || isWithdrawn}
         marketIsDuel={marketShape === SHAPE_DUEL}
       />
 

@@ -11,6 +11,7 @@ Channels:
 
 import asyncio
 import contextlib
+import contextvars
 import functools
 import logging
 import math
@@ -202,6 +203,12 @@ class _KalshiHeadlineEvents(Mapping[int, int]):
         return sum(1 for _ in self)
 
 
+#: #10090 — True inside a flush's `serve_live_beside` task. Its awaits run
+#: beside that flush's own non-live transaction, so `_KalshiPriceOwner` keeps
+#: them out of the flush's sequential waits (`_FlushTimings.waited`).
+_WRITING_BESIDE = contextvars.ContextVar("kalshi_writing_beside", default=False)
+
+
 def live_input_waiting(buffer, batch, event_id_by_outcome, live_events):
     """#10090 — True when ``buffer`` holds input for a live game that
     ``batch`` (this flush's snapshot) does not: a new outcome, or a value that
@@ -274,17 +281,48 @@ class _FlushTimings:
     buckets can sum past `total` and `rank_commit`, the floored remainder,
     reads low. `total` below `save + publish + stamp` is that overlap.
 
+    Beside (#10090): a live phase written while the flush waits on a non-live
+    transaction adds its `save` and its phase here, overlapping that flush's
+    own, and none of its awaits to `slowest` (`flush_prices` ``beside``).
+
     Cross-flush (#10090): a refresh may outlive the flush that started it. Its
     time joins whichever flush returns after it ends, so `stamp` is the
     minute's refresh time, not any one flush's own: never read it, or
     `rank_commit`, as a per-flush or per-origin stage time.
+
+    WHERE THE LONGEST FLUSH WAITED (#10090): `slowest` is the minute's longest
+    flush's own awaits, timed on that flush's clock around its own calls
+    (`waited`): `db` from opening a phase's session to its commit returning
+    (checkout, lock waits, writes, re-rank and commit, indistinguishable here),
+    `publish` its market invalidation call, `stamp_wait` its waits on the
+    blend refresh (a join, or the final drain's inline refresh of an empty
+    batch; a periodic empty batch starts owed stamps on a task). They are
+    sequential awaits of one coroutine, so they never overlap and never exceed
+    `max`; the rest is unattributed, not a stage. The refresh's own work on
+    its task is not here. `db_phase` is that flush's slowest phase: its time,
+    live or nonlive, and rows.
+
+    INSIDE `db` (#10090): `slowest_db` splits that same flush's `db` into
+    spans NESTED in it, so they are part of `db`, never added to it:
+    `set_lock` the phase's first execute (the lock-timeout SET; an
+    AsyncSession checks its connection out lazily, so pool checkout and
+    connection setup land here), `save` the price pipeline (the `save` bucket's
+    own time, the row writes and their lock waits), `rerank` the field
+    re-rank execute. `unknown` is `db` minus those three: session enter, the
+    buffer re-read, exit and commit, and anything else. It is not commit. A
+    final drain sets no lock timeout, so its checkout lands in `save`.
     """
 
     BUCKETS = ("save", "publish", "stamp")
+    WAITS = ("db", "publish", "stamp_wait")
+    WITHIN_DB = ("set_lock", "save", "rerank")
 
     def __init__(self):
         self.in_flight = dict.fromkeys(self.BUCKETS, 0.0)
         self.in_flight_phases = 0
+        self.waiting = dict.fromkeys(self.WAITS, 0.0)
+        self.waiting_phase = None
+        self.waiting_db = dict.fromkeys(self.WITHIN_DB, 0.0)
         self.reset()
 
     def reset(self):
@@ -294,12 +332,41 @@ class _FlushTimings:
         self.total = 0.0
         self.longest = 0.0
         self.spent = dict.fromkeys(self.BUCKETS, 0.0)
+        self.slowest = None
+        self.slowest_db = None
 
     def add(self, bucket, seconds, *, phase=False):
         self.in_flight[bucket] += seconds
         self.in_flight_phases += int(phase)
 
+    @contextlib.asynccontextmanager
+    async def waited(self, bucket, *, rows=0, live=False):
+        """The current flush awaiting ``bucket``; joins `slowest` at `flushed`."""
+        started = time.monotonic()
+        try:
+            yield
+        finally:
+            seconds = time.monotonic() - started
+            if bucket in self.WITHIN_DB:
+                self.within_db(bucket, seconds)
+            else:
+                self.waiting[bucket] += seconds
+            if bucket == "db" and (
+                self.waiting_phase is None or seconds > self.waiting_phase[0]
+            ):
+                self.waiting_phase = (seconds, live, rows)
+
+    def within_db(self, bucket, seconds):
+        """Time the current flush spent in ``bucket``, nested inside its `db`."""
+        self.waiting_db[bucket] += seconds
+
     def flushed(self, seconds):
+        if self.slowest is None or seconds > self.longest:
+            self.slowest = (self.waiting, self.waiting_phase)
+            self.slowest_db = self.waiting_db
+        self.waiting = dict.fromkeys(self.WAITS, 0.0)
+        self.waiting_phase = None
+        self.waiting_db = dict.fromkeys(self.WITHIN_DB, 0.0)
         self.flushes += 1
         self.total += seconds
         self.longest = max(self.longest, seconds)
@@ -329,7 +396,26 @@ class _FlushTimings:
             f"max={self.longest:.1f}s phases={self.phases} "
             f"save={self.spent['save']:.1f}s rank_commit={rank_commit:.1f}s "
             f"publish={self.spent['publish']:.1f}s stamp={self.spent['stamp']:.1f}s"
+            f" slowest {self._slowest()}"
         )
+
+    def _slowest(self):
+        if self.slowest is None:
+            return "-"
+        waits, phase = self.slowest
+        split = " ".join(f"{name}={waits[name]:.2f}s" for name in self.WAITS)
+        if phase is None:
+            split = f"{split} db_phase=-"
+        else:
+            seconds, live, rows = phase
+            split = (
+                f"{split} db_phase={seconds:.2f}s/"
+                f"{'live' if live else 'nonlive'}/{rows}"
+            )
+        inside = self.slowest_db
+        unknown = max(0.0, waits["db"] - sum(inside.values()))
+        nested = " ".join(f"db.{name}={inside[name]:.2f}s" for name in self.WITHIN_DB)
+        return f"{split} {nested} db.unknown={unknown:.2f}s"
 
 
 class _KalshiPriceOwner:
@@ -363,6 +449,22 @@ class _KalshiPriceOwner:
         # spends its once-per-period budget only on these, so an empty timer
         # probe leaves the next accepted winner quote free to start at once.
         self.flush_work = 0
+        # #10090: set when a winner leg is buffered, so a flush waiting on a
+        # non-live transaction can write live input beside it. The consumer
+        # points it at its flush wake (`serve_live_beside`).
+        self.input_wake = asyncio.Event()
+
+    def held_events(self, refresher):
+        """#10090 — the events the run's refresh is still stamping.
+
+        Its own fence (`holding_event_ids`) once it reports one; until then,
+        everything it was started with or admitted (``stamping_events``).
+        """
+        reader = getattr(refresher, "holding_event_ids", None)
+        holding = reader() if reader is not None else None
+        if holding is None:
+            return self.stamping_events
+        return self.stamping_events.intersection(holding)
 
     async def join_stamp(self, refresher, *, cancel=False):
         """Wait for the run's blend refresh, if any, and retrieve its outcome.
@@ -427,7 +529,22 @@ class _KalshiPriceOwner:
                     yield result
         finally:
             if self.timings is not None:
-                self.timings.add("save", time.monotonic() - started, phase=True)
+                seconds = time.monotonic() - started
+                self.timings.add("save", seconds, phase=True)
+                if not _WRITING_BESIDE.get():
+                    self.timings.within_db("save", seconds)
+
+    @staticmethod
+    def writing_beside():
+        """#10090 — the calling task's prices are written beside its flush's
+        own transaction (`serve_live_beside`). That task's context only."""
+        _WRITING_BESIDE.set(True)
+
+    def waited(self, bucket, **phase):
+        """#10090 — this flush's own await, when timed (`_FlushTimings.waited`)."""
+        if self.timings is None or _WRITING_BESIDE.get():
+            return contextlib.nullcontext()
+        return self.timings.waited(bucket, **phase)
 
     def close(self):
         if self.pipeline is not None:
@@ -1030,6 +1147,11 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
         # one because a live game had new input waiting (`live_input_waiting`).
         # Deferred like `budget_deferred`, never dropped.
         "live_preempted": 0,
+        "live_beside": 0,
+        # #10090: buffered prices a periodic flush left for the next one
+        # because their event's stamp was still queued or running in the run's
+        # refresh. Deferred like `budget_deferred`, never dropped.
+        "stamp_fenced": 0,
     }
 
     # -- Buffered price updates --
@@ -1085,6 +1207,10 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
     # (`run_flush_cadence`'s opt-in wake). Refused, unmapped, open-contract and
     # prop input never sets it; the actual-work ceiling is the cadence's.
     flush_wake = asyncio.Event()
+    # #10090: also the beside writer's wake. It clears it only inside a flush
+    # that did actual work, after which the cadence never reads the wake
+    # before that flush's period is over (`run_flush_cadence`'s ``not_before``).
+    prices.input_wake = flush_wake
     # #10090: the monotonic time the soonest quoting, otherwise-eligible event
     # starts, from the last quote-priority read; the watcher's next reread is
     # due then instead of at the next 30 s check (an event that quotes BEFORE
@@ -1114,7 +1240,7 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
     stats["blend_pending_adopted"] = adopt_handed_off(blend_refresher)
     stats["history_pending_adopted"] = len(getattr(blend_refresher, "_history", ()))
 
-    async def flush_prices(flush_started=None, *, final_drain=False):
+    async def flush_prices(flush_started=None, *, final_drain=False, beside=None):
         """Write buffered price updates to DB — #10640: game markets first.
 
         Returns False for a non-lock failure (the cadence waits before retrying).
@@ -1131,6 +1257,13 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
         permits later independent phases; other failures retain the remaining
         tail. Earlier committed games stay done. ``final_drain`` waits for locks
         as long as Postgres does: the drain has no next flush to retry in.
+
+        ``beside`` (#10090, `serve_live_beside`): this call runs while the
+        flush that made it waits on a non-live transaction. It takes only live
+        games' input, never an outcome, event or market of that flush's
+        unfinished ``(outcomes, events, markets)``, which it is given. With no
+        such input it stamps only owed debt that includes a live event, those
+        events deferred, and it owes no flush budget or timing of its own.
         """
         from app.tasks.kalshi_ws import _KalshiHeadlineEvents
 
@@ -1144,34 +1277,79 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
         from app.tasks.live_blend_refresh import _mono
 
         async with buffer_lock:
-            batch = dict(price_buffer)
-            prices.lock_retry_until = {
-                oid: until for oid, until in prices.lock_retry_until.items()
-                if oid in batch and until > _mono()
-            }
+            if beside is None:
+                batch = dict(price_buffer)
+                prices.lock_retry_until = {
+                    oid: until for oid, until in prices.lock_retry_until.items()
+                    if oid in batch and until > _mono()
+                }
+            else:
+                outcomes, events, markets = beside
+                batch = {
+                    oid: entry for oid, entry in price_buffer.items()
+                    if cohort_event_ids.get(oid) in live_event_ids
+                    and oid not in outcomes
+                    and cohort_event_ids.get(oid) not in events
+                    and market_id_by_outcome.get(oid) not in markets
+                }
             batch_marks = {
                 oid: input_marks[oid] for oid in batch if oid in input_marks
             }
             if exact_trace is not None:
                 with contextlib.suppress(Exception):
                     exact_trace.snapshot(batch_marks.values())
+        if not batch and beside is not None and not (
+            blend_refresher.pending_event_ids() & (set(live_event_ids) - beside[1])
+        ):
+            return True
         if not batch:
             # #837 tail — a flush with no new prices still owes the stamps a row
             # lock deferred: those prices are already stored, so waiting for the
             # next venue tick would strand them on a quiet market. Free when
             # nothing is queued (no session is opened). #10090: while an earlier
             # flush's refresh still runs, the debt stays owed for a later flush:
-            # two refreshes never share the refresher.
-            if prices.stamping is not None and prices.stamping.done():
-                await prices.join_stamp(blend_refresher)
-            if prices.stamping is None:
-                if blend_refresher.pending_event_ids():
-                    prices.flush_work += 1  # owed stamps are actual work
-                await blend_refresher.refresh_pending(flush_started=flush_started)
+            # two refreshes never share the refresher. Beside a flush (#10090)
+            # only a live event's debt brings it here, and that flush's
+            # unfinished events stay owed.
+            async with prices.waited("stamp_wait"):
+                # The drain has no next flush: a running stamp is joined first.
+                if prices.stamping is not None and (
+                    prices.stamping.done() or final_drain
+                ):
+                    await prices.join_stamp(blend_refresher)
+                if prices.stamping is None:
+                    owed = blend_refresher.pending_event_ids()
+                    if owed and beside is None:
+                        prices.flush_work += 1  # owed stamps are actual work
+                    if beside is not None:
+                        owed = owed - beside[1]
+                    stamp = blend_refresher.refresh_pending(
+                        flush_started=flush_started,
+                        **({} if beside is None else {"defer_event_ids": beside[1]}),
+                    )
+                    if owed and not final_drain:
+                        # #10090: the debt is the run's refresh, as a price
+                        # flush's is, so the next flush's fresh cohort joins
+                        # it instead of waiting for it to return. The drain
+                        # has no next flush and stamps inline.
+                        prices.stamping_fresh = set()
+                        prices.stamping_events = set(owed)
+                        prices.stamping = asyncio.create_task(stamp)
+                        try:
+                            await asyncio.sleep(0)  # its first turn takes the debt
+                        except asyncio.CancelledError:
+                            # As a price flush's cancellation: cancelled and
+                            # joined; debt it had not taken was never moved.
+                            await prices.join_stamp(blend_refresher, cancel=True)
+                            raise
+                    else:
+                        await stamp
             return True
         # #10090: a snapshot with prices is actual work, held cohorts included,
         # so a held game's quotes cannot buy more than one flush per period.
-        prices.flush_work += 1
+        # A call beside a flush is that flush's work.
+        if beside is None:
+            prices.flush_work += 1
         # Q491 repair 2 (CERT-659 BLOCK) — THE BUFFER IS DELIBERATELY *NOT*
         # CLEARED HERE. Draining first and putting the batch back on failure
         # only covers the failures you thought to catch, and two rounds of certs
@@ -1190,7 +1368,8 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
         )
         # Includes failed/budget-deferred phases until a whole phase commits.
         # Re-resolve through the current map at each launch for late bridges.
-        unfinished_price_ids = set(batch)
+        # Beside a flush, that flush's unfinished prices stay unfinished here.
+        unfinished_price_ids = set(batch) if beside is None else set(batch) | beside[0]
         had_lock_failure = False
         flush_counted = False
         # #10090: one refresh may cover several committed whole-event phases.
@@ -1213,10 +1392,88 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
         # Preemption permits one non-live phase; the existing budget still
         # applies. Served hot non-live entries yield to the untouched tail.
         nonlive_started = 0
+        # #10090 — LIVE INPUT BESIDE AN IN-FLIGHT NON-LIVE TRANSACTION. The
+        # preemption above is decided before a non-live phase opens; a live
+        # tick arriving once it runs waited for all of it, then for the next
+        # flush (production 2026-10-12 21:25:44Z: one 200-row non-live phase
+        # held its transaction 3.50 s, save 1.50 s + rerank 2.01 s). While a
+        # periodic non-live phase's transaction is open, live winner-leg input
+        # is written by this same function (``beside``) on its own pooled
+        # session and transaction: whole live cohorts, never a row, event or
+        # market this flush has not finished, under every rule below. It
+        # wakes as the held cadence would: on winner input, when the run's
+        # refresh returns, and once a period, so a fenced quote or a floored
+        # live stamp still lands before the non-live commit (Root 2146Z). The
+        # non-live phase is never rolled back or cut for it, and the writer is
+        # joined, never abandoned, before this flush moves past that phase.
+        beside_task = None
+        beside_stop = False
+        beside_failed = False
+
+        async def serve_live_beside():
+            prices.writing_beside()
+            unfinished = frozenset(unfinished_price_ids)
+            excluded = (
+                unfinished,
+                frozenset(event_ids_for_outcomes(cohort_event_ids, unfinished)),
+                frozenset(market_id_by_outcome.get(oid) for oid in unfinished) - {None},
+            )
+            while not beside_stop:
+                prices.input_wake.clear()
+                # Its own clock: the refresher's per-event floor reads it.
+                if await flush_prices(_mono(), beside=excluded) is False:
+                    return False
+                if beside_stop:
+                    break
+                # Again on new winner input, when the run's refresh returns (it
+                # may release a fenced quote or owe a floored stamp), or after
+                # one period: the cadence's own probe, which this flush holds.
+                wake = asyncio.create_task(prices.input_wake.wait())
+                try:
+                    running = prices.stamping
+                    await asyncio.wait(
+                        {wake} if running is None or running.done() else {wake, running},
+                        timeout=flush_period, return_when=asyncio.FIRST_COMPLETED,
+                    )
+                finally:
+                    wake.cancel()
+                    await asyncio.wait({wake})
+            return True
+
+        async def end_beside(*, cancel=False):
+            # Lets a running beside write finish (unless cancelled) and joins it.
+            nonlocal beside_task, beside_stop, beside_failed
+            task, beside_task = beside_task, None
+            if task is None:
+                return
+            beside_stop = True
+            prices.input_wake.set()
+            if cancel:
+                task.cancel()
+            interrupted = None
+            while not task.done():
+                try:
+                    await asyncio.wait({task})
+                except asyncio.CancelledError as exc:
+                    interrupted = exc
+                    task.cancel()
+            beside_stop = False
+            if not task.cancelled():
+                if task.exception() is not None:
+                    beside_failed = True
+                    logger.error(
+                        "Kalshi WS: live write beside a non-live phase raised",
+                        exc_info=task.exception(),
+                    )
+                elif task.result() is False:
+                    beside_failed = True
+            if interrupted is not None:
+                raise interrupted
 
         async def stamp_done(*, cancel=False):
             # Repeated cancellation cannot let a task escape beside the drain.
-            await prices.join_stamp(blend_refresher, cancel=cancel)
+            async with prices.waited("stamp_wait"):
+                await prices.join_stamp(blend_refresher, cancel=cancel)
 
         async def stamp_start():
             nonlocal queued_refresh
@@ -1300,6 +1557,10 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
 
         try:
             for index, phase in enumerate(phases):
+                if beside_failed:
+                    # A non-lock failure beside the last phase: as any other,
+                    # the unpaid tail stays buffered for the retry.
+                    return False
                 if not final_drain and any(
                     prices.lock_retry_until.get(oid, 0) > _mono() for oid in phase
                 ):
@@ -1314,9 +1575,10 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
                 ):
                     stats["budget_deferred"] += sum(len(p) for p in phases[index:])
                     break
-                if live_event_ids and not final_drain and not any(
+                phase_live = bool(live_event_ids) and any(
                     cohort_event_ids.get(oid) in live_event_ids for oid in phase
-                ):
+                )
+                if live_event_ids and not final_drain and not phase_live:
                     if live_preempts_tail(
                         flush_started, flush_period, nonlive_started, price_buffer,
                         batch, cohort_event_ids, live_event_ids,
@@ -1332,22 +1594,43 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
                 # late bridge may name an event in a later phase; implicit debt
                 # captured by the active refresh must obey the same fence. So
                 # must an event an earlier flush's refresh still holds.
-                if not prices.stamping_events.isdisjoint(
-                    event_ids_for_outcomes(cohort_event_ids, phase.keys())
-                ):
-                    await stamp_done()
+                phase_events = event_ids_for_outcomes(cohort_event_ids, phase.keys())
+                if not prices.stamping_events.isdisjoint(phase_events):
+                    if final_drain:
+                        await stamp_done()
+                    elif not prices.held_events(blend_refresher).isdisjoint(
+                        phase_events
+                    ):
+                        # #10090: that event's stamp is still queued or running.
+                        # Joining waited for the WHOLE refresh and held every
+                        # later phase and flush with it, independent games
+                        # included. The whole cohort stays buffered at the head
+                        # instead, like a lock retry; the next flush writes it
+                        # once its stamp has returned. An event whose stamp has
+                        # returned writes now and is admitted again.
+                        stats["stamp_fenced"] += len(phase)
+                        continue
                 declined = 0
                 written_outcome_ids: list[int] = []
                 written_observations: dict = {}
+                if (
+                    beside is None and live_event_ids and not final_drain
+                    and not phase_live
+                ):
+                    beside_task = asyncio.create_task(serve_live_beside())
                 try:
-                    async with get_task_session() as session:
+                    async with (
+                        prices.waited("db", rows=len(phase), live=phase_live),
+                        get_task_session() as session,
+                    ):
                         # #10661: bound each lock acquisition in this transaction.
                         # Pool checkout and total phase duration have separate costs.
                         if not final_drain:
-                            await session.execute(
-                                SET_LOCK_TIMEOUT_SQL,
-                                {"ms": lock_timeout_value(PRICE_PHASE_LOCK_TIMEOUT_MS)},
-                            )
+                            async with prices.waited("set_lock"):
+                                await session.execute(
+                                    SET_LOCK_TIMEOUT_SQL,
+                                    {"ms": lock_timeout_value(PRICE_PHASE_LOCK_TIMEOUT_MS)},
+                                )
                         # The admitted whole-question phase keeps its IDs and
                         # ordering, but takes the newest eligible tuple and its
                         # matching receipt before writing. A concurrent open-leg
@@ -1466,15 +1749,20 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
                             if oid in market_id_by_outcome
                         }
                         if reranked_markets:
-                            stats["ranks_rederived"] += (
-                                await session.execute(
-                                    rerank_market_fields_stmt(sorted(reranked_markets))
-                                )
-                            ).rowcount
-                    if not flush_counted:
+                            async with prices.waited("rerank"):
+                                stats["ranks_rederived"] += (
+                                    await session.execute(
+                                        rerank_market_fields_stmt(sorted(reranked_markets))
+                                    )
+                                ).rowcount
+                    if not flush_counted and beside is None:
                         stats["flushes"] += 1
                         flush_counted = True
                     stats["price_updates"] += len(phase) - declined
+                    if beside is not None:
+                        stats["live_beside"] = (
+                            stats.get("live_beside", 0) + len(written_outcome_ids)
+                        )
                     # First observations are forced, so their missing rows still
                     # mean settled/deleted. Repeats may also be skipped by SQL.
                     first_declined = sum(
@@ -1494,6 +1782,7 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
                         if oid in open_contract_outcome_ids
                     )
                 except Exception as exc:
+                    await end_beside()
                     # Q491 — the batch is still in `price_buffer`, so the next flush
                     # retries it. Before Q491 the buffer was drained up front and a
                     # failed write discarded those prices outright: the socket only
@@ -1547,6 +1836,9 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
                             "NO_WRITE_UNCHANGED_SETTLED_OR_MISSING",
                         )
 
+                # Debt is registered: now join anything written beside it.
+                await end_beside()
+
                 # The event refresh uses its own session and committed prices.
                 # Start it before awaiting the separate MARKET notification;
                 # either delivery can progress while the other awaits Redis.
@@ -1559,7 +1851,8 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
 
                 # #9484: keep every committed MARKET notification, including
                 # standalone futures/props which have no event blend.
-                await blend_refresher.publish_market_changes(session)
+                async with prices.waited("publish"):
+                    await blend_refresher.publish_market_changes(session)
 
                 # Q491 repair 2 — the write landed, so and only so do these entries
                 # leave the buffer. The `== prob` test is what used to be `setdefault`:
@@ -1588,6 +1881,8 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
                         await stamp_start()
                 elif queued_refresh:
                     stamp_admit()
+            if beside_failed:
+                return False
             # Lock retries are bounded on their cohorts above. A handled lock
             # must not add two seconds after unrelated successful work.
             return not had_lock_failure if final_drain else True
@@ -1597,11 +1892,13 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
         finally:
             if cancelled:
                 try:
+                    await end_beside(cancel=True)
                     await stamp_done(cancel=True)
                 finally:
                     keep_queued()
             else:
                 try:
+                    await end_beside()
                     # #10090: the refresh is the run's; this flush returns
                     # without waiting for it, so the next flush's committed
                     # cohort joins it rather than waiting behind an unrelated
@@ -2318,8 +2615,8 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
                 "Kalshi WS: %d updates, %d flushes, %d settlements, %d errors, "
                 "%d msgs | blend stamped=%d no_reading=%d throttled=%d errors=%d "
                 "lock_skipped=%d unobserved=%d stale=%d | %s deferred=%d "
-                "preempted=%d live=%d book=%d quotes=%d resnapshots=%d "
-                "quote_priority=%d",
+                "preempted=%d beside=%d fenced=%d live=%d book=%d quotes=%d "
+                "resnapshots=%d quote_priority=%d",
                 stats["price_updates"], stats["flushes"],
                 stats["settlements"], stats["errors"],
                 game_messages(),
@@ -2331,7 +2628,8 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
                 blend.get("stale_readings_refused", 0),
                 # #10090: this minute's flush phases, then cumulative deferrals.
                 flush_timings.line(), stats["budget_deferred"],
-                stats["live_preempted"], len(live_event_ids),
+                stats["live_preempted"], stats["live_beside"], stats["stamp_fenced"],
+                len(live_event_ids),
                 # #10090 direct book: tickers carried, quotes taken, resyncs.
                 stats.get("book_tickers", 0),
                 sum(c.sock.stats.get("book_quotes", 0) for c in game_clients),

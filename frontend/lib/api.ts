@@ -1239,6 +1239,9 @@ export interface GameMarketsResponse {
     outcome_name: string;
     movement: number | null;
     observed_at?: string | null;
+    // #10590: the OVER's settled verdict (#6239), even on an Under-named leg.
+    is_winner?: boolean | null;
+    resolution_source?: string | null;
   }[];
   spreads: {
     market_name: string;
@@ -1258,6 +1261,10 @@ export interface GameMarketsResponse {
     movement?: number | null;
     period?: string | null;
     observed_at?: string | null;
+    // #10590: own-leg verdict on a `probability` row; the OVER's on an
+    // over-axis row.
+    is_winner?: boolean | null;
+    resolution_source?: string | null;
   }[];
   /** #10850: closed, not-yet-graded period rows — never priced, graded from `period_score`. */
   closed_period_markets?: ClosedPeriodRow[] | null;
@@ -1268,6 +1275,16 @@ export interface GameMarketsResponse {
     outcomes: {
       name: string;
       probability: number;
+      /**
+       * #10980 — the same two keys `other` declares below (#6138), and dropped
+       * here the same way: `/events/14780558` (BUF 37 – LAR 34) served all six
+       * head-to-head legs `resolution_source: "api_settlement"` with their
+       * winners, and the card printed `Last quotes 100% / 0%`. Optional and
+       * nullable for the reason written on `other`: absent is an older payload,
+       * a served null is "nobody graded this".
+       */
+      is_winner?: boolean | null;
+      resolution_source?: string | null;
     }[];
   }[];
   other: {

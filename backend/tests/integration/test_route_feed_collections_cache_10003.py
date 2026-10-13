@@ -38,8 +38,18 @@ from app.utils import request_cache as _rc
 
 @pytest.fixture
 def enabled(monkeypatch):
+    from app.utils import theme_collection_ref
+
     monkeypatch.setenv("CONTAINER_DISCOVERY_ENABLED", "true")
     monkeypatch.setenv("CONTAINERS_READ_ENABLED", "true")
+    # #9925: the reader flag also arms the theme-card publication read. This
+    # route double has no SAVEPOINT, so state it like the hub fingerprint is
+    # stated: no theme published (production today), keys unchanged.
+    monkeypatch.setattr(
+        theme_collection_ref,
+        "read_published_themes",
+        AsyncMock(return_value=theme_collection_ref.PublishedThemes()),
+    )
 
 
 @pytest.fixture
