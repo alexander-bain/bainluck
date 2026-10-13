@@ -3870,6 +3870,26 @@ jobs:
             exit 1
           fi
 
+      - name: "#5344 a game the authority moves to another week moves hubs; an older read never moves it back (real Postgres)"
+        # The move is one transaction over every week it touches: ascending-id
+        # chain locks, a barrier gate read under them, owned-edge deletes, the
+        # destination's assembly and a decision row on both sides. Only a server
+        # shows a read parked in its fetch losing to a later-started pass that
+        # committed, a person's withdrawal holding its row lock while the pass
+        # waits, the unchanged repeat rewriting no edge (xmin), and a failure
+        # mid-move leaving both weeks as they were.
+        #
+        # Same skip-detection as every gate in this job.
+        if: matrix.group == 'shared-tail'
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_container_nfl_relocation_5344_pg.py \
+            -v -s -rs 2>&1 | tee /tmp/nflrelocation5344.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/nflrelocation5344.txt; then
+            echo "::error::#5344 NFL week relocation SKIPPED — the gate did not run"
+            exit 1
+          fi
+
       - name: "#4229 Kalshi senate backfill moves the stored row (real Postgres)"
         # CERT-2372 blocked the classifier-only SHA because the diff made these
         # markets CLASSIFY as politics while every stored row stayed `hockey`:
