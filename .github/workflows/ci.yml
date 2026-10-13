@@ -7291,6 +7291,53 @@ jobs:
             exit 1
           }
 
+      - name: "#1527 a settled soccer fixture's market leaves open on a reviewed exact plan, and the undo round-trips (real Postgres)"
+        # PILLAR TRUTH. SHIP: after a soccer fixture is settled, its market no
+        # longer appears live while its one real winner remains visible. The
+        # attended status transition's exact-id plan (market AND leg row
+        # versions), FOR UPDATE / FOR SHARE compare-and-set, row-count-checked
+        # write, D51 before-image in the write's own transaction, the audit of a
+        # stopped run and a restore that never overwrites a same-value later
+        # writer are SQL a session double reads green on. Venue-open, void,
+        # contradictory, disagreeing, unknown/sourceless-authority, incoherent,
+        # ungraded, two-leg, Kalshi and already-resolved markets must never move.
+        # Runs in its own throwaway database on the real ORM schema.
+        if: matrix.group == 'shared-tail'
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_repair_settled_status_1527_pg.py \
+            -v -rs 2>&1 | tee /tmp/settledstatus1527.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/settledstatus1527.txt; then
+            echo "::error::#1527 settled-status gate SKIPPED — the gate did not run"
+            exit 1
+          fi
+          grep -qE "[^0-9]13 passed[,[:space:]]" /tmp/settledstatus1527.txt || {
+            echo "::error::#1527 settled-status gate did not run all thirteen cases"
+            exit 1
+          }
+
+      - name: "#1527 a repaired settled soccer field survives the real poll and reads as a result (real Postgres)"
+        # CERT-4099's 1527-REINGEST-WRITER-GUARD. The REAL Gamma parser and the
+        # REAL _process_event_batch re-poll the repaired rows: one winner, two
+        # losses, resolution_source, the honest 0.41 opening and every honest
+        # NULL survive a closed terminal and a closed incoherent replay; an open
+        # control proves the replay reaches the opening writer; and the real
+        # detail route serves the settled market as resolved with one winner.
+        # Runs in its own throwaway database on the real ORM schema.
+        if: matrix.group == 'shared-tail'
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_reingest_keeps_settled_soccer_field_1527_pg.py \
+            -v -rs 2>&1 | tee /tmp/reingest1527.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/reingest1527.txt; then
+            echo "::error::#1527 re-ingest gate SKIPPED — the gate did not run"
+            exit 1
+          fi
+          grep -qE "[^0-9]5 passed[,[:space:]]" /tmp/reingest1527.txt || {
+            echo "::error::#1527 re-ingest gate did not run all five cases"
+            exit 1
+          }
+
       - name: "#8910 a newer WebSocket stamp survives the two-minute poll (real Postgres)"
         # #8910 / CERT-3585's required guard. The REAL live poll against real
         # Postgres, paused after its compared read, while a second session sends
