@@ -108,6 +108,7 @@ func futuresDetailShareMessage(_ market: FuturesMarketDetail?) -> String {
 struct FuturesDetailView: View {
     private let marketId: Int
     @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @State private var pageVisible = false
     @StateObject private var viewModel: FuturesDetailViewModel
     @State private var sortField: FuturesSortField = .probability
@@ -137,6 +138,15 @@ struct FuturesDetailView: View {
             category: viewModel.market?.llmSportCategory?.lowercased(),
             surface: .futuresDetail
         )
+    }
+
+    /// #10964 — room below the last outcome row. On iPhone the floating tab
+    /// bar sits over the bottom of the page, and the review's frame of
+    /// Boston–Detroit (54069274) at its deepest scroll had #13 Detroit over 5.5
+    /// under it: a graded row nobody could read. iPad's tab bar is at the top.
+    /// Same split, and the same reason, as `PinFeedbackToast.bottomClearance`.
+    static func bottomClearance(horizontalSizeClass: UserInterfaceSizeClass?) -> CGFloat {
+        horizontalSizeClass == .regular ? 0 : 120
     }
 
     var body: some View {
@@ -196,6 +206,7 @@ struct FuturesDetailView: View {
                             outcomesSection(market)
                         }
                         .padding()
+                        .padding(.bottom, Self.bottomClearance(horizontalSizeClass: horizontalSizeClass))
                     }
                     #if os(macOS)
                     .frame(maxWidth: 1000)

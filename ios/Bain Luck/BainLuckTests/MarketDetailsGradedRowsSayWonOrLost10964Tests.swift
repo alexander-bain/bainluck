@@ -181,6 +181,31 @@ final class MarketDetailsGradedRowsSayWonOrLost10964Tests: XCTestCase {
                        "`is_winner` alone is not a grade")
         XCTAssertTrue(source.contains("marketStatus: market.status"))
     }
+
+    // MARK: - The last rows clear the iPhone's floating tab bar
+
+    /// Review of PR #10999: at the deepest scroll on iPhone, #13 Detroit over
+    /// 5.5 sat under the floating tab bar. The page now ends with room for it.
+    func test_iPhoneLeavesRoomBelowTheLastRow_iPadDoesNot() {
+        let compact = FuturesDetailView.bottomClearance(horizontalSizeClass: .compact)
+        XCTAssertGreaterThanOrEqual(compact, 120, "the tab bar is ~76pt over the safe area; a row is ~60pt")
+        XCTAssertEqual(FuturesDetailView.bottomClearance(horizontalSizeClass: nil), compact,
+                       "an unknown size class is treated as the phone")
+        XCTAssertEqual(FuturesDetailView.bottomClearance(horizontalSizeClass: .regular), 0,
+                       "iPad's tab bar is at the top")
+    }
+
+    func test_thePageAppliesTheClearance() throws {
+        let url = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .appendingPathComponent("Bain Luck/Views/FuturesDetailView.swift")
+        let source = try String(contentsOf: url, encoding: .utf8)
+        let start = try XCTUnwrap(source.range(of: "outcomesSection(market)\n"))
+        let tail = source[start.upperBound...].prefix(400)
+        XCTAssertTrue(tail.contains(".padding(.bottom, Self.bottomClearance(horizontalSizeClass: horizontalSizeClass))"),
+                      "the clearance must follow the outcomes section inside the scroll content")
+    }
 }
 
 private extension FuturesDetailRowValue {
