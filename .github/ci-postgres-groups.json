@@ -195,6 +195,7 @@
     "#6955 club-noun rails: apply, partial CAS and the D51 undo (real Postgres)",
     "#7021 Cardinals fold — apply, re-run and undo against real Postgres",
     "#8636 volleyball rows — retire, relabel, re-run and undo against real Postgres",
+    "#1109 Football shelf — apply, interleaved-writer rollback, re-run and undo against real Postgres",
     "#8100 Phoenix placement — select, bank, apply, refuse mid-run and undo against real Postgres",
     "#9850 seeded opening — clear, re-run, undo and refusals against real Postgres",
     "#6974 MLS duplicate clubs — strip, fold, re-run and undo against real Postgres",

@@ -620,6 +620,11 @@ COVERED = (
     # venue-contradicted-rows repair's retire / relabel, re-run and
     # `--restore`. `sports.active` is the Python-side default the seed names.
     "test_repair_8636_venue_contradicted_rows_pg.py",
+    # #1109 (the Football shelf). Seeds `futures_markets` by raw INSERT, in a
+    # private schema, to drive the exact-id compare-and-set's apply, the
+    # interleaved-writer refusal and rollback, the re-run and `--restore`.
+    # `mutually_exclusive` is the Python-side default the seed names.
+    "test_repair_1109_football_shelf_apply_restore_pg.py",
     # #8100 (the Phoenix in the catch-all). Seeds `sports`, `teams` and `events`
     # by raw INSERT, in a private schema, to drive the placement repair's
     # select, bank, apply, mid-run refusal and `--restore`. `sports.active` is
