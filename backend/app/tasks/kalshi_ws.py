@@ -457,14 +457,16 @@ class _KalshiPriceOwner:
     def held_events(self, refresher):
         """#10090 — the events the run's refresh is still stamping.
 
-        Its own fence (`holding_event_ids`) once it reports one; until then,
+        Its own fence (`holding_event_ids`) once it reports one — whole: the
+        call also stamps owed events it takes after it started (#10090,
+        `window.debt`), which ``stamping_events`` never lists; until then,
         everything it was started with or admitted (``stamping_events``).
         """
         reader = getattr(refresher, "holding_event_ids", None)
         holding = reader() if reader is not None else None
         if holding is None:
             return self.stamping_events
-        return self.stamping_events.intersection(holding)
+        return set(holding)
 
     async def join_stamp(self, refresher, *, cancel=False):
         """Wait for the run's blend refresh, if any, and retrieve its outcome.
@@ -475,6 +477,13 @@ class _KalshiPriceOwner:
         stamping = self.stamping
         if stamping is None:
             return
+        if not stamping.done():
+            # #10090: the running call keeps admitting later cohorts; a join is
+            # a lifecycle drain, so close its door first (bounded by what is
+            # already queued, never by a later arrival).
+            stop = getattr(refresher, "stop_admitting", None)
+            if stop is not None:
+                stop()
         if cancel and not stamping.cancelling():
             stamping.cancel()
         interrupted = None

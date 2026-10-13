@@ -232,34 +232,166 @@ async def test_next_flush_cohort_publishes_while_an_earlier_flush_stamp_is_held(
     assert x.r.stats["errors"] == 0
 
 
-async def test_later_flush_is_admitted_on_its_clock_only_while_own_stamps_run(
-    monkeypatch,
-):
-    # Bounded: a later flush joins while the call's own stamp is unfinished.
-    # Once it has returned the call only drains what it admitted, so a later
-    # flush is refused and stays with its caller.
-    x = refresher_rig(monkeypatch, count=3, block=True, blocked=(1,))
-    hold_two, read_groups = asyncio.Event(), x.r._read_groups
+def _held_reads(x, *events):
+    """Hold each named event's own (singleton) read until its event is set."""
+    holds = {eid: asyncio.Event() for eid in events}
+    read_groups = x.r._read_groups
 
     async def held_read(session, event_ids):
-        if event_ids == [2]:
-            await hold_two.wait()
+        if len(event_ids) == 1 and event_ids[0] in holds:
+            await holds[event_ids[0]].wait()
         return await read_groups(session, event_ids)
 
     x.r._read_groups = held_read
+    return holds
+
+
+async def test_later_flushes_are_admitted_while_the_call_admits_until_a_lifecycle_stop(
+    monkeypatch,
+):
+    # #10090: a later flush joins the running call while it admits — also
+    # after its own stamps returned, and after the admitted stamp that was
+    # held then returned while ANOTHER admitted stamp is held (Root's
+    # successor case): overlapping holders never shut an unrelated game out.
+    # Bounded by the lifecycle: once `stop_admitting` runs, nothing new is
+    # admitted (not a new event, not a re-admission) and the call ends after
+    # what was already queued.
+    x = refresher_rig(monkeypatch, count=5, block=True, blocked=(1,))
+    holds = _held_reads(x, 2, 3)
     running = asyncio.create_task(x.r.refresh([1], flush_started=1000))
     try:
         await settle_until(lambda: "update" in x.commands)
         assert x.r.admit_fresh([2], flush_started=1002) == {2}
-        assert x.r._admission.clocks == {2: 1002}
         x.release.set()
         await settle_until(lambda: 1 in x.published)
-        assert x.r._admission.own_done and not running.done()
-        assert x.r.admit_fresh([3], flush_started=1004) == frozenset()
+        window = x.r._admission
+        assert window.own_done and x.r.admitting() and not running.done()
+        assert x.r.admit_fresh([3], flush_started=1004) == {3}  # 2 still held
+        holds[2].set()
+        await settle_until(lambda: 2 in x.published)
+        assert x.r.admit_fresh([4], flush_started=1006) == {4}  # 3 still held
+        await settle_until(lambda: 4 in x.published)
+        assert 3 not in x.published and not running.done()
+        x.r.stop_admitting()
+        assert not x.r.admitting()
+        assert x.r.admit_fresh([5], flush_started=1008) == frozenset()
+        assert x.r.admit_fresh([2], flush_started=1008) == frozenset()
+        assert not running.done()  # 3, queued before the stop, still drains
     finally:
         x.release.set()
-        hold_two.set()
+        for hold in holds.values():
+            hold.set()
     await asyncio.wait_for(running, 2)
-    assert x.published == [1, 2]
-    assert x.r._last_refresh_at == {1: 1000, 2: 1002}
+    assert x.published == [1, 2, 4, 3]
+    assert x.r._last_refresh_at == {1: 1000, 2: 1002, 3: 1004, 4: 1006}
     assert x.r.pending_event_ids() == frozenset() and x.r._admission is None
+
+
+async def test_debt_rides_the_door_one_event_at_a_time_while_the_call_lives_on(
+    monkeypatch,
+):
+    # #10090: a call that keeps admitting may outlive the moment a new refresh
+    # would have taken the debt. The oldest due owed event rides an admission
+    # — one at a time, so debt never holds more than one stamp worker — and
+    # publishes while the call's held stamp is still held.
+    x = refresher_rig(monkeypatch, count=5, block=True, blocked=(1,))
+    holds = _held_reads(x, 3)
+    running = asyncio.create_task(x.r.refresh([1], flush_started=1000))
+    try:
+        await settle_until(lambda: "update" in x.commands)
+        x.r.adopt_pending([3, 4])
+        assert x.r.admit_fresh([2], flush_started=1002) == {2}  # cohort only
+        window = x.r._admission
+        assert window.debt == 3 and x.r.pending_event_ids() == frozenset({4})
+        await settle_until(lambda: 2 in x.published)
+        # 3's stamp is still running: no second debt stamp beside it.
+        assert x.r.admit_fresh((), flush_started=1004) == frozenset()
+        assert window.debt == 3 and x.r.pending_event_ids() == frozenset({4})
+        holds[3].set()
+        await settle_until(lambda: 3 in x.published)
+        assert window.debt is None
+        assert x.r.admit_fresh((), flush_started=1006) == frozenset()
+        await settle_until(lambda: 4 in x.published)
+        assert 1 not in x.published and not x.release.is_set()
+    finally:
+        x.release.set()
+        for hold in holds.values():
+            hold.set()
+    await asyncio.wait_for(running, 2)
+    assert x.published == [2, 3, 4, 1]
+    assert x.r.pending_event_ids() == frozenset() and x.r._admission is None
+    assert x.r.stats["errors"] == 0
+
+
+async def test_cancelling_a_call_with_debt_in_flight_leaves_every_unstamped_event_owed(
+    monkeypatch,
+):
+    x = refresher_rig(monkeypatch, count=4, block=True, blocked=(1,))
+    holds = _held_reads(x, 2, 3)
+    running = asyncio.create_task(x.r.refresh([1], flush_started=1000))
+    try:
+        await settle_until(lambda: "update" in x.commands)
+        x.r.adopt_pending([3])
+        assert x.r.admit_fresh([2], flush_started=1002) == {2}
+        assert x.r._admission.debt == 3
+        await asyncio.sleep(0)
+        running.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await asyncio.wait_for(running, 2)
+    finally:
+        x.release.set()
+        for hold in holds.values():
+            hold.set()
+    assert {1, 2, 3} <= x.r.pending_event_ids()
+    assert x.r._admission is None and x.published == []
+
+
+async def test_a_newly_owed_sibling_gets_a_debt_turn_beside_a_repeatedly_locked_one(
+    monkeypatch,
+):
+    # #10090, Root's debt-fairness counterexample on be0d6a8a: lock-retry debt
+    # 2 and 3 arrives after the call took its population; 2's row stays locked
+    # and is due again at once. Without a remembered turn order, 2 took every
+    # debt turn (attempts 1,2,4,2,2,2) and writable 3 never published.
+    x = refresher_rig(monkeypatch, count=4, block=True, blocked=(1,), failure="lock")
+    running = asyncio.create_task(x.r.refresh([1], flush_started=1000))
+    try:
+        await settle_until(
+            lambda: x.r._admission is not None
+            and x.r.holding_event_ids() == frozenset({1})
+        )
+        x.r._lock_retry.update({2, 3})
+        for i in range(1, 5):
+            assert x.r.admit_fresh({4}, flush_started=1000 + i * 0.25) == frozenset({4})
+            await settle_until(
+                lambda: x.r._admission.debt is None
+                and 4 not in x.r.holding_event_ids()
+            )
+        attempts = [s.event_ids for s in x.sessions if s.event_ids]
+        assert attempts[:4] == [[1], [2], [4], [3]]  # 3 takes the next turn
+        assert 3 in x.published and x.r.pending_event_ids() == frozenset({2})
+    finally:
+        x.r.stop_admitting()
+        x.release.set()
+        await asyncio.wait_for(running, 2)
+
+
+async def test_the_kalshi_write_fence_covers_owed_events_the_call_took_later(monkeypatch):
+    # #10090: the call stamps owed events it takes after it started, which the
+    # owner's captured `stamping_events` never lists; a write to one must not
+    # cross its live stamp.
+    from app.tasks.kalshi_ws import _KalshiPriceOwner
+
+    x = refresher_rig(monkeypatch, count=2, block=True, blocked=(1, 2))
+    prices = _KalshiPriceOwner()
+    prices.stamping_events = {1}
+    prices.stamping = asyncio.create_task(x.r.refresh([1], flush_started=1000))
+    try:
+        await settle_until(lambda: x.r._admission is not None)
+        x.r.adopt_pending({2})
+        assert x.r.admit_fresh((), flush_started=1000.25) == frozenset()
+        await asyncio.wait_for(x.second_stamp.wait(), 1)
+        assert prices.held_events(x.r) == {1, 2}
+    finally:
+        x.release.set()
+        await prices.join_stamp(x.r)

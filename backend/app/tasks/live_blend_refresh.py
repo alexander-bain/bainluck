@@ -1155,16 +1155,26 @@ class _FreshAdmission:
         self.stored_wall: dict[int, Optional[float]] = {}
         #: Each admitted event's own flush clock (its cohort's `flush_started`).
         self.clocks: dict[int, float] = {}
-        #: Set once the call's own stamps have returned; later flushes are
-        #: refused from then on, so the call ends after a bounded drain.
+        #: Set once the call's own stamps have returned. #10090: it no longer
+        #: closes the door — an admitted stamp held past it (a row lock, a slow
+        #: frame) shut every later game out until it returned. The door closes
+        #: when the admitted workers go idle (`_admission_join`) or when a
+        #: lifecycle drain stops admitting (`stop_admitting`); either way the
+        #: call then drains only what was queued before the close.
         self.own_done = False
         self.closed = False
+        #: #10090 — the one owed (debt) event this call is stamping beside its
+        #: admitted cohorts, if any: debt keeps progressing while a call lives
+        #: on, but never holds more than one stamp worker.
+        self.debt: Optional[int] = None
         self.publish: Optional[Callable[[list[dict]], Awaitable[None]]] = None
         self.publish_inline: Optional[Callable[[list[dict]], Awaitable[None]]] = None
 
     def release(self, event_ids) -> None:
         """These events' stamps returned, or went back to debt unstamped."""
         self.holding.difference_update(event_ids)
+        if self.debt is not None and self.debt in event_ids:
+            self.debt = None
 
 
 class LiveBlendRefresher:
@@ -1227,6 +1237,11 @@ class LiveBlendRefresher:
         #: an EARLIER flush admitted; that flush is fresh-bearing when its own
         #: `refresh` begins.
         self._admitted_fresh_flush: Optional[float] = None
+        #: #10090 — the turn order of owed events riding a running call's
+        #: door (`window.debt`): a newly owed event joins the back, and the one
+        #: taken goes to the back, so a row lock that is due again at once
+        #: cannot take every turn from a writable sibling.
+        self._debt_rotation: list[int] = []
         self._last_refresh_at: dict[int, float] = {}
         #: Events whose last batch failed -> the monotonic time before which
         #: they are not due, whatever the throttle says.
@@ -1794,8 +1809,9 @@ class LiveBlendRefresher:
                             break
                         await stamp_event(event_id)
             # Admitted cohorts finish inside this call; the door closes with
-            # no turn between its last worker ending and the close. From here
-            # no later flush is admitted, so the remaining drain is bounded.
+            # no turn between its last worker ending and the close (or when a
+            # lifecycle drain stops admitting), so the remaining drain is
+            # bounded by what was queued before it.
             window.own_done = True
             await self._admission_join(window)
             await publication_done()
@@ -1947,6 +1963,28 @@ class LiveBlendRefresher:
         """
         self._throttle_deferred.update(event_ids)
 
+    def keep_owed(self, event_ids: Iterable[int], *, marks: Iterable[InputMark] = ()) -> None:
+        """#10090 — record what `refresh` records for an event it must defer.
+
+        For a caller whose committed events are all still being written by its
+        own flush (`defer_event_ids`): joining the running call only to start a
+        `refresh` that defers every one of them waits out the WHOLE call, and
+        the next flush with it, for no stamp. The debt is the same: queued as
+        throttle-deferred, counted once as throttled, and the cohort's newest
+        committed input opens its receipt chain as a deferred one does. The
+        staging slot is not touched (a running call may own it). Synchronous.
+        """
+        event_ids = set(event_ids)
+        throttled = event_ids.difference(self._throttle_deferred)
+        self._throttle_deferred.update(event_ids)
+        if throttled:
+            self.stats["throttled"] += len(throttled)
+        receipts = self.receipts
+        if receipts is not None:
+            staged, wall = self._receipt_call(receipts.staged_for, marks) or ({}, None)
+            staged = {eid: m for eid, m in staged.items() if eid in event_ids}
+            self._receipt_call(receipts.observe, staged, wall, set(), _mono())
+
     # ── #10090: admitting a committed cohort into the running refresh ────────
 
     def admit_fresh(
@@ -1963,14 +2001,15 @@ class LiveBlendRefresher:
         running call returns, on a free one of its stamp workers, or is left
         owed exactly as a `refresh` would leave it (throttled). Each is due,
         stamped and held on ITS flush's clock (``flush_started``): a cohort of
-        a LATER flush than the running call's joins while that call's own
-        stamps are still unfinished, so a new batch does not wait for an
-        unrelated older stamp; once they have returned, later flushes are
-        refused and the call ends after its bounded drain. Empty means the
-        caller keeps them for its next `refresh`, as before: no call is
-        running, the clock is earlier, a later one arrived after the call's
-        own stamps returned, or there is none (the final drain keeps its own
-        contract), or the event is fenced — the running call is
+        a LATER flush than the running call's joins it for as long as the call
+        admits (#10090: until its admitted workers go idle or a lifecycle
+        drain calls `stop_admitting`), so a new batch never waits for an
+        unrelated older stamp, however long that one is held. Beside it, at
+        most one due owed event at a time (`window.debt`) is stamped too, so
+        debt progresses while the call lives on; it is not in the returned set.
+        Empty means the caller keeps them for its next `refresh`, as before:
+        no call is admitting, the clock is earlier, or there is none (the final
+        drain keeps its own contract), or the event is fenced — the running call is
         still stamping it (an earlier attempt that has returned does not
         fence a newer price, #10090), or the caller is still writing its cohort
         (``defer_event_ids``) — so no partial board is read and no two stamps
@@ -1984,15 +2023,33 @@ class LiveBlendRefresher:
             or window.flush_started is None
         ):
             return frozenset()
-        if flush_started != window.flush_started and (
-            flush_started < window.flush_started or window.own_done
-        ):
+        if flush_started != window.flush_started and flush_started < window.flush_started:
             return frozenset()
         excluded = set(defer_event_ids)
         taken = {
             eid for eid in event_ids
             if eid not in excluded and eid not in window.holding
         }
+        cohort = frozenset(taken)
+        if window.debt is None:
+            # #10090: a call that keeps admitting may outlive the moment a new
+            # `refresh` would have taken the debt, so the oldest due owed event
+            # rides along — one at a time, behind the cohort, never fenced.
+            owed = self._lock_retry | self._throttle_deferred
+            rotation = [eid for eid in self._debt_rotation if eid in owed]
+            rotation += sorted(owed.difference(rotation))
+            order = [eid for eid in self._pending_continuation if eid in owed]
+            order += [eid for eid in rotation if eid not in order]
+            for eid in order:
+                if eid in taken or eid in excluded or eid in window.holding:
+                    continue
+                if self._due(eid, flush_started):
+                    taken.add(eid)
+                    window.debt = eid
+                    rotation.remove(eid)
+                    rotation.append(eid)
+                    break
+            self._debt_rotation = rotation
         if not taken:
             return frozenset()
         # #10090: an event whose earlier stamp in this call has returned is
@@ -2021,10 +2078,10 @@ class LiveBlendRefresher:
         ]
         # Sticky for the flush, exactly as a fresh `refresh` call would be. A
         # later flush's allowance is not the running call's to spend: it is
-        # marked for that flush's own first `refresh`.
-        if flush_started == self._pending_flush_started:
+        # marked for that flush's own first `refresh`. Debt alone is not fresh.
+        if cohort and flush_started == self._pending_flush_started:
             self._pending_fresh_flush = True
-        else:
+        elif cohort:
             self._admitted_fresh_flush = flush_started
         self.stats["considered"] += len(due)
         window.events.update(taken)
@@ -2055,7 +2112,21 @@ class LiveBlendRefresher:
                     task.exception()
             for _ in range(min(FRESH_STAMP_WORKERS - len(window.workers), len(due))):
                 window.workers.add(asyncio.create_task(self._admitted_worker(window)))
-        return frozenset(taken)
+        return cohort
+
+    def stop_admitting(self) -> None:
+        """#10090 — a lifecycle drain (final, cancellation, catalog change, a
+        joined fallback) is about to wait for the running call: close its door
+        first, so the wait covers what is already queued, never a later
+        arrival. Synchronous; the call ends once its queue has drained."""
+        window = self._admission
+        if window is not None:
+            window.closed = True
+
+    def admitting(self) -> bool:
+        """#10090 — a running call is still taking later flushes' cohorts."""
+        window = self._admission
+        return window is not None and not window.closed
 
     async def _admitted_worker(self, window: _FreshAdmission) -> None:
         while window.queue:

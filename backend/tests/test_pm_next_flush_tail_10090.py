@@ -12,6 +12,11 @@ snapshot is one no blend reads (a venue-refuted prop) and the stamp's
 membership is known; a speaking leg or unknown membership still follows it. Executes the shipped `_flush_prices`
 closure and the real refresher; the database boundary is faked. Proves
 ordering, not production latency.
+
+Since the post-v5710 residual, a speaking leg follows only ITS OWN event's
+running stamp, and without holding the flush: its book stays buffered and the
+first flush after that stamp returns withdraws it (and re-stamps the event).
+Unknown membership still joins.
 """
 
 import asyncio
@@ -109,8 +114,9 @@ async def test_a_tail_withdrawal_waits_only_when_the_running_read_can_see_it(
     monkeypatch, leg,
 ):
     # Flush 2 carries no price, only a fresh wide book on one leg of event 1,
-    # whose stamp is held. A prop withdraws beside the running read and the
-    # flush returns; a WIN leg (control) must wait until that read committed.
+    # whose stamp is held. A prop withdraws beside the running read; a WIN leg
+    # (control) must wait until that read committed. Neither holds the flush:
+    # the WIN book stays buffered for the first flush after the read.
     p, x, attempts = game(monkeypatch, churn_leg=PROP)
     p.books.clear()
     held, first = await held_first_flush(p, x)
@@ -120,19 +126,21 @@ async def test_a_tail_withdrawal_waits_only_when_the_running_read_can_see_it(
         seen = watch_withdrawals(p, x)
         p.books[leg] = (0.01, 0.99)
         second = asyncio.create_task(p.ns["flush_prices"](flush_started=1000.25))
+        assert await asyncio.wait_for(second, 1)
         if leg == PROP:
-            assert await asyncio.wait_for(second, 1)
             assert seen == [([PROP], False)]
         else:
-            for _ in range(50):
-                await asyncio.sleep(0)
-            assert not second.done() and seen == []
+            assert seen == [] and leg in p.books
+            assert p.ns["stats"]["stamp_fenced"] == 1
     finally:
         held.release.set()
         if second is not None:
             await asyncio.wait_for(second, 2)
         await p.ns["catalog_boundary"].join_stamps()
     if leg == WIN:
+        assert seen == []
+        assert await p.ns["flush_prices"](flush_started=1000.5)
+        await p.ns["catalog_boundary"].join_stamps()
         assert seen == [([WIN], True)]  # withdrawn only after the read committed
         assert attempts.count(1) == 2  # and the withdrawal is re-stamped
     else:
