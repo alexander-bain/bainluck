@@ -8464,13 +8464,28 @@ def _gamma_head_stop_at(t0: float, stop_at: float) -> float:
 def _merge_head_into_page(head_rows, cursor_rows):
     """``(rows_to_process, head_only_ids)``. Pure.
 
-    Head rows first, so Phase B reaches them before the deadline; a row in both
-    lists is kept once, as a CURSOR row, because the cursor's completeness
-    accounting is the one that must see it.
+    Every head row first, in the head's newest-settled order, so Phase B
+    reaches them before the deadline. A row in both lists is kept once, still
+    in the head's position, and counted as a CURSOR row (it stays out of
+    ``head_only_ids``), because the cursor's completeness accounting is the one
+    that must see it.
+
+    The position is the fix for the second half of #10765. It used to keep the
+    shared row in the cursor's id order, behind every older row on the page. A
+    market listed long ago that settled today (a weekly chart, a season future)
+    has an old id, so once the cursor's page reached it, the head stopped
+    giving it priority: the 05:47Z Oct 13 page began at 63719795 and held the
+    Billboard markets 63874444/445/446 about 5,400 rows up, the deadline
+    deferred them, and the head reported every row it still owned as complete.
+    Moving a shared row forward cannot cost the cursor a row: it holds below
+    its lowest unfinished id whatever order the page ran in, and the row is
+    cursor work it would have spent the same call on later in the run.
     """
     cursor_ids = {r.id for r in cursor_rows}
+    head_ids = {r.id for r in head_rows}
     head_only = [r for r in head_rows if r.id not in cursor_ids]
-    return head_only + list(cursor_rows), {r.id for r in head_only}
+    rest = [r for r in cursor_rows if r.id not in head_ids]
+    return list(head_rows) + rest, {r.id for r in head_only}
 
 
 async def _backfill_polymarket_winners_from_api(
@@ -8626,6 +8641,8 @@ async def _backfill_polymarket_winners_from_api(
     stats["head_events"] = 0
     stats["head_events_skipped"] = 0
     stats["head_reached_s"] = None
+    stats["head_in_cursor_page"] = 0
+    stats["head_in_cursor_page_completed"] = 0
     if recency_head and not _targeted:
         try:
             async with get_task_session() as session:
@@ -8689,6 +8706,11 @@ async def _backfill_polymarket_winners_from_api(
     # cursor decision is a statement about the cursor's page alone.
     markets, _head_only_ids = _merge_head_into_page(head_rows, markets)
     stats["head_selected"] = len(_head_only_ids)
+    # Head rows the cursor's page also holds. They run in the head's position
+    # but are counted in `completed`, never in `head_completed`, so without
+    # this pair a run that never reached them still reads as a whole head.
+    _head_in_page_ids = {r.id for r in head_rows} - _head_only_ids
+    stats["head_in_cursor_page"] = len(_head_in_page_ids)
 
     # Separate markets by lookup strategy:
     # - With poly_event_id: group by event for batch event lookup
@@ -9447,6 +9469,7 @@ async def _backfill_polymarket_winners_from_api(
     # subset of `selected` before the head existed); the head reports its own.
     stats["completed"] = len(_completed_ids & set(_selected_ids))
     stats["head_completed"] = len(_completed_ids & _head_only_ids)
+    stats["head_in_cursor_page_completed"] = len(_completed_ids & _head_in_page_ids)
     stats["deferred"] = len(_deferred_ids)
     if _targeted:
         # #6110: a targeted run never touches the shared cursor. It selected an
