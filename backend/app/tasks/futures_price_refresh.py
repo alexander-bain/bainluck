@@ -215,6 +215,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 import time
 from datetime import datetime, timedelta, timezone
 from typing import Optional
@@ -542,6 +543,24 @@ IN_PLAY_LIMIT = 200
 #: ``KXNASCARCUPSERIES`` stay out; NBA and NHL are named before their playoffs
 #: start so the first round does not repeat this.
 SERIES_CARD_TICKER_RE = r"^KX(WNBA|NBA|NHL|MLB)SERIES(GAMES|SCORE)?-"
+
+#: #1845 — the TITLE markets of the same leagues, plus MLB's two pennants: the
+#: playoff grid's championship and "AL / NL Champ" columns. Kept apart from the
+#: family above because they are not a game's series (the guard on that family
+#: pins `KXMLB-26` OUT of it), but they move with every playoff game the same
+#: way, so they ride the same arm and clock.
+#:
+#: The class arm was their only rail, and its gate is market-level and 6h: one
+#: snapshot on any leg holds the whole board. Measured 2026-10-13 01:5xZ, every
+#: leg of `KXMLB-26` (market 275, tier 1) last snapshotted 22:22:48Z, before NLCS
+#: Game 2 ended, so nothing could re-price it before ~04:22Z. /playoffs/mlb
+#: printed Dodgers K32 against Kalshi's 0.198 / 0.206 and Brewers K35 against
+#: 0.435 / 0.439. The pennants (274, 270) are tier 2 on the same 6h clock.
+#:
+#: Not gated on the postseason: six rows at most, ~0.35s of Kalshi time each per
+#: beat out of season. NBA / NHL conference titles are not named here: their
+#: tickers were not read off the venue, and their playoffs start in April.
+TITLE_TICKER_RE = r"^KX(?:WNBA|NBA|NHL|MLB(?:AL|NL)?)-\d+$"
 
 #: A ceiling, not a fence, for the reason :data:`IN_PLAY_LIMIT` is one: 18 open
 #: today, and an NBA + NHL first round together is 16 series x 3 families = 48.
@@ -1037,7 +1056,8 @@ _SERIES_CARD_CANDIDATE_SQL = text(
       FROM futures_markets fm
      WHERE {LIVE_MARKET_SQL}
        AND fm.source = 'kalshi'
-       AND fm.external_id ~ :series_ticker_re
+       AND (fm.external_id ~ :series_ticker_re
+            OR fm.external_id ~ :title_ticker_re)
        AND NOT EXISTS (
              SELECT 1
                FROM futures_outcomes fo
@@ -1332,13 +1352,15 @@ async def _scan_in_play_candidates(
 async def _scan_series_card_candidates(
     session, *, stale_minutes: int, limit: int = SERIES_CARD_LIMIT
 ) -> list[dict]:
-    """Stale playoff-series markets a game page's Series card renders (#9220)."""
+    """Stale playoff-series markets a game page's Series card renders (#9220),
+    and the playoff grid's title and pennant markets (#1845)."""
     rows = (
         await session.execute(
             _SERIES_CARD_CANDIDATE_SQL,
             {
                 "stale_minutes": stale_minutes,
                 "series_ticker_re": SERIES_CARD_TICKER_RE,
+                "title_ticker_re": TITLE_TICKER_RE,
                 "series_card_limit": limit,
             },
         )
@@ -3585,6 +3607,8 @@ async def _refresh_stale_futures_prices(
         "series_card_candidates": 0,
         "series_card_attempted": 0,
         "series_card_priced": 0,
+        # #1845: how many of `series_card_candidates` are title / pennant rows.
+        "series_card_title_candidates": 0,
         # #10320: the markets the category pages last rendered. `known` is
         # reported even at zero, and `read_ok` beside it, because "the producer
         # has not run since this deployed" and "the read failed" both arrive as an
@@ -3787,6 +3811,9 @@ async def _refresh_stale_futures_prices(
         stats["served_candidates"] = len(served_scan)
         stats["in_play_candidates"] = len(in_play_scan)
         stats["series_card_candidates"] = len(series_card_scan)
+        stats["series_card_title_candidates"] = sum(
+            1 for m in series_card_scan if re.match(TITLE_TICKER_RE, m["external_id"] or "")
+        )
         stats["category_page_candidates"] = len(category_page_scan)
         stats["threshold_label_candidates"] = len(threshold_label_scan)
 
