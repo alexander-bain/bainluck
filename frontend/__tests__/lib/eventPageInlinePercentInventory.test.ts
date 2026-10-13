@@ -78,7 +78,10 @@ const PERMITTED: Record<string, { count: number; because: string }> = {
 /** The files the repair routed. Each must still import the shared rule. */
 const ROUTED = [
   "components/SpecialEventMarkets.tsx",
-  "app/events/[id]/page.tsx",
+  // #10980: the page's routed site was the Matchups row percent, which moved
+  // with its markup into `MatchupOutcomes`. The page's own inline sites stay
+  // pinned by PERMITTED above.
+  "components/event/MatchupOutcomes.tsx",
   "components/event/SettledOutcomeHero.tsx",
   "components/event/PropsSection.tsx",
   "components/event/AdvancementPath.tsx",
