@@ -422,14 +422,15 @@ async def test_the_owner_counts_only_time_spent_waiting_on_a_running_refresh():
 
 
 @pytest.mark.parametrize("fenced_tick", [False, True])
-async def test_a_quiet_batch_leaves_debt_owed_beside_the_running_call_without_joining(
+async def test_a_quiet_batch_hands_due_debt_to_the_running_call_without_joining(
     monkeypatch, fenced_tick,
 ):
-    # #10090 repeat tail: event 1's stamp is held and event 2 owes a stamp.
-    # Debt is stamped only once the call returns (one refresher), so a quiet
-    # batch that joined it bought no earlier stamp and held every later flush.
-    # fenced_tick: the batch carries only the held event's newer prices, which
-    # the fence keeps buffered (the second quiet path).
+    # #10090 repeat tail: event 1's stamp is held and event 2 owes a stamp. A
+    # quiet batch that joined the call held every later flush behind the held
+    # stamp; now it returns, and the call's door takes the due debt, which
+    # publishes while event 1 is still held. fenced_tick: the batch carries
+    # only the held event's newer prices, which the fence keeps buffered (the
+    # second quiet path).
     p, x, later = cross_batch(monkeypatch)
     first = asyncio.create_task(p.ns["flush_prices"](flush_started=1000))
     try:
@@ -440,8 +441,9 @@ async def test_a_quiet_batch_leaves_debt_owed_beside_the_running_call_without_jo
         if fenced_tick:
             p.ns["price_buffer"].update({1: 0.5, 2: 0.5})
         assert await asyncio.wait_for(p.ns["flush_prices"](flush_started=1001), 2)
+        await settle_until(lambda: 2 in x.published)
         assert 1 not in x.committed and not x.release.is_set()
-        assert x.r.pending_event_ids() == frozenset({2}) and 2 not in x.published
+        assert not x.r.pending_event_ids()
         if fenced_tick:
             assert p.ns["price_buffer"] == {1: 0.5, 2: 0.5}
     finally:
@@ -450,7 +452,7 @@ async def test_a_quiet_batch_leaves_debt_owed_beside_the_running_call_without_jo
         await finish(p, x)
     assert await p.ns["flush_prices"](flush_started=1002)
     await p.ns["catalog_boundary"].join_stamps()
-    assert x.published[:2] == [1, 2] and not x.r.pending_event_ids()
+    assert x.published[:2] == [2, 1] and not x.r.pending_event_ids()
     assert not p.ns["price_buffer"] and x.r.stats["errors"] == 0
 
 
@@ -526,66 +528,134 @@ async def test_keep_owed_records_the_debt_a_deferring_refresh_records(monkeypatc
     assert (receipts._staged, receipts._staged_wall) == staged  # slot untouched
 
 
-async def test_an_unrelated_price_publishes_while_an_admitted_holder_outlives_own_done(
-    monkeypatch,
-):
-    # #10090, Root's closed-admission counterexample (1.504 s FAIL on a23a6c9680):
-    # event 1's own stamp returns while admitted event 2's stamp is still held.
-    # The drain waits for event 2 regardless, so event 3's committed price joins
-    # the call (the fixed frontier) and publishes before event 2's holder lets
-    # go, instead of waiting it out. Its mark stays the admission's own.
+def held_admission(monkeypatch, *, games):
+    """The real PM flush driving the real refresher, Root's closed-admission
+    shape: game n's single leg is outcome 10*n; game 2's UPDATE is held until
+    ``x.release``; ``gates[n]`` holds game n's stamp before it starts."""
     from tests import test_polymarket_withdrawal_speed_10651 as fixtures
     from tests.test_single_event_commit_10090 import rig as stamp_rig
 
-    p = fixtures.rig(batch={10: 0.6}, mapping={10: 1, 20: 2, 30: 3}, books={})
+    values = {n: round(0.5 + n / 20, 2) for n in range(1, games + 1)}
+    p = fixtures.rig(
+        batch={10: values[1]}, mapping={10 * n: n for n in values}, books={},
+    )
     p.release.set()
-    x = stamp_rig(monkeypatch, count=3, block=True, blocked=(2,))
+    x = stamp_rig(monkeypatch, count=games, block=True, blocked=(2,))
     p.ns["blend_refresher"] = x.r
     receipts = p.ns["tail_receipts"] = x.r.receipts = blend.TailReceipts("polymarket")
     p.ns["input_marks"] = {
-        oid: blend.InputMark(
-            seq=n, event_id=n, outcome_id=oid, probability=value, kind="price",
+        10 * n: blend.InputMark(
+            seq=n, event_id=n, outcome_id=10 * n, probability=value, kind="price",
             recv_wall=1000 + n, recv_mono=100 + n, venue_ts_ms=None, event_ordinal=n,
         )
-        for n, (oid, value) in enumerate([(10, 0.6), (20, 0.7), (30, 0.8)], 1)
+        for n, value in values.items()
     }
 
     async def no_market_publish(session):
         return 0
 
     x.r.publish_market_changes = no_market_publish
-    first_entered, first_release = asyncio.Event(), asyncio.Event()
+    gates = {n: (asyncio.Event(), asyncio.Event()) for n in (1, 3)}  # entered, release
     batch = x.r._refresh_batch
 
-    async def first_gate(ids, *a, **kw):
-        if ids == [1]:
-            first_entered.set()
-            await first_release.wait()
+    async def gated(ids, *a, **kw):
+        if len(ids) == 1 and ids[0] in gates:
+            entered, release = gates[ids[0]]
+            entered.set()
+            await release.wait()
         return await batch(ids, *a, **kw)
 
-    x.r._refresh_batch = first_gate
+    x.r._refresh_batch = gated
+    return p, x, receipts, values, gates
+
+
+async def own_done_with_game_2_held(p, x, values, gates):
+    """Game 1's own stamp returns while admitted game 2's stamp is held."""
+    assert await p.ns["flush_prices"](flush_started=1000)
+    await asyncio.wait_for(gates[1][0].wait(), 1)
+    p.ns["price_buffer"][20] = values[2]
+    assert await asyncio.wait_for(p.ns["flush_prices"](flush_started=1000.25), 1)
+    await asyncio.wait_for(x.second_stamp.wait(), 1)
+    gates[1][1].set()
+    await settle_until(lambda: x.r._admission is not None and x.r._admission.own_done)
+    assert x.r.holding_event_ids() == frozenset({2}) and x.published == [1]
+
+
+async def release_all(p, x, gates):
+    x.release.set()
+    for _, release in gates.values():
+        release.set()
+    await p.ns["catalog_boundary"].join_stamps()
+
+
+async def test_an_unrelated_price_publishes_while_an_admitted_holder_outlives_own_done(
+    monkeypatch,
+):
+    # #10090, Root's closed-admission counterexample (1.504 s FAIL on a23a6c9680):
+    # event 1's own stamp returns while admitted event 2's stamp is still held.
+    # The call still admits, so event 3's committed price joins it and
+    # publishes before event 2's holder lets go, instead of waiting it out. Its
+    # mark stays the admission's own; the staging slot is untouched.
+    p, x, receipts, values, gates = held_admission(monkeypatch, games=3)
+    gates[3][1].set()  # game 3's stamp is not held here
     try:
-        assert await p.ns["flush_prices"](flush_started=1000)
-        await asyncio.wait_for(first_entered.wait(), 1)
-        p.ns["price_buffer"][20] = 0.7
-        assert await asyncio.wait_for(p.ns["flush_prices"](flush_started=1000.25), 1)
-        await asyncio.wait_for(x.second_stamp.wait(), 1)
-        first_release.set()
-        await settle_until(lambda: x.r._admission is not None and x.r._admission.own_done)
+        await own_done_with_game_2_held(p, x, values, gates)
         window = x.r._admission
-        assert x.r.holding_event_ids() == frozenset({2}) and window.frontier == {2}
-        assert x.published == [1]
+        assert x.r.admitting()
         slot = (receipts._staged, receipts._staged_wall)
-        p.ns["price_buffer"][30] = 0.8
+        p.ns["price_buffer"][30] = values[3]
         assert await asyncio.wait_for(p.ns["flush_prices"](flush_started=1000.5), 1)
         await settle_until(lambda: 3 in x.published)
         assert not x.release.is_set() and 2 not in x.committed  # holder still held
-        assert window.staged[3].seq == 3 and window.frontier == {2}
+        assert window.staged[3].seq == 3 and x.r.admitting()
         assert (receipts._staged, receipts._staged_wall) == slot
     finally:
-        first_release.set()
-        x.release.set()
-        await p.ns["catalog_boundary"].join_stamps()
+        await release_all(p, x, gates)
     assert x.published == [1, 3, 2] and not p.ns["price_buffer"]
     assert not x.r.pending_event_ids() and x.r._admission is None
+    assert x.r.stats["errors"] == 0
+
+
+async def test_an_unrelated_price_publishes_while_a_successor_holder_is_held(monkeypatch):
+    # #10090, Root's successor counterexample (1.506 s FAIL on 317dc06135, a
+    # fixed frontier): game 3 is admitted and held; game 2's holder then lets
+    # go; game 4's price arrives while game 3 is still held. Overlapping
+    # holders never shut an unrelated game out: game 4 publishes first.
+    p, x, receipts, values, gates = held_admission(monkeypatch, games=4)
+    try:
+        await own_done_with_game_2_held(p, x, values, gates)
+        p.ns["price_buffer"][30] = values[3]
+        assert await asyncio.wait_for(p.ns["flush_prices"](flush_started=1000.5), 1)
+        await asyncio.wait_for(gates[3][0].wait(), 1)
+        x.release.set()
+        await settle_until(lambda: 2 in x.published)
+        assert x.r.holding_event_ids() == frozenset({3}) and x.r.admitting()
+        p.ns["price_buffer"][40] = values[4]
+        assert await asyncio.wait_for(p.ns["flush_prices"](flush_started=1000.75), 1)
+        await settle_until(lambda: 4 in x.published)
+        assert not gates[3][1].is_set() and 3 not in x.published
+    finally:
+        await release_all(p, x, gates)
+    assert x.published == [1, 2, 4, 3] and not p.ns["price_buffer"]
+    assert not x.r.pending_event_ids() and x.r._admission is None
+    assert x.r.stats["errors"] == 0
+
+
+async def test_a_join_is_a_lifecycle_drain_that_stops_admission_first(monkeypatch):
+    # #10090: the call keeps admitting; any join (final, cancellation, catalog,
+    # a refused fallback) closes its door before it waits, so the wait is
+    # bounded by what is already queued, never by a later arrival.
+    p, x, receipts, values, gates = held_admission(monkeypatch, games=3)
+    gates[3][1].set()
+    try:
+        await own_done_with_game_2_held(p, x, values, gates)
+        joining = asyncio.create_task(p.ns["catalog_boundary"].join_stamps())
+        await settle_until(lambda: not x.r.admitting())
+        assert not joining.done()
+        assert x.r.admit_fresh([3], flush_started=1000.5) == frozenset()
+        x.release.set()
+        await asyncio.wait_for(joining, 2)
+    finally:
+        await release_all(p, x, gates)
+    assert x.published == [1, 2] and x.r._admission is None
     assert x.r.stats["errors"] == 0

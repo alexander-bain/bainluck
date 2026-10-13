@@ -475,6 +475,13 @@ class _KalshiPriceOwner:
         stamping = self.stamping
         if stamping is None:
             return
+        if not stamping.done():
+            # #10090: the running call keeps admitting later cohorts; a join is
+            # a lifecycle drain, so close its door first (bounded by what is
+            # already queued, never by a later arrival).
+            stop = getattr(refresher, "stop_admitting", None)
+            if stop is not None:
+                stop()
         if cancel and not stamping.cancelling():
             stamping.cancel()
         interrupted = None

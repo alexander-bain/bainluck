@@ -136,6 +136,13 @@ class _PMStampOwner:
         if self.task is None:
             return
         task = self.task
+        if not task.done():
+            # #10090: a running call keeps admitting later flushes' cohorts.
+            # A join is a lifecycle drain: close the door first, so this waits
+            # for what is already queued and never for a later arrival.
+            stop = getattr(self.refresher, "stop_admitting", None)
+            if stop is not None:
+                stop()
         if cancel and not task.cancelling():
             task.cancel()
         interrupted = None
@@ -2524,8 +2531,25 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                             refresh_events.difference_update(admitted)
                             if not ready:
                                 continue
-                        # Same-event/refused cohorts keep the previous joined
-                        # path. No second mutable refresher call runs beside it.
+                            admitting = getattr(blend_refresher, "admitting", None)
+                            keep_owed = getattr(blend_refresher, "keep_owed", None)
+                            if admitting is not None and keep_owed is not None and admitting():
+                                # #10090: refused while the call still admits —
+                                # the same event's stamp is queued or running, or
+                                # this flush is still writing its cohort. Joining
+                                # waited out the WHOLE call for a stamp only its
+                                # own return allows. Kept owed instead; a later
+                                # flush's admission stamps it (`window.debt`).
+                                keep_owed(
+                                    refresh_events,
+                                    marks=[batch_marks[oid] for oid in ready
+                                           if oid in batch_marks
+                                           and oid not in headline_event_ids.non_speakers],
+                                )
+                                continue
+                        # Refused by a call that no longer admits (it is ending):
+                        # the previous joined path. No second mutable refresher
+                        # call runs beside it.
                         await stamp_done()
                         tail_receipts.stage(
                             [batch_marks[oid] for oid in ready if oid in batch_marks
@@ -2614,11 +2638,14 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                 ):
                     return wrote_all
                 if not final and flush_started is not None and not stamp_owner.task.done():
-                    # #10090: debt is stamped only once the running call has
-                    # returned (one refresher), so joining it here bought no
-                    # earlier stamp — it held this flush, and every later one,
-                    # behind the slowest stamp in the call. The debt stays owed;
-                    # the first flush after the call returns stamps it.
+                    # #10090: joining the running call here held this flush, and
+                    # every later one, behind the slowest stamp in it. While it
+                    # admits, its door takes the oldest due debt (`window.debt`);
+                    # otherwise the first flush after it returns stamps the debt.
+                    admit = getattr(blend_refresher, "admit_fresh", None)
+                    if admit is not None:
+                        admit((), flush_started=flush_started,
+                              defer_event_ids=unfinished_events)
                     return wrote_all
                 await stamp_owner.join()
             await blend_refresher.refresh_pending(
@@ -2637,11 +2664,14 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                 ):
                     return wrote_all
                 if not final and flush_started is not None and not stamp_owner.task.done():
-                    # #10090: debt is stamped only once the running call has
-                    # returned (one refresher), so joining it here bought no
-                    # earlier stamp — it held this flush, and every later one,
-                    # behind the slowest stamp in the call. The debt stays owed;
-                    # the first flush after the call returns stamps it.
+                    # #10090: joining the running call here held this flush, and
+                    # every later one, behind the slowest stamp in it. While it
+                    # admits, its door takes the oldest due debt (`window.debt`);
+                    # otherwise the first flush after it returns stamps the debt.
+                    admit = getattr(blend_refresher, "admit_fresh", None)
+                    if admit is not None:
+                        admit((), flush_started=flush_started,
+                              defer_event_ids=unfinished_events)
                     return wrote_all
                 await stamp_owner.join()
             await blend_refresher.refresh_pending(
@@ -2672,13 +2702,15 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
             tail_events.difference_update(admitted)
             if not tail_events:
                 return wrote_all
-            if tail_events <= unfinished_events:
+            admitting = getattr(blend_refresher, "admitting", None)
+            if tail_events <= unfinished_events or (admitting is not None and admitting()):
                 # #10090: every refused event is still being written by this
                 # flush (a newer book or price arrived for it), so the joined
-                # `refresh` below could only defer it. Joining waited out the
-                # WHOLE running call for no stamp — behind a held stamp, 1.4 s
-                # in which no later flush ran. Same debt, no join; a later flush
-                # writes the rest of its cohort and stamps it.
+                # `refresh` below could only defer it — or the call still
+                # admits, so a later flush's admission stamps it once its own
+                # stamp has returned. Joining waited out the WHOLE running call
+                # for no earlier stamp — behind a held stamp, 1.4 s in which no
+                # later flush ran. Same debt, no join.
                 keep_owed = getattr(blend_refresher, "keep_owed", None)
                 if keep_owed is not None:
                     keep_owed(
