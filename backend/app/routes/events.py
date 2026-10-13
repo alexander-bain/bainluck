@@ -26330,11 +26330,36 @@ async def _build_game_markets(
                 )
                 is_under = name_lower.startswith("under") or name_lower == "no"
                 prob = float(o.current_probability) if o.current_probability is not None else None
-                if prob is None:
+                # #10965 — A GRADED RUNG WITH NO QUOTE IS STILL A RESULT.
+                #
+                # This line used to drop every priceless leg before its verdict was
+                # read. On `/events/14626073` (Boston 10, Detroit 3) Kalshi's team
+                # total held Detroit over 4.5/5.5/6.5 at `is_winner=False`,
+                # `game_score`, `current_probability=NULL`, so the settled ladder
+                # read 1.5 Won, 2.5 Won, 3.5 Lost, 7.5 Lost — three answered lines
+                # gone from the middle, while 3.5 and 7.5 survived only because
+                # they still held a stale 0.01.
+                #
+                # A priceless leg is readmitted ONLY when `_verdict_is_provable`
+                # accepts its grade: authoritative tier AND a winner on its own
+                # market, so a voided market (every leg lost) and an ungraded,
+                # retracted or pre-kick-off-settled row (`_settled_grade_fields`
+                # withholds those) are still dropped here exactly as before, and a
+                # live null-priced leg never qualifies. No price is invented: the
+                # served number is the 0/1 `_settled_over_probability` derives from
+                # the verdict, the same value a priced settled rung serves.
+                # The grade is read HERE, once, and reused by the append below.
+                _grade = _settled_grade_fields(market, o, **_grade_ctx)
+                if prob is None and not _verdict_is_provable(
+                    _grade, market.id in markets_with_a_winner,
+                ):
                     continue
                 # For "Under X", convert to "probability of going OVER"
                 # For threshold outcomes ("2+", "3+"), prob IS the over probability
-                over_prob = prob if is_over or not is_under else 1.0 - prob
+                if prob is None:
+                    over_prob = None
+                else:
+                    over_prob = prob if is_over or not is_under else 1.0 - prob
 
                 # Detect player props hiding inside team_total markets.
                 # Kalshi names markets "Team at Team: Steals" but outcomes
@@ -26346,6 +26371,11 @@ async def _build_game_markets(
                 # `_SUBJECT_LADDER_LEG_RE`. State-independent on purpose — a leg
                 # must not change buckets when the whistle blows.
                 if market_type == "team_total" and _leg_names_its_own_subject(o.name):
+                    # #10965 readmits priceless legs for the totals ladder only; a
+                    # player-shaped leg keeps today's behaviour (no row without a
+                    # price) — its grade path is `_grade_settled_prop`, not this.
+                    if prob is None:
+                        continue
                     tt_opening_over = None
                     if o.opening_probability is not None:
                         tt_op = float(o.opening_probability)
@@ -26389,7 +26419,7 @@ async def _build_game_markets(
                 # `_inverted` is computed ONCE and handed to both helpers on
                 # purpose: the half-inverted row this repairs existed because
                 # the price was normalised here and the grade was spread raw.
-                _grade = _settled_grade_fields(market, o, **_grade_ctx)
+                # (`_grade` is read once above, before the #10965 priceless gate.)
 
                 # #6769 — A GRADED RUNG THE RANGE GUARD IS ABOUT TO DELETE IS
                 # SERVED AS A RESULT INSTEAD.
@@ -26450,7 +26480,10 @@ async def _build_game_markets(
                 totals_thresholds.append({
                     "threshold": threshold,
                     "over_probability": _settled_over_probability(
-                        _grade, _inverted, round(over_prob, 4), _market_settled,
+                        _grade,
+                        _inverted,
+                        round(over_prob, 4) if over_prob is not None else None,
+                        _market_settled,
                     ),
                     "source": market.source,
                     "market_type": market_type,
