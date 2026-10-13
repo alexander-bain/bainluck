@@ -12,6 +12,7 @@ Risk mitigations:
    outcomes at 0 or 1). This IS the settlement price, not an inference.
 """
 
+import bisect
 import logging
 import re
 from datetime import datetime, timezone
@@ -40,6 +41,7 @@ from app.utils.resolution_authority import (
     SINGLE_WINNER_GUESS_SOURCES_SQL,
 )
 from app.utils.kalshi_fabricated_loss import RETRACTION_SOURCE
+from app.utils.kalshi_retention import PROVABLY_PURGED_AGE_DAYS
 from app.utils.box_score_capture import box_is_live_capture
 from app.utils.price_change_stamp import price_changed_at_value
 from app.utils.soccer_three_way import (  # #1011
@@ -300,6 +302,107 @@ def _read_retracted_open_cursor(rc) -> str:
     return raw.decode() if isinstance(raw, bytes) else (raw or "")
 
 
+#: #1853 — BAND 7: A NEVER-GRADED MARKET IS ASKED ABOUT BEFORE KALSHI FORGETS IT.
+#:
+#: Bands 1 and 2 between them cover every resolved Kalshi market still lacking an
+#: authoritative grade, and neither knows how OLD one is. Band 1 stops at
+#: `_FRESH_SETTLEMENT_FLOOR_DAYS`; band 2 is alphabetical. And band 2's population
+#: only grows at its old end: a market past the purge bound can never be answered
+#: (`kalshi_retention`, gotcha #35), so it never leaves, and the wrap lengthens with
+#: every week that passes (71,389 tickers, a ~8.9-day wrap, measured 2026-09-10).
+#: A never-graded market — one with a leg no grader has ever touched
+#: (`resolution_source IS NULL`), sitting on the column DEFAULT `is_winner=false`
+#: that a reader sees as "Lost" — waits its alphabetical turn whether it settled last week or is a day
+#: from the purge. Past the purge nobody can ever prove its result (#1853's census:
+#: 12,852 such outcomes already NOT-PROVABLE, every one of them with zero winners).
+#:
+#: Gotcha #41's two bounds, over exactly that cohort:
+#:   * a FLOOR AND A CEILING — venue settlement older than band 1's floor and
+#:     younger than `PROVABLY_PURGED_AGE_DAYS`, the skip-work horizon (the UPPER
+#:     observed purge bound — fail-open, per `kalshi_retention`: only a market that
+#:     is provably gone is left out). The window LEAVES NOTHING BEHIND: every row
+#:     it excludes is still in band 2, which has no window at all;
+#:   * OLDEST FIRST — the market nearest its purge is asked about first.
+#:
+#: WHY A CURSOR AND NOT `ORDER BY age ASC LIMIT n` — band 4's reason. A market the
+#: venue cannot grade (no markets, a scalar, no result) stays in this population,
+#: so a bare oldest-first LIMIT would ask about the SAME oldest rows every cycle
+#: and starve everything behind them. The cursor walks oldest -> youngest on
+#: `(venue age, ticker)` and wraps when a batch comes back short, so every member
+#: is asked once per wrap and each wrap starts at the purge edge.
+#:
+#: WHY THE AGE IS `LEAST(settled_at, resolution_date)` — band 1's ordering finding
+#: (#1121): `settled_at` is OUR observation stamp, and a catch-up sweep that finally
+#: reaches a five-week-old market writes `settled_at = now`. The earlier of the two
+#: is the best stored estimate of when the VENUE settled, which is the clock the
+#: purge runs on. Postgres `LEAST` ignores NULLs, so a one-column row keeps its one
+#: column; a row with neither is not placeable and stays band 2's.
+#:
+#: BUDGET: CARVED OUT OF THE TAIL, NEVER ADDED (`_settlement_band_budgets`). The
+#: cycle asks the venue about exactly as many tickers as before, so the phase's
+#: wall (#4740) is unchanged. 200 of the omnibus's 2,000 — 800 lookups a day —
+#: so band 2 keeps 1,400. Omnibus only: the half-hourly fast lane exists for what a
+#: reader is looking at now, and 48 cycles a day of these lookups is inside no
+#: existing budget.
+#:
+#: SAFE FOR THE REASON #6981 STATES FOR BAND 1: THIS WIDENS NO POPULATION. Every
+#: member (resolved, a NULL-source leg) already satisfies band 2's `EXISTS`, and
+#: its ticker flows through the identical writer — `kms.gradeable_winner`'s
+#: three-state refusal (no result, void, scalar, a `closed` market's stray value
+#: are never a loss) and the `clean_resolution` fallback's guards. What changes is
+#: WHEN a market is asked about, never WHETHER or WHAT is written.
+_EXPIRING_UNGRADED_MAX_TICKERS = 200
+_EXPIRING_UNGRADED_MAX_SHARE = 0.1
+_EXPIRING_UNGRADED_FLOOR_DAYS = _FRESH_SETTLEMENT_FLOOR_DAYS
+_EXPIRING_UNGRADED_PURGE_DAYS = PROVABLY_PURGED_AGE_DAYS
+
+#: Band 7's cursor key. Its OWN, for gotcha #34's reason. Unlike bands 2 and 4-6 it
+#: is a `(venue age, ticker)` keyset, not a ticker: the walk is in age order.
+_EXPIRING_UNGRADED_CURSOR_KEY = "bainluck:kalshi_winner_expiring_ungraded_cursor"
+
+
+def _encode_expiring_cursor(age_key: datetime, ticker: str) -> str:
+    return f"{age_key.isoformat()}|{ticker}"
+
+
+def _decode_expiring_cursor(raw) -> tuple[datetime, str] | None:
+    """Band 7's cursor, decoded. Absent or unreadable is the cold cursor (None):
+    start at the purge edge, which is the correct cold-start and post-wrap state."""
+    if isinstance(raw, bytes):
+        raw = raw.decode()
+    if not raw or "|" not in raw:
+        return None
+    age_iso, ticker = raw.split("|", 1)
+    try:
+        age_key = datetime.fromisoformat(age_iso)
+    except ValueError:
+        return None
+    if age_key.tzinfo is None:
+        age_key = age_key.replace(tzinfo=timezone.utc)
+    return age_key, ticker
+
+
+def _settlement_band_budgets(limit: int) -> tuple[int, int, int]:
+    """Split a cycle's ticker budget into (band 1, band 7, band 2).
+
+    #1853. Band 1's slice is `_fresh_settlement_budget`'s, untouched, so the fast
+    lane asks about exactly the tickers it always did. Band 7 is carved out of
+    what remained for the tail, and the tail always keeps at least one slot: an
+    empty tail SELECT is band 2's wrap signal, and a split that left it nothing
+    would reset the alphabetical walk every cycle. The three always sum to
+    `limit`, so the cycle's cost is unchanged by construction.
+    """
+    fresh, rest = _fresh_settlement_budget(limit)
+    if rest <= 1:
+        return fresh, 0, rest
+    expiring = min(
+        _EXPIRING_UNGRADED_MAX_TICKERS,
+        int(limit * _EXPIRING_UNGRADED_MAX_SHARE),
+        rest - 1,
+    )
+    return fresh, expiring, rest - expiring
+
+
 def _fresh_settlement_budget(limit: int) -> tuple[int, int]:
     """Split a cycle's ticker budget into (recency band, alphabetical tail band).
 
@@ -308,6 +411,10 @@ def _fresh_settlement_budget(limit: int) -> tuple[int, int]:
     `_FRESH_SETTLEMENT_MAX_SHARE` of the cycle, and the tail takes the REST — the
     two always sum to exactly `limit`, so the sweep's cost per cycle is unchanged
     by construction rather than by inspection.
+
+    #1853: the REST is now split again by `_settlement_band_budgets` — band 7
+    takes its slice from it and band 2's statement gets what is left. This
+    function's own answer (band 1's slice) is unchanged.
     """
     if limit <= 1:
         return 0, max(limit, 0)
@@ -339,7 +446,9 @@ async def _select_kalshi_settlement_tickers(
     The tail statement is not merely discarded, it is NOT RUN: it is the expensive
     half (a 71k-ticker alphabetical walk) and the cheap half is the whole point.
     """
-    fresh_limit, tail_limit = _fresh_settlement_budget(limit)
+    # #1853: band 7's slice comes out of the tail's, so this statement's LIMIT is
+    # what the three-way split leaves it. Band 1's slice is unchanged.
+    fresh_limit, _expiring_limit, tail_limit = _settlement_band_budgets(limit)
 
     # BAND 1 — what settled since the last cycle, newest first. Bounded on BOTH
     # sides of now (`_FRESH_SETTLEMENT_FLOOR_DAYS`) and restricted to markets with
@@ -891,6 +1000,61 @@ async def _select_kalshi_retracted_open_tickers(
     )
     return [r[0] for r in rows.all()]
 
+#: Band 7's cold cursor: any instant before the window's floor. A real datetime,
+#: not a SQL literal, because asyncpg binds `CAST(:x AS timestamptz)` as a typed
+#: parameter and refuses a string.
+_EXPIRING_UNGRADED_COLD_AGE = datetime(1970, 1, 1, tzinfo=timezone.utc)
+
+
+async def _select_kalshi_expiring_ungraded_tickers(
+    session, limit: int, cursor: tuple[datetime, str] | None
+) -> list[tuple[str, datetime]]:
+    """Band 7 (#1853) — never-graded markets inside the retrievable window, oldest first.
+
+    Returns `(event ticker, venue age key)` pairs in walk order; the caller stores
+    the LAST pair as the cursor. See the constant block above
+    `_EXPIRING_UNGRADED_MAX_TICKERS` for why each clause is here.
+
+    Membership is per ROW and the age key is the group's MIN, so a ticker
+    stored on several rows sorts by its oldest in-window row. The keyset compares
+    `(age, ticker)` as a row value, so two tickers sharing an age cannot be
+    skipped or repeated across a cursor boundary.
+    """
+    if limit <= 0:
+        return []
+    cursor_age, cursor_ticker = cursor or (_EXPIRING_UNGRADED_COLD_AGE, "")
+    rows = await session.execute(
+        text("""
+            SELECT fm.external_id,
+                   MIN(LEAST(fm.settled_at, fm.resolution_date)) AS venue_age
+            FROM futures_markets fm
+            WHERE fm.source = 'kalshi'
+              AND fm.status = 'resolved'
+              AND LEAST(fm.settled_at, fm.resolution_date)
+                  < NOW() - make_interval(days => :floor_days)
+              AND LEAST(fm.settled_at, fm.resolution_date)
+                  >= NOW() - make_interval(days => :purge_days)
+              AND EXISTS (
+                  SELECT 1 FROM futures_outcomes fo
+                  WHERE fo.market_id = fm.id
+                    AND fo.resolution_source IS NULL
+              )
+            GROUP BY fm.external_id
+            HAVING (MIN(LEAST(fm.settled_at, fm.resolution_date)), fm.external_id)
+                   > (CAST(:cursor_age AS timestamptz), CAST(:cursor_ticker AS text))
+            ORDER BY venue_age ASC, fm.external_id ASC
+            LIMIT :limit
+        """),
+        {
+            "limit": limit,
+            "floor_days": _EXPIRING_UNGRADED_FLOOR_DAYS,
+            "purge_days": _EXPIRING_UNGRADED_PURGE_DAYS,
+            "cursor_age": cursor_age,
+            "cursor_ticker": cursor_ticker,
+        },
+    )
+    return [(r[0], r[1]) for r in rows.all()]
+
 
 #: Phase 0c-repair's promotion, hoisted to module level so a test can execute
 #: THE SHIPPED STATEMENT (#4745, CAL-P1086).
@@ -1249,6 +1413,11 @@ async def _backfill_kalshi_winners(
         "api_miss": 0,
         "fresh_selected": 0,
         "fresh_graded": 0,
+        # #1853 band 7 — never-graded markets nearest the purge. Its own
+        # receipt for band 1's reason: the shared counters cannot say whether
+        # the markets about to become unprovable were the ones graded.
+        "expiring_selected": 0,
+        "expiring_graded": 0,
         "tail_selected": 0,
         "early_selected": 0,
         "longdated_selected": 0,
@@ -1280,6 +1449,16 @@ async def _backfill_kalshi_winners(
     # unreachable, so a test aimed at the write arm passes against a build with
     # the write arm deleted. Flip this one name and both ends move together.
     _use_tail_cursor = not fast_lane_only
+    # #1853 — band 7's own flag, read at both ends of ITS cursor lifecycle (select
+    # and write) for the reason above: the fast lane must neither ask band 7's
+    # questions nor move band 7's key, and one name makes both falsifiable.
+    _run_expiring_band = not fast_lane_only
+    if _run_expiring_band:
+        _expiring_cursor = _decode_expiring_cursor(
+            _rc.get(_EXPIRING_UNGRADED_CURSOR_KEY)
+        )
+    else:
+        _expiring_cursor = None
     if _use_tail_cursor:
         _raw = _rc.get(_cursor_key)
         _last_cursor = _raw.decode() if isinstance(_raw, bytes) else (_raw or "")
@@ -1290,6 +1469,14 @@ async def _backfill_kalshi_winners(
         fresh_tickers, tail_tickers = await _select_kalshi_settlement_tickers(
             session, limit, _last_cursor, include_tail=not fast_lane_only
         )
+        # #1853 — band 7. Its slice comes from the SAME split the selector above
+        # applied, so the tail statement's LIMIT already left room for it.
+        _expiring_limit = _settlement_band_budgets(limit)[1]
+        expiring_rows: list[tuple[str, datetime]] = []
+        if _run_expiring_band:
+            expiring_rows = await _select_kalshi_expiring_ungraded_tickers(
+                session, _expiring_limit, _expiring_cursor
+            )
         # #6012 — the early-settled band. Its own budget, so it can never take a
         # ticker from the two above (gotcha #34), and it does NOT move the tail
         # cursor for the same reason the recency band does not: these tickers
@@ -1328,6 +1515,29 @@ async def _backfill_kalshi_winners(
             session, _RETRACTED_OPEN_MAX_TICKERS, _retracted_open_cursor
         )
     fresh_set = set(fresh_tickers)
+    expiring_tickers = [t for t, _age in expiring_rows]
+    expiring_set = set(expiring_tickers)
+
+    # Band 7's cursor, on band 7 alone. A FULL batch advances it to the last
+    # `(age, ticker)` returned; a SHORT one means the walk reached the young edge
+    # of the window, so it wraps and the next cycle starts at the purge edge
+    # again. (Band 4 wraps only on an EMPTY batch, which spends one cycle asking
+    # nothing per wrap; here the batch size is a fact the caller knows.)
+    #
+    # 🔴 Unlike bands 2/4/5/6 it is NOT written here, before the fetch: it moves
+    # only past rows whose fetch batch has finished (`_advance_expiring_cursor`,
+    # called after each batch). A venue error swallowed by the `except` below,
+    # a wall cancellation (#4740) or a crash mid-list would otherwise leave the
+    # cursor past 200 markets nobody asked about, and these are the markets
+    # about to become unprovable — the next visit would be a full wrap later.
+    # An EMPTY band has nothing at risk, so its wrap is immediate.
+    _expiring_full = bool(expiring_rows) and len(expiring_rows) >= _expiring_limit
+    _expiring_written = -1
+    if _run_expiring_band and not expiring_rows and _expiring_cursor is not None:
+        _rc.delete(_EXPIRING_UNGRADED_CURSOR_KEY)
+        logger.info(
+            "Kalshi winner backfill: expiring-ungraded cursor wrapped, will restart next run"
+        )
 
     # Band 4's cursor advances on band 4 alone, and WRAPS when the sweep runs dry
     # — without the wrap the band asks about the alphabetical tail for ever and
@@ -1394,13 +1604,19 @@ async def _backfill_kalshi_winners(
         logger.info("Kalshi winner backfill: cursor wrapped, will restart next run")
 
     stats["fresh_selected"] = len(fresh_tickers)
+    stats["expiring_selected"] = len(expiring_tickers)
     stats["tail_selected"] = len(tail_tickers)
     stats["early_selected"] = len(early_tickers)
     stats["longdated_selected"] = len(longdated_tickers)
     stats["status_sync_selected"] = len(status_sync_tickers)
     stats["retracted_open_selected"] = len(retracted_open_tickers)
 
-    tickers = fresh_tickers + [t for t in tail_tickers if t not in fresh_set]
+    # #1853: band 7 is fetched right after band 1 and BEFORE the tail. A phase
+    # that dies on its wall (#4740) loses the end of this list, and the markets
+    # about to become unprovable must not be the ones it loses.
+    tickers = fresh_tickers + [t for t in expiring_tickers if t not in fresh_set]
+    _selected = set(tickers)
+    tickers += [t for t in tail_tickers if t not in _selected]
     _selected = set(tickers)
     tickers += [t for t in early_tickers if t not in _selected]
     _selected = set(tickers)
@@ -1421,13 +1637,52 @@ async def _backfill_kalshi_winners(
 
     logger.info(
         "Kalshi winner backfill: %d tickers to look up "
-        "(%d just-settled, %d tail, %d early-settled, %d long-dated)",
+        "(%d just-settled, %d expiring-ungraded, %d tail, %d early-settled, "
+        "%d long-dated)",
         len(tickers),
         len(fresh_tickers),
+        len(expiring_tickers),
         len(tail_tickers),
         len(early_tickers),
         len(longdated_tickers),
     )
+
+    # Band 7's row k is safe to step past once every row 0..k has been fetched.
+    # A row shared with band 1 sits EARLIER in `tickers` than band 7's own slots,
+    # so the reach is a running max of positions, not the row's own position.
+    _ticker_pos = {t: i for i, t in enumerate(tickers)}
+    _expiring_reach: list[int] = []
+    for _t, _age in expiring_rows:
+        _p = _ticker_pos[_t]
+        _expiring_reach.append(max(_p, _expiring_reach[-1]) if _expiring_reach else _p)
+
+    def _advance_expiring_cursor(fetched_upto: int) -> None:
+        """Move band 7's cursor past the rows whose fetch has FINISHED.
+
+        Called after each batch with the count of `tickers` attempted so far. A
+        full selection steps the key to the last fully-attempted row; a short
+        one wraps (deletes) only once every one of its rows has been attempted.
+        """
+        nonlocal _expiring_written
+        if not _run_expiring_band or not expiring_rows:
+            return
+        k = bisect.bisect_left(_expiring_reach, fetched_upto) - 1
+        if k <= _expiring_written:
+            return
+        if _expiring_full:
+            _rc.setex(
+                _EXPIRING_UNGRADED_CURSOR_KEY,
+                86400 * 14,
+                _encode_expiring_cursor(expiring_rows[k][1], expiring_rows[k][0]),
+            )
+        elif k == len(expiring_rows) - 1 and _expiring_cursor is not None:
+            _rc.delete(_EXPIRING_UNGRADED_CURSOR_KEY)
+            logger.info(
+                "Kalshi winner backfill: expiring-ungraded cursor wrapped, will restart next run"
+            )
+        else:
+            return
+        _expiring_written = k
 
     service = KalshiAPIService()
     try:
@@ -1630,6 +1885,9 @@ async def _backfill_kalshi_winners(
                                 # they are dominated by the 71k-ticker tail.
                                 if event_ticker in fresh_set:
                                     stats["fresh_graded"] += updated.rowcount
+                                # #1853: band 7's receipt, same shape.
+                                if event_ticker in expiring_set:
+                                    stats["expiring_graded"] += updated.rowcount
                             else:
                                 stats["not_found"] += 1
                                 samples = stats.setdefault("not_found_samples", [])
@@ -1760,6 +2018,10 @@ async def _backfill_kalshi_winners(
 
                 if not dry_run:
                     await session.commit()
+
+            # #1853: only now, with this batch fetched and committed, may band 7's
+            # cursor step past its rows.
+            _advance_expiring_cursor(batch_start + len(batch))
 
             logger.info(
                 "Kalshi backfill: %d/%d tickers, %d found, %d winners, %d losers",

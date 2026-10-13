@@ -2065,3 +2065,246 @@ async def test_band_six_cursor_walks_forward_and_wraps(pg_engine):
     assert page_two == ["R6B-27SEP13"]
     assert await _select_retracted_open(pg_engine, cursor=everything[-1]) == []
     assert await _select_retracted_open(pg_engine, limit=0) == []
+
+
+# ---------------------------------------------------------------------------
+# #1853 — BAND 7, never-graded markets inside the retrievable window, oldest
+# first, against the same server.
+#
+# The grader-side wiring (budget split, own cursor, fast lane, fetch order,
+# refusals) is `tests/test_kalshi_expiring_ungraded_band_1853.py`. This section
+# is the WHERE clause and the ORDER: who gets asked, and in what order. Each
+# clause is falsified by a row below that only it keeps out (or lets in), so
+# deleting any one of them reddens a named arm.
+#
+# The band's rows are seeded INSIDE these arms, not in `_corpus()`: every older
+# band's exact-list assertion reads that corpus, and these rows would join band
+# 2's population and move them. They are `X7…`, below the corpus's cursor `M`.
+# ---------------------------------------------------------------------------
+
+
+async def _insert_band7_market(conn, ext, status, settled_at, resolution_date, legs, source="kalshi"):
+    market_id = (
+        await conn.execute(
+            text(
+                "INSERT INTO futures_markets "
+                "(source, external_id, name, category, mutually_exclusive, "
+                " status, settled_at, resolution_date) "
+                "VALUES (:source, :ext, :name, 'championship', true, "
+                "        :status, :settled_at, :resolution_date) RETURNING id"
+            ),
+            {
+                "source": source,
+                "ext": ext,
+                "name": f"{ext} market",
+                "status": status,
+                "settled_at": settled_at,
+                "resolution_date": resolution_date,
+            },
+        )
+    ).scalar_one()
+    for leg_ext, is_winner, resolution_source in legs:
+        await conn.execute(
+            text(
+                "INSERT INTO futures_outcomes "
+                "(market_id, external_id, name, is_winner, resolution_source) "
+                "VALUES (:mid, :ext, :name, :w, :src)"
+            ),
+            {
+                "mid": market_id,
+                "ext": f"{ext}-{leg_ext}",
+                "name": f"{ext} {leg_ext}",
+                "w": is_winner,
+                "src": resolution_source,
+            },
+        )
+
+
+#: Distinct ages to the hour, so every ordering assertion has one answer.
+def _band7_rows():
+    now = _now()
+    d = lambda days, hours=0: now - timedelta(days=days, hours=hours)  # noqa: E731
+    never = [("a", False, None), ("b", False, None)]
+    return [
+        # members, oldest first
+        ("X7NEAR-26JUL20", "resolved", d(80), d(80), never),          # 6 days from the purge
+        ("X7STAMP-26AUG03", "resolved", d(0, 2), d(70), never),       # catch-up stamped 2h ago
+        ("X7MID-26SEP02", "resolved", d(40), d(40), never),
+        ("X7MIXED-26SEP12", "resolved", d(30), d(30),                 # one never-graded leg
+         [("a", True, "api_settlement"), ("b", False, None)]),
+        ("X7SCHED-26SEP22", "resolved", None, d(20), never),          # pre-`settled_at` row
+        ("X7YOUNG-26OCT08", "resolved", d(5), d(5), never),
+        # refusals — each kept out by exactly one clause
+        ("X7PURGED-26JUL10", "resolved", d(90), d(90), never),        # past PROVABLY_PURGED
+        ("X7FRESH-26OCT12", "resolved", d(1), d(1), never),           # band 1's
+        ("X7OPEN-26SEP02", "open", d(40), d(40), never),              # not resolved
+        ("X7GUESS-26SEP02", "resolved", d(40), d(40),                 # heuristic, not NULL
+         [("a", False, "all_losers"), ("b", False, "clean_resolution")]),
+        ("X7RETRACT-26SEP02", "resolved", d(40), d(40),               # #1852's retraction
+         [("a", None, "ungradeable_result")]),
+        ("X7GRADED-26SEP02", "resolved", d(40), d(40),
+         [("a", True, "api_settlement"), ("b", False, "api_settlement")]),
+        ("X7NODATE-26SEP02", "resolved", None, None, never),          # unplaceable: band 2's
+    ]
+
+
+_BAND7_MEMBERS = [
+    "X7NEAR-26JUL20",
+    "X7STAMP-26AUG03",
+    "X7MID-26SEP02",
+    "X7MIXED-26SEP12",
+    "X7SCHED-26SEP22",
+    "X7YOUNG-26OCT08",
+]
+
+
+async def _seed_band7(engine, extra=()):
+    async with engine.begin() as conn:
+        for ext, status, settled_at, resolution_date, legs in _band7_rows():
+            await _insert_band7_market(conn, ext, status, settled_at, resolution_date, legs)
+        for row in extra:
+            await _insert_band7_market(conn, *row)
+
+
+async def _select_band7(engine, limit: int = 2000, cursor=None):
+    from app.tasks.backfill_winners import _select_kalshi_expiring_ungraded_tickers
+
+    async with engine.connect() as conn:
+        return await _select_kalshi_expiring_ungraded_tickers(conn, limit, cursor)
+
+
+def _x7(rows):
+    return [t for t, _age in rows if t.startswith("X7")]
+
+
+def _cursor_after(row):
+    """The selector returns `(ticker, age)`; its cursor is the sort key, `(age, ticker)`."""
+    ticker, age = row
+    return age, ticker
+
+
+@needs_postgres
+@pytest.mark.asyncio
+async def test_band_seven_asks_about_the_market_nearest_its_purge_first(pg_engine):
+    """THE SHIP. With room for one ticker, it is the one six days from the
+    purge — not the alphabetically first, not the most recently stamped."""
+    await _seed_band7(pg_engine)
+
+    first = await _select_band7(pg_engine, limit=1)
+
+    assert [t for t, _ in first] == ["X7NEAR-26JUL20"]
+
+
+@needs_postgres
+@pytest.mark.asyncio
+async def test_band_seven_walks_its_members_oldest_first(pg_engine):
+    """Order AND membership, exactly. The corpus's own ≤10-day NULL-leg rows are
+    members too; they are filtered out by prefix, not excluded by fixture."""
+    await _seed_band7(pg_engine)
+
+    rows = await _select_band7(pg_engine)
+
+    assert _x7(rows) == _BAND7_MEMBERS
+    ages = [age for _t, age in rows]
+    assert ages == sorted(ages), "the whole band, corpus rows included, is age-ordered"
+
+
+@needs_postgres
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "ticker,why",
+    [
+        ("X7PURGED-26JUL10", "past PROVABLY_PURGED_AGE_DAYS — provably gone, skip-work horizon"),
+        ("X7FRESH-26OCT12", "inside band 1's floor — band 1 owns it"),
+        ("X7OPEN-26SEP02", "status open — bands 3-6's business, not this one's"),
+        ("X7GUESS-26SEP02", "heuristic grades are not never-graded; band 2 still reaches them"),
+        ("X7RETRACT-26SEP02", "#1852's retraction is a decision, not a gap"),
+        ("X7GRADED-26SEP02", "fully venue-graded"),
+        ("X7NODATE-26SEP02", "no stored date to place it by — band 2 keeps it"),
+    ],
+)
+async def test_band_seven_refuses(pg_engine, ticker, why):
+    await _seed_band7(pg_engine)
+
+    assert ticker not in _x7(await _select_band7(pg_engine)), why
+
+
+@needs_postgres
+@pytest.mark.asyncio
+async def test_a_catch_up_stamp_does_not_hide_an_old_market(pg_engine):
+    """`settled_at` two hours ago, venue-dated 70 days ago: the observation stamp
+    must neither push it out to band 1's window nor sort it as young."""
+    await _seed_band7(pg_engine)
+
+    order = _x7(await _select_band7(pg_engine))
+
+    assert order.index("X7STAMP-26AUG03") < order.index("X7MID-26SEP02")
+
+
+@needs_postgres
+@pytest.mark.asyncio
+async def test_band_seven_is_kalshi_only(pg_engine):
+    now = _now()
+    await _seed_band7(
+        pg_engine,
+        extra=[("X7POLY-26SEP02", "resolved", now - timedelta(days=40), now - timedelta(days=40),
+                [("a", False, None)], "polymarket")],
+    )
+
+    assert "X7POLY-26SEP02" not in _x7(await _select_band7(pg_engine))
+
+
+@needs_postgres
+@pytest.mark.asyncio
+async def test_band_seven_cursor_walks_forward_never_repeats_and_runs_short_at_the_end(pg_engine):
+    """A member the venue cannot grade never leaves, so a bare oldest-first LIMIT
+    would ask about it every cycle. The keyset walk must advance past it, cover
+    everything once, and come back short at the young edge for the caller's wrap."""
+    await _seed_band7(pg_engine)
+    everything = await _select_band7(pg_engine)
+
+    walked, cursor = [], None
+    for _ in range(len(everything) + 2):
+        page = await _select_band7(pg_engine, limit=2, cursor=cursor)
+        walked.extend(page)
+        if len(page) < 2:
+            break
+        cursor = _cursor_after(page[-1])
+
+    assert [t for t, _ in walked] == [t for t, _ in everything]
+    assert len(page) < 2
+    assert await _select_band7(pg_engine, limit=0) == []
+
+
+@needs_postgres
+@pytest.mark.asyncio
+async def test_two_tickers_sharing_an_age_survive_a_cursor_boundary(pg_engine):
+    """The keyset is `(age, ticker)`. An age-only cursor would skip the second
+    of two tickers that settled at the same instant."""
+    tie = _now() - timedelta(days=60)
+    await _seed_band7(
+        pg_engine,
+        extra=[
+            ("X7TIEA-26AUG14", "resolved", tie, tie, [("a", False, None)]),
+            ("X7TIEB-26AUG14", "resolved", tie, tie, [("a", False, None)]),
+        ],
+    )
+    everything = await _select_band7(pg_engine)
+    first_tie = next(i for i, (t, _) in enumerate(everything) if t == "X7TIEA-26AUG14")
+
+    page = await _select_band7(pg_engine, limit=1, cursor=_cursor_after(everything[first_tie]))
+
+    assert [t for t, _ in page] == ["X7TIEB-26AUG14"]
+
+
+@needs_postgres
+@pytest.mark.asyncio
+async def test_the_tail_still_reaches_what_band_seven_refuses(pg_engine):
+    """The window leaves nothing behind: the rows band 7 excludes for their age
+    or their date are still in band 2's population (cursor '' walks it all)."""
+    await _seed_band7(pg_engine)
+
+    _fresh, tail = await _select(pg_engine, limit=2000, cursor="")
+
+    for ticker in ("X7PURGED-26JUL10", "X7NODATE-26SEP02", "X7GUESS-26SEP02", "X7NEAR-26JUL20"):
+        assert ticker in tail
