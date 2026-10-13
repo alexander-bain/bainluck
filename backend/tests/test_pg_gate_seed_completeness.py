@@ -109,6 +109,10 @@ COVERED = (
     # `containers` row by raw INSERT to prove the publication preflight refuses
     # stored membership the pass never proved.
     "test_provider_event_collections_5343_pg.py",
+    # #5344. Seeds one `containers` row by raw INSERT so Week 8 holds the LOWER
+    # id — the second lock order the relocation's ascending-id locks must
+    # survive without deadlock.
+    "test_container_nfl_relocation_5344_pg.py",
     "test_create_wave_insert_bind_contract.py",
     "test_feed_static_tag_filter_pg.py",
     "test_futures_outcome_grade_schema_parity_pg.py",
