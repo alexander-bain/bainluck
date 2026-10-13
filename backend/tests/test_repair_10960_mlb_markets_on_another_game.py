@@ -141,16 +141,41 @@ class TestEspnIsTheAnchor:
         plan = rp.plan_moves([ATL_SD], {ATL_SD.market_id: [ATL_SD_GAME]}, b)
         assert plan.moves == [] and plan.kept[0]["verdict"] == rp.ESPN_DISAGREES
 
-    def test_a_postponed_game_on_its_original_day_is_a_target(self):
-        # KXMLBTEAMTOTAL-26MAY051945MILSTL: postponed; Kalshi settled it scalar the
-        # same day. ESPN keeps 401815223 on May 5; our 15290177 carries it.
+    def test_a_postponed_game_is_not_a_target_even_when_kalshi_never_played_it(self):
+        # KXMLBTEAMTOTAL-26MAY051945MILSTL: postponed; Kalshi settled it at fixed
+        # values the same day. ESPN keeps 401815223 on May 5 as POSTPONED and our
+        # suspended 15290177 carries it. The board says "postponed" here exactly
+        # as it does for TOR@CWS below, so it cannot be the anchor for either.
         mil, stl = 10735, 10740
         m = market(54069190, "KXMLBTEAMTOTAL-26MAY051945MILSTL", 14626206,
                    "2026-05-06T17:15:00", stl, mil)
         ppd = cand(15290177, "2026-05-05T23:45:00", stl, mil, "401815223", "suspended")
         b = {date(2026, 5, 5): board(("401815223", "2026-05-05T23:45:00", "STATUS_POSTPONED"))}
         plan = rp.plan_moves([m], {m.market_id: [ppd]}, b)
-        assert [x["to_event_id"] for x in plan.moves] == [15290177]
+        assert plan.moves == []
+        assert plan.kept[0]["verdict"] == rp.ESPN_NOT_FINAL
+        assert plan.kept[0]["espn_status"] == "STATUS_POSTPONED"
+        assert plan.kept[0]["target_event_id"] == 15290177
+
+    def test_a_postponed_game_never_pulls_a_market_off_the_make_up_it_was_graded_on(self):
+        # KXMLBTEAMTOTAL-26APR021610TORCWS: Apr 2 postponed. Kalshi settled it
+        # yes/no on Apr 3 21:56Z from the make-up, 12405462 (CWS 5, TOR 4) — the
+        # row the market sits on. The first production plan moved it onto the
+        # scoreless suspended 15290171; that move is what this refuses.
+        tor, cws = 10744, 10720
+        m = market(8275776, "KXMLBTEAMTOTAL-26APR021610TORCWS", 12405462,
+                   "2026-04-03T18:10:00", cws, tor)
+        ppd = cand(15290171, "2026-04-02T20:10:00", cws, tor, "401814780", "suspended")
+        b = {date(2026, 4, 2): board(("401814780", "2026-04-02T20:10:00", "STATUS_POSTPONED"))}
+        plan = rp.plan_moves([m], {m.market_id: [ppd]}, b)
+        assert plan.moves == [] and plan.kept[0]["verdict"] == rp.ESPN_NOT_FINAL
+
+    @pytest.mark.parametrize("status", ["STATUS_CANCELED", "STATUS_SUSPENDED",
+                                        "STATUS_SCHEDULED", "STATUS_IN_PROGRESS", None])
+    def test_only_a_final_game_is_a_target(self, status):
+        b = {date(2026, 6, 22): board(("401815865", "2026-06-23T02:10:00", status))}
+        plan = rp.plan_moves([ATL_SD], {ATL_SD.market_id: [ATL_SD_GAME]}, b)
+        assert plan.moves == [] and plan.kept[0]["verdict"] == rp.ESPN_NOT_FINAL
 
     def test_an_empty_espn_answer_is_dark_not_a_disagreement(self):
         assert rp.board_from_espn(None) is None

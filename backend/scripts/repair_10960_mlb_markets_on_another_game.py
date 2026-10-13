@@ -35,13 +35,19 @@ A market moves only when ALL hold:
    sits on, starts within that window of the ticker — and it carries an ESPN id;
 3. ESPN's own MLB board for the ticker's Eastern date lists that ESPN id,
    starting within the same window. That dereference is the anchor: ESPN, not
-   our clock, says the target is the game played (or postponed) at the time the
-   ticker names.
+   our clock, says the target is the game played at the time the ticker names;
+4. ESPN calls that game ``STATUS_FINAL``. A game ESPN lists as postponed at the
+   ticker's time does not say where Kalshi graded the question. Of the 13
+   postponed targets in the first production plan (2026-10-13 01:39Z), Kalshi
+   settled 3 at fixed values the same day (never played: the postponed row is
+   their home) and 10 yes/no from a make-up game, 5 of them the very row the
+   market already sits on. The board cannot tell those apart, so none moves.
 
 Anything else is reported and left where it is: ``no_candidate`` (no row of
 ours is the ticker's game — e.g. TB@NYY 05-23, postponed; ESPN's id 401815462
 is held by no row), ``ambiguous`` (two rows in the window), ``no_espn_id``,
-``espn_dark`` (the board could not be read), ``espn_disagrees`` and
+``espn_dark`` (the board could not be read), ``espn_disagrees``,
+``espn_not_final`` (ESPN lists the game, but not as played) and
 ``retired_target`` (the ticker's game is a ``merged``/``voided`` row — a
 wrongly retired real game is a separate repair, never a link onto a hidden row).
 
@@ -140,12 +146,16 @@ DEFAULT_MAX_MOVES = 600
 
 RETIRED = frozenset({"merged", "voided"})
 
+#: The only ESPN status that says the ticker's game was played (rule 4).
+ESPN_FINAL = "STATUS_FINAL"
+
 MOVE = "move"
 NO_CANDIDATE = "no_candidate"
 AMBIGUOUS = "ambiguous"
 NO_ESPN_ID = "no_espn_id"
 ESPN_DARK = "espn_dark"
 ESPN_DISAGREES = "espn_disagrees"
+ESPN_NOT_FINAL = "espn_not_final"
 RETIRED_TARGET = "retired_target"
 
 #: Run outcomes. Anything but DRY_RUN / NOTHING_TO_MOVE / APPLIED exits non-zero.
@@ -327,6 +337,8 @@ def decide(
     detail["espn_id"] = target.espn_id
     detail["espn_start"] = entry.start.isoformat()
     detail["espn_status"] = entry.status
+    if entry.status != ESPN_FINAL:
+        return ESPN_NOT_FINAL, target, detail
     return MOVE, target, detail
 
 
