@@ -257,14 +257,15 @@ def test_n_floor_boundary_is_inclusive_on_the_real_side():
     assert _starved(MIN_GAMES_FOR_CAPTURE_ALARM - 1, now=IN_SEASON_NFL).severity == "WATCH"
 
 
-def test_offseason_downgrades_to_watch_even_with_plenty_of_games():
+def test_offseason_downgrades_to_explained_even_with_plenty_of_games():
     # #1897: 19 NFL games, 2026-08-07..08-16 — preseason only. The detector's
     # premise ("a game without a winner market is impossible") is not true of
     # NFL preseason. n is deliberately well OVER the floor here, so this proves
-    # the SEASON gate fired and not the n-floor.
+    # the SEASON gate fired and not the n-floor. A calendar-proved artifact is
+    # EXPLAINED (#1906), the grid sentinel's verdict for it; the n-floor stays WATCH.
     f = _starved(500, now=OFFSEASON_NFL)
     assert f is not None
-    assert f.severity == "WATCH"
+    assert f.severity == "EXPLAINED"
     assert "offseason" in f.detail.lower()
 
 
@@ -305,11 +306,11 @@ def test_banded_league_verdict_is_identical_at_every_month_of_the_year():
 
     NHL is the specimen because it is in ``_SEASON_LEAGUE_SLUG``: the gate
     genuinely consults the calendar for it, so a cohort that is starved in
-    January and starved in July should be REAL in one and WATCH in the other,
+    January and starved in July should be REAL in one and EXPLAINED in the other,
     and each answer must be stable no matter what day the test runs.
 
     The pair is asserted TOGETHER (gotcha #43): proving only that some month
-    says WATCH would also pass if the gate had been silenced into always-WATCH.
+    says EXPLAINED would also pass if the gate had been silenced into always-EXPLAINED.
     """
     by_month = {
         m.month: _starved(500, sport="icehockey_nhl", now=m) for m in TWELVE_MONTHS
@@ -317,14 +318,14 @@ def test_banded_league_verdict_is_identical_at_every_month_of_the_year():
     assert all(f is not None for f in by_month.values()), "a finding must never vanish"
 
     severities = {m: f.severity for m, f in by_month.items()}
-    assert set(severities.values()) == {"REAL", "WATCH"}, (
+    assert set(severities.values()) == {"REAL", "EXPLAINED"}, (
         "the season gate must actually discriminate for a banded league — "
         f"got {sorted(set(severities.values()))} across 12 months"
     )
     # January is NHL regular season; July is not. Named explicitly so a bands
     # change that inverts them fails here rather than drifting quietly.
     assert severities[1] == "REAL"
-    assert severities[7] == "WATCH"
+    assert severities[7] == "EXPLAINED"
     assert "offseason" in by_month[7].detail.lower() or "season" in by_month[7].detail.lower()
 
 
