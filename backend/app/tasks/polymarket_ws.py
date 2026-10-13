@@ -2613,6 +2613,13 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                     unfinished_events,
                 ):
                     return wrote_all
+                if not final and flush_started is not None and not stamp_owner.task.done():
+                    # #10090: debt is stamped only once the running call has
+                    # returned (one refresher), so joining it here bought no
+                    # earlier stamp — it held this flush, and every later one,
+                    # behind the slowest stamp in the call. The debt stays owed;
+                    # the first flush after the call returns stamps it.
+                    return wrote_all
                 await stamp_owner.join()
             await blend_refresher.refresh_pending(
                 flush_started=flush_started, defer_event_ids=unfinished_events,
@@ -2628,6 +2635,13 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                 if pending_reader is not None and not set(pending_reader()).difference(
                     unfinished_events,
                 ):
+                    return wrote_all
+                if not final and flush_started is not None and not stamp_owner.task.done():
+                    # #10090: debt is stamped only once the running call has
+                    # returned (one refresher), so joining it here bought no
+                    # earlier stamp — it held this flush, and every later one,
+                    # behind the slowest stamp in the call. The debt stays owed;
+                    # the first flush after the call returns stamps it.
                     return wrote_all
                 await stamp_owner.join()
             await blend_refresher.refresh_pending(
@@ -2658,6 +2672,21 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
             tail_events.difference_update(admitted)
             if not tail_events:
                 return wrote_all
+            if tail_events <= unfinished_events:
+                # #10090: every refused event is still being written by this
+                # flush (a newer book or price arrived for it), so the joined
+                # `refresh` below could only defer it. Joining waited out the
+                # WHOLE running call for no stamp — behind a held stamp, 1.4 s
+                # in which no later flush ran. Same debt, no join; a later flush
+                # writes the rest of its cohort and stamps it.
+                keep_owed = getattr(blend_refresher, "keep_owed", None)
+                if keep_owed is not None:
+                    keep_owed(
+                        tail_events,
+                        marks=[batch_marks[oid] for oid in owed if oid in batch_marks
+                               and oid not in headline_event_ids.non_speakers],
+                    )
+                    return wrote_all
         await stamp_owner.join()
         if owed:
             tail_receipts.stage(

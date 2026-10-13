@@ -419,3 +419,108 @@ async def test_the_owner_counts_only_time_spent_waiting_on_a_running_refresh():
     await asyncio.sleep(0.01)  # already finished: a reap, not a wait
     await owner.join()
     assert owner.waited_s - waited < 0.005
+
+
+@pytest.mark.parametrize("fenced_tick", [False, True])
+async def test_a_quiet_batch_leaves_debt_owed_beside_the_running_call_without_joining(
+    monkeypatch, fenced_tick,
+):
+    # #10090 repeat tail: event 1's stamp is held and event 2 owes a stamp.
+    # Debt is stamped only once the call returns (one refresher), so a quiet
+    # batch that joined it bought no earlier stamp and held every later flush.
+    # fenced_tick: the batch carries only the held event's newer prices, which
+    # the fence keeps buffered (the second quiet path).
+    p, x, later = cross_batch(monkeypatch)
+    first = asyncio.create_task(p.ns["flush_prices"](flush_started=1000))
+    try:
+        await settle_until(first.done)
+        assert first.result() is True and not x.release.is_set()
+        assert await p.ns["write_chunk"](later)  # stored; its stamp is owed
+        x.r.adopt_pending([2])
+        if fenced_tick:
+            p.ns["price_buffer"].update({1: 0.5, 2: 0.5})
+        assert await asyncio.wait_for(p.ns["flush_prices"](flush_started=1001), 2)
+        assert 1 not in x.committed and not x.release.is_set()
+        assert x.r.pending_event_ids() == frozenset({2}) and 2 not in x.published
+        if fenced_tick:
+            assert p.ns["price_buffer"] == {1: 0.5, 2: 0.5}
+    finally:
+        x.release.set()
+        await asyncio.gather(first, return_exceptions=True)
+        await finish(p, x)
+    assert await p.ns["flush_prices"](flush_started=1002)
+    await p.ns["catalog_boundary"].join_stamps()
+    assert x.published[:2] == [1, 2] and not x.r.pending_event_ids()
+    assert not p.ns["price_buffer"] and x.r.stats["errors"] == 0
+
+
+async def test_a_tail_cohort_still_being_written_is_kept_owed_without_joining(monkeypatch):
+    # #10090 repeat tail (replay 31.8 s, 1.4 s): event 2's withdrawal commits at
+    # the tail while a newer wide book for its leg arrives inside that
+    # transaction, so this flush is still writing event 2 and admission refuses
+    # it (`defer_event_ids`). The joined refresh could only defer it; joining
+    # waited out the WHOLE running call (event 1's stamp held).
+    p, x, later = cross_batch(monkeypatch)
+    first = asyncio.create_task(p.ns["flush_prices"](flush_started=1000))
+    try:
+        await settle_until(first.done)
+        assert first.result() is True and not x.release.is_set()
+        assert await p.ns["write_chunk"](later)
+        withdraw = p.ns["withdraw_book_refuted_prices"]
+
+        async def newer_book_arrives(session, selected):
+            p.ns["withdraw_book_refuted_prices"] = withdraw  # once
+            rows = await withdraw(session, selected)
+            p.books[900] = (0.02, 0.98)
+            return rows
+
+        p.ns["withdraw_book_refuted_prices"] = newer_book_arrives
+        calls = []
+        admit = x.r.admit_fresh
+
+        def record(ids, **kwargs):
+            owned = admit(ids, **kwargs)
+            calls.append((set(ids), set(kwargs["defer_event_ids"]), owned))
+            return owned
+
+        x.r.admit_fresh = record
+        p.books[900] = (0.01, 0.99)
+        assert await asyncio.wait_for(p.ns["flush_prices"](flush_started=1001), 2)
+        assert 1 not in x.committed and not x.release.is_set()
+        assert ("withdraw", [900]) in p.trace
+        assert calls == [({2}, {2}, frozenset())]  # refused: still being written
+        assert x.r.pending_event_ids() == frozenset({2}) and 2 not in x.published
+        assert p.books == {900: (0.02, 0.98)}
+    finally:
+        x.release.set()
+        await asyncio.gather(first, return_exceptions=True)
+        await finish(p, x)
+    assert await p.ns["flush_prices"](flush_started=1002)
+    await p.ns["catalog_boundary"].join_stamps()
+    assert p.trace.count(("withdraw", [900])) == 2 and not p.books
+    assert x.published[:2] == [1, 2] and not x.r.pending_event_ids()
+    assert x.r.stats["errors"] == 0
+
+
+async def test_keep_owed_records_the_debt_a_deferring_refresh_records(monkeypatch):
+    from tests.test_single_event_commit_10090 import rig as stamp_rig
+
+    r = stamp_rig(monkeypatch, count=2).r
+    receipts = r.receipts = blend.TailReceipts("polymarket")
+    receipts._live_events = {1, 2}
+    mark = blend.InputMark(
+        seq=7, event_id=2, outcome_id=900, probability=0.7, kind="price",
+        recv_wall=1007, recv_mono=107, venue_ts_ms=None, event_ordinal=7,
+    )
+    other = blend.InputMark(
+        seq=8, event_id=1, outcome_id=1, probability=0.6, kind="price",
+        recv_wall=1008, recv_mono=108, venue_ts_ms=None, event_ordinal=8,
+    )
+    staged = (receipts._staged, receipts._staged_wall)
+    before = r.stats["throttled"]
+    r.keep_owed({2}, marks=[mark, other])
+    r.keep_owed([2])
+    assert r.pending_event_ids() == frozenset({2})
+    assert r.stats["throttled"] == before + 1  # once per owed event
+    assert set(receipts._open) == {2}  # the cohort's input opens its chain
+    assert (receipts._staged, receipts._staged_wall) == staged  # slot untouched

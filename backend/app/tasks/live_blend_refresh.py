@@ -1947,6 +1947,28 @@ class LiveBlendRefresher:
         """
         self._throttle_deferred.update(event_ids)
 
+    def keep_owed(self, event_ids: Iterable[int], *, marks: Iterable[InputMark] = ()) -> None:
+        """#10090 — record what `refresh` records for an event it must defer.
+
+        For a caller whose committed events are all still being written by its
+        own flush (`defer_event_ids`): joining the running call only to start a
+        `refresh` that defers every one of them waits out the WHOLE call, and
+        the next flush with it, for no stamp. The debt is the same: queued as
+        throttle-deferred, counted once as throttled, and the cohort's newest
+        committed input opens its receipt chain as a deferred one does. The
+        staging slot is not touched (a running call may own it). Synchronous.
+        """
+        event_ids = set(event_ids)
+        throttled = event_ids.difference(self._throttle_deferred)
+        self._throttle_deferred.update(event_ids)
+        if throttled:
+            self.stats["throttled"] += len(throttled)
+        receipts = self.receipts
+        if receipts is not None:
+            staged, wall = self._receipt_call(receipts.staged_for, marks) or ({}, None)
+            staged = {eid: m for eid, m in staged.items() if eid in event_ids}
+            self._receipt_call(receipts.observe, staged, wall, set(), _mono())
+
     # ── #10090: admitting a committed cohort into the running refresh ────────
 
     def admit_fresh(
