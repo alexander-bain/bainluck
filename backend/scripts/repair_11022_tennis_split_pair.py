@@ -33,8 +33,9 @@ The market moves only when ALL of these read true at run time:
 2. 15329612 is market-born and id-less (no ``external_id``, ``espn_id``,
    ``statpal_fixture_id``), carries no score or ``completed_at``, is not
    retired, and holds no market but this one;
-3. 15329605 is a live or scheduled tennis row, not retired, and holds the
-   user's Polymarket condition;
+3. 15329605 is a tennis row, not retired (a finished match still takes the
+   move: the settled page then carries both results), and holds the user's
+   Polymarket condition;
 4. THE FORWARD GATE ACCEPTS IT: the contracts' names rebuild the matchup
    (``kalshi_contract_name_matchup``, one contract per title side) and the
    unchanged ``_score_candidates`` picks 15329605 — both sides, opposite sides,
@@ -113,7 +114,6 @@ TO_EVENT_ID = 15329605
 PM_CONDITION = "0xad76c3f95ad3a76f6aaa78f49fc1e82f617cba0261005effde12ba09dd9c33ea"
 
 RETIRED = frozenset({"merged", "voided"})
-OPEN_TARGET_STATUSES = frozenset({"scheduled", "live"})
 
 DRY_RUN = "DRY_RUN"
 APPLIED = "APPLIED"
@@ -203,8 +203,8 @@ def decide(*, market: dict, outcomes: list[str], from_row: Optional[dict],
     if to_row is None:
         refusals.append("to_event_missing")
         return {"refusals": refusals, "witness": witness}
-    if to_row.get("status") not in OPEN_TARGET_STATUSES:
-        refusals.append("to_event_not_scheduled_or_live")
+    if to_row.get("status") in RETIRED:
+        refusals.append("to_event_retired")
     if not str(to_row.get("sport_key") or "").startswith("tennis"):
         refusals.append("to_event_not_tennis")
     if not any(m.get("external_id") == PM_CONDITION for m in to_markets):

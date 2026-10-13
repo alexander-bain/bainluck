@@ -91,7 +91,7 @@ def _mutate(path, value):
     (_mutate(("from_row", "status"), "merged"), "from_event_retired"),
     (_mutate(("from_row", "commence_time_source"), "odds_api"), "from_event_not_kalshi_born"),
     (_mutate(("from_market_ids",), [r.MARKET_ID, 1]), "from_event_holds_other_markets"),
-    (_mutate(("to_row", "status"), "completed"), "to_event_not_scheduled_or_live"),
+    (_mutate(("to_row", "status"), "voided"), "to_event_retired"),
     (_mutate(("to_row", "sport_key"), "basketball_other"), "forward_gate_refuses_the_target"),
     (_mutate(("to_row", "away_team_name"), "Juan Del Pino"), "forward_gate_refuses_the_target"),
     (_mutate(("outcomes",), ["Guido Ivan Justo"]), "contracts_do_not_rename_both_title_sides"),
@@ -102,6 +102,12 @@ def _mutate(path, value):
 ])
 def test_each_witness_refuses_on_its_own(state, reason):
     assert reason in _decide(state)["refusals"]
+
+
+def test_a_finished_target_still_takes_the_move():
+    """The match ends before this script reaches production: the settled page
+    is still the one page that should carry both results."""
+    assert _decide(_mutate(("to_row", "status"), "completed"))["refusals"] == []
 
 
 def test_a_missing_target_refuses():
