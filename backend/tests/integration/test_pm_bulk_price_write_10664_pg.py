@@ -540,3 +540,34 @@ async def test_a_known_held_pair_is_written_by_the_first_flush_after_a_brief_hol
     assert rig.buffer == {} and rig.ns["lock_retry_until"] == {}
     assert rig.stats["price_lock_probes_refused"] == len(refused)
     assert (await _prices(rig))[1] == Decimal(str(round(0.61 + (len(refused) - 1) / 100, 6)))
+
+
+async def test_a_probe_whose_rerank_times_out_keeps_the_cooldown(rig):
+    # #10090 (Root's review_pg_rerank_retry control): only the probe's own
+    # immediate row refusal is retried next flush. Here the NOWAIT price write
+    # succeeds and the rerank waits out the 500 ms budget on row 3, which must
+    # move rank 3 -> 2. Treated as a refusal, that real wait would recur every
+    # 250 ms flush with no error counted.
+    rig.buffer.update({1: 0.6, 2: 0.1})
+    rig.ns["lock_retry_until"].update({1: 0, 2: 0})
+    rig.ns["lock_retry_events"].add(10)
+    async with rig.engine.connect() as holder:
+        txn = await holder.begin()
+        await holder.execute(text("SELECT id FROM futures_outcomes WHERE id = 3 FOR UPDATE"))
+        try:
+            rig.price_started.clear()
+            assert await asyncio.wait_for(rig.write(dict(rig.buffer)), 5) is None
+            assert rig.price_started.is_set(), "the probe's price statement ran"
+            assert rig.stats["errors"] == 1 and rig.stats["requeued"] == 2
+            assert not rig.stats.get("price_lock_probes_refused")
+            assert min(rig.ns["lock_retry_until"].values()) > 0, "rerank timeout keeps the cooldown"
+            # The next flush skips the pair without touching the database.
+            await asyncio.sleep(0.25)
+            rig.price_started.clear()
+            assert await rig.write(dict(rig.buffer)) is None
+            assert not rig.price_started.is_set()
+            assert rig.stats["errors"] == 1
+        finally:
+            await txn.rollback()
+    assert rig.buffer == {1: 0.6, 2: 0.1} and not rig.publisher.frames
+    assert (await _prices(rig))[1] == Decimal(".300000")

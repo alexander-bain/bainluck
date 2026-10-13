@@ -1819,6 +1819,7 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
         # Probe it NOWAIT instead. A first refusal keeps the budget, so a brief
         # holder still costs no retry; the final drain still waits.
         probe = not final and any(oid in lock_retry_until for oid in chunk)
+        probe_refused = False
         try:
             async with get_task_session() as session:
                 if not final:
@@ -1835,9 +1836,22 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                     if final or oid not in successful_price_write_at
                     or now - successful_price_write_at[oid] >= PM_QUOTE_LIVENESS_SECONDS
                 }
-                result = await session.execute(
-                    chunk_price_update_stmt(chunk, force_ids=forced, nowait=probe)
-                )
+                price_started = _mono()
+                try:
+                    result = await session.execute(
+                        chunk_price_update_stmt(chunk, force_ids=forced, nowait=probe)
+                    )
+                except Exception as exc:
+                    # Only the probe's own row refusal, and only an immediate
+                    # one. A lock_timeout cancellation (a table lock this
+                    # statement queued on) arrives after the whole budget, and
+                    # a refusal reached after a long partial wait would repeat
+                    # that wait every flush; both keep the cooldown below.
+                    probe_refused = (
+                        probe and is_lock_timeout(exc)
+                        and _mono() - price_started < PRICE_CHUNK_LOCK_TIMEOUT_MS / 10_000
+                    )
+                    raise
                 written_rows = sorted(result.all(), key=lambda r: r.ord)
                 # #9484: only a row the UPDATE returned is evidence — a
                 # buffered id whose row is gone signals nothing. And only
@@ -1890,7 +1904,7 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
             # Bounded by construction: the buffer is keyed by outcome_id over a
             # fixed subscription, so a long outage holds at most one entry per
             # subscribed outcome however many attempts are burned.
-            if probe and is_lock_timeout(exc):
+            if probe_refused:
                 # #10090 recovery: a refused probe waited for nothing, so it
                 # re-arms no cooldown. Re-arming the two seconds left a pair
                 # whose holder let go 100 ms later unwritten for 2.2 s on real
@@ -1898,7 +1912,9 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                 # so each flush probes them once, NOWAIT, at a round trip's
                 # cost; the first after the holder lets go writes the pair.
                 # Counted apart from `errors` and not logged per refusal: it
-                # recurs every flush the holder keeps the row.
+                # recurs every flush the holder keeps the row. A lock failure
+                # anywhere else (rerank, commit, a timed-out wait) spent real
+                # time and keeps the cooldown and error accounting.
                 stats["price_lock_probes_refused"] = (
                     stats.get("price_lock_probes_refused", 0) + 1
                 )
