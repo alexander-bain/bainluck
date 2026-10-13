@@ -194,7 +194,7 @@ import {
   computeLastChartPoint,
   defaultChartTimeRange,
 } from "@/lib/eventKeyStats";
-import { renderedPercent } from "@/lib/renderedPercent";
+import MatchupOutcomes from "@/components/event/MatchupOutcomes";
 import { settledPregameMark } from "@/lib/settledPregameMark";
 import { SPECIAL_MARKETS_MIN_WIRE_ROWS, specialMarketsDrawnIds } from "@/lib/gamePropsDrawnAbove";
 
@@ -3381,42 +3381,8 @@ export default function EventPage({ params }: EventPageProps) {
                 <MarketBrowser label="Matchups" items={gameMarkets.matchups!.map((matchup, idx) => ({
                   key: String(idx), group: matchup.type === "3ball" ? "Three ball" : "Head to head",
                   search: `${matchup.market_name} ${matchup.outcomes.map(o => o.name).join(" ")}`,
-                  content: (
-                  <div key={idx} className="px-4 sm:px-5 py-3">
-                    <div className="flex items-center justify-between mb-2.5">
-                      <span className="text-xs font-medium text-text-secondary">{matchup.market_name}{isFinished ? " · Last quotes" : ""}</span>
-                      {/* L2-52: source-name badge removed (blend-only). */}
-                    </div>
-                    <div className="space-y-2">
-                      {matchup.outcomes.map((outcome, oidx) => {
-                        // #3867 (CERT-2224 repair): the label routes through the
-                        // contract; `Math.max(pct, 2)` below is still the bar's geometry.
-                        const pct = renderedPercent(outcome.probability) ?? 0;
-                        const isLeader = outcome.probability === Math.max(...matchup.outcomes.map(o => o.probability));
-                        return (
-                          <div key={oidx} className="flex items-center gap-3">
-                            <span className={`text-xs font-medium w-[140px] sm:w-[180px] truncate ${isLeader ? "text-text-primary" : "text-text-secondary"}`}>
-                              {outcome.name}
-                            </span>
-                            <div className="flex-1 h-5 bg-surface-elevated rounded-full overflow-hidden relative">
-                              <div
-                                className="h-full rounded-full transition-all duration-300"
-                                style={{
-                                  width: `${Math.max(pct, 2)}%`,
-                                  backgroundColor: isLeader ? "#10B981" : "#94A3B8",
-                                  opacity: isLeader ? 1 : 0.5,
-                                }}
-                              />
-                            </div>
-                            <span className={`text-xs font-bold tabular-nums w-10 text-right ${isLeader ? "text-text-primary" : "text-text-muted"}`}>
-                              {pct}%
-                            </span>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </div>
-                )}))} />
+                  content: <MatchupOutcomes key={idx} matchup={matchup} finished={isFinished} />,
+                }))} />
               </div>
             </div>
             </SectionErrorBoundary>

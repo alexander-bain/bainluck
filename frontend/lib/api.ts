@@ -1275,6 +1275,16 @@ export interface GameMarketsResponse {
     outcomes: {
       name: string;
       probability: number;
+      /**
+       * #10980 — the same two keys `other` declares below (#6138), and dropped
+       * here the same way: `/events/14780558` (BUF 37 – LAR 34) served all six
+       * head-to-head legs `resolution_source: "api_settlement"` with their
+       * winners, and the card printed `Last quotes 100% / 0%`. Optional and
+       * nullable for the reason written on `other`: absent is an older payload,
+       * a served null is "nobody graded this".
+       */
+      is_winner?: boolean | null;
+      resolution_source?: string | null;
     }[];
   }[];
   other: {
