@@ -756,6 +756,15 @@ const CLOSED_HALF_TYPES = new Set(["half_spread", "half_total", "half_winner"]);
  * refused the closed card; and the live card has no line to draw from two
  * resolved rungs, so the 1st half points card vanished anyway.
  *
+ * Those resolved rows join the card, graded from the same score like every
+ * closed row; their price and venue grade are never read. The venue grades a
+ * half in pieces after the break, and each graded row leaves the closed key for
+ * `period_markets`. Same game, 4th quarter (03:04Z): all 24 1H total rows and
+ * 51 of 61 spread rows were back in `period_markets`, graded. Only 10 closed
+ * spread rows remained. The points card was gone again, and the margin card was
+ * down from 15 lines to 5. A resolved row needs the closed rows' score to draw,
+ * so a half with no closed row left still draws nothing.
+ *
  * The score is one per half, so it is checked across EVERY closed row of the
  * half before the card's own type is picked out: a margin card and a points
  * card graded from two different "finals" of the same half is the defect.
@@ -766,16 +775,14 @@ const CLOSED_HALF_TYPES = new Set(["half_spread", "half_total", "half_winner"]);
 export function closedHalfRows(
   closedRows: ClosedPeriodRow[] | null | undefined,
   quotingRows:
-    | Array<{ market_type: string; period?: string | null; outcome_name: string; market_name: string; is_winner?: boolean | null }>
+    | Array<Partial<PeriodTotalRow> & { market_type: string; outcome_name: string; market_name: string }>
     | null
     | undefined,
   marketType: "half_spread" | "half_total",
   half: string
 ): { rows: ClosedPeriodRow[]; score: { home: number; away: number } } | null {
-  const quotes = (quotingRows || []).some(
-    (r) => r.market_type === marketType && derivePeriod(r) === half && r.is_winner == null
-  );
-  if (quotes) return null;
+  const sameCard = (quotingRows || []).filter((r) => r.market_type === marketType && derivePeriod(r) === half);
+  if (sameCard.some((r) => r.is_winner == null)) return null;
   const halfRows = (closedRows || []).filter((r) => CLOSED_HALF_TYPES.has(r.market_type) && r.period === half);
   let score: { home: number; away: number } | null = null;
   for (const r of halfRows) {
@@ -784,10 +791,24 @@ export function closedHalfRows(
     if (score && (score.home !== s.home || score.away !== s.away)) return null;
     score = { home: s.home, away: s.away };
   }
-  const rows = halfRows.filter((r) => r.market_type === marketType);
-  if (rows.length === 0 || !score) return null;
-  for (const r of rows) {
+  if (!score) return null;
+  const served = halfRows.filter((r) => r.market_type === marketType);
+  for (const r of served) {
     if (r.window_closed !== true || r.probability != null || r.over_probability != null) return null;
+  }
+  const graded: ClosedPeriodRow[] = sameCard.map((r) => ({
+    ...r,
+    threshold: r.threshold ?? null,
+    probability: null,
+    over_probability: undefined,
+    is_winner: undefined,
+    resolution_source: undefined,
+    window_closed: true,
+    period_score: score,
+  }));
+  const rows = [...served, ...graded];
+  if (rows.length === 0) return null;
+  for (const r of rows) {
     if (marketType === "half_total" && !(typeof r.threshold === "number" && Number.isFinite(r.threshold))) return null;
   }
   return { rows, score };
