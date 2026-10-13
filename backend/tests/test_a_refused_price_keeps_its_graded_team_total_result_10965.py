@@ -385,14 +385,23 @@ async def test_an_all_null_ungraded_market_is_still_dropped():
 
 
 @pytest.mark.asyncio
-async def test_an_all_null_voided_market_serves_no_rows():
-    """Every leg lost and none won: the score agrees each Detroit leg above 3
-    lost, but a void is not a verdict — the per-leg gate keeps them off."""
+async def test_an_all_null_all_lost_market_serves_only_the_legs_the_score_proves():
+    """Every leg lost and none won. Detroit scored 3: its over 4.5 and 5.5 losses
+    are decided by the scoreboard and read Lost (#10965's all-lost slice,
+    `/events/14454995`; this guard pinned them off before it). "over 1.5" stored
+    a loser is the void's signature — the score says it came in — so it is never
+    printed."""
     rows = [
         (99401, "Detroit over 4.5 runs scored", None, None, None, False, "game_score"),
         (99402, "Detroit over 5.5 runs scored", None, None, None, False, "game_score"),
+        (99403, "Detroit over 1.5 runs scored", None, None, None, False, "game_score"),
     ]
-    assert await _team_totals(rows) == {}
+    served = await _team_totals(rows)
+
+    assert set(served) == {"Detroit over 4.5 runs scored", "Detroit over 5.5 runs scored"}
+    for row in served.values():
+        assert row["is_winner"] is False
+        assert row["over_probability"] == 0.0
 
 
 # ── CERT-4082: each newly admitted leg carries its own proof ────────────────

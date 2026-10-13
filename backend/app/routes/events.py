@@ -26541,7 +26541,8 @@ async def _build_game_markets(
                 #
                 # A priceless leg is readmitted ONLY when `_verdict_is_provable`
                 # accepts its grade: authoritative tier AND a winner on its own
-                # market, so a voided market (every leg lost) and an ungraded,
+                # market or the final score's own proof (the all-lost block just
+                # below), so an unproved all-lost market and an ungraded,
                 # retracted or pre-kick-off-settled row (`_settled_grade_fields`
                 # withholds those) are still dropped here exactly as before, and a
                 # live null-priced leg never qualifies. No price is invented: the
@@ -26549,6 +26550,26 @@ async def _build_game_markets(
                 # the verdict, the same value a priced settled rung serves.
                 # The grade is read HERE, once, and reused by the append below.
                 _grade = _settled_grade_fields(market, o, **_grade_ctx)
+                # #10965 — AN ALL-LOST TEAM TOTAL IS DECIDED BY THE SCOREBOARD.
+                #
+                # `/events/14454995` (San Diego 1, Colorado 0): Kalshi's team
+                # total holds 14 legs, Colorado over 1.5 … San Diego over 7.5,
+                # every one a correct `game_score` loser still carrying a quote
+                # (Colorado over 1.5 at 0.86). No leg won, so `_verdict_is_provable`
+                # read the market as possibly voided: the ladder served the stale
+                # quotes and the Game question matrix — the iPhone's reader —
+                # printed all 14 as quoted, never Lost. This is #6312's spreads
+                # rule for the one family `_score_proves_this_grade` cannot
+                # read: a leg whose grade `_score_proves_team_total_grade`
+                # recomputes from the final score carries `_SCORE_PROVED_KEY`,
+                # so every gate below (and the matrix, which reads the served
+                # row) accepts it on its own evidence. It is an OR — an Under,
+                # period, foreign-unit, unresolved-club or contradicted leg
+                # carries no key and keeps the sibling-winner rule exactly.
+                if market_type == "team_total" and _score_proves_team_total_grade(
+                    event, event_is_finished, sport_key, market, o, _grade,
+                ):
+                    _grade = {**_grade, _SCORE_PROVED_KEY: True}
                 if prob is None and not _verdict_is_provable(
                     _grade, market.id in markets_with_a_winner,
                 ):
