@@ -221,6 +221,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from sqlalchemy import text
+from sqlalchemy.exc import DBAPIError
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 # #8265. `venue_volume_24h` moved to the Kalshi client so its parser can carry
@@ -3609,6 +3610,8 @@ async def _refresh_stale_futures_prices(
         "series_card_priced": 0,
         # #1845: how many of `series_card_candidates` are title / pennant rows.
         "series_card_title_candidates": 0,
+        # #1845: the class scan raised and only the identity arms were priced.
+        "class_scan_failed": False,
         # #10320: the markets the category pages last rendered. `known` is
         # reported even at zero, and `read_ok` beside it, because "the producer
         # has not run since this deployed" and "the read failed" both arrive as an
@@ -3720,12 +3723,27 @@ async def _refresh_stale_futures_prices(
             market_ids=category.ids,
             stale_minutes=category_page_refresh_minutes,
         )
-        class_scan = await _scan_candidates(
-            session,
-            volume_floor=volume_floor,
-            stale_hours=stale_hours,
-            stats=stats,
-        )
+        # #1845: the class scan is the one statement here that can run into the
+        # 60s bound (the pool CTEs over every open market), and its failure used
+        # to throw the run AFTER the identity arms had already selected their
+        # rows, so a timeout here priced nothing at all. 14 of the 50 runs
+        # before 2026-10-13 07:00Z ended this way, the first one on #1845's fix
+        # among them (06:51Z), and the World Series board waited another hour
+        # behind it. The identity arms are plain dicts already in hand, so the
+        # run rolls back the aborted statement and prices them; `errors` makes
+        # the terminal `partial`, never `complete`.
+        try:
+            class_scan = await _scan_candidates(
+                session,
+                volume_floor=volume_floor,
+                stale_hours=stale_hours,
+                stats=stats,
+            )
+        except DBAPIError as exc:
+            await session.rollback()
+            class_scan = []
+            stats["class_scan_failed"] = True
+            stats["errors"].append(f"class scan: {str(exc).splitlines()[0][:300]}")
 
         # A market can qualify on more than one arm — every US Open winner field
         # is registered AND tier-1 high-volume, and a page-one card is routinely
@@ -3865,6 +3883,11 @@ async def _refresh_stale_futures_prices(
                     f"served page-one signal {stats['served_state']}: "
                     "page-one coverage could not be established"
                 )
+            # #1845: and "nothing was stale" says nothing about a class
+            # population the scan could not enumerate.
+            if stats["class_scan_failed"]:
+                stats["terminal"] = "failed"
+                stats["reason"] = "class scan raised before the class arm was read"
             stats["remaining_stale"] = len(scan)
             return stats
 
