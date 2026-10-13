@@ -250,7 +250,9 @@ class TestRefusedByName:
         assert _refusal(event=_event(lambda e: e.update({field: value}))) == reason
 
     def test_an_absent_event_flag_is_malformed(self):
-        assert _refusal(event=_event(lambda e: e.pop("closed"))) == "event_flags_malformed"
+        ev = _event()
+        del ev["closed"]
+        assert _refusal(event=ev) == "event_flags_malformed"
 
     @pytest.mark.parametrize("value", ["false", None, 0, "no"])
     def test_a_malformed_leg_flag_refuses_the_parent(self, value):

@@ -130,7 +130,7 @@ def _default_events():
 
 @pytest.fixture(scope="session")
 def isolated_database():
-    import app.models.models  # noqa: F401 — registers every table on Base
+    from app.models import models as _registers_every_table  # noqa: F401
     from app.services.database import Base
 
     url = make_url(URL)
