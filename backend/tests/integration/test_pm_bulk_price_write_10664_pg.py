@@ -450,9 +450,11 @@ async def test_a_row_a_lock_already_refused_is_probed_nowait_and_a_fresh_chunk_s
             rig.ns["lock_retry_until"].update({1: 0, 2: 0})  # cooldown expired
             rig.price_started.clear()
             assert await asyncio.wait_for(rig.write({1: 0.6, 2: 0.7}), 5) is None
-            assert min(rig.ns["lock_retry_until"].values()) > 0, "refusal re-arms the cooldown"
+            # A refused probe waited for nothing: no new cooldown, still due.
+            assert rig.ns["lock_retry_until"] == {1: 0, 2: 0}
             assert rig.buffer == {1: 0.6, 2: 0.7}
-            assert rig.stats["errors"] == rig.stats["requeued"] // 2 == 2
+            assert rig.stats["errors"] == rig.stats["requeued"] // 2 == 1
+            assert rig.stats["price_lock_probes_refused"] == 1
             # A row no lock has refused still waits out a brief holder.
             rig.price_started.clear()
             fresh = asyncio.create_task(_write(rig, {3: 0.8}))
@@ -475,3 +477,66 @@ async def test_a_row_a_lock_already_refused_is_probed_nowait_and_a_fresh_chunk_s
     assert await _prices(rig) == {
         1: Decimal(".600000"), 2: Decimal(".700000"), 3: Decimal(".800000"),
     }
+
+
+async def test_a_known_held_pair_is_written_by_the_first_flush_after_a_brief_holder_lets_go(rig):
+    # #10090 recovery (Root's review_pg_transient_retry control): the pair's
+    # cooldown is due and its holder lets go 100 ms after the probe starts,
+    # under the production 500 ms budget and the 250 ms flush cadence. A
+    # refused probe used to re-arm the two-second cooldown, so every flush
+    # skipped the pair for 2.2 s after the holder had gone (parent: 0.62 s).
+    loop = asyncio.get_running_loop()
+    rig.buffer.update({1: 0.6, 2: 0.4})
+    rig.ns["lock_retry_until"].update({1: 0, 2: 0})
+    rig.ns["lock_retry_events"].add(10)
+    published = []
+    record = rig.publisher.record
+
+    async def stamped(channel, payload):
+        await record(channel, payload)
+        published.append(loop.time())
+
+    rig.publisher.record = stamped
+    released = []
+    async with rig.engine.connect() as holder:
+        txn = await holder.begin()
+        await holder.execute(text("SELECT id FROM futures_outcomes WHERE id = 1 FOR UPDATE"))
+
+        async def let_go():
+            await asyncio.wait_for(rig.price_started.wait(), 2)
+            await asyncio.sleep(0.1)
+            await txn.rollback()
+            released.append(loop.time())
+
+        letting_go = asyncio.create_task(let_go())
+        attempts = []
+        start = loop.time()
+        try:
+            while rig.buffer.keys() & {1, 2} and len(attempts) < 16:
+                await asyncio.sleep(max(0, start + 0.25 * len(attempts) - loop.time()))
+                began = loop.time()
+                if not released:
+                    rig.buffer[1] = 0.61 + len(attempts) / 100  # latest input wins
+                pair = {oid: rig.buffer[oid] for oid in (1, 2)}
+                attempts.append((began, await rig.write(pair), loop.time()))
+                # A row no lock refused, written in the same flush, never waits.
+                assert (await rig.write({3: 0.5 + len(attempts) / 100})).written_ids == (3,)
+            await letting_go
+        finally:
+            if txn.is_active:
+                await txn.rollback()
+            await asyncio.gather(letting_go, return_exceptions=True)
+
+    (released_at,) = released
+    refused = [a for a in attempts if a[0] < released_at]
+    after = [a for a in attempts if a[0] >= released_at]
+    # Not vacuous: the holder refused the probe at once, NOWAIT, before it let go.
+    assert refused and all(result is None and done < released_at for _, result, done in refused)
+    # The FIRST flush after it let go writes the whole pair, newest values.
+    assert after[0][1].written_ids == (1, 2) and len(after) == 1
+    pair_frames = [f for _, f in rig.publisher.frames if f["outcome_ids"] == [1, 2]]
+    assert len(pair_frames) == 1
+    assert published[[f["outcome_ids"] for _, f in rig.publisher.frames].index([1, 2])] - released_at < 1.0
+    assert rig.buffer == {} and rig.ns["lock_retry_until"] == {}
+    assert rig.stats["price_lock_probes_refused"] == len(refused)
+    assert (await _prices(rig))[1] == Decimal(str(round(0.61 + (len(refused) - 1) / 100, 6)))

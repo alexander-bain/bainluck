@@ -231,7 +231,13 @@ async def test_mixed_lock_failure_retries_events_separately_and_keeps_full_fence
     clock.t = 1004
     r.ns["price_buffer"][900] = 0.75
     assert await r.ns["flush_prices"](flush_started=1004)
-    assert state.attempts[-1] == (1004, (900,)), "healthy event keeps ordinary eligibility"
+    # A refused probe re-arms no cooldown: the held cohort is probed again
+    # (NOWAIT, no wait spent), after the healthy event, which keeps its
+    # ordinary eligibility.
+    assert state.attempts[-2:] == [(1004, (900,)), (1004, (1, 2, 3))]
+    assert state.nowait[-2:] == [False, True]
+    assert set(r.ns["lock_retry_until"]) == {1, 2, 3}
+    assert r.ns["stats"]["price_lock_probes_refused"] == 2
     state.held = False
     clock.t = 1006
     assert await r.ns["flush_prices"](flush_started=1006)
