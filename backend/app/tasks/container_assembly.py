@@ -832,7 +832,9 @@ async def _live_ids(session, child_type: str, ids: set[int]) -> set[int]:
     return {int(r[0]) for r in result.fetchall()}
 
 
-async def assemble_container(session, container, candidates: list[Candidate]) -> AssemblyReport:
+async def assemble_container(
+    session, container, candidates: list[Candidate], *, skip_unchanged: bool = False
+) -> AssemblyReport:
     """Write the `contains` edges for one container, and receipt the rest.
 
     Idempotent. The edge's unique key `(parent_type, parent_id, child_type,
@@ -849,6 +851,10 @@ async def assemble_container(session, container, candidates: list[Candidate]) ->
     never edged; an edge found in place for one is removed. Nothing here
     retires a member the pass merely failed to see — see
     ``app/utils/container_corrections.py``.
+
+    ``skip_unchanged`` (#5344, the NFL relocation pass only): an edge already
+    stored with the same class, source and confidence is not rewritten, so an
+    unchanged pass writes no edge at all. Off, every edge is upserted as before.
     """
     from sqlalchemy.dialects.postgresql import insert as pg_insert
 
@@ -865,6 +871,21 @@ async def assemble_container(session, container, candidates: list[Candidate]) ->
         await lock_container_chain(session, container.id, with_columns=schema.columns)
         withdrawn = await withdrawn_members(session, container.id)
         existing = await current_members(session, container.id)
+    stored: dict = {}
+    if skip_unchanged and schema.ledger:
+        stored = {
+            (r[0], int(r[1])): (r[2], r[3], float(r[4]) if r[4] is not None else None)
+            for r in (
+                await session.execute(
+                    text(
+                        "SELECT child_type, child_id, class, source, confidence "
+                        "FROM event_edges WHERE parent_type = 'container' "
+                        "AND parent_id = :cid AND kind = 'contains'"
+                    ),
+                    {"cid": container.id},
+                )
+            ).fetchall()
+        }
 
     # One existence query per child type, not one per candidate. A COUNT in a
     # loop re-scans the whole table when the key is a Join Filter rather than
@@ -1006,9 +1027,17 @@ async def assemble_container(session, container, candidates: list[Candidate]) ->
             (row["parent_type"], row["parent_id"], row["child_type"], row["child_id"], row["kind"])
         ] = row
     ordered = list(deduped.values())
+    writes = ordered
+    if stored:
+        writes = [
+            row
+            for row in ordered
+            if stored.get((row["child_type"], row["child_id"]))
+            != (row["class"], row["source"], float(row["confidence"]))
+        ]
 
-    for start in range(0, len(ordered), 500):
-        batch = ordered[start : start + 500]
+    for start in range(0, len(writes), 500):
+        batch = writes[start : start + 500]
         stmt = pg_insert(EventEdge).values(batch)
         stmt = stmt.on_conflict_do_update(
             index_elements=["parent_type", "parent_id", "child_type", "child_id", "kind"],
@@ -1695,15 +1724,27 @@ async def run_nfl_collection(
     The schedule is read ONCE and shared by every week's run. An unreadable
     schedule, a schedule of another season, or no week in the window is one
     ``unavailable`` run naming why — a declared season never goes silent.
+
+    #5344: the read is the receipted one (`get_nfl_schedule_read`), and the
+    database barrier it is ordered by is taken BEFORE the fetch, with no
+    transaction held across it. A game the read places in another week moves
+    there in that week's run; a destination outside the window gets a run
+    narrowed to the games moving in (`container_nfl_assembly`, policy A).
     """
     from app.services.statpal_api import StatPalUpstreamError, get_statpal_service
-    from app.tasks.container_nfl_assembly import run_nfl_week_assembly
+    from app.tasks.container_nfl_assembly import (
+        prepare_nfl_relocation,
+        read_admission_barrier,
+        run_nfl_week_assembly,
+    )
 
     root = declaration.root_slug
     now = now or datetime.now(timezone.utc)
     service = service or get_statpal_service()
+    barrier = await read_admission_barrier(session)
     try:
-        fixtures = list(await service.get_schedule_fixtures("nfl"))
+        read = await service.get_nfl_schedule_read()
+        fixtures = list(read.fixtures)
     except StatPalUpstreamError as exc:
         logger.warning("NFL collection %s: schedule unreadable: %s", root, exc)
         return [
@@ -1729,17 +1770,23 @@ async def run_nfl_collection(
             }
         ]
 
-    runs = []
-    for target in weeks:
+    plan = await prepare_nfl_relocation(
+        session, read, edition=declaration.season, barrier=barrier, weeks=weeks
+    )
 
-        async def _run(target=target):
+    runs = []
+    for target, week_relocation in plan:
+
+        async def _run(target=target, week_relocation=week_relocation):
             container, bootstrap = await _collection_container(
                 session, target.slug, target.display_name, NFL_WEEK_KIND, None, None,
                 apply=apply,
             )
             if container is None:
                 return _row_absent(target.slug, "nfl")
-            run = await run_nfl_week_assembly(session, container, fixtures, target, apply=apply)
+            run = await run_nfl_week_assembly(
+                session, container, fixtures, target, apply=apply, relocation=week_relocation
+            )
             run["bootstrap"] = bootstrap
             return run
 

@@ -78,11 +78,16 @@ class _Schedule:
     def __init__(self, fixtures=None, error=None):
         self.fixtures, self.error = fixtures, error
 
-    async def get_schedule_fixtures(self, sport):
-        assert sport == "nfl"
+    async def get_nfl_schedule_read(self):
+        """#5344: the pass reads the receipted schedule (M1); a clean one here."""
+        from app.services.statpal_api import StatPalNflScheduleRead
+
         if self.error is not None:
             raise self.error
-        return list(self.fixtures)
+        return StatPalNflScheduleRead(
+            fixtures=list(self.fixtures), skipped=[], unidentified=[], duplicates=[],
+            rows_seen=len(self.fixtures),
+        )
 
 
 @pytest.fixture
