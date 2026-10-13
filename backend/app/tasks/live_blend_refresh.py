@@ -1237,6 +1237,11 @@ class LiveBlendRefresher:
         #: an EARLIER flush admitted; that flush is fresh-bearing when its own
         #: `refresh` begins.
         self._admitted_fresh_flush: Optional[float] = None
+        #: #10090 — the turn order of owed events riding a running call's
+        #: door (`window.debt`): a newly owed event joins the back, and the one
+        #: taken goes to the back, so a row lock that is due again at once
+        #: cannot take every turn from a writable sibling.
+        self._debt_rotation: list[int] = []
         self._last_refresh_at: dict[int, float] = {}
         #: Events whose last batch failed -> the monotonic time before which
         #: they are not due, whatever the throttle says.
@@ -2031,15 +2036,20 @@ class LiveBlendRefresher:
             # `refresh` would have taken the debt, so the oldest due owed event
             # rides along — one at a time, behind the cohort, never fenced.
             owed = self._lock_retry | self._throttle_deferred
+            rotation = [eid for eid in self._debt_rotation if eid in owed]
+            rotation += sorted(owed.difference(rotation))
             order = [eid for eid in self._pending_continuation if eid in owed]
-            order += sorted(owed.difference(order))
+            order += [eid for eid in rotation if eid not in order]
             for eid in order:
                 if eid in taken or eid in excluded or eid in window.holding:
                     continue
                 if self._due(eid, flush_started):
                     taken.add(eid)
                     window.debt = eid
+                    rotation.remove(eid)
+                    rotation.append(eid)
                     break
+            self._debt_rotation = rotation
         if not taken:
             return frozenset()
         # #10090: an event whose earlier stamp in this call has returned is

@@ -344,3 +344,54 @@ async def test_cancelling_a_call_with_debt_in_flight_leaves_every_unstamped_even
             hold.set()
     assert {1, 2, 3} <= x.r.pending_event_ids()
     assert x.r._admission is None and x.published == []
+
+
+async def test_a_newly_owed_sibling_gets_a_debt_turn_beside_a_repeatedly_locked_one(
+    monkeypatch,
+):
+    # #10090, Root's debt-fairness counterexample on be0d6a8a: lock-retry debt
+    # 2 and 3 arrives after the call took its population; 2's row stays locked
+    # and is due again at once. Without a remembered turn order, 2 took every
+    # debt turn (attempts 1,2,4,2,2,2) and writable 3 never published.
+    x = refresher_rig(monkeypatch, count=4, block=True, blocked=(1,), failure="lock")
+    running = asyncio.create_task(x.r.refresh([1], flush_started=1000))
+    try:
+        await settle_until(
+            lambda: x.r._admission is not None
+            and x.r.holding_event_ids() == frozenset({1})
+        )
+        x.r._lock_retry.update({2, 3})
+        for i in range(1, 5):
+            assert x.r.admit_fresh({4}, flush_started=1000 + i * 0.25) == frozenset({4})
+            await settle_until(
+                lambda: x.r._admission.debt is None
+                and 4 not in x.r.holding_event_ids()
+            )
+        attempts = [s.event_ids for s in x.sessions if s.event_ids]
+        assert attempts[:4] == [[1], [2], [4], [3]]  # 3 takes the next turn
+        assert 3 in x.published and x.r.pending_event_ids() == frozenset({2})
+    finally:
+        x.r.stop_admitting()
+        x.release.set()
+        await asyncio.wait_for(running, 2)
+
+
+async def test_the_kalshi_write_fence_covers_owed_events_the_call_took_later(monkeypatch):
+    # #10090: the call stamps owed events it takes after it started, which the
+    # owner's captured `stamping_events` never lists; a write to one must not
+    # cross its live stamp.
+    from app.tasks.kalshi_ws import _KalshiPriceOwner
+
+    x = refresher_rig(monkeypatch, count=2, block=True, blocked=(1, 2))
+    prices = _KalshiPriceOwner()
+    prices.stamping_events = {1}
+    prices.stamping = asyncio.create_task(x.r.refresh([1], flush_started=1000))
+    try:
+        await settle_until(lambda: x.r._admission is not None)
+        x.r.adopt_pending({2})
+        assert x.r.admit_fresh((), flush_started=1000.25) == frozenset()
+        await asyncio.wait_for(x.second_stamp.wait(), 1)
+        assert prices.held_events(x.r) == {1, 2}
+    finally:
+        x.release.set()
+        await prices.join_stamp(x.r)

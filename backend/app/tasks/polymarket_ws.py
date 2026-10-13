@@ -120,7 +120,9 @@ class _PMStampOwner:
     def held_events(self) -> Optional[set[int]]:
         """#10090 — the events the running refresh is still stamping.
 
-        The refresher's own fence (`holding_event_ids`) once it reports one;
+        The refresher's own fence (`holding_event_ids`) once it reports one —
+        whole: the call also stamps owed events it takes after it started
+        (`window.debt`), which this owner's captured membership never lists;
         until then everything the call was started with or admitted. None
         while membership is unknown. Twin of the Kalshi owner's.
         """
@@ -130,7 +132,7 @@ class _PMStampOwner:
         holding = reader() if reader is not None else None
         if holding is None:
             return self.events
-        return self.events.intersection(holding)
+        return set(holding)
 
     async def join(self, *, cancel=False) -> None:
         if self.task is None:

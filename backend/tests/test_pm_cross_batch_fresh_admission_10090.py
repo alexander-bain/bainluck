@@ -659,3 +659,27 @@ async def test_a_join_is_a_lifecycle_drain_that_stops_admission_first(monkeypatc
         await release_all(p, x, gates)
     assert x.published == [1, 2] and x.r._admission is None
     assert x.r.stats["errors"] == 0
+
+
+async def test_the_write_fence_covers_owed_events_the_call_took_later(monkeypatch):
+    # #10090, Root's fence counterexample on be0d6a8a: an owed event the call
+    # takes after it started (`window.debt`) is in the refresher's holding but
+    # not in the owner's captured membership; `held_events` returned {1}, so a
+    # later write or withdrawal to event 2 could cross its live stamp.
+    from app.tasks.polymarket_ws import _PMStampOwner
+    from tests.test_single_event_commit_10090 import rig as stamp_rig
+
+    x = stamp_rig(monkeypatch, count=2, block=True, blocked=(1, 2))
+    owner = _PMStampOwner(x.r)
+    owner.events = {1}
+    owner.task = asyncio.create_task(x.r.refresh([1], flush_started=1000))
+    try:
+        await settle_until(lambda: x.r._admission is not None)
+        x.r.adopt_pending({2})
+        assert x.r.admit_fresh((), flush_started=1000.25) == frozenset()
+        await asyncio.wait_for(x.second_stamp.wait(), 1)
+        assert x.r.holding_event_ids() == frozenset({1, 2})
+        assert owner.held_events() == {1, 2}
+    finally:
+        x.release.set()
+        await owner.join()
