@@ -429,3 +429,49 @@ async def test_cancelled_real_lock_wait_keeps_latest_input_and_publishes_nothing
     assert (
         rig.stats["errors"] == rig.stats["requeued"] == rig.stats["price_updates"] == 0
     )
+
+
+async def test_a_row_a_lock_already_refused_is_probed_nowait_and_a_fresh_chunk_still_waits(rig):
+    # #10090: production's held 2- and 6-row cohorts failed about once a
+    # second, each retry spending the whole 500 ms budget that every later
+    # chunk and the next flush waited out. A known-held row is probed NOWAIT.
+    async with rig.engine.connect() as holder:
+        txn = await holder.begin()
+        await holder.execute(
+            text("SELECT id FROM futures_outcomes WHERE id IN (1, 3) FOR UPDATE")
+        )
+        fresh = None
+        try:
+            # The first refusal keeps the ordinary budget (actual lock timeout).
+            assert await asyncio.wait_for(_write(rig, {1: 0.6, 2: 0.7}), 5) is None
+            assert set(rig.ns["lock_retry_until"]) == {1, 2}
+            # Any wait is now unmistakable: only NOWAIT can return in time.
+            rig.ns["PRICE_CHUNK_LOCK_TIMEOUT_MS"] = 60_000
+            rig.ns["lock_retry_until"].update({1: 0, 2: 0})  # cooldown expired
+            rig.price_started.clear()
+            assert await asyncio.wait_for(rig.write({1: 0.6, 2: 0.7}), 5) is None
+            assert min(rig.ns["lock_retry_until"].values()) > 0, "refusal re-arms the cooldown"
+            assert rig.buffer == {1: 0.6, 2: 0.7}
+            assert rig.stats["errors"] == rig.stats["requeued"] // 2 == 2
+            # A row no lock has refused still waits out a brief holder.
+            rig.price_started.clear()
+            fresh = asyncio.create_task(_write(rig, {3: 0.8}))
+            await asyncio.wait_for(rig.price_started.wait(), 2)
+            await _wait_for_lock(rig)
+            assert not fresh.done()
+            await txn.rollback()
+            assert (await asyncio.wait_for(fresh, 5)).written_ids == (3,)
+        finally:
+            if txn.is_active:
+                await txn.rollback()
+            if fresh is not None and not fresh.done():
+                fresh.cancel()
+                await asyncio.gather(fresh, return_exceptions=True)
+    assert rig.publisher.frames[0][1]["outcome_ids"] == [3]
+    # Released: the probe writes the retained pair atomically and clears it.
+    rig.ns["lock_retry_until"].update({1: 0, 2: 0})
+    assert (await rig.write(dict(rig.buffer))).written_ids == (1, 2)
+    assert rig.buffer == {} and rig.ns["lock_retry_until"] == {}
+    assert await _prices(rig) == {
+        1: Decimal(".600000"), 2: Decimal(".700000"), 3: Decimal(".800000"),
+    }

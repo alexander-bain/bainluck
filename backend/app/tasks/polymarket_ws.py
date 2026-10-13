@@ -372,7 +372,7 @@ class _PMPriceWriteResult:
 PM_QUOTE_LIVENESS_SECONDS = 30.0
 
 
-def chunk_price_update_stmt(chunk: dict, force_ids=None):
+def chunk_price_update_stmt(chunk: dict, force_ids=None, nowait=False):
     """#10664: a flush chunk's price writes as ONE UPDATE ... RETURNING.
 
     ``write_chunk`` awaited one UPDATE per outcome — 500 round trips for a full
@@ -392,6 +392,10 @@ def chunk_price_update_stmt(chunk: dict, force_ids=None):
 
     One parameter per column (arrays), so the prepared statement is shared by
     every chunk size.
+
+    #10090 ``nowait``: take the row locks ``NOWAIT``. A refusal raises the same
+    ``lock_not_available`` (55P03) as a lock timeout, so the caller's retained
+    rows, cooldown and rollback boundary are unchanged; only the wait is gone.
     """
     from sqlalchemy import (
         ARRAY,
@@ -442,7 +446,7 @@ def chunk_price_update_stmt(chunk: dict, force_ids=None):
             ),
         ))
         .order_by(given.c.ord)
-        .with_for_update(of=table)
+        .with_for_update(of=table, nowait=nowait)
         .cte("locked")
         .prefix_with("MATERIALIZED")
     )
@@ -1818,7 +1822,18 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                     if final or oid not in successful_price_write_at
                     or now - successful_price_write_at[oid] >= PM_QUOTE_LIVENESS_SECONDS
                 }
-                result = await session.execute(chunk_price_update_stmt(chunk, force_ids=forced))
+                # #10090: a row a lock already refused stays in
+                # `lock_retry_until` until a write lands, and it is the one
+                # most likely still held. Waiting the full lock budget on it
+                # again bought nothing: production's held 2- and 6-row cohorts
+                # failed about once a second, each spending 500 ms that every
+                # later chunk and the next flush waited out in turn. Probe it
+                # NOWAIT instead. A first refusal keeps the budget, so a brief
+                # holder still costs no retry; the final drain still waits.
+                probe = not final and any(oid in lock_retry_until for oid in chunk)
+                result = await session.execute(
+                    chunk_price_update_stmt(chunk, force_ids=forced, nowait=probe)
+                )
                 written_rows = sorted(result.all(), key=lambda r: r.ord)
                 # #9484: only a row the UPDATE returned is evidence — a
                 # buffered id whose row is gone signals nothing. And only

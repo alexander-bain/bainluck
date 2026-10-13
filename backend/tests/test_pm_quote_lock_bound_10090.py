@@ -23,7 +23,7 @@ def writer_rig(clock, *, error=None, database=None, **kwargs):
     r = rig(**({"books": {1: (0.2, 0.8)}} | kwargs))
     r.release.set()
     state = SimpleNamespace(held=True, attempts=[], settings=[], commits=[], pending=set(),
-                            forced=[], ranks=[], values={})
+                            forced=[], ranks=[], values={}, nowait=[])
 
     class Session:
         async def execute(self, stmt, params=None):
@@ -35,13 +35,15 @@ def writer_rig(clock, *, error=None, database=None, **kwargs):
             if kind == "rank":
                 state.ranks.append(tuple(values))
                 return SimpleNamespace(rowcount=len(values))
-            chunk, forced = values
+            chunk, forced, nowait = values
             state.forced.append(set(forced))
+            state.nowait.append(nowait)
             state.attempts.append((clock.t, tuple(chunk)))
             if 1 in chunk and state.held:
                 # A newer accepted quote survives the whole transaction rollback.
                 r.ns["price_buffer"][1] = 0.9
-                clock.t += 0.5
+                # NOWAIT is refused at once; otherwise the lock budget is spent.
+                clock.t += 0 if nowait else 0.5
                 raise error or LockHeld()
             written = {
                 oid: value for oid, value in chunk.items()
@@ -78,7 +80,9 @@ def writer_rig(clock, *, error=None, database=None, **kwargs):
         PRICE_CHUNK_LOCK_TIMEOUT_MS=PRICE_CHUNK_LOCK_TIMEOUT_MS,
         PRICE_FLUSH_SECONDS=PRICE_FLUSH_SECONDS, SET_LOCK_TIMEOUT_SQL=SET_LOCK_TIMEOUT_SQL,
         is_lock_timeout=is_lock_timeout, lock_timeout_value=lock_timeout_value,
-        chunk_price_update_stmt=lambda chunk, force_ids: ("price", (chunk, force_ids)),
+        chunk_price_update_stmt=lambda chunk, force_ids, nowait=False: (
+            "price", (chunk, force_ids, nowait)
+        ),
         rerank_market_fields_stmt=lambda ids: ("rank", ids),
         market_by_outcome={oid: oid for oid in r.ns["price_buffer"]},
     )
@@ -152,6 +156,7 @@ async def test_final_drain_ignores_hold_and_does_not_set_periodic_lock_budget(mo
     assert (await r.ns["write_chunk"]({1: 0.9, 2: 0.4}, final=True)).written_ids == (1, 2)
     assert len(state.settings) == 1  # no SET in the final transaction
     assert state.commits == [1, 2] and not r.ns["lock_retry_until"]
+    assert state.nowait == [False, False], "the final drain still waits for its locks"
 
 
 async def test_non_lock_error_retains_existing_global_failure_result(monkeypatch):
@@ -211,7 +216,10 @@ async def test_mixed_lock_failure_retries_events_separately_and_keeps_full_fence
     # A new question for the held event is part of this admitted cohort too.
     r.ns["price_buffer"][3] = 0.85
     assert await r.ns["flush_prices"](flush_started=1003)
-    assert state.attempts[-2:] == [(1003, (1, 2, 3)), (1003.5, (900, 901))]
+    # #10090: the cohort a lock already refused is probed NOWAIT, so the
+    # healthy event behind it no longer waits out a second 500 ms budget.
+    assert state.attempts[-2:] == [(1003, (1, 2, 3)), (1003, (900, 901))]
+    assert state.nowait[-2:] == [True, True]
     assert state.commits == [3, 902, 900, 901]
     assert r.ns["price_buffer"] == {1: 0.9, 2: 0.4, 3: 0.85}
     assert r.ns["lock_retry_events"] == {10}
@@ -279,6 +287,8 @@ async def test_fresh_unrelated_event_writes_before_a_still_held_retried_cohort(m
     # Event 20 commits at the flush start, not after event 10's 500 ms wait,
     # and its stamp is not held behind that retry.
     assert state.attempts == [(1000, (1, 2)), (1003, (5,)), (1003, (1, 2))]
+    # Only rows a lock already refused skip the wait; a fresh chunk keeps it.
+    assert state.nowait == [False, False, True]
     assert state.commits == [5]
     assert r.trace.index(("refresh", [20])) < r.trace.index(("rollback", None))
     # The held cohort was still attempted this flush and keeps its debt.
@@ -378,7 +388,7 @@ async def test_later_admitted_pair_adopts_latest_values_marks_and_new_withdrawal
 
         async def execute(self, stmt, params=None):
             if isinstance(stmt, tuple) and stmt[0] == "price":
-                chunk, _forced = stmt[1]
+                chunk = stmt[1][0]
                 observed.append(dict(chunk))
                 if 900 in chunk:
                     first_started.set()
