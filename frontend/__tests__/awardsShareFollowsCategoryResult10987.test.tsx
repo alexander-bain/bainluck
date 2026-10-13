@@ -121,6 +121,12 @@ describe("#10987 no grade, no winner", () => {
     expect(buildEventConceptShareCopy(source).title).not.toContain("Actual unpriced winner");
   });
 
+  it("rows served without any `won` key (today's master shape) announce nobody", async () => {
+    const source = structuredClone(SERVED) as EventConceptShareSource;
+    for (const outcome of source.children![0].outcomes!) delete outcome!.won;
+    expect(eventConceptShareFacts(source).category).toEqual({ state: "closed", winners: [], names: "" });
+  });
+
   it("an open, ungraded category is unchanged", async () => {
     const open = primaryIs(2, "Best Director");
     expect(eventConceptShareFacts(open).category).toBeNull();
@@ -141,7 +147,7 @@ describe("#10987 ordinary share behaviour is unchanged", () => {
     expect(await everythingSaid(ufc)).toEqual(await everythingSaid(withoutChildren(ufc)));
   });
 
-  it("an authoritative parent winner is not hidden behind a closed category", () => {
+  it("an authoritative parent winner is not hidden behind a closed category", async () => {
     const source = structuredClone(primaryIs(3, "Best Actor")) as EventConceptShareSource;
     source.event = { ...source.event, status: "settled" };
     source.primary!.competitors = [
@@ -149,5 +155,8 @@ describe("#10987 ordinary share behaviour is unchanged", () => {
       { name: "Another actor", probability: 0.01, won: false },
     ];
     expect(buildEventConceptShareCopy(source).title).toBe("The Oscars 2026: Closed favorite won");
+    const card = await drawCard(source);
+    expect(card).toContain("Closed favorite won");
+    expect(card).not.toContain("Trading closed");
   });
 });
