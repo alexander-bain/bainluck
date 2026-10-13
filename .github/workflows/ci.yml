@@ -7357,6 +7357,35 @@ jobs:
             exit 1
           }
 
+      - name: "#11007 an undecided Polymarket leg stops reading as settled and Lost, and the undo round-trips (real Postgres)"
+        # PILLAR TRUTH. SHIP: the Fed rate-cut page stops calling the
+        # still-undecided October and December 2026 meetings Lost or the whole
+        # question Settled, while its genuinely decided legs keep their results.
+        # From production's poisoned rows (113883 / Gamma 106884): the attended
+        # rail's exact-id plan bound to every written row version, FOR UPDATE
+        # compare-and-set, one transaction per parent, D51 before-images in the
+        # write's own transaction, and a whole-parent restore that refuses a
+        # same-value later writer, which a session double reads green on, and
+        # that applies only to the one plan_hash named. Plus
+        # the reader's own detail route, the REAL poll writer and the REAL gated
+        # Gamma grader re-run over the repaired rows (with controls that
+        # reproduce the defect), and the REAL sunk-recovery selector reaching the
+        # parent it could not reach before. Runs in its own throwaway database on
+        # the real ORM schema.
+        if: matrix.group == 'shared-tail'
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_repair_pm_open_leg_grade_11007_pg.py \
+            -v -rs 2>&1 | tee /tmp/openleg11007.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/openleg11007.txt; then
+            echo "::error::#11007 open-leg gate SKIPPED — the gate did not run"
+            exit 1
+          fi
+          grep -qE "[^0-9]33 passed[,[:space:]]" /tmp/openleg11007.txt || {
+            echo "::error::#11007 open-leg gate did not run all thirty-three cases"
+            exit 1
+          }
+
       - name: "#8910 a newer WebSocket stamp survives the two-minute poll (real Postgres)"
         # #8910 / CERT-3585's required guard. The REAL live poll against real
         # Postgres, paused after its compared read, while a second session sends
