@@ -259,12 +259,15 @@ export function stagePendingLabel(child: EventConceptChild): string {
  *  dead-extreme leader as a fallback. */
 export function splitChildren(
   children: EventConceptChild[],
+  domain?: string | null,
 ): { live: EventConceptChild[]; settled: EventConceptChild[] } {
   const live: EventConceptChild[] = [];
   const settled: EventConceptChild[] = [];
   for (const c of children || []) {
     const p = c.probability;
-    const decided = c.settled === true || (p != null && (p >= 0.97 || p <= 0.03));
+    const decided = domain === "awards"
+      ? c.settled === true || (c.outcomes ?? []).some((outcome) => outcome.won === true)
+      : c.settled === true || (p != null && (p >= 0.97 || p <= 0.03));
     (decided ? settled : live).push(c);
   }
   return { live, settled };
@@ -1125,4 +1128,26 @@ export function conceptCountdownHeadline(
   if (days === 1) return "Tomorrow";
   if (days <= 7) return "This week";
   return null;
+}
+
+// #5349: trading closed is not a category announcement. Read only own grades;
+// never the price-ranked leader or a standalone convenience winner string.
+export function awardsResult(child: EventConceptChild): { state: "announced" | "closed" | "pending"; names: string[]; prop: boolean } {
+  const names = Array.from(new Set((child.outcomes ?? []).filter((outcome) => outcome.won === true && outcome.name.trim()).map((outcome) => outcome.name.trim())));
+  return { state: names.length ? "announced" : child.settled === true ? "closed" : "pending", names, prop: child.kind === "prop" };
+}
+
+export function awardsRefreshInterval(latest: { event?: { domain?: string; key?: string; status?: string | null; end_date?: string | null }; children?: EventConceptChild[] } | null | undefined, openedAt: number, now = Date.now()): number {
+  if (latest?.event?.domain !== "awards" || latest.event.status === "settled" || now < openedAt || now - openedAt >= 30 * 60 * 1000) return 0;
+  const edition = /^event:awards:[a-z-]+-(20\d{2})$/.exec(latest.event.key ?? "");
+  const year = new Date(now).getUTCFullYear();
+  if (!edition || Number(edition[1]) < year || Number(edition[1]) > year + 1) return 0;
+  const date = latest.event.end_date ? Date.parse(latest.event.end_date) : NaN;
+  if (Number.isFinite(date) && (date - now > 24 * 60 * 60 * 1000 || now - date > 12 * 60 * 60 * 1000)) return 0;
+  const children = latest.children ?? [];
+  if (!children.length || children.every((child) => awardsResult(child).state === "announced")) return 0;
+  // Existing live cadence, only while this current/next edition is being read;
+  // stop at the30minute reading window, complete own grades, or date/edition exit.
+  // Historical unknown editions never acquire perpetual polling.
+  return 30000;
 }

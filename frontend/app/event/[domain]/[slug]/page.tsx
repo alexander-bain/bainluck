@@ -9,12 +9,13 @@
 // individual-competitor event via /api/event/{key}.
 
 import { useParams, useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import useSWR from "swr";
 import { usePageTracking, useScrollDepth, useEngagementTime } from "@/hooks";
 import Link from "next/link";
 import { fetchEventConcept } from "@/lib/api";
 import {
+  awardsRefreshInterval,
   marketsTracked,
   renderedFinishColumns,
   headlinerMatchup,
@@ -99,6 +100,14 @@ export default function EventConceptPage() {
   const slug = dec(params?.slug);
   const decodedKey = domain && slug ? `event:${domain}:${slug}` : "";
 
+  // A stable SWR callback per actual route, never reset by incidental renders.
+  const refreshInterval = useMemo(() => {
+    if (domain !== "awards") return conceptRefreshInterval;
+    const openedAt = Date.now();
+    return (latest: Parameters<typeof awardsRefreshInterval>[0]) => awardsRefreshInterval(latest, openedAt);
+  }, [domain, decodedKey]);
+  const [awardsHistoryOpen, setAwardsHistoryOpen] = useState(false);
+
   // GA4 hooks — before any conditional return (MANDATORY).
   usePageTracking({ pageType: "event_concept", pageTitle: `Event ${decodedKey}` });
   useScrollDepth({ pageType: "event_concept" });
@@ -119,6 +128,7 @@ export default function EventConceptPage() {
   useEffect(() => {
     setRetriesExhausted(false);
     setCeilingReached(false);
+    setAwardsHistoryOpen(false);
     const timer = setTimeout(() => setCeilingReached(true), CONCEPT_LOADING_CEILING_MS);
     return () => clearTimeout(timer);
   }, [decodedKey]);
@@ -161,7 +171,7 @@ export default function EventConceptPage() {
       // breaks, and it breaks silently: nothing errors, the page simply never
       // asks again. Safe to hoist because the callback is a pure function of its
       // argument and the clock.
-      refreshInterval: conceptRefreshInterval,
+      refreshInterval: refreshInterval,
     },
   );
 
@@ -290,7 +300,7 @@ export default function EventConceptPage() {
   // rail — one market, one display. Exclude the primary/evolution market from the
   // rail (backend puts the main event in BOTH primary.competitors and children[0]).
   const primaryMarketId =
-    primary.kind === "co_equal_list" && typeof primary.evolution_market_id === "number"
+    primary.kind === "co_equal_list" && event.domain !== "awards" && typeof primary.evolution_market_id === "number"
       ? primary.evolution_market_id
       : null;
   const fightChildren = children.filter(
@@ -428,7 +438,16 @@ export default function EventConceptPage() {
           /next match duel), or the winner-field chart. L2-156 Item 5: a settled
           winner-field event LEADS with the completed-journey chart in the hero slot
           (Alex expects the chart at the top), not buried at the bottom of the page. */}
-      {isCoEqual ? (
+      {isCoEqual && event.domain === "awards" ? (
+        <section className="rounded-card border border-surface-border bg-surface-card p-4 space-y-3">
+          <p className="text-sm text-text-secondary">Each category is announced independently.</p>
+          {typeof primary.evolution_market_id === "number" && <Link href={`#awards-category-${primary.evolution_market_id}`} className="text-sm font-semibold text-accent-brand hover:underline">View {primary.label}</Link>}
+          {typeof evolutionId === "number" && <details onToggle={(event) => setAwardsHistoryOpen(event.currentTarget.open)}>
+            <summary className="text-sm text-text-secondary cursor-pointer">Probability history for {primary.label}</summary>
+            {awardsHistoryOpen && <WinnerEvolutionChart marketId={evolutionId} domain="awards" live={false} />}
+          </details>}
+        </section>
+      ) : isCoEqual ? (
         <TwoSidedTimeline
           competitors={competitors}
           label={primary.label}
@@ -516,13 +535,13 @@ export default function EventConceptPage() {
           there is no double-render; the leftover section-grouped props now surface
           under their backend labels (Round Top N …). Self-suppresses when empty
           (EventProps returns null on no items — the common no-leftover case). */}
-      <EventProps
+      {event.domain === "awards" ? <MatchupsRail items={propChildren} sport="awards" title="Nominations and more" /> : <EventProps
         items={propChildren}
         sections={data.sections}
         title={hasPropsScript ? "Other markets" : undefined}
         anchorId={hasPropsScript ? "other-markets" : undefined}
         domain={event.domain}
-      />
+      />}
 
       {/* L2-135: Scoring & Records — the Under-N families as QuantityGroup ladders,
           not a wall of numbers. Suppressed once settled (settled-means-settled). */}
