@@ -1,7 +1,7 @@
 """#1527: the three-winner soccer repair's guarded apply against a real PostgreSQL —
 the exact-id plan, compare-and-set under row locks, per-transaction timeouts,
 row-count refusal, the D51 backup, the audit of a stopped run, and a restore that
-never overwrites a later writer.
+never overwrites a later writer, including one that left every value the same.
 
 Runs in a throwaway database on the local CI service, never production. The
 tables carry the columns the rail reads and writes; the SQL under test is the
@@ -312,6 +312,12 @@ async def test_the_pinned_apply_writes_exactly_the_plan(db):
     bak = await _bak(db)
     assert [b[0] for b in bak] == sorted(state)
     assert {b[2] for b in bak} == {plan["plan_hash"]}
+    # Each leg's bank row carries the version this write left on it.
+    async with db() as s:
+        pairs = (await s.execute(text(
+            f"SELECT b.wrote_row_version, fo.xmin::text FROM {rp.BAK_TABLE} b"
+            " JOIN futures_outcomes fo ON fo.id = b.outcome_id"))).all()
+    assert len(pairs) == 6 and all(w is not None and w == x for w, x in pairs)
 
 
 async def test_named_controls_never_move_beside_a_real_repair(db):
@@ -385,13 +391,73 @@ async def test_the_old_apply_accepted_drift_and_the_guarded_one_refuses(db):
     assert n == 3 and src == rp.WRITE_SOURCE
 
 
-async def test_a_touch_stamp_after_review_does_not_stale_the_plan(db):
-    plan = await _run(db, only_ids=_ids(SPEC))
-    async with db() as s:
-        await s.execute(text(
-            "UPDATE futures_outcomes SET last_updated = NOW() WHERE market_id = :m"),
-            {"m": SPEC})
+SAME_VALUE_WRITES = {
+    # A writer that leaves every reviewed value exactly as it was.
+    "same_value_update": "UPDATE futures_outcomes SET is_winner = is_winner,"
+                         " current_probability = current_probability WHERE id = :oid",
+    # A poll's touch-stamp.
+    "touch_stamp": "UPDATE futures_outcomes SET last_updated = NOW() WHERE id = :oid",
+}
+
+
+async def _write_beside(maker, sql, oid):
+    async with maker() as s:
+        await s.execute(text(sql), {"oid": oid})
         await s.commit()
+
+
+async def _xmin(maker, oid):
+    async with maker() as s:
+        return (await s.execute(text(
+            "SELECT xmin::text FROM futures_outcomes WHERE id = :o"), {"o": oid})).scalar_one()
+
+
+def _without_versions(entry):
+    return {k: v for k, v in entry.items() if k not in ("row_versions", "prior_last_updated")}
+
+
+@pytest.mark.parametrize("write", sorted(SAME_VALUE_WRITES))
+async def test_a_write_between_the_dry_run_and_the_apply_refuses_the_old_hash(db, write):
+    # Root's hold on 9298be4a, point 1: dry run -> a same-value write to ONE
+    # exact leg -> apply with the reviewed hash. Every value the operator
+    # reviewed still holds; the row version does not, so the apply refuses whole.
+    seed = await _state(db)
+    plan = await _run(db, only_ids=_ids(SPEC, HONEST))
+    await _write_beside(db, SAME_VALUE_WRITES[write], 205060695)
+    assert await _state(db) == seed
+
+    out = await _run(db, only_ids=_ids(SPEC, HONEST), apply=True,
+                     plan_hash=plan["plan_hash"])
+    assert out["terminal"] == "refused_plan_drift" and out["repaired"] == 0
+    assert out["detail"]["reviewed"] == plan["plan_hash"]
+    assert await _state(db) == seed
+    assert await _bak(db) == []
+
+    # The fresh dry run differs from the reviewed one in that leg's version and
+    # in nothing else; it is the plan the operator now reviews, and it applies.
+    fresh = await _run(db, only_ids=_ids(SPEC, HONEST))
+    old, new = ({e["market_id"]: e for e in x["ledger"]} for x in (plan, fresh))
+    assert new[HONEST] == old[HONEST]
+    assert _without_versions(new[SPEC]) == _without_versions(old[SPEC])
+    moved = {o for o, v in old[SPEC]["row_versions"].items()
+             if new[SPEC]["row_versions"][o] != v}
+    assert moved == {205060695}
+    assert fresh["plan_hash"] != plan["plan_hash"]
+    applied = await _run(db, only_ids=_ids(SPEC, HONEST), apply=True,
+                         plan_hash=fresh["plan_hash"])
+    assert applied["terminal"] == "applied" and applied["repaired"] == 2
+
+
+async def test_strawman_an_address_without_row_versions_lets_the_old_hash_through(
+        db, monkeypatch):
+    # The held head's address, which left row versions out: the same sequence
+    # applies over a row version nobody reviewed. This is what the test above
+    # refuses.
+    original = rp.plan_hash_for
+    monkeypatch.setattr(rp, "plan_hash_for", lambda named, planned: original(
+        named, [{**p, "row_versions": {}} for p in planned]))
+    plan = await _run(db, only_ids=_ids(SPEC))
+    await _write_beside(db, SAME_VALUE_WRITES["same_value_update"], 205060695)
     out = await _run(db, only_ids=_ids(SPEC), apply=True, plan_hash=plan["plan_hash"])
     assert out["terminal"] == "applied" and out["repaired"] == 1
 
@@ -524,6 +590,87 @@ async def test_restore_never_overwrites_a_later_writer(db):
     assert await _state(db, {SPEC}) == later
 
 
+NO_VERSION = "TRUE"
+
+
+@pytest.mark.parametrize("write", sorted(SAME_VALUE_WRITES))
+async def test_restore_never_overwrites_a_same_value_later_writer(db, write):
+    # Root's hold on 9298be4a, point 2: apply -> another writer's same-value
+    # write to one leg -> restore. Every value this rail wrote still holds, so
+    # a value-only audit would call the market repaired and put it back over
+    # the later writer.
+    plan = await _run(db, only_ids=_ids(SPEC, HONEST))
+    await _run(db, only_ids=_ids(SPEC, HONEST), apply=True, plan_hash=plan["plan_hash"])
+    repaired = await _state(db, {SPEC})
+    await _write_beside(db, SAME_VALUE_WRITES[write], 205060694)
+    version = await _xmin(db, 205060694)
+    assert await _state(db, {SPEC}) == repaired
+
+    audit = await _run(db, fn=rp.restore)
+    assert {m["market_id"]: m["state"] for m in audit["markets"]} == {
+        SPEC: "moved", HONEST: "repaired"}
+    done = await _run(db, fn=rp.restore, apply=True, plan_hash=plan["plan_hash"])
+    assert done["restored_markets"] == 1 and done["refused_markets"] == []
+    assert await _state(db, {SPEC}) == repaired
+    assert await _xmin(db, 205060694) == version
+
+
+async def test_strawman_a_value_only_restore_overwrites_the_same_value_writer(
+        db, monkeypatch):
+    # The held head's restore, which compared values only: the same sequence
+    # puts SPEC back to the three-winner seed over the later writer.
+    seed = await _state(db, {SPEC})
+    for name in ("_AUDIT_SQL", "_RESTORE_MARKET"):
+        monkeypatch.setattr(rp, name, getattr(rp, name).replace(rp._WROTE_VERSION,
+                                                                NO_VERSION))
+    plan = await _run(db, only_ids=_ids(SPEC))
+    await _run(db, only_ids=_ids(SPEC), apply=True, plan_hash=plan["plan_hash"])
+    await _write_beside(db, SAME_VALUE_WRITES["same_value_update"], 205060694)
+    done = await _run(db, fn=rp.restore, apply=True)
+    assert done["restored_markets"] == 1
+    assert await _state(db, {SPEC}) == seed
+
+
+async def test_the_restore_write_itself_refuses_a_same_value_writer(db, monkeypatch):
+    # The audit under the lock is one guard; the restore's own WHERE is the
+    # second. With the audit blinded to versions, the WHERE alone refuses.
+    monkeypatch.setattr(rp, "_AUDIT_SQL", rp._AUDIT_SQL.replace(rp._WROTE_VERSION,
+                                                                 NO_VERSION))
+    plan = await _run(db, only_ids=_ids(SPEC, HONEST))
+    await _run(db, only_ids=_ids(SPEC, HONEST), apply=True, plan_hash=plan["plan_hash"])
+    await _write_beside(db, SAME_VALUE_WRITES["same_value_update"], 205060694)
+    repaired = await _state(db, {SPEC})
+    done = await _run(db, fn=rp.restore, apply=True)
+    assert done["restored_markets"] == 1
+    assert done["refused_markets"] == [{"market_id": SPEC, "reason": rp.ROWCOUNT}]
+    assert await _state(db, {SPEC}) == repaired
+
+
+async def test_a_same_value_writer_between_the_audit_and_the_lock_refuses_that_restore(
+        db, isolated_database, monkeypatch):
+    plan = await _run(db, only_ids=_ids(SPEC, HONEST))
+    await _run(db, only_ids=_ids(SPEC, HONEST), apply=True, plan_hash=plan["plan_hash"])
+    repaired = await _state(db, {SPEC})
+    original = rp._market_states
+    raced = []
+
+    def audit_then_race(rows):
+        out = original(rows)
+        if not raced:
+            raced.append(True)
+            engine = create_engine(isolated_database.set(drivername="postgresql+psycopg2"))
+            with engine.begin() as c:
+                c.execute(text(SAME_VALUE_WRITES["same_value_update"]), {"oid": 205060694})
+            engine.dispose()
+        return out
+
+    monkeypatch.setattr(rp, "_market_states", audit_then_race)
+    done = await _run(db, fn=rp.restore, apply=True)
+    assert done["restored_markets"] == 1
+    assert done["refused_markets"] == [{"market_id": SPEC, "reason": rp.DRIFT}]
+    assert await _state(db, {SPEC}) == repaired
+
+
 async def test_a_writer_between_the_audit_and_the_lock_refuses_that_restore(
         db, isolated_database, monkeypatch):
     plan = await _run(db, only_ids=_ids(SPEC, HONEST))
@@ -585,7 +732,9 @@ async def test_a_retry_after_restore_is_valid_and_a_changed_prior_is_refused(db)
     out = await _run(db, only_ids=_ids(SPEC), apply=True, plan_hash=retry["plan_hash"])
     assert out["repaired"] == 1
     assert {b[2] for b in await _bak(db)} == {retry["plan_hash"]}
-    await _run(db, fn=rp.restore, apply=True)
+    # The kept bank row carries THIS run's version, so this run restores.
+    assert (await _run(db, fn=rp.restore, apply=True))["restored_markets"] == 1
+    assert await _state(db, {SPEC}) == seed
 
     # The prior moved after the restore: the bank no longer describes it, so a
     # restore after this run would put back a state it never removed.
@@ -598,6 +747,21 @@ async def test_a_retry_after_restore_is_valid_and_a_changed_prior_is_refused(db)
     out = await _run(db, only_ids=_ids(SPEC), apply=True, plan_hash=third["plan_hash"])
     assert out["backup_refused"] == 1 and out["repaired"] == 0
     assert await _state(db, {SPEC}) == moved
+
+
+async def test_a_bank_from_the_older_head_gains_the_version_column(db):
+    # A bank created by the held head has no version column. The apply adds it,
+    # and stamps the legs it writes.
+    old_shape = rp._BAK_CREATE.replace("        wrote_row_version TEXT,\n", "")
+    assert old_shape != rp._BAK_CREATE
+    async with db() as s:
+        await s.execute(text(old_shape))
+        await s.commit()
+    plan = await _run(db, only_ids=_ids(SPEC))
+    out = await _run(db, only_ids=_ids(SPEC), apply=True, plan_hash=plan["plan_hash"])
+    assert out["repaired"] == 1
+    audit = await _run(db, fn=rp.restore)
+    assert [m["state"] for m in audit["markets"]] == ["repaired"]
 
 
 async def test_restore_without_a_backup_is_refused(db):

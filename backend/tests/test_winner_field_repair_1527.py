@@ -238,6 +238,21 @@ class TestWriteShape:
             assert users == [repair_mod._apply_market], name
         assert "_RESTORE_MARKET" in inspect.getsource(repair_mod.restore)
 
+    def test_the_restore_requires_the_row_version_the_write_left(self):
+        # Root's hold on 9298be4a: a value-only audit cannot see a later writer
+        # that left every value the same. The audit and the restore's own WHERE
+        # both require the version this rail's write stamped.
+        assert repair_mod._WROTE_VERSION == "fo.xmin::text = b.wrote_row_version"
+        assert repair_mod._WROTE_VERSION in repair_mod._AUDIT_SQL
+        assert repair_mod._WROTE_VERSION in repair_mod._RESTORE_MARKET
+        assert "wrote_row_version TEXT" in repair_mod._BAK_CREATE
+        assert "wrote_row_version" in repair_mod._BAK_ALTER
+        # Stamped inside the market's own write transaction, after every write.
+        src = inspect.getsource(repair_mod._apply_market)
+        assert src.index("_BAK_VERSION") > src.index("_NULL_CP")
+        assert src.index("_BAK_VERSION") < src.index("session.commit()")
+        assert "wrote_row_version = NULL" in repair_mod._BAK_STAMP
+
     def test_scan_is_bounded_and_resumable(self):
         src = inspect.getsource(repair_mod)
         assert "SET LOCAL statement_timeout" in src
@@ -406,10 +421,20 @@ class TestPlanHash:
             venue=(True, False, False), win=205060693)) != self.BASE
         assert plan_hash_for([55254886, 1], _planned()) != self.BASE
 
-    def test_row_versions_and_touch_stamps_are_not(self):
+    def test_a_row_version_is_in_the_address(self):
+        # Root's hold on 9298be4a: a same-value write between the dry run and
+        # the apply moves only the row version. If the version were outside the
+        # address, the reviewed hash would authorize a row nobody reviewed.
+        for oid in _planned()[0]["row_versions"]:
+            moved = _planned()
+            moved[0]["row_versions"] = {**moved[0]["row_versions"], oid: "999"}
+            assert plan_hash_for([55254886], moved) != self.BASE, oid
+
+    def test_a_touch_stamp_alone_is_not(self):
+        # Nothing can move last_updated without moving xmin, which is in the
+        # address; the stamp itself would only add a second spelling of it.
         moved = _planned()
-        moved[0]["row_versions"] = {k: "999" for k in moved[0]["row_versions"]}
-        moved[0]["prior_last_updated"] = {"205060693": "2026-10-13T00:00:00"}
+        moved[0]["prior_last_updated"] = {205060693: "2026-10-13T00:00:00"}
         assert plan_hash_for([55254886], moved) == self.BASE
 
     def test_numeric_spelling_does_not_move_the_address(self):

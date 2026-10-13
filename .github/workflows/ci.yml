@@ -7271,8 +7271,8 @@ jobs:
             echo "::error::#1527 winner-field repair gate SKIPPED — the gate did not run"
             exit 1
           fi
-          grep -qE "[^0-9]17 passed[,[:space:]]" /tmp/winnerfield1527.txt || {
-            echo "::error::#1527 winner-field repair gate did not run all seventeen cases"
+          grep -qE "[^0-9]25 passed[,[:space:]]" /tmp/winnerfield1527.txt || {
+            echo "::error::#1527 winner-field repair gate did not run all twenty-five cases"
             exit 1
           }
 

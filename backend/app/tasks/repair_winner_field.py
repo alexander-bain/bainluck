@@ -57,14 +57,18 @@ recorded reason.
   only and can never write.
 * The apply re-plans those ids (fresh stored values, fresh CLOB answers) and
   refuses everything unless the content address (:func:`plan_hash_for`, over the
-  named ids, every planned leg's stored values and identity, the venue verdict
-  and the planned writes) equals the one the operator reviewed.
+  named ids, every planned leg's stored values, identity and row version, the
+  venue verdict and the planned writes) equals the one the operator reviewed.
+  The row version (``xmin``) is in the address because a write that leaves
+  every value the same is still a write the operator never reviewed: a poll's
+  touch, or a same-value UPDATE, between the dry run and the apply refuses the
+  whole apply (``refused_plan_drift``), and the operator dry-runs again.
 * Each market is then one transaction with its own statement and lock timeouts:
   the market row is share-locked and its cohort fields re-checked, the legs are
-  row-locked and must still hold the planned values AND the row version
-  (``xmin``) the apply itself read. A moved row refuses its market
-  (``drift_refused``). ``last_updated`` is a poll touch-stamp, so it is backed
-  up and reported but is not part of the reviewed address.
+  row-locked and must still hold the planned values AND the reviewed row
+  version. A moved row refuses its market (``drift_refused``). ``last_updated``
+  is backed up and reported; it needs no place of its own in the address,
+  because nothing can move it without moving ``xmin``.
 * Every write checks its row count against the plan; a mismatch rolls the
   market back.
 
@@ -82,8 +86,12 @@ markets still hold the repaired state, which are already back, which moved::
       "$BAINLUCK_API/api/admin/repairs/winner-field-repair-restore?apply=true"
 
 It restores a market only while every one of its legs still holds exactly what
-this rail wrote, so a later writer's value is never overwritten. ``plan_hash``
-scopes it to one run.
+this rail wrote AND the row version this rail's write left
+(``wrote_row_version``, stamped in the write's own transaction), checked again
+under the restore's row lock and in the restore's own ``WHERE``. A later writer
+that touched a leg, even one that left every value the same, makes the market
+``moved``, and a moved market is never restored. ``plan_hash`` scopes it to one
+run.
 
 The write cap is a MODULE CONSTANT rather than a query parameter, deliberately,
 so "capped" cannot be dialled off mid-run.
@@ -127,7 +135,7 @@ BAK_TABLE = "bak_1527_winner_field_outcomes"
 
 #: Bumped whenever the plan's shape or the write changes, so a hash reviewed
 #: against an older rail can never authorize this one.
-PLAN_VERSION = "1527-guarded-v1"
+PLAN_VERSION = "1527-guarded-v2"
 
 #: Wall clock for the CLOB reads of one call, below the router's 30 s. A plan
 #: that runs out of budget is incomplete and can never be applied.
@@ -209,9 +217,14 @@ _BAK_CREATE = f"""
         nulled_opening BOOLEAN NOT NULL,
         nulled_cp BOOLEAN NOT NULL,
         plan_hash TEXT NOT NULL,
+        wrote_row_version TEXT,
         backed_up_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )
 """
+
+#: A bank made by an older head of this rail lacks the version column. Its rows
+#: then hold NULL, which the audit reads as "not this rail's write": never restored.
+_BAK_ALTER = f"ALTER TABLE {BAK_TABLE} ADD COLUMN IF NOT EXISTS wrote_row_version TEXT"
 
 _BAK_COPY = f"""
     INSERT INTO {BAK_TABLE} (
@@ -258,9 +271,20 @@ _BAK_PAIRED = f"""
 
 #: After the pair check passes: the bank row now describes THIS run, so the audit
 #: and a ``plan_hash``-scoped restore attribute a re-apply to the plan that made it.
+#: An older run's version token is cleared here and re-stamped after the write.
 _BAK_STAMP = f"""
-    UPDATE {BAK_TABLE} SET plan_hash = :plan_hash
+    UPDATE {BAK_TABLE} SET plan_hash = :plan_hash, wrote_row_version = NULL
     WHERE outcome_id = :oid AND market_id = :mid
+"""
+
+#: After every write of the market, in the same transaction: the row version this
+#: rail's write left on each leg. The restore requires it, so any later write to
+#: the leg, same values or not, is visible to the audit.
+_BAK_VERSION = f"""
+    UPDATE {BAK_TABLE} b SET wrote_row_version = fo.xmin::text
+    FROM futures_outcomes fo
+    WHERE fo.id = b.outcome_id AND b.market_id = :mid AND fo.market_id = :mid
+      AND b.outcome_id = ANY(:ids)
 """
 
 _WRITE_WINNER = """
@@ -298,11 +322,16 @@ _EXISTS = "SELECT to_regclass(:t) IS NOT NULL"
 _OPENING_NULL = """(fo.opening_probability IS NULL AND fo.opening_american_odds IS NULL
          AND fo.opening_captured_at IS NULL AND fo.opening_source IS NULL)"""
 
-#: Per backed-up leg: does it still hold exactly what this rail wrote, or is it
-#: already back at its prior? ``CAST`` so a NULL scope binds on asyncpg.
+#: The leg is still the very row version this rail's write left.
+_WROTE_VERSION = "fo.xmin::text = b.wrote_row_version"
+
+#: Per backed-up leg: does it still hold exactly what this rail wrote, in the row
+#: version that write left, or is it already back at its prior? ``CAST`` so a
+#: NULL scope binds on asyncpg.
 _AUDIT_SQL = f"""
     SELECT b.plan_hash, b.market_id, b.outcome_id,
            (fo.id IS NOT NULL
+            AND {_WROTE_VERSION}
             AND fo.is_winner IS NOT DISTINCT FROM b.wrote_is_winner
             AND fo.current_probability = b.wrote_current_probability
             AND fo.resolution_source = :src
@@ -345,6 +374,7 @@ _RESTORE_MARKET = f"""
     FROM {BAK_TABLE} b
     WHERE fo.id = b.outcome_id AND b.market_id = :mid
       AND fo.market_id = :mid AND fo.id = ANY(:ids)
+      AND {_WROTE_VERSION}
 """
 
 
@@ -498,8 +528,8 @@ def authority_refusal(legs: list[dict]) -> Optional[tuple[str, list]]:
 def leg_image(row: dict) -> dict:
     """The stored values a plan is reviewed on and an apply re-checks under lock.
 
-    ``last_updated`` is a poll touch-stamp and is deliberately absent; ``xmin``
-    is checked separately, against the apply's own read.
+    ``last_updated`` is deliberately absent and the row version is carried
+    beside the image (``row_versions``); both are in the reviewed address.
     """
     at = row.get("opening_captured_at")
     return {
@@ -544,8 +574,9 @@ def planned_writes(legs: list[dict], win_id: int) -> list[dict]:
 
 def plan_hash_for(named_ids: list[int], planned: list[dict]) -> str:
     """Content address of an exact-id plan: the ids named, and for every planned
-    market its cohort fields, every leg's stored values and identity, the venue
-    verdict per leg and the writes. Row versions and timings are excluded."""
+    market its cohort fields, every leg's stored values, identity and row
+    version, the venue verdict per leg and the writes. Touch-stamps and timings
+    are excluded; no write can move a touch-stamp without moving the version."""
     body = json.dumps(
         {
             "version": PLAN_VERSION,
@@ -553,8 +584,10 @@ def plan_hash_for(named_ids: list[int], planned: list[dict]) -> str:
             "impossible_price": IMPOSSIBLE_PRICE,
             "named_ids": sorted(int(i) for i in named_ids),
             "markets": sorted(
-                ({k: p[k] for k in ("market", "legs", "venue", "winner_outcome_id",
-                                    "writes")} for p in planned),
+                ({**{k: p[k] for k in ("market", "legs", "venue", "winner_outcome_id",
+                                       "writes")},
+                  "row_versions": {str(k): v for k, v in p["row_versions"].items()}}
+                 for p in planned),
                 key=lambda p: p["market"]["market_id"],
             ),
         },
@@ -644,7 +677,7 @@ async def _plan_market(session, service, mid: int, deadline: float) -> dict:
         "legs": [leg_image(leg) for leg in legs],
         "venue": venue,
         "writes": planned_writes(legs, win_id),
-        # Not in the address: checked against the apply's own read, under lock.
+        # In the address, and checked again under the apply's row lock.
         "row_versions": {int(leg["id"]): leg.get("row_version") for leg in legs},
         "prior_last_updated": {
             int(leg["id"]): (leg["last_updated"].isoformat()
@@ -729,6 +762,10 @@ async def _apply_market(session, p: dict, digest: str) -> Optional[str]:
         if n != len(cp_ids):
             await session.rollback()
             return ROWCOUNT
+    stamped = (await session.execute(text(_BAK_VERSION), {"mid": mid, "ids": ids})).rowcount
+    if stamped != len(ids):
+        await session.rollback()
+        return ROWCOUNT
     await session.commit()
     return None
 
@@ -852,6 +889,7 @@ async def repair(
     await session.commit()
     if planned:
         await session.execute(text(_BAK_CREATE))
+        await session.execute(text(_BAK_ALTER))
         await session.commit()
     repaired = outcomes_written = openings_nulled = cp_nulled = 0
     counts = {DRIFT: 0, BACKUP_MISMATCH: 0, ROWCOUNT: 0}
@@ -908,7 +946,8 @@ def _market_states(rows) -> dict[int, dict]:
 
 async def restore(session, apply: bool = False, plan_hash: str | None = None) -> dict:
     """Audit (dry run) or put back every market this rail repaired whose legs
-    all still hold exactly what it wrote. ``plan_hash`` scopes it to one run."""
+    all still hold exactly what it wrote, in the row version its write left.
+    ``plan_hash`` scopes it to one run."""
     base = {"issue": ISSUE, "backup_table": BAK_TABLE, "apply": apply,
             "plan_hash": plan_hash}
     if not (await session.execute(text(_EXISTS), {"t": BAK_TABLE})).scalar_one():
