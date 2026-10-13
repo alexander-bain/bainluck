@@ -5514,6 +5514,21 @@ jobs:
             exit 1
           fi
 
+      - name: "#1109 Football shelf — apply, interleaved-writer rollback, re-run and undo against real Postgres"
+        # The repair moves stored Kalshi rows off the Football shelf by an exact-id
+        # compare-and-set; a writer landing between its read and its UPDATE must
+        # change zero rows and roll the whole run back, and the undo touches only
+        # the ids it is given. Those are SQL, so only a real server runs them.
+        if: matrix.group == 'shared-tail'
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_repair_1109_football_shelf_apply_restore_pg.py \
+            -v -rs 2>&1 | tee /tmp/repair1109.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/repair1109.txt; then
+            echo "::error::#1109 Football-shelf apply/restore gate SKIPPED — the gate did not run"
+            exit 1
+          fi
+
       - name: "#8100 Phoenix placement — select, bank, apply, refuse mid-run and undo against real Postgres"
         # The repair moves the Phoenix's Polymarket-born rows from the catch-all
         # into the NBL, banking each sport_id first; a row that changes under
