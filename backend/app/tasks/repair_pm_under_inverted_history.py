@@ -94,8 +94,15 @@ planned priors, or the leg is left whole and counted ``drift_refused``.
 ## D51: backup and restore
 
 Rows are copied whole into :data:`BAK_ROWS` and the outcome's prior fields
-into :data:`BAK_FIELDS` in the same transaction as the delete/withdrawal. The
-undo is one statement::
+into :data:`BAK_FIELDS` in the same transaction as the delete/withdrawal. A
+copy keeps an older bank row on conflict, so before anything is deleted or
+withdrawn every planned row must have a bank row equal to it in every
+restorable column, and the field bank must hold exactly the locked priors and
+this plan's withdrawal flags. An absent or different copy (a retry after a
+restore whose state then moved) rolls the whole leg back and is reported as
+``backup_refused`` by outcome id: the restore would otherwise put back a state
+this run never removed. An exact bank from an earlier run is a valid retry.
+The undo is one statement::
 
     curl -X POST -H "Authorization: Bearer $ADMIN_TOKEN" \\
       "$BAINLUCK_API/api/admin/repairs/pm-under-inverted-history-restore?apply=true"
@@ -279,6 +286,24 @@ _BAK_ROWS_COPY = f"""
     ON CONFLICT (id) DO NOTHING
 """
 
+_RESTORABLE_ROW = ("outcome_id, bookmaker, probability, american_odds, yes_bid, yes_ask, "
+                   "last_price, captured_at, reading_count, valid_until")
+
+#: Planned rows with no bank copy equal in every restorable column. A count of
+#: bank rows would pass on an older row the copy's conflict clause kept.
+_BAK_ROWS_UNPAIRED = f"""
+    SELECT s.id FROM futures_odds_snapshots s
+    WHERE s.id = ANY(:ids) AND s.outcome_id = :oid
+      AND NOT EXISTS (
+          SELECT 1 FROM {BAK_ROWS} b
+          WHERE b.id = s.id
+            AND ({", ".join("b." + c for c in _RESTORABLE_ROW.split(", "))})
+                IS NOT DISTINCT FROM
+                ({", ".join("s." + c for c in _RESTORABLE_ROW.split(", "))})
+      )
+    ORDER BY s.id
+"""
+
 _DELETE_ROWS = """
     DELETE FROM futures_odds_snapshots WHERE id = ANY(:ids) AND outcome_id = :oid
 """
@@ -290,7 +315,8 @@ _LOCK_FIELDS = """
     FOR UPDATE
 """
 
-#: The FIRST copy is the one that predates this rail, so a conflict keeps it.
+#: A conflict keeps the older copy; :data:`_BAK_FIELDS_PAIRED` then refuses the
+#: leg unless that copy is exactly this run's prior.
 _BAK_FIELDS_COPY = f"""
     INSERT INTO {BAK_FIELDS} (outcome_id, withdrew_opening, prior_opening_probability,
                               prior_opening_american_odds, prior_opening_captured_at,
@@ -300,6 +326,22 @@ _BAK_FIELDS_COPY = f"""
            opening_source, :wc, calibration_probability, :plan_hash
     FROM futures_outcomes WHERE id = :oid
     ON CONFLICT (outcome_id) DO NOTHING
+"""
+
+#: Does the field bank hold exactly this leg's locked priors and this plan's flags?
+_BAK_FIELDS_PAIRED = f"""
+    SELECT EXISTS (
+        SELECT 1 FROM {BAK_FIELDS} b
+        JOIN futures_outcomes fo ON fo.id = b.outcome_id
+        WHERE b.outcome_id = :oid
+          AND b.withdrew_opening = :wo AND b.withdrew_cp = :wc
+          AND (b.prior_opening_probability, b.prior_opening_american_odds,
+               b.prior_opening_captured_at, b.prior_opening_source,
+               b.prior_calibration_probability)
+              IS NOT DISTINCT FROM
+              (fo.opening_probability, fo.opening_american_odds, fo.opening_captured_at,
+               fo.opening_source, fo.calibration_probability)
+    )
 """
 
 _WITHDRAW_OPENING = """
@@ -661,34 +703,50 @@ def _same_prior(now, prior: dict) -> bool:
             and _f(now.calibration_probability) == prior["calibration_probability"])
 
 
-async def _apply_leg(session, p: dict, digest: str) -> bool:
-    """One leg, one transaction. False (and nothing written) on any drift."""
+DRIFT = "drift"
+BACKUP_ROWS_MISMATCH = "backup_rows_mismatch"
+BACKUP_FIELDS_MISMATCH = "backup_fields_mismatch"
+
+
+async def _apply_leg(session, p: dict, digest: str) -> Optional[str]:
+    """One leg, one transaction. None when written; otherwise the refusal
+    reason, with nothing written."""
     oid = p["outcome_id"]
     ids = [r[0] for r in p["rows"]]
     locked = (await session.execute(text(_LOCK_ROWS), {"ids": ids, "oid": oid})).all()
     now_rows = sorted([[r.id, r.captured_at.isoformat(), str(r.probability)] for r in locked])
     if now_rows != sorted(p["rows"]):
         await session.rollback()
-        return False
+        return DRIFT
     fields = (await session.execute(text(_LOCK_FIELDS), {"oid": oid})).one_or_none()
     if fields is None or not _same_prior(fields, p["prior"]):
         await session.rollback()
-        return False
+        return DRIFT
+    # Every copy is checked before the first DELETE or UPDATE.
     await session.execute(text(_BAK_ROWS_COPY), {"ids": ids, "oid": oid, "plan_hash": digest})
-    deleted = (await session.execute(text(_DELETE_ROWS), {"ids": ids, "oid": oid})).rowcount
-    if deleted != len(ids):
+    unpaired = (await session.execute(text(_BAK_ROWS_UNPAIRED), {"ids": ids, "oid": oid})).all()
+    if unpaired:
         await session.rollback()
-        return False
+        return BACKUP_ROWS_MISMATCH
     wo, wc = bool(p["withdraw_opening"]), bool(p["withdraw_cp"])
     if wo or wc:
         await session.execute(text(_BAK_FIELDS_COPY),
                               {"oid": oid, "wo": wo, "wc": wc, "plan_hash": digest})
-        if wo:
-            await session.execute(text(_WITHDRAW_OPENING), {"oid": oid})
-        if wc:
-            await session.execute(text(_WITHDRAW_CP), {"oid": oid})
+        paired = (await session.execute(text(_BAK_FIELDS_PAIRED),
+                                        {"oid": oid, "wo": wo, "wc": wc})).scalar_one()
+        if not paired:
+            await session.rollback()
+            return BACKUP_FIELDS_MISMATCH
+    deleted = (await session.execute(text(_DELETE_ROWS), {"ids": ids, "oid": oid})).rowcount
+    if deleted != len(ids):
+        await session.rollback()
+        return DRIFT
+    if wo:
+        await session.execute(text(_WITHDRAW_OPENING), {"oid": oid})
+    if wc:
+        await session.execute(text(_WITHDRAW_CP), {"oid": oid})
     await session.commit()
-    return True
+    return None
 
 
 async def _set_bounds(session) -> None:
@@ -753,6 +811,8 @@ async def repair(
         "plan_hash": digest,
         "legs_written": 0,
         "drift_refused": 0,
+        "backup_refused": 0,
+        "refused_legs": [],
     }
     if not apply:
         await session.rollback()
@@ -767,27 +827,35 @@ async def repair(
         await session.execute(text(_BAK_ROWS_CREATE))
         await session.execute(text(_BAK_FIELDS_CREATE))
         await session.commit()
-    written = drift = 0
+    written = drift = backup = 0
+    refused: list[dict] = []
     for p in planned:
         await _set_bounds(session)
         try:
-            ok = await _apply_leg(session, p, digest)
+            reason = await _apply_leg(session, p, digest)
         except Exception as e:  # noqa: BLE001 — one leg never stops its siblings
             await session.rollback()
             logger.warning("%s leg %s refused: %s", ISSUE, p["outcome_id"], e)
-            ok = False
-        if ok:
+            reason = "error"
+        if reason is None:
             written += 1
+            continue
+        refused.append({"outcome_id": p["outcome_id"], "reason": reason})
+        if reason in (BACKUP_ROWS_MISMATCH, BACKUP_FIELDS_MISMATCH):
+            backup += 1
+            logger.warning("%s leg %s refused: an existing backup is not this run's "
+                           "locked prior (%s); nothing withdrawn", ISSUE, p["outcome_id"],
+                           reason)
         else:
             drift += 1
     if written:
         logger.warning(
             "%s withdrew the Over-token history from %s Under legs (%s refused on "
-            "drift). Backup in %s / %s. D51 undo:\n%s",
-            ISSUE, written, drift, BAK_ROWS, BAK_FIELDS, restore_command(),
+            "drift, %s on backup mismatch). Backup in %s / %s. D51 undo:\n%s",
+            ISSUE, written, drift, backup, BAK_ROWS, BAK_FIELDS, restore_command(),
         )
     return {**summary, "terminal": "applied", "legs_written": written,
-            "drift_refused": drift}
+            "drift_refused": drift, "backup_refused": backup, "refused_legs": refused}
 
 
 async def restore(session, apply: bool = False) -> dict[str, Any]:

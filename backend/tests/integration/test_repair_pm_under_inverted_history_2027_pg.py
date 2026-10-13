@@ -432,3 +432,166 @@ async def test_the_undo_never_overwrites_a_later_writer(db):
     assert float(fields[0][1]) == 0.8333 and fields[0][4] == "first_snapshot"
     at_t0 = [r for r in rows if r[3] == T0]
     assert len(at_t0) == 1 and float(at_t0[0][2]) == 0.255
+
+
+# ---------------------------------------------------------------------------
+# D51 backup pairing: an older bank kept by ON CONFLICT DO NOTHING must be
+# exactly this run's locked prior, or the leg is refused before any write.
+# ---------------------------------------------------------------------------
+
+async def _bank_snapshot(maker):
+    async with maker() as s:
+        rows = (await s.execute(text(
+            f"SELECT {rp._SNAP_COLS}, plan_hash FROM {rp.BAK_ROWS} ORDER BY id"))).all()
+        fields = (await s.execute(text(
+            f"SELECT outcome_id, withdrew_opening, prior_opening_probability,"
+            f" prior_opening_american_odds, prior_opening_captured_at, prior_opening_source,"
+            f" withdrew_cp, prior_calibration_probability, plan_hash"
+            f" FROM {rp.BAK_FIELDS} ORDER BY outcome_id"))).all()
+    return [tuple(r) for r in rows], [tuple(r) for r in fields]
+
+
+async def _create_banks(maker):
+    async with maker() as s:
+        await s.execute(text(rp._BAK_ROWS_CREATE))
+        await s.execute(text(rp._BAK_FIELDS_CREATE))
+        await s.commit()
+
+
+async def _earlier_bank(maker, *, row_set=None, field_set=None, wo=True, wc=True):
+    """Leave the bank an earlier run would have left: move the live row/fields
+    to that run's state, copy with the module's own SQL, and move them back."""
+    await _create_banks(maker)
+    snap = await _state(maker, {SPEC_UNDER})
+    async with maker() as s:
+        if row_set is not None:
+            await s.execute(text(f"UPDATE futures_odds_snapshots SET {row_set} WHERE id = 100"))
+            await s.execute(text(rp._BAK_ROWS_COPY),
+                            {"ids": [100], "oid": SPEC_UNDER, "plan_hash": "earlier"})
+        if field_set is not None:
+            await s.execute(text(f"UPDATE futures_outcomes SET {field_set} WHERE id = :o"),
+                            {"o": SPEC_UNDER})
+            await s.execute(text(rp._BAK_FIELDS_COPY),
+                            {"oid": SPEC_UNDER, "wo": wo, "wc": wc, "plan_hash": "earlier"})
+        # Put the live leg back exactly as seeded; only the bank keeps the move.
+        await s.execute(text(
+            "UPDATE futures_odds_snapshots SET probability = 0.745, last_price = 0.745,"
+            " captured_at = :t0 WHERE id = 100"), {"t0": T0})
+        op, src, at, cp = FIELDS[SPEC_UNDER]
+        await s.execute(text(
+            "UPDATE futures_outcomes SET opening_probability = :op, opening_source = :src,"
+            " opening_captured_at = :at, opening_american_odds = NULL,"
+            " calibration_probability = :cp WHERE id = :o"),
+            {"op": op, "src": src, "at": at, "cp": cp, "o": SPEC_UNDER})
+        await s.commit()
+    assert await _state(maker, {SPEC_UNDER}) == snap
+
+
+async def _assert_spec_refused_flip_written(maker, out, reason, spec_before):
+    assert out["terminal"] == "applied"
+    assert out["legs_written"] == 1 and out["backup_refused"] == 1
+    assert out["drift_refused"] == 0
+    assert out["refused_legs"] == [{"outcome_id": SPEC_UNDER, "reason": reason}]
+    # Zero snapshot deletion and zero field withdrawal on the refused leg.
+    assert await _state(maker, {SPEC_UNDER}) == spec_before
+    # The sibling leg is repaired whole.
+    rows, fields = await _state(maker, {FLIP_UNDER})
+    assert rows == [] and fields[0][1:6] == (None, None, None, None, None)
+
+
+@pytest.mark.parametrize("stale", [
+    "probability = 0.5, last_price = 0.5",
+    "captured_at = captured_at - interval '1 day'",
+], ids=["different_probability", "different_captured_at"])
+async def test_a_stale_row_bank_at_the_same_id_refuses_the_leg(db, stale):
+    # A bank row from an earlier run holds id 100 (the specimen's first false
+    # row) with a value or instant this run is not about to delete.
+    await _earlier_bank(db, row_set=stale)
+    spec_before = await _state(db, {SPEC_UNDER})
+    bank_before = await _bank_snapshot(db)
+    plan = await _run(db, limit=50)
+    out = await _run(db, limit=50, apply=True, plan_hash=plan["plan_hash"])
+    await _assert_spec_refused_flip_written(db, out, rp.BACKUP_ROWS_MISMATCH, spec_before)
+    rows, fields = await _bank_snapshot(db)
+    # The refused leg's transaction left no copy of its own; the stale row stands.
+    assert [r for r in rows if r[1] == SPEC_UNDER] == [
+        r for r in bank_before[0] if r[1] == SPEC_UNDER]
+    assert all(f[0] != SPEC_UNDER for f in fields)
+
+
+@pytest.mark.parametrize("stale", [
+    ("opening_probability = 0.5", True, True),
+    ("opening_source = 'first_snapshot'", True, True),
+    ("calibration_probability = 0.5", True, True),
+    ("last_updated = last_updated", True, False),
+    ("last_updated = last_updated", False, True),
+], ids=["opening_value", "opening_source", "calibration", "cp_flag", "opening_flag"])
+async def test_a_stale_field_bank_refuses_the_leg(db, stale):
+    field_set, wo, wc = stale
+    await _earlier_bank(db, field_set=field_set, wo=wo, wc=wc)
+    spec_before = await _state(db, {SPEC_UNDER})
+    bank_before = await _bank_snapshot(db)
+    plan = await _run(db, limit=50)
+    out = await _run(db, limit=50, apply=True, plan_hash=plan["plan_hash"])
+    await _assert_spec_refused_flip_written(db, out, rp.BACKUP_FIELDS_MISMATCH, spec_before)
+    rows, fields = await _bank_snapshot(db)
+    # The leg's row copy rolled back with it; the stale field bank stands.
+    assert all(r[1] != SPEC_UNDER for r in rows)
+    assert [f for f in fields if f[0] == SPEC_UNDER] == [
+        f for f in bank_before[1] if f[0] == SPEC_UNDER]
+
+
+async def test_the_exact_bank_strawman_passes_the_pair_check(db):
+    """Control for the two falsifiers: a pre-existing bank that IS this run's
+    prior (the same seed values) is accepted, so the refusals above are the
+    mismatch and not the mere presence of an older bank."""
+    await _earlier_bank(db, row_set="probability = probability",
+                        field_set="last_updated = last_updated")
+    plan = await _run(db, limit=50)
+    out = await _run(db, limit=50, apply=True, plan_hash=plan["plan_hash"])
+    assert out["legs_written"] == 2 and out["backup_refused"] == 0
+    assert out["refused_legs"] == []
+
+
+async def test_an_exact_bank_retry_after_restore_applies_and_round_trips(db):
+    before = await _state(db)
+    plan = await _run(db, limit=50)
+    first = await _run(db, limit=50, apply=True, plan_hash=plan["plan_hash"])
+    assert first["legs_written"] == 2
+    bank_after_first = await _bank_snapshot(db)
+    async with db() as s:
+        await rp.restore(s, apply=True)
+    assert await _state(db) == before
+    # Same page, same state: the same address, and every kept bank row is exact.
+    replan = await _run(db, limit=50)
+    assert replan["plan_hash"] == plan["plan_hash"]
+    again = await _run(db, limit=50, apply=True, plan_hash=replan["plan_hash"])
+    assert again["legs_written"] == 2 and again["backup_refused"] == 0
+    assert again["refused_legs"] == []
+    assert await _bank_snapshot(db) == bank_after_first
+    async with db() as s:
+        out = await rp.restore(s, apply=True)
+    assert (out["restored_rows"], out["restored_openings"], out["restored_cp"]) == (9, 2, 2)
+    assert await _state(db) == before
+
+
+async def test_a_retry_after_the_state_moved_since_restore_is_refused(db):
+    """The audit's scenario end to end: apply, restore, a later writer moves the
+    restored opening, re-review, retry. The bank still holds the FIRST prior, so
+    the retry would withdraw a value nobody backed up. Refused whole."""
+    plan = await _run(db, limit=50)
+    await _run(db, limit=50, apply=True, plan_hash=plan["plan_hash"])
+    async with db() as s:
+        await rp.restore(s, apply=True)
+        await s.execute(text(
+            "UPDATE futures_outcomes SET calibration_probability = 0.74 WHERE id = :o"),
+            {"o": SPEC_UNDER})
+        await s.commit()
+    spec_before = await _state(db, {SPEC_UNDER})
+    replan = await _run(db, limit=50)
+    assert SPEC_UNDER in replan["planned_outcome_ids"]
+    out = await _run(db, limit=50, apply=True, plan_hash=replan["plan_hash"])
+    assert out["backup_refused"] == 1
+    assert out["refused_legs"] == [{"outcome_id": SPEC_UNDER,
+                                    "reason": rp.BACKUP_FIELDS_MISMATCH}]
+    assert await _state(db, {SPEC_UNDER}) == spec_before
