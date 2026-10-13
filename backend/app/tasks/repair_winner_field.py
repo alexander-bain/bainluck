@@ -405,20 +405,32 @@ def yes_winner(clob_market: dict | None) -> bool | None:
     for t in tokens:
         if str(t.get("outcome") or "").strip().lower() == "yes":
             w = t.get("winner")
-            return bool(w) if w is not None else None
+            # Only the JSON boolean is an answer: bool("false") is True.
+            return w if isinstance(w, bool) else None
     return None
+
+
+def names_condition(condition_id: str, clob_market: dict | None) -> bool:
+    """Does this CLOB body name the condition id we asked about?
+
+    A body naming a different id, or none at all (missing, empty, not a string),
+    is not testimony about this leg (CERT-4102).
+    """
+    if not isinstance(clob_market, dict):
+        return False
+    echoed = clob_market.get("condition_id")
+    return (isinstance(echoed, str) and bool(echoed.strip())
+            and echoed.lower() == str(condition_id).lower())
 
 
 def venue_answer(condition_id: str, clob_market: dict | None) -> bool | None:
     """:func:`yes_winner`, but only for the condition id we asked about.
 
-    A CLOB body that names a different condition id is not testimony about this
+    A CLOB body that does not name that condition id is not testimony about this
     leg, so it reads as "cannot say".
     """
-    if clob_market:
-        echoed = clob_market.get("condition_id")
-        if echoed and str(echoed).lower() != str(condition_id).lower():
-            return None
+    if not names_condition(condition_id, clob_market):
+        return None
     return yes_winner(clob_market)
 
 

@@ -376,6 +376,112 @@ class TestVenueAnswer:
         assert venue_answer("0xasked", body) is None
         assert venue_answer("0xOTHER", body) is True
 
+    # CERT-4102's 1527-CLOB-ANSWER-SHAPE-GUARD: a body that does not NAME the
+    # asked condition is not testimony about it either. Only a mismatched
+    # nonempty echo was refused before; a missing or empty one passed.
+    @pytest.mark.parametrize("echo", ["absent", None, "", "   ", 0, ["0xasked"]])
+    def test_a_body_that_does_not_name_the_asked_condition_is_no_answer(self, echo):
+        body = {"tokens": [{"outcome": "Yes", "winner": True}]}
+        if echo != "absent":
+            body["condition_id"] = echo
+        assert venue_answer("0xasked", body) is None
+
+    @pytest.mark.parametrize("winner", ["false", "true", "False", "", "0", 0, 1, [], {}])
+    def test_a_non_boolean_yes_winner_is_no_answer(self, winner):
+        # bool("false") is True: a string the venue never sent as a boolean
+        # must not crown a leg.
+        body = {"condition_id": "0xasked",
+                "tokens": [{"outcome": "Yes", "winner": winner}]}
+        assert yes_winner(body) is None
+        assert venue_answer("0xasked", body) is None
+
+    @pytest.mark.parametrize("won", [True, False])
+    def test_a_well_formed_boolean_answer_is_kept(self, won):
+        body = {"condition_id": "0xASKED",
+                "tokens": [{"outcome": "Yes", "winner": won},
+                           {"outcome": "No", "winner": not won}]}
+        assert venue_answer("0xasked", body) is won
+
+
+class _Result:
+    def __init__(self, rows):
+        self.rows = rows
+
+    def mappings(self):
+        return self
+
+    def first(self):
+        return self.rows[0] if self.rows else None
+
+    def all(self):
+        return self.rows
+
+
+class _ReadSession:
+    """Answers exactly the two reads ``_plan_market`` makes, and nothing else."""
+
+    def __init__(self, market, legs):
+        self.by_sql = {repair_mod._MARKET_SQL: [market],
+                       repair_mod._OUTCOMES_SQL: legs}
+
+    async def execute(self, stmt, params=None):
+        return _Result(self.by_sql[str(stmt)])
+
+
+def _clob(echo, won):
+    body = {"closed": True, "tokens": [{"outcome": "Yes", "winner": won},
+                                       {"outcome": "No", "winner": not won}]}
+    if echo is not None:
+        body["condition_id"] = echo
+    return body
+
+
+class _Clob:
+    def __init__(self, answer):
+        self.answer = answer
+
+    async def get_clob_market_by_condition(self, cid):
+        return self.answer(cid)
+
+
+class TestPlanRefusesAMalformedAnswer:
+    """The guard protects the outcome plan, not just its status successor."""
+
+    WON = {SPECIMEN[0]["external_id"]: False, SPECIMEN[1]["external_id"]: True,
+           SPECIMEN[2]["external_id"]: False}
+
+    async def _plan(self, answer):
+        import time
+        return await repair_mod._plan_market(
+            _ReadSession(_market(), [dict(r) for r in SPECIMEN]), _Clob(answer),
+            55254886, time.monotonic() + 60)
+
+    async def test_the_valid_venue_answer_plans_the_one_winner(self):
+        plan = await self._plan(lambda cid: _clob(cid, self.WON[cid]))
+        assert (plan["action"], plan["winner_outcome_id"]) == ("repair", 205060694)
+
+    @pytest.mark.parametrize("echo", [None, ""])
+    async def test_a_body_without_the_asked_id_plans_nothing(self, echo):
+        plan = await self._plan(lambda cid: _clob(echo, self.WON[cid]))
+        assert (plan["action"], plan["reason"]) == ("skip", "unresolved_legs")
+
+    async def test_a_string_false_on_a_void_fixture_crowns_nobody(self):
+        # The venue decided nobody won; one leg's Yes answer is the STRING
+        # "false". Coerced, it would be the only winner and be written.
+        answers = {SPECIMEN[0]["external_id"]: "false",
+                   SPECIMEN[1]["external_id"]: False, SPECIMEN[2]["external_id"]: False}
+        plan = await self._plan(lambda cid: _clob(cid, answers[cid]))
+        assert (plan["action"], plan["reason"]) == ("skip", "unresolved_legs")
+
+    @pytest.mark.parametrize("won,reason", [
+        ((False, False, False), "no_winner_void"),
+        ((True, True, False), "multiple_clob_winners"),
+    ])
+    async def test_void_and_contradictory_controls_still_refuse(self, won, reason):
+        answers = {r["external_id"]: w for r, w in zip(SPECIMEN, won)}
+        plan = await self._plan(lambda cid: _clob(cid, answers[cid]))
+        assert (plan["action"], plan["reason"]) == ("skip", reason)
+
 
 class TestPlannedWrites:
     def test_opening_and_calibration_are_decided_separately(self):
