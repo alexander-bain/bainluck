@@ -2272,6 +2272,7 @@ class TestSeriesCardMarketsAreRepricedOnTheShortClock:
         assert seen["params"] == {
             "stale_minutes": fpr.IN_PLAY_REFRESH_MINUTES,
             "series_ticker_re": fpr.SERIES_CARD_TICKER_RE,
+            "title_ticker_re": fpr.TITLE_TICKER_RE,
             "series_card_limit": fpr.SERIES_CARD_LIMIT,
         }
         assert [m["id"] for m in out] == [62383749]
@@ -2342,3 +2343,135 @@ class TestTheRunRepricesTheSeriesCard:
         # The identity TTL, never the class 6h — otherwise the next five beats
         # skip it and a series card goes back to printing the pre-game price.
         assert h.marks.get((62383749,)) == fpr.IN_PLAY_REFRESH_MINUTES * 60
+
+
+# --- #1845: the playoff grid's title and pennant markets ride the same clock ---
+
+
+class TestTitleMarketsRideTheSeriesCardClock:
+    """#1845. /playoffs/mlb printed Dodgers K32 / Brewers K35 at 01:44Z on
+    2026-10-13 while Kalshi read 0.198 / 0.435: every leg of `KXMLB-26` (market
+    275, tier 1) last snapshotted 22:22:48Z, and the class arm's 6h market-level
+    gate was the only rail that could select it.
+    """
+
+    #: The open rows the grid's championship and pennant columns render,
+    #: read off production 2026-10-13 (ids 275, 274, 270, 52755651, 52755659,
+    #: 12046267).
+    TITLE_TICKERS = (
+        "KXMLB-26",
+        "KXMLBAL-26",
+        "KXMLBNL-26",
+        "KXNBA-27",
+        "KXNHL-27",
+        "KXWNBA-26",
+    )
+
+    #: Same prefixes, different questions: none of them is a title.
+    NOT_A_TITLE = (
+        "KXMLBALCY-26",  # AL Cy Young
+        "KXMLBNLWEST-26",  # a division
+        "KXMLBPLAYOFFS-26",
+        "KXMLBBESTRECORD-26",
+        "KXMLBALCS-26",
+        "KXTEAMSINWS-26",
+        "KXNBAEAST-27",
+        "KXMLB-26-LAD",  # an OUTCOME ticker, not a market
+        "KXMLBSERIES-26BOSNYYWC",
+        "KXSB-27",
+        "XKXMLB-26",
+    )
+
+    def test_the_title_family_selects_every_title_and_nothing_else(self):
+        family = re.compile(fpr.TITLE_TICKER_RE)
+        missed = [t for t in self.TITLE_TICKERS if not family.search(t)]
+        leaked = [t for t in self.NOT_A_TITLE if family.search(t)]
+        assert missed == [] and leaked == [], (missed, leaked)
+
+    def test_the_two_families_stay_disjoint(self):
+        # The series family's guard pins `KXMLB-26` OUT; the title family must
+        # not take a series row either, or the counter below double-reads.
+        series = re.compile(fpr.SERIES_CARD_TICKER_RE)
+        title = re.compile(fpr.TITLE_TICKER_RE)
+        assert not any(series.search(t) for t in self.TITLE_TICKERS)
+        assert not any(
+            title.search(t)
+            for t in TestSeriesCardMarketsAreRepricedOnTheShortClock.PRODUCTION_SERIES_TICKERS
+        )
+
+    def test_the_statement_admits_either_family_on_the_same_bounds(self):
+        sql = _normalise(fpr._SERIES_CARD_CANDIDATE_SQL.text)
+        assert (
+            "(fm.external_id ~ :series_ticker_re or fm.external_id ~ :title_ticker_re)"
+            in sql.lower()
+        )
+        assert "fm.source = 'kalshi'" in sql
+        assert "make_interval(mins => :stale_minutes)" in sql
+
+
+class _TitleHarness(_SeriesCardHarness):
+    """`KXMLB-26` as production holds it: tier 1, so the class arm returns it
+    too, and the series arm must keep it on the identity clock."""
+
+    SERIES_ROW = (275, "kalshi", "KXMLB-26", 123192109, None, None)
+
+    def __init__(self, *, signal):
+        super().__init__(signal=signal)
+        self.class_rows = [self.SERIES_ROW + (0, 1)]
+
+    class _Session(_SeriesCardHarness._Session):
+        async def execute(self, statement, params=None):
+            if "series_ticker_re" in str(statement):
+                return _RunHarness._Result([_TitleHarness.SERIES_ROW])
+            return await super().execute(statement, params)
+
+
+class TestTheRunRepricesTheWorldSeriesBoard:
+    @pytest.mark.asyncio
+    async def test_fetched_once_counted_as_a_title_and_marked_on_the_short_ttl(
+        self, monkeypatch
+    ):
+        from app.utils.feed_served_markets import SERVED_EMPTY
+
+        signal = type(
+            "Sig",
+            (),
+            {
+                "ids": [],
+                "state": SERVED_EMPTY,
+                "green_allowed": True,
+                "shapes": 0,
+                "stale_shapes": 0,
+                "unreadable_shapes": 0,
+            },
+        )()
+        h = _TitleHarness(signal=signal)
+        stats = await h.run(monkeypatch)
+
+        assert stats["series_card_candidates"] == 1
+        assert stats["series_card_title_candidates"] == 1
+        assert stats["candidates"] == 1
+        assert h.kalshi_fetched == ["KXMLB-26"]
+        # Not the class arm's 6h marker, which would hold the board through
+        # the next five beats exactly as the 6h snapshot gate did.
+        assert h.marks.get((275,)) == fpr.IN_PLAY_REFRESH_MINUTES * 60
+
+    @pytest.mark.asyncio
+    async def test_a_series_row_is_not_counted_as_a_title(self, monkeypatch):
+        from app.utils.feed_served_markets import SERVED_EMPTY
+
+        signal = type(
+            "Sig",
+            (),
+            {
+                "ids": [],
+                "state": SERVED_EMPTY,
+                "green_allowed": True,
+                "shapes": 0,
+                "stale_shapes": 0,
+                "unreadable_shapes": 0,
+            },
+        )()
+        stats = await _SeriesCardHarness(signal=signal).run(monkeypatch)
+        assert stats["series_card_candidates"] == 1
+        assert stats["series_card_title_candidates"] == 0
