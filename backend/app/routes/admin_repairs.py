@@ -16,7 +16,8 @@ transactional session and RETURNS its own before/after census in the response bo
              | winner-field-coherence | reachability-census
              | coverage-rung-census
              | prop-threshold-cliff-census | overlap-trading-census
-             | winner-field-repair | event-team-binding
+             | winner-field-repair | winner-field-repair-restore
+             | event-team-binding
              | kalshi-settlement-status | statpal-blank-ids
              | statpal-fabricated-ids
              | kalshi-fabricated-loss-census | kalshi-fabricated-loss
@@ -94,7 +95,9 @@ transactional session and RETURNS its own before/after census in the response bo
      them. Re-synced again 2026-10-12, calibration/#2351, adding the two
      team-total-game-score entries in the commit that registered them.
      Re-synced again 2026-10-12, calibration/#2027, adding the two
-     pm-under-inverted-history entries in the commit that registered them.)
+     pm-under-inverted-history entries in the commit that registered them.
+     Re-synced again 2026-10-13, calibration/#1527, adding
+     winner-field-repair-restore in the commit that registered it.)
 
 Repairs whose signature declares ``limit`` / ``sport`` / ``newest_first`` /
 ``offset`` / ``after_id`` / ``after_date`` / ``plan_hash`` / ``expected_blank`` /
@@ -243,13 +246,18 @@ _REPAIRS = {
     # accepted and ignored.
     "overlap-trading-census": ("app.tasks.census_overlap_trading", "census"),
     # CAL-P007 (#1527), approved by Alex 2026-08-07 under attended capped-batch
-    # discipline: the WRITE half. Re-resolves an incoherent single-winner field
-    # from CLOB per-leg authority (each leg is its own condition_id), then nulls
-    # the impossible captured prices. Fails closed on anything ambiguous. Writes
-    # at most APPLY_MARKET_CAP markets per call — a module constant, not a param,
-    # so the cap cannot be dialled off mid-run. Accepts ?limit=&offset=.
+    # discipline: the WRITE half. Re-resolves an incoherent three-way soccer
+    # field (Polymarket, exactly one Draw leg) from CLOB per-leg authority (each
+    # leg is its own condition_id), then nulls the impossible captured prices.
+    # Fails closed on anything ambiguous; golf, football and every other cohort
+    # are refused by name. Discovery walk ?limit=&offset= never writes; apply
+    # needs ?only_ids= (at most APPLY_MARKET_CAP, a module constant) and the dry
+    # run's ?plan_hash=, re-checks every leg under lock, one market per
+    # transaction. D51: backup in `bak_1527_winner_field_outcomes`; the
+    # `-restore` name is the audit (dry run) and the undo.
     # ATTENDED ONLY: never wire this to a beat.
     "winner-field-repair": ("app.tasks.repair_winner_field", "repair"),
+    "winner-field-repair-restore": ("app.tasks.repair_winner_field", "restore"),
     # #1798: events whose home/away ``team_id`` dereferences to a DIFFERENT club
     # than the row's own ``*_team_name`` (153 sides measured across the 2026 MLB
     # season), or to the right club's ``baseball_mlb_preseason`` twin. Detection
