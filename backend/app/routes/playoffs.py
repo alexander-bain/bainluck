@@ -1143,6 +1143,11 @@ def _match_market_to_column(
     return None
 
 
+# Two sources closer than this agree; their summing to ~1.0 is not evidence
+# that one shows the "No" side (#11013).
+_INVERSION_MIN_GAP = 0.10
+
+
 def _correct_inverted_probs(probs: list[float]) -> list[float]:
     """Detect and correct probability inversions.
 
@@ -1150,14 +1155,19 @@ def _correct_inverted_probs(probs: list[float]) -> list[float]:
     the values from two sources will sum to ~1.0. Detect this and invert
     the outlier.
 
+    Two sources near 50% that AGREE also sum to ~1.0 (0.53 + 0.515), and
+    inverting one of them turns a favourite into an underdog (#11013). An
+    inversion is only evidenced when the two sources disagree, so a pair
+    closer than ``_INVERSION_MIN_GAP`` is left alone.
+
     Returns the corrected list (same length, same order).
     """
     if len(probs) < 2:
         return probs
     if len(probs) == 2:
         a, b = probs
-        # If they sum to ~1.0, one is inverted
-        if abs(a + b - 1.0) < 0.05:
+        # If they sum to ~1.0 while disagreeing, one is inverted
+        if abs(a + b - 1.0) < 0.05 and abs(a - b) > _INVERSION_MIN_GAP:
             # Invert the higher one (the one showing "No" probability)
             if a > b:
                 return [1.0 - a, b]
