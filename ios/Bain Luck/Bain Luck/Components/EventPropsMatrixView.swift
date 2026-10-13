@@ -382,9 +382,7 @@ struct EventPropsMatrixDetailView: View {
                 if let basis = EventPropsMatrixLayout.basisText(row) {
                     Text(basis).font(.subheadline).foregroundStyle(.secondary)
                 }
-                if let age = SourceAge.format(row.current.observedAt) {
-                    Text("Updated \(age)").font(.caption).foregroundStyle(.secondary)
-                }
+                SourceAgeText(observedAt: row.current.observedAt, prefix: "Updated")
             }
             .accessibilityElement(children: .combine)
             if row.current.quotedProbability != nil {
@@ -437,9 +435,7 @@ struct EventPropsMatrixDetailView: View {
                     VStack(alignment: typeSize.isAccessibilitySize ? .leading : .trailing, spacing: 2) {
                         Text(EventPropsMatrixLayout.exactPercent(c.probability))
                             .font(.subheadline.monospacedDigit())
-                        if let age = SourceAge.format(c.observedAt) {
-                            Text(age).font(.caption2).foregroundStyle(.secondary)
-                        }
+                        SourceAgeText(observedAt: c.observedAt, font: .caption2)
                     }
                 }
                 .accessibilityElement(children: .combine)

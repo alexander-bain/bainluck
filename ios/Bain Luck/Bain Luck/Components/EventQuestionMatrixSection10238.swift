@@ -282,9 +282,7 @@ struct EventQuestionMatrixSection10238: View {
                                         .foregroundStyle(.secondary)
                                 }
                             }
-                            if let age = SourceAge.format(resolved.option.observedAt) {
-                                Text("Updated \(age)").font(.caption).foregroundStyle(.secondary)
-                            }
+                            SourceAgeText(observedAt: resolved.option.observedAt, prefix: "Updated")
                         }
                         .fixedSize(horizontal: false, vertical: true)
                         .accessibilityElement(children: .combine)
@@ -320,15 +318,11 @@ struct EventQuestionMatrixSection10238: View {
         Section(comparison.caption) {
             VStack(alignment: .leading, spacing: 8) {
                 Text("Before: \(exactPercent(comparison.baseline))")
-                if let age = SourceAge.format(comparison.baselineObservedAt) {
-                    Text(age).font(.caption).foregroundStyle(.secondary)
-                }
+                SourceAgeText(observedAt: comparison.baselineObservedAt)
                 // The served delta belongs only beside its own Latest value;
                 // it never annotates the published hero or a raw source quote.
                 Text("Latest: \(exactPercent(comparison.latest)) · \(comparison.points.formatted(.number.sign(strategy: .always()).precision(.fractionLength(0...1)))) \(abs(comparison.points) == 1 ? "point" : "points")")
-                if let age = SourceAge.format(comparison.latestObservedAt) {
-                    Text(age).font(.caption).foregroundStyle(.secondary)
-                }
+                SourceAgeText(observedAt: comparison.latestObservedAt)
             }
             .font(.subheadline.monospacedDigit())
             .accessibilityElement(children: .combine)
@@ -363,9 +357,7 @@ struct EventQuestionMatrixSection10238: View {
                         } else {
                             Text("Unavailable").foregroundStyle(.secondary)
                         }
-                        if let age = SourceAge.format(source.observedAt) {
-                            Text(age).font(.caption).foregroundStyle(.secondary)
-                        }
+                        SourceAgeText(observedAt: source.observedAt)
                     }
                 }
                 .accessibilityElement(children: .combine)
