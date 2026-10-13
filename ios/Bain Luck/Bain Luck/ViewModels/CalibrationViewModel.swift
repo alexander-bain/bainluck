@@ -910,7 +910,12 @@ final class CalibrationViewModel: ObservableObject {
 
     // MARK: - Colors / labels
 
-    func eceColor(_ ece: Double) -> Color { ece < 4 ? .green : (ece < 8 ? .blue : .orange) }
+    /// #10982: the website's bands — `< 3` green, `< 5` blue, else orange — on the
+    /// hero, the cohort row and every category cell (`app/calibration/page.tsx`),
+    /// and the same cut-points `eceQualityLabel` already uses. This was `< 4` /
+    /// `< 8`, so AFL 5.1 printed orange on the web and blue here. Pinned against
+    /// web by `__tests__/ios/calibrationEceColourParity10982.test.ts`.
+    func eceColor(_ ece: Double) -> Color { ece < 3 ? .green : (ece < 5 ? .blue : .orange) }
 
     /// #3650: a withheld metric has no quality colour. Painting an unmeasured
     /// row green is the same claim its fabricated `0.0` was making, in pixels.
