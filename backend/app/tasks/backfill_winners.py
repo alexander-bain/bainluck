@@ -8515,6 +8515,7 @@ async def _backfill_polymarket_winners_from_api(
     import json as _json
     from app.services.polymarket_api import PolymarketAPIService
     from app.utils.polymarket_champion_mint import MINTED as _CHAMPION_MINTED
+    from app.utils.polymarket_champion_mint import venue_has_closed_the_leg
 
     stats = {
         "markets_checked": 0,
@@ -8532,6 +8533,11 @@ async def _backfill_polymarket_winners_from_api(
         # would show first (gotcha #53).
         "champions_minted": 0,
         "champion_mint": {},
+        # #11007. Legs this run left ungraded because the venue has not closed
+        # them. Our `status = 'resolved'` selected the market; that is local
+        # bookkeeping, not the venue's result, so an open leg's quote is never
+        # read as its outcome.
+        "legs_open_at_venue": 0,
         "errors": [],
     }
 
@@ -8931,6 +8937,12 @@ async def _backfill_polymarket_winners_from_api(
                         stats["not_settled"] += 1
                         continue
 
+                    # #11007: a terminal-looking quote on an open market is a
+                    # price, not a result — see the negRisk branch below.
+                    if not venue_has_closed_the_leg(market_data.get("closed")):
+                        stats["legs_open_at_venue"] += 1
+                        continue
+
                     yes_won = prices[0] >= 0.90
                     stats["prices_synced"] += 1
 
@@ -9082,6 +9094,39 @@ async def _backfill_polymarket_winners_from_api(
                                     m.get("conditionId") or m.get("condition_id") or ""
                                 )
                                 if not m_cid:
+                                    continue
+
+                                # #11007 — GRADE ONLY A LEG THE VENUE HAS
+                                # CLOSED. This branch used to grade every
+                                # sub-market of the event on its quote
+                                # (`>= 0.90` won, anything else lost), and the
+                                # only gate in front of it is OUR
+                                # `status = 'resolved'`, which an elapsed or
+                                # wrong `resolution_date` can write with no
+                                # venue result behind it. Specimen: parent
+                                # 113883, Gamma 106884 ("Fed rate cut by...?"),
+                                # resolved by us on 2026-07-21 on a stored
+                                # `resolution_date` of 2026-06-17 while the
+                                # venue's own event runs to 2028. On 2026-09-28
+                                # this loop stamped the October 2026 leg
+                                # (`closed: false`, quoted 0.0095) and the
+                                # December 2026 leg (`closed: false`, 0.023)
+                                # `is_winner=false, resolution_source=
+                                # 'api_settlement'`, and the page printed both
+                                # meetings as Lost a month before the first one
+                                # met. `api_settlement` is authoritative, so no
+                                # later pass could take it back.
+                                #
+                                # `closed` is the venue's own statement that the
+                                # leg is settled — the flag the champion mint
+                                # below already demands (CERT-2893), reused so
+                                # the two cannot disagree. An open leg is left
+                                # exactly as it was: no grade and no price sync
+                                # (its live price belongs to the poll). A field
+                                # that genuinely closed sends `closed: true` on
+                                # every leg, so it grades as before.
+                                if not venue_has_closed_the_leg(m.get("closed")):
+                                    stats["legs_open_at_venue"] += 1
                                     continue
 
                                 m_prices_raw = (
@@ -9285,6 +9330,11 @@ async def _backfill_polymarket_winners_from_api(
 
                         if max(prices) < 0.90 or min(prices) > 0.10:
                             stats["not_settled"] += 1
+                            continue
+
+                        # #11007: same rule as the negRisk branch above.
+                        if not venue_has_closed_the_leg(market_data.get("closed")):
+                            stats["legs_open_at_venue"] += 1
                             continue
 
                         # Determine winner from settlement prices
