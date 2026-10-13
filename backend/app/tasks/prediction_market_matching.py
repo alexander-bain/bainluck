@@ -81,6 +81,8 @@ from app.utils.prediction_market_matching import (
     feeds_win_prob_blend,
     is_combat_fight_ticker,
     is_kalshi_match_segment_ticker,
+    is_kalshi_tennis_match_ticker,
+    kalshi_contract_name_matchup,
     _fuzzy_team_match,
     _names_both_sides,
     _doubles_pair_match,
@@ -4095,6 +4097,10 @@ async def _attempt_ticker_market(
             receipt=receipt,
             probe_allowed=_time_remaining() > _PROBE_MIN_SECONDS_REMAINING,
         )
+        if matched_event is None:
+            matched_event, matchup = await _retry_on_contract_names(
+                session, market, matchup, now, ticker_game_date, receipt, stats,
+            )
         if matched_event and matchup.format_type == "ticker_parsed":
             stats["funnel"].setdefault("ticker_abbrev_linked", 0)
             stats["funnel"]["ticker_abbrev_linked"] += 1
@@ -4113,6 +4119,61 @@ async def _attempt_ticker_market(
         ticker_game_date, now, polymarket_backfill_queue,
         receipt=receipt,
     )
+
+
+async def _kalshi_contract_name_matchup_for(session, market, matchup):
+    """#11022: the title matchup re-named from the market's own winner contracts.
+
+    Kalshi tennis match markets only, and only when the title already names two
+    sides; see :func:`kalshi_contract_name_matchup` for the one-to-one rule.
+    One read of the market's outcome names, made only after the title failed.
+    """
+    from app.models.models import FuturesOutcome
+
+    if not matchup or not matchup.team_b:
+        return None
+    if getattr(market, "source", None) != "kalshi":
+        return None
+    if not is_kalshi_tennis_match_ticker(getattr(market, "external_id", None)):
+        return None
+    result = await session.execute(
+        select(FuturesOutcome.name)
+        .where(FuturesOutcome.market_id == market.id)
+        .order_by(FuturesOutcome.id)
+    )
+    return kalshi_contract_name_matchup(matchup, list(result.scalars().all()))
+
+
+async def _retry_on_contract_names(
+    session, market, matchup, now, game_date, receipt, stats,
+):
+    """#11022: one more search under the contracts' names, after the title found nothing.
+
+    Returns ``(matched_event, matchup)``. On a match the matchup is the contract
+    one, so the link records the names that matched; otherwise the title
+    matchup comes back unchanged and the caller goes on exactly as before
+    (including the auto-create, which still mints from the title).
+    """
+    contract_matchup = await _kalshi_contract_name_matchup_for(session, market, matchup)
+    if contract_matchup is None:
+        return None, matchup
+    matched_event = await _find_matching_event(
+        session, contract_matchup, market, now,
+        game_date_override=game_date,
+        receipt=receipt,
+        probe_allowed=False,
+    )
+    if receipt is not None:
+        receipt.detail["contract_name_pass"] = {
+            "team_a": contract_matchup.team_a,
+            "team_b": contract_matchup.team_b,
+            "matched_event_id": matched_event["event_id"] if matched_event else None,
+        }
+    if not matched_event:
+        return None, matchup
+    stats["funnel"].setdefault("contract_name_linked", 0)
+    stats["funnel"]["contract_name_linked"] += 1
+    return matched_event, contract_matchup
 
 
 async def _flush_pass_receipts(
@@ -4443,6 +4504,10 @@ async def _run_one_attempt(
         receipt=receipt,
         probe_allowed=_time_remaining() > _PROBE_MIN_SECONDS_REMAINING,
     )
+    if matched_event is None:
+        matched_event, matchup = await _retry_on_contract_names(
+            session, market, matchup, now, game_date, receipt, stats,
+        )
 
     await _try_link_market(
         session, market, matchup, matched_event, stats,
