@@ -25,8 +25,8 @@ nonisolated enum LiveUpdateStatus: Equatable {
     var accessibilityText: String {
         switch self {
         case .hidden: return ""
-        case .awaitingUpdate: return "Connected. Waiting for a live price update."
-        case .live: return "Live updates. A live price update has reached this page."
+        case .awaitingUpdate: return "Connected. Waiting for a live probability update."
+        case .live: return "Live updates. A live probability update has reached this page."
         case .autoRefresh: return "Live updates unavailable. Checking automatically."
         case .interrupted: return "Update interrupted. The last refresh failed."
         }

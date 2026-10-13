@@ -18,7 +18,7 @@ nonisolated struct LivePriceReceiptCue: Equatable {
 
     static func accessibilityText(status: LiveUpdateStatus, receivedAt: Date?) -> String {
         let receipt = receivedAt.map {
-            "Last price update received on this device at \($0.formatted(date: .abbreviated, time: .standard))."
+            "Last probability update received on this device at \($0.formatted(date: .abbreviated, time: .standard))."
         } ?? "No live update received on this page yet."
         return "\(status.accessibilityText) \(receipt)"
     }

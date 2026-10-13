@@ -217,7 +217,7 @@ struct FreshnessRevealView: View {
                     .foregroundStyle(.secondary)
                     .accessibilityLabel("Received on this device at \(lastReceivedAt.formatted(date: .abbreviated, time: .standard)).")
             } else {
-                Text("No newer price update received since opening this page.")
+                Text("No newer probability update received since opening this page.")
             }
             if let tier = Confidence.normalize(confidenceTier) {
                 // #10830 — confidence is not delivery: set apart, and described by
@@ -242,6 +242,6 @@ struct FreshnessRevealView: View {
     }
 
     private func receipt(_ receivedAt: Date, now: Date) -> some View {
-        Text("Last price update received \(LivePriceFeedbackPresentation.receiptAge(receivedAt: receivedAt, now: now)).")
+        Text("Last probability update received \(LivePriceFeedbackPresentation.receiptAge(receivedAt: receivedAt, now: now)).")
     }
 }
