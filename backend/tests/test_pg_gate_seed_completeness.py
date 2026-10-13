@@ -102,6 +102,13 @@ COVERED = (
     # snapshot names `reading_count` (NOT NULL, no server default) and a real
     # two-sided book so the Kalshi liquidity rungs keep their hands off.
     "test_calibration_golf_round_timing_pg.py",
+    # #1527. Seeds eleven `futures_markets` and their legs by raw INSERT on a
+    # hand-built schema to prove the guarded three-winner repair. Its first CI
+    # run died here: the throwaway table had no `category` / `external_id`, so
+    # all 25 cases passed locally against a schema narrower than production.
+    # The table now carries both with their real types, and this check reads
+    # the seed against the ORM instead of against the fixture it was written to.
+    "test_repair_winner_field_guarded_apply_1527_pg.py",
     # #2927. Added the same night this check would have saved the trip: the
     # containers gate seeded `INSERT INTO sports (key, name)` and died on
     # `NotNullViolation: null value in column "active"` in CI, because

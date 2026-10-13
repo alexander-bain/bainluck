@@ -170,9 +170,11 @@ async def db(isolated_database, monkeypatch):
             await s.execute(text(f"DROP TABLE IF EXISTS {t}"))
         await s.execute(text("DROP FUNCTION IF EXISTS skip_one_leg() CASCADE"))
         await s.execute(text(
-            "CREATE TABLE futures_markets (id BIGINT PRIMARY KEY, source TEXT NOT NULL,"
-            " name TEXT NOT NULL, llm_sport_category TEXT, market_type TEXT,"
-            " mutually_exclusive BOOLEAN NOT NULL, status TEXT NOT NULL)"))
+            "CREATE TABLE futures_markets (id BIGINT PRIMARY KEY,"
+            " source VARCHAR(50) NOT NULL, external_id VARCHAR(200) NOT NULL,"
+            " name VARCHAR(300) NOT NULL, category VARCHAR(50) NOT NULL,"
+            " llm_sport_category VARCHAR(50), market_type VARCHAR(30),"
+            " mutually_exclusive BOOLEAN NOT NULL, status VARCHAR(20) NOT NULL)"))
         await s.execute(text(
             "CREATE TABLE futures_outcomes (id BIGINT PRIMARY KEY,"
             " market_id BIGINT NOT NULL REFERENCES futures_markets(id),"
@@ -184,10 +186,11 @@ async def db(isolated_database, monkeypatch):
             " last_updated TIMESTAMPTZ NOT NULL)"))
         for mid, (source, sport, mtype) in MARKETS.items():
             await s.execute(text(
-                "INSERT INTO futures_markets (id, source, name, llm_sport_category,"
-                " market_type, mutually_exclusive, status)"
-                " VALUES (:i, :src, :n, :sp, :mt, true, 'open')"),
-                dict(i=mid, src=source, n=f"market {mid}", sp=sport, mt=mtype))
+                "INSERT INTO futures_markets (id, source, external_id, name, category,"
+                " llm_sport_category, market_type, mutually_exclusive, status)"
+                " VALUES (:i, :src, :x, :n, 'championship', :sp, :mt, true, 'open')"),
+                dict(i=mid, src=source, x=f"event-{mid}", n=f"market {mid}", sp=sport,
+                     mt=mtype))
         for oid, mid, name, _ in LEGS:
             op, cp, src = FIELDS.get(oid, (1.0, 1.0, "clean_resolution"))
             await s.execute(text(
