@@ -266,20 +266,28 @@ async def test_an_ungraded_priceless_leg_on_a_finished_game_is_still_hidden():
 
 
 @pytest.mark.asyncio
-async def test_a_voided_market_does_not_readmit_its_priceless_legs():
-    """Every leg lost and none won is a void, not a verdict (`_verdict_is_provable`):
-    a priceless leg there proves nothing and stays off the page. The priced leg
-    is what proves the market reached the loop rather than being dropped whole."""
+async def test_a_voided_market_readmits_only_the_priceless_legs_the_score_proves():
+    """Every leg lost and none won may be a void (`_verdict_is_provable`), and a
+    void's signature is a leg stored LOST on a line the score says came in:
+    Detroit scored 3, so "over 1.5" and "over 2.5" stored losers prove nothing.
+    The priceless 1.5 stays off the page; the priced 2.5 keeps its quote and no
+    verdict. The lines the final score agrees with (3.5, 4.5) are decided by the
+    scoreboard whatever the venue did, and read Lost (#10965, `/events/14454995`;
+    this guard pinned all four off before the all-lost slice)."""
     rows = [
         (93001, K_TEAM_TOTAL, "Detroit over 2.5 runs scored", 0.4, False, "game_score"),
         (93002, K_TEAM_TOTAL, "Detroit over 3.5 runs scored", None, False, "game_score"),
         (93003, K_TEAM_TOTAL, "Detroit over 4.5 runs scored", None, False, "game_score"),
+        (93004, K_TEAM_TOTAL, "Detroit over 1.5 runs scored", None, False, "game_score"),
     ]
     served = _by_name(await _team_totals(rows))
 
-    assert (K_TEAM_TOTAL, "Detroit over 2.5 runs scored") in served
-    assert (K_TEAM_TOTAL, "Detroit over 3.5 runs scored") not in served
-    assert (K_TEAM_TOTAL, "Detroit over 4.5 runs scored") not in served
+    assert served[(K_TEAM_TOTAL, "Detroit over 2.5 runs scored")]["over_probability"] == 0.4
+    assert (K_TEAM_TOTAL, "Detroit over 1.5 runs scored") not in served
+    for leg in ("Detroit over 3.5 runs scored", "Detroit over 4.5 runs scored"):
+        row = served[(K_TEAM_TOTAL, leg)]
+        assert row["is_winner"] is False
+        assert row["over_probability"] == 0.0
 
 
 # ── The period branch: a None row there would bypass 7b's filter entirely ────
