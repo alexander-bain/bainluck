@@ -337,6 +337,55 @@ class TestRefusedByName:
         assert _refusal(event=ev) == "event_not_open_at_venue"
 
 
+class TestLegRowsStoredOnTheParent:
+    """Production, read 2026-10-13 21:08Z (dry run plan_hash 28e9676d…, refused
+    ``unexpected_parent_outcome`` on 84295247): parent 113883 also holds April's
+    ``<cid>_yes`` / ``<cid>_no`` rows, written 2026-05-24, ``(False, None)``. The
+    served payload drops them. They belong to their leg and are judged as the
+    parent's own outcomes are."""
+
+    APRIL = LEG_BY_TITLE["April Meeting"]["conditionId"]
+
+    def _with(self, cid, won=False, src=None, sides=("yes", "no")):
+        return _outcomes() + [
+            {"id": 84295247 + i, "market_id": PARENT_ID,
+             "external_id": f"{cid}_{side}", "name": side.title(),
+             "is_winner": won, "resolution_source": src,
+             "row_version": str(84295247 + i)}
+            for i, side in enumerate(sides)]
+
+    def test_the_production_shape_plans_and_its_rows_are_controls(self):
+        assert self.APRIL not in OPEN
+        p = _plan(outcomes=self._with(self.APRIL))
+        assert p["action"] == "repair", p
+        assert {w["outcome_id"] for w in p["outcome_writes"]} == {
+            PARENT_OUTCOME[OCT], PARENT_OUTCOME[DEC]}
+        assert {84295247, 84295248} <= {c["outcome_id"] for c in p["controls"]}
+
+    def test_a_leg_row_for_a_condition_the_parent_does_not_store_refuses(self):
+        stranger = "0x" + "ab" * 32
+        assert _refusal(outcomes=self._with(stranger)) == "unexpected_parent_outcome"
+
+    def test_an_unknown_suffix_still_refuses(self):
+        assert _refusal(outcomes=self._with(self.APRIL, sides=("side1",))) == (
+            "unexpected_parent_outcome")
+
+    def test_on_an_open_leg_a_sourceless_false_refuses_as_on_the_parent(self):
+        assert _refusal(outcomes=self._with(OCT)) == "sourceless_grade_on_open_leg"
+
+    def test_on_an_open_leg_an_ungraded_row_is_left_alone(self):
+        p = _plan(outcomes=self._with(OCT, won=None))
+        assert p["action"] == "repair", p
+        assert not {84295247, 84295248} & {w["outcome_id"] for w in p["outcome_writes"]}
+
+    def test_its_grade_is_bound_into_the_plan_hash(self):
+        a = rr.plan_hash_for([PARENT_ID], [{"market_id": PARENT_ID,
+                                            **_plan(outcomes=self._with(self.APRIL))}])
+        b = rr.plan_hash_for([PARENT_ID], [{"market_id": PARENT_ID, **_plan(
+            outcomes=self._with(self.APRIL, won=True, src="api_settlement"))}])
+        assert a != b
+
+
 class TestThePlanHash:
     def _planned(self, **kw):
         p = _plan(**kw)

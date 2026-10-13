@@ -483,13 +483,29 @@ def plan_parent(parent: Optional[dict], members: list[dict], outcomes: list[dict
     # Every stored leg, and the condition each outcome belongs to.
     stored: set[str] = set(child_by_cid)
     outcome_cid: dict[int, str] = {}
+    leg_form_on_parent: list[tuple[int, str]] = []
     for o in by_market.get(pid, []):
         ext = str(o.get("external_id") or "").lower()
+        base, sep, side = ext.rpartition("_")
+        if (sep and side in ("yes", "no") and rwf._is_condition_id(base)
+                and "_" not in base):
+            # Production holds these: 113883 carries April's ``_yes`` / ``_no``
+            # rows (written 2026-05-24, ungraded, filtered from the served
+            # payload). Such a row belongs to its leg, and only to a leg this
+            # parent already stores; it is then judged exactly like the
+            # parent's own outcomes, so a venue-closed leg makes it a control.
+            leg_form_on_parent.append((int(o["id"]), base))
+            continue
         if not rwf._is_condition_id(ext) or "_" in ext:
             return {"action": "skip", "reason": "unexpected_parent_outcome",
                     "detail": int(o["id"])}
         stored.add(ext)
         outcome_cid[int(o["id"])] = ext
+    for oid, base in leg_form_on_parent:
+        if base not in stored:
+            return {"action": "skip", "reason": "unexpected_parent_outcome",
+                    "detail": oid}
+        outcome_cid[oid] = base
     for cid, m in child_by_cid.items():
         forms = leg_forms(cid)
         for o in by_market.get(int(m["id"]), []):

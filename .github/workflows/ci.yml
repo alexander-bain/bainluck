@@ -7381,8 +7381,8 @@ jobs:
             echo "::error::#11007 open-leg gate SKIPPED — the gate did not run"
             exit 1
           fi
-          grep -qE "[^0-9]33 passed[,[:space:]]" /tmp/openleg11007.txt || {
-            echo "::error::#11007 open-leg gate did not run all thirty-three cases"
+          grep -qE "[^0-9]34 passed[,[:space:]]" /tmp/openleg11007.txt || {
+            echo "::error::#11007 open-leg gate did not run all thirty-four cases"
             exit 1
           }
 
