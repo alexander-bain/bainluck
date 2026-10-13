@@ -39,6 +39,7 @@ def phase_a(cur, window):
     source_rows = _run(cur, cc.source_split_sql(window))
     by_sc, other_names = cc.tally_market_rows(market_rows)
     by_src = cc.tally_source_split(source_rows)
+    season = cc.season_cohort(_run(cur, cc.fixture_days_sql(window)), market_rows)
 
     print("\n" + "=" * 80)
     print("PHASE A.1 — Resolved games per sport (denominator)")
@@ -65,7 +66,7 @@ def phase_a(cur, window):
     print("PHASE A.3 — AUTO-FLAGGED findings (starved class / classifier leak / "
           "pass-rate outlier)")
     print("=" * 80)
-    findings = cc.capture_findings(games, by_sc, by_src)
+    findings = cc.capture_findings(games, by_sc, by_src, season=season)
     if not findings:
         print("  (none — every sport lands sane)")
     for f in findings:

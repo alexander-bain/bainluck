@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import statistics
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from typing import Optional
 
 from app.utils.game_market_class import classify_game_market_class
@@ -61,6 +62,13 @@ NO_VOLUME_SOURCES = frozenset({"odds_api", "odds_api_bookmaker", "datagolf"})
 # indistinguishable from an alarm that never fired (gotcha #53), so the reason is
 # always named in the detail string.
 MIN_GAMES_FOR_CAPTURE_ALARM = 30
+# `classifier_leak` is a share of MARKETS, so its denominator is the market count,
+# not the game count: #1899 fired on 27 markets. A slate can clear the game floor
+# and still carry too few markets for one mis-bucketed name not to move the share
+# (30 games with 27 markets, two of them 'other', is 7%; three is 11%). Both
+# floors apply to it — markets are clustered by fixture, so a big prop menu on a
+# handful of games is not 30 independent observations either.
+MIN_MARKETS_FOR_CLASSIFIER_ALARM = 30
 
 # odds-api sport key -> the grid league slug season_windows keys its bands on.
 # Only the four leagues it actually has bands for: league_phase() returns
@@ -74,12 +82,15 @@ _SEASON_LEAGUE_SLUG = {
 }
 
 
-def _capture_severity(sport: str, games: int, now=None) -> tuple[str, str]:
+def _capture_severity(
+    sport: str, games: int, now=None, *, markets: Optional[int] = None
+) -> tuple[str, str]:
     """(severity, suffix) for a per-game capture alarm on ``sport``.
 
-    REAL — and therefore file-worthy — requires all three of: a sport whose
-    expectation genuinely holds, enough games to compute a ratio on, and a
-    calendar phase in which games are actually being played.
+    REAL — and therefore file-worthy — requires all of: a sport whose
+    expectation genuinely holds, enough games to compute a ratio on (and, for a
+    share of markets, enough ``markets``), and a calendar phase in which games
+    are actually being played.
     """
     if sport not in CORE_TEAM_SPORTS:
         return "WATCH", ""
@@ -87,6 +98,12 @@ def _capture_severity(sport: str, games: int, now=None) -> tuple[str, str]:
         return "WATCH", (
             f" WATCH not REAL: {games} games is under the {MIN_GAMES_FOR_CAPTURE_ALARM}-game "
             f"floor, so one missing market can move this ratio — too few to file on."
+        )
+    if markets is not None and markets < MIN_MARKETS_FOR_CLASSIFIER_ALARM:
+        return "WATCH", (
+            f" WATCH not REAL: {markets} markets is under the "
+            f"{MIN_MARKETS_FOR_CLASSIFIER_ALARM}-market floor, so one mis-bucketed "
+            f"name can move this share — too few to file on."
         )
     slug = _SEASON_LEAGUE_SLUG.get(sport)
     if slug:
@@ -100,6 +117,33 @@ def _capture_severity(sport: str, games: int, now=None) -> tuple[str, str]:
                 f"coverage as the regular season."
             )
     return "REAL", ""
+
+
+def fixture_in_season(sport: str, day) -> bool:
+    """Was a fixture on ``day`` played in its league's regular season or
+    postseason, per ``season_windows``? (#1906)
+
+    The season gate above reads the SWEEP date, but the census counts a trailing
+    window of fixtures: a mid-September sweep of the NFL is "in season" while
+    half its 30-day window is August preseason, so preseason games that carry no
+    winner market at either venue were graded against the regular-season
+    expectation (#1897 re-observed REAL on 2026-09-14, 43 moneylines / 56 games).
+    Asking each fixture's OWN date splits that window instead of labelling it.
+
+    Same authority and the same fail-open rule as the sweep gate: a sport with no
+    band is never excluded (every fixture is in season). ``day`` may be a date or
+    a datetime; month/day is all the bands read. A fixture with NO date in a
+    banded league cannot be placed, so it is out — it can never make a ratio REAL.
+    """
+    slug = _SEASON_LEAGUE_SLUG.get(sport)
+    if not slug:
+        return True
+    if day is None:
+        return False
+    from app.utils.season_windows import is_active
+
+    return is_active(slug, datetime(day.year, day.month, day.day, tzinfo=timezone.utc))
+
 
 # Team-ball sports where "~1 game-winner (moneyline) market per game" is a
 # genuine expectation AND the classifier's "Team at/vs Team" recognizer applies.
@@ -126,7 +170,8 @@ CORE_TEAM_SPORTS = frozenset({
 # ---------------------------------------------------------------------------
 _GAME_CTE = """
 WITH g AS (
-  SELECT e.id, s.key AS sport_key, e.home_team_name, e.away_team_name
+  SELECT e.id, s.key AS sport_key, e.home_team_name, e.away_team_name,
+         (e.commence_time AT TIME ZONE 'UTC')::date AS fixture_day
   FROM events e
   JOIN sports s ON s.id = e.sport_id
   WHERE e.status IN ('completed', 'closed')
@@ -156,22 +201,32 @@ def games_sql(window: int) -> str:
         "SELECT sport_key, COUNT(*) FROM g GROUP BY sport_key ORDER BY 2 DESC;"
 
 
+def fixture_days_sql(window: int) -> str:
+    """(sport, UTC fixture day, games) — the per-fixture half of the season
+    split (#1906). Same CTE as ``games_sql``, so the two can never disagree about
+    which games are in the window; only the grouping is finer."""
+    return _GAME_CTE % {"window": window} + \
+        "SELECT sport_key, fixture_day, COUNT(*) FROM g GROUP BY 1, 2;"
+
+
 def market_rows_sql(window: int) -> str:
     """One row per game-linked market: (sport, name, external_id, outcomes,
-    well_traded, vol_pos, vol_null, artifact, home_team, away_team).
+    well_traded, vol_pos, vol_null, artifact, home_team, away_team, fixture_day).
 
     The two team names are the classifier's ``sides``: the only identity signal
     that separates a player ladder ("Lyle Foster: 3+ goals") from a team one
-    ("Arsenal: 3+ goals") with the same shape (#1529)."""
+    ("Arsenal: 3+ goals") with the same shape (#1529). ``fixture_day`` places the
+    market's game in its league's season (#1906, ``fixture_in_season``)."""
     return _GAME_CTE % {"window": window} + f"""
         SELECT g.sport_key, fm.name, fm.external_id,
                COUNT(fo.id), {_WELL_TRADED}, {_VOLUME_POSITIVE},
-               {_VOLUME_NULL}, {_ARTIFACT}, g.home_team_name, g.away_team_name
+               {_VOLUME_NULL}, {_ARTIFACT}, g.home_team_name, g.away_team_name,
+               g.fixture_day
         FROM futures_markets fm
         JOIN g ON g.id = fm.event_id
         LEFT JOIN futures_outcomes fo ON fo.market_id = fm.id
         GROUP BY g.sport_key, fm.id, fm.name, fm.external_id,
-                 g.home_team_name, g.away_team_name;
+                 g.home_team_name, g.away_team_name, g.fixture_day;
     """
 
 
@@ -229,15 +284,25 @@ class CaptureCohorts:
     other_names: dict[str, dict[str, int]] = field(default_factory=dict)
 
 
-def tally_market_rows(rows) -> tuple[dict[str, dict[str, MassCounts]], dict]:
+def tally_market_rows(
+    rows, *, in_season_only: bool = False
+) -> tuple[dict[str, dict[str, MassCounts]], dict]:
     """rows: (sport, name, external_id, outcomes, well, vol_pos, vol_null, art)
-    with the game's (home_team, away_team) optionally appended as ``sides``."""
+    with the game's (home_team, away_team) optionally appended as ``sides``, and
+    then the game's ``fixture_day``.
+
+    ``in_season_only`` keeps only markets whose fixture ``fixture_in_season``
+    admits — the numerator that matches ``season_cohort``'s denominator. A row
+    without a day reads as undated, which a banded league never admits."""
     by_sc: dict[str, dict[str, MassCounts]] = {}
     other_names: dict[str, dict[str, int]] = {}
-    for sport, name, ext, outc, well, volp, _voln, art, *sides in rows:
-        cls = classify_game_market_class(
-            name or "", ext, sport, sides=tuple(sides) if len(sides) == 2 else None
-        )
+    for sport, name, ext, outc, well, volp, _voln, art, *rest in rows:
+        sides = tuple(rest[:2]) if len(rest) >= 2 else None
+        if in_season_only and not fixture_in_season(
+            sport, rest[2] if len(rest) >= 3 else None
+        ):
+            continue
+        cls = classify_game_market_class(name or "", ext, sport, sides=sides)
         mc = by_sc.setdefault(sport, {}).setdefault(cls, MassCounts())
         mc.markets += 1
         mc.outcomes += int(outc or 0)
@@ -249,6 +314,35 @@ def tally_market_rows(rows) -> tuple[dict[str, dict[str, MassCounts]], dict]:
             other_names.setdefault(sport, {})
             other_names[sport][key] = other_names[sport].get(key, 0) + 1
     return by_sc, other_names
+
+
+@dataclass
+class SeasonCohort:
+    """The in-season slice of the window, for leagues ``season_windows`` bands.
+
+    ``games_by_sport`` and ``by_sport_class`` count ONLY fixtures played in their
+    league's regular season or postseason; ``excluded_games`` is how many window
+    fixtures fell outside it (preseason, offseason, a break). Unbanded sports
+    are absent: their whole window is the cohort, as before."""
+    games_by_sport: dict[str, int] = field(default_factory=dict)
+    by_sport_class: dict[str, dict[str, MassCounts]] = field(default_factory=dict)
+    excluded_games: dict[str, int] = field(default_factory=dict)
+
+
+def season_cohort(fixture_day_rows, market_rows) -> SeasonCohort:
+    """Build the in-season slice from ``fixture_days_sql`` rows (sport, day,
+    games) and ``market_rows_sql`` rows. Numerator and denominator go through
+    the one predicate, ``fixture_in_season``, on the one column."""
+    cohort = SeasonCohort()
+    for sport, day, n in fixture_day_rows:
+        if sport not in _SEASON_LEAGUE_SLUG:
+            continue
+        n = int(n or 0)
+        bucket = cohort.games_by_sport if fixture_in_season(sport, day) else cohort.excluded_games
+        bucket[sport] = bucket.get(sport, 0) + n
+    banded = [r for r in market_rows if r[0] in _SEASON_LEAGUE_SLUG]
+    cohort.by_sport_class, _ = tally_market_rows(banded, in_season_only=True)
+    return cohort
 
 
 def tally_source_split(rows) -> dict[tuple[str, str], MassCounts]:
@@ -282,6 +376,7 @@ def capture_findings(
     by_sport_class: dict[str, dict[str, MassCounts]],
     by_source_sport: Optional[dict[tuple[str, str], MassCounts]] = None,
     now=None,
+    season: Optional[SeasonCohort] = None,
 ) -> list[CaptureFinding]:
     """Cross-sectional alarms for THIS sweep (no history needed).
 
@@ -297,6 +392,11 @@ def capture_findings(
     graded against `datetime.now()` is green for part of the year and red for the
     rest, and the three previous instances were all "fixed" by pinning an hour
     rather than by removing the clock. Pass a real date; assert a real phase.
+
+    ``season`` (#1906) is the window's in-season slice (``season_cohort``). When
+    given, a banded league's REAL verdict is computed on its in-season fixtures
+    only; a shortfall that lives in its preseason fixtures still SURFACES, as
+    WATCH, with the split named. Without it the whole window is graded, as before.
     """
     findings: list[CaptureFinding] = []
 
@@ -307,34 +407,92 @@ def capture_findings(
         total_markets = sum(mc.markets for mc in classes.values()) or 1
         ml = classes.get("moneyline", MassCounts()).markets
         other = classes.get("other", MassCounts()).markets
+        if season is not None and sport in _SEASON_LEAGUE_SLUG:
+            findings.extend(_season_split_findings(
+                sport, games, ml, other, total_markets, season, now,
+            ))
+            continue
         # REAL (files) only where the expectation genuinely holds, there are
-        # enough games to compute a ratio on, and the league is actually playing
-        # (#1906). `suffix` names the downgrade reason so a WATCH is never a
-        # silent disappearance.
-        sev, suffix = _capture_severity(sport, games, now)
+        # enough games (and, for a share of markets, markets) to compute a ratio
+        # on, and the league is actually playing (#1906). `suffix` names the
+        # downgrade reason so a WATCH is never a silent disappearance.
         if ml / games < MONEYLINE_PER_GAME_FLOOR:
-            findings.append(CaptureFinding(
-                kind="starved_class",
-                cohort=f"{sport}/moneyline",
-                severity=sev,
-                detail=(f"{ml} moneyline markets across {games} games "
-                        f"= {ml/games:.2f}/game (< {MONEYLINE_PER_GAME_FLOOR}). "
-                        f"A game without a winner market is impossible — a "
-                        f"missing/mis-classified class, not a fact." + suffix),
-            ))
+            sev, suffix = _capture_severity(sport, games, now)
+            findings.append(_starved_finding(sport, ml, games, sev, suffix))
         if other / total_markets > OTHER_SHARE_CEILING:
-            findings.append(CaptureFinding(
-                kind="classifier_leak",
-                cohort=f"{sport}/other",
-                severity=sev,
-                detail=(f"'other' is {other/total_markets:.0%} of {total_markets} "
-                        f"markets (> {OTHER_SHARE_CEILING:.0%}). The classifier "
-                        f"is failing to recognize known classes for {sport}." + suffix),
-            ))
+            sev, suffix = _capture_severity(sport, games, now, markets=total_markets)
+            findings.append(_leak_finding(sport, other, total_markets, sev, suffix))
 
     if by_source_sport:
         findings.extend(_passrate_outliers(by_source_sport))
     return findings
+
+
+def _starved_finding(sport, ml, games, sev, suffix) -> CaptureFinding:
+    return CaptureFinding(
+        kind="starved_class",
+        cohort=f"{sport}/moneyline",
+        severity=sev,
+        detail=(f"{ml} moneyline markets across {games} games "
+                f"= {ml/games:.2f}/game (< {MONEYLINE_PER_GAME_FLOOR}). "
+                f"A game without a winner market is impossible — a "
+                f"missing/mis-classified class, not a fact." + suffix),
+    )
+
+
+def _leak_finding(sport, other, total_markets, sev, suffix) -> CaptureFinding:
+    return CaptureFinding(
+        kind="classifier_leak",
+        cohort=f"{sport}/other",
+        severity=sev,
+        detail=(f"'other' is {other/total_markets:.0%} of {total_markets} "
+                f"markets (> {OTHER_SHARE_CEILING:.0%}). The classifier "
+                f"is failing to recognize known classes for {sport}." + suffix),
+    )
+
+
+def _season_split_findings(
+    sport, games, ml, other, total_markets, season: SeasonCohort, now
+) -> list[CaptureFinding]:
+    """starved_class / classifier_leak for a banded league, graded on its
+    in-season fixtures (#1906). Three outcomes per alarm:
+
+    * the in-season slice breaches — the finding carries the slice's numbers and
+      is REAL subject to every ``_capture_severity`` gate on the SLICE's counts;
+    * only the whole window breaches — the shortfall sits in fixtures outside
+      the regular season/postseason, so it SURFACES as WATCH with the split
+      named (never dropped: gotcha #53);
+    * neither — nothing.
+    """
+    out: list[CaptureFinding] = []
+    s_games = season.games_by_sport.get(sport, 0)
+    s_classes = season.by_sport_class.get(sport, {})
+    s_total = sum(mc.markets for mc in s_classes.values())
+    s_ml = s_classes.get("moneyline", MassCounts()).markets
+    s_other = s_classes.get("other", MassCounts()).markets
+    excluded = season.excluded_games.get(sport, 0)
+    slug = _SEASON_LEAGUE_SLUG[sport].upper()
+    split = (f" In-season slice: {s_games} of the window's {games} games; "
+             f"{excluded} fell outside {slug}'s regular season/postseason "
+             f"(preseason/exhibition dates per season_windows) and are not graded.")
+    outside = (" WATCH not REAL: the breach is carried by fixtures outside the "
+               "regular season/postseason, where the winner-market expectation "
+               "does not hold; " + (
+                   "the in-season slice does not breach." if s_games else
+                   "no fixture in the window is in the regular season/postseason."))
+
+    if s_games and s_ml / s_games < MONEYLINE_PER_GAME_FLOOR:
+        sev, suffix = _capture_severity(sport, s_games, now)
+        out.append(_starved_finding(sport, s_ml, s_games, sev, suffix + (split if excluded else "")))
+    elif ml / games < MONEYLINE_PER_GAME_FLOOR:
+        out.append(_starved_finding(sport, ml, games, "WATCH", outside + split))
+
+    if s_total and s_other / s_total > OTHER_SHARE_CEILING:
+        sev, suffix = _capture_severity(sport, s_games, now, markets=s_total)
+        out.append(_leak_finding(sport, s_other, s_total, sev, suffix + (split if excluded else "")))
+    elif other / total_markets > OTHER_SHARE_CEILING:
+        out.append(_leak_finding(sport, other, total_markets, "WATCH", outside + split))
+    return out
 
 
 def _volume_coverage(mc: MassCounts) -> float:

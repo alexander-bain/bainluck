@@ -1519,12 +1519,17 @@ async def _mine_capture_cohorts(session, prev_baseline: dict | None) -> dict:
     games = {r[0]: r[1] for r in games_rows}
     market_rows = (await session.execute(text(cc.market_rows_sql(window)))).all()
     source_rows = (await session.execute(text(cc.source_split_sql(window)))).all()
+    # #1906: per-fixture days, so a banded league's alarm grades only the window
+    # fixtures played in its regular season/postseason (a September NFL window
+    # still holds August preseason games).
+    day_rows = (await session.execute(text(cc.fixture_days_sql(window)))).all()
 
     by_sc, other_names = cc.tally_market_rows(market_rows)
     by_src = cc.tally_source_split(source_rows)
     snapshot = cc.snapshot_for_baseline(window, games, by_sc, by_src)
+    season = cc.season_cohort(day_rows, market_rows)
 
-    findings = cc.capture_findings(games, by_sc, by_src)
+    findings = cc.capture_findings(games, by_sc, by_src, season=season)
     findings += cc.drift_findings(prev_baseline, snapshot)
 
     # A compact per-cohort mass table for the run payload (expected-vs-actual).
@@ -1538,6 +1543,7 @@ async def _mine_capture_cohorts(session, prev_baseline: dict | None) -> dict:
     return {
         "window_days": window,
         "games_by_sport": games,
+        "in_season_games_by_sport": season.games_by_sport,
         "mass_per_game": mass,
         "findings": [
             {"kind": f.kind, "cohort": f.cohort, "severity": f.severity,
