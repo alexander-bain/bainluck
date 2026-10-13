@@ -2475,3 +2475,84 @@ class TestTheRunRepricesTheWorldSeriesBoard:
         stats = await _SeriesCardHarness(signal=signal).run(monkeypatch)
         assert stats["series_card_candidates"] == 1
         assert stats["series_card_title_candidates"] == 0
+
+
+class _ClassScanTimesOutHarness(_TitleHarness):
+    """#1845: the class statement hits the 60s bound — 06:51Z 2026-10-13, the
+    first run on the title fix, threw there and priced nothing."""
+
+    def __init__(self, *, signal, title_row=True):
+        super().__init__(signal=signal)
+        self.title_row = title_row
+        self.rollbacks = 0
+
+    class _Session(_TitleHarness._Session):
+        async def execute(self, statement, params=None):
+            from sqlalchemy.exc import OperationalError
+
+            sql = str(statement)
+            if "pool AS MATERIALIZED" in sql and "COUNT(*)" not in sql:
+                raise OperationalError(
+                    "WITH value_pool AS MATERIALIZED (...)",
+                    {},
+                    Exception("canceling statement due to statement timeout"),
+                )
+            if "series_ticker_re" in sql and not self.outer.title_row:
+                return _RunHarness._Result([])
+            return await super().execute(statement, params)
+
+        async def rollback(self):
+            self.outer.rollbacks += 1
+
+
+class TestAClassScanTimeoutStillPricesTheIdentityArms:
+    @staticmethod
+    def _signal():
+        from app.utils.feed_served_markets import SERVED_EMPTY
+
+        return type(
+            "Sig",
+            (),
+            {
+                "ids": [],
+                "state": SERVED_EMPTY,
+                "green_allowed": True,
+                "shapes": 0,
+                "stale_shapes": 0,
+                "unreadable_shapes": 0,
+            },
+        )()
+
+    @pytest.mark.asyncio
+    async def test_the_world_series_board_is_priced_and_the_run_is_partial(
+        self, monkeypatch
+    ):
+        h = _ClassScanTimesOutHarness(signal=self._signal())
+        stats = await h.run(monkeypatch)
+
+        assert h.kalshi_fetched == ["KXMLB-26"]
+        assert stats["series_card_title_candidates"] == 1
+        assert stats["class_scan_failed"] is True
+        assert h.rollbacks >= 1
+        assert any(e.startswith("class scan: ") for e in stats["errors"]), stats["errors"]
+        assert "statement timeout" in " ".join(stats["errors"])
+        # The harness's Kalshi fetch writes no snapshot, so the terminal is the
+        # attempted-and-wrote-nothing `failed`; what matters is it never greens.
+        assert stats["terminal"] != "complete"
+
+    @pytest.mark.asyncio
+    async def test_nothing_else_stale_is_failed_not_complete(self, monkeypatch):
+        # The early "nothing stale" exit sets its terminal literally; without
+        # the clause this run would read `complete` over an unread class arm.
+        h = _ClassScanTimesOutHarness(signal=self._signal(), title_row=False)
+        stats = await h.run(monkeypatch)
+
+        assert h.kalshi_fetched == []
+        assert stats["class_scan_failed"] is True
+        assert stats["terminal"] == "failed"
+
+    @pytest.mark.asyncio
+    async def test_a_healthy_run_reports_the_flag_false(self, monkeypatch):
+        stats = await _TitleHarness(signal=self._signal()).run(monkeypatch)
+        assert stats["class_scan_failed"] is False
+        assert not any(e.startswith("class scan: ") for e in stats["errors"])
