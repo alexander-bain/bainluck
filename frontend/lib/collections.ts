@@ -88,8 +88,16 @@ const themeSectionTitles: Record<string, Record<string, string>> = {
 };
 const cursorText = (value: unknown): value is string => typeof value === "string" && value.length > 0 && value.length <= 64 && /^[A-Za-z0-9_-]+$/.test(value);
 
+// #5343: a provider event is one complete, unpaginated collection. Keep the
+// provider identity as its digit string; coercion would admit a different slug.
+const providerEventLabel = (edition: ObjectValue, slug: string): string | null =>
+  edition.provider === "polymarket" && typeof edition.event_id === "string"
+  && edition.event_id.trim() === edition.event_id && /^[1-9][0-9]{0,17}$/.test(edition.event_id)
+  && slug === `polymarket-event-${edition.event_id}` ? "Polymarket · Event" : null;
+
 function editionLabel(value: unknown, slug: string): string | null {
   const edition = object(value);
+  if (edition?.kind === "provider_event") return providerEventLabel(edition, slug);
   if (edition && isTheme(edition)) return themeLabel(edition, slug);
   if (!edition || !positive(edition.season)) return null;
   if (edition.kind === "mlb_postseason" && edition.league === "mlb" && slug === `mlb-${edition.season}-postseason`) return `MLB · ${edition.season} · Postseason`;
@@ -275,4 +283,34 @@ export function collectionRefreshInterval(hub: CollectionHub | null, now = Date.
   const games = hub.members.filter((m) => m.type === "event").map((m) => m.item.data as FeedEventData);
   if (games.some((e) => e.status === "live")) return 30000;
   return games.some((e) => ["scheduled", "upcoming"].includes(e.status) && Math.abs(Date.parse(e.commence_time) - now) <= 86400000) ? 60000 : 0;
+}
+
+export interface CollectionWeekLink { slug: string; label: string; href: string }
+export interface CollectionWeekNavigation { slug: string; state: "available" | "unavailable" | "not_applicable"; previous: CollectionWeekLink | null; next: CollectionWeekLink | null }
+
+export function parseCollectionWeekNavigation(value: unknown, slug: string): CollectionWeekNavigation {
+  const row = object(value);
+  const current = /^nfl-(\d{4})-(preseason-|postseason-)?week-([1-9]\d?)$/.exec(slug);
+  if (!row || row.slug !== slug || !current || !["available", "unavailable", "not_applicable"].includes(row.state as string)) throw new Error("Week navigation isn't available right now.");
+  const state = row.state as CollectionWeekNavigation["state"];
+  const rank = (match: RegExpExecArray) => (match[2] === "preseason-" ? 0 : match[2] === "postseason-" ? 2 : 1) * 100 + Number(match[3]);
+  const parseLink = (value: unknown, direction: number): CollectionWeekLink | null => {
+    if (value === null) return null;
+    const link = object(value), destination = object(link?.destination), edition = object(link?.edition);
+    const match = typeof link?.slug === "string" ? /^nfl-(\d{4})-(preseason-|postseason-)?week-([1-9]\d?)$/.exec(link.slug) : null;
+    if (!link || !match || match[1] !== current[1] || (rank(match) - rank(current)) * direction <= 0 || !edition || !editionLabel(edition, link.slug as string) || edition.kind !== "nfl_week" || !text(link.label) || !destination || destination.kind !== "container" || destination.slug !== link.slug || destination.api !== `/api/containers/${link.slug}` || destination.web !== collectionPath(link.slug as string)) throw new Error("Week navigation isn't available right now.");
+    return { slug: link.slug as string, label: `NFL ${edition.season} · ${edition.stage === "Regular Season" ? "" : `${edition.stage} `}Week ${edition.week}`, href: destination.web as string };
+  };
+  if (state !== "available") {
+    if (row.previous !== null || row.next !== null) throw new Error("Week navigation isn't available right now.");
+    return { slug, state, previous: null, next: null };
+  }
+  return { slug, state, previous: parseLink(row.previous, -1), next: parseLink(row.next, 1) };
+}
+
+export async function fetchCollectionWeekNavigation(slug: string, signal?: AbortSignal): Promise<CollectionWeekNavigation> {
+  if (!safeCollectionSlug(slug)) throw new Error("Week navigation isn't available right now.");
+  const response = await fetch(`${API_URL}/api/containers/${slug}/week-navigation`, { cache: "no-store", signal });
+  if (!response.ok) throw new Error("Week navigation isn't available right now.");
+  return parseCollectionWeekNavigation(await response.json(), slug);
 }

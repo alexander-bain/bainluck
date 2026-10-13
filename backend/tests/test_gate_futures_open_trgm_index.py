@@ -461,3 +461,103 @@ class TestRecordedRedBaselineIsIntact:
             "every term is a subject -- the bystander half of the probe is gone, "
             "so the gate no longer covers both measured plan shapes"
         )
+
+
+class TestSemanticsIsSameInstant:
+    """#10769: the after-run of 2026-10-12 REDed semantics on 6 of 8 terms
+    because it compared top-20 ids with the 10/08 baseline, and three days of
+    markets opening and closing moves those on their own. A hand-run same-instant
+    A/B found the usable arm identical to both index-disabled variants on every
+    readable term. The gate now runs that A/B itself."""
+
+    def test_both_variants_rewrite_the_compiled_arm(self, gate):
+        for term in ("champion", "world cup"):
+            sql = gate._sql_for(term, "all")
+            for variant, (old, new) in gate.SEMANTICS_VARIANTS.items():
+                rewritten = gate.disabled_variant(sql, variant)
+                assert old not in rewritten, (term, variant)
+                assert rewritten.count(new) == sql.count(old) > 0, (term, variant)
+
+    def test_the_trigram_variant_leaves_the_outcome_predicate_alone(self, gate):
+        """Only the indexed column is rewritten; the outcome half is untouched."""
+        sql = gate._sql_for("world cup", "all")
+        rewritten = gate.disabled_variant(sql, "no_trgm")
+        assert rewritten.count("futures_outcomes.name ILIKE") == sql.count(
+            "futures_outcomes.name ILIKE"
+        ) > 0
+
+    def test_a_missing_predicate_exits_2_rather_than_comparing_the_arm_with_itself(
+        self, gate
+    ):
+        with pytest.raises(SystemExit) as exc:
+            gate.disabled_variant("SELECT 1", "no_partial")
+        assert exc.value.code == 2
+
+    def test_same_instant_reads_share_one_compiled_statement(self, gate, monkeypatch):
+        """One `resolution_date` cutoff for all three reads, or the comparison
+        carries its own clock skew."""
+        seen: list[str] = []
+
+        def _fake_post(sql, **_kwargs):
+            seen.append(sql)
+            return {"rows": [[7], [3]]}
+
+        monkeypatch.setattr(gate, "_post", _fake_post)
+        reads = gate.same_instant_ids("world cup")
+        assert reads == {"usable": [7, 3], "no_partial": [7, 3], "no_trgm": [7, 3]}
+        assert len(seen) == 3 and len(set(seen)) == 3
+        assert gate.disabled_variant(seen[0], "no_partial") == seen[1]
+        assert gate.disabled_variant(seen[0], "no_trgm") == seen[2]
+
+    @staticmethod
+    def _reads(usable, no_partial=None, no_trgm=None):
+        return {
+            "usable": usable,
+            "no_partial": usable if no_partial is None else no_partial,
+            "no_trgm": usable if no_trgm is None else no_trgm,
+        }
+
+    def test_baseline_churn_no_longer_reds_identical_same_instant_reads(self, gate):
+        ids_now = {"winner": self._reads([5, 4, 9]), "election": self._reads([1, 2])}
+        stale_base = {"winner": [1, 2, 3], "election": [8]}
+        passed, note = gate.semantics_verdict(ids_now, stale_base)
+        assert passed is True, note
+
+    def test_a_variant_returning_other_markets_fails(self, gate):
+        ids_now = {"winner": self._reads([5, 4, 9], no_trgm=[5, 4, 8])}
+        passed, note = gate.semantics_verdict(ids_now, {})
+        assert passed is False
+        assert "winner:no_trgm" in note
+
+    def test_a_reordering_fails(self, gate):
+        """The route returns the first 20, so order decides which markets show."""
+        ids_now = {"winner": self._reads([5, 4, 9], no_partial=[4, 5, 9])}
+        assert gate.semantics_verdict(ids_now, {})[0] is False
+
+    def test_an_unreadable_variant_is_excluded_not_passed(self, gate):
+        ids_now = {
+            "champion": self._reads([1, 2], no_partial="UNREAD:statement_timeout"),
+            "winner": self._reads([3]),
+        }
+        passed, note = gate.semantics_verdict(ids_now, {})
+        assert passed is True
+        assert "champion:no_partial" in note
+        assert note.startswith("3 same-instant")
+
+    def test_nothing_readable_is_a_fail_not_a_pass(self, gate):
+        u = "UNREAD:statement_timeout"
+        ids_now = {"champion": self._reads([1], no_partial=u, no_trgm=u)}
+        passed, note = gate.semantics_verdict(ids_now, {})
+        assert passed is False
+        assert "unproven" in note
+
+    def test_a_usable_arm_that_got_slower_past_the_timeout_fails(self, gate):
+        u = "UNREAD:statement_timeout"
+        ids_now = {"winner": self._reads(u, no_partial=[1], no_trgm=[1]),
+                   "election": self._reads([2])}
+        passed, note = gate.semantics_verdict(ids_now, {"winner": [1]})
+        assert passed is False
+        assert "newly UNREADABLE" in note
+        ids_now_known = {"winner": self._reads(u, no_partial=[1], no_trgm=[1]),
+                         "election": self._reads([2])}
+        assert gate.semantics_verdict(ids_now_known, {"winner": u})[0] is True

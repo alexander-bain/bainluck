@@ -64,6 +64,8 @@ export const RUNG_LABELS: Readonly<Record<string, string>> = {
   opening_below_writer_bar: "The opening price was never discovered in real trading",
   datagolf_opening_after_start:
     "The model's first reading came after the tournament had started, so it is not a forecast",
+  golf_round_price_unanchored:
+    "Nothing shows the golf round price came before the round, so it is not a forecast",
   structural_artifact: "The price is a known artifact of how the market was listed",
   field_incomplete: "Another outcome in the same group was excluded, so the group cannot sum to 100%",
   representative_not_selected: "A different row already represents this question",

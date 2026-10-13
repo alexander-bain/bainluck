@@ -108,6 +108,7 @@ func futuresDetailShareMessage(_ market: FuturesMarketDetail?) -> String {
 struct FuturesDetailView: View {
     private let marketId: Int
     @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @State private var pageVisible = false
     @StateObject private var viewModel: FuturesDetailViewModel
     @State private var sortField: FuturesSortField = .probability
@@ -137,6 +138,15 @@ struct FuturesDetailView: View {
             category: viewModel.market?.llmSportCategory?.lowercased(),
             surface: .futuresDetail
         )
+    }
+
+    /// #10964 — room below the last outcome row. On iPhone the floating tab
+    /// bar sits over the bottom of the page, and the review's frame of
+    /// Boston–Detroit (54069274) at its deepest scroll had #13 Detroit over 5.5
+    /// under it: a graded row nobody could read. iPad's tab bar is at the top.
+    /// Same split, and the same reason, as `PinFeedbackToast.bottomClearance`.
+    static func bottomClearance(horizontalSizeClass: UserInterfaceSizeClass?) -> CGFloat {
+        horizontalSizeClass == .regular ? 0 : 120
     }
 
     var body: some View {
@@ -196,6 +206,7 @@ struct FuturesDetailView: View {
                             outcomesSection(market)
                         }
                         .padding()
+                        .padding(.bottom, Self.bottomClearance(horizontalSizeClass: horizontalSizeClass))
                     }
                     #if os(macOS)
                     .frame(maxWidth: 1000)
@@ -666,7 +677,8 @@ struct FuturesDetailView: View {
                     rank: index + 1,
                     color: color,
                     leaderId: sorted.first?.id,
-                    percent: percents[outcome.id]
+                    percent: percents[outcome.id],
+                    marketStatus: market.status
                 )
                 if index < displayed.count - 1 {
                     Divider()
@@ -772,10 +784,13 @@ struct FuturesDetailView: View {
         rank: Int,
         color: Color,
         leaderId: Int?,
-        percent: Int?
+        percent: Int?,
+        marketStatus: String?
     ) -> some View {
         let isLeader = outcome.id == leaderId
         let probPct = (outcome.probability ?? 0) * 100
+        // #10964: a graded row names its result instead of its last quote.
+        let value = FuturesDetailRowValue.of(outcome, marketStatus: marketStatus)
 
         return VStack(spacing: 6) {
             HStack(alignment: .top) {
@@ -804,26 +819,29 @@ struct FuturesDetailView: View {
                         Text(outcome.name)
                             .font(.system(size: 15, weight: isLeader ? .semibold : .medium))
                             .foregroundStyle(DS.textPrimary)
-                        if outcome.isWinner == true {
+                        if value == .verdict(.won) {
                             Image(systemName: "checkmark.circle.fill")
                                 .font(.system(size: 13))
                                 .foregroundStyle(DS.emerald)
                         }
                     }
 
-                    HStack(spacing: 8) {
-                        // L2-48: American moneyline removed — probability only
-                        // (no-odds thesis: "60% vs 40%", never "-150/+130").
-                        // 24h movement via DeltaBadge
-                        if let change = outcome.probabilityChange24h, abs(change) >= 0.005 {
-                            DeltaBadge(value: change * 100)
-                        }
-                        if let opening = outcome.openingProbability, let current = outcome.probability {
-                            let diff = current - opening
-                            if abs(diff) >= 0.005 {
-                                Text("from \(formatProbability(opening))")
-                                    .font(.system(size: 11, design: .monospaced))
-                                    .foregroundStyle(DS.textMuted)
+                    // A settled row prints its result, never a move (#10964).
+                    if value.printsMovement {
+                        HStack(spacing: 8) {
+                            // L2-48: American moneyline removed — probability only
+                            // (no-odds thesis: "60% vs 40%", never "-150/+130").
+                            // 24h movement via DeltaBadge
+                            if let change = outcome.probabilityChange24h, abs(change) >= 0.005 {
+                                DeltaBadge(value: change * 100)
+                            }
+                            if let opening = outcome.openingProbability, let current = outcome.probability {
+                                let diff = current - opening
+                                if abs(diff) >= 0.005 {
+                                    Text("from \(formatProbability(opening))")
+                                        .font(.system(size: 11, design: .monospaced))
+                                        .foregroundStyle(DS.textMuted)
+                                }
                             }
                         }
                     }
@@ -831,8 +849,15 @@ struct FuturesDetailView: View {
 
                 Spacer()
 
-                // Lead probability via ProbabilityNumber
-                if let prob = outcome.probability {
+                switch value {
+                case .verdict(let verdict):
+                    // Search's and the event page's vocabulary: a win in the
+                    // live accent, a loss muted.
+                    Text(verdict.label)
+                        .font(.system(size: 18, weight: verdict == .won ? .semibold : .regular))
+                        .foregroundStyle(verdict == .won ? DS.emerald : DS.textSecondary)
+                case .price(let prob):
+                    // Lead probability via ProbabilityNumber
                     if isLeader {
                         ProbabilityNumber(
                             value: prob * 100,
@@ -845,11 +870,13 @@ struct FuturesDetailView: View {
                             .font(.system(size: 18, weight: .semibold, design: .monospaced))
                             .foregroundStyle(DS.probColor(probPct))
                     }
+                case .none:
+                    EmptyView()
                 }
             }
 
             // Probability bar via DSProbabilityBar
-            if outcome.probability != nil {
+            if case .price = value {
                 DSProbabilityBar(
                     value: probPct,
                     maxValue: 100,

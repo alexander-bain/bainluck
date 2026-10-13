@@ -33,6 +33,8 @@ import MarketMapSection from "@/components/MarketMapSection";
 import { closedHalfRows, type ClosedPeriodRow } from "@/lib/marketMapUtils";
 
 import live15322373 from "../fixtures/ux10830_game_markets_15322373.20261010T1641Z.json";
+import mnfHalftime from "../fixtures/ux10850_game_markets_14780558.20261013T0137Z.json";
+import mnfFourth from "../fixtures/ux10850_game_markets_14780558.20261013T0304Z.json";
 
 function visibleText(html: string): string {
   return html
@@ -265,5 +267,146 @@ describe("#10850 one half, one score, real lines only", () => {
 
   it("an explicit line of 0 is a real line, not a missing one", () => {
     expect(closedHalfRows(withTotalLine(0), [], "half_total", "1H")?.score).toEqual(HALFTIME);
+  });
+});
+
+/**
+ * Production, Bills @ Rams (`/events/14780558`, MNF), Halftime 13–7, served
+ * 01:37Z 10/13 and banked whole except the prop lists. The 1st half margin card
+ * came back; the 1st half points card did not. Two Polymarket 1H Overs
+ * (`16.5`, `19.5`) had already resolved when the total passed them, so they
+ * stayed in `period_markets` with `is_winner: true` while the other 19 total
+ * rows came back closed — and the quoting check counted them as quoting.
+ */
+describe("#10850 a rung the venue already resolved is not quoting (MNF, 14780558)", () => {
+  const MNF_HISTORY = [
+    { period: "1st Quarter", home_score: 0, away_score: 6, timestamp: "2026-10-13T00:15:00Z" },
+    { period: "2nd Quarter", home_score: 7, away_score: 13, timestamp: "2026-10-13T00:48:00Z" },
+    { period: "Halftime", home_score: 7, away_score: 13, timestamp: "2026-10-13T01:36:00Z" },
+  ];
+  const renderMnf = (gameMarkets: unknown) => {
+    const p = {
+      gameMarkets,
+      eventStatus: "live",
+      homeTeam: "Los Angeles Rams",
+      awayTeam: "Buffalo Bills",
+      homeAbbr: "LAR",
+      awayAbbr: "BUF",
+      homeSpread: -2.5,
+      openingHomeSpread: -3.5,
+      sportKey: "americanfootball_nfl",
+      espnHistory: MNF_HISTORY,
+    } as unknown as React.ComponentProps<typeof MarketMapSection>;
+    return visibleText(renderToStaticMarkup(<MarketMapSection {...p} />));
+  };
+  type MnfRow = (typeof mnfHalftime.period_markets)[number] & { is_winner?: boolean | null };
+  const resolved1H = (mnfHalftime.period_markets as MnfRow[]).filter(
+    (r) => r.market_type === "half_total" && r.period === "1H"
+  );
+
+  it("the specimen: the half's only total rows left in period_markets are resolved", () => {
+    expect(resolved1H.map((r) => `${r.market_name} ${r.outcome_name}`)).toEqual([
+      "Bills vs. Rams: 1H O/U 16.5 Over",
+      "Bills vs. Rams: 1H O/U 16.5 Under",
+      "Bills vs. Rams: 1H O/U 19.5 Over",
+      "Bills vs. Rams: 1H O/U 19.5 Under",
+    ]);
+    expect(resolved1H.every((r) => r.is_winner != null)).toBe(true);
+    expect(mnfHalftime.closed_period_markets.filter((r) => r.market_type === "half_total")).toHaveLength(19);
+  });
+
+  it("the 1st half points card draws, graded from 20 points", () => {
+    const body = cardBody(renderMnf(mnfHalftime), "1st half points");
+    expect(body).toMatch(/Final\s+20/);
+    expect(body).toMatch(/Over 17\.5\s+cleared/);
+    expect(body).toMatch(/Over 20\.5\s+not cleared/);
+    expect(body).not.toMatch(/\d%/);
+  });
+
+  it("the 1st half margin card is unchanged: BUF by 6", () => {
+    expect(cardBody(renderMnf(mnfHalftime), "1st half margin")).toMatch(/Final\s+BUF by 6/);
+  });
+
+  it("control: the same two rows unresolved still quote, and the card stays the live one's", () => {
+    const quoting = {
+      ...mnfHalftime,
+      period_markets: (mnfHalftime.period_markets as MnfRow[]).map((r) =>
+        resolved1H.includes(r) ? { ...r, is_winner: null } : r
+      ),
+    };
+    expect(closedHalfRows(mnfHalftime.closed_period_markets as ClosedPeriodRow[], quoting.period_markets, "half_total", "1H")).toBeNull();
+    expect(closedHalfRows(mnfHalftime.closed_period_markets as ClosedPeriodRow[], mnfHalftime.period_markets, "half_total", "1H")?.score).toEqual({ home: 7, away: 13 });
+  });
+});
+
+/**
+ * The same game in the 4th quarter (27–27, served 03:04Z 10/13). After the break
+ * the venue graded the half in pieces, and each graded row moved from the closed
+ * key back to `period_markets`. All 24 1H total rows and 51 of 61 spread rows
+ * were back there; only 10 closed spread rows remained. On production the 1st
+ * half points card was gone again, and the margin card read "Five lines settled".
+ */
+describe("#10850 a half the venue grades after the break keeps both cards (MNF, 4th quarter)", () => {
+  const history = [
+    { period: "1st Quarter", home_score: 0, away_score: 6, timestamp: "2026-10-13T00:15:00Z" },
+    { period: "Halftime", home_score: 7, away_score: 13, timestamp: "2026-10-13T01:36:00Z" },
+    { period: "4th Quarter", home_score: 27, away_score: 27, timestamp: "2026-10-13T03:00:00Z" },
+  ];
+  const renderQ4 = (gameMarkets: unknown) => {
+    const p = {
+      gameMarkets,
+      eventStatus: "live",
+      homeTeam: "Los Angeles Rams",
+      awayTeam: "Buffalo Bills",
+      homeAbbr: "LAR",
+      awayAbbr: "BUF",
+      homeSpread: -1.5,
+      openingHomeSpread: -3.5,
+      sportKey: "americanfootball_nfl",
+      espnHistory: history,
+    } as unknown as React.ComponentProps<typeof MarketMapSection>;
+    return visibleText(renderToStaticMarkup(<MarketMapSection {...p} />));
+  };
+  type Q4Row = (typeof mnfFourth.period_markets)[number] & { is_winner?: boolean | null };
+  const firstHalf = (mnfFourth.period_markets as Q4Row[]).filter((r) => r.period === "1H");
+
+  it("the specimen: every 1H row in period_markets is graded, and only spread rows are still closed", () => {
+    expect(firstHalf.filter((r) => r.market_type === "half_total")).toHaveLength(24);
+    expect(firstHalf.every((r) => r.is_winner != null)).toBe(true);
+    expect(new Set(mnfFourth.closed_period_markets.map((r) => r.market_type))).toEqual(new Set(["half_spread"]));
+  });
+
+  it("the 1st half points card draws from the graded rows, against the closed rows' 20 points", () => {
+    const body = cardBody(renderQ4(mnfFourth), "1st half points");
+    expect(body).toMatch(/Final\s+20/);
+    expect(body).toMatch(/Over 17\.5\s+cleared/);
+    expect(body).toMatch(/Over 20\.5\s+not cleared/);
+    expect(body).not.toMatch(/\d%/);
+  });
+
+  it("the 1st half margin card counts every line again, not only the 10 closed rows", () => {
+    const body = cardBody(renderQ4(mnfFourth), "1st half margin");
+    expect(body).toMatch(/Final\s+BUF by 6/);
+    expect(body).not.toContain("Five lines settled");
+    expect(body).not.toMatch(/\d%/);
+  });
+
+  it("control: with no closed row left there is no score, so the closed cards do not draw", () => {
+    // What is left is the page from before this key: no points card, and the
+    // margin card falls back to quoting the graded ladder (99% / 1%).
+    const text = renderQ4({ ...mnfFourth, closed_period_markets: [] });
+    expect(text).not.toContain("1st half points");
+    expect(cardBody(text, "1st half margin")).toMatch(/\d%/);
+    expect(cardBody(text, "1st half margin")).not.toMatch(/Final\s+BUF by 6/);
+  });
+
+  it("the grade comes from the score, never the venue: a flipped is_winner changes nothing", () => {
+    const flipped = {
+      ...mnfFourth,
+      period_markets: (mnfFourth.period_markets as Q4Row[]).map((r) =>
+        r.period === "1H" ? { ...r, is_winner: !r.is_winner } : r
+      ),
+    };
+    expect(cardBody(renderQ4(flipped), "1st half points")).toBe(cardBody(renderQ4(mnfFourth), "1st half points"));
   });
 });

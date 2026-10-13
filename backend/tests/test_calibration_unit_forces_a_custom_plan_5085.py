@@ -294,7 +294,45 @@ from app.tasks.calibration_main_build import UNIT_PLAN_CACHE_MODE
 #: exact predicate succession instead (#8458's mechanism), so the rebuild's
 #: growth is not folded into a "methodology move" and the bank is not discarded
 #: twice.
-LIVE_INPUT_FINGERPRINT = "5c2987db39cf5ab3fe0efd65d636720c"
+#:
+#: RE-ANCHORED for #1010 (tennis/MMA spreads and totals the stored score cannot
+#: settle): ``5c2987db…`` -> ``0c9350ca…``. Moved: the root
+#: ``compute_calibration_payload`` (a Python partition of the spreads/totals rows
+#: after their phase read, plus the ``score_unit_filter`` disclosure) and the
+#: family tuple hashed by value. WHAT IT COSTS, measured on both trees:
+#: ``staged_unit_fingerprint`` is ``dec3026b…`` on master and on this change, and
+#: the staged cursor keys on that narrow digest (CAL-P205), so no banked unit is
+#: discarded; only a carried PHASE output in flight at deploy is re-read. The
+#: PUBLISHED population identity does move (``3944c947…`` -> ``da21d87f…``), as it
+#: must for a rule that changes which rows publish, and is declared to the gate.
+#:
+#: Same unmerged change, ``0c9350ca…`` -> ``39846d26…``: the root also counts
+#: what the rule removed per cell (``score_unit_filter.excluded_by_cell``) so the
+#: publish gate can bound its disclosure. Counting only — ``staged_unit_fingerprint``
+#: (``dec3026b…``) and the published identity (``da21d87f…``) are both unmoved.
+#:
+#: RE-ANCHORED for #1011 (soccer graded three-way from the 3-way capture
+#: forward): ``39846d26…`` -> ``6a1aa8ac…`` (CERT-4066's repair adds the
+#: regulation-finish proof and its two bound values). Moved: the root
+#: ``compute_calibration_payload`` (events_sql's soccer three-way branch and the
+#: soccer exclusion count, both with bound contract values, plus the
+#: ``soccer_2way_filter.three_way`` disclosure) and the contract values hashed
+#: by name and value (four, with the regulation pair). ``staged_unit_fingerprint`` is ``dec3026b…`` on master and on
+#: this change, so no banked unit is discarded; only a carried PHASE output in
+#: flight at deploy is re-read. The published predicate moves ``da21d87f…`` ->
+#: ``598e0ed8…`` and is declared to the gate as a widening succession.
+#:
+#: RE-ANCHORED for #938 (Kalshi golf round markets whose price no stored time
+#: places before the round): ``6a1aa8ac…`` -> ``dc2df778…``. Moved: the root
+#: ``_calibration_population_ctes`` (a per-outcome flag, withheld in ``deduped``
+#: and in the field-completeness survivor set) and ``compute_calibration_payload``
+#: (its ``golf_round_timing_filter`` disclosure). The rows change, so
+#: ``staged_unit_fingerprint`` moves too (``dec3026b…`` -> ``5de54fd2…``): the
+#: next ``bainluck-heavy`` release that carries this re-keys the bank it finds,
+#: the same cost #5355 named and NOT MEASURED for the same reason (ruling 134).
+#: The published predicate moves ``598e0ed8…`` -> ``ea3ef49d…`` and is declared
+#: to the gate as a narrowing succession; the version is not bumped.
+LIVE_INPUT_FINGERPRINT = "dc2df778434ef3322f0b124214589736"
 
 
 class _Db:

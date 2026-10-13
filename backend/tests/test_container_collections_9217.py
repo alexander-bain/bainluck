@@ -163,6 +163,15 @@ class _Result:
     def fetchall(self):
         return list(self._rows)
 
+    def scalar_one(self):
+        (row,) = self._rows
+        return row[0]
+
+
+#: #5344: the barrier the season pass reads from the database clock before it
+#: fetches the schedule.
+BARRIER = datetime(2026, 9, 12, 11, 0, tzinfo=timezone.utc)
+
 
 class ContainerSession:
     """Holds a slug -> row map; INSERT … ON CONFLICT adds unless ``insert_lands`` is off."""
@@ -180,6 +189,11 @@ class ContainerSession:
         if sql.startswith("SELECT id, slug, window_start, window_end FROM containers"):
             row = self.rows.get(params["slug"])
             return _Result([row] if row else [])
+        if sql == "SELECT clock_timestamp()":
+            return _Result([(BARRIER,)])
+        if sql.startswith("SELECT to_regclass('public.container_corrections')"):
+            # #5344: no correction ledger here, so the pass relocates nothing.
+            return _Result([(False, False)])
         if sql.startswith("INSERT INTO containers"):
             assert "ON CONFLICT (slug) DO NOTHING" in sql
             if self.insert_lands and params["slug"] not in self.rows:
@@ -203,21 +217,27 @@ class Schedule:
     def __init__(self, fixtures=None, error=None):
         self.fixtures, self.error, self.calls = fixtures, error, 0
 
-    async def get_schedule_fixtures(self, sport):
+    async def get_nfl_schedule_read(self):
+        """#5344: the pass reads the receipted schedule (M1); a clean one here."""
+        from app.services.statpal_api import StatPalNflScheduleRead
+
         self.calls += 1
-        assert sport == "nfl"
         if self.error:
             raise self.error
-        return self.fixtures
+        return StatPalNflScheduleRead(
+            fixtures=list(self.fixtures), skipped=[], unidentified=[], duplicates=[],
+            rows_seen=len(self.fixtures),
+        )
 
 
 @pytest.fixture
 def nfl_calls(monkeypatch):
     calls = []
 
-    async def fake_run(session, container, fixtures, target, *, apply=False, limit=None):
+    async def fake_run(session, container, fixtures, target, *, apply=False, limit=None,
+                       relocation=None):
         calls.append(SimpleNamespace(container=container, target=target, apply=apply,
-                                     fixtures=fixtures))
+                                     fixtures=fixtures, relocation=relocation))
         return {"slug": target.slug, "terminal": "complete", "reason": None,
                 "assembly": {"edges_written": 3} if apply else None}
 
@@ -318,7 +338,8 @@ async def test_one_week_raising_rolls_back_and_the_next_week_still_runs(real, mo
 
     seen = []
 
-    async def flaky(session, container, fixtures, target, *, apply=False, limit=None):
+    async def flaky(session, container, fixtures, target, *, apply=False, limit=None,
+                    relocation=None):
         seen.append(target.week)
         if target.week == 1:
             raise RuntimeError("boom")
@@ -338,7 +359,8 @@ async def test_one_week_raising_rolls_back_and_the_next_week_still_runs(real, mo
     assert [(r["slug"], r["terminal"]) for r in runs] == [
         ("nfl-2026-week-1", "failed"), ("nfl-2026-week-2", "complete")
     ]
-    assert session.rollbacks == 1 and session.commits == 1
+    # One rollback ends the barrier read before the fetch (#5344); one is week 1's.
+    assert session.rollbacks == 2 and session.commits == 1
 
 
 @pytest.mark.asyncio

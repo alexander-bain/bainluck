@@ -343,6 +343,130 @@ class TestTheCursorIsTheCursorsAlone:
         assert stats["cursor_op"] == "noop", stats
 
 
+class _Wall:
+    """A run wall that is spent after the run's first Gamma event call.
+
+    Deterministic stand-in for "the deadline binds part-way through Phase B":
+    ``_time.monotonic() >= _stop_at`` falls through to ``_Wall.__le__``, so the
+    wall reads open until one event has been fetched and closed after.
+    """
+
+    def __init__(self):
+        self.spent = False
+
+    def __le__(self, other):
+        return self.spent
+
+    def __ge__(self, other):
+        return not self.spent
+
+
+def _install_wall(monkeypatch, rig):
+    wall = _Wall()
+    monkeypatch.setattr(bw, "_effective_stop_at", lambda t0, mr, dl: wall)
+    # The head's own share never binds here; the run wall is the clock.
+    monkeypatch.setattr(bw, "_gamma_head_stop_at", lambda t0, stop_at: float("inf"))
+    base = poly_api_mod.PolymarketAPIService
+
+    class _OneCallWall(base):
+        async def get_event_by_id(self, eid):
+            out = await super().get_event_by_id(eid)
+            wall.spent = True
+            return out
+
+    monkeypatch.setattr(poly_api_mod, "PolymarketAPIService", _OneCallWall)
+    return wall
+
+
+@pytest.mark.asyncio
+class TestAHeadRowOnTheCursorPageKeepsTheHeadsPlace:
+    """The 05:47Z Oct 13 run, in miniature.
+
+    That run's cursor page began at 63719795 and held 10,000 rows. The Billboard
+    markets 63874444/445/446, settled 23:13:40Z and venue-closed with a 1.0 Yes
+    winner, sat inside it about 5,400 rows up. Because they were ALSO on the
+    page, the merge kept them as cursor rows in id order, behind every older
+    row, and the deadline deferred them. That happened two scheduled runs in a
+    row, while the head reported every row it selected as completed. A fresh
+    settlement with an old id is the class: a weekly chart, a season future,
+    any market listed long before it settles.
+    """
+
+    async def test_a_fresh_settlement_with_an_old_id_is_reached_before_the_tail(
+        self, monkeypatch
+    ):
+        backlog = [_Row(10, "910", "negrisk", "910"), _Row(11, "911", "negrisk", "911")]
+        events = {
+            SERIES_EVENT: _series_event(),
+            "910": _backlog_event("910"),
+            "911": _backlog_event("911"),
+        }
+        # The specimen is on the cursor page too, ABOVE the older backlog rows.
+        rig = _Rig(head=[SERIES_ROW], cursor=backlog + [SERIES_ROW], events=events)
+        rc = _install(monkeypatch, rig)
+        _install_wall(monkeypatch, rig)
+
+        stats = await bw._backfill_polymarket_winners_from_api(
+            limit=5, recency_head=True
+        )
+
+        # One event fit before the wall. It is the fresh settlement.
+        assert rig.event_calls == [SERIES_EVENT], rig.event_calls
+        assert rig.grades[(SERIES_MARKET, SERIES_CID)] is True
+        assert rig.grades[(SERIES_MARKET, f"{SERIES_CID}_side1")] is False
+        # The overlap is reported, so it can no longer hide inside `completed`.
+        assert stats["head_in_cursor_page"] == 1, stats
+        assert stats["head_in_cursor_page_completed"] == 1, stats
+        # The cursor is unchanged in kind: it holds just below the lowest
+        # unfinished row. Moving the shared row forward cannot let the cursor
+        # skip the older rows it did not reach.
+        assert stats["deadline_hit"] == "phase_b_inner", stats
+        assert rc.store.get(OFFSET_KEY) == "9", rc.store
+        assert stats["selected"] == 3
+        assert stats["completed"] == 1
+        assert stats["deferred"] == 2
+
+    async def test_control_without_the_head_the_page_runs_in_id_order(
+        self, monkeypatch
+    ):
+        # The same page with no head: the old cursor order is untouched, and
+        # the specimen waits behind the tail. That wait is the defect, but on
+        # a call that never opted into the head it is the old behaviour.
+        backlog = [_Row(10, "910", "negrisk", "910"), _Row(11, "911", "negrisk", "911")]
+        events = {
+            SERIES_EVENT: _series_event(),
+            "910": _backlog_event("910"),
+            "911": _backlog_event("911"),
+        }
+        rig = _Rig(head=[SERIES_ROW], cursor=backlog + [SERIES_ROW], events=events)
+        rc = _install(monkeypatch, rig)
+        _install_wall(monkeypatch, rig)
+
+        stats = await bw._backfill_polymarket_winners_from_api(limit=5)
+
+        assert rig.event_calls == ["910"], rig.event_calls
+        assert rig.grades == {}
+        assert stats["head_in_cursor_page"] == 0, stats
+        assert rc.store.get(OFFSET_KEY) == "10", rc.store
+
+    async def test_a_shared_event_is_never_skipped_on_the_heads_clock(
+        self, monkeypatch
+    ):
+        # It is cursor work. A spent head share must not drop it, or the
+        # cursor would hold on it forever while the head kept "yielding".
+        rig = _Rig(head=[SERIES_ROW], cursor=[SERIES_ROW])
+        _install(monkeypatch, rig)
+        monkeypatch.setattr(bw, "_gamma_head_stop_at", lambda t0, stop_at: 0.0)
+
+        stats = await bw._backfill_polymarket_winners_from_api(
+            limit=5, recency_head=True
+        )
+
+        assert stats["head_events_skipped"] == 0, stats
+        assert rig.event_calls == [SERIES_EVENT]
+        assert stats["completed"] == 1
+
+
 # ---------------------------------------------------------------------------
 # Who takes the head, and who does not
 # ---------------------------------------------------------------------------
@@ -515,6 +639,17 @@ class TestPureHelpers:
         rows, head_only = bw._merge_head_into_page([c, a], [a, b])
         assert [r.id for r in rows] == [3, 1, 2]
         assert head_only == {3}
+
+    def test_merge_keeps_a_shared_row_in_the_heads_position(self):
+        # The shared row is the cursor page's LAST row: it still goes first,
+        # in the head's newest-settled order, and stays out of head_only.
+        a, b, c, d = (
+            _Row(1, "w", None, "e1"), _Row(2, "x", None, "e2"),
+            _Row(3, "y", None, "e3"), _Row(4, "z", None, "e4"),
+        )
+        rows, head_only = bw._merge_head_into_page([d, c], [a, b, c])
+        assert [r.id for r in rows] == [4, 3, 1, 2]
+        assert head_only == {4}
 
 
 # ---------------------------------------------------------------------------

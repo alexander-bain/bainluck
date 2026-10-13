@@ -509,6 +509,8 @@ def _quiet_namespace(module, refresher):
     from app.tasks.live_blend_refresh import event_ids_for_outcomes
 
     namespace = {
+        # #10090: Kalshi's quiet flush starts owed stamps on a task.
+        "asyncio": asyncio,
         "buffer_lock": asyncio.Lock(),
         "price_buffer": {},
         "blend_refresher": refresher,
@@ -567,10 +569,17 @@ class TestAQuietFlushServicesLockDeferredStamps:
                 _seen.append(sorted(event_ids))
 
             refresher._refresh_batch = _batch
-            flush = _exec_flush(
-                module, consumer, _quiet_namespace(module, refresher)
-            )
-            asyncio.run(flush())
+            namespace = _quiet_namespace(module, refresher)
+            flush = _exec_flush(module, consumer, namespace)
+
+            async def quiet_flush(namespace=namespace, flush=flush):
+                await flush()
+                # #10090: Kalshi starts the owed stamp as the run's refresh,
+                # which the consumer joins; Polymarket stamps it inline.
+                if "prices" in namespace:
+                    await namespace["prices"].join_stamp(refresher)
+
+            asyncio.run(quiet_flush())
             assert seen == [[15318131]], f"{consumer}: quiet flush skipped the retry"
             assert refresher._lock_retry == set(), consumer
 

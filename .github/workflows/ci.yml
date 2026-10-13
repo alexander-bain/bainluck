@@ -598,8 +598,8 @@ jobs:
             echo "::error::#10305 D2 participant-fill gate SKIPPED — the gate did not run"
             exit 1
           fi
-          if ! grep -qE "\b92 passed\b" /tmp/fill10305.txt; then
-            echo "::error::#10305 D2 participant-fill gate did not pass exactly 92 tests"
+          if ! grep -qE "\b94 passed\b" /tmp/fill10305.txt; then
+            echo "::error::#10305 D2 participant-fill gate did not pass exactly 94 tests"
             exit 1
           fi
 
@@ -1962,6 +1962,31 @@ jobs:
             exit 1
           fi
 
+      - name: "#1541 a championship the provider closed stops reading as open (real Postgres)"
+        # /futures/10 (FIFA World Cup Winner, odds_api) read as an open question
+        # for three months after the final: The Odds API stopped listing its key,
+        # so the poller stopped visiting the row and nothing else ever closes one.
+        # The real poll now resolves such a row under a NAMED no-winner reason,
+        # releases the rolling key for the next edition, and grades no leg.
+        #
+        # Real Postgres because the retirement and the same-edition reopen are
+        # Core UPDATEs over JSONB (a JSON-null metadata merge turned the stamp
+        # into an array in the first cut — only a real database showed it), and
+        # the crowner arm runs the real `_backfill_from_current_probability`.
+        # Controls ride in the same file: a listed live field, an unlisted board
+        # quoted two days ago, a listed-but-silent board (flagged, never closed),
+        # a board carrying a venue verdict, and resolved boards WITHOUT the stamp
+        # that the price crowners must still grade.
+        if: matrix.group == 'shared-middle'
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_provider_delisted_championship_retires_1541_pg.py \
+            -v -s -rs 2>&1 | tee /tmp/provider_closed_1541.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/provider_closed_1541.txt; then
+            echo "::error::#1541 provider-closed championship gate SKIPPED — the gate did not run"
+            exit 1
+          fi
+
       - name: Polymarket price-crown venue re-grade (real Postgres)
         # #9394. The Gamma winner rail selected only markets holding a row that
         # was neither `api_settlement` nor `clean_resolution`, so a field Pass 1
@@ -2945,6 +2970,26 @@ jobs:
             exit 1
           fi
 
+      - name: Calibration soccer three-way grade (real Postgres)
+        # #1011. Since release v4636 a soccer sportsbook pair keeps the draw as
+        # 1 - home - away, and the accuracy curve grades it as the home/draw/
+        # away question it is instead of excluding it. A population claim, so
+        # rows rather than strings: the events curve, the exclusion count, the
+        # per-sportsbook slice and the drill-down sample all execute against
+        # seeded matches, judged by the three-way invariant (n = 3k, winners =
+        # k, sum_prob = k) beside a drawn match, a closing pair, a two-way-shaped
+        # pair, a pre-cutoff match and a pre-release reading.
+        if: matrix.group == 'shared-middle'
+        run: |
+          set -o pipefail
+          python -m pytest \
+            tests/integration/test_calibration_soccer_three_way_1011_pg.py \
+            -v -s -rs 2>&1 | tee /tmp/soccer3way.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/soccer3way.txt; then
+            echo "::error::soccer three-way calibration contract SKIPPED — the gate did not run"
+            exit 1
+          fi
+
       - name: Calibration trade-evidence Polymarket receipt (real Postgres)
         # #1870 consumer half. `fo.volume` is an integer and Polymarket's traded
         # amount is not, so both writers carry the fact in
@@ -3806,6 +3851,64 @@ jobs:
             exit 1
           fi
 
+      - name: "#5343 a provider event becomes one collection and a correction stays corrected (real Postgres)"
+        # The provider-event writer (#5343) takes the same container row lock as
+        # every correction and reads withdrawals, edges, decisions and rows inside
+        # it. Only a server shows a pass that waited on the lock honouring a
+        # withdrawal committed meanwhile, two concurrent passes serializing to one
+        # container and one revision bump, and a stale roster on two consecutive
+        # passes never resurrecting a member a newer roster removed.
+        #
+        # Same skip-detection as every gate in this job.
+        if: matrix.group == 'shared-tail'
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_provider_event_collections_5343_pg.py \
+            -v -s -rs 2>&1 | tee /tmp/provider5343.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/provider5343.txt; then
+            echo "::error::#5343 provider event collections SKIPPED — the gate did not run"
+            exit 1
+          fi
+
+      - name: "#5341 a complete NFL week publishes itself; partial or corrected weeks never do (real Postgres)"
+        # The automatic publication rides #9651's chain lock, ledger and revision
+        # column inside the collection pass's own transaction. Only a server
+        # shows the publish landing in the assembly's commit, a second pass
+        # adding no ledger row, a withdrawn hub or member staying withdrawn
+        # across a commit, an edge left by a game the authority moved, and a
+        # schedule outage leaving the published hub untouched.
+        #
+        # Same skip-detection as every gate in this job.
+        if: matrix.group == 'shared-tail'
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_container_nfl_publication_5341_pg.py \
+            -v -s -rs 2>&1 | tee /tmp/nflpublication5341.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/nflpublication5341.txt; then
+            echo "::error::#5341 NFL week publication SKIPPED — the gate did not run"
+            exit 1
+          fi
+
+      - name: "#5344 a game the authority moves to another week moves hubs; an older read never moves it back (real Postgres)"
+        # The move is one transaction over every week it touches: ascending-id
+        # chain locks, a barrier gate read under them, owned-edge deletes, the
+        # destination's assembly and a decision row on both sides. Only a server
+        # shows a read parked in its fetch losing to a later-started pass that
+        # committed, a person's withdrawal holding its row lock while the pass
+        # waits, the unchanged repeat rewriting no edge (xmin), and a failure
+        # mid-move leaving both weeks as they were.
+        #
+        # Same skip-detection as every gate in this job.
+        if: matrix.group == 'shared-tail'
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_container_nfl_relocation_5344_pg.py \
+            -v -s -rs 2>&1 | tee /tmp/nflrelocation5344.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/nflrelocation5344.txt; then
+            echo "::error::#5344 NFL week relocation SKIPPED — the gate did not run"
+            exit 1
+          fi
+
       - name: "#4229 Kalshi senate backfill moves the stored row (real Postgres)"
         # CERT-2372 blocked the classifier-only SHA because the diff made these
         # markets CLASSIFY as politics while every stored row stayed `hockey`:
@@ -4058,6 +4161,26 @@ jobs:
             -v -s -rs 2>&1 | tee /tmp/dg_post_start_opening.txt
           if grep -qiE "[0-9]+ skipped" /tmp/dg_post_start_opening.txt; then
             echo "::error::#5355 DataGolf post-start opening gate SKIPPED — the gate did not run"
+            exit 1
+          fi
+
+      - name: "#938 a Kalshi golf round price no stored time places before the round is not scored (real Postgres)"
+        # Kalshi gives a golf round market only the round's close as a start
+        # time, so every closing-line selector bounded on it can store a quote
+        # from inside or after the round (the specimen stores 0.99 on every
+        # winner, 0.01 on every loser). The curve now withholds Kalshi golf
+        # markets whose ticker names a round, keyed on structure, never on
+        # price. Controls: the tournament sibling, an R that is not a round, a
+        # year-bearing series, a margin prop, another source and another sport
+        # all publish whole at their own prices, and every withheld row lands
+        # on the new coverage rung rather than the catch-all.
+        if: matrix.group == 'shared-tail'
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_calibration_golf_round_timing_pg.py \
+            -v -s -rs 2>&1 | tee /tmp/golf_round_timing.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/golf_round_timing.txt; then
+            echo "::error::#938 golf round-timing gate SKIPPED — the gate did not run"
             exit 1
           fi
 
@@ -4715,6 +4838,35 @@ jobs:
           fi
           grep -qE "[^0-9]7 passed," /tmp/pricelock10661.txt || {
             echo "::error::#10661 price lock budget gate did not run all seven cases"
+            exit 1
+          }
+
+      - name: "#10090 a live quote is written beside a slow non-live transaction (real Postgres)"
+        # A Kalshi flush decided live preemption only BEFORE a non-live phase
+        # opened; a live quote arriving once that transaction ran waited for all
+        # of it (production 2026-10-12: one 200-row non-live phase held 3.50 s).
+        # The live input is now written beside it, on its own pooled session.
+        # Only real transactions show it: a pg_sleep trigger holds the non-live
+        # UPDATE open while live quotes enter through the shipped handle_ticker,
+        # the shipped cadence and flush write them, and publication reads the
+        # committed rows on an independent connection. Cases: promptness before
+        # the non-live commit (with strawman), continuing input without
+        # starvation, an in-flight event never split, cancellation inside both
+        # transactions then the final drain, and Root's three liveness cases:
+        # the last quote inside the stamp floor, a quote fenced behind its own
+        # running stamp, a bridged open-contract winner. Reuses the #837
+        # database; same skip detection plus a count.
+        if: matrix.group == 'isolated'
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_kalshi_live_beside_inflight_nonlive_10090_pg.py \
+            -v -rs 2>&1 | tee /tmp/livebeside10090.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/livebeside10090.txt; then
+            echo "::error::#10090 live-beside gate SKIPPED — the gate did not run"
+            exit 1
+          fi
+          grep -qE "[^0-9]8 passed," /tmp/livebeside10090.txt || {
+            echo "::error::#10090 live-beside gate did not run all eight cases"
             exit 1
           }
 
@@ -6944,6 +7096,67 @@ jobs:
             exit 1
           }
 
+      - name: "#10090 an odds pass releases each game's row before the next game's snapshot bookkeeping (real Postgres)"
+        # #10090. Inside one sport, `_ingest_event_odds` stamps `betting` on game
+        # N's `events` row and the same transaction then ran games N+1…'s
+        # registry lookups and snapshot `reading_count` updates before the
+        # sport's commit. Production (2026-10-12 03:38:29Z, BAL @ ATL): the
+        # venue stamp waited 1.4 s behind that idle transaction and re-queued.
+        # The gate blocks a real pass on a held snapshot row in game B and runs
+        # the real LiveBlendRefresher against game A.
+        #
+        # 3 = the ship arm + the refresher-bound control + the failed-game
+        # rollback/publication control.
+        if: matrix.group == 'shared-tail'
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_a_poll_releases_each_game_before_the_next_games_snapshots_10090_pg.py \
+            -v -rs 2>&1 | tee /tmp/pergame10090.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/pergame10090.txt; then
+            echo "::error::#10090 per-game commit gate SKIPPED — the gate did not run"
+            exit 1
+          fi
+          grep -qE "[^0-9]3 passed[,[:space:]]" /tmp/pergame10090.txt || {
+            echo "::error::#10090 per-game commit gate did not run all three cases"
+            exit 1
+          }
+
+      - name: "#10090 a futures_outcomes write never adds to or merges a search-index backlog (real Postgres)"
+        # #10090. With GIN's default fastupdate, every non-HOT futures_outcomes
+        # write appended to ix_futures_outcomes_name_trgm's pending list, and the
+        # write that crossed 4 MB merged it inside its own statement. Production
+        # 16:01:53Z on release 5671 showed the symptom (rerank 2.02 s beside
+        # 0.02 s of saves), not an exact attribution. The gate reads the pending
+        # page count from the server, so it times nothing.
+        #
+        # 3 = the parent strawman (writes leave pages pending) + the migration's
+        # upgrade (zero pending, fastupdate=off) + its downgrade (parent restored).
+        if: matrix.group == 'shared-tail'
+        run: |
+          set +e
+          python -m pytest tests/integration/test_futures_outcome_writes_never_merge_a_search_backlog_10090_pg.py \
+            -v -rs > /tmp/ginbacklog10090.txt 2>&1
+          RC=$?
+          set -e
+          cat /tmp/ginbacklog10090.txt
+          echo "PYTEST EXIT CODE: $RC"
+          if [ "$RC" -ne 0 ] && [ "$RC" -ne 1 ]; then
+            echo "::error::#10090 GIN backlog gate: pytest exit $RC is a harness story, not a result"
+            exit 1
+          fi
+          if [ "$RC" -ne 0 ]; then
+            echo "::error::#10090 GIN backlog gate RED"
+            exit 1
+          fi
+          if grep -qiE "[0-9]+ skipped" /tmp/ginbacklog10090.txt; then
+            echo "::error::#10090 GIN backlog gate SKIPPED — the gate did not run"
+            exit 1
+          fi
+          grep -qE "[^0-9]3 passed[,[:space:]]" /tmp/ginbacklog10090.txt || {
+            echo "::error::#10090 GIN backlog gate did not run all three cases"
+            exit 1
+          }
+
       - name: "#837 a failed sport no longer aborts the sports after it, and the scores loop releases per sport (real Postgres)"
         # #837, the three gaps the per-sport commit above left. (1) A failed
         # statement (production: a 40P01 at 03:05:27Z) left the transaction
@@ -7014,6 +7227,49 @@ jobs:
           fi
           grep -qE "[^0-9]19 passed[,[:space:]]" /tmp/captureverdicts8126.txt || {
             echo "::error::#8126 capture-verdict gate did not run all nineteen cases"
+            exit 1
+          }
+
+      - name: "#2351 an MLB team-total leg is re-graded from its own team's score, and the undo round-trips (real Postgres)"
+        # PILLAR TRUTH. SHIP: MLB team-total questions show each team's own
+        # correct Won/Lost result. The attended repair's plan, its pinned apply
+        # (which re-asks final status, chronology, score and clubs under lock),
+        # the drift refusal and the row-version-exact restore are compare-and-
+        # swaps a session double reads green on. Runs in its own throwaway
+        # database. 11 cases (9 tests, one parametrized over three event drifts).
+        if: matrix.group == 'shared-tail'
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_repair_team_total_game_score_2351_pg.py \
+            -v -rs 2>&1 | tee /tmp/teamtotal2351.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/teamtotal2351.txt; then
+            echo "::error::#2351 team-total repair gate SKIPPED — the gate did not run"
+            exit 1
+          fi
+          grep -qE "[^0-9]11 passed[,[:space:]]" /tmp/teamtotal2351.txt || {
+            echo "::error::#2351 team-total repair gate did not run all eleven cases"
+            exit 1
+          }
+
+      - name: "#2027 a Polymarket Under leg stops showing the Over contract's history, and the undo round-trips (real Postgres)"
+        # PILLAR TRUTH. SHIP: a settled Under contract shows its own probability
+        # history and opening, or an honest gap. The attended repair's classifier
+        # (era bound, same-second and nearest-observation witnesses), its pinned
+        # apply (rows and priors re-read under lock, one leg per transaction) and
+        # a restore that never overwrites a later writer are SQL a session double
+        # reads green on. Runs in its own throwaway database. 19 cases (the 9
+        # classifier/apply/restore cases + the backup-pair collision falsifiers).
+        if: matrix.group == 'shared-tail'
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_repair_pm_under_inverted_history_2027_pg.py \
+            -v -rs 2>&1 | tee /tmp/underhistory2027.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/underhistory2027.txt; then
+            echo "::error::#2027 Under-history repair gate SKIPPED — the gate did not run"
+            exit 1
+          fi
+          grep -qE "[^0-9]19 passed[,[:space:]]" /tmp/underhistory2027.txt || {
+            echo "::error::#2027 Under-history repair gate did not run all nineteen cases"
             exit 1
           }
 

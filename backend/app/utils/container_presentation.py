@@ -14,7 +14,7 @@ No database, no network, no clock: every rule below is gradeable from a fixture.
 WHAT IT DECIDES, EXHAUSTIVELY.
 
 1. **Edition identity** — which NFL week, NFL season or MLB postseason a slug
-   names, or (#9935) which theme collection. Read by round-tripping the slug
+   names, or (#9935) which theme collection, or (#5343) which provider event. Read by round-tripping the slug
    through the adapters' OWN slug builders (the theme registry's for a theme),
    so the identity can never disagree with the slug assembly wrote. Any other
    slug has no edition (``None``), never a nearest guess.
@@ -47,11 +47,13 @@ from app.utils.container_nfl import (
     STAGE_REGULAR,
     NflWeek,
 )
+from app.utils.provider_event_collections import parse_collection_slug
 from app.utils.theme_definitions import parse_theme_slug
 
 EDITION_NFL_WEEK = "nfl_week"
 EDITION_NFL_SEASON = "nfl_season"
 EDITION_MLB_POSTSEASON = "mlb_postseason"
+EDITION_PROVIDER_EVENT = "provider_event"
 
 #: Why a member of a published collection is not shown as a card.
 WITHHELD_ROW_MISSING = "row_missing"  # the edge names a row we no longer hold
@@ -107,6 +109,19 @@ def edition_for_slug(slug: str) -> Optional[dict]:
         except ValueError:
             return None
         return None
+
+    # #5343: one provider event's collection. The adapter's own parser must
+    # round-trip the slug byte for byte (``polymarket-event-042`` is None), and
+    # the edition is the admitted identity itself — no registry row, no branch
+    # per event. Not discoverable and not operable by the publication operator,
+    # neither of which lists this kind.
+    provider_event = parse_collection_slug(slug)
+    if provider_event is not None:
+        return {
+            "kind": EDITION_PROVIDER_EVENT,
+            "provider": provider_event.provider,
+            "event_id": provider_event.event_id,
+        }
 
     # #9935: a theme collection, AFTER the sports branches so no NFL/MLB slug's
     # answer can change. ``{"kind": "theme_edition", "subject", "edition"}`` or

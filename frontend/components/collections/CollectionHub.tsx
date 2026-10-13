@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { CollectionWeekNavigation } from "./CollectionWeekNavigation";
 import { CollectionMemberCard } from "./CollectionMemberCard";
 import {
   acceptedCollection, collectionMemberDomId, collectionReadAdmitted, collectionRefreshInterval, fetchCollection, openCollectionRead, reconcileCollectionContext,
@@ -15,6 +16,7 @@ export default function CollectionHub({ slug }: { slug: string }) {
   const [hub, setHub] = useState<Hub | null>(() => acceptedCollection(slug));
   const [error, setError] = useState<string | null>(null);
   const [fetching, setFetching] = useState(true);
+  const [navigationRead, setNavigationRead] = useState(0);
   const [paging, setPaging] = useState(false);
   const [pageError, setPageError] = useState<string | null>(null);
   const request = useRef<AbortController | null>(null);
@@ -28,6 +30,7 @@ export default function CollectionHub({ slug }: { slug: string }) {
     request.current = controller;
     const ticket = openCollectionRead();
     setFetching(true);
+    setNavigationRead((value) => value + 1);
     const timeout = window.setTimeout(() => controller.abort(), 12000);
     try {
       const fresh = await fetchCollection(slug, controller.signal);
@@ -85,7 +88,7 @@ export default function CollectionHub({ slug }: { slug: string }) {
       setHub(settled); setError(null);
     } catch {
       // A failed page leaves every loaded question where it is.
-      if (pageRequest.current === controller) setPageError("Couldn't load more questions. Please try again.");
+      if (pageRequest.current === controller) setPageError("Couldn't load more markets. Please try again.");
     } finally {
       window.clearTimeout(timeout);
       if (pageRequest.current === controller) { pageRequest.current = null; setPaging(false); }
@@ -126,7 +129,7 @@ export default function CollectionHub({ slug }: { slug: string }) {
     </div>
     <header className="space-y-2">
       <p className="text-xs font-semibold uppercase tracking-wide text-text-secondary">Collection</p>
-      <h1 className="text-2xl font-bold text-text-primary">{shown?.title ?? "Collection"}</h1>
+      <h1 id="collection-title" className="text-2xl font-bold text-text-primary">{shown?.title ?? "Collection"}</h1>
       {shown?.edition && <p className="text-sm text-text-secondary">{shown.edition}</p>}
     </header>
     {fetching && !shown && !error && <p role="status" className="py-8 text-text-secondary">Loading collection…</p>}
@@ -138,11 +141,19 @@ export default function CollectionHub({ slug }: { slug: string }) {
       <p className="text-text-secondary">{error}</p>
       <button type="button" onClick={() => void load()} className="text-accent-brand hover:underline">Try again</button>
     </div>}
+    {shown?.state === "published" && /^nfl-\d{4}-(?:preseason-|postseason-)?week-[1-9]\d?$/.test(slug) && <CollectionWeekNavigation key={slug} slug={slug} read={navigationRead} onNavigate={() => {
+      const member = shown.members.find((member) => (document.getElementById(collectionMemberDomId(member.key))?.getBoundingClientRect().bottom ?? 0) > 0);
+      if (member) remember(member.key);
+    }} />}
     {shown?.note && <p role="status" className="text-sm text-text-secondary">{shown.note}</p>}
-    {shown?.theme && !shown.theme.inventoryComplete && <p className="text-sm text-text-secondary">This list may not include every question yet.</p>}
+    {shown?.theme && !shown.theme.inventoryComplete && <p className="text-sm text-text-secondary">This list may not include every market yet.</p>}
     {shown?.children.map((child) => <Link key={child.key} id={collectionMemberDomId(child.key)} href={child.href} onClick={() => remember(child.key)} className="flex justify-between gap-4 rounded-card border border-surface-border bg-surface-card p-4 font-semibold text-text-primary hover:bg-surface-elevated">{child.name}<span aria-hidden>›</span></Link>)}
-    {shown?.sections.map((section) => <section key={section.key} className="space-y-3" aria-labelledby={`section-${section.key}`}>
-      <h2 id={`section-${section.key}`} className="text-lg font-semibold text-text-primary">{section.title}</h2>
+    {/* #10985: a hub served as one unclassified list (every provider event) has no
+        section to name, so "More" would follow nothing; the page title names it. */}
+    {shown?.sections.map((section) => {
+      const lone = shown.sections.length === 1 && section.cls === "unclassified";
+      return <section key={section.key} className="space-y-3" aria-labelledby={lone ? "collection-title" : `section-${section.key}`}>
+      {!lone && <h2 id={`section-${section.key}`} className="text-lg font-semibold text-text-primary">{section.title}</h2>}
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 items-start">
         {section.members.map((member) => <div key={member.key} className="min-w-0 space-y-3">
           {card(member)}
@@ -150,9 +161,10 @@ export default function CollectionHub({ slug }: { slug: string }) {
           {!!shown.related[member.key]?.length && <Link href={member.href} data-more-on-game={member.key} onClick={() => remember(member.key)} className="flex justify-between gap-4 rounded-card border border-surface-border bg-surface-card px-4 py-2.5 text-sm font-semibold text-text-secondary hover:bg-surface-elevated hover:text-text-primary">More on this game<span aria-hidden>›</span></Link>}
         </div>)}
       </div>
-    </section>)}
+    </section>;
+    })}
     {shown?.theme && shown.members.length > 0 && <div className="flex flex-col items-center gap-2 pb-6" data-collection-pager={shown.revision ?? ""}>
-      <p className="text-sm text-text-secondary">{shown.members.length} of {Math.max(shown.theme.totalCount, shown.members.length)} questions</p>
+      <p className="text-sm text-text-secondary">{shown.members.length} of {Math.max(shown.theme.totalCount, shown.members.length)} markets</p>
       {shown.theme.nextCursor && <button type="button" disabled={paging} onClick={() => void loadMore()} className="rounded-card border border-surface-border bg-surface-card px-4 py-2 text-sm font-semibold text-text-primary hover:bg-surface-elevated disabled:text-text-muted">{paging ? "Loading…" : "Load more"}</button>}
       {pageError && <p role="status" className="text-sm text-text-secondary">{pageError}</p>}
     </div>}

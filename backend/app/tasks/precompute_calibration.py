@@ -44,6 +44,18 @@ from app.utils.resolution_authority import (
     PRICE_DERIVED_SOURCES_SQL,
     calibration_truth_eligible_sql,
 )
+# #1011: the soccer three-way contract. Imported, never restated — the events
+# arm, the per-sportsbook writer and the drill-down samples bind the same values.
+from app.utils import soccer_three_way as _soccer_three_way_module
+from app.utils.soccer_three_way import (
+    SOCCER_DRAW_RESIDUAL_MIN,
+    SOCCER_REGULATION_FINISH_PERIOD,
+    SOCCER_REGULATION_FINISH_STATUS,
+    SOCCER_THREE_WAY_CONTRACT,
+    SOCCER_THREE_WAY_CONTRACT_KEY,
+    SOCCER_THREE_WAY_PARAMS,
+    SOCCER_THREE_WAY_SINCE,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -614,10 +626,19 @@ def read_bookmaker_curve_rows(rc, *, refuse: bool, json_module=None, durable=Non
     # Left in, it dominates the soccer_* by_category lines (~40K draw-inflated
     # outcomes). Dropped here, read-side, so the exclusion holds even though the
     # 6 h source keeps writing them.
+    #
+    # #1011: the writer now ALSO emits soccer buckets graded three-way (home,
+    # draw, away; drawn matches in) from readings taken since release v4636, and
+    # stamps each one with the contract. Only a stamped bucket is published. The
+    # stamp is the whole discrimination, on purpose: a bucket from an older
+    # writer — from Redis or the durable survivor — carries no stamp, so the
+    # two-way reading can never be read as the three-way one during a rollout.
     rows = []
     soccer_excluded = 0
     for row in raw:
-        if category_is_soccer_2way_excluded(row.get("category")):
+        if category_is_soccer_2way_excluded(row.get("category")) and (
+            row.get(SOCCER_THREE_WAY_CONTRACT_KEY) != SOCCER_THREE_WAY_CONTRACT
+        ):
             soccer_excluded += int(row.get("n") or 0)
             continue
         rows.append(SimpleNamespace(**row))
@@ -1209,6 +1230,21 @@ CALIBRATION_CORRECTIONS = [
                        "(#1011 draw column). Read-side only, no regrade.",
     },
     {
+        "date": "2026-10-12",
+        "title": "Soccer prices since September 16 are scored as home, draw or away",
+        "rows": None,  # live counts in payload.soccer_2way_filter.three_way
+        "description": "Since 2026-09-16 17:43:41 UTC the sportsbook writer "
+                       "keeps the draw (#1011): a soccer price now leaves room "
+                       "for it instead of splitting it between the two teams. "
+                       "Those readings are graded as the three-way question "
+                       "they are — home, draw and away, drawn matches included "
+                       "— in both the events aggregate and the per-sportsbook "
+                       "curve, for matches recorded as ending at full time (the "
+                       "market settles on the 90-minute score). Earlier soccer "
+                       "moneyline stays excluded; it was never captured with "
+                       "the draw. Read-side only, no regrade.",
+    },
+    {
         "date": "2026-07-12",
         "title": "Esports match-bundle exclusion",
         "rows": None,  # live count in payload.esports_multi_bundle_filter.excluded
@@ -1324,6 +1360,19 @@ CALIBRATION_CORRECTIONS = [
                        "adds questions back rather than removing them, so "
                        "earlier numbers here were incomplete rather than "
                        "wrong.",
+    },
+    {
+        "date": "2026-10-11",
+        "title": "Tennis and fight over/unders we had no way to settle",
+        "rows": None,  # live count in payload.score_unit_filter.excluded
+        "description": "Over/under and handicap lines in tennis count games, "
+                       "and in MMA they count rounds. The result we keep for a "
+                       "tennis match is the sets each player won, and for a "
+                       "fight only who won, so it cannot say whether a line "
+                       "went over or under. We were scoring them anyway, and "
+                       "every tennis over/under came out as a miss. Those lines "
+                       "are no longer scored; who won the match or the fight "
+                       "still is. No result was re-graded.",
     },
 ]
 
@@ -1536,6 +1585,17 @@ DATAGOLF_OPENING_TIMING_RULE_TEXT = (
     "date: the outcome was first read while the tournament was being played, or "
     "at a time that cannot be placed before it. A price moved to a pre-start "
     "closing line is kept. Applied to DataGolf only; never mutates resolutions."
+)
+
+#: #938. Same arrangement as the DataGolf rule above: the SQL lives inside
+#: ``_calibration_population_ctes`` so the fingerprints hash it, and this is the
+#: sentence that rides beside its count on the payload.
+GOLF_ROUND_TIMING_RULE_TEXT = (
+    "Excludes Kalshi golf round markets (round leader and round top-N) because "
+    "no stored time places their price before the round began: the only start "
+    "time Kalshi gives them is the round's close, so the stored price can be a "
+    "quote taken during or after the round. Tournament-long golf markets are "
+    "kept. Applied to Kalshi golf only; never mutates resolutions."
 )
 
 # L2-76 (#151/#997): curve-side exclusion of the Polymarket no-bid PLACEHOLDER
@@ -1952,7 +2012,25 @@ SOCCER_2WAY_RULE_TEXT = (
     "split summing to ~1.0, dropping the ~25% draw mass and over-predicting "
     "home/away by 7-18pp uniformly across ~20 leagues (#1011). The draw was never "
     "captured so these rows can't be re-graded; league-scoped by the soccer_* key. "
-    "Soccer spreads/totals (genuinely 2-way) are kept. Forward fix = 3-way capture. "
+    "Soccer spreads/totals (genuinely 2-way) are kept. Soccer moneyline read since "
+    "the 3-way capture (2026-09-16) is graded 3-way instead — see three_way. "
+    "Read-side only; never mutates resolutions."
+)
+
+# #1011 — the forward half. Since release v4636 (2026-09-16T17:43:41Z) the
+# sportsbook writer de-vigs over every outcome the book quotes, so a soccer pair
+# keeps the draw as ``1 - home - away``. Those readings are graded as the
+# three-way question they are. Contract, evidence and the per-row proof:
+# ``app/utils/soccer_three_way.py``.
+SOCCER_THREE_WAY_RULE_TEXT = (
+    "Soccer game winners priced since the 3-way capture went live "
+    "(2026-09-16 17:43:41 UTC) are graded as three outcomes — home, draw, away — "
+    "with drawn matches included, using the draw the price left room for. A "
+    "reading is graded 3-way only when its own numbers keep the draw (home + away "
+    "at least 1pp under 100%); one that does not stays excluded rather than being "
+    "graded as two losses on a draw. The market settles on the 90-minute score, "
+    "so only a match recorded as ending at full time is graded; an extra-time or "
+    "penalty finish stays excluded. Earlier soccer moneyline stays excluded. "
     "Read-side only; never mutates resolutions."
 )
 
@@ -1964,8 +2042,106 @@ def category_is_soccer_2way_excluded(category: str | None) -> bool:
     ``s.key NOT LIKE 'soccer_%'`` events-curve filter: every soccer league game-odds
     row was captured 2-way (draw dropped at ingest), so it is excluded from the
     published moneyline curve. Read-side only (gotcha #21).
+
+    #1011: names the soccer CATEGORY, not the verdict. A soccer row graded
+    three-way under ``app/utils/soccer_three_way.py`` is published; every caller
+    pairs this with that contract's own test (the events branch, the bookmaker
+    stamp) rather than reading True as "drop".
     """
     return bool(category) and category.startswith("soccer_")
+
+
+# #1010: tennis and MMA over/under and handicap lines cannot be graded from the
+# score we store.
+#
+# The spreads and totals curves grade every event the same way:
+# ``home_score + away_score > closing_over_under`` and
+# ``(home_score - away_score) + closing_home_spread > 0``. That is only a grade
+# when the stored score is in the same unit as the line. For these two sport
+# families it is not, measured on production 2026-10-11:
+#
+#   tennis  stored score = SETS (sum 2..5); lines = GAMES (O/U 15.5..42.5,
+#           handicap 0..8.5). Over can never win, so every Over was a loss:
+#           winner rate 0.000 in all nine published tennis tournaments, ECE ~50.
+#   mma     stored score = a 1-0 WINNER FLAG (sum always 1); lines = ROUNDS
+#           (O/U 0.5..4.5). Its 2 "winners" in 100 were 0.5 lines a 1-0 flag
+#           happens to clear.
+#
+# The real game or round count was never stored, so the outcome is UNKNOWN, not
+# a loss, and the rows are excluded rather than re-graded. Moneyline is
+# unaffected: the winner of a tennis match or a fight is exactly what the stored
+# score does say. Partitioned in Python on the rows' own ``category`` AFTER the
+# phase read/reuse, so a carried read is always judged by the current rule and
+# nothing is interpolated into the fingerprinted SQL. Read-side only (gotcha
+# #21) — never mutates scores or lines.
+#
+# IT CHANGES WHICH ROWS PUBLISH, so it is part of the published population's
+# identity: both helpers below and the family tuple are hashed into
+# :func:`population_predicate_fingerprint`, and the move is declared to the
+# publish gate as an exact predicate succession (#1010 in
+# ``calibration_publish_gate.DECLARED_PREDICATE_SUCCESSIONS``). The cells it
+# removes are published as ``score_unit_filter.excluded_cells`` so a category
+# that drops under the publish bar reads as a disclosed exclusion, not a
+# collapse.
+SCORE_UNIT_MISMATCH_FAMILIES = ("mma", "tennis")
+
+SCORE_UNIT_MISMATCH_RULE_TEXT = (
+    "Excludes tennis and MMA over/under and handicap lines from the spreads and "
+    "totals curves. The stored score counts sets (tennis) or is a 1-0 winner "
+    "flag (MMA), while those lines count games or rounds, so the score cannot "
+    "settle them: every tennis Over was graded a loss. The game/round count was "
+    "never stored, so these rows are ungradeable, not losses, and are not "
+    "re-graded. Moneyline for both sports is kept. Read-side only (#1010)."
+)
+
+
+def category_has_score_unit_mismatch(category: str | None) -> bool:
+    """True if an events-table sport key's stored score cannot grade its lines.
+
+    The family is the key's first ``_`` segment (``tennis_atp_us_open`` ->
+    ``tennis``), matching :func:`score_unit_mismatch_sql`.
+    """
+    return bool(category) and category.split("_", 1)[0] in SCORE_UNIT_MISMATCH_FAMILIES
+
+
+def score_unit_mismatch_sql(key_column: str) -> str:
+    """The same family test as SQL, for the drill-down route's sample reads."""
+    families = ", ".join(f"'{f}'" for f in SCORE_UNIT_MISMATCH_FAMILIES)
+    return f"split_part({key_column}, '_', 1) IN ({families})"
+
+
+def split_score_unit_mismatch(rows) -> tuple[list, int, set]:
+    """Spreads/totals bucket rows -> (gradeable rows, outcomes excluded, cells).
+
+    ``cells`` is the set of ``(source, category)`` pairs the rule removed, for
+    the publish gate's disclosed-exclusion read.
+    """
+    kept = []
+    excluded = 0
+    cells = set()
+    for r in rows:
+        if category_has_score_unit_mismatch(r.category):
+            excluded += r.n
+            cells.add((r.source, r.category))
+        else:
+            kept.append(r)
+    return kept, excluded, cells
+
+
+def score_unit_excluded_by_cell(rows) -> dict[str, int]:
+    """Outcomes the score-unit rule removes, per ``"source/category"`` cell.
+
+    The publish gate bounds a category collapse the rule discloses by these
+    counts: the rule may explain a cell's loss only up to what it says it
+    removed there. Counting only — membership is decided by the hashed
+    :func:`category_has_score_unit_mismatch`, so this is outside the digest.
+    """
+    out: dict[str, int] = {}
+    for r in rows:
+        if category_has_score_unit_mismatch(r.category):
+            key = f"{r.source}/{r.category}"
+            out[key] = out.get(key, 0) + r.n
+    return dict(sorted(out.items()))
 
 
 # Queue #159 (#1010): esports malformed-MULTI "match bundle" curve exclusion.
@@ -3930,6 +4106,37 @@ def _calibration_population_ctes(
                     END)"""
     else:
         datagolf_opening_after_start = "false"
+    # #938: a Kalshi golf ROUND market's price cannot be placed before its
+    # round. Written here for the same fingerprint reason as #5355 above.
+    #
+    # Kalshi gives these markets one time, the round's CLOSE, and it lands in
+    # ``commence_time`` (the golf commence fix that would move it is off by
+    # default, and it would move every round to the eve of round 1 anyway).
+    # Every closing-line selector bounds on that column, so on a round market
+    # "the last quote before commence" is a quote from inside the round. The
+    # specimen is ``KXPGAR3TOP10-THOC26``: all ten winners store 0.99 and every
+    # loser 0.01 against pre-round quotes of 0.10–0.18, the values of snapshots
+    # taken on and after 07-23, five days after the round settled. Its sibling
+    # ``KXPGATOP10-THOC26`` keeps genuine pre-tournament prices, so the scope is
+    # the round, not golf.
+    #
+    # FAILS CLOSED and keys on STRUCTURE, never on the outcome: the ticker's
+    # first segment names a round (the same anchored pattern as
+    # ``repair_golf_round_closing_line.ROUND_SERIES_PATTERN``, pinned equal by
+    # test). There is no stored round start, so no snapshot can prove a price
+    # predates the round; matching a snapshot's value would not help, because
+    # the hindsight values also appear on snapshots stamped weeks before the
+    # market opened. Applies in every caller: a horizon snapshot is bounded on
+    # the same commence_time. Read-side only (gotcha #21): ``is_winner`` and
+    # ``calibration_probability`` are never touched.
+    golf_round_price_unanchored = """(cv.source = 'kalshi'
+                     AND cv.category = 'golf'
+                     AND EXISTS (
+                        SELECT 1
+                        FROM futures_markets fm_grt
+                        WHERE fm_grt.id = fo.market_id
+                          AND SPLIT_PART(fm_grt.external_id, '-', 1)
+                              ~ 'R[0-9]+(LEAD|TOP[0-9]+)$'))"""
     return f"""{leading_ctes}market_info AS (
                 SELECT fm.id AS market_id, fm.source, fm.event_id, fm.group_id,
                     fm.commence_time,
@@ -4736,6 +4943,9 @@ def _calibration_population_ctes(
                     -- #5355: a DataGolf opening with no pre-start reading of
                     -- its own value is not a forecast (rule above the return).
                     {datagolf_opening_after_start} AS is_datagolf_opening_after_start,
+                    -- #938: a Kalshi golf round market's price cannot be placed
+                    -- before its round (rule above the return).
+                    {golf_round_price_unanchored} AS is_golf_round_price_unanchored,
                     {POLY_PLACEHOLDER_EXCLUDE} AS is_poly_placeholder,
                     -- Queue #220/221 Item 3: all-bands poly never-traded flag (for
                     -- the exclusion-symmetry census; does NOT gate the curve).
@@ -4996,6 +5206,9 @@ def _calibration_population_ctes(
                           -- the opening-timing rule cannot be normalized over
                           -- its survivors; it is dropped whole like any other.
                           AND NOT ro.is_datagolf_opening_after_start
+                          -- #938: market-level like the quarantine, so a round
+                          -- field loses every member; named for the same reason.
+                          AND NOT ro.is_golf_round_price_unanchored
                     ) AS survivor_n,
                     COUNT(*) FILTER (
                         WHERE ro.is_winner
@@ -5018,6 +5231,7 @@ def _calibration_population_ctes(
                           -- luck of another rung.
                           AND NOT ro.is_identity_disputed
                           AND NOT ro.is_datagolf_opening_after_start
+                          AND NOT ro.is_golf_round_price_unanchored
                     ) AS survivor_win_n
                 FROM ranked_outcomes ro
                 JOIN mex_field_candidates mfc ON mfc.market_id = ro.market_id
@@ -5154,6 +5368,9 @@ def _calibration_population_ctes(
                     -- whose timing cannot be proved) is not a forecast.
                     -- Read-side only (gotcha #21) — dropped, never re-graded.
                     AND NOT ro.is_datagolf_opening_after_start
+                    -- #938: a Kalshi golf round price that no stored time places
+                    -- before the round is not a forecast. Dropped, never re-graded.
+                    AND NOT ro.is_golf_round_price_unanchored
                     AND NOT ro.is_field_incomplete
                     AND
                     CASE
@@ -5351,6 +5568,15 @@ _COVERAGE_RUNG_PREDICATES: tuple[tuple[str, str], ...] = (
     (
         "datagolf_opening_after_start",
         "COALESCE(n.is_datagolf_opening_after_start, false)",
+    ),
+    # #938. Its own rung for #5355's reason (a different reader sentence:
+    # "taken during or after the round"). After the Kalshi price rungs, which
+    # keep any round row they already own, and before structural_artifact,
+    # whose golf-placeholder arm would otherwise claim the round-leader fields
+    # this rule drops whole.
+    (
+        "golf_round_price_unanchored",
+        "COALESCE(n.is_golf_round_price_unanchored, false)",
     ),
     (
         "structural_artifact",
@@ -5699,6 +5925,12 @@ def _main_futures_sql(*, frozen: bool = False) -> str:
                         AS datagolf_opening_after_start_excluded,
                     COUNT(DISTINCT market_id) FILTER (WHERE is_datagolf_opening_after_start)
                         AS datagolf_opening_after_start_markets,
+                    -- #938: the golf round-timing rule's own size, read by the
+                    -- publish gate to admit its declared succession.
+                    COUNT(*) FILTER (WHERE is_golf_round_price_unanchored)
+                        AS golf_round_price_unanchored_excluded,
+                    COUNT(DISTINCT market_id) FILTER (WHERE is_golf_round_price_unanchored)
+                        AS golf_round_price_unanchored_markets,
                     COUNT(*) FILTER (WHERE is_draw_authority_missing) AS draw_authority_excluded,
                     COUNT(DISTINCT market_id) FILTER (WHERE is_draw_authority_missing) AS draw_authority_markets,
                     COUNT(*) FILTER (WHERE is_orphan_partition) AS orphan_partition_excluded,
@@ -5812,6 +6044,10 @@ def _main_futures_sql(*, frozen: bool = False) -> str:
                     AS datagolf_opening_after_start_excluded,
                 MAX(ls.datagolf_opening_after_start_markets)
                     AS datagolf_opening_after_start_markets,
+                MAX(ls.golf_round_price_unanchored_excluded)
+                    AS golf_round_price_unanchored_excluded,
+                MAX(ls.golf_round_price_unanchored_markets)
+                    AS golf_round_price_unanchored_markets,
                 MAX(ls.draw_authority_excluded) AS draw_authority_excluded,
                 MAX(ls.draw_authority_markets) AS draw_authority_markets,
                 MAX(ls.orphan_partition_excluded) AS orphan_partition_excluded,
@@ -7326,6 +7562,12 @@ async def compute_calibration_payload(db, *, runner=None) -> dict:
         datagolf_opening_after_start_markets = _int0(
             "datagolf_opening_after_start_markets"
         )
+        golf_round_price_unanchored_excluded = _int0(
+            "golf_round_price_unanchored_excluded"
+        )
+        golf_round_price_unanchored_markets = _int0(
+            "golf_round_price_unanchored_markets"
+        )
         draw_authority_excluded = _int0("draw_authority_excluded")
         draw_authority_markets_count = _int0("draw_authority_markets")
         orphan_partition_excluded = _int0("orphan_partition_excluded")
@@ -7456,7 +7698,7 @@ async def compute_calibration_payload(db, *, runner=None) -> dict:
                 SUM((prob::float - CASE WHEN won THEN 1.0 ELSE 0.0 END)^2) AS sum_sq_err
             FROM (
                 SELECT COALESCE(closing_home_probability, opening_home_probability) AS prob,
-                       (home_score > away_score) AS won, sport_id
+                       (home_score > away_score) AS won, sport_id, FALSE AS three_way
                 FROM events
                 WHERE status IN ('completed', 'closed')
                   AND COALESCE(closing_home_probability, opening_home_probability) IS NOT NULL
@@ -7466,7 +7708,7 @@ async def compute_calibration_payload(db, *, runner=None) -> dict:
                   AND home_score != away_score
                 UNION ALL
                 SELECT COALESCE(closing_away_probability, opening_away_probability) AS prob,
-                       (away_score > home_score) AS won, sport_id
+                       (away_score > home_score) AS won, sport_id, FALSE AS three_way
                 FROM events
                 WHERE status IN ('completed', 'closed')
                   AND COALESCE(closing_away_probability, opening_away_probability) IS NOT NULL
@@ -7474,17 +7716,50 @@ async def compute_calibration_payload(db, *, runner=None) -> dict:
                   AND COALESCE(closing_away_probability, opening_away_probability) < 1
                   AND home_score IS NOT NULL AND away_score IS NOT NULL
                   AND home_score != away_score
+                UNION ALL
+                -- #1011: soccer graded THREE-WAY (app/utils/soccer_three_way.py).
+                -- The last pre-kickoff consensus pair, which since release v4636
+                -- keeps the draw as 1 - home - away. The CLOSING pair is not
+                -- read: its away leg is written as 1 - home, so it cannot hold
+                -- the draw. Drawn matches stay in — the draw is an outcome here.
+                SELECT tw.prob, tw.won, ev.sport_id, TRUE AS three_way
+                FROM events ev
+                CROSS JOIN LATERAL (VALUES
+                    (ev.opening_home_probability::float,
+                     ev.home_score > ev.away_score),
+                    (ev.opening_away_probability::float,
+                     ev.away_score > ev.home_score),
+                    (1.0 - ev.opening_home_probability::float
+                         - ev.opening_away_probability::float,
+                     ev.home_score = ev.away_score)
+                ) AS tw(prob, won)
+                WHERE ev.status IN ('completed', 'closed')
+                  AND ev.sport_id IN (SELECT id FROM sports WHERE key LIKE 'soccer_%')
+                  AND ev.commence_time >= :soccer_three_way_since
+                  AND ev.home_score IS NOT NULL AND ev.away_score IS NOT NULL
+                  -- CERT-4066: the score graded must be the 90-minute score.
+                  -- Admitted only when the row says the match ENDED at full
+                  -- time; an extra-time or shootout finish is unproven.
+                  AND (ev.period = :soccer_regulation_period
+                       OR ev.box_score_data->'provider_box_evidence'
+                              ->'provider_status'->>'name'
+                          = :soccer_regulation_status)
+                  AND ev.opening_home_probability > 0
+                  AND ev.opening_away_probability > 0
+                  AND 1.0 - ev.opening_home_probability::float
+                          - ev.opening_away_probability::float
+                      >= :soccer_draw_residual_min
             ) outcomes
             JOIN sports s ON s.id = outcomes.sport_id
-            -- Queue #158 (#1011): soccer game-odds were captured 2-way (draw
-            -- dropped at ingest — no draw column) so every soccer moneyline row
-            -- sums to ~1.0 and over-predicts home/away by 7-18pp. Excluded from
-            -- the published curve, league-scoped by the soccer_* key. Read-side
-            -- only (gotcha #21); forward fix = 3-way capture (#1011).
-            WHERE s.key NOT LIKE 'soccer_%'
+            -- Queue #158 (#1011): soccer read as a TWO-way pair is excluded —
+            -- before v4636 the draw was dropped at ingest and the pair summed to
+            -- ~1.0, over-predicting home/away by 7-18pp, and that cannot be
+            -- re-graded. Only the three-way branch above reaches the curve for
+            -- soccer. Read-side only (gotcha #21).
+            WHERE (s.key NOT LIKE 'soccer_%' OR outcomes.three_way)
             GROUP BY bucket_idx, s.key
             ORDER BY bucket_idx, s.key
-        """)
+        """).bindparams(**SOCCER_THREE_WAY_PARAMS)
         events_rows = runner.reuse(PHASE_SPORTS, "events_rows")
         if events_rows is None:
             await runner.apply_statement_timeout(db, PHASE_SPORTS)
@@ -7590,6 +7865,15 @@ async def compute_calibration_payload(db, *, runner=None) -> dict:
                 totals_result = await db.execute(totals_sql)
                 totals_rows = totals_result.all()
             runner.record(PHASE_SPORTS, "totals_rows", totals_rows, kind="rows")
+
+        # #1010: after record/reuse, so a carried read is judged by today's rule.
+        score_unit_by_cell = score_unit_excluded_by_cell(
+            list(spreads_rows) + list(totals_rows))
+        spreads_rows, score_unit_spreads_excluded, _su_spread_cells = (
+            split_score_unit_mismatch(spreads_rows))
+        totals_rows, score_unit_totals_excluded, _su_total_cells = (
+            split_score_unit_mismatch(totals_rows))
+        score_unit_cells = sorted(_su_spread_cells | _su_total_cells)
 
         if not _sports_carried:
             await runner.commit(db)
@@ -7764,6 +8048,12 @@ async def compute_calibration_payload(db, *, runner=None) -> dict:
         # drops from the published curve. Mirrors the events_sql population
         # (same eligibility, both home + away outcomes) so the count is honest,
         # never silent — the same contract as the #762 void_filter count.
+        #
+        # #1011: a match the three-way branch of events_sql grades is NOT
+        # excluded, so it is not counted here. The admission test is that
+        # branch's own, wrapped in COALESCE(..., FALSE): a NULL kickoff or a
+        # NULL opening leg is "not admitted", never a row silently dropped from
+        # the count by a NULL comparison.
         # -----------------------------------------------------------
         soccer_2way_sql = text("""
             SELECT COUNT(*) AS excluded
@@ -7776,6 +8066,18 @@ async def compute_calibration_payload(db, *, runner=None) -> dict:
                   AND COALESCE(closing_home_probability, opening_home_probability) < 1
                   AND home_score IS NOT NULL AND away_score IS NOT NULL
                   AND home_score != away_score
+                  AND NOT COALESCE(
+                      commence_time >= :soccer_three_way_since
+                      AND (period = :soccer_regulation_period
+                           OR box_score_data->'provider_box_evidence'
+                                  ->'provider_status'->>'name'
+                              = :soccer_regulation_status)
+                      AND opening_home_probability > 0
+                      AND opening_away_probability > 0
+                      AND 1.0 - opening_home_probability::float
+                              - opening_away_probability::float
+                          >= :soccer_draw_residual_min,
+                      FALSE)
                 UNION ALL
                 SELECT sport_id
                 FROM events
@@ -7785,10 +8087,22 @@ async def compute_calibration_payload(db, *, runner=None) -> dict:
                   AND COALESCE(closing_away_probability, opening_away_probability) < 1
                   AND home_score IS NOT NULL AND away_score IS NOT NULL
                   AND home_score != away_score
+                  AND NOT COALESCE(
+                      commence_time >= :soccer_three_way_since
+                      AND (period = :soccer_regulation_period
+                           OR box_score_data->'provider_box_evidence'
+                                  ->'provider_status'->>'name'
+                              = :soccer_regulation_status)
+                      AND opening_home_probability > 0
+                      AND opening_away_probability > 0
+                      AND 1.0 - opening_home_probability::float
+                              - opening_away_probability::float
+                          >= :soccer_draw_residual_min,
+                      FALSE)
             ) outcomes
             JOIN sports s ON s.id = outcomes.sport_id
             WHERE s.key LIKE 'soccer_%'
-        """)
+        """).bindparams(**SOCCER_THREE_WAY_PARAMS)
         soccer_2way_excluded = runner.reuse(PHASE_DIAGNOSTICS, "soccer_2way_excluded")
         if soccer_2way_excluded is None:
             with runner.stage("read:soccer_2way"):
@@ -8570,6 +8884,19 @@ async def compute_calibration_payload(db, *, runner=None) -> dict:
             "excluded_markets": datagolf_opening_after_start_markets,
             "excluded_cells": [["datagolf", "golf"]],
         },
+        # #938: a Kalshi golf round market's price cannot be placed before its
+        # round. Same contract as the DataGolf section above: the gate reads
+        # `excluded` for the declared succession and `excluded_cells` so the
+        # shrinking golf cell is a disclosed exclusion. The SQL keys on
+        # `cv.source = 'kalshi' AND cv.category = 'golf'`, so this is the one
+        # cell it can take rows out of.
+        "golf_round_timing_filter": {
+            "applies_to": "kalshi",
+            "rule": GOLF_ROUND_TIMING_RULE_TEXT,
+            "excluded": golf_round_price_unanchored_excluded,
+            "excluded_markets": golf_round_price_unanchored_markets,
+            "excluded_cells": [["kalshi", "golf"]],
+        },
         # Queue 299 rung 1 (#1012): result authority before anything else.
         "no_winner_filter": {
             "applies_to": "all",
@@ -8643,6 +8970,25 @@ async def compute_calibration_payload(db, *, runner=None) -> dict:
             "excluded": soccer_2way_excluded + bookmaker_soccer_excluded,
             "events_excluded": soccer_2way_excluded,
             "bookmaker_excluded": bookmaker_soccer_excluded,
+            # #1011: what IS published for soccer moneyline, graded three-way.
+            # Counted off the rows that actually entered the curve, so the
+            # disclosure cannot claim an inclusion the build did not make. Every
+            # soccer row that survives to here is three-way by construction:
+            # events_sql admits soccer only through its three-way branch, and
+            # the bookmaker reader keeps only contract-stamped soccer buckets.
+            "three_way": {
+                "since": SOCCER_THREE_WAY_SINCE.isoformat(),
+                "draw_residual_min": SOCCER_DRAW_RESIDUAL_MIN,
+                "rule": SOCCER_THREE_WAY_RULE_TEXT,
+                "events_included": sum(
+                    int(r.n) for r in events_rows
+                    if category_is_soccer_2way_excluded(r.category)
+                ),
+                "bookmaker_included": sum(
+                    int(r.n) for r in bookmaker_rows
+                    if category_is_soccer_2way_excluded(r.category)
+                ),
+            },
             # D21 (#1978, CAL-P150). None on a normal read; one of the two
             # reason codes when the per-bookmaker curve could not be assembled
             # and this response was served anyway. Only the serve path can ever
@@ -8652,6 +8998,19 @@ async def compute_calibration_payload(db, *, runner=None) -> dict:
             # cannot be told from an absence is a response shape, not an answer
             # (gotcha #53).
             "bookmaker_curve_degraded": bookmaker_curve_degraded,
+        },
+        "score_unit_filter": {  # #1010
+            "applies_to": "odds_api_spreads, odds_api_totals (tennis, mma)",
+            "rule": SCORE_UNIT_MISMATCH_RULE_TEXT,
+            "excluded": score_unit_spreads_excluded + score_unit_totals_excluded,
+            "spreads_excluded": score_unit_spreads_excluded,
+            "totals_excluded": score_unit_totals_excluded,
+            # Read by the publish gate (`_disclosed_excluded_cells`): a category
+            # this rule takes under the publish bar is a disclosed exclusion.
+            "excluded_cells": [list(c) for c in score_unit_cells],
+            # Per-cell counts summing to `excluded`: the gate bounds the
+            # disclosed-exclusion excuse by them (`_judge_score_unit_disclosure`).
+            "excluded_by_cell": score_unit_by_cell,
         },
         "heuristic_filter": {
             "applies_to": "polymarket",
@@ -8945,6 +9304,23 @@ def population_predicate_fingerprint() -> str:
             # change which rows qualify while this digest went on claiming the
             # predicate had not moved.
             + inspect.getsource(identity_quarantine_ctes)
+            # #1010: the score-unit rule removes published spreads/totals rows
+            # after the read, outside every SQL root above, so its helpers and
+            # its family tuple (by value — a tuple's VALUE never appears in a
+            # function's source) are hashed here explicitly.
+            + inspect.getsource(category_has_score_unit_mismatch)
+            + inspect.getsource(split_score_unit_mismatch)
+            + f"score_unit_families={SCORE_UNIT_MISMATCH_FAMILIES}"
+            # #1011: soccer moneyline is admitted three-way from the capture
+            # forward — a WIDENING of which rows qualify, decided outside every
+            # SQL root above (events_sql's soccer branch, the soccer exclusion
+            # count, the bookmaker reader's stamp test), so the contract is
+            # hashed explicitly: its module source (cutoff, draw floor, stamp
+            # version, the Python twin of the grade) and the reader predicate
+            # that keeps a soccer bucket. Declared to the publish gate as a
+            # widening by its exact digest pair, never by a version bump.
+            + inspect.getsource(_soccer_three_way_module)
+            + inspect.getsource(category_is_soccer_2way_excluded)
         )
     except Exception:  # noqa: BLE001 — no source => never claim a match
         # A digest nothing can equal (``_same_predicate`` requires equality), so
@@ -9126,6 +9502,19 @@ def _main_input_fingerprint() -> str:
         # moved in months; this one is pinned to another file's constant. The
         # gap is filed rather than widened here (#5430).
         f"kalshi_writer_bar={KALSHI_WRITER_BAR_MET}",
+        # #1010 — hashed by name and by value like its neighbours. Applied after
+        # the phase read, so a carried output cannot encode an old value; it is
+        # here so the census covers it rather than counting it as a hole.
+        f"score_unit_families={SCORE_UNIT_MISMATCH_FAMILIES}",
+        # #1011 — hashed by name and by value like its neighbours. BOUND into
+        # events_sql and the soccer exclusion count rather than interpolated,
+        # so the source hash above sees the parameter NAMES and never these
+        # values; both decide which soccer rows the curve publishes.
+        f"soccer_three_way_since={SOCCER_THREE_WAY_SINCE.isoformat()}",
+        f"soccer_draw_residual_min={SOCCER_DRAW_RESIDUAL_MIN}",
+        # CERT-4066: the regulation-finish proof, bound the same way.
+        f"soccer_regulation_period={SOCCER_REGULATION_FINISH_PERIOD}",
+        f"soccer_regulation_status={SOCCER_REGULATION_FINISH_STATUS}",
         source,
     )
 

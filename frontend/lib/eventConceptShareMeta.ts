@@ -100,7 +100,19 @@ export interface EventConceptShareSource {
   primary?: {
     label?: string | null;
     competitors?: EventConceptShareCompetitor[] | null;
+    /** The market the primary contest IS — an awards ceremony's marquee category. */
+    evolution_market_id?: number | null;
   } | null;
+  /** Read only to find the primary awards category's own grades (#10987). */
+  children?: EventConceptShareChild[] | null;
+}
+
+/** The slice of one `children[]` row the awards branch reads. */
+export interface EventConceptShareChild {
+  market_id?: number | null;
+  kind?: string | null;
+  settled?: boolean | null;
+  outcomes?: Array<{ name?: string | null; won?: boolean | null } | null> | null;
 }
 
 /** A competitor we are willing to print: a name and a printable probability. */
@@ -373,6 +385,61 @@ function flaggedWinner(source: EventConceptShareSource): string | null {
 }
 
 /**
+ * #10987 — THE PRIMARY AWARDS CATEGORY'S OWN RESULT.
+ *
+ * A ceremony announces its categories one at a time, so the parent stays
+ * `unknown` all night (#5349) while Best Picture is already decided. The page
+ * body reads that category's own `outcomes[].won`; this read the parent status
+ * and the price-ranked leader, and unfurled "Forecast nominee 0 leads at 90%"
+ * under a page saying "Winner: Actual unpriced winner".
+ *
+ * Same rule as the reader's `awardsResult` (#5349): own grades only — never a
+ * price, never `graded_winner`, never the calendar. Every `won` name is kept, so
+ * a tie names all winners; a settled row with no grade is closed, not decided.
+ * The category is the child the primary points at; the nominations prop that
+ * shares its label is a different question and is skipped by `kind`.
+ *
+ * Null when there is no such child or it has neither a grade nor a close, so an
+ * open category and every non-awards event fall through untouched.
+ */
+export interface AwardsCategoryResult {
+  state: "announced" | "closed";
+  /** Display names, "Other" already read as "Another nominee". Empty when closed. */
+  winners: string[];
+  /** `winners` as one phrase — "A", "A and B" — so caption and card agree. */
+  names: string;
+}
+
+function awardsCategoryResult(source: EventConceptShareSource): AwardsCategoryResult | null {
+  if (cleanText(source.event?.domain)?.toLowerCase() !== "awards") return null;
+  const id = source.primary?.evolution_market_id;
+  if (typeof id !== "number") return null;
+  const category = (source.children ?? []).find(
+    (child) => child?.market_id === id && child.kind !== "prop"
+  );
+  if (!category) return null;
+
+  const winners = Array.from(
+    new Set(
+      (category.outcomes ?? [])
+        .filter((outcome) => outcome?.won === true)
+        .map((outcome) => cleanText(outcome?.name))
+        .filter((name): name is string => name !== null)
+    )
+  ).map((name) => (name.toLowerCase() === "other" ? "Another nominee" : name));
+
+  if (winners.length > 0) return { state: "announced", winners, names: joinNames(winners) };
+  return category.settled === true ? { state: "closed", winners: [], names: "" } : null;
+}
+
+/** "A", "A and B", "A, B and C". */
+function joinNames(names: string[]): string {
+  return names.length <= 1
+    ? names.join("")
+    : `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`;
+}
+
+/**
  * `": "` normally, `" — "` when the event's own name already carries a colon.
  *
  * See the header: combat cards are named "Contender Series: Hunt vs Perea", and
@@ -417,12 +484,19 @@ export interface EventConceptShareFacts {
   settled: boolean;
   /** The flagged winner's name, or null. Never inferred from a price. */
   winner: string | null;
+  /**
+   * The primary awards category's own announced or closed result (#10987), or
+   * null. When set, `priced` is empty: a decided or closed category has no
+   * forecast left to print.
+   */
+  category: AwardsCategoryResult | null;
 }
 
 export function eventConceptShareFacts(
   source: EventConceptShareSource
 ): EventConceptShareFacts {
   const priced = pricedCompetitors(source);
+  const category = awardsCategoryResult(source);
   return {
     name: cleanText(source.event?.name) ?? "Event",
     label: contestLabel(source),
@@ -431,10 +505,12 @@ export function eventConceptShareFacts(
     // withheld WHOLE rather than narrated as a lead. Cleared here, in the facts
     // both readers share, so the picture and the sentence cannot take different
     // views of it: the card's `rows` and the copy's branch are the same
-    // emptiness. See `isForecast`.
-    priced: isForecast(priced) ? priced : [],
+    // emptiness. See `isForecast`. #10987 clears it the same way for an
+    // announced or closed awards category.
+    priced: !category && isForecast(priced) ? priced : [],
     settled: cleanText(source.event?.status)?.toLowerCase() === "settled",
     winner: flaggedWinner(source),
+    category,
   };
 }
 
@@ -443,9 +519,23 @@ export function buildEventConceptShareCopy(source: EventConceptShareSource): {
   title: string;
   description: string;
 } {
-  const { name, label, where, priced, settled, winner } =
+  const { name, label, where, priced, settled, winner, category } =
     eventConceptShareFacts(source);
   const sep = separator(name);
+
+  // ── AN ANNOUNCED AWARDS CATEGORY (#10987) ──────────────────────────────────
+  // Named, no percentage. Ahead of the parent's branches because the parent
+  // stays unknown while its categories are announced one by one.
+  if (category?.state === "announced") {
+    const names = category.names;
+    const joint = category.winners.length > 1;
+    return {
+      title: `${name}${sep}${names} won${label ? ` ${label}` : ""}`,
+      description: truncateShareText(
+        `${label ? `${label}. ` : ""}${joint ? "Joint winners" : "Winner"}: ${names}.`
+      ),
+    };
+  }
 
   // ── SETTLED, WITH AN AUTHORITATIVE WINNER ──────────────────────────────────
   if (winner) {
@@ -453,6 +543,18 @@ export function buildEventConceptShareCopy(source: EventConceptShareSource): {
       title: `${name}${sep}${winner} won`,
       description: truncateShareText(
         label ? `Final: ${winner} won the ${label}.` : `Final: ${winner} won.`
+      ),
+    };
+  }
+
+  // ── A CLOSED, UNGRADED AWARDS CATEGORY (#10987) ────────────────────────────
+  // The page's own words. Below the parent's winner so an authoritative parent
+  // result is never hidden behind a category whose rows lack the grade.
+  if (category?.state === "closed") {
+    return {
+      title: name,
+      description: truncateShareText(
+        `${label ?? name}. Trading closed, result not announced yet.`
       ),
     };
   }

@@ -62,6 +62,40 @@ rebuild that accompanied the change, and say so.
 
 ---
 
+## 2026-10-11 — tennis and fight over/unders our recorded result cannot settle are not scored
+
+**Population version:** `q271` (unchanged — declared instead as an exact predicate succession,
+`3944c947…` → `da21d87f…`, so the finished rebuild bank is kept; the published population identity
+does move, because which rows publish moved) · **Code:** _pending merge_ · **Issue:** #1010
+**Ruled by:** the standing calibration-truth bar — an outcome the stored result cannot decide is
+unknown, not a loss; no separate Alex ruling required.
+
+**What changed.** Over/under and handicap lines in tennis count games, and in MMA they count rounds.
+The result we store for a tennis match is the sets each player won, and for a fight only who won (a
+1–0). Neither can say whether a games or rounds line went over or under, but both curves graded them
+anyway with the same arithmetic used for points and runs. Those lines are no longer scored. Who won
+the match or the fight still is: that is exactly what the stored result says.
+
+**Why.** Measured on the 2026-10-11 23:08Z publish and on production rows. Tennis: stored score sum
+2–5, over/under lines 15.5–42.5, handicaps 0–8.5, 480 matches — an Over could never win, so the
+totals winner rate was **0.000 in all nine published tennis tournaments** and each cell's error was
+about 50 points. MMA: stored score sum always 1, over/under lines 0.5–4.5, 100 fights; its 2
+"winners" were 0.5 lines a 1–0 happens to clear. The real game and round counts were never stored,
+so these rows cannot be re-graded.
+
+**What it affected.** _Pending the first publish under this rule_: the published count is
+`score_unit_filter.excluded` (with `spreads_excluded` / `totals_excluded`, the cells it removes in
+`excluded_cells`, and how many outcomes it removes from each in `excluded_by_cell`). Rescoring the
+23:08Z artifact gives 1,120 outcomes (0.097% of 1,154,060). Two categories fall under the
+1,000-outcome publish bar and move to the small-sample list: `tennis_atp_canadian_open`
+(1,155 → 976) and `tennis_wta_cincinnati_open` (1,108 → 938). The publish gate records both as
+disclosed exclusions rather than collapses — but only for the outcomes the rule says it removed from
+each spreads/totals cell. The sportsbook and moneyline forecasts in the same tournament are not the
+rule's to explain: if they fall by more than the ordinary 20% of what the rule left, the publish is
+refused, and it is refused too if the per-cell counts are missing.
+
+---
+
 ## 2026-09-13 — a one-question market its venue settled is graded, not thrown away
 
 **Population version:** `q271` (from `q270`) · **Code:** `5def08cb4` (the wiring) and `31de29e1b`

@@ -167,6 +167,23 @@ const NOT_YET_SERVED = {
     excluded_markets: 12,
     excluded_cells: [["datagolf", "golf"]],
   },
+  // #1010 — same situation: emitted by the build, served once heavy publishes.
+  score_unit_filter: {
+    applies_to: "odds_api_spreads, odds_api_totals (tennis, mma)",
+    rule: "Excludes tennis and MMA over/under and handicap lines from the spreads and totals curves…",
+    excluded: 1_127,
+    spreads_excluded: 547,
+    totals_excluded: 580,
+    excluded_cells: [["odds_api_totals", "tennis_atp_us_open"]],
+  },
+  // #938 — same situation: emitted by the build, served once heavy publishes.
+  golf_round_timing_filter: {
+    applies_to: "kalshi",
+    rule: "Excludes Kalshi golf round markets (round leader and round top-N) because no stored time places their price before the round began…",
+    excluded: 2_400,
+    excluded_markets: 31,
+    excluded_cells: [["kalshi", "golf"]],
+  },
 };
 
 /** The payload, near enough: the sixteen filter blocks plus noise around them. */
@@ -403,6 +420,20 @@ describe("the labels are this module's words, not the payload's", () => {
     // …and it carries none of the payload's own prose (the check above, applied
     // to the block `THE_NINE` cannot hold).
     const words = NOT_YET_SERVED.datagolf_opening_timing_filter.rule.split(/\s+/);
+    for (let i = 0; i + 6 <= words.length; i += 1) {
+      expect(row!.label).not.toContain(words.slice(i, i + 6).join(" "));
+    }
+  });
+
+  test("#938's golf round rule reads as its own row in the reader's words", () => {
+    const out = readNamedExclusions({ ...LIVE, ...NOT_YET_SERVED })!;
+    const row = out.rows.find(r => r.key === "golf_round_timing_filter");
+    expect(row).toEqual({
+      key: "golf_round_timing_filter",
+      label: NAMED_EXCLUSION_LABELS.golf_round_timing_filter,
+      outcomes: 2_400,
+    });
+    const words = NOT_YET_SERVED.golf_round_timing_filter.rule.split(/\s+/);
     for (let i = 0; i + 6 <= words.length; i += 1) {
       expect(row!.label).not.toContain(words.slice(i, i + 6).join(" "));
     }

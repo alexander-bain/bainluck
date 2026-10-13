@@ -142,6 +142,13 @@ BRIDGE_RUNGS: tuple[tuple[str, str], ...] = (
         "time that cannot be placed before it. It is not a forecast.",
     ),
     (
+        "golf_round_price_unanchored",
+        "A Kalshi golf round market (round leader or round top-N). Kalshi gives "
+        "these markets only the round's close as a start time, so no stored "
+        "time places the price before the round began; it can be a quote taken "
+        "during or after the round. It is not a forecast.",
+    ),
+    (
         "structural_artifact",
         "A measured pricing artifact rather than a genuine probability: esports "
         "match bundles, golf one-sided-ask placeholders, Kalshi player-prop "

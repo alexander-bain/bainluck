@@ -9646,6 +9646,79 @@ for _warmer_beat, _expires_s in _EXPIRING_WARMER_BEATS.items():
     ] = _expires_s
 
 
+# =============================================================================
+# #10983 — a heavy beat message stops being worth running once it is older than
+# its own period (floor 15 minutes).
+#
+# Measured 2026-10-13 06:11–08:05Z: the `heavy` queue held 977 → 1,019 messages,
+# ~19–20 h of FIFO backlog, and still growing. Heavy beats ask ~7,530 slot-
+# seconds an hour of a two-slot worker (7,200), so the queue never drains, and
+# every release or crash adds the work it loses. With no `expires`, each message
+# waited its turn: `refresh_stale_futures_prices` started twice in 24 h, both
+# times serving a dispatch from the previous day, and the World Series board
+# (#1845) sat 5 h stale through a playoff game.
+#
+# Every heavy task reads current state when it runs, so a message whose next
+# sibling has already been dispatched buys nothing by running late. Hence
+# `expires = max(period, floor)`: in overload the queue's age settles near the
+# floor, ticks are dropped across the short-period tasks in proportion, and
+# hourly-and-slower tasks run at most ~15 min late instead of ~19 h.
+#
+# ⚠️ THIS DOES NOT ADD A SLOT. The ~5% overload remains and now shows up as
+# expired messages instead of age. Capacity is a separate, attended decision.
+# It also cannot touch messages ALREADY queued (they were sent without
+# `expires`); that backlog drains only by an attended purge.
+#
+# An entry that already states `expires` keeps it. An entry whose schedule this
+# cannot derive a period for gets none, and `tests/test_heavy_beat_expires_10983.py`
+# fails on it, so a new shape is caught in CI rather than at import.
+# =============================================================================
+HEAVY_BEAT_EXPIRES_FLOOR_S = 900
+
+
+def _crontab_period_seconds(schedule) -> "int | None":
+    """Longest gap, in seconds, between consecutive fires of ``schedule``.
+
+    Read from the crontab's minute/hour/day-of-week sets over one week. The
+    LONGEST gap is used so an uneven schedule (``5,20,35,50``) is bounded by its
+    widest interval. Returns None for anything this cannot read: a non-crontab,
+    or a crontab restricted by day-of-month or month.
+    """
+    if not isinstance(schedule, crontab):
+        return None
+    if schedule.day_of_month != set(range(1, 32)) or schedule.month_of_year != set(
+        range(1, 13)
+    ):
+        return None
+    fires = sorted(
+        (dow * 1440 + hour * 60 + minute) * 60
+        for dow in schedule.day_of_week
+        for hour in schedule.hour
+        for minute in schedule.minute
+    )
+    if not fires:
+        return None
+    week = 7 * 86400
+    gaps = [b - a for a, b in zip(fires, fires[1:])]
+    gaps.append(fires[0] + week - fires[-1])
+    return max(gaps)
+
+
+def apply_heavy_beat_expires(schedule: dict) -> dict:
+    """Set ``expires = max(period, floor)`` on every heavy beat entry without one."""
+    for entry in schedule.values():
+        options = entry.get("options") or {}
+        if options.get("queue") != "heavy" or "expires" in options:
+            continue
+        period = _crontab_period_seconds(entry.get("schedule"))
+        if period is not None:
+            options["expires"] = max(period, HEAVY_BEAT_EXPIRES_FLOOR_S)
+    return schedule
+
+
+apply_heavy_beat_expires(celery_app.conf.beat_schedule)
+
+
 # Queue 300R Item 1 — targeted result suppression. Must run AFTER the beat
 # schedule exists (it is derived from it) and after every task decorator has
 # run. Beat-only tasks with no HTTP dispatcher stop writing a celery-task-meta

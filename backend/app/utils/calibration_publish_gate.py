@@ -181,6 +181,59 @@ DECLARATION_MAX_TOLERANCE_PCT = 5.0
 #: (before the tail and representative filters), so it can exceed the published
 #: share; 6.0% is a little over twice DataGolf's whole published share. A
 #: narrowing past it is not this rule.
+#:
+#: #1010. Tennis and MMA over/under and handicap lines leave the spreads and
+#: totals curves: the stored score (sets; a 1-0 winner flag) cannot settle a
+#: games or rounds line. The rule is applied after the phase read, outside the
+#: SQL roots, so its helpers and family tuple were added to the predicate digest
+#: in the same commit — moving it ``3944c947…`` -> ``da21d87f…``, unbumped, for
+#: #8458's reason. Stated once (``"listed": False``): its only statement is
+#: ``score_unit_filter.excluded``.
+#:
+#: ``max_narrowing_pct`` is BOUNDED by what the rule can touch. It removes only
+#: ``odds_api_spreads`` / ``odds_api_totals`` rows whose sport family is tennis
+#: or mma: measured at 1,120 of 1,154,060 published outcomes (0.097%) on the
+#: 2026-10-11 23:08Z artifact, out of 30,607 spreads+totals outcomes (2.65%).
+#: 0.5% is about five times the measured mass and under a fifth of both curves
+#: together; a narrowing past it is not this rule.
+#:
+#: #1011 — the first WIDENING. Soccer moneyline read since release v4636
+#: (2026-09-16T17:43:41Z), when the sportsbook writer began keeping the draw, is
+#: graded three-way (home, draw, away; drawn matches in) instead of excluded.
+#: The contract is hashed into the predicate digest, moving it ``da21d87f…`` ->
+#: ``598e0ed8…``, unbumped, for #8458's reason. A widening ADMITS rows, so it is
+#: judged by :func:`_judge_widening`: the candidate's own count of what it
+#: admitted (``soccer_2way_filter.three_way``) is taken out and the rest must
+#: clear Rule 2 as same-predicate growth.
+#:
+#: ``max_widening_pct`` is BOUNDED, not measured — build lanes do not read the
+#: live table (ruling 134). The rule can only admit soccer moneyline priced after
+#: the cutoff. Its counterfactual ceiling is the whole of soccer's history graded
+#: three-way: July's two-way exclusion counted 48,567 soccer moneyline outcomes
+#: across both sources (Queue #158), ~4.2% of the 1,154,060 published on
+#: 2026-10-11, and a three-way grade of the same matches adds the draw outcome
+#: and the drawn matches (~2x), ~8.5%. 8.0% sits under that, so a widening that
+#: large means the cutoff or the stamp failed open, not this rule.
+#:
+#: That cap bounds the GLOBAL narrowing. Per category, the rule's disclosed
+#: cells excuse a collapse only up to its per-cell counts
+#: (``score_unit_filter.excluded_by_cell``); see
+#: :func:`_judge_score_unit_disclosure`.
+#:
+#: #938. Kalshi golf ROUND markets (round leader, round top-N) leave the curve:
+#: Kalshi gives them only the round's close as a start time, so no stored time
+#: places their price before the round, and the specimen
+#: (``KXPGAR3TOP10-THOC26``) stores 0.99 on every winner and 0.01 on every loser
+#: from quotes taken after the round settled. It moves the digest from
+#: ``598e0ed8…`` (the served artifact of 2026-10-13 09:17Z and master's pin since
+#: #1011) to ``ea3ef49d…``, unbumped, for #8458's reason. Stated once
+#: (``"listed": False``): its only statement is ``golf_round_timing_filter.excluded``.
+#:
+#: ``max_narrowing_pct`` is BOUNDED by what the rule can touch, not measured.
+#: Its SQL keys on ``cv.source = 'kalshi' AND cv.category = 'golf'``, and that
+#: cell published 17,302 of 1,160,981 outcomes (1.49%) on the same artifact.
+#: ``excluded`` is counted over ``normalized`` and can exceed the published share,
+#: so 3.0% is about twice the whole cell; a narrowing past it is not this rule.
 DECLARED_PREDICATE_SUCCESSIONS: dict[tuple[str, str], dict] = {
     ("e67d771bbd7a92dfd8d1a0f4bd79b4c2", "27b49126ac461fce9d5f078b471bb17f"): {
         "cause": "#6275 identity quarantine (Alex ruling; 22a99a734d, heavy v27)",
@@ -193,6 +246,26 @@ DECLARED_PREDICATE_SUCCESSIONS: dict[tuple[str, str], dict] = {
         "issue": 5355,
         "narrowing": "datagolf_opening_timing",
         "max_narrowing_pct": 6.0,
+        "listed": False,
+    },
+    ("3944c947edb78d220ed3bef7defcc526", "da21d87f0f001c635a813eefb3eb9532"): {
+        "cause": "#1010 tennis/MMA over/unders the stored score cannot settle",
+        "issue": 1010,
+        "narrowing": "score_unit",
+        "max_narrowing_pct": 0.5,
+        "listed": False,
+    },
+    ("da21d87f0f001c635a813eefb3eb9532", "598e0ed820277a9748363a4d7a276a63"): {
+        "cause": "#1011 soccer graded three-way from the 3-way capture forward",
+        "issue": 1011,
+        "widening": "soccer_three_way",
+        "max_widening_pct": 8.0,
+    },
+    ("598e0ed820277a9748363a4d7a276a63", "ea3ef49d2a15568e11d7d8e54240bfdb"): {
+        "cause": "#938 Kalshi golf round prices no stored time places before the round",
+        "issue": 938,
+        "narrowing": "golf_round_timing",
+        "max_narrowing_pct": 3.0,
         "listed": False,
     },
 }
@@ -637,6 +710,10 @@ def census(payload: Any) -> dict:
             "excluded_cells": {},
             "identity_quarantine": None,
             "datagolf_opening_timing": None,
+            "golf_round_timing": None,
+            "score_unit": None,
+            "soccer_three_way": None,
+            "cell_counts": None,
         }
 
     buckets = payload.get("buckets") if isinstance(payload.get("buckets"), list) else []
@@ -711,6 +788,15 @@ def census(payload: Any) -> dict:
         "identity_quarantine": _identity_quarantine_census(payload),
         # #5355: the DataGolf opening-timing rule's size, stated once.
         "datagolf_opening_timing": _datagolf_opening_timing_census(payload),
+        # #938: the golf round-timing rule's size, stated once.
+        "golf_round_timing": _golf_round_timing_census(payload),
+        # #1010: the score-unit rule's size, stated once.
+        "score_unit": _score_unit_census(payload),
+        # #1011: the soccer three-way rule's size — the rows it ADMITS.
+        "soccer_three_way": _soccer_three_way_census(payload),
+        # #1010: per-cell published counts, so a disclosed exclusion can be
+        # bounded by what it removed (`_judge_score_unit_disclosure`).
+        "cell_counts": _bucket_cell_counts(buckets),
     }
 
 
@@ -758,6 +844,98 @@ def _datagolf_opening_timing_census(payload: dict) -> dict:
         "listed_outcomes": None,
         "section_present": isinstance(section, dict),
     }
+
+
+def _golf_round_timing_census(payload: dict) -> dict:
+    """The golf round-timing rule's size, unvalidated (#938).
+
+    One statement, ``golf_round_timing_filter.excluded``, with no reader-facing
+    list beside it — the same shape as :func:`_datagolf_opening_timing_census`,
+    and its succession entry says ``"listed": False`` for the same reason.
+    """
+    section = payload.get("golf_round_timing_filter")
+    return {
+        "excluded": section.get("excluded") if isinstance(section, dict) else None,
+        "listed_outcomes": None,
+        "section_present": isinstance(section, dict),
+    }
+
+
+def _score_unit_census(payload: dict) -> dict:
+    """#1010's one statement of its size, ``score_unit_filter.excluded``, and
+    the same size per cell, ``score_unit_filter.excluded_by_cell``.
+
+    ``by_cell`` is ``{category: {source: outcomes}}``, or ``None`` when the
+    section does not carry a usable per-cell count: absent, any malformed entry,
+    or entries that do not add up to ``excluded``. ``None`` is never read as
+    zero — :func:`_judge_score_unit_disclosure` refuses on it.
+    """
+    section = payload.get("score_unit_filter")
+    excluded = section.get("excluded") if isinstance(section, dict) else None
+    by_cell: Optional[dict[str, dict[str, int]]] = None
+    raw = section.get(DISCLOSED_CELL_MAP_KEY) if isinstance(section, dict) else None
+    if isinstance(raw, dict) and _is_count(excluded):
+        by_cell = {}
+        total = 0
+        for key, n in raw.items():
+            cell = _split_cell(key)
+            if cell is None or not cell[0] or not _is_count(n):
+                by_cell = None
+                break
+            source, category = cell
+            slot = by_cell.setdefault(category, {})
+            slot[source] = slot.get(source, 0) + n
+            total += n
+        if by_cell is not None and total != excluded:
+            by_cell = None
+    return {
+        "excluded": excluded,
+        "listed_outcomes": None,
+        "section_present": isinstance(section, dict),
+        "by_cell": by_cell,
+    }
+
+
+def _soccer_three_way_census(payload: dict) -> dict:
+    """#1011's one statement of its size: the soccer outcomes graded three-way.
+
+    ``soccer_2way_filter.three_way`` carries ``events_included`` and
+    ``bookmaker_included``, each counted by the build off the rows that entered
+    the curve. ``included`` is their sum, or ``None`` when either is missing or
+    not a count — never read as zero.
+    """
+    section = payload.get("soccer_2way_filter")
+    three_way = section.get("three_way") if isinstance(section, dict) else None
+    events = three_way.get("events_included") if isinstance(three_way, dict) else None
+    bookmaker = (
+        three_way.get("bookmaker_included") if isinstance(three_way, dict) else None
+    )
+    included = events + bookmaker if _is_count(events) and _is_count(bookmaker) else None
+    return {"included": included, "section_present": isinstance(three_way, dict)}
+
+
+def _is_count(value: Any) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool) and value >= 0
+
+
+def _bucket_cell_counts(buckets: list) -> Optional[dict[str, dict[str, int]]]:
+    """Published outcomes per ``{category: {source: n}}``, from the buckets.
+
+    The buckets are the canonical rows every other count is summed from, and
+    unlike ``by_category`` they keep a category the build parked under its
+    publish bar. ``None`` if any row lacks a usable source, category or count:
+    a partial tally would under-state some cell and read as a loss.
+    """
+    out: dict[str, dict[str, int]] = {}
+    for b in buckets:
+        if not isinstance(b, dict):
+            return None
+        source, category, n = b.get("source"), b.get("category"), b.get("n")
+        if not isinstance(source, str) or not isinstance(category, str) or not _is_count(n):
+            return None
+        slot = out.setdefault(category, {})
+        slot[source] = slot.get(source, 0) + n
+    return out
 
 
 def _ordering(well: dict, thin: dict) -> Optional[str]:
@@ -1040,6 +1218,87 @@ def _judge_succession(
     return record, None
 
 
+def _judge_widening(
+    entry: dict, cand: dict, prev_pop: float, cand_pop: float
+) -> tuple[Optional[dict], Optional[str]]:
+    """Measure a declared WIDENING off the candidate (#1011).
+
+    The mirror of :func:`_judge_succession`. A narrowing removed rows, so it is
+    added back; a widening ADMITTED rows the old predicate did not count, so its
+    stated count is taken out and the remainder is judged as same-predicate
+    growth. Same discipline: the count is read off the candidate's own artifact
+    (``widening`` names the census key, whose ``included`` the build counted off
+    the rows that entered the curve), must be present and positive, and may be no
+    larger than ``max_widening_pct`` of the candidate — a widening past that is
+    not this rule.
+
+    The record carries the move under the narrowing keys as well, SIGNED
+    (``narrowing`` is ``-included``), so the growth branch and the persisted
+    ledger read one shape whichever direction the predicate moved.
+    """
+    stated = cand.get(entry["widening"]) or {}
+    included = stated.get("included")
+    record: dict = {
+        "published_predicate": None,
+        "candidate_predicate": None,
+        "cause": entry["cause"],
+        "issue": entry["issue"],
+        "widening": included if _is_count(included) else None,
+        "max_widening_pct": entry["max_widening_pct"],
+        "narrowing": -included if _is_count(included) else None,
+        "narrowing_listed": None,
+    }
+    if not _is_count(included):
+        return record, (
+            f"the candidate does not state the declared widening "
+            f"({entry['widening']}.included is {included!r}), so the move it "
+            "declares cannot be measured"
+        )
+    if included <= 0:
+        return record, (
+            "the candidate states a widening of 0: the ruled cause the "
+            "succession declares is absent from this artifact, so the predicate "
+            "moved for some other reason"
+        )
+    widening_pct = included / cand_pop * 100 if cand_pop else 100.0
+    pre_widening = cand_pop - included
+    record["widening_pct"] = round(widening_pct, 2)
+    record["narrowing_pct"] = -round(widening_pct, 2)
+    record["pre_narrowing_population"] = int(pre_widening)
+    record["pre_narrowing_drift_pct"] = round(
+        (pre_widening - prev_pop) / prev_pop * 100, 2
+    )
+    if widening_pct > entry["max_widening_pct"]:
+        return record, (
+            f"the declared widening admitted {widening_pct:.2f}% "
+            f"({included:,} of {int(cand_pop):,}), past its "
+            f"{entry['max_widening_pct']:.1f}% cap"
+        )
+    return record, None
+
+
+def _declared_move_phrase(record: dict) -> str:
+    """'with the declared narrowing of N added back' — or the widening's mirror."""
+    if record.get("widening") is not None:
+        return f"with the declared widening of {record['widening']:,} taken out"
+    return f"with the declared narrowing of {record['narrowing']:,} added back"
+
+
+def _declared_size_phrase(record: dict) -> str:
+    """How big the declared move was, in the direction it went."""
+    if record.get("widening") is not None:
+        return (
+            f"the widening as {record['widening']:,} outcomes "
+            f"({record['widening_pct']:.2f}% of {int(record['pre_narrowing_population'] + record['widening']):,}, "
+            f"cap {record['max_widening_pct']:.1f}%)"
+        )
+    return (
+        f"the narrowing as {record['narrowing']:,} outcomes "
+        f"({record['narrowing_pct']:.2f}% of {record['pre_narrowing_population']:,}, "
+        f"cap {record['max_narrowing_pct']:.1f}%)"
+    )
+
+
 #: Keys under which an artifact's filter sections disclose WHICH (source,
 #: category) cells that rung deletes. All three already ship on
 #: ``/api/calibration``; this reads them, it does not add to the contract.
@@ -1138,6 +1397,101 @@ def _newly_excluded_in(cand: dict, prev: dict, category: str) -> list[dict]:
                 continue
             rows.append({"section": section, "source": source, "category": cat})
     return rows
+
+
+#: The filter section #1010's rung discloses its cells under.
+SCORE_UNIT_SECTION = "score_unit_filter"
+
+
+def _judge_score_unit_disclosure(
+    category: str, prev_n: int, cand: dict, prev: dict, disclosed: list[dict]
+) -> tuple[Optional[dict], Optional[str]]:
+    """Bound a collapse the score-unit rung discloses by what it removed.
+
+    The rung only ever deletes ``odds_api_spreads`` / ``odds_api_totals`` cells
+    in tennis and MMA, and it states how many outcomes per cell
+    (``excluded_by_cell``). So the loss it explains in a category is, per
+    disclosed cell, the cell's published drop capped at the count the rung says
+    it removed there. Every other source in the category — the moneyline, the
+    sportsbook lines, Kalshi — is untouched by the rule, and its loss is judged
+    by the ordinary :data:`CATEGORY_DROP_TOLERANCE` against the part of the
+    baseline the rule left. A label naming the category excuses nothing on its
+    own (the 2187ed78 probe: 796 sportsbook outcomes lost beside 179 the rule
+    removed read OK).
+
+    Both category totals are the canonical bucket sums, and each must equal the
+    total the artifact states — ``by_category`` when the category is listed
+    there. A candidate category the rule took under the publish bar is absent
+    from ``by_category``, so its bucket sum is the only count it has; reading
+    it as 0 would charge the rule's honest remainder as a loss.
+
+    Returns ``(accounting, refusal)``; ``refusal`` is ``None`` when the drop is
+    explained. Any quantity it needs that the artifacts do not carry is a
+    refusal, never a pass — this exists to bound an excuse, and an unbounded
+    one is what it replaces.
+    """
+    prev_cells = (prev.get("cell_counts") or {}).get(category)
+    cand_counts = cand.get("cell_counts")
+    cand_cells = (cand_counts or {}).get(category, {})
+    by_cell = (cand.get("score_unit") or {}).get("by_cell")
+
+    if prev_cells is None or sum(prev_cells.values()) != prev_n:
+        return None, (
+            f"{SCORE_UNIT_SECTION} discloses this category but the published "
+            "artifact's buckets do not sum to its stated count, so what the "
+            "rule removed cannot be told from what was lost"
+        )
+    cand_total = sum(cand_cells.values()) if cand_counts is not None else None
+    listed = cand.get("categories", {}).get(category)
+    if cand_total is None or (listed is not None and listed != cand_total):
+        return None, (
+            f"{SCORE_UNIT_SECTION} discloses this category but the candidate's "
+            "buckets do not sum to its stated count, so what the rule removed "
+            "cannot be told from what was lost"
+        )
+    if by_cell is None:
+        return None, (
+            f"{SCORE_UNIT_SECTION} discloses this category but carries no usable "
+            "per-cell count (excluded_by_cell absent, malformed, or not summing "
+            "to excluded), so its share of the drop is unbounded"
+        )
+
+    explained = 0
+    sources = []
+    for row in disclosed:
+        source = row["source"]
+        removed = (by_cell.get(category) or {}).get(source)
+        if removed is None:
+            return None, (
+                f"{SCORE_UNIT_SECTION} names {source}/{category} as excluded but "
+                "states no count for that cell"
+            )
+        fell = max(prev_cells.get(source, 0) - cand_cells.get(source, 0), 0)
+        explained += min(fell, removed)
+        sources.append(f"{source} {min(fell, removed):,}")
+
+    retained = prev_n - explained
+    unexplained = max(prev_n - cand_total - explained, 0)
+    unexplained_drop = unexplained / retained if retained > 0 else 0.0
+    accounting = {
+        "previous": prev_n,
+        "candidate": cand_total,
+        "candidate_listed": listed is not None,
+        "explained": explained,
+        "sources": sources,
+        "retained_baseline": retained,
+        "unexplained": unexplained,
+        "unexplained_drop_pct": round(unexplained_drop * 100, 2),
+    }
+    if unexplained_drop > CATEGORY_DROP_TOLERANCE:
+        return accounting, (
+            f"{SCORE_UNIT_SECTION} explains {explained:,} of the "
+            f"{prev_n - cand_total:,} lost outcomes ({', '.join(sources)}); the "
+            f"other {unexplained:,} are {unexplained_drop * 100:.1f}% of the "
+            f"{retained:,} the rule does not touch, past the "
+            f"{CATEGORY_DROP_TOLERANCE * 100:.0f}% limit"
+        )
+    return accounting, None
 
 
 def _judge_recategorization(
@@ -1594,7 +1948,9 @@ def evaluate_publish(
             # #8458: a RULED predicate move, declared by its exact digest pair.
             # The narrowing is added back and the growth judged as if the
             # predicate had not moved; shrink never reaches this branch.
-            record, why_not = _judge_succession(succession, cand, prev_pop, cand_pop)
+            judge = (_judge_widening if "widening" in succession
+                     else _judge_succession)
+            record, why_not = judge(succession, cand, prev_pop, cand_pop)
             record["published_predicate"] = prev["population_predicate"]
             record["candidate_predicate"] = cand["population_predicate"]
             record["admitted"] = False
@@ -1617,14 +1973,13 @@ def evaluate_publish(
                     predicate_succession=record,
                 )
             else:
-                pre_drift = (cand_pop + record["narrowing"] - prev_pop) / prev_pop
+                pre_drift = (record["pre_narrowing_population"] - prev_pop) / prev_pop
                 if pre_drift > POPULATION_GROWTH_CEILING:
                     reject(
                         "population_growth_unexplained",
                         f"population grew {pre_drift * 100:+.1f}% "
                         f"({prev_pop:,} -> {record['pre_narrowing_population']:,} "
-                        f"with the declared narrowing of {record['narrowing']:,} "
-                        f"added back) across a declared predicate succession, past "
+                        f"{_declared_move_phrase(record)}) across a declared predicate succession, past "
                         f"the {POPULATION_GROWTH_CEILING * 100:.0f}% ceiling — the "
                         "same rule counting this many more rows is duplication or "
                         "a bad merge, not a backfill",
@@ -1641,17 +1996,14 @@ def evaluate_publish(
                         f"the population predicate moved {_predicate_label(prev)} "
                         f"-> {_predicate_label(cand)}, a DECLARED succession "
                         f"({succession['cause']}, #{succession['issue']}): the "
-                        f"candidate states the narrowing as {record['narrowing']:,} "
-                        f"outcomes ({record['narrowing_pct']:.2f}% of "
-                        f"{record['pre_narrowing_population']:,}, cap "
-                        f"{succession['max_narrowing_pct']:.1f}%)",
+                        f"candidate states {_declared_size_phrase(record)}",
                         **record,
                     )
                     observe(
                         "population_growth_acknowledged",
                         f"population grew {drift * 100:+.1f}% "
-                        f"({prev_pop:,} -> {int(cand_pop):,}); with the declared "
-                        f"narrowing added back it grew {pre_drift * 100:+.1f}% "
+                        f"({prev_pop:,} -> {int(cand_pop):,}); "
+                        f"{_declared_move_phrase(record)} it grew {pre_drift * 100:+.1f}% "
                         f"({prev_pop:,} -> {record['pre_narrowing_population']:,}) "
                         f"under the {POPULATION_GROWTH_CEILING * 100:.0f}% ceiling "
                         "— ADMITTED as growth across a declared predicate "
@@ -1738,6 +2090,48 @@ def evaluate_publish(
             # candidate against a pre-ruling baseline and refusing every hour
             # for three days while both artifacts said why in a published key.
             disclosed = _newly_excluded_in(cand, prev, name)
+            if disclosed and all(
+                r["section"] == SCORE_UNIT_SECTION for r in disclosed
+            ):
+                # #1010: the score-unit rung publishes what it removed per cell,
+                # so its excuse is bounded by that, not granted by its label.
+                accounting, refusal = _judge_score_unit_disclosure(
+                    name, prev_n, cand, prev, disclosed
+                )
+                if refusal is None:
+                    observe(
+                        "category_collapse_disclosed_exclusion",
+                        f"category {name!r} fell {drop * 100:.1f}% "
+                        f"({prev_n:,} -> {accounting['candidate']:,}), past the "
+                        f"{CATEGORY_DROP_TOLERANCE * 100:.0f}% limit, and is "
+                        f"RECORDED rather than refused: {SCORE_UNIT_SECTION} "
+                        f"removed {accounting['explained']:,} of its outcomes "
+                        f"({', '.join(accounting['sources'])}) and the "
+                        f"{accounting['retained_baseline']:,} it did not touch "
+                        f"lost {accounting['unexplained_drop_pct']:.1f}%",
+                        category=name,
+                        previous=prev_n,
+                        candidate=cand_n,
+                        drop_pct=round(drop * 100, 2),
+                        disclosed_by=disclosed,
+                        magnitude_uncheckable=False,
+                        score_unit_accounting=accounting,
+                    )
+                    continue
+                reject(
+                    "category_collapse",
+                    f"category {name!r} fell {drop * 100:.1f}% "
+                    f"({prev_n:,} -> {cand_n:,}), limit "
+                    f"{CATEGORY_DROP_TOLERANCE * 100:.0f}%, without a version "
+                    f"bump; {refusal}",
+                    category=name,
+                    previous=prev_n,
+                    candidate=cand_n,
+                    drop_pct=round(drop * 100, 2),
+                    disclosed_by=disclosed,
+                    score_unit_accounting=accounting,
+                )
+                continue
             if disclosed:
                 observe(
                     "category_collapse_disclosed_exclusion",
@@ -1758,12 +2152,13 @@ def evaluate_publish(
                     candidate=cand_n,
                     drop_pct=round(drop * 100, 2),
                     disclosed_by=disclosed,
-                    # No rung publishes a PER-CELL count today, so the size of
+                    # These rungs publish no PER-CELL count, so the size of
                     # the drop is explained in kind but not in magnitude. Said
                     # out loud: an unchecked read must never pass as a clean
                     # one. Bounding this needs the build to disclose per-cell
                     # counts, which is a change to the artifact contract and
-                    # belongs to its own ship, not to this alarm.
+                    # belongs to its own ship, not to this alarm (#1010's
+                    # score-unit rung does, and is bounded above).
                     magnitude_uncheckable=True,
                 )
                 # The ECE comparison below is skipped for the same reason the
@@ -1875,6 +2270,12 @@ def gate_ledger_record(verdict: PublishVerdict) -> dict:
             "drop_pct": o.get("drop_pct"),
             "disclosed_by": o.get("disclosed_by"),
             "magnitude_uncheckable": o.get("magnitude_uncheckable"),
+            # #1010: the bounded rung's arithmetic, where it was checked.
+            **(
+                {"score_unit_accounting": o["score_unit_accounting"]}
+                if o.get("score_unit_accounting") is not None
+                else {}
+            ),
         }
         for o in verdict.observations
         if o.get("code") == "category_collapse_disclosed_exclusion"

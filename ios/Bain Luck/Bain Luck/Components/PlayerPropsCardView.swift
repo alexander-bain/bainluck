@@ -437,6 +437,15 @@ struct PlayerPropsCardView: View {
             if !item.group.isPriced {
                 unpricedGroupView(item.group, card: item.card)
             } else if browsesByTarget {
+                // #10868 — three or more priced lines also read as one
+                // milestone profile above their chips (Atlas v6).
+                if let profile = milestoneProfile(item.group) {
+                    PlayerMilestoneProfileView(
+                        profile: profile,
+                        selectedIndex: target?.index,
+                        color: item.card.color,
+                        stat: spokenStat(item))
+                }
                 HStack(alignment: .center, spacing: 8) {
                     targetRow(item, chosen: target?.index)
                     if item.protectedRule {
@@ -514,6 +523,14 @@ struct PlayerPropsCardView: View {
             rungs.firstIndex { $0.threshold == threshold && $0.priced }
         } ?? fallback
         return chosen.map { ($0, rungs[$0]) }
+    }
+
+    /// #10868 — the profile a pre-game ladder draws, from the same rungs and the
+    /// same `priced` flag its chips use. nil draws the chips only.
+    private func milestoneProfile(_ group: StatGroup) -> PlayerMilestoneProfile.Profile? {
+        PlayerMilestoneProfile.profile(
+            thresholds: group.rungs.map(\.threshold),
+            probabilities: group.rungs.map { $0.priced ? $0.probability : nil })
     }
 
     /// "Touchdowns · 1+ · Home" — the stat, the chosen line (pre-game only)

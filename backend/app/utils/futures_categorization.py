@@ -1322,6 +1322,52 @@ def _best_category(search_text: str) -> Optional[str]:
     return winner
 
 
+# 🔴 #1109 — the football rules that say, in their own comments, that they are
+# guesses: "Most common in NFL context", "Generic but usually NFL", "NFL/NBA
+# draft". Every major league has a coach of the year, a wins total, a playoff
+# spot and a draft, so a name carrying ONLY one of these phrases names no sport.
+# Inside `categorize_by_rules` they still answer football — a caller that has a
+# sport_key or a league word beside them is not guessing. A caller that has
+# nothing else (an unmapped Kalshi ticker with no venue tag) asks
+# `football_evidence_is_generic_only` before persisting that answer.
+#
+# Keyed by pattern SOURCE so the list above stays where it is; the guard test
+# asserts every source here is still a football rule in SPORT_PATTERNS, so an
+# edit to one of them reddens instead of silently dropping out of this set.
+GENERIC_FOOTBALL_DEFAULT_SOURCES = frozenset({
+    r"\b(head\s+)?coach.of.the.year\b",
+    r"\b(most\s+)?wins?\s+(total|over|under)\b",
+    r"\bplayoff\s+(berth|spot|appearance|contender)\b",
+    r"\bdraft\s+(pick|order|lottery|#?\d+\s+overall)\b",
+    r"\b(overall\s+pick|#\d+\s+pick|1st\s+pick|first\s+pick|draft\s+class)\b",
+})
+
+
+def football_evidence_is_generic_only(market_name: str) -> bool:
+    """True when ``market_name``'s football evidence is ONLY the generic defaults.
+
+    False when nothing points at football, or when anything specific does — a
+    team, ``NFL``/``NCAAF``/``CFL``, a bowl, a football stat (passing yards,
+    touchdowns). Only "a generic rule matched and nothing else said football"
+    is True.
+    """
+    if not market_name:
+        return False
+    if detect_game_prop_sport(market_name) == "football":
+        return False
+    for pattern, category in _STRONG_EVIDENCE_PATTERNS:
+        if category == "football" and pattern.search(market_name):
+            return False
+    generic_hit = False
+    for pattern, category in SPORT_PATTERNS:
+        if category != "football" or not pattern.search(market_name):
+            continue
+        if pattern.pattern not in GENERIC_FOOTBALL_DEFAULT_SOURCES:
+            return False
+        generic_hit = True
+    return generic_hit
+
+
 def categorize_by_rules(market_name: str, sport_key: Optional[str] = None) -> Optional[str]:
     """
     Try to categorize a market using regex pattern matching.

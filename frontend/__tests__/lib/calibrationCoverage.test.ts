@@ -52,13 +52,15 @@ describe("the accounting the reader gets", () => {
   });
 
   it("counts a measured-zero rule rather than listing it as an exclusion", () => {
-    // `field_incomplete`, `identity_disputed` and `datagolf_opening_after_start`
-    // are all 0 in the fixture: rules that fired on nobody.
+    // `field_incomplete`, `identity_disputed`, `datagolf_opening_after_start`
+    // and `golf_round_price_unanchored` are all 0 in the fixture: rules that
+    // fired on nobody.
     const a = readCoverageAccounting(COMPLETE_CENSUS)!;
     expect(a.rows.map(r => r.key)).not.toContain("field_incomplete");
     expect(a.rows.map(r => r.key)).not.toContain("identity_disputed");
     expect(a.rows.map(r => r.key)).not.toContain("datagolf_opening_after_start");
-    expect(a.emptyRules).toBe(3);
+    expect(a.rows.map(r => r.key)).not.toContain("golf_round_price_unanchored");
+    expect(a.emptyRules).toBe(4);
   });
 
   it("labels every row from this module, never from the payload", () => {

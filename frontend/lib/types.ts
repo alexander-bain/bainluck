@@ -979,7 +979,8 @@ export interface FuturesMarket {
   sport_name: string | null;
   category: string | null;
   llm_sport_category: string | null;
-  status: "open" | "resolved" | "closed";
+  // #1541: "withdrawn" = the provider stopped offering it. Not a settlement.
+  status: "open" | "resolved" | "closed" | "withdrawn";
   source: string | null;
   external_id: string | null;
   /**
@@ -1051,6 +1052,9 @@ export interface FuturesMarket {
   // B7 (L2-91): up-link mesh — the richer event-concept page + competition hub this
   // market belongs to (null where no mapping exists). Server-derived so links resolve.
   event_concept_key?: string | null;
+  // #1541: provider edition year of an odds_api board's current quotes (null when
+  // no verified provider event names one). Titles the board via `editionTitle`.
+  edition_year?: string | null;
   hub_slug?: string | null;
   // L2-94: mesh fallbacks below the hub — themed section page (politics/economics/
   // weather/entertainment) then a hub-less sport's sport page (soccer, …).
@@ -1957,6 +1961,22 @@ export interface FeedBundleData {
   // Member feed items, ranked — rendered as the mini-ranked-peek + on expand.
   items: FeedItem[];
   entities?: string[];
+  // #9925: theme bundles only, and only when the server proved the whole
+  // preview sits on that collection's published, complete page at `revision`
+  // (`backend/app/utils/theme_collection_ref.py`). Absent = no link; the card
+  // never guesses a destination.
+  collection_ref?: FeedThemeCollectionRef | null;
+}
+
+// #9925: where a theme card's "View collection" goes. `name` is the
+// collection's own name ("Oscars 2027"), not the card's header;
+// `collection_count` is the page's full shown count, distinct from the
+// card's preview `item_count`.
+export interface FeedThemeCollectionRef {
+  slug: string;
+  name: string;
+  revision: number;
+  collection_count: number;
 }
 
 // #9653 / #9905: a published NFL-week or MLB-postseason hub the feed placed

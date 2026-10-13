@@ -78,6 +78,13 @@ COVERED = (
     #     identical except for it — so a seed that dropped it would compare a
     #     market against itself and pass.
     "test_calibration_datagolf_symmetric_exclusion_pg.py",
+    # #1011. Seeds `sports`, `events` and `odds_snapshots` by raw INSERT to
+    # prove soccer is graded three-way. The opening and closing PAIRS are the
+    # subject — the closing pair is seeded the way its writer stores it (away =
+    # 1 - home) so a statement reading it breaks the three-way invariant — and
+    # `odds_snapshots.reading_count` (NOT NULL, client-side default only) is
+    # named on every snapshot.
+    "test_calibration_soccer_three_way_1011_pg.py",
     # #1870 consumer half. Seeds Polymarket markets by raw INSERT whose
     # `market_metadata` is the whole subject — including deliberately malformed
     # receipts, a JSON `null` (bound as the string 'null', distinct from SQL
@@ -90,6 +97,11 @@ COVERED = (
     # other — so both are named on every row, and `reading_count` (NOT NULL, no
     # server default) is named on every snapshot.
     "test_calibration_datagolf_post_start_opening_pg.py",
+    # #938. Seeds the same three tables by raw INSERT. The ticker
+    # (`external_id`) and the market's source/category ARE the subject; every
+    # snapshot names `reading_count` (NOT NULL, no server default) and a real
+    # two-sided book so the Kalshi liquidity rungs keep their hands off.
+    "test_calibration_golf_round_timing_pg.py",
     # #2927. Added the same night this check would have saved the trip: the
     # containers gate seeded `INSERT INTO sports (key, name)` and died on
     # `NotNullViolation: null value in column "active"` in CI, because
@@ -98,6 +110,14 @@ COVERED = (
     # raw INSERT added to it is checked before a runner finds out.
     "test_container_assembly_real_postgres.py",
     "test_containers_migration_real_postgres.py",
+    # #5343 (CERT-4043 repair). Seeds a stray `event_edges` slot and a child
+    # `containers` row by raw INSERT to prove the publication preflight refuses
+    # stored membership the pass never proved.
+    "test_provider_event_collections_5343_pg.py",
+    # #5344. Seeds one `containers` row by raw INSERT so Week 8 holds the LOWER
+    # id — the second lock order the relocation's ascending-id locks must
+    # survive without deadlock.
+    "test_container_nfl_relocation_5344_pg.py",
     "test_create_wave_insert_bind_contract.py",
     "test_feed_static_tag_filter_pg.py",
     "test_futures_outcome_grade_schema_parity_pg.py",
@@ -498,6 +518,11 @@ COVERED = (
     # not resolve the payload to the seeded row, nothing writes `betting`, and
     # the probe finds a free row for the wrong reason.
     "test_a_poll_releases_its_event_rows_per_sport_837_pg.py",
+    # #10090: seeds `sports`, `teams`, two live `events` rows in one sport and
+    # one Polymarket `futures_markets` row by raw INSERT. As in the #837 file,
+    # the nullable `external_id` is the reach: without it the registry does not
+    # resolve the payload to the seeded rows and nothing writes `betting`.
+    "test_a_poll_releases_each_game_before_the_next_games_snapshots_10090_pg.py",
     # #10305: the anchor-schedule rail's one-row mode (lock, fence, reach).
     "test_reconcile_anchor_schedule_member_10305_pg.py",
     # #837 follow-up: seeds two invented sports, their teams and four `events`
@@ -611,6 +636,22 @@ COVERED = (
     # INSERT, in a private schema, to drive the capture-verdict apply, re-run,
     # `--restore`, `--restore-undrifted` and refusals.
     "test_settlement_capture_verdicts_repair_8126_pg.py",
+    # #2351 (MLB team totals graded from the team's own score). Seeds `events`,
+    # `futures_markets` and `futures_outcomes` by raw INSERT into a throwaway
+    # database. `events.sport_id`, `.commence_time` and the market's
+    # `category` / `mutually_exclusive` / `status` and the leg's `external_id`
+    # are named only to match the ORM. The subject is `is_winner` /
+    # `resolution_source` on each leg and the event's status and score, all
+    # named explicitly. `completed_at` stays NULL so the chronology refusal
+    # only fires in the test that sets both clocks.
+    "test_repair_team_total_game_score_2351_pg.py",
+    # #2027 (Under legs priced from the Over token). Seeds `futures_markets`,
+    # `futures_outcomes` and `futures_odds_snapshots` by raw INSERT into a
+    # throwaway database. Every snapshot names `reading_count` (NOT NULL, no
+    # server default). The subject is each row's id (the era bound), stamp
+    # (whole second or not) and odds/book columns (the history shape), and each
+    # leg's opening/calibration fields — all named on every seed.
+    "test_repair_pm_under_inverted_history_2027_pg.py",
 )
 
 INTEGRATION_DIR = Path(__file__).parent / "integration"

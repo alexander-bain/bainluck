@@ -18,7 +18,13 @@ consumer — the game-markets endpoint, the calibration cohorts, and the capture
 census — can call it instead of re-implementing recognition and drifting.
 
 Coarse taxonomy (what the capture census counts):
-    moneyline | spread | total | player_prop | team_prop | other
+    moneyline | segment_winner | spread | total | player_prop | team_prop | other
+
+`segment_winner` (#1529) is the winner of a PART of the match — a numbered map,
+set, half, quarter, period or first-N-innings window. It is never `moneyline`:
+every consumer that asks "does this market decide the game?" compares against
+`moneyline` exactly (settlement, blend admission, container exclusion), so a
+segment named here can neither speak for nor settle the whole match.
 
 Consumers that need a finer taxonomy (period winners/totals, h2h/3ball) can keep
 their own logic and use `is_game_winner_market()` only to close the specific
@@ -135,6 +141,42 @@ _TEAM_PROP_RE = re.compile(
     r"\bboth teams (?:to )?score\b|\bbtts\b)",
     re.IGNORECASE,
 )
+
+# #1529 census: prop shapes the vocabularies above miss, read ONLY for a title
+# that would otherwise be "other" (see the tail of `classify_game_market_class`),
+# so no answer already given moves — in particular nothing crosses `moneyline`
+# and nothing enters the refresh-budgeted `spread`/`total`. Measured on the
+# 30-day census of 2026-10-12 (main v5675): these were most of the `other` rows
+# behind the soccer and NHL ceiling breaches — Polymarket "Lyle Foster: 3+
+# goals" / "…: 2+ shots on target", Kalshi "St. Louis vs Chicago: Goals"
+# (KXNHLGOAL, outcomes "Adam Jiricek: 1+") and "…: First Goalscorer".
+_PLAYER_PROP_TAIL_RE = re.compile(
+    r"(?:\bgoal ?scorer\b|\bstarting (?:xi|11|eleven|line-?up)\b)",
+    re.IGNORECASE,
+)
+#: "Lyle Foster: 3+ goals" is a player ladder; "Arsenal vs Chelsea: 3+ goals"
+#: and "Will there be 3+ goals in Arsenal vs Chelsea?" are match thresholds,
+#: and "Arsenal: 3+ goals" is a TEAM threshold of the same shape. The title
+#: alone cannot tell a person from a club, so the count is a player contract
+#: only when the caller hands over the game's two ``sides`` and the single
+#: subject shares no distinctive word with either. Without sides (every
+#: consumer but the census) the shape stays "other" — fail closed.
+_PLAYER_THRESHOLD_RE = re.compile(
+    r"^\s*(?P<who>[^:?]+?)\s*:\s*\d+\+ (?:shots(?: on target)?|goals?)\s*$",
+    re.IGNORECASE,
+)
+_QUESTION_HEAD_RE = re.compile(r"^\s*(?:will|who|which|what|how)\b", re.IGNORECASE)
+#: Kalshi's player-goals ladder is titled with the matchup and a bare "Goals"
+#: tail; only its own series (``KXNHLGOAL``, ``…GOAL``) makes that a player book.
+_KALSHI_GOALS_TAIL_RE = re.compile(r":\s*goals\s*$", re.IGNORECASE)
+# Both-sides game derivatives (the BTTS precedent above): "…: Overtime"
+# (KX*OT), "…: Goal in First 10 Minutes", "…: Correct Score", corners.
+_GAME_PROP_TAIL_RE = re.compile(
+    r"(?:\bovertime\b|\bgoal in (?:the )?first \d+ minutes\b"
+    r"|\b(?:correct|exact) score\b|\bcorners\b)",
+    re.IGNORECASE,
+)
+
 
 # An OUTCOME label that can only belong to a derivative book — a handicap, a
 # total, a period, or a scoreline. Deliberately narrower than the market-name
@@ -302,6 +344,14 @@ _SEGMENT_SCOPED_MONEYLINE_RE = re.compile(
     rf"|{_SEGMENT_ORDINAL}\s+(?:{_MONEYLINE_SCOPE_ALT})"
     rf"|{_COMPRESSED_SEGMENT})\b",
     re.IGNORECASE,
+)
+
+# Two sides joined by a matchup separator anywhere in a title (#1529's segment
+# arm). Deliberately looser than `_BARE_MATCHUP_RE` — the segment titles carry
+# a qualifier by definition — and used only to keep a side-less stage winner
+# out of `segment_winner`; it never admits anything to `moneyline`.
+_NAMES_TWO_SIDES_RE = re.compile(
+    r"[^\W_]\s+(?:vs\.?|v\.|@|at)\s+[^\W_]", re.IGNORECASE
 )
 
 # Every pattern that disqualifies a leading prefix from being read as a
@@ -546,6 +596,54 @@ def outcomes_refute_game_winner(outcome_names: Optional[Iterable[Optional[str]]]
     )
 
 
+# A Kalshi SERIES token that binds its question to a PART of the game: halves
+# (`KXEPL1H`, `KXNCAAMB1HWINNER`), quarters (`KXNBA1QWINNER`), the MLB
+# first-N-innings windows (`KXMLBF5`, `KXMLBF5TOTAL`, `KXMLBF3`, `KXMLBF7`) and
+# the first-inning run (`KXMLBRFI`). Measured over all 899 event-linked Kalshi
+# series on production 2026-09-10; the reasoning behind every alternative —
+# the `(?<!h)` that keeps `KXEPLH2H` a whole-game market, the END anchor that
+# keeps `KXNCAAF3QSPREAD` out of the `f[357]` arm — is written once, beside the
+# grader that has used it since: `tasks/backfill_winners.py::_PERIOD_SERIES_RE`.
+#
+# 🔴 IT IS THAT PATTERN, CHARACTER FOR CHARACTER, AND A GUARD SAYS SO
+# (test_game_market_class_rollout_1529.py). It is restated here rather than
+# imported because this module imports nothing but stdlib, and it is not moved
+# out of the grader because that file settles markets and this one does not
+# need to touch it to read the same grammar. Two copies that may never differ
+# is the #1951 drift risk made checkable instead of silent.
+KALSHI_PERIOD_SERIES_RE = re.compile(r"(?<!h)[1-4]h|[1-4]q|f[357](?:spread|total)?$|rfi$")
+
+
+def names_a_scoped_segment(name: Optional[str]) -> bool:
+    """True if ``name`` pins an ordinal to a segment word: "Set 1", "2nd Period",
+    "Map 1", "1H" — the test the winner door refuses a "Winner" title on (#5698).
+
+    Public so a consumer with a finer taxonomy can LABEL the segment rather than
+    re-derive the vocabulary (#1529). It answers nothing about the whole-match
+    phrasing: "Game Winner", "Match Winner" and "Round of 16" stay unscoped here
+    exactly as they do in `is_game_winner_market`.
+    """
+    return bool(_SEGMENT_SCOPED_WINNER_RE.search(name or ""))
+
+
+def kalshi_series_period(external_id: Optional[str]) -> Optional[str]:
+    """The period token a Kalshi ticker's SERIES names (``"1h"``, ``"f5"`` …), else None.
+
+    Reads the series token only — the part before the first ``-`` — because the
+    suffix is a date and two club codes and carries accidental matches
+    (`KXWTAMATCH-26JUL11HODCHA` holds a "1h" and is a whole tennis match).
+    A non-Kalshi id (a Polymarket integer or condition hash) is never read:
+    it is opaque, and "no period" is the only honest answer about it.
+    """
+    if not external_id:
+        return None
+    series = external_id.split("-", 1)[0].lower()
+    if not series.startswith("kx"):
+        return None
+    match = KALSHI_PERIOD_SERIES_RE.search(series)
+    return match.group(0) if match else None
+
+
 def is_game_winner_market(
     name: str, external_id: Optional[str] = None, sport: Optional[str] = None
 ) -> bool:
@@ -558,6 +656,16 @@ def is_game_winner_market(
          "winner" ticker) — for ALL leagues, not just the few hard-coded ones.
     """
     name = name or ""
+    # A KALSHI PERIOD SERIES NEVER DECIDES THE GAME (#1529). Kalshi titles its
+    # first-five-innings book with the game's own bare matchup — "Boston Red Sox
+    # at Baltimore Orioles" on `KXMLBF5-26SEP061335BOSBAL`, identical to the
+    # `KXMLBGAME` title — so every name-based door below admits it. Its series
+    # token is the only thing that says it covers innings 1-5, and the grader
+    # (`tasks/backfill_winners.py::_PERIOD_SERIES_RE`) already reads that token
+    # as a period. Refused FIRST and terminally, for the reason the winner
+    # branch records: a later door would re-admit it.
+    if kalshi_series_period(external_id) is not None:
+        return False
     # EXPLICIT MATCH WORDING MUST ALSO SAY WHICH PART (#5743). "Moneyline" was
     # trusted outright on the reasoning that it names the whole contest — true
     # of the phrase, false of the title it sits in: the venue writes "76ers vs.
@@ -604,12 +712,59 @@ def is_game_winner_market(
     return False
 
 
+_WORD_RE = re.compile(r"[^\W\d_]{3,}")
+
+
+def _distinctive_words(text: Optional[str]) -> set[str]:
+    return {w.casefold() for w in _WORD_RE.findall(text or "")} - {"the"}
+
+
+def _names_one_player_threshold(
+    name: str, sides: Optional[tuple[Optional[str], Optional[str]]]
+) -> bool:
+    if not sides or not all(sides):
+        return False
+    m = _PLAYER_THRESHOLD_RE.match(name)
+    if m is None:
+        return False
+    who = m.group("who")
+    # A matchup subject is a match threshold, in every separator the module
+    # admits as a matchup — the bare "Spurs v Wolves" too, which the segment
+    # arm's `_NAMES_TWO_SIDES_RE` (v. only) does not read (CERT-4062). Aliases
+    # share no word with the sides, so the side check below cannot hold them.
+    if (
+        _NAMES_TWO_SIDES_RE.search(who)
+        or is_bare_matchup(who)
+        or _QUESTION_HEAD_RE.match(who)
+    ):
+        return False
+    words = _distinctive_words(who)
+    # A person is named by at least two words; a club shares one with a side,
+    # whole or as a prefix ("Man Utd" / "Manchester United"). Either miss keeps
+    # the title "other".
+    if len(words) < 2:
+        return False
+    side_words = _distinctive_words(sides[0]) | _distinctive_words(sides[1])
+    return not any(
+        w.startswith(s) or s.startswith(w) for w in words for s in side_words
+    )
+
+
+def _kalshi_goal_series(external_id: Optional[str]) -> bool:
+    series = (external_id or "").split("-", 1)[0].upper()
+    return series.startswith("KX") and series.endswith("GOAL")
+
+
 def classify_game_market_class(
-    name: str, external_id: Optional[str] = None, sport: Optional[str] = None
+    name: str,
+    external_id: Optional[str] = None,
+    sport: Optional[str] = None,
+    sides: Optional[tuple[Optional[str], Optional[str]]] = None,
 ) -> str:
     """Classify a per-game market into the coarse census taxonomy.
 
-    Returns one of: moneyline | spread | total | player_prop | team_prop | other.
+    Returns one of: moneyline | segment_winner | spread | total | player_prop |
+    team_prop | other.
 
     Order matters and mirrors the production read-side intent: the most specific
     tells (player/team props, totals, spreads) win before the game-winner
@@ -641,7 +796,32 @@ def classify_game_market_class(
                 return "spread"
             if "total" in t:
                 return "total"
+    # #1529: a Kalshi period series that is not a spread/total (taken above) is
+    # a segment book — the F5/1H/1Q winner — or the first-inning run, whose name
+    # vocabulary (`NRFI`) is already `team_prop`. Read BEFORE the moneyline
+    # catch, which `is_game_winner_market` now refuses for these tickers anyway.
+    period = kalshi_series_period(external_id)
+    if period is not None:
+        return "team_prop" if period == "rfi" else "segment_winner"
     if is_game_winner_market(name, external_id, sport):
         return "moneyline"
+    # #1529: a matchup title that names a numbered part of the match — "Counter-
+    # Strike: 1WIN vs B8 - Map 1 Winner", "Phantom Academy vs. Noir Verse: Map 1",
+    # "Set 1 Winner: Aboian vs Martin" — is a segment winner, not "other". Only
+    # titles the moneyline door already REFUSED reach here, so no whole-match
+    # answer moves (the "Round 2: Who will win Celtics vs. Bucks?" games stay
+    # moneyline above). The matchup is required so a tournament-stage winner
+    # with no sides ("… Election First Round Winner") stays "other".
+    if names_a_scoped_segment(name) and _NAMES_TWO_SIDES_RE.search(name):
+        return "segment_winner"
+    # #1529 census: last, so only an "other" answer can move.
+    if (
+        _PLAYER_PROP_TAIL_RE.search(name)
+        or _names_one_player_threshold(name, sides)
+        or (_KALSHI_GOALS_TAIL_RE.search(name) and _kalshi_goal_series(external_id))
+    ):
+        return "player_prop"
+    if _GAME_PROP_TAIL_RE.search(name):
+        return "team_prop"
     _ = lower  # reserved for future sport-specific disambiguation
     return "other"

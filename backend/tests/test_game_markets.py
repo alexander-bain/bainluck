@@ -229,9 +229,10 @@ class TestClassifyGameMarket:
         """'matchup' + 'vs.' is golf-specific enough to classify as h2h."""
         assert _classify_game_market("Matchup: Scheffler vs. McIlroy") == "h2h"
 
-    def test_matchup_alone_stays_other(self):
-        """Bare 'matchup' without golf signals stays generic (not h2h)."""
-        assert _classify_game_market("Celtics at Warriors") == "other"
+    def test_matchup_alone_is_not_h2h(self):
+        """Bare 'matchup' without golf signals is not h2h — it is the game's
+        winner (#1529: this used to assert "other", which encoded the leak)."""
+        assert _classify_game_market("Celtics at Warriors") == "moneyline"
 
     def test_3ball(self):
         assert _classify_game_market("3-Ball: Scheffler, McIlroy, Thomas") == "3ball"
@@ -245,9 +246,14 @@ class TestClassifyGameMarket:
     def test_three_ball_no_hyphen(self):
         assert _classify_game_market("Three Ball Group B") == "3ball"
 
-    def test_no_ticker_returns_other(self):
-        """A bare matchup name with no ticker stays 'other'."""
-        assert _classify_game_market("Celtics at Warriors") == "other"
+    def test_no_ticker_bare_matchup_is_moneyline(self):
+        """A bare matchup name with no ticker is the game's winner (#1529).
+
+        It used to assert "other" — the Polymarket bare-matchup leak written
+        down as the expected answer. The endpoint serves both labels from the
+        same branch, so the player-contract rescue below is unaffected.
+        """
+        assert _classify_game_market("Celtics at Warriors") == "moneyline"
 
 
 class TestExtractThreshold:

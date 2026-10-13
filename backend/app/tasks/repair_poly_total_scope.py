@@ -45,10 +45,14 @@ source name would be invisible on web and iOS until both allowlists learned it).
 Only ``is_winner`` and ``resolution_source`` change. The stored prices are
 already the venue's settled prices.
 
-Fail closed: a 404, a void (no single winner), a discordant question, any shape
-other than a direct Over/Under mapping, a leg that does not carry
+Fail closed: a 404, a void (no single winner), a discordant question, a reply
+whose own ``condition_id`` is missing or is not exactly the one we asked for,
+any shape other than a direct Over/Under mapping, a leg that does not carry
 ``poly_total_score``, or a tier-3 source already on the market are all SKIPPED
-by name and leave the row exactly as it is.
+by name and leave the row exactly as it is. The identity check is the reply's,
+not the question's: a different market with the same title and Over/Under
+labels would pass the name guard and the mapper, so only the id proves the
+answer is about this market.
 
 ## D51: backup and restore
 
@@ -72,6 +76,16 @@ fetch. A call that stops on the clock returns the last market it finished as
 ``next_after_id``. A CLOB error stops the call BEFORE that market, so it is
 retried, never skipped (gotcha #36). Re-invoke until ``exhausted``.
 ATTENDED ONLY: never wire this to a beat.
+
+Each call also walks at most ``ROW_WINDOW`` ``futures_markets`` rows past the
+cursor. Above id 59,466,461 fewer than 2% of the regex candidates carry a
+``poly_total_score`` leg, so ``LIMIT :scan`` alone walked the pk for more than
+1M ids looking for 100 and hit the 20 s statement cap on every retry (#10590
+dry run, 2026-10-12). The window bounds the walk by ROWS, not ids, so a dense
+id range costs the same as a sparse one. A call that examines the whole window
+without filling ``limit`` returns the window's last id as ``next_after_id``:
+every row up to it has been through the full predicate. ``exhausted`` means the
+window reached the end of the table.
 
 ## ledger evidence
 
@@ -106,6 +120,10 @@ WRITE_SOURCE = "clob_authoritative"
 
 DEFAULT_SCAN = 500
 MAX_SCAN = 2000
+#: ``futures_markets`` rows walked per call, matching or not. Measured
+#: 2026-10-12 on production: 69,340 rows above id 59,466,461 took 5.9 s through
+#: the full predicate, so 50,000 stays well inside the 20 s statement cap.
+ROW_WINDOW = 50_000
 #: Wall clock per call. Below the router's 30 s with room for the commit.
 WALL_BUDGET_S = 20.0
 
@@ -120,12 +138,25 @@ _PAGE_SQL = f"""
       AND m.status = 'resolved'
       AND m.name ~* ':[[:space:]]*o/u'
       AND m.id > :after_id
+      AND m.id <= :window_end
       AND EXISTS (
           SELECT 1 FROM futures_outcomes o
           WHERE o.market_id = m.id AND o.resolution_source = '{READ_SOURCE}'
       )
     ORDER BY m.id
     LIMIT :scan
+"""
+
+#: The last id within ``ROW_WINDOW`` rows of the cursor, from the pk alone
+#: (index-only), and how many rows that window holds. NULL past the table's end.
+_WINDOW_SQL = """
+    SELECT max(w.id) AS window_end, count(*) AS walked
+    FROM (
+        SELECT id FROM futures_markets
+        WHERE id > :after_id
+        ORDER BY id
+        LIMIT :window
+    ) w
 """
 
 _LEGS_SQL = """
@@ -223,11 +254,17 @@ def condition_id_of(market_ext: Optional[str], legs: list[dict]) -> Optional[str
 
 
 def _decide_and_map(
-    market_name: str, legs: list[dict], clob: Optional[dict]
+    market_name: str,
+    legs: list[dict],
+    clob: Optional[dict],
+    requested_condition_id: Optional[str],
 ) -> tuple[dict, Optional[dict]]:
     """:func:`decide` plus the mapper result it acted on (``None`` when a gate
     refused before the mapper ran). One mapping call, shared by the decision
-    and the ledger evidence, so the evidence is the answer that was used."""
+    and the ledger evidence, so the evidence is the answer that was used.
+
+    ``requested_condition_id`` is the id the CLOB was asked for. The reply's
+    own ``condition_id`` must equal it exactly, or nothing is graded."""
     foreign = sorted({
         leg["resolution_source"] for leg in legs
         if leg["resolution_source"] in AUTHORITATIVE_SOURCES
@@ -241,6 +278,13 @@ def _decide_and_map(
     if not _name_concordance_ok(market_name, clob.get("question") or ""):
         return {"action": "skip", "reason": "name_discordant",
                 "detail": clob.get("question")}, None
+    returned = clob.get("condition_id")
+    if not isinstance(returned, str) or not returned:
+        return {"action": "skip", "reason": "clob_condition_id_missing"}, None
+    if returned != requested_condition_id:
+        return {"action": "skip", "reason": "clob_condition_id_mismatch",
+                "detail": {"requested": requested_condition_id,
+                           "returned": returned[:_EVIDENCE_STR_CAP]}}, None
     res = map_clob_to_outcome(clob, legs, event_linked=True)
     if res.get("tier") != "resolved_direct":
         return {"action": "skip", "reason": res.get("skip") or res.get("tier"),
@@ -254,12 +298,17 @@ def _decide_and_map(
     }, res
 
 
-def decide(market_name: str, legs: list[dict], clob: Optional[dict]) -> dict:
+def decide(
+    market_name: str,
+    legs: list[dict],
+    clob: Optional[dict],
+    requested_condition_id: Optional[str],
+) -> dict:
     """Pure decision for one in-scope market: re-grade from the venue, or skip.
 
     ``legs``: ``{"id","name","external_id","is_winner","resolution_source"}``.
     """
-    return _decide_and_map(market_name, legs, clob)[0]
+    return _decide_and_map(market_name, legs, clob, requested_condition_id)[0]
 
 
 # ---------------------------------------------------------------------------
@@ -382,9 +431,16 @@ async def repair(
     cursor = int(after_id or 0)
 
     await session.execute(text("SET LOCAL statement_timeout = '20s'"))
+    window = (
+        await session.execute(text(_WINDOW_SQL), {"after_id": cursor, "window": ROW_WINDOW})
+    ).one()
+    window_end, walked = window.window_end, int(window.walked or 0)
     page = (
-        await session.execute(text(_PAGE_SQL), {"after_id": cursor, "scan": scan})
-    ).all()
+        await session.execute(
+            text(_PAGE_SQL),
+            {"after_id": cursor, "window_end": window_end, "scan": scan},
+        )
+    ).all() if window_end is not None else []
 
     skip_reasons: dict[str, int] = {}
     ledger: list[dict] = []
@@ -419,7 +475,7 @@ async def repair(
                 stopped_on = f"clob_error: {str(e)[:80]}"
                 in_scope -= 1
                 break
-            decision, mapping = _decide_and_map(row.market_name, legs, clob)
+            decision, mapping = _decide_and_map(row.market_name, legs, clob, cond)
 
         entry = {
             "market_id": row.market_id, "name": row.market_name, **decision,
@@ -460,7 +516,12 @@ async def repair(
         ledger.append(entry)
         next_after_id = row.market_id
 
-    exhausted = stopped_on is None and len(page) < scan
+    window_examined = stopped_on is None and len(page) < scan
+    if window_examined and window_end is not None:
+        # Every row up to the window's end went through the predicate; the
+        # ones that are not in ``page`` did not qualify.
+        next_after_id = window_end
+    exhausted = window_examined and walked < ROW_WINDOW
     result = {
         "issue": ISSUE,
         "apply": apply,
@@ -476,6 +537,8 @@ async def repair(
         "stopped_on": stopped_on,
         "exhausted": exhausted,
         "next_after_id": next_after_id,
+        "rows_walked": walked,
+        "window_end": window_end,
         "backup_table": BAK_TABLE,
         "restore_command": restore_command(),
         "ledger": ledger[:100],

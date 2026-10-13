@@ -42,6 +42,12 @@ from app.utils.resolution_authority import (
 from app.utils.kalshi_fabricated_loss import RETRACTION_SOURCE
 from app.utils.box_score_capture import box_is_live_capture
 from app.utils.price_change_stamp import price_changed_at_value
+from app.utils.soccer_three_way import (  # #1011
+    SOCCER_THREE_WAY_CONTRACT,
+    SOCCER_THREE_WAY_CONTRACT_KEY,
+    SOCCER_THREE_WAY_PARAMS,
+    is_soccer_key,
+)
 from app.utils.settled_price import (
     SETTLED_NO_PRICE,
     SETTLED_YES_PRICE,
@@ -8458,13 +8464,28 @@ def _gamma_head_stop_at(t0: float, stop_at: float) -> float:
 def _merge_head_into_page(head_rows, cursor_rows):
     """``(rows_to_process, head_only_ids)``. Pure.
 
-    Head rows first, so Phase B reaches them before the deadline; a row in both
-    lists is kept once, as a CURSOR row, because the cursor's completeness
-    accounting is the one that must see it.
+    Every head row first, in the head's newest-settled order, so Phase B
+    reaches them before the deadline. A row in both lists is kept once, still
+    in the head's position, and counted as a CURSOR row (it stays out of
+    ``head_only_ids``), because the cursor's completeness accounting is the one
+    that must see it.
+
+    The position is the fix for the second half of #10765. It used to keep the
+    shared row in the cursor's id order, behind every older row on the page. A
+    market listed long ago that settled today (a weekly chart, a season future)
+    has an old id, so once the cursor's page reached it, the head stopped
+    giving it priority: the 05:47Z Oct 13 page began at 63719795 and held the
+    Billboard markets 63874444/445/446 about 5,400 rows up, the deadline
+    deferred them, and the head reported every row it still owned as complete.
+    Moving a shared row forward cannot cost the cursor a row: it holds below
+    its lowest unfinished id whatever order the page ran in, and the row is
+    cursor work it would have spent the same call on later in the run.
     """
     cursor_ids = {r.id for r in cursor_rows}
+    head_ids = {r.id for r in head_rows}
     head_only = [r for r in head_rows if r.id not in cursor_ids]
-    return head_only + list(cursor_rows), {r.id for r in head_only}
+    rest = [r for r in cursor_rows if r.id not in head_ids]
+    return list(head_rows) + rest, {r.id for r in head_only}
 
 
 async def _backfill_polymarket_winners_from_api(
@@ -8620,6 +8641,8 @@ async def _backfill_polymarket_winners_from_api(
     stats["head_events"] = 0
     stats["head_events_skipped"] = 0
     stats["head_reached_s"] = None
+    stats["head_in_cursor_page"] = 0
+    stats["head_in_cursor_page_completed"] = 0
     if recency_head and not _targeted:
         try:
             async with get_task_session() as session:
@@ -8683,6 +8706,11 @@ async def _backfill_polymarket_winners_from_api(
     # cursor decision is a statement about the cursor's page alone.
     markets, _head_only_ids = _merge_head_into_page(head_rows, markets)
     stats["head_selected"] = len(_head_only_ids)
+    # Head rows the cursor's page also holds. They run in the head's position
+    # but are counted in `completed`, never in `head_completed`, so without
+    # this pair a run that never reached them still reads as a whole head.
+    _head_in_page_ids = {r.id for r in head_rows} - _head_only_ids
+    stats["head_in_cursor_page"] = len(_head_in_page_ids)
 
     # Separate markets by lookup strategy:
     # - With poly_event_id: group by event for batch event lookup
@@ -9441,6 +9469,7 @@ async def _backfill_polymarket_winners_from_api(
     # subset of `selected` before the head existed); the head reports its own.
     stats["completed"] = len(_completed_ids & set(_selected_ids))
     stats["head_completed"] = len(_completed_ids & _head_only_ids)
+    stats["head_in_cursor_page_completed"] = len(_completed_ids & _head_in_page_ids)
     stats["deferred"] = len(_deferred_ids)
     if _targeted:
         # #6110: a targeted run never touches the shared cursor. It selected an
@@ -11264,6 +11293,102 @@ WHERE prob > 0.01 AND prob < 0.99
 GROUP BY bucket_idx, category
 """
 
+#: #1011. One bounded slice of the per-bookmaker SOCCER curve, graded three-way.
+#:
+#: ``_BOOKMAKER_CHUNK_SQL`` above reads every sport as a two-way question:
+#: ``home / (home + away)``, drawn matches dropped. For a pair renormalized
+#: conditional on no draw that is consistent, and it is exactly how soccer was
+#: stored until release v4636. Since then the writer de-vigs over the whole
+#: board (``app/utils/soccer_three_way.py`` has the contract and the evidence),
+#: so a soccer snapshot's two legs leave the draw as ``1 - home - away`` and the
+#: honest grade is three outcomes per reading, drawn matches IN.
+#:
+#: Same slice shape as the two-way statement — DISTINCT ON the last pre-kickoff
+#: snapshot per (event, bookmaker), same per-outcome ``0.01 < p < 0.99`` band —
+#: with these differences, each a clause of the contract:
+#:
+#: * soccer keys only, kickoff and capture both on or after the cutoff — a
+#:   reading from before v4636 has no draw in it;
+#: * ``home_score != away_score`` is gone: a draw is an outcome here — and the
+#:   match must be proven to have ENDED at full time (CERT-4066), because a
+#:   game winner settles on the 90-minute score and an extra-time final is not
+#:   it;
+#: * the draw-remainder test sits OUTSIDE the DISTINCT ON, so it judges the LAST
+#:   reading. A book whose closing reading is two-way-shaped is skipped, never
+#:   replaced by an earlier reading that happened to keep the draw;
+#: * three rows per reading: home won, away won, drawn.
+#:
+#: A separate statement rather than an edit to the two-way one, because the
+#: cell bank is keyed by a digest of the statement: editing the shared statement
+#: would discard every banked cell of every sport and force the full walk that
+#: froze the page for 33 h (#10697). This one has its own bank.
+_BOOKMAKER_SOCCER_THREE_WAY_CHUNK_SQL = """
+SELECT LEAST(FLOOR(prob * 10)::int, 9) AS bucket_idx,
+       category,
+       COUNT(*) AS n,
+       SUM(CASE WHEN won THEN 1 ELSE 0 END) AS winners,
+       SUM(prob) AS sum_prob,
+       SUM((prob - CASE WHEN won THEN 1.0 ELSE 0.0 END)^2) AS sum_sq_err
+FROM (
+    SELECT tw.prob, tw.won, cl.category
+    FROM (
+        SELECT DISTINCT ON (ee.id, os.bookmaker)
+               os.home_win_probability::float AS h,
+               os.away_win_probability::float AS a,
+               ee.home_score, ee.away_score, ee.category
+        FROM (
+            SELECT e.id, e.commence_time, e.home_score, e.away_score,
+                   s.key AS category
+            FROM events e
+            JOIN sports s ON s.id = e.sport_id
+            WHERE e.status IN ('completed', 'closed')
+              AND e.home_score IS NOT NULL AND e.away_score IS NOT NULL
+              AND e.commence_time IS NOT NULL
+              AND s.key = :category
+              AND s.key LIKE 'soccer_%'
+              AND e.commence_time >= :lo AND e.commence_time < :hi
+              AND e.commence_time >= :soccer_three_way_since
+              AND (e.period = :soccer_regulation_period
+                   OR e.box_score_data->'provider_box_evidence'
+                          ->'provider_status'->>'name'
+                      = :soccer_regulation_status)
+        ) ee
+        JOIN odds_snapshots os ON os.event_id = ee.id
+        WHERE os.captured_at < ee.commence_time
+          AND os.captured_at >= :soccer_three_way_since
+          AND os.home_win_probability IS NOT NULL
+          AND os.away_win_probability IS NOT NULL
+          AND os.home_win_probability > 0
+          AND os.away_win_probability > 0
+        ORDER BY ee.id, os.bookmaker, os.captured_at DESC
+    ) cl
+    CROSS JOIN LATERAL (VALUES
+        (cl.h, cl.home_score > cl.away_score),
+        (cl.a, cl.away_score > cl.home_score),
+        (1.0 - cl.h - cl.a, cl.home_score = cl.away_score)
+    ) AS tw(prob, won)
+    WHERE 1.0 - cl.h - cl.a >= :soccer_draw_residual_min
+) outcomes
+WHERE prob > 0.01 AND prob < 0.99
+GROUP BY bucket_idx, category
+"""
+
+#: #1011. The (category, month) cells the soccer three-way walk reads. Its own
+#: grid, because the shared one drops drawn matches — a soccer month whose only
+#: finished match was a draw would otherwise never be read.
+_BOOKMAKER_SOCCER_THREE_WAY_GRID_SQL = """
+SELECT s.key AS category,
+       date_trunc('month', e.commence_time) AS bucket_start
+FROM events e
+JOIN sports s ON s.id = e.sport_id
+WHERE e.status IN ('completed', 'closed')
+  AND e.home_score IS NOT NULL AND e.away_score IS NOT NULL
+  AND s.key LIKE 'soccer_%'
+  AND e.commence_time >= :soccer_three_way_since
+GROUP BY 1, 2
+ORDER BY 1, 2
+"""
+
 #: Per-slice ceiling. Deliberately far below the task's soft limit: the point is
 #: that no single statement can consume the budget, so a slow slice costs a
 #: split rather than the run.
@@ -11348,6 +11473,14 @@ _BOOKMAKER_BANK_KEY = (
     "bainluck:bookmaker_calibration:cell_bank:"
     + __import__("hashlib").sha1(_BOOKMAKER_CHUNK_SQL.encode()).hexdigest()[:12]
 )
+#: #1011: the soccer three-way cells bank under their OWN statement's digest, so
+#: a two-way soccer cell can never be carried into the three-way curve, and the
+#: soccer statement can change without discarding the shared bank.
+_BOOKMAKER_SOCCER_BANK_KEY = (
+    "bainluck:bookmaker_calibration:cell_bank:"
+    + __import__("hashlib").sha1(
+        _BOOKMAKER_SOCCER_THREE_WAY_CHUNK_SQL.encode()).hexdigest()[:12]
+)
 
 
 def _bookmaker_cell_key(category: str, lo: datetime) -> str:
@@ -11365,7 +11498,9 @@ def _bookmaker_row_tuple(r) -> tuple:
             float(r.sum_prob), float(r.sum_sq_err))
 
 
-def _read_bookmaker_bank(client, now_ts: float) -> dict[str, tuple[float, list]]:
+def _read_bookmaker_bank(client, now_ts: float,
+                         bank_key: str = _BOOKMAKER_BANK_KEY,
+                         ) -> dict[str, tuple[float, list]]:
     """Banked cells still inside their age bound, as ``{key: (banked_at, rows)}``.
 
     An entry that does not parse, or whose ``banked_at`` is in the future by
@@ -11375,7 +11510,7 @@ def _read_bookmaker_bank(client, now_ts: float) -> dict[str, tuple[float, list]]
     import json as _json
 
     out: dict[str, tuple[float, list]] = {}
-    for k, v in (client.hgetall(_BOOKMAKER_BANK_KEY) or {}).items():
+    for k, v in (client.hgetall(bank_key) or {}).items():
         try:
             key = k.decode() if isinstance(k, bytes) else str(k)
             entry = _json.loads(v.decode() if isinstance(v, bytes) else v)
@@ -11408,6 +11543,12 @@ async def _precompute_bookmaker_calibration(deadline: float | None = None):
     the game outcome. Resolution is free (home_score > away_score). Devigged
     via home_prob / (home_prob + away_prob). Results stored as aggregated
     calibration buckets in Redis for the calibration endpoint to read.
+
+    #1011: soccer is ALSO walked a second way — graded three-way (home, draw,
+    away; drawn matches in) from readings taken since release v4636, under its
+    own statement and bank (``_BOOKMAKER_SOCCER_THREE_WAY_CHUNK_SQL``). Those
+    buckets carry the contract stamp; the curve reader publishes a soccer bucket
+    only with it, so the two-way soccer rows above are written and never shown.
 
     CAL-P134 (#1835) — THE SWEEP IS BOUNDED NOW, AND IT FAILS CLOSED.
 
@@ -11502,10 +11643,13 @@ async def _precompute_bookmaker_calibration(deadline: float | None = None):
         stats["bank"] = bank_stats
         now_ts = _time.time()
         bank: dict[str, tuple[float, list]] = {}
+        soccer_bank: dict[str, tuple[float, list]] = {}
         bank_client = None
         try:
             bank_client = get_redis_client()
             bank = _read_bookmaker_bank(bank_client, now_ts)
+            soccer_bank = _read_bookmaker_bank(
+                bank_client, now_ts, _BOOKMAKER_SOCCER_BANK_KEY)
             bank_stats["read"] = "ok"
         except Exception as e:
             # The bank only saves wall; without it the run is the full walk it
@@ -11514,13 +11658,14 @@ async def _precompute_bookmaker_calibration(deadline: float | None = None):
             logger.warning("Bookmaker calibration: cell bank unreadable (%s) — "
                            "walking every cell (#10697)", e)
 
-        def _bank_cell(key: str, rows: list) -> None:
+        def _bank_cell(key: str, rows: list,
+                       bank_key: str = _BOOKMAKER_BANK_KEY) -> None:
             if bank_client is None:
                 return
             try:
-                bank_client.hset(_BOOKMAKER_BANK_KEY, key, _json.dumps(
+                bank_client.hset(bank_key, key, _json.dumps(
                     {"banked_at": _time.time(), "rows": rows}))
-                bank_client.expire(_BOOKMAKER_BANK_KEY, _BOOKMAKER_BANK_TTL_S)
+                bank_client.expire(bank_key, _BOOKMAKER_BANK_TTL_S)
                 bank_stats["banked"] += 1
             except Exception as e:
                 bank_stats["write_errors"] += 1
@@ -11552,7 +11697,8 @@ async def _precompute_bookmaker_calibration(deadline: float | None = None):
                 ORDER BY 1, 2
             """))).all()
 
-            async def _slice(category, lo, hi, sink, unrun, failed, depth=0):
+            async def _slice(category, lo, hi, sink, unrun, failed, depth=0,
+                             sql=_BOOKMAKER_CHUNK_SQL, params=None):
                 """One bounded slice, or a SPLIT. Returns True when it landed.
 
                 Adaptive rather than a fixed grid because snapshot density is
@@ -11576,8 +11722,9 @@ async def _precompute_bookmaker_calibration(deadline: float | None = None):
                     await session.execute(
                         text(f"SET LOCAL statement_timeout = '{_CHUNK_TIMEOUT_S}s'"))
                     rows = (await session.execute(
-                        text(_BOOKMAKER_CHUNK_SQL),
-                        {"category": category, "lo": lo, "hi": hi})).all()
+                        text(sql),
+                        {**(params or {}),
+                         "category": category, "lo": lo, "hi": hi})).all()
                 except Exception as exc:
                     await session.rollback()
                     if not _is_statement_timeout(exc):
@@ -11590,9 +11737,9 @@ async def _precompute_bookmaker_calibration(deadline: float | None = None):
                         return False
                     mid = lo + (hi - lo) / 2
                     a = await _slice(category, lo, mid, sink, unrun, failed,
-                                     depth + 1)
+                                     depth + 1, sql=sql, params=params)
                     b = await _slice(category, mid, hi, sink, unrun, failed,
-                                     depth + 1)
+                                     depth + 1, sql=sql, params=params)
                     return a and b
 
                 chunks_done += 1
@@ -11630,6 +11777,48 @@ async def _precompute_bookmaker_calibration(deadline: float | None = None):
                     cell_rows[key] = sink
                     _bank_cell(key, sink)
 
+            # #1011: the soccer cells graded THREE-WAY, after the two-way walk
+            # and under the same fail-closed contract — a soccer cell that does
+            # not land is unrun or irreducible like any other, and the key is
+            # not written. Missing first, open months last, for the reason given
+            # above. The two-way soccer rows the walk above still produces are
+            # published by nobody: the reader keeps a soccer bucket only when it
+            # carries the three-way stamp these rows are given below.
+            soccer_grid = (await session.execute(
+                text(_BOOKMAKER_SOCCER_THREE_WAY_GRID_SQL),
+                SOCCER_THREE_WAY_PARAMS)).all()
+            soccer_cell_rows: dict[str, list] = {}
+            soccer_missing: list = []
+            soccer_open: list = []
+            # The statement already scopes to soccer keys; the filter here is
+            # the same rule restated where the cells are consumed, so a grid
+            # row for any other sport can never be graded three-way.
+            soccer_grid = [c for c in soccer_grid if is_soccer_key(c.category)]
+            for cell in soccer_grid:
+                lo = cell.bucket_start
+                if lo.tzinfo is None:
+                    lo = lo.replace(tzinfo=timezone.utc)
+                key = _bookmaker_cell_key(cell.category, lo)
+                if not _bookmaker_cell_settled(lo, now_ts):
+                    soccer_open.append((key, cell.category, lo))
+                elif key in soccer_bank:
+                    soccer_cell_rows[key] = list(soccer_bank[key][1])
+                else:
+                    soccer_missing.append((key, cell.category, lo))
+            for key, category, lo in soccer_missing + soccer_open:
+                sink = []
+                if await _slice(category, lo, _add_month(lo), sink,
+                                chunks_unrun, chunks_failed,
+                                sql=_BOOKMAKER_SOCCER_THREE_WAY_CHUNK_SQL,
+                                params=SOCCER_THREE_WAY_PARAMS):
+                    soccer_cell_rows[key] = sink
+                    _bank_cell(key, sink, _BOOKMAKER_SOCCER_BANK_KEY)
+            stats["soccer_three_way"] = {
+                "cells": len(soccer_grid),
+                "carried": len(soccer_grid) - len(soccer_missing)
+                - len(soccer_open),
+            }
+
             # Spare wall re-reads the oldest carried cells, so the bank does not
             # age out in one block 48 h after it filled. Optional work: a cell
             # that does not land here keeps its carried rows and is NOT reported
@@ -11650,6 +11839,19 @@ async def _precompute_bookmaker_calibration(deadline: float | None = None):
             for rows in cell_rows.values():
                 for bucket_idx, category, n, winners, sum_prob, sum_sq_err in rows:
                     slot = agg.setdefault(
+                        (bucket_idx, category),
+                        {"n": 0, "winners": 0, "sum_prob": 0.0, "sum_sq_err": 0.0})
+                    slot["n"] += n
+                    slot["winners"] += winners
+                    slot["sum_prob"] += sum_prob
+                    slot["sum_sq_err"] += sum_sq_err
+
+            # #1011: folded apart from the two-way rows — same (bucket,
+            # category) keys, different question — and stamped on the way out.
+            soccer_agg: dict = {}
+            for rows in soccer_cell_rows.values():
+                for bucket_idx, category, n, winners, sum_prob, sum_sq_err in rows:
+                    slot = soccer_agg.setdefault(
                         (bucket_idx, category),
                         {"n": 0, "winners": 0, "sum_prob": 0.0, "sum_sq_err": 0.0})
                     slot["n"] += n
@@ -11678,6 +11880,25 @@ async def _precompute_bookmaker_calibration(deadline: float | None = None):
                     }
                 )
                 stats["data_points"] += slot["n"]
+            for (bucket_idx, category), slot in sorted(soccer_agg.items(),
+                                                       key=lambda kv: kv[0]):
+                buckets.append(
+                    {
+                        "bucket_idx": bucket_idx,
+                        "source": "odds_api_bookmaker",
+                        "category": category,
+                        "price_moved": None,
+                        "n": slot["n"],
+                        "winners": slot["winners"],
+                        "avg_prob": slot["sum_prob"] / slot["n"],
+                        "sum_prob": slot["sum_prob"],
+                        "sum_sq_err": slot["sum_sq_err"],
+                        SOCCER_THREE_WAY_CONTRACT_KEY: SOCCER_THREE_WAY_CONTRACT,
+                    }
+                )
+                stats["data_points"] += slot["n"]
+            stats["soccer_three_way"]["outcomes"] = sum(
+                slot["n"] for slot in soccer_agg.values())
 
             stats["chunks"] = chunks_done
             stats["chunks_failed"] = chunks_failed

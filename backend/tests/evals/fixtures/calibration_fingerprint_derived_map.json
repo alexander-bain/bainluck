@@ -12,14 +12,15 @@
     "PLAYER_PROPS_NAME_PATTERN",
     "PLAYER_PROPS_PLACEHOLDER_EXCLUDED_CELLS",
     "REPRESENTATIVE_TIE_AUTHORITY",
+    "SCORE_UNIT_MISMATCH_FAMILIES",
     "SUM_ARM_ONLY_EXCLUDED_CELLS"
   ],
   "hashed_root_sha16": {
-    "_calibration_population_ctes": "e18d605acfc9c5fd",
-    "_main_futures_sql": "5f399959e521e053",
+    "_calibration_population_ctes": "fd717a69a4235457",
+    "_main_futures_sql": "b78428c8e9ce8d3b",
     "_roster_pushdown_predicates": "9b4afb101a88cb8a",
     "_virtual_market_ctes": "d03415be9c36d5cb",
-    "compute_calibration_payload": "1a4bb1b0d246dc2b",
+    "compute_calibration_payload": "62d5b4cbe93b5abf",
     "identity_quarantine_ctes": "178dd31b64f3e836"
   },
   "hashed_roots": [
@@ -30,7 +31,7 @@
     "compute_calibration_payload",
     "identity_quarantine_ctes"
   ],
-  "input_count": 81,
+  "input_count": 91,
   "inputs": [
     {
       "covered_by_value": false,
@@ -316,6 +317,17 @@
       "impact": "behavior_or_evidence",
       "name": "GOLF_PLACEHOLDER_RULE_TEXT",
       "origin": "app.tasks.precompute_calibration:GOLF_PLACEHOLDER_RULE_TEXT",
+      "sql_interpolated": false,
+      "used_in": [
+        "compute_calibration_payload"
+      ]
+    },
+    {
+      "covered_by_value": false,
+      "definition_sha16": null,
+      "impact": "behavior_or_evidence",
+      "name": "GOLF_ROUND_TIMING_RULE_TEXT",
+      "origin": "app.tasks.precompute_calibration:GOLF_ROUND_TIMING_RULE_TEXT",
       "sql_interpolated": false,
       "used_in": [
         "compute_calibration_payload"
@@ -737,11 +749,100 @@
       ]
     },
     {
+      "covered_by_value": true,
+      "definition_sha16": null,
+      "impact": "sql_shaping",
+      "name": "SCORE_UNIT_MISMATCH_FAMILIES",
+      "origin": "app.tasks.precompute_calibration:SCORE_UNIT_MISMATCH_FAMILIES",
+      "sql_interpolated": true,
+      "used_in": [
+        "category_has_score_unit_mismatch",
+        "population_predicate_fingerprint"
+      ]
+    },
+    {
+      "covered_by_value": false,
+      "definition_sha16": null,
+      "impact": "behavior_or_evidence",
+      "name": "SCORE_UNIT_MISMATCH_RULE_TEXT",
+      "origin": "app.tasks.precompute_calibration:SCORE_UNIT_MISMATCH_RULE_TEXT",
+      "sql_interpolated": false,
+      "used_in": [
+        "compute_calibration_payload"
+      ]
+    },
+    {
       "covered_by_value": false,
       "definition_sha16": null,
       "impact": "behavior_or_evidence",
       "name": "SOCCER_2WAY_RULE_TEXT",
       "origin": "app.tasks.precompute_calibration:SOCCER_2WAY_RULE_TEXT",
+      "sql_interpolated": false,
+      "used_in": [
+        "compute_calibration_payload"
+      ]
+    },
+    {
+      "covered_by_value": false,
+      "definition_sha16": "0d2b16bd8704e743",
+      "impact": "behavior_or_evidence",
+      "name": "SOCCER_DRAW_RESIDUAL_MIN",
+      "origin": "app.utils.soccer_three_way:SOCCER_DRAW_RESIDUAL_MIN",
+      "sql_interpolated": false,
+      "used_in": [
+        "compute_calibration_payload"
+      ]
+    },
+    {
+      "covered_by_value": false,
+      "definition_sha16": "21168ca45ef4dc4f",
+      "impact": "behavior_or_evidence",
+      "name": "SOCCER_THREE_WAY_CONTRACT",
+      "origin": "app.utils.soccer_three_way:SOCCER_THREE_WAY_CONTRACT",
+      "sql_interpolated": false,
+      "used_in": [
+        "read_bookmaker_curve_rows"
+      ]
+    },
+    {
+      "covered_by_value": false,
+      "definition_sha16": "85f5f96a920e7bfb",
+      "impact": "behavior_or_evidence",
+      "name": "SOCCER_THREE_WAY_CONTRACT_KEY",
+      "origin": "app.utils.soccer_three_way:SOCCER_THREE_WAY_CONTRACT_KEY",
+      "sql_interpolated": false,
+      "used_in": [
+        "read_bookmaker_curve_rows"
+      ]
+    },
+    {
+      "covered_by_value": false,
+      "definition_sha16": "8967af724bcf3769",
+      "impact": "behavior_or_evidence",
+      "name": "SOCCER_THREE_WAY_PARAMS",
+      "origin": "app.utils.soccer_three_way:SOCCER_THREE_WAY_PARAMS",
+      "sql_interpolated": false,
+      "used_in": [
+        "compute_calibration_payload"
+      ]
+    },
+    {
+      "covered_by_value": false,
+      "definition_sha16": null,
+      "impact": "behavior_or_evidence",
+      "name": "SOCCER_THREE_WAY_RULE_TEXT",
+      "origin": "app.tasks.precompute_calibration:SOCCER_THREE_WAY_RULE_TEXT",
+      "sql_interpolated": false,
+      "used_in": [
+        "compute_calibration_payload"
+      ]
+    },
+    {
+      "covered_by_value": false,
+      "definition_sha16": "183a920333ca700b",
+      "impact": "behavior_or_evidence",
+      "name": "SOCCER_THREE_WAY_SINCE",
+      "origin": "app.utils.soccer_three_way:SOCCER_THREE_WAY_SINCE",
       "sql_interpolated": false,
       "used_in": [
         "compute_calibration_payload"
@@ -890,7 +991,7 @@
     },
     {
       "covered_by_value": false,
-      "definition_sha16": "b540c2bd9956b4ca",
+      "definition_sha16": "51ee7d57d2c87cfe",
       "impact": "sql_shaping",
       "name": "_COVERAGE_RUNG_KEYS",
       "origin": "app.utils.calibration_coverage_bridge:RUNG_KEYS",
@@ -927,13 +1028,24 @@
     },
     {
       "covered_by_value": false,
-      "definition_sha16": "8e08a2ede90cd53c",
+      "definition_sha16": "5a47493a5f96c296",
       "impact": "behavior_or_evidence",
       "name": "_build_coverage_census",
       "origin": "app.utils.calibration_coverage_bridge:build_coverage_census",
       "sql_interpolated": false,
       "used_in": [
         "_coverage_census_or_disabled"
+      ]
+    },
+    {
+      "covered_by_value": false,
+      "definition_sha16": null,
+      "impact": "behavior_or_evidence",
+      "name": "_soccer_three_way_module",
+      "origin": "app.utils:soccer_three_way",
+      "sql_interpolated": false,
+      "used_in": [
+        "population_predicate_fingerprint"
       ]
     },
     {
@@ -963,8 +1075,8 @@
   ],
   "schema": "calibration-fingerprint-derived/v1",
   "source": "backend/app/tasks/precompute_calibration.py",
-  "source_sha256": "47c36d9a6dec6ce172866dbae7f42cf4d22525b48735fb0b6ea0a4002bba6719",
-  "uncovered_behavior_or_evidence": 41,
-  "uncovered_count": 68,
+  "source_sha256": "24813caec3f92206862bbbc81ee1ed43f636531bb05d9c8fcaf06d23acce557f",
+  "uncovered_behavior_or_evidence": 50,
+  "uncovered_count": 77,
   "uncovered_sql_shaping": 27
 }
