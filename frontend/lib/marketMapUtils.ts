@@ -748,6 +748,14 @@ const CLOSED_HALF_TYPES = new Set(["half_spread", "half_total", "half_winner"]);
  * A half still quoting in `period_markets` keeps that card; a row is never in
  * both lists, and if it were, the quoting list wins.
  *
+ * A row the venue has already resolved (`is_winner` set) is not quoting. A
+ * Polymarket 1H Over resolves the moment the total passes it, so it stays in
+ * `period_markets` graded while the rest of the half comes back closed. Bills @
+ * Rams at halftime (`/events/14780558`, 13–7, 01:37Z 10/13) had exactly two:
+ * `1H O/U 16.5` and `19.5`, both `is_winner: true`. Counted as quoting, they
+ * refused the closed card; and the live card has no line to draw from two
+ * resolved rungs, so the 1st half points card vanished anyway.
+ *
  * The score is one per half, so it is checked across EVERY closed row of the
  * half before the card's own type is picked out: a margin card and a points
  * card graded from two different "finals" of the same half is the defect.
@@ -757,11 +765,17 @@ const CLOSED_HALF_TYPES = new Set(["half_spread", "half_total", "half_winner"]);
  */
 export function closedHalfRows(
   closedRows: ClosedPeriodRow[] | null | undefined,
-  quotingRows: Array<{ market_type: string; period?: string | null; outcome_name: string; market_name: string }> | null | undefined,
+  quotingRows:
+    | Array<{ market_type: string; period?: string | null; outcome_name: string; market_name: string; is_winner?: boolean | null }>
+    | null
+    | undefined,
   marketType: "half_spread" | "half_total",
   half: string
 ): { rows: ClosedPeriodRow[]; score: { home: number; away: number } } | null {
-  if ((quotingRows || []).some((r) => r.market_type === marketType && derivePeriod(r) === half)) return null;
+  const quotes = (quotingRows || []).some(
+    (r) => r.market_type === marketType && derivePeriod(r) === half && r.is_winner == null
+  );
+  if (quotes) return null;
   const halfRows = (closedRows || []).filter((r) => CLOSED_HALF_TYPES.has(r.market_type) && r.period === half);
   let score: { home: number; away: number } | null = null;
   for (const r of halfRows) {
