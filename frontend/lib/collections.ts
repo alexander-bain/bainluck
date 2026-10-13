@@ -88,8 +88,16 @@ const themeSectionTitles: Record<string, Record<string, string>> = {
 };
 const cursorText = (value: unknown): value is string => typeof value === "string" && value.length > 0 && value.length <= 64 && /^[A-Za-z0-9_-]+$/.test(value);
 
+// #5343: a provider event is one complete, unpaginated collection. Keep the
+// provider identity as its digit string; coercion would admit a different slug.
+const providerEventLabel = (edition: ObjectValue, slug: string): string | null =>
+  edition.provider === "polymarket" && typeof edition.event_id === "string"
+  && edition.event_id.trim() === edition.event_id && /^[1-9][0-9]{0,17}$/.test(edition.event_id)
+  && slug === `polymarket-event-${edition.event_id}` ? "Polymarket · Event" : null;
+
 function editionLabel(value: unknown, slug: string): string | null {
   const edition = object(value);
+  if (edition?.kind === "provider_event") return providerEventLabel(edition, slug);
   if (edition && isTheme(edition)) return themeLabel(edition, slug);
   if (!edition || !positive(edition.season)) return null;
   if (edition.kind === "mlb_postseason" && edition.league === "mlb" && slug === `mlb-${edition.season}-postseason`) return `MLB · ${edition.season} · Postseason`;
