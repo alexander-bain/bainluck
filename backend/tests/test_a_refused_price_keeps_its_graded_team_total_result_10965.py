@@ -39,6 +39,15 @@ A market admitted on the proof now keeps exactly the legs that pass it, each on
 its own score, unit, club and period. And an Under leg is never admitted on the
 proof: the totals ladder reads "Boston under 7.5 runs scored" on the Over axis
 (follow-up 10965-TEAM-NAMED-UNDER-AXIS), so its loss would print as 0% Over.
+
+## CERT-4083: a final score answers only a full-game question
+
+A Polymarket market carries a numeric id, so no ticker names its period, and the
+backfill name parser reads only halves. "Boston vs Detroit: First 5 innings Team
+Total Runs" therefore reached the proof as full-game and its fourteen all-null
+legs were served from the FINAL score (Detroit over 1.5 Won). The proof now
+refuses any market or leg title the shipped segment readers place in part of the
+game, and any regulation-time window, whatever the id or ticker says.
 """
 
 from __future__ import annotations
@@ -111,7 +120,10 @@ def _dec(v):
     return None if v is None else Decimal(v)
 
 
-def _game(rows, *, finished=True, sport_key="baseball_mlb", market_id=K_TEAM_TOTAL):
+def _game(
+    rows, *, finished=True, sport_key="baseball_mlb", market_id=K_TEAM_TOTAL,
+    market_name=None, external_id=None, source="kalshi",
+):
     event = _make_event(
         id=EVENT_ID,
         home_team=HOME,
@@ -128,10 +140,10 @@ def _game(rows, *, finished=True, sport_key="baseball_mlb", market_id=K_TEAM_TOT
     event.game_clock = None
     event.box_score_data = {"players": {}}
 
-    name, external_id = MARKETS[market_id]
-    market = _make_futures_market(id=market_id, name=name, source="kalshi")
+    name, ticker = MARKETS[market_id]
+    market = _make_futures_market(id=market_id, name=market_name or name, source=source)
     market.category = "game_prop"
-    market.external_id = external_id
+    market.external_id = external_id or ticker
     market.event_id = EVENT_ID
     market.commence_time = KICKOFF
     market.status = "resolved" if finished else "open"
@@ -453,3 +465,131 @@ async def test_an_all_null_team_named_under_leg_is_not_admitted():
     served = await _team_totals(rows)
 
     assert set(served) == {"Detroit over 1.5 runs scored"}
+
+
+# ── CERT-4083: a period window is never proved from the final score ─────────
+
+POLY_ID = "977353"  # a numeric Polymarket id: no ticker token names a period
+FIRST_FIVE = "Boston vs Detroit: First 5 innings Team Total Runs"
+FULL_GAME = "Boston vs Detroit: Team Total Runs"
+
+
+def _served_results(payload: dict) -> dict:
+    """Every served row anywhere in the payload that names a leg AND a verdict."""
+    found: dict = {}
+
+    def walk(node):
+        if isinstance(node, dict):
+            if node.get("outcome_name") and node.get("is_winner") is not None:
+                found[node["outcome_name"]] = node
+            for value in node.values():
+                walk(value)
+        elif isinstance(node, list):
+            for value in node:
+                walk(value)
+
+    walk(payload)
+    return found
+
+
+@pytest.mark.asyncio
+async def test_a_numeric_id_first_five_all_null_market_serves_no_result():
+    """CERT-4083's witness. Detroit's three runs are a full-game fact; nothing
+    shows they fell inside five innings, so no leg is served a verdict."""
+    payload = await _payload(
+        _all_null(SPECIMEN), market_name=FIRST_FIVE, external_id=POLY_ID, source="polymarket",
+    )
+
+    assert payload.get("team_totals") in (None, [])
+    leg_names = {leg for _, leg, *_ in SPECIMEN}
+    assert not leg_names & set(_served_results(payload))
+
+
+@pytest.mark.asyncio
+async def test_the_same_numeric_id_market_on_the_full_game_serves_its_fourteen_legs():
+    """The control: identical rows, id and venue; only the period words differ."""
+    served = await _team_totals(
+        _all_null(SPECIMEN), market_name=FULL_GAME, external_id=POLY_ID, source="polymarket",
+    )
+
+    assert len(served) == 14
+    assert served["Detroit over 1.5 runs scored"]["is_winner"] is True
+    assert served["Detroit over 1.5 runs scored"]["over_probability"] == 1.0
+    assert served["Detroit over 4.5 runs scored"]["over_probability"] == 0.0
+
+
+@pytest.mark.asyncio
+async def test_a_full_game_ticker_does_not_vouch_for_a_first_five_name():
+    """The ticker wins only when it NAMES a period; a full-game ticker beside a
+    first-five title does not make the question full-game."""
+    payload = await _payload(_all_null(SPECIMEN), market_name=FIRST_FIVE)
+
+    assert payload.get("team_totals") in (None, [])
+
+
+@pytest.mark.parametrize(
+    "market_name",
+    [
+        "Boston vs Detroit: 1st 5 Innings Team Total",
+        "Boston vs Detroit: F5 Team Total Runs",
+        "Boston vs Detroit: First Five Innings Team Total Runs",
+        "Boston vs Detroit: 1st Inning Team Total",
+        "Boston vs Detroit: Team Total Runs (First 3 Innings)",
+    ],
+)
+@pytest.mark.asyncio
+async def test_every_named_period_window_is_withheld(market_name):
+    served = await _team_totals(
+        _all_null(SPECIMEN), market_name=market_name, external_id=POLY_ID, source="polymarket",
+    )
+
+    assert served == {}
+
+
+@pytest.mark.asyncio
+async def test_a_period_named_only_on_the_leg_is_withheld():
+    rows = [
+        (70501, "Detroit over 1.5 runs scored", None, None, None, True, "game_score"),
+        (70502, "Detroit over 1.5 runs scored in the first 5 innings", None, None, None, True, "game_score"),
+    ]
+    served = await _team_totals(
+        rows, market_name=FULL_GAME, external_id=POLY_ID, source="polymarket",
+    )
+
+    assert "Detroit over 1.5 runs scored in the first 5 innings" not in served
+    assert served["Detroit over 1.5 runs scored"]["is_winner"] is True
+
+
+@pytest.mark.asyncio
+async def test_book_refused_legs_on_a_first_five_market_stay_dropped():
+    """The refused-price readmission uses the same proof, so a first-five
+    market's three book-refused Detroit losers are not printed as Lost. (Kalshi:
+    #8753's book refusal is the one that refuses these three prices; the
+    full-game control is `test_the_three_book_refused_detroit_losers_are_served_as_lost`.)"""
+    served = await _team_totals(SPECIMEN, market_name=FIRST_FIVE)
+
+    assert not set(REFUSED) & set(served)
+    assert served["Detroit over 1.5 runs scored"]["is_winner"] is True  # priced, unchanged
+
+
+@pytest.mark.parametrize(
+    ("market_name", "expected"),
+    [
+        ("Detroit vs Boston: Team Total Goals", 2),
+        ("Detroit vs Boston: Team Total Goals (Regulation)", 0),
+        ("Detroit vs Boston: Team Total Goals - 1st Period", 0),
+    ],
+)
+@pytest.mark.asyncio
+async def test_a_regulation_or_period_hockey_total_is_withheld(market_name, expected):
+    """A final that may include overtime answers only the full-game question."""
+    rows = [
+        (70601, "Detroit over 1.5 goals scored", None, None, None, True, "game_score"),
+        (70602, "Detroit over 4.5 goals scored", None, None, None, False, "game_score"),
+    ]
+    served = await _team_totals(
+        rows, sport_key="icehockey_nhl", market_name=market_name,
+        external_id=POLY_ID, source="polymarket",
+    )
+
+    assert len(served) == expected

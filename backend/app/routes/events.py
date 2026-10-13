@@ -23793,6 +23793,15 @@ _TEAM_TOTAL_SCORE_UNIT = {
 }
 
 
+#: CERT-4083: a regulation-time question ("Team Total Goals (Regulation)",
+#: "90 minutes") is not answered by a final that may include overtime or extra
+#: time, and no segment reader names it — so the proof refuses it by name.
+_REGULATION_WINDOW_RE = re.compile(
+    r"\b(?:regulation|regular\s+time|90\s+min(?:ute)?s|excl(?:uding|\.)?\s+(?:overtime|ot))\b",
+    re.IGNORECASE,
+)
+
+
 def _score_proves_team_total_grade(
     event, event_is_finished, sport_key, market, outcome, grade
 ) -> bool:
@@ -23809,7 +23818,8 @@ def _score_proves_team_total_grade(
     positively identify the question:
 
     * a live or scheduled game, or a score that is not two integers;
-    * a period market (a first-five total is not answered by the final score);
+    * a period market (a first-five total is not answered by the final score),
+      whether the ticker, the market name or the leg name says so (CERT-4083);
     * a leg whose unit is not the sport's score unit, or a sport with none;
     * an Under leg, which the totals ladder would draw on the wrong axis;
     * a name the grader does not read as a team total, or a club it cannot
@@ -23844,8 +23854,21 @@ def _score_proves_team_total_grade(
     # leg is not admitted here and keeps today's behaviour.
     if match.group("dir").lower() != "over":
         return False
-    if _market_period(getattr(market, "external_id", None), getattr(market, "name", None)):
+    market_name = str(getattr(market, "name", None) or "")
+    if _market_period(getattr(market, "external_id", None), market_name):
         return False
+    # CERT-4083: `_market_period` reads only halves out of a NAME, and a numeric
+    # provider id (Polymarket's `977353`) carries no ticker token, so "Boston vs
+    # Detroit: First 5 innings Team Total Runs" classified as full-game and its
+    # legs were proved against the FINAL score — Detroit over 1.5 served Won on
+    # runs nobody showed fell inside five innings. A final score answers only a
+    # full-game question, so any title — market or leg — that the shipped
+    # segment readers place in a PART of the game (first-N innings, one inning,
+    # a half, a quarter, a period) or that stops the clock at regulation is
+    # refused here, whatever its ticker says.
+    for title in (market_name, name):
+        if _names_a_match_segment(title) or _REGULATION_WINDOW_RE.search(title):
+            return False
     won = _team_total_outcome_is_winner(
         name,
         getattr(event, "home_team_name", None),
