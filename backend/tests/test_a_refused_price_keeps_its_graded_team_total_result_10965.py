@@ -1,0 +1,373 @@
+"""#10965 — the three missing Detroit rungs were refused by their BOOK, not by a NULL.
+
+## What a reader saw after PR #10969 went live
+
+`/api/events/14626073/game-markets` (Boston 10, Detroit 3, final) still served 11
+team-total rows: Detroit over 1.5 Won, 2.5 Won, 3.5 Lost, 7.5 Lost — 4.5 / 5.5 /
+6.5 absent, and the 390px "Team scoring & period lines" had the same gap.
+
+#10969's specimen was read from `/api/futures/54069274`, which WITHHOLDS a stale
+number and keeps the result, so it showed the three legs at `probability=null`.
+The stored rows (Root's read-only db-query, 2026-10-13 02:47Z) are not null:
+
+    202058567  Detroit over 4.5  current 0.020000  bid 0.0000  ask 0.0100
+    202058565  Detroit over 5.5  current 0.900000  bid 0.0000  ask 0.0100
+    202058566  Detroit over 6.5  current 0.330000  bid 0.0000  ask 0.0100
+
+all `is_winner=false`, `game_score`. #8753's `_leg_price_refuted_by_its_book`
+refuses every one of those prices (a graded loser asked the ask arm: 0.02, 0.90
+and 0.33 all sit above the 0.01 ask) and used to drop the LEG with the price,
+above the #10965 per-leg gate, so that gate was never reached.
+
+## The rule these tests pin
+
+A refused price is not a refused result. A settled TEAM-TOTAL leg whose grade the
+final score recomputes (`_score_proves_team_total_grade`) keeps its row with its
+price withheld, and is served at the 0/1 its verdict implies — never the refused
+number. The same recomputation admits a settled team-total market whose quotes
+are ALL gone. Everything else is refused exactly as before: a live game, an
+ungraded leg, a grade the score contradicts, a club that resolves to neither
+side, a unit that is not the sport's, a voided market, a player-shaped leg, and
+every other market type.
+"""
+
+from __future__ import annotations
+
+from datetime import datetime, timedelta, timezone
+from decimal import Decimal
+from unittest.mock import AsyncMock, patch
+
+import pytest
+from httpx import ASGITransport, AsyncClient
+
+from app.dependencies.auth import get_optional_user
+from app.services.database import get_db, get_db_rw
+from app.utils.futures_unsupported_price import price_refuted_by_live_book
+from tests.integration.test_route_events_seeded import (
+    _make_event,
+    _make_event_detail_session,
+    _make_futures_market,
+    _make_outcome,
+)
+
+EVENT_ID = 14626073
+HOME = "Detroit Tigers"
+AWAY = "Boston Red Sox"
+K_TEAM_TOTAL = 54069274
+K_GAME_TOTAL = 54069280  # illustrative: the "other market type" control
+
+KICKOFF = datetime(2026, 5, 5, 22, 40, tzinfo=timezone.utc)
+FINAL_AT = KICKOFF + timedelta(hours=3)
+SETTLED_AT = FINAL_AT + timedelta(minutes=40)
+
+MARKETS = {
+    K_TEAM_TOTAL: (
+        "Boston vs Detroit: Team Total",
+        "KXMLBTEAMTOTAL-26MAY051840BOSDET",
+    ),
+    K_GAME_TOTAL: (
+        "Boston vs Detroit: Total Runs",
+        "KXMLBTOTAL-26MAY051840BOSDET",
+    ),
+}
+
+W = ("0.995000", "0.9900", "1.0000")  # a settled winner's stored triple
+# The production specimen, id for id and byte for byte:
+# `(outcome_id, name, current, bid, ask, is_winner, resolution_source)`.
+SPECIMEN = [
+    (202058556, "Detroit over 1.5 runs scored", *W, True, "game_score"),
+    (202058557, "Detroit over 2.5 runs scored", *W, True, "game_score"),
+    (202058558, "Boston over 1.5 runs scored", *W, True, "game_score"),
+    (202058559, "Boston over 2.5 runs scored", *W, True, "game_score"),
+    (202058560, "Boston over 3.5 runs scored", *W, True, "game_score"),
+    (202058561, "Boston over 4.5 runs scored", *W, True, "game_score"),
+    (202058562, "Boston over 5.5 runs scored", *W, True, "game_score"),
+    (202058563, "Boston over 6.5 runs scored", *W, True, "game_score"),
+    (202058564, "Boston over 7.5 runs scored", *W, True, "game_score"),
+    (202058565, "Detroit over 5.5 runs scored", "0.900000", "0.0000", "0.0100", False, "game_score"),
+    (202058566, "Detroit over 6.5 runs scored", "0.330000", "0.0000", "0.0100", False, "game_score"),
+    (202058567, "Detroit over 4.5 runs scored", "0.020000", "0.0000", "0.0100", False, "game_score"),
+    (202058568, "Detroit over 3.5 runs scored", "0.010000", "0.0000", "0.0100", False, "game_score"),
+    (202058569, "Detroit over 7.5 runs scored", "0.010000", "0.0000", "0.0100", False, "game_score"),
+]
+REFUSED = {
+    "Detroit over 4.5 runs scored": 0.02,
+    "Detroit over 5.5 runs scored": 0.90,
+    "Detroit over 6.5 runs scored": 0.33,
+}
+
+
+def _dec(v):
+    return None if v is None else Decimal(v)
+
+
+def _game(rows, *, finished=True, sport_key="baseball_mlb", market_id=K_TEAM_TOTAL):
+    event = _make_event(
+        id=EVENT_ID,
+        home_team=HOME,
+        away_team=AWAY,
+        status="completed" if finished else "live",
+        sport_key=sport_key,
+        home_score=3 if finished else 2,
+        away_score=10 if finished else 2,
+    )
+    event.llm_league = "MLB"
+    event.commence_time = KICKOFF
+    event.completed_at = FINAL_AT if finished else None
+    event.period = "Final" if finished else "Top 3rd"
+    event.game_clock = None
+    event.box_score_data = {"players": {}}
+
+    name, external_id = MARKETS[market_id]
+    market = _make_futures_market(id=market_id, name=name, source="kalshi")
+    market.category = "game_prop"
+    market.external_id = external_id
+    market.event_id = EVENT_ID
+    market.commence_time = KICKOFF
+    market.status = "resolved" if finished else "open"
+    market.settled_at = SETTLED_AT if finished else None
+
+    outcomes = []
+    for oid, leg, price, bid, ask, won, source in rows:
+        outcome = _make_outcome(
+            id=oid, market_id=market_id, name=leg, probability=0.0,
+            is_winner=won, resolution_source=source,
+        )
+        outcome.current_probability = _dec(price)
+        outcome.current_yes_bid = _dec(bid)
+        outcome.current_yes_ask = _dec(ask)
+        outcome.opening_probability = None
+        outcomes.append(outcome)
+    return event, [market], outcomes
+
+
+async def _payload(rows=SPECIMEN, **kw) -> dict:
+    from app.main import app
+    from app.routes.events import _game_markets_cache
+
+    _game_markets_cache.clear()
+    event, futures, outcomes = _game(rows, **kw)
+    session = _make_event_detail_session(event=event, futures=futures, outcomes=outcomes)
+
+    async def _mock_get_db():
+        yield session
+
+    async def _mock_get_optional_user():
+        return None
+
+    app.dependency_overrides[get_db] = _mock_get_db
+    app.dependency_overrides[get_db_rw] = _mock_get_db
+    app.dependency_overrides[get_optional_user] = _mock_get_optional_user
+    try:
+        with patch("app.main.init_db", new_callable=AsyncMock):
+            async with AsyncClient(
+                transport=ASGITransport(app=app), base_url="http://test"
+            ) as ac:
+                resp = await ac.get(f"/api/events/{EVENT_ID}/game-markets")
+    finally:
+        _game_markets_cache.clear()
+        app.dependency_overrides.clear()
+    assert resp.status_code == 200, resp.text
+    return resp.json()
+
+
+async def _team_totals(rows=SPECIMEN, **kw) -> dict:
+    rows_out = (await _payload(rows, **kw)).get("team_totals") or []
+    return {r["outcome_name"]: r for r in rows_out}
+
+
+def _all_null(rows):
+    return [(oid, leg, None, None, None, won, src) for oid, leg, _p, _b, _a, won, src in rows]
+
+
+def _served_numbers(payload: dict) -> list:
+    """Every number the payload serves, in any section, under any key."""
+    found = []
+
+    def walk(node):
+        if isinstance(node, dict):
+            for v in node.values():
+                walk(v)
+        elif isinstance(node, list):
+            for v in node:
+                walk(v)
+        elif isinstance(node, (int, float)) and not isinstance(node, bool):
+            found.append(node)
+
+    walk(payload)
+    return found
+
+
+# ── the specimen really is #8753's shape ─────────────────────────────────────
+
+
+def test_the_specimens_three_detroit_prices_are_refused_by_their_own_book():
+    """Strawman guard: without this the tests below could pass on a fixture that
+    never reaches #8753 (the #10969 fixture carried no book, so it never did)."""
+    for oid, leg, price, bid, ask, won, src in SPECIMEN:
+        refused = price_refuted_by_live_book(
+            "kalshi", src, won, float(price), float(bid), float(ask)
+        )
+        assert refused is (leg in REFUSED), leg
+
+
+# ── the repair ───────────────────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_the_three_book_refused_detroit_losers_are_served_as_lost():
+    served = await _team_totals()
+
+    for leg in REFUSED:
+        row = served.get(leg)
+        assert row is not None, f"{leg} was dropped from the settled ladder"
+        assert row["over_probability"] == 0.0
+        assert row["is_winner"] is False
+        assert row["resolution_source"] == "game_score"
+        assert row["movement"] is None
+        assert row["team_side"] == "home"
+
+
+@pytest.mark.asyncio
+async def test_the_whole_fourteen_leg_ladder_is_served_with_its_verdicts():
+    served = await _team_totals()
+
+    assert len(served) == 14
+    detroit = sorted(r["threshold"] for n, r in served.items() if n.startswith("Detroit"))
+    boston = sorted(r["threshold"] for n, r in served.items() if n.startswith("Boston"))
+    assert detroit == [1.5, 2.5, 3.5, 4.5, 5.5, 6.5, 7.5]
+    assert boston == [1.5, 2.5, 3.5, 4.5, 5.5, 6.5, 7.5]
+    for leg, row in served.items():
+        won = leg.startswith("Boston") or leg in (
+            "Detroit over 1.5 runs scored", "Detroit over 2.5 runs scored",
+        )
+        assert row["is_winner"] is won, leg
+        assert row["over_probability"] == (1.0 if won else 0.0), leg
+
+
+@pytest.mark.asyncio
+async def test_no_refused_number_is_served_anywhere():
+    """Withheld means withheld: 0.90 and 0.33 are in no section of the payload
+    (0.02 included). The result is printed; the refused quote is not."""
+    numbers = _served_numbers(await _payload())
+
+    for refused in REFUSED.values():
+        assert not any(abs(n - refused) < 1e-9 for n in numbers), refused
+
+
+@pytest.mark.asyncio
+async def test_a_settled_team_total_with_every_quote_gone_is_served():
+    """The all-null admission: no leg carries a price, the market is graded, and
+    the final score recomputes every grade — the ladder is served, losers
+    included, instead of the whole market being dropped by `has_no_real_price`."""
+    served = await _team_totals(_all_null(SPECIMEN))
+
+    assert len(served) == 14
+    assert served["Detroit over 3.5 runs scored"]["is_winner"] is False
+    assert served["Detroit over 3.5 runs scored"]["over_probability"] == 0.0
+    assert served["Detroit over 2.5 runs scored"]["is_winner"] is True
+    assert served["Boston over 7.5 runs scored"]["over_probability"] == 1.0
+
+
+# ── what must NOT change ─────────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_a_refused_price_on_a_live_game_still_takes_its_leg():
+    rows = [
+        (98001, "Detroit over 1.5 runs scored", "0.710000", "0.7000", "0.7200", None, None),
+        (98002, "Detroit over 2.5 runs scored", "0.900000", "0.0000", "0.4000", None, None),
+    ]
+    served = await _team_totals(rows, finished=False)
+
+    assert "Detroit over 1.5 runs scored" in served
+    assert "Detroit over 2.5 runs scored" not in served
+
+
+@pytest.mark.asyncio
+async def test_a_refused_price_whose_grade_the_score_contradicts_stays_dropped():
+    """Detroit scored 3, so "over 2.5" graded a LOSER disagrees with the score:
+    the grade is not recomputed, the leg is not readmitted."""
+    rows = SPECIMEN[:1] + [
+        (99001, "Detroit over 2.5 runs scored", "0.900000", "0.0000", "0.0100", False, "game_score"),
+    ]
+    served = await _team_totals(rows)
+
+    assert "Detroit over 1.5 runs scored" in served
+    assert "Detroit over 2.5 runs scored" not in served
+
+
+@pytest.mark.asyncio
+async def test_a_refused_price_on_an_ungraded_leg_stays_dropped():
+    rows = SPECIMEN[:1] + [
+        (99002, "Detroit over 5.5 runs scored", "0.900000", "0.0000", "0.0100", False, None),
+    ]
+    served = await _team_totals(rows)
+
+    assert "Detroit over 5.5 runs scored" not in served
+
+
+@pytest.mark.asyncio
+async def test_a_refused_player_shaped_leg_in_a_team_total_market_stays_dropped():
+    rows = SPECIMEN[:1] + [
+        (99003, "Riley Greene: 2+", "0.900000", "0.0000", "0.0100", False, "game_score"),
+    ]
+    payload = await _payload(rows)
+
+    names = {r["outcome_name"] for r in payload.get("player_props") or []}
+    names |= {r["outcome_name"] for r in payload.get("team_totals") or []}
+    assert "Riley Greene: 2+" not in names
+
+
+@pytest.mark.asyncio
+async def test_a_refused_price_on_another_market_type_still_takes_its_leg():
+    """#8753's scope is unchanged outside team totals: a game-total loser whose
+    stored 0.50 sits above its 0.01 ask is still dropped."""
+    rows = [
+        (99101, "Over 9.5 runs scored", "0.995000", "0.9900", "1.0000", True, "game_score"),
+        (99102, "Over 14.5 runs scored", "0.500000", "0.0000", "0.0100", False, "game_score"),
+    ]
+    payload = await _payload(rows, market_id=K_GAME_TOTAL)
+
+    served = {r["outcome_name"] for r in payload.get("totals") or []}
+    assert "Over 14.5 runs scored" not in served
+
+
+@pytest.mark.asyncio
+async def test_an_all_null_market_with_a_club_on_neither_side_is_still_dropped():
+    rows = [
+        (99201, "New York over 1.5 runs scored", None, None, None, True, "game_score"),
+        (99202, "New York over 4.5 runs scored", None, None, None, False, "game_score"),
+    ]
+    assert await _team_totals(rows) == {}
+
+
+@pytest.mark.asyncio
+async def test_an_all_null_market_in_a_foreign_unit_is_still_dropped():
+    rows = [
+        (99301, "Detroit over 1.5 goals scored", None, None, None, True, "game_score"),
+        (99302, "Detroit over 4.5 goals scored", None, None, None, False, "game_score"),
+    ]
+    assert await _team_totals(rows) == {}
+
+
+@pytest.mark.asyncio
+async def test_an_all_null_market_in_a_sport_with_no_score_unit_is_still_dropped():
+    assert await _team_totals(_all_null(SPECIMEN), sport_key="tennis_atp_us_open") == {}
+
+
+@pytest.mark.asyncio
+async def test_an_all_null_ungraded_market_is_still_dropped():
+    rows = [(oid, leg, None, None, None, False, None) for oid, leg, *_ in SPECIMEN]
+    assert await _team_totals(rows) == {}
+
+
+@pytest.mark.asyncio
+async def test_an_all_null_voided_market_serves_no_rows():
+    """Every leg lost and none won: the score agrees each Detroit leg above 3
+    lost, but a void is not a verdict — the per-leg gate keeps them off."""
+    rows = [
+        (99401, "Detroit over 4.5 runs scored", None, None, None, False, "game_score"),
+        (99402, "Detroit over 5.5 runs scored", None, None, None, False, "game_score"),
+    ]
+    assert await _team_totals(rows) == {}
