@@ -96,7 +96,8 @@ class _RecordingSession:
         self.events: list[str] = []
         self._rowcounts = list(rowcounts or [])
         self.fail_bank = fail_bank
-        self.retired_ids = list(retired_ids or [[] for _ in range(7)])
+        # A, A2-A7, then A11 (#2408) — the eighth UPDATE futures_outcomes.
+        self.retired_ids = list(retired_ids or [[] for _ in range(8)])
         self.retirement_index = 0
         self.retirement_asof = datetime(2026, 10, 9, 5, 30, tzinfo=timezone.utc)
         self.fail_maxima = fail_maxima
@@ -112,6 +113,11 @@ class _RecordingSession:
         # the core's locking write.
         self.prepares: list[tuple[int, str, dict]] = []
         self.prepared_ids = {"A4": [41, 42], "A7": [71]}
+        # A11 (#2408) answers `(id, basis)` rows, not bare ids: its write sets
+        # `current - basis` per row. A NULL basis is "no dated evidence".
+        self.prepared_rows = {
+            "A11": [(111, Decimal("0.300000")), (112, None)],
+        }
         # Relative order of the two out-of-band kinds above.
         self.out_of_band: list[str] = []
 
@@ -126,6 +132,9 @@ class _RecordingSession:
             return _Result(0)
         if "/* movement prepare:" in sql:
             self.prepares.append((len(self.events), sql, params or {}))
+            if "movement prepare: A11" in sql:
+                self.out_of_band.append("PREPARE A11")
+                return _Result(0, self.prepared_rows["A11"])
             label = "A4" if "movement prepare: A4" in sql else "A7"
             self.out_of_band.append(f"PREPARE {label}")
             return _Result(0, self.prepared_ids[label])
@@ -135,14 +144,22 @@ class _RecordingSession:
             raise RuntimeError("bank failed")
         if "SET max_movement_24h" in sql:
             targeted = bool((params or {}).get("market_ids"))
-            unit = ("a7" if self.retirement_index == 7 else "core") if targeted else "full"
+            unit = (
+                {7: "a7", 8: "a11"}.get(self.retirement_index, "core")
+                if targeted else "full"
+            )
             if self.fail_maxima == unit:
                 raise RuntimeError("maxima failed")
             if targeted:
                 return _Result(self.core_max_counts["= NULL" in sql])
         rowcount = self._rowcounts.pop(0) if self._rowcounts else 0
         if sql.startswith("UPDATE futures_outcomes"):
-            ids = self.retired_ids[self.retirement_index]
+            # A control written before A11 (#2408) names seven retirements;
+            # the eighth, A11, then retires nothing.
+            ids = (
+                self.retired_ids[self.retirement_index]
+                if self.retirement_index < len(self.retired_ids) else []
+            )
             self.retirement_index += 1
             return _Result(rowcount, ids)
         return _Result(rowcount)
@@ -180,8 +197,9 @@ def run_task(monkeypatch):
         # Counter controls name the established A..A10/B/C phase order.
         # Execute A10 first, then A1-A7/B/C, then the four bank operations.
         # Preserve each control's named phase value across that reorder.
-        phase_counts = list(rowcounts or []) + [0] * 14
-        order = (11, 0, 1, 2, 3, 4, 5, 6, 12, 13, 7, 8, 9, 10)
+        # #2408: A11 is phase 14, executed between A7 and the full B/C.
+        phase_counts = list(rowcounts or []) + [0] * 15
+        order = (11, 0, 1, 2, 3, 4, 5, 6, 14, 12, 13, 7, 8, 9, 10)
         session = _RecordingSession(
             [phase_counts[i] for i in order], fail_bank=fail_bank,
             retired_ids=retired_ids, fail_maxima=fail_maxima,
@@ -206,10 +224,13 @@ def run_task(monkeypatch):
 
 
 def _movement_events(session: _RecordingSession) -> list[str]:
-    """A10 and banks commit separately; delta/rank/max core stays atomic."""
+    """A10 and banks commit separately; delta/rank/max core stays atomic.
+
+    Six commits: A10, the A1-A6 prefix, A7, A11 (#2408), the full B/C, banks.
+    """
     events = session.events
     commits = [i for i, event in enumerate(events) if event == "COMMIT"]
-    assert len(commits) == 5, events
+    assert len(commits) == 6, events
     assert commits[0] == 1, events
     assert "unpriced_opening_ids" in events[0], events
     assert "probability_change_24h" not in events[0], events[0]
@@ -243,6 +264,7 @@ def test_the_core_yields_quote_rows_instead_of_waiting_for_them(run_task):
         (commits[0] + 1, {"ms": f"{MOVEMENT_CORE_LOCK_TIMEOUT_MS}ms"}),
         (commits[1] + 1, {"ms": f"{MOVEMENT_CORE_LOCK_TIMEOUT_MS}ms"}),
         (commits[2] + 1, {"ms": f"{MOVEMENT_CORE_LOCK_TIMEOUT_MS}ms"}),
+        (commits[3] + 1, {"ms": f"{MOVEMENT_CORE_LOCK_TIMEOUT_MS}ms"}),
     ], session.lock_budgets
     assert MOVEMENT_CORE_LOCK_TIMEOUT_MS < 1000  # under deadlock_timeout
 
@@ -279,7 +301,7 @@ def test_only_actual_retirement_markets_are_recomputed_before_quote_locks_releas
     assert all(sql in core for sql, _ in targets[:2])
     assert all("fm.status IN ('open', 'active')" in sql for sql, _ in targets)
     commits = [i for i, event in enumerate(session.events) if event == "COMMIT"]
-    full_scan = session.events[commits[2] + 1:commits[3]]
+    full_scan = session.events[commits[3] + 1:commits[4]]
     assert len(full_scan) == 2
     assert all("SET max_movement_24h" in sql and "ANY(:market_ids)" not in sql
                for sql in full_scan)
@@ -300,7 +322,7 @@ def test_full_scan_failure_propagates_after_coherent_core_and_warms_it(run_task)
     with pytest.raises(RuntimeError, match="maxima failed"):
         run_task(retired_ids=[[101], [], [], [], [], [], []], fail_maxima="full")
     session = run_task.last_session
-    assert session.events.count("COMMIT") == 3  # opening, prefix, A7
+    assert session.events.count("COMMIT") == 4  # opening, prefix, A7, A11
     assert session.events[-1] == "ROLLBACK"
     assert session.warm_snapshots == [session.events]
     commits = [i for i, event in enumerate(session.events) if event == "COMMIT"]
@@ -358,13 +380,20 @@ def test_snapshot_scans_run_before_any_outcome_lock(run_task):
     commits = [i for i, event in enumerate(session.events) if event == "COMMIT"]
     assert session.out_of_band == [
         "PREPARE A4", "PREPARE A7", "RETIREMENT CLOCK",
-        "LOCK BUDGET", "LOCK BUDGET", "LOCK BUDGET",
+        "LOCK BUDGET", "LOCK BUDGET",
+        # #2408: A11's lateral is its own lock-free read, after A7 commits and
+        # before A11's lock budget — no outcome lock is held while it scans.
+        "PREPARE A11", "LOCK BUDGET",
+        "LOCK BUDGET",
     ], session.out_of_band
-    assert [p[0] for p in session.prepares] == [commits[0] + 1] * 2
+    a4_a7_prepares = [p for p in session.prepares if "prepare: A11" not in p[1]]
+    assert [p[0] for p in a4_a7_prepares] == [commits[0] + 1] * 2
+    a11_prepares = [p for p in session.prepares if "prepare: A11" in p[1]]
+    assert [p[0] for p in a11_prepares] == [commits[2] + 1]
 
     core = _movement_events(session)
     for (_, prep_sql, prep_params), predicate, label in zip(
-        session.prepares,
+        a4_a7_prepares,
         (A4_UNOBSERVED_PREDICATE, A7_CONTRADICTED_PREDICATE),
         ("A4", "A7"),
     ):
@@ -968,61 +997,71 @@ def test_both_short_batches_report_drain_unverified(run_task) -> None:
 
 
 # ---------------------------------------------------------------------------
-# The WRITER-side semantics, ported from CAL-P159's file at this same path
+# The WRITER-side semantics (#2408)
 # ---------------------------------------------------------------------------
-# CAL-P173 (#1978), under INT-190 directive 936 step 2. Two lanes independently
-# created `test_movement_window.py` for item 12. Everything above is lane1/Q482's
-# sweep — the FIX. CAL-P159's 118-line file pinned the *unfixed writer
-# semantics*, and the rebase that resolved the add/add collision took master's
-# file whole, which silently dropped four pins.
-#
-# Two of the four were re-checked against this branch's code and survive; they
-# are ported here rather than restored as a second file at the same path (which
-# is what 936 forbids and what caused the collision). The other two were dropped
-# on measurement, not on taste:
-#
-#   * `..._the_upstream_fix_has_not_silently_landed_elsewhere` pinned the
-#     ABSENCE of the very sweep this file now tests — `app.tasks.__init__` has
-#     `SET probability_change_24h = NULL` twice. Correct when written, obsolete
-#     now.
-#   * `..._the_movers_bound_still_documents_why_read_side_is_wrong` is covered
-#     by `tests/test_futures_movers_pool_bound.py`.
-#
-# Why these two still earn their place AFTER the fix: the sweep retires stale
-# deltas downstream, but no writer was changed. The field is still a per-write
-# delta over whatever interval happened to elapse — the sweep bounds how long a
-# lie survives, it does not make the number mean 24 hours. A reader who sees
-# only the sweep will assume it does.
+# This section used to be `TestTheFieldStillDoesNotMeanWhatItIsNamed`, ported
+# from CAL-P159's file by CAL-P173 (#1978): it pinned that every writer still
+# stored `new - previous`, so a reader who saw only the sweep would not assume
+# the column meant a day. Its docstring asked to be RECONCILED rather than
+# relaxed if a writer ever grew a windowed recompute. #2408 is that
+# reconciliation: statement A11 states the column on a dated basis and the
+# writers CARRY that basis (`app.utils.movement_basis`). The pins below are the
+# inverse of the old ones — they red the moment a writer goes back to a
+# per-write delta, which is the defect the issue was filed on.
 
 
-class TestTheFieldStillDoesNotMeanWhatItIsNamed:
-    def test_every_writer_computes_a_per_write_delta_not_a_windowed_one(self):
-        """All four writers store ``new - previous``, over whatever interval that was."""
+class TestTheWritersCarryADatedMove:
+    def test_no_writer_stores_a_per_write_delta(self):
+        """The old expressions are gone from all three delta-writing tasks."""
         import inspect
 
         from app.tasks import futures as futures_task
         from app.tasks import kalshi as kalshi_task
         from app.tasks import polymarket as polymarket_task
 
-        kalshi_src = inspect.getsource(kalshi_task)
-        poly_src = inspect.getsource(polymarket_task)
+        for mod in (kalshi_task, polymarket_task):
+            src = inspect.getsource(mod)
+            assert '"probability_change_24h": prob\n' not in src, mod.__name__
+            assert not re.search(
+                r"probability_change_24h[\"\]]*\s*[:=]\s*\(?\s*prob\s*-\s*"
+                r"FuturesOutcome\.current_probability",
+                src,
+            ), mod.__name__
         futures_src = inspect.getsource(futures_task)
+        assert "prob_change = prob - old_prob" not in futures_src
 
-        assert "- FuturesOutcome.current_probability" in kalshi_src
-        assert "- FuturesOutcome.current_probability" in poly_src
-        assert "prob_change = prob - old_prob" in futures_src
+    def test_every_delta_writer_routes_through_the_carried_change(self):
+        """Four sites, one expression (#1951's lesson about third copies)."""
+        import inspect
 
-    def test_no_writer_recomputes_it_over_a_real_24_hour_window(self):
-        """Renamed from ``test_nothing_recomputes_it_over_a_real_24_hour_window``.
+        from app.tasks import futures as futures_task
+        from app.tasks import kalshi as kalshi_task
+        from app.tasks import polymarket as polymarket_task
 
-        The original name and docstring became false the day lane1/Q482's sweep
-        landed: something DOES now bound the field to a window. That something is
-        `update_max_movement`, downstream of every writer — so the scope this
-        pin can honestly claim is the WRITERS, and the name now says so.
+        expected = {kalshi_task: 1, polymarket_task: 2, futures_task: 1}
+        for mod, sites in expected.items():
+            src = inspect.getsource(mod)
+            assert src.count("carried_change_value(") == sites, mod.__name__
 
-        If this ever fails, a writer has grown a windowed recompute and the two
-        mechanisms are both bounding the same column. Reconcile them before
-        deleting this — do not simply relax it.
+    def test_datagolf_keeps_its_own_arm(self):
+        """#10248 owns golf's dated move end to end; A11 skips it by source.
+
+        If DataGolf ever adopts the carried change, A11's `datagolf` exclusion,
+        the A8-DG bank and `reader_change_24h` must be reconciled together.
+        """
+        import inspect
+
+        from app.tasks import A11_REANCHOR_SELECT
+        from app.tasks import datagolf as datagolf_task
+
+        assert "carried_change_value" not in inspect.getsource(datagolf_task)
+        assert "m.source IS DISTINCT FROM 'datagolf'" in A11_REANCHOR_SELECT
+
+    def test_no_writer_recomputes_it_over_a_window_of_its_own(self):
+        """The window lives in ONE place per side: A11 and `movement_basis`.
+
+        A writer that grew its own windowed recompute would be a second
+        definition of "a day ago" beside A11's dated basis.
         """
         import inspect
 
@@ -1796,7 +1835,8 @@ def test_bank_failure_rolls_back_and_warms_committed_core_then_propagates(run_ta
         run_task(fail_bank=True)
     session = run_task.last_session
     events = session.events
-    assert events.count("COMMIT") == 4, events
+    # opening, A1-A6 prefix, A7, A11 (#2408), full B/C — then the bank fails.
+    assert events.count("COMMIT") == 5, events
     assert events[-1] == "ROLLBACK", events
     core_commit = max(i for i, event in enumerate(events) if event == "COMMIT")
     assert "SET max_movement_24h = NULL" in events[core_commit - 1], events
@@ -1821,3 +1861,109 @@ def test_the_bank_runs_after_every_retirement_and_the_committed_recompute(
         f"the bank is out of order — sweeps={sweeps} bank={bank} "
         f"recompute={recompute}: {events}"
     )
+
+
+# ---------------------------------------------------------------------------
+# #2408 — statement A11, the wiring (the behaviour is in the real-PG gate)
+# ---------------------------------------------------------------------------
+
+
+def _a11_write(session: _RecordingSession) -> tuple[int, str, dict]:
+    hits = [
+        (i, sql, params) for i, (sql, params) in enumerate(session.calls)
+        if sql.startswith("UPDATE futures_outcomes fo SET probability_change_24h = fo.current_probability - b.basis")
+    ]
+    assert len(hits) == 1, (
+        "statement A11 is GONE: nothing re-states the column on a dated basis, "
+        "so a fresh row's per-write delta is served as a day again (#2408). "
+        + repr(_statements(session))
+    )
+    return hits[0]
+
+
+def _lateral(sql: str) -> str:
+    """The `CROSS JOIN LATERAL ( ... ) obs` body, whitespace-normalized."""
+    flat = " ".join(sql.split())
+    start = flat.index("CROSS JOIN LATERAL (")
+    return flat[start:flat.index(") obs", start)]
+
+
+def test_a11_reads_snapshots_lock_free_and_writes_only_prepared_rows(run_task) -> None:
+    from app.tasks import REANCHOR_BATCH
+
+    _, session = run_task()
+    prepares = [p for p in session.prepares if "movement prepare: A11" in p[1]]
+    assert len(prepares) == 1, session.out_of_band
+    _, prep_sql, prep_params = prepares[0]
+    assert "FOR UPDATE" not in prep_sql, prep_sql
+    assert "futures_odds_snapshots" in prep_sql
+    assert prep_params["batch"] == REANCHOR_BATCH
+    assert f"{{priced}}" not in prep_sql, "the price rule was never substituted"
+
+    _, sql, params = _a11_write(session)
+    assert "futures_odds_snapshots" not in sql, (
+        "A11's write re-scans snapshots while holding outcome locks (#10090)"
+    )
+    assert "FOR UPDATE OF t SKIP LOCKED" in sql, sql
+    assert "t.probability_change_24h IS DISTINCT FROM (t.current_probability - c.basis)" in sql
+    rows = session.prepared_rows["A11"]
+    assert params["ids"] == [r[0] for r in rows]
+    assert params["bases"] == [r[1] for r in rows]
+
+
+def test_a11_basis_is_a8s_basis_verbatim(run_task) -> None:
+    """Column and bank must be ONE answer to "what did this cost a day ago"."""
+    _, session = run_task()
+    a11 = [p[1] for p in session.prepares if "movement prepare: A11" in p[1]][0]
+    a8 = [
+        s for s in _dated_basis_statements(session)
+        if "jsonb_object_agg" in s
+    ]
+    assert len(a8) == 1, a8
+    assert _lateral(a11) == _lateral(a8[0]), (_lateral(a11), _lateral(a8[0]))
+    for clause in (
+        "obs.foreign_scale IS FALSE",
+        "obs.sources = 1",
+        "<= now() - (:basis_age_hours * interval '1 hour')",
+    ):
+        assert clause in a11 and clause in a8[0], clause
+
+
+def test_a11_scope_excludes_what_a_and_a2_own_and_datagolf(run_task) -> None:
+    _, session = run_task()
+    a11 = [p[1] for p in session.prepares if "movement prepare: A11" in p[1]][0]
+    _, write, _ = _a11_write(session)
+    for sql, alias in ((a11, "fo"), (write, "t")):
+        assert f"{alias}.resolution_source IS NULL" in sql, sql
+        assert f"{alias}.last_updated >= now() - (:window_hours * interval '1 hour')" in sql, sql
+        assert "m.source IS DISTINCT FROM 'datagolf'" in sql, sql
+        assert "m.status = 'open'" in sql, sql
+
+
+def test_a11_commits_alone_after_a7_and_before_the_recompute_and_bank(run_task) -> None:
+    from app.tasks import MOVEMENT_CORE_LOCK_TIMEOUT_MS
+
+    result, session = run_task(
+        retired_ids=[[], [], [], [], [], [], [], [811, 812]],
+    )
+    events = session.events
+    commits = [i for i, e in enumerate(events) if e == "COMMIT"]
+    a11_unit = events[commits[2] + 1:commits[3]]
+    assert a11_unit[0].startswith("UPDATE futures_outcomes fo SET probability_change_24h"), a11_unit
+    # its own affected-market maxima, inside its own transaction
+    assert all("ANY(:market_ids)" in s for s in a11_unit[1:]) and len(a11_unit) == 3, a11_unit
+    targets = [p for _, p in session.calls if p.get("market_ids")]
+    assert targets == [{"market_ids": [811, 812]}] * 2, targets
+    # the full recompute and the bank both follow it
+    assert all("max_movement_24h" in s for s in events[commits[3] + 1:commits[4]])
+    assert session.lock_budgets[2] == (commits[2] + 1, {"ms": f"{MOVEMENT_CORE_LOCK_TIMEOUT_MS}ms"})
+    assert result["reanchored"] == 0 and result["reanchor_drained"] is None, result
+
+
+def test_a11_reports_a_full_batch_as_undrained(run_task) -> None:
+    from app.tasks import REANCHOR_BATCH
+
+    rowcounts = [0] * 14 + [REANCHOR_BATCH]
+    result, _ = run_task(rowcounts)
+    assert result["reanchored"] == REANCHOR_BATCH
+    assert result["reanchor_drained"] is False, result

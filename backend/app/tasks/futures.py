@@ -11,6 +11,7 @@ from sqlalchemy import func
 from app.services.odds_api import OddsAPIService
 from app.tasks.base import get_task_session, run_async
 from app.utils.market_settlement import settled_values
+from app.utils.movement_basis import carried_change_value  # #2408
 from app.utils.price_change_stamp import price_changed_at_value  # #2024
 from app.utils.futures_rank import rerank_market_field_stmt  # #6598
 
@@ -329,17 +330,25 @@ async def _poll_futures_odds():
                         existing = existing_outcomes.get(outcome_name)
 
                         if existing:
-                            # Calculate 24h change
-                            old_prob = float(existing.current_probability) if existing.current_probability else None
-                            prob_change = prob - old_prob if old_prob else None
-
                             old_rank = existing.rank
                             rank_change = old_rank - rank if old_rank else None
 
-                            # Update existing outcome
+                            # Update existing outcome. #2408: the change is a
+                            # dated move CARRIED to the new price, never
+                            # `prob - old_prob` (a per-write delta over however
+                            # long this dormant poll last slept). A SQL
+                            # expression on the mapped attribute, as datagolf's
+                            # `price_changed_at` is: PostgreSQL evaluates it
+                            # against the OLD row, whatever order the attributes
+                            # are assigned in.
+                            existing.probability_change_24h = carried_change_value(
+                                FuturesOutcome.probability_change_24h,
+                                FuturesOutcome.current_probability,
+                                FuturesOutcome.last_updated,
+                                prob,
+                            )
                             existing.current_probability = prob
                             existing.current_american_odds = american
-                            existing.probability_change_24h = prob_change
                             existing.rank = rank
                             existing.rank_change_24h = rank_change
                             existing.last_updated = now
