@@ -75,7 +75,12 @@ REFUSALS (the whole run stops, nothing is written)
   this run (the dry run prints it), so the attended apply writes exactly the plan
   the reviewer read and not one row more;
 * ``--restore`` without ``--ids``, or with an id that is not pinned;
-* any statement that changes other than exactly one row.
+* any statement that changes other than exactly one row — including a row whose
+  category OR name moved between the read and its write (the UPDATE re-states
+  both, the name null-safely, so the classifier's evidence still covers the row);
+* the database stopping a statement: the run carries its own short lock and
+  statement budgets, so a contended row refuses in seconds with the whole
+  transaction rolled back, never a partial commit and never an unbounded wait.
 
 DELIBERATELY NOT TOUCHED
 ------------------------
@@ -273,14 +278,33 @@ async def _read(session) -> dict[int, tuple[str | None, str | None]]:
     return {int(r.id): (r.llm_sport_category, r.name) for r in got}
 
 
-# The WHERE re-states the compare half of the compare-and-set, so a writer landing
-# between the read and the write makes the statement change 0 rows and the run
-# refuses rather than overwriting it. `IS NOT DISTINCT FROM` is not needed: every
-# pinned `before`/`after` is a non-null string, and NULL never equals one.
+# The WHERE re-states EVERYTHING the plan decided on, so a writer landing between
+# the read and the write makes the statement change 0 rows and the run refuses
+# rather than overwriting it. Two halves:
+#
+# * the category — the compare half of the compare-and-set. Plain `=` is enough:
+#   every pinned `before`/`after` is a non-null string, and NULL never equals one.
+# * the observed NAME — the classifier gate in ``plan()`` judged the name it read,
+#   so the write is only covered by that evidence while the name is unchanged. A
+#   rename of the open Kalshi row 59165075 between ``_read()`` and its UPDATE, with
+#   the category still ``basketball``, would otherwise land ``politics`` on a name
+#   nobody classified. Null-safe (`IS NOT DISTINCT FROM`) because ``name`` is the
+#   one compared value that can legitimately be NULL: a NULL name read must match
+#   a NULL name now, and a name set since must not.
 _CAS_SQL = (
     "UPDATE futures_markets SET llm_sport_category = :target "
-    "WHERE id = :id AND llm_sport_category = :source"
+    "WHERE id = :id AND llm_sport_category = :source "
+    "AND name IS NOT DISTINCT FROM :name"
 )
+
+#: The attended run's own budgets, per connection (``get_task_session`` kwargs, so
+#: they survive a pool reconnect — #4482). Without them the session rests at the
+#: 30-minute statement bound and NO lock bound: one contended row would hold the
+#: whole transaction open on production. With them a busy row stops the run in
+#: seconds, the transaction rolls back, and nothing is committed. Same values as
+#: the sibling attended repairs (``repair_10520_keeper_current_anchor``).
+LOCK_TIMEOUT_MS = 5000
+STATEMENT_TIMEOUT_MS = 10000
 
 
 def parse_ids(raw: str) -> frozenset[int]:
@@ -312,11 +336,18 @@ async def run(
     if apply or restore_ids is not None:
         for market_id, source, target in decided["write"]:
             result = await session.execute(
-                text(_CAS_SQL), {"id": market_id, "source": source, "target": target}
+                text(_CAS_SQL),
+                {
+                    "id": market_id,
+                    "source": source,
+                    "target": target,
+                    "name": rows[market_id][1],
+                },
             )
             if result.rowcount != 1:
                 raise Refused(
-                    f"market {market_id}: expected to change 1 row, changed {result.rowcount}"
+                    f"market {market_id}: expected to change 1 row, changed "
+                    f"{result.rowcount} — its category or name moved since the read"
                 )
             written += 1
         await session.commit()
@@ -356,10 +387,14 @@ async def main() -> int:
         print(f"REFUSED: {exc}")
         return 2
 
+    from sqlalchemy.exc import DBAPIError
+
     from app.tasks.base import get_task_session
     from app.utils.futures_categorization import categorize_by_rules
 
-    async with get_task_session() as session:
+    async with get_task_session(
+        statement_timeout_ms=STATEMENT_TIMEOUT_MS, lock_timeout_ms=LOCK_TIMEOUT_MS
+    ) as session:
         try:
             out = await run(
                 session,
@@ -371,6 +406,20 @@ async def main() -> int:
         except Refused as exc:
             await session.rollback()
             print(f"REFUSED: {exc}")
+            return 2
+        except DBAPIError as exc:
+            # A budget firing (lock_timeout 55P03, statement_timeout 57014) or any
+            # other server refusal: the transaction rolls back whole, so no row of
+            # the plan is committed, and the run says so rather than tracebacking.
+            await session.rollback()
+            code = getattr(exc.orig, "sqlstate", None) or getattr(
+                exc.orig, "pgcode", None
+            )
+            print(
+                f"REFUSED: the database stopped the run ({type(exc.orig).__name__}, "
+                f"sqlstate {code}); rolled back, nothing committed — re-run the dry "
+                "run when production is quieter"
+            )
             return 2
     print(json.dumps(out, indent=2))
     if out["mode"] == "apply" and out["written"]:

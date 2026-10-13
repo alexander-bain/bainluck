@@ -11,6 +11,11 @@
    statement that changes other than one row, stops the run before commit.
 5. **The undo only undoes what the apply wrote**: it needs the id list and never
    touches a row the pipeline repaired on its own.
+6. **The write re-states the name the classifier judged**: a rename between the
+   read and the UPDATE changes zero rows and the run refuses before commit.
+7. **The attended run is bounded**: ``main()`` arms short lock and statement
+   budgets on the session, and a budget firing refuses with a rollback, never a
+   commit.
 """
 
 from __future__ import annotations
@@ -221,19 +226,30 @@ class FakeSession:
         sql = str(stmt)
         if sql.lstrip().upper().startswith("SELECT"):
             ids = set(params["ids"])
-            return _Result(_Row(i, c, n) for i, (c, n) in self.live.items() if i in ids)
+            got = _Result(_Row(i, c, n) for i, (c, n) in self.live.items() if i in ids)
+            self.after_read()
+            return got
         assert sql.lstrip().upper().startswith("UPDATE")
         self.updates.append(dict(params, sql=sql))
-        if self.rowcount == 1 and self.live[params["id"]][0] == params["source"]:
-            self.live[params["id"]][0] = params["target"]
+        row = self.live[params["id"]]
+        # The fake honours only the predicates the SQL TEXT states, so a clause
+        # dropped from `_CAS_SQL` is a clause this fake stops enforcing.
+        matches = row[0] == params["source"]
+        if "name IS NOT DISTINCT FROM :name" in " ".join(sql.split()):
+            matches = matches and row[1] == params["name"]
+        if self.rowcount == 1 and matches:
+            row[0] = params["target"]
             return _Result(rowcount=1)
         return _Result(rowcount=0 if self.rowcount == 1 else self.rowcount)
+
+    def after_read(self):
+        """A concurrent writer's hook: runs between the read and the first UPDATE."""
 
     async def commit(self):
         self.committed = True
 
     async def rollback(self):
-        pass
+        self.rolled_back = True
 
 
 def _run(repair, session, **kw):
@@ -280,12 +296,66 @@ def test_plan_hash_is_order_free_and_content_bound(repair):
     assert repair.plan_hash(a) != repair.plan_hash([(1, "golf", "esports"), a[1]])
 
 
-def test_the_write_is_a_compare_and_set_on_the_category_alone(repair):
+def test_the_write_moves_the_category_alone(repair):
     sql = " ".join(repair._CAS_SQL.split())
     assert "SET llm_sport_category = :target WHERE" in sql
-    assert sql.endswith("WHERE id = :id AND llm_sport_category = :source")
+    assert sql.endswith(
+        "WHERE id = :id AND llm_sport_category = :source "
+        "AND name IS NOT DISTINCT FROM :name"
+    )
+    set_clause = sql.split(" WHERE ")[0]
+    assert set_clause == "UPDATE futures_markets SET llm_sport_category = :target"
     for column in ("canonical_market_key", "updated_at", "category_tags", "llm_league"):
         assert column not in sql
+
+
+# ── 6. the name the classifier judged is the name the write lands on ─────────
+
+
+class RenamedAfterRead(FakeSession):
+    """The open Kalshi row is renamed between `_read()` and its UPDATE; its
+    category stays `basketball`, so only the name half of the CAS can see it."""
+
+    RENAMED = "Los Angeles Lakers win the 2027 NBA Finals?"
+
+    def after_read(self):
+        self.live[59165075][1] = self.RENAMED
+
+
+def test_a_rename_between_read_and_write_refuses_before_commit(repair):
+    assert categorize_by_rules(RenamedAfterRead.RENAMED) != "politics"
+    h = _run(repair, FakeSession(LIVE_2026_10_13), apply=False)["plan_hash"]
+    s = RenamedAfterRead(LIVE_2026_10_13)
+    with pytest.raises(repair.Refused, match="59165075"):
+        _run(repair, s, apply=True, expect_plan_hash=h)
+    assert not s.committed
+    assert s.live[59165075] == ["basketball", RenamedAfterRead.RENAMED]
+    # The UPDATE carried the name the plan read, not the one it found.
+    sent = [u for u in s.updates if u["id"] == 59165075]
+    assert sent and sent[0]["name"] == LIVE_2026_10_13[59165075][1]
+
+
+def test_every_update_binds_the_observed_name(repair):
+    h = _run(repair, FakeSession(LIVE_2026_10_13), apply=False)["plan_hash"]
+    s = FakeSession(LIVE_2026_10_13)
+    _run(repair, s, apply=True, expect_plan_hash=h)
+    assert {u["id"]: u["name"] for u in s.updates} == {
+        i: LIVE_2026_10_13[i][1] for i in set(ISSUE_TABLE) - ALREADY_REPAIRED
+    }
+
+
+def test_a_null_name_is_compared_null_safely(repair):
+    # Plain `=` against NULL is never true, so a NULL-named row read as NULL could
+    # never be written (nor undone); the CAS must say IS NOT DISTINCT FROM.
+    sql = " ".join(repair._CAS_SQL.split())
+    assert "name IS NOT DISTINCT FROM :name" in sql
+    assert "name = :name" not in sql
+    rows = dict(LIVE_2026_10_13)
+    rows[59304735] = ("darts", None)
+    s = FakeSession(rows)
+    out = _run(repair, s, apply=False, restore_ids=frozenset({59304735}))
+    assert out["written"] == 1 and s.updates[0]["name"] is None
+    assert s.live[59304735][0] == "baseball"
 
 
 # ── 5. the undo ──────────────────────────────────────────────────────────────
@@ -351,3 +421,80 @@ def test_main_refuses_unsafe_flag_shapes_before_any_session(
     monkeypatch.setattr(sys, "argv", ["repair_2169", *argv])
     assert asyncio.run(repair.main()) == 2
     assert capsys.readouterr().out.startswith("REFUSED:")
+
+
+# ── 7. the attended run is bounded ───────────────────────────────────────────
+
+
+def _fake_task_session(session, seen):
+    import contextlib
+
+    @contextlib.asynccontextmanager
+    async def fake(**kwargs):
+        seen.append(kwargs)
+        yield session
+
+    return fake
+
+
+def test_main_arms_short_lock_and_statement_budgets(repair, monkeypatch, capsys):
+    import app.tasks.base as base
+
+    seen: list[dict] = []
+    monkeypatch.setattr(
+        base, "get_task_session", _fake_task_session(FakeSession(LIVE_2026_10_13), seen)
+    )
+    monkeypatch.setenv("HEROKU_APP_NAME", "bainluck")
+    monkeypatch.setattr(sys, "argv", ["repair_2169"])
+    assert asyncio.run(repair.main()) == 0
+    assert seen == [
+        {
+            "statement_timeout_ms": repair.STATEMENT_TIMEOUT_MS,
+            "lock_timeout_ms": repair.LOCK_TIMEOUT_MS,
+        }
+    ]
+    # Short: seconds, not the 30-minute resting bound, and a lock bound exists.
+    assert 0 < repair.LOCK_TIMEOUT_MS <= 10_000
+    assert 0 < repair.STATEMENT_TIMEOUT_MS <= 30_000
+    assert '"mode": "dry-run"' in capsys.readouterr().out
+
+
+class _LockNotAvailable(Exception):
+    sqlstate = "55P03"
+
+
+class LockedOnThirdWrite(FakeSession):
+    """A contended row: the third UPDATE waits out `lock_timeout` and the server
+    cancels it, after two earlier writes have already executed in the txn."""
+
+    def __init__(self, live):
+        super().__init__(live)
+        self.rolled_back = False
+
+    async def execute(self, stmt, params):
+        if str(stmt).lstrip().upper().startswith("UPDATE") and len(self.updates) == 2:
+            from sqlalchemy.exc import OperationalError
+
+            self.updates.append(dict(params, sql=str(stmt)))
+            raise OperationalError(str(stmt), params, _LockNotAvailable("lock timeout"))
+        return await super().execute(stmt, params)
+
+
+def test_a_lock_timeout_refuses_and_rolls_back_without_commit(
+    repair, monkeypatch, capsys
+):
+    import app.tasks.base as base
+
+    h = _run(repair, FakeSession(LIVE_2026_10_13), apply=False)["plan_hash"]
+    s = LockedOnThirdWrite(LIVE_2026_10_13)
+    monkeypatch.setattr(base, "get_task_session", _fake_task_session(s, []))
+    monkeypatch.setenv("HEROKU_APP_NAME", "bainluck")
+    monkeypatch.setattr(
+        sys, "argv", ["repair_2169", "--apply", "--expect-plan-hash", h]
+    )
+    assert asyncio.run(repair.main()) == 2
+    out = capsys.readouterr().out
+    assert out.startswith("REFUSED:") and "55P03" in out and "nothing committed" in out
+    assert "UNDO" not in out
+    assert len(s.updates) == 3
+    assert s.rolled_back and not s.committed
