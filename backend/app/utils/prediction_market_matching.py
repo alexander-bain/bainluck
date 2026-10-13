@@ -1734,6 +1734,64 @@ def match_teams_to_event(
     return None
 
 
+def is_kalshi_tennis_match_ticker(external_id: Optional[str]) -> bool:
+    """A Kalshi market that prices who wins a tennis match (not a prop about one)."""
+    return isinstance(external_id, str) and external_id.strip().lower().startswith(
+        _KALSHI_TENNIS_MATCH_SERIES
+    )
+
+
+def kalshi_contract_name_matchup(
+    matchup: Optional[MatchupInfo], contract_names,
+) -> Optional[MatchupInfo]:
+    """The title's two players, named the way Kalshi's own contracts name them. #11022.
+
+    Kalshi titles a tennis match with surnames and its two winner contracts with
+    full names. Polymarket shortens a compound surname differently, so the two
+    titles can share no name at all for one player: Kalshi
+    ``KXATPCHALLENGERMATCH-26OCT13JUSHUE`` is "Justo vs Huertas Del Pino
+    Cordova", its contracts are "Guido Ivan Justo" / "Arklon Huertas Del Pino
+    Cordova", and Polymarket's row for the same Santa Cruz 2 match is 15329605
+    "Guido Justo" / "Arklon Del Pino". The name gate refused that row on the
+    title (receipt verdict ``name_mismatch``), and the market minted 15329612,
+    so the reader got the match twice, one source on each page.
+
+    This builds a second matchup from the contracts only when they are exactly
+    the title's two players, one each: each contract must name its own title
+    side and not the other one. Anything else (a third name, two contracts on
+    one side, a contract on neither) answers ``None`` and the title stands
+    alone. The matchup still goes through the unchanged ``_score_candidates``
+    gate (both sides, opposite sides, pair shape, sport, window), so this adds
+    the venue's own names to what is compared, never a looser comparison.
+    """
+    if matchup is None or not matchup.team_b:
+        return None
+    names = [n.strip() for n in contract_names or () if isinstance(n, str) and n.strip()]
+    if len(names) != 2:
+        return None
+    first, second = names
+    if _normalize_for_matching(first) == _normalize_for_matching(second):
+        return None
+
+    a, b = matchup.team_a, matchup.team_b
+    a_first, a_second = _fuzzy_team_match(a, first), _fuzzy_team_match(a, second)
+    b_first, b_second = _fuzzy_team_match(b, first), _fuzzy_team_match(b, second)
+    if a_first and b_second and not a_second and not b_first:
+        full_a, full_b = first, second
+    elif a_second and b_first and not a_first and not b_second:
+        full_a, full_b = second, first
+    else:
+        return None
+
+    if matchup.yes_team == a:
+        yes = full_a
+    elif matchup.yes_team == b:
+        yes = full_b
+    else:
+        return None
+    return MatchupInfo(full_a, full_b, yes, matchup.format_type)
+
+
 def _is_prop_or_spread_outcome(name: str) -> bool:
     """
     Check if an outcome name looks like a prop, spread, total, or O/U — NOT moneyline.
