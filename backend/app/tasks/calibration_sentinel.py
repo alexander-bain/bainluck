@@ -1677,13 +1677,28 @@ async def _run_calibration_sentinel(
         flagged.sort(key=lambda c: (c["mce"] or 0) * (1 if not c["is_new_format"] else 1.5), reverse=True)
         stats["flagged"] = len(flagged)
 
-        # --- Evidence census + classification (bounded) ---
+        # --- Evidence census (bounded) + classification (every flagged cohort) ---
+        # #1911: the deadline bounds ONLY the snapshot-touching evidence census.
+        # It used to `break` the whole loop, so every cohort past it kept no
+        # disposition and no `explained_by` — `_suppressed()` then read it as
+        # unexplained and it went to filing on its RAW number alone, the exact
+        # #1142 error this loop exists to prevent. The organic run of
+        # 2026-10-13 00:13Z stopped at 22 of 218 and sent one such cohort
+        # (49032741c5d0) to filing. Coverage and disposition are pure arithmetic
+        # over numbers the mining scan already produced, so they cost nothing
+        # and are never skipped.
+        evidence_stopped_at: int | None = None
         for i, c in enumerate(flagged):
-            if _time.monotonic() - start > deadline_seconds:
-                stats["errors"].append({"deadline": f"stopped after {i} of {len(flagged)} flagged cohorts"})
-                break
+            if evidence_stopped_at is None and _time.monotonic() - start > deadline_seconds:
+                evidence_stopped_at = i
+                stats["errors"].append({
+                    "deadline": (
+                        f"evidence census stopped after {i} of {len(flagged)} flagged "
+                        f"cohorts; every flagged cohort still carries its disposition"
+                    )
+                })
             try:
-                if i < SENTINEL_MAX_EVIDENCE_COHORTS:
+                if i < SENTINEL_MAX_EVIDENCE_COHORTS and evidence_stopped_at is None:
                     ph = await _placeholder_fraction(session, c["dims"])
                     if ph is not None:
                         c["overlap_fractions"]["poly_placeholder"] = ph
