@@ -29,6 +29,16 @@ are ALL gone. Everything else is refused exactly as before: a live game, an
 ungraded leg, a grade the score contradicts, a club that resolves to neither
 side, a unit that is not the sport's, a voided market, a player-shaped leg, and
 every other market type.
+
+## CERT-4082: one agreeing leg does not vouch for its siblings
+
+The all-null admission used to let the WHOLE market in on one proved leg, and the
+siblings then met only `_verdict_is_provable` (the market was decided), not the
+score. Detroit 3 with an unpriced "over 2.5" stored as a loser was served Lost.
+A market admitted on the proof now keeps exactly the legs that pass it, each on
+its own score, unit, club and period. And an Under leg is never admitted on the
+proof: the totals ladder reads "Boston under 7.5 runs scored" on the Over axis
+(follow-up 10965-TEAM-NAMED-UNDER-AXIS), so its loss would print as 0% Over.
 """
 
 from __future__ import annotations
@@ -371,3 +381,75 @@ async def test_an_all_null_voided_market_serves_no_rows():
         (99402, "Detroit over 5.5 runs scored", None, None, None, False, "game_score"),
     ]
     assert await _team_totals(rows) == {}
+
+
+# ── CERT-4082: each newly admitted leg carries its own proof ────────────────
+
+
+@pytest.mark.asyncio
+async def test_an_all_null_market_serves_only_the_legs_the_score_proves():
+    """CERT-4082's witness. Detroit scored 3: over 1.5 Won and over 4.5 Lost
+    agree with the score, over 2.5 stored a LOSER does not. The agreeing legs are
+    served; the contradicted one is withheld rather than printed as Lost."""
+    rows = [
+        (70001, "Detroit over 1.5 runs scored", None, None, None, True, "game_score"),
+        (70002, "Detroit over 2.5 runs scored", None, None, None, False, "game_score"),
+        (70003, "Detroit over 4.5 runs scored", None, None, None, False, "game_score"),
+    ]
+    served = await _team_totals(rows)
+
+    assert set(served) == {"Detroit over 1.5 runs scored", "Detroit over 4.5 runs scored"}
+    assert served["Detroit over 1.5 runs scored"]["is_winner"] is True
+    assert served["Detroit over 1.5 runs scored"]["over_probability"] == 1.0
+    assert served["Detroit over 4.5 runs scored"]["is_winner"] is False
+    assert served["Detroit over 4.5 runs scored"]["over_probability"] == 0.0
+
+
+@pytest.mark.asyncio
+async def test_an_all_null_market_withholds_an_unprovable_sibling():
+    """A sibling whose club resolves to neither side cannot be recomputed, so the
+    proved legs beside it do not carry it in."""
+    rows = [
+        (70101, "Detroit over 1.5 runs scored", None, None, None, True, "game_score"),
+        (70102, "New York over 3.5 runs scored", None, None, None, True, "game_score"),
+        (70103, "Boston over 7.5 runs scored", None, None, None, True, "game_score"),
+    ]
+    served = await _team_totals(rows)
+
+    assert set(served) == {"Detroit over 1.5 runs scored", "Boston over 7.5 runs scored"}
+
+
+@pytest.mark.asyncio
+async def test_an_all_null_market_withholds_a_contradicted_sibling_stored_at_zero():
+    """0.0 is "no real price" to `has_no_real_price` but is not None, so it never
+    meets the priceless gate: the proof must hold for it at admission too."""
+    rows = [
+        (70201, "Detroit over 1.5 runs scored", None, None, None, True, "game_score"),
+        (70202, "Detroit over 2.5 runs scored", "0.000000", "0.0000", "0.0000", False, "game_score"),
+    ]
+    served = await _team_totals(rows)
+
+    assert set(served) == {"Detroit over 1.5 runs scored"}
+
+
+@pytest.mark.asyncio
+async def test_a_refused_team_named_under_leg_is_not_readmitted():
+    """Boston scored 10, so "Boston under 7.5" lost. The ladder reads a
+    team-named Under on the Over axis, so readmitting it would print 0% Over on a
+    line Boston cleared; it stays dropped, as it was before #10965."""
+    rows = [SPECIMEN[0], (70301, "Boston under 7.5 runs scored", "0.900000", "0.0000", "0.0100", False, "game_score")]
+    served = await _team_totals(rows)
+
+    assert "Detroit over 1.5 runs scored" in served
+    assert "Boston under 7.5 runs scored" not in served
+
+
+@pytest.mark.asyncio
+async def test_an_all_null_team_named_under_leg_is_not_admitted():
+    rows = [
+        (70401, "Detroit over 1.5 runs scored", None, None, None, True, "game_score"),
+        (70402, "Boston under 7.5 runs scored", None, None, None, False, "game_score"),
+    ]
+    served = await _team_totals(rows)
+
+    assert set(served) == {"Detroit over 1.5 runs scored"}

@@ -23811,6 +23811,7 @@ def _score_proves_team_total_grade(
     * a live or scheduled game, or a score that is not two integers;
     * a period market (a first-five total is not answered by the final score);
     * a leg whose unit is not the sport's score unit, or a sport with none;
+    * an Under leg, which the totals ladder would draw on the wrong axis;
     * a name the grader does not read as a team total, or a club it cannot
       resolve to exactly one side (`_TEAM_TOTAL_UNRESOLVED` — shared cities);
     * a grade the arithmetic disagrees with.
@@ -23835,6 +23836,13 @@ def _score_proves_team_total_grade(
     name = str(getattr(outcome, "name", None) or "")
     match = _TEAM_TOTAL_RE.match(name)
     if match is None or not re.search(rf"\b{unit}\b", match.group(0), re.IGNORECASE):
+        return False
+    # CERT-4082: the totals ladder reads a leg as Under only when its name
+    # STARTS with "Under", so "Boston under 7.5 runs scored" is drawn on the Over
+    # axis and its loss would print as 0% Over at Boston 10. Until that parser
+    # reads team-named Unders (follow-up 10965-TEAM-NAMED-UNDER-AXIS), an Under
+    # leg is not admitted here and keeps today's behaviour.
+    if match.group("dir").lower() != "over":
         return False
     if _market_period(getattr(market, "external_id", None), getattr(market, "name", None)):
         return False
@@ -26423,28 +26431,44 @@ async def _build_game_markets(
         # so a settled ladder whose quotes are ALL gone (or all withheld above)
         # still reaches the per-leg gate, and never prints a withheld number. Only
         # that type: every other all-unpriced market is dropped exactly as before.
+        #
+        # CERT-4082: …AND ONLY THE LEGS THE SCORE PROVES COME IN WITH IT. One
+        # agreeing leg used to admit the whole market, and its siblings then met
+        # only `_verdict_is_provable`, which checks the market was decided — not
+        # that THIS leg's grade is right. Detroit 3 with an unpriced
+        # "Detroit over 2.5 runs scored" stored as a `game_score` loser was
+        # served Lost beside a correctly Won 1.5. So a market admitted on this
+        # proof keeps exactly the legs that pass it, each on its own score, unit,
+        # club and period; a contradicted or unprovable sibling leaves, as the
+        # whole market did before #10965. The stored verdict is never rewritten.
+        _no_real_price = has_no_real_price(
+            [
+                None if o.id in _price_withheld_ids else o.current_probability
+                for o in market_outcomes
+            ]
+        )
+        _team_total_proved_ids: set = set()
         if (
-            has_no_real_price(
-                [
-                    None if o.id in _price_withheld_ids else o.current_probability
-                    for o in market_outcomes
-                ]
-            )
+            _no_real_price
             and not _score_proved_ids
-            and not (
-                event_is_finished
-                and _classify_game_market(market.name, external_id=market.external_id)
-                == "team_total"
-                and any(
-                    _score_proves_team_total_grade(
-                        event, event_is_finished, sport_key, market, o,
-                        _settled_grade_fields(market, o, **_grade_ctx),
-                    )
-                    for o in market_outcomes
-                )
-            )
+            and event_is_finished
+            and _classify_game_market(market.name, external_id=market.external_id)
+            == "team_total"
         ):
+            _team_total_proved_ids = {
+                o.id
+                for o in market_outcomes
+                if _score_proves_team_total_grade(
+                    event, event_is_finished, sport_key, market, o,
+                    _settled_grade_fields(market, o, **_grade_ctx),
+                )
+            }
+        if _no_real_price and not _score_proved_ids and not _team_total_proved_ids:
             continue
+        if _team_total_proved_ids:
+            market_outcomes = [
+                o for o in market_outcomes if o.id in _team_total_proved_ids
+            ]
         if _PLACEHOLDER_TEAM_RE.search(market.name or ""):
             continue
 
