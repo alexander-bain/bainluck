@@ -29,7 +29,7 @@ final class VisibleLivePriceStatusTests: XCTestCase {
     func testDisclosureLabelsReceiptAsLocalAndKeepsStatusTruthful() {
         XCTAssertEqual(LivePriceReceiptCue.receiptText(nil), "No live update yet")
         XCTAssertTrue(LivePriceReceiptCue.accessibilityText(status: .awaitingUpdate, receivedAt: Date())
-            .contains("Waiting for a live price update"))
+            .contains("Waiting for a live probability update"))
         XCTAssertTrue(LivePriceReceiptCue.accessibilityText(status: .autoRefresh, receivedAt: Date())
             .contains("Checking automatically"))
         XCTAssertTrue(LivePriceReceiptCue.accessibilityText(status: .interrupted, receivedAt: Date())

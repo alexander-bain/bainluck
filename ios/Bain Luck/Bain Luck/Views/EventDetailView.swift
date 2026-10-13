@@ -943,7 +943,7 @@ struct EventDetailView: View {
         .accessibilityLabel("Probability confidence and update details. " +
             (priceStreamingEligible ? LivePriceReceiptCue.accessibilityText(status: vm.liveUpdateStatus,
                 receivedAt: vm.priceActivity?.receivedAt) : ""))
-        .accessibilityHint("Shows connection status and when the last price update reached this phone")
+        .accessibilityHint("Shows connection status and when the last probability update reached this phone")
         // #9408 — open BELOW the button (on iOS, `.top` measured below; the
         // default nil picked above, under the nav bar with 144pt to spare, and at
         // Alex's XXXL text the content overflowed both edges). The reveal

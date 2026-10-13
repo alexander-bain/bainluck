@@ -123,7 +123,7 @@ extension LivePriceFeedbackPresentationTests {
         defer { window.isHidden = true }
         settleView(host, seconds: 0.15)
         let text = try recognizedText(feedbackImage(host, name: "freshness-390"))
-        XCTAssertTrue(text.contains("Last price update received"), text)
+        XCTAssertTrue(text.contains("Last probability update received"), text)
         XCTAssertTrue(text.contains("Received on this device"), text)
         XCTAssertTrue(text.contains("High confidence"), text)
         XCTAssertFalse(text.contains("published"), "local receipt must never be called source publication: \(text)")
