@@ -45,7 +45,8 @@ transactional session and RETURNS its own before/after census in the response bo
              | kalshi-venue-sport-correction
              | poly-total-scope | poly-total-scope-restore
              | team-total-game-score | team-total-game-score-restore
-             | pm-under-inverted-history | pm-under-inverted-history-restore }
+             | pm-under-inverted-history | pm-under-inverted-history-restore
+             | settled-status-repair | settled-status-repair-restore }
     (the registry below is authoritative; this list had already drifted two
      censuses behind it, so a reader who trusted it would have concluded a
      deployed rail did not exist — the same class of error as trusting a
@@ -97,7 +98,9 @@ transactional session and RETURNS its own before/after census in the response bo
      Re-synced again 2026-10-12, calibration/#2027, adding the two
      pm-under-inverted-history entries in the commit that registered them.
      Re-synced again 2026-10-13, calibration/#1527, adding
-     winner-field-repair-restore in the commit that registered it.)
+     winner-field-repair-restore in the commit that registered it. Re-synced
+     again 2026-10-13, calibration/#1527, adding the two settled-status-repair
+     entries in the commit that registered them.)
 
 Repairs whose signature declares ``limit`` / ``sport`` / ``newest_first`` /
 ``offset`` / ``after_id`` / ``after_date`` / ``plan_hash`` / ``expected_blank`` /
@@ -258,6 +261,18 @@ _REPAIRS = {
     # ATTENDED ONLY: never wire this to a beat.
     "winner-field-repair": ("app.tasks.repair_winner_field", "repair"),
     "winner-field-repair-restore": ("app.tasks.repair_winner_field", "restore"),
+    # #1527, the status half: a settled three-way soccer market leaves
+    # ``status='open'``. Moves `futures_markets.status` to 'resolved' (with
+    # `settled_at` first-observation and the resolution-gate WINNER stamp) only
+    # when the stored field is already graded to one winner AND every leg's CLOB
+    # condition is closed and names that same winner. Writes no outcome. Exact
+    # ids only, dry run and apply alike (?only_ids=, at most APPLY_MARKET_CAP);
+    # apply needs the dry run's ?plan_hash=, which binds the market's and every
+    # leg's row version. D51: before-image in `bak_1527_settled_status_markets`
+    # in the write's own transaction; the `-restore` name is the audit (dry run)
+    # and the version-guarded undo. ATTENDED ONLY: never wire this to a beat.
+    "settled-status-repair": ("app.tasks.repair_settled_status_1527", "repair"),
+    "settled-status-repair-restore": ("app.tasks.repair_settled_status_1527", "restore"),
     # #1798: events whose home/away ``team_id`` dereferences to a DIFFERENT club
     # than the row's own ``*_team_name`` (153 sides measured across the 2026 MLB
     # season), or to the right club's ``baseball_mlb_preseason`` twin. Detection
