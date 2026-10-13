@@ -126,6 +126,102 @@ class TestVenue:
         assert rs.venue_leg("0xabc", None) == {"condition_id": "0xabc", "closed": None,
                                                "yes_winner": None}
 
+    # CERT-4102's 1527-CLOB-ANSWER-SHAPE-GUARD: only a NONEMPTY mismatched echo
+    # was refused; a body naming no condition at all passed as an answer.
+    @pytest.mark.parametrize("echo", ["absent", None, "", "   ", 0])
+    def test_a_body_that_names_no_condition_is_no_testimony(self, echo):
+        body = {"closed": True, "tokens": [{"outcome": "Yes", "winner": True}]}
+        if echo != "absent":
+            body["condition_id"] = echo
+        assert rs.venue_leg("0xabc", body) == {"condition_id": "0xabc", "closed": None,
+                                               "yes_winner": None}
+
+    @pytest.mark.parametrize("winner", ["false", "true", "", 0, 1])
+    def test_a_non_boolean_yes_winner_reads_unknown(self, winner):
+        body = {"condition_id": "0xabc", "closed": True,
+                "tokens": [{"outcome": "Yes", "winner": winner}]}
+        assert rs.venue_leg("0xabc", body)["yes_winner"] is None
+
+
+class _Result:
+    def __init__(self, rows):
+        self.rows = rows
+
+    def mappings(self):
+        return self
+
+    def first(self):
+        return self.rows[0] if self.rows else None
+
+    def all(self):
+        return self.rows
+
+
+class _ReadSession:
+    """Answers exactly the two reads ``_plan_market`` makes, and nothing else."""
+
+    def __init__(self, market, legs):
+        self.by_sql = {rs._MARKET_SQL: [market], rs._LEGS_SQL: legs}
+
+    async def execute(self, stmt, params=None):
+        return _Result(self.by_sql[str(stmt)])
+
+
+class _Clob:
+    def __init__(self, answer):
+        self.answer = answer
+
+    async def get_clob_market_by_condition(self, cid):
+        return self.answer(cid)
+
+
+def _clob(echo, won, closed=True):
+    body = {"closed": closed, "tokens": [{"outcome": "Yes", "winner": won},
+                                         {"outcome": "No", "winner": not won}]}
+    if echo is not None:
+        body["condition_id"] = echo
+    return body
+
+
+class TestPlanRefusesAMalformedAnswer:
+    """Through the rail's own per-market plan, with the poller's body shape."""
+
+    LEGS = _legs()
+    WON = {leg["external_id"]: w for leg, w in zip(LEGS, (False, True, False))}
+
+    async def _plan(self, answer):
+        import time
+        return await rs._plan_market(
+            _ReadSession(_market(), [dict(leg) for leg in self.LEGS]), _Clob(answer),
+            55254886, time.monotonic() + 60)
+
+    async def test_the_valid_closed_answer_settles(self):
+        plan = await self._plan(lambda cid: _clob(cid, self.WON[cid]))
+        assert (plan["action"], plan["winner_outcome_id"]) == ("settle", 205060694)
+
+    @pytest.mark.parametrize("echo", [None, ""])
+    async def test_a_body_without_the_asked_id_settles_nothing(self, echo):
+        plan = await self._plan(lambda cid: _clob(echo, self.WON[cid]))
+        assert (plan["action"], plan["reason"]) == ("skip", "venue_not_closed")
+
+    async def test_a_string_false_never_confirms_the_stored_winner(self):
+        # The venue's Yes answer for the stored winner is the STRING "false":
+        # it did not say that leg won, so the stored grade is unconfirmed.
+        answers = {**self.WON, self.LEGS[1]["external_id"]: "false"}
+        plan = await self._plan(lambda cid: _clob(cid, answers[cid]))
+        assert (plan["action"], plan["reason"]) == ("skip", "unresolved_legs")
+
+    @pytest.mark.parametrize("won,closed,reason", [
+        ((False, False, False), True, "no_winner_void"),
+        ((True, True, False), True, "multiple_clob_winners"),
+        ((False, True, False), False, "venue_not_closed"),
+    ])
+    async def test_void_contradictory_and_open_controls_still_refuse(self, won, closed,
+                                                                    reason):
+        answers = {leg["external_id"]: w for leg, w in zip(self.LEGS, won)}
+        plan = await self._plan(lambda cid: _clob(cid, answers[cid], closed))
+        assert (plan["action"], plan["reason"]) == ("skip", reason)
+
     @pytest.mark.parametrize("venue,reason", [
         (_venue(closed=(True, False, True)), "venue_not_closed"),
         (_venue(closed=(True, None, True)), "venue_not_closed"),
