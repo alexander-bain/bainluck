@@ -30,6 +30,7 @@ from app.tasks.ws_consumer_sessions import owns_consumer_sessions  # #2471
 from app.utils.market_quote_push import queue_market_change
 from app.utils.market_settlement import settled_values
 from app.utils.repair_lock_budget import (
+    LOCK_NOT_AVAILABLE_SQLSTATE,
     SET_LOCK_TIMEOUT_SQL,
     is_lock_timeout,
     lock_timeout_value,
@@ -370,6 +371,41 @@ class _PMPriceWriteResult:
 
 
 PM_QUOTE_LIVENESS_SECONDS = 30.0
+
+#: #10090: PostgreSQL's server message when a NOWAIT row lock on the price
+#: table is refused. A lock_timeout cancellation shares its SQLSTATE (55P03)
+#: but reads "canceling statement due to lock timeout".
+PRICE_ROW_LOCK_REFUSAL_MESSAGE = (
+    'could not obtain lock on row in relation "futures_outcomes"'
+)
+
+
+def is_price_row_lock_refusal(exc: BaseException) -> bool:
+    """True iff ``exc`` is PostgreSQL refusing a NOWAIT row lock on the price table.
+
+    Identified by what the database said, not by how long the answer took to
+    arrive: a refusal received 60 ms late is still a refusal that waited for
+    nothing. Narrowly positive — the SQLSTATE and the exact server message must
+    sit on the same driver exception (asyncpg's ``message``, psycopg's
+    ``diag.message_primary``). A lock_timeout cancellation, a localised or
+    unrecognised message, or any other error returns False and keeps the
+    caller's ordinary cooldown. ``is_lock_timeout`` is unchanged.
+    """
+    seen: set[int] = set()
+    cur: BaseException | None = exc
+    while cur is not None and id(cur) not in seen:
+        seen.add(id(cur))
+        code = getattr(cur, "sqlstate", None) or getattr(cur, "pgcode", None)
+        message = getattr(cur, "message", None)
+        if not isinstance(message, str):
+            message = getattr(getattr(cur, "diag", None), "message_primary", None)
+        if code == LOCK_NOT_AVAILABLE_SQLSTATE and message == PRICE_ROW_LOCK_REFUSAL_MESSAGE:
+            return True
+        nxt = getattr(cur, "orig", None)
+        if nxt is None or nxt is cur:
+            nxt = cur.__cause__
+        cur = nxt
+    return False
 
 
 def chunk_price_update_stmt(chunk: dict, force_ids=None, nowait=False):
@@ -1836,21 +1872,19 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                     if final or oid not in successful_price_write_at
                     or now - successful_price_write_at[oid] >= PM_QUOTE_LIVENESS_SECONDS
                 }
-                price_started = _mono()
                 try:
                     result = await session.execute(
                         chunk_price_update_stmt(chunk, force_ids=forced, nowait=probe)
                     )
                 except Exception as exc:
-                    # Only the probe's own row refusal, and only an immediate
-                    # one. A lock_timeout cancellation (a table lock this
-                    # statement queued on) arrives after the whole budget, and
-                    # a refusal reached after a long partial wait would repeat
-                    # that wait every flush; both keep the cooldown below.
-                    probe_refused = (
-                        probe and is_lock_timeout(exc)
-                        and _mono() - price_started < PRICE_CHUNK_LOCK_TIMEOUT_MS / 10_000
-                    )
+                    # Only the probe's own statement, and only PostgreSQL's
+                    # NOWAIT row refusal by its message — never elapsed time: a
+                    # refusal delivered 60 ms late re-armed the cooldown and
+                    # left the pair unwritten 2.18 s after its holder let go
+                    # (Root, real PG). A lock_timeout cancellation (a table
+                    # lock this statement queued on) and any unrecognised
+                    # error keep the cooldown below.
+                    probe_refused = probe and is_price_row_lock_refusal(exc)
                     raise
                 written_rows = sorted(result.all(), key=lambda r: r.ord)
                 # #9484: only a row the UPDATE returned is evidence — a
