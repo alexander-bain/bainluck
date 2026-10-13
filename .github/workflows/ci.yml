@@ -3654,6 +3654,25 @@ jobs:
             exit 1
           fi
 
+      - name: "#5343 A Polymarket leg the venue settled No is stored as a resolved row (real Postgres)"
+        # The hourly poll's sub-market loop over the retained Gamma 106884 bytes:
+        # the two resolved legs the resolver declines become resolved rows at the
+        # venue's 0/1 pair with no opening, no snapshot and no winner, and the
+        # gate-off control on the same bytes stores exactly two fewer. Why the
+        # server: the write is an INSERT ... ON CONFLICT whose `settled_at` and
+        # opening COALESCE only mean something on real Postgres. Its fixture
+        # drops and recreates the schema, like the steps around it. Same
+        # skip-detection as every gate here.
+        if: matrix.group == 'shared-middle'
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_polymarket_resolved_zero_legs_5343_real_postgres.py \
+            -v -s -rs 2>&1 | tee /tmp/resolvedzerolegs5343.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/resolvedzerolegs5343.txt; then
+            echo "::error::#5343 resolved zero-leg gate SKIPPED — the gate did not run"
+            exit 1
+          fi
+
       - name: "#3518+#3569 A low-value future game ends up showing a price (real Postgres)"
         # CERT-2082's required composition. Creating a row is not showing a
         # price: the hero reads the event's blended probability, not outcome

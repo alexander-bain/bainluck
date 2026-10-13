@@ -2452,6 +2452,70 @@ async def rescue_stuck_future_status_events() -> dict:
         return stats
 
 
+#: #5343: the domains whose provider-defined collections may hold a resolved
+#: zero-priced member. Mirrors ``SUPPORTED_DOMAINS`` in lane1's
+#: ``app/utils/provider_event_collections.py`` (PR #10916), keyed on the same
+#: ``llm_sport_category`` this writer stamps. Sports props, weather ladders and
+#: every other tag the closed sweep reaches are deliberately outside it:
+#: admitting their zero legs changes event pages, settled rendering and
+#: calibration over a population nobody has measured, and that widening is its
+#: own ruling.
+RESOLVED_ZERO_LEG_DOMAINS = frozenset(
+    {"politics", "geopolitics", "economics", "tech", "entertainment"}
+)
+
+#: The venue's settled pair for a leg that resolved No. Exactly this — a dust
+#: quote such as ``[0.002, 0.998]`` is a price, not a result.
+_RESOLVED_NO_PAIR = [0.0, 1.0]
+
+
+def resolved_zero_leg_admitted(event, market, domain) -> bool:
+    """May a decomposed leg the resolver declined be stored as resolved at 0? Pure.
+
+    #5343. The sub-market loop below drops every leg it cannot price
+    (``prob is None or prob <= 0: continue``). For a leg the venue has SETTLED
+    No that is not a refusal, it is a lost fact: Gamma serves
+    ``outcomePrices ["0","1"]``, which is the result, and the row never exists,
+    so a provider collection listing that leg can never be complete. Measured on
+    the retained ``GET /events/106884`` bytes: 13 legs, 6 closed and
+    ``umaResolutionStatus "resolved"``; 2 of those 6 are dropped today (the
+    other 4 price off a pre-settlement last trade).
+
+    Every clause must hold, and each one keeps a refusal that exists today:
+
+    * a non-negRisk multi-market event, and a leg that is not negRisk itself —
+      the decomposition branch's own shape; a negRisk partition is priced by
+      different gates whose refusals mean different things;
+    * ``domain`` in :data:`RESOLVED_ZERO_LEG_DOMAINS`;
+    * ``market.closed is True`` — an open leg at 0 is a quote nobody is making,
+      and storing it would be a fake active zero;
+    * ``uma_resolution_status == "resolved"`` — closed but proposed, disputed
+      or unstated is not settled, and a disputed result can still flip;
+    * ``outcome_prices`` exactly ``[0.0, 1.0]`` — a settled result, not dust;
+    * not a placeholder slot (:func:`_is_placeholder_outcome`, unchanged).
+
+    What it does NOT do is decide a winner. The caller stores the venue's pair as
+    the current price and writes ``is_winner`` NULL exactly as for every other
+    leg; grading stays with the settlement rail.
+    """
+    if event.neg_risk or len(event.markets) <= 1:
+        return False
+    if getattr(market, "neg_risk", False):
+        return False
+    if domain not in RESOLVED_ZERO_LEG_DOMAINS:
+        return False
+    if getattr(market, "closed", False) is not True:
+        return False
+    status = getattr(market, "uma_resolution_status", None)
+    if not isinstance(status, str) or status.strip().lower() != "resolved":
+        return False
+    if list(market.outcome_prices or []) != _RESOLVED_NO_PAIR:
+        return False
+    if _is_placeholder_outcome(market):
+        return False
+    return True
+
+
 def submarket_is_open(event, market) -> bool:
     """Whether a decomposed sub-market row may be stamped `status='open'`. Pure.
 
@@ -3070,9 +3134,22 @@ async def _process_event_batch(
 
                     for market in event.markets:
                         prob, prob_source = _resolve_market_probability_with_source(market)
-
+                        sub_settled_zero = False
                         if prob is None or prob <= 0:
-                            continue
+                            if not resolved_zero_leg_admitted(event, market, llm_sport_category):
+                                continue
+                            # #5343: a leg the venue settled No is a result, not
+                            # a missing price. It is stored at the venue's own
+                            # pair (Yes 0 / No 1) as a resolved row with no
+                            # opening and no snapshot — see
+                            # `resolved_zero_leg_admitted`. Only a leg the
+                            # resolver DECLINED reaches this arm, so a leg it
+                            # already prices keeps exactly today's write.
+                            prob, prob_source = 0.0, "outcome_prices"
+                            sub_settled_zero = True
+                            stats["resolved_zero_legs_admitted"] = (
+                                stats.get("resolved_zero_legs_admitted", 0) + 1
+                            )
 
                         sub_name = market.question or event.title
                         sub_tier = compute_market_tier(sub_name, category, sport_category=llm_sport_category)
@@ -3489,18 +3566,25 @@ async def _process_event_batch(
                         # falls back to the opening), which makes it the half where
                         # storing an incoherent price costs the most and the one the
                         # opening gate never protected.
-                        if sub_price_ok:
-                            snap_stmt = pg_insert(FuturesOddsSnapshot).values(
-                                outcome_id=over_outcome_id,
-                                bookmaker="polymarket",
-                                probability=prob,
-                                american_odds=over_american,
-                                yes_bid=market.best_bid,
-                                yes_ask=market.best_ask,
-                                last_price=market.last_trade_price,
-                                captured_at=now,
-                            )
-                            await session.execute(snap_stmt)
+                        # #5343: a settled result is not a quote in time. A
+                        # snapshot stamped `now` at 0 would sit inside the closing
+                        # window of any leg the venue resolved before its own end
+                        # date, and calibration reads that window as the forecast
+                        # — a hindsight closing line (#2027's class). The row and
+                        # its current price are the whole write.
+                        if not sub_settled_zero:
+                            if sub_price_ok:
+                                snap_stmt = pg_insert(FuturesOddsSnapshot).values(
+                                    outcome_id=over_outcome_id,
+                                    bookmaker="polymarket",
+                                    probability=prob,
+                                    american_odds=over_american,
+                                    yes_bid=market.best_bid,
+                                    yes_ask=market.best_ask,
+                                    last_price=market.last_trade_price,
+                                    captured_at=now,
+                                )
+                                await session.execute(snap_stmt)
 
                         # Create Under/No outcome if available
                         if len(market.outcome_prices) > 1:
@@ -3665,18 +3749,20 @@ async def _process_event_batch(
                             # so the two can never disagree about one market.
                             # #6793: skipped on a refused pair, exactly as the Over
                             # snapshot above is, and for the same NOT NULL reason.
-                            if sub_price_ok:
-                                under_snap_stmt = pg_insert(FuturesOddsSnapshot).values(
-                                    outcome_id=under_outcome_id,
-                                    bookmaker="polymarket",
-                                    probability=under_prob,
-                                    american_odds=under_american,
-                                    yes_bid=under_best_bid,
-                                    yes_ask=under_best_ask,
-                                    last_price=under_last,
-                                    captured_at=now,
-                                )
-                                await session.execute(under_snap_stmt)
+                            # #5343: same as the Over snapshot above.
+                            if not sub_settled_zero:
+                                if sub_price_ok:
+                                    under_snap_stmt = pg_insert(FuturesOddsSnapshot).values(
+                                        outcome_id=under_outcome_id,
+                                        bookmaker="polymarket",
+                                        probability=under_prob,
+                                        american_odds=under_american,
+                                        yes_bid=under_best_bid,
+                                        yes_ask=under_best_ask,
+                                        last_price=under_last,
+                                        captured_at=now,
+                                    )
+                                    await session.execute(under_snap_stmt)
 
                         stats["markets_processed"] += 1
                         stats["outcomes_updated"] += 2
@@ -3685,7 +3771,7 @@ async def _process_event_batch(
                         # task-verdict failure mode of gotcha #53 ("it returned" is
                         # not "it worked"). The outcome rows ARE still written (their
                         # books and names), so that counter is unchanged.
-                        if sub_price_ok:
+                        if sub_price_ok and not sub_settled_zero:
                             stats["snapshots_created"] += 1
                         stats["sub_markets_created"] = stats.get("sub_markets_created", 0) + 1
 
