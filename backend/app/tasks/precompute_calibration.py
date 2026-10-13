@@ -1587,6 +1587,17 @@ DATAGOLF_OPENING_TIMING_RULE_TEXT = (
     "closing line is kept. Applied to DataGolf only; never mutates resolutions."
 )
 
+#: #938. Same arrangement as the DataGolf rule above: the SQL lives inside
+#: ``_calibration_population_ctes`` so the fingerprints hash it, and this is the
+#: sentence that rides beside its count on the payload.
+GOLF_ROUND_TIMING_RULE_TEXT = (
+    "Excludes Kalshi golf round markets (round leader and round top-N) because "
+    "no stored time places their price before the round began: the only start "
+    "time Kalshi gives them is the round's close, so the stored price can be a "
+    "quote taken during or after the round. Tournament-long golf markets are "
+    "kept. Applied to Kalshi golf only; never mutates resolutions."
+)
+
 # L2-76 (#151/#997): curve-side exclusion of the Polymarket no-bid PLACEHOLDER
 # class. Gamma stamps synthetic `outcomePrices` at ~0.50 with no orderbook, so an
 # illiquid poly outcome sits near 0.50 but is not a real 50/50. #151's census
@@ -4095,6 +4106,37 @@ def _calibration_population_ctes(
                     END)"""
     else:
         datagolf_opening_after_start = "false"
+    # #938: a Kalshi golf ROUND market's price cannot be placed before its
+    # round. Written here for the same fingerprint reason as #5355 above.
+    #
+    # Kalshi gives these markets one time, the round's CLOSE, and it lands in
+    # ``commence_time`` (the golf commence fix that would move it is off by
+    # default, and it would move every round to the eve of round 1 anyway).
+    # Every closing-line selector bounds on that column, so on a round market
+    # "the last quote before commence" is a quote from inside the round. The
+    # specimen is ``KXPGAR3TOP10-THOC26``: all ten winners store 0.99 and every
+    # loser 0.01 against pre-round quotes of 0.10–0.18, the values of snapshots
+    # taken on and after 07-23, five days after the round settled. Its sibling
+    # ``KXPGATOP10-THOC26`` keeps genuine pre-tournament prices, so the scope is
+    # the round, not golf.
+    #
+    # FAILS CLOSED and keys on STRUCTURE, never on the outcome: the ticker's
+    # first segment names a round (the same anchored pattern as
+    # ``repair_golf_round_closing_line.ROUND_SERIES_PATTERN``, pinned equal by
+    # test). There is no stored round start, so no snapshot can prove a price
+    # predates the round; matching a snapshot's value would not help, because
+    # the hindsight values also appear on snapshots stamped weeks before the
+    # market opened. Applies in every caller: a horizon snapshot is bounded on
+    # the same commence_time. Read-side only (gotcha #21): ``is_winner`` and
+    # ``calibration_probability`` are never touched.
+    golf_round_price_unanchored = """(cv.source = 'kalshi'
+                     AND cv.category = 'golf'
+                     AND EXISTS (
+                        SELECT 1
+                        FROM futures_markets fm_grt
+                        WHERE fm_grt.id = fo.market_id
+                          AND SPLIT_PART(fm_grt.external_id, '-', 1)
+                              ~ 'R[0-9]+(LEAD|TOP[0-9]+)$'))"""
     return f"""{leading_ctes}market_info AS (
                 SELECT fm.id AS market_id, fm.source, fm.event_id, fm.group_id,
                     fm.commence_time,
@@ -4901,6 +4943,9 @@ def _calibration_population_ctes(
                     -- #5355: a DataGolf opening with no pre-start reading of
                     -- its own value is not a forecast (rule above the return).
                     {datagolf_opening_after_start} AS is_datagolf_opening_after_start,
+                    -- #938: a Kalshi golf round market's price cannot be placed
+                    -- before its round (rule above the return).
+                    {golf_round_price_unanchored} AS is_golf_round_price_unanchored,
                     {POLY_PLACEHOLDER_EXCLUDE} AS is_poly_placeholder,
                     -- Queue #220/221 Item 3: all-bands poly never-traded flag (for
                     -- the exclusion-symmetry census; does NOT gate the curve).
@@ -5161,6 +5206,9 @@ def _calibration_population_ctes(
                           -- the opening-timing rule cannot be normalized over
                           -- its survivors; it is dropped whole like any other.
                           AND NOT ro.is_datagolf_opening_after_start
+                          -- #938: market-level like the quarantine, so a round
+                          -- field loses every member; named for the same reason.
+                          AND NOT ro.is_golf_round_price_unanchored
                     ) AS survivor_n,
                     COUNT(*) FILTER (
                         WHERE ro.is_winner
@@ -5183,6 +5231,7 @@ def _calibration_population_ctes(
                           -- luck of another rung.
                           AND NOT ro.is_identity_disputed
                           AND NOT ro.is_datagolf_opening_after_start
+                          AND NOT ro.is_golf_round_price_unanchored
                     ) AS survivor_win_n
                 FROM ranked_outcomes ro
                 JOIN mex_field_candidates mfc ON mfc.market_id = ro.market_id
@@ -5319,6 +5368,9 @@ def _calibration_population_ctes(
                     -- whose timing cannot be proved) is not a forecast.
                     -- Read-side only (gotcha #21) — dropped, never re-graded.
                     AND NOT ro.is_datagolf_opening_after_start
+                    -- #938: a Kalshi golf round price that no stored time places
+                    -- before the round is not a forecast. Dropped, never re-graded.
+                    AND NOT ro.is_golf_round_price_unanchored
                     AND NOT ro.is_field_incomplete
                     AND
                     CASE
@@ -5516,6 +5568,15 @@ _COVERAGE_RUNG_PREDICATES: tuple[tuple[str, str], ...] = (
     (
         "datagolf_opening_after_start",
         "COALESCE(n.is_datagolf_opening_after_start, false)",
+    ),
+    # #938. Its own rung for #5355's reason (a different reader sentence:
+    # "taken during or after the round"). After the Kalshi price rungs, which
+    # keep any round row they already own, and before structural_artifact,
+    # whose golf-placeholder arm would otherwise claim the round-leader fields
+    # this rule drops whole.
+    (
+        "golf_round_price_unanchored",
+        "COALESCE(n.is_golf_round_price_unanchored, false)",
     ),
     (
         "structural_artifact",
@@ -5864,6 +5925,12 @@ def _main_futures_sql(*, frozen: bool = False) -> str:
                         AS datagolf_opening_after_start_excluded,
                     COUNT(DISTINCT market_id) FILTER (WHERE is_datagolf_opening_after_start)
                         AS datagolf_opening_after_start_markets,
+                    -- #938: the golf round-timing rule's own size, read by the
+                    -- publish gate to admit its declared succession.
+                    COUNT(*) FILTER (WHERE is_golf_round_price_unanchored)
+                        AS golf_round_price_unanchored_excluded,
+                    COUNT(DISTINCT market_id) FILTER (WHERE is_golf_round_price_unanchored)
+                        AS golf_round_price_unanchored_markets,
                     COUNT(*) FILTER (WHERE is_draw_authority_missing) AS draw_authority_excluded,
                     COUNT(DISTINCT market_id) FILTER (WHERE is_draw_authority_missing) AS draw_authority_markets,
                     COUNT(*) FILTER (WHERE is_orphan_partition) AS orphan_partition_excluded,
@@ -5977,6 +6044,10 @@ def _main_futures_sql(*, frozen: bool = False) -> str:
                     AS datagolf_opening_after_start_excluded,
                 MAX(ls.datagolf_opening_after_start_markets)
                     AS datagolf_opening_after_start_markets,
+                MAX(ls.golf_round_price_unanchored_excluded)
+                    AS golf_round_price_unanchored_excluded,
+                MAX(ls.golf_round_price_unanchored_markets)
+                    AS golf_round_price_unanchored_markets,
                 MAX(ls.draw_authority_excluded) AS draw_authority_excluded,
                 MAX(ls.draw_authority_markets) AS draw_authority_markets,
                 MAX(ls.orphan_partition_excluded) AS orphan_partition_excluded,
@@ -7491,6 +7562,12 @@ async def compute_calibration_payload(db, *, runner=None) -> dict:
         datagolf_opening_after_start_markets = _int0(
             "datagolf_opening_after_start_markets"
         )
+        golf_round_price_unanchored_excluded = _int0(
+            "golf_round_price_unanchored_excluded"
+        )
+        golf_round_price_unanchored_markets = _int0(
+            "golf_round_price_unanchored_markets"
+        )
         draw_authority_excluded = _int0("draw_authority_excluded")
         draw_authority_markets_count = _int0("draw_authority_markets")
         orphan_partition_excluded = _int0("orphan_partition_excluded")
@@ -8806,6 +8883,19 @@ async def compute_calibration_payload(db, *, runner=None) -> dict:
             "excluded": datagolf_opening_after_start_excluded,
             "excluded_markets": datagolf_opening_after_start_markets,
             "excluded_cells": [["datagolf", "golf"]],
+        },
+        # #938: a Kalshi golf round market's price cannot be placed before its
+        # round. Same contract as the DataGolf section above: the gate reads
+        # `excluded` for the declared succession and `excluded_cells` so the
+        # shrinking golf cell is a disclosed exclusion. The SQL keys on
+        # `cv.source = 'kalshi' AND cv.category = 'golf'`, so this is the one
+        # cell it can take rows out of.
+        "golf_round_timing_filter": {
+            "applies_to": "kalshi",
+            "rule": GOLF_ROUND_TIMING_RULE_TEXT,
+            "excluded": golf_round_price_unanchored_excluded,
+            "excluded_markets": golf_round_price_unanchored_markets,
+            "excluded_cells": [["kalshi", "golf"]],
         },
         # Queue 299 rung 1 (#1012): result authority before anything else.
         "no_winner_filter": {

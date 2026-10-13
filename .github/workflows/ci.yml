@@ -4145,6 +4145,26 @@ jobs:
             exit 1
           fi
 
+      - name: "#938 a Kalshi golf round price no stored time places before the round is not scored (real Postgres)"
+        # Kalshi gives a golf round market only the round's close as a start
+        # time, so every closing-line selector bounded on it can store a quote
+        # from inside or after the round (the specimen stores 0.99 on every
+        # winner, 0.01 on every loser). The curve now withholds Kalshi golf
+        # markets whose ticker names a round, keyed on structure, never on
+        # price. Controls: the tournament sibling, an R that is not a round, a
+        # year-bearing series, a margin prop, another source and another sport
+        # all publish whole at their own prices, and every withheld row lands
+        # on the new coverage rung rather than the catch-all.
+        if: matrix.group == 'shared-tail'
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_calibration_golf_round_timing_pg.py \
+            -v -s -rs 2>&1 | tee /tmp/golf_round_timing.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/golf_round_timing.txt; then
+            echo "::error::#938 golf round-timing gate SKIPPED — the gate did not run"
+            exit 1
+          fi
+
       - name: "#4444 the census caps do not move the numbers (real Postgres)"
         # The two `precompute_backfill_progress` tiles ran an uncapped
         # per-outcome `COUNT(*)` over `futures_odds_snapshots` and became the two

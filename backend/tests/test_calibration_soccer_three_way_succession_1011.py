@@ -93,7 +93,12 @@ def _candidate(**kw):
 
 class TestThisTree:
     def test_this_tree_states_the_declared_candidate(self):
-        assert pc.population_predicate_fingerprint() == CANDIDATE_PREDICATE
+        # #938 moved the digest on as a declared narrowing whose predecessor is
+        # this widening's candidate, so the chain is unbroken to this tree.
+        current = pc.population_predicate_fingerprint()
+        assert current == CANDIDATE_PREDICATE or (
+            (CANDIDATE_PREDICATE, current) in DECLARED_PREDICATE_SUCCESSIONS
+        )
         assert PAIR in DECLARED_PREDICATE_SUCCESSIONS
         assert DECLARED_PREDICATE_SUCCESSIONS[PAIR]["widening"] == "soccer_three_way"
 
@@ -117,7 +122,9 @@ class TestThisTree:
         assert pc.population_predicate_fingerprint() != before
 
     def test_futures_unit_reuse_is_unaffected(self):
-        assert pc.staged_unit_fingerprint() == "dec3026b97c1f61cda6ce65c70459fe5"
+        # #938 moved the unit digest (``dec3026b…`` -> ``5de54fd2…``) with a
+        # per-outcome flag in ``_calibration_population_ctes``; this rule did not.
+        assert pc.staged_unit_fingerprint() == "5de54fd27524df3c6af470d7f3c15bb9"
 
 
 class TestTheCensus:

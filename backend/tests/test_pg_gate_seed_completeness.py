@@ -97,6 +97,11 @@ COVERED = (
     # other — so both are named on every row, and `reading_count` (NOT NULL, no
     # server default) is named on every snapshot.
     "test_calibration_datagolf_post_start_opening_pg.py",
+    # #938. Seeds the same three tables by raw INSERT. The ticker
+    # (`external_id`) and the market's source/category ARE the subject; every
+    # snapshot names `reading_count` (NOT NULL, no server default) and a real
+    # two-sided book so the Kalshi liquidity rungs keep their hands off.
+    "test_calibration_golf_round_timing_pg.py",
     # #2927. Added the same night this check would have saved the trip: the
     # containers gate seeded `INSERT INTO sports (key, name)` and died on
     # `NotNullViolation: null value in column "active"` in CI, because

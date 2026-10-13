@@ -80,7 +80,10 @@ def test_the_rung_is_ordered_where_no_earlier_rung_claims_a_datagolf_row():
     keys = list(RUNG_KEYS)
     i = keys.index("datagolf_opening_after_start")
     assert keys[i - 1] == "opening_below_writer_bar"
-    assert keys[i + 1] == "structural_artifact"
+    # #938's golf round rung sits between this one and structural_artifact; what
+    # this rule needs is only that the golf-placeholder arm comes after it.
+    assert keys[i + 1] == "golf_round_price_unanchored"
+    assert keys.index("structural_artifact") > i
     predicates = dict(pc._COVERAGE_RUNG_PREDICATES)
     assert predicates["datagolf_opening_after_start"] == f"COALESCE(n.{FLAG}, false)"
 

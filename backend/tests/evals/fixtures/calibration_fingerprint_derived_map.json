@@ -16,11 +16,11 @@
     "SUM_ARM_ONLY_EXCLUDED_CELLS"
   ],
   "hashed_root_sha16": {
-    "_calibration_population_ctes": "e18d605acfc9c5fd",
-    "_main_futures_sql": "5f399959e521e053",
+    "_calibration_population_ctes": "fd717a69a4235457",
+    "_main_futures_sql": "b78428c8e9ce8d3b",
     "_roster_pushdown_predicates": "9b4afb101a88cb8a",
     "_virtual_market_ctes": "d03415be9c36d5cb",
-    "compute_calibration_payload": "c397cf7ee13985ef",
+    "compute_calibration_payload": "62d5b4cbe93b5abf",
     "identity_quarantine_ctes": "178dd31b64f3e836"
   },
   "hashed_roots": [
@@ -31,7 +31,7 @@
     "compute_calibration_payload",
     "identity_quarantine_ctes"
   ],
-  "input_count": 90,
+  "input_count": 91,
   "inputs": [
     {
       "covered_by_value": false,
@@ -317,6 +317,17 @@
       "impact": "behavior_or_evidence",
       "name": "GOLF_PLACEHOLDER_RULE_TEXT",
       "origin": "app.tasks.precompute_calibration:GOLF_PLACEHOLDER_RULE_TEXT",
+      "sql_interpolated": false,
+      "used_in": [
+        "compute_calibration_payload"
+      ]
+    },
+    {
+      "covered_by_value": false,
+      "definition_sha16": null,
+      "impact": "behavior_or_evidence",
+      "name": "GOLF_ROUND_TIMING_RULE_TEXT",
+      "origin": "app.tasks.precompute_calibration:GOLF_ROUND_TIMING_RULE_TEXT",
       "sql_interpolated": false,
       "used_in": [
         "compute_calibration_payload"
@@ -980,7 +991,7 @@
     },
     {
       "covered_by_value": false,
-      "definition_sha16": "b540c2bd9956b4ca",
+      "definition_sha16": "51ee7d57d2c87cfe",
       "impact": "sql_shaping",
       "name": "_COVERAGE_RUNG_KEYS",
       "origin": "app.utils.calibration_coverage_bridge:RUNG_KEYS",
@@ -1017,7 +1028,7 @@
     },
     {
       "covered_by_value": false,
-      "definition_sha16": "8e08a2ede90cd53c",
+      "definition_sha16": "5a47493a5f96c296",
       "impact": "behavior_or_evidence",
       "name": "_build_coverage_census",
       "origin": "app.utils.calibration_coverage_bridge:build_coverage_census",
@@ -1064,8 +1075,8 @@
   ],
   "schema": "calibration-fingerprint-derived/v1",
   "source": "backend/app/tasks/precompute_calibration.py",
-  "source_sha256": "e5d62a70fe1244af6d0b8f57d4dd5ed1212b39d9f5354e7cfc1ed6e6511e1f0a",
-  "uncovered_behavior_or_evidence": 49,
-  "uncovered_count": 76,
+  "source_sha256": "24813caec3f92206862bbbc81ee1ed43f636531bb05d9c8fcaf06d23acce557f",
+  "uncovered_behavior_or_evidence": 50,
+  "uncovered_count": 77,
   "uncovered_sql_shaping": 27
 }

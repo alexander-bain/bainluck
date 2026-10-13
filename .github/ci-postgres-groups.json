@@ -148,6 +148,7 @@
     "#938 golf round markets stop publishing a stamp as a price (real Postgres)",
     "/api/calibration/rescue runs Part C, not a private copy (real Postgres)",
     "#5355 a DataGolf opening first read after the start is not scored (real Postgres)",
+    "#938 a Kalshi golf round price no stored time places before the round is not scored (real Postgres)",
     "#4444 the census caps do not move the numbers (real Postgres)",
     "#4482 a task's query budget survives the pool (real Postgres)",
     "#2471 socket consumer keeps one engine per run (real Postgres)",
