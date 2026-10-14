@@ -208,7 +208,9 @@ final class LargeTextRecoveryJourneyTests: XCTestCase {
             let appFrame = app.frame
             let frame = element.frame
             if element.isHittable && appFrame.contains(frame) { return }
-            let earlier = frame.minY < appFrame.minY
+            // Contained but not hittable in the upper half means under the navigation bar (the
+            // Watch app has no bottom chrome); dragging it up again oscillated until the cap.
+            let earlier = frame.minY < appFrame.minY || (appFrame.contains(frame) && frame.midY < appFrame.midY)
             // Size each drag to the remaining offset, as revealChange does; a fixed 15% step
             // spent most of the 3-minute allowance on drags at accessibility5.
             let distance = earlier ? appFrame.minY - frame.minY : frame.maxY - appFrame.maxY

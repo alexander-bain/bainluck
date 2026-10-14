@@ -563,10 +563,16 @@ def test_picker_frame_read_normalization_refuses_scope_or_gate_changes(mutation)
 
 
 LARGE_TEXT_FIXED_STEP = (
+    "            if element.isHittable && appFrame.contains(frame) { return }\n"
+    "            let earlier = frame.minY < appFrame.minY\n"
     "            let start = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.60))\n"
     "            let end = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: earlier ? 0.75 : 0.45))\n"
 )
 LARGE_TEXT_DISTANCE_STEP = (
+    "            if element.isHittable && appFrame.contains(frame) { return }\n"
+    "            // Contained but not hittable in the upper half means under the navigation bar (the\n"
+    "            // Watch app has no bottom chrome); dragging it up again oscillated until the cap.\n"
+    "            let earlier = frame.minY < appFrame.minY || (appFrame.contains(frame) && frame.midY < appFrame.midY)\n"
     "            // Size each drag to the remaining offset, as revealChange does; a fixed 15% step\n"
     "            // spent most of the 3-minute allowance on drags at accessibility5.\n"
     "            let distance = earlier ? appFrame.minY - frame.minY : frame.maxY - appFrame.maxY\n"
@@ -616,7 +622,8 @@ COST_READ_TRANSFORMS = {
             1,
         ),
         # #10090: the generic reveal drags by the remaining offset (revealChange's clamp),
-        # not a fixed 15% step; the visibility test and the 32-attempt cap are untouched.
+        # not a fixed 15% step, and moves a contained-but-unhittable upper element down from
+        # under the navigation bar; the visibility test and the 32-attempt cap are untouched.
         (
             LARGE_TEXT_FIXED_STEP,
             LARGE_TEXT_DISTANCE_STEP,
@@ -679,7 +686,7 @@ COST_ORIGINAL_SHA256 = {
     "WatchDiagnosticsJourneyTests.swift": "2d1319539f2648876a5dd8b1e451c66c64651a0c3ad5c27e914980c1d5f8ec1a",
 }
 COST_PROPOSED_SHA256 = {
-    "LargeTextRecoveryJourneyTests.swift": "ef984837758d4b63ef8f107f469947d94e1df9ecc2aa87556dc7c7e24d77ce0f",
+    "LargeTextRecoveryJourneyTests.swift": "7082122150c61f86892dd9f6a72582561bba0ac58e2dc1b95b3e2621c5a50106",
     "PickerAliasJourneyTests.swift": "ae6767e2c5563d30604e2f25a574f5ff3c2e20ba22478e8dd6a178161e1d3d1e",
     "WatchDiagnosticsJourneyTests.swift": "21680343a8a45c392958f2b41b6dd2437ba5b5875c13c89c898535314fed9591",
 }
@@ -761,6 +768,7 @@ def test_large_text_reveal_moves_by_remaining_offset_within_the_window():
         ("appFrame.contains(frame) { return }", "appFrame.intersects(frame) { return }"),
         ("min(0.50, max(0.15, distance / appFrame.height))", "0.50"),
         ("earlier ? 0.35 : 0.75", "earlier ? 0.60 : 0.60"),
+        (" || (appFrame.contains(frame) && frame.midY < appFrame.midY)", ""),
     ],
 )
 def test_large_text_reveal_rejects_fixed_step_partial_visibility_or_unbounded_drag(old, new):
