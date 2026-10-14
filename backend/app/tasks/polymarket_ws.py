@@ -335,6 +335,14 @@ class _PMStampOwner:
                 if not task.cancelling():
                     task.cancel()
         self.waited_s += time.monotonic() - started
+        if self.task is not task:
+            # #10090: a catalog settle's cancel joins while game flushes still
+            # run, so a flush's join of the same call can finish first and
+            # start the next call. That joiner already took this call's debt;
+            # the slot (and its cohort) now belong to the next call.
+            if interrupted is not None:
+                raise interrupted
+            return
         self.task = None
         fresh, self.fresh = self.fresh, set()
         self.events = None

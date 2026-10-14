@@ -34,6 +34,9 @@ THE CASES:
         cancellation during the settle behaves like a cancel during the
         parent's stamps phase: the call is cancelled and joined, and its
         events stay owed.
+    test_a_cancelled_settle_never_clears_the_call_a_game_flush_started ...
+        the settle's cancel join overlaps a game flush's join of the same
+        call: whichever finishes second leaves the next call on the owner.
 """
 
 import ast
@@ -312,6 +315,56 @@ async def test_a_cancelled_settle_cancels_and_joins_the_call_keeping_its_debt():
         if owner.task is not None:
             owner.task.cancel()
             await asyncio.gather(owner.task, return_exceptions=True)
+
+
+async def test_a_cancelled_settle_never_clears_the_call_a_game_flush_started():
+    """Independent review of 124637a906: the settle joins while game flushes
+    still run, so a game flush's join of the same call can finish first and
+    start the next call. The cancelled settle's join, waking second, must
+    leave that next call (and its cohort) on the owner: clearing it orphaned a
+    running call, and its events were adopted as debt while still stamping."""
+    boundary, owner, fake = await _owned_boundary()
+    owner.task = asyncio.create_task(asyncio.Event().wait())
+    owner.events, owner.fresh = {1}, {1}
+    successor, mapped = {}, asyncio.Event()
+
+    async def game_flush():  # joins the ending call, then starts the next
+        async with boundary.flushing():
+            await owner.join()
+            owner.events, owner.fresh = {2}, {2}
+            successor["task"] = owner.task = asyncio.create_task(asyncio.Event().wait())
+            await asyncio.sleep(0)
+
+    async def handover():
+        async with boundary.updating():
+            mapped.set()
+
+    flush = asyncio.create_task(game_flush())
+    await asyncio.sleep(0)
+    h = asyncio.create_task(handover())
+    try:
+        for _ in range(5):
+            await asyncio.sleep(0)
+        assert not h.done() and not flush.done(), "both joins are waiting"
+        h.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await asyncio.wait_for(h, 1)
+        await asyncio.wait_for(flush, 1)
+        nxt = successor["task"]
+        assert owner.task is nxt and not nxt.done(), "the next call keeps its owner"
+        assert owner.fresh == {2} and owner.events == {2}
+        assert fake.adopted == [1], "only the cancelled call's events are owed"
+        assert not mapped.is_set()
+        assert not boundary.changing and not boundary.standalone_fenced
+        await asyncio.wait_for(owner.join(cancel=True), 1)
+        assert owner.task is None and fake.adopted == [1, 2]
+    finally:
+        h.cancel()
+        flush.cancel()
+        await asyncio.gather(h, flush, return_exceptions=True)
+        if successor.get("task") is not None:
+            successor["task"].cancel()
+            await asyncio.gather(successor["task"], return_exceptions=True)
 
 
 async def test_continuous_readmission_cannot_extend_the_settle(monkeypatch):
