@@ -28,7 +28,7 @@ WALL = 1_000_000.0
 
 
 def trace_rig(monkeypatch, *, slow_write=0.0, slow_stamp=0.0, block=False,
-              env=None, emit=None, wall=None):
+              env=None, emit=None, wall=None, during_write=None):
     clock = [500.0]
     monkeypatch.setattr(blend, "_mono", lambda: clock[0])
     monkeypatch.setattr(blend, "_wall", lambda: WALL)
@@ -68,6 +68,8 @@ def trace_rig(monkeypatch, *, slow_write=0.0, slow_stamp=0.0, block=False,
                 if slow_write:
                     clock[0] += slow_write  # e.g. a row-lock wait inside the UPDATE
                     await asyncio.sleep(0)
+                if during_write is not None:
+                    during_write(statement[1])  # callbacks landing mid-statement
                 return SimpleNamespace(all=lambda: [
                     SimpleNamespace(id=oid, ord=i, market_id=10, quote_moved=True,
                                     last_updated=STORED)
@@ -160,7 +162,8 @@ async def test_slow_write_and_slow_stamp_are_distinguishable_on_the_exact_mark(
     assert chunk["flush_started_mono"] == 500.0 and chunk["size"] == 2
 
     (committed,) = stage(t.lines, "PRICE_COMMITTED")
-    assert committed["input_seq"] == seq and committed["covers"] == [seq]
+    assert committed["input_seq"] == seq and committed["carries_changed_seq"] == seq
+    assert committed["superseded_unwritten"] == committed["committed_unstamped"] == []
     assert committed["stored_epoch"] == STORED.timestamp()
     assert committed["stored_clock"] == "DB_TRANSACTION_NOW_NOT_COMMIT"
 
@@ -324,3 +327,129 @@ def test_pending_overflow_stops_rather_than_dropping_identity():
         ))
     assert lines[-1]["stage"] == "STOP" and lines[-1]["reason"] == "PENDING_OVERFLOW"
     assert not trace.active() and not trace.waiting
+
+
+@pytest.mark.asyncio
+async def test_a_repeat_burst_during_the_write_keeps_the_written_identity(monkeypatch):
+    # Root 21:37Z, its exact shape: the flush snapshot pins an OLDER mark; a new
+    # change arrives before outcome 1's chunk adopts it; 70 identical callbacks
+    # during that chunk's awaited UPDATE age the adopted mark out of `accepted`.
+    box = {"changed": None}
+
+    def callbacks(chunk):
+        t = box["t"]
+        if 2 in chunk and box["changed"] is None:
+            box["changed"] = t.accept(1, 0.55, 6)  # lands after the snapshot
+        if 1 in chunk:
+            for seq in range(100, 170):
+                t.accept(1, 0.55, seq)
+
+    t = box["t"] = trace_rig(monkeypatch, during_write=callbacks)
+    t.p.ns["FLUSH_CHUNK_ROWS"] = 1
+    t.p.ns["open_complement_of"].clear()  # two independent legs, two chunks
+    buffer = t.p.ns["price_buffer"]
+    buffer[1] = buffer.pop(1)  # outcome 2's chunk writes first
+    assert await flush(t, started=500.0)
+    written = box["changed"]
+    assert len(t.trace.accepted) == 64 and written.seq not in t.trace.accepted
+    (chunk,) = stage(t.lines, "CHUNK")
+    assert chunk["snapshot"] == [[1, 1, 0.6]] and chunk["written"] == [[1, 6, 0.55]]
+    (committed,) = stage(t.lines, "PRICE_COMMITTED")
+    assert committed["input_seq"] == written.seq and committed["probability"] == 0.55
+    assert committed["carries_changed_seq"] == written.seq
+    assert committed["superseded_unwritten"] == [1]  # the snapshot's, never written
+    (event,) = stage(t.lines, "EVENT_COMMITTED")
+    assert event["input_seq"] == written.seq
+    assert not stage(t.lines, "PRICE_COMMITTED_IDENTITY_UNAVAILABLE")
+
+
+def _unit_trace():
+    lines = []
+    trace = PMStageTrace.from_env(
+        {"WS_PM_TRACE_EVENT": "1", "WS_PM_TRACE_OUTCOMES": "7",
+         "WS_PM_TRACE_EXPIRES_AT": str(WALL + 300), "WS_PM_TRACE_MAX_LINES": "256"},
+        run="r", event_of={7: 1}, wall=lambda: WALL, mono=lambda: 1.0,
+        emit=lines.append,
+    )
+
+    def mark(seq, value):
+        m = blend.InputMark(
+            seq=seq, event_id=1, outcome_id=7, probability=value, kind="price",
+            recv_wall=WALL, recv_mono=1.0, venue_ts_ms=None, event_ordinal=seq,
+        )
+        trace.input_accepted(m)
+        return m
+
+    def write(m, chunk=None):
+        chunk = chunk if chunk is not None else {7: m.probability}
+        trace.flush_begin(1.0, False, {7: m} if m is not None else {}, chunk)
+        token = trace.chunk_begin(0, [7])
+        trace.chunk_write(token, chunk, {7: m} if m is not None else {})
+        trace.write_stage(chunk, "COMMITTED", rows=[SimpleNamespace(id=7, last_updated=STORED)])
+        trace.chunk_end(token, True)
+
+    return trace, lines, mark, write
+
+
+def test_lineage_separates_the_exact_commit_from_superseded_and_unstamped_seqs():
+    trace, lines, mark, write = _unit_trace()
+    first = mark(1, 0.40)
+    write(first)
+    mark(2, 0.45)  # replaced in the buffer before any write took it
+    newest = mark(3, 0.50)
+    repeat = mark(4, 0.50)  # the flush wrote this repeat of seq 3
+    write(repeat)
+    committed = stage(lines, "PRICE_COMMITTED")
+    assert [c["input_seq"] for c in committed] == [first.seq, repeat.seq]
+    assert committed[1]["carries_changed_seq"] == newest.seq
+    assert committed[1]["superseded_unwritten"] == [2]
+    assert committed[1]["committed_unstamped"] == [first.seq]
+    trace.stamp(1, {"7": STORED.timestamp()}, 9, "db-clock")
+    (event,) = stage(lines, "EVENT_COMMITTED")
+    assert event["input_seq"] == repeat.seq and event["committed_unstamped"] == [1]
+    assert not trace.waiting and not trace.written
+
+
+def test_a_written_mark_with_no_retained_identity_is_reported_not_silent():
+    trace, lines, mark, write = _unit_trace()
+    mark(1, 0.40)
+    write(None, chunk={7: 0.40})  # the flush had no mark for the written row
+    (missing,) = stage(lines, "PRICE_COMMITTED_IDENTITY_UNAVAILABLE")
+    assert missing["identity_reason"] == "NO_MARK" and missing["input_seq"] == "UNAVAILABLE"
+    trace, lines, mark, write = _unit_trace()
+    mark(1, 0.40)
+    gone = blend.InputMark(  # a mark whose identity the trace never retained
+        seq=999, event_id=1, outcome_id=7, probability=0.40, kind="price",
+        recv_wall=WALL, recv_mono=1.0, venue_ts_ms=None, event_ordinal=999,
+    )
+    write(gone)
+    (missing,) = stage(lines, "PRICE_COMMITTED_IDENTITY_UNAVAILABLE")
+    assert missing["identity_reason"] == "WRITTEN_MARK_NOT_RETAINED"
+    assert missing["input_seq"] == 999
+
+
+@pytest.mark.asyncio
+async def test_disabled_refresher_does_no_admission_work_and_reads_iterables_once(
+    monkeypatch,
+):
+    t = trace_rig(monkeypatch, env={})
+    assert t.trace is None
+    called = []
+    original = t.x.r._stage_trace
+    monkeypatch.setattr(
+        t.x.r, "_stage_trace",
+        lambda name, *a, **k: (called.append(name), original(name, *a, **k)),
+    )
+
+    class Once:
+        reads = 0
+
+        def __iter__(self):
+            Once.reads += 1
+            return iter([1])
+
+    assert t.x.r.admit_fresh(Once(), flush_started=500.0) == frozenset()
+    assert await flush(t, started=500.0)
+    assert t.x.published == [1]
+    assert "stage_admission" not in called
+    assert Once.reads <= 1

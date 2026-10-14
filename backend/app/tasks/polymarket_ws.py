@@ -2425,7 +2425,7 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
             batch_marks = {oid: input_marks[oid] for oid in batch if oid in input_marks}
             stage_trace = getattr(tail_receipts, "exact_trace", None)
             if stage_trace is not None:
-                stage_trace.flush_begin(flush_started, final, batch_marks)
+                stage_trace.flush_begin(flush_started, final, batch_marks, batch)
             # #10090 / #837: events a held-price withdrawal may still touch
             # this flush. Their refresh waits for that transaction when the
             # withdrawn leg is one the blend reads (`speaking_withdrawals`).

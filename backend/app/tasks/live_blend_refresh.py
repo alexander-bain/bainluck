@@ -1491,11 +1491,11 @@ class LiveBlendRefresher:
             self.stats["throttled"] += skipped
         if receipts is not None:
             self._receipt_call(receipts.observe, staged, stored_wall, set(due), now)
-        self._stage_trace(
-            "stage_admission", "REFRESH", None, wanted,
-            due=sorted(due), excluded=sorted(excluded), fresh=sorted(fresh),
-            flush_started=flush_started,
-        )
+        if self._stage_hook("stage_admission") is not None:
+            self._stage_trace(
+                "stage_admission", "REFRESH", None, wanted,
+                due=due, excluded=excluded, fresh=fresh, flush_started=flush_started,
+            )
         if not due:
             return self.stats
 
@@ -2118,20 +2118,22 @@ class LiveBlendRefresher:
             window is None or window.closed or flush_started is None
             or window.flush_started is None
         ):
-            self._stage_trace(
-                "stage_admission", "ADMIT", "NO_ADMITTING_CALL", event_ids,
-                flush_started=flush_started,
-            )
+            if self._stage_hook("stage_admission") is not None:
+                self._stage_trace(
+                    "stage_admission", "ADMIT", "NO_ADMITTING_CALL", event_ids,
+                    flush_started=flush_started,
+                )
             return frozenset()
         if flush_started != window.flush_started and flush_started < window.flush_started:
-            self._stage_trace(
-                "stage_admission", "ADMIT", "EARLIER_CLOCK", event_ids,
-                flush_started=flush_started,
-            )
+            if self._stage_hook("stage_admission") is not None:
+                self._stage_trace(
+                    "stage_admission", "ADMIT", "EARLIER_CLOCK", event_ids,
+                    flush_started=flush_started,
+                )
             return frozenset()
-        event_ids = list(event_ids)
         excluded = set(defer_event_ids)
         if self._stage_hook("stage_admission") is not None:
+            event_ids = list(event_ids)  # traced only: read twice below
             for eid in event_ids:
                 if eid in excluded or eid in window.holding:
                     self._stage_trace(

@@ -34,9 +34,18 @@ named. No mapped outcome, pending overflow, expiry or budget emits STOP and
 discards all state. No payloads, SQL parameters or credentials are recorded.
 
 Volume. Only a CHANGED selected value opens a chain. Repeats keep their
-identity without spending lines. A repeat that a flush actually wrote carries
-(`covers`) the changed seqs at or before it. Flush, admission and attempt
-lines are written only while a chain is open, or for an attempt that fenced one.
+identity without spending lines. Flush, admission and attempt lines are written
+only while a chain is open, or for an attempt that fenced one.
+
+Identity. `input_seq` is the exact mark whose value the row committed. When a
+flush wrote a later repeat of a change, `carries_changed_seq` names that change
+(same value, checked). Older changed seqs of the outcome are split:
+`superseded_unwritten` were replaced in the buffer before any write took them,
+and `committed_unstamped` were written but replaced before a stamp joined them.
+Neither list is evidence those values were ever stamped. The written marks'
+identities are held on the chunk itself, so a repeat burst during the awaited
+write cannot age them out. A written mark with no retained identity reports
+`PRICE_COMMITTED_IDENTITY_UNAVAILABLE`, never silence.
 
 Every entry point catches its own exceptions and returns None. A trace or logger
 failure must never cost a price, an exception, a cancellation, ordering or a
@@ -136,7 +145,8 @@ class PMStageTrace(ExactKalshiTrace):
         )
         self.event = None
         self.last_value = {}
-        self.waiting = {}  # changed seq -> outcome, until a stamp carries it
+        self.waiting = {}  # changed seq -> (outcome, value), until a stamp joins it
+        self.written = set()  # waiting seqs a PRICE_COMMITTED already carried
         self.joined = {}  # outcome -> seq last carried by an EVENT_COMMITTED
         self.flush = None
         self.flush_seq = self.chunk_seq = self.attempt_seq = 0
@@ -146,7 +156,7 @@ class PMStageTrace(ExactKalshiTrace):
 
     def _clear(self):
         super()._clear()
-        for state in (self.last_value, self.waiting, self.joined):
+        for state in (self.last_value, self.waiting, self.joined, self.written):
             state.clear()
         self.flush = self.chunk = self.attempt = None
         self.fenced_attempts = set()
@@ -160,7 +170,7 @@ class PMStageTrace(ExactKalshiTrace):
     def _open(self, outcome=None, seq=None):
         return any(
             (outcome is None or o == outcome) and (seq is None or s <= seq)
-            for s, o in self.waiting.items()
+            for s, (o, _value) in self.waiting.items()
         )
 
     def _input_chain(self, entry):
@@ -215,19 +225,25 @@ class PMStageTrace(ExactKalshiTrace):
             if mark.seq not in self.waiting and len(self.waiting) >= MAX_PENDING:
                 self._stop("PENDING_OVERFLOW")
                 return
-            self.waiting[mark.seq] = oid
+            self.waiting[mark.seq] = (oid, mark.probability)
             self._input_chain(entry)
 
     # ── the flush's side ─────────────────────────────────────────────────────
 
     @_guarded
-    def flush_begin(self, flush_started, final, marks):
-        """The flush's snapshot of the buffered marks (`batch_marks`)."""
+    def flush_begin(self, flush_started, final, marks, batch=()):
+        """The flush's snapshot of the buffered marks (`batch_marks`). A
+        selected outcome buffered with NO mark still opens the flush, so its
+        write reports an unavailable identity instead of nothing."""
         self.flush = None
         if not self.active() or not self.waiting:
             return
         mine = [m for m in marks.values() if self._mine(m)]
-        if not any(self._open(m.outcome_id, m.seq) for m in mine):
+        markless = sorted(
+            oid for oid in batch
+            if oid in self.targets and marks.get(oid) is None and self._open(oid)
+        )
+        if not markless and not any(self._open(m.outcome_id, m.seq) for m in mine):
             return
         self.flush_seq += 1
         self.snapshot(mine)
@@ -236,7 +252,8 @@ class PMStageTrace(ExactKalshiTrace):
             flush_started_mono=flush_started,
             final=bool(final),
             snapshot_mono=self.mono(),
-            snapshot=sorted((m.outcome_id, m.seq, m.probability) for m in mine),
+            snapshot=sorted((m.outcome_id, m.seq, m.probability) for m in mine)
+            + [(oid, "UNAVAILABLE", None) for oid in markless],
         )
 
     @_guarded
@@ -317,6 +334,11 @@ class PMStageTrace(ExactKalshiTrace):
         )
         token["_chunk"] = chunk  # pins identity: `write_stage` matches this object
         token["_marks"] = mine
+        # The exact identities this write carries, held HERE: socket repeats
+        # arriving during the awaited write age the bounded `accepted` map.
+        token["_identities"] = {
+            oid: self._accepted(m) if m is not None else None for oid, m in mine.items()
+        }
 
     @_guarded
     def write_stage(self, chunk, stage, rows=None, reason=None):
@@ -325,57 +347,91 @@ class PMStageTrace(ExactKalshiTrace):
         if token is None or token.get("_chunk") is not chunk or not self.active():
             return
         token[f"{stage.lower()}_mono"] = self.mono()
-        marks = token["_marks"]
+        marks, identities = token["_marks"], token["_identities"]
         if stage == "COMMITTED":
             returned = {row.id: row for row in rows or ()}
             for oid, mark in sorted(marks.items()):
                 row = returned.get(oid)
                 if row is None:
-                    self._not_committed(mark, oid, "NO_ROW_RETURNED_UNCHANGED")
+                    self._not_committed(
+                        mark, oid, identities.get(oid), "NO_ROW_RETURNED_UNCHANGED"
+                    )
                 else:
-                    self._committed(mark, row)
+                    self._committed(mark, oid, identities.get(oid), row)
         elif stage in ("FAILED", "COOLDOWN_SKIP"):
             token["detail"] = reason or stage
             for oid, mark in sorted(marks.items()):
-                self._not_committed(mark, oid, reason or stage)
+                self._not_committed(mark, oid, identities.get(oid), reason or stage)
 
-    def _covers(self, mark):
-        return sorted(
-            s for s, o in self.waiting.items() if o == mark.outcome_id and s <= mark.seq
+    def _lineage(self, mark):
+        """What this write carries of the outcome's open changed seqs (see
+        "Identity" above). Never a claim that any value was stamped."""
+        older = sorted(
+            s for s, (o, _v) in self.waiting.items()
+            if o == mark.outcome_id and s <= mark.seq
+        )
+        latest = older[-1] if older else None
+        carries = (
+            latest
+            if latest is not None and self.waiting[latest][1] == mark.probability
+            else None
+        )
+        earlier = [s for s in older if s != carries]
+        return carries, dict(
+            carries_changed_seq=carries,
+            superseded_unwritten=[s for s in earlier if s not in self.written][-MAX_COVERS:],
+            committed_unstamped=[s for s in earlier if s in self.written][-MAX_COVERS:],
         )
 
-    def _committed(self, mark, row):
-        identity = self._accepted(mark) if mark is not None else None
-        if identity is None or not self._open(mark.outcome_id, mark.seq):
-            return
+    def _committed(self, mark, oid, identity, row):
         observed = row.last_updated
+        if identity is None:
+            if self._open(oid):
+                self._record(
+                    "PRICE_COMMITTED_IDENTITY_UNAVAILABLE",
+                    event=self.event,
+                    outcome=oid,
+                    input_seq=mark.seq if mark is not None else "UNAVAILABLE",
+                    identity_reason=(
+                        "WRITTEN_MARK_NOT_RETAINED" if mark is not None else "NO_MARK"
+                    ),
+                    stored_at=observed.isoformat(),
+                    stored_clock="DB_TRANSACTION_NOW_NOT_COMMIT",
+                    commit_mono=self.mono(),
+                )
+            return
+        if not self._open(oid, mark.seq):
+            return
+        carries, lineage = self._lineage(mark)
+        if carries is not None:
+            self.written.add(carries)
         fields = dict(
             identity,
-            covers=self._covers(mark)[-MAX_COVERS:],
+            **lineage,
             stored_at=observed.isoformat(),
             stored_epoch=observed.timestamp(),
             stored_clock="DB_TRANSACTION_NOW_NOT_COMMIT",
             commit_mono=self.mono(),
         )
-        self._put(self.commits, mark.outcome_id, fields)
+        self._put(self.commits, oid, fields)
         self._input_chain(identity)
         self._record("PRICE_COMMITTED", **self._fields(fields))
 
-    def _not_committed(self, mark, oid, reason):
-        identity = self._accepted(mark) if mark is not None else None
+    def _not_committed(self, mark, oid, identity, reason):
         if identity is None:
             if self._open(oid):
                 self._record(
                     "PRICE_NOT_COMMITTED", event=self.event, outcome=oid,
-                    input_seq="UNAVAILABLE", write_reason=reason,
+                    input_seq=mark.seq if mark is not None else "UNAVAILABLE",
+                    identity="UNAVAILABLE", write_reason=reason,
                 )
             return
-        if not self._open(mark.outcome_id, mark.seq):
+        if not self._open(oid, mark.seq):
             return
         self._input_chain(identity)
         self._record(
             "PRICE_NOT_COMMITTED", **self._fields(identity),
-            covers=self._covers(mark)[-MAX_COVERS:], write_reason=reason,
+            **self._lineage(mark)[1], write_reason=reason,
         )
 
     def _chunk_line(self, token, result):
@@ -516,9 +572,10 @@ class PMStageTrace(ExactKalshiTrace):
         for identity in matched:
             oid = identity["outcome"]
             self.joined[oid] = identity["input_seq"]
-            for seq in [s for s, o in self.waiting.items()
+            for seq in [s for s, (o, _v) in self.waiting.items()
                         if o == oid and s <= identity["input_seq"]]:
                 del self.waiting[seq]
+                self.written.discard(seq)
             self._record(
                 "EVENT_COMMITTED",
                 **self._fields(identity),
