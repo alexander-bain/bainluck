@@ -266,12 +266,11 @@ final class LiveEventStreamTransport: LiveStreamHandle {
             // looks perfectly healthy. Caught end-to-end over a real socket; no
             // parser test could see it, because the parser is correct.
             //
-            // Byte-at-a-time is fine, but NOT on the main actor (#10090). Read
-            // there, every byte cost a trip off main and back, so a frame waited
-            // behind the page's own updates once per byte: the phone's nine-frame
-            // burst took 128 ms to decode. The bytes are read and the frames
-            // assembled off main; each COMPLETE frame comes back to `emit` in
-            // order, and the next is not handed over until it has run.
+            // Byte-at-a-time, off the main actor (#10090): the bytes are read and
+            // the frames assembled there, so the page's own main-actor work no
+            // longer shares an executor with the byte loop. Each COMPLETE frame
+            // comes back to `emit` in order, and the next is not handed over
+            // until it has run.
             let finished = try await Self.readFrames(from: bytes) { [self] event, data in
                 // `close()` cancels this task, and a handler may have called it
                 // for an earlier frame: nothing is handed on after either.
