@@ -24,6 +24,12 @@ enum NFLEventCard9483: Equatable, Identifiable {
         case .milestone(let card): return "\(card.player) · \(card.stat)"
         }
     }
+
+    /// The card as it may be shown at `now` (`NFLMilestoneCard9483.current(at:)`).
+    func current(at now: Date) -> NFLEventCard9483 {
+        guard case .milestone(let card) = self else { return self }
+        return .milestone(card.current(at: now))
+    }
 }
 
 enum NFLEventCardDeck9483 {
@@ -142,7 +148,15 @@ struct NFLMilestoneCard9483: Equatable, Identifiable {
 
     nonisolated struct Rung: Equatable, Identifiable {
         let threshold: Double
-        let chance: Double
+        /// The chance this card may print for the line, or nil: before kickoff
+        /// a quote with no recent observation, after it a line with no served
+        /// pregame mark. A nil line stays on the card ("No recent price"),
+        /// draws no dot, and never borrows another number.
+        let chance: Double?
+        /// The venue's observation clock for the quote behind `chance`
+        /// (`pregamePrice` basis only), kept so the price can expire while a
+        /// reader is looking (`current(at:)`).
+        let observedAt: String?
         /// The original row (`GameMarketPlayerProp.id`), for exact details.
         let rowID: String
         /// The server's grade, after the final only.
@@ -159,18 +173,58 @@ struct NFLMilestoneCard9483: Equatable, Identifiable {
     /// The stat's final value as the server graded it; nil until then.
     let actual: Double?
 
+    /// Both bases are named for what they are: before kickoff the current
+    /// price is the pregame chance; once play starts the number is the
+    /// historical mark from before kickoff, never a live price.
     var caption: String {
-        basis == .pregamePrice ? "Chance to reach each line" : "Pre-game chance to reach each line"
+        basis == .pregamePrice ? "Pregame chance to reach each line" : "Chance before kickoff to reach each line"
     }
 
     /// The rung a card opens on: the one nearest even odds, ties low
     /// (`PlayerPropsFamily.defaultTarget`).
     var defaultRung: Int? { PlayerPropsFamily.defaultTarget(probabilities: rungs.map(\.chance)) }
 
-    /// The milestone profile this card draws, from its own rungs.
+    /// The milestone profile this card draws, from its own priced rungs.
     @MainActor
     var profile: PlayerMilestoneProfile.Profile? {
         PlayerMilestoneProfile.profile(thresholds: rungs.map(\.threshold), probabilities: rungs.map(\.chance))
+    }
+
+    /// The card as it may be shown at `now`: a pregame price that has stopped
+    /// being observed loses its number, the same rule `cards` admits on, so a
+    /// card held open does not keep a price current because the reader was
+    /// looking (v159's rule, applied to quotes). The mark basis is a
+    /// historical number and does not age.
+    func current(at now: Date) -> NFLMilestoneCard9483 {
+        guard basis == .pregamePrice else { return self }
+        let aged = rungs.map { rung -> Rung in
+            guard rung.chance != nil, !Self.isRecent(rung.observedAt, now: now) else { return rung }
+            return Rung(threshold: rung.threshold, chance: nil, observedAt: rung.observedAt,
+                        rowID: rung.rowID, hit: rung.hit)
+        }
+        return NFLMilestoneCard9483(id: id, player: player, stat: stat, side: side, basis: basis,
+                                    rungs: aged, actual: actual)
+    }
+
+    /// A quote is recent when its observation clock is readable and no older
+    /// than `SourceAge.liveStaleAfter` — the bound every live price on the
+    /// page uses. An undatable quote is NOT recent here: this card prints it
+    /// as a current chance, so unknown counts toward "no recent price".
+    nonisolated static func isRecent(_ observedAt: String?, now: Date) -> Bool {
+        guard let age = SourceAge.ageSeconds(observedAt, now: now) else { return false }
+        return age <= SourceAge.liveStaleAfter
+    }
+
+    /// The stat axis the chart draws: the profile's own domain, widened at
+    /// either end so the actual always sits inside the plot with room to
+    /// spare — a final 0 below a ladder starting at 0.5 included. The actual
+    /// is a stat value on this axis, never a probability.
+    nonisolated static func statDomain(_ domain: ClosedRange<Double>, actual: Double?) -> ClosedRange<Double> {
+        guard let actual, actual.isFinite else { return domain }
+        let pad = max((domain.upperBound - domain.lowerBound) * 0.06, 0.5)
+        let lower = min(domain.lowerBound, actual - pad)
+        let upper = max(domain.upperBound, actual + pad)
+        return lower...upper
     }
 
     /// The player cards for this page, best first, at most
@@ -204,10 +258,16 @@ struct NFLMilestoneCard9483: Equatable, Identifiable {
 
         let candidates: [(card: NFLMilestoneCard9483, family: String)] = ladders.compactMap { key, ladder in
             let rungs = ladder.rows.compactMap { row -> Rung? in
-                guard let threshold = row.threshold, threshold.isFinite else { return nil }
-                let chance = basis == .pregamePrice ? row.overProbability : row.pregameMark
-                guard let chance, chance.isFinite, (0...1).contains(chance) else { return nil }
-                return Rung(threshold: threshold, chance: chance, rowID: row.id, hit: finished ? row.hit : nil)
+                guard let threshold = row.threshold, threshold.isFinite,
+                      // The catalog's side rule: only a row naming the over
+                      // side reads `over_probability` or its mark (gotcha #17).
+                      QuestionCatalog9483.lineSide(QuestionCatalog9483.row(row)) == .over else { return nil }
+                let observedAt = basis == .pregamePrice ? row.observedAt : nil
+                var chance = basis == .pregamePrice ? row.overProbability : row.pregameMark
+                if let c = chance, !(c.isFinite && (0...1).contains(c)) { chance = nil }
+                if basis == .pregamePrice, !isRecent(observedAt, now: now) { chance = nil }
+                return Rung(threshold: threshold, chance: chance, observedAt: observedAt,
+                            rowID: row.id, hit: finished ? row.hit : nil)
             }.sorted { $0.threshold < $1.threshold }
             let stat = PlayerPropsStatLabel.display(
                 marketName: ladder.market, homeTeam: homeTeam, awayTeam: awayTeam, player: ladder.player)
@@ -221,13 +281,14 @@ struct NFLMilestoneCard9483: Equatable, Identifiable {
         }
 
         // The stat the game is most quoted on leads (the chooser's own order),
-        // then the longer ladder, then the key — a relaunch deals the same deck.
+        // then the longer priced ladder, then the key — a relaunch deals the same deck.
         let order = PlayerPropsFamily.orderedFamilies(candidates.map(\.family))
         let rank = Dictionary(uniqueKeysWithValues: order.enumerated().map { ($1, $0) })
         let ranked = candidates.sorted { a, b in
             let (ra, rb) = (rank[a.family] ?? .max, rank[b.family] ?? .max)
             if ra != rb { return ra < rb }
-            if a.card.rungs.count != b.card.rungs.count { return a.card.rungs.count > b.card.rungs.count }
+            let (pa, pb) = (a.card.rungs.filter { $0.chance != nil }.count, b.card.rungs.filter { $0.chance != nil }.count)
+            if pa != pb { return pa > pb }
             return a.card.id < b.card.id
         }
         var players = Set<String>()

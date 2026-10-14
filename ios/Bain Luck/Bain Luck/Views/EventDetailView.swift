@@ -1883,20 +1883,23 @@ struct EventDetailView: View {
     }
 
     /// The reader's match line, from the same values the headline prints.
+    /// Live, it carries the admitted quarter and clock (`PeriodLabel`, the
+    /// title's own rule), falling back to "Live" only when none is admitted.
     private func nflReaderHeader(_ event: EventDetail) -> NFLReaderHeader9483 {
         let names = nflNames(event)
         let hasScore = EventDetailView.showsScore(
             status: event.status, away: event.awayScore, home: event.homeScore)
-        let state = isFinished ? "Final" : isLive ? "Live" : "Pregame"
+        let liveState = PeriodLabel.liveStatusText(period: event.espn?.period, gameClock: event.espn?.gameClock)
+        let state = isFinished ? "Final" : isLive ? (liveState.flatMap { $0.isEmpty ? nil : $0 } ?? "Live") : "Pregame"
         let match = hasScore
             ? "\(names.away) \(event.awayScore ?? 0)\u{2013}\(event.homeScore ?? 0) \(names.home) · \(state)"
             : "\(names.away) vs \(names.home) · \(state)"
         guard let headline = nflPairedHeadline(event, hasScore: hasScore) else {
             return NFLReaderHeader9483(match: match, chances: "")
         }
-        if let awayWon = headline.away.won {
-            return NFLReaderHeader9483(match: match, chances: "\(awayWon ? names.away : names.home) won")
-        }
+        // After the final the score says who won; a second line saying it
+        // again is the repetition the large-text reader cannot afford.
+        if headline.away.won != nil { return NFLReaderHeader9483(match: match, chances: "") }
         return NFLReaderHeader9483(
             match: match,
             chances: "Win chances · \(names.away) \(headline.away.figure) · \(names.home) \(headline.home.figure)")
@@ -1905,13 +1908,14 @@ struct EventDetailView: View {
     private func nflReader(_ event: EventDetail) -> some View {
         let projectedInput = projectedPointsInput(event)
         let props = vm.gameMarkets?.playerProps ?? []
+        let cards = nflCardDeck(event, projectedInput: projectedInput)
         return NFLCardReader9483(
-            liveCards: nflCardDeck(event, projectedInput: projectedInput),
+            liveCards: cards,
             liveHeader: nflReaderHeader(event),
             awayName: nflNames(event).away, homeName: nflNames(event).home,
             awayColor: teamColors(event).away, homeColor: teamColors(event).home,
             state: nflCards,
-            row: { id in props.first { $0.id == id } })
+            liveRows: NFLCardReaderHold9483.rows(for: cards, in: props))
     }
 
     // MARK: - #9483 NFL paired headline

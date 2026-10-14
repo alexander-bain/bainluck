@@ -180,30 +180,34 @@ struct NFLMilestoneCardView9483: View {
             if let profile = card.profile {
                 chart(profile, selected: rung)
             }
+            if card.profile == nil {
+                // Every price on the card has stopped being observed: the
+                // lines stay, the shape does not.
+                Text("No recent prices")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, minHeight: expanded ? 120 : 60)
+            }
             HStack(spacing: 4) {
                 Button { state.move(in: card, by: -1) } label: {
                     Image(systemName: "chevron.left").frame(width: 44, height: 44)
                 }
                 .disabled(selected.map { $0 == 0 } ?? true)
                 .accessibilityLabel("Previous line")
-                Button {
-                    if let rung { state.detailsRowID = rung.rowID }
-                } label: {
-                    VStack(spacing: 2) {
-                        if let rung {
-                            Text("\(PlayerPropsFamily.targetLabel(rung.threshold)) · \(formatProbability(rung.chance))")
-                                .font(.subheadline.weight(.semibold))
-                                .foregroundStyle(color)
-                            Text(verdict(rung))
-                                .font(.caption2)
-                                .foregroundStyle(.secondary)
-                        }
+                if expanded {
+                    // Details sheet lives on the full-size reader only; the
+                    // compact card opens through its "Open full size" control.
+                    Button {
+                        if let rung { state.detailsRowID = rung.rowID }
+                    } label: {
+                        readout(rung)
                     }
-                    .frame(maxWidth: .infinity, minHeight: 44)
-                    .contentShape(Rectangle())
+                    .buttonStyle(.plain)
+                    .accessibilityHint("Shows this line's exact quote")
+                } else {
+                    readout(rung)
+                        .accessibilityElement(children: .combine)
                 }
-                .buttonStyle(.plain)
-                .accessibilityHint("Shows this line's exact quote")
                 Button { state.move(in: card, by: 1) } label: {
                     Image(systemName: "chevron.right").frame(width: 44, height: 44)
                 }
@@ -213,43 +217,65 @@ struct NFLMilestoneCardView9483: View {
         }
     }
 
+    private func readout(_ rung: NFLMilestoneCard9483.Rung?) -> some View {
+        VStack(spacing: 2) {
+            if let rung {
+                Text(rung.chance.map {
+                    "\(PlayerPropsFamily.targetLabel(rung.threshold)) · \(formatProbability($0))"
+                } ?? "\(PlayerPropsFamily.targetLabel(rung.threshold)) · \(noChance)")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(rung.chance == nil ? Color.secondary : color)
+                Text(verdict(rung))
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .multilineTextAlignment(.center)
+        .frame(maxWidth: .infinity, minHeight: 44)
+        .contentShape(Rectangle())
+    }
+
+    /// What a line with no number says, by basis: a quote that stopped being
+    /// observed, or a line the server served no pregame mark for.
+    private var noChance: String {
+        card.basis == .pregamePrice ? "No recent price" : "No pregame chance"
+    }
+
     private func verdict(_ rung: NFLMilestoneCard9483.Rung) -> String {
+        let more = expanded ? " · details" : ""
         switch rung.hit {
-        case true?: return "Reached · details"
-        case false?: return "Not reached · details"
-        case nil: return card.basis == .pregamePrice ? "Details" : "Pre-game chance · details"
+        case true?: return "Reached" + more
+        case false?: return "Not reached" + more
+        case nil:
+            if rung.chance == nil { return !expanded ? "" : card.basis == .pregamePrice ? "Last quote in details" : "Details" }
+            return (card.basis == .pregamePrice ? "Pregame chance" : "Before kickoff") + more
         }
     }
 
     private func chart(_ profile: PlayerMilestoneProfile.Profile, selected: NFLMilestoneCard9483.Rung?) -> some View {
-        let upper = max(profile.domain.upperBound, (card.actual ?? 0) * 1.08)
+        let domain = NFLMilestoneCard9483.statDomain(profile.domain, actual: card.actual)
         return Chart {
+            // The final is a rule on the stat axis. Its value is printed large
+            // in the card's header, so the rule carries no second label to clip.
             if let actual = card.actual {
-                RectangleMark(xStart: .value("Start", profile.domain.lowerBound), xEnd: .value("Final", actual),
+                RectangleMark(xStart: .value("Start", domain.lowerBound), xEnd: .value("Final", actual),
                               yStart: .value("Chance", 0), yEnd: .value("Chance", 1))
                     .foregroundStyle(color.opacity(0.07))
                 RuleMark(x: .value("Final", actual))
                     .foregroundStyle(color)
                     .lineStyle(StrokeStyle(lineWidth: 2))
-                    // Near the right edge the label reads leftward, so it is never clipped.
-                    .annotation(position: .top,
-                                alignment: actual > profile.domain.lowerBound + (upper - profile.domain.lowerBound) * 0.6
-                                    ? .trailing : .leading) {
-                        Text("Final \(NFLFinishCardView9483.points(actual))")
-                            .font(.caption2.weight(.bold))
-                            .foregroundStyle(color)
-                    }
             }
             RuleMark(y: .value("Chance", 0.5))
                 .foregroundStyle(Color.secondary.opacity(0.35))
                 .lineStyle(StrokeStyle(lineWidth: 0.5, dash: [3, 3]))
-            ForEach(card.rungs) { rung in
+            ForEach(card.rungs.filter { $0.chance != nil }) { rung in
                 let isSelected = rung.rowID == selected?.rowID
+                let chance = rung.chance ?? 0
                 RuleMark(x: .value("Line", rung.threshold),
-                         yStart: .value("Chance", 0), yEnd: .value("Chance", rung.chance))
+                         yStart: .value("Chance", 0), yEnd: .value("Chance", chance))
                     .foregroundStyle(color.opacity(isSelected ? 0.9 : 0.3))
                     .lineStyle(StrokeStyle(lineWidth: isSelected ? 2 : 1.5))
-                PointMark(x: .value("Line", rung.threshold), y: .value("Chance", rung.chance))
+                PointMark(x: .value("Line", rung.threshold), y: .value("Chance", chance))
                     .symbol {
                         Circle()
                             .strokeBorder(isSelected ? color : Color.secondary, lineWidth: isSelected ? 2.5 : 1.5)
@@ -258,7 +284,7 @@ struct NFLMilestoneCardView9483: View {
                     }
             }
         }
-        .chartXScale(domain: profile.domain.lowerBound...upper)
+        .chartXScale(domain: domain)
         .chartYScale(domain: 0...1)
         .chartYAxis {
             AxisMarks(position: .leading, values: [0, 0.5, 1]) { value in
@@ -269,14 +295,15 @@ struct NFLMilestoneCardView9483: View {
             }
         }
         .chartXAxis {
-            AxisMarks(values: profile.axisLines) { value in
+            // Every quoted line is labelled, priced or not, so a line with no
+            // recent price is still named where it stands.
+            AxisMarks(values: card.rungs.map(\.threshold)) { value in
                 AxisValueLabel(collisionResolution: .greedy) {
                     if let line = value.as(Double.self) { Text(PlayerPropsFamily.targetLabel(line)) }
                 }
             }
         }
         .frame(height: expanded ? 240 : 150)
-        .padding(.top, card.actual == nil ? 0 : 14)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(PlayerMilestoneProfile.spokenSummary(profile, stat: card.stat)
             + (card.actual.map { ". Final \(NFLFinishCardView9483.points($0))" } ?? ""))
@@ -337,9 +364,12 @@ struct NFLEventCardDeckView9483: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
+            // Re-read each minute so a pregame price that stops being observed
+            // loses its number on the page too, not only in the reader.
+            TimelineView(.periodic(from: .now, by: 60)) { tick in
             ScrollView(.horizontal, showsIndicators: false) {
                 LazyHStack(alignment: .top, spacing: 12) {
-                    ForEach(cards) { card in
+                    ForEach(cards.map { $0.current(at: tick.date) }) { card in
                         VStack(spacing: 6) {
                             NFLEventCardView9483(card: card, awayName: awayName, homeName: homeName,
                                                  awayColor: awayColor, homeColor: homeColor, state: state)
@@ -358,6 +388,7 @@ struct NFLEventCardDeckView9483: View {
                 .scrollTargetLayout()
             }
             .scrollTargetBehavior(.viewAligned)
+            }
         }
         // Back from the reader returns focus to the card it was opened from.
         .onChange(of: state.openCardID) { old, new in

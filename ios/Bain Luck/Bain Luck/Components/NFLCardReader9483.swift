@@ -11,39 +11,63 @@ import SwiftUI
 /// - Back returns to the page, on the card it was opened from.
 ///
 /// HELD WHILE READING: what was on screen when the card opened stays on screen
-/// — the match line and every card — until the reader asks for the newer one
-/// ("Refresh"). New data never moves or rewrites a card under a reader's eyes.
-/// One exception, deliberately (v159): a live projection that stops being
-/// current leaves the held card too; a forecast never outlives its validity
-/// because the reader happened to be looking.
+/// — the match line, every card, and the original rows its Details show —
+/// until the reader asks for the newer one ("Refresh"), which replaces all
+/// three together. New data never moves or rewrites a card, or the Details
+/// behind it, under a reader's eyes. One exception, deliberately (v159): a
+/// number that stops being current leaves the held card too — a live
+/// projection past its capture gap, a pregame price past its observation
+/// bound. A forecast never outlives its validity because the reader happened
+/// to be looking.
 
 /// The match line the reader keeps on top.
 struct NFLReaderHeader9483: Equatable {
-    /// "BUF 20–7 LAR · Q3 5:47", "SEA vs DEN · Pregame".
+    /// "BUF 20–7 LAR · Q3 5:47", "SEA vs DEN · Pregame", "PHI 7–27 CHI · Final".
     let match: String
-    /// "Win chances 86% · 14%", "Bills won".
+    /// "Win chances · BUF 86% · LAR 14%"; empty after the final, where the
+    /// score already says who won.
     let chances: String
 }
 
 /// What the reader shows, given what was held and what is live now.
 enum NFLCardReaderHold9483 {
-    /// The held cards, with v159 applied: an expired live projection leaves.
-    static func displayed(held: [NFLEventCard9483], live: [NFLEventCard9483]) -> [NFLEventCard9483] {
+    /// The held cards, with v159 applied: an expired live projection leaves,
+    /// and so does a pregame price no longer observed at `now`.
+    static func displayed(held: [NFLEventCard9483], live: [NFLEventCard9483],
+                          now: Date = Date()) -> [NFLEventCard9483] {
         let liveFinish = live.lazy.compactMap { card -> NFLFinishCard9483? in
             if case .finish(let finish) = card { return finish } else { return nil }
         }.first
         return held.map { card in
             guard case .finish(let finish) = card, finish.projectedNow != nil,
-                  liveFinish?.projectedNow == nil else { return card }
+                  liveFinish?.projectedNow == nil else { return card.current(at: now) }
             return .finish(NFLFinishCard9483(phase: finish.phase, pregame: finish.pregame,
                                              projectedNow: nil, final: finish.final))
         }
     }
 
-    /// Whether a refresh would change anything the reader is looking at.
+    /// Whether a refresh would change anything the reader is looking at,
+    /// Details included.
     static func hasUpdate(held: [NFLEventCard9483], heldHeader: NFLReaderHeader9483?,
-                          live: [NFLEventCard9483], liveHeader: NFLReaderHeader9483) -> Bool {
-        displayed(held: held, live: live) != live || heldHeader != liveHeader
+                          live: [NFLEventCard9483], liveHeader: NFLReaderHeader9483,
+                          heldRows: [String: GameMarketPlayerProp] = [:],
+                          liveRows: [String: GameMarketPlayerProp] = [:],
+                          now: Date = Date()) -> Bool {
+        displayed(held: held, live: live, now: now) != live.map { $0.current(at: now) }
+            || heldHeader != liveHeader || heldRows != liveRows
+    }
+
+    /// The original rows the cards' lines point at, by row id — what Details
+    /// shows, and what the reader holds beside the cards.
+    static func rows(for cards: [NFLEventCard9483],
+                     in props: [GameMarketPlayerProp]) -> [String: GameMarketPlayerProp] {
+        let ids = Set(cards.flatMap { card -> [String] in
+            guard case .milestone(let milestone) = card else { return [] }
+            return milestone.rungs.map(\.rowID)
+        })
+        var rows: [String: GameMarketPlayerProp] = [:]
+        for prop in props where ids.contains(prop.id) && rows[prop.id] == nil { rows[prop.id] = prop }
+        return rows
     }
 }
 
@@ -55,11 +79,12 @@ struct NFLCardReader9483: View {
     let awayColor: Color
     let homeColor: Color
     @ObservedObject var state: NFLCardDeckState9483
-    /// The original row behind a selected line, for exact details.
-    let row: (String) -> GameMarketPlayerProp?
+    /// The original rows behind the cards' lines, live (`NFLCardReaderHold9483.rows`).
+    let liveRows: [String: GameMarketPlayerProp]
 
     @State private var heldCards: [NFLEventCard9483] = []
     @State private var heldHeader: NFLReaderHeader9483?
+    @State private var heldRows: [String: GameMarketPlayerProp]?
     /// The card on screen. Seeded at init so the first layout already asks for
     /// the card the reader was opened on (v107's rail: SwiftUI reports the
     /// LEADING card before the requested one is seated, so position reports
@@ -69,7 +94,7 @@ struct NFLCardReader9483: View {
 
     init(liveCards: [NFLEventCard9483], liveHeader: NFLReaderHeader9483,
          awayName: String, homeName: String, awayColor: Color, homeColor: Color,
-         state: NFLCardDeckState9483, row: @escaping (String) -> GameMarketPlayerProp?) {
+         state: NFLCardDeckState9483, liveRows: [String: GameMarketPlayerProp]) {
         self.liveCards = liveCards
         self.liveHeader = liveHeader
         self.awayName = awayName
@@ -77,65 +102,83 @@ struct NFLCardReader9483: View {
         self.awayColor = awayColor
         self.homeColor = homeColor
         self.state = state
-        self.row = row
+        self.liveRows = liveRows
         _visible = State(initialValue: state.openCardID)
     }
 
-    private var cards: [NFLEventCard9483] {
-        heldCards.isEmpty ? liveCards : NFLCardReaderHold9483.displayed(held: heldCards, live: liveCards)
+    private func cards(at now: Date) -> [NFLEventCard9483] {
+        heldCards.isEmpty ? liveCards.map { $0.current(at: now) }
+            : NFLCardReaderHold9483.displayed(held: heldCards, live: liveCards, now: now)
     }
     private var header: NFLReaderHeader9483 { heldHeader ?? liveHeader }
-    private var position: Int { cards.firstIndex { $0.id == visible } ?? 0 }
+    /// Details read the held rows, never the live ones, until Refresh.
+    private var rows: [String: GameMarketPlayerProp] { heldRows ?? liveRows }
 
     var body: some View {
-        GeometryReader { geo in
-            VStack(spacing: 0) {
-                top
-                Divider()
-                rail(width: geo.size.width)
-                Divider()
-                bottom
+        // Re-read each minute: a held number past its validity leaves (v159).
+        TimelineView(.periodic(from: .now, by: 60)) { tick in
+            let cards = cards(at: tick.date)
+            GeometryReader { geo in
+                VStack(spacing: 0) {
+                    top(now: tick.date)
+                    Divider()
+                    rail(cards, width: geo.size.width)
+                    Divider()
+                    bottom(cards)
+                }
             }
         }
         .background(Color.systemBackground)
         .onAppear {
             heldCards = liveCards
             heldHeader = liveHeader
+            heldRows = liveRows
         }
         .sheet(item: Binding(
             get: { state.detailsRowID.map(IdentifiedRow.init) },
             set: { state.detailsRowID = $0?.id })) { item in
-            NFLRowDetails9483(prop: row(item.id))
+            NFLRowDetails9483(prop: rows[item.id])
         }
+    }
+
+    private func refresh() {
+        heldCards = liveCards
+        heldHeader = liveHeader
+        heldRows = liveRows
     }
 
     private struct IdentifiedRow: Identifiable { let id: String }
 
-    private var top: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Button { state.close() } label: {
-                Label("Back to the game", systemImage: "chevron.left")
-                    .font(.callout.weight(.semibold))
-                    .frame(minHeight: 44)
+    /// One row of controls — a short Back and, when there is one, Refresh —
+    /// then one match summary. At accessibility sizes the text stays large;
+    /// it is the repetition that goes, not the type size.
+    private func top(now: Date) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            HStack(alignment: .center) {
+                Button { state.close() } label: {
+                    Label("Back", systemImage: "chevron.left")
+                        .font(.callout.weight(.semibold))
+                        .frame(minHeight: 44)
+                }
+                .accessibilityLabel("Back to the game")
+                Spacer(minLength: 8)
+                if NFLCardReaderHold9483.hasUpdate(held: heldCards, heldHeader: heldHeader,
+                                                   live: liveCards, liveHeader: liveHeader,
+                                                   heldRows: heldRows ?? liveRows, liveRows: liveRows,
+                                                   now: now) {
+                    Button("Refresh", action: refresh)
+                        .font(.callout.weight(.bold))
+                        .frame(minHeight: 44)
+                        .accessibilityLabel("New game update. Refresh the cards")
+                        .accessibilityHint("Keeps this card open and shows the newest numbers")
+                }
             }
             Text(header.match)
                 .font(.subheadline.weight(.bold))
-            HStack(alignment: .firstTextBaseline) {
+            if !header.chances.isEmpty {
                 Text(header.chances)
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                Spacer(minLength: 8)
-                if NFLCardReaderHold9483.hasUpdate(held: heldCards, heldHeader: heldHeader,
-                                                   live: liveCards, liveHeader: liveHeader) {
-                    Button("Refresh") {
-                        heldCards = liveCards
-                        heldHeader = liveHeader
-                    }
-                    .font(.caption.weight(.bold))
-                    .frame(minHeight: 44)
-                    .accessibilityLabel("New game update. Refresh the cards")
-                    .accessibilityHint("Keeps this card open and shows the newest numbers")
-                }
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -144,7 +187,7 @@ struct NFLCardReader9483: View {
         .accessibilityElement(children: .contain)
     }
 
-    private func rail(width: CGFloat) -> some View {
+    private func rail(_ cards: [NFLEventCard9483], width: CGFloat) -> some View {
         ScrollViewReader { proxy in
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(alignment: .top, spacing: 12) {
@@ -186,24 +229,26 @@ struct NFLCardReader9483: View {
                 }
             }
             .accessibilityLabel("Game story cards")
+            .accessibilityHint(cards.count > 1 ? "Swipe left or right with three fingers for another card" : "")
         }
     }
 
-    private var bottom: some View {
-        HStack {
-            Button { step(-1) } label: {
+    /// A compact footer: previous, "2 of 2", next. The card names itself, so
+    /// the footer does not repeat its title.
+    private func bottom(_ cards: [NFLEventCard9483]) -> some View {
+        let position = cards.firstIndex { $0.id == visible } ?? 0
+        return HStack {
+            Button { step(-1, in: cards) } label: {
                 Image(systemName: "chevron.left").frame(width: 44, height: 44)
             }
             .disabled(position == 0)
             .accessibilityLabel("Previous card")
             Spacer(minLength: 4)
             VStack(spacing: 4) {
-                Text(cards.indices.contains(position) ? cards[position].title : "")
-                    .font(.subheadline.weight(.bold))
-                    .lineLimit(1)
-                Text("\(position + 1) of \(cards.count)\(cards.count > 1 ? " · Swipe to explore" : "")")
-                    .font(.caption)
+                Text("\(position + 1) of \(cards.count)")
+                    .font(.subheadline.weight(.semibold).monospacedDigit())
                     .foregroundStyle(.secondary)
+                    .accessibilityLabel("Card \(position + 1) of \(cards.count)")
                 HStack(spacing: 6) {
                     ForEach(cards) { card in
                         Capsule()
@@ -215,7 +260,7 @@ struct NFLCardReader9483: View {
             }
             .multilineTextAlignment(.center)
             Spacer(minLength: 4)
-            Button { step(1) } label: {
+            Button { step(1, in: cards) } label: {
                 Image(systemName: "chevron.right").frame(width: 44, height: 44)
             }
             .disabled(position >= cards.count - 1)
@@ -225,8 +270,8 @@ struct NFLCardReader9483: View {
         .padding(.vertical, 8)
     }
 
-    private func step(_ delta: Int) {
-        let next = position + delta
+    private func step(_ delta: Int, in cards: [NFLEventCard9483]) {
+        let next = (cards.firstIndex { $0.id == visible } ?? 0) + delta
         guard cards.indices.contains(next) else { return }
         seated = true
         withAnimation { visible = cards[next].id }
@@ -253,10 +298,13 @@ struct NFLRowDetails9483: View {
                     }
                     Section {
                         if let mark = prop.pregameMark {
-                            LabeledContent("Pre-game chance", value: formatProbability(mark))
+                            LabeledContent("Pregame baseline", value: formatProbability(mark))
                         }
+                        // Always dated: a quote's number without its time
+                        // cannot say whether it is current.
                         if let price = prop.overProbability {
-                            LabeledContent("Latest quote", value: formatProbability(price))
+                            LabeledContent("Last quote", value: formatProbability(price))
+                            LabeledContent("Quoted", value: SourceAge.preciseStamp(prop.observedAt) ?? "Time unknown")
                         }
                         if let name = SourceLabels.label(for: prop.source) {
                             LabeledContent("Venue", value: name)
