@@ -338,11 +338,8 @@ class TestTheRunCanBeAudited:
 
         Resuming a `:v2` offset under this ordering would skip an arbitrary
         slice on the first run after deploy and nothing would report it.
-
-        "At least `:v3`", not "exactly": #2722 bumped it again to `:v4`, and
-        the exact current version is pinned once, in the #3284 file.
         """
-        assert int(sweep.SWEEP_CURSOR_KEY.rsplit(":v", 1)[1]) >= 3
+        assert sweep.SWEEP_CURSOR_KEY.endswith(":v3")
 
     def test_the_population_count_selects_the_cohort(self):
         """`fully_retracted_total` is the number that says the promotion works.

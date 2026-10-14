@@ -34,12 +34,6 @@ markets still hold a FUTURE ``close_time``, so no date field and no date
 predicate can ever select them, and the row goes on claiming to be open. The
 write is at :data:`UPDATE_SQL`: ``status`` and ``settled_at``, on the venue's
 word only, and never a grade (#1852's line is unchanged).
-
-#2722, THE REACH HALF. That write only sees rows the SELECT returns, and a row
-whose stored date has converged off the backstop is never returned again. So
-:func:`reach_select_sql` re-admits converged, future-dated open rows whose
-ticker names a day already played. They rank in the existing band. The undated
-remainder is named at the arm's definition.
 """
 
 from __future__ import annotations
@@ -911,124 +905,6 @@ def row_is_in_band(external_id: Optional[str], tokens: list[str]) -> bool:
     return any(tok.strip("%") in external_id for tok in tokens)
 
 
-# ---------------------------------------------------------------------------
-# The early-final reach arm — #2722, the reach half
-# ---------------------------------------------------------------------------
-#
-# PR #3308 taught the write to say `status='resolved'` on the venue's word
-# (:data:`UPDATE_SQL`, `derive_venue_settlement`). The write only runs on rows the
-# SELECT hands it, and the SELECT's provisional predicate (`resolution_date >=
-# expiration_time`) drops a row the moment its stored date stops being the
-# backstop. Nothing re-reads it after that. A market the venue finalises EARLY
-# keeps a future `close_time` (#2722: 10 of 49 settled events sampled at the
-# venue, 2026-09-02), so its row stays converged, future-dated and `open`. The
-# date path never reaches it because the date is in the future, and this sweep
-# never reaches it because the row converged.
-#
-# #2644 made that population larger. `derive_resolution_window` now pulls a
-# futures row's date onto `expected_expiration_time` when the venue sends the
-# backstop twice, so the poller converges those rows out on their first upsert.
-#
-# WHY THE BAND AND NOT EVERY FUTURE-DATED ROW. Re-admitting every converged,
-# future-dated open row would put thousands more rows into a 500-a-night
-# rotation that is already ~25 nights long. That pushes one cycle past the
-# cursor's 30-day TTL (:data:`SWEEP_CURSOR_TTL_S`), which is a backstop and
-# must never become the mechanism. The band is the one in-row signal with a
-# measured yield on this sweep: ~67% convergeable at the venue (#3284).
-# Its population is bounded, because a ticker leaves the band once its day is
-# older than `PAST_EVENT_BAND_DAYS`. A row whose ticker names a day already
-# played, but whose stored date is still in the future, is exactly the shape
-# an early final leaves behind.
-#
-# WHAT IT DOES NOT REACH, named so the arm is not read as more. A converged
-# future-dated row whose ticker names NO played day (an undated future decided
-# early) is still unreached. Re-admitting those needs its own screen and its
-# own measured yield, not a wider net here.
-#
-# ADDITIVE ONLY. The arm is OR'd INSIDE the provisional group, so every row the
-# base predicate selects is still selected. The band stays an order for those
-# rows (`test_the_band_changes_only_the_order` keeps pinning `banded_select_sql`)
-# and only widens the population. The write is untouched. It is still
-# `derive_venue_settlement` on all legs, still `ELSE status` for a venue that
-# says open, and still no grade.
-
-#: The base predicate's provisional group, the one place the arm is spliced in.
-#: Two lines on purpose, because the one-line `resolution_date >= expiration_time)`
-#: also closes `COUNT_SQL`'s `provisional_recheck` FILTER. The splice asserts it
-#: matched exactly once.
-_PROVISIONAL_GROUP_TAIL = (
-    "OR resolution_date IS NULL\n"
-    "           OR resolution_date >= expiration_time)"
-)
-
-
-def early_final_reach_sql(n_tokens: int) -> str:
-    """The arm's own condition, without the leading ``OR``. Empty for no band.
-
-    ``resolution_date >= :reach_after``: the row's date is still in the future.
-    Once that date is past, the date path (#1818's predicate) is the row's rail,
-    and the arm would only spend a venue read to duplicate it.
-
-    The band clause reuses :func:`band_bind_params`' binds, the ones the
-    ORDER BY already carries. Membership and rank therefore cannot read two
-    different day lists.
-    """
-    if n_tokens <= 0:
-        return ""
-    band = " OR ".join(f"external_id LIKE :band_{i}" for i in range(n_tokens))
-    return f"resolution_date >= :reach_after AND ({band})"
-
-
-def _splice_reach(sql: str, n_tokens: int) -> str:
-    arm = early_final_reach_sql(n_tokens)
-    if not arm:
-        return sql
-    if sql.count(_PROVISIONAL_GROUP_TAIL) != 1:  # pragma: no cover — a moved predicate is a bug
-        raise ValueError("provisional group not found exactly once; the reach arm cannot be spliced")
-    widened = (
-        _PROVISIONAL_GROUP_TAIL[:-1]
-        + f"\n           OR ({arm}))"
-    )
-    return sql.replace(_PROVISIONAL_GROUP_TAIL, widened)
-
-
-def reach_select_sql(n_tokens: int) -> str:
-    """:func:`banded_select_sql` with the early-final arm OR'd into its predicate.
-
-    Spliced into the banded statement rather than restated, so the ORDER BY,
-    the band rank and the retracted rank are byte-identical to the ones their
-    own guards pin. ``n_tokens == 0`` returns the banded statement unchanged.
-    """
-    return _splice_reach(banded_select_sql(n_tokens), n_tokens)
-
-
-def reach_count_sql(n_tokens: int) -> str:
-    """:data:`COUNT_SQL` over the SAME widened population, plus the arm's size.
-
-    `eligible_total` must count what the select can return, or the cursor's
-    cycle wrap (:func:`next_cursor`) fires before the arm's rows were walked.
-    `early_final_reach_total` is APPENDED last, because `totals` is read by
-    position. It counts only the rows the base predicate would NOT have
-    selected, so it reads as the arm's own contribution.
-    """
-    arm = early_final_reach_sql(n_tokens)
-    column = (
-        "count(*) FILTER (\n"
-        "            WHERE expiration_time IS NOT NULL\n"
-        "              AND resolution_date IS NOT NULL\n"
-        "              AND resolution_date < expiration_time\n"
-        f"              AND {arm}\n"
-        "        ) AS early_final_reach_total"
-        if arm
-        else "0 AS early_final_reach_total"
-    )
-    sql = _splice_reach(COUNT_SQL, n_tokens)
-    anchor = ") AS fully_retracted_total\n"
-    if sql.count(anchor) != 1:  # pragma: no cover — a reshaped COUNT_SQL is a bug
-        raise ValueError("COUNT_SQL's last column moved; append the reach total after it")
-    return sql.replace(anchor, f") AS fully_retracted_total,\n        {column}\n")
-
-
 #: What the batch does NOT cover. Reported every run so a bounded sweep can never
 #: read as a complete one. `never_swept` / `provisional_recheck` split the eligible
 #: population by which of the two selection reasons put the row there, because they
@@ -1236,31 +1112,22 @@ async def run_backfill(
     if supplied:
         rows = list(rows)
         eligible_total = excluded_purged = never_swept = provisional_recheck = -1
-        fully_retracted_total = early_final_reach_total = -1
+        fully_retracted_total = -1
     else:
-        # #2722: `reach_after` is bound only when the arm exists, so an empty
-        # band sends exactly the binds it always sent.
-        reach_binds = (
-            {**band_bind_params(band_tokens), "reach_after": now} if band_tokens else {}
-        )
         async with session_maker() as session:
             rows = (
                 await session.execute(
-                    text(reach_select_sql(len(band_tokens))),
+                    text(banded_select_sql(len(band_tokens))),
                     {
                         "purge_floor": purge_floor,
                         "limit": limit,
                         "offset": offset,
                         **band_bind_params(band_tokens),
-                        **reach_binds,
                     },
                 )
             ).all()
             totals = (
-                await session.execute(
-                    text(reach_count_sql(len(band_tokens))),
-                    {"purge_floor": purge_floor, **reach_binds},
-                )
+                await session.execute(text(COUNT_SQL), {"purge_floor": purge_floor})
             ).first()
 
         eligible_total = int(totals[0]) if totals else -1
@@ -1268,7 +1135,6 @@ async def run_backfill(
         never_swept = int(totals[2]) if totals else -1
         provisional_recheck = int(totals[3]) if totals else -1
         fully_retracted_total = int(totals[4]) if totals else -1
-        early_final_reach_total = int(totals[5]) if totals else -1
 
     stats = {
         "eligible_total": eligible_total,
@@ -1286,12 +1152,6 @@ async def run_backfill(
         # a flat number across a full wrap means the promotion is not reaching
         # them and is the thing to re-measure.
         "fully_retracted_total": fully_retracted_total,
-        # #2722, the reach half: the population size of converged, future-dated
-        # open rows that the base predicate excludes and the early-final arm
-        # re-admits. A number that stays flat across a full cycle while
-        # `venue_settled` stays 0 means the arm is reading active markets, not
-        # early finals.
-        "early_final_reach_total": early_final_reach_total,
         "candidates": len(rows),
         # #3284: how much of this batch the played-game band actually supplied.
         # The band is an ORDER, so this is the number that says whether it is
@@ -1675,13 +1535,7 @@ async def run_backfill(
 #: ORDER BY term, so every offset banked under `:v2` names a different 500 rows
 #: than it would under this ordering. One clean cycle from the head is also what
 #: the change is FOR — the promoted cohort is at the head.
-#:
-#: 🔁 **VERSIONED at `:v4` by #2722's reach half.** The ORDER BY is unchanged, but
-#: the early-final arm (:func:`reach_select_sql`) inserts rows at the band's
-#: ranks, ahead of every non-band row. An offset banked under `:v3` would then
-#: skip a slice whose size nobody reports, starting with the rows the change
-#: exists to reach.
-SWEEP_CURSOR_KEY = "bainluck:kalshi_resolution_sweep:offset:v4"
+SWEEP_CURSOR_KEY = "bainluck:kalshi_resolution_sweep:offset:v3"
 
 #: 30 days. Long enough that a fortnight of failed beats does not silently reset
 #: the sweep to the jammed head; short enough that a stale cursor left behind by

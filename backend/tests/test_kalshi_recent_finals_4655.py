@@ -77,7 +77,7 @@ class _Session:
     """
 
     #: (eligible_total, excluded_purged, never_swept, provisional_recheck)
-    TOTALS = (1, 0, 0, 1, 0, 0)  # 6 cols: #7000 fully_retracted_total, #2722 early_final_reach_total
+    TOTALS = (1, 0, 0, 1, 0)  # 5 cols: #7000 appended fully_retracted_total to COUNT_SQL
 
     def __init__(self, recorder, rows):
         self._recorder = recorder

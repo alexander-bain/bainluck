@@ -620,9 +620,8 @@ class TestTheCursorDoesNotSurviveTheReorder:
         # the mechanism that makes a bump deliberate. #7000 added a second ORDER
         # BY term and moved this to `:v3`; whoever changes the order next has to
         # come here and say so, which is exactly the intent of the module note
-        # ("Any future change to the ORDER BY must bump this again"). #2722's
-        # early-final arm moved it to `:v4`: it inserts rows at the band's ranks.
-        assert sweep.SWEEP_CURSOR_KEY.endswith(":v4")
+        # ("Any future change to the ORDER BY must bump this again").
+        assert sweep.SWEEP_CURSOR_KEY.endswith(":v3")
         assert sweep.SWEEP_CURSOR_KEY != "bainluck:kalshi_resolution_sweep:offset"
 
 
@@ -681,12 +680,12 @@ async def _run_against(tickers, *, limit=100, now=NOW):
     """
     recorder: list = []
     rows = [(i + 1, t, None, None, 5) for i, t in enumerate(tickers)]
-    # Six columns because the run's COUNT selects six (#7000 appended
-    # `fully_retracted_total`, #2722 `early_final_reach_total`). The stub models that statement, so it tracks its
+    # Five columns because `COUNT_SQL` selects five (#7000 appended
+    # `fully_retracted_total`). The stub models that statement, so it tracks its
     # shape: `run_backfill` reads `totals` POSITIONALLY and a short tuple raises
     # rather than degrading, which is the behaviour we want — a reader and a
     # COUNT that have drifted apart should be loud, not quietly `-1`.
-    totals = (len(tickers), 0, len(tickers), 0, 0, 0)
+    totals = (len(tickers), 0, len(tickers), 0, 0)
 
     class _Venue:
         async def get_event(self, ticker, with_nested_markets=True):

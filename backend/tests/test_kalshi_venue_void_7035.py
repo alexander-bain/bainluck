@@ -294,7 +294,7 @@ def _drive(legs, *, apply=True):
     venue = _Venue(legs)
 
     def maker():
-        return _FakeSession(recorder, [ROW], (1, 0, 0, 1, 0, 0))  # 6 cols: #2722 early_final_reach_total
+        return _FakeSession(recorder, [ROW], (1, 0, 0, 1, 0))
 
     report = asyncio.run(
         sweep.run_backfill(
@@ -435,7 +435,7 @@ def _drive_mode(legs, *, void_capture_only, apply=True):
     venue = _Venue(legs)
 
     def maker():
-        return _FakeSession(recorder, [ROW], (1, 0, 0, 1, 0, 0))  # 6 cols: #2722 early_final_reach_total
+        return _FakeSession(recorder, [ROW], (1, 0, 0, 1, 0))
 
     report = asyncio.run(
         sweep.run_backfill(

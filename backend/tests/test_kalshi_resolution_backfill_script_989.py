@@ -624,12 +624,11 @@ def _drive(apply: bool, rows=(STALE_ROW,)):
     def maker():
         # The totals tuple must have the same arity as `COUNT_SQL` returns
         # (eligible_total, excluded_purged, never_swept, provisional_recheck,
-        # fully_retracted_total, early_final_reach_total). A fake that is narrower than the real result
+        # fully_retracted_total). A fake that is narrower than the real result
         # set would let a widened COUNT_SQL ship with an IndexError nobody
         # executed — which is exactly what this caught when #7000 appended the
-        # fifth column, so the comment is load-bearing and stays. #2722
-        # appended the sixth.
-        s = _FakeSession(recorder, list(rows), (len(rows), 0, len(rows), 0, 0, 0))
+        # fifth column, so the comment is load-bearing and stays.
+        s = _FakeSession(recorder, list(rows), (len(rows), 0, len(rows), 0, 0))
         sessions.append(s)
         return s
 
