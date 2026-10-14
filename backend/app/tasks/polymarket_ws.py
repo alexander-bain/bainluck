@@ -50,11 +50,28 @@ PM_WAKE_COALESCE_SECONDS = 0.005
 
 
 class _PMCatalogFlushBoundary:
-    """Catalog handover waits for both disjoint flushes without serializing them."""
+    """Catalog handover waits for both disjoint flushes without serializing them.
+
+    #10090: in two steps. First only standalone flushes are fenced and the
+    handover waits out the one writing — game flushes keep running on the
+    unchanged maps meanwhile, so an unrelated standalone UPDATE no longer
+    holds every game's next price. The stamp attempts queued or running when
+    that write clears (a game flush may have started or extended the call
+    during the fence) then return with games still flowing and the call's
+    door open: a later game is admitted beside a held stamp instead of being
+    fenced behind it. That frontier is fixed, so arrivals cannot extend it.
+    Then game flushes are fenced too and the handover waits for the one in
+    flight (the game loop is serial) and joins the call, door closed first:
+    only attempts admitted since the frontier remain — the parent's residual
+    at its own fence instant. Maps change only with no flush of either kind
+    and no stamp running.
+    """
 
     def __init__(self):
         self.condition = asyncio.Condition()
         self.active = 0
+        self.standalone_active = 0
+        self.standalone_fenced = False
         self.changing = False
         self.stamps: Optional["_PMStampOwner"] = None
         self.flush_wake = asyncio.Event()
@@ -70,28 +87,86 @@ class _PMCatalogFlushBoundary:
             await self.stamps.join(cancel=cancel)
 
     @contextlib.asynccontextmanager
-    async def flushing(self):
+    async def flushing(self, *, standalone=False):
+        """``standalone``: the flush may write standalone legs (the standalone
+        loop and the final drain), so the handover's first step fences it."""
         async with self.condition:
-            await self.condition.wait_for(lambda: not self.changing)
+            await self.condition.wait_for(
+                lambda: not self.changing
+                and not (standalone and self.standalone_fenced)
+            )
             self.active += 1
+            self.standalone_active += standalone
         try:
             yield
         finally:
             async with self.condition:
                 self.active -= 1
+                self.standalone_active -= standalone
                 self.condition.notify_all()
+
+    async def _settle_stamp(self) -> None:
+        """#10090 — the stamp attempts queued or running as the fence's
+        standalone write clears return before game flushes are fenced. The
+        call's door stays open meanwhile, so a game arriving now is admitted
+        beside a held stamp, not held behind it. Only that frontier of
+        attempts (or the call's end): a later admission — even a re-admission
+        of a frontier event — is joined under the fence, never waited for
+        here, so continuous arrivals cannot extend the settle. A call whose
+        task has not yet had its first turn holds nothing readable: the
+        frontier is fixed once it opens its door (or it ends), never left
+        unset — an unset frontier would wait on the whole, extendable call.
+        Cancelled here, the call is cancelled and joined as in the stamps
+        phase."""
+        owner = self.stamps
+        task = None if owner is None else owner.task
+        if task is None or task.done():
+            return
+        reader = getattr(owner.refresher, "holding_frontier", None)
+        opened = getattr(owner.refresher, "admission_opened", None)
+        try:
+            frontier = reader() if reader is not None else None
+            while frontier is None and opened is not None and not task.done():
+                await asyncio.wait({task, opened()}, return_when=asyncio.FIRST_COMPLETED)
+                frontier = reader()
+            while not task.done() and not (frontier is not None and frontier.drained()):
+                waits = {task}
+                if frontier is not None:
+                    waits.add(frontier.changed())
+                await asyncio.wait(waits, return_when=asyncio.FIRST_COMPLETED)
+        except asyncio.CancelledError:
+            await owner.join(cancel=True)
+            raise
 
     @contextlib.asynccontextmanager
     async def updating(self, timing: Optional["_PMCatalogHandoverTiming"] = None):
         if timing is None:
             timing = _PMCatalogHandoverTiming(None)
         async with self.condition:
+            self.standalone_fenced = True
+            timing.enter("fence", flushes=self.active)
+            try:
+                await self.condition.wait_for(lambda: self.standalone_active == 0)
+            except BaseException as exc:
+                self.standalone_fenced = False
+                self.condition.notify_all()
+                timing.finish(_handover_outcome(exc))
+                raise
+        try:
+            await self._settle_stamp()
+        except BaseException as exc:
+            async with self.condition:
+                self.standalone_fenced = False
+                self.condition.notify_all()
+            timing.finish(_handover_outcome(exc))
+            raise
+        async with self.condition:
             self.changing = True
-            timing.enter("drain", flushes=self.active)
+            timing.enter("drain")
             try:
                 await self.condition.wait_for(lambda: self.active == 0)
             except BaseException as exc:
-                self.changing = False
+                self.standalone_fenced = self.changing = False
                 self.condition.notify_all()
                 timing.finish(_handover_outcome(exc))
                 raise
@@ -107,7 +182,7 @@ class _PMCatalogFlushBoundary:
         finally:
             try:
                 async with self.condition:
-                    self.changing = False
+                    self.standalone_fenced = self.changing = False
                     self.condition.notify_all()
             finally:
                 timing.finish(outcome)
@@ -123,7 +198,10 @@ class _PMCatalogHandoverTiming:
     """#10090 — where one catalog handover's blocked interval went.
 
     Every PM flush waits while `changing` is set, so a slow handover delays
-    every game's next price. Phases are monotonic durations; a phase runs
+    every game's next price. `fence` (standalone flushes held, game flushes
+    still running — through the standalone write and then the stamp attempts
+    held when it cleared) comes first and is reported beside `blocked`,
+    not inside it; `blocked` starts at `drain`. Phases are monotonic durations; a phase runs
     until the next one opens (the boundary opens drain and stamps, the
     caller names its body's phases) or the release. One INFO line per
     handover, written once, with the phase the handover ended in when it
@@ -161,9 +239,10 @@ class _PMCatalogHandoverTiming:
             return
         now = self.clock()
         self._close(now)
-        if self.blocked_started is None:
-            self.blocked_started = now
+        if flushes is not None:
             self.flushes = flushes
+        if self.blocked_started is None and phase != "fence":
+            self.blocked_started = now
         self.phase, self.phase_started = phase, now
 
     def finish(self, outcome: str) -> None:
@@ -174,6 +253,8 @@ class _PMCatalogHandoverTiming:
         self._close(now)
         if self.blocked_started is not None:
             self.blocked_s = now - self.blocked_started
+        elif self.durations:
+            self.blocked_s = 0.0  # ended in `fence`: no game flush was held
         self.outcome = outcome
         if self.reason is not None:
             logger.info("%s", self.line())
@@ -189,7 +270,7 @@ class _PMCatalogHandoverTiming:
         parts += [f"{name}={seconds(value)}" for name, value in self.reads]
         parts += [
             f"{name}={seconds(self.durations.get(name))}"
-            for name in ("drain", "stamps", "lock", "map", "open")
+            for name in ("fence", "drain", "stamps", "lock", "map", "open")
         ]
         parts.append(f"blocked={seconds(self.blocked_s)}")
         parts.append(
@@ -254,6 +335,14 @@ class _PMStampOwner:
                 if not task.cancelling():
                     task.cancel()
         self.waited_s += time.monotonic() - started
+        if self.task is not task:
+            # #10090: a catalog settle's cancel joins while game flushes still
+            # run, so a flush's join of the same call can finish first and
+            # start the next call. That joiner already took this call's debt;
+            # the slot (and its cohort) now belong to the next call.
+            if interrupted is not None:
+                raise interrupted
+            return
         self.task = None
         fresh, self.fresh = self.fresh, set()
         self.events = None
@@ -2866,11 +2955,12 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
         return wrote_all
 
     async def flush_prices(flush_started=None, final=False):
-        async with catalog_boundary.flushing():
+        # The final drain also writes standalone legs.
+        async with catalog_boundary.flushing(standalone=final):
             return await _flush_prices(flush_started, final=final)
 
     async def flush_standalone(flush_started=None):
-        async with catalog_boundary.flushing():
+        async with catalog_boundary.flushing(standalone=True):
             return await _flush_standalone(flush_started)
 
     async def drain_prices():
