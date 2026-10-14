@@ -531,8 +531,11 @@ final class SubsecondHeldDelivery10090Tests: XCTestCase {
     }
 
     /// Runs the saved burst. `final` replaces the last frame's `p` (nil = the
-    /// saved bytes); `drawn` reads the page as drawn before it closes.
-    private func burstCase(final: String?, drawn: ((MountedPage) throws -> Void)? = nil) async throws {
+    /// saved bytes). With `drawn`, the page is captured as soon as the model has
+    /// adopted the last frame, and that capture must be taken within a second of
+    /// the chunk reaching URLSession: a later capture is no timing result. It
+    /// does not wait for the view marks, and it is taken before the poll.
+    private func burstCase(final: String?, drawn: ((UIImage) throws -> Void)? = nil) async throws {
         PacedStream.reset(quarter: false, base: Self.recentBase(), burst: true, burstFinal: final)
         let config = URLSessionConfiguration.ephemeral
         config.protocolClasses = [PacedStream.self]
@@ -553,6 +556,7 @@ final class SubsecondHeldDelivery10090Tests: XCTestCase {
         defer { page.close(); vm.stopRefresh() }
         await waitUntil(10) { vm.event != nil }
         XCTAssertNotNil(vm.event, "the mounted page ran its own load")
+        let loadReads = client.reads
 
         // The paced cases' poll, carrying the held read. It lands after the burst
         // has drained: it checks nothing rolls back, it does not load the drain.
@@ -561,6 +565,24 @@ final class SubsecondHeldDelivery10090Tests: XCTestCase {
             await vm.load()
         }
         let last = Self.burstBasis(Self.burstFrames.count - 1)
+        if let drawn {
+            await waitUntil(Self.burstAfter + 1) {
+                PacedStream.done && marks.contains { $0.mark.name == .modelHeadlineAdopted && $0.mark.basis == last }
+            }
+            let readsBefore = client.reads
+            let dir = FileManager.default.temporaryDirectory.appendingPathComponent("native-10090-subsecond-hosted")
+            try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+            let url = dir.appendingPathComponent("final-burst-\(final ?? "saved").png")
+            let image = try page.capture(to: url)
+            let capturedAt = DispatchTime.now().uptimeNanoseconds
+            let chunkAt = try XCTUnwrap(PacedStream.emittedAt[last], "the burst was never handed to URLSession")
+            let capturedMs = Double(capturedAt &- chunkAt) / 1e6
+            print(String(format: "SUBSECOND-10090 drawn=burst-final-%@ chunk_to_capture_ms=%.2f reads_at_capture=%d capture=%@",
+                         final ?? "saved", capturedMs, readsBefore, url.path))
+            XCTAssertEqual(readsBefore, loadReads, "captured before the poll: the poll did not make it visible")
+            XCTAssertLessThan(capturedMs, 1000, "late capture: no timing result")
+            if capturedMs < 1000 { try drawn(image) }
+        }
         await waitUntil(Self.burstAfter + 5) {
             PacedStream.done && marks.contains { $0.mark.name == .viewHeadlineUpdated && $0.mark.basis == last }
         }
@@ -599,12 +621,9 @@ final class SubsecondHeldDelivery10090Tests: XCTestCase {
             latestHeadline, latestChart, viewHeadline.count, viewChart.count, client.reads,
             viewHeadline.map { String($0.mark.basis.split(separator: "=").last ?? "?") }.joined(separator: ","))
         print(line)
-        if let drawn {
-            // The companion control reads the drawn page instead; the view
-            // marks above are printed beside it, not required.
-            try drawn(page)
-            return
-        }
+        // The companion control read the drawn page instead; the view marks
+        // above are printed beside it, not required.
+        if drawn != nil { return }
         // A generous bound: this is a measurement, not a performance gate.
         XCTAssertLessThan(max(latestHeadline, latestChart), 1000,
                           "the latest frame had not reached the hero and chart inputs a second after the burst: \(line)")
@@ -613,17 +632,14 @@ final class SubsecondHeldDelivery10090Tests: XCTestCase {
     /// Companion control: the saved burst with only its last `p` moved to 60%,
     /// far from the 99.5% the eight before it share, so the DRAWN page shows
     /// which frame it settled on. The hero's printed numbers and the chart
-    /// line's drawn end are read from the captured page, after the burst and the
-    /// poll. The view marks are the hook this control checks, so they are
-    /// printed, not required.
+    /// line's drawn end are read from a capture taken within a second of the
+    /// chunk and before the poll (`burstCase`). The view marks are the hook this
+    /// control checks, so they are printed, not required.
     func testHostedPageDrawsTheBurstsChangedLastFrameInTheHeroAndAtTheChartEnd() async throws {
-        try await burstCase(final: "0.6") { page in
-            let dir = FileManager.default.temporaryDirectory.appendingPathComponent("native-10090-subsecond-hosted")
-            try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-            let url = dir.appendingPathComponent("final-burst-60.png")
-            let drawn = try Self.readDrawn(try page.capture(to: url))
-            print(String(format: "SUBSECOND-10090 drawn=burst-final-0.6 end_top_p=%.3f end_bottom_p=%.3f hero=%@ capture=%@",
-                         drawn.endTop, drawn.endBottom, drawn.hero.joined(separator: "|"), url.path))
+        try await burstCase(final: "0.6") { image in
+            let drawn = try Self.readDrawn(image)
+            print(String(format: "SUBSECOND-10090 drawn=burst-final-0.6 end_top_p=%.3f end_bottom_p=%.3f hero=%@",
+                         drawn.endTop, drawn.endBottom, drawn.hero.joined(separator: "|")))
             XCTAssertTrue(drawn.hero.contains { $0.contains("60%") } && drawn.hero.contains { $0.contains("40%") },
                           "the hero prints the last frame: \(drawn.hero)")
             XCTAssertEqual(drawn.endBottom, 0.60, accuracy: 0.04,
@@ -633,7 +649,7 @@ final class SubsecondHeldDelivery10090Tests: XCTestCase {
 
     /// The page as drawn: the text printed above the chart, and the vertical
     /// extent of the line's rightmost drawn column as probabilities, scaled by
-    /// the chart's own 100% and 50% axis labels. Every burst point is seconds
+    /// the two farthest-apart of the chart's own axis labels that were read. Every burst point is seconds
     /// apart on an hour-wide axis, so the line's end is one column.
     nonisolated private static func readDrawn(_ image: UIImage) throws -> (hero: [String], endTop: Double, endBottom: Double) {
         let cg = try XCTUnwrap(image.cgImage)
@@ -648,14 +664,16 @@ final class SubsecondHeldDelivery10090Tests: XCTestCase {
             return (string, CGRect(x: b.minX * CGFloat(w), y: (1 - b.maxY) * CGFloat(h),
                                    width: b.width * CGFloat(w), height: b.height * CGFloat(h)))
         }
-        func axis(_ label: String) throws -> CGFloat {
-            // The line can touch a label ("50% /" when it starts at 50%).
-            try XCTUnwrap(texts.first { $0.0.hasPrefix(label) && $0.1.midX < CGFloat(w) * 0.3 }?.1.midY,
-                          "the chart's \(label) axis label: \(texts.map(\.0))")
-        }
-        let y100 = try axis("100%"), y50 = try axis("50%")
-        let y0 = y100 + 2 * (y50 - y100)
-        func probability(_ y: Int) -> Double { 1 - 0.5 * Double((CGFloat(y) - y100) / (y50 - y100)) }
+        // The line can touch a label ("50% /") or hide it from the reader.
+        let ticks: [(p: Double, y: CGFloat)] = [("100%", 1.0), ("75%", 0.75), ("50%", 0.5), ("25%", 0.25), ("0%", 0)]
+            .compactMap { label, p in
+                texts.first { $0.0.hasPrefix(label) && $0.1.midX < CGFloat(w) * 0.3 }.map { (p, $0.1.midY) }
+            }
+        let (top, bottom) = try (XCTUnwrap(ticks.first), XCTUnwrap(ticks.last))
+        XCTAssertGreaterThanOrEqual(top.p - bottom.p, 0.5, "two axis labels at least 50 points apart: \(texts.map(\.0))")
+        let perPoint = (bottom.y - top.y) / CGFloat(top.p - bottom.p)
+        let y100 = top.y - CGFloat(1 - top.p) * perPoint, y0 = y100 + perPoint
+        func probability(_ y: Int) -> Double { 1 - Double((CGFloat(y) - y100) / perPoint) }
 
         var bytes = [UInt8](repeating: 0, count: w * h * 4)
         let ctx = try XCTUnwrap(CGContext(data: &bytes, width: w, height: h, bitsPerComponent: 8,
