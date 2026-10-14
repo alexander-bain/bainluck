@@ -41,7 +41,7 @@ from app.tasks import kalshi_resolution_sweep as sweep
 #: A beat instant.
 NOW = datetime(2026, 10, 13, 4, 23, tzinfo=timezone.utc)
 NOW_TS = int(NOW.timestamp())
-CEILING = NOW_TS - sweep.SETTLED_FEED_LAG_S
+CEILING = NOW_TS  # the head walks to the present (CERT-4118)
 #: Where a running feed's watermark stood before this beat: the previous run.
 LAST_RUN = CEILING - 600
 
@@ -419,7 +419,8 @@ class TestTheSelectionReadsNoDateAndNoCursor:
         for page in venue.pages:
             assert page["status"] == "settled"
             assert page["mve"] == "exclude"
-            assert page["min"] == LAST_RUN
+            # The head's first window re-reads the overlap behind the watermark.
+            assert page["min"] == LAST_RUN - sweep.SETTLED_FEED_OVERLAP_S
             assert page["max"] == CEILING
 
 
@@ -938,6 +939,130 @@ class TestAnUnconfirmedReadIsOwedNotForgotten:
         assert report["stats"]["writes_applied"] == 0
 
 
+def _at(hh_mm: str) -> int:
+    """A 2026-10-13 UTC clock time as unix seconds (NOW is 04:23)."""
+    hh, mm = hh_mm.split(":")
+    return int(NOW.replace(hour=int(hh), minute=int(mm)).timestamp())
+
+
+def _iso_at(ts: int) -> str:
+    return datetime.fromtimestamp(ts, timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+class TestTheNextBeatReadsWhatTheVenueAlreadyListed:
+    """CERT-4118's required repair 2722-NEXT-BEAT-SETTLED-HEAD. The beat fires
+    at :x3. The old walk stopped five minutes short of the present, so a
+    question listed settled at 04:19 was not read at 04:23 and closed at 04:33
+    — fourteen minutes. The walk now reaches the present and re-reads the last
+    five minutes on the next run, so late listings are still caught."""
+
+    SPEC = dict(EARLY_UNDATED, id=21, external_id="KXGOLDENGLOBE-26")
+
+    def _venue(self, *stamps):
+        ticker = self.SPEC["external_id"]
+        return _Venue(
+            settled=[{"ticker": f"{ticker}-0", "event_ticker": ticker,
+                      "settlement_ts": _iso_at(ts)} for ts in stamps],
+            legs={ticker: _legs(ticker, ["finalized"], self.SPEC["resolution_date"])},
+        )
+
+    def _run(self, engine, venue, at: int):
+        return asyncio.run(sweep.run_settled_feed(
+            session_maker=lambda: _SqliteSession(engine), client_factory=lambda: venue,
+            now=datetime.fromtimestamp(at, timezone.utc)))
+
+    def test_listed_at_0419_closes_on_the_0423_beat(self, redis_state):
+        redis_state.store["feed"] = _feed_state(head=_at("04:13"))
+        engine = _seed(SPECIMENS + (self.SPEC,))
+        report = self._run(engine, self._venue(_at("04:19")), _at("04:23"))
+        assert _state(engine)[0][21] == ("resolved", NOW.isoformat())
+        assert report["head_caught_up"] is True
+        assert redis_state.store["feed"]["head"] == _at("04:23")
+
+    def test_listed_one_second_after_a_beat_closes_on_the_next(self, redis_state):
+        """The worst case of an already-listed settlement: one period."""
+        redis_state.store["feed"] = _feed_state(head=_at("04:23"))
+        engine = _seed(SPECIMENS + (self.SPEC,))
+        at = _at("04:33")
+        self._run(engine, self._venue(_at("04:23") + 1), at)
+        assert _state(engine)[0][21] == ("resolved",
+                                         datetime.fromtimestamp(at, timezone.utc).isoformat())
+
+    def test_a_listing_late_at_0423_is_caught_by_the_0433_re_read(self, redis_state):
+        """The hold's reason, kept: stamped 04:22 but not yet listed when the
+        04:23 beat read to the present. The 04:33 beat re-reads from 04:18."""
+        redis_state.store["feed"] = _feed_state(head=_at("04:13"))
+        engine = _seed(SPECIMENS + (self.SPEC,))
+        self._run(engine, self._venue(), _at("04:23"))  # not listed yet
+        assert _state(engine)[0][21] == ("open", None)
+        assert redis_state.store["feed"]["head"] == _at("04:23")
+
+        at = _at("04:33")
+        venue = self._venue(_at("04:22"))
+        self._run(engine, venue, at)
+        assert venue.pages[0]["min"] == _at("04:18")
+        assert _state(engine)[0][21] == ("resolved",
+                                         datetime.fromtimestamp(at, timezone.utc).isoformat())
+
+    def test_the_re_read_is_the_head_only_and_once_per_run(self, redis_state):
+        floor = _at("04:23") - 86400
+        redis_state.store["feed"] = _feed_state(head=_at("03:53"), back=floor,
+                                                back_end=floor + 1800)
+        venue = self._venue()
+        self._run(_seed(), venue, _at("04:23"))
+        mins = [p["min"] for p in venue.pages]
+        assert mins[0] == _at("03:48")  # the head's first window re-reads
+        assert mins[1] == _at("04:08")  # its second starts at the watermark
+        assert mins[2:] == [floor, floor + sweep.SETTLED_FEED_STEP_S]  # backlog, none
+
+
+class TestTheRowCapIsLiteral:
+    """CERT-4118's named follow-up 2722-ONE-SECOND-ROW-CAP: a one-second window
+    bypassed ``max_rows``. And a window too big for the run must still narrow
+    when owed retries have already spent part of the run's rows."""
+
+    @staticmethod
+    def _crowd(n, ts):
+        rows = tuple(dict(EARLY_UNDATED, id=300 + i, external_id=f"KXCROWD-{i:03d}")
+                     for i in range(n))
+        settled = [{"ticker": f"{r['external_id']}-0", "event_ticker": r["external_id"],
+                    "settlement_ts": _iso_at(ts)} for r in rows]
+        legs = {r["external_id"]: _legs(r["external_id"], ["finalized"], r["resolution_date"])
+                for r in rows}
+        return rows, settled, legs
+
+    def test_one_second_over_the_cap_asks_the_cap_and_owes_the_rest(self, redis_state):
+        rows, settled, legs = self._crowd(3, LAST_RUN + 1)
+        engine = _seed(rows)
+        venue = _Venue(settled=settled, legs=legs)
+        report = _feed(engine, venue, max_rows=2)
+        assert len(venue.asked) == 2
+        assert report["stats"]["candidates"] == 2
+        assert redis_state.store["feed"]["owed"] == ["KXCROWD-002"]
+        # Past the crowded second, then the run's rows are spent.
+        assert redis_state.store["feed"]["head"] == LAST_RUN + 1
+        assert report["head_stop"] == "row budget spent"
+
+        venue = _Venue(settled=settled, legs=legs)
+        _feed(engine, venue, max_rows=2)  # the debt is paid from the owed list
+        assert redis_state.store["feed"]["head"] == CEILING
+        assert redis_state.store["feed"]["owed"] == []
+        assert all(_state(engine)[0][r["id"]][0] == "resolved" for r in rows)
+
+    def test_owed_retries_do_not_hold_an_oversized_window_forever(self, redis_state):
+        rows, settled, legs = self._crowd(3, LAST_RUN + 1)
+        stuck = dict(EARLY_UNDATED, id=399, external_id="KXSTUCK-26")
+        engine = _seed(rows + (stuck,))
+        redis_state.store["feed"] = _feed_state(
+            owed=["KXSTUCK-26"], owed_meta={"KXSTUCK-26": {"since": NOW_TS, "legs": []}})
+        venue = _Venue(settled=settled, legs=legs)
+        venue.event_error_for = {"KXSTUCK-26"}
+        report = _feed(engine, venue, max_rows=3)
+        assert report["stats"]["candidates"] <= 3
+        assert redis_state.store["feed"]["head"] == LAST_RUN + 1  # moved past the crowd
+        assert set(redis_state.store["feed"]["owed"]) == {"KXSTUCK-26", "KXCROWD-002"}
+
+
 class TestTheBeat:
     def test_the_task_is_registered_and_scheduled_on_realtime(self):
         from app.tasks import celery_app
@@ -988,4 +1113,3 @@ class TestTheClientSendsTheBoundsOnlyWhenAsked:
         assert captured[0]["min_settled_ts"] == 10
         assert captured[0]["max_settled_ts"] == 20
         assert captured[0]["mve_filter"] == "exclude"
-

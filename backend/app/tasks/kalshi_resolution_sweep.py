@@ -2327,9 +2327,19 @@ SETTLED_FEED_BACKLOG_DAYS = PROVABLY_PURGED_AGE_DAYS
 #: so a step is one or two pages.
 SETTLED_FEED_STEP_S = 15 * 60
 
-#: The newest five minutes are left for the next run. A market stamped settled
-#: at the venue may not be listed yet, and a window is never walked twice.
-SETTLED_FEED_LAG_S = 5 * 60
+#: How far each run's first head window reaches back behind the watermark.
+#:
+#: The head walks to the PRESENT, because CERT-4118 measured what holding the
+#: newest five minutes back cost: a question settled at :19 was not read by the
+#: :23 beat and closed at :33, fourteen minutes, past the ten-minute bar. The
+#: reason for the hold is kept by re-reading instead of waiting: a market stamped
+#: settled shortly before a run may not be listed yet, so the next run reads the
+#: last five minutes again. A listing up to five minutes late is still caught,
+#: as it was under the hold, and a settlement already listed is read at once.
+#: Re-reading is safe — a row closed the first time is no longer ``open``.
+#: Clamped to the walk's current step, so a burst that narrows the step cannot
+#: be wedged by a fixed re-read wider than the step itself.
+SETTLED_FEED_OVERLAP_S = 5 * 60
 
 #: The venue's page maximum.
 SETTLED_FEED_PAGE_SIZE = 1000
@@ -2441,7 +2451,7 @@ async def fetch_settled_event_tickers(
 
 def fresh_feed_state(now: datetime) -> dict:
     """Head one step behind the present; backlog from the retention floor up to it."""
-    head = int(now.timestamp()) - SETTLED_FEED_LAG_S - SETTLED_FEED_STEP_S
+    head = int(now.timestamp()) - SETTLED_FEED_STEP_S
     return {
         "head": head,
         "head_step": SETTLED_FEED_STEP_S,
@@ -2549,7 +2559,8 @@ async def run_settled_feed(
        not read or could not confirm. A ticker leaves the list when a read
        confirms the listing, when its row is no longer ``open``, or — retired by
        name — when its listing window passes the venue's retention floor.
-    2. HEAD. Walk ``[head, present - lag]`` in windows: read every settled market
+    2. HEAD. Walk ``[head, present]`` in windows, the first re-reading
+       :data:`SETTLED_FEED_OVERLAP_S` behind ``head``: read every settled market
        in the window, look up our ``open`` rows by event ticker, send them
        through :func:`run_backfill` (the all-legs read and :data:`UPDATE_SQL`),
        record any errored or unconfirmed ticker as owed, then persist ``head``
@@ -2572,7 +2583,9 @@ async def run_settled_feed(
     now = now or datetime.now(timezone.utc)
     maker = session_maker or default_session_maker()
     factory = client_factory or KalshiAPIService
-    ceiling = int(now.timestamp()) - SETTLED_FEED_LAG_S
+    # The present. Late listings are covered by the head's re-read
+    # (:data:`SETTLED_FEED_OVERLAP_S`), not by leaving the newest minutes unread.
+    ceiling = int(now.timestamp())
 
     stored = await _read_feed_state()
     bootstrapped = stored is None
@@ -2676,6 +2689,9 @@ async def run_settled_feed(
         async def _walk(name: str, end_bound: Optional[int]) -> None:
             nonlocal refusal
             wm_key, step_key = name, f"{name}_step"
+            # Only the head's first window this run re-reads behind the
+            # watermark: it is the one whose end was "now" on the last run.
+            reread = name == "head"
             while True:
                 limit_ts = ceiling if end_bound is None else min(end_bound, ceiling)
                 if state[wm_key] >= limit_ts:
@@ -2687,8 +2703,9 @@ async def run_settled_feed(
                 if totals["candidates"] >= max_rows:
                     stop[name] = "row budget spent"
                     return
-                start = state[wm_key]
-                end = min(start + state[step_key], limit_ts)
+                mark = state[wm_key]
+                end = min(mark + state[step_key], limit_ts)
+                start = mark - (min(SETTLED_FEED_OVERLAP_S, state[step_key]) if reread else 0)
                 window = await fetch_settled_event_tickers(
                     client, start_ts=start, end_ts=end, max_pages=pages_left
                 )
@@ -2704,26 +2721,37 @@ async def run_settled_feed(
                     if pages_left == max_pages and state[step_key] > 1:
                         # This window alone does not fit in a whole run. Halve
                         # it so a later run can finish a step.
-                        state[step_key] = max(1, (end - start) // 2)
+                        state[step_key] = max(1, (end - mark) // 2)
                         await _persist()
                     stop[name] = "page budget spent mid-window"
                     return
 
                 rows = await _open_rows_for_tickers(maker, window.event_tickers)
                 remaining = max_rows - totals["candidates"]
-                if len(rows) > remaining and end - start > 1:
-                    if totals["candidates"] == 0:
+                deferred: list = []
+                if len(rows) > remaining:
+                    # Judged on the WALKS' rows, not the owed retries: those run
+                    # first every run while the list is non-empty, so a test on
+                    # all candidates would hold this window forever.
+                    if totals["candidates"] > owed_asked:
+                        stop[name] = "row budget spent"
+                        return
+                    if state[step_key] > 1:
                         # More rows than a whole run may ask about: narrow the
                         # window and read it again inside this run.
-                        state[step_key] = max(1, (end - start) // 2)
+                        state[step_key] = max(1, (end - mark) // 2)
                         continue
-                    stop[name] = "row budget spent"
-                    return
+                    # One-second step and still too many (2722-ONE-SECOND-ROW-
+                    # CAP): the cap is literal. Ask what fits and owe the rest,
+                    # so the watermark still moves and no row is dropped.
+                    rows, deferred = rows[:remaining], rows[remaining:]
+                reread = False
 
                 totals["venue_markets_seen"] += window.markets
                 totals["event_tickers_seen"] += len(window.event_tickers)
                 totals["rows_matched"] += len(rows)
                 errored = await _ask(rows, window.settled_legs) if rows else []
+                errored += [r[1] for r in deferred]
 
                 if not apply:
                     progress[name] += 1
