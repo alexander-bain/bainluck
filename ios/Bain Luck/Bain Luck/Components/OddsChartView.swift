@@ -882,6 +882,12 @@ struct OddsChartView: View {
                         }
                         .frame(width: chartTeamGutterWidth)
                         .padding(.vertical, 8)
+                        // #9483 — "home above 50%, away below" is the single
+                        // line's reading. On a paired chart each line is its own
+                        // team's chance (the key below names them), so the side
+                        // labels would misread; the gutter keeps its width so the
+                        // page's shared time axis stays aligned.
+                        .pairedGutterHidden9483(checkpoints == nil && pairedLineColors(for: dataPoints) != nil)
 
                         chartView(dataPoints: dataPoints, sources: history.winProbSources ?? [:],
                                   periodMarkers: periodMarkers, moments: moments,
@@ -1036,6 +1042,8 @@ struct OddsChartView: View {
                                 }
                                 .frame(width: chartTeamGutterWidth)
                                 .padding(.vertical, 12)
+                                // #9483 — as the inline gutter: no side labels on a paired chart.
+                                .pairedGutterHidden9483(checkpoints == nil && pairedLineColors(for: dataPoints) != nil)
 
                                 chartView(dataPoints: dataPoints, sources: history.winProbSources ?? [:],
                                           periodMarkers: periodMarkers, moments: moments,
@@ -1607,7 +1615,8 @@ struct OddsChartView: View {
         moments: [ChartMoment],
         liveSplit: LiveEdgeSplit? = nil,
         balanceSource: String? = nil,
-        checkpoints: PublicationCheckpointMount4974? = nil
+        checkpoints: PublicationCheckpointMount4974? = nil,
+        paired: (home: Color, away: Color)? = nil
     ) -> some ChartContent {
         let _ = vm.onPlotBuild?()
         // 50% reference line (single 0–100 axis: even is 0.5)
@@ -1635,7 +1644,9 @@ struct OddsChartView: View {
         } else {
             ForEach(Self.defaultVisibleSources(in: dataPoints).filter { $0 != balanceSource }, id: \.self) { source in
                 let points = dataPoints.filter { $0.source == source }
-                let color = colorForSource(source, sources: sources)
+                // #9483 — a paired NFL chart draws its one line in the home
+                // team's colour, with the away line beside it (below).
+                let color = paired?.home ?? colorForSource(source, sources: sources)
                 let stroke = strokeStyleForSource(source, sources: sources)
                 // One series per RUN of observations rather than per source (#7878).
                 // Swift Charts joins whatever shares a series value, so a single
@@ -1675,6 +1686,53 @@ struct OddsChartView: View {
                         .foregroundStyle(color)
                         .symbolSize(18)
                     }
+                    // #9483 — the away team's line over the same run, in its own
+                    // series so no run is ever joined to its neighbour (#7878).
+                    if let paired {
+                        let awayRun = PairedWinLines9483.awayRun(segment)
+                        ForEach(Array(awayRun.enumerated()), id: \.offset) { _, vertex in
+                            LineMark(
+                                x: .value("Time", vertex.date),
+                                y: .value("Win probability", vertex.probability),
+                                series: .value("Source", "\(source)#away#\(index)")
+                            )
+                            .foregroundStyle(paired.away)
+                            .lineStyle(stroke)
+                            .interpolationMethod(.linear)
+                        }
+                        if segment.count == 1, index != split?.continuedRun, let only = awayRun.first {
+                            PointMark(
+                                x: .value("Time", only.date),
+                                y: .value("Win probability", only.probability)
+                            )
+                            .foregroundStyle(paired.away)
+                            .symbolSize(18)
+                        }
+                    }
+                }
+                // #9483 — the live edge's last segment from the away side. The
+                // home tail is the overlay's (`LiveChartEdgeMarker`); this one is
+                // drawn in the plot, ending at the same instant.
+                if let paired, let split {
+                    let tail = PairedWinLines9483.awayTail(split.tail)
+                    ForEach(Array(tail.enumerated()), id: \.offset) { _, vertex in
+                        LineMark(
+                            x: .value("Time", vertex.date),
+                            y: .value("Win probability", vertex.probability),
+                            series: .value("Source", "\(source)#away#tail")
+                        )
+                        .foregroundStyle(paired.away)
+                        .lineStyle(stroke)
+                        .interpolationMethod(.linear)
+                    }
+                    if tail.count == 1, let only = tail.first {
+                        PointMark(
+                            x: .value("Time", only.date),
+                            y: .value("Win probability", only.probability)
+                        )
+                        .foregroundStyle(paired.away)
+                        .symbolSize(18)
+                    }
                 }
             }
         }
@@ -1699,8 +1757,8 @@ struct OddsChartView: View {
                 y: .value("Win probability", moment.probability)
             )
             .symbolSize(momentSymbolArea)
-            .foregroundStyle(momentColor(moment, inked: balanceSource != nil,
-                                         dataPoints: dataPoints, sources: sources))
+            .foregroundStyle(paired?.home ?? momentColor(moment, inked: balanceSource != nil,
+                                                         dataPoints: dataPoints, sources: sources))
             .annotation(position: .overlay, spacing: 0) {
                 Circle()
                     .stroke(Color.systemBackground, lineWidth: 1.5)
@@ -1782,14 +1840,19 @@ struct OddsChartView: View {
         let liveSplit = checkpoints == nil ? liveEdgeSplit(dataPoints: dataPoints, domain: domain) : nil
         let balance = checkpoints == nil
             ? balancePlan(dataPoints: dataPoints, liveSplit: liveSplit, domain: domain) : nil
-        let balanceColors = balance == nil ? nil : teamColors
+        // #9483 — on an NFL page the admitted pair is drawn as two team lines
+        // instead of the balance ink: the same admission, the same number.
+        let paired = pairedLineColors(admitted: balance)
+        let ink = paired == nil ? balance : nil
+        let balanceColors = ink == nil ? nil : teamColors
 
         return Chart {
             chartContent(dataPoints: dataPoints, sources: sources,
                          visibleMarkers: visibleMarkers, moments: moments,
                          liveSplit: liveSplit,
-                         balanceSource: balance == nil ? nil : Self.primarySource(in: dataPoints),
-                         checkpoints: checkpoints)
+                         balanceSource: ink == nil ? nil : Self.primarySource(in: dataPoints),
+                         checkpoints: checkpoints,
+                         paired: paired)
         }
         .chartYScale(domain: yMin...yMax)
         .chartXScale(domain: domain)
@@ -1800,10 +1863,10 @@ struct OddsChartView: View {
         // space, then placed on the plot frame.
         .chartBackground { proxy in
             GeometryReader { geo in
-                if let balance, let colors = balanceColors {
+                if let ink, let colors = balanceColors {
                     let plotFrame = geo[proxy.plotAreaFrame]
                     BinaryWinChartBalanceInkLayer(
-                        plan: balance,
+                        plan: ink,
                         project: BinaryWinChartBalanceInk.linearProjector(
                             xDomain: domain, yDomain: yMin...yMax,
                             plotRect: CGRect(origin: .zero, size: plotFrame.size)),
@@ -1858,7 +1921,7 @@ struct OddsChartView: View {
                         selection: selection, proxy: proxy, plotFrame: plotFrame,
                         tail: liveSplit.tail, label: "\(homeShort) \(liveEdge.homeLabel)",
                         rising: priceActivity?.homeDelta.map { $0 > 0 },
-                        lineColor: balanceColors.map {
+                        lineColor: paired?.home ?? balanceColors.map {
                             BinaryWinBalanceMount.sideColor(probability: liveSplit.tail.to.probability,
                                                             home: $0.home, away: $0.away)
                         } ?? colorForSource(liveSplit.source, sources: sources),
@@ -1997,6 +2060,27 @@ struct OddsChartView: View {
             gameFinished: EventState.isFinished(status), xDomain: domain)
     }
 
+    /// #9483 — the two team colours when this chart draws the paired NFL lines,
+    /// else nil. `admitted` is `balancePlan`'s answer, which exists only for an
+    /// admitted binary (`BinaryWinBalanceMount.admission`).
+    private func pairedLineColors(admitted: BinaryWinBalancePlan?) -> (home: Color, away: Color)? {
+        guard admitted != nil, let teamColors,
+              PairedWinLines9483.admits(sportKey: sportKey, binaryAdmission: .admittedBinary)
+        else { return nil }
+        return (home: teamColors.home, away: teamColors.away)
+    }
+
+    /// #9483 — `pairedLineColors(admitted:)` for a whole point set, read the
+    /// way the legend reads it (no checkpoint mount).
+    private func pairedLineColors(for dataPoints: [ChartDataPoint]) -> (home: Color, away: Color)? {
+        guard NFLRecognizablePage9483.applies(sportKey: sportKey) else { return nil }
+        let domain = xAxisDomain(for: dataPoints)
+        return pairedLineColors(admitted: balancePlan(
+            dataPoints: dataPoints,
+            liveSplit: liveEdgeSplit(dataPoints: dataPoints, domain: domain),
+            domain: domain))
+    }
+
     /// #925 — the date under a finger at chart-space `x`, clamped to the plot
     /// so a thumb that slides past either end reads the first or last moment
     /// rather than dropping the selection.
@@ -2081,11 +2165,19 @@ struct OddsChartView: View {
         // #10456 — an inked binary line is not the source color, so its swatch
         // is the two team colors it is actually drawn in (home over away).
         let domain = xAxisDomain(for: dataPoints)
-        let inkedColors = balancePlan(dataPoints: dataPoints,
-                                      liveSplit: liveEdgeSplit(dataPoints: dataPoints, domain: domain),
-                                      domain: domain) == nil ? nil : teamColors
+        let admitted = balancePlan(dataPoints: dataPoints,
+                                   liveSplit: liveEdgeSplit(dataPoints: dataPoints, domain: domain),
+                                   domain: domain)
+        // #9483 — a paired chart's key is its two teams, each in its line's colour.
+        let paired = pairedLineColors(admitted: admitted)
+        let inkedColors = admitted == nil ? nil : teamColors
+        // (`pairedLineColors(for:)` is this same reading, for the gutter.)
 
         return FlowLayout(spacing: 8) {
+            if let paired {
+                pairedLegendKey(awayShort, color: paired.away)
+                pairedLegendKey(homeShort, color: paired.home)
+            } else {
             ForEach(ordered, id: \.self) { source in
                 let isPrimary = source == "aggregate" || (source == "consensus" && !ordered.contains("aggregate"))
                 HStack(spacing: 4) {
@@ -2109,6 +2201,19 @@ struct OddsChartView: View {
                         .foregroundStyle(isPrimary ? .primary : .secondary)
                 }
             }
+            }
+        }
+    }
+
+    /// #9483 — one team's key on a paired chart.
+    private func pairedLegendKey(_ name: String, color: Color) -> some View {
+        HStack(spacing: 4) {
+            RoundedRectangle(cornerRadius: 1)
+                .fill(color)
+                .frame(width: 14, height: 3)
+            Text(name)
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(color)
         }
     }
 
@@ -3967,5 +4072,15 @@ struct PublicationCheckpointMount4974 {
         case .withheld:
             return PublicationCheckpointReadoutSlot4974.withheldText
         }
+    }
+}
+
+private extension View {
+    /// #9483 — a gutter's side labels step aside on a paired chart. ONE read of
+    /// the pairing per gutter: `pairedLineColors(for:)` segments every point,
+    /// and the opacity and the accessibility answer must agree.
+    func pairedGutterHidden9483(_ hidden: Bool) -> some View {
+        opacity(hidden ? 0 : 1)
+            .accessibilityHidden(hidden)
     }
 }
