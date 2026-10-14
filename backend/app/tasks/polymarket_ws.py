@@ -50,11 +50,21 @@ PM_WAKE_COALESCE_SECONDS = 0.005
 
 
 class _PMCatalogFlushBoundary:
-    """Catalog handover waits for both disjoint flushes without serializing them."""
+    """Catalog handover waits for both disjoint flushes without serializing them.
+
+    #10090: in two steps. First only standalone flushes are fenced and the
+    handover waits out the one writing — game flushes keep running on the
+    unchanged maps meanwhile, so an unrelated standalone UPDATE no longer
+    holds every game's next price. Then game flushes are fenced too and the
+    handover waits for the one in flight (the game loop is serial) and the
+    stamps. Maps change only with no flush of either kind running.
+    """
 
     def __init__(self):
         self.condition = asyncio.Condition()
         self.active = 0
+        self.standalone_active = 0
+        self.standalone_fenced = False
         self.changing = False
         self.stamps: Optional["_PMStampOwner"] = None
         self.flush_wake = asyncio.Event()
@@ -70,15 +80,22 @@ class _PMCatalogFlushBoundary:
             await self.stamps.join(cancel=cancel)
 
     @contextlib.asynccontextmanager
-    async def flushing(self):
+    async def flushing(self, *, standalone=False):
+        """``standalone``: the flush may write standalone legs (the standalone
+        loop and the final drain), so the handover's first step fences it."""
         async with self.condition:
-            await self.condition.wait_for(lambda: not self.changing)
+            await self.condition.wait_for(
+                lambda: not self.changing
+                and not (standalone and self.standalone_fenced)
+            )
             self.active += 1
+            self.standalone_active += standalone
         try:
             yield
         finally:
             async with self.condition:
                 self.active -= 1
+                self.standalone_active -= standalone
                 self.condition.notify_all()
 
     @contextlib.asynccontextmanager
@@ -86,12 +103,15 @@ class _PMCatalogFlushBoundary:
         if timing is None:
             timing = _PMCatalogHandoverTiming(None)
         async with self.condition:
-            self.changing = True
-            timing.enter("drain", flushes=self.active)
+            self.standalone_fenced = True
+            timing.enter("fence", flushes=self.active)
             try:
+                await self.condition.wait_for(lambda: self.standalone_active == 0)
+                self.changing = True
+                timing.enter("drain")
                 await self.condition.wait_for(lambda: self.active == 0)
             except BaseException as exc:
-                self.changing = False
+                self.standalone_fenced = self.changing = False
                 self.condition.notify_all()
                 timing.finish(_handover_outcome(exc))
                 raise
@@ -107,7 +127,7 @@ class _PMCatalogFlushBoundary:
         finally:
             try:
                 async with self.condition:
-                    self.changing = False
+                    self.standalone_fenced = self.changing = False
                     self.condition.notify_all()
             finally:
                 timing.finish(outcome)
@@ -123,7 +143,9 @@ class _PMCatalogHandoverTiming:
     """#10090 — where one catalog handover's blocked interval went.
 
     Every PM flush waits while `changing` is set, so a slow handover delays
-    every game's next price. Phases are monotonic durations; a phase runs
+    every game's next price. `fence` (standalone flushes held, game flushes
+    still running) comes first and is reported beside `blocked`, not inside
+    it; `blocked` starts at `drain`. Phases are monotonic durations; a phase runs
     until the next one opens (the boundary opens drain and stamps, the
     caller names its body's phases) or the release. One INFO line per
     handover, written once, with the phase the handover ended in when it
@@ -161,9 +183,10 @@ class _PMCatalogHandoverTiming:
             return
         now = self.clock()
         self._close(now)
-        if self.blocked_started is None:
-            self.blocked_started = now
+        if flushes is not None:
             self.flushes = flushes
+        if self.blocked_started is None and phase != "fence":
+            self.blocked_started = now
         self.phase, self.phase_started = phase, now
 
     def finish(self, outcome: str) -> None:
@@ -174,6 +197,8 @@ class _PMCatalogHandoverTiming:
         self._close(now)
         if self.blocked_started is not None:
             self.blocked_s = now - self.blocked_started
+        elif self.durations:
+            self.blocked_s = 0.0  # ended in `fence`: no game flush was held
         self.outcome = outcome
         if self.reason is not None:
             logger.info("%s", self.line())
@@ -189,7 +214,7 @@ class _PMCatalogHandoverTiming:
         parts += [f"{name}={seconds(value)}" for name, value in self.reads]
         parts += [
             f"{name}={seconds(self.durations.get(name))}"
-            for name in ("drain", "stamps", "lock", "map", "open")
+            for name in ("fence", "drain", "stamps", "lock", "map", "open")
         ]
         parts.append(f"blocked={seconds(self.blocked_s)}")
         parts.append(
@@ -2866,11 +2891,12 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
         return wrote_all
 
     async def flush_prices(flush_started=None, final=False):
-        async with catalog_boundary.flushing():
+        # The final drain also writes standalone legs.
+        async with catalog_boundary.flushing(standalone=final):
             return await _flush_prices(flush_started, final=final)
 
     async def flush_standalone(flush_started=None):
-        async with catalog_boundary.flushing():
+        async with catalog_boundary.flushing(standalone=True):
             return await _flush_standalone(flush_started)
 
     async def drain_prices():

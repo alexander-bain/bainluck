@@ -58,9 +58,9 @@ class Rig:
     def stop_admitting(self):
         self.stopped += 1
 
-    async def start(self):
+    async def start(self, standalone=False):
         async def flush():
-            async with self.boundary.flushing():
+            async with self.boundary.flushing(standalone=standalone):
                 await self.flush_release.wait()
 
         self.flush = asyncio.create_task(flush())
@@ -87,9 +87,9 @@ class Rig:
 
         return asyncio.create_task(run())
 
-    async def later_flush_admitted(self):
+    async def later_flush_admitted(self, standalone=False):
         async def later():
-            async with self.boundary.flushing():
+            async with self.boundary.flushing(standalone=standalone):
                 return True
 
         return await asyncio.wait_for(later(), 5)
@@ -120,13 +120,20 @@ async def test_each_phase_owns_its_induced_wait_and_one_line_lands(caplog):
     await rig.flush
 
     assert timing.durations == pytest.approx(
-        {"drain": 2.0, "stamps": 3.0, "lock": 0.5, "map": 0.05, "open": 0.01}
+        {
+            "fence": 0.0,
+            "drain": 2.0,
+            "stamps": 3.0,
+            "lock": 0.5,
+            "map": 0.05,
+            "open": 0.01,
+        }
     )
     assert timing.blocked_s == pytest.approx(5.56)
     assert sum(timing.durations.values()) == pytest.approx(timing.blocked_s)
     assert handover_lines(caplog) == [
         PREFIX + "reason=timer outcome=ok slate_read=0.400s open_read=1.200s "
-        "drain=2.000s stamps=3.000s lock=0.500s map=0.050s open=0.010s "
+        "fence=0.000s drain=2.000s stamps=3.000s lock=0.500s map=0.050s open=0.010s "
         "blocked=5.560s flushes_at_start=1"
     ]
     assert not rig.boundary.changing and rig.boundary.stamps.task is None
@@ -206,6 +213,62 @@ async def test_failure_in_the_map_body_is_named_and_releases(caplog):
 
 
 @pytest.mark.asyncio
+async def test_a_standalone_write_is_fenced_time_and_game_flushes_keep_running(caplog):
+    """#10090 candidate: the held flush is a STANDALONE write. Its remaining
+    time is `fence` — reported beside `blocked`, not inside it — and a game
+    flush enters and leaves during it while a later standalone flush waits."""
+    caplog.set_level(logging.INFO, logger=LOGGER)
+    rig = Rig()
+    await rig.start(standalone=True)
+    rig.stamp_release.set()
+    timing = rig.timing()
+    handover = rig.handover(timing)
+    await until(lambda: timing.phase == "fence")
+    assert rig.boundary.standalone_fenced and not rig.boundary.changing
+    assert await rig.later_flush_admitted()  # a game flush runs beside it
+    held = asyncio.create_task(rig.later_flush_admitted(standalone=True))
+    await asyncio.sleep(0.01)
+    assert not held.done(), "a new standalone write entered the fence"
+    rig.clock.now += 2.0  # the standalone write's remaining UPDATE
+    rig.flush_release.set()
+    await asyncio.wait_for(handover, 5)
+    assert await held  # re-admitted once the maps changed
+
+    assert timing.durations["fence"] == pytest.approx(2.0)
+    assert timing.durations["drain"] == pytest.approx(0.0)
+    assert timing.blocked_s == pytest.approx(0.06)
+    (line,) = handover_lines(caplog)
+    assert "outcome=ok " in line and "fence=2.000s drain=0.000s " in line
+    assert "blocked=0.060s flushes_at_start=1" in line
+    assert not rig.boundary.standalone_fenced and not rig.boundary.changing
+
+
+@pytest.mark.asyncio
+async def test_cancel_during_fence_releases_both_kinds_and_logs_once(caplog):
+    caplog.set_level(logging.INFO, logger=LOGGER)
+    rig = Rig()
+    await rig.start(standalone=True)
+    timing = rig.timing()
+    handover = rig.handover(timing)
+    await until(lambda: timing.phase == "fence")
+    rig.clock.now += 0.75
+    handover.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await handover
+
+    assert not rig.boundary.standalone_fenced and not rig.boundary.changing
+    (line,) = handover_lines(caplog)
+    assert "outcome=cancelled@fence" in line
+    assert "fence=0.750s drain=- stamps=-" in line
+    assert "blocked=0.000s" in line
+    assert await rig.later_flush_admitted(standalone=True)
+    rig.flush_release.set()
+    await rig.flush
+    rig.stamp_release.set()
+    await rig.owner.task
+
+
+@pytest.mark.asyncio
 async def test_an_untimed_boundary_stays_silent(caplog):
     caplog.set_level(logging.INFO, logger=LOGGER)
     boundary = task._PMCatalogFlushBoundary()
@@ -279,6 +342,7 @@ async def test_real_consumer_writes_one_line_per_catalog_handover(monkeypatch, c
             "outcome",
             "slate_read",
             "open_read",
+            "fence",
             "drain",
             "stamps",
             "lock",
@@ -287,7 +351,7 @@ async def test_real_consumer_writes_one_line_per_catalog_handover(monkeypatch, c
             "blocked",
             "flushes_at_start",
         }
-        for name in ("drain", "stamps", "lock", "map", "open", "blocked"):
+        for name in ("fence", "drain", "stamps", "lock", "map", "open", "blocked"):
             assert fields[name].endswith("s") and float(fields[name][:-1]) >= 0
     for line in timer:
         fields = dict(part.split("=", 1) for part in line[len(PREFIX) :].split())
