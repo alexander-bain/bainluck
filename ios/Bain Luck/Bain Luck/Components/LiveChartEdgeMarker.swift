@@ -142,18 +142,6 @@ enum LiveChartEdgeMarkerPlan {
         return new.to.date >= old.to.date
     }
 
-    /// The tip actually drawn this frame: the held one while it belongs to the
-    /// new segment — one of its ends, or the replaced pin hanging off the same
-    /// predecessor (`shownFrom`) — otherwise the target. The overlay always
-    /// draws from `tail.from` to this tip, so it is never detached.
-    static func drawnTip(shown: LiveEdgeVertex?, shownFrom: LiveEdgeVertex? = nil,
-                         tail: LiveEdgeTail) -> LiveEdgeVertex {
-        guard let shown else { return tail.to }
-        if shown == tail.to || shown == tail.from { return shown }
-        if let from = tail.from, shownFrom == from, shown.date >= from.date { return shown }
-        return tail.to
-    }
-
     /// Which way a changed printed value slides: up (−1) for a rise or an
     /// unknown direction, down (+1) for a fall.
     static func shiftDirection(rising: Bool?) -> CGFloat {
@@ -194,6 +182,29 @@ enum LiveChartEdgeMarkerPlan {
             let t = CGFloat(i) / CGFloat(steps)
             return rect.contains(CGPoint(x: from.x + (to.x - from.x) * t, y: from.y + (to.y - from.y) * t))
         }
+    }
+}
+
+/// The tail the marker last drew, and whether moving to the current one
+/// glides. The marker advances it while it draws, so it never waits on a
+/// change callback. SwiftUI skips `onChange` actions beyond one per frame, and
+/// a skipped callback once left the dot on the vertex before the line's end
+/// (#10090). This is a plain reference, so advancing it invalidates nothing.
+/// It decides only the motion: the drawn tip is always the current tail's end.
+final class LiveEdgeGlideMemory {
+    private var tail: LiveEdgeTail?
+    private var glides = false
+
+    /// Same tail again (a redraw): the same answer. A tail drawn for the first
+    /// time is compared with the one drawn before it, whatever changes in
+    /// between were coalesced away.
+    func glides(to new: LiveEdgeTail, reduceMotion: Bool, sceneActive: Bool) -> Bool {
+        guard new != tail else { return glides }
+        glides = tail.map {
+            LiveChartEdgeMarkerPlan.glides(from: $0, to: new, reduceMotion: reduceMotion, sceneActive: sceneActive)
+        } ?? false
+        tail = new
+        return glides
     }
 }
 
@@ -333,6 +344,10 @@ private struct LiveEdgeLabelSizeKey: PreferenceKey {
 /// A scene that is not active hides them the same way, and it or Reduce
 /// Motion turning on mid-glide cancels the glide: the segment is drawn to the
 /// settled tip at once.
+///
+/// The tip handed to the layer is always the tail's own end. A glide is that
+/// same change, animated (`LiveEdgeGlideMemory`), so no callback has to arrive
+/// for the line to reach its newest vertex.
 struct LiveChartEdgeMarker: View {
     @ObservedObject var selection: OddsChartSelection
     let proxy: ChartProxy
@@ -346,57 +361,41 @@ struct LiveChartEdgeMarker: View {
     let pulseColor: Color
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.scenePhase) private var scenePhase
-    @State private var shownTip: LiveEdgeVertex?
-    /// The `from` of the tail `shownTip` was set on — lets a replaced pin keep
-    /// being drawn off the same predecessor until its glide starts.
-    @State private var shownFrom: LiveEdgeVertex?
+    @State private var memory = LiveEdgeGlideMemory()
     @State private var labelSize = CGSize(width: 64, height: 20)
     /// Bumped to cancel an in-flight glide (see `AcceptedValueChange.epoch`).
     @State private var epoch = 0
 
     var body: some View {
-        let tip = LiveChartEdgeMarkerPlan.drawnTip(shown: shownTip, shownFrom: shownFrom, tail: tail)
+        let glides = memory.glides(to: tail, reduceMotion: reduceMotion, sceneActive: scenePhase == .active)
         LiveEdgeTipLayer(
-            tipTime: tip.date.timeIntervalSinceReferenceDate,
-            tipProbability: tip.probability,
+            tipTime: tail.to.date.timeIntervalSinceReferenceDate,
+            tipProbability: tail.to.probability,
             from: tail.from, proxy: proxy, plotFrame: plotFrame,
             label: label, rising: rising, labelSize: labelSize,
             showsMarker: selection.date == nil && scenePhase == .active,
             lineColor: lineColor, lineStyle: lineStyle,
             selection: selection, activity: activity, target: tail.to, pulseColor: pulseColor)
+        // A glide animates the layer's tip from where it was drawn. A snap
+        // takes no animation, even inside someone else's.
+        .animation(glides ? .easeOut(duration: LiveChartEdgeMarkerPlan.glideDuration) : nil, value: tail.to)
         .id(epoch)
         .onPreferenceChange(LiveEdgeLabelSizeKey.self) { size in
             if size != .zero { labelSize = size }
         }
-        .onAppear { shownTip = tail.to; shownFrom = tail.from }
-        .onChange(of: tail) { old, new in
-            if LiveChartEdgeMarkerPlan.glides(from: old, to: new, reduceMotion: reduceMotion,
-                                              sceneActive: scenePhase == .active) {
-                shownFrom = new.from
-                withAnimation(.easeOut(duration: LiveChartEdgeMarkerPlan.glideDuration)) {
-                    shownTip = new.to
-                }
-            } else {
-                settle(cancelling: false)
-            }
-        }
         .onChange(of: scenePhase) { _, phase in
-            if phase != .active { settle(cancelling: true) }
+            if phase != .active { cancelGlide() }
         }
         .onChange(of: reduceMotion) { _, on in
-            if on { settle(cancelling: true) }
+            if on { cancelGlide() }
         }
         .allowsHitTesting(false)
     }
 
-    private func settle(cancelling: Bool) {
+    private func cancelGlide() {
         var snap = Transaction()
         snap.disablesAnimations = true
-        withTransaction(snap) {
-            shownTip = tail.to
-            shownFrom = tail.from
-            if cancelling { epoch += 1 }
-        }
+        withTransaction(snap) { epoch += 1 }
     }
 }
 
@@ -479,6 +478,12 @@ private struct LiveEdgeTipLayer: View, Animatable {
                 }
             }
         }
+        // A new target arrives in the glide's own transaction (`.animation` on
+        // this layer). Only the tip interpolates, in data space. Everything
+        // drawn from it, the new axis, string and colour takes this frame's
+        // value as-is: animated again they would slide in screen space off the
+        // line, and the label would crossfade.
+        .animation(nil, value: target)
         .accessibilityHidden(true)
     }
 }
