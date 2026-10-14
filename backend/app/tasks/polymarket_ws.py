@@ -55,9 +55,14 @@ class _PMCatalogFlushBoundary:
     #10090: in two steps. First only standalone flushes are fenced and the
     handover waits out the one writing — game flushes keep running on the
     unchanged maps meanwhile, so an unrelated standalone UPDATE no longer
-    holds every game's next price. Then game flushes are fenced too and the
-    handover waits for the one in flight (the game loop is serial) and the
-    stamps. Maps change only with no flush of either kind running.
+    holds every game's next price. The stamp call running when that write
+    clears (one a game flush started or extended during the fence) then
+    returns with games still flowing and its door open: a later game is
+    admitted beside a held stamp instead of being fenced behind it. Then game
+    flushes are fenced too and the handover waits for the one in flight (the
+    game loop is serial) and joins the one call it may have started — the
+    parent's residual at its own fence instant, never a later call. Maps
+    change only with no flush of either kind and no stamp running.
     """
 
     def __init__(self):
@@ -98,6 +103,22 @@ class _PMCatalogFlushBoundary:
                 self.standalone_active -= standalone
                 self.condition.notify_all()
 
+    async def _settle_stamp(self) -> None:
+        """#10090 — the stamp call running as the fence's standalone write
+        clears returns before game flushes are fenced. Its door stays open, so
+        a game arriving now is admitted beside a held stamp, not held behind
+        it. Only this call: a successor is joined under the fence. Cancelled
+        here, the call is cancelled and joined as in the stamps phase."""
+        owner = self.stamps
+        task = None if owner is None else owner.task
+        if task is None or task.done():
+            return
+        try:
+            await asyncio.wait({task})
+        except asyncio.CancelledError:
+            await owner.join(cancel=True)
+            raise
+
     @contextlib.asynccontextmanager
     async def updating(self, timing: Optional["_PMCatalogHandoverTiming"] = None):
         if timing is None:
@@ -107,8 +128,23 @@ class _PMCatalogFlushBoundary:
             timing.enter("fence", flushes=self.active)
             try:
                 await self.condition.wait_for(lambda: self.standalone_active == 0)
-                self.changing = True
-                timing.enter("drain")
+            except BaseException as exc:
+                self.standalone_fenced = False
+                self.condition.notify_all()
+                timing.finish(_handover_outcome(exc))
+                raise
+        try:
+            await self._settle_stamp()
+        except BaseException as exc:
+            async with self.condition:
+                self.standalone_fenced = False
+                self.condition.notify_all()
+            timing.finish(_handover_outcome(exc))
+            raise
+        async with self.condition:
+            self.changing = True
+            timing.enter("drain")
+            try:
                 await self.condition.wait_for(lambda: self.active == 0)
             except BaseException as exc:
                 self.standalone_fenced = self.changing = False
@@ -144,8 +180,9 @@ class _PMCatalogHandoverTiming:
 
     Every PM flush waits while `changing` is set, so a slow handover delays
     every game's next price. `fence` (standalone flushes held, game flushes
-    still running) comes first and is reported beside `blocked`, not inside
-    it; `blocked` starts at `drain`. Phases are monotonic durations; a phase runs
+    still running — through the standalone write and then the stamp call
+    running when it cleared) comes first and is reported beside `blocked`,
+    not inside it; `blocked` starts at `drain`. Phases are monotonic durations; a phase runs
     until the next one opens (the boundary opens drain and stamps, the
     caller names its body's phases) or the release. One INFO line per
     handover, written once, with the phase the handover ended in when it
