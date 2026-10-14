@@ -1346,6 +1346,9 @@ class LiveBlendRefresher:
         #: #10090 — the running call's same-event fence (`holding_event_ids`).
         #: None from a call's first turn until it opens its door.
         self._holding: Optional[set[int]] = None
+        #: #10090 — resolved when the next call opens its door
+        #: (`admission_opened`).
+        self._admission_signal = None
 
     # ── throttling ───────────────────────────────────────────────────────────
 
@@ -1580,6 +1583,9 @@ class LiveBlendRefresher:
         window.publish_inline = publish_inline
         self._admission = window
         self._holding = window.holding
+        signal, self._admission_signal = self._admission_signal, None
+        if signal is not None and not signal.done():
+            signal.set_result(None)
         interrupted = False
         try:
             # One event already owns its transaction. For multiple admitted events,
@@ -2003,6 +2009,22 @@ class LiveBlendRefresher:
         call is running. Synchronous; never closes the door."""
         window = self._admission
         return None if window is None else _HoldingFrontier(window)
+
+    def admission_opened(self):
+        """#10090 — a future resolved when the next call opens its door.
+
+        A call's task created this turn has no window until its first turn
+        runs, so `holding_frontier` reads None for a call that is about to
+        hold attempts. A lifecycle wait awaits this (beside the task, which
+        may end without opening one) rather than polling for the first turn.
+        """
+        import asyncio
+
+        loop = asyncio.get_running_loop()
+        signal = self._admission_signal
+        if signal is None or signal.done() or signal.get_loop() is not loop:
+            signal = self._admission_signal = loop.create_future()
+        return signal
 
     def adopt_pending(self, event_ids: Iterable[int]) -> None:
         """Take over stamps a previous run of this source still owed.

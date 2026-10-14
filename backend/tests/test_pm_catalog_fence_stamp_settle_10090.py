@@ -441,3 +441,101 @@ async def test_alternating_readmissions_do_not_starve_the_catalog(monkeypatch):
             hand.cancel()
             await asyncio.gather(hand, return_exceptions=True)
         await boundary.join_stamps()
+
+
+async def test_a_call_before_its_first_turn_still_fixes_a_finite_frontier(monkeypatch):
+    """Root's 2026-10-14 counterexample on 52fc646942: the handover waits out
+    a standalone write; its exit notifies the handover; a game write
+    finishing in the same ready queue creates the stamp task before the
+    handover resumes. The settle then read `holding_frontier()` while that
+    task had not had its first turn (no window yet), kept `None` for good
+    and awaited the whole call, which alternating re-admissions kept alive:
+    ten attempts returned with the catalog fenced. Now the settle waits for
+    the call to open its door (or end) and fixes the frontier there."""
+    from tests.test_single_event_commit_10090 import rig as stamp_rig, settle_until
+
+    x = stamp_rig(monkeypatch, count=2)
+    boundary = task._PMCatalogFlushBoundary()
+    owner = boundary.stamp_owner(x.r)
+    gates, starts = [], []
+    original = x.r._refresh_batch
+
+    async def controlled(ids, *args, **kwargs):
+        gate = asyncio.Event()
+        starts.append(tuple(ids))
+        gates.append(gate)
+        await gate.wait()
+        return await original(ids, *args, **kwargs)
+
+    x.r._refresh_batch = controlled
+    owner.events, owner.fresh = {1}, {1}
+    mapped = asyncio.Event()
+    read_before_first_turn = []
+    reader = x.r.holding_frontier
+
+    def frontier():
+        read_before_first_turn.append(x.r._admission is None)
+        return reader()
+
+    x.r.holding_frontier = frontier
+
+    async def handover():
+        async with boundary.updating():
+            mapped.set()
+
+    hand, accepted = None, 0
+    try:
+        async with boundary.flushing(standalone=True):
+            hand = asyncio.create_task(handover())
+            await settle_until(lambda: boundary.standalone_fenced)
+        # The handover is notified; the stamp task is created in this same
+        # turn, so the handover resumes before the task's first turn.
+        owner.task = asyncio.create_task(x.r.refresh([1], flush_started=1000))
+        await settle_until(lambda: len(starts) == 1)
+        assert read_before_first_turn[:1] == [True], (
+            "the probe did not reach the first-turn ordering"
+        )
+        for i in range(10):
+            eid = 2 if i % 2 == 0 else 1
+            if x.r.admit_fresh([eid], flush_started=1001 + i) != frozenset({eid}):
+                break
+            accepted += 1
+            await settle_until(lambda: len(starts) == i + 2)
+            gates[i].set()
+            previous = starts[i][0]
+            await settle_until(lambda: previous not in x.r.holding_event_ids())
+        assert accepted < 10, "continuous re-admission kept the catalog waiting"
+        assert boundary.changing, "games were never fenced while arrivals continued"
+        for gate in gates:
+            gate.set()
+        await asyncio.wait_for(hand, 2)
+        assert mapped.is_set() and not boundary.standalone_fenced
+        assert not x.r.pending_event_ids()
+    finally:
+        for gate in gates:
+            gate.set()
+        x.r.stop_admitting()
+        if hand is not None:
+            hand.cancel()
+            await asyncio.gather(hand, return_exceptions=True)
+        await boundary.join_stamps()
+
+
+async def test_a_call_that_ends_on_its_first_turn_does_not_hold_the_settle(monkeypatch):
+    """The first-turn wait also completes on the task: a call with nothing
+    due returns without ever opening a door."""
+    from tests.test_single_event_commit_10090 import rig as stamp_rig
+
+    x = stamp_rig(monkeypatch, count=1)
+    boundary = task._PMCatalogFlushBoundary()
+    owner = boundary.stamp_owner(x.r)
+    owner.events, owner.fresh = set(), set()
+    owner.task = asyncio.create_task(x.r.refresh([]))
+    mapped = asyncio.Event()
+
+    async def handover():
+        async with boundary.updating():
+            mapped.set()
+
+    await asyncio.wait_for(handover(), 2)
+    assert mapped.is_set() and owner.task is None

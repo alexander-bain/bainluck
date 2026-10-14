@@ -112,15 +112,23 @@ class _PMCatalogFlushBoundary:
         beside a held stamp, not held behind it. Only that frontier of
         attempts (or the call's end): a later admission — even a re-admission
         of a frontier event — is joined under the fence, never waited for
-        here, so continuous arrivals cannot extend the settle. Cancelled
-        here, the call is cancelled and joined as in the stamps phase."""
+        here, so continuous arrivals cannot extend the settle. A call whose
+        task has not yet had its first turn holds nothing readable: the
+        frontier is fixed once it opens its door (or it ends), never left
+        unset — an unset frontier would wait on the whole, extendable call.
+        Cancelled here, the call is cancelled and joined as in the stamps
+        phase."""
         owner = self.stamps
         task = None if owner is None else owner.task
         if task is None or task.done():
             return
         reader = getattr(owner.refresher, "holding_frontier", None)
-        frontier = reader() if reader is not None else None
+        opened = getattr(owner.refresher, "admission_opened", None)
         try:
+            frontier = reader() if reader is not None else None
+            while frontier is None and opened is not None and not task.done():
+                await asyncio.wait({task, opened()}, return_when=asyncio.FIRST_COMPLETED)
+                frontier = reader()
             while not task.done() and not (frontier is not None and frontier.drained()):
                 waits = {task}
                 if frontier is not None:
