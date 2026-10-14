@@ -624,7 +624,7 @@ final class SubsecondHeldDelivery10090Tests: XCTestCase {
             let drawn = try Self.readDrawn(try page.capture(to: url))
             print(String(format: "SUBSECOND-10090 drawn=burst-final-0.6 end_top_p=%.3f end_bottom_p=%.3f hero=%@ capture=%@",
                          drawn.endTop, drawn.endBottom, drawn.hero.joined(separator: "|"), url.path))
-            XCTAssertTrue(drawn.hero.contains("60%") && drawn.hero.contains("40%"),
+            XCTAssertTrue(drawn.hero.contains { $0.contains("60%") } && drawn.hero.contains { $0.contains("40%") },
                           "the hero prints the last frame: \(drawn.hero)")
             XCTAssertEqual(drawn.endBottom, 0.60, accuracy: 0.04,
                            "the chart line is drawn to the last frame's 60%, not held at the one before it")
@@ -649,7 +649,8 @@ final class SubsecondHeldDelivery10090Tests: XCTestCase {
                                    width: b.width * CGFloat(w), height: b.height * CGFloat(h)))
         }
         func axis(_ label: String) throws -> CGFloat {
-            try XCTUnwrap(texts.first { $0.0 == label && $0.1.midX < CGFloat(w) * 0.3 }?.1.midY,
+            // The line can touch a label ("50% /" when it starts at 50%).
+            try XCTUnwrap(texts.first { $0.0.hasPrefix(label) && $0.1.midX < CGFloat(w) * 0.3 }?.1.midY,
                           "the chart's \(label) axis label: \(texts.map(\.0))")
         }
         let y100 = try axis("100%"), y50 = try axis("50%")
