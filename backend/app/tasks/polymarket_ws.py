@@ -82,23 +82,120 @@ class _PMCatalogFlushBoundary:
                 self.condition.notify_all()
 
     @contextlib.asynccontextmanager
-    async def updating(self):
+    async def updating(self, timing: Optional["_PMCatalogHandoverTiming"] = None):
+        if timing is None:
+            timing = _PMCatalogHandoverTiming(None)
         async with self.condition:
             self.changing = True
+            timing.enter("drain", flushes=self.active)
             try:
                 await self.condition.wait_for(lambda: self.active == 0)
-            except BaseException:
+            except BaseException as exc:
                 self.changing = False
                 self.condition.notify_all()
+                timing.finish(_handover_outcome(exc))
                 raise
+        outcome = "ok"
         try:
             # No maps change beneath a stamp left running by an earlier batch.
+            timing.enter("stamps")
             await self.join_stamps()
             yield
+        except BaseException as exc:
+            outcome = _handover_outcome(exc)
+            raise
         finally:
-            async with self.condition:
-                self.changing = False
-                self.condition.notify_all()
+            try:
+                async with self.condition:
+                    self.changing = False
+                    self.condition.notify_all()
+            finally:
+                timing.finish(outcome)
+
+
+def _handover_outcome(exc: BaseException) -> str:
+    if isinstance(exc, asyncio.CancelledError):
+        return "cancelled"
+    return f"failed:{type(exc).__name__}"
+
+
+class _PMCatalogHandoverTiming:
+    """#10090 — where one catalog handover's blocked interval went.
+
+    Every PM flush waits while `changing` is set, so a slow handover delays
+    every game's next price. Phases are monotonic durations; a phase runs
+    until the next one opens (the boundary opens drain and stamps, the
+    caller names its body's phases) or the release. One INFO line per
+    handover, written once, with the phase the handover ended in when it
+    was cancelled or failed. Reads before the boundary block no flush and
+    are reported beside it, not inside `blocked`.
+    """
+
+    def __init__(
+        self,
+        reason: Optional[str],
+        *,
+        slate_read_s: Optional[float] = None,
+        open_read_s: Optional[float] = None,
+        clock=time.monotonic,
+    ) -> None:
+        self.reason = reason
+        self.reads = (("slate_read", slate_read_s), ("open_read", open_read_s))
+        self.clock = clock
+        self.durations: dict[str, float] = {}
+        self.phase: Optional[str] = None
+        self.phase_started = 0.0
+        self.blocked_started: Optional[float] = None
+        self.blocked_s: Optional[float] = None
+        self.flushes: Optional[int] = None
+        self.ended_in: Optional[str] = None
+        self.outcome: Optional[str] = None
+
+    def _close(self, now: float) -> None:
+        if self.phase is not None:
+            self.durations[self.phase] = now - self.phase_started
+            self.phase = None
+
+    def enter(self, phase: str, *, flushes: Optional[int] = None) -> None:
+        if self.outcome is not None:
+            return
+        now = self.clock()
+        self._close(now)
+        if self.blocked_started is None:
+            self.blocked_started = now
+            self.flushes = flushes
+        self.phase, self.phase_started = phase, now
+
+    def finish(self, outcome: str) -> None:
+        if self.outcome is not None:
+            return
+        now = self.clock()
+        self.ended_in = self.phase
+        self._close(now)
+        if self.blocked_started is not None:
+            self.blocked_s = now - self.blocked_started
+        self.outcome = outcome
+        if self.reason is not None:
+            logger.info("%s", self.line())
+
+    def line(self) -> str:
+        def seconds(value: Optional[float]) -> str:
+            return "-" if value is None else f"{value:.3f}s"
+
+        outcome = self.outcome or "open"
+        if outcome != "ok" and self.ended_in is not None:
+            outcome = f"{outcome}@{self.ended_in}"
+        parts = [f"reason={self.reason}", f"outcome={outcome}"]
+        parts += [f"{name}={seconds(value)}" for name, value in self.reads]
+        parts += [
+            f"{name}={seconds(self.durations.get(name))}"
+            for name in ("drain", "stamps", "lock", "map", "open")
+        ]
+        parts.append(f"blocked={seconds(self.blocked_s)}")
+        parts.append(
+            f"flushes_at_start={'-' if self.flushes is None else self.flushes}"
+        )
+        return "Polymarket WS catalog handover: " + " ".join(parts)
 
 
 class _PMStampOwner:
@@ -3279,7 +3376,7 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
     # One callback/buffer/session owner spans routine catalog refreshes. Only
     # changed subscriptions reconnect; unchanged open-contract shards keep
     # their books and receive queues instead of rebuilding the whole fleet.
-    async def refresh_catalog(slate, open_read):
+    async def refresh_catalog(slate, open_read, timing):
         nonlocal open_run_task, routing_generation
         admission, failed, bridge, bridge_failed = open_read
         stats["open_contract_admission_error"] = failed
@@ -3296,8 +3393,10 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
             fresh_open_markets.update(admission.mirrored_outcomes())
             for key, value in admission.counts.items():
                 stats[f"open_contract_{key}"] = value
-        async with catalog_boundary.updating():
+        async with catalog_boundary.updating(timing):
+            timing.enter("lock")
             async with buffer_lock:
+                timing.enter("map")
                 routing_generation += 1
                 # Keep accepted writes' ownership through their drain even if the
                 # token has left the catalog. New inputs use ONLY the fresh maps.
@@ -3372,6 +3471,7 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                 legged_market_ids.update(
                     asset_to_market[a] for a in asset_to_outcome if a in asset_to_market
                 )
+            timing.enter("open")
             stats["assets_subscribed"] = len(asset_ids)
             stats["assets_mapped"] = len(asset_to_outcome)
             stats["assets_unmapped"] = len(slate["unmapped_assets"])
@@ -3437,9 +3537,15 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
         )
 
     async def admit_open_contracts():
+        open_read, open_read_s = preread, None
+        if open_read is None:
+            started = time.monotonic()
+            open_read = await read_catalog_open(game_slate)
+            open_read_s = time.monotonic() - started
         await refresh_catalog(
             game_slate,
-            preread if preread is not None else await read_catalog_open(game_slate),
+            open_read,
+            _PMCatalogHandoverTiming("initial", open_read_s=open_read_s),
         )
 
     admission_task = asyncio.create_task(admit_open_contracts())
@@ -3549,8 +3655,12 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                     stats["admitted_event_ids"] = sorted(admitted)[:20]
                 break
             try:
+                read_started = time.monotonic()
                 fresh_slate = await load_game_slate()
+                slate_read_s = time.monotonic() - read_started
+                read_started = time.monotonic()
                 fresh_open = await read_catalog_open(fresh_slate)
+                open_read_s = time.monotonic() - read_started
                 if fresh_open[1]:
                     stats["open_contract_admission_error"] = True
                     logger.warning(
@@ -3567,7 +3677,15 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
             # Install new callback ownership before subscribing new tokens.
             # The existing refreshable owner changes only affected shards, so
             # unrelated live games keep their connections, books and coverage.
-            await refresh_catalog(fresh_slate, fresh_open)
+            await refresh_catalog(
+                fresh_slate,
+                fresh_open,
+                _PMCatalogHandoverTiming(
+                    "admission" if admitted else "timer",
+                    slate_read_s=slate_read_s,
+                    open_read_s=open_read_s,
+                ),
+            )
             if game_run_task.done():
                 # Loading/updating can yield while the retained client exits.
                 # Propagate its failure (or end this run) just as the wait above.
