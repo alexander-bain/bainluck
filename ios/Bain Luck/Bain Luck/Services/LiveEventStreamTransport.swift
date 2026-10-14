@@ -189,6 +189,35 @@ final class LiveEventStreamTransport: LiveStreamHandle {
         for handler in handlers[event] ?? [] { handler(data) }
     }
 
+    /// Reads the byte stream and assembles SSE frames OFF the main actor
+    /// (`@concurrent`; this target's nonisolated async functions otherwise run
+    /// on the caller's actor). Each complete frame is handed to `deliver` on
+    /// main and awaited, so frames arrive in wire order and one at a time.
+    /// Returns false when `deliver` declines a frame or the task is cancelled,
+    /// true when the stream ends.
+    @concurrent
+    nonisolated private static func readFrames(
+        from bytes: URLSession.AsyncBytes,
+        deliver: @MainActor @Sendable (String, String) -> Bool
+    ) async throws -> Bool {
+        var parser = SSEFrameParser()
+        var line: [UInt8] = []
+        for try await byte in bytes {
+            if Task.isCancelled { return false }
+            guard byte == 0x0A else {           // not "\n"
+                line.append(byte)
+                continue
+            }
+            if line.last == 0x0D { line.removeLast() }   // a CRLF sender
+            let text = String(decoding: line, as: UTF8.self)
+            line.removeAll(keepingCapacity: true)
+            if let frame = parser.feed(text), await !deliver(frame.event, frame.data) {
+                return false
+            }
+        }
+        return true
+    }
+
     /// How one connection ended.
     private enum Outcome {
         /// The server answered with a non-200: final, the transport is closed.
@@ -237,24 +266,19 @@ final class LiveEventStreamTransport: LiveStreamHandle {
             // looks perfectly healthy. Caught end-to-end over a real socket; no
             // parser test could see it, because the parser is correct.
             //
-            // Byte-at-a-time is fine here: a busy market pushes a frame every
-            // few seconds, and correctness on the frame boundary is the whole
-            // feature.
-            var parser = SSEFrameParser()
-            var line: [UInt8] = []
-            for try await byte in bytes {
-                if Task.isCancelled || closed { return .ended }
-                guard byte == 0x0A else {           // not "\n"
-                    line.append(byte)
-                    continue
-                }
-                if line.last == 0x0D { line.removeLast() }   // a CRLF sender
-                let text = String(decoding: line, as: UTF8.self)
-                line.removeAll(keepingCapacity: true)
-                if let frame = parser.feed(text) {
-                    emit(frame.event, frame.data)
-                }
+            // Byte-at-a-time, off the main actor (#10090): the bytes are read and
+            // the frames assembled there, so the page's own main-actor work no
+            // longer shares an executor with the byte loop. Each COMPLETE frame
+            // comes back to `emit` in order, and the next is not handed over
+            // until it has run.
+            let finished = try await Self.readFrames(from: bytes) { [self] event, data in
+                // `close()` cancels this task, and a handler may have called it
+                // for an earlier frame: nothing is handed on after either.
+                if Task.isCancelled || closed { return false }
+                emit(event, data)
+                return true
             }
+            if !finished { return .ended }
 
             // The byte stream ended without the server saying `closed` or
             // `reconnect` — a release restarting the dyno, or a router cut.

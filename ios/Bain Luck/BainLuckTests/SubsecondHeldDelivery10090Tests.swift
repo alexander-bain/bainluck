@@ -1,5 +1,6 @@
 import SwiftUI
 import UIKit
+import Vision
 import XCTest
 @testable import Bain_Luck
 
@@ -35,12 +36,20 @@ final class SubsecondHeldDelivery10090Tests: XCTestCase {
     nonisolated private static let spacing: TimeInterval = 0.25
     nonisolated private static let rawToFold: TimeInterval = 0.05
     nonisolated private static let resyncAfter = 8
+    /// The burst lands after the hosted page has loaded and drawn. It drains
+    /// well before the 2.1 s poll, so the burst case is an UNLOADED control; the
+    /// paced cases carry the poll and resync workload.
+    nonisolated private static let burstAfter: TimeInterval = 1.5
+    nonisolated private static let events: Set<Int> = [4242, burstEvent]
 
     private var marks: [(mark: LiveTimingSeam.Mark, at: UInt64)] = []
 
     override func setUp() async throws {
         marks = []
+        // The host app runs its own live streams against production while the
+        // tests run, and their marks reach this observer too. Keep this page's.
         LiveTimingSeam.observer = { [weak self] in
+            guard Self.events.contains($0.eventId) else { return }
             self?.marks.append(($0, DispatchTime.now().uptimeNanoseconds))
         }
     }
@@ -87,25 +96,72 @@ final class SubsecondHeldDelivery10090Tests: XCTestCase {
         Data("event: \(event)\ndata: \(data)\n\n".utf8)
     }
 
+    // MARK: - The phone's burst
+
+    /// The nine frames build 52 decoded in one 128 ms burst (revs 1440–1448 of
+    /// event 15329605, 2026-10-13 22:59:52–55Z). The payloads are copied byte for
+    /// byte from the Mac's wire capture of the same stream
+    /// (`paired-sources/phone-attach/wire.jsonl`). Only the clocks are moved, by
+    /// one shared offset, so they fall on the hosted chart's recent axis. Each
+    /// entry is the frame's `p` and its microseconds after the held rev-1439 clock.
+    nonisolated private static let burstEvent = 15329605
+    nonisolated private static let burstFrames: [(p: String, after: Int64)] = [
+        ("0.995", 9_122_053), ("0.9955", 9_369_861), ("0.995", 9_862_483),
+        ("0.9955", 10_108_783), ("0.995", 10_634_906), ("0.9955", 11_108_875),
+        ("0.995", 12_436_220), ("0.9955", 12_691_242), ("0.995", 12_929_543),
+    ]
+    /// The rev-1439 clock's microseconds past its whole second (22:59:42.880923Z).
+    nonisolated private static let burstHeldMicros: Int64 = 880_923
+
+    /// The wire's clock format: six fractional digits and `+00:00`.
+    nonisolated private static func microClock(_ micros: Int64) -> String {
+        let whole = Int64(PacedStream.base) * 1_000_000 + micros
+        let f = ISO8601DateFormatter()
+        f.formatOptions = [.withInternetDateTime]
+        let seconds = f.string(from: Date(timeIntervalSince1970: TimeInterval(whole / 1_000_000)))
+        return String(seconds.dropLast()) + String(format: ".%06lld+00:00", whole % 1_000_000)
+    }
+
+    nonisolated private static func burstBasis(_ i: Int) -> String { "rev:\(burstEvent)=\(1440 + i)" }
+
+    /// All nine frames as one chunk, the way they reached the phone's decoder.
+    /// `final` replaces only the last frame's `p` (the companion control); nil
+    /// is the saved burst byte for byte.
+    nonisolated private static func burstChunk(final: String? = nil) -> Data {
+        var chunk = Data()
+        for (i, f) in burstFrames.enumerated() {
+            let clock = microClock(burstHeldMicros + f.after)
+            let p = i == burstFrames.count - 1 ? final ?? f.p : f.p
+            chunk += frame("probability", #"{"event_id": \#(burstEvent), "p": \#(p), "source": "polymarket", "source_value": \#(p), "updated_at": "\#(clock)", "status": "live", "rev": {"\#(burstEvent)": \#(1440 + i)}}"#)
+        }
+        return chunk
+    }
+
     /// Streams one open, then a raw promise and its fold every `spacing`, from a
     /// background queue. It records when each fold's bytes were handed to
-    /// URLSession, keyed by the fold's basis.
+    /// URLSession, keyed by the fold's basis. In burst mode it instead hands the
+    /// phone's nine frames to URLSession as one chunk, `burstAfter` after the open.
     private nonisolated final class PacedStream: URLProtocol, @unchecked Sendable {
         private static let lock = NSLock()
         nonisolated(unsafe) private static var emitted: [String: UInt64] = [:]
         nonisolated(unsafe) private static var finished = false
         nonisolated(unsafe) private static var quarter = false
+        nonisolated(unsafe) private static var burst = false
+        nonisolated(unsafe) private static var burstFinal: String?
         nonisolated(unsafe) private static var baseEpoch = SubsecondHeldDelivery10090Tests.fixedBase
         private let queue = DispatchQueue(label: "paced-stream")
         private var stopped = false
 
-        static func reset(quarter: Bool, base: TimeInterval) {
-            lock.lock(); emitted = [:]; finished = false; Self.quarter = quarter; baseEpoch = base; lock.unlock()
+        static func reset(quarter: Bool, base: TimeInterval, burst: Bool = false, burstFinal: String? = nil) {
+            lock.lock(); emitted = [:]; finished = false; Self.quarter = quarter; Self.burst = burst
+            Self.burstFinal = burstFinal; baseEpoch = base; lock.unlock()
         }
         static var base: TimeInterval { lock.lock(); defer { lock.unlock() }; return baseEpoch }
         static var emittedAt: [String: UInt64] { lock.lock(); defer { lock.unlock() }; return emitted }
         static var done: Bool { lock.lock(); defer { lock.unlock() }; return finished }
         private static var isQuarter: Bool { lock.lock(); defer { lock.unlock() }; return quarter }
+        private static var isBurst: Bool { lock.lock(); defer { lock.unlock() }; return burst }
+        private static var finalValue: String? { lock.lock(); defer { lock.unlock() }; return burstFinal }
 
         override class func canInit(with request: URLRequest) -> Bool {
             request.url?.path.hasSuffix("/stream") == true
@@ -117,8 +173,24 @@ final class SubsecondHeldDelivery10090Tests: XCTestCase {
             let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: "HTTP/1.1",
                                            headerFields: ["Content-Type": "text/event-stream"])!
             client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
-            client?.urlProtocol(self, didLoad: SubsecondHeldDelivery10090Tests.frame("open", #"{"event_id":4242}"#))
+            let id = Self.isBurst ? SubsecondHeldDelivery10090Tests.burstEvent : 4242
+            client?.urlProtocol(self, didLoad: SubsecondHeldDelivery10090Tests.frame("open", #"{"event_id":\#(id)}"#))
             let start = DispatchTime.now()
+            if Self.isBurst {
+                let chunk = SubsecondHeldDelivery10090Tests.burstChunk(final: Self.finalValue)
+                queue.asyncAfter(deadline: start + SubsecondHeldDelivery10090Tests.burstAfter) { [self] in
+                    guard !stopped else { return }
+                    let at = DispatchTime.now().uptimeNanoseconds
+                    Self.lock.lock()
+                    for i in SubsecondHeldDelivery10090Tests.burstFrames.indices {
+                        Self.emitted[SubsecondHeldDelivery10090Tests.burstBasis(i)] = at
+                    }
+                    Self.lock.unlock()
+                    client?.urlProtocol(self, didLoad: chunk)
+                    Self.lock.lock(); Self.finished = true; Self.lock.unlock()
+                }
+                return
+            }
             for i in 1...SubsecondHeldDelivery10090Tests.quotes {
                 let at = Double(i) * SubsecondHeldDelivery10090Tests.spacing
                 queue.asyncAfter(deadline: start + at) { [self] in
@@ -191,17 +263,33 @@ final class SubsecondHeldDelivery10090Tests: XCTestCase {
         """.utf8))
     }
 
+    /// The burst's held page: the phone's folded blend at the one row its frames
+    /// write, rev 1439 at 99.1%, hosted with the same tip-off as the others.
+    private func heldBeforeBurst() throws -> EventDetail {
+        let id = Self.burstEvent
+        let clock = Self.microClock(Self.burstHeldMicros)
+        return try Self.decoder().decode(EventDetail.self, from: Data("""
+        {"id":\(id),"sport":"basketball_nba","home_team":"Celtics","away_team":"Knicks","status":"live",
+         "commence_time":"\(Self.stamp(-4200))","home_score":50,"away_score":48,
+         "current_odds":{"home_probability":0.991,"away_probability":0.009},
+         "hero_probability":0.991,"hero_probability_source":"blend",
+         "hero_probability_observed_at":"\(clock)",
+         "blend_fold_revision":{"\(id)":1439},
+         "win_probability_sources":{"polymarket":{"value":0.991,"updated_at":"\(clock)"}}}
+        """.utf8))
+    }
+
     /// The hosted page's history: a blend line from tip-off that ends on the
     /// held hero, 60% at the held clock, so the chart draws before the burst and the
     /// page never falls through to the production history read.
-    private func heldHistory() throws -> EventHistoryResponse {
-        let rows: [(TimeInterval, Double)] = [(-4200, 0.50), (-2400, 0.54), (-600, 0.58), (0, 0.60)]
+    private func heldHistory(eventId: Int = 4242, end: Double = 0.60) throws -> EventHistoryResponse {
+        let rows: [(TimeInterval, Double)] = [(-4200, 0.50), (-2400, 0.54), (-600, 0.58), (0, end)]
         func points() -> String {
             rows.map { #"{"timestamp":"\#(Self.stamp($0.0))","home_probability":\#($0.1)}"# }
                 .joined(separator: ",")
         }
         return try Self.decoder().decode(EventHistoryResponse.self, from: Data("""
-        {"event_id":4242,"home_team":"Celtics","away_team":"Knicks","status":"live",
+        {"event_id":\(eventId),"home_team":"Celtics","away_team":"Knicks","status":"live",
          "history":[\(points())],"aggregate_line":[\(points())],
          "win_prob_history":{"polymarket":[\(points())]}}
         """.utf8))
@@ -222,7 +310,7 @@ final class SubsecondHeldDelivery10090Tests: XCTestCase {
         let window: UIWindow
         private let previousKeyWindow: UIWindow?
 
-        init(_ vm: EventDetailViewModel) async throws {
+        init(_ vm: EventDetailViewModel, eventId: Int = 4242) async throws {
             let deadline = CACurrentMediaTime() + 10
             func activeScene() -> UIWindowScene? {
                 UIApplication.shared.connectedScenes
@@ -234,7 +322,7 @@ final class SubsecondHeldDelivery10090Tests: XCTestCase {
             }
             let scene = try XCTUnwrap(activeScene(), "the hosted page needs a foreground-active window scene")
             previousKeyWindow = scene.windows.first { $0.isKeyWindow }
-            let page = NavigationStack { EventDetailView(eventId: 4242, viewModel: vm) }
+            let page = NavigationStack { EventDetailView(eventId: eventId, viewModel: vm) }
                 .environmentObject(PinManager())
                 .environment(\.colorScheme, .light)
             let host = hostForMeasurement(page, at: .large)
@@ -245,13 +333,20 @@ final class SubsecondHeldDelivery10090Tests: XCTestCase {
             window.makeKeyAndVisible()
         }
 
+        /// When the last `capture` finished drawing, on the process clock: the
+        /// image's content is fixed here, before it is encoded and written.
+        private(set) var drawnAt: UInt64 = 0
+
         /// The final page as drawn, taken after the measured burst.
-        func capture(to url: URL) throws {
+        @discardableResult
+        func capture(to url: URL) throws -> UIImage {
             window.layoutIfNeeded()
             let image = UIGraphicsImageRenderer(bounds: window.bounds).image { _ in
                 _ = window.drawHierarchy(in: window.bounds, afterScreenUpdates: true)
             }
+            drawnAt = DispatchTime.now().uptimeNanoseconds
             try XCTUnwrap(image.pngData()).write(to: url)
+            return image
         }
 
         func close() {
@@ -421,5 +516,204 @@ final class SubsecondHeldDelivery10090Tests: XCTestCase {
 
     func testHostedPageHandsEveryQuarterSecondQuoteToTheHeroAndChartInOrder() async throws {
         try await hostedCase(quarter: true)
+    }
+
+    // MARK: - Burst case
+
+    /// The phone's nine frames arrive in ONE chunk on the hosted page. Every one
+    /// is decoded, adopted and charted, in revision order, and the poll after it
+    /// rolls nothing back. Lags are read from the moment the chunk was handed to
+    /// URLSession, on the same process clock.
+    ///
+    /// The display is read from the page as drawn, captured within a second of
+    /// the chunk and before the poll (`burstCase`): the hero prints the pair the
+    /// last frame's 99.5% renders to, and the chart line ends there. The saved
+    /// values alternate 99.5 / 99.55% and share one rounded headline, so an
+    /// unchanged display need not produce a new view callback; the view marks
+    /// are printed, not required (SwiftUI can skip the last `onChange`). The
+    /// held 99.1% prints the same `<1%` / `>99%` pair and ends the line inside
+    /// the same tolerance, so this display check cannot tell the last frame from
+    /// the held page. This case proves drain, order, history and a correct final
+    /// display; the companion below proves a visibly different last frame is
+    /// drawn.
+    func testHostedPageDrainsThePhonesNineFrameBurstToTheLatestHeadlineAndChart() async throws {
+        try await burstCase(final: nil) { image, event in
+            let drawn = try Self.readDrawn(image)
+            let labels = try XCTUnwrap(event.map(LivePriceActivity.displayedLabels(in:)))
+            let (home, away) = try (XCTUnwrap(labels.home), XCTUnwrap(labels.away))
+            print(String(format: "SUBSECOND-10090 drawn=burst-final-saved end_top_p=%.3f end_bottom_p=%.3f labels=%@|%@ hero=%@",
+                         drawn.endTop, drawn.endBottom, away, home, drawn.hero.joined(separator: "|")))
+            let printed = Set(drawn.hero.flatMap { $0.split(whereSeparator: { $0 == " " || $0 == "-" }).map(String.init) })
+            XCTAssertTrue(printed.contains(home) && printed.contains(away),
+                          "the hero prints the last frame's pair \(away) / \(home): \(drawn.hero)")
+            XCTAssertEqual(drawn.endBottom, 0.995, accuracy: 0.04,
+                           "the chart line is drawn to the last frame's 99.5%")
+        }
+    }
+
+    /// Runs the saved burst. `final` replaces the last frame's `p` (nil = the
+    /// saved bytes). The page is captured as soon as the model has adopted the
+    /// last frame, and that capture must be taken within a second of the chunk
+    /// reaching URLSession: a later capture is no timing result. It does not wait
+    /// for the view marks, and it is taken before the poll. `drawn` reads the
+    /// capture, with the event the model held when it was taken.
+    private func burstCase(final: String?, drawn: (UIImage, EventDetail?) throws -> Void) async throws {
+        PacedStream.reset(quarter: false, base: Self.recentBase(), burst: true, burstFinal: final)
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = [PacedStream.self]
+        let session = URLSession(configuration: config)
+        let base = PacedStream.base
+        let client = Client(try heldBeforeBurst(), history: try heldHistory(eventId: Self.burstEvent, end: 0.991))
+        let vm = EventDetailViewModel(
+            eventId: Self.burstEvent, client: client,
+            makeStreamHandle: { id in
+                let t = try LiveEventStreamTransport(eventId: id, baseURL: "https://stub.invalid", session: session)
+                t.connect()
+                return t
+            },
+            now: { base - 595 },
+            sleep: { _ in try? await Task.sleep(nanoseconds: 60_000_000_000) }
+        )
+        let page = try await MountedPage(vm, eventId: Self.burstEvent)
+        defer { page.close(); vm.stopRefresh() }
+        await waitUntil(10) { vm.event != nil }
+        XCTAssertNotNil(vm.event, "the mounted page ran its own load")
+        let loadReads = client.reads
+
+        // The paced cases' poll, carrying the held read. It lands after the burst
+        // has drained: it checks nothing rolls back, it does not load the drain.
+        let poll = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 2_100_000_000)
+            await vm.load()
+        }
+        let last = Self.burstBasis(Self.burstFrames.count - 1)
+        await waitUntil(Self.burstAfter + 1) {
+            PacedStream.done && marks.contains { $0.mark.name == .modelHeadlineAdopted && $0.mark.basis == last }
+        }
+        let readsBefore = client.reads
+        let heldAtCapture = vm.event
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("native-10090-subsecond-hosted")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let url = dir.appendingPathComponent("final-burst-\(final ?? "saved").png")
+        let captureStart = DispatchTime.now().uptimeNanoseconds
+        let image = try page.capture(to: url)
+        let writtenAt = DispatchTime.now().uptimeNanoseconds
+        let chunkAt = try XCTUnwrap(PacedStream.emittedAt[last], "the burst was never handed to URLSession")
+        // The deadline reads the moment the page was drawn; encoding and writing
+        // the PNG afterwards is the test's own cost and is printed beside it.
+        let capturedMs = Double(page.drawnAt &- chunkAt) / 1e6
+        print(String(format: "SUBSECOND-10090 drawn=burst-final-%@ chunk_to_capture_start_ms=%.2f chunk_to_capture_ms=%.2f chunk_to_png_written_ms=%.2f reads_at_capture=%d capture=%@",
+                     final ?? "saved", Double(captureStart &- chunkAt) / 1e6, capturedMs,
+                     Double(writtenAt &- chunkAt) / 1e6, readsBefore, url.path))
+        XCTAssertTrue(chunkAt < captureStart && captureStart <= page.drawnAt && page.drawnAt <= writtenAt,
+                      "the capture stamps are ordered after the chunk")
+        XCTAssertEqual(readsBefore, loadReads, "captured before the poll: the poll did not make it visible")
+        XCTAssertLessThan(capturedMs, 1000, "late capture: no timing result")
+        if capturedMs < 1000 { try drawn(image, heldAtCapture) }
+        await poll.value
+        try? await Task.sleep(nanoseconds: 300_000_000)
+        XCTAssertNotNil(vm.history, "the hosted chart drew from the supplied history, not production")
+
+        let expected = Self.burstFrames.indices.map(Self.burstBasis)
+        let received = marks.filter { $0.mark.name == .frameReceived && $0.mark.basis.hasPrefix("rev:") }
+        let adopted = marks.filter { $0.mark.name == .modelHeadlineAdopted && $0.mark.basis.hasPrefix("rev:") }
+        let charted = marks.filter { $0.mark.name == .modelChartAppended }
+        XCTAssertEqual(received.map(\.mark.basis), expected, "every frame is decoded once, in order")
+        XCTAssertEqual(adopted.map(\.mark.basis), expected, "every frame is adopted once, in revision order")
+        XCTAssertEqual(adopted.map(\.mark.path), Array(repeating: "stream", count: expected.count))
+        XCTAssertEqual(charted.map(\.mark.basis), expected, "every adopted frame gets its own chart point")
+        let latest = Double(final ?? Self.burstFrames[Self.burstFrames.count - 1].p) ?? -2
+        XCTAssertEqual(vm.event?.currentOdds?.homeProbability ?? -1, latest, accuracy: 1e-9)
+        XCTAssertEqual(vm.liveBlend.last?.homeProbability ?? -1, latest, accuracy: 1e-9,
+                       "the chart edge agrees with the headline")
+        XCTAssertGreaterThanOrEqual(client.reads, 2, "the page was read again and did not roll back")
+
+        let viewHeadline = marks.filter { $0.mark.name == .viewHeadlineUpdated && $0.mark.basis.hasPrefix("rev:") }
+        let lastStamp = charted.last?.mark.stamp
+        let viewChart = marks.filter { $0.mark.name == .viewChartUpdated }
+        func ms(_ at: UInt64?) -> Double { at.map { Double($0 &- chunkAt) / 1e6 } ?? .infinity }
+        let latestHeadline = ms(viewHeadline.first { $0.mark.basis == last }?.at)
+        let latestChart = ms(viewChart.first { $0.mark.stamp == lastStamp }?.at)
+        let line = String(
+            format: "SUBSECOND-10090 depth=\(final == nil ? "burst" : "burst-final-\(final!)") frames=%d bytes=%d chunk_to_first_received_ms=%.2f "
+                + "chunk_to_last_received_ms=%.2f received_spread_ms=%.2f chunk_to_model_latest_ms=%.2f "
+                + "chunk_to_view_headline_latest_ms=%.2f chunk_to_view_chart_latest_ms=%.2f "
+                + "view_headline_marks=%d view_chart_marks=%d view_hook_latest=%@ reads=%d view_headline_revs=%@",
+            received.count, Self.burstChunk(final: final).count, ms(received.first?.at), ms(received.last?.at),
+            ms(received.last?.at) - ms(received.first?.at), ms(adopted.last?.at),
+            latestHeadline, latestChart, viewHeadline.count, viewChart.count,
+            latestHeadline.isFinite && latestChart.isFinite ? "present" : "missed", client.reads,
+            viewHeadline.map { String($0.mark.basis.split(separator: "=").last ?? "?") }.joined(separator: ","))
+        // The drawn page above is the display check; the view marks are hooks,
+        // printed beside it (a missed last callback reads `inf`), not required.
+        print(line)
+    }
+
+    /// Companion control: the saved burst with only its last `p` moved to 60%,
+    /// far from the 99.5% the eight before it share, so the DRAWN page shows
+    /// which frame it settled on. The hero's printed numbers and the chart
+    /// line's drawn end are read from a capture taken within a second of the
+    /// chunk and before the poll (`burstCase`). The view marks are the hook this
+    /// control checks, so they are printed, not required.
+    func testHostedPageDrawsTheBurstsChangedLastFrameInTheHeroAndAtTheChartEnd() async throws {
+        try await burstCase(final: "0.6") { image, _ in
+            let drawn = try Self.readDrawn(image)
+            print(String(format: "SUBSECOND-10090 drawn=burst-final-0.6 end_top_p=%.3f end_bottom_p=%.3f hero=%@",
+                         drawn.endTop, drawn.endBottom, drawn.hero.joined(separator: "|")))
+            XCTAssertTrue(drawn.hero.contains { $0.contains("60%") } && drawn.hero.contains { $0.contains("40%") },
+                          "the hero prints the last frame: \(drawn.hero)")
+            XCTAssertEqual(drawn.endBottom, 0.60, accuracy: 0.04,
+                           "the chart line is drawn to the last frame's 60%, not held at the one before it")
+        }
+    }
+
+    /// The page as drawn: the text printed above the chart, and the vertical
+    /// extent of the line's rightmost drawn column as probabilities, scaled by
+    /// the two farthest-apart of the chart's own axis labels that were read. Every burst point is seconds
+    /// apart on an hour-wide axis, so the line's end is one column.
+    nonisolated private static func readDrawn(_ image: UIImage) throws -> (hero: [String], endTop: Double, endBottom: Double) {
+        let cg = try XCTUnwrap(image.cgImage)
+        let (w, h) = (cg.width, cg.height)
+        let request = VNRecognizeTextRequest()
+        request.recognitionLevel = .accurate
+        request.usesLanguageCorrection = false
+        try VNImageRequestHandler(cgImage: cg).perform([request])
+        let texts: [(String, CGRect)] = (request.results ?? []).compactMap { o in
+            guard let string = o.topCandidates(1).first?.string else { return nil }
+            let b = o.boundingBox
+            return (string, CGRect(x: b.minX * CGFloat(w), y: (1 - b.maxY) * CGFloat(h),
+                                   width: b.width * CGFloat(w), height: b.height * CGFloat(h)))
+        }
+        // The line can touch a label ("50% /") or hide it from the reader.
+        let ticks: [(p: Double, y: CGFloat)] = [("100%", 1.0), ("75%", 0.75), ("50%", 0.5), ("25%", 0.25), ("0%", 0)]
+            .compactMap { label, p in
+                texts.first { $0.0.hasPrefix(label) && $0.1.midX < CGFloat(w) * 0.3 }.map { (p, $0.1.midY) }
+            }
+        let (top, bottom) = try (XCTUnwrap(ticks.first), XCTUnwrap(ticks.last))
+        XCTAssertGreaterThanOrEqual(top.p - bottom.p, 0.5, "two axis labels at least 50 points apart: \(texts.map(\.0))")
+        let perPoint = (bottom.y - top.y) / CGFloat(top.p - bottom.p)
+        let y100 = top.y - CGFloat(1 - top.p) * perPoint, y0 = y100 + perPoint
+        func probability(_ y: Int) -> Double { 1 - Double((CGFloat(y) - y100) / perPoint) }
+
+        var bytes = [UInt8](repeating: 0, count: w * h * 4)
+        let ctx = try XCTUnwrap(CGContext(data: &bytes, width: w, height: h, bitsPerComponent: 8,
+                                          bytesPerRow: w * 4, space: CGColorSpaceCreateDeviceRGB(),
+                                          bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
+        ctx.draw(cg, in: CGRect(x: 0, y: 0, width: w, height: h))
+        // A line pixel is saturated or dark: not the white plot, the grey grid
+        // or the pale area fill.
+        func line(_ x: Int, _ y: Int) -> Bool {
+            let i = (y * w + x) * 4
+            let (r, g, b) = (Int(bytes[i]), Int(bytes[i + 1]), Int(bytes[i + 2]))
+            return max(r, g, b) - min(r, g, b) > 60 || max(r, g, b) < 110
+        }
+        let rows = Int(y100) - 6 ... Int(y0)
+        let right = try XCTUnwrap(stride(from: w - 1, through: w / 2, by: -1).first { x in
+            rows.filter { line(x, $0) }.count >= 2
+        }, "a drawn line in the plot")
+        let band = max(w / 2, right - Int(image.scale) * 2) ... right
+        let ys = rows.filter { y in band.contains { line($0, y) } }
+        return (texts.filter { $0.1.maxY < y100 }.map(\.0),
+                probability(try XCTUnwrap(ys.first)), probability(try XCTUnwrap(ys.last)))
     }
 }
