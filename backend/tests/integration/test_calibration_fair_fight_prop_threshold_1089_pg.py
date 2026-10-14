@@ -26,6 +26,11 @@ THE CONTROLS ARE THE POINT
 * Non-threshold Kalshi rows and Polymarket threshold-shaped rows stay: the rule is
   scoped to Kalshi ``Player: N+`` names.
 * The band reads the curve price: cp wins over opening in both directions.
+* The band reads the ROW's category, not the pairing key's. ``key_pairs`` labels
+  a shared key with ``MIN(category)`` over its Kalshi rows, so a hockey row on a
+  key that also carries a baseball row is reported as ``baseball``. A rule that
+  read that label would apply the 0.90 band to a 0.52 NHL threshold row and keep
+  it (CERT-4124 follow-up 1089-MIXED-CATEGORY-KEY-GUARD).
 
 Opt-in on ``SEARCH_TEST_DATABASE_URL`` and named in ``ci.yml``.
 """
@@ -80,6 +85,29 @@ SPECIMENS = [
 
 EXCLUDED = {"nhl_high_api", "nhl_high_box", "nhl_edge_050", "nhl_high_opening_only", "mlb_degenerate"}
 
+# A shared key whose Kalshi rows span two categories. Its key-level label is
+# MIN('baseball', 'hockey') = 'baseball', so every row below reports 'baseball'.
+MIXED_MID_BASE = MID_BASE + 100
+MIXED_KEY = "test-1089::mixed::player-props"
+MIXED_SPECIMENS = [
+    # The baseball row is what makes the key's label 'baseball'; below 0.90, stays.
+    ("mixed_baseball_row", "kalshi", "baseball", MIXED_KEY, "Batter: 1+", 0.7129, 0.7129, "api_settlement", True),
+    # Hockey ROW in the NHL band (cp 0.52 over opening 0.22): excluded only if the
+    # rule reads the row's category AND cp.
+    ("mixed_hockey_high_cp", "kalshi", "hockey", MIXED_KEY, "Skater: 1+", 0.5217, 0.2217, "api_settlement", False),
+    # Hockey row with cp NULL, opening just under 0.50: stays.
+    ("mixed_hockey_opening_low", "kalshi", "hockey", MIXED_KEY, "Skater Low: 1+", None, 0.4999, "box_score", True),
+    # Hockey non-threshold outcome above both bands: not a prop threshold, stays.
+    ("mixed_hockey_non_threshold", "kalshi", "hockey", MIXED_KEY, "Yes", 0.9423, 0.9423, "api_settlement", True),
+    # General band edges: exactly 0.90 is excluded, 0.8999 stays.
+    ("mixed_general_edge", "kalshi", "baseball", MIXED_KEY, "Batter Edge: 1+", 0.9000, 0.9000, "box_score", False),
+    ("mixed_general_below", "kalshi", "baseball", MIXED_KEY, "Batter Below: 1+", 0.8999, 0.8999, "box_score", True),
+    # Polymarket pairs the key; threshold-shaped and above 0.90, still stays.
+    ("mixed_poly_high", "polymarket", "baseball", MIXED_KEY, "Poly Batter: 1+", 0.9637, 0.9637, "api_settlement", True),
+]
+
+MIXED_EXCLUDED = {"mixed_hockey_high_cp", "mixed_general_edge"}
+
 
 class _RecordingSession:
     """Delegates to a real session and keeps the rows the impl's statement returned."""
@@ -117,8 +145,8 @@ def _key(spec) -> tuple:
     return (source, category, round(prob, 4), winner)
 
 
-async def _clear(session):
-    ids = [MID_BASE + i for i in range(len(SPECIMENS))]
+async def _clear(session, specimens=SPECIMENS, mid_base=MID_BASE):
+    ids = [mid_base + i for i in range(len(specimens))]
     await session.execute(
         text(
             "DELETE FROM futures_odds_snapshots WHERE outcome_id IN "
@@ -131,7 +159,7 @@ async def _clear(session):
     await session.commit()
 
 
-async def _seed(session):
+async def _seed(session, specimens=SPECIMENS, mid_base=MID_BASE):
     """One resolved market per specimen, so each carries its own category and key.
 
     ``futures_markets.category`` is NOT NULL with no server default; the cell key
@@ -139,8 +167,8 @@ async def _seed(session):
     ``yes_bid`` snapshot so the liquidity predicate ADMITS it — the subject is the
     price-band rule, not the evidence rule. ``reading_count`` is NOT NULL.
     """
-    for i, (label, source, category, key, name, cp, opening, rs, winner) in enumerate(SPECIMENS):
-        mid = MID_BASE + i
+    for i, (label, source, category, key, name, cp, opening, rs, winner) in enumerate(specimens):
+        mid = mid_base + i
         await session.execute(
             text(
                 "INSERT INTO futures_markets (id, external_id, name, source, status, "
@@ -175,7 +203,7 @@ async def _seed(session):
     await session.commit()
 
 
-async def _seeded_delta():
+async def _seeded_delta(specimens=SPECIMENS, mid_base=MID_BASE):
     """Rows the seed contributed: post-seed multiset minus the pre-seed baseline."""
     from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
@@ -187,13 +215,13 @@ async def _seeded_delta():
             await conn.run_sync(Base.metadata.create_all)
         Session = async_sessionmaker(engine, expire_on_commit=False)
         async with Session() as session:
-            await _clear(session)
+            await _clear(session, specimens, mid_base)
             before = await _fair_fight_rows(session)
-            await _seed(session)
+            await _seed(session, specimens, mid_base)
             try:
                 after = await _fair_fight_rows(session)
             finally:
-                await _clear(session)
+                await _clear(session, specimens, mid_base)
         return after - before
     finally:
         await engine.dispose()
@@ -227,3 +255,25 @@ async def test_non_nhl_and_non_threshold_controls():
         assert delta[_key(spec)] == 1, f"control {label} was dropped"
     mlb_deg = next(s for s in SPECIMENS if s[0] == "mlb_degenerate")
     assert delta[_key(mlb_deg)] == 0, "general >= 0.90 band no longer excludes"
+
+
+async def test_band_reads_the_row_category_on_a_mixed_category_key():
+    delta = await _seeded_delta(MIXED_SPECIMENS, MIXED_MID_BASE)
+
+    def mixed_key(spec):
+        # Every row on the shared key reports the key's label, not its own category.
+        source, _category, prob, winner = _key(spec)
+        return (source, "baseball", prob, winner)
+
+    kept = [s for s in MIXED_SPECIMENS if s[0] not in MIXED_EXCLUDED]
+    assert all(delta[mixed_key(s)] == 1 for s in kept), (
+        f"mixed-key seed did not reach the fair fight: {sorted(delta)}"
+    )
+    for spec in MIXED_SPECIMENS:
+        if spec[0] in MIXED_EXCLUDED:
+            assert delta[mixed_key(spec)] == 0, (
+                f"{spec[0]} leaked: the band read the key's label, not the row's category"
+                if spec[2] == "hockey"
+                else f"{spec[0]} leaked: the general >= 0.90 band missed its edge"
+            )
+    assert sum(delta.values()) == len(kept)
