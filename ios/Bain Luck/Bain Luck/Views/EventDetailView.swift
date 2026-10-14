@@ -34,6 +34,9 @@ struct EventDetailView: View {
     /// #10863 — the book table past its first `collapsedBookmakerRowLimit` rows.
     @State private var showAllBookmakers = false
     @State private var showProbabilityDetails = false
+    /// #9483 — the NFL cards' open card and selections, owned by the page so
+    /// they survive the deck → full size → deck round trip.
+    @StateObject private var nflCards = NFLCardDeckState9483()
     /// The width of a row in the sources disclosure, reported by the
     /// `GeometryReader` behind the whole panel, so both lists inside it can size
     /// their label column against the room the row actually has rather than a
@@ -473,6 +476,20 @@ struct EventDetailView: View {
                             .padding(.horizontal, 4)
                     }
                     #endif
+                    let projectedInput = projectedPointsInput(event)
+                    let projectionReplacesDifferential = ProjectedFinalPointsMount.replacesScoreDifferential(projectedInput)
+                    // #9483 — the NFL cards sit directly under the paired chart:
+                    // the forecast against what happened, and the top player
+                    // milestones. Each opens full size. Every section below,
+                    // including the full projected-points chart and all props,
+                    // stays where it is.
+                    let nflDeck = nflCardDeck(event, projectedInput: projectedInput)
+                    if !nflDeck.isEmpty {
+                        NFLEventCardDeckView9483(
+                            cards: nflDeck, awayName: nflNames(event).away, homeName: nflNames(event).home,
+                            awayColor: teamColors(event).away, homeColor: teamColors(event).home,
+                            state: nflCards)
+                    }
                     // #9483 C3 — the venue's winner price is read under the
                     // chart, never between the hero's result and the chart.
                     if let gameMarkets = vm.gameMarkets,
@@ -518,11 +535,6 @@ struct EventDetailView: View {
                     // chart, that chart takes the Score Differential card's place
                     // (never two answers to one question); every refusal keeps
                     // the differential.
-                    let projectedInput = ProjectedFinalPointsMount.input(
-                        sportKey: event.sport, eventStatus: event.status, history: vm.history,
-                        finalHome: event.homeScore, finalAway: event.awayScore,
-                        asOf: vm.historyArrivedAt)
-                    let projectionReplacesDifferential = ProjectedFinalPointsMount.replacesScoreDifferential(projectedInput)
                     // Score Differential Chart
                     if let history = vm.history, (isLive || isFinished), !projectionReplacesDifferential {
                         ScoreDifferentialChartView(
@@ -811,6 +823,13 @@ struct EventDetailView: View {
             .onChange(of: LiveTimingSeam.presented(event, liveBlend: vm.liveBlend)) { old, new in
                 LiveTimingSeam.viewUpdated(from: old, to: new)
             }
+            // #9483 — a card opened full size: the page stays mounted beneath,
+            // so Back lands on the card it was opened from.
+            #if os(iOS)
+            .fullScreenCover(isPresented: nflReaderPresented) { nflReader(event) }
+            #else
+            .sheet(isPresented: nflReaderPresented) { nflReader(event).frame(minWidth: 420, minHeight: 640) }
+            #endif
         }
     }
 
@@ -1828,6 +1847,71 @@ struct EventDetailView: View {
             )
         )
         .clipShape(RoundedRectangle(cornerRadius: 16))
+    }
+
+    // MARK: - #9483 NFL cards
+
+    /// #10239 / #10549 — the ONE projected-points admission. The page body and
+    /// the NFL card reader (#9483) both read it here, so the differential, the
+    /// projected-points chart and the forecast card can never disagree on it.
+    private func projectedPointsInput(_ event: EventDetail) -> ProjectedFinalPointsSeries.Input? {
+        ProjectedFinalPointsMount.input(
+            sportKey: event.sport, eventStatus: event.status, history: vm.history,
+            finalHome: event.homeScore, finalAway: event.awayScore,
+            asOf: vm.historyArrivedAt)
+    }
+
+    private func nflNames(_ event: EventDetail) -> (away: String, home: String) {
+        TeamShortName.shortPair(away: event.awayTeam, home: event.homeTeam, sportKey: event.sport)
+    }
+
+    private func nflCardDeck(
+        _ event: EventDetail, projectedInput: ProjectedFinalPointsSeries.Input?
+    ) -> [NFLEventCard9483] {
+        guard NFLRecognizablePage9483.applies(sportKey: event.sport) else { return [] }
+        return NFLEventCardDeck9483.cards(
+            sportKey: event.sport,
+            finish: NFLFinishCard9483.build(projectedInput),
+            milestones: NFLMilestoneCard9483.cards(
+                props: vm.gameMarkets?.playerProps ?? [], eventStatus: event.status,
+                commenceTime: event.commenceTime?.asDate,
+                homeTeam: event.homeTeam, awayTeam: event.awayTeam))
+    }
+
+    private var nflReaderPresented: Binding<Bool> {
+        Binding(get: { nflCards.openCardID != nil }, set: { if !$0 { nflCards.close() } })
+    }
+
+    /// The reader's match line, from the same values the headline prints.
+    private func nflReaderHeader(_ event: EventDetail) -> NFLReaderHeader9483 {
+        let names = nflNames(event)
+        let hasScore = EventDetailView.showsScore(
+            status: event.status, away: event.awayScore, home: event.homeScore)
+        let state = isFinished ? "Final" : isLive ? "Live" : "Pregame"
+        let match = hasScore
+            ? "\(names.away) \(event.awayScore ?? 0)\u{2013}\(event.homeScore ?? 0) \(names.home) · \(state)"
+            : "\(names.away) vs \(names.home) · \(state)"
+        guard let headline = nflPairedHeadline(event, hasScore: hasScore) else {
+            return NFLReaderHeader9483(match: match, chances: "")
+        }
+        if let awayWon = headline.away.won {
+            return NFLReaderHeader9483(match: match, chances: "\(awayWon ? names.away : names.home) won")
+        }
+        return NFLReaderHeader9483(
+            match: match,
+            chances: "Win chances · \(names.away) \(headline.away.figure) · \(names.home) \(headline.home.figure)")
+    }
+
+    private func nflReader(_ event: EventDetail) -> some View {
+        let projectedInput = projectedPointsInput(event)
+        let props = vm.gameMarkets?.playerProps ?? []
+        return NFLCardReader9483(
+            liveCards: nflCardDeck(event, projectedInput: projectedInput),
+            liveHeader: nflReaderHeader(event),
+            awayName: nflNames(event).away, homeName: nflNames(event).home,
+            awayColor: teamColors(event).away, homeColor: teamColors(event).home,
+            state: nflCards,
+            row: { id in props.first { $0.id == id } })
     }
 
     // MARK: - #9483 NFL paired headline
