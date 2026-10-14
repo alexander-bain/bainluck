@@ -1169,12 +1169,53 @@ class _FreshAdmission:
         self.debt: Optional[int] = None
         self.publish: Optional[Callable[[list[dict]], Awaitable[None]]] = None
         self.publish_inline: Optional[Callable[[list[dict]], Awaitable[None]]] = None
+        #: #10090 — per event, how many of its attempts in this call have
+        #: returned (or gone back to debt), and a future resolved at the next
+        #: one: a lifecycle wait drains a fixed frontier of attempts by these
+        #: counts, so a re-admitted event's NEW attempt cannot extend it.
+        self.released: dict[int, int] = {}
+        self._released_signal = None
 
     def release(self, event_ids) -> None:
         """These events' stamps returned, or went back to debt unstamped."""
         self.holding.difference_update(event_ids)
         if self.debt is not None and self.debt in event_ids:
             self.debt = None
+        for event_id in event_ids:
+            self.released[event_id] = self.released.get(event_id, 0) + 1
+        signal, self._released_signal = self._released_signal, None
+        if signal is not None and not signal.done():
+            signal.set_result(None)
+
+    def released_signal(self):
+        """A future resolved at this call's next `release`."""
+        import asyncio
+
+        if self._released_signal is None:
+            self._released_signal = asyncio.get_running_loop().create_future()
+        return self._released_signal
+
+
+class _HoldingFrontier:
+    """#10090 — the attempts one call holds (queued or running) at one instant.
+
+    Drained once each has returned or gone back to debt. Counted per attempt,
+    not read from `holding`: an event re-admitted after its frontier attempt
+    returned is holding again, and waiting on `holding` would wait for that
+    later attempt too — so continuous arrivals could extend the wait forever.
+    """
+
+    def __init__(self, window: "_FreshAdmission") -> None:
+        self.window = window
+        self.counts = {eid: window.released.get(eid, 0) for eid in window.holding}
+
+    def drained(self) -> bool:
+        released = self.window.released
+        return all(released.get(eid, 0) > n for eid, n in self.counts.items())
+
+    def changed(self):
+        """A future resolved when one more attempt of this call returns."""
+        return self.window.released_signal()
 
 
 class LiveBlendRefresher:
@@ -1954,6 +1995,14 @@ class LiveBlendRefresher:
         creation, so a caller that yields once after creating it sees the set).
         """
         return None if self._holding is None else frozenset(self._holding)
+
+    def holding_frontier(self) -> Optional[_HoldingFrontier]:
+        """#10090 — the running call's attempts queued or running right now,
+        as a frontier a lifecycle wait can drain while the call keeps
+        admitting later cohorts (none of which it waits for). None when no
+        call is running. Synchronous; never closes the door."""
+        window = self._admission
+        return None if window is None else _HoldingFrontier(window)
 
     def adopt_pending(self, event_ids: Iterable[int]) -> None:
         """Take over stamps a previous run of this source still owed.

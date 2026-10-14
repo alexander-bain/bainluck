@@ -55,14 +55,16 @@ class _PMCatalogFlushBoundary:
     #10090: in two steps. First only standalone flushes are fenced and the
     handover waits out the one writing — game flushes keep running on the
     unchanged maps meanwhile, so an unrelated standalone UPDATE no longer
-    holds every game's next price. The stamp call running when that write
-    clears (one a game flush started or extended during the fence) then
-    returns with games still flowing and its door open: a later game is
-    admitted beside a held stamp instead of being fenced behind it. Then game
-    flushes are fenced too and the handover waits for the one in flight (the
-    game loop is serial) and joins the one call it may have started — the
-    parent's residual at its own fence instant, never a later call. Maps
-    change only with no flush of either kind and no stamp running.
+    holds every game's next price. The stamp attempts queued or running when
+    that write clears (a game flush may have started or extended the call
+    during the fence) then return with games still flowing and the call's
+    door open: a later game is admitted beside a held stamp instead of being
+    fenced behind it. That frontier is fixed, so arrivals cannot extend it.
+    Then game flushes are fenced too and the handover waits for the one in
+    flight (the game loop is serial) and joins the call, door closed first:
+    only attempts admitted since the frontier remain — the parent's residual
+    at its own fence instant. Maps change only with no flush of either kind
+    and no stamp running.
     """
 
     def __init__(self):
@@ -104,17 +106,26 @@ class _PMCatalogFlushBoundary:
                 self.condition.notify_all()
 
     async def _settle_stamp(self) -> None:
-        """#10090 — the stamp call running as the fence's standalone write
-        clears returns before game flushes are fenced. Its door stays open, so
-        a game arriving now is admitted beside a held stamp, not held behind
-        it. Only this call: a successor is joined under the fence. Cancelled
+        """#10090 — the stamp attempts queued or running as the fence's
+        standalone write clears return before game flushes are fenced. The
+        call's door stays open meanwhile, so a game arriving now is admitted
+        beside a held stamp, not held behind it. Only that frontier of
+        attempts (or the call's end): a later admission — even a re-admission
+        of a frontier event — is joined under the fence, never waited for
+        here, so continuous arrivals cannot extend the settle. Cancelled
         here, the call is cancelled and joined as in the stamps phase."""
         owner = self.stamps
         task = None if owner is None else owner.task
         if task is None or task.done():
             return
+        reader = getattr(owner.refresher, "holding_frontier", None)
+        frontier = reader() if reader is not None else None
         try:
-            await asyncio.wait({task})
+            while not task.done() and not (frontier is not None and frontier.drained()):
+                waits = {task}
+                if frontier is not None:
+                    waits.add(frontier.changed())
+                await asyncio.wait(waits, return_when=asyncio.FIRST_COMPLETED)
         except asyncio.CancelledError:
             await owner.join(cancel=True)
             raise
@@ -180,8 +191,8 @@ class _PMCatalogHandoverTiming:
 
     Every PM flush waits while `changing` is set, so a slow handover delays
     every game's next price. `fence` (standalone flushes held, game flushes
-    still running — through the standalone write and then the stamp call
-    running when it cleared) comes first and is reported beside `blocked`,
+    still running — through the standalone write and then the stamp attempts
+    held when it cleared) comes first and is reported beside `blocked`,
     not inside it; `blocked` starts at `drain`. Phases are monotonic durations; a phase runs
     until the next one opens (the boundary opens drain and stamps, the
     caller names its body's phases) or the release. One INFO line per

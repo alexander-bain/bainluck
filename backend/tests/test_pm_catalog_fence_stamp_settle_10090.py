@@ -312,3 +312,132 @@ async def test_a_cancelled_settle_cancels_and_joins_the_call_keeping_its_debt():
         if owner.task is not None:
             owner.task.cancel()
             await asyncio.gather(owner.task, return_exceptions=True)
+
+
+async def test_continuous_readmission_cannot_extend_the_settle(monkeypatch):
+    """Root's 19:03Z counterexample on 8b4d3e6860, on the real refresher:
+    the settle awaited the call task, and alternating same-event
+    re-admissions (each admitted before the previous attempt returned) kept
+    that call alive, so the catalog stayed unmapped and standalone writes
+    fenced for as long as arrivals continued. Now the settle drains the
+    attempts held when it began. Event 2 arriving during the settle is still
+    admitted beside held event 1 (the ship). Once event 1's attempt returns
+    the handover fences games and joins, door closed first: a re-admission of
+    event 1 is refused (its caller keeps it owed), and the catalog maps after
+    event 2's attempt, which was admitted before the fence."""
+    from tests.test_single_event_commit_10090 import rig as stamp_rig, settle_until
+
+    x = stamp_rig(monkeypatch, count=2)
+    boundary = task._PMCatalogFlushBoundary()
+    owner = boundary.stamp_owner(x.r)
+    gates, starts = [], []
+    original = x.r._refresh_batch
+
+    async def controlled(ids, *args, **kwargs):
+        gate = asyncio.Event()
+        starts.append(tuple(ids))
+        gates.append(gate)
+        await gate.wait()
+        return await original(ids, *args, **kwargs)
+
+    x.r._refresh_batch = controlled
+    owner.events, owner.fresh = {1}, {1}
+    owner.task = asyncio.create_task(x.r.refresh([1], flush_started=1000))
+    mapped = asyncio.Event()
+
+    async def handover():
+        async with boundary.updating():
+            mapped.set()
+
+    hand = None
+    try:
+        await settle_until(lambda: len(starts) == 1)
+        hand = asyncio.create_task(handover())
+        await settle_until(lambda: boundary.standalone_fenced)
+        assert x.r.admit_fresh([2], flush_started=1001) == frozenset({2})
+        await settle_until(lambda: len(starts) == 2)
+        assert not boundary.changing, "event 2 was admitted beside held event 1"
+        gates[0].set()  # the frontier's only attempt returns
+        await settle_until(lambda: boundary.changing)
+        assert not x.r.admitting(), "the join closed the door before waiting"
+        assert x.r.admit_fresh([1], flush_started=1002) == frozenset(), (
+            "a re-admission extended the handover"
+        )
+        await asyncio.sleep(0.01)
+        assert not mapped.is_set(), "maps changed beneath event 2's attempt"
+        gates[1].set()
+        await asyncio.wait_for(hand, 2)
+        assert mapped.is_set() and not boundary.standalone_fenced
+        assert not boundary.changing and owner.task is None
+        assert sorted(x.published) == [1, 2]
+        assert not x.r.pending_event_ids()
+    finally:
+        for gate in gates:
+            gate.set()
+        x.r.stop_admitting()
+        if hand is not None:
+            hand.cancel()
+            await asyncio.gather(hand, return_exceptions=True)
+        await boundary.join_stamps()
+
+
+async def test_alternating_readmissions_do_not_starve_the_catalog(monkeypatch):
+    """Root's alternating loop verbatim in shape: each next cohort (events 2,
+    1, 2, ...) is admitted before the previous attempt returns. On the
+    task-wait settle all ten were admitted and the catalog never mapped
+    while they kept coming. The frontier is counted per attempt, so event 1
+    re-admitted after its frontier attempt returned does not extend it: the
+    handover fences and closes the door within a couple of arrivals."""
+    from tests.test_single_event_commit_10090 import rig as stamp_rig, settle_until
+
+    x = stamp_rig(monkeypatch, count=2)
+    boundary = task._PMCatalogFlushBoundary()
+    owner = boundary.stamp_owner(x.r)
+    gates, starts = [], []
+    original = x.r._refresh_batch
+
+    async def controlled(ids, *args, **kwargs):
+        gate = asyncio.Event()
+        starts.append(tuple(ids))
+        gates.append(gate)
+        await gate.wait()
+        return await original(ids, *args, **kwargs)
+
+    x.r._refresh_batch = controlled
+    owner.events, owner.fresh = {1}, {1}
+    owner.task = asyncio.create_task(x.r.refresh([1], flush_started=1000))
+    mapped = asyncio.Event()
+
+    async def handover():
+        async with boundary.updating():
+            mapped.set()
+
+    hand, accepted = None, 0
+    try:
+        await settle_until(lambda: len(starts) == 1)
+        hand = asyncio.create_task(handover())
+        await settle_until(lambda: boundary.standalone_fenced)
+        for i in range(10):
+            eid = 2 if i % 2 == 0 else 1
+            if x.r.admit_fresh([eid], flush_started=1001 + i) != frozenset({eid}):
+                break
+            accepted += 1
+            await settle_until(lambda: len(starts) == i + 2)
+            gates[i].set()
+            previous = starts[i][0]
+            await settle_until(lambda: previous not in x.r.holding_event_ids())
+        assert accepted < 10, "continuous re-admission kept the catalog waiting"
+        assert boundary.changing, "games were never fenced while arrivals continued"
+        for gate in gates:
+            gate.set()
+        await asyncio.wait_for(hand, 2)
+        assert mapped.is_set() and not boundary.standalone_fenced
+        assert not x.r.pending_event_ids()
+    finally:
+        for gate in gates:
+            gate.set()
+        x.r.stop_admitting()
+        if hand is not None:
+            hand.cancel()
+            await asyncio.gather(hand, return_exceptions=True)
+        await boundary.join_stamps()
