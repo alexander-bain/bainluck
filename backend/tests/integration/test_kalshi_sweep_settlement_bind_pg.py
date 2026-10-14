@@ -215,3 +215,39 @@ class TestTheSettlementUpdatePrepares:
 
         _status, settled_at, _rd, _exp = await _read(pg_session, market_id)
         assert settled_at == stamped
+
+
+class TestTheSettledFeedLookupPrepares:
+    """#2722 / CERT-4117: the settled feed's lookup, on real asyncpg.
+
+    An expanding ``IN :tickers`` is rendered by SQLAlchemy at execute time, and
+    sqlite accepts it whatever the driver would do, so only a real prepare
+    shows the statement the beat sends is one Postgres takes. It must also
+    return only ``open`` rows and the 5-tuple ``run_backfill`` unpacks.
+    """
+
+    async def test_it_returns_only_open_rows_for_the_tickers_the_venue_settled(self, pg_session):
+        from app.tasks.kalshi_resolution_sweep import _open_rows_for_tickers
+
+        open_id = await _seed(pg_session, ext="KXFEED-OPEN-26")
+        resolved_id = await _seed(pg_session, ext="KXFEED-RESOLVED-26")
+        await _seed(pg_session, ext="KXFEED-NOT-SETTLED-26")
+        await pg_session.execute(
+            text("UPDATE futures_markets SET status = 'resolved' WHERE id = :id"),
+            {"id": resolved_id},
+        )
+        await pg_session.commit()
+
+        class _Maker:
+            async def __aenter__(self_inner):
+                return pg_session
+
+            async def __aexit__(self_inner, *exc):
+                return False
+
+        rows = await _open_rows_for_tickers(
+            lambda: _Maker(),
+            {"KXFEED-OPEN-26", "KXFEED-RESOLVED-26", "KXNEVER-SEEN-26"},
+        )
+        assert [(r[0], r[1]) for r in rows] == [(open_id, "KXFEED-OPEN-26")]
+        assert len(rows[0]) == 5

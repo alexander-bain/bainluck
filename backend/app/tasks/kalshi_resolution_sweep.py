@@ -34,6 +34,12 @@ markets still hold a FUTURE ``close_time``, so no date field and no date
 predicate can ever select them, and the row goes on claiming to be open. The
 write is at :data:`UPDATE_SQL`: ``status`` and ``settled_at``, on the venue's
 word only, and never a grade (#1852's line is unchanged).
+
+#2722, THE REACH HALF. That write only sees rows a selection hands it, and an
+early final changes nothing in our row that a selection could key on.
+:func:`run_settled_feed` keys on the venue instead: it walks Kalshi's own
+settlement clock and hands over every ``open`` row whose event the venue
+settled, whatever its date, ticker shape or place in the sweep's cursor.
 """
 
 from __future__ import annotations
@@ -2177,4 +2183,445 @@ async def run_resolved_voids(
     # (a stamped row is only retirable once the floor passes it). Folding these
     # counters into that verdict would make a healthy capture read `partial`.
     report.update(await _retire_rows_the_venue_voided(maker, now))
+    return report
+
+
+# ---------------------------------------------------------------------------
+# The venue's settled feed — #2722, the reach half (CERT-4117's repair)
+# ---------------------------------------------------------------------------
+#
+# WHY A FOURTH ARM, AND WHY IT IS KEYED ON THE VENUE. :data:`UPDATE_SQL` already
+# writes ``status='resolved'`` on the venue's word (PR #3308). What it lacked was
+# a way to be HANDED the rows the venue finalised early. Every selection above
+# starts from a fact in our own row — a provisional date, a finished game, a
+# suspended fixture — and an early final changes no fact in our row. Its stored
+# date is a real, future close (#2722: 10 of 49 settled events sampled at the
+# venue, 2026-09-02), so it is converged, future-dated and ``open``, and nothing
+# we hold says it is over.
+#
+# The first repair re-admitted those rows into the population sweep through a
+# played-day ticker arm. CERT-4117 blocked it, correctly: the sweep resumes a
+# rotating global cursor, so an admitted row can sit behind the saved offset for
+# a whole cycle. Eligible in a rotation is not visited per cadence. That arm also
+# reached only rows whose ticker names a played day, and left every undated
+# early final (an awards market, a corporate event, a season prop) unreached.
+#
+# THE VENUE ALREADY PUBLISHES THE FACT. ``GET /markets?status=settled`` takes
+# ``min_settled_ts`` / ``max_settled_ts`` on the market's own ``settlement_ts``,
+# newest-first. Read live 2026-10-14 04:1xZ: both bounds are honoured (a
+# 02:12–03:12Z window returned 03:02–03:10Z on its first page) and the non-combo
+# volume is ~4,300 markets an hour, five pages. So this arm walks the settlement
+# clock forward from a durable watermark, collects the EVENT tickers the venue
+# settled in each window, and looks up our ``open`` rows by ``external_id``.
+# A settled market cannot be missed by this arm for a reason in our row, because
+# no field of our row is read to select it — not a date, not a ticker shape, not
+# a cursor. That is the guard #2722's third acceptance line asks for:
+# :data:`SETTLED_FEED_SELECT_SQL` has no date predicate at all.
+#
+# WHAT IT WRITES IS WHAT EVERY OTHER ARM WRITES. The matched rows go through
+# :func:`run_backfill` as a supplied batch, so each event is re-read with its
+# nested markets and :func:`derive_venue_settlement` still needs EVERY leg
+# terminal before ``status`` moves. A market settling leg by leg is matched when
+# its first leg settles, refused as partially settled, and matched again when
+# its last leg's ``settlement_ts`` falls in a later window. Still no grade:
+# ``is_winner``, prices and probabilities are #1852's rail, untouched here.
+#
+# BOUNDED THREE WAYS, each reported: pages per run, matched rows per run, and the
+# window walked per step. The window halves when one step will not fit inside a
+# run's budget and grows back after a step that does, so a burst at the venue
+# slows the walk instead of wedging it.
+#
+# THE BACKLOG. A missing watermark starts :data:`SETTLED_FEED_BACKLOG_DAYS` back,
+# which is the venue's own market-retention floor: an older settlement is purged
+# at the venue and no read can confirm it. The cost is venue PAGES, not steps:
+# ~100,000 non-combo settlements a day (mostly hourly crypto/commodity ladders)
+# is ~7,400 pages over the floor, so at 120 pages a run the standing backlog is
+# walked in ~60 runs, about ten hours of 10-minute beats, after which a run is
+# one or two pages at the head. Until it is walked, the head waits behind it;
+# that is a one-time cost on the first deploy, named so it is not mistaken for
+# the steady-state cadence.
+
+#: Durable position on the venue's settlement clock: ``"<ts>:<step_s>:<stuck>"``.
+#: One value, for the reason :data:`SWEEP_CURSOR_KEY` gives — a half-written pair
+#: is a position that skips silently.
+SETTLED_FEED_STATE_KEY = "bainluck:kalshi_settled_feed:watermark:v1"
+
+#: Refreshed on every persisted step, so it only lapses if the arm stops running
+#: for a month, and then it restarts the backlog walk, which is idempotent.
+SETTLED_FEED_STATE_TTL_S = 60 * 60 * 24 * 30
+
+#: How far back a fresh watermark starts. The venue's market-retention floor,
+#: READ, never retuned — the same constant the purge floor and the band use.
+SETTLED_FEED_BACKLOG_DAYS = PROVABLY_PURGED_AGE_DAYS
+
+#: The default window per step. ~1,100 non-combo markets at the measured rate,
+#: so a step is one or two pages.
+SETTLED_FEED_STEP_S = 15 * 60
+
+#: The newest five minutes are left for the next run. A market stamped settled
+#: at the venue may not be listed yet, and a window is never walked twice.
+SETTLED_FEED_LAG_S = 5 * 60
+
+#: The venue's page maximum.
+SETTLED_FEED_PAGE_SIZE = 1000
+
+#: Venue pages one run may read. ~0.5 s each sequential, so ~60 s at the cap,
+#: against the beat's 240 s soft limit. Only the backlog walk ever reaches it.
+SETTLED_FEED_MAX_PAGES = 120
+
+#: Our rows one run may send to the venue for the all-legs read. At concurrency
+#: 6 this is ~15 s; the beat's soft limit is 240 s.
+SETTLED_FEED_MAX_ROWS = 300
+
+#: How many consecutive runs a step may fail on venue errors before the walk
+#: steps past it. Without a limit one ticker the venue keeps erroring on would
+#: wedge the arm. The rows stepped past are named on the report.
+SETTLED_FEED_MAX_STUCK_RUNS = 3
+
+#: Our ``open`` rows whose event ticker the venue settled in the step. No date,
+#: no ticker shape, no cursor: membership is the venue's word and our status.
+#: ``external_id`` is unique per source (``uq_futures_source_external``), so the
+#: lookup is an index probe.
+SETTLED_FEED_SELECT_SQL = """
+    SELECT id, external_id, resolution_date, commence_time, market_tier
+    FROM futures_markets
+    WHERE source = 'kalshi'
+      AND status = 'open'
+      AND external_id IN :tickers
+    ORDER BY id
+"""
+
+#: Tickers per lookup statement, so one step never builds an unbounded IN list.
+SETTLED_FEED_LOOKUP_CHUNK = 500
+
+
+@dataclass
+class SettledWindow:
+    """What the venue said it settled in one window, and whether we saw all of it."""
+
+    event_tickers: set
+    pages: int = 0
+    markets: int = 0
+    complete: bool = False
+    error: Optional[str] = None
+    refusal: Optional[str] = None
+
+
+async def fetch_settled_event_tickers(
+    client, *, start_ts: int, end_ts: int, max_pages: int, page_size: int = SETTLED_FEED_PAGE_SIZE
+) -> SettledWindow:
+    """Every event ticker with a market settled in ``[start_ts, end_ts]``.
+
+    ``complete`` is true only when the cursor ran out inside ``max_pages``; a
+    window that is not complete must not move the watermark.
+
+    The filter is CHECKED, not trusted. A market whose ``settlement_ts`` is
+    missing or outside the window means the venue did not apply the bounds we
+    sent, and a feed that silently stopped filtering would read as an empty
+    window walked correctly. That is a ``refusal``, and the run fails loud.
+    """
+    out = SettledWindow(event_tickers=set())
+    cursor: Optional[str] = None
+    while out.pages < max_pages:
+        try:
+            markets, cursor = await client.get_markets(
+                status="settled",
+                limit=page_size,
+                cursor=cursor,
+                min_settled_ts=start_ts,
+                max_settled_ts=end_ts,
+                mve_filter="exclude",
+            )
+        except Exception as exc:  # noqa: BLE001 — reported; the step is retried
+            out.error = f"{type(exc).__name__}: {str(exc)[:160]}"
+            return out
+        out.pages += 1
+        for market in markets or []:
+            settled_at = _parse(market.get("settlement_ts"))
+            # One second of slack each side: the bounds are whole seconds and
+            # the stamp carries microseconds.
+            if settled_at is None or not (
+                start_ts - 1 <= settled_at.timestamp() <= end_ts + 1
+            ):
+                out.refusal = (
+                    f"venue returned {market.get('ticker')!r} settled at "
+                    f"{market.get('settlement_ts')!r}, outside the requested window "
+                    f"[{start_ts}, {end_ts}] — the settled-time filter was not applied"
+                )
+                return out
+            out.markets += 1
+            event_ticker = market.get("event_ticker")
+            if event_ticker:
+                out.event_tickers.add(event_ticker)
+        if not cursor or not markets:
+            out.complete = True
+            return out
+    return out
+
+
+async def _read_feed_state() -> Optional[tuple[int, int, int]]:
+    """``(watermark_ts, step_s, stuck_runs)``, or None when there is no state."""
+    try:
+        from app.tasks.redis_state import get_async_redis_client
+
+        raw = await get_async_redis_client().get(SETTLED_FEED_STATE_KEY)
+        if raw is None:
+            return None
+        if isinstance(raw, bytes):
+            raw = raw.decode()
+        parts = str(raw).split(":")
+        ts = int(parts[0])
+        step = int(parts[1]) if len(parts) > 1 and parts[1] else SETTLED_FEED_STEP_S
+        stuck = int(parts[2]) if len(parts) > 2 and parts[2] else 0
+        return ts, max(1, step), max(0, stuck)
+    except Exception:  # noqa: BLE001 — an unreadable state is a fresh start
+        return None
+
+
+async def _write_feed_state(ts: int, step_s: int, stuck: int) -> bool:
+    try:
+        from app.tasks.redis_state import get_async_redis_client
+
+        await get_async_redis_client().set(
+            SETTLED_FEED_STATE_KEY,
+            f"{int(ts)}:{int(step_s)}:{int(stuck)}",
+            ex=SETTLED_FEED_STATE_TTL_S,
+        )
+        return True
+    except Exception:  # noqa: BLE001
+        return False
+
+
+async def _open_rows_for_tickers(session_maker, tickers: set) -> list:
+    """Our ``open`` Kalshi rows whose ``external_id`` the venue just settled."""
+    from sqlalchemy import bindparam
+
+    if not tickers:
+        return []
+    stmt = text(SETTLED_FEED_SELECT_SQL).bindparams(bindparam("tickers", expanding=True))
+    ordered = sorted(tickers)
+    rows: list = []
+    async with session_maker() as session:
+        for i in range(0, len(ordered), SETTLED_FEED_LOOKUP_CHUNK):
+            chunk = ordered[i : i + SETTLED_FEED_LOOKUP_CHUNK]
+            rows.extend((await session.execute(stmt, {"tickers": chunk})).all())
+    return rows
+
+
+async def run_settled_feed(
+    *,
+    concurrency: int = SWEEP_CONCURRENCY,
+    apply: bool = True,
+    max_pages: int = SETTLED_FEED_MAX_PAGES,
+    max_rows: int = SETTLED_FEED_MAX_ROWS,
+    session_maker: Optional[Callable] = None,
+    client_factory: Optional[Callable[[], object]] = None,
+    now: Optional[datetime] = None,
+) -> dict:
+    """Walk the venue's settlement clock forward and close what it settled.
+
+    One beat run. Each STEP is a window ``[watermark, watermark + step]``: read
+    every settled market in it, look up our ``open`` rows by event ticker, send
+    them through :func:`run_backfill` (the all-legs read and :data:`UPDATE_SQL`),
+    then persist the watermark at the window's end. A step that is not finished
+    — budget spent mid-window, a venue error, a refused filter — leaves the
+    watermark where it was, so the next run re-reads that window. Re-reading is
+    safe: a row closed the first time is no longer ``open``.
+
+    ``apply=False`` reads and derives but writes nothing and never moves the
+    watermark, so a dry run cannot skip a window.
+
+    The sweep's rotating cursor is never read here. That is the repair CERT-4117
+    named: whether the next cadence asks about an early final does not depend
+    on where the population sweep happens to be in its cycle.
+    """
+    now = now or datetime.now(timezone.utc)
+    maker = session_maker or default_session_maker()
+    factory = client_factory or KalshiAPIService
+    ceiling = int(now.timestamp()) - SETTLED_FEED_LAG_S
+
+    state = await _read_feed_state()
+    bootstrapped = state is None
+    if state is None:
+        state = (
+            int((now - timedelta(days=SETTLED_FEED_BACKLOG_DAYS)).timestamp()),
+            SETTLED_FEED_STEP_S,
+            0,
+        )
+    watermark, step_s, stuck = state
+    watermark_before = watermark
+
+    totals = {
+        "pages": 0,
+        "venue_markets_seen": 0,
+        "event_tickers_seen": 0,
+        "rows_matched": 0,
+        "candidates": 0,
+        "venue_settled": 0,
+        "venue_partially_settled": 0,
+        "settled_without_date": 0,
+        "venue_voided": 0,
+        "unresolvable_at_venue": 0,
+        "writes_applied": 0,
+        "errors": 0,
+    }
+    steps_completed = 0
+    persisted = True
+    stop_reason: Optional[str] = None
+    refusal: Optional[str] = None
+    skipped_after_errors: list[str] = []
+    samples: list[dict] = []
+
+    client = factory()
+    try:
+        while watermark < ceiling:
+            pages_left = max_pages - totals["pages"]
+            if pages_left <= 0:
+                stop_reason = "page budget spent"
+                break
+            if totals["candidates"] >= max_rows:
+                stop_reason = "row budget spent"
+                break
+            end = min(watermark + step_s, ceiling)
+            window = await fetch_settled_event_tickers(
+                client, start_ts=watermark, end_ts=end, max_pages=pages_left
+            )
+            totals["pages"] += window.pages
+            if window.refusal:
+                refusal = window.refusal
+                stop_reason = "venue filter refused"
+                break
+            if window.error:
+                stop_reason = f"venue page error: {window.error}"
+                break
+            if not window.complete:
+                if pages_left == max_pages and step_s > 1:
+                    # This window alone does not fit in a whole run. Halve it,
+                    # so the next run can finish a step instead of re-reading
+                    # the same oversized window forever.
+                    step_s = max(1, (end - watermark) // 2)
+                    if apply:
+                        persisted = await _write_feed_state(watermark, step_s, stuck)
+                stop_reason = "page budget spent mid-window"
+                break
+
+            rows = await _open_rows_for_tickers(maker, window.event_tickers)
+            remaining_rows = max_rows - totals["candidates"]
+            if len(rows) > remaining_rows and end - watermark > 1:
+                if totals["candidates"] == 0:
+                    # More rows than a whole run may ask about: narrow the window
+                    # and try again inside this run.
+                    step_s = max(1, (end - watermark) // 2)
+                    continue
+                stop_reason = "row budget spent"
+                break
+
+            totals["venue_markets_seen"] += window.markets
+            totals["event_tickers_seen"] += len(window.event_tickers)
+            totals["rows_matched"] += len(rows)
+
+            step_errors = 0
+            if rows:
+                report = await run_backfill(
+                    session_maker=maker,
+                    client_factory=factory,
+                    limit=len(rows),
+                    apply=apply,
+                    concurrency=concurrency,
+                    now=now,
+                    rows=rows,
+                )
+                stats = report.get("stats") or {}
+                for key in (
+                    "candidates",
+                    "venue_settled",
+                    "venue_partially_settled",
+                    "settled_without_date",
+                    "venue_voided",
+                    "unresolvable_at_venue",
+                    "writes_applied",
+                    "errors",
+                ):
+                    totals[key] += max(0, int(stats.get(key) or 0))
+                step_errors = max(0, int(stats.get("errors") or 0))
+                if len(samples) < 10:
+                    samples.extend(
+                        {"id": r[0], "external_id": r[1]} for r in rows[: 10 - len(samples)]
+                    )
+
+            if not apply:
+                # A dry run reads one step and stops. The watermark stays put:
+                # a window nothing was written for is not a window walked.
+                steps_completed += 1
+                stop_reason = "dry run"
+                break
+
+            if step_errors:
+                stuck += 1
+                if stuck < SETTLED_FEED_MAX_STUCK_RUNS:
+                    persisted = await _write_feed_state(watermark, step_s, stuck)
+                    stop_reason = f"{step_errors} venue errors in this window; retried next run"
+                    break
+                skipped_after_errors.extend(r[1] for r in rows)
+
+            watermark = end
+            stuck = 0
+            steps_completed += 1
+            step_s = min(SETTLED_FEED_STEP_S, step_s * 2)
+            persisted = await _write_feed_state(watermark, step_s, stuck)
+            if not persisted:
+                stop_reason = "watermark not persisted"
+                break
+    finally:
+        close = getattr(client, "close", None)
+        if close is not None:
+            maybe = close()
+            if asyncio.iscoroutine(maybe):
+                await maybe
+
+    behind = max(0, ceiling - watermark)
+    report = {
+        "mode": "APPLY" if apply else "DRY_RUN",
+        "selection": "settled_feed",
+        "measured_at": now.isoformat(),
+        "bootstrapped": bootstrapped,
+        "watermark_before": datetime.fromtimestamp(watermark_before, timezone.utc).isoformat(),
+        "watermark_after": datetime.fromtimestamp(watermark, timezone.utc).isoformat(),
+        "ceiling": datetime.fromtimestamp(ceiling, timezone.utc).isoformat(),
+        "behind_seconds": behind,
+        "caught_up": behind == 0,
+        "step_seconds": step_s,
+        "steps_completed": steps_completed,
+        "stuck_runs": stuck,
+        "stop_reason": stop_reason,
+        "refusal": refusal,
+        "skipped_after_errors": skipped_after_errors[:50],
+        "skipped_after_errors_count": len(skipped_after_errors),
+        "state_persisted": persisted,
+        "matched_samples": samples,
+        "stats": totals,
+    }
+
+    if refusal:
+        report["terminal"] = "failed"
+        report["terminal_reason"] = refusal
+    elif not persisted:
+        report["terminal"] = "failed"
+        report["terminal_reason"] = (
+            "watermark not persisted — the next run re-reads from "
+            f"{report['watermark_before']}"
+        )
+    elif totals["candidates"] and totals["errors"] >= totals["candidates"]:
+        report["terminal"] = "failed"
+        report["terminal_reason"] = (
+            f"all {totals['candidates']} matched rows errored at the venue"
+        )
+    elif behind and steps_completed == 0:
+        report["terminal"] = "partial"
+        report["terminal_reason"] = (
+            f"no window finished ({stop_reason}); {behind}s of settlements "
+            "behind the venue, re-read next run"
+        )
+    else:
+        report["terminal"] = "complete"
     return report

@@ -501,6 +501,11 @@ class TestEnforcementScope:
             # grades on `venue_settled` rather than `writes_applied`, because an
             # unsettled leg still produces a date write and the row stays `open`.
             "kalshi_recent_finals",
+            # #2722 / CERT-4117: the venue-keyed arm, enrolled at birth. Its
+            # healthy return matches nothing of ours most runs, so unenrolled a
+            # venue that stopped applying the settled-time filter would read
+            # the same as a quiet ten minutes.
+            "kalshi_settled_feed",
             # #2907 (authority/049): the StatPal injury sync, enrolled in the
             # change that gives it a terminal AND the change that makes it
             # capable of producing a row at all. It is the longest-running
