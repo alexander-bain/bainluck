@@ -2076,8 +2076,12 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
         from app.tasks.polymarket_ws import _PMPriceWriteResult, PM_QUOTE_LIVENESS_SECONDS
 
         # #10090 stage trace (OFF by default): times only the chunk the game
-        # flush registered for its selected outcomes; never raises.
-        stage_trace = getattr(tail_receipts, "exact_trace", None)
+        # flush registered for its selected outcomes; never raises. Reached
+        # through the refresher this writer already publishes with (its
+        # `receipts` IS `tail_receipts`), so the writer gains no new name.
+        stage_trace = getattr(
+            getattr(blend_refresher, "receipts", None), "exact_trace", None
+        )
         # None means a lock-held whole chunk, not a global cadence failure.
         # Newer ticks on its rows cannot bypass the existing two-second hold.
         if not final and any(lock_retry_until.get(oid, 0) > _mono() for oid in chunk):
