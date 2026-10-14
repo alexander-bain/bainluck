@@ -310,20 +310,34 @@ _DEFAULT_LEGS = {
 }
 
 
+def _feed_state(*, head=LAST_RUN, back=None, back_end=None, owed=()):
+    """A running feed's state. By default the backlog is already walked."""
+    back_end = head if back_end is None else back_end
+    return {
+        "head": head,
+        "head_step": sweep.SETTLED_FEED_STEP_S,
+        "back": back_end if back is None else back,
+        "back_end": back_end,
+        "back_step": sweep.SETTLED_FEED_STEP_S,
+        "owed": list(owed),
+    }
+
+
 @pytest.fixture
 def redis_state(monkeypatch):
     """The two Redis values this file touches, in memory."""
-    store: dict = {"feed": (LAST_RUN, sweep.SETTLED_FEED_STEP_S, 0), "cursor": (0, 0)}
+    store: dict = {"feed": _feed_state(), "cursor": (0, 0)}
     writes: list = []
 
     async def read_feed():
-        return store["feed"]
+        feed = store["feed"]
+        return None if feed is None else dict(feed, owed=list(feed["owed"]))
 
-    async def write_feed(ts, step, stuck):
+    async def write_feed(state):
         if store.get("feed_write_fails"):
             return False
-        store["feed"] = (ts, step, stuck)
-        writes.append((ts, step, stuck))
+        store["feed"] = dict(state, owed=list(state["owed"]))
+        writes.append(store["feed"])
         return True
 
     async def read_cursor():
@@ -513,7 +527,7 @@ class TestANonzeroSweepCursorNoLongerDecidesTheCadence:
         assert stats["event_tickers_seen"] == 5
         assert stats["rows_matched"] == 3
         assert stats["venue_settled"] == 2
-        assert report["caught_up"] is True
+        assert report["head_caught_up"] is True
 
 
 # ---------------------------------------------------------------------------
@@ -521,17 +535,17 @@ class TestANonzeroSweepCursorNoLongerDecidesTheCadence:
 # ---------------------------------------------------------------------------
 
 
-class TestTheWatermark:
+class TestTheHeadWalk:
     def test_it_moves_to_the_ceiling_and_a_quiet_next_run_asks_nothing(self, redis_state):
         engine = _seed()
         _feed(engine, _Venue())
-        assert redis_state.store["feed"][0] == CEILING
+        assert redis_state.store["feed"]["head"] == CEILING
 
         venue = _Venue()
         report = _feed(engine, venue)
         assert venue.asked == []
         assert report["terminal"] == "complete"
-        assert report["steps_completed"] == 0
+        assert report["head_windows"] == 0
 
     def test_an_event_whose_last_leg_settles_later_is_closed_then(self, redis_state):
         """Leg-by-leg settlement: refused on the first leg, reached again when
@@ -554,23 +568,63 @@ class TestTheWatermark:
         assert venue.asked == [PARTIAL["external_id"]]
         assert _state(engine)[0][PARTIAL["id"]] == ("resolved", later.isoformat())
 
-    def test_a_missing_watermark_starts_at_the_venues_retention_floor(self, redis_state):
-        redis_state.store["feed"] = None
-        venue = _Venue(settled=[])
-        report = _feed(_seed(), venue, max_pages=1)
-        floor = int((NOW - timedelta(days=sweep.SETTLED_FEED_BACKLOG_DAYS)).timestamp())
-        assert report["bootstrapped"] is True
-        assert venue.pages[0]["min"] == floor
-        assert redis_state.store["feed"][0] == floor + sweep.SETTLED_FEED_STEP_S
 
-    def test_the_backlog_walk_is_bounded_by_the_page_budget(self, redis_state):
+class TestTheHeadIsNeverHeldBehindTheBacklog:
+    def test_a_fresh_state_puts_the_head_one_step_back_and_the_backlog_at_the_floor(self):
+        state = sweep.fresh_feed_state(NOW)
+        floor = int((NOW - timedelta(days=sweep.SETTLED_FEED_BACKLOG_DAYS)).timestamp())
+        assert state["head"] == CEILING - sweep.SETTLED_FEED_STEP_S
+        assert state["back"] == floor
+        assert state["back_end"] == state["head"]
+        assert state["owed"] == []
+
+    def test_on_first_deploy_a_fresh_undated_settlement_closes_in_the_first_run(self, redis_state):
+        """Root 019's composed test. No stored state, so the backlog is ~74 days
+        behind and the run's page budget could not walk it, yet an undated early
+        final settled minutes ago is closed by this very run."""
         redis_state.store["feed"] = None
+        engine = _seed()
+        venue = _Venue()
+        report = _feed(engine, venue, max_pages=5)
+        assert report["bootstrapped"] is True
+        assert report["backlog_behind_seconds"] > 70 * 86400
+        assert EARLY_UNDATED["external_id"] in venue.asked
+        assert _state(engine)[0][EARLY_UNDATED["id"]] == ("resolved", NOW.isoformat())
+        assert report["head_caught_up"] is True
+        # The head was read first: its window is the first page asked for.
+        assert venue.pages[0]["max"] == CEILING
+
+    def test_while_the_backlog_is_behind_each_later_run_still_reaches_the_head(self, redis_state):
+        floor = int((NOW - timedelta(days=sweep.SETTLED_FEED_BACKLOG_DAYS)).timestamp())
+        redis_state.store["feed"] = _feed_state(back=floor, back_end=LAST_RUN - 3600)
+        engine = _seed()
+        venue = _Venue()
+        report = _feed(engine, venue, max_pages=3)
+        assert _state(engine)[0][EARLY_BAND["id"]][0] == "resolved"
+        assert report["head_caught_up"] is True
+        assert report["backlog_windows"] >= 1
+        assert redis_state.store["feed"]["back"] > floor
+        assert report["terminal"] == "complete"
+
+    def test_the_backlog_walk_uses_what_the_head_left_and_is_bounded(self, redis_state):
+        floor = int((NOW - timedelta(days=sweep.SETTLED_FEED_BACKLOG_DAYS)).timestamp())
+        redis_state.store["feed"] = _feed_state(back=floor, back_end=LAST_RUN)
         venue = _Venue(settled=[])
         report = _feed(_seed(), venue, max_pages=5)
         assert len(venue.pages) == 5
-        assert report["steps_completed"] == 5
-        assert report["caught_up"] is False
-        assert report["terminal"] == "complete"
+        assert report["head_windows"] == 1
+        assert report["backlog_windows"] == 4
+        assert redis_state.store["feed"]["back"] == floor + 4 * sweep.SETTLED_FEED_STEP_S
+
+    def test_a_backlog_settlement_is_closed_when_the_walk_reaches_it(self, redis_state):
+        old = dict(EARLY_UNDATED, id=9, external_id="KXGRAMMYAOTY-26")
+        settled = [{"ticker": "KXGRAMMYAOTY-26-X", "event_ticker": old["external_id"],
+                    "settlement_ts": _ts(86400 * 3)}]
+        legs = {old["external_id"]: _legs(old["external_id"], ["finalized"], old["resolution_date"])}
+        redis_state.store["feed"] = _feed_state(back=CEILING - 86400 * 4, back_end=LAST_RUN)
+        engine = _seed(SPECIMENS + (old,))
+        _feed(engine, _Venue(settled=settled, legs=legs))
+        assert _state(engine)[0][9] == ("resolved", NOW.isoformat())
 
 
 class TestAWindowThatIsNotFinishedDoesNotMoveIt:
@@ -584,7 +638,7 @@ class TestAWindowThatIsNotFinishedDoesNotMoveIt:
         report = _feed(engine, venue)
         assert report["terminal"] == "failed"
         assert "not applied" in report["terminal_reason"]
-        assert redis_state.store["feed"][0] == LAST_RUN
+        assert redis_state.store["feed"]["head"] == LAST_RUN
         assert venue.asked == []
         assert all(s == ("open", None) or i == ALREADY_RESOLVED["id"]
                    for i, s in _state(engine)[0].items())
@@ -594,45 +648,25 @@ class TestAWindowThatIsNotFinishedDoesNotMoveIt:
         venue.page_error = RuntimeError("429 Too Many Requests")
         report = _feed(_seed(), venue)
         assert report["terminal"] == "partial"
-        assert "page error" in report["stop_reason"]
-        assert redis_state.store["feed"][0] == LAST_RUN
+        assert "page error" in report["head_stop"]
+        assert redis_state.store["feed"]["head"] == LAST_RUN
 
     def test_a_window_too_big_for_a_whole_run_halves_and_then_finishes(self, redis_state):
         engine = _seed()
         venue = _Venue(page_size=1)
         report = _feed(engine, venue, max_pages=3)
-        assert report["steps_completed"] == 0
-        assert redis_state.store["feed"][0] == LAST_RUN
-        assert redis_state.store["feed"][1] == (CEILING - LAST_RUN) // 2
+        assert report["head_windows"] == 0
+        assert redis_state.store["feed"]["head"] == LAST_RUN
+        assert redis_state.store["feed"]["head_step"] == (CEILING - LAST_RUN) // 2
 
-        # Successive runs walk the narrower windows and finish.
         for _ in range(10):
-            if redis_state.store["feed"][0] == CEILING:
+            if redis_state.store["feed"]["head"] == CEILING:
                 break
             _feed(engine, _Venue(page_size=1), max_pages=3)
-        assert redis_state.store["feed"][0] == CEILING
+        assert redis_state.store["feed"]["head"] == CEILING
         assert _state(engine)[0][EARLY_BAND["id"]][0] == "resolved"
 
-    def test_a_venue_error_on_a_matched_event_retries_then_steps_past_named(self, redis_state):
-        engine = _seed()
-        for attempt in range(1, sweep.SETTLED_FEED_MAX_STUCK_RUNS):
-            venue = _Venue()
-            venue.event_error_for = {EARLY_UNDATED["external_id"]}
-            report = _feed(engine, venue)
-            assert redis_state.store["feed"][0] == LAST_RUN
-            assert redis_state.store["feed"][2] == attempt
-            assert report["skipped_after_errors_count"] == 0
-        # The rows that did answer were still written on the first attempt.
-        assert _state(engine)[0][EARLY_BAND["id"]][0] == "resolved"
-
-        venue = _Venue()
-        venue.event_error_for = {EARLY_UNDATED["external_id"]}
-        report = _feed(engine, venue)
-        assert redis_state.store["feed"][0] == CEILING
-        assert redis_state.store["feed"][2] == 0
-        assert EARLY_UNDATED["external_id"] in report["skipped_after_errors"]
-
-    def test_a_lost_watermark_write_fails_the_run(self, redis_state):
+    def test_a_lost_state_write_fails_the_run(self, redis_state):
         redis_state.store["feed_write_fails"] = True
         report = _feed(_seed(), _Venue())
         assert report["terminal"] == "failed"
@@ -643,9 +677,91 @@ class TestAWindowThatIsNotFinishedDoesNotMoveIt:
         report = _feed(engine, _Venue(), apply=False)
         assert report["mode"] == "DRY_RUN"
         assert redis_state.writes == []
-        assert report["watermark_after"] == report["watermark_before"]
+        assert report["head_after"] == report["head_before"]
         state, _ = _state(engine)
         assert state[EARLY_BAND["id"]] == ("open", None)
+
+
+class TestAnErroredReadIsOwedNotForgotten:
+    def test_the_walk_moves_on_and_the_ticker_is_owed(self, redis_state):
+        """One bad ticker neither wedges the walk nor drops the row: the head
+        reaches the present and the ticker is carried as a debt, read partial."""
+        engine = _seed()
+        venue = _Venue()
+        venue.event_error_for = {EARLY_UNDATED["external_id"]}
+        report = _feed(engine, venue)
+        assert redis_state.store["feed"]["head"] == CEILING
+        assert redis_state.store["feed"]["owed"] == [EARLY_UNDATED["external_id"]]
+        assert report["terminal"] == "partial"
+        assert "owed" in report["terminal_reason"]
+        # Its siblings in the same window were still written.
+        assert _state(engine)[0][EARLY_BAND["id"]][0] == "resolved"
+        assert _state(engine)[0][EARLY_UNDATED["id"]] == ("open", None)
+
+    def test_every_fresh_row_erroring_is_an_outage(self, redis_state):
+        venue = _Venue()
+        venue.event_error_for = {EARLY_BAND["external_id"], EARLY_UNDATED["external_id"],
+                                 PARTIAL["external_id"]}
+        report = _feed(_seed(), venue)
+        assert report["terminal"] == "failed"
+        assert len(redis_state.store["feed"]["owed"]) == 3
+
+    def test_repeated_errors_keep_the_debt_then_recovery_closes_the_row(self, redis_state):
+        """Root 019: errors for several runs, then the venue answers. The row
+        closes from the owed list alone — no window re-read, no sweep, no date."""
+        engine = _seed()
+        for _ in range(5):
+            venue = _Venue()
+            venue.event_error_for = {EARLY_UNDATED["external_id"]}
+            report = _feed(engine, venue)
+            assert redis_state.store["feed"]["owed"] == [EARLY_UNDATED["external_id"]]
+            assert report["terminal"] == "partial"
+        assert _state(engine)[0][EARLY_UNDATED["id"]] == ("open", None)
+
+        venue = _Venue()
+        report = _feed(engine, venue)
+        assert venue.asked == [EARLY_UNDATED["external_id"]]
+        assert all(p["min"] == CEILING for p in venue.pages)  # head is current; nothing re-read
+        assert _state(engine)[0][EARLY_UNDATED["id"]] == ("resolved", NOW.isoformat())
+        assert redis_state.store["feed"]["owed"] == []
+        assert report["owed_paid"] == 1
+        assert report["terminal"] == "complete"
+
+    def test_a_debt_whose_row_closed_elsewhere_is_paid_without_a_read(self, redis_state):
+        engine = _seed()
+        with engine.begin() as conn:
+            conn.execute(text("UPDATE futures_markets SET status = 'resolved' WHERE id = :i"),
+                         {"i": EARLY_UNDATED["id"]})
+        redis_state.store["feed"] = _feed_state(head=CEILING, owed=[EARLY_UNDATED["external_id"]])
+        venue = _Venue()
+        report = _feed(engine, venue)
+        assert venue.asked == []
+        assert redis_state.store["feed"]["owed"] == []
+        assert report["terminal"] == "complete"
+
+    def test_a_full_owed_list_holds_the_window_instead_of_dropping_a_debt(self, redis_state, monkeypatch):
+        monkeypatch.setattr(sweep, "SETTLED_FEED_OWED_MAX", 1)
+        monkeypatch.setattr(sweep, "SETTLED_FEED_OWED_RETRY_PER_RUN", 0)
+        redis_state.store["feed"] = _feed_state(owed=["KXSOMETHING-ELSE"])
+        venue = _Venue()
+        venue.event_error_for = {EARLY_UNDATED["external_id"]}
+        report = _feed(_seed(), venue)
+        assert redis_state.store["feed"]["head"] == LAST_RUN
+        assert redis_state.store["feed"]["owed"] == ["KXSOMETHING-ELSE"]
+        assert "owed list full" in report["head_stop"]
+        assert report["terminal"] == "partial"
+
+    def test_owed_retries_are_bounded_and_rotate(self, redis_state, monkeypatch):
+        monkeypatch.setattr(sweep, "SETTLED_FEED_OWED_RETRY_PER_RUN", 1)
+        engine = _seed()
+        redis_state.store["feed"] = _feed_state(
+            head=CEILING, owed=[EARLY_UNDATED["external_id"], EARLY_BAND["external_id"]])
+        venue = _Venue()
+        venue.event_error_for = {EARLY_UNDATED["external_id"]}
+        _feed(engine, venue)
+        assert venue.asked == [EARLY_UNDATED["external_id"]]
+        assert redis_state.store["feed"]["owed"] == [
+            EARLY_BAND["external_id"], EARLY_UNDATED["external_id"]]
 
 
 class TestTheBeat:

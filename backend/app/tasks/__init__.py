@@ -1965,14 +1965,18 @@ def settle_kalshi_settled_feed(self, concurrency: int = 6):
 
     CERT-4117 blocked the first repair because it rode the population sweep's
     rotating cursor, so a newly admitted row could wait a full cycle. This arm
-    never reads that cursor.
+    never reads that cursor. Each run walks the HEAD (the newest settlements)
+    before the one-time BACKLOG back to the venue's retention floor, so a fresh
+    early final is never queued behind history, and a matched row whose event
+    read errors is kept on a durable OWED list, retried first every run, with
+    the run reading `partial` until it is paid.
 
     ON `realtime`, `expires` one period, for `settle_kalshi_recent_finals`'s
     measured reason: a dropped message on `background` leaves no trace. A
     dropped run here costs one period of lateness and nothing else, because the
     watermark only moves after a window is walked.
 
-    Bounded per run: 120 venue pages, 300 matched rows. Writes NO grade
+    Bounded per run: 120 venue pages, 300 matched rows (50 owed). Writes NO grade
     (CAL-P061 / #1852, inherited unchanged from `UPDATE_SQL`).
     """
     from app.tasks.kalshi_resolution_sweep import run_settled_feed

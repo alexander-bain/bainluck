@@ -1207,6 +1207,9 @@ async def run_backfill(
     void_samples: list[dict] = []
     void_ids: list[int] = []
     void_checked_ids: list[int] = []
+    # #2722: WHICH rows errored, not only how many. The settled feed moves its
+    # watermark past a window and must carry these tickers as a retry it owes.
+    errored_tickers: list[str] = []
 
     if not rows:
         # Not a success. Either the migration has not run, or the floor has
@@ -1237,6 +1240,7 @@ async def run_backfill(
             # that voided nothing must be the same SHAPE to a reader, or every
             # consumer grows a `.get`.
             "venue_voided_samples": [],
+            "errored_tickers": [],
         }
 
     sem = asyncio.Semaphore(concurrency)
@@ -1255,6 +1259,7 @@ async def run_backfill(
                 event = await client.get_event(ticker, with_nested_markets=True)
             except Exception:
                 stats["errors"] += 1
+                errored_tickers.append(ticker)
                 return None
 
         markets = (event or {}).get("markets") or []
@@ -1451,6 +1456,7 @@ async def run_backfill(
         # (`/events/{ticker}?with_nested_markets=true`) and a report that only
         # carries a number cannot be audited that way.
         "venue_voided_samples": void_samples,
+        "errored_tickers": errored_tickers,
     }
     if stats["unresolvable_at_venue"] == len(rows) and not writes:
         # Every slot in the batch went to a row this script may not write. Those
@@ -2226,31 +2232,41 @@ async def run_resolved_voids(
 # its last leg's ``settlement_ts`` falls in a later window. Still no grade:
 # ``is_winner``, prices and probabilities are #1852's rail, untouched here.
 #
-# BOUNDED THREE WAYS, each reported: pages per run, matched rows per run, and the
-# window walked per step. The window halves when one step will not fit inside a
-# run's budget and grows back after a step that does, so a burst at the venue
-# slows the walk instead of wedging it.
+# TWO WALKS, AND THE HEAD GOES FIRST. A fresh state starts the HEAD walk one
+# step behind the present and the BACKLOG walk at the venue's market-retention
+# floor (:data:`SETTLED_FEED_BACKLOG_DAYS`; an older settlement is purged at the
+# venue and no read can confirm it), bounded above by where the head began.
+# Every run walks the head to the present before it spends anything on the
+# backlog, so a question settled today is closed on the next beat even while
+# weeks of history are still being walked behind it. The backlog's cost is
+# venue PAGES: ~100,000 non-combo settlements a day (mostly hourly crypto and
+# commodity ladders) is ~7,400 pages over the floor, ~60 runs at the page cap,
+# about ten hours of beats, once.
 #
-# THE BACKLOG. A missing watermark starts :data:`SETTLED_FEED_BACKLOG_DAYS` back,
-# which is the venue's own market-retention floor: an older settlement is purged
-# at the venue and no read can confirm it. The cost is venue PAGES, not steps:
-# ~100,000 non-combo settlements a day (mostly hourly crypto/commodity ladders)
-# is ~7,400 pages over the floor, so at 120 pages a run the standing backlog is
-# walked in ~60 runs, about ten hours of 10-minute beats, after which a run is
-# one or two pages at the head. Until it is walked, the head waits behind it;
-# that is a one-time cost on the first deploy, named so it is not mistaken for
-# the steady-state cadence.
+# NOTHING THE VENUE SETTLED IS FORGOTTEN. A matched row whose event read
+# errored is not a reason to hold the walk (one bad ticker would wedge it) and
+# not a reason to drop the row (the venue settled it, so the row is owed a
+# close). Its ticker goes on a durable, bounded OWED list that every run
+# retries first, and the run reads `partial` while the list is not empty. A
+# ticker leaves the list when its event read answers, or when its row is no
+# longer ``open`` here. A full list stops the walks rather than drop an entry.
+#
+# BOUNDED, each bound reported: pages per run, matched rows per run, owed rows
+# retried per run, and the window per step. A window that will not fit inside
+# a whole run halves and grows back after one that does, so a burst at the
+# venue slows a walk instead of wedging it.
 
-#: Durable position on the venue's settlement clock: ``"<ts>:<step_s>:<stuck>"``.
-#: One value, for the reason :data:`SWEEP_CURSOR_KEY` gives — a half-written pair
-#: is a position that skips silently.
-SETTLED_FEED_STATE_KEY = "bainluck:kalshi_settled_feed:watermark:v1"
+#: The feed's durable state, ONE JSON value for the reason
+#: :data:`SWEEP_CURSOR_KEY` gives — a half-written state is a position that
+#: skips silently. Keys: ``head``/``head_step``, ``back``/``back_end``/
+#: ``back_step`` (unix seconds), and ``owed`` (event tickers).
+SETTLED_FEED_STATE_KEY = "bainluck:kalshi_settled_feed:state:v1"
 
-#: Refreshed on every persisted step, so it only lapses if the arm stops running
-#: for a month, and then it restarts the backlog walk, which is idempotent.
+#: Refreshed on every write, so it only lapses if the arm stops running for a
+#: month, and then both walks restart, which is idempotent.
 SETTLED_FEED_STATE_TTL_S = 60 * 60 * 24 * 30
 
-#: How far back a fresh watermark starts. The venue's market-retention floor,
+#: How far back the backlog walk starts. The venue's market-retention floor,
 #: READ, never retuned — the same constant the purge floor and the band use.
 SETTLED_FEED_BACKLOG_DAYS = PROVABLY_PURGED_AGE_DAYS
 
@@ -2269,17 +2285,20 @@ SETTLED_FEED_PAGE_SIZE = 1000
 #: against the beat's 240 s soft limit. Only the backlog walk ever reaches it.
 SETTLED_FEED_MAX_PAGES = 120
 
-#: Our rows one run may send to the venue for the all-legs read. At concurrency
-#: 6 this is ~15 s; the beat's soft limit is 240 s.
+#: Our rows one run may send to the venue for the all-legs read, owed retries
+#: included. At concurrency 6 this is ~15 s.
 SETTLED_FEED_MAX_ROWS = 300
 
-#: How many consecutive runs a step may fail on venue errors before the walk
-#: steps past it. Without a limit one ticker the venue keeps erroring on would
-#: wedge the arm. The rows stepped past are named on the report.
-SETTLED_FEED_MAX_STUCK_RUNS = 3
+#: Owed tickers retried per run, oldest first. Small, so tickers that keep
+#: erroring can never starve the head walk of its row budget.
+SETTLED_FEED_OWED_RETRY_PER_RUN = 50
 
-#: Our ``open`` rows whose event ticker the venue settled in the step. No date,
-#: no ticker shape, no cursor: membership is the venue's word and our status.
+#: The owed list's ceiling. Reaching it stops the walks (the run reads
+#: `partial`) rather than drop an obligation.
+SETTLED_FEED_OWED_MAX = 500
+
+#: Our ``open`` rows whose event ticker the venue settled. No date, no ticker
+#: shape, no cursor: membership is the venue's word and our status.
 #: ``external_id`` is unique per source (``uq_futures_source_external``), so the
 #: lookup is an index probe.
 SETTLED_FEED_SELECT_SQL = """
@@ -2313,7 +2332,7 @@ async def fetch_settled_event_tickers(
     """Every event ticker with a market settled in ``[start_ts, end_ts]``.
 
     ``complete`` is true only when the cursor ran out inside ``max_pages``; a
-    window that is not complete must not move the watermark.
+    window that is not complete must not move a watermark.
 
     The filter is CHECKED, not trusted. A market whose ``settlement_ts`` is
     missing or outside the window means the venue did not apply the bounds we
@@ -2332,7 +2351,7 @@ async def fetch_settled_event_tickers(
                 max_settled_ts=end_ts,
                 mve_filter="exclude",
             )
-        except Exception as exc:  # noqa: BLE001 — reported; the step is retried
+        except Exception as exc:  # noqa: BLE001 — reported; the window is re-read
             out.error = f"{type(exc).__name__}: {str(exc)[:160]}"
             return out
         out.pages += 1
@@ -2359,9 +2378,24 @@ async def fetch_settled_event_tickers(
     return out
 
 
-async def _read_feed_state() -> Optional[tuple[int, int, int]]:
-    """``(watermark_ts, step_s, stuck_runs)``, or None when there is no state."""
+def fresh_feed_state(now: datetime) -> dict:
+    """Head one step behind the present; backlog from the retention floor up to it."""
+    head = int(now.timestamp()) - SETTLED_FEED_LAG_S - SETTLED_FEED_STEP_S
+    return {
+        "head": head,
+        "head_step": SETTLED_FEED_STEP_S,
+        "back": int((now - timedelta(days=SETTLED_FEED_BACKLOG_DAYS)).timestamp()),
+        "back_end": head,
+        "back_step": SETTLED_FEED_STEP_S,
+        "owed": [],
+    }
+
+
+async def _read_feed_state() -> Optional[dict]:
+    """The stored state, or None when there is none or it does not parse."""
     try:
+        import json
+
         from app.tasks.redis_state import get_async_redis_client
 
         raw = await get_async_redis_client().get(SETTLED_FEED_STATE_KEY)
@@ -2369,22 +2403,29 @@ async def _read_feed_state() -> Optional[tuple[int, int, int]]:
             return None
         if isinstance(raw, bytes):
             raw = raw.decode()
-        parts = str(raw).split(":")
-        ts = int(parts[0])
-        step = int(parts[1]) if len(parts) > 1 and parts[1] else SETTLED_FEED_STEP_S
-        stuck = int(parts[2]) if len(parts) > 2 and parts[2] else 0
-        return ts, max(1, step), max(0, stuck)
+        data = json.loads(raw)
+        state = {
+            "head": int(data["head"]),
+            "head_step": max(1, int(data.get("head_step") or SETTLED_FEED_STEP_S)),
+            "back": int(data["back"]),
+            "back_end": int(data["back_end"]),
+            "back_step": max(1, int(data.get("back_step") or SETTLED_FEED_STEP_S)),
+            "owed": [str(t) for t in (data.get("owed") or [])],
+        }
+        return state
     except Exception:  # noqa: BLE001 — an unreadable state is a fresh start
         return None
 
 
-async def _write_feed_state(ts: int, step_s: int, stuck: int) -> bool:
+async def _write_feed_state(state: dict) -> bool:
     try:
+        import json
+
         from app.tasks.redis_state import get_async_redis_client
 
         await get_async_redis_client().set(
             SETTLED_FEED_STATE_KEY,
-            f"{int(ts)}:{int(step_s)}:{int(stuck)}",
+            json.dumps(state, sort_keys=True),
             ex=SETTLED_FEED_STATE_TTL_S,
         )
         return True
@@ -2392,20 +2433,32 @@ async def _write_feed_state(ts: int, step_s: int, stuck: int) -> bool:
         return False
 
 
-async def _open_rows_for_tickers(session_maker, tickers: set) -> list:
-    """Our ``open`` Kalshi rows whose ``external_id`` the venue just settled."""
+async def _open_rows_for_tickers(session_maker, tickers) -> list:
+    """Our ``open`` Kalshi rows whose ``external_id`` is one of ``tickers``."""
     from sqlalchemy import bindparam
 
     if not tickers:
         return []
     stmt = text(SETTLED_FEED_SELECT_SQL).bindparams(bindparam("tickers", expanding=True))
-    ordered = sorted(tickers)
+    ordered = sorted(set(tickers))
     rows: list = []
     async with session_maker() as session:
         for i in range(0, len(ordered), SETTLED_FEED_LOOKUP_CHUNK):
             chunk = ordered[i : i + SETTLED_FEED_LOOKUP_CHUNK]
             rows.extend((await session.execute(stmt, {"tickers": chunk})).all())
     return rows
+
+
+_FEED_COUNTERS = (
+    "candidates",
+    "venue_settled",
+    "venue_partially_settled",
+    "settled_without_date",
+    "venue_voided",
+    "unresolvable_at_venue",
+    "writes_applied",
+    "errors",
+)
 
 
 async def run_settled_feed(
@@ -2418,160 +2471,173 @@ async def run_settled_feed(
     client_factory: Optional[Callable[[], object]] = None,
     now: Optional[datetime] = None,
 ) -> dict:
-    """Walk the venue's settlement clock forward and close what it settled.
+    """Close what the venue settled: owed retries, then the head, then the backlog.
 
-    One beat run. Each STEP is a window ``[watermark, watermark + step]``: read
-    every settled market in it, look up our ``open`` rows by event ticker, send
-    them through :func:`run_backfill` (the all-legs read and :data:`UPDATE_SQL`),
-    then persist the watermark at the window's end. A step that is not finished
-    — budget spent mid-window, a venue error, a refused filter — leaves the
-    watermark where it was, so the next run re-reads that window. Re-reading is
-    safe: a row closed the first time is no longer ``open``.
+    One beat run, in three phases that share the run's page and row budgets:
 
-    ``apply=False`` reads and derives but writes nothing and never moves the
-    watermark, so a dry run cannot skip a window.
+    1. OWED. Re-ask the venue about tickers a previous window matched and could
+       not read. A ticker leaves the list when its read answers or its row is no
+       longer ``open``.
+    2. HEAD. Walk ``[head, present - lag]`` in windows: read every settled market
+       in the window, look up our ``open`` rows by event ticker, send them
+       through :func:`run_backfill` (the all-legs read and :data:`UPDATE_SQL`),
+       record any errored ticker as owed, then persist ``head`` at the window's
+       end.
+    3. BACKLOG. The same, over ``[back, back_end]``, with whatever budget the
+       head left.
 
-    The sweep's rotating cursor is never read here. That is the repair CERT-4117
-    named: whether the next cadence asks about an early final does not depend
-    on where the population sweep happens to be in its cycle.
+    A window that is not finished — budget spent mid-window, a venue page error,
+    a refused filter, a full owed list — leaves its watermark where it was, so
+    the next run re-reads that window. Re-reading is safe: a row closed the
+    first time is no longer ``open``.
+
+    ``apply=False`` reads and derives one head window but writes nothing and
+    persists nothing, so a dry run cannot move a watermark or clear a debt.
+
+    The sweep's rotating cursor is never read here. That is the repair
+    CERT-4117 named: whether the next cadence asks about an early final does not
+    depend on where the population sweep stands in its cycle.
     """
     now = now or datetime.now(timezone.utc)
     maker = session_maker or default_session_maker()
     factory = client_factory or KalshiAPIService
     ceiling = int(now.timestamp()) - SETTLED_FEED_LAG_S
 
-    state = await _read_feed_state()
-    bootstrapped = state is None
-    if state is None:
-        state = (
-            int((now - timedelta(days=SETTLED_FEED_BACKLOG_DAYS)).timestamp()),
-            SETTLED_FEED_STEP_S,
-            0,
-        )
-    watermark, step_s, stuck = state
-    watermark_before = watermark
+    stored = await _read_feed_state()
+    bootstrapped = stored is None
+    state = stored if stored is not None else fresh_feed_state(now)
+    before = dict(state, owed=list(state["owed"]))
 
-    totals = {
-        "pages": 0,
-        "venue_markets_seen": 0,
-        "event_tickers_seen": 0,
-        "rows_matched": 0,
-        "candidates": 0,
-        "venue_settled": 0,
-        "venue_partially_settled": 0,
-        "settled_without_date": 0,
-        "venue_voided": 0,
-        "unresolvable_at_venue": 0,
-        "writes_applied": 0,
-        "errors": 0,
-    }
-    steps_completed = 0
-    persisted = True
-    stop_reason: Optional[str] = None
+    totals = {k: 0 for k in _FEED_COUNTERS}
+    totals.update(pages=0, venue_markets_seen=0, event_tickers_seen=0, rows_matched=0)
+    progress = {"owed": 0, "head": 0, "back": 0}
+    owed_asked = owed_errored = 0
+    stop: dict = {"owed": None, "head": None, "back": None}
     refusal: Optional[str] = None
-    skipped_after_errors: list[str] = []
+    persisted = True
     samples: list[dict] = []
+
+    async def _ask(rows) -> list[str]:
+        """The all-legs read and write for ``rows``; returns the tickers that errored."""
+        report = await run_backfill(
+            session_maker=maker,
+            client_factory=factory,
+            limit=len(rows),
+            apply=apply,
+            concurrency=concurrency,
+            now=now,
+            rows=rows,
+        )
+        stats = report.get("stats") or {}
+        for key in _FEED_COUNTERS:
+            totals[key] += max(0, int(stats.get(key) or 0))
+        if len(samples) < 10:
+            samples.extend(
+                {"id": r[0], "external_id": r[1]} for r in rows[: 10 - len(samples)]
+            )
+        return list(report.get("errored_tickers") or [])
+
+    async def _persist() -> bool:
+        nonlocal persisted
+        if not apply:
+            return True
+        ok = await _write_feed_state(state)
+        persisted = persisted and ok
+        return ok
+
+    # --- 1. Owed retries -------------------------------------------------
+    if state["owed"]:
+        batch = state["owed"][:SETTLED_FEED_OWED_RETRY_PER_RUN]
+        rows = await _open_rows_for_tickers(maker, batch)
+        still_open = {r[1] for r in rows}
+        errored = set(await _ask(rows)) if rows else set()
+        owed_asked, owed_errored = len(rows), len(errored)
+        if apply:
+            # Answered, or no longer open here: the debt is paid. Still erroring:
+            # it goes to the back of the list so the next run tries the others.
+            kept = [t for t in batch if t in still_open and t in errored]
+            state["owed"] = state["owed"][len(batch) :] + kept
+            progress["owed"] = len(batch) - len(kept)
+            await _persist()
 
     client = factory()
     try:
-        while watermark < ceiling:
-            pages_left = max_pages - totals["pages"]
-            if pages_left <= 0:
-                stop_reason = "page budget spent"
-                break
-            if totals["candidates"] >= max_rows:
-                stop_reason = "row budget spent"
-                break
-            end = min(watermark + step_s, ceiling)
-            window = await fetch_settled_event_tickers(
-                client, start_ts=watermark, end_ts=end, max_pages=pages_left
-            )
-            totals["pages"] += window.pages
-            if window.refusal:
-                refusal = window.refusal
-                stop_reason = "venue filter refused"
-                break
-            if window.error:
-                stop_reason = f"venue page error: {window.error}"
-                break
-            if not window.complete:
-                if pages_left == max_pages and step_s > 1:
-                    # This window alone does not fit in a whole run. Halve it,
-                    # so the next run can finish a step instead of re-reading
-                    # the same oversized window forever.
-                    step_s = max(1, (end - watermark) // 2)
-                    if apply:
-                        persisted = await _write_feed_state(watermark, step_s, stuck)
-                stop_reason = "page budget spent mid-window"
-                break
 
-            rows = await _open_rows_for_tickers(maker, window.event_tickers)
-            remaining_rows = max_rows - totals["candidates"]
-            if len(rows) > remaining_rows and end - watermark > 1:
-                if totals["candidates"] == 0:
-                    # More rows than a whole run may ask about: narrow the window
-                    # and try again inside this run.
-                    step_s = max(1, (end - watermark) // 2)
-                    continue
-                stop_reason = "row budget spent"
-                break
-
-            totals["venue_markets_seen"] += window.markets
-            totals["event_tickers_seen"] += len(window.event_tickers)
-            totals["rows_matched"] += len(rows)
-
-            step_errors = 0
-            if rows:
-                report = await run_backfill(
-                    session_maker=maker,
-                    client_factory=factory,
-                    limit=len(rows),
-                    apply=apply,
-                    concurrency=concurrency,
-                    now=now,
-                    rows=rows,
+        async def _walk(name: str, end_bound: Optional[int]) -> None:
+            nonlocal refusal
+            wm_key, step_key = name, f"{name}_step"
+            while True:
+                limit_ts = ceiling if end_bound is None else min(end_bound, ceiling)
+                if state[wm_key] >= limit_ts:
+                    return
+                pages_left = max_pages - totals["pages"]
+                if pages_left <= 0:
+                    stop[name] = "page budget spent"
+                    return
+                if totals["candidates"] >= max_rows:
+                    stop[name] = "row budget spent"
+                    return
+                start = state[wm_key]
+                end = min(start + state[step_key], limit_ts)
+                window = await fetch_settled_event_tickers(
+                    client, start_ts=start, end_ts=end, max_pages=pages_left
                 )
-                stats = report.get("stats") or {}
-                for key in (
-                    "candidates",
-                    "venue_settled",
-                    "venue_partially_settled",
-                    "settled_without_date",
-                    "venue_voided",
-                    "unresolvable_at_venue",
-                    "writes_applied",
-                    "errors",
-                ):
-                    totals[key] += max(0, int(stats.get(key) or 0))
-                step_errors = max(0, int(stats.get("errors") or 0))
-                if len(samples) < 10:
-                    samples.extend(
-                        {"id": r[0], "external_id": r[1]} for r in rows[: 10 - len(samples)]
+                totals["pages"] += window.pages
+                if window.refusal:
+                    refusal = window.refusal
+                    stop[name] = "venue filter refused"
+                    return
+                if window.error:
+                    stop[name] = f"venue page error: {window.error}"
+                    return
+                if not window.complete:
+                    if pages_left == max_pages and state[step_key] > 1:
+                        # This window alone does not fit in a whole run. Halve
+                        # it so a later run can finish a step.
+                        state[step_key] = max(1, (end - start) // 2)
+                        await _persist()
+                    stop[name] = "page budget spent mid-window"
+                    return
+
+                rows = await _open_rows_for_tickers(maker, window.event_tickers)
+                remaining = max_rows - totals["candidates"]
+                if len(rows) > remaining and end - start > 1:
+                    if totals["candidates"] == 0:
+                        # More rows than a whole run may ask about: narrow the
+                        # window and read it again inside this run.
+                        state[step_key] = max(1, (end - start) // 2)
+                        continue
+                    stop[name] = "row budget spent"
+                    return
+
+                totals["venue_markets_seen"] += window.markets
+                totals["event_tickers_seen"] += len(window.event_tickers)
+                totals["rows_matched"] += len(rows)
+                errored = await _ask(rows) if rows else []
+
+                if not apply:
+                    progress[name] += 1
+                    stop[name] = "dry run"
+                    return
+
+                new_owed = [t for t in dict.fromkeys(errored) if t not in state["owed"]]
+                if len(state["owed"]) + len(new_owed) > SETTLED_FEED_OWED_MAX:
+                    stop[name] = (
+                        f"owed list full ({len(state['owed'])}/{SETTLED_FEED_OWED_MAX}); "
+                        "the window is re-read once retries drain it"
                     )
+                    return
+                state["owed"].extend(new_owed)
+                state[wm_key] = end
+                state[step_key] = min(SETTLED_FEED_STEP_S, state[step_key] * 2)
+                progress[name] += 1
+                if not await _persist():
+                    stop[name] = "state not persisted"
+                    return
 
-            if not apply:
-                # A dry run reads one step and stops. The watermark stays put:
-                # a window nothing was written for is not a window walked.
-                steps_completed += 1
-                stop_reason = "dry run"
-                break
-
-            if step_errors:
-                stuck += 1
-                if stuck < SETTLED_FEED_MAX_STUCK_RUNS:
-                    persisted = await _write_feed_state(watermark, step_s, stuck)
-                    stop_reason = f"{step_errors} venue errors in this window; retried next run"
-                    break
-                skipped_after_errors.extend(r[1] for r in rows)
-
-            watermark = end
-            stuck = 0
-            steps_completed += 1
-            step_s = min(SETTLED_FEED_STEP_S, step_s * 2)
-            persisted = await _write_feed_state(watermark, step_s, stuck)
-            if not persisted:
-                stop_reason = "watermark not persisted"
-                break
+        await _walk("head", None)
+        if refusal is None and persisted and apply:
+            await _walk("back", state["back_end"])
     finally:
         close = getattr(client, "close", None)
         if close is not None:
@@ -2579,24 +2645,36 @@ async def run_settled_feed(
             if asyncio.iscoroutine(maybe):
                 await maybe
 
-    behind = max(0, ceiling - watermark)
+    def _iso_ts(ts: int) -> str:
+        return datetime.fromtimestamp(ts, timezone.utc).isoformat()
+
+    head_behind = max(0, ceiling - state["head"])
+    walked_rows = totals["candidates"] - owed_asked
+    walked_errors = totals["errors"] - owed_errored
+    back_behind = max(0, min(state["back_end"], ceiling) - state["back"])
     report = {
         "mode": "APPLY" if apply else "DRY_RUN",
         "selection": "settled_feed",
         "measured_at": now.isoformat(),
         "bootstrapped": bootstrapped,
-        "watermark_before": datetime.fromtimestamp(watermark_before, timezone.utc).isoformat(),
-        "watermark_after": datetime.fromtimestamp(watermark, timezone.utc).isoformat(),
-        "ceiling": datetime.fromtimestamp(ceiling, timezone.utc).isoformat(),
-        "behind_seconds": behind,
-        "caught_up": behind == 0,
-        "step_seconds": step_s,
-        "steps_completed": steps_completed,
-        "stuck_runs": stuck,
-        "stop_reason": stop_reason,
+        "ceiling": _iso_ts(ceiling),
+        "head_before": _iso_ts(before["head"]),
+        "head_after": _iso_ts(state["head"]),
+        "head_behind_seconds": head_behind,
+        "head_caught_up": head_behind == 0,
+        "head_windows": progress["head"],
+        "head_stop": stop["head"],
+        "backlog_before": _iso_ts(before["back"]),
+        "backlog_after": _iso_ts(state["back"]),
+        "backlog_end": _iso_ts(state["back_end"]),
+        "backlog_behind_seconds": back_behind,
+        "backlog_windows": progress["back"],
+        "backlog_stop": stop["back"],
+        "owed_before": len(before["owed"]),
+        "owed_paid": progress["owed"],
+        "owed_after": len(state["owed"]),
+        "owed_tickers": list(state["owed"][:50]),
         "refusal": refusal,
-        "skipped_after_errors": skipped_after_errors[:50],
-        "skipped_after_errors_count": len(skipped_after_errors),
         "state_persisted": persisted,
         "matched_samples": samples,
         "stats": totals,
@@ -2608,19 +2686,33 @@ async def run_settled_feed(
     elif not persisted:
         report["terminal"] = "failed"
         report["terminal_reason"] = (
-            "watermark not persisted — the next run re-reads from "
-            f"{report['watermark_before']}"
+            "feed state not persisted — the next run re-reads from "
+            f"{report['head_before']} (head) and {report['backlog_before']} (backlog)"
         )
-    elif totals["candidates"] and totals["errors"] >= totals["candidates"]:
+    elif walked_rows and walked_errors >= walked_rows:
+        # Judged on the walks' rows only. An owed ticker that keeps erroring is
+        # the debt below, not an outage; every fresh row erroring is.
         report["terminal"] = "failed"
         report["terminal_reason"] = (
-            f"all {totals['candidates']} matched rows errored at the venue"
+            f"all {walked_rows} rows matched this run errored at the venue"
         )
-    elif behind and steps_completed == 0:
+    elif state["owed"]:
         report["terminal"] = "partial"
         report["terminal_reason"] = (
-            f"no window finished ({stop_reason}); {behind}s of settlements "
-            "behind the venue, re-read next run"
+            f"{len(state['owed'])} venue-settled tickers are owed a re-read "
+            "(their event read errored); retried first every run"
+        )
+    elif head_behind and progress["head"] == 0:
+        report["terminal"] = "partial"
+        report["terminal_reason"] = (
+            f"no head window finished ({stop['head']}); {head_behind}s of "
+            "settlements behind the venue, re-read next run"
+        )
+    elif back_behind and progress["back"] == 0 and apply:
+        report["terminal"] = "partial"
+        report["terminal_reason"] = (
+            f"head current, backlog made no progress ({stop['back']}); "
+            f"{back_behind}s of history still to walk"
         )
     else:
         report["terminal"] = "complete"
