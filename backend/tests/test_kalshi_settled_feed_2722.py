@@ -324,12 +324,16 @@ def _copy_feed(feed):
                            for t, m in (feed.get("owed_meta") or {}).items()})
 
 
-def _feed_state(*, head=LAST_RUN, back=None, back_end=None, owed=(), owed_meta=None):
-    """A running feed's state. By default the backlog is already walked."""
+def _feed_state(*, head=LAST_RUN, trail=None, back=None, back_end=None, owed=(),
+                owed_meta=None):
+    """A running feed's state. By default the backlog is already walked and the
+    trail stands its lag behind the head, where the previous run left it."""
     back_end = head if back_end is None else back_end
     return {
         "head": head,
         "head_step": sweep.SETTLED_FEED_STEP_S,
+        "trail": head - sweep.SETTLED_FEED_TRAIL_LAG_S if trail is None else trail,
+        "trail_step": sweep.SETTLED_FEED_STEP_S,
         "back": back_end if back is None else back,
         "back_end": back_end,
         "back_step": sweep.SETTLED_FEED_STEP_S,
@@ -419,9 +423,13 @@ class TestTheSelectionReadsNoDateAndNoCursor:
         for page in venue.pages:
             assert page["status"] == "settled"
             assert page["mve"] == "exclude"
-            # The head's first window re-reads the overlap behind the watermark.
-            assert page["min"] == LAST_RUN - sweep.SETTLED_FEED_OVERLAP_S
-            assert page["max"] == CEILING
+        # The head's first window re-reads the overlap behind the watermark;
+        # the trail then reads the same stretch of clock a day earlier.
+        lag = sweep.SETTLED_FEED_TRAIL_LAG_S
+        assert [(p["min"], p["max"]) for p in venue.pages] == [
+            (LAST_RUN - sweep.SETTLED_FEED_OVERLAP_S, CEILING),
+            (LAST_RUN - lag, CEILING - lag),
+        ]
 
 
 # ---------------------------------------------------------------------------
@@ -629,8 +637,9 @@ class TestTheHeadIsNeverHeldBehindTheBacklog:
         report = _feed(_seed(), venue, max_pages=5)
         assert len(venue.pages) == 5
         assert report["head_windows"] == 1
-        assert report["backlog_windows"] == 4
-        assert redis_state.store["feed"]["back"] == floor + 4 * sweep.SETTLED_FEED_STEP_S
+        assert report["trail_windows"] == 1
+        assert report["backlog_windows"] == 3
+        assert redis_state.store["feed"]["back"] == floor + 3 * sweep.SETTLED_FEED_STEP_S
 
     def test_a_backlog_settlement_is_closed_when_the_walk_reaches_it(self, redis_state):
         old = dict(EARLY_UNDATED, id=9, external_id="KXGRAMMYAOTY-26")
@@ -953,8 +962,9 @@ class TestTheNextBeatReadsWhatTheVenueAlreadyListed:
     """CERT-4118's required repair 2722-NEXT-BEAT-SETTLED-HEAD. The beat fires
     at :x3. The old walk stopped five minutes short of the present, so a
     question listed settled at 04:19 was not read at 04:23 and closed at 04:33
-    — fourteen minutes. The walk now reaches the present and re-reads the last
-    five minutes on the next run, so late listings are still caught."""
+    — fourteen minutes. The walk now reaches the present and re-reads a whole
+    beat period plus five minutes on the next run, so late listings are still
+    caught."""
 
     SPEC = dict(EARLY_UNDATED, id=21, external_id="KXGOLDENGLOBE-26")
 
@@ -990,7 +1000,7 @@ class TestTheNextBeatReadsWhatTheVenueAlreadyListed:
 
     def test_a_listing_late_at_0423_is_caught_by_the_0433_re_read(self, redis_state):
         """The hold's reason, kept: stamped 04:22 but not yet listed when the
-        04:23 beat read to the present. The 04:33 beat re-reads from 04:18."""
+        04:23 beat read to the present. The 04:33 beat re-reads from 04:08."""
         redis_state.store["feed"] = _feed_state(head=_at("04:13"))
         engine = _seed(SPECIMENS + (self.SPEC,))
         self._run(engine, self._venue(), _at("04:23"))  # not listed yet
@@ -1000,7 +1010,7 @@ class TestTheNextBeatReadsWhatTheVenueAlreadyListed:
         at = _at("04:33")
         venue = self._venue(_at("04:22"))
         self._run(engine, venue, at)
-        assert venue.pages[0]["min"] == _at("04:18")
+        assert venue.pages[0]["min"] == _at("04:08")
         assert _state(engine)[0][21] == ("resolved",
                                          datetime.fromtimestamp(at, timezone.utc).isoformat())
 
@@ -1011,9 +1021,150 @@ class TestTheNextBeatReadsWhatTheVenueAlreadyListed:
         venue = self._venue()
         self._run(_seed(), venue, _at("04:23"))
         mins = [p["min"] for p in venue.pages]
-        assert mins[0] == _at("03:48")  # the head's first window re-reads
+        day = sweep.SETTLED_FEED_TRAIL_LAG_S
+        assert mins[0] == _at("03:38")  # the head's first window re-reads
         assert mins[1] == _at("04:08")  # its second starts at the watermark
-        assert mins[2:] == [floor, floor + sweep.SETTLED_FEED_STEP_S]  # backlog, none
+        # The trail: from its watermark, no re-read, before the backlog.
+        assert mins[2:4] == [_at("03:53") - day, _at("04:08") - day]
+        assert mins[4:] == [floor, floor + sweep.SETTLED_FEED_STEP_S]  # backlog, none
+
+
+class TestALateListingIsReadAgain:
+    """Root's exact-head review of 5e756763a8 (PR #11024 comment 6161336863).
+    At 04:23 the feed omits a market stamped settled at 04:17; the run persists
+    head=04:23; the market is listed at 04:24. A five-minute re-read at 04:33
+    starts at 04:18 and the market is excluded forever. The head's re-read is
+    now a whole beat period plus five minutes, and the TRAIL reads every window
+    once more a day later, for a listing later than that."""
+
+    SPEC = TestTheNextBeatReadsWhatTheVenueAlreadyListed.SPEC
+
+    def _venue(self, *stamps):
+        return TestTheNextBeatReadsWhatTheVenueAlreadyListed._venue(self, *stamps)
+
+    def _run(self, engine, venue, at: int, **kw):
+        return asyncio.run(sweep.run_settled_feed(
+            session_maker=lambda: _SqliteSession(engine), client_factory=lambda: venue,
+            now=datetime.fromtimestamp(at, timezone.utc), **kw))
+
+    def _missed_at_0423(self, redis_state):
+        """The 04:23 beat reads to the present; the venue has not listed it yet."""
+        redis_state.store["feed"] = _feed_state(head=_at("04:13"))
+        engine = _seed(SPECIMENS + (self.SPEC,))
+        report = self._run(engine, self._venue(), _at("04:23"))
+        assert report["terminal"] == "complete"
+        assert redis_state.store["feed"]["head"] == _at("04:23")
+        assert _state(engine)[0][21] == ("open", None)
+        return engine
+
+    def test_roots_sequence_stamped_0417_listed_0424_closes_on_the_0433_beat(self, redis_state):
+        engine = self._missed_at_0423(redis_state)
+        at = _at("04:33")
+        venue = self._venue(_at("04:17"))  # listed at 04:24, so visible now
+        self._run(engine, venue, at)
+        assert venue.pages[0]["min"] == _at("04:08")
+        assert venue.asked == [self.SPEC["external_id"]]
+        assert _state(engine)[0][21] == ("resolved",
+                                         datetime.fromtimestamp(at, timezone.utc).isoformat())
+
+    def test_mutant_control_the_five_minute_re_read_leaves_roots_row_open(
+            self, redis_state, monkeypatch):
+        """5e756763a8's behaviour, in-test: the same sequence never reads it."""
+        monkeypatch.setattr(sweep, "SETTLED_FEED_OVERLAP_S", 5 * 60)
+        engine = self._missed_at_0423(redis_state)
+        venue = self._venue(_at("04:17"))
+        self._run(engine, venue, _at("04:33"))
+        assert venue.pages[0]["min"] == _at("04:18")
+        assert venue.asked == []
+        assert _state(engine)[0][21] == ("open", None)
+
+    def test_the_re_read_covers_a_whole_period_plus_the_allowance(self):
+        assert sweep.SETTLED_FEED_OVERLAP_S == (
+            sweep.SETTLED_FEED_BEAT_PERIOD_S + sweep.SETTLED_FEED_LISTING_ALLOWANCE_S)
+        assert sweep.SETTLED_FEED_BEAT_PERIOD_S == 600
+        assert sweep.SETTLED_FEED_OVERLAP_S <= sweep.SETTLED_FEED_STEP_S
+
+    def test_the_beat_period_constant_is_the_scheduled_period(self):
+        from app.tasks import celery_app
+
+        entry = celery_app.conf.beat_schedule["settle-kalshi-settled-feed"]
+        assert entry["schedule"].minute == set(range(3, 60, 10))
+        assert sweep.SETTLED_FEED_BEAT_PERIOD_S == 10 * 60
+
+    def test_stamped_at_the_re_read_edge_is_caught(self, redis_state):
+        engine = self._missed_at_0423(redis_state)
+        venue = self._venue(_at("04:08"))
+        self._run(engine, venue, _at("04:33"))
+        assert _state(engine)[0][21][0] == "resolved"
+
+    def test_later_than_the_re_read_the_trail_closes_it_a_day_on(self, redis_state):
+        """Stamped 04:07, listed after the 04:23 beat: sixteen minutes late, past
+        the head's re-read. The 04:33 beat cannot see it; the trail reads that
+        window again when it is a day old, and the row closes then."""
+        engine = self._missed_at_0423(redis_state)
+        venue = self._venue(_at("04:07"))
+        self._run(engine, venue, _at("04:33"))
+        assert venue.asked == []
+        assert _state(engine)[0][21] == ("open", None)
+        assert redis_state.store["feed"]["trail"] < _at("04:07")
+
+        day = sweep.SETTLED_FEED_TRAIL_LAG_S
+        # The beat before the trail reaches 04:07 still does not ask.
+        venue = self._venue(_at("04:07"))
+        self._run(engine, venue, _at("04:03") + day, max_pages=400)
+        assert venue.asked == []
+        assert _state(engine)[0][21] == ("open", None)
+
+        at = _at("04:13") + day
+        venue = self._venue(_at("04:07"))
+        report = self._run(engine, venue, at, max_pages=400)
+        assert venue.asked == [self.SPEC["external_id"]]
+        assert _state(engine)[0][21] == ("resolved",
+                                         datetime.fromtimestamp(at, timezone.utc).isoformat())
+        assert report["trail_windows"] >= 1
+        assert redis_state.store["feed"]["trail"] == at - day
+        assert report["terminal"] == "complete"
+
+    def test_a_fresh_state_trails_from_the_head_and_waits_its_lag(self, redis_state):
+        redis_state.store["feed"] = None
+        report = _feed(_seed(), _Venue())
+        state = redis_state.store["feed"]
+        assert state["trail"] == CEILING - sweep.SETTLED_FEED_STEP_S
+        assert report["trail_windows"] == 0
+        assert report["trail_behind_seconds"] == 0
+        assert report["terminal"] == "complete"
+
+    def test_a_trail_that_cannot_move_reads_partial(self, redis_state):
+        venue = _Venue(settled=[])
+        report = _feed(_seed(), venue, max_pages=1)
+        assert report["head_caught_up"] is True
+        assert report["trail_windows"] == 0
+        assert report["trail_stop"] == "page budget spent"
+        assert report["trail_behind_seconds"] == 600
+        assert report["terminal"] == "partial"
+        assert "trail" in report["terminal_reason"]
+
+    def test_a_state_stored_before_the_trail_trails_from_its_head(self, monkeypatch):
+        import json
+
+        from app.tasks import redis_state as rs
+
+        stored = {"head": LAST_RUN, "head_step": 900, "back": 1, "back_end": 2,
+                  "back_step": 900, "owed": [], "owed_meta": {}}
+
+        class _Redis:
+            async def get(self, key):
+                assert key == sweep.SETTLED_FEED_STATE_KEY
+                return json.dumps(stored)
+
+        monkeypatch.setattr(rs, "get_async_redis_client", lambda: _Redis())
+        state = asyncio.run(sweep._read_feed_state())
+        assert state["trail"] == LAST_RUN
+        assert state["trail_step"] == sweep.SETTLED_FEED_STEP_S
+
+        stored.update(trail=LAST_RUN - 5000, trail_step=60)
+        state = asyncio.run(sweep._read_feed_state())
+        assert (state["trail"], state["trail_step"]) == (LAST_RUN - 5000, 60)
 
 
 class TestTheRowCapIsLiteral:

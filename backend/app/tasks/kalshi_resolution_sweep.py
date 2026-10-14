@@ -2302,6 +2302,12 @@ async def run_resolved_voids(
 # RETIRED by name in the report — purged history, said as such, never a fresh
 # uncertain read dropped as if it were absence.
 #
+# A LATE LISTING IS READ AGAIN, TWICE OVER. The head re-reads a whole beat
+# period plus five minutes behind its watermark, so a market the venue stamped
+# settled before a beat but listed after it closes on the next beat; and a
+# TRAIL walk re-reads every window in full a day behind the present, so a
+# listing later than the head's re-read is closed a day late, not never.
+#
 # BOUNDED, each bound reported: pages per run, matched rows per run, owed rows
 # retried per run, and the window per step. A window that will not fit inside
 # a whole run halves and grows back after one that does, so a burst at the
@@ -2309,8 +2315,9 @@ async def run_resolved_voids(
 
 #: The feed's durable state, ONE JSON value for the reason
 #: :data:`SWEEP_CURSOR_KEY` gives — a half-written state is a position that
-#: skips silently. Keys: ``head``/``head_step``, ``back``/``back_end``/
-#: ``back_step`` (unix seconds), ``owed`` (event tickers), and ``owed_meta``
+#: skips silently. Keys: ``head``/``head_step``, ``trail``/``trail_step``,
+#: ``back``/``back_end``/``back_step`` (unix seconds), ``owed`` (event
+#: tickers), and ``owed_meta``
 #: (per owed ticker: ``since``, the end of the window that listed it, and
 #: ``legs``, the market tickers listed settled there).
 SETTLED_FEED_STATE_KEY = "bainluck:kalshi_settled_feed:state:v1"
@@ -2327,19 +2334,45 @@ SETTLED_FEED_BACKLOG_DAYS = PROVABLY_PURGED_AGE_DAYS
 #: so a step is one or two pages.
 SETTLED_FEED_STEP_S = 15 * 60
 
+#: The beat's period (``settle-kalshi-settled-feed``, ``3-59/10``).
+SETTLED_FEED_BEAT_PERIOD_S = 10 * 60
+
+#: How late a listing may be, past one whole beat period, and still close on
+#: the first beat after it appears.
+SETTLED_FEED_LISTING_ALLOWANCE_S = 5 * 60
+
 #: How far each run's first head window reaches back behind the watermark.
 #:
 #: The head walks to the PRESENT, because CERT-4118 measured what holding the
 #: newest five minutes back cost: a question settled at :19 was not read by the
 #: :23 beat and closed at :33, fourteen minutes, past the ten-minute bar. The
 #: reason for the hold is kept by re-reading instead of waiting: a market stamped
-#: settled shortly before a run may not be listed yet, so the next run reads the
-#: last five minutes again. A listing up to five minutes late is still caught,
-#: as it was under the hold, and a settlement already listed is read at once.
-#: Re-reading is safe — a row closed the first time is no longer ``open``.
-#: Clamped to the walk's current step, so a burst that narrows the step cannot
-#: be wedged by a fixed re-read wider than the step itself.
-SETTLED_FEED_OVERLAP_S = 5 * 60
+#: settled shortly before a run may not be listed yet, so the next run reads
+#: behind the watermark again.
+#:
+#: The re-read is a WHOLE beat period plus the listing allowance, not five
+#: minutes. Root's counterexample to five (PR #11024, 2026-10-14): stamped
+#: 04:17, not listed when the 04:23 beat read to the present, listed at 04:24;
+#: the 04:33 beat re-read only from 04:18 and the row was never read again. A
+#: re-read of ``R`` catches any listing at most ``R`` late, on the first beat
+#: after it lists, so fifteen minutes covers a listing that missed one beat
+#: entirely and five minutes more. Re-reading is safe — a row closed the first
+#: time is no longer ``open``. Clamped to the walk's current step, so a burst
+#: that narrows the step cannot be wedged by a fixed re-read wider than the
+#: step itself; the TRAIL below is what still catches a listing then.
+SETTLED_FEED_OVERLAP_S = SETTLED_FEED_BEAT_PERIOD_S + SETTLED_FEED_LISTING_ALLOWANCE_S
+
+#: How far behind the present the TRAIL walk re-reads every window once more.
+#:
+#: The head's re-read is bounded, so a listing later than it would otherwise
+#: be read never again. The trail is a second, full pass over the settlement
+#: clock at a fixed lag: every window the head walked is read again in full a
+#: day later, so a listing up to a day late is still closed, a day late rather
+#: than never. Its cost is the head's own (~5 pages an hour, so about one page
+#: a beat), and it walks before the backlog so the backlog's page appetite
+#: cannot starve it. A listing more than a day late is not seen by this arm:
+#: the one named limit, reported as such.
+SETTLED_FEED_TRAIL_LAG_S = 24 * 60 * 60
 
 #: The venue's page maximum.
 SETTLED_FEED_PAGE_SIZE = 1000
@@ -2450,11 +2483,18 @@ async def fetch_settled_event_tickers(
 
 
 def fresh_feed_state(now: datetime) -> dict:
-    """Head one step behind the present; backlog from the retention floor up to it."""
+    """Head one step behind the present; backlog from the retention floor up to it.
+
+    The trail starts where the head starts: everything older is the backlog's,
+    read long after any listing delay, so the trail only revisits what the head
+    reads, and waits :data:`SETTLED_FEED_TRAIL_LAG_S` before its first window.
+    """
     head = int(now.timestamp()) - SETTLED_FEED_STEP_S
     return {
         "head": head,
         "head_step": SETTLED_FEED_STEP_S,
+        "trail": head,
+        "trail_step": SETTLED_FEED_STEP_S,
         "back": int((now - timedelta(days=SETTLED_FEED_BACKLOG_DAYS)).timestamp()),
         "back_end": head,
         "back_step": SETTLED_FEED_STEP_S,
@@ -2476,9 +2516,14 @@ async def _read_feed_state() -> Optional[dict]:
         if isinstance(raw, bytes):
             raw = raw.decode()
         data = json.loads(raw)
+        head = int(data["head"])
         state = {
-            "head": int(data["head"]),
+            "head": head,
             "head_step": max(1, int(data.get("head_step") or SETTLED_FEED_STEP_S)),
+            # A state written before the trail existed trails from the head on:
+            # the head's re-read already covered what lies behind it.
+            "trail": int(data["trail"]) if data.get("trail") is not None else head,
+            "trail_step": max(1, int(data.get("trail_step") or SETTLED_FEED_STEP_S)),
             "back": int(data["back"]),
             "back_end": int(data["back_end"]),
             "back_step": max(1, int(data.get("back_step") or SETTLED_FEED_STEP_S)),
@@ -2551,9 +2596,9 @@ async def run_settled_feed(
     client_factory: Optional[Callable[[], object]] = None,
     now: Optional[datetime] = None,
 ) -> dict:
-    """Close what the venue settled: owed retries, then the head, then the backlog.
+    """Close what the venue settled: owed retries, the head, the trail, the backlog.
 
-    One beat run, in three phases that share the run's page and row budgets:
+    One beat run, in four phases that share the run's page and row budgets:
 
     1. OWED. Re-ask the venue about tickers a previous window matched and could
        not read or could not confirm. A ticker leaves the list when a read
@@ -2565,8 +2610,11 @@ async def run_settled_feed(
        through :func:`run_backfill` (the all-legs read and :data:`UPDATE_SQL`),
        record any errored or unconfirmed ticker as owed, then persist ``head``
        at the window's end.
-    3. BACKLOG. The same, over ``[back, back_end]``, with whatever budget the
-       head left.
+    3. TRAIL. The same, over ``[trail, present - SETTLED_FEED_TRAIL_LAG_S]``,
+       no re-read: every window read once more in full, a day later, for a
+       listing later than the head's re-read.
+    4. BACKLOG. The same, over ``[back, back_end]``, with whatever budget the
+       head and the trail left.
 
     A window that is not finished — budget spent mid-window, a venue page error,
     a refused filter, a full owed list — leaves its watermark where it was, so
@@ -2586,6 +2634,8 @@ async def run_settled_feed(
     # The present. Late listings are covered by the head's re-read
     # (:data:`SETTLED_FEED_OVERLAP_S`), not by leaving the newest minutes unread.
     ceiling = int(now.timestamp())
+    # The trail reads nothing newer than a day ago (:data:`SETTLED_FEED_TRAIL_LAG_S`).
+    trail_end = ceiling - SETTLED_FEED_TRAIL_LAG_S
 
     stored = await _read_feed_state()
     bootstrapped = stored is None
@@ -2601,9 +2651,9 @@ async def run_settled_feed(
 
     totals = {k: 0 for k in _FEED_COUNTERS}
     totals.update(pages=0, venue_markets_seen=0, event_tickers_seen=0, rows_matched=0)
-    progress = {"owed": 0, "head": 0, "back": 0}
+    progress = {"owed": 0, "head": 0, "trail": 0, "back": 0}
     owed_asked = owed_errored = 0
-    stop: dict = {"owed": None, "head": None, "back": None}
+    stop: dict = {"owed": None, "head": None, "trail": None, "back": None}
     refusal: Optional[str] = None
     persisted = True
     samples: list[dict] = []
@@ -2777,6 +2827,8 @@ async def run_settled_feed(
 
         await _walk("head", None)
         if refusal is None and persisted and apply:
+            await _walk("trail", trail_end)
+        if refusal is None and persisted and apply:
             await _walk("back", state["back_end"])
     finally:
         close = getattr(client, "close", None)
@@ -2789,6 +2841,7 @@ async def run_settled_feed(
         return datetime.fromtimestamp(ts, timezone.utc).isoformat()
 
     head_behind = max(0, ceiling - state["head"])
+    trail_behind = max(0, trail_end - state["trail"])
     walked_rows = totals["candidates"] - owed_asked
     walked_errors = totals["errors"] - owed_errored
     back_behind = max(0, min(state["back_end"], ceiling) - state["back"])
@@ -2804,6 +2857,12 @@ async def run_settled_feed(
         "head_caught_up": head_behind == 0,
         "head_windows": progress["head"],
         "head_stop": stop["head"],
+        "trail_before": _iso_ts(before["trail"]),
+        "trail_after": _iso_ts(state["trail"]),
+        "trail_end": _iso_ts(trail_end),
+        "trail_behind_seconds": trail_behind,
+        "trail_windows": progress["trail"],
+        "trail_stop": stop["trail"],
         "backlog_before": _iso_ts(before["back"]),
         "backlog_after": _iso_ts(state["back"]),
         "backlog_end": _iso_ts(state["back_end"]),
@@ -2829,7 +2888,8 @@ async def run_settled_feed(
         report["terminal"] = "failed"
         report["terminal_reason"] = (
             "feed state not persisted — the next run re-reads from "
-            f"{report['head_before']} (head) and {report['backlog_before']} (backlog)"
+            f"{report['head_before']} (head), {report['trail_before']} (trail) and "
+            f"{report['backlog_before']} (backlog)"
         )
     elif walked_rows and walked_errors >= walked_rows:
         # Judged on the walks' rows only. An owed ticker that keeps erroring is
@@ -2857,6 +2917,12 @@ async def run_settled_feed(
         report["terminal_reason"] = (
             f"no head window finished ({stop['head']}); {head_behind}s of "
             "settlements behind the venue, re-read next run"
+        )
+    elif trail_behind and progress["trail"] == 0 and apply:
+        report["terminal"] = "partial"
+        report["terminal_reason"] = (
+            f"head current, trail made no progress ({stop['trail']}); "
+            f"{trail_behind}s of settlements not yet read a second time"
         )
     elif back_behind and progress["back"] == 0 and apply:
         report["terminal"] = "partial"
