@@ -1138,7 +1138,7 @@ class _FreshAdmission:
     (``own_done``), and is stamped on its own flush's clock, never the call's.
     """
 
-    def __init__(self, flush_started, clock, events) -> None:
+    def __init__(self, flush_started, clock, events, *, release_wake=None) -> None:
         import asyncio
 
         self.flush_started = flush_started
@@ -1175,6 +1175,10 @@ class _FreshAdmission:
         #: counts, so a re-admitted event's NEW attempt cannot extend it.
         self.released: dict[int, int] = {}
         self._released_signal = None
+        #: #10090 functional release wake (the PM stamp owner's): told of
+        #: every actual release so a game flush that fenced a newer quote on
+        #: these events runs now, not at the next periodic timer.
+        self.release_wake: Optional[Callable[[Iterable[int]], None]] = release_wake
         #: #10090 stage trace only (None unless one is configured): told of
         #: every actual release. Never raises into the fence.
         self.on_release: Optional[Callable[[Iterable[int]], None]] = None
@@ -1189,6 +1193,8 @@ class _FreshAdmission:
         signal, self._released_signal = self._released_signal, None
         if signal is not None and not signal.done():
             signal.set_result(None)
+        if self.release_wake is not None:
+            self.release_wake(event_ids)
         if self.on_release is not None:
             with contextlib.suppress(Exception):
                 self.on_release(event_ids)
@@ -1355,6 +1361,9 @@ class LiveBlendRefresher:
         #: #10090 — resolved when the next call opens its door
         #: (`admission_opened`).
         self._admission_signal = None
+        #: #10090 — optional callback notified when held events release so a
+        #: socket flush loop that fenced a newer quote on those events wakes.
+        self.release_wake: Optional[Callable[[Iterable[int]], None]] = None
 
     # ── throttling ───────────────────────────────────────────────────────────
 
@@ -1497,6 +1506,8 @@ class LiveBlendRefresher:
                 due=due, excluded=excluded, fresh=fresh, flush_started=flush_started,
             )
         if not due:
+            if self.release_wake is not None and wanted:
+                self.release_wake(wanted)
             return self.stats
 
         self._dispositions = {}
@@ -1589,13 +1600,16 @@ class LiveBlendRefresher:
         # joins it on a free stamp worker (`admit_fresh`) rather than waiting
         # for every stamp below to return. Its frames go through this call's
         # one sender; its sessions share this call's FRESH_STAMP_WORKERS slots.
-        window = _FreshAdmission(flush_started, clock, due)
+        window = _FreshAdmission(flush_started, clock, due, release_wake=self.release_wake)
         window.publish = publish_committed
         window.publish_inline = publish_inline
         if self._stage_hook("attempt_released") is not None:
             window.on_release = lambda ids: self._stage_trace("attempt_released", ids)
         self._admission = window
         self._holding = window.holding
+        not_due = wanted.difference(due)
+        if not_due and self.release_wake is not None:
+            self.release_wake(not_due)
         signal, self._admission_signal = self._admission_signal, None
         if signal is not None and not signal.done():
             signal.set_result(None)
