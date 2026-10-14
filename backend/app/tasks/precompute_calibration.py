@@ -11034,6 +11034,21 @@ async def _query_futures_fair_fight_impl(db):
               -- same contract as the headline (bid-bearing volume=0 kept, never-bid/
               -- never-traded phantoms excluded), replacing the volume proxy.
               AND """ + kalshi_liquidity_exists_sql(source="fm.source") + """
+              -- #1089: the shared #941/#186 Kalshi prop-threshold exclusion
+              -- (NHL goal-family >= 0.50, every series >= 0.90), restored after
+              -- the #197 rewrite dropped Queue #188 Item 3's guard. Neither
+              -- proxy above covers it: high-band NHL rows are api_settlement /
+              -- box_score graded AND bid-bearing, yet their captured price is
+              -- settlement-contaminated. Category is the ROW's own, read exactly
+              -- as the curve population reads it, and the band reads the same
+              -- COALESCE(cp, opening) this query grades on. Read-side only.
+              AND NOT """ + kalshi_prop_threshold_exclude_sql(
+                  source="fm.source",
+                  name="fo.name",
+                  category="COALESCE(fm.llm_sport_category, 'uncategorized')",
+                  calibration_probability="fo.calibration_probability",
+                  opening_probability="fo.opening_probability",
+              ) + """
         )
         SELECT source, category, prob, is_winner
         FROM matched_outcomes

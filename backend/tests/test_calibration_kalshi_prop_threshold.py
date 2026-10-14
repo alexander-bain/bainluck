@@ -286,6 +286,11 @@ class TestSourceIntelligenceHonorsExclusion:
         pred = kalshi_liquidity_exists_sql(source="fm.source")
         assert "fm.source <> 'kalshi'" in pred
         assert "fos.yes_bid > 0 OR fos.last_price > 0" in pred
+        # #1089: neither proxy above covers the price-band rule — high-band NHL
+        # goal-family rows are truth-graded AND bid-bearing — so the shared
+        # exclusion must be applied too (rows proved in
+        # tests/integration/test_calibration_fair_fight_prop_threshold_1089_pg.py).
+        assert "AND NOT \"\"\" + kalshi_prop_threshold_exclude_sql(" in src
 
     def test_fair_fight_is_read_side_only(self):
         # Gotcha #21: the fair-fight query must never mutate resolutions/prices.
