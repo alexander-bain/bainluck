@@ -333,6 +333,10 @@ final class SubsecondHeldDelivery10090Tests: XCTestCase {
             window.makeKeyAndVisible()
         }
 
+        /// When the last `capture` finished drawing, on the process clock: the
+        /// image's content is fixed here, before it is encoded and written.
+        private(set) var drawnAt: UInt64 = 0
+
         /// The final page as drawn, taken after the measured burst.
         @discardableResult
         func capture(to url: URL) throws -> UIImage {
@@ -340,6 +344,7 @@ final class SubsecondHeldDelivery10090Tests: XCTestCase {
             let image = UIGraphicsImageRenderer(bounds: window.bounds).image { _ in
                 _ = window.drawHierarchy(in: window.bounds, afterScreenUpdates: true)
             }
+            drawnAt = DispatchTime.now().uptimeNanoseconds
             try XCTUnwrap(image.pngData()).write(to: url)
             return image
         }
@@ -590,12 +595,18 @@ final class SubsecondHeldDelivery10090Tests: XCTestCase {
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent("native-10090-subsecond-hosted")
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         let url = dir.appendingPathComponent("final-burst-\(final ?? "saved").png")
+        let captureStart = DispatchTime.now().uptimeNanoseconds
         let image = try page.capture(to: url)
-        let capturedAt = DispatchTime.now().uptimeNanoseconds
+        let writtenAt = DispatchTime.now().uptimeNanoseconds
         let chunkAt = try XCTUnwrap(PacedStream.emittedAt[last], "the burst was never handed to URLSession")
-        let capturedMs = Double(capturedAt &- chunkAt) / 1e6
-        print(String(format: "SUBSECOND-10090 drawn=burst-final-%@ chunk_to_capture_ms=%.2f reads_at_capture=%d capture=%@",
-                     final ?? "saved", capturedMs, readsBefore, url.path))
+        // The deadline reads the moment the page was drawn; encoding and writing
+        // the PNG afterwards is the test's own cost and is printed beside it.
+        let capturedMs = Double(page.drawnAt &- chunkAt) / 1e6
+        print(String(format: "SUBSECOND-10090 drawn=burst-final-%@ chunk_to_capture_start_ms=%.2f chunk_to_capture_ms=%.2f chunk_to_png_written_ms=%.2f reads_at_capture=%d capture=%@",
+                     final ?? "saved", Double(captureStart &- chunkAt) / 1e6, capturedMs,
+                     Double(writtenAt &- chunkAt) / 1e6, readsBefore, url.path))
+        XCTAssertTrue(chunkAt < captureStart && captureStart <= page.drawnAt && page.drawnAt <= writtenAt,
+                      "the capture stamps are ordered after the chunk")
         XCTAssertEqual(readsBefore, loadReads, "captured before the poll: the poll did not make it visible")
         XCTAssertLessThan(capturedMs, 1000, "late capture: no timing result")
         if capturedMs < 1000 { try drawn(image, heldAtCapture) }
