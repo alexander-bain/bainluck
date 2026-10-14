@@ -1539,10 +1539,9 @@ struct EventDetailView: View {
                             // derived home re-opens the same 101 from the other side,
                             // and an older deploy can carry one field and not the
                             // other, so the pair falls back whole.
-                            let duelFallback = complementDisplayPercents(away: away, home: home)
-                            let bothServed = shown.awayRenderedPercent != nil && shown.homeRenderedPercent != nil
-                            let awayPct = bothServed ? shown.awayRenderedPercent : duelFallback[0]
-                            let homePct = bothServed ? shown.homeRenderedPercent : duelFallback[1]
+                            let percents = Self.heroPairPercents(shown, away: away, home: home)
+                            let awayPct = percents.away
+                            let homePct = percents.home
                             HStack(spacing: 8) {
                                 Text(formatProbability(away, renderedPercent: awayPct))
                                     .acceptedValueChange(heroValue(away: true), rising: heroRising(away: true), animates: heroMoves)
@@ -1833,6 +1832,20 @@ struct EventDetailView: View {
 
     // MARK: - #9483 NFL paired headline
 
+    /// #2085 — THE HERO PAIR'S PERCENTS, for both headline arrangements (the
+    /// crest/centre/crest hero and #9483's NFL paired headline), so the two can
+    /// never round one price differently. `current_odds.away_probability` is
+    /// `round(1 - home, 6)` on the backend, so rounding the sides independently
+    /// printed 101; the served integers are used BOTH OR NEITHER, because a
+    /// served away beside a locally derived home re-opens the same 101 from the
+    /// other side.
+    static func heroPairPercents(_ shown: OpeningLineHero, away: Double, home: Double) -> (away: Int?, home: Int?) {
+        let duelFallback = complementDisplayPercents(away: away, home: home)
+        let bothServed = shown.awayRenderedPercent != nil && shown.homeRenderedPercent != nil
+        return (away: bothServed ? shown.awayRenderedPercent : duelFallback[0],
+                home: bothServed ? shown.homeRenderedPercent : duelFallback[1])
+    }
+
     /// The NFL paired headline, or nil to keep today's hero. Reads the same
     /// values the hero's centre column reads, in the same order, so the two can
     /// never print different numbers for one price: the venue-settled verdict
@@ -1857,12 +1870,12 @@ struct EventDetailView: View {
                 away: shown.awayProbability, home: shown.homeProbability, sport: event.sport),
               let away = pair.away
         else { return nil }
-        // #2085 — both served or neither, exactly as the hero pair.
-        let fallback = complementDisplayPercents(away: away, home: pair.home)
-        let bothServed = shown.awayRenderedPercent != nil && shown.homeRenderedPercent != nil
+        // #2085 — the hero pair's own percents, from the one rule both
+        // arrangements read.
+        let percents = Self.heroPairPercents(shown, away: away, home: pair.home)
         return NFLPairedHeadline9483.priced(
-            awayText: formatProbability(away, renderedPercent: bothServed ? shown.awayRenderedPercent : fallback[0]),
-            homeText: formatProbability(pair.home, renderedPercent: bothServed ? shown.homeRenderedPercent : fallback[1]),
+            awayText: formatProbability(away, renderedPercent: percents.away),
+            homeText: formatProbability(pair.home, renderedPercent: percents.home),
             live: event.status == "live", score: score, pregame: pregame)
     }
 
