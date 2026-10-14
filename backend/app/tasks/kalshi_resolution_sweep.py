@@ -2404,6 +2404,33 @@ SETTLED_FEED_PAGE_SIZE = 1000
 #: against the beat's 240 s soft limit. Only the backlog walk ever reaches it.
 SETTLED_FEED_MAX_PAGES = 120
 
+#: Venue pages one run may re-ask after a 429, across the head and relist
+#: walks together. Measured 2026-10-14 (#2722 comment 6165557468): the 09:13Z
+#: beat met one 429 on its first head page and closed nothing for a whole
+#: cadence, so an early final waited 11m04s. ``get_markets`` itself does not
+#: retry, and stays that way for its other callers; the feed retries here.
+SETTLED_FEED_429_RETRIES = 3
+
+#: The longest single wait for a 429. A ``Retry-After`` longer than this is not
+#: waited out: the window stays where it was and the next beat re-reads it.
+SETTLED_FEED_429_MAX_WAIT_S = 10.0
+
+#: All 429 waits in one run, together. With the retries' own reads (25 s read
+#: timeout each) the worst case adds ~95 s against the beat's 240 s soft limit,
+#: which only the backlog's page appetite otherwise approaches, and the backlog
+#: is never given a retry.
+SETTLED_FEED_429_WAIT_BUDGET_S = 20.0
+
+#: The first wait when the venue sends no ``Retry-After``; it doubles per retry
+#: of the same page (2, 4, 8 s: 14 s, inside the run's wait budget).
+SETTLED_FEED_429_BACKOFF_S = 2.0
+
+#: The walks that may spend the run's 429 retries. The head and the relist are
+#: the ten-minute promise; the trail reads a day behind and the backlog is
+#: history, so both stop at their first 429 and resume next beat without
+#: spending a retry, or a request, that the next head window needs.
+SETTLED_FEED_RETRYING_WALKS = ("head", "relist")
+
 #: Our rows one run may send to the venue for the all-legs read, owed retries
 #: included. At concurrency 6 this is ~15 s.
 SETTLED_FEED_MAX_ROWS = 300
@@ -2451,8 +2478,90 @@ class SettledWindow:
     refusal: Optional[str] = None
 
 
+def _is_rate_limited(exc: BaseException) -> bool:
+    """True only for an HTTP 429 the client raised with its response attached."""
+    return getattr(getattr(exc, "response", None), "status_code", None) == 429
+
+
+def _retry_after_s(exc: BaseException) -> Optional[float]:
+    """The 429's ``Retry-After`` in seconds (delta or HTTP date), or None."""
+    headers = getattr(getattr(exc, "response", None), "headers", None)
+    raw = headers.get("Retry-After") if headers is not None else None
+    if raw is None:
+        return None
+    try:
+        return max(0.0, float(raw))
+    except (TypeError, ValueError):
+        pass
+    try:
+        from email.utils import parsedate_to_datetime
+
+        when = parsedate_to_datetime(str(raw))
+        return max(0.0, (when - datetime.now(timezone.utc)).total_seconds())
+    except (TypeError, ValueError):
+        return None
+
+
+async def _settled_feed_sleep(seconds: float) -> None:
+    await asyncio.sleep(seconds)
+
+
+@dataclass
+class RateLimitBudget:
+    """One run's allowance for re-asking a settled-feed page that answered 429.
+
+    Shared by every walk that is handed it, so the whole run is bounded by
+    :data:`SETTLED_FEED_429_RETRIES` and :data:`SETTLED_FEED_429_WAIT_BUDGET_S`
+    however many windows the head and relist walk.
+    """
+
+    retries_left: int = SETTLED_FEED_429_RETRIES
+    wait_left_s: float = SETTLED_FEED_429_WAIT_BUDGET_S
+    retried: int = 0
+    waited_s: float = 0.0
+    #: Why the last 429 was not retried, when one was not.
+    refused: Optional[str] = None
+
+    def take(self, exc: BaseException, attempt: int) -> Optional[float]:
+        """The wait before re-asking, spent from the budget; None = do not retry."""
+        if self.retries_left <= 0:
+            self.refused = f"429 retries spent ({self.retried}/{SETTLED_FEED_429_RETRIES})"
+            return None
+        after = _retry_after_s(exc)
+        if after is not None:
+            # The venue named its wait. Asking sooner would only spend a request
+            # on another 429, so a wait we cannot afford is not taken at all.
+            if after > SETTLED_FEED_429_MAX_WAIT_S or after > self.wait_left_s:
+                self.refused = (
+                    f"Retry-After {after:g}s exceeds the run's 429 wait allowance "
+                    f"({min(SETTLED_FEED_429_MAX_WAIT_S, self.wait_left_s):g}s)"
+                )
+                return None
+            wait = after
+        else:
+            wait = min(
+                SETTLED_FEED_429_BACKOFF_S * (2 ** attempt),
+                SETTLED_FEED_429_MAX_WAIT_S,
+                self.wait_left_s,
+            )
+            if wait <= 0:
+                self.refused = f"429 wait budget spent ({self.waited_s:g}s)"
+                return None
+        self.retries_left -= 1
+        self.wait_left_s -= wait
+        self.retried += 1
+        self.waited_s += wait
+        return wait
+
+
 async def fetch_settled_event_tickers(
-    client, *, start_ts: int, end_ts: int, max_pages: int, page_size: int = SETTLED_FEED_PAGE_SIZE
+    client,
+    *,
+    start_ts: int,
+    end_ts: int,
+    max_pages: int,
+    page_size: int = SETTLED_FEED_PAGE_SIZE,
+    rate_limit: Optional[RateLimitBudget] = None,
 ) -> SettledWindow:
     """Every event ticker with a market settled in ``[start_ts, end_ts]``.
 
@@ -2463,9 +2572,15 @@ async def fetch_settled_event_tickers(
     missing or outside the window means the venue did not apply the bounds we
     sent, and a feed that silently stopped filtering would read as an empty
     window walked correctly. That is a ``refusal``, and the run fails loud.
+
+    A 429 re-asks the same page after a wait spent from ``rate_limit``
+    (:class:`RateLimitBudget`); a re-ask is not a page. Without a budget, or
+    once it is spent, a 429 is an ``error`` like any other failure, and the
+    window is re-read next run.
     """
     out = SettledWindow(event_tickers=set())
     cursor: Optional[str] = None
+    attempt = 0
     while out.pages < max_pages:
         try:
             markets, cursor = await client.get_markets(
@@ -2477,8 +2592,17 @@ async def fetch_settled_event_tickers(
                 mve_filter="exclude",
             )
         except Exception as exc:  # noqa: BLE001 — reported; the window is re-read
-            out.error = f"{type(exc).__name__}: {str(exc)[:160]}"
-            return out
+            limited = _is_rate_limited(exc)
+            wait = rate_limit.take(exc, attempt) if (limited and rate_limit) else None
+            if wait is None:
+                out.error = f"{type(exc).__name__}: {str(exc)[:160]}"
+                if limited and rate_limit is not None and rate_limit.refused:
+                    out.error += f" [not retried: {rate_limit.refused}]"
+                return out
+            await _settled_feed_sleep(wait)
+            attempt += 1
+            continue
+        attempt = 0
         out.pages += 1
         for market in markets or []:
             settled_at = _parse(market.get("settlement_ts"))
@@ -2660,6 +2784,12 @@ async def run_settled_feed(
     the next run re-reads that window. Re-reading is safe: a row closed the
     first time is no longer ``open``.
 
+    A 429 is not yet an error for the head and the relist: they re-ask the page
+    from one run-wide :class:`RateLimitBudget` (honouring ``Retry-After``). The
+    trail and the backlog get no retries and stop at their first 429, so they
+    never spend a retry or a request the head needs. A 429 the budget cannot
+    cover is the page error above.
+
     ``apply=False`` reads and derives one head window but writes nothing and
     persists nothing, so a dry run cannot move a watermark or clear a debt.
 
@@ -2702,6 +2832,9 @@ async def run_settled_feed(
     refusal: Optional[str] = None
     persisted = True
     samples: list[dict] = []
+    # One allowance for the whole run, spent only by the walks named in
+    # :data:`SETTLED_FEED_RETRYING_WALKS`.
+    rate_limit = RateLimitBudget()
 
     async def _ask(rows, legs: dict) -> list[str]:
         """The all-legs read and write for ``rows``; returns the tickers still owed.
@@ -2804,7 +2937,11 @@ async def run_settled_feed(
                 mark = state[wm_key]
                 end = min(mark + state[step_key], limit_ts)
                 window = await fetch_settled_event_tickers(
-                    client, start_ts=mark, end_ts=end, max_pages=pages_left
+                    client,
+                    start_ts=mark,
+                    end_ts=end,
+                    max_pages=pages_left,
+                    rate_limit=rate_limit if name in SETTLED_FEED_RETRYING_WALKS else None,
                 )
                 totals["pages"] += window.pages
                 if window.refusal:
@@ -2942,6 +3079,9 @@ async def run_settled_feed(
         "owed_retired_purged": len(retired),
         "owed_retired_tickers": retired[:50],
         "refusal": refusal,
+        "venue_429_retries": rate_limit.retried,
+        "venue_429_waited_seconds": round(rate_limit.waited_s, 3),
+        "venue_429_not_retried": rate_limit.refused,
         "state_persisted": persisted,
         "matched_samples": samples,
         "stats": totals,
