@@ -1895,7 +1895,7 @@ struct EventDetailView: View {
                               color: colors.away, logo: event.awayTeamData?.logoSmall,
                               opponent: event.homeTeam)
                 if !stacked {
-                    nflPairedCenter(event, headline, colors: colors)
+                    nflPairedCenter(event, headline, colors: colors, movement: .reserved)
                         .alignmentGuide(.nflPairedFigure9483) { $0[VerticalAlignment.center] }
                 }
                 nflPairedSide(event, headline.home, name: names.home, isAway: false,
@@ -1904,7 +1904,19 @@ struct EventDetailView: View {
             }
             .accessibilityElement(children: .ignore)
             .accessibilityLabel(headline.accessibilityLabel(awayName: names.away, homeName: names.home))
-            if stacked && centerRow { nflPairedCenter(event, headline, colors: colors) }
+            // The live move caption sits under the score, but the row above is
+            // ONE VoiceOver element that ignores its children, so the caption
+            // inside it was unreachable (native review of ffa5f83d97). It draws
+            // here instead, outside that element, on the same line: the centre
+            // column again, its score invisible, aligned on the figures' line
+            // exactly as the reserved copy in the row is.
+            .overlay(alignment: Alignment(horizontal: .center, vertical: .nflPairedFigure9483)) {
+                if !stacked {
+                    nflPairedCenter(event, headline, colors: colors, movement: .only)
+                        .alignmentGuide(.nflPairedFigure9483) { $0[VerticalAlignment.center] }
+                }
+            }
+            if stacked && centerRow { nflPairedCenter(event, headline, colors: colors, movement: .shown) }
             if priced {
                 // The pair's subject and its age, as the hero words it (#9483
                 // F1), on one line with the delivery control where it fits.
@@ -1976,7 +1988,6 @@ struct EventDetailView: View {
                 if isAway { Spacer(minLength: 0) }
             }
             Text(side.figure)
-                .alignmentGuide(.nflPairedFigure9483) { $0[VerticalAlignment.center] }
                 .acceptedValueChange(heroValue(away: isAway), rising: heroRising(away: isAway), animates: heroMoves)
                 .font(.system(size: sizeClass == .regular ? 40 : 34, weight: .black, design: .rounded).monospacedDigit())
                 .foregroundStyle(side.won == false ? Color.secondary : color)
@@ -1987,39 +1998,71 @@ struct EventDetailView: View {
                                              isAway ? $0.previousAwayLabel != $0.awayLabel
                                                     : $0.previousHomeLabel != $0.homeLabel } ?? false,
                                          color: color, isEnabled: priceStreamingEligible && vm.liveUpdateStatus != .interrupted)
+                // Outermost: set inside the value-change wrapper (a ZStack) it
+                // did not reach the row, and a shrunk name lifted one figure
+                // ~4pt off the other's line at AX-XL (native review).
+                .alignmentGuide(.nflPairedFigure9483) { $0[VerticalAlignment.center] }
             if let pregame = side.pregame {
+                // The figure is a fixed size, so its caption may not outgrow it:
+                // at AX5 an unbounded "Pre-match 38%" wrapped to three lines
+                // larger than "55%" (native review). One line, shrunk like the
+                // name, and no larger than AX1.
                 Text(pregame)
                     .font(.caption2)
                     .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.5)
+                    .dynamicTypeSize(...Self.nflPairedCaptionTypeCeiling)
             }
         }
         .frame(maxWidth: .infinity, alignment: isAway ? .leading : .trailing)
     }
 
+    /// The headline's figures are fixed sizes, so its captions stop growing
+    /// here: past AX1 "Score" outgrew "27–24" and "Pre-match 38%" outgrew "55%".
+    static let nflPairedCaptionTypeCeiling = DynamicTypeSize.accessibility1
+
+    /// Where the centre column's live move caption goes. The default row is one
+    /// VoiceOver element, so there the caption is `.reserved` (its room kept,
+    /// nothing drawn) and an overlay outside the element draws it `.only`.
+    enum NFLPairedMovement { case shown, reserved, only }
+
     /// The score (or "vs") between the chances, with the live move caption
     /// under it — the one slot in the headline that has the room.
     private func nflPairedCenter(
-        _ event: EventDetail, _ headline: NFLPairedHeadline9483, colors: (away: Color, home: Color)
+        _ event: EventDetail, _ headline: NFLPairedHeadline9483, colors: (away: Color, home: Color),
+        movement: NFLPairedMovement
     ) -> some View {
         VStack(spacing: 2) {
-            switch headline.center {
-            case .versus:
-                Text("vs")
-                    .font(.title3.weight(.medium))
-                    .foregroundStyle(.secondary)
-            case let .score(away, home, _):
-                Text("\(away)\u{2013}\(home)")
-                    .font(.system(size: 24, weight: .bold, design: .rounded).monospacedDigit())
-                    .foregroundStyle(Color.primary)
-                    .fixedSize()
-                if let caption = headline.centerCaption {
-                    Text(caption)
-                        .font(.caption2)
+            Group {
+                switch headline.center {
+                case .versus:
+                    Text("vs")
+                        .font(.title3.weight(.medium))
                         .foregroundStyle(.secondary)
+                case let .score(away, home, _):
+                    Text("\(away)\u{2013}\(home)")
+                        .font(.system(size: 24, weight: .bold, design: .rounded).monospacedDigit())
+                        .foregroundStyle(Color.primary)
+                        .fixedSize()
+                    if let caption = headline.centerCaption {
+                        Text(caption)
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.5)
+                            .dynamicTypeSize(...Self.nflPairedCaptionTypeCeiling)
+                    }
                 }
             }
+            // The row's one label already reads the score; stacked, this copy
+            // sits outside that element and VoiceOver read the score twice.
+            .accessibilityHidden(true)
+            .opacity(movement == .only ? 0 : 1)
             if headline.away.won == nil && priceStreamingEligible {
                 movementCaptionSlot(event, colors: colors)
+                    .opacity(movement == .reserved ? 0 : 1)
+                    .accessibilityHidden(movement == .reserved)
             }
         }
     }

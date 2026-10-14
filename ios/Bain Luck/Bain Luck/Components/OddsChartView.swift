@@ -887,8 +887,7 @@ struct OddsChartView: View {
                         // team's chance (the key below names them), so the side
                         // labels would misread; the gutter keeps its width so the
                         // page's shared time axis stays aligned.
-                        .opacity(checkpoints == nil && pairedLineColors(for: dataPoints) != nil ? 0 : 1)
-                        .accessibilityHidden(checkpoints == nil && pairedLineColors(for: dataPoints) != nil)
+                        .pairedGutterHidden9483(checkpoints == nil && pairedLineColors(for: dataPoints) != nil)
 
                         chartView(dataPoints: dataPoints, sources: history.winProbSources ?? [:],
                                   periodMarkers: periodMarkers, moments: moments,
@@ -1044,8 +1043,7 @@ struct OddsChartView: View {
                                 .frame(width: chartTeamGutterWidth)
                                 .padding(.vertical, 12)
                                 // #9483 — as the inline gutter: no side labels on a paired chart.
-                                .opacity(checkpoints == nil && pairedLineColors(for: dataPoints) != nil ? 0 : 1)
-                                .accessibilityHidden(checkpoints == nil && pairedLineColors(for: dataPoints) != nil)
+                                .pairedGutterHidden9483(checkpoints == nil && pairedLineColors(for: dataPoints) != nil)
 
                                 chartView(dataPoints: dataPoints, sources: history.winProbSources ?? [:],
                                           periodMarkers: periodMarkers, moments: moments,
@@ -4074,5 +4072,15 @@ struct PublicationCheckpointMount4974 {
         case .withheld:
             return PublicationCheckpointReadoutSlot4974.withheldText
         }
+    }
+}
+
+private extension View {
+    /// #9483 — a gutter's side labels step aside on a paired chart. ONE read of
+    /// the pairing per gutter: `pairedLineColors(for:)` segments every point,
+    /// and the opacity and the accessibility answer must agree.
+    func pairedGutterHidden9483(_ hidden: Bool) -> some View {
+        opacity(hidden ? 0 : 1)
+            .accessibilityHidden(hidden)
     }
 }
