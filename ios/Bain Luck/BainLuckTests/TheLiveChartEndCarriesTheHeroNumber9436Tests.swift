@@ -277,27 +277,23 @@ final class TheLiveChartEndCarriesTheHeroNumber9436Tests: XCTestCase {
         XCTAssertFalse(LiveChartEdgeMarkerPlan.glides(from: old, to: new, reduceMotion: false, sceneActive: false))
     }
 
-    /// The replaced pin is held (drawn off the same predecessor) until the
-    /// glide starts; held under any other predecessor it is off the line.
-    func testTheReplacedPinIsHeldOnlyOffTheSamePredecessor() {
-        let bucket = vertex(10, 0.60)
-        let tail = LiveEdgeTail(from: bucket, to: vertex(14, 0.59))
-        XCTAssertEqual(LiveChartEdgeMarkerPlan.drawnTip(shown: vertex(12, 0.61), shownFrom: bucket, tail: tail),
-                       vertex(12, 0.61))
-        XCTAssertEqual(LiveChartEdgeMarkerPlan.drawnTip(shown: vertex(12, 0.61), shownFrom: vertex(9, 0.5), tail: tail),
-                       vertex(14, 0.59))
-        XCTAssertEqual(LiveChartEdgeMarkerPlan.drawnTip(shown: vertex(12, 0.61), shownFrom: nil, tail: tail),
-                       vertex(14, 0.59))
-    }
-
-    /// The tip drawn in any frame lies on the line: the held tip while it is
-    /// one of the new segment's two ends, otherwise the new end.
-    func testTheDrawnTipIsNeverOffTheLine() {
-        let tail = LiveEdgeTail(from: vertex(1, 0.61), to: vertex(2, 0.59))
-        XCTAssertEqual(LiveChartEdgeMarkerPlan.drawnTip(shown: vertex(1, 0.61), tail: tail), vertex(1, 0.61))
-        XCTAssertEqual(LiveChartEdgeMarkerPlan.drawnTip(shown: vertex(2, 0.59), tail: tail), vertex(2, 0.59))
-        XCTAssertEqual(LiveChartEdgeMarkerPlan.drawnTip(shown: vertex(0, 0.4), tail: tail), vertex(2, 0.59))
-        XCTAssertEqual(LiveChartEdgeMarkerPlan.drawnTip(shown: nil, tail: tail), vertex(2, 0.59))
+    /// #10090 — the glide is decided from the tail drawn LAST, not from a
+    /// change callback that SwiftUI may skip. A redraw keeps its answer; a tail
+    /// whose predecessors were coalesced away is compared with the one drawn
+    /// before it.
+    func testTheGlideIsDecidedFromTheLastDrawnTail() {
+        let memory = LiveEdgeGlideMemory()
+        let a = LiveEdgeTail(from: vertex(0, 0.6), to: vertex(1, 0.61))
+        let b = LiveEdgeTail(from: vertex(1, 0.61), to: vertex(2, 0.59))
+        let c = LiveEdgeTail(from: vertex(2, 0.59), to: vertex(3, 0.62))
+        XCTAssertFalse(memory.glides(to: a, reduceMotion: false, sceneActive: true), "the first tail drawn snaps")
+        XCTAssertTrue(memory.glides(to: b, reduceMotion: false, sceneActive: true), "an append after it glides")
+        XCTAssertTrue(memory.glides(to: b, reduceMotion: true, sceneActive: false), "a redraw keeps its answer")
+        let fresh = LiveEdgeGlideMemory()
+        _ = fresh.glides(to: a, reduceMotion: false, sceneActive: true)
+        XCTAssertFalse(fresh.glides(to: c, reduceMotion: false, sceneActive: true),
+                       "b was never drawn: c does not start where a ended, so it snaps")
+        XCTAssertFalse(memory.glides(to: c, reduceMotion: true, sceneActive: true), "Reduce Motion snaps")
     }
 
     /// A fall slides down, a rise (or an unknown direction) slides up — both
