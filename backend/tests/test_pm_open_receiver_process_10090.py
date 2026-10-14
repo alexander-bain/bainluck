@@ -456,3 +456,35 @@ async def test_a_catalog_write_failure_fails_the_run_while_the_child_still_quote
     (child,) = spawned
     assert child.returncode is not None
     assert not proxy.is_connected
+
+
+@pytest.mark.asyncio
+async def test_a_status_frame_applied_during_teardown_cannot_leave_the_proxy_connected(
+    monkeypatch,
+):
+    """#10090 (Root 21:45Z): the run's `finally` cleared `connected` BEFORE
+    teardown joined the reader, so a STATS frame the reader applied in that
+    window left `is_connected` True after the run had failed (1 in 10 under
+    load, on master too). The window is made certain here: the wrapped
+    teardown applies that late frame itself, then the real teardown runs."""
+    monkeypatch.setattr(pwp, "CHILD_EXIT_SECONDS", 0.5)
+    proxy = pwp.PolymarketOpenReceiverProcess(
+        command=[sys.executable, "-c", PIPE_BREAKING_CHILD, PROCESS_FILE],
+    )
+    spawned = []
+    _recording_exec(monkeypatch, spawned)
+    teardown = pwp._teardown
+
+    async def late_frame_then_teardown(spawn, tasks):
+        proxy._stats = {**proxy._stats, "connected": True}  # the reader's late STATS
+        await teardown(spawn, tasks)
+
+    monkeypatch.setattr(pwp, "_teardown", late_frame_then_teardown)
+    run = asyncio.create_task(proxy.run_refreshable(["a"]))
+    assert await _wait_for(lambda: (proxy.stats.get("seq") or 0) >= 3)
+    proxy.update_asset_ids(_catalog(20000, 6))  # past the pipe buffer
+    with pytest.raises(RuntimeError, match="catalog not delivered"):
+        await asyncio.wait_for(run, 30)
+    (child,) = spawned
+    assert child.returncode is not None
+    assert not proxy.is_connected

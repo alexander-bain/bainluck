@@ -1175,6 +1175,9 @@ class _FreshAdmission:
         #: counts, so a re-admitted event's NEW attempt cannot extend it.
         self.released: dict[int, int] = {}
         self._released_signal = None
+        #: #10090 stage trace only (None unless one is configured): told of
+        #: every actual release. Never raises into the fence.
+        self.on_release: Optional[Callable[[Iterable[int]], None]] = None
 
     def release(self, event_ids) -> None:
         """These events' stamps returned, or went back to debt unstamped."""
@@ -1186,6 +1189,9 @@ class _FreshAdmission:
         signal, self._released_signal = self._released_signal, None
         if signal is not None and not signal.done():
             signal.set_result(None)
+        if self.on_release is not None:
+            with contextlib.suppress(Exception):
+                self.on_release(event_ids)
 
     def released_signal(self):
         """A future resolved at this call's next `release`."""
@@ -1485,6 +1491,11 @@ class LiveBlendRefresher:
             self.stats["throttled"] += skipped
         if receipts is not None:
             self._receipt_call(receipts.observe, staged, stored_wall, set(due), now)
+        if self._stage_hook("stage_admission") is not None:
+            self._stage_trace(
+                "stage_admission", "REFRESH", None, wanted,
+                due=due, excluded=excluded, fresh=fresh, flush_started=flush_started,
+            )
         if not due:
             return self.stats
 
@@ -1581,6 +1592,8 @@ class LiveBlendRefresher:
         window = _FreshAdmission(flush_started, clock, due)
         window.publish = publish_committed
         window.publish_inline = publish_inline
+        if self._stage_hook("attempt_released") is not None:
+            window.on_release = lambda ids: self._stage_trace("attempt_released", ids)
         self._admission = window
         self._holding = window.holding
         signal, self._admission_signal = self._admission_signal, None
@@ -1950,6 +1963,17 @@ class LiveBlendRefresher:
                 _mono(),
             )
 
+    def _stage_hook(self, name):
+        """#10090: an optional stage-trace hook, None when no trace has it."""
+        return getattr(getattr(self.receipts, "exact_trace", None), name, None)
+
+    def _stage_trace(self, name, *args, **kwargs):
+        """#10090: call an optional stage-trace hook. Synchronous, never raises."""
+        hook = self._stage_hook(name)
+        if hook is not None:
+            with contextlib.suppress(Exception):
+                hook(*args, **kwargs)
+
     def _receipt_call(self, fn, *args):
         """Receipts are evidence about the price path, never part of it."""
         try:
@@ -2046,6 +2070,7 @@ class LiveBlendRefresher:
         staging slot is not touched (a running call may own it). Synchronous.
         """
         event_ids = set(event_ids)
+        self._stage_trace("stage_admission", "KEEP_OWED", "KEPT_OWED", event_ids)
         throttled = event_ids.difference(self._throttle_deferred)
         self._throttle_deferred.update(event_ids)
         if throttled:
@@ -2093,10 +2118,29 @@ class LiveBlendRefresher:
             window is None or window.closed or flush_started is None
             or window.flush_started is None
         ):
+            if self._stage_hook("stage_admission") is not None:
+                self._stage_trace(
+                    "stage_admission", "ADMIT", "NO_ADMITTING_CALL", event_ids,
+                    flush_started=flush_started,
+                )
             return frozenset()
         if flush_started != window.flush_started and flush_started < window.flush_started:
+            if self._stage_hook("stage_admission") is not None:
+                self._stage_trace(
+                    "stage_admission", "ADMIT", "EARLIER_CLOCK", event_ids,
+                    flush_started=flush_started,
+                )
             return frozenset()
         excluded = set(defer_event_ids)
+        if self._stage_hook("stage_admission") is not None:
+            event_ids = list(event_ids)  # traced only: read twice below
+            for eid in event_ids:
+                if eid in excluded or eid in window.holding:
+                    self._stage_trace(
+                        "stage_admission", "ADMIT",
+                        "DEFERRED_UNFINISHED" if eid in excluded else "HELD",
+                        (eid,), flush_started=flush_started,
+                    )
         taken = {
             eid for eid in event_ids
             if eid not in excluded and eid not in window.holding
@@ -2137,6 +2181,14 @@ class LiveBlendRefresher:
             window.stored_wall.pop(event_id, None)
         clock = flush_started
         due = sorted(eid for eid in taken if self._due(eid, clock))
+        if self._stage_hook("stage_admission") is not None:
+            for eid in taken:
+                self._stage_trace(
+                    "stage_admission", "ADMIT",
+                    ("DEBT_" if eid == window.debt and eid not in cohort else "")
+                    + ("ADMITTED" if eid in due else "THROTTLED"),
+                    (eid,), flush_started=flush_started,
+                )
         throttled = taken.difference(due, self._throttle_deferred)
         self._throttle_deferred.update(taken.difference(due))
         if throttled:
@@ -2607,6 +2659,7 @@ class LiveBlendRefresher:
         # contributor observations. Nothing is emitted before outer COMMIT.
         exact_trace = getattr(self.receipts, "exact_trace", None)
         trace_bases: dict = {}
+        self._stage_trace("attempt_start", event_ids, now)
         # #837 tail (Codex review of #8490) — and for the same reason the
         # write bookkeeping is COLLECTED and applied only after the commit. A
         # released savepoint is not a committed stamp: recorded there, a failed
@@ -2634,6 +2687,7 @@ class LiveBlendRefresher:
             self._session_slot(), get_task_session() as session,
         ):
             reserved, history_ready = reservation
+            self._stage_trace("attempt_session", event_ids)
             if prepared is None:
                 grouped = await self._read_groups(session, event_ids)
             else:
@@ -2918,6 +2972,7 @@ class LiveBlendRefresher:
 
         # Session closed and committed — only now is the pushed number a number
         # the database actually kept, and only now is it "written".
+        self._stage_trace("attempt_committed", event_ids, self._dispositions)
         for event_id, value in written.items():
             self._last_write_at[event_id] = now
             self._last_written_value[event_id] = value
