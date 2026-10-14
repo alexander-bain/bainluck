@@ -112,20 +112,68 @@ def test_raw_text_frame_decodes_exactly_as_the_old_text_path(raw):
     assert text_path_outcome(service._decode_text_frame_bytes, raw) == old
 
 
-async def test_utf16_frame_is_skipped_and_the_next_quote_still_arrives(monkeypatch):
+class RecoveryClock:
+    """The service's asyncio, with its reconnect wait recorded and not slept.
+
+    Yields stay real; the 8 s heartbeat keeps its real sleep (it never fires
+    inside this test), so the only wait taken off the wall clock is the one
+    under test and the test's own one-second runaway guard stays honest.
+    """
+
+    def __init__(self, events):
+        self.events = events
+
+    def __getattr__(self, name):
+        return getattr(asyncio, name)
+
+    async def sleep(self, delay, *args, **kwargs):
+        if delay in (0, 8):
+            return await asyncio.sleep(delay, *args, **kwargs)
+        self.events.append(("wait", delay))
+        return await asyncio.sleep(0)
+
+
+@pytest.mark.parametrize("draw", [0.0, 0.999998])  # both ends of random()
+async def test_utf16_frame_drops_its_connection_and_the_next_connection_delivers(
+    monkeypatch, draw,
+):
+    # Strict UTF-8: the bad frame raises out of the decoder, so its connection
+    # is abandoned (never skipped in place) and the quote arrives on a NEW one.
+    stale = dict(event_type="best_bid_ask", asset_id="a", n=0)
     message = dict(event_type="best_bid_ask", asset_id="a", n=1)
-    socket = BytesSocket([json.dumps(message).encode("utf-16"),
-                          json.dumps(message).encode()])
-    monkeypatch.setattr("websockets.connect", lambda *a, **kw: socket)
+    failed = BytesSocket([json.dumps(message).encode("utf-16"),
+                          json.dumps(stale).encode()])
+    recovered = BytesSocket([json.dumps(message).encode()])
+    sockets, events = [failed, recovered], []
+
+    def connect(*_args, **_kwargs):
+        if not sockets:
+            pytest.fail("dialled a third connection")
+        events.append("dial")
+        return sockets.pop(0)
+
+    monkeypatch.setattr("websockets.connect", connect)
+    monkeypatch.setattr(service.random, "random", lambda: draw)
+    monkeypatch.setattr(service, "asyncio", RecoveryClock(events))
     client = service.PolymarketWebSocket()
     delivered = []
     client.on_price = delivered.append
     task = asyncio.create_task(client._run_one(["a"], 0))
     try:
-        await asyncio.wait_for(socket.drained.wait(), 1)
+        await asyncio.wait_for(recovered.drained.wait(), 1)
+        wait = service.INITIAL_BACKOFF_SECONDS * (0.5 + draw / 2)
+        assert events == ["dial", ("wait", wait), "dial"]
         assert delivered == [message]
+        assert failed.closed and failed.read == 1 and not failed.drained.is_set()
+        assert failed.decode_calls == [False]
+        assert recovered.decode_calls == [False, False]
         assert client.stats["messages"] == 2
+        assert client.stats["reconnects"] == 2
+        assert client._shards_connected == {0}
     finally:
         task.cancel()
         with pytest.raises(asyncio.CancelledError):
             await task
+    assert recovered.closed
+    assert client._shards_connected == set()
+    assert delivered == [message]
