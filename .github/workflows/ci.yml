@@ -2944,6 +2944,21 @@ jobs:
             exit 1
           fi
 
+      - name: Calibration fair-fight prop-threshold exclusion (real Postgres)
+        # #1089. The Kalshi-vs-Polymarket source comparison must drop corrupt
+        # NHL goal-family captures (>= 0.50) and the general >= 0.90 band while
+        # keeping the honest NHL low band. Relational claim — which rows the real
+        # query returns — so it runs the unmodified impl against seeded rows.
+        if: matrix.group == 'shared-middle'
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_calibration_fair_fight_prop_threshold_1089_pg.py \
+            -v -s -rs 2>&1 | tee /tmp/fairfight1089.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/fairfight1089.txt; then
+            echo "::error::calibration fair-fight prop-threshold contract SKIPPED — the gate did not run"
+            exit 1
+          fi
+
       - name: Calibration DataGolf symmetric exclusion (real Postgres)
         # #6211. `market_info` withholds a DataGolf market whose field we cannot
         # establish, WHOLE — winners and losers together. Its comment said that

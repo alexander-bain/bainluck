@@ -65,6 +65,12 @@ COVERED = (
     # arm's, and it is what stops the NEXT raw INSERT added to this file from
     # reaching a runner unchecked.
     "test_calibration_threshold_ladder_pg.py",
+    # #1089. Seeds Kalshi + Polymarket markets on shared canonical keys by raw
+    # INSERT. `canonical_market_key` IS the pairing (omit it and nothing reaches
+    # the fair fight), `llm_sport_category` is the band's category, and every
+    # Kalshi leg carries a bid snapshot (`reading_count` named) so the liquidity
+    # predicate admits it and only the price-band rule is under test.
+    "test_calibration_fair_fight_prop_threshold_1089_pg.py",
     # #6211 (CAL-P1310). Seeds three DataGolf markets and their boards by raw
     # INSERT to prove `market_info` withholds an unverified market WHOLE —
     # winners and losers together. Two seeding hazards worth naming here rather
