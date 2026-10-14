@@ -35,15 +35,20 @@ final class SubsecondHeldDelivery10090Tests: XCTestCase {
     nonisolated private static let spacing: TimeInterval = 0.25
     nonisolated private static let rawToFold: TimeInterval = 0.05
     nonisolated private static let resyncAfter = 8
-    /// The burst lands after the hosted page has loaded and drawn, before the
-    /// mid-burst poll.
+    /// The burst lands after the hosted page has loaded and drawn. It drains
+    /// well before the 2.1 s poll, so the burst case is an UNLOADED control; the
+    /// paced cases carry the poll and resync workload.
     nonisolated private static let burstAfter: TimeInterval = 1.5
+    nonisolated private static let events: Set<Int> = [4242, burstEvent]
 
     private var marks: [(mark: LiveTimingSeam.Mark, at: UInt64)] = []
 
     override func setUp() async throws {
         marks = []
+        // The host app runs its own live streams against production while the
+        // tests run, and their marks reach this observer too. Keep this page's.
         LiveTimingSeam.observer = { [weak self] in
+            guard Self.events.contains($0.eventId) else { return }
             self?.marks.append(($0, DispatchTime.now().uptimeNanoseconds))
         }
     }
@@ -162,7 +167,8 @@ final class SubsecondHeldDelivery10090Tests: XCTestCase {
             let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: "HTTP/1.1",
                                            headerFields: ["Content-Type": "text/event-stream"])!
             client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
-            client?.urlProtocol(self, didLoad: SubsecondHeldDelivery10090Tests.frame("open", #"{"event_id":4242}"#))
+            let id = Self.isBurst ? SubsecondHeldDelivery10090Tests.burstEvent : 4242
+            client?.urlProtocol(self, didLoad: SubsecondHeldDelivery10090Tests.frame("open", #"{"event_id":\#(id)}"#))
             let start = DispatchTime.now()
             if Self.isBurst {
                 let chunk = SubsecondHeldDelivery10090Tests.burstChunk()
@@ -509,6 +515,9 @@ final class SubsecondHeldDelivery10090Tests: XCTestCase {
     /// The view marks may coalesce: two adoptions inside one main run-loop turn
     /// are one SwiftUI update. So the view side asserts only that the LATEST
     /// value reached the hero and chart inputs; the model side asserts all nine.
+    /// The saved values alternate 99.5 / 99.55%, so this case proves drain,
+    /// order and history, not nine distinct headlines; the paced cases' 41–56%
+    /// quotes are the changing-headline case. View marks are inputs, not paint.
     func testHostedPageDrainsThePhonesNineFrameBurstToTheLatestHeadlineAndChart() async throws {
         PacedStream.reset(quarter: false, base: Self.recentBase(), burst: true)
         let config = URLSessionConfiguration.ephemeral
@@ -531,7 +540,8 @@ final class SubsecondHeldDelivery10090Tests: XCTestCase {
         await waitUntil(10) { vm.event != nil }
         XCTAssertNotNil(vm.event, "the mounted page ran its own load")
 
-        // The same mid-burst poll as the paced cases, carrying the held read.
+        // The paced cases' poll, carrying the held read. It lands after the burst
+        // has drained: it checks nothing rolls back, it does not load the drain.
         let poll = Task { @MainActor in
             try? await Task.sleep(nanoseconds: 2_100_000_000)
             await vm.load()
@@ -568,10 +578,11 @@ final class SubsecondHeldDelivery10090Tests: XCTestCase {
             format: "SUBSECOND-10090 depth=burst frames=%d bytes=%d chunk_to_first_received_ms=%.2f "
                 + "chunk_to_last_received_ms=%.2f received_spread_ms=%.2f chunk_to_model_latest_ms=%.2f "
                 + "chunk_to_view_headline_latest_ms=%.2f chunk_to_view_chart_latest_ms=%.2f "
-                + "view_headline_marks=%d view_chart_marks=%d reads=%d",
+                + "view_headline_marks=%d view_chart_marks=%d reads=%d view_headline_revs=%@",
             received.count, Self.burstChunk().count, ms(received.first?.at), ms(received.last?.at),
             ms(received.last?.at) - ms(received.first?.at), ms(adopted.last?.at),
-            latestHeadline, latestChart, viewHeadline.count, viewChart.count, client.reads)
+            latestHeadline, latestChart, viewHeadline.count, viewChart.count, client.reads,
+            viewHeadline.map { String($0.mark.basis.split(separator: "=").last ?? "?") }.joined(separator: ","))
         print(line)
         // A generous bound: this is a measurement, not a performance gate.
         XCTAssertLessThan(max(latestHeadline, latestChart), 1000,

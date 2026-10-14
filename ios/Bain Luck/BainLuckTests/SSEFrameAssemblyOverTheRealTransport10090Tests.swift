@@ -181,6 +181,10 @@ final class SSEFrameAssemblyOverTheRealTransport10090Tests: XCTestCase {
         record(old) { d, _ in oldGot.append(d) }
         old.connect()
         await waitUntil(5) { oldGot.filter { $0.event == "probability" }.count >= 3 }
+        // `waitUntil` only stops waiting. Without this an old stream that never
+        // delivered would pass every assertion below.
+        XCTAssertGreaterThanOrEqual(oldGot.filter { $0.event == "probability" }.count, 3,
+                                    "the old transport delivered frames before it was closed")
         old.close()
         let atClose = oldGot
 
@@ -192,6 +196,9 @@ final class SSEFrameAssemblyOverTheRealTransport10090Tests: XCTestCase {
         await waitUntil(5) { newGot.filter { $0.event == "probability" }.count >= 5 }
         try? await Task.sleep(nanoseconds: 300_000_000)
         replacement.close()
+        // An empty replacement list would equal the empty sequence built from it.
+        XCTAssertGreaterThanOrEqual(newGot.filter { $0.event == "probability" }.count, 5,
+                                    "the replacement delivered frames of its own")
 
         XCTAssertEqual(oldGot, atClose, "the closed transport handed on frames after close()")
         XCTAssertFalse(oldGot.contains { $0.event == "error" }, "a close is not a drop")
