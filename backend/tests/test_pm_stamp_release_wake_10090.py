@@ -542,3 +542,28 @@ async def test_released_event_bounded_under_sustained_peer_traffic_250ms_real_lo
     gaps = [b - a for a, b in zip(starts, starts[1:])]
     assert all(g >= 0.25 - 0.010 for g in gaps[2:]), out
     assert out["peer_last_written"] == out["peer_last"], out
+
+
+async def test_a_release_observer_set_on_the_window_never_replaces_the_release_wake():
+    """The default-off stage trace (#11037) observes releases through the
+    window's own `on_release`; the functional wake is a separate slot, so
+    turning a trace on can never silence it."""
+    woken: list[list[int]] = []
+    observed: list[list[int]] = []
+    window = blend._FreshAdmission(
+        1000.0, 1000.0, {1, 2}, release_wake=lambda ids: woken.append(sorted(ids)),
+    )
+    window.on_release = lambda ids: observed.append(sorted(ids))
+    window.release({1})
+    assert woken == [[1]]
+    assert window.release_wake is not window.on_release
+
+
+async def test_the_pm_stamp_owner_installs_its_wake_on_the_refresher():
+    """`_PMStampOwner` binds the refresher's `release_wake`; every window the
+    refresher opens is handed it (`_FreshAdmission(..., release_wake=...)`)."""
+    refresher = blend.LiveBlendRefresher("polymarket")
+    boundary = pm._PMCatalogFlushBoundary()
+    owner = boundary.stamp_owner(refresher)
+    assert refresher.release_wake == owner._on_release
+    assert owner.wake is boundary.flush_wake
