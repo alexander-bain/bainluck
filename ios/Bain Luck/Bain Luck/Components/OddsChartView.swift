@@ -1840,19 +1840,19 @@ struct OddsChartView: View {
         // nothing recorded; the live split is a live page's, and a mount is a
         // finished page's.
         let liveSplit = checkpoints == nil ? liveEdgeSplit(dataPoints: dataPoints, domain: domain) : nil
-        let admitted = checkpoints == nil
+        let balance = checkpoints == nil
             ? balancePlan(dataPoints: dataPoints, liveSplit: liveSplit, domain: domain) : nil
         // #9483 — on an NFL page the admitted pair is drawn as two team lines
         // instead of the balance ink: the same admission, the same number.
-        let paired = pairedLineColors(admitted: admitted)
-        let balance = paired == nil ? admitted : nil
-        let balanceColors = balance == nil ? nil : teamColors
+        let paired = pairedLineColors(admitted: balance)
+        let ink = paired == nil ? balance : nil
+        let balanceColors = ink == nil ? nil : teamColors
 
         return Chart {
             chartContent(dataPoints: dataPoints, sources: sources,
                          visibleMarkers: visibleMarkers, moments: moments,
                          liveSplit: liveSplit,
-                         balanceSource: balance == nil ? nil : Self.primarySource(in: dataPoints),
+                         balanceSource: ink == nil ? nil : Self.primarySource(in: dataPoints),
                          checkpoints: checkpoints,
                          paired: paired)
         }
@@ -1865,10 +1865,10 @@ struct OddsChartView: View {
         // space, then placed on the plot frame.
         .chartBackground { proxy in
             GeometryReader { geo in
-                if let balance, let colors = balanceColors {
+                if let ink, let colors = balanceColors {
                     let plotFrame = geo[proxy.plotAreaFrame]
                     BinaryWinChartBalanceInkLayer(
-                        plan: balance,
+                        plan: ink,
                         project: BinaryWinChartBalanceInk.linearProjector(
                             xDomain: domain, yDomain: yMin...yMax,
                             plotRect: CGRect(origin: .zero, size: plotFrame.size)),

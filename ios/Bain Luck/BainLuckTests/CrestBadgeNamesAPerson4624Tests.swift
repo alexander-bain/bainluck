@@ -242,7 +242,9 @@ final class CrestBadgeNamesAPerson4624Tests: XCTestCase {
         // than as the hero having dropped its sport.
         XCTAssertFalse(source.isEmpty, "EventDetailView.swift is not where this test thinks it is")
         let circles = source.components(separatedBy: "TeamLogoView(").dropFirst()
-        XCTAssertEqual(circles.count, 2, "the hero's circle count moved; re-read this guard")
+        // #9483 — a third call: the NFL paired headline's side crest, drawn
+        // once per side from one helper, which passes the sport like the two.
+        XCTAssertEqual(circles.count, 3, "the hero's circle count moved; re-read this guard")
         for (index, circle) in circles.enumerated() {
             let call = circle.prefix(while: { $0 != ")" })
             XCTAssertTrue(call.contains("sportKey: event.sport"),

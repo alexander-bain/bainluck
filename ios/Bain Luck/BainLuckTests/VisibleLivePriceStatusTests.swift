@@ -202,7 +202,10 @@ extension VisibleLivePriceStatusTests {
             // #10830 — read as the hero's adjacent pair. With Start Live Activity
             // moved under the chart, page-wide OCR reads the pixel-identical hero
             // as "55% - 45" (the crest circle beside it swallows the trailing %).
-            XCTAssertNotNil(recognized.range(of: #"55%\s*[-–—]?\s*45%?"#, options: .regularExpression), recognized)
+            // #9483 — this fixture is an NFL game, so the paired headline
+            // prints each chance under its own team ("Ravens 55% … Cowboys 45%").
+            XCTAssertTrue(recognized.range(of: #"55%\s*[-–—]?\s*45%?"#, options: .regularExpression) != nil
+                || (recognized.contains("Ravens 55%") && recognized.contains("Cowboys 45%")), recognized)
         }
     }
 }
