@@ -101,6 +101,7 @@
     "CREATE-wave INSERT bind contract (real Postgres)",
     "Calibration mode-price source scope (real Postgres)",
     "Calibration threshold-ladder collapse (real Postgres)",
+    "Calibration fair-fight prop-threshold exclusion (real Postgres)",
     "Calibration DataGolf symmetric exclusion (real Postgres)",
     "Calibration soccer three-way grade (real Postgres)",
     "Calibration trade-evidence Polymarket receipt (real Postgres)",
