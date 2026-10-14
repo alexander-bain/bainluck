@@ -231,6 +231,10 @@ class _Venue:
         self.ignore_filter = False
         self.page_error: Exception | None = None
         self.event_error_for: set = set()
+        #: ticker -> the payload `get_event` answers with instead (CERT-4118):
+        #: None is a 404 or three swallowed failures; `{"markets": []}` is the
+        #: empty 200.
+        self.event_payload_for: dict = {}
 
     async def get_markets(self, *, status, limit, cursor=None, min_settled_ts=None,
                           max_settled_ts=None, mve_filter=None, **_):
@@ -257,6 +261,8 @@ class _Venue:
         self.asked.append(ticker)
         if ticker in self.event_error_for:
             raise RuntimeError("venue 502")
+        if ticker in self.event_payload_for:
+            return self.event_payload_for[ticker]
         legs = self.legs.get(ticker)
         if legs is None:
             return {"markets": [
@@ -285,13 +291,15 @@ def _legs(ticker, statuses, close):
 
 
 _DEFAULT_SETTLED = [
-    {"ticker": "KXPGATOUR-26OCT08SHRINERS-SSCHEFFLER", "event_ticker": EARLY_BAND["external_id"],
+    # Market tickers match `_legs`'s naming: the feed and the event read name
+    # the same markets, as they do at the venue.
+    {"ticker": "KXPGATOUR-26OCT08SHRINERS-0", "event_ticker": EARLY_BAND["external_id"],
      "settlement_ts": _ts(200)},
-    {"ticker": "KXPGATOUR-26OCT08SHRINERS-RMCILROY", "event_ticker": EARLY_BAND["external_id"],
+    {"ticker": "KXPGATOUR-26OCT08SHRINERS-1", "event_ticker": EARLY_BAND["external_id"],
      "settlement_ts": _ts(200)},
-    {"ticker": "KXOSCARSONG-26-GOLDEN", "event_ticker": EARLY_UNDATED["external_id"],
+    {"ticker": "KXOSCARSONG-26-0", "event_ticker": EARLY_UNDATED["external_id"],
      "settlement_ts": _ts(300)},
-    {"ticker": "KXEMMYCOUNT-26WID-15", "event_ticker": PARTIAL["external_id"],
+    {"ticker": "KXEMMYCOUNT-26WID-0", "event_ticker": PARTIAL["external_id"],
      "settlement_ts": _ts(400)},
     {"ticker": "KXFEDDECISION-26SEP-C25", "event_ticker": ALREADY_RESOLVED["external_id"],
      "settlement_ts": _ts(450)},
@@ -310,7 +318,13 @@ _DEFAULT_LEGS = {
 }
 
 
-def _feed_state(*, head=LAST_RUN, back=None, back_end=None, owed=()):
+def _copy_feed(feed):
+    return dict(feed, owed=list(feed["owed"]),
+                owed_meta={t: dict(m, legs=list(m["legs"]))
+                           for t, m in (feed.get("owed_meta") or {}).items()})
+
+
+def _feed_state(*, head=LAST_RUN, back=None, back_end=None, owed=(), owed_meta=None):
     """A running feed's state. By default the backlog is already walked."""
     back_end = head if back_end is None else back_end
     return {
@@ -320,6 +334,7 @@ def _feed_state(*, head=LAST_RUN, back=None, back_end=None, owed=()):
         "back_end": back_end,
         "back_step": sweep.SETTLED_FEED_STEP_S,
         "owed": list(owed),
+        "owed_meta": dict(owed_meta or {}),
     }
 
 
@@ -331,12 +346,12 @@ def redis_state(monkeypatch):
 
     async def read_feed():
         feed = store["feed"]
-        return None if feed is None else dict(feed, owed=list(feed["owed"]))
+        return None if feed is None else _copy_feed(feed)
 
     async def write_feed(state):
         if store.get("feed_write_fails"):
             return False
-        store["feed"] = dict(state, owed=list(state["owed"]))
+        store["feed"] = _copy_feed(state)
         writes.append(store["feed"])
         return True
 
@@ -556,7 +571,7 @@ class TestTheHeadWalk:
 
         later = NOW + timedelta(minutes=10)
         settled = _DEFAULT_SETTLED + [
-            {"ticker": "KXEMMYCOUNT-26WID-16", "event_ticker": PARTIAL["external_id"],
+            {"ticker": "KXEMMYCOUNT-26WID-1", "event_ticker": PARTIAL["external_id"],
              "settlement_ts": (later - timedelta(minutes=7)).isoformat().replace("+00:00", "Z")},
         ]
         legs = {**_DEFAULT_LEGS, PARTIAL["external_id"]: _legs(
@@ -618,7 +633,7 @@ class TestTheHeadIsNeverHeldBehindTheBacklog:
 
     def test_a_backlog_settlement_is_closed_when_the_walk_reaches_it(self, redis_state):
         old = dict(EARLY_UNDATED, id=9, external_id="KXGRAMMYAOTY-26")
-        settled = [{"ticker": "KXGRAMMYAOTY-26-X", "event_ticker": old["external_id"],
+        settled = [{"ticker": "KXGRAMMYAOTY-26-0", "event_ticker": old["external_id"],
                     "settlement_ts": _ts(86400 * 3)}]
         legs = {old["external_id"]: _legs(old["external_id"], ["finalized"], old["resolution_date"])}
         redis_state.store["feed"] = _feed_state(back=CEILING - 86400 * 4, back_end=LAST_RUN)
@@ -762,6 +777,165 @@ class TestAnErroredReadIsOwedNotForgotten:
         assert venue.asked == [EARLY_UNDATED["external_id"]]
         assert redis_state.store["feed"]["owed"] == [
             EARLY_BAND["external_id"], EARLY_UNDATED["external_id"]]
+
+
+class TestAnUnconfirmedReadIsOwedNotForgotten:
+    """CERT-4118 / Root's exact-head review of eb65ad4677: the venue's settled
+    feed names an open event, the event read comes back empty or missing, and
+    the next run's read is all-terminal. The window is never listed again, so
+    the row is reached only if the first read was owed.
+
+    An empty 200 is a response shape (gotcha #53), and ``get_event`` returns
+    None for a 404 AND after three swallowed failures — neither is absence."""
+
+    @pytest.mark.parametrize(
+        "payload",
+        [None, {"markets": []}, {}, {"markets": None}],
+        ids=["none-404-or-swallowed", "empty-200", "no-markets-key", "null-markets"],
+    )
+    def test_an_empty_read_is_owed_and_the_recovered_read_closes_it(self, redis_state, payload):
+        engine = _seed()
+        venue = _Venue()
+        venue.event_payload_for = {EARLY_UNDATED["external_id"]: payload}
+        report = _feed(engine, venue)
+
+        feed = redis_state.store["feed"]
+        assert feed["head"] == CEILING  # the walk still moved on
+        assert feed["owed"] == [EARLY_UNDATED["external_id"]]
+        assert feed["owed_meta"][EARLY_UNDATED["external_id"]]["legs"] == ["KXOSCARSONG-26-0"]
+        assert report["stats"]["venue_read_unconfirmed"] == 1
+        assert report["terminal"] == "partial"
+        assert _state(engine)[0][EARLY_UNDATED["id"]] == ("open", None)
+        assert _state(engine)[0][EARLY_BAND["id"]][0] == "resolved"
+
+        venue = _Venue()  # the venue answers with every leg finalized
+        report = _feed(engine, venue)
+        assert venue.asked == [EARLY_UNDATED["external_id"]]
+        assert all(p["min"] == CEILING for p in venue.pages)  # no window re-read
+        assert _state(engine)[0][EARLY_UNDATED["id"]] == ("resolved", NOW.isoformat())
+        assert redis_state.store["feed"]["owed"] == []
+        assert redis_state.store["feed"]["owed_meta"] == {}
+        assert report["owed_paid"] == 1
+        assert report["terminal"] == "complete"
+
+    def test_mutant_control_without_the_owe_the_row_is_never_reached(self, redis_state, monkeypatch):
+        """The test above bites: with the unconfirmed list ignored (the
+        eb65ad4677 behaviour), the same two runs leave the row open."""
+        real = sweep.run_backfill
+
+        async def forgetful(**kw):
+            report = await real(**kw)
+            return dict(report, unconfirmed_tickers=[])
+
+        monkeypatch.setattr(sweep, "run_backfill", forgetful)
+        engine = _seed()
+        venue = _Venue()
+        venue.event_payload_for = {EARLY_UNDATED["external_id"]: {"markets": []}}
+        _feed(engine, venue)
+        _feed(engine, _Venue())
+        assert redis_state.store["feed"]["owed"] == []
+        assert _state(engine)[0][EARLY_UNDATED["id"]] == ("open", None)
+
+    def test_a_read_older_than_the_listing_is_owed(self, redis_state):
+        """The feed listed the leg settled; the event read still shows it
+        trading. That read is stale, not a refusal."""
+        engine = _seed()
+        venue = _Venue()
+        venue.legs[EARLY_UNDATED["external_id"]] = _legs(
+            EARLY_UNDATED["external_id"], ["active", "finalized", "finalized"],
+            EARLY_UNDATED["resolution_date"])
+        report = _feed(engine, venue)
+        assert redis_state.store["feed"]["owed"] == [EARLY_UNDATED["external_id"]]
+        assert report["stats"]["venue_read_unconfirmed"] == 1
+        assert _state(engine)[0][EARLY_UNDATED["id"]] == ("open", None)
+
+        # Still stale on the retry: kept, because the retry checks the same legs.
+        _feed(engine, venue)
+        assert redis_state.store["feed"]["owed"] == [EARLY_UNDATED["external_id"]]
+
+        venue = _Venue()
+        _feed(engine, venue)
+        assert _state(engine)[0][EARLY_UNDATED["id"]] == ("resolved", NOW.isoformat())
+        assert redis_state.store["feed"]["owed"] == []
+
+    def test_partial_settlement_control_confirms_the_listing_and_is_not_owed(self, redis_state):
+        """The listed leg is terminal and another leg still trades. The read
+        confirms what the feed said, so nothing is owed — the last leg's own
+        listing reaches the row later (test_an_event_whose_last_leg_settles_later)."""
+        engine = _seed()
+        report = _feed(engine, _Venue())
+        assert report["stats"]["venue_partially_settled"] == 1
+        assert report["stats"]["venue_read_unconfirmed"] == 0
+        assert redis_state.store["feed"]["owed"] == []
+        assert report["terminal"] == "complete"
+
+    def test_a_listing_past_the_retention_floor_is_retired_by_name(self, redis_state):
+        """Purged history, said as such: once the listing window is older than
+        the venue's retention bound no read can confirm it, so it is not asked
+        and is reported by name. A listing one day inside the bound is still asked."""
+        engine = _seed(SPECIMENS + (dict(EARLY_UNDATED, id=9, external_id="KXGRAMMYAOTY-26"),))
+        purged = NOW_TS - (sweep.PROVABLY_PURGED_AGE_DAYS * 86400) - 1
+        inside = NOW_TS - ((sweep.PROVABLY_PURGED_AGE_DAYS - 1) * 86400)
+        redis_state.store["feed"] = _feed_state(
+            head=CEILING,
+            owed=[EARLY_UNDATED["external_id"], "KXGRAMMYAOTY-26"],
+            owed_meta={
+                EARLY_UNDATED["external_id"]: {"since": purged, "legs": []},
+                "KXGRAMMYAOTY-26": {"since": inside, "legs": []},
+            },
+        )
+        venue = _Venue()
+        venue.event_payload_for = {"KXGRAMMYAOTY-26": {"markets": []}}
+        report = _feed(engine, venue)
+        assert venue.asked == ["KXGRAMMYAOTY-26"]
+        assert report["owed_retired_purged"] == 1
+        assert report["owed_retired_tickers"] == [EARLY_UNDATED["external_id"]]
+        assert redis_state.store["feed"]["owed"] == ["KXGRAMMYAOTY-26"]
+        assert set(redis_state.store["feed"]["owed_meta"]) == {"KXGRAMMYAOTY-26"}
+        assert report["terminal"] == "partial"
+
+    def test_a_retirement_alone_reads_partial_not_complete(self, redis_state):
+        purged = NOW_TS - (sweep.PROVABLY_PURGED_AGE_DAYS * 86400) - 1
+        redis_state.store["feed"] = _feed_state(
+            head=CEILING, owed=[EARLY_UNDATED["external_id"]],
+            owed_meta={EARLY_UNDATED["external_id"]: {"since": purged, "legs": []}})
+        report = _feed(_seed(), _Venue())
+        assert report["terminal"] == "partial"
+        assert "retention" in report["terminal_reason"]
+        assert redis_state.store["feed"]["owed"] == []
+
+    def test_an_undated_legacy_entry_is_dated_now_not_retired(self, redis_state):
+        redis_state.store["feed"] = _feed_state(head=CEILING, owed=[EARLY_UNDATED["external_id"]])
+        venue = _Venue()
+        venue.event_payload_for = {EARLY_UNDATED["external_id"]: None}
+        report = _feed(_seed(), venue)
+        assert report["owed_retired_purged"] == 0
+        assert redis_state.store["feed"]["owed_meta"][EARLY_UNDATED["external_id"]]["since"] == NOW_TS
+
+    def test_a_dry_run_retires_nothing(self, redis_state):
+        purged = NOW_TS - (sweep.PROVABLY_PURGED_AGE_DAYS * 86400) - 1
+        redis_state.store["feed"] = _feed_state(
+            head=CEILING, owed=[EARLY_UNDATED["external_id"]],
+            owed_meta={EARLY_UNDATED["external_id"]: {"since": purged, "legs": []}})
+        report = _feed(_seed(), _Venue(), apply=False)
+        assert report["owed_retired_purged"] == 0
+        assert redis_state.writes == []
+
+    def test_the_population_sweep_reports_an_empty_read_by_name(self):
+        """run_backfill's other callers get the same report key; their writes
+        are unchanged (an empty read still writes nothing)."""
+        engine = _seed()
+        venue = _Venue()
+        venue.event_payload_for = {EARLY_UNDATED["external_id"]: {"markets": []}}
+        rows = [(EARLY_UNDATED["id"], EARLY_UNDATED["external_id"],
+                 EARLY_UNDATED["resolution_date"], None, 3)]
+        report = asyncio.run(sweep.run_backfill(
+            session_maker=lambda: _SqliteSession(engine), client_factory=lambda: venue,
+            apply=True, now=NOW, rows=rows))
+        assert report["unconfirmed_tickers"] == [EARLY_UNDATED["external_id"]]
+        assert report["errored_tickers"] == []
+        assert report["stats"]["unresolvable_at_venue"] == 1
+        assert report["stats"]["writes_applied"] == 0
 
 
 class TestTheBeat:
