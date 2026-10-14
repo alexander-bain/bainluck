@@ -1970,8 +1970,10 @@ def settle_kalshi_settled_feed(self, concurrency: int = 6):
     early final is never queued behind history, and a matched row whose event
     read errors is kept on a durable OWED list, retried first every run, with
     the run reading `partial` until it is paid. A late listing is read again:
-    the head re-reads a whole period plus five minutes behind its watermark,
-    and a TRAIL walk re-reads every window in full a day behind the present.
+    a RELIST walk re-reads every stamp until a read of it happened a whole
+    period plus five minutes after it (a durable certified mark, never the
+    head's step), and a TRAIL walk re-reads every window in full a day behind
+    the present.
 
     ON `realtime`, `expires` one period, for `settle_kalshi_recent_finals`'s
     measured reason: a dropped message on `background` leaves no trace. A
