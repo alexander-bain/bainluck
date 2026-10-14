@@ -646,7 +646,7 @@ def test_the_sealed_card_converges_onto_the_venue_close_time(apply_writes):
     recorder: list = []
 
     def maker():
-        return _FakeSession(recorder, [SEALED_ROW], (1, 0, 0, 1, 0))  # 5 cols: #7000
+        return _FakeSession(recorder, [SEALED_ROW], (1, 0, 0, 1, 0, 0))  # 6 cols: #7000, then #2722's reach total
 
     out = asyncio.run(
         sweep.run_sweep(
@@ -785,12 +785,13 @@ class _RotatingPopulation:
                     )
                 if sql.startswith("SELECT"):
                     return _R(
-                        # Five columns: `COUNT_SQL` gained
-                        # `fully_retracted_total` in #7000, and the reader
+                        # Six columns: `COUNT_SQL` gained
+                        # `fully_retracted_total` in #7000 and the reach count
+                        # `early_final_reach_total` in #2722, and the reader
                         # unpacks it positionally.
                         totals=(
                             len(population.rows), 0, 0,
-                            len(population.rows), 0,
+                            len(population.rows), 0, 0,
                         )
                     )
                 if sql.startswith("UPDATE"):

@@ -215,3 +215,74 @@ class TestTheSettlementUpdatePrepares:
 
         _status, settled_at, _rd, _exp = await _read(pg_session, market_id)
         assert settled_at == stamped
+
+
+class TestTheEarlyFinalReachSelectPrepares:
+    """#2722, the reach half. The run's SELECT and COUNT, prepared by asyncpg.
+
+    The arm adds ``resolution_date >= :reach_after`` and reuses the band's
+    ``LIKE`` binds inside the WHERE. Those binds were previously typed only by
+    the ORDER BY's ``CASE``. Both statements are prepared here with the binds
+    ``run_backfill`` sends, and the converged, future-dated, band-dated row has
+    to come back. The unit rig proves the same on SQLite, which types by value
+    and cannot reject a parameter Postgres would refuse to infer.
+    """
+
+    async def _seed_converged(self, session, *, ext, resolution_date, expiration_time):
+        return (
+            await session.execute(
+                text("""
+                    INSERT INTO futures_markets
+                        (name, source, category, mutually_exclusive, status,
+                         external_id, resolution_date, expiration_time)
+                    VALUES
+                        ('Sweep reach contract market', 'kalshi', 'championship',
+                         TRUE, 'open', :ext, :rd, :exp)
+                    RETURNING id
+                    """),
+                {"ext": ext, "rd": resolution_date, "exp": expiration_time},
+            )
+        ).scalar()
+
+    async def test_the_reach_select_and_count_prepare_and_return_the_row(self, pg_session):
+        from app.tasks import kalshi_resolution_sweep as sweep
+        from app.utils.kalshi_retention import PROVABLY_PURGED_AGE_DAYS
+
+        early = await self._seed_converged(
+            pg_session,
+            ext="KXPGATOUR-26SEP03TOURCHAMP",
+            resolution_date=FUTURE,
+            expiration_time=FUTURE + timedelta(days=30),
+        )
+        undated = await self._seed_converged(
+            pg_session,
+            ext="KXSENATEME-26",
+            resolution_date=FUTURE,
+            expiration_time=FUTURE + timedelta(days=300),
+        )
+        await pg_session.commit()
+
+        tokens = sweep.past_event_band_tokens(NOW)
+        reach = {**sweep.band_bind_params(tokens), "reach_after": NOW}
+        purge_floor = NOW - timedelta(days=PROVABLY_PURGED_AGE_DAYS)
+
+        ids = [
+            r[0]
+            for r in (
+                await pg_session.execute(
+                    text(sweep.reach_select_sql(len(tokens))),
+                    {"purge_floor": purge_floor, "limit": 500, "offset": 0, **reach},
+                )
+            ).all()
+        ]
+        totals = (
+            await pg_session.execute(
+                text(sweep.reach_count_sql(len(tokens))),
+                {"purge_floor": purge_floor, **reach},
+            )
+        ).first()
+
+        assert early in ids
+        assert undated not in ids
+        assert totals[0] == 1
+        assert totals[5] == 1

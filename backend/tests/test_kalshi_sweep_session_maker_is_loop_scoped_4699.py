@@ -71,7 +71,7 @@ class _RecordingSession:
         self._log.append(("used", id(asyncio.get_running_loop())))
         sql = str(stmt)
         if "count(*)" in sql:
-            return _Result([(0, 0, 0, 0, 0)])  # 5 cols: #7000 appended fully_retracted_total to COUNT_SQL
+            return _Result([(0, 0, 0, 0, 0, 0)])  # 6 cols: #7000 fully_retracted_total, #2722 early_final_reach_total
         return _Result([])
 
     async def commit(self):
