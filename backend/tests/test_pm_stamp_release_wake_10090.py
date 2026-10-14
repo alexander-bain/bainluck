@@ -33,6 +33,14 @@ from tests.test_single_event_commit_10090 import settle_until
 
 pytestmark = pytest.mark.asyncio
 
+#: A wake-driven publication or withdrawal lands within this of its trigger.
+#: Measured ~6-10 ms here; before this change the same paths waited 193-213 ms
+#: for the periodic timer. The gap is runner headroom (a loaded runner measured
+#: 54 ms once), never enough for a timer-paced path to pass.
+WAKE_BOUND_S = 0.120
+#: How far past the 250 ms floor a floor-paced publication may land.
+FLOOR_MARGIN_S = 0.100
+
 def _buffer_game_cohort(
     p,
     cohort: dict[int, float],
@@ -280,16 +288,16 @@ async def test_healthy_peer_and_fenced_event_after_fully_fenced_flush_250ms_real
     assert len(out["ev1_pubs"]) == 2
 
     # On Candidate (where 100%-fenced Flush 2 does not charge `flush_work`),
-    # `flush_work_after_fenced_flush2 == 1` and Peer Event 2 publishes in < 50ms
+    # `flush_work_after_fenced_flush2 == 1` and Peer Event 2 publishes within `WAKE_BOUND_S`
     # (~6-10ms) at ~0.302s while Event 1 is still held.
     # On Parent, `flush_work_after_fenced_flush2 == 2` and Peer Event 2 is held
     # for ~210ms until ~0.505s.
     assert out["flush_work_after_fenced_flush2"] == 1
     assert out["ev2_published_before_ev1_release"] is True
-    assert out["ev2_latency_from_arrival_s"] < 0.050
+    assert out["ev2_latency_from_arrival_s"] < WAKE_BOUND_S
     # The released event's newer quote rides the release wake, not the next
     # periodic timer (~193 ms after release before this change).
-    assert out["ev1_final_latency_from_release_s"] < 0.100, out
+    assert out["ev1_final_latency_from_release_s"] < WAKE_BOUND_S, out
 
 
 async def test_healthy_peer_when_fenced_event_releases_inside_peer_budget_window_250ms_real_loop(
@@ -298,7 +306,7 @@ async def test_healthy_peer_when_fenced_event_releases_inside_peer_budget_window
     """Real-loop comparison when Event 1 releases at ~0.340s (45 ms after Peer
     Event 2 arrived at ~0.295s, inside the 250 ms socket budget window opened
     by Peer Event 2's ~0.300s flush):
-    - Peer Event 2 still publishes in < 50ms (~0.302s vs ~0.506s on Parent).
+    - Peer Event 2 still publishes within `WAKE_BOUND_S` (~0.302s vs ~0.506s on Parent).
     - Event 1's second quote flushes at the end of Peer Event 2's 250 ms socket
       budget window (~0.550s vs ~0.505s on Parent, i.e. the ~45ms socket budget
       phase shift from Event 2 flushing at ~0.300s, never the 145ms virtual
@@ -310,14 +318,14 @@ async def test_healthy_peer_when_fenced_event_releases_inside_peer_budget_window
     assert out["errors"] == 0
     assert out["pending_after"] == []
     assert out["flush_work_after_fenced_flush2"] == 1
-    assert out["ev2_latency_from_arrival_s"] < 0.050
+    assert out["ev2_latency_from_arrival_s"] < WAKE_BOUND_S
     # The tradeoff, bounded: the released quote waits for the floor the peer's
-    # flush set (its start + 250 ms), and no later than a short margin past it.
+    # flush set (its start + 250 ms), and no later than `FLOOR_MARGIN_S` past it.
     peer_flush = max(f for f in out["flush_starts"] if f <= out["ev2_writes"][0])
     floor = peer_flush + 0.25
     assert out["ev1_pubs"][1] >= floor - 0.010, out
-    assert out["ev1_pubs"][1] - floor < 0.060, out
-    assert out["ev1_final_latency_from_release_s"] < 0.25 + 0.060, out
+    assert out["ev1_pubs"][1] - floor < FLOOR_MARGIN_S, out
+    assert out["ev1_final_latency_from_release_s"] < 0.25 + FLOOR_MARGIN_S, out
 
 
 async def test_fenced_withdrawal_recovery_after_stamp_release_250ms_real_loop(
@@ -403,7 +411,7 @@ async def test_fenced_withdrawal_recovery_after_stamp_release_250ms_real_loop(
     assert not p.books
     assert flush_work_after_fenced_withdraw == 1
     # Withdrawn on the release wake (~209 ms after release before this change).
-    assert withdraw_times[0][0] - t_released < 0.100, (t_released, withdraw_times)
+    assert withdraw_times[0][0] - t_released < WAKE_BOUND_S, (t_released, withdraw_times)
 
 
 async def test_failed_stamp_hold_until_does_not_spin_on_wake_250ms_real_loop(
@@ -533,8 +541,8 @@ async def test_released_event_bounded_under_sustained_peer_traffic_250ms_real_lo
     assert out["errors"] == 0
     assert out["pending_after"] == []
     assert out["flush_work_after_fenced_flush2"] == 1
-    assert out["ev2_latency_from_arrival_s"] < 0.050
-    assert out["ev1_final_latency_from_release_s"] < 0.25 + 0.060, out
+    assert out["ev2_latency_from_arrival_s"] < WAKE_BOUND_S
+    assert out["ev1_final_latency_from_release_s"] < 0.25 + FLOOR_MARGIN_S, out
     # Ceiling: actual work starts at most once per 250 ms, so the run holds no
     # more flushes than its length allows (plus the first and a closing probe).
     starts = out["flush_starts"]
