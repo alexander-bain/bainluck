@@ -1,5 +1,6 @@
 import SwiftUI
 import UIKit
+import Vision
 import XCTest
 @testable import Bain_Luck
 
@@ -124,11 +125,14 @@ final class SubsecondHeldDelivery10090Tests: XCTestCase {
     nonisolated private static func burstBasis(_ i: Int) -> String { "rev:\(burstEvent)=\(1440 + i)" }
 
     /// All nine frames as one chunk, the way they reached the phone's decoder.
-    nonisolated private static func burstChunk() -> Data {
+    /// `final` replaces only the last frame's `p` (the companion control); nil
+    /// is the saved burst byte for byte.
+    nonisolated private static func burstChunk(final: String? = nil) -> Data {
         var chunk = Data()
         for (i, f) in burstFrames.enumerated() {
             let clock = microClock(burstHeldMicros + f.after)
-            chunk += frame("probability", #"{"event_id": \#(burstEvent), "p": \#(f.p), "source": "polymarket", "source_value": \#(f.p), "updated_at": "\#(clock)", "status": "live", "rev": {"\#(burstEvent)": \#(1440 + i)}}"#)
+            let p = i == burstFrames.count - 1 ? final ?? f.p : f.p
+            chunk += frame("probability", #"{"event_id": \#(burstEvent), "p": \#(p), "source": "polymarket", "source_value": \#(p), "updated_at": "\#(clock)", "status": "live", "rev": {"\#(burstEvent)": \#(1440 + i)}}"#)
         }
         return chunk
     }
@@ -143,19 +147,21 @@ final class SubsecondHeldDelivery10090Tests: XCTestCase {
         nonisolated(unsafe) private static var finished = false
         nonisolated(unsafe) private static var quarter = false
         nonisolated(unsafe) private static var burst = false
+        nonisolated(unsafe) private static var burstFinal: String?
         nonisolated(unsafe) private static var baseEpoch = SubsecondHeldDelivery10090Tests.fixedBase
         private let queue = DispatchQueue(label: "paced-stream")
         private var stopped = false
 
-        static func reset(quarter: Bool, base: TimeInterval, burst: Bool = false) {
+        static func reset(quarter: Bool, base: TimeInterval, burst: Bool = false, burstFinal: String? = nil) {
             lock.lock(); emitted = [:]; finished = false; Self.quarter = quarter; Self.burst = burst
-            baseEpoch = base; lock.unlock()
+            Self.burstFinal = burstFinal; baseEpoch = base; lock.unlock()
         }
         static var base: TimeInterval { lock.lock(); defer { lock.unlock() }; return baseEpoch }
         static var emittedAt: [String: UInt64] { lock.lock(); defer { lock.unlock() }; return emitted }
         static var done: Bool { lock.lock(); defer { lock.unlock() }; return finished }
         private static var isQuarter: Bool { lock.lock(); defer { lock.unlock() }; return quarter }
         private static var isBurst: Bool { lock.lock(); defer { lock.unlock() }; return burst }
+        private static var finalValue: String? { lock.lock(); defer { lock.unlock() }; return burstFinal }
 
         override class func canInit(with request: URLRequest) -> Bool {
             request.url?.path.hasSuffix("/stream") == true
@@ -171,7 +177,7 @@ final class SubsecondHeldDelivery10090Tests: XCTestCase {
             client?.urlProtocol(self, didLoad: SubsecondHeldDelivery10090Tests.frame("open", #"{"event_id":\#(id)}"#))
             let start = DispatchTime.now()
             if Self.isBurst {
-                let chunk = SubsecondHeldDelivery10090Tests.burstChunk()
+                let chunk = SubsecondHeldDelivery10090Tests.burstChunk(final: Self.finalValue)
                 queue.asyncAfter(deadline: start + SubsecondHeldDelivery10090Tests.burstAfter) { [self] in
                     guard !stopped else { return }
                     let at = DispatchTime.now().uptimeNanoseconds
@@ -328,12 +334,14 @@ final class SubsecondHeldDelivery10090Tests: XCTestCase {
         }
 
         /// The final page as drawn, taken after the measured burst.
-        func capture(to url: URL) throws {
+        @discardableResult
+        func capture(to url: URL) throws -> UIImage {
             window.layoutIfNeeded()
             let image = UIGraphicsImageRenderer(bounds: window.bounds).image { _ in
                 _ = window.drawHierarchy(in: window.bounds, afterScreenUpdates: true)
             }
             try XCTUnwrap(image.pngData()).write(to: url)
+            return image
         }
 
         func close() {
@@ -519,7 +527,13 @@ final class SubsecondHeldDelivery10090Tests: XCTestCase {
     /// order and history, not nine distinct headlines; the paced cases' 41–56%
     /// quotes are the changing-headline case. View marks are inputs, not paint.
     func testHostedPageDrainsThePhonesNineFrameBurstToTheLatestHeadlineAndChart() async throws {
-        PacedStream.reset(quarter: false, base: Self.recentBase(), burst: true)
+        try await burstCase(final: nil)
+    }
+
+    /// Runs the saved burst. `final` replaces the last frame's `p` (nil = the
+    /// saved bytes); `drawn` reads the page as drawn before it closes.
+    private func burstCase(final: String?, drawn: ((MountedPage) throws -> Void)? = nil) async throws {
+        PacedStream.reset(quarter: false, base: Self.recentBase(), burst: true, burstFinal: final)
         let config = URLSessionConfiguration.ephemeral
         config.protocolClasses = [PacedStream.self]
         let session = URLSession(configuration: config)
@@ -562,8 +576,9 @@ final class SubsecondHeldDelivery10090Tests: XCTestCase {
         XCTAssertEqual(adopted.map(\.mark.basis), expected, "every frame is adopted once, in revision order")
         XCTAssertEqual(adopted.map(\.mark.path), Array(repeating: "stream", count: expected.count))
         XCTAssertEqual(charted.map(\.mark.basis), expected, "every adopted frame gets its own chart point")
-        XCTAssertEqual(vm.event?.currentOdds?.homeProbability ?? -1, 0.995, accuracy: 1e-9)
-        XCTAssertEqual(vm.liveBlend.last?.homeProbability ?? -1, 0.995, accuracy: 1e-9,
+        let latest = Double(final ?? Self.burstFrames[Self.burstFrames.count - 1].p) ?? -2
+        XCTAssertEqual(vm.event?.currentOdds?.homeProbability ?? -1, latest, accuracy: 1e-9)
+        XCTAssertEqual(vm.liveBlend.last?.homeProbability ?? -1, latest, accuracy: 1e-9,
                        "the chart edge agrees with the headline")
         XCTAssertGreaterThanOrEqual(client.reads, 2, "the page was read again and did not roll back")
 
@@ -575,17 +590,91 @@ final class SubsecondHeldDelivery10090Tests: XCTestCase {
         let latestHeadline = ms(viewHeadline.first { $0.mark.basis == last }?.at)
         let latestChart = ms(viewChart.first { $0.mark.stamp == lastStamp }?.at)
         let line = String(
-            format: "SUBSECOND-10090 depth=burst frames=%d bytes=%d chunk_to_first_received_ms=%.2f "
+            format: "SUBSECOND-10090 depth=\(final == nil ? "burst" : "burst-final-\(final!)") frames=%d bytes=%d chunk_to_first_received_ms=%.2f "
                 + "chunk_to_last_received_ms=%.2f received_spread_ms=%.2f chunk_to_model_latest_ms=%.2f "
                 + "chunk_to_view_headline_latest_ms=%.2f chunk_to_view_chart_latest_ms=%.2f "
                 + "view_headline_marks=%d view_chart_marks=%d reads=%d view_headline_revs=%@",
-            received.count, Self.burstChunk().count, ms(received.first?.at), ms(received.last?.at),
+            received.count, Self.burstChunk(final: final).count, ms(received.first?.at), ms(received.last?.at),
             ms(received.last?.at) - ms(received.first?.at), ms(adopted.last?.at),
             latestHeadline, latestChart, viewHeadline.count, viewChart.count, client.reads,
             viewHeadline.map { String($0.mark.basis.split(separator: "=").last ?? "?") }.joined(separator: ","))
         print(line)
+        if let drawn {
+            // The companion control reads the drawn page instead; the view
+            // marks above are printed beside it, not required.
+            try drawn(page)
+            return
+        }
         // A generous bound: this is a measurement, not a performance gate.
         XCTAssertLessThan(max(latestHeadline, latestChart), 1000,
                           "the latest frame had not reached the hero and chart inputs a second after the burst: \(line)")
+    }
+
+    /// Companion control: the saved burst with only its last `p` moved to 60%,
+    /// far from the 99.5% the eight before it share, so the DRAWN page shows
+    /// which frame it settled on. The hero's printed numbers and the chart
+    /// line's drawn end are read from the captured page, after the burst and the
+    /// poll. The view marks are the hook this control checks, so they are
+    /// printed, not required.
+    func testHostedPageDrawsTheBurstsChangedLastFrameInTheHeroAndAtTheChartEnd() async throws {
+        try await burstCase(final: "0.6") { page in
+            let dir = FileManager.default.temporaryDirectory.appendingPathComponent("native-10090-subsecond-hosted")
+            try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+            let url = dir.appendingPathComponent("final-burst-60.png")
+            let drawn = try Self.readDrawn(try page.capture(to: url))
+            print(String(format: "SUBSECOND-10090 drawn=burst-final-0.6 end_top_p=%.3f end_bottom_p=%.3f hero=%@ capture=%@",
+                         drawn.endTop, drawn.endBottom, drawn.hero.joined(separator: "|"), url.path))
+            XCTAssertTrue(drawn.hero.contains("60%") && drawn.hero.contains("40%"),
+                          "the hero prints the last frame: \(drawn.hero)")
+            XCTAssertEqual(drawn.endBottom, 0.60, accuracy: 0.04,
+                           "the chart line is drawn to the last frame's 60%, not held at the one before it")
+        }
+    }
+
+    /// The page as drawn: the text printed above the chart, and the vertical
+    /// extent of the line's rightmost drawn column as probabilities, scaled by
+    /// the chart's own 100% and 50% axis labels. Every burst point is seconds
+    /// apart on an hour-wide axis, so the line's end is one column.
+    nonisolated private static func readDrawn(_ image: UIImage) throws -> (hero: [String], endTop: Double, endBottom: Double) {
+        let cg = try XCTUnwrap(image.cgImage)
+        let (w, h) = (cg.width, cg.height)
+        let request = VNRecognizeTextRequest()
+        request.recognitionLevel = .accurate
+        request.usesLanguageCorrection = false
+        try VNImageRequestHandler(cgImage: cg).perform([request])
+        let texts: [(String, CGRect)] = (request.results ?? []).compactMap { o in
+            guard let string = o.topCandidates(1).first?.string else { return nil }
+            let b = o.boundingBox
+            return (string, CGRect(x: b.minX * CGFloat(w), y: (1 - b.maxY) * CGFloat(h),
+                                   width: b.width * CGFloat(w), height: b.height * CGFloat(h)))
+        }
+        func axis(_ label: String) throws -> CGFloat {
+            try XCTUnwrap(texts.first { $0.0 == label && $0.1.midX < CGFloat(w) * 0.3 }?.1.midY,
+                          "the chart's \(label) axis label: \(texts.map(\.0))")
+        }
+        let y100 = try axis("100%"), y50 = try axis("50%")
+        let y0 = y100 + 2 * (y50 - y100)
+        func probability(_ y: Int) -> Double { 1 - 0.5 * Double((CGFloat(y) - y100) / (y50 - y100)) }
+
+        var bytes = [UInt8](repeating: 0, count: w * h * 4)
+        let ctx = try XCTUnwrap(CGContext(data: &bytes, width: w, height: h, bitsPerComponent: 8,
+                                          bytesPerRow: w * 4, space: CGColorSpaceCreateDeviceRGB(),
+                                          bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
+        ctx.draw(cg, in: CGRect(x: 0, y: 0, width: w, height: h))
+        // A line pixel is saturated or dark: not the white plot, the grey grid
+        // or the pale area fill.
+        func line(_ x: Int, _ y: Int) -> Bool {
+            let i = (y * w + x) * 4
+            let (r, g, b) = (Int(bytes[i]), Int(bytes[i + 1]), Int(bytes[i + 2]))
+            return max(r, g, b) - min(r, g, b) > 60 || max(r, g, b) < 110
+        }
+        let rows = Int(y100) - 6 ... Int(y0)
+        let right = try XCTUnwrap(stride(from: w - 1, through: w / 2, by: -1).first { x in
+            rows.filter { line(x, $0) }.count >= 2
+        }, "a drawn line in the plot")
+        let band = max(w / 2, right - Int(image.scale) * 2) ... right
+        let ys = rows.filter { y in band.contains { line($0, y) } }
+        return (texts.filter { $0.1.maxY < y100 }.map(\.0),
+                probability(try XCTUnwrap(ys.first)), probability(try XCTUnwrap(ys.last)))
     }
 }
