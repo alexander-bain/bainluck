@@ -1459,3 +1459,64 @@ class TestANarrowedHeadStepStillReReadsAWholePeriod:
             now=datetime.fromtimestamp(at, timezone.utc)))
         assert (venue.pages[1]["min"], venue.pages[1]["max"]) == (
             CEILING - sweep.SETTLED_FEED_OVERLAP_S, CEILING)
+
+    def test_cert_4120_persisted_head_0423_step_60_closes_at_0433(self, redis_state):
+        """CERT-4120's first specimen, literally: stored head=04:23, head_step=60.
+        Stamped 04:17, listed 04:24. 783d40ed62 clipped the replay to 04:22 and
+        left it open and unasked at 04:33 and 04:43."""
+        feed = _feed_state(head=_at("04:23"))
+        feed["head_step"] = 60
+        redis_state.store["feed"] = feed
+        engine = _seed(SPECIMENS + (self.SPEC,))
+        at = _at("04:33")
+        _, venue = self._venue(_at("04:17"))
+        self._run(engine, venue, at)
+        assert self.SPEC["external_id"] in venue.asked
+        assert _state(engine)[0][21] == ("resolved",
+                                         datetime.fromtimestamp(at, timezone.utc).isoformat())
+
+    def test_boundary_after_0433_the_0417_stamp_is_past_the_allowance(self, redis_state):
+        """The declared limit, stated: once 04:33 has read 04:17 (at least R after
+        it), the stamp is certified and 04:43 does not read it again; a listing
+        later than that is the trail's, a day on. So 04:33 is the beat that must
+        close it, which the test above proves it does."""
+        feed = _feed_state(head=_at("04:23"))
+        feed["head_step"] = 60
+        redis_state.store["feed"] = feed
+        engine = _seed(SPECIMENS + (self.SPEC,))
+        _, venue = self._venue()  # 04:33 sees nothing for the specimen
+        self._run(engine, venue, _at("04:33"))
+        assert redis_state.store["feed"]["relist"] == _at("04:18")
+        _, venue = self._venue(_at("04:17"))
+        self._run(engine, venue, _at("04:43"))
+        assert self.SPEC["external_id"] not in venue.asked  # past the allowance: the trail's
+
+    def test_cert_4120_default_301_row_burst_then_the_specimen_closes_next_beat(
+            self, redis_state):
+        """CERT-4120's second specimen: the DEFAULT row budget (300) and 301 of
+        our rows settled at 04:22:59. The 04:23 beat asks 300, owes 1, and stores
+        head=04:22:59 on a two-second step. The 04:33 beat pays the debt AND
+        asks the 04:17 specimen listed at 04:24."""
+        crowd, settled, legs = TestTheRowCapIsLiteral._crowd(301, _at("04:23") - 1)
+        ticker = self.SPEC["external_id"]
+        legs[ticker] = _legs(ticker, ["finalized"], self.SPEC["resolution_date"])
+        redis_state.store["feed"] = _feed_state(head=_at("04:13"))
+        engine = _seed(SPECIMENS + crowd + (self.SPEC,))
+
+        report = self._run(engine, _Venue(settled=settled, legs=legs), _at("04:23"))
+        feed = redis_state.store["feed"]
+        assert report["stats"]["candidates"] == sweep.SETTLED_FEED_MAX_ROWS == 300
+        assert len(feed["owed"]) == 1
+        assert feed["head"] == _at("04:23") - 1
+        assert feed["head_step"] < sweep.SETTLED_FEED_BEAT_PERIOD_S
+
+        at = _at("04:33")
+        venue = _Venue(settled=settled + [{"ticker": f"{ticker}-0", "event_ticker": ticker,
+                                           "settlement_ts": _iso_at(_at("04:17"))}], legs=legs)
+        report = self._run(engine, venue, at)
+        assert ticker in venue.asked
+        assert _state(engine)[0][21] == ("resolved",
+                                         datetime.fromtimestamp(at, timezone.utc).isoformat())
+        assert redis_state.store["feed"]["owed"] == []
+        assert all(_state(engine)[0][r["id"]][0] == "resolved" for r in crowd)
+        assert report["terminal"] == "complete"
