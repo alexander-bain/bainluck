@@ -1950,6 +1950,50 @@ def settle_kalshi_recent_finals(self, limit: int = 200, concurrency: int = 6):
     bind=True,
     soft_time_limit=240,
     time_limit=300,
+    name="app.tasks.settle_kalshi_settled_feed",
+)
+def settle_kalshi_settled_feed(self, concurrency: int = 6):
+    """#2722: close a Kalshi question the venue finalized EARLY, within 10 minutes.
+
+    A market Kalshi decides before its scheduled close keeps a future
+    `close_time` (10 of 49 settled events sampled at the venue, 2026-09-02), so
+    no date reaches it, and nothing else in our row changes either. The three
+    arms above all select on a fact in our row; this one selects on the venue's.
+    It walks `GET /markets?status=settled` forward by `settlement_ts` from a
+    durable watermark, matches the settled EVENT tickers to our `open` rows,
+    and hands them to the shared all-legs read and `UPDATE_SQL`.
+
+    CERT-4117 blocked the first repair because it rode the population sweep's
+    rotating cursor, so a newly admitted row could wait a full cycle. This arm
+    never reads that cursor. Each run walks the HEAD (the newest settlements)
+    before the one-time BACKLOG back to the venue's retention floor, so a fresh
+    early final is never queued behind history, and a matched row whose event
+    read errors is kept on a durable OWED list, retried first every run, with
+    the run reading `partial` until it is paid. A late listing is read again:
+    a RELIST walk re-reads every stamp until a read of it happened a whole
+    period plus five minutes after it (a durable certified mark, never the
+    head's step), and a TRAIL walk re-reads every window in full a day behind
+    the present.
+
+    ON `realtime`, `expires` one period, for `settle_kalshi_recent_finals`'s
+    measured reason: a dropped message on `background` leaves no trace. A
+    dropped run here costs one period of lateness and nothing else, because the
+    watermark only moves after a window is walked.
+
+    Bounded per run: 120 venue pages, 300 matched rows (50 owed). Writes NO grade
+    (CAL-P061 / #1852, inherited unchanged from `UPDATE_SQL`).
+    """
+    from app.tasks.kalshi_resolution_sweep import run_settled_feed
+    return _tracked_run(
+        "kalshi_settled_feed",
+        run_settled_feed(concurrency=concurrency),
+    )
+
+
+@celery_app.task(
+    bind=True,
+    soft_time_limit=240,
+    time_limit=300,
     name="app.tasks.capture_kalshi_resolved_voids",
 )
 def capture_kalshi_resolved_voids(self, limit: int = 60, concurrency: int = 6):
@@ -8867,6 +8911,17 @@ celery_app.conf.beat_schedule = {
         "task": "app.tasks.settle_kalshi_recent_finals",
         "schedule": crontab(minute="*/10"),
         "kwargs": {"limit": 200},
+        "options": {"queue": "realtime", "expires": 600},
+    },
+    # #2722 / CERT-4117: the venue-keyed arm. Every 10 minutes, offset to :x3 so
+    # it does not fire in the same minute as the recent-finals arm above. It
+    # walks Kalshi's settlement clock from a watermark, so a question the venue
+    # finalized early is closed within one period, whatever its stored date and
+    # wherever the population sweep's cursor stands. `realtime` and `expires`
+    # for the reasons given on the entry above.
+    "settle-kalshi-settled-feed": {
+        "task": "app.tasks.settle_kalshi_settled_feed",
+        "schedule": crontab(minute="3-59/10"),
         "options": {"queue": "realtime", "expires": 600},
     },
     # #7035 — the already-resolved void capture. Deliberately NOT folded into

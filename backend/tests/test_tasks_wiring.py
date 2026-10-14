@@ -418,6 +418,10 @@ class TestBeatScheduleCompleteness:
         # `realtime`, keyed on `events.completed_at` rather than on a population
         # page, so a finished game's legs are reached inside 30 minutes.
         "settle-kalshi-recent-finals",
+        # #2722 / CERT-4117: the venue-keyed arm. Every 10 min on `realtime`,
+        # walking Kalshi's settlement clock from a watermark, so an early final
+        # is closed whatever its stored date or the sweep cursor's position.
+        "settle-kalshi-settled-feed",
         # #7035 / CERT-3324. The already-resolved void capture: records that the
         # venue voided a postponed fixture, so a page can stop reporting "No
         # result reported" forever. Separate from the beat above because it

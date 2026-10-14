@@ -920,7 +920,14 @@ _RECORDED_ASYNC_POOL_SITES = {
     "services/ws_shadow.py": 3,
     "tasks/__init__.py": 1,
     "tasks/enrich_markets.py": 1,
-    "tasks/kalshi_resolution_sweep.py": 2,
+    # 2 -> 4 (#2722 / CERT-4117). The settled feed's watermark read and write,
+    # beside the sweep cursor's pair. Same third kind — a pool per call, lazy,
+    # one `get` or one `set`, then dropped — on a 10-minute task, never a
+    # request path: one read per run and one write per finished window, so one
+    # or two writes a run at the head and at most one per venue page (cap 120)
+    # while the one-time backlog is walked. Comment read before the entry moved,
+    # as this census asks.
+    "tasks/kalshi_resolution_sweep.py": 4,
     "tasks/live_blend_refresh.py": 1,
     "tasks/tournament_matchup_linker.py": 3,
     "tasks/tournament_price_refresh.py": 2,

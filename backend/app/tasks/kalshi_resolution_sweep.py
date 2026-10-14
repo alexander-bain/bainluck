@@ -34,12 +34,18 @@ markets still hold a FUTURE ``close_time``, so no date field and no date
 predicate can ever select them, and the row goes on claiming to be open. The
 write is at :data:`UPDATE_SQL`: ``status`` and ``settled_at``, on the venue's
 word only, and never a grade (#1852's line is unchanged).
+
+#2722, THE REACH HALF. That write only sees rows a selection hands it, and an
+early final changes nothing in our row that a selection could key on.
+:func:`run_settled_feed` keys on the venue instead: it walks Kalshi's own
+settlement clock and hands over every ``open`` row whose event the venue
+settled, whatever its date, ticker shape or place in the sweep's cursor.
 """
 
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Callable, Optional
 
@@ -52,6 +58,7 @@ from sqlalchemy import text
 from app.services.kalshi_api import KalshiAPIService
 from app.utils.kalshi_fabricated_loss import RETRACTION_SOURCE
 from app.utils.kalshi_resolution_window import (
+    VENUE_SETTLED_STATUSES,
     derive_resolution_window,
     derive_venue_settlement,
     derive_venue_void,
@@ -1062,6 +1069,7 @@ async def run_backfill(
     now: Optional[datetime] = None,
     rows: Optional[list] = None,
     void_capture_only: bool = False,
+    venue_settled_legs: Optional[dict] = None,
 ) -> dict:
     """Select, derive and (optionally) write. Every dependency is a parameter.
 
@@ -1096,6 +1104,12 @@ async def run_backfill(
     is closing and wrong for a row it is only explaining. #7035 ships one fact and
     writes one fact; a capture that quietly re-dated 489 settled rows would be a
     different change wearing this one's name.
+
+    `venue_settled_legs` (#2722 / CERT-4118) maps an event ticker to the market
+    tickers the caller already saw the venue list as settled. A read whose legs
+    do not show every one of them terminal is a STALE read, not a refusal, and
+    its ticker is reported in ``unconfirmed_tickers`` beside an empty or missing
+    event. The derivation and write are unchanged by it.
 
     It also turns the refusals durable: with the flag set, a row the venue has
     SETTLED but GRADED is stamped `venue_void_checked_at`
@@ -1196,11 +1210,23 @@ async def run_backfill(
         # where it is 0 while `venue_voided` is also 0 means the arm asked
         # nothing, which is a different fact from "nothing voided".
         "void_refused_graded": 0,
+        # #2722 / CERT-4118: reads that could not confirm what the venue said.
+        # A SUBSET of the batch, overlapping `unresolvable_at_venue` for the
+        # empty/missing event: it counts the reads a caller holding the venue's
+        # settled list must ask again, not a fact about the market.
+        "venue_read_unconfirmed": 0,
     }
     samples: list[dict] = []
     void_samples: list[dict] = []
     void_ids: list[int] = []
     void_checked_ids: list[int] = []
+    # #2722: WHICH rows errored, not only how many. The settled feed moves its
+    # watermark past a window and must carry these tickers as a retry it owes.
+    errored_tickers: list[str] = []
+    # #2722 / CERT-4118: the reads that ANSWERED but proved nothing — an empty or
+    # missing event, or legs that contradict the caller's settled list. Not
+    # errors (the run is not failing), and not absence (gotcha #53).
+    unconfirmed_tickers: list[str] = []
 
     if not rows:
         # Not a success. Either the migration has not run, or the floor has
@@ -1231,6 +1257,8 @@ async def run_backfill(
             # that voided nothing must be the same SHAPE to a reader, or every
             # consumer grows a `.get`.
             "venue_voided_samples": [],
+            "errored_tickers": [],
+            "unconfirmed_tickers": [],
         }
 
     sem = asyncio.Semaphore(concurrency)
@@ -1249,6 +1277,7 @@ async def run_backfill(
                 event = await client.get_event(ticker, with_nested_markets=True)
             except Exception:
                 stats["errors"] += 1
+                errored_tickers.append(ticker)
                 return None
 
         markets = (event or {}).get("markets") or []
@@ -1257,7 +1286,26 @@ async def run_backfill(
             # yields a date. Counted apart from errors so a zero-yield run
             # cannot read as a clean one.
             stats["unresolvable_at_venue"] += 1
+            # #2722 / CERT-4118. Nor is either proof the event is gone: an empty
+            # 200 is a response shape (gotcha #53), and `get_event` returns None
+            # for a 404 AND after three swallowed failures (5xx, timeout, 429s).
+            # Reported by name so a caller that knows the venue settled this
+            # event can ask again rather than forget it.
+            stats["venue_read_unconfirmed"] += 1
+            unconfirmed_tickers.append(ticker)
             return None
+
+        expected = (venue_settled_legs or {}).get(ticker)
+        if expected:
+            # #2722 / CERT-4118. The caller saw these legs listed settled. If the
+            # event read does not show every one terminal, this read is older
+            # than the listing, and the listing will not name the leg again.
+            leg_status = {
+                m.get("ticker"): (m.get("status") or "").strip().lower() for m in markets
+            }
+            if any(leg_status.get(leg) not in VENUE_SETTLED_STATUSES for leg in expected):
+                stats["venue_read_unconfirmed"] += 1
+                unconfirmed_tickers.append(ticker)
 
         # #2722 — the venue's own word, off the payload we already have. Read
         # BEFORE the date derivation and independently of it, because that is
@@ -1445,6 +1493,8 @@ async def run_backfill(
         # (`/events/{ticker}?with_nested_markets=true`) and a report that only
         # carries a number cannot be audited that way.
         "venue_voided_samples": void_samples,
+        "errored_tickers": errored_tickers,
+        "unconfirmed_tickers": unconfirmed_tickers,
     }
     if stats["unresolvable_at_venue"] == len(rows) and not writes:
         # Every slot in the batch went to a row this script may not write. Those
@@ -2177,4 +2227,783 @@ async def run_resolved_voids(
     # (a stamped row is only retirable once the floor passes it). Folding these
     # counters into that verdict would make a healthy capture read `partial`.
     report.update(await _retire_rows_the_venue_voided(maker, now))
+    return report
+
+
+# ---------------------------------------------------------------------------
+# The venue's settled feed — #2722, the reach half (CERT-4117's repair)
+# ---------------------------------------------------------------------------
+#
+# WHY A FOURTH ARM, AND WHY IT IS KEYED ON THE VENUE. :data:`UPDATE_SQL` already
+# writes ``status='resolved'`` on the venue's word (PR #3308). What it lacked was
+# a way to be HANDED the rows the venue finalised early. Every selection above
+# starts from a fact in our own row — a provisional date, a finished game, a
+# suspended fixture — and an early final changes no fact in our row. Its stored
+# date is a real, future close (#2722: 10 of 49 settled events sampled at the
+# venue, 2026-09-02), so it is converged, future-dated and ``open``, and nothing
+# we hold says it is over.
+#
+# The first repair re-admitted those rows into the population sweep through a
+# played-day ticker arm. CERT-4117 blocked it, correctly: the sweep resumes a
+# rotating global cursor, so an admitted row can sit behind the saved offset for
+# a whole cycle. Eligible in a rotation is not visited per cadence. That arm also
+# reached only rows whose ticker names a played day, and left every undated
+# early final (an awards market, a corporate event, a season prop) unreached.
+#
+# THE VENUE ALREADY PUBLISHES THE FACT. ``GET /markets?status=settled`` takes
+# ``min_settled_ts`` / ``max_settled_ts`` on the market's own ``settlement_ts``,
+# newest-first. Read live 2026-10-14 04:1xZ: both bounds are honoured (a
+# 02:12–03:12Z window returned 03:02–03:10Z on its first page) and the non-combo
+# volume is ~4,300 markets an hour, five pages. So this arm walks the settlement
+# clock forward from a durable watermark, collects the EVENT tickers the venue
+# settled in each window, and looks up our ``open`` rows by ``external_id``.
+# A settled market cannot be missed by this arm for a reason in our row, because
+# no field of our row is read to select it — not a date, not a ticker shape, not
+# a cursor. That is the guard #2722's third acceptance line asks for:
+# :data:`SETTLED_FEED_SELECT_SQL` has no date predicate at all.
+#
+# WHAT IT WRITES IS WHAT EVERY OTHER ARM WRITES. The matched rows go through
+# :func:`run_backfill` as a supplied batch, so each event is re-read with its
+# nested markets and :func:`derive_venue_settlement` still needs EVERY leg
+# terminal before ``status`` moves. A market settling leg by leg is matched when
+# its first leg settles, refused as partially settled, and matched again when
+# its last leg's ``settlement_ts`` falls in a later window. Still no grade:
+# ``is_winner``, prices and probabilities are #1852's rail, untouched here.
+#
+# TWO WALKS, AND THE HEAD GOES FIRST. A fresh state starts the HEAD walk one
+# step behind the present and the BACKLOG walk at the venue's market-retention
+# floor (:data:`SETTLED_FEED_BACKLOG_DAYS`; an older settlement is purged at the
+# venue and no read can confirm it), bounded above by where the head began.
+# Every run walks the head to the present before it spends anything on the
+# backlog, so a question settled today is closed on the next beat even while
+# weeks of history are still being walked behind it. The backlog's cost is
+# venue PAGES: ~100,000 non-combo settlements a day (mostly hourly crypto and
+# commodity ladders) is ~7,400 pages over the floor, ~60 runs at the page cap,
+# about ten hours of beats, once.
+#
+# NOTHING THE VENUE SETTLED IS FORGOTTEN. A matched row whose event read
+# errored is not a reason to hold the walk (one bad ticker would wedge it) and
+# not a reason to drop the row (the venue settled it, so the row is owed a
+# close). Its ticker goes on a durable, bounded OWED list that every run
+# retries first, and the run reads `partial` while the list is not empty. A
+# ticker leaves the list when its event read answers, or when its row is no
+# longer ``open`` here. A full list stops the walks rather than drop an entry.
+#
+# AN ANSWER MUST CONFIRM THE LISTING, NOT MERELY ARRIVE (CERT-4118). The feed
+# names a market settled once, in one window. A read that returns no event, no
+# legs, or legs that do not yet show the listed market terminal proves nothing
+# about it: an empty 200 is a response shape (gotcha #53), and `get_event`
+# returns None after three swallowed failures as well as for a 404. Counting
+# such a read as an answer would advance the watermark past the only listing
+# the row will ever get. So it is owed exactly like an error, carrying the
+# listed legs so the retry checks the same claim. The one exit that is not an
+# answer is the venue's retention floor: once the listing window is older than
+# :data:`PROVABLY_PURGED_AGE_DAYS` no read can confirm it, and the entry is
+# RETIRED by name in the report — purged history, said as such, never a fresh
+# uncertain read dropped as if it were absence.
+#
+# A LATE LISTING IS READ AGAIN, TWICE OVER. A RELIST walk re-reads every
+# stamp until some read of it happened at least a beat period plus five
+# minutes after the stamp, so a market the venue stamped settled before a beat
+# but listed after it closes on the next beat; and a TRAIL walk re-reads every
+# window in full a day behind the present, so a listing later than that is
+# closed a day late, not never. The relist is its own walk with its own step
+# and a durable CERTIFIED mark, not the head's first window: a burst that
+# narrows the head's step cannot narrow the re-read (Root, PR #11024 comment
+# 6161436168), and a re-read too big for one run resumes on the next from
+# where it stopped, never shortened and never restarted.
+#
+# BOUNDED, each bound reported: pages per run, matched rows per run, owed rows
+# retried per run, and the window per step. A window that will not fit inside
+# a whole run halves and grows back after one that does, so a burst at the
+# venue slows a walk instead of wedging it.
+
+#: The feed's durable state, ONE JSON value for the reason
+#: :data:`SWEEP_CURSOR_KEY` gives — a half-written state is a position that
+#: skips silently. Keys: ``head``/``head_step``, ``relist``/``relist_step``
+#: (``relist`` is the certified mark, :data:`SETTLED_FEED_OVERLAP_S`),
+#: ``trail``/``trail_step``,
+#: ``back``/``back_end``/``back_step`` (unix seconds), ``owed`` (event
+#: tickers), and ``owed_meta``
+#: (per owed ticker: ``since``, the end of the window that listed it, and
+#: ``legs``, the market tickers listed settled there).
+SETTLED_FEED_STATE_KEY = "bainluck:kalshi_settled_feed:state:v1"
+
+#: Refreshed on every write, so it only lapses if the arm stops running for a
+#: month, and then both walks restart, which is idempotent.
+SETTLED_FEED_STATE_TTL_S = 60 * 60 * 24 * 30
+
+#: How far back the backlog walk starts. The venue's market-retention floor,
+#: READ, never retuned — the same constant the purge floor and the band use.
+SETTLED_FEED_BACKLOG_DAYS = PROVABLY_PURGED_AGE_DAYS
+
+#: The default window per step. ~1,100 non-combo markets at the measured rate,
+#: so a step is one or two pages.
+SETTLED_FEED_STEP_S = 15 * 60
+
+#: The beat's period (``settle-kalshi-settled-feed``, ``3-59/10``).
+SETTLED_FEED_BEAT_PERIOD_S = 10 * 60
+
+#: How late a listing may be, past one whole beat period, and still close on
+#: the first beat after it appears.
+SETTLED_FEED_LISTING_ALLOWANCE_S = 5 * 60
+
+#: How late a listing the RELIST walk is built to catch on its first beat.
+#:
+#: The head walks to the PRESENT, because CERT-4118 measured what holding the
+#: newest five minutes back cost: a question settled at :19 was not read by the
+#: :23 beat and closed at :33, fourteen minutes, past the ten-minute bar. The
+#: reason for the hold is kept by re-reading instead of waiting: a market stamped
+#: settled shortly before a run may not be listed yet, so the next run reads
+#: behind the watermark again.
+#:
+#: The re-read is a WHOLE beat period plus the listing allowance, not five
+#: minutes. Root's counterexample to five (PR #11024, 2026-10-14): stamped
+#: 04:17, not listed when the 04:23 beat read to the present, listed at 04:24;
+#: the 04:33 beat re-read only from 04:18 and the row was never read again. A
+#: re-read of ``R`` catches any listing at most ``R`` late, on the first beat
+#: after it lists, so fifteen minutes covers a listing that missed one beat
+#: entirely and five minutes more. Re-reading is safe — a row closed the first
+#: time is no longer ``open``.
+#:
+#: NEVER clamped to a step. 783d40ed62 clamped it to ``head_step``, which a
+#: burst narrows and which is stored between runs, so a beat that ended on a
+#: one-second step re-read one second (Root, PR #11024 comment 6161436168).
+#:
+#: THE INVARIANT, now carried by state instead of by a window width. The
+#: relist keeps a durable CERTIFIED mark: every stamp below it has been read at
+#: some moment at least ``R`` after the stamp, so no listing within the
+#: allowance can still appear there. Each run re-reads ``[certified, head0]``
+#: (``head0`` = the head when the run began; the head reads past it this run)
+#: and then certifies up to ``min(reached, now - R)``. In the steady state that
+#: is exactly ``[head0 - R, head0]``. A stamp ``s`` listed at ``L <= s + R`` is
+#: below no certified mark at any beat before ``L`` (each such beat certified
+#: at most its own time minus ``R``, which is before ``s``), so the first beat
+#: at or after ``L`` reads it — unless the run's page or row budget stops the
+#: relist first, and then the next beat resumes from the certified mark, which
+#: still lies below ``s``. Re-reading is bounded by the run's budgets, never by
+#: a narrower span, and advances every beat because ``now - R`` does.
+SETTLED_FEED_OVERLAP_S = SETTLED_FEED_BEAT_PERIOD_S + SETTLED_FEED_LISTING_ALLOWANCE_S
+
+#: How far behind the present the TRAIL walk re-reads every window once more.
+#:
+#: The relist's allowance is bounded, so a listing later than it would
+#: otherwise be read never again. The trail is a second, full pass over the settlement
+#: clock at a fixed lag: every window the head walked is read again in full a
+#: day later, so a listing up to a day late is still closed, a day late rather
+#: than never. Its cost is the head's own (~5 pages an hour, so about one page
+#: a beat), and it walks before the backlog so the backlog's page appetite
+#: cannot starve it. A listing more than a day late is not seen by this arm:
+#: the one named limit, reported as such.
+SETTLED_FEED_TRAIL_LAG_S = 24 * 60 * 60
+
+#: The venue's page maximum.
+SETTLED_FEED_PAGE_SIZE = 1000
+
+#: Venue pages one run may read. ~0.5 s each sequential, so ~60 s at the cap,
+#: against the beat's 240 s soft limit. Only the backlog walk ever reaches it.
+SETTLED_FEED_MAX_PAGES = 120
+
+#: Our rows one run may send to the venue for the all-legs read, owed retries
+#: included. At concurrency 6 this is ~15 s.
+SETTLED_FEED_MAX_ROWS = 300
+
+#: Owed tickers retried per run, oldest first. Small, so tickers that keep
+#: erroring can never starve the head walk of its row budget.
+SETTLED_FEED_OWED_RETRY_PER_RUN = 50
+
+#: The owed list's ceiling. Reaching it stops the walks (the run reads
+#: `partial`) rather than drop an obligation.
+SETTLED_FEED_OWED_MAX = 500
+
+#: Listed legs remembered per owed ticker. Any one leg still not terminal makes
+#: a read stale, so a subset is a sound check; the cap bounds the stored state.
+SETTLED_FEED_OWED_LEGS_MAX = 20
+
+#: Our ``open`` rows whose event ticker the venue settled. No date, no ticker
+#: shape, no cursor: membership is the venue's word and our status.
+#: ``external_id`` is unique per source (``uq_futures_source_external``), so the
+#: lookup is an index probe.
+SETTLED_FEED_SELECT_SQL = """
+    SELECT id, external_id, resolution_date, commence_time, market_tier
+    FROM futures_markets
+    WHERE source = 'kalshi'
+      AND status = 'open'
+      AND external_id IN :tickers
+    ORDER BY id
+"""
+
+#: Tickers per lookup statement, so one step never builds an unbounded IN list.
+SETTLED_FEED_LOOKUP_CHUNK = 500
+
+
+@dataclass
+class SettledWindow:
+    """What the venue said it settled in one window, and whether we saw all of it."""
+
+    event_tickers: set
+    #: event ticker -> the market tickers listed settled in this window.
+    settled_legs: dict = field(default_factory=dict)
+    pages: int = 0
+    markets: int = 0
+    complete: bool = False
+    error: Optional[str] = None
+    refusal: Optional[str] = None
+
+
+async def fetch_settled_event_tickers(
+    client, *, start_ts: int, end_ts: int, max_pages: int, page_size: int = SETTLED_FEED_PAGE_SIZE
+) -> SettledWindow:
+    """Every event ticker with a market settled in ``[start_ts, end_ts]``.
+
+    ``complete`` is true only when the cursor ran out inside ``max_pages``; a
+    window that is not complete must not move a watermark.
+
+    The filter is CHECKED, not trusted. A market whose ``settlement_ts`` is
+    missing or outside the window means the venue did not apply the bounds we
+    sent, and a feed that silently stopped filtering would read as an empty
+    window walked correctly. That is a ``refusal``, and the run fails loud.
+    """
+    out = SettledWindow(event_tickers=set())
+    cursor: Optional[str] = None
+    while out.pages < max_pages:
+        try:
+            markets, cursor = await client.get_markets(
+                status="settled",
+                limit=page_size,
+                cursor=cursor,
+                min_settled_ts=start_ts,
+                max_settled_ts=end_ts,
+                mve_filter="exclude",
+            )
+        except Exception as exc:  # noqa: BLE001 — reported; the window is re-read
+            out.error = f"{type(exc).__name__}: {str(exc)[:160]}"
+            return out
+        out.pages += 1
+        for market in markets or []:
+            settled_at = _parse(market.get("settlement_ts"))
+            # One second of slack each side: the bounds are whole seconds and
+            # the stamp carries microseconds.
+            if settled_at is None or not (
+                start_ts - 1 <= settled_at.timestamp() <= end_ts + 1
+            ):
+                out.refusal = (
+                    f"venue returned {market.get('ticker')!r} settled at "
+                    f"{market.get('settlement_ts')!r}, outside the requested window "
+                    f"[{start_ts}, {end_ts}] — the settled-time filter was not applied"
+                )
+                return out
+            out.markets += 1
+            event_ticker = market.get("event_ticker")
+            if event_ticker:
+                out.event_tickers.add(event_ticker)
+                if market.get("ticker"):
+                    out.settled_legs.setdefault(event_ticker, set()).add(market["ticker"])
+        if not cursor or not markets:
+            out.complete = True
+            return out
+    return out
+
+
+def fresh_feed_state(now: datetime) -> dict:
+    """Head one step behind the present; backlog from the retention floor up to it.
+
+    The trail starts where the head starts: everything older is the backlog's,
+    read long after any listing delay, so the trail only revisits what the head
+    reads, and waits :data:`SETTLED_FEED_TRAIL_LAG_S` before its first window.
+    """
+    head = int(now.timestamp()) - SETTLED_FEED_STEP_S
+    return {
+        "head": head,
+        "head_step": SETTLED_FEED_STEP_S,
+        # Nothing below the head has been listed to us yet, so nothing below it
+        # is owed a re-read: everything older is the backlog's.
+        "relist": head,
+        "relist_step": SETTLED_FEED_STEP_S,
+        "trail": head,
+        "trail_step": SETTLED_FEED_STEP_S,
+        "back": int((now - timedelta(days=SETTLED_FEED_BACKLOG_DAYS)).timestamp()),
+        "back_end": head,
+        "back_step": SETTLED_FEED_STEP_S,
+        "owed": [],
+        "owed_meta": {},
+    }
+
+
+async def _read_feed_state() -> Optional[dict]:
+    """The stored state, or None when there is none or it does not parse."""
+    try:
+        import json
+
+        from app.tasks.redis_state import get_async_redis_client
+
+        raw = await get_async_redis_client().get(SETTLED_FEED_STATE_KEY)
+        if raw is None:
+            return None
+        if isinstance(raw, bytes):
+            raw = raw.decode()
+        data = json.loads(raw)
+        head = int(data["head"])
+        state = {
+            "head": head,
+            "head_step": max(1, int(data.get("head_step") or SETTLED_FEED_STEP_S)),
+            # A state written before the relist walk: its head was the last
+            # run's present, read then, so nothing newer than ``head - R`` has
+            # been read late enough to be certified.
+            "relist": (
+                int(data["relist"])
+                if data.get("relist") is not None
+                else head - SETTLED_FEED_OVERLAP_S
+            ),
+            "relist_step": max(1, int(data.get("relist_step") or SETTLED_FEED_STEP_S)),
+            # A state written before the trail existed trails from the head on:
+            # the re-read behind the head already covered what lies behind it.
+            "trail": int(data["trail"]) if data.get("trail") is not None else head,
+            "trail_step": max(1, int(data.get("trail_step") or SETTLED_FEED_STEP_S)),
+            "back": int(data["back"]),
+            "back_end": int(data["back_end"]),
+            "back_step": max(1, int(data.get("back_step") or SETTLED_FEED_STEP_S)),
+            "owed": [str(t) for t in (data.get("owed") or [])],
+            "owed_meta": {
+                str(t): {
+                    "since": int(m["since"]),
+                    "legs": [str(x) for x in (m.get("legs") or [])],
+                }
+                for t, m in (data.get("owed_meta") or {}).items()
+            },
+        }
+        return state
+    except Exception:  # noqa: BLE001 — an unreadable state is a fresh start
+        return None
+
+
+async def _write_feed_state(state: dict) -> bool:
+    try:
+        import json
+
+        from app.tasks.redis_state import get_async_redis_client
+
+        await get_async_redis_client().set(
+            SETTLED_FEED_STATE_KEY,
+            json.dumps(state, sort_keys=True),
+            ex=SETTLED_FEED_STATE_TTL_S,
+        )
+        return True
+    except Exception:  # noqa: BLE001
+        return False
+
+
+async def _open_rows_for_tickers(session_maker, tickers) -> list:
+    """Our ``open`` Kalshi rows whose ``external_id`` is one of ``tickers``."""
+    from sqlalchemy import bindparam
+
+    if not tickers:
+        return []
+    stmt = text(SETTLED_FEED_SELECT_SQL).bindparams(bindparam("tickers", expanding=True))
+    ordered = sorted(set(tickers))
+    rows: list = []
+    async with session_maker() as session:
+        for i in range(0, len(ordered), SETTLED_FEED_LOOKUP_CHUNK):
+            chunk = ordered[i : i + SETTLED_FEED_LOOKUP_CHUNK]
+            rows.extend((await session.execute(stmt, {"tickers": chunk})).all())
+    return rows
+
+
+_FEED_COUNTERS = (
+    "candidates",
+    "venue_settled",
+    "venue_partially_settled",
+    "settled_without_date",
+    "venue_voided",
+    "unresolvable_at_venue",
+    "venue_read_unconfirmed",
+    "writes_applied",
+    "errors",
+)
+
+
+async def run_settled_feed(
+    *,
+    concurrency: int = SWEEP_CONCURRENCY,
+    apply: bool = True,
+    max_pages: int = SETTLED_FEED_MAX_PAGES,
+    max_rows: int = SETTLED_FEED_MAX_ROWS,
+    session_maker: Optional[Callable] = None,
+    client_factory: Optional[Callable[[], object]] = None,
+    now: Optional[datetime] = None,
+) -> dict:
+    """Close what the venue settled: owed retries, head, relist, trail, backlog.
+
+    One beat run, in five phases that share the run's page and row budgets:
+
+    1. OWED. Re-ask the venue about tickers a previous window matched and could
+       not read or could not confirm. A ticker leaves the list when a read
+       confirms the listing, when its row is no longer ``open``, or — retired by
+       name — when its listing window passes the venue's retention floor.
+    2. HEAD. Walk ``[head, present]`` in windows: read every settled market
+       in the window, look up our ``open`` rows by event ticker, send them
+       through :func:`run_backfill` (the all-legs read and :data:`UPDATE_SQL`),
+       record any errored or unconfirmed ticker as owed, then persist ``head``
+       at the window's end.
+    3. RELIST. The same, over ``[relist, head0]``: from the certified mark
+       (:data:`SETTLED_FEED_OVERLAP_S`) to where the head stood when the run
+       began. Its own step, so a narrowed head step cannot shorten it; a spent
+       budget leaves the mark where the walk stopped, so the next run resumes.
+    4. TRAIL. The same, over ``[trail, present - SETTLED_FEED_TRAIL_LAG_S]``,
+       no re-read: every window read once more in full, a day later, for a
+       listing later than the relist's allowance.
+    5. BACKLOG. The same, over ``[back, back_end]``, with whatever budget the
+       head, the relist and the trail left.
+
+    A window that is not finished — budget spent mid-window, a venue page error,
+    a refused filter, a full owed list — leaves its watermark where it was, so
+    the next run re-reads that window. Re-reading is safe: a row closed the
+    first time is no longer ``open``.
+
+    ``apply=False`` reads and derives one head window but writes nothing and
+    persists nothing, so a dry run cannot move a watermark or clear a debt.
+
+    The sweep's rotating cursor is never read here. That is the repair
+    CERT-4117 named: whether the next cadence asks about an early final does not
+    depend on where the population sweep stands in its cycle.
+    """
+    now = now or datetime.now(timezone.utc)
+    maker = session_maker or default_session_maker()
+    factory = client_factory or KalshiAPIService
+    # The present. Late listings are covered by the relist
+    # (:data:`SETTLED_FEED_OVERLAP_S`), not by leaving the newest minutes unread.
+    ceiling = int(now.timestamp())
+    # The trail reads nothing newer than a day ago (:data:`SETTLED_FEED_TRAIL_LAG_S`).
+    trail_end = ceiling - SETTLED_FEED_TRAIL_LAG_S
+
+    stored = await _read_feed_state()
+    bootstrapped = stored is None
+    state = stored if stored is not None else fresh_feed_state(now)
+    meta = state.setdefault("owed_meta", {})
+    for ticker in state["owed"]:
+        # An entry with no record of its window cannot be dated, so it is dated
+        # now: it is retried for the full retention span rather than retired.
+        meta.setdefault(ticker, {"since": int(now.timestamp()), "legs": []})
+    # The relist re-reads from its certified mark to where the head stands NOW,
+    # before the head moves. What a read this run can certify: stamps at least
+    # the allowance older than the present (:data:`SETTLED_FEED_OVERLAP_S`).
+    head0 = state["head"]
+    certify_to = ceiling - SETTLED_FEED_OVERLAP_S
+    state["relist"] = min(state["relist"], head0)
+    before = dict(state, owed=list(state["owed"]))
+    purge_floor_ts = int((now - timedelta(days=PROVABLY_PURGED_AGE_DAYS)).timestamp())
+    retired: list[str] = []
+
+    totals = {k: 0 for k in _FEED_COUNTERS}
+    totals.update(pages=0, venue_markets_seen=0, event_tickers_seen=0, rows_matched=0)
+    progress = {"owed": 0, "head": 0, "relist": 0, "trail": 0, "back": 0}
+    owed_asked = owed_errored = 0
+    stop: dict = {"owed": None, "head": None, "relist": None, "trail": None, "back": None}
+    refusal: Optional[str] = None
+    persisted = True
+    samples: list[dict] = []
+
+    async def _ask(rows, legs: dict) -> list[str]:
+        """The all-legs read and write for ``rows``; returns the tickers still owed.
+
+        Owed = the read errored, or it answered without confirming the listing
+        (no event, no legs, or a listed leg not yet terminal).
+        """
+        report = await run_backfill(
+            session_maker=maker,
+            client_factory=factory,
+            limit=len(rows),
+            apply=apply,
+            concurrency=concurrency,
+            now=now,
+            rows=rows,
+            venue_settled_legs=legs,
+        )
+        stats = report.get("stats") or {}
+        for key in _FEED_COUNTERS:
+            totals[key] += max(0, int(stats.get(key) or 0))
+        if len(samples) < 10:
+            samples.extend(
+                {"id": r[0], "external_id": r[1]} for r in rows[: 10 - len(samples)]
+            )
+        return list(report.get("errored_tickers") or []) + list(
+            report.get("unconfirmed_tickers") or []
+        )
+
+    def _owe(tickers, since: int, legs: dict) -> None:
+        for ticker in tickers:
+            if ticker not in state["owed"]:
+                state["owed"].append(ticker)
+            held = meta.get(ticker) or {"since": since, "legs": []}
+            merged = sorted(set(held["legs"]) | set(legs.get(ticker) or ()))
+            meta[ticker] = {
+                "since": max(held["since"], since),
+                "legs": merged[:SETTLED_FEED_OWED_LEGS_MAX],
+            }
+
+    def _durable() -> dict:
+        # In-run, ``relist`` is the walk's position; stored, it is the certified
+        # mark. A stamp read this run but younger than ``certify_to`` is not yet
+        # certified, so a run that dies after reading it re-reads it next run.
+        return dict(state, relist=min(state["relist"], max(before["relist"], certify_to)))
+
+    async def _persist() -> bool:
+        nonlocal persisted
+        if not apply:
+            return True
+        ok = await _write_feed_state(_durable())
+        persisted = persisted and ok
+        return ok
+
+    # --- 1. Owed retries -------------------------------------------------
+    if state["owed"] and apply:
+        # Past the venue's retention floor no read can confirm the listing, so
+        # asking can only spend budget. Retired by name, never silently.
+        retired = [t for t in state["owed"] if meta[t]["since"] < purge_floor_ts]
+        if retired:
+            gone = set(retired)
+            state["owed"] = [t for t in state["owed"] if t not in gone]
+    if state["owed"]:
+        batch = state["owed"][:SETTLED_FEED_OWED_RETRY_PER_RUN]
+        rows = await _open_rows_for_tickers(maker, batch)
+        still_open = {r[1] for r in rows}
+        legs = {t: set(meta[t]["legs"]) for t in batch}
+        errors_before = totals["errors"]
+        unpaid = set(await _ask(rows, legs)) if rows else set()
+        owed_asked, owed_errored = len(rows), totals["errors"] - errors_before
+        if apply:
+            # Confirmed, or no longer open here: the debt is paid. Still erroring
+            # or still unconfirmed: it goes to the back of the list so the next
+            # run tries the others.
+            kept = [t for t in batch if t in still_open and t in unpaid]
+            state["owed"] = state["owed"][len(batch) :] + kept
+            progress["owed"] = len(batch) - len(kept)
+    if apply:
+        for ticker in [t for t in meta if t not in state["owed"]]:
+            del meta[ticker]
+        if before["owed"]:
+            await _persist()
+
+    client = factory()
+    try:
+
+        async def _walk(name: str, end_bound: Optional[int]) -> None:
+            nonlocal refusal
+            wm_key, step_key = name, f"{name}_step"
+            while True:
+                limit_ts = ceiling if end_bound is None else min(end_bound, ceiling)
+                if state[wm_key] >= limit_ts:
+                    return
+                pages_left = max_pages - totals["pages"]
+                if pages_left <= 0:
+                    stop[name] = "page budget spent"
+                    return
+                if totals["candidates"] >= max_rows:
+                    stop[name] = "row budget spent"
+                    return
+                mark = state[wm_key]
+                end = min(mark + state[step_key], limit_ts)
+                window = await fetch_settled_event_tickers(
+                    client, start_ts=mark, end_ts=end, max_pages=pages_left
+                )
+                totals["pages"] += window.pages
+                if window.refusal:
+                    refusal = window.refusal
+                    stop[name] = "venue filter refused"
+                    return
+                if window.error:
+                    stop[name] = f"venue page error: {window.error}"
+                    return
+                if not window.complete:
+                    if state[step_key] > 1:
+                        # This window does not fit in the pages left. Halve it
+                        # so a later run can finish a step. Not only when the
+                        # walk had the whole run: a walk that runs after the
+                        # head never does, and would otherwise retry the same
+                        # too-wide window forever. A finished window grows the
+                        # step back.
+                        state[step_key] = max(1, (end - mark) // 2)
+                        await _persist()
+                    stop[name] = "page budget spent mid-window"
+                    return
+
+                rows = await _open_rows_for_tickers(maker, window.event_tickers)
+                remaining = max_rows - totals["candidates"]
+                deferred: list = []
+                if len(rows) > remaining:
+                    # Judged on the WALKS' rows, not the owed retries: those run
+                    # first every run while the list is non-empty, so a test on
+                    # all candidates would hold this window forever.
+                    if totals["candidates"] > owed_asked:
+                        stop[name] = "row budget spent"
+                        return
+                    if state[step_key] > 1:
+                        # More rows than a whole run may ask about: narrow the
+                        # window and read it again inside this run.
+                        state[step_key] = max(1, (end - mark) // 2)
+                        continue
+                    # One-second step and still too many (2722-ONE-SECOND-ROW-
+                    # CAP): the cap is literal. Ask what fits and owe the rest,
+                    # so the watermark still moves and no row is dropped.
+                    rows, deferred = rows[:remaining], rows[remaining:]
+
+                totals["venue_markets_seen"] += window.markets
+                totals["event_tickers_seen"] += len(window.event_tickers)
+                totals["rows_matched"] += len(rows)
+                errored = await _ask(rows, window.settled_legs) if rows else []
+                errored += [r[1] for r in deferred]
+
+                if not apply:
+                    progress[name] += 1
+                    stop[name] = "dry run"
+                    return
+
+                new_owed = [t for t in dict.fromkeys(errored) if t not in state["owed"]]
+                if len(state["owed"]) + len(new_owed) > SETTLED_FEED_OWED_MAX:
+                    stop[name] = (
+                        f"owed list full ({len(state['owed'])}/{SETTLED_FEED_OWED_MAX}); "
+                        "the window is re-read once retries drain it"
+                    )
+                    return
+                # Every unpaid ticker, not only the new ones: one already owed
+                # gains this window's legs and date.
+                _owe(list(dict.fromkeys(errored)), end, window.settled_legs)
+                state[wm_key] = end
+                state[step_key] = min(SETTLED_FEED_STEP_S, state[step_key] * 2)
+                progress[name] += 1
+                if not await _persist():
+                    stop[name] = "state not persisted"
+                    return
+
+        await _walk("head", None)
+        if refusal is None and persisted and apply:
+            await _walk("relist", head0)
+            if state["relist"] >= head0:
+                # Re-read through head0, and the head read on from there this
+                # run, so everything up to the head was read now.
+                state["relist"] = max(state["relist"], state["head"])
+                if not await _persist():
+                    stop["relist"] = "state not persisted"
+        if refusal is None and persisted and apply:
+            await _walk("trail", trail_end)
+        if refusal is None and persisted and apply:
+            await _walk("back", state["back_end"])
+    finally:
+        close = getattr(client, "close", None)
+        if close is not None:
+            maybe = close()
+            if asyncio.iscoroutine(maybe):
+                await maybe
+
+    def _iso_ts(ts: int) -> str:
+        return datetime.fromtimestamp(ts, timezone.utc).isoformat()
+
+    head_behind = max(0, ceiling - state["head"])
+    relist_behind = max(0, head0 - state["relist"])
+    state = _durable()
+    trail_behind = max(0, trail_end - state["trail"])
+    walked_rows = totals["candidates"] - owed_asked
+    walked_errors = totals["errors"] - owed_errored
+    back_behind = max(0, min(state["back_end"], ceiling) - state["back"])
+    report = {
+        "mode": "APPLY" if apply else "DRY_RUN",
+        "selection": "settled_feed",
+        "measured_at": now.isoformat(),
+        "bootstrapped": bootstrapped,
+        "ceiling": _iso_ts(ceiling),
+        "head_before": _iso_ts(before["head"]),
+        "head_after": _iso_ts(state["head"]),
+        "head_behind_seconds": head_behind,
+        "head_caught_up": head_behind == 0,
+        "head_windows": progress["head"],
+        "head_stop": stop["head"],
+        "relist_before": _iso_ts(before["relist"]),
+        "relist_after": _iso_ts(state["relist"]),
+        "relist_end": _iso_ts(head0),
+        "relist_behind_seconds": relist_behind,
+        "relist_windows": progress["relist"],
+        "relist_stop": stop["relist"],
+        "trail_before": _iso_ts(before["trail"]),
+        "trail_after": _iso_ts(state["trail"]),
+        "trail_end": _iso_ts(trail_end),
+        "trail_behind_seconds": trail_behind,
+        "trail_windows": progress["trail"],
+        "trail_stop": stop["trail"],
+        "backlog_before": _iso_ts(before["back"]),
+        "backlog_after": _iso_ts(state["back"]),
+        "backlog_end": _iso_ts(state["back_end"]),
+        "backlog_behind_seconds": back_behind,
+        "backlog_windows": progress["back"],
+        "backlog_stop": stop["back"],
+        "owed_before": len(before["owed"]),
+        "owed_paid": progress["owed"],
+        "owed_after": len(state["owed"]),
+        "owed_tickers": list(state["owed"][:50]),
+        "owed_retired_purged": len(retired),
+        "owed_retired_tickers": retired[:50],
+        "refusal": refusal,
+        "state_persisted": persisted,
+        "matched_samples": samples,
+        "stats": totals,
+    }
+
+    if refusal:
+        report["terminal"] = "failed"
+        report["terminal_reason"] = refusal
+    elif not persisted:
+        report["terminal"] = "failed"
+        report["terminal_reason"] = (
+            "feed state not persisted — the next run re-reads from "
+            f"{report['head_before']} (head), {report['relist_before']} (relist), "
+            f"{report['trail_before']} (trail) and "
+            f"{report['backlog_before']} (backlog)"
+        )
+    elif walked_rows and walked_errors >= walked_rows:
+        # Judged on the walks' rows only. An owed ticker that keeps erroring is
+        # the debt below, not an outage; every fresh row erroring is.
+        report["terminal"] = "failed"
+        report["terminal_reason"] = (
+            f"all {walked_rows} rows matched this run errored at the venue"
+        )
+    elif state["owed"]:
+        report["terminal"] = "partial"
+        report["terminal_reason"] = (
+            f"{len(state['owed'])} venue-settled tickers are owed a re-read "
+            "(their event read errored or did not confirm the listing); "
+            "retried first every run"
+        )
+    elif retired:
+        report["terminal"] = "partial"
+        report["terminal_reason"] = (
+            f"{len(retired)} owed tickers retired unconfirmed: their listing is "
+            f"older than the venue's {PROVABLY_PURGED_AGE_DAYS}-day retention, "
+            "so no read can confirm it"
+        )
+    elif head_behind and progress["head"] == 0:
+        report["terminal"] = "partial"
+        report["terminal_reason"] = (
+            f"no head window finished ({stop['head']}); {head_behind}s of "
+            "settlements behind the venue, re-read next run"
+        )
+    elif relist_behind and progress["relist"] == 0 and apply:
+        report["terminal"] = "partial"
+        report["terminal_reason"] = (
+            f"head current, relist made no progress ({stop['relist']}); "
+            f"{relist_behind}s behind where the head began not yet re-read for "
+            "late listings"
+        )
+    elif trail_behind and progress["trail"] == 0 and apply:
+        report["terminal"] = "partial"
+        report["terminal_reason"] = (
+            f"head current, trail made no progress ({stop['trail']}); "
+            f"{trail_behind}s of settlements not yet read a second time"
+        )
+    elif back_behind and progress["back"] == 0 and apply:
+        report["terminal"] = "partial"
+        report["terminal_reason"] = (
+            f"head current, backlog made no progress ({stop['back']}); "
+            f"{back_behind}s of history still to walk"
+        )
+    else:
+        report["terminal"] = "complete"
     return report

@@ -1273,6 +1273,9 @@ class KalshiAPIService(BaseAPIClient):
         limit: int = 1000,
         cursor: Optional[str] = None,
         series_ticker: Optional[str] = None,
+        min_settled_ts: Optional[int] = None,
+        max_settled_ts: Optional[int] = None,
+        mve_filter: Optional[str] = None,
     ) -> tuple[list[dict], Optional[str]]:
         """
         Get markets from Kalshi.
@@ -1290,6 +1293,14 @@ class KalshiAPIService(BaseAPIClient):
                 carrying its own `event_ticker`. The empty-event backfill was
                 paying one request plus a mandatory 0.3s sleep PER EVENT for
                 the same data.
+            min_settled_ts / max_settled_ts: Unix-second bounds on the
+                market's own ``settlement_ts`` (#2722). Read live 2026-10-14:
+                both bounds are honoured and pages come newest-first, so a
+                window is walked to its end by following the cursor. Only the
+                settled-feed arm passes them; every other caller sends the
+                params it always sent.
+            mve_filter: ``"exclude"`` drops multivariate combo markets, which
+                we never ingest and which dominate the settled volume.
 
         Returns:
             Tuple of (RAW markets list, next cursor or None). 🔴 The dicts are
@@ -1307,6 +1318,12 @@ class KalshiAPIService(BaseAPIClient):
             params["event_ticker"] = event_ticker
         if series_ticker:
             params["series_ticker"] = series_ticker
+        if min_settled_ts is not None:
+            params["min_settled_ts"] = int(min_settled_ts)
+        if max_settled_ts is not None:
+            params["max_settled_ts"] = int(max_settled_ts)
+        if mve_filter:
+            params["mve_filter"] = mve_filter
         if cursor:
             params["cursor"] = cursor
 

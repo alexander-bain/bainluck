@@ -545,6 +545,13 @@ ENFORCED_TASKS = frozenset({
     # our authority called final that Kalshi has not finalized yet selects rows
     # and writes none, every ten minutes, until the venue catches up.
     "kalshi_recent_finals",            # terminal + candidates + writes_applied
+    # #2722 / CERT-4117, the VENUE-KEYED arm of the same repair. Enrolled in the
+    # change that gives it a terminal. Its healthy steady state is a run that
+    # walks ten minutes of settlements and matches nothing of ours, so without
+    # enrolment a venue that stopped answering, or stopped applying the settled
+    # time filter, would read the same. `failed` on a refused filter or a lost
+    # watermark; `partial` when it is behind and finished no window.
+    "kalshi_settled_feed",             # terminal + steps_completed + behind_seconds
     # #2907 (authority/049). Enrolled in the same change that gives it a
     # terminal, per the trap two entries up: enrolment without one buys nothing.
     #
