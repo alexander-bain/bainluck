@@ -77,16 +77,20 @@ async def _cooperative_messages(socket):
 
         while True:
             try:
-                raw = await receive(decode=False)
+                # Yielded unbound (#10090): a name bound here would hold the
+                # frame — up to ~1.6 MB for a 500-book dump — for as long as
+                # the consumer takes to process it, including slow forwarding.
+                yield await receive(decode=False)
             except ConnectionClosedOK:
                 return
-            yield raw
-            raw = None
             await asyncio.sleep(0)
 
-    async for raw in socket:
-        yield raw
-        raw = None  # Do not retain the last full-depth book on a quiet socket.
+    messages = aiter(socket)
+    while True:
+        try:
+            yield await anext(messages)
+        except StopAsyncIteration:
+            return
         await asyncio.sleep(0)
 
 
@@ -321,6 +325,35 @@ def _snapshot_quotes(message: Any) -> list[dict]:
             }
         )
     return out
+
+
+#: Books extracted, and quotes handed to `on_price`, between loop yields (#10665).
+SNAPSHOT_BATCH_SIZE = 32
+
+
+async def _snapshot_quotes_cooperatively(
+    data: Any,
+) -> tuple[list[dict], Optional[Exception]]:
+    """`_snapshot_quotes(data)`, yielding to the loop every batch of books.
+
+    Extraction is CPU work, so a reconnect dump must not monopolize the loop
+    ahead of ready quotes on other shards (#10665). An extraction error ends
+    the frame: the quotes of the batches before it are returned with it, for
+    the caller to price before raising. Its traceback is dropped because it
+    would pin the dump this exists to let go of; the shard logs only the type
+    and message.
+    """
+    entries = data if isinstance(data, list) else [data]
+    data = None
+    quotes: list[dict] = []
+    for start in range(0, len(entries), SNAPSHOT_BATCH_SIZE):
+        try:
+            quotes.extend(_snapshot_quotes(entries[start : start + SNAPSHOT_BATCH_SIZE]))
+        except Exception as error:
+            return quotes, error.with_traceback(None)
+        if start + SNAPSHOT_BATCH_SIZE < len(entries):
+            await asyncio.sleep(0)
+    return quotes, None
 
 
 def _evenly_spaced(items: list[str], limit: int) -> list[str]:
@@ -909,7 +942,17 @@ class PolymarketWebSocket:
                                     # by a client that asked for it; skipped by
                                     # every other, as before.
                                     if self._price_book_snapshots and self.on_price:
-                                        await self._price_snapshot(data, shard)
+                                        quotes, failure = await _snapshot_quotes_cooperatively(
+                                            data
+                                        )
+                                        # #10090: a decoded 500-book dump is ~11-18 MB
+                                        # (measured, ~10x its wire size); its quotes
+                                        # are ~1/40 of that. Forwarding waits on the
+                                        # consumer, so drop the dump before it, not
+                                        # after: at startup every shard is forwarding
+                                        # at once.
+                                        raw = data = None
+                                        await self._price_quotes(quotes, shard, failure)
                                     continue
 
                                 if event_type in (
@@ -960,6 +1003,7 @@ class PolymarketWebSocket:
                                 raw = None
                                 data = None
                                 result = None
+                                quotes = failure = None
 
                     finally:
                         hb.cancel()
@@ -1114,13 +1158,28 @@ class PolymarketWebSocket:
 
     async def _price_snapshot(self, data: Any, shard: Optional[int] = None) -> None:
         """Each book in a snapshot frame, through `on_price` like a quote."""
-        # An async price callback can complete without suspending. Bound book
-        # extraction as well as callbacks so a reconnect dump cannot monopolize
-        # the loop ahead of ready quotes on other shards (#10665).
-        entries = data if isinstance(data, list) else [data]
-        batch_size = 32
-        for start in range(0, len(entries), batch_size):
-            for quote in _snapshot_quotes(entries[start : start + batch_size]):
+        quotes, failure = await _snapshot_quotes_cooperatively(data)
+        data = None
+        await self._price_quotes(quotes, shard, failure)
+
+    async def _price_quotes(
+        self,
+        quotes: list[dict],
+        shard: Optional[int],
+        failure: Optional[Exception] = None,
+    ) -> None:
+        """Hand a snapshot's extracted quotes to `on_price`, in order.
+
+        Routing is read per quote, at hand-off, so a fence narrowed while an
+        earlier quote's callback waited still applies. ``failure`` is the
+        extraction error that stopped the frame part-way: the quotes before it
+        are priced, then it is raised, as when extraction and pricing
+        alternated batch by batch.
+        """
+        # An async price callback can complete without suspending (#10665).
+        batch_size = SNAPSHOT_BATCH_SIZE
+        for start in range(0, len(quotes), batch_size):
+            for quote in quotes[start : start + batch_size]:
                 if shard is not None and not self._routes(shard, quote):
                     continue
                 self._book_snapshot_quotes += 1
@@ -1130,8 +1189,11 @@ class PolymarketWebSocket:
                         await result
                 except Exception:
                     logger.exception("Polymarket book snapshot price handler error")
-            if start + batch_size < len(entries):
+                result = None
+            if start + batch_size < len(quotes):
                 await asyncio.sleep(0)
+        if failure is not None:
+            raise failure
 
     @property
     def stats(self) -> dict:
