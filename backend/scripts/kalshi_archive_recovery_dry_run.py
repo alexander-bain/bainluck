@@ -20,11 +20,19 @@ authoritative start), READER-ONLY history, or refused. The digest is repeatable.
 and status filters; the venue's settlement and the provider cutoff choose the
 tier. A run that stops mid-outcome reports ``held_outcome`` (listing cursor, or
 the unread hourly/minute windows) and does not advance ``next_after_id`` past it.
-An outcome planned ``incomplete`` names its ``owed_windows``.
+Its sealed ``continuation`` is the next run's input:
+
+    python3 scripts/kalshi_archive_recovery_dry_run.py --after-id <next_after_id> \
+        --continue-from /tmp/683-plan.json --output /tmp/683-plan-2.json
+
+The held outcome then resumes under the new run's own request budget: windows
+already read are re-verified from their stored response text and never asked
+again. An outcome planned ``incomplete`` names its ``owed_windows``.
 
 Needs ``DATABASE_URL`` for the candidate read (a read-only transaction) and makes
-public Kalshi GETs. ``--apply`` does not exist as a mode. It is refused with exit 2,
-and the refusal names the gates that are still unpaid.
+public Kalshi GETs. This script never writes. ``--apply`` is refused with exit 2:
+the attended writer is ``scripts/kalshi_archive_import.py``, which takes this
+script's ``--output`` file and its ``plan_digest``.
 """
 
 from __future__ import annotations
@@ -38,10 +46,10 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 UNPAID_GATES = (
-    "provenance/schema decision for where archive rows live (Goal Root)",
+    "this dry run never writes; the attended writer is scripts/kalshi_archive_import.py",
     "independent exact-cohort + raw-payload validation (Measurement)",
     "authenticated access + rate budget for the archive endpoints (Measurement)",
-    "independent review of the write path, which does not exist yet",
+    "the archive-store migration and any production apply are attended (Alex)",
 )
 
 
@@ -70,7 +78,12 @@ def _parse(argv=None) -> argparse.Namespace:
     p.add_argument("--deadline", type=float, default=600.0, help="wall-clock seconds")
     p.add_argument("--output", default="", help="write the full JSON plan here")
     p.add_argument(
-        "--apply", action="store_true", help="REFUSED: there is no write path"
+        "--continue-from",
+        default="",
+        help="an earlier --output whose run stopped mid-outcome; resume it",
+    )
+    p.add_argument(
+        "--apply", action="store_true", help="REFUSED: this script never writes"
     )
     return p.parse_args(argv)
 
@@ -78,11 +91,18 @@ def _parse(argv=None) -> argparse.Namespace:
 def main(argv=None) -> int:
     args = _parse(argv)
     if args.apply:
-        print("REFUSED: this arm has no write path. Unpaid gates:", file=sys.stderr)
+        print("REFUSED: this dry run has no write path. Gates:", file=sys.stderr)
         for gate in UNPAID_GATES:
             print(f"  - {gate}", file=sys.stderr)
         return 2
     ids = [int(x) for x in args.outcome_ids.split(",") if x.strip()] or None
+    carry = None
+    if args.continue_from:
+        with open(args.continue_from) as fh:
+            carry = json.load(fh).get("continuation")
+        if carry is None:
+            print("REFUSED: --continue-from holds no continuation", file=sys.stderr)
+            return 2
 
     from app.services.kalshi_archive_recovery import plan_archive_recovery
 
@@ -94,9 +114,13 @@ def main(argv=None) -> int:
             max_requests=args.max_requests,
             pace_seconds=args.pace,
             deadline_seconds=args.deadline,
+            continuation=carry,
         )
     )
-    summary = {k: v for k, v in report.items() if k != "plans"}
+    summary = {k: v for k, v in report.items() if k not in ("plans", "continuation")}
+    summary["continuation_sealed"] = (
+        None if report.get("continuation") is None else report["continuation"]["digest"]
+    )
     print(json.dumps(summary, indent=2, default=str))
     if args.output:
         with open(args.output, "w") as fh:

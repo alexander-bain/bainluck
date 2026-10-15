@@ -2959,6 +2959,28 @@ jobs:
             exit 1
           fi
 
+      - name: "#683 Kalshi archive store, attended import and chart readers (real Postgres)"
+        # #683. The archive store's claims all belong to PostgreSQL: the CHECK and
+        # UNIQUE constraints that refuse a post-settlement or doubled interval, the
+        # migration building the models' exact schema, an apply that writes only
+        # with the typed digest and restores only its own rows, the two chart
+        # routes joining the archive (live wins actual overlap only), and the
+        # dormant forecast lateral revalidating at consumption. Drops and creates
+        # the full schema, like #6757 above.
+        if: matrix.group == 'shared-middle'
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_kalshi_archive_store_683_pg.py \
+            -v -s -rs 2>&1 | tee /tmp/archive683.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/archive683.txt; then
+            echo "::error::#683 archive store gate SKIPPED — the gate did not run"
+            exit 1
+          fi
+          grep -qE "(^|[^0-9])16 passed([,[:space:]]|$)" /tmp/archive683.txt || {
+            echo "::error::#683 archive store gate did not run all sixteen cases"
+            exit 1
+          }
+
       - name: Calibration DataGolf symmetric exclusion (real Postgres)
         # #6211. `market_info` withholds a DataGolf market whose field we cannot
         # establish, WHOLE — winners and losers together. Its comment said that

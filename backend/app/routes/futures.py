@@ -50,6 +50,11 @@ from app.utils.futures_verified_title import (
     title_team_index,
 )
 from app.utils.generic_market_history import captures_are_coarse, captures_cover_cell
+from app.utils.kalshi_archive_reader import (
+    history_point as archive_history_point,
+    load_archive_history,
+    timeline_mark as archive_timeline_mark,
+)
 from app.utils.kalshi_empty_book import KALSHI_BOOKMAKER
 from app.utils.futures_unsupported_price import (
     MIDPOINT_TRADE_SOURCES,
@@ -7349,6 +7354,12 @@ async def get_probability_timeline(
     # below behaves exactly as it did.
     venue = await _load_generic_venue_history(market, charted_outcomes, _field_ids, db)
     venue_rows = venue.in_window(cutoff, snapshots, all_outcome_ids)
+    # #683 — the archive store, read once over the widest window the tiers below
+    # may adopt and cut to the served one after. Kalshi markets only.
+    archive = await load_archive_history(
+        db, market, all_outcome_ids,
+        since=min(cutoff, now - timedelta(hours=2160)),
+    )
     # Thin is judged on OUR captures in the window the reader ASKED for — the
     # same `< 20` this route has always used to call a window sparse — so a
     # chart our polls already draw densely never spends a venue request.
@@ -7419,7 +7430,13 @@ async def get_probability_timeline(
                 actual_hours = extended_hours
                 window_start = extended_cutoff
 
-    if not snapshots and not venue_rows:
+    # #683: a zero-snapshot outcome whose only history is the archive's is the
+    # case this arm exists for, so the archive is asked BEFORE "nothing to draw".
+    archive_by_outcome = archive.served(
+        window_start, claims=list(snapshots) + list(venue_rows),
+        outcome_ids=all_outcome_ids,
+    )
+    if not snapshots and not venue_rows and not archive_by_outcome:
         return await _finish_verified_timeline(db, market, {
             "market_id": market_id,
             "market_name": market.name,
@@ -7648,6 +7665,26 @@ async def get_probability_timeline(
                     outcome_names[oid], round(float(row.probability), 6)
                 )
 
+    # #683 — the archive's intervals, at their own close, for the charted legs.
+    # A capture or venue value already standing at that instant keeps its seat
+    # (`setdefault`), and each archive value is MARKED on its entry, so a reader
+    # can always tell an archive interval from a polling instant.
+    archive_rows_served: list = []
+    for oid, rows in archive_by_outcome.items():
+        if oid not in top_outcome_ids:
+            continue
+        for row in rows:
+            entry = entries_by_instant.setdefault(
+                row.captured_at,
+                {"timestamp": row.captured_at.isoformat(), "outcomes": {}},
+            )
+            name = outcome_names[oid]
+            if name in entry["outcomes"]:
+                continue
+            entry["outcomes"][name] = round(float(row.probability), 6)
+            entry.setdefault("archive", {})[name] = archive_timeline_mark(row)
+            archive_rows_served.append(row)
+
     timeline = [entries_by_instant[at] for at in sorted(entries_by_instant)]
 
     # Build outcome metadata list (ordered by current probability)
@@ -7760,6 +7797,11 @@ async def get_probability_timeline(
         # coverage above can be read for what it is. Shipped clients ignore an
         # unknown key (`Decodable`); nothing above it changed shape.
         **({"venue_history": venue_block} if venue_block is not None else {}),
+        **(
+            {"archive_history": archive.describe(archive_rows_served)}
+            if archive.state not in ("not_applicable", "absent")
+            else {}
+        ),
     }
     # #9387: last, after every history read, and only when opted in.
     return await _finish_verified_timeline(
@@ -8466,6 +8508,17 @@ async def get_futures_history(
     # agree, kept in two places. One selection, one place.
     _field_outcome_ids = [o.id for o in charted_outcomes]
     field_venue_rows = venue.in_window(cutoff, _supported_field, _field_outcome_ids)
+    # #683 — the archive store's intervals for the whole field, read ONCE over
+    # the widest window the tiers below may adopt, then cut to the window that
+    # is actually served. Kalshi markets only; every other board issues no query.
+    archive = await load_archive_history(
+        db, market, _field_outcome_ids,
+        since=min(cutoff, datetime.now(timezone.utc) - timedelta(hours=_EXTEND_TIERS[-1][1])),
+    )
+    # The live rows an archive interval must yield to: the field's supported
+    # captures in the SERVED window (re-pointed if a wider window is adopted).
+    _archive_claims = _supported_field
+    _archive_window = cutoff
     # #7936 second half — the count the TIERS below are allowed to read, which is
     # not the same number as the rows served. See
     # `_venue_points_countable_as_density`: a series this reader will refuse whole
@@ -8563,6 +8616,8 @@ async def get_futures_history(
                 field_rows = extended_field
                 actual_hours = extended_hours
                 auto_extended = True
+                _archive_claims = extended_supported
+                _archive_window = extended_cutoff
                 # ADOPTED TOGETHER OR NOT AT ALL, so this window's points are
                 # never served under the other window's selection. `charted_ids`
                 # gates the venue series below and that arm is live — a
@@ -8738,6 +8793,30 @@ async def get_futures_history(
             venue_by_outcome = defaultdict(list)
     venue_rows_served: list = []
 
+    # #683 — THE ARCHIVE ARM, ON THE SAME SCALE CONTRACT AS THE VENUE ARM. An
+    # archive interval is the venue's raw YES price, exactly like a venue point,
+    # so it is admitted only where this route's printed scale is measurably the
+    # raw scale (`_venue_scale_refusal`, asked of the archive rows on their own).
+    # Live evidence wins actual overlap only: an interval holding a capture or a
+    # served venue point is withheld; the rest of the timeline stands.
+    field_archive_by_outcome = archive.served(
+        _archive_window,
+        claims=list(_archive_claims) + list(field_venue_rows),
+        outcome_ids=_field_outcome_ids,
+    )
+    archive_by_outcome: dict[int, list] = {
+        oid: rows for oid, rows in field_archive_by_outcome.items() if oid in charted_ids
+    }
+    archive_scale_refusal: Optional[str] = None
+    if field_archive_by_outcome:
+        archive_scale_refusal = _venue_scale_refusal(
+            market, charted_outcomes, field_archive_by_outcome, outcome_time_groups,
+            devigged, field_complete=_field_complete,
+        )
+        if archive_scale_refusal:
+            archive_by_outcome = {}
+    archive_rows_served: list = []
+
 
     # Build aggregated history: one data point per timestamp per outcome
     outcome_history = {}
@@ -8747,6 +8826,12 @@ async def get_futures_history(
     _history_order = list(outcome_time_groups.keys()) + [
         oid for oid in outcome_ids
         if oid in venue_by_outcome and oid not in outcome_time_groups
+    ]
+    # #683: a leg the archive alone speaks for (no capture, no venue point) is
+    # drawn too — the zero-snapshot outcome this arm exists for.
+    _history_order += [
+        oid for oid in outcome_ids
+        if oid in archive_by_outcome and oid not in _history_order
     ]
     for oid in _history_order:
         time_groups = outcome_time_groups.get(oid) or {}
@@ -8783,7 +8868,11 @@ async def get_futures_history(
         # leg of any source (`did_not_play`, `all_losers`, ...): how such a leg
         # ends is the settled rules' call, and a squeezed carry printed a void
         # leg at 0.333 beside a detail row reading 0.49 (#6757's control).
-        if not venue_by_outcome.get(oid) and oid not in resolved_ids:
+        if (
+            not venue_by_outcome.get(oid)
+            and not archive_by_outcome.get(oid)
+            and oid not in resolved_ids
+        ):
             _closing = carried_endpoint(
                 oid, devigged, own=time_groups.keys(),
                 observed=observed_at.get(oid, ()),
@@ -8808,7 +8897,12 @@ async def get_futures_history(
                 "provenance": "venue_history",
             })
             venue_rows_served.append(row)
-        if venue_by_outcome.get(oid):
+        # #683: the archive's intervals, each drawn at its close with its
+        # interval and provenance — never as a polling instant.
+        for row in archive_by_outcome.get(oid, ()):
+            history.append(archive_history_point(row))
+            archive_rows_served.append(row)
+        if venue_by_outcome.get(oid) or archive_by_outcome.get(oid):
             history.sort(key=lambda pt: _parse_stamp(pt["timestamp"]))
         # #7935 — the stale echo, dropped before anything downstream reads the
         # line. Placed HERE, not after the loop with the freeze arms, for two
@@ -8902,6 +8996,11 @@ async def get_futures_history(
             response["venue_history"],
             market_id=market.id,
             surface="futures_history",
+        )
+    # #683 — additive, and only when the archive store answered for this board.
+    if archive.state not in ("not_applicable", "absent"):
+        response["archive_history"] = archive.describe(
+            archive_rows_served, scale_refused=archive_scale_refusal
         )
 
     return response

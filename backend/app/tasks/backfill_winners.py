@@ -26,6 +26,7 @@ from app.utils.calibration_closing_line import (
     closing_line_boundary_sql,
     closing_line_lateral_sql,
 )
+from app.utils.kalshi_archive_forecast import KALSHI_ARCHIVE_FORECAST_ENABLED  # #683
 from app.utils.kalshi_empty_book import lone_ask_on_empty_book_sql
 from app.utils.polymarket_empty_book import empty_polymarket_book_sql  # #9083
 from app.utils.prediction_market_matching import (
@@ -12427,8 +12428,53 @@ _REPAIR_CURSOR_KEY = "bainluck:cal_closing_line_repair_cursor_q436"
 _REPAIR_DONE = "done"
 
 
-def _part_a_calibration_sql(would_churn: str, part_a_value: str) -> str:
-    """Part A: fill an event-linked outcome's first calibration price."""
+def _part_a_value_sql(archive_forecast: bool = False) -> str:
+    """Part A's price: the closing line, then (OFF by default) the archive, then the opening.
+
+    #683: with ``archive_forecast`` False this is byte-for-byte the expression
+    Part A has always written, so the calibration SQL and the staged bank are
+    unchanged. ``app.utils.kalshi_archive_forecast`` owns the switch and why it
+    is off.
+    """
+    if not archive_forecast:
+        return """COALESCE(
+                              closing.probability,
+                              CASE WHEN nc.is_threshold THEN NULL
+                                   ELSE nc.opening_probability END
+                          )"""
+    from app.utils.kalshi_archive_forecast import archive_closing_value_sql
+
+    return f"""COALESCE(
+                              closing.probability,
+                              {archive_closing_value_sql()},
+                              CASE WHEN nc.is_threshold THEN NULL
+                                   ELSE nc.opening_probability END
+                          )"""
+
+
+def _part_a_calibration_sql(
+    would_churn: str, part_a_value: str, *, archive_forecast: bool = False
+) -> str:
+    """Part A: fill an event-linked outcome's first calibration price.
+
+    #683: ``archive_forecast`` adds ONE lateral over the archive store's
+    forecast-admitted intervals (``app.utils.kalshi_archive_forecast``). False,
+    the default, emits exactly the parent SQL.
+    """
+    archive_lateral = ""
+    if archive_forecast:
+        from app.utils.kalshi_archive_forecast import archive_forecast_lateral_sql
+
+        archive_lateral = (
+            "\n                            LEFT JOIN LATERAL "
+            + archive_forecast_lateral_sql(
+                outcome_id="nc.outcome_id",
+                boundary=closing_line_boundary_sql(
+                    "nc.commence_time", "nc.resolution_date"
+                ),
+            )
+            + " archive ON true"
+        )
     return f"""
                         WITH needs_cal AS (
                             SELECT fo.id AS outcome_id, e.commence_time,
@@ -12456,7 +12502,7 @@ def _part_a_calibration_sql(would_churn: str, part_a_value: str) -> str:
                                     "nc.commence_time", "nc.resolution_date"
                                 ),
                                 extra_and="AND (NOT nc.is_threshold OR fos.yes_bid > 0)",
-                            )} closing ON true
+                            )} closing ON true{archive_lateral}
                             WHERE fo.id = nc.outcome_id
                               AND {part_a_value} IS NOT NULL
                               {would_churn.format(value=part_a_value)}
@@ -12786,14 +12832,16 @@ async def _compute_calibration_prices():
                 # the SQL mirror of precompute_calibration.KALSHI_PROP_THRESHOLD_NAME_RE
                 # (keep in sync); it is FALSE for every non-Kalshi/non-prop row so
                 # this branch is a provable no-op for all other sources.
-                _part_a_value = """COALESCE(
-                              closing.probability,
-                              CASE WHEN nc.is_threshold THEN NULL
-                                   ELSE nc.opening_probability END
-                          )"""
+                _part_a_value = _part_a_value_sql(KALSHI_ARCHIVE_FORECAST_ENABLED)
                 result_a = await _run_bounded(
                     session,
-                    text(_part_a_calibration_sql(_WOULD_CHURN, _part_a_value)),
+                    text(
+                        _part_a_calibration_sql(
+                            _WOULD_CHURN,
+                            _part_a_value,
+                            archive_forecast=KALSHI_ARCHIVE_FORECAST_ENABLED,
+                        )
+                    ),
                     {"cursor": part_a_cursor, "batch": _CAL_BATCH},
                     "part_a",
                 )

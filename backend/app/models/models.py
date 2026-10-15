@@ -1184,6 +1184,186 @@ class FuturesOddsSnapshot(Base):
     outcome: Mapped["FuturesOutcome"] = relationship(back_populates="snapshots")
 
 
+# ── #683: Kalshi historical-tier (archive) evidence, kept apart from live capture ──
+#
+# THREE TABLES, AND WHY NOT A ``bookmaker`` VALUE IN ``futures_odds_snapshots``.
+# That table has no unique key and no provenance column beyond ``bookmaker``, and
+# every calibration phase reads it WITHOUT a bookmaker filter (Part B takes the
+# first snapshot an hour after the opening with no cutoff at all). A reader-only
+# archive candle written there would enter the published curve. Goal Root chose
+# a separate store (``ROOT-STORAGE-DECISION.md``, 2026-10-15): nothing that reads
+# snapshots today can see these rows until it is explicitly joined.
+#
+# * ``kalshi_archive_imports``: one row per attended apply of one reviewed plan,
+#   holding the plan's content address and the ids it inserted, so a restore
+#   removes exactly that import's own rows and nothing else.
+# * ``kalshi_archive_outcome_evidence``: per import and outcome, the identity
+#   and forecast-cutoff evidence the apply revalidated, kept SEPARATE from the
+#   price observations (a cutoff is a judgement about an event; a candle is a
+#   market fact). Exactly one of cutoff / refusal is set.
+# Checks that call PostgreSQL-only functions carry ``ddl_if(dialect="postgresql")``:
+# several unit suites ``create_all`` every model on SQLite, which cannot run them.
+#
+# * ``kalshi_archive_intervals``: the observations. One per outcome, period and
+#   interval end, enforced by a real unique constraint, so a re-import of the
+#   same interval conflicts instead of doubling. The database refuses an
+#   interval that ends at or after the venue's settlement.
+
+
+class KalshiArchiveImport(Base):
+    """One attended apply of one content-addressed archive plan. (#683)"""
+
+    __tablename__ = "kalshi_archive_imports"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('applying', 'applied', 'partial', 'failed', 'restored')",
+            name="ck_kai_status",
+        ),
+        CheckConstraint("char_length(plan_digest) = 64", name="ck_kai_plan_digest").ddl_if(dialect="postgresql"),
+        CheckConstraint(
+            "(status = 'restored') = (restored_at IS NOT NULL)", name="ck_kai_restored"
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    import_key: Mapped[str] = mapped_column(String(64), unique=True)
+    plan_digest: Mapped[str] = mapped_column(String(64), index=True)
+    archive_cutoff: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    status: Mapped[str] = mapped_column(String(20))
+    started_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    finished_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    restored_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    inserted_ids: Mapped[list] = mapped_column(
+        ARRAY(BigInteger), server_default=text("'{}'")
+    )
+    outcome_ids: Mapped[list] = mapped_column(
+        ARRAY(Integer), server_default=text("'{}'")
+    )
+    report: Mapped[dict] = mapped_column(JSONB, server_default=text("'{}'"))
+
+
+class KalshiArchiveOutcomeEvidence(Base):
+    """Identity + forecast-cutoff evidence for one outcome in one import. (#683)"""
+
+    __tablename__ = "kalshi_archive_outcome_evidence"
+    __table_args__ = (
+        UniqueConstraint("import_id", "outcome_id", name="uq_kaoe_import_outcome"),
+        CheckConstraint(
+            "(forecast_cutoff_ts IS NULL) <> (cutoff_refusal IS NULL)",
+            name="ck_kaoe_cutoff_xor_refusal",
+        ),
+        CheckConstraint(
+            "venue_settlement_ts < archive_cutoff", name="ck_kaoe_archive_tier"
+        ),
+        CheckConstraint(
+            "forecast_cutoff_ts IS NULL OR forecast_cutoff_ts <= venue_settlement_ts",
+            name="ck_kaoe_cutoff_before_settlement",
+        ),
+        CheckConstraint("char_length(input_fingerprint) = 64", name="ck_kaoe_fp").ddl_if(dialect="postgresql"),
+        CheckConstraint("period_minutes IN (1, 60)", name="ck_kaoe_period"),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    import_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("kalshi_archive_imports.id")
+    )
+    outcome_id: Mapped[int] = mapped_column(
+        ForeignKey("futures_outcomes.id"), index=True
+    )
+    market_ticker: Mapped[str] = mapped_column(String(120))
+    event_ticker: Mapped[str] = mapped_column(String(120))
+    period_minutes: Mapped[int] = mapped_column(SmallInteger)
+    venue_open_ts: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    venue_settlement_ts: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    archive_cutoff: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    coverage: Mapped[str] = mapped_column(String(20))
+    input_fingerprint: Mapped[str] = mapped_column(String(64))
+    #: What the apply re-read: event id + start + its provenance, and row versions.
+    cutoff_inputs: Mapped[dict] = mapped_column(JSONB)
+    forecast_cutoff_ts: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True)
+    )
+    cutoff_refusal: Mapped[Optional[str]] = mapped_column(String(80))
+    plan_forecast_cutoff_ts: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True)
+    )
+    plan_cutoff_refusal: Mapped[Optional[str]] = mapped_column(String(80))
+    #: Window lineage (bounds, echoed ticker, response digest, retrieval time).
+    windows: Mapped[list] = mapped_column(JSONB)
+    owed_windows: Mapped[list] = mapped_column(JSONB, server_default=text("'[]'"))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+
+class KalshiArchiveInterval(Base):
+    """One archive candle interval for one outcome: a market observation. (#683)
+
+    Drawn by the history readers at ``interval_end`` with its interval, never as
+    a polling instant. ``futures_odds_snapshots`` readers cannot see it.
+    """
+
+    __tablename__ = "kalshi_archive_intervals"
+    __table_args__ = (
+        UniqueConstraint(
+            "outcome_id", "period_minutes", "interval_end", name="uq_kai_interval"
+        ),
+        CheckConstraint("period_minutes IN (1, 60)", name="ck_kaiv_period"),
+        CheckConstraint(
+            "date_part('epoch', interval_end - interval_start) = period_minutes * 60",
+            name="ck_kaiv_span",
+        ).ddl_if(dialect="postgresql"),
+        CheckConstraint(
+            "interval_end < venue_settlement_ts", name="ck_kaiv_before_settlement"
+        ),
+        CheckConstraint(
+            "probability > 0 AND probability < 1", name="ck_kaiv_probability"
+        ),
+        CheckConstraint(
+            "price_basis IN ('traded_interval', 'quote_only')", name="ck_kaiv_basis"
+        ),
+        CheckConstraint("echoed_ticker = market_ticker", name="ck_kaiv_echo"),
+        CheckConstraint("char_length(raw_response_sha256) = 64", name="ck_kaiv_sha").ddl_if(dialect="postgresql"),
+        CheckConstraint(
+            "admission_at_plan IN ('forecast', 'reader_only')", name="ck_kaiv_plan_adm"
+        ),
+        CheckConstraint(
+            "admission_at_apply IN ('forecast', 'reader_only')",
+            name="ck_kaiv_apply_adm",
+        ),
+        Index("ix_kaiv_outcome_end", "outcome_id", "interval_end"),
+        Index("ix_kaiv_import", "import_id"),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    import_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("kalshi_archive_imports.id")
+    )
+    evidence_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("kalshi_archive_outcome_evidence.id")
+    )
+    outcome_id: Mapped[int] = mapped_column(ForeignKey("futures_outcomes.id"))
+    market_ticker: Mapped[str] = mapped_column(String(120))
+    event_ticker: Mapped[str] = mapped_column(String(120))
+    period_minutes: Mapped[int] = mapped_column(SmallInteger)
+    interval_start: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    interval_end: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    venue_settlement_ts: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    probability: Mapped[float] = mapped_column(Numeric(7, 6))
+    price_basis: Mapped[str] = mapped_column(String(20))
+    volume: Mapped[Optional[str]] = mapped_column(String(40))
+    echoed_ticker: Mapped[str] = mapped_column(String(120))
+    raw_response_sha256: Mapped[str] = mapped_column(String(64))
+    retrieved_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    admission_at_plan: Mapped[str] = mapped_column(String(20))
+    admission_at_apply: Mapped[str] = mapped_column(String(20))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+
 class LineMovementAnalysis(Base):
     """Cached LLM-generated explanations for significant line movements."""
 
