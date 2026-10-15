@@ -68,6 +68,9 @@ import PropDivergenceRail from "@/components/PropDivergenceRail";
 import PropsSection, { type PropMark } from "@/components/event/PropsSection";
 import PlayerPropsDashboard from "@/components/PlayerPropsDashboard";
 import TotalPointsSpectrum from "@/components/TotalPointsSpectrum";
+import { NFLEventCardDeck } from "@/components/event/NFLEventCards";
+import EventCardReader, { LineDetails } from "@/components/event/EventCardReader";
+import { milestoneCards, rowsForCards, type NflPropRow } from "@/lib/nflEventCardDeck";
 import {
   isSettledVocabularyToken,
   PROP_HIT_LABEL,
@@ -243,6 +246,36 @@ interface Surface {
 }
 
 /**
+ * #9483 — the NFL game-story cards' graded ladder: one finished game, the same
+ * box-score number both ways, only the server's grade differs.
+ */
+function nflGradedRows(hit: boolean): NflPropRow[] {
+  return [39.5, 49.5, 59.5].map((threshold, i) => ({
+    market_name: "Seattle vs Denver: Receiving Yards",
+    outcome_name: `Jaxon Smith-Njigba: ${threshold}+`,
+    threshold,
+    over_probability: [0.8, 0.6, 0.4][i],
+    source: "kalshi",
+    observed_at: "2026-10-16T00:00:00Z",
+    pregame_mark: [0.78, 0.55, 0.38][i],
+    player_team: "away" as const,
+    actual: 52,
+    hit,
+  }));
+}
+function nflGradedDeck(hit: boolean) {
+  return milestoneCards({
+    props: nflGradedRows(hit),
+    eventStatus: "completed",
+    commenceTime: "2026-10-16T00:15:00Z",
+    homeTeam: "Denver Broncos",
+    awayTeam: "Seattle Seahawks",
+    nowMs: Date.parse("2026-10-16T04:00:00Z"),
+  });
+}
+const NFL_TEAMS = { awayName: "Seattle Seahawks", homeName: "Denver Broncos" };
+
+/**
  * EVERY component that can state a settled prop verdict. Not hand-maintained:
  * `enrolment` below proves this list covers the transitive closure.
  */
@@ -313,6 +346,44 @@ const SURFACES: Surface[] = [
       />,
     ),
   })),
+  {
+    file: "components/event/NFLEventCards.tsx",
+    render: (hit) =>
+      renderToStaticMarkup(
+        <NFLEventCardDeck
+          cards={nflGradedDeck(hit)}
+          teams={NFL_TEAMS}
+          selection={{}}
+          onSelect={() => undefined}
+          onOpen={() => undefined}
+          openerRef={() => undefined}
+        />,
+      ),
+  },
+  {
+    file: "components/event/EventCardReader.tsx",
+    variant: "full-size card",
+    render: (hit) => {
+      const cards = nflGradedDeck(hit);
+      return renderToStaticMarkup(
+        <EventCardReader
+          openCardId={cards[0].id}
+          liveCards={cards}
+          liveHeader={{ match: "SEA 27–17 DEN · Final", chances: "" }}
+          liveRows={rowsForCards(cards, nflGradedRows(hit))}
+          teams={NFL_TEAMS}
+          selection={{}}
+          onSelect={() => undefined}
+          onClose={() => undefined}
+        />,
+      );
+    },
+  },
+  {
+    file: "components/event/EventCardReader.tsx",
+    variant: "line details",
+    render: (hit) => renderToStaticMarkup(<LineDetails row={nflGradedRows(hit)[1]} onDone={() => undefined} />),
+  },
   {
     file: "components/TotalPointsSpectrum.tsx",
     render: (hit) =>
