@@ -259,8 +259,9 @@ describe("#9483 projected finish", () => {
     expect(finishHeadline(card, AWAY, HOME)).toBe("Denver Broncos projected ahead");
   });
 
-  it("another sport draws no finish card", () => {
-    expect(buildFinishCard(input({ sportKey: "basketball_nba" }))).toBeNull();
+  it("a sport without story cards draws no finish card (NBA has its own deck)", () => {
+    expect(buildFinishCard(input({ sportKey: "icehockey_nhl" }))).toBeNull();
+    expect(buildFinishCard(input({ sportKey: "basketball_wnba" }))).toBeNull();
     expect(nflEventCards("basketball_nba", null, [])).toEqual([]);
   });
 
