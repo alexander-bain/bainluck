@@ -155,10 +155,13 @@ FRESH_FLUSH_PENDING_ATTEMPTS = 1
 FRESH_STAMP_WORKERS = 3
 
 # #10090 — admitted cohorts are stamped live-first, as a call's own population
-# is: a live game's newer price waited 6.4 s behind 134 held events in the
-# first-come queue while its own stamp took 95 ms (stage trace 02:14Z
-# 2026-10-15). After this many live stamps in a row, a waiting non-live event
-# goes next, so pre-game prices keep progressing while live ones lead.
+# is. Stage trace 02:14Z 2026-10-15: a live game's admitted stamp started
+# 6.43 s after admission and then took 95 ms; 134 events were held by the call
+# then, which does not say how many were queued ahead of it, their status, or
+# what the three workers were waiting on. This orders a known-live event ahead
+# of queued non-live ones when a worker comes free; it cannot preempt an
+# occupied worker. After this many live stamps in a row, a waiting non-live
+# event goes next, so pre-game prices keep progressing while live ones lead.
 ADMITTED_LIVE_RUN = 3
 
 # Includes the point currently writing and reservations before quote COMMIT.
