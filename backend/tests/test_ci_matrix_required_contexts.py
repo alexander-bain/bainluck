@@ -16,6 +16,7 @@ A non-matrix job skipped at job level is fine: its single `skipped` context
 satisfies branch protection (`shard-completeness`, `search-recall` on
 `ef81eafb9b`, read 2026-09-23).
 """
+
 from __future__ import annotations
 
 import os
@@ -25,9 +26,14 @@ import pytest
 import yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-CI = Path(os.environ.get("CI_WORKFLOW_PATH") or REPO_ROOT / ".github" / "workflows" / "ci.yml")
+CI = Path(
+    os.environ.get("CI_WORKFLOW_PATH") or REPO_ROOT / ".github" / "workflows" / "ci.yml"
+)
 
-RUNS = "needs.change-scope.outputs.scope != 'frontend'"
+SCOPE_RUNS = "needs.change-scope.outputs.scope != 'frontend'"
+REUSE = "needs.change-scope.outputs.reuse != 'true'"
+RUNS = f"{SCOPE_RUNS} && {REUSE}"
+REUSED = "needs.change-scope.outputs.reuse == 'true'"
 MARKER = "needs.change-scope.outputs.scope == 'frontend'"
 
 
@@ -35,7 +41,7 @@ def _jobs() -> dict:
     return yaml.safe_load(CI.read_text())["jobs"]
 
 
-def _evaluate(cond: str | None, scope) -> bool:
+def _evaluate(cond: str | None, scope, reuse="") -> bool:
     """The two conditions this job uses, evaluated for a change-scope output.
 
     An unset output reads as '' in GitHub expressions. Anything else is refused
@@ -45,7 +51,9 @@ def _evaluate(cond: str | None, scope) -> bool:
     if cond is None:
         return True
     if cond.strip() == RUNS:
-        return value != "frontend"
+        return value != "frontend" and reuse != "true"
+    if cond.strip() == REUSED:
+        return reuse == "true"
     if cond.strip() == MARKER:
         return value == "frontend"
     raise AssertionError(f"unrecognised backend-tests step condition: {cond!r}")
@@ -80,7 +88,9 @@ def _validate_backend_partition(jobs):
     assert all("continue-on-error" not in step for step in job["steps"])
     verifier = jobs["shard-completeness"]["steps"][-1]["run"]
     assert verifier == "python scripts/ci_shard.py --verify --of 8"
-    command = next(s["run"] for s in job["steps"] if s.get("name", "").startswith("Run tests"))
+    command = next(
+        s["run"] for s in job["steps"] if s.get("name", "").startswith("Run tests")
+    )
     assert "--of ${{ strategy.job-total }}" in command
     assert "python -m pytest $FILES" in command
     assert "backend-tests" in jobs["deploy"]["needs"]
@@ -90,7 +100,10 @@ def test_backend_tests_keeps_required_contexts_and_checks_the_actual_partition()
     _validate_backend_partition(_jobs())
 
 
-@pytest.mark.parametrize("mutation", ["omitted", "duplicate", "wrong_verifier", "waived_failure", "lost_dependency"])
+@pytest.mark.parametrize(
+    "mutation",
+    ["omitted", "duplicate", "wrong_verifier", "waived_failure", "lost_dependency"],
+)
 def test_backend_partition_guard_rejects_lost_work_or_failed_matrix_bypass(mutation):
     jobs = _jobs()
     job = jobs["backend-tests"]
@@ -99,7 +112,9 @@ def test_backend_partition_guard_rejects_lost_work_or_failed_matrix_bypass(mutat
     elif mutation == "duplicate":
         job["strategy"]["matrix"]["shard"][-1] = 7
     elif mutation == "wrong_verifier":
-        jobs["shard-completeness"]["steps"][-1]["run"] = "python scripts/ci_shard.py --verify --of 4"
+        jobs["shard-completeness"]["steps"][-1][
+            "run"
+        ] = "python scripts/ci_shard.py --verify --of 4"
     elif mutation == "waived_failure":
         job["continue-on-error"] = True
     else:
@@ -112,12 +127,14 @@ def test_every_backend_tests_step_carries_one_of_the_two_scope_conditions():
     steps = _jobs()["backend-tests"]["steps"]
     for step in steps:
         label = step.get("name") or step.get("uses")
-        assert step.get("if") in (RUNS, MARKER), (
+        assert step.get("if") in (RUNS, MARKER, REUSED), (
             f"backend-tests step {label!r} has condition {step.get('if')!r}. Every step must "
             f"carry `{RUNS}` (real work) or be the frontend marker; an unconditioned step "
             "runs on a frontend-only candidate with no checkout and spends #5007's saving."
         )
-    assert sum(s.get("if") == MARKER for s in steps) == 1, "exactly one frontend marker step"
+    assert (
+        sum(s.get("if") == MARKER for s in steps) == 1
+    ), "exactly one frontend marker step"
 
 
 def test_the_marker_step_needs_no_checkout():
@@ -130,7 +147,9 @@ def test_the_marker_step_needs_no_checkout():
 @pytest.mark.parametrize("scope", ["frontend", "full", "", None])
 def test_a_frontend_scope_runs_only_the_marker_and_anything_else_runs_everything(scope):
     steps = _jobs()["backend-tests"]["steps"]
-    ran = [s.get("name") or s.get("uses") for s in steps if _evaluate(s.get("if"), scope)]
+    ran = [
+        s.get("name") or s.get("uses") for s in steps if _evaluate(s.get("if"), scope)
+    ]
     real = [s.get("name") or s.get("uses") for s in steps if s.get("if") == RUNS]
     if scope == "frontend":
         assert len(ran) == 1 and ran[0].startswith("Frontend-only candidate"), ran
@@ -141,11 +160,34 @@ def test_a_frontend_scope_runs_only_the_marker_and_anything_else_runs_everything
 
 def test_deploy_still_waits_on_the_sibling_gates_that_skip_on_frontend():
     jobs = _jobs()
-    assert {"backend-tests", "shard-completeness", "search-recall"} <= set(jobs["deploy"]["needs"])
+    assert {"backend-tests", "shard-completeness", "search-recall"} <= set(
+        jobs["deploy"]["needs"]
+    )
     for name in ("shard-completeness", "search-recall"):
         job = jobs[name]
-        assert not (job.get("strategy") or {}).get("matrix"), (
-            f"{name} became a matrix job; a job-level skip would then drop its required contexts"
+        assert not (job.get("strategy") or {}).get(
+            "matrix"
+        ), f"{name} became a matrix job; a job-level skip would then drop its required contexts"
+        expected = (
+            f"always() && {SCOPE_RUNS}" if name == "search-recall" else SCOPE_RUNS
         )
-        expected = f"always() && {RUNS}" if name == "search-recall" else RUNS
         assert job.get("if") == expected, (name, job.get("if"))
+
+
+@pytest.mark.parametrize("reuse", ["true", "false", "", None])
+def test_reuse_never_removes_matrix_contexts_and_missing_decision_runs_tests(reuse):
+    jobs = _jobs()
+    assert "if" not in jobs["backend-tests"]
+    for scope in ("full", "", None):
+        ran = [
+            s
+            for s in jobs["backend-tests"]["steps"]
+            if _evaluate(s.get("if"), scope, reuse)
+        ]
+        assert bool(any("Run tests" in s.get("name", "") for s in ran)) == (
+            reuse != "true"
+        )
+        assert bool(any(s.get("if") == REUSED for s in ran)) == (reuse == "true")
+    assert "if" not in jobs["frontend-build"]
+    assert jobs["frontend-build"]["needs"] == "change-scope"
+    assert len(jobs["database-integration"]["strategy"]["matrix"]["group"]) == 5
