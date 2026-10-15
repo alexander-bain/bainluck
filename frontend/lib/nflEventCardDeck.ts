@@ -31,11 +31,17 @@ import {
   buildProjectedFinalPointsSeries,
   type ProjectedFinalPointsInput,
 } from "./projectedFinalPointsSeries";
+import type { LadderCard } from "./nbaEventCards";
 
 export const NFL_SPORT_KEY = "americanfootball_nfl";
 
 export function nflCardsApply(sportKey: string | null | undefined): boolean {
   return sportKey === NFL_SPORT_KEY;
+}
+
+/** #9483 NBA slice — the sports whose pages carry game-story cards and both teams' lines. */
+export function storyCardsApply(sportKey: string | null | undefined): boolean {
+  return sportKey === NFL_SPORT_KEY || sportKey === "basketball_nba";
 }
 
 /** At most this many player cards: the deck is a story, not the catalog. */
@@ -118,7 +124,7 @@ function parseMs(value: string | null | undefined): number | null {
  * the last recorded intermediate score or a quote.
  */
 export function buildFinishCard(input: ProjectedFinalPointsInput | null | undefined): FinishCard | null {
-  if (!input || !nflCardsApply(input.sportKey)) return null;
+  if (!input || !storyCardsApply(input.sportKey)) return null;
   const series = buildProjectedFinalPointsSeries(input);
   if (!series.supported) return null;
   const points = series.segments.flat();
@@ -227,10 +233,12 @@ export interface MilestoneCard {
   actual: number | null;
 }
 
-export type NflEventCard = FinishCard | MilestoneCard;
+export type NflEventCard = FinishCard | MilestoneCard | LadderCard;
 
 export function cardTitle(card: NflEventCard): string {
-  return card.kind === "finish" ? finishKicker(card) : `${card.player} · ${card.stat}`;
+  if (card.kind === "finish") return finishKicker(card);
+  if (card.kind === "ladder") return card.family === "total" ? "Scoring expectations" : "Winning margin";
+  return `${card.player} · ${card.stat}`;
 }
 
 export function milestoneCaption(card: MilestoneCard): string {
@@ -313,6 +321,17 @@ export function isRecentQuote(observedAt: string | null | undefined, nowMs: numb
 
 /** The card as it may be shown at `nowMs`: an unobserved pregame price loses its number. */
 export function cardAt(card: NflEventCard, nowMs: number): NflEventCard {
+  if (card.kind === "ladder") {
+    // Same rule for the NBA ladders (`ladderAt`): only a pregame price ages.
+    if (card.phase !== "before") return card;
+    let aged = false;
+    const points = card.points.map((p) => {
+      if (p.chance === null || isRecentQuote(p.observedAt, nowMs)) return p;
+      aged = true;
+      return { ...p, chance: null };
+    });
+    return aged ? { ...card, points } : card;
+  }
   if (card.kind !== "milestone" || card.basis !== "pregamePrice") return card;
   let changed = false;
   const rungs = card.rungs.map((rung) => {
@@ -481,6 +500,19 @@ export function milestoneCards(opts: {
     chosen.push(card);
   }
   return chosen;
+}
+
+/**
+ * The NBA deck: winning margin, scoring expectations, then the projected
+ * finish — a fixed order per page state (no ranking service).
+ */
+export function nbaEventCards(
+  sportKey: string | null | undefined,
+  finish: FinishCard | null,
+  ladders: { margin: LadderCard | null; total: LadderCard | null },
+): NflEventCard[] {
+  if (sportKey !== "basketball_nba") return [];
+  return [ladders.margin, ladders.total, finish].filter((c): c is LadderCard | FinishCard => c !== null);
 }
 
 /** The deck for this page, or empty to draw none. NFL only. */

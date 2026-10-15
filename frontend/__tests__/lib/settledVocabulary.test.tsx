@@ -71,6 +71,8 @@ import TotalPointsSpectrum from "@/components/TotalPointsSpectrum";
 import { NFLEventCardDeck } from "@/components/event/NFLEventCards";
 import EventCardReader, { LineDetails } from "@/components/event/EventCardReader";
 import { milestoneCards, rowsForCards, type NflPropRow } from "@/lib/nflEventCardDeck";
+import { decodeQuestionMatrix, totalLadderCard } from "@/lib/nbaEventCards";
+import nbaFinalBody from "../fixtures/nbaFinalMatrix15320337.json";
 import {
   isSettledVocabularyToken,
   PROP_HIT_LABEL,
@@ -275,6 +277,23 @@ function nflGradedDeck(hit: boolean) {
 }
 const NFL_TEAMS = { awayName: "Seattle Seahawks", homeName: "Denver Broncos" };
 
+/** #9483 NBA — the final total ladder (15320337) with every producer verdict forced one way. */
+function nbaGradedTotal(hit: boolean) {
+  const m = JSON.parse(JSON.stringify(nbaFinalBody.game_question_matrix));
+  for (const q of m.questions) for (const o of q.options) o.result = { state: hit ? "won" : "lost" };
+  return totalLadderCard({
+    questions: decodeQuestionMatrix(m),
+    status: "completed",
+    commenceTime: "2026-10-04T23:00:00Z",
+    homeScore: 104,
+    awayScore: 101,
+    pregameProjection: null,
+    homeShort: "Clippers",
+    awayShort: "Warriors",
+    nowMs: Date.parse("2026-10-05T04:00:00Z"),
+  })!;
+}
+
 /**
  * EVERY component that can state a settled prop verdict. Not hand-maintained:
  * `enrolment` below proves this list covers the transitive closure.
@@ -378,6 +397,26 @@ const SURFACES: Surface[] = [
         />,
       );
     },
+  },
+  {
+    file: "components/event/NFLEventCards.tsx",
+    variant: "NBA total ladder",
+    render: (hit) =>
+      renderToStaticMarkup(
+        <NFLEventCardDeck
+          cards={[nbaGradedTotal(hit)]}
+          teams={{ awayName: "Golden State Warriors", homeName: "Los Angeles Clippers" }}
+          selection={{}}
+          onSelect={() => undefined}
+          onOpen={() => undefined}
+          openerRef={() => undefined}
+        />,
+      ),
+  },
+  {
+    file: "components/event/EventCardReader.tsx",
+    variant: "NBA option details",
+    render: (hit) => renderToStaticMarkup(<LineDetails row={nbaGradedTotal(hit).points[0].detail} onDone={() => undefined} />),
   },
   {
     file: "components/event/EventCardReader.tsx",
