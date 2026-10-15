@@ -1,6 +1,7 @@
 """Shared test fixtures for the Bain Luck backend test suite."""
 
 import json
+import sys
 
 import pytest
 from datetime import datetime, timezone, timedelta
@@ -121,11 +122,65 @@ def _reset_live_blend_pending_handoff():
     """#9462 review: a WS consumer run leaves its owed blend stamps for the next
     run of its source in a process-global hand-off. In a suite the "next run"
     is the next test's consumer, which would adopt events it never seeded."""
-    from app.tasks import live_blend_refresh as _lbr
-
-    _lbr._pending_handoff.clear()
+    retained = _reset_loaded_live_blend_handoff()
     yield
-    _lbr._pending_handoff.clear()
+    _reset_loaded_live_blend_handoff(retained)
+
+
+def _loaded_cache_modules(name, retained=()):
+    """Retain all live identities without importing application packages.
+
+    A cached parent attribute can differ from sys.modules during test patching.
+    Keep both, plus setup identities which the test might evict before teardown.
+    Reading the package dictionary avoids dynamic __getattr__ execution.
+    """
+    parent, _, leaf = name.rpartition(".")
+    package = sys.modules.get(parent)
+    candidates = (
+        *retained,
+        sys.modules.get(name),
+        vars(package).get(leaf) if package is not None else None,
+    )
+    modules = []
+    for module in candidates:
+        if module is not None and all(module is not old for old in modules):
+            modules.append(module)
+    return tuple(modules)
+
+
+def _reset_loaded_live_blend_handoff(retained=()):
+    modules = _loaded_cache_modules("app.tasks.live_blend_refresh", retained)
+    for module in modules:
+        module._pending_handoff.clear()
+    return modules
+
+
+def _reset_loaded_request_caches(retained=None):
+    retained = retained or {}
+    resets = (
+        (
+            "app.utils.request_cache",
+            (
+                "_reset_last_good_for_tests",
+                "_reset_inflight_for_tests",
+                "_reset_shared_client_for_tests",
+            ),
+        ),
+        ("app.utils.candidate_base", ("_reset_l0_for_tests",)),
+        ("app.utils.principal_independent_cache", ("clear_shared_builds",)),
+        ("app.utils.event_history_cache", ("_reset_for_tests",)),
+        ("app.routes.calibration", ()),
+    )
+    found = {}
+    for name, methods in resets:
+        found[name] = _loaded_cache_modules(name, retained.get(name, ()))
+        for module in found[name]:
+            for method in methods:
+                getattr(module, method)()
+            if name == "app.routes.calibration":
+                module._staged_cache["data"] = None
+                module._staged_cache["timestamp"] = 0.0
+    return found
 
 
 @pytest.fixture(autouse=True)
@@ -157,32 +212,9 @@ def _reset_request_cache_state():
     60s is tighter than the response cache above it); in a test suite nothing
     bounds it, because nothing takes 60 seconds.
     """
-    from app.utils import request_cache as _rc
-    from app.utils import candidate_base as _cb
-    from app.utils import event_history_cache as _ehc
-    from app.utils.principal_independent_cache import clear_shared_builds
-
-    def _reset_staged():
-        from app.routes import calibration as _cal
-
-        _cal._staged_cache["data"] = None
-        _cal._staged_cache["timestamp"] = 0.0
-
-    _rc._reset_last_good_for_tests()
-    _rc._reset_inflight_for_tests()
-    _rc._reset_shared_client_for_tests()
-    _cb._reset_l0_for_tests()
-    clear_shared_builds()
-    _ehc._reset_for_tests()
-    _reset_staged()
+    retained = _reset_loaded_request_caches()
     yield
-    _rc._reset_last_good_for_tests()
-    _rc._reset_inflight_for_tests()
-    _rc._reset_shared_client_for_tests()
-    _cb._reset_l0_for_tests()
-    clear_shared_builds()
-    _ehc._reset_for_tests()
-    _reset_staged()
+    _reset_loaded_request_caches(retained)
 
 
 @pytest.fixture
