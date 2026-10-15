@@ -17,8 +17,9 @@ table and adds no column. The indexes are built on empty tables, so gotcha #31
 does not apply.
 
 * ``kalshi_archive_imports``: one row per attended apply of one reviewed,
-  content-addressed plan. It records the ids that apply inserted, so a restore
-  removes only that import's own rows.
+  content-addressed plan. It records the ids that apply inserted, and each
+  row's version and content seal as stored. A restore therefore removes only
+  that import's own rows, and refuses if any of them changed afterwards.
 * ``kalshi_archive_outcome_evidence``: per import and outcome, the identity and
   forecast-cutoff evidence the apply revalidated. It is kept apart from the
   price observations, and exactly one of cutoff or refusal is set.
@@ -93,6 +94,18 @@ def upgrade() -> None:
         ),
         sa.Column(
             "report",
+            postgresql.JSONB(),
+            server_default=sa.text("'{}'"),
+            nullable=False,
+        ),
+        sa.Column(
+            "inserted_seals",
+            postgresql.JSONB(),
+            server_default=sa.text("'{}'"),
+            nullable=False,
+        ),
+        sa.Column(
+            "evidence_versions",
             postgresql.JSONB(),
             server_default=sa.text("'{}'"),
             nullable=False,

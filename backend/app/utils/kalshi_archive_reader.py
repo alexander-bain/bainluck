@@ -1,13 +1,14 @@
 """#683 reader half: Kalshi archive intervals on the history charts. Explicit join.
 
 PILLAR: TRUTH. SHIP: a settled Kalshi question with missing history gains its
-real recoverable pre-resolution probability journey on web (``/history``) and
-native (``/probability-timeline``), with archive provenance on every point.
+real recoverable pre-resolution probability journey on web (``/history``, and
+``/multi-history`` when the evolution view combines markets) and native
+(``/probability-timeline``), with archive provenance on every point.
 
 WHY A SEPARATE ARM AND NOT ``futures_odds_snapshots``. The archive store is its
 own table (``kalshi_archive_intervals``) so that no existing snapshot reader,
 calibration phase, coverage probe or "latest price" read can see these rows.
-This module is the one door the two chart routes open on purpose.
+This module is the one door the three chart routes open on purpose.
 
 THE RULES THIS ARM HOLDS
 
@@ -17,10 +18,14 @@ THE RULES THIS ARM HOLDS
    other interval stands, whether before the first live capture, between two of
    them or after the last one. A live point never suppresses the rest of a
    recoverable timeline.
-2. **An interval is drawn as an interval.** The point sits at ``interval_end``
+2. **An interval is SERVED as an interval.** The point sits at ``interval_end``
    (the candle's close) and carries ``interval_start``, ``period_minutes``,
-   ``price_basis`` and ``provenance: kalshi_archive``, so it can never pass for a
-   polling instant. Nothing is interpolated or carried forward to fill a gap.
+   ``price_basis`` and ``provenance: kalshi_archive``, so the payload never
+   passes it off as a polling instant. Nothing is interpolated or carried
+   forward to fill a gap. HOW A CLIENT SHOWS that distinction is the client's:
+   as of this change no web or native reader decodes these fields, so a reader
+   sees the close as an ordinary chart point. That client half is an explicit,
+   owner-routed dependency of #683 (web: UX; native: Native), not a claim here.
 3. **Never past settlement.** The store refuses an interval ending at or after
    the venue's settlement (``ck_kaiv_before_settlement``), and the read repeats
    the bound.

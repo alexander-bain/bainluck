@@ -556,7 +556,7 @@ class TestTheStoreIsJoinedOnlyOnPurpose:
             assert "kalshi_archive_reader" not in src, path
             assert "kalshi_archive_apply" not in src, path
 
-    def test_only_the_two_chart_routes_join_the_reader(self):
+    def test_only_the_three_chart_routes_join_the_reader(self):
         users = {
             str(p.relative_to(APP))
             for p in APP.rglob("*.py")
@@ -564,7 +564,9 @@ class TestTheStoreIsJoinedOnlyOnPurpose:
         }
         assert users == {"utils/kalshi_archive_reader.py", "routes/futures.py"}
         src = (APP / "routes" / "futures.py").read_text()
-        assert src.count("await load_archive_history(") == 2
+        # /history, /probability-timeline and /multi-history (Root's WIP review:
+        # the web evolution view combines markets through the third).
+        assert src.count("await load_archive_history(") == 3
 
     def test_nothing_schedules_or_calls_the_import(self):
         hits = {
