@@ -2964,7 +2964,8 @@ jobs:
         # UNIQUE constraints that refuse a post-settlement or doubled interval, the
         # migration building the models' exact schema, an apply that writes only
         # with the typed digest and restores only its own rows, the two chart
-        # routes joining the archive (live wins actual overlap only), and the
+        # routes joining the archive (live wins actual overlap only; the clients'
+        # actual Full request, range=full, reaching a 189-day archive), and the
         # dormant forecast lateral revalidating at consumption. Drops and creates
         # the full schema, like #6757 above.
         if: matrix.group == 'shared-middle'
@@ -2976,8 +2977,8 @@ jobs:
             echo "::error::#683 archive store gate SKIPPED — the gate did not run"
             exit 1
           fi
-          grep -qE "(^|[^0-9])25 passed([,[:space:]]|$)" /tmp/archive683.txt || {
-            echo "::error::#683 archive store gate did not run all twenty-five cases"
+          grep -qE "(^|[^0-9])30 passed([,[:space:]]|$)" /tmp/archive683.txt || {
+            echo "::error::#683 archive store gate did not run all thirty cases"
             exit 1
           }
 
