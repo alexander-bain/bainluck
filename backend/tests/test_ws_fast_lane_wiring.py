@@ -267,6 +267,20 @@ class TestFlushReachesTheBlend:
             )
             refresh_calls = _calls_named(flush, "refresh")
             assert refresh_calls, consumer
+            # #10090: the bridged writer's committed cohorts are stamped at the
+            # flush's top, before its own first write — rows that writer has
+            # already COMMITTED. Only that stamp (`start_events`, after
+            # `take_completed`) may precede the write; every other must follow.
+            taken = _calls_named(flush, "take_completed")
+            early = [c for c in refresh_calls if c.lineno < write_line]
+            if taken and early:
+                assert all(
+                    c.args and ast.unparse(c.args[0]) == "start_events"
+                    and c.lineno > min(t.lineno for t in taken)
+                    for c in early
+                ), f"{consumer}: blend refresh must follow the price write"
+                refresh_calls = [c for c in refresh_calls if c not in early]
+                assert refresh_calls, consumer
             first = min(refresh_calls, key=lambda c: c.lineno)
             starter = next(
                 (fn for fn in ast.walk(flush)

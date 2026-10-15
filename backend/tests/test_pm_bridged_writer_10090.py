@@ -40,6 +40,11 @@ from tests.test_single_event_commit_10090 import rig as stamp_rig, settle_until
 
 pytestmark = pytest.mark.asyncio
 PERIOD = 0.25
+#: Flush clocks are anchored on the refresher's own clock seam (production:
+#: `time.monotonic()`), in the past: a fixed 1000 s anchor was in the FUTURE
+#: of a freshly booted CI runner's clock, so the final drain's stamp was
+#: never due there (Hot List #44).
+_T0 = blend._mono() - 30.0
 
 
 def _mark(oid, event_id, value, seq):
@@ -198,7 +203,7 @@ async def test_mixed_event_stays_whole_on_the_game_flush(monkeypatch, sibling):
     _plain_frames(p, x)
     x.release.set()
     boundary = p.ns["catalog_boundary"]
-    assert await asyncio.wait_for(p.ns["_flush_prices"](flush_started=1000), 2) is True
+    assert await asyncio.wait_for(p.ns["_flush_prices"](flush_started=_T0 + 0), 2) is True
     await asyncio.wait_for(boundary.join_stamps(), 2)
     assert boundary.bridges.task is None and "bridged_handed_off" not in p.ns["stats"]
     writes = [ids for kind, ids in p.trace if kind == "write"]
@@ -219,13 +224,13 @@ async def test_pure_bridged_cohort_waits_buffered_while_side_flushes_are_fenced(
     boundary = p.ns["catalog_boundary"]
     boundary.standalone_fenced = True
     x.release.set()
-    assert await asyncio.wait_for(p.ns["_flush_prices"](flush_started=1000), 2) is True
+    assert await asyncio.wait_for(p.ns["_flush_prices"](flush_started=_T0 + 0), 2) is True
     await asyncio.wait_for(boundary.join_stamps(), 2)
     assert not any(kind == "write" and 900 in ids for kind, ids in p.trace)
     assert p.ns["price_buffer"] == {900: 0.7, 901: 0.3}
     assert p.ns["stats"]["bridge_waiting"] == 1 and not boundary.bridges.busy()
     boundary.standalone_fenced = False
-    assert await asyncio.wait_for(p.ns["_flush_prices"](flush_started=1001), 2) is True
+    assert await asyncio.wait_for(p.ns["_flush_prices"](flush_started=_T0 + 1), 2) is True
     await asyncio.wait_for(boundary.bridges.join(), 2)
     assert ("write", [900, 901]) in p.trace and not p.ns["price_buffer"]
     assert p.ns["stats"]["bridged_handed_off"] == 2
@@ -237,11 +242,11 @@ async def test_cooling_lock_retry_waits_buffered_and_final_drain_writes_serially
     boundary = p.ns["catalog_boundary"]
     x.release.set()
     p.ns["lock_retry_until"][900] = time.monotonic() + 60  # still cooling down
-    assert await asyncio.wait_for(p.ns["_flush_prices"](flush_started=1000), 2) is True
+    assert await asyncio.wait_for(p.ns["_flush_prices"](flush_started=_T0 + 0), 2) is True
     assert not any(kind == "write" and 900 in ids for kind, ids in p.trace)
     assert not boundary.bridges.busy() and 900 in p.ns["price_buffer"]
     p.ns["lock_retry_until"][900] = 0  # cooldown passed: the writer probes it
-    assert await asyncio.wait_for(p.ns["_flush_prices"](flush_started=1001), 2) is True
+    assert await asyncio.wait_for(p.ns["_flush_prices"](flush_started=_T0 + 1), 2) is True
     await asyncio.wait_for(boundary.bridges.join(), 2)
     await asyncio.wait_for(boundary.join_stamps(), 2)
     assert ("write", [900, 901]) in p.trace and p.ns["stats"]["bridged_handed_off"] == 2
@@ -480,19 +485,19 @@ async def test_failed_bridged_write_reads_no_partial_board_then_recovers(monkeyp
     overlap = _watch_bridged_overlap(p, x)
     x.release.set()
     boundary = p.ns["catalog_boundary"]
-    assert await asyncio.wait_for(p.ns["_flush_prices"](flush_started=1000), 2) is True
+    assert await asyncio.wait_for(p.ns["_flush_prices"](flush_started=_T0 + 0), 2) is True
     await asyncio.wait_for(boundary.bridges.join(), 2)
     await asyncio.wait_for(boundary.join_stamps(), 2)
     assert 1 in x.published
     assert p.ns["price_buffer"] == {900: 0.7, 901: 0.3}
     assert not boundary.bridges.accepting() and not boundary.bridges.take_completed()
-    assert await asyncio.wait_for(p.ns["_flush_prices"](flush_started=1003), 2) is True
+    assert await asyncio.wait_for(p.ns["_flush_prices"](flush_started=_T0 + 3), 2) is True
     assert not boundary.bridges.busy(), "a failure hold leaves the pair buffered"
     boundary.bridges.hold_until = 0
     p.ns["write_chunk"] = _recovered(p, overlap, x)
-    assert await asyncio.wait_for(p.ns["_flush_prices"](flush_started=1006), 2) is True
+    assert await asyncio.wait_for(p.ns["_flush_prices"](flush_started=_T0 + 6), 2) is True
     await asyncio.wait_for(boundary.bridges.join(), 2)
-    assert await asyncio.wait_for(p.ns["_flush_prices"](flush_started=1009), 2) is True
+    assert await asyncio.wait_for(p.ns["_flush_prices"](flush_started=_T0 + 9), 2) is True
     await asyncio.wait_for(boundary.join_stamps(), 2)
     recovered = p.trace.index(("write", [900, 901]))
     frames = [i for i, entry in enumerate(p.trace) if entry == ("event_frame", 2)]
@@ -542,7 +547,7 @@ async def test_an_untimed_flush_neither_writes_nor_withdraws_a_reserved_event(mo
     entered, release_bridge = _held_bridge(p)
     x.release.set()
     boundary = p.ns["catalog_boundary"]
-    assert await asyncio.wait_for(p.ns["_flush_prices"](flush_started=1000), 2) is True
+    assert await asyncio.wait_for(p.ns["_flush_prices"](flush_started=_T0 + 0), 2) is True
     try:
         await asyncio.wait_for(entered.wait(), 2)
         p.ns["price_buffer"].update({900: 0.72, 901: 0.28})
@@ -627,10 +632,10 @@ async def test_repeated_cancellation_of_a_catalog_handover_keeps_the_bridged_sta
 
     update = None
     try:
-        assert await asyncio.wait_for(p.ns["flush_prices"](flush_started=1000), 2) is True
+        assert await asyncio.wait_for(p.ns["flush_prices"](flush_started=_T0 + 0), 2) is True
         await asyncio.wait_for(boundary.bridges.join(), 2)  # the pair committed
         writer = boundary.bridges.task
-        assert await asyncio.wait_for(p.ns["flush_prices"](flush_started=1001), 2) is True
+        assert await asyncio.wait_for(p.ns["flush_prices"](flush_started=_T0 + 1), 2) is True
         await asyncio.wait_for(x.second_stamp.wait(), 2)  # its stamp holds
         p.ns["price_buffer"].update({900: 0.72, 901: 0.28})
         update = asyncio.create_task(handover())
@@ -885,7 +890,7 @@ async def test_shutdown_joins_the_writer_then_drains_and_stamps(phase):
         ROOT / "app/tasks/polymarket_ws.py", ["drain_prices", "join_flushes_then_drain"], p.ns,
     )
     boundary = p.ns["catalog_boundary"]
-    assert await asyncio.wait_for(p.ns["flush_prices"](flush_started=1000), 1) is True
+    assert await asyncio.wait_for(p.ns["flush_prices"](flush_started=_T0 + 0), 1) is True
     assert boundary.bridges.busy() and boundary.bridges.reserved == {10}
     await asyncio.wait_for(
         (write_entered if phase == "write" else publishing).wait(), 1,
