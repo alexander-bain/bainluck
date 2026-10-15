@@ -1299,6 +1299,13 @@ export interface FuturesHistoryPoint {
   probability: number | null;
   american_odds: number | null;
   bookmaker: string;
+  /** #683 — present only on a point recovered from Kalshi's archive
+   *  (`"kalshi_archive"`). Such a point is an interval: `timestamp` is its
+   *  close, `interval_start` its open. Live points carry none of these. */
+  provenance?: string;
+  interval_start?: string;
+  period_minutes?: number;
+  price_basis?: "traded_interval" | "quote_only" | string;
 }
 
 export interface FuturesOutcomeHistory {
@@ -1330,6 +1337,15 @@ export interface FuturesHistoryResponse {
   auto_extended?: boolean;
   /** True if fewer than 10 total data points (very sparse) */
   sparse?: boolean;
+  /** #683 — the server's account of what the Kalshi archive served, present only
+   *  when the archive store answered. Metadata: the chart labels archive points
+   *  from the points themselves (`lib/archiveHistory.ts`), never from this block. */
+  archive_history?: {
+    state: string;
+    points_served: number;
+    observed_from?: string | null;
+    observed_through?: string | null;
+  };
 }
 
 /** DataGolf leaderboard entry stored in FuturesMarket.metadata.leaderboard */
