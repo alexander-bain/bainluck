@@ -231,6 +231,31 @@ describe("#9483 journey 6 — expiry while reading", () => {
     const stillCurrent = displayedCards([finish], [finish], KICKOFF + 40 * MIN);
     expect((stillCurrent[0] as FinishCard).projectedNow).toEqual(finish.projectedNow);
   });
+
+  it("a held projection leaves on its OWN clock even while a newer live projection is current (v334)", () => {
+    const finish: FinishCard = {
+      kind: "finish",
+      id: "finish",
+      phase: "during",
+      pregame: { away: 20.5, home: 23.5, at: KICKOFF - MIN },
+      projectedNow: { away: 24, home: 17, at: KICKOFF + 30 * MIN },
+      final: null,
+    };
+    const newer: FinishCard = { ...finish, projectedNow: { away: 27, home: 17, at: KICKOFF + 85 * MIN } };
+    // One hour after its own capture it still reads as current.
+    const within = displayedCards([finish], [newer], KICKOFF + 90 * MIN);
+    expect((within[0] as FinishCard).projectedNow).toEqual(finish.projectedNow);
+    // Past the capture gap it leaves: the newer one waits behind Refresh, never swapped in.
+    const past = displayedCards([finish], [newer], KICKOFF + 91 * MIN) as FinishCard[];
+    expect(past[0].projectedNow).toBeNull();
+    expect(past[0].pregame).toEqual(finish.pregame);
+    const header = { match: "", chances: "" };
+    expect(
+      readerHasUpdate({ held: [finish], heldHeader: header, heldRows: {}, live: [newer], liveHeader: header, liveRows: {}, nowMs: KICKOFF + 91 * MIN }),
+    ).toBe(true);
+    // A live projection whose own capture is that old is not current either.
+    expect((cardAt(newer, KICKOFF + 146 * MIN) as FinishCard).projectedNow).toBeNull();
+  });
 });
 
 describe("#9483 projected finish", () => {

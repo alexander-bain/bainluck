@@ -29,6 +29,7 @@ import { SOURCE_STALE_AFTER_MS, sourceAgeMs } from "./sourceAge";
 import { isFinishedStatus } from "./eventState";
 import {
   buildProjectedFinalPointsSeries,
+  MAX_CAPTURE_GAP_MS,
   type ProjectedFinalPointsInput,
 } from "./projectedFinalPointsSeries";
 import type { LadderCard } from "./nbaEventCards";
@@ -319,7 +320,11 @@ export function isRecentQuote(observedAt: string | null | undefined, nowMs: numb
   return age !== null && age <= SOURCE_STALE_AFTER_MS;
 }
 
-/** The card as it may be shown at `nowMs`: an unobserved pregame price loses its number. */
+/**
+ * The card as it may be shown at `nowMs`: an unobserved pregame price loses its
+ * number, and so does a live projection whose own capture is older than the
+ * series' capture gap (or undatable) — even when a newer projection exists.
+ */
 export function cardAt(card: NflEventCard, nowMs: number): NflEventCard {
   if (card.kind === "ladder") {
     // Same rule for the NBA ladders (`ladderAt`): only a pregame price ages.
@@ -331,6 +336,11 @@ export function cardAt(card: NflEventCard, nowMs: number): NflEventCard {
       return { ...p, chance: null };
     });
     return aged ? { ...card, points } : card;
+  }
+  if (card.kind === "finish") {
+    const at = card.projectedNow?.at ?? null;
+    if (!card.projectedNow || (at !== null && nowMs - at <= MAX_CAPTURE_GAP_MS)) return card;
+    return { ...card, projectedNow: null };
   }
   if (card.kind !== "milestone" || card.basis !== "pregamePrice") return card;
   let changed = false;
