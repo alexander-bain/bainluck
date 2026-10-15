@@ -4845,7 +4845,7 @@ jobs:
             echo "::error::#837 stamp deadlock gate SKIPPED — the gate did not run"
             exit 1
           fi
-          grep -qE "[^0-9]4 passed," /tmp/deadlock837.txt || {
+          grep -qE "[^0-9]4 passed[,[:space:]]" /tmp/deadlock837.txt || {
             echo "::error::#837 stamp gate did not run all four cases"
             exit 1
           }
@@ -4872,7 +4872,7 @@ jobs:
             echo "::error::#10661 price lock budget gate SKIPPED — the gate did not run"
             exit 1
           fi
-          grep -qE "[^0-9]7 passed," /tmp/pricelock10661.txt || {
+          grep -qE "[^0-9]7 passed[,[:space:]]" /tmp/pricelock10661.txt || {
             echo "::error::#10661 price lock budget gate did not run all seven cases"
             exit 1
           }
@@ -4901,7 +4901,7 @@ jobs:
             echo "::error::#10090 live-beside gate SKIPPED — the gate did not run"
             exit 1
           fi
-          grep -qE "[^0-9]8 passed," /tmp/livebeside10090.txt || {
+          grep -qE "[^0-9]8 passed[,[:space:]]" /tmp/livebeside10090.txt || {
             echo "::error::#10090 live-beside gate did not run all eight cases"
             exit 1
           }
@@ -6522,7 +6522,7 @@ jobs:
             exit 1
           fi
           # `[^0-9]` so a future `114 passed` cannot satisfy a gate asking for 14.
-          grep -qE "[^0-9]14 passed," /tmp/own7594.txt || {
+          grep -qE "[^0-9]14 passed[,[:space:]]" /tmp/own7594.txt || {
             echo "::error::#7594 contract did not run all fourteen cases"
             exit 1
           }
@@ -6590,7 +6590,7 @@ jobs:
             exit 1
           fi
           # `[^0-9]` so a future `16 passed` cannot satisfy a gate asking for 6.
-          grep -qE "[^0-9]6 passed," /tmp/delay7617.txt || {
+          grep -qE "[^0-9]6 passed[,[:space:]]" /tmp/delay7617.txt || {
             echo "::error::#7617 delay contract did not run all six cases"
             exit 1
           }
@@ -6612,7 +6612,7 @@ jobs:
             echo "::error::#8755 withdrawn-listing contract SKIPPED — the gate did not run"
             exit 1
           fi
-          grep -qE "[^0-9]6 passed," /tmp/withdrawn8755.txt || {
+          grep -qE "[^0-9]6 passed[,[:space:]]" /tmp/withdrawn8755.txt || {
             echo "::error::#8755 withdrawn-listing contract did not run all six cases"
             exit 1
           }
@@ -6632,7 +6632,7 @@ jobs:
             echo "::error::#9588 later-session contract SKIPPED — the gate did not run"
             exit 1
           fi
-          grep -qE "[^0-9]14 passed," /tmp/latersession9588.txt || {
+          grep -qE "[^0-9]14 passed[,[:space:]]" /tmp/latersession9588.txt || {
             echo "::error::#9588 later-session contract did not run all fourteen cases"
             exit 1
           }
@@ -6653,7 +6653,7 @@ jobs:
             echo "::error::#10300 future-start live contract SKIPPED — the gate did not run"
             exit 1
           fi
-          grep -qE "[^0-9]8 passed," /tmp/futurelive10300.txt || {
+          grep -qE "[^0-9]8 passed[,[:space:]]" /tmp/futurelive10300.txt || {
             echo "::error::#10300 future-start live contract did not run all eight cases"
             exit 1
           }
@@ -6674,7 +6674,7 @@ jobs:
             echo "::error::#10022 open-contract leg-grade contract SKIPPED — the gate did not run"
             exit 1
           fi
-          grep -qE "[^0-9]8 passed," /tmp/openleg10022.txt || {
+          grep -qE "[^0-9]8 passed[,[:space:]]" /tmp/openleg10022.txt || {
             echo "::error::#10022 open-contract leg-grade contract did not run all eight cases"
             exit 1
           }
@@ -6743,7 +6743,7 @@ jobs:
             echo "::error::#7878 evidence collapse SKIPPED — the gate did not run"
             exit 1
           fi
-          grep -qE "[^0-9]22 passed," /tmp/evidence7878.txt || {
+          grep -qE "[^0-9]22 passed[,[:space:]]" /tmp/evidence7878.txt || {
             echo "::error::#7878 evidence collapse did not run all twenty-two cases (#8514 added the backfilled-row case; the retention-selection blocker added seven selector cases)"
             exit 1
           }
@@ -6764,7 +6764,7 @@ jobs:
             echo "::error::#7878 wire gate SKIPPED — the gate did not run"
             exit 1
           fi
-          grep -qE "[^0-9]4 passed," /tmp/wire7878.txt || {
+          grep -qE "[^0-9]4 passed[,[:space:]]" /tmp/wire7878.txt || {
             echo "::error::#7878 wire gate did not run all four cases (#8514 added the two ESPN backfill cases)"
             exit 1
           }
@@ -6785,7 +6785,7 @@ jobs:
             echo "::error::#8796 ESPN-pass contract SKIPPED — the gate did not run"
             exit 1
           fi
-          grep -qE "[^0-9]5 passed," /tmp/espnpass8796.txt || {
+          grep -qE "[^0-9]5 passed[,[:space:]]" /tmp/espnpass8796.txt || {
             echo "::error::#8796 ESPN-pass contract did not run all five cases"
             exit 1
           }
@@ -6806,7 +6806,7 @@ jobs:
             echo "::error::#9797 tennis release-savepoint contract SKIPPED — the gate did not run"
             exit 1
           fi
-          grep -qE "[^0-9]2 passed," /tmp/tennisrelease9797.txt || {
+          grep -qE "[^0-9]2 passed[,[:space:]]" /tmp/tennisrelease9797.txt || {
             echo "::error::#9797 tennis release-savepoint contract did not run both cases"
             exit 1
           }
@@ -6826,7 +6826,7 @@ jobs:
             echo "::error::#9049 ESPN row-release gate SKIPPED — the gate did not run"
             exit 1
           fi
-          grep -qE "[^0-9]4 passed," /tmp/espnrelease9049.txt || {
+          grep -qE "[^0-9]4 passed[,[:space:]]" /tmp/espnrelease9049.txt || {
             echo "::error::#9049 ESPN row-release gate did not run all four cases (CERT-3611 added the same-sport dated-board case)"
             exit 1
           }
@@ -6846,7 +6846,7 @@ jobs:
             echo "::error::#9602 playoff-mark gate SKIPPED — the gate did not run"
             exit 1
           fi
-          grep -qE "[^0-9]2 passed," /tmp/playoff9602.txt || {
+          grep -qE "[^0-9]2 passed[,[:space:]]" /tmp/playoff9602.txt || {
             echo "::error::#9602 playoff-mark gate did not run both cases"
             exit 1
           }
@@ -6866,7 +6866,7 @@ jobs:
             echo "::error::#9713 settled box-score gate SKIPPED — the gate did not run"
             exit 1
           fi
-          grep -qE "[^0-9]2 passed," /tmp/settledbox9713.txt || {
+          grep -qE "[^0-9]2 passed[,[:space:]]" /tmp/settledbox9713.txt || {
             echo "::error::#9713 settled box-score gate did not run both cases"
             exit 1
           }
@@ -6887,7 +6887,7 @@ jobs:
             echo "::error::#8913 live box-score gate SKIPPED — the gate did not run"
             exit 1
           fi
-          grep -qE "[^0-9]2 passed," /tmp/livebox8913.txt || {
+          grep -qE "[^0-9]2 passed[,[:space:]]" /tmp/livebox8913.txt || {
             echo "::error::#8913 live box-score gate did not run both cases"
             exit 1
           }
@@ -6908,7 +6908,7 @@ jobs:
             echo "::error::#9067 live box-score reach gate SKIPPED — the gate did not run"
             exit 1
           fi
-          grep -qE "[^0-9]2 passed," /tmp/livebox9067.txt || {
+          grep -qE "[^0-9]2 passed[,[:space:]]" /tmp/livebox9067.txt || {
             echo "::error::#9067 live box-score reach gate did not run both cases"
             exit 1
           }
