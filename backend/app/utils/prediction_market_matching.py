@@ -14,6 +14,7 @@ from datetime import datetime, timedelta, timezone
 
 from app.utils.name_normalization import (
     _MATCH_STOPWORDS,
+    expand_city_abbreviations,
     expand_trailing_state_abbrev as _expand_trailing_state_abbrev,
     normalize_name as _normalize_name,
     normalize_team_name_for_matching as _normalize_for_matching,
@@ -2021,10 +2022,71 @@ def _doubles_pair_match(market_team: str, event_team: str) -> bool:
     return pairs_one_to_one(event, market) or pairs_one_to_one(market, event)
 
 
+#: Kalshi's truncated side: one or two capitals standing in for a nickname
+#: (`Los Angeles C`, `Chicago WS`). Raw text, so the case is the evidence.
+_CITY_INITIALS_TAIL_RE = re.compile(r"[A-Z]{1,2}")
+
+
+def _city_initials_names_team(outcome_name: str, event_team: str) -> bool:
+    """``Los Angeles C`` names ``LA Clippers``: city plus nickname initials. #10090.
+
+    WHY. Kalshi writes a shared city's clubs as the city and the nickname's
+    initials, and ESPN writes the Clippers as ``LA Clippers``.
+    :func:`_fuzzy_team_match` cannot join those: ``los angeles c`` is not inside
+    ``la clippers``, and ``normalize_name`` deletes a trailing ``c`` anyway. So
+    the Clippers outcome named no side. Denver named the away side, and the
+    reader priced the home team as ``1 - Denver`` and ignored the home team's
+    own book. Measured 2026-10-15 04:06Z, Nuggets at Clippers (event 15326747,
+    market 64805004): the home book was 0.54/0.55 and Denver's was 0.46/0.47.
+    The Kalshi leg held 0.535 for 8.4 s while the home outcome stood at 0.545.
+
+    THE RULE, the same as ``team_linking._match_league_team_by_city_initials``
+    (#9617) with ESPN's city abbreviations expanded on both sides. The RAW last
+    word of the outcome must be one or two capitals. Everything before it must
+    equal the team's name minus a one- or two-word nickname, and the capitals
+    must be that nickname's initials. ``Los Angeles C`` therefore names
+    ``LA Clippers`` and does not name ``Los Angeles Lakers``. The linker's
+    containment rule still lets ``Los Angeles C`` reach the Lakers, because the
+    trailing ``c`` is deleted. In a Lakers-Clippers game that name therefore
+    reaches both sides, and the callers refuse it (#4629). The Lakers row then
+    orients the market alone. Before this arm the same name named only the
+    Lakers, so with the Clippers favoured the Clippers' price was read as the
+    Lakers'.
+
+    DELIBERATELY NOT INSIDE ``_fuzzy_team_match``, for #8722's reason. The
+    linker uses that function. This rule is only for the resolvers, which
+    already hold a market the linker attached to this event and only have to
+    pick a side.
+    """
+    tokens = (outcome_name or "").split()
+    if len(tokens) < 2 or not _CITY_INITIALS_TAIL_RE.fullmatch(tokens[-1]):
+        return False
+    initials = tokens[-1]
+    city = expand_city_abbreviations(_normalize_for_matching(" ".join(tokens[:-1])))
+    if not city:
+        return False
+    words = (event_team or "").split()
+    for k in (1, 2):
+        if len(words) <= k:
+            continue
+        nickname = words[-k:]
+        if "".join(word[0] for word in nickname).upper() != initials:
+            continue
+        team_city = expand_city_abbreviations(
+            _normalize_for_matching(" ".join(words[:-k]))
+        )
+        if team_city == city:
+            return True
+    return False
+
+
 def _outcome_names_team(outcome_name: str, event_team: str) -> bool:
-    """The moneyline resolvers' side test: the linker's rule, plus doubles pairs."""
-    return _fuzzy_team_match(outcome_name, event_team) or _doubles_pair_match(
-        outcome_name, event_team
+    """The moneyline resolvers' side test: the linker's rule, plus doubles pairs
+    and Kalshi's city-plus-initials sides."""
+    return (
+        _fuzzy_team_match(outcome_name, event_team)
+        or _doubles_pair_match(outcome_name, event_team)
+        or _city_initials_names_team(outcome_name, event_team)
     )
 
 
