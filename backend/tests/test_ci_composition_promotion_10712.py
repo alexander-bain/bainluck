@@ -48,6 +48,44 @@ python -m pytest $FILES -q --durations=0
 """
 
 
+# These are only reviewed workflow-defined keys, not a claim that runner,
+# installed-package, test and production environments are equivalent.
+JOB_ENV_KEYS = {
+    "database-integration": {"DATABASE_URL", "SEARCH_TEST_DATABASE_URL"},
+    "deploy": {"HEROKU_API_KEY"},
+}
+STEP_ENV_KEYS = {
+    (
+        "database-integration",
+        "#7351 an ordinary market's chart serves the venue history our polls missed",
+    ): {"REDIS_URL", "KALSHI_API_KEY"},
+    (
+        "database-integration",
+        "#8000 supported venue history survives display selection",
+    ): {"REDIS_URL", "KALSHI_API_KEY"},
+    (
+        "database-integration",
+        "#7547 the phone's selected range keeps the venue's genuine turns",
+    ): {"REDIS_URL", "KALSHI_API_KEY"},
+    (
+        "database-integration",
+        "#7548 a ~$45 trade print is not a championship probability",
+    ): {"REDIS_URL"},
+    ("search-recall", "Every database integration group passed"): {
+        "SCOPE_RESULT",
+        "INTEGRATION_RESULT",
+    },
+}
+
+
+def _allowed_environment(env, allowed, scope):
+    env = {} if env is None else env
+    assert isinstance(env, dict), f"{scope} environment must be a mapping"
+    assert (
+        set(env) <= allowed
+    ), f"unreviewed {scope} environment keys: {set(env) - allowed}"
+
+
 def _workflow():
     return yaml.safe_load(CI.read_text(encoding="utf-8"))
 
@@ -83,10 +121,25 @@ def _current_checkout(job):
     return step
 
 
-def _validate_current_composed_promotion(jobs, *, workflow_defaults=None):
+def _validate_current_composed_promotion(
+    jobs, *, workflow_defaults=None, workflow_env=None
+):
     """A narrow current-workflow contract, not an arbitrary shell interpreter."""
     if workflow_defaults is None:
         workflow_defaults = _workflow().get("defaults", {})
+    if workflow_env is None:
+        workflow_env = _workflow().get("env", {})
+    _allowed_environment(workflow_env, set(), "workflow")
+    for name, job in jobs.items():
+        _allowed_environment(
+            job.get("env"), JOB_ENV_KEYS.get(name, set()), f"{name} job"
+        )
+        for step in job.get("steps", []):
+            _allowed_environment(
+                step.get("env"),
+                STEP_ENV_KEYS.get((name, step.get("name")), set()),
+                f"{name}/{step.get('name', step.get('uses'))} step",
+            )
     # A custom shell may exit successfully without executing {0}, regardless
     # of the guarded run bytes. All three inheritance scopes must retain the
     # reviewed runner-default shell, including sibling/aggregate gate jobs.
@@ -302,6 +355,56 @@ def test_custom_shell_cannot_skip_guarded_run_body(scope, job_name, step_prefix)
         _validate_current_composed_promotion(
             jobs, workflow_defaults=workflow.get("defaults", {})
         )
+
+
+@pytest.mark.parametrize(
+    "scope,job_name,step_prefix,key,value",
+    [
+        ("workflow", None, None, "PYTEST_ADDOPTS", "-k startup"),
+        ("workflow", None, None, "BASH_ENV", "/tmp/skip-body.sh"),
+        ("job", "backend-tests", None, "PYTEST_ADDOPTS", "-k startup"),
+        ("job", "shard-completeness", None, "PYTEST_ADDOPTS", "-k startup"),
+        ("job", "database-integration", None, "PYTEST_ADDOPTS", "-k startup"),
+        ("job", "deploy", None, "BASH_ENV", "/tmp/skip-body.sh"),
+        ("step", "backend-tests", "Run tests", "BASH_ENV", "/tmp/skip-body.sh"),
+        ("step", "backend-tests", "Run tests", "PYTEST_ADDOPTS", "-k startup"),
+        (
+            "step",
+            "backend-tests",
+            "Install dependencies",
+            "PIP_CONFIG_FILE",
+            "/tmp/component-pip.conf",
+        ),
+        (
+            "step",
+            "database-integration",
+            "#7351 an ordinary market's chart serves the venue history our polls missed",
+            "PYTEST_ADDOPTS",
+            "-k startup",
+        ),
+        (
+            "step",
+            "search-recall",
+            "Every database integration group passed",
+            "BASH_ENV",
+            "/tmp/skip-body.sh",
+        ),
+        ("step", "deploy", "Deploy to Heroku", "BASH_ENV", "/tmp/skip-body.sh"),
+    ],
+)
+def test_unreviewed_environment_cannot_change_the_guarded_execution(
+    scope, job_name, step_prefix, key, value
+):
+    workflow = copy.deepcopy(_workflow())
+    jobs = workflow["jobs"]
+    if scope == "workflow":
+        workflow.setdefault("env", {})[key] = value
+    elif scope == "job":
+        jobs[job_name].setdefault("env", {})[key] = value
+    else:
+        _step(jobs[job_name], step_prefix).setdefault("env", {})[key] = value
+    with pytest.raises(AssertionError, match="environment"):
+        _validate_current_composed_promotion(jobs, workflow_env=workflow.get("env", {}))
 
 
 # Literal minimal historical shape, not historical dependency reconstruction.
