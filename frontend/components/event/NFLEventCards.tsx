@@ -450,7 +450,7 @@ export function MilestoneCardView({
             className="flex-1 min-h-11 rounded-md hover:bg-surface-elevated"
           >
             {readout}
-            <span className="sr-only">Shows this line&apos;s exact quote</span>
+            <span className="sr-only">Opens this line&apos;s details</span>
           </button>
         ) : (
           <div className="flex-1 min-h-11 flex items-center justify-center" aria-live="polite">

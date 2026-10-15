@@ -26,10 +26,13 @@ import { sourceLabel } from "@/lib/sourceLabels";
 import {
   displayedCards,
   formatPoints,
+  lineLead,
+  lineLeadLabel,
   openReader,
   readerHasUpdate,
   readerReducer,
   targetLabel,
+  type MilestoneBasis,
   type NflEventCard,
   type NflPropRow,
   type ReaderHeader,
@@ -247,7 +250,12 @@ export default function EventCardReader({
               })}
             </div>
             {detailsRow !== undefined || state.detailsRowId ? (
-              <LineDetails row={detailsRow} doneRef={detailsDoneRef} onDone={() => dispatch({ type: "details", rowId: null })} />
+              <LineDetails
+                row={detailsRow}
+                lead={state.detailsRowId ? lineLead(cards, state.detailsRowId) : null}
+                doneRef={detailsDoneRef}
+                onDone={() => dispatch({ type: "details", rowId: null })}
+              />
             ) : null}
           </div>
           <div className="flex items-center gap-1 px-3 py-2 border-t border-surface-border">
@@ -292,13 +300,21 @@ export default function EventCardReader({
 /**
  * The exact original row behind a line: what the venue quoted and when, the
  * pregame mark, and the server's grade — each named for what it is.
+ *
+ * Hierarchy (v335): the selected side's pregame chance leads — exactly the
+ * number its card prints for the line (`lineLead`), never one re-derived from
+ * the row — then the final and its grade as a separate Result, then the dated
+ * quote and its venue as secondary, so a later quote never reads as the
+ * earlier probability. No lead, no headline: nothing is promoted into it.
  */
 export function LineDetails({
   row,
+  lead = null,
   onDone,
   doneRef,
 }: {
   row: NflPropRow | OptionDetail | undefined;
+  lead?: { chance: number; basis: MilestoneBasis } | null;
   onDone: () => void;
   doneRef?: Ref<HTMLButtonElement>;
 }) {
@@ -325,39 +341,27 @@ export function LineDetails({
           </button>
         </div>
         {row ? (
-          <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-2 text-sm">
-            <dt className="col-span-2 font-semibold text-text-primary">{row.outcome_name}</dt>
-            <dt className="text-text-secondary">Market</dt>
-            <dd className="text-text-primary">{row.market_name}</dd>
-            {row.threshold !== null && (
-              <>
-                <dt className="text-text-secondary">Line</dt>
-                <dd className="text-text-primary">{targetLabel(row.threshold)}</dd>
-              </>
-            )}
-            {typeof row.pregame_mark === "number" && (
-              <>
-                <dt className="text-text-secondary">Pregame baseline</dt>
-                <dd className="text-text-primary tabular-nums">{formatProbability(row.pregame_mark)}</dd>
-              </>
-            )}
-            {typeof row.over_probability === "number" && (
-              <>
-                <dt className="text-text-secondary">Last quote</dt>
-                <dd className="text-text-primary tabular-nums">{formatProbability(row.over_probability)}</dd>
-                <dt className="text-text-secondary">Quoted</dt>
-                <dd className="text-text-primary">{formatSourceStamp(row.observed_at) ?? "Time unknown"}</dd>
-              </>
-            )}
-            {venue && (
-              <>
-                <dt className="text-text-secondary">Venue</dt>
-                <dd className="text-text-primary">{venue}</dd>
-              </>
+          <>
+            <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-2 text-sm">
+              <dt className="col-span-2 font-semibold text-text-primary">{row.outcome_name}</dt>
+              <dt className="text-text-secondary">Market</dt>
+              <dd className="text-text-primary">{row.market_name}</dd>
+              {row.threshold !== null && (
+                <>
+                  <dt className="text-text-secondary">Line</dt>
+                  <dd className="text-text-primary">{targetLabel(row.threshold)}</dd>
+                </>
+              )}
+            </dl>
+            {lead && (
+              <div data-testid="line-details-pregame">
+                <div className="text-xs font-semibold uppercase tracking-wide text-text-secondary">{lineLeadLabel(lead.basis)}</div>
+                <div className="text-3xl font-bold text-text-primary tabular-nums">{formatProbability(lead.chance)}</div>
+              </div>
             )}
             {(typeof row.actual === "number" || typeof row.hit === "boolean") && (
-              <>
-                <dt className="col-span-2 pt-2 font-semibold text-text-primary">Result</dt>
+              <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-2 text-sm" data-testid="line-details-result">
+                <dt className="col-span-2 font-semibold text-text-primary">Result</dt>
                 {typeof row.actual === "number" && (
                   <>
                     <dt className="text-text-secondary">Final</dt>
@@ -370,9 +374,31 @@ export function LineDetails({
                     <dd className="text-text-primary">{propVerdictLabel(row.hit)}</dd>
                   </>
                 )}
-              </>
+              </dl>
             )}
-          </dl>
+            {(typeof row.over_probability === "number" || venue) && (
+              <dl
+                className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-xs text-text-secondary border-t border-surface-border pt-3"
+                data-testid="line-details-quote"
+              >
+                <dt className="col-span-2 font-semibold">Quote &amp; source</dt>
+                {typeof row.over_probability === "number" && (
+                  <>
+                    <dt>Last quote</dt>
+                    <dd className="tabular-nums">{formatProbability(row.over_probability)}</dd>
+                    <dt>Quoted</dt>
+                    <dd>{formatSourceStamp(row.observed_at) ?? "Time unknown"}</dd>
+                  </>
+                )}
+                {venue && (
+                  <>
+                    <dt>Venue</dt>
+                    <dd>{venue}</dd>
+                  </>
+                )}
+              </dl>
+            )}
+          </>
         ) : (
           <p className="text-sm text-text-secondary">This line is no longer offered.</p>
         )}

@@ -352,6 +352,26 @@ export function cardAt(card: NflEventCard, nowMs: number): NflEventCard {
   return changed ? { ...card, rungs } : card;
 }
 
+/**
+ * The headline a line's Details may lead with: the chance its card prints for
+ * that line right now, and the card's basis to name it by — never re-derived
+ * from the row. Before kickoff the row's `pregame_mark` is the opening line,
+ * not the pregame chance, so it never leads. Null when no displayed card
+ * carries the line or the card prints no number for it.
+ */
+export function lineLead(cards: NflEventCard[], rowId: string): { chance: number; basis: MilestoneBasis } | null {
+  for (const card of cards) {
+    if (card.kind !== "milestone") continue;
+    const rung = card.rungs.find((r) => r.rowId === rowId);
+    if (rung) return rung.chance === null ? null : { chance: rung.chance, basis: card.basis };
+  }
+  return null;
+}
+
+export function lineLeadLabel(basis: MilestoneBasis): string {
+  return basis === "pregamePrice" ? "Pregame chance" : "Chance before kickoff";
+}
+
 /** Kalshi's subject before the colon of `outcome_name` names a team, not a player. */
 export function isTeamSubject(subject: string, teams: string[]): boolean {
   const name = subject.trim().toLowerCase();

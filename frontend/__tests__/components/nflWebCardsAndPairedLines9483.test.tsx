@@ -20,6 +20,7 @@ import { AnalyticsProvider } from "@/components/Analytics";
 import EventCardReader, { LineDetails } from "@/components/event/EventCardReader";
 import { NFLEventCardDeck } from "@/components/event/NFLEventCards";
 import {
+  lineLead,
   milestoneCards,
   propRowId,
   readerHeader,
@@ -183,8 +184,8 @@ describe("#9483 the full-size reader", () => {
 
 describe("#9483 a line's exact details", () => {
   it("names each number for what it is and always dates the last quote", () => {
-    const html = renderToStaticMarkup(<LineDetails row={PROPS[2]} onDone={noop} />);
-    expect(html).toContain("Pregame baseline");
+    const html = renderToStaticMarkup(<LineDetails row={PROPS[2]} lead={{ chance: 0.4, basis: "pregameMark" }} onDone={noop} />);
+    expect(html).toContain("Chance before kickoff");
     expect(html).toContain("Last quote");
     expect(html).toContain("Quoted");
     expect(html).not.toContain("Time unknown");
@@ -194,6 +195,58 @@ describe("#9483 a line's exact details", () => {
     expect(html).toContain(">HIT<");
     const undated = renderToStaticMarkup(<LineDetails row={{ ...PROPS[2], observed_at: null }} onDone={noop} />);
     expect(undated).toContain("Time unknown");
+  });
+
+  it("v335: the card's chance leads, the result is its own group, and the dated quote is secondary", () => {
+    const row = { ...PROPS[2], pregame_mark: 0.295, over_probability: 1, actual: 84, hit: true };
+    const html = renderToStaticMarkup(<LineDetails row={row} lead={{ chance: 0.295, basis: "pregameMark" }} onDone={noop} />);
+    const pregame = html.indexOf('data-testid="line-details-pregame"');
+    const result = html.indexOf('data-testid="line-details-result"');
+    const quote = html.indexOf('data-testid="line-details-quote"');
+    expect(pregame).toBeGreaterThan(-1);
+    expect(result).toBeGreaterThan(pregame);
+    expect(quote).toBeGreaterThan(result);
+    // The 100% quote lives only in the secondary group, never beside the lead.
+    const lead = html.slice(pregame, result);
+    expect(lead).toContain("Chance before kickoff");
+    expect(lead).toContain("30%");
+    expect(lead).not.toContain("100%");
+    expect(html.slice(quote)).toContain("100%");
+    expect(html.slice(quote)).toContain("Quote &amp; source");
+  });
+
+  it("v335: with no lead the sheet has no headline — neither the quote nor the row's mark is promoted", () => {
+    const row = { ...PROPS[2], pregame_mark: 0.42, over_probability: 0.62 };
+    const html = renderToStaticMarkup(<LineDetails row={row} onDone={noop} />);
+    expect(html).not.toContain('data-testid="line-details-pregame"');
+    expect(html).not.toContain("42%");
+    expect(html.slice(html.indexOf('data-testid="line-details-quote"'))).toContain("62%");
+  });
+
+  it("v335: before kickoff the lead is the card's current quote, not the row's mark (the opening line)", () => {
+    // Before kickoff the server's `pregame_mark` falls back to the opening line;
+    // the card prints the recent quote, and the sheet leads with the card's number.
+    const pre: NflPropRow[] = PROPS.slice(0, 5).map((r) => ({ ...r, actual: null, hit: null, observed_at: iso(-30) }));
+    const row = pre[2];
+    expect(row.pregame_mark).toBeCloseTo(0.53);
+    expect(row.over_probability).toBeCloseTo(0.58);
+    const cards = milestoneCards({
+      props: pre,
+      eventStatus: "scheduled",
+      commenceTime: iso(0),
+      homeTeam: HOME,
+      awayTeam: AWAY,
+      nowMs: KICKOFF - 25 * MIN,
+    });
+    const lead = lineLead(cards, propRowId(row));
+    expect(lead).toEqual({ chance: 0.58, basis: "pregamePrice" });
+    const html = renderToStaticMarkup(<LineDetails row={row} lead={lead} onDone={noop} />);
+    const head = html.slice(html.indexOf('data-testid="line-details-pregame"'), html.indexOf('data-testid="line-details-quote"'));
+    expect(head).toContain("Pregame chance");
+    expect(head).toContain("58%");
+    expect(html).not.toContain("53%");
+    // A line the displayed cards do not carry has no lead.
+    expect(lineLead(cards, "nope")).toBeNull();
   });
 
   it("a row that is no longer served says so", () => {
