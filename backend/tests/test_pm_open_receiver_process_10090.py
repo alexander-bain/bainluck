@@ -4,6 +4,7 @@ Real child processes and real pipes; only the venue socket is replaced, by a
 fake client inside the child that emits as fast as the pipe lets it.
 """
 
+import ast
 import asyncio
 import hashlib
 import os
@@ -11,6 +12,7 @@ import random
 import subprocess
 import sys
 import textwrap
+from contextlib import contextmanager
 
 import pytest
 
@@ -32,6 +34,12 @@ DRIVER = textwrap.dedent(
             return ids
         return [len(ids), hashlib.sha256("\\n".join(ids).encode()).hexdigest()]
 
+    def publish_emitted(count):
+        temporary = LEDGER + ".tmp"
+        with open(temporary, "w") as f:
+            f.write(str(count))
+        os.replace(temporary, LEDGER)
+
     class FakeClient:
         def __init__(self, **config):
             self.config, self.updates, self.emitted = config, [], 0
@@ -50,13 +58,39 @@ DRIVER = textwrap.dedent(
                 handler = self.on_trade if seq % 5 == 4 else self.on_price
                 await handler({"asset_id": ids[seq % len(ids)], "seq": seq, "pad": PAD})
                 self.emitted = seq + 1
-                with open(LEDGER, "w") as f:
-                    f.write(str(self.emitted))
+                publish_emitted(self.emitted)
             await asyncio.Event().wait()
 
     sys.exit(asyncio.run(pwp.serve_receiver(FakeClient)))
     """
 )
+
+
+def test_child_ledger_publishes_only_complete_counts(tmp_path):
+    """Inspect during the actual driver's write, before atomic publication."""
+    ledger = tmp_path / "emitted"
+    ledger.write_text("7")
+    observed = []
+
+    @contextmanager
+    def inspecting_open(path, mode):
+        with open(path, mode) as stream:
+            # With the old direct writer, opening truncates the visible ledger.
+            observed.append(int(ledger.read_text()))
+            yield stream
+            stream.flush()
+            observed.append(int(ledger.read_text()))
+
+    definition = next(
+        node for node in ast.parse(DRIVER).body
+        if isinstance(node, ast.FunctionDef) and node.name == "publish_emitted"
+    )
+    namespace = {"LEDGER": str(ledger), "open": inspecting_open, "os": os}
+    exec(compile(ast.Module(body=[definition], type_ignores=[]), "child-driver", "exec"), namespace)
+    namespace["publish_emitted"](8)
+    assert observed == [7, 7]
+    assert ledger.read_text() == "8"
+    assert not (tmp_path / "emitted.tmp").exists()
 
 
 def _proxy(tmp_path, n):
@@ -95,42 +129,49 @@ async def test_order_backpressure_and_shutdown_through_a_real_child(tmp_path, mo
 
     monkeypatch.setattr(pwp.asyncio, "create_subprocess_exec", recording_exec)
     run = asyncio.create_task(proxy.run_refreshable(["a", "b", "c"]))
-    for _ in range(200):
-        if seen:
-            break
-        await asyncio.sleep(0.01)
-    assert seen == [("p", 0)]
+    try:
+        for _ in range(200):
+            if seen:
+                break
+            await asyncio.sleep(0.01)
+        assert seen == [("p", 0)]
 
-    # Parent stalled on frame 0: the child may only fill the bounded pipe.
-    await asyncio.sleep(0.5)
-    stalled_at = int(ledger.read_text())
-    assert 0 < stalled_at < 200, stalled_at
+        # Parent stalled on frame 0: the child may only fill the bounded pipe.
+        await asyncio.sleep(0.5)
+        stalled_at = int(ledger.read_text())
+        assert 0 < stalled_at < 200, stalled_at
 
-    stall.set()
-    for _ in range(500):
-        if len(seen) == n:
-            break
-        await asyncio.sleep(0.01)
-    assert [seq for _, seq in seen] == list(range(n))
-    assert all((kind == "t") == (seq % 5 == 4) for kind, seq in seen)
+        stall.set()
+        for _ in range(500):
+            if len(seen) == n:
+                break
+            await asyncio.sleep(0.01)
+        assert [seq for _, seq in seen] == list(range(n))
+        assert all((kind == "t") == (seq % 5 == 4) for kind, seq in seen)
 
-    for _ in range(100):
-        if proxy.stats.get("emitted") == n:
-            break
-        await asyncio.sleep(0.02)
-    assert proxy.is_connected
-    assert proxy.stats["config"] == {
-        "max_concurrent_handshakes": 3, "max_queue": 4, "price_book_snapshots": True,
-    }
+        for _ in range(100):
+            if proxy.stats.get("emitted") == n:
+                break
+            await asyncio.sleep(0.02)
+        assert proxy.is_connected
+        assert proxy.stats["config"] == {
+            "max_concurrent_handshakes": 3, "max_queue": 4, "price_book_snapshots": True,
+        }
 
-    run.cancel()
-    with pytest.raises(asyncio.CancelledError):
-        await run
-    (child,) = spawned
-    assert child.returncode == 0  # left on stdin EOF, not killed
-    assert not proxy.is_connected
-    with pytest.raises(RuntimeError, match="not running"):
-        proxy.update_asset_ids(["a"])
+        run.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await run
+        (child,) = spawned
+        assert child.returncode == 0  # left on stdin EOF, not killed
+        assert not proxy.is_connected
+        with pytest.raises(RuntimeError, match="not running"):
+            proxy.update_asset_ids(["a"])
+    finally:
+        # Failure paths must also release and reap this test's real child.
+        stall.set()
+        run.cancel()
+        await asyncio.gather(run, return_exceptions=True)
+
 
 
 @pytest.mark.asyncio
