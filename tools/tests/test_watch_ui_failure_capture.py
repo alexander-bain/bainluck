@@ -149,6 +149,56 @@ class FailureCaptureTests(unittest.TestCase):
         self.assertEqual([r["tool"] for r in rows], ["xcrun"])
         self.assertIn("phone install-end exit=149", lifecycle)
 
+    def test_real_helper_records_failed_install_and_only_the_exact_pair(self):
+        log_root = self.root / "logs"
+        log_root.mkdir()
+        (log_root / "CoreSimulator.log").write_text("fixture service failure\n")
+        (self.root / "tools/watch_failure_evidence.py").write_text(
+            "import importlib.util,os,sys\nfrom pathlib import Path\n"
+            f"s=importlib.util.spec_from_file_location('helper',{str(ROOT / 'tools/watch_failure_evidence.py')!r})\n"
+            "m=importlib.util.module_from_spec(s);s.loader.exec_module(m)\n"
+            "raise SystemExit(m.main(sys.argv[1:],log_root=Path(os.environ['SNAPSHOT_LOG_ROOT'])))\n"
+        )
+        stub = self.bin / "xcrun"
+        stub.write_text(
+            "#!" + sys.executable + "\n"
+            "import json,os,sys\nargs=sys.argv[1:]\n"
+            "with open(os.environ['CALLS'],'a') as f:"
+            "f.write(json.dumps({'tool':'xcrun','args':args})+'\\n')\n"
+            "if args[:2]==['simctl','install']:sys.exit(149)\n"
+            "if args==['simctl','list','devices','--json']:\n"
+            " print(json.dumps({'devices':{'runtime':["
+            "{'udid':os.environ['TEST_UDID'],'state':'Booted'},"
+            "{'udid':os.environ['PHONE_UDID'],'state':'Shutdown'}]}}));sys.exit(0)\n"
+            "if args==['simctl','list','pairs','--json']:\n"
+            " print(json.dumps({'pairs':{'exact':{"
+            "'watch':{'udid':os.environ['TEST_UDID']},"
+            "'phone':{'udid':os.environ['PHONE_UDID']},"
+            "'state':'(active, disconnected)'}}}));sys.exit(0)\n"
+            "raise SystemExit('Unexpected command')\n"
+        )
+        result, rows, lifecycle = self.run_installs(SNAPSHOT_LOG_ROOT=str(log_root))
+        self.assertEqual(result.returncode, 149, result.stderr)
+        self.assertIn("phone install-end exit=149", lifecycle)
+        self.assertEqual(
+            [r["args"][:3] for r in rows],
+            [
+                ["simctl", "install", "11111111-1111-1111-1111-111111111111"],
+                ["simctl", "list", "devices"],
+                ["simctl", "list", "pairs"],
+            ],
+        )
+        evidence = json.loads((self.out / "failure-evidence.json").read_text())
+        self.assertEqual(evidence["original_failure"]["exit_code"], 149)
+        self.assertEqual(evidence["original_failure"]["status"], "unpaid")
+        self.assertFalse(evidence["test_receipt"])
+        self.assertEqual(evidence["devices"]["phone"]["state"], "Shutdown")
+        self.assertEqual(evidence["pairs"]["exact_pair_count"], 1)
+        self.assertEqual(
+            (self.out / "failure-evidence-coresimulator.log").read_text(),
+            "fixture service failure\n",
+        )
+
     def test_xcode_failure_diagnostics_preserve_every_execution_argument(self):
         call = self.source.split("if xcodebuild test-without-building", 1)[1].split(
             '> "$OUT/tests.log" 2>&1; then', 1
