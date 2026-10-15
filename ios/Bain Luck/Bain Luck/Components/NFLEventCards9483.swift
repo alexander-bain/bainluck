@@ -177,9 +177,12 @@ struct NFLMilestoneCardView9483: View {
                     Text(card.stat)
                         .font(.caption)
                         .foregroundStyle(.secondary)
+                    // #11061 — a hyphenated name needs a third line at
+                    // accessibility sizes ("Jaxon / Smith- / Njigba").
                     Text(card.player)
                         .font(.title3.weight(.bold))
-                        .lineLimit(2)
+                        .lineLimit(3)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
                 Spacer(minLength: 4)
                 if let actual = card.actual {
@@ -493,6 +496,7 @@ struct NFLEventCardDeckView9483: View {
             // Re-read each minute so a pregame price that stops being observed
             // loses its number on the page too, not only in the reader.
             TimelineView(.periodic(from: .now, by: 60)) { tick in
+            ScrollViewReader { proxy in
             ScrollView(.horizontal, showsIndicators: false) {
                 LazyHStack(alignment: .top, spacing: 12) {
                     ForEach(cards.map { $0.current(at: tick.date) }) { card in
@@ -514,6 +518,13 @@ struct NFLEventCardDeckView9483: View {
                 .scrollTargetLayout()
             }
             .scrollTargetBehavior(.viewAligned)
+            // #11060 — Back lands on the card it was opened from, on screen,
+            // even when a rotation under the reader re-laid this deck out.
+            .onChange(of: state.openCardID) { old, new in
+                guard old != nil, new == nil, let back = state.returnCardID else { return }
+                proxy.scrollTo(back, anchor: .leading)
+            }
+            }
             }
         }
         // Back from the reader returns focus to the card it was opened from.
