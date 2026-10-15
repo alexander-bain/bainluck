@@ -22,6 +22,7 @@ from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.models import BugReport
+from app.services.llm_models import chat_request_kwargs
 
 logger = logging.getLogger(__name__)
 
@@ -164,9 +165,9 @@ def _generate_email_body(
     try:
         import openai
 
-        client = openai.OpenAI()
+        client = openai.OpenAI(timeout=30.0)
         response = client.chat.completions.create(
-            model="gpt-4o-mini",
+            **chat_request_kwargs("bug_fixed_email", max_output_tokens=200, temperature=0.7),
             messages=[
                 {
                     "role": "system",
@@ -180,8 +181,6 @@ def _generate_email_body(
                     "content": build_bug_fixed_email_prompt_body(prompt_input),
                 },
             ],
-            max_tokens=200,
-            temperature=0.7,
         )
         return response.choices[0].message.content.strip()
     except Exception as exc:

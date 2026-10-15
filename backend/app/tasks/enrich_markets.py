@@ -18,6 +18,7 @@ from typing import Any
 import httpx
 from sqlalchemy import select, update, func
 
+from app.services.llm_models import chat_request_kwargs, estimate_cost_usd, resolve_model
 from app.tasks.base import get_task_session
 from app.utils.futures_market_snapshot import reader_change_24h  # #10248
 from app.utils.image_dimensions import delivered_dimensions
@@ -36,7 +37,6 @@ logger = logging.getLogger(__name__)
 PEXELS_API_KEY = os.getenv("PEXELS_API_KEY")
 DISCOVER_LLM_METADATA_KEY = "discover_llm"
 DISCOVER_LLM_SCHEMA_VERSION = 1
-DISCOVER_LLM_MODEL = os.getenv("DISCOVER_LLM_MODEL", "gpt-4o-mini")
 
 # CU v2 writer revision. Bump this (NOT schema_version) to force a re-tag of
 # existing schema_version=2 profiles when the writer logic changes but the
@@ -104,7 +104,9 @@ def _clean_string_list(value: Any, *, max_items: int = 8, max_len: int = 60) -> 
     return cleaned
 
 
-def _sanitize_discover_llm_metadata(data: dict[str, Any], *, now: datetime) -> dict[str, Any]:
+def _sanitize_discover_llm_metadata(
+    data: dict[str, Any], *, now: datetime, model: str | None = None
+) -> dict[str, Any]:
     """Keep LLM output small, typed, and safe to consume synchronously."""
     salience = data.get("salience_score", 3)
     try:
@@ -128,7 +130,8 @@ def _sanitize_discover_llm_metadata(data: dict[str, Any], *, now: datetime) -> d
     return {
         "schema_version": DISCOVER_LLM_SCHEMA_VERSION,
         "generated_at": now.isoformat(),
-        "model": DISCOVER_LLM_MODEL,
+        # The model that actually answered (#11042); provenance, not a constant.
+        "model": model or resolve_model("discover_metadata"),
         "topic": clean_scalar("topic"),
         "subtopic": clean_scalar("subtopic"),
         "archetype": clean_scalar("archetype"),
@@ -982,10 +985,8 @@ async def enrich_market_hooks(limit: int = 50):
 
             try:
                 response = client.chat.completions.create(
-                    model="gpt-4o-mini",
+                    **chat_request_kwargs("hooks", max_output_tokens=150, temperature=0.7),
                     messages=[{"role": "user", "content": prompt}],
-                    max_tokens=150,
-                    temperature=0.7,
                 )
                 # FAIL CLOSED, exit 2 of 2: the model is allowed to answer "the evidence
                 # supports nothing worth saying", and that answer is honoured rather than
@@ -1209,16 +1210,15 @@ async def enrich_discover_llm_metadata(limit: int = 100):
             )
 
             try:
+                request = chat_request_kwargs("discover_metadata", max_output_tokens=350, temperature=0.1)
                 response = client.chat.completions.create(
-                    model=DISCOVER_LLM_MODEL,
+                    **request,
                     messages=[{"role": "user", "content": prompt}],
-                    max_tokens=350,
-                    temperature=0.1,
                     response_format={"type": "json_object"},
                 )
                 content = response.choices[0].message.content or "{}"
                 raw = _json_from_llm_response(content)
-                metadata = _sanitize_discover_llm_metadata(raw, now=now)
+                metadata = _sanitize_discover_llm_metadata(raw, now=now, model=request["model"])
                 next_metadata = dict(market["market_metadata"] or {})
                 next_metadata[DISCOVER_LLM_METADATA_KEY] = metadata
 
@@ -1472,6 +1472,10 @@ async def enrich_cu_v2_profiles(limit: int = 125):
         "processed": 0, "generated": 0, "skipped_fresh": 0,
         "errors": 0, "input_tokens": 0, "output_tokens": 0,
         "estimated_cost_usd": 0.0,
+        # #11042: a response whose cost cannot be computed (no usage, unpriced
+        # model). Unknown is not zero, so the first one stops the batch — the
+        # cap below cannot be enforced past it.
+        "cost_unknown_responses": 0,
         # --- #1809 C1: quantitative frame. `frames_absent` (the model saw no
         # number in the title) and `frames_dropped_*` (it produced one that is
         # not in the title) are counted apart: the first is coverage, the
@@ -1585,6 +1589,9 @@ async def enrich_cu_v2_profiles(limit: int = 125):
             if stats["estimated_cost_usd"] >= COST_CAP_USD:
                 logger.warning("CU v2: cost cap reached ($%.2f), stopping", stats["estimated_cost_usd"])
                 break
+            if stats["cost_unknown_responses"]:
+                logger.warning("CU v2: a response had no computable cost, stopping")
+                break
 
             prompt = _CU_V2_PROMPT.format(
                 name=item["name"] or "",
@@ -1595,23 +1602,26 @@ async def enrich_cu_v2_profiles(limit: int = 125):
             )
 
             try:
+                request = chat_request_kwargs("cu_v2", max_output_tokens=500, temperature=0.1)
                 response = client.chat.completions.create(
-                    model=DISCOVER_LLM_MODEL,
+                    **request,
                     messages=[{"role": "user", "content": prompt}],
-                    max_tokens=500,
-                    temperature=0.1,
                     response_format={"type": "json_object"},
                 )
+                # Account BEFORE reading the answer (CERT-4125): a returned
+                # completion is paid for whether or not its content parses, and a
+                # parse error raising first used to book a paid call as $0.
+                usage = getattr(response, "usage", None)
+                cost = estimate_cost_usd(request["model"], usage)
+                if cost is None:
+                    stats["cost_unknown_responses"] += 1
+                else:
+                    stats["input_tokens"] += usage.prompt_tokens
+                    stats["output_tokens"] += usage.completion_tokens
+                    stats["estimated_cost_usd"] += cost
+
                 content = response.choices[0].message.content or "{}"
                 raw = _json_from_llm_response(content)
-
-                usage = getattr(response, "usage", None)
-                if usage:
-                    inp = int(getattr(usage, "prompt_tokens", 0) or 0)
-                    out = int(getattr(usage, "completion_tokens", 0) or 0)
-                    stats["input_tokens"] += inp
-                    stats["output_tokens"] += out
-                    stats["estimated_cost_usd"] += (inp * 0.15 + out * 0.60) / 1_000_000
 
                 liveness = _compute_liveness(item["outcome_probs"], item["status"])
 
@@ -1676,7 +1686,7 @@ async def enrich_cu_v2_profiles(limit: int = 125):
                 profile = {
                     "schema_version": CU_V2_SCHEMA_VERSION,
                     "writer_rev": CU_WRITER_REV,
-                    "model": DISCOVER_LLM_MODEL,
+                    "model": request["model"],
                     "generated_at": now.isoformat(),
                     "topic": raw.get("topic"),
                     "subtopic": raw.get("subtopic"),
@@ -1965,10 +1975,8 @@ async def generate_discover_comparison_candidates(limit: int = 60):
 
     try:
         response = client.chat.completions.create(
-            model=DISCOVER_LLM_MODEL,
+            **chat_request_kwargs("comparison_candidates", max_output_tokens=1800, temperature=0.5),
             messages=[{"role": "user", "content": prompt}],
-            max_tokens=1800,
-            temperature=0.5,
             response_format={"type": "json_object"},
         )
         raw = _json_from_llm_response(response.choices[0].message.content or "{}")
@@ -2114,10 +2122,8 @@ async def evaluate_discover_with_llm(limit: int = 50):
 
         try:
             response = client.chat.completions.create(
-                model=DISCOVER_LLM_MODEL,
+                **chat_request_kwargs("discover_eval", max_output_tokens=2200, temperature=0.2),
                 messages=[{"role": "user", "content": prompt}],
-                max_tokens=2200,
-                temperature=0.2,
                 response_format={"type": "json_object"},
             )
             raw = _json_from_llm_response(response.choices[0].message.content or "{}")
@@ -2239,7 +2245,7 @@ Rewrite:"""
 async def _llm_rephrase_snippet(
     market_name: str, raw_snippet: str, angle_type: str
 ) -> str | None:
-    """Call GPT-4o-mini to rephrase a deterministic snippet template.
+    """Ask the configured model to rephrase a deterministic snippet template.
 
     Returns the rephrased text, or None if the call fails or no API key.
     """
@@ -2250,9 +2256,9 @@ async def _llm_rephrase_snippet(
     try:
         import openai
 
-        client = openai.OpenAI(api_key=api_key)
+        client = openai.OpenAI(api_key=api_key, timeout=30.0)
         response = client.chat.completions.create(
-            model="gpt-4o-mini",
+            **chat_request_kwargs("snippet_rephrase", max_output_tokens=60, temperature=0.4),
             messages=[
                 {
                     "role": "user",
@@ -2261,8 +2267,6 @@ async def _llm_rephrase_snippet(
                     ),
                 }
             ],
-            max_tokens=60,
-            temperature=0.4,
         )
         text = response.choices[0].message.content.strip().strip('"').strip("'")
         if len(text) > 120:
