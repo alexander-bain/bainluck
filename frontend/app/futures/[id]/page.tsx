@@ -41,7 +41,7 @@ import {
   isFuturesRangeKey,
   type FuturesRangeKey,
 } from "@/lib/futuresHistoryRange";
-import { historyRangeDataAttributes, historyRangeOption, servedFullRange } from "@/lib/historyRange";
+import { archiveWidenedRange, historyRangeDataAttributes, historyRangeOption } from "@/lib/historyRange";
 import { renderedOutcomeRowPercents } from "@/lib/renderedPercent";
 import ErrorMessage from "@/components/ErrorMessage";
 import { usePinnedFutures } from "@/hooks";
@@ -1223,10 +1223,11 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
                 range={effectiveRange}
                 onSelect={selectRange}
                 requestedHours={historyHours}
-                /* #683: a full read starts where the question's history starts,
-                   which is wider than `hours` by design — not the sparse-data
-                   widening `rangeCoverageNote` exists to report. */
-                actualHours={servedFullRange(historyData) ? undefined : historyData.actual_hours}
+                /* #683: when the drawn span began at an archive interval,
+                   `actual_hours` no longer says what is on screen, so the
+                   sparse-data note would understate it. A full read that began
+                   at `hours` keeps the note: that widening is still real. */
+                actualHours={archiveWidenedRange(historyData) ? undefined : historyData.actual_hours}
                 /* #8135: `sparse` asks how MUCH history there is; `dormant` asks
                    whether any of it is recent. The specimen was sparse, open and
                    four weeks cold, so the old gate returned the live promise over
@@ -1350,7 +1351,7 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
           range={effectiveRange}
           onSelect={selectRange}
           requestedHours={historyHours}
-          actualHours={servedFullRange(historyData) ? undefined : historyData?.actual_hours}
+          actualHours={archiveWidenedRange(historyData) ? undefined : historyData?.actual_hours}
           createdAt={market?.created_at}
         />
       )}

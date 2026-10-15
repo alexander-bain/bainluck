@@ -15,6 +15,7 @@
 import { useMemo, useState } from "react";
 import useSWR from "swr";
 import { fetchFuturesHistory } from "@/lib/api";
+import { historyRangeOption } from "@/lib/historyRange";
 import type { FuturesOutcomeHistory } from "@/lib/types";
 import { FuturesChart } from "@/components/FuturesChart";
 import ChartRangeChips from "@/components/event/ChartRangeChips";
@@ -58,7 +59,9 @@ export default function SettledPathChart({
   // charted source (odds_api winner fields) never graded is_winner and fizzled.
   const { data, isLoading } = useSWR(
     ["event-settled-path", marketId, championName],
-    () => fetchFuturesHistory(marketId, 8760, undefined, 8, championName ?? undefined),
+    // #683: `range=full` also reaches recovered archive intervals older than
+    // the 8760h window; an older server ignores it and serves exactly 8760h.
+    () => fetchFuturesHistory(marketId, 8760, undefined, 8, championName ?? undefined, historyRangeOption("full")),
     { revalidateOnFocus: false },
   );
 

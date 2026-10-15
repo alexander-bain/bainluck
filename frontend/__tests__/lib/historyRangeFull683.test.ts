@@ -26,6 +26,7 @@ import {
   historyRangeDataAttributes,
   historyRangeOption,
   readHistoryRange,
+  archiveWidenedRange,
   servedFullRange,
 } from "@/lib/historyRange";
 import type { FuturesHistoryResponse } from "@/lib/types";
@@ -102,6 +103,30 @@ describe("#683 SHIP — the whole-history rung sends range=full", () => {
   });
 });
 
+describe("#683 SHIP — the fixed-window settled charts ask for the whole history too (calibration 10/15)", () => {
+  it("SettledPathChart: 8760h + champion + top_n stay, range=full is added", async () => {
+    await fetchFuturesHistory(683015, 8760, undefined, 8, "Dodgers", historyRangeOption("full"));
+    expect(sent()).toBe("/api/futures/683015/history?hours=8760&top_n=8&champion=Dodgers&range=full");
+  });
+
+  it("WinnerEvolutionChart: 8760h + top_n stay, range=full is added", async () => {
+    await fetchFuturesHistory(683016, 8760, undefined, 8, undefined, historyRangeOption("full"));
+    expect(sent()).toBe("/api/futures/683016/history?hours=8760&top_n=8&range=full");
+  });
+
+  it("the three call sites pass the option (source pin)", () => {
+    expect(readSource("components/event/SettledPathChart.tsx")).toContain(
+      'fetchFuturesHistory(marketId, 8760, undefined, 8, championName ?? undefined, historyRangeOption("full"))',
+    );
+    expect(readSource("components/event/WinnerEvolutionChart.tsx")).toContain(
+      'fetchFuturesHistory(marketId, 8760, undefined, 8, undefined, historyRangeOption("full"))',
+    );
+    const two = readSource("components/event/TwoSidedTimeline.tsx");
+    expect(two).toContain('{ label: "All", hours: 8760 }');
+    expect(two).toContain('historyRangeOption(hours === 8760 ? "all" : null)');
+  });
+});
+
 describe("#683 CONTROL — every shorter rung is byte-identical to before", () => {
   it.each(["7d", "24h", "today", "tournament", "1W", "1M", undefined, null, "FULL", "lifetime"])(
     "rung %p sends no range option",
@@ -128,9 +153,10 @@ describe("#683 CONTROL — every shorter rung is byte-identical to before", () =
     expect(sent()).toBe("/api/futures/683014/history?hours=720&fresh=true");
   });
 
-  it("the fixed-window settled readers are untouched (champion + top_n, no range)", async () => {
-    await fetchFuturesHistory(683015, 8760, undefined, 8, "Dodgers");
-    expect(sent()).toBe("/api/futures/683015/history?hours=8760&top_n=8&champion=Dodgers");
+  it("TwoSidedTimeline's 24h and 7d rungs send no range", () => {
+    const two = readSource("components/event/TwoSidedTimeline.tsx");
+    expect(two).toContain('historyRangeOption(hours === 8760 ? "all" : null)');
+    expect(historyRangeOption(null)).toBeUndefined();
   });
 });
 
@@ -149,14 +175,14 @@ describe("#683 DECODER — the server's account, read only when it says it serve
     expect(historyRangeDataAttributes(other)).toEqual({});
   });
 
-  it("a partial archive says partial: the earliest drawn point is not the question's open", () => {
+  it("an incomplete archive says incomplete (the store's own word): the earliest drawn point is not the question's open", () => {
     const partial: FuturesHistoryResponse = {
       ...EMPTY,
       history_range: {
         requested: "full",
         window_start: "2026-04-09T00:00:00+00:00",
         window_start_basis: "archive_first_interval",
-        archive_coverage: "partial",
+        archive_coverage: "incomplete",
         archive_venue_open: "2026-03-01T00:00:00+00:00",
         thinned_outcomes: [11, 12],
       },
@@ -166,7 +192,7 @@ describe("#683 DECODER — the server's account, read only when it says it serve
       "data-history-range": "full",
       "data-history-range-start": "2026-04-09T00:00:00+00:00",
       "data-history-range-basis": "archive_first_interval",
-      "data-archive-coverage": "partial",
+      "data-archive-coverage": "incomplete",
       "data-history-range-thinned": "2",
     });
   });
@@ -174,7 +200,7 @@ describe("#683 DECODER — the server's account, read only when it says it serve
   it("a full read with no coverage word is 'unknown', never read as a whole lifetime", () => {
     const silent: FuturesHistoryResponse = {
       ...EMPTY,
-      history_range: { requested: "full", window_start_basis: "market_created_at", archive_coverage: null },
+      history_range: { requested: "full", window_start_basis: "hours", archive_coverage: null },
     };
     const attrs = historyRangeDataAttributes(silent);
     expect(attrs["data-archive-coverage"]).toBe("unknown");
@@ -183,15 +209,38 @@ describe("#683 DECODER — the server's account, read only when it says it serve
   });
 });
 
-describe("#683 — a full read is not the sparse-data widening note", () => {
-  it("both /futures range-control call sites drop actual_hours when the server served full", () => {
+describe("#683 — the sparse-data note is dropped only when the archive set the span", () => {
+  const full = (basis: string | null): FuturesHistoryResponse => ({
+    ...EMPTY,
+    actual_hours: 900,
+    history_range: { requested: "full", window_start_basis: basis },
+  });
+
+  it("archive_first_interval: actual_hours no longer describes the drawn span", () => {
+    expect(archiveWidenedRange(full("archive_first_interval"))).toBe(true);
+  });
+
+  it("CONTROL: a full read that began at hours keeps the note (the server still widens sparse windows under full)", () => {
+    expect(servedFullRange(full("hours"))).toBe(true);
+    expect(archiveWidenedRange(full("hours"))).toBe(false);
+    expect(archiveWidenedRange(full(null))).toBe(false);
+  });
+
+  it("CONTROL: an older server, or a non-full block, never drops the note", () => {
+    const older: FuturesHistoryResponse = { ...EMPTY, actual_hours: 900 };
+    expect(archiveWidenedRange(older)).toBe(false);
+    expect(archiveWidenedRange({ ...EMPTY, history_range: { requested: "since_start", window_start_basis: "archive_first_interval" } })).toBe(false);
+  });
+
+  it("both /futures range-control call sites gate on the archive basis, not on 'served full'", () => {
     const page = readSource("app/futures/[id]/page.tsx");
     expect(page).toContain(
-      "actualHours={servedFullRange(historyData) ? undefined : historyData.actual_hours}",
+      "actualHours={archiveWidenedRange(historyData) ? undefined : historyData.actual_hours}",
     );
     expect(page).toContain(
-      "actualHours={servedFullRange(historyData) ? undefined : historyData?.actual_hours}",
+      "actualHours={archiveWidenedRange(historyData) ? undefined : historyData?.actual_hours}",
     );
+    expect(page).not.toContain("servedFullRange(historyData)");
     expect(page).not.toMatch(/actualHours=\{historyData\??\.actual_hours\}/);
   });
 });

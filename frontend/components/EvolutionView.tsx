@@ -184,8 +184,9 @@ export function EvolutionView({
   }, [tournamentStart]);
 
   // #683 (Root ruling B): "full" also sends `range=full`, so the server reads
-  // the question's whole history — archive intervals included, back past our
-  // own first capture. 4320 stays only as the floor an older server serves.
+  // every archive interval the question has, however old. Our own live captures
+  // stay inside the 4320h window (the server never widens those under full);
+  // that is the same reach Full had before, so nothing drawn today goes away.
   const fetchHours = timeRange === "full"
     ? 4320
     : timeRange === "tournament"

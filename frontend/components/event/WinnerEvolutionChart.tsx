@@ -18,6 +18,7 @@
 import { useMemo, useState } from "react";
 import useSWR from "swr";
 import { fetchFuturesHistory } from "@/lib/api";
+import { historyRangeOption } from "@/lib/historyRange";
 import type { FuturesOutcomeHistory } from "@/lib/types";
 import { outcomesByLatestProb } from "@/lib/eventConceptDisplay";
 import { FuturesChart } from "@/components/FuturesChart";
@@ -44,7 +45,9 @@ export default function WinnerEvolutionChart({
   // whole run is the story. Top 8 outcomes fetched; the chart draws the top 5.
   const { data, isLoading } = useSWR(
     ["event-winner-evolution", marketId],
-    () => fetchFuturesHistory(marketId, 8760, undefined, 8),
+    // #683: `range=full` also reaches recovered archive intervals older than
+    // the 8760h window; an older server ignores it and serves exactly 8760h.
+    () => fetchFuturesHistory(marketId, 8760, undefined, 8, undefined, historyRangeOption("full")),
     { revalidateOnFocus: false, refreshInterval: live ? 60000 : 0 },
   );
 

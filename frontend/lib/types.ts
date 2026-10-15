@@ -1324,12 +1324,14 @@ export interface FuturesOutcomeHistory {
  *  the server's; the client reads it, never infers it from the points. */
 export interface FuturesHistoryRange {
   requested: "full" | string;
-  /** Where the server began reading, ISO. */
+  /** The first drawn archive interval's start when it precedes the live
+   *  window, else the live window's start. ISO. */
   window_start?: string | null;
-  /** Why it began there: "archive_first_interval" | "market_created_at" | "hours". */
-  window_start_basis?: string | null;
-  /** The archive plan's own coverage word; null when no plan covers these markets. */
-  archive_coverage?: string | null;
+  /** Why it began there. Live captures stay inside `hours`, so never the market's open. */
+  window_start_basis?: "archive_first_interval" | "hours" | string | null;
+  /** The store's own word: "complete" only when every charted outcome has a
+   *  complete import; null when no charted outcome has one. */
+  archive_coverage?: "complete" | "incomplete" | string | null;
   /** The venue's open, ISO, when the plan knows it. */
   archive_venue_open?: string | null;
   /** Lines whose read was span-sampled to stay bounded (never tail-cut). */

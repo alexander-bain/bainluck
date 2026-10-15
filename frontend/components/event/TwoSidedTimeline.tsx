@@ -9,6 +9,7 @@
 import { useState } from "react";
 import useSWR from "swr";
 import { fetchFuturesHistory } from "@/lib/api";
+import { historyRangeOption } from "@/lib/historyRange";
 import { formatProbability } from "@/lib/api";
 import { fieldOrder } from "@/lib/eventConceptDisplay";
 import { renderedDuelPercents } from "@/lib/renderedPercent";
@@ -38,7 +39,11 @@ export default function TwoSidedTimeline({
   const pair = fieldOrder(competitors).slice(0, 2);
   const { data } = useSWR(
     evolutionMarketId ? ["event-twosided", evolutionMarketId, hours] : null,
-    () => fetchFuturesHistory(evolutionMarketId as number, hours, undefined, 4),
+    // #683: the "All" rung also asks for every recovered archive interval.
+    () => fetchFuturesHistory(
+      evolutionMarketId as number, hours, undefined, 4, undefined,
+      historyRangeOption(hours === 8760 ? "all" : null),
+    ),
     { revalidateOnFocus: false },
   );
 

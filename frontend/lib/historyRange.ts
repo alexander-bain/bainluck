@@ -15,18 +15,25 @@
  *
  *  - a server that does not know the option ignores it and serves exactly
  *    today's `hours` window, so shipping this first loses nothing;
- *  - a server that knows it starts reading at the earliest of `now − hours`,
- *    the market's own open and the first stored archive interval. It answers
- *    with a `history_range` block saying where it began, why, the archive plan's
- *    own coverage word, and which lines it had to thin to stay bounded.
+ *  - a server that knows it lifts the time bound on the ARCHIVE arm only. Our
+ *    own live captures stay exactly the `hours` window (calibration's
+ *    amendment, 10/15): a reader that also wants captures older than the floor
+ *    sends a wider `hours` itself, as `/futures` "All" does from `created_at`.
+ *    It answers with a `history_range` block saying where the drawn history
+ *    began (`archive_first_interval` or `hours`, never the market's open), the
+ *    store's own coverage word (`complete` | `incomplete`, null = no import),
+ *    and which lines it span-sampled to stay bounded.
  *
  * WHAT THE CLIENT DOES WITH THE BLOCK. Nothing on the page body (notice 34).
  * The archive caption (`lib/archiveHistory.ts`) already names only the span
  * actually drawn, so a chart never claims to start at the question's open. Two
  * reads only:
  *
- *  - `servedFullRange` turns off the "too few prices — showing N days" note,
- *    which reads a wider served window as a sparse-data fallback (#7545);
+ *  - `archiveWidenedRange` turns off the "too few prices — showing N days"
+ *    note when the drawn span began at an archive interval: that note reads
+ *    `actual_hours`, which then no longer describes what is on screen. A full
+ *    read that began at `hours` keeps the note — the server's sparse-data
+ *    widening (#7545) still happens under full and is still true;
  *  - `historyRangeDataAttributes` puts basis, coverage and thinning on the chart
  *    card as `data-*` attributes, so a probe can tell a complete archive from a
  *    partial one without the reader being told about our plumbing.
@@ -53,6 +60,17 @@ export function servedFullRange(
   response: Pick<FuturesHistoryResponse, "history_range"> | null | undefined,
 ): boolean {
   return readHistoryRange(response) !== null;
+}
+
+/**
+ * True only when a full read's drawn span began at an archive interval, so the
+ * chart reaches further back than `actual_hours` says. Never true for a server
+ * that does not know the option, or for a full read that began at `hours`.
+ */
+export function archiveWidenedRange(
+  response: Pick<FuturesHistoryResponse, "history_range"> | null | undefined,
+): boolean {
+  return readHistoryRange(response)?.window_start_basis === "archive_first_interval";
 }
 
 /** Probe attributes for the chart card. `{}` when the read was not full. */
