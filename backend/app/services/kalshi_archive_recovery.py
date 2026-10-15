@@ -35,6 +35,15 @@ also honours the shared Kalshi cooldown that the trade rail records
 is waited out once, but only when ``Retry-After`` fits
 ``_TRADE_429_MAX_WAIT_S`` and the deadline. Otherwise the run stops, with the
 cursor held BEFORE the refused outcome. A 429 is never recorded as "no data".
+The deadline is re-checked after every pacing or 429 sleep, before the next GET.
+
+WHAT IS NEVER WRITTEN DOWN AS DONE. A listing the run could not finish (budget,
+429) holds the outcome with its listing cursor in ``held_outcome``; only an
+exhausted listing can say a ticker is absent. A malformed 200 (wrong body, a
+row that is not a market, a repeated cursor) is an error and leaves the outcome
+owed. A long history is read in several windows at one width, and a run that
+stops between them holds the outcome with the unread windows named. An outcome
+whose opening is unknown is planned ``incomplete`` with the earlier gap owed.
 """
 
 from __future__ import annotations
@@ -42,24 +51,29 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from dataclasses import asdict
+from dataclasses import asdict, dataclass, field
 from types import SimpleNamespace
 from typing import Any, Awaitable, Callable, Optional, Sequence
 
 from sqlalchemy import text
 
 from app.utils.kalshi_archive_history import (
+    COVERAGE_COMPLETE,
+    COVERAGE_INCOMPLETE,
+    OWED_MALFORMED_CANDLES,
     ROUTE_ARCHIVE,
     OutcomePlan,
     archive_settled_cutoff,
+    candle_is_wellformed,
     choose_period,
     classify_candles,
     forecast_cutoff,
     identity_refusal,
     importable,
+    owed_window,
     parse_instant,
     plan_digest,
-    request_window,
+    request_windows,
     route_market,
 )
 
@@ -69,17 +83,26 @@ logger = logging.getLogger(__name__)
 MAX_OUTCOMES = 200
 MAX_REQUESTS = 400
 MIN_PACE_SECONDS = 0.5
-#: Listing pages read per event ticker before giving up on finding a market.
-MAX_LISTING_PAGES = 3
+#: Rows per listing page. There is NO per-event page cap: an event's listing is
+#: paged until the stored ticker is found or the listing is exhausted, inside the
+#: run's request budget and deadline. A listing the run could not finish is never
+#: read as absence. The outcome is held, with the listing cursor reported.
 LISTING_PAGE_LIMIT = 200
 #: Stored outcome tickers this arm will ask about: the exact ``KX…-…-…`` shape the
 #: trade rail already selects on. Passed as a bind, never inlined (gotcha #45).
 TICKER_LIKE = "KX%-%-%"
 
-#: Zero-snapshot resolved Kalshi outcomes whose BACKSTOP date already precedes
-#: the archive cutoff (so the real settlement certainly does), or that have no
-#: date at all (the listing then answers). ``{id_clause}`` is one of two fixed
-#: strings, never caller text.
+#: Zero-snapshot Kalshi outcomes with an exact stored ticker. ``{id_clause}`` is
+#: one of two fixed strings, never caller text:
+#:
+#: - keyset (broad discovery) also requires ``status='resolved'`` and a
+#:   ``resolution_date`` BACKSTOP before the archive cutoff (or none). That keeps
+#:   discovery bounded, and it UNDER-covers: an early-finalized market can carry a
+#:   future backstop, and a settled one can still read ``open`` (gotcha #33). The
+#:   report names this limit; those outcomes are reached by exact id.
+#: - exact ids read the stored identity with NEITHER local filter. Neither field is
+#:   the venue's settlement, so the venue's own ``settlement_ts`` and the provider
+#:   cutoff choose the tier (``identity_refusal`` + ``route_market``).
 CANDIDATE_SQL = """
     SELECT fo.id AS outcome_id,
            fo.external_id AS ticker,
@@ -94,7 +117,6 @@ CANDIDATE_SQL = """
     JOIN futures_markets fm ON fm.id = fo.market_id
     LEFT JOIN events e ON e.id = fm.event_id
     WHERE fm.source = 'kalshi'
-      AND fm.status = 'resolved'
       AND fo.external_id LIKE :ticker_like
       AND fm.external_id IS NOT NULL
       AND COALESCE(fo.resolution_source, '') NOT IN
@@ -102,13 +124,23 @@ CANDIDATE_SQL = """
       AND NOT EXISTS (
           SELECT 1 FROM futures_odds_snapshots fos WHERE fos.outcome_id = fo.id
       )
-      AND (fm.resolution_date IS NULL OR fm.resolution_date < :archive_cutoff)
       AND {id_clause}
     ORDER BY fo.id ASC
     LIMIT :lim
 """
-_ID_AFTER = "fo.id > :after_id"
+_ID_AFTER = (
+    "fm.status = 'resolved'"
+    " AND (fm.resolution_date IS NULL OR fm.resolution_date < :archive_cutoff)"
+    " AND fo.id > :after_id"
+)
 _ID_EXACT = "fo.id = ANY(:outcome_ids)"
+
+#: What keyset discovery cannot see, stated in every keyset report.
+KEYSET_SELECTOR_LIMITS = (
+    "excludes outcomes whose market is not status='resolved' locally",
+    "excludes outcomes whose resolution_date backstop is at or after the archive cutoff",
+    "an early-finalized market can fall in either group; name it with --outcome-ids",
+)
 
 STORED_INSTANTS_SQL = """
     SELECT outcome_id, captured_at
@@ -125,6 +157,22 @@ class _RateLimited(Exception):
 
 class _BudgetSpent(Exception):
     pass
+
+
+class _ListingUnreadable(Exception):
+    """This event's listing failed earlier in the run; siblings stay owed too."""
+
+
+@dataclass
+class _Listing:
+    """One event's archive listing as far as this run has read it."""
+
+    markets: dict = field(default_factory=dict)
+    cursor: Optional[str] = None
+    pages: int = 0
+    exhausted: bool = False
+    error: Optional[str] = None
+    seen_cursors: set = field(default_factory=set)
 
 
 def _read_shared_cooldown() -> Optional[float]:
@@ -202,6 +250,8 @@ async def plan_archive_recovery(
         "candidates": 0,
         "planned": 0,
         "owed_ids": [],
+        "incomplete_ids": [],
+        "held_outcome": None,
         "errors": [],
         "plans": [],
         "totals": {},
@@ -210,6 +260,8 @@ async def plan_archive_recovery(
         "next_after_id": None if exact is not None else int(after_id),
         "terminal": None,
     }
+    if exact is None:
+        report["selector_limits"] = list(KEYSET_SELECTOR_LIMITS)
 
     cooldown_left = cooldown_reader()
     report["shared_cooldown_s"] = (
@@ -221,12 +273,19 @@ async def plan_archive_recovery(
 
     state = {"sent": 0}
 
+    def _spent() -> bool:
+        return state["sent"] >= max_requests or monotonic() >= deadline
+
     async def _get(call: Callable[[], Awaitable[Any]]) -> Any:
         for attempt in range(2):
-            if state["sent"] >= max_requests or monotonic() >= deadline:
+            if _spent():
                 raise _BudgetSpent()
             if state["sent"]:
                 await sleep(pace_seconds)
+                # The pace (and a 429 wait before it) spends wall time: re-check,
+                # so no GET leaves after the run's stated deadline.
+                if _spent():
+                    raise _BudgetSpent()
             state["sent"] += 1
             report["requests_sent"] = state["sent"]
             try:
@@ -268,16 +327,13 @@ async def plan_archive_recovery(
 
         async with session_factory() as session:
             await session.execute(text("SET TRANSACTION READ ONLY"))
-            params = {
-                "ticker_like": TICKER_LIKE,
-                "archive_cutoff": archive_cutoff,
-                "lim": limit,
-            }
+            params: dict = {"ticker_like": TICKER_LIKE, "lim": limit}
             if exact is not None:
                 params["outcome_ids"] = exact
                 sql = CANDIDATE_SQL.replace("{id_clause}", _ID_EXACT)
             else:
                 params["after_id"] = int(after_id)
+                params["archive_cutoff"] = archive_cutoff
                 sql = CANDIDATE_SQL.replace("{id_clause}", _ID_AFTER)
             rows = (await session.execute(text(sql), params)).fetchall()
             stored: dict[int, list] = {}
@@ -291,7 +347,7 @@ async def plan_archive_recovery(
         if exact is not None:
             report["ids_not_candidates"] = sorted(set(exact) - set(ids))
 
-        listings: dict[str, Optional[dict]] = {}
+        listings: dict[str, _Listing] = {}
         last_done = int(after_id)
         stopped = None
         for row in rows:
@@ -299,22 +355,23 @@ async def plan_archive_recovery(
             ticker = row.ticker
             event_ticker = row.event_ticker
             plan = OutcomePlan(outcome_id=oid, ticker=ticker, route="unknown")
+            listing = listings.setdefault(event_ticker, _Listing())
+            stage = "listing"
+            windows: list = []
             try:
-                if event_ticker not in listings:
-                    listings[event_ticker] = await _read_listing(
-                        _get, service, event_ticker
+                market = await _find_listed(
+                    _get, service, listing, event_ticker, ticker
+                )
+                if market is None:
+                    # Reached only on an EXHAUSTED listing: every page was read.
+                    plan.refusal = (
+                        "archive_listing_empty"
+                        if not listing.markets
+                        else "absent_from_archive_listing"
                     )
-                listed = listings[event_ticker]
-                if listed is None:
-                    plan.refusal = "archive_listing_empty"
-                elif ticker not in listed:
-                    plan.refusal = "absent_from_archive_listing"
                 else:
-                    plan.refusal = identity_refusal(
-                        ticker, event_ticker, listed[ticker]
-                    )
+                    plan.refusal = identity_refusal(ticker, event_ticker, market)
                 if plan.refusal is None:
-                    market = listed[ticker]
                     settled_at = parse_instant(market.get("settlement_ts"))
                     plan.settled_at = settled_at.isoformat()
                     plan.route = route_market(settled_at, archive_cutoff)
@@ -336,43 +393,73 @@ async def plan_archive_recovery(
                     plan.cutoff_refusal = cutoff_refusal
                     open_time = parse_instant(market.get("open_time"))
                     period = choose_period(open_time, settled_at)
-                    start_ts, end_ts = request_window(open_time, settled_at, period)
+                    windows, opening_gap = request_windows(
+                        open_time, settled_at, period
+                    )
                     plan.period_minutes = period
-                    candles = await _get(
-                        lambda: service.get_historical_market_candlesticks_raw(
-                            ticker,
-                            period_interval=period,
-                            start_ts=start_ts,
-                            end_ts=end_ts,
+                    plan.windows_requested = len(windows)
+                    if opening_gap is not None:
+                        plan.owed_windows.append(opening_gap)
+                    if len(windows) > MAX_REQUESTS:
+                        # No run could ever read it whole: owed by name, never sampled.
+                        plan.refusal = "history_exceeds_request_cap"
+                        plan.coverage = COVERAGE_INCOMPLETE
+                        plan.owed_windows.extend(owed_window(w) for w in windows)
+                        report["owed_ids"].append(oid)
+                    else:
+                        stage = "candles"
+                        candles: list = []
+                        for window in windows:
+                            batch = await _get(
+                                lambda w=window: service.get_historical_market_candlesticks_raw(
+                                    ticker,
+                                    period_interval=w.period_minutes,
+                                    start_ts=w.start_ts,
+                                    end_ts=w.end_ts,
+                                )
+                            )
+                            plan.windows_read += 1
+                            if not all(candle_is_wellformed(c) for c in batch):
+                                plan.owed_windows.append(
+                                    owed_window(window, OWED_MALFORMED_CANDLES)
+                                )
+                            candles.extend(batch)
+                        points, counts = classify_candles(
+                            outcome_id=oid,
+                            ticker=ticker,
+                            candles=candles,
+                            period_minutes=period,
+                            settled_at=settled_at,
+                            cutoff=cutoff,
+                            cutoff_refusal=cutoff_refusal,
+                            stored_instants=stored.get(oid, ()),
                         )
-                    )
-                    points, counts = classify_candles(
-                        outcome_id=oid,
-                        ticker=ticker,
-                        candles=candles,
-                        period_minutes=period,
-                        settled_at=settled_at,
-                        cutoff=cutoff,
-                        cutoff_refusal=cutoff_refusal,
-                        stored_instants=stored.get(oid, ()),
-                    )
-                    plan.points = points
-                    plan.counts = {**counts, "candles_returned": len(candles)}
-                    if not candles:
-                        plan.refusal = "archive_candles_empty"
-            except _RateLimited as e:
+                        plan.points = points
+                        plan.counts = {**counts, "candles_returned": len(candles)}
+                        plan.coverage = (
+                            COVERAGE_INCOMPLETE
+                            if plan.owed_windows
+                            else COVERAGE_COMPLETE
+                        )
+                        if not candles:
+                            plan.refusal = "archive_candles_empty"
+            except (_RateLimited, _BudgetSpent) as e:
                 # The cursor stays BEFORE this outcome; it is asked first next run.
-                stopped = "rate_limited"
-                report["stopped_on_cooldown_s"] = e.wait
-                break
-            except _BudgetSpent:
-                stopped = "partial"
+                # Nothing it half-read becomes a plan, an absence or a coverage claim.
+                stopped = "rate_limited" if isinstance(e, _RateLimited) else "partial"
+                if isinstance(e, _RateLimited):
+                    report["stopped_on_cooldown_s"] = e.wait
+                report["held_outcome"] = _held(
+                    oid, ticker, stage, listing, plan, windows
+                )
                 break
             except Exception as e:  # one bad outcome never wipes the pass (gotcha #42)
                 report["errors"].append(f"{ticker}: {str(e)[:120]}")
                 report["owed_ids"].append(oid)
                 last_done = max(last_done, oid)
                 continue
+            if plan.coverage == COVERAGE_INCOMPLETE:
+                report["incomplete_ids"].append(oid)
             report["plans"].append(plan)
             last_done = max(last_done, oid)
     finally:
@@ -384,6 +471,9 @@ async def plan_archive_recovery(
     totals: dict = {}
     for plan in report["plans"]:
         totals[f"refusal:{plan.refusal}"] = totals.get(f"refusal:{plan.refusal}", 0) + 1
+        totals[f"coverage:{plan.coverage}"] = (
+            totals.get(f"coverage:{plan.coverage}", 0) + 1
+        )
         for key, value in plan.counts.items():
             totals[key] = totals.get(key, 0) + value
     report["totals"] = totals
@@ -399,26 +489,79 @@ async def plan_archive_recovery(
         report["walk_ended"] = stopped is None and len(rows) < limit
     if stopped:
         report["terminal"] = stopped
-    elif report["owed_ids"]:
+    elif report["owed_ids"] or report["incomplete_ids"]:
         report["terminal"] = "partial"
     else:
         report["terminal"] = "complete"
     return report
 
 
-async def _read_listing(_get, service, event_ticker: str) -> Optional[dict]:
-    """Every archived market of one event, keyed by exact ticker; ``None`` if empty."""
-    found: dict = {}
-    cursor: Optional[str] = None
-    for _ in range(MAX_LISTING_PAGES):
-        markets, cursor = await _get(
-            lambda c=cursor: service.get_historical_markets(
-                event_ticker=event_ticker, limit=LISTING_PAGE_LIMIT, cursor=c
-            )
+def _held(
+    oid: int,
+    ticker: str,
+    stage: str,
+    listing: _Listing,
+    plan: OutcomePlan,
+    windows: Sequence[Any],
+) -> dict:
+    """Where a stopped run left the outcome it could not finish. Plan vocabulary only."""
+    held: dict = {"outcome_id": oid, "ticker": ticker, "stage": stage}
+    if stage == "listing":
+        held.update(
+            listing_pages_read=listing.pages,
+            listing_cursor=listing.cursor,
+            listing_exhausted=listing.exhausted,
         )
+    else:
+        held.update(
+            period_minutes=plan.period_minutes,
+            windows_requested=plan.windows_requested,
+            windows_read=plan.windows_read,
+            # The unread windows at the SAME width: a rerun asks these, never daily.
+            owed_windows=list(plan.owed_windows)
+            + [owed_window(w) for w in windows[plan.windows_read :]],
+        )
+    return held
+
+
+async def _find_listed(
+    _get, service, listing: _Listing, event_ticker: str, ticker: str
+) -> Optional[dict]:
+    """The listed row for ``ticker``; ``None`` ONLY once the listing is exhausted.
+
+    Pages are read lazily and shared by sibling outcomes. An empty page that
+    carries a cursor is not the end. A budget stop or a 429 propagates with the
+    cursor kept, so truncated evidence never reads as absence. A listing that
+    failed (malformed, 5xx, a repeated cursor) keeps failing for its siblings
+    this run instead of being re-asked or read as empty.
+    """
+    while ticker not in listing.markets and not listing.exhausted:
+        if listing.error is not None:
+            raise _ListingUnreadable(listing.error)
+        cursor = listing.cursor
+        try:
+            markets, next_cursor = await _get(
+                lambda c=cursor: service.get_historical_markets(
+                    event_ticker=event_ticker, limit=LISTING_PAGE_LIMIT, cursor=c
+                )
+            )
+        except (_BudgetSpent, _RateLimited):
+            raise
+        except Exception as e:
+            listing.error = f"listing: {str(e)[:120]}"
+            raise
+        listing.pages += 1
         for market in markets:
-            if isinstance(market, dict) and market.get("ticker"):
-                found.setdefault(market["ticker"], market)
-        if not cursor:
-            break
-    return found or None
+            listing.markets.setdefault(market["ticker"], market)
+        if not next_cursor:
+            listing.cursor = None
+            listing.exhausted = True
+        elif next_cursor in listing.seen_cursors or next_cursor == cursor:
+            listing.error = (
+                "listing: malformed_response:historical_markets:cursor_repeated"
+            )
+            raise _ListingUnreadable(listing.error)
+        else:
+            listing.seen_cursors.add(next_cursor)
+            listing.cursor = next_cursor
+    return listing.markets.get(ticker)

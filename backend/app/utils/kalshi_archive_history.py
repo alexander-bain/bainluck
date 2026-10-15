@@ -50,6 +50,13 @@ WHAT THIS MODULE DECIDES, AND THE RULES IT WILL NOT BEND
    own ``settlement_ts`` is refused outright, including one that straddles it.
    It may hold earlier activity, but it cannot be told apart from what came after.
 
+6. **Full history is chunked, never coarsened or clipped.** A long market is
+   asked for in several windows at the same width, each inside the request
+   bound. The width is one minute or one hour, never daily: daily candles missed
+   every sampled NCAA spread market. An outcome whose opening is unknown, or
+   whose windows were not all read, is ``incomplete`` and names the windows it
+   still owes. A bounded sample is never reported as ``complete``.
+
 The plan carries its provenance on every row (``source``, interval start and end,
 period, archive cutoff, forecast cutoff, and the reason a row is not a forecast).
 :func:`plan_digest` makes it a reviewable, repeatable artifact: the same inputs
@@ -73,7 +80,9 @@ from app.utils.kalshi_candle_price import candle_yes_price
 #: ``app.services.kalshi_archive_recovery``), so it is plan vocabulary only today.
 ARCHIVE_SOURCE = "kalshi_archive"
 
-#: Candle widths the archive endpoint takes, in minutes.
+#: Candle widths the archive endpoint takes, in minutes. Recovery asks for
+#: ``PERIOD_MINUTE`` or ``PERIOD_HOUR`` only. ``PERIOD_DAY`` is named so a guard
+#: can prove it is never chosen.
 PERIOD_MINUTE = 1
 PERIOD_HOUR = 60
 PERIOD_DAY = 1440
@@ -85,13 +94,21 @@ PERIOD_DAY = 1440
 SHORT_MARKET_SPAN = timedelta(hours=6)
 
 #: Our own per-request bound on candles. This is a request-size limit WE chose.
-#: It is not a claim about Kalshi's limit. A span with more hourly candles than
-#: this drops to daily rather than being chunked into many requests.
+#: It is not a claim about Kalshi's limit. A span with more candles than this is
+#: CHUNKED into several windows at the same width. It is never coarsened.
 CANDLES_PER_REQUEST_BOUND = 4000
 
 #: When the archive listing carries no ``open_time``, how far back of settlement
-#: to ask. Bounded so a missing field can never become an unbounded window.
+#: to ask. Bounded so a missing field can never become an unbounded window, and
+#: everything before it is OWED (``opening_unknown``): the outcome stays
+#: ``incomplete`` and the earlier history is never reported as absent.
 MISSING_OPEN_LOOKBACK = timedelta(days=30)
+
+COVERAGE_COMPLETE = "complete"
+COVERAGE_INCOMPLETE = "incomplete"
+OWED_OPENING_UNKNOWN = "opening_unknown"
+OWED_NOT_READ = "window_not_read"
+OWED_MALFORMED_CANDLES = "malformed_candles"
 
 #: Venue states that mean "settled". Anything else is not a settled market.
 ARCHIVE_SETTLED_STATUSES = frozenset({"finalized", "settled"})
@@ -169,24 +186,73 @@ def identity_refusal(
 
 
 def choose_period(open_time: Optional[datetime], settled_at: datetime) -> int:
-    """The finest candle width that resolves this market inside the request bound."""
-    start = open_time if open_time is not None else settled_at - MISSING_OPEN_LOOKBACK
-    span = max(settled_at - start, timedelta(0))
-    if span <= SHORT_MARKET_SPAN:
-        return PERIOD_MINUTE
-    if span / timedelta(minutes=PERIOD_HOUR) <= CANDLES_PER_REQUEST_BOUND:
+    """One minute for a market that lives at most ``SHORT_MARKET_SPAN``, else one hour.
+
+    Never daily. The span sets the resolution only. Request size is
+    :func:`request_windows`' job, so a season-long market keeps hourly candles
+    across several windows instead of trading them for daily ones. An unknown
+    opening gets hourly: its span is unknown, not short.
+    """
+    if open_time is None:
         return PERIOD_HOUR
-    return PERIOD_DAY
+    span = max(settled_at - open_time, timedelta(0))
+    return PERIOD_MINUTE if span <= SHORT_MARKET_SPAN else PERIOD_HOUR
 
 
-def request_window(
+@dataclass(frozen=True)
+class RequestWindow:
+    """One archive candle request. ``start_ts``/``end_ts`` are epoch seconds."""
+
+    start_ts: int
+    end_ts: int
+    period_minutes: int
+
+
+def request_windows(
     open_time: Optional[datetime], settled_at: datetime, period_minutes: int
-) -> tuple[int, int]:
-    """``(start_ts, end_ts)``, clamped so it never holds more than the bound."""
-    start = open_time if open_time is not None else settled_at - MISSING_OPEN_LOOKBACK
-    floor = settled_at - timedelta(minutes=period_minutes * CANDLES_PER_REQUEST_BOUND)
-    start = min(max(start, floor), settled_at)
-    return int(start.timestamp()), int(settled_at.timestamp())
+) -> tuple[list[RequestWindow], Optional[dict]]:
+    """Every window from the opening to settlement, oldest first, plus any owed gap.
+
+    Each window holds at most ``CANDLES_PER_REQUEST_BOUND`` candles of
+    ``period_minutes``. Adjacent windows share their boundary instant, and
+    :func:`classify_candles` drops the repeated interval. When the opening is
+    unknown the windows cover only ``MISSING_OPEN_LOOKBACK`` before settlement
+    and the second value is the owed gap before them (``start_ts`` ``None``:
+    nobody knows where it begins). Otherwise it is ``None``.
+    """
+    end = settled_at
+    gap: Optional[dict] = None
+    if open_time is None:
+        start = settled_at - MISSING_OPEN_LOOKBACK
+        gap = {
+            "start_ts": None,
+            "end_ts": int(start.timestamp()),
+            "period_minutes": period_minutes,
+            "reason": OWED_OPENING_UNKNOWN,
+        }
+    else:
+        start = min(open_time, settled_at)
+    width = timedelta(minutes=period_minutes * CANDLES_PER_REQUEST_BOUND)
+    windows: list[RequestWindow] = []
+    cursor = start
+    while cursor < end:
+        upper = min(cursor + width, end)
+        windows.append(
+            RequestWindow(
+                int(cursor.timestamp()), int(upper.timestamp()), period_minutes
+            )
+        )
+        cursor = upper
+    if not windows:  # opened at settlement: one zero-span ask, still bounded
+        windows.append(
+            RequestWindow(int(start.timestamp()), int(end.timestamp()), period_minutes)
+        )
+    return windows, gap
+
+
+def owed_window(window: RequestWindow, reason: str = OWED_NOT_READ) -> dict:
+    """A window this run did not read, as the plan reports it."""
+    return {**asdict(window), "reason": reason}
 
 
 def _side(container: Any, keys: Iterable[str]) -> dict:
@@ -275,8 +341,26 @@ class OutcomePlan:
     settled_at: Optional[str] = None
     forecast_cutoff: Optional[str] = None
     cutoff_refusal: Optional[str] = None
+    #: ``complete`` only when every window from a KNOWN opening to settlement
+    #: was read and no candle was malformed. ``None`` when no candles were asked.
+    coverage: Optional[str] = None
+    windows_requested: int = 0
+    windows_read: int = 0
+    owed_windows: list = field(default_factory=list)
     counts: dict = field(default_factory=dict)
     points: list = field(default_factory=list)
+
+
+def candle_is_wellformed(candle: Any) -> bool:
+    """A dict with a numeric ``end_period_ts`` (a bool is not a number here)."""
+    if not isinstance(candle, dict):
+        return False
+    end = candle.get("end_period_ts")
+    return (
+        isinstance(end, (int, float))
+        and not isinstance(end, bool)
+        and parse_instant(end) is not None
+    )
 
 
 def classify_candles(
@@ -311,14 +395,10 @@ def classify_candles(
     seen: set = set()
     points: list[PlannedPoint] = []
     for candle in candles:
-        end = (
-            parse_instant(candle.get("end_period_ts"))
-            if isinstance(candle, dict)
-            else None
-        )
-        if end is None or not isinstance(candle.get("end_period_ts"), (int, float)):
+        if not candle_is_wellformed(candle):
             counts["malformed"] += 1
             continue
+        end = parse_instant(candle["end_period_ts"])
         if end in seen:
             counts["duplicate_interval"] += 1
             continue

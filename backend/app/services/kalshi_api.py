@@ -52,6 +52,23 @@ class KalshiSeriesLookupError(Exception):
     """
 
 
+class KalshiArchiveResponseMalformed(ValueError):
+    """A 200 from ``/historical/*`` whose body is not the documented shape. (#683)
+
+    It is NOT an empty archive. A valid empty answer carries the list key with
+    ``[]``. A body that is not a dict, lacks the list key, holds a non-list
+    there, or holds a row that is not a market cannot say whether the market
+    exists, so the caller must keep the outcome owed, never record absence
+    (gotcha #53). ``reason`` names the shape and never echoes payload text: the
+    trade rail's 429 detector falls back to ``"429" in str(exc)``.
+    """
+
+    def __init__(self, endpoint: str, reason: str):
+        super().__init__(f"malformed_response:{endpoint}:{reason}")
+        self.endpoint = endpoint
+        self.reason = reason
+
+
 class KalshiMarket(BaseModel):
     """Represents a single Kalshi market (binary outcome)."""
     ticker: str
@@ -1576,7 +1593,8 @@ class KalshiAPIService(BaseAPIClient):
     # trade reads above then answer 200-empty for it, which is the shape
     # ``kalshi_retention`` measured as "purged" — the archive is where it went.
     # All three methods RAISE on HTTP failure (gotcha #36: a 429 must re-raise,
-    # never read as "nothing there"), and none clamps or invents a parameter.
+    # never read as "nothing there") AND on a malformed 200, and none clamps or
+    # invents a parameter.
     # Callers: ``app.services.kalshi_archive_recovery`` (dry-run only).
 
     async def get_historical_cutoff(self) -> dict:
@@ -1589,7 +1607,11 @@ class KalshiAPIService(BaseAPIClient):
         response = await self.client.get(f"{self.BASE_URL}/historical/cutoff")
         response.raise_for_status()
         data = response.json()
-        return data if isinstance(data, dict) else {}
+        if not isinstance(data, dict):
+            raise KalshiArchiveResponseMalformed(
+                "historical_cutoff", f"body_{type(data).__name__}"
+            )
+        return data
 
     async def get_historical_markets(
         self,
@@ -1603,7 +1625,10 @@ class KalshiAPIService(BaseAPIClient):
 
         An empty page with an empty cursor is a response SHAPE, not proof the
         market never existed (gotcha #53) — the KXNCAAMB listing returned
-        exactly that on 2026-10-15 while its sibling series were archived.
+        exactly that on 2026-10-15 while its sibling series were archived. An
+        empty page WITH a cursor is not the end of the listing at all. A body
+        that is not that shape raises :class:`KalshiArchiveResponseMalformed`
+        rather than reading as an empty page.
         """
         params: dict = {"limit": max(1, min(int(limit), 200))}
         if event_ticker:
@@ -1618,9 +1643,28 @@ class KalshiAPIService(BaseAPIClient):
         response.raise_for_status()
         data = response.json()
         if not isinstance(data, dict):
-            return [], None
-        markets = data.get("markets") or []
-        return (markets if isinstance(markets, list) else []), (data.get("cursor") or None)
+            raise KalshiArchiveResponseMalformed(
+                "historical_markets", f"body_{type(data).__name__}"
+            )
+        markets = data.get("markets")
+        if not isinstance(markets, list):
+            raise KalshiArchiveResponseMalformed(
+                "historical_markets",
+                (
+                    "markets_missing"
+                    if markets is None
+                    else f"markets_{type(markets).__name__}"
+                ),
+            )
+        for row in markets:
+            if not isinstance(row, dict) or not isinstance(row.get("ticker"), str):
+                raise KalshiArchiveResponseMalformed("historical_markets", "market_row")
+        cursor = data.get("cursor")
+        if cursor is not None and not isinstance(cursor, str):
+            raise KalshiArchiveResponseMalformed(
+                "historical_markets", f"cursor_{type(cursor).__name__}"
+            )
+        return markets, (cursor or None)
 
     async def get_historical_market_candlesticks_raw(
         self,
@@ -1637,7 +1681,9 @@ class KalshiAPIService(BaseAPIClient):
         (``price.close``, ``yes_bid.close``), so they must not be fed to
         :func:`candle_yes_price` as-is — it would see no price at all. The
         reduction lives in :mod:`app.utils.kalshi_archive_history`. The window
-        is required: an archive read has no honest default span.
+        is required: an archive read has no honest default span. A body without
+        a ``candlesticks`` list raises :class:`KalshiArchiveResponseMalformed`;
+        only a real ``[]`` is an empty answer.
         """
         from urllib.parse import quote
 
@@ -1651,8 +1697,21 @@ class KalshiAPIService(BaseAPIClient):
         )
         response.raise_for_status()
         data = response.json()
-        candles = data.get("candlesticks") if isinstance(data, dict) else None
-        return candles if isinstance(candles, list) else []
+        if not isinstance(data, dict):
+            raise KalshiArchiveResponseMalformed(
+                "historical_candlesticks", f"body_{type(data).__name__}"
+            )
+        candles = data.get("candlesticks")
+        if not isinstance(candles, list):
+            raise KalshiArchiveResponseMalformed(
+                "historical_candlesticks",
+                (
+                    "candlesticks_missing"
+                    if candles is None
+                    else f"candlesticks_{type(candles).__name__}"
+                ),
+            )
+        return candles
 
     async def get_market_candlesticks_batch(
         self,

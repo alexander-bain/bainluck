@@ -16,6 +16,12 @@ authoritative start), READER-ONLY history, or refused. The digest is repeatable.
     python3 scripts/kalshi_archive_recovery_dry_run.py --outcome-ids 101,102 --output ...
     python3 scripts/kalshi_archive_recovery_dry_run.py --after-id <next_after_id> ...
 
+``--outcome-ids`` reads the stored identity WITHOUT the keyset's local backstop
+and status filters; the venue's settlement and the provider cutoff choose the
+tier. A run that stops mid-outcome reports ``held_outcome`` (listing cursor, or
+the unread hourly/minute windows) and does not advance ``next_after_id`` past it.
+An outcome planned ``incomplete`` names its ``owed_windows``.
+
 Needs ``DATABASE_URL`` for the candidate read (a read-only transaction) and makes
 public Kalshi GETs. ``--apply`` does not exist as a mode. It is refused with exit 2,
 and the refusal names the gates that are still unpaid.

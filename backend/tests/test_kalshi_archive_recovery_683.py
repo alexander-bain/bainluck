@@ -211,12 +211,20 @@ class TestResolution:
             == kah.PERIOD_MINUTE
         )
 
-    def test_season_long_market_drops_to_daily_only_past_the_bound(self):
-        long_open = SETTLED - timedelta(hours=kah.CANDLES_PER_REQUEST_BOUND + 1)
-        assert kah.choose_period(long_open, SETTLED) == kah.PERIOD_DAY
-        assert (
-            kah.choose_period(SETTLED - timedelta(days=90), SETTLED) == kah.PERIOD_HOUR
-        )
+    @pytest.mark.parametrize(
+        "span",
+        [
+            timedelta(hours=kah.CANDLES_PER_REQUEST_BOUND + 1),
+            timedelta(days=181),
+            timedelta(days=4000),
+        ],
+    )
+    def test_a_long_market_keeps_hourly_and_is_never_coarsened_to_daily(self, span):
+        # Root's reproduction: a 181-day market selected 1440 (daily) at ed55fc5fb9.
+        assert kah.choose_period(SETTLED - span, SETTLED) == kah.PERIOD_HOUR
+
+    def test_unknown_opening_is_hourly_not_short_and_not_daily(self):
+        assert kah.choose_period(None, SETTLED) == kah.PERIOD_HOUR
 
     def test_the_daily_candle_ends_after_settlement_and_is_refused_hourly_is_kept(self):
         daily = candle(datetime(2026, 4, 6, 4, 0, tzinfo=UTC), close="0.5500")
@@ -226,12 +234,33 @@ class TestResolution:
         assert d_points[0].admission == kah.REFUSE_POST_SETTLEMENT
         assert h_points[0].admission == kah.ADMIT_FORECAST
 
-    def test_window_is_bounded_and_never_past_settlement(self):
-        start, end = kah.request_window(None, SETTLED, 60)
-        assert end == ts(SETTLED)
-        assert start == ts(SETTLED - kah.MISSING_OPEN_LOOKBACK)
-        start, _ = kah.request_window(SETTLED - timedelta(days=4000), SETTLED, 1440)
-        assert end - start <= 1440 * 60 * kah.CANDLES_PER_REQUEST_BOUND
+    def test_a_long_history_is_chunked_whole_from_opening_to_settlement(self):
+        opened = SETTLED - timedelta(hours=10_000)
+        windows, gap = kah.request_windows(opened, SETTLED, 60)
+        assert gap is None and len(windows) == 3
+        assert windows[0].start_ts == ts(opened) and windows[-1].end_ts == ts(SETTLED)
+        for a, b in zip(windows, windows[1:]):
+            assert a.end_ts == b.start_ts  # contiguous: no clipped span between them
+        for w in windows:
+            assert w.period_minutes == 60
+            assert w.end_ts - w.start_ts <= 60 * 60 * kah.CANDLES_PER_REQUEST_BOUND
+
+    def test_short_history_is_one_window(self):
+        windows, gap = kah.request_windows(OPEN, SETTLED, 60)
+        assert gap is None
+        assert [(w.start_ts, w.end_ts) for w in windows] == [(ts(OPEN), ts(SETTLED))]
+
+    def test_missing_opening_asks_a_bounded_window_and_owes_the_gap_before_it(self):
+        # Root's reproduction: a missing open_time silently became the last 30 days.
+        windows, gap = kah.request_windows(None, SETTLED, 60)
+        lower = ts(SETTLED - kah.MISSING_OPEN_LOOKBACK)
+        assert [(w.start_ts, w.end_ts) for w in windows] == [(lower, ts(SETTLED))]
+        assert gap == {
+            "start_ts": None,
+            "end_ts": lower,
+            "period_minutes": 60,
+            "reason": kah.OWED_OPENING_UNKNOWN,
+        }
 
 
 # ── admission ──────────────────────────────────────────────────────────────
@@ -371,12 +400,15 @@ def _row(
     evt="KXNCAAMBSPREAD-26APR05OKLAWVU",
     has_event=True,
     source="espn",
+    resolution_date=SETTLED,
+    status="resolved",
 ):
     return SimpleNamespace(
         outcome_id=oid,
         ticker=ticker,
         event_ticker=evt,
-        resolution_date=SETTLED,
+        resolution_date=resolution_date,
+        status=status,
         has_event=has_event,
         commence_time=TIPOFF,
         commence_time_source=source,
@@ -385,12 +417,12 @@ def _row(
     )
 
 
-def _listed(ticker, evt, settled=SETTLED):
+def _listed(ticker, evt, settled=SETTLED, opened=OPEN):
     return {
         "ticker": ticker,
         "event_ticker": evt,
         "status": "finalized",
-        "open_time": OPEN.isoformat(),
+        "open_time": None if opened is None else opened.isoformat(),
         "settlement_ts": settled.isoformat(),
     }
 
@@ -410,6 +442,16 @@ class FakeSession:
                 rows = [r for r in rows if r.outcome_id in params["outcome_ids"]]
             else:
                 rows = [r for r in rows if r.outcome_id > params["after_id"]]
+            # Emulate the local filters only when the SQL really carries them.
+            if "fm.status = 'resolved'" in sql:
+                rows = [r for r in rows if r.status == "resolved"]
+            if ":archive_cutoff" in sql:
+                cut = params["archive_cutoff"]
+                rows = [
+                    r
+                    for r in rows
+                    if r.resolution_date is None or r.resolution_date < cut
+                ]
             return SimpleNamespace(fetchall=lambda: rows[: params["lim"]])
         if "captured_at" in sql:
             return SimpleNamespace(
@@ -519,6 +561,7 @@ class TestPlanner:
         assert report["terminal"] == "complete" and report["walk_ended"] is True
         plan = report["plans"][0]
         assert plan["refusal"] is None and plan["period_minutes"] == 60
+        assert plan["coverage"] == "complete" and plan["owed_windows"] == []
         assert plan["forecast_cutoff"] == TIPOFF.isoformat()
         adm = [p["admission"] for p in plan["points"]]
         assert adm == ["forecast", "reader_only", "no_price", "post_settlement"]
@@ -695,6 +738,251 @@ class TestPlanner:
         )
 
 
+# ── Root source review of ed55fc5fb9: the four repairs + the deadline ──────
+
+
+def _listing_calls(svc):
+    return [c for c in svc.calls if c[0] == "listing"]
+
+
+def _candle_calls(svc):
+    return [c for c in svc.calls if c[0] == "candles"]
+
+
+class TestListingIsNeverTruncatedIntoAbsence:
+    async def test_ticker_after_the_third_page_is_found(self):
+        filler = [
+            ([_listed(f"{E1}-F{p}", E1)], str(p + 1)) for p in range(4)
+        ]  # four pages of siblings, then ours on the fifth
+        svc = FakeService(
+            {E1: filler + [([_listed(T1, E1)], None)]}, {T1: _good_candles()}
+        )
+        report = await _plan(FakeSession([_row(1)]), svc)
+        plan = report["plans"][0]
+        assert plan["refusal"] is None and plan["coverage"] == "complete"
+        assert len(_listing_calls(svc)) == 5
+        assert report["terminal"] == "complete"
+
+    async def test_empty_pages_carrying_a_cursor_are_not_the_end(self):
+        pages = [([], "1"), ([], "2"), ([], "3"), ([_listed(T1, E1)], None)]
+        svc = FakeService({E1: pages}, {T1: _good_candles()})
+        report = await _plan(FakeSession([_row(1)]), svc)
+        assert report["plans"][0]["refusal"] is None
+        assert len(_listing_calls(svc)) == 4
+
+    async def test_budget_spent_mid_listing_holds_the_outcome_with_its_cursor(self):
+        # Root's reproduction: three empty pages each with a next cursor became None.
+        pages = [([], str(i + 1)) for i in range(10)] + [([_listed(T1, E1)], None)]
+        svc = FakeService({E1: pages}, {T1: _good_candles()})
+        report = await _plan(
+            FakeSession([_row(1), _row(2, ticker=T2)]), svc, max_requests=4
+        )
+        assert report["terminal"] == "partial"
+        assert report["plans"] == [] and report["owed_ids"] == []
+        assert report["next_after_id"] == 0  # NOT advanced past the unproven ticker
+        held = report["held_outcome"]
+        assert held["outcome_id"] == 1 and held["stage"] == "listing"
+        assert held["listing_pages_read"] == 3 and held["listing_cursor"] == "3"
+        assert held["listing_exhausted"] is False
+        assert "refusal:archive_listing_empty" not in report["totals"]
+        assert "refusal:absent_from_archive_listing" not in report["totals"]
+
+    async def test_absence_needs_an_exhausted_listing(self):
+        pages = [([_listed(T2, E1)], "1"), ([], None)]
+        svc = FakeService({E1: pages}, {T2: []})
+        report = await _plan(FakeSession([_row(1)]), svc)
+        assert report["plans"][0]["refusal"] == "absent_from_archive_listing"
+        assert len(_listing_calls(svc)) == 2
+
+    async def test_a_repeated_cursor_is_owed_and_siblings_are_not_re_asked(self):
+        loop = [([_listed(f"{E1}-F", E1)], "1"), ([], "1")]
+        svc = FakeService({E1: loop}, {})
+        report = await _plan(FakeSession([_row(1), _row(2, ticker=T2)]), svc)
+        assert report["owed_ids"] == [1, 2] and report["plans"] == []
+        assert any("cursor_repeated" in e for e in report["errors"])
+        assert len(_listing_calls(svc)) == 2
+        assert report["terminal"] == "partial"
+
+
+class TestFullHistoryIsChunkedNotSampled:
+    LONG_OPEN = SETTLED - timedelta(hours=10_000)
+
+    def _svc(self):
+        return FakeService(
+            {E1: [([_listed(T1, E1, opened=self.LONG_OPEN)], None)]},
+            {T1: _good_candles()},
+        )
+
+    async def test_more_than_4000_hours_reads_every_hourly_window(self):
+        svc = self._svc()
+        report = await _plan(FakeSession([_row(1)]), svc)
+        plan = report["plans"][0]
+        calls = _candle_calls(svc)
+        assert [c[2] for c in calls] == [60, 60, 60]  # never 1440
+        assert calls[0][3] == ts(self.LONG_OPEN) and calls[-1][4] == ts(SETTLED)
+        assert plan["windows_requested"] == plan["windows_read"] == 3
+        assert plan["coverage"] == "complete" and report["terminal"] == "complete"
+        # Overlapping boundary candles are one interval, not three.
+        assert plan["counts"]["duplicate_interval"] == 2 * len(_good_candles())
+
+    async def test_a_stop_between_windows_owes_the_rest_at_the_same_width(self):
+        svc = self._svc()
+        # cutoff, listing, first window, then the budget is gone.
+        report = await _plan(FakeSession([_row(1)]), svc, max_requests=3)
+        assert report["terminal"] == "partial" and report["plans"] == []
+        assert report["next_after_id"] == 0
+        held = report["held_outcome"]
+        assert held["stage"] == "candles" and held["windows_read"] == 1
+        owed = held["owed_windows"]
+        assert len(owed) == 2 and {w["period_minutes"] for w in owed} == {60}
+        assert owed[-1]["end_ts"] == ts(SETTLED)
+        # The rerun asks the same hourly windows and completes.
+        again = await _plan(FakeSession([_row(1)]), self._svc(), max_requests=10)
+        assert again["plans"][0]["coverage"] == "complete"
+        assert again["plans"][0]["period_minutes"] == 60
+
+    async def test_missing_opening_is_incomplete_with_the_gap_owed(self):
+        svc = FakeService(
+            {E1: [([_listed(T1, E1, opened=None)], None)]}, {T1: _good_candles()}
+        )
+        report = await _plan(FakeSession([_row(1)]), svc)
+        plan = report["plans"][0]
+        assert plan["coverage"] == "incomplete"
+        assert [w["reason"] for w in plan["owed_windows"]] == ["opening_unknown"]
+        assert report["incomplete_ids"] == [1] and report["terminal"] == "partial"
+
+    async def test_a_history_no_run_could_read_is_owed_by_name(self, monkeypatch):
+        monkeypatch.setattr(rec, "MAX_REQUESTS", 2)
+        svc = self._svc()
+        report = await _plan(FakeSession([_row(1)]), svc, max_requests=2)
+        plan = report["plans"][0]
+        assert plan["refusal"] == "history_exceeds_request_cap"
+        assert plan["coverage"] == "incomplete" and len(plan["owed_windows"]) == 3
+        assert report["owed_ids"] == [1] and _candle_calls(svc) == []
+
+    async def test_malformed_candle_rows_leave_the_window_owed(self):
+        bad = _good_candles() + [{"end_period_ts": "soon"}]
+        svc = FakeService({E1: [([_listed(T1, E1)], None)]}, {T1: bad})
+        report = await _plan(FakeSession([_row(1)]), svc)
+        plan = report["plans"][0]
+        assert plan["coverage"] == "incomplete"
+        assert [w["reason"] for w in plan["owed_windows"]] == ["malformed_candles"]
+        assert plan["counts"]["malformed"] == 1 and report["terminal"] == "partial"
+
+
+class TestExactIdsIgnoreTheLocalBackstop:
+    # Stored backstop in the FUTURE, market still 'open' locally (gotcha #33),
+    # but the venue settled it before the archive cutoff.
+    def _session(self):
+        return FakeSession(
+            [
+                _row(
+                    1,
+                    resolution_date=ARCHIVE_CUTOFF + timedelta(days=60),
+                    status="open",
+                )
+            ]
+        )
+
+    def _svc(self):
+        return FakeService({E1: [([_listed(T1, E1)], None)]}, {T1: _good_candles()})
+
+    async def test_exact_id_is_read_and_the_venue_chooses_the_tier(self):
+        session = self._session()
+        report = await _plan(session, self._svc(), outcome_ids=[1])
+        assert report["ids_not_candidates"] == []
+        plan = report["plans"][0]
+        assert plan["route"] == "archive" and plan["refusal"] is None
+        assert "forecast" in [p["admission"] for p in plan["points"]]
+        sql, params = next(x for x in session.sql if "futures_outcomes" in x[0])
+        assert "resolution_date" not in sql.split("FROM futures_outcomes")[1]
+        assert "archive_cutoff" not in params
+
+    async def test_keyset_discovery_stays_bounded_and_says_what_it_misses(self):
+        report = await _plan(self._session(), self._svc())
+        assert report["candidates"] == 0
+        assert any("backstop" in line for line in report["selector_limits"])
+
+    async def test_exact_ids_still_refuse_a_recent_venue_settlement(self):
+        late = ARCHIVE_CUTOFF + timedelta(days=1)
+        svc = FakeService({E1: [([_listed(T1, E1, settled=late)], None)]}, {})
+        report = await _plan(self._session(), svc, outcome_ids=[1])
+        assert report["plans"][0]["refusal"] == "route_recent"
+
+
+class TestMalformedIsNotEmpty:
+    async def test_malformed_listing_is_owed_never_listing_empty(self):
+        from app.services.kalshi_api import KalshiArchiveResponseMalformed
+
+        svc = FakeService(
+            {},
+            {},
+            script=[
+                None,
+                KalshiArchiveResponseMalformed("historical_markets", "markets_missing"),
+            ],
+        )
+        report = await _plan(FakeSession([_row(1), _row(2, ticker=T2)]), svc)
+        assert report["owed_ids"] == [1, 2] and report["plans"] == []
+        assert all(
+            "malformed_response:historical_markets" in e for e in report["errors"]
+        )
+        assert len(_listing_calls(svc)) == 1  # the sibling is not re-asked
+        assert report["terminal"] == "partial"
+
+    async def test_malformed_candles_are_owed_never_candles_empty(self):
+        from app.services.kalshi_api import KalshiArchiveResponseMalformed
+
+        svc = FakeService(
+            {E1: [([_listed(T1, E1)], None)]},
+            {},
+            script=[
+                None,
+                None,
+                KalshiArchiveResponseMalformed(
+                    "historical_candlesticks", "candlesticks_missing"
+                ),
+            ],
+        )
+        report = await _plan(FakeSession([_row(1)]), svc)
+        assert report["owed_ids"] == [1] and report["plans"] == []
+        assert "refusal:archive_candles_empty" not in report["totals"]
+
+    async def test_malformed_errors_are_not_read_as_429(self):
+        from app.services.kalshi_api import KalshiArchiveResponseMalformed
+        from app.tasks.kalshi import _kalshi_trade_429_wait
+
+        exc = KalshiArchiveResponseMalformed("historical_markets", "market_row")
+        assert _kalshi_trade_429_wait(exc) is None
+
+
+class TestDeadlineAfterPacing:
+    async def test_no_get_leaves_after_the_deadline_once_the_pace_has_slept(self):
+        svc = FakeService({E1: [([_listed(T1, E1)], None)]}, {T1: _good_candles()})
+        clock = Clock()
+        # cutoff at t=0, listing after the pace at t=0.5; the next pace lands at
+        # t=1.0, past the 0.7 s deadline, so the candle GET must not be sent.
+        report = await _plan(
+            FakeSession([_row(1)]), svc, clock=clock, deadline_seconds=0.7
+        )
+        assert _candle_calls(svc) == [] and report["requests_sent"] == 2
+        assert report["terminal"] == "partial" and report["next_after_id"] == 0
+
+    async def test_no_get_leaves_after_the_deadline_once_a_429_wait_has_slept(self):
+        svc = FakeService(
+            {E1: [([_listed(T1, E1)], None)]},
+            {T1: _good_candles()},
+            script=[None, _429("1")],
+        )
+        clock = Clock()
+        report = await _plan(
+            FakeSession([_row(1)]), svc, clock=clock, deadline_seconds=1.8
+        )
+        assert report["rate_limit_waits"] == 1
+        assert len(_listing_calls(svc)) == 1 and report["requests_sent"] == 2
+        assert clock.t <= 2.0 and report["terminal"] == "partial"
+
+
 # ── static guards ──────────────────────────────────────────────────────────
 
 
@@ -777,6 +1065,71 @@ class TestServiceMethods:
         assert seen[1].params["limit"] == "200" and seen[1].params["event_ticker"] == E1
         assert seen[2].path.endswith(f"/historical/markets/{T1}/candlesticks")
         assert seen[2].params["period_interval"] == "60"
+        await svc.client.aclose()
+
+    async def test_empty_page_keeps_its_cursor(self):
+        svc = self._svc(
+            lambda r: httpx.Response(200, json={"cursor": "c2", "markets": []})
+        )
+        assert await svc.get_historical_markets(event_ticker=E1) == ([], "c2")
+        await svc.client.aclose()
+
+    @pytest.mark.parametrize(
+        "body,reason",
+        [
+            ([], "body_list"),
+            ({"cursor": ""}, "markets_missing"),
+            ({"markets": {"ticker": T1}}, "markets_dict"),
+            ({"markets": ["KXT"]}, "market_row"),
+            ({"markets": [{"event_ticker": E1}]}, "market_row"),
+            ({"markets": [], "cursor": 7}, "cursor_int"),
+        ],
+    )
+    async def test_malformed_listing_raises(self, body, reason):
+        from app.services.kalshi_api import KalshiArchiveResponseMalformed
+
+        svc = self._svc(lambda r: httpx.Response(200, json=body))
+        with pytest.raises(KalshiArchiveResponseMalformed) as info:
+            await svc.get_historical_markets(event_ticker=E1)
+        assert info.value.reason == reason
+        await svc.client.aclose()
+
+    @pytest.mark.parametrize(
+        "body,reason",
+        [
+            ("nope", "body_str"),
+            ({}, "candlesticks_missing"),
+            ({"candlesticks": None}, "candlesticks_missing"),
+            ({"candlesticks": {"a": 1}}, "candlesticks_dict"),
+        ],
+    )
+    async def test_malformed_candles_raise_and_a_real_empty_list_does_not(
+        self, body, reason
+    ):
+        from app.services.kalshi_api import KalshiArchiveResponseMalformed
+
+        svc = self._svc(lambda r: httpx.Response(200, json=body))
+        with pytest.raises(KalshiArchiveResponseMalformed) as info:
+            await svc.get_historical_market_candlesticks_raw(
+                T1, period_interval=60, start_ts=1, end_ts=2
+            )
+        assert info.value.reason == reason
+        await svc.client.aclose()
+        ok = self._svc(lambda r: httpx.Response(200, json={"candlesticks": []}))
+        assert (
+            await ok.get_historical_market_candlesticks_raw(
+                T1, period_interval=60, start_ts=1, end_ts=2
+            )
+            == []
+        )
+        await ok.client.aclose()
+
+    async def test_malformed_cutoff_raises(self):
+        from app.services.kalshi_api import KalshiArchiveResponseMalformed
+
+        svc = self._svc(lambda r: httpx.Response(200, json=["2026-08-16"]))
+        with pytest.raises(KalshiArchiveResponseMalformed):
+            await svc.get_historical_cutoff()
         await svc.client.aclose()
 
     async def test_429_raises_never_reads_as_empty(self):
