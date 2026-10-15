@@ -1755,12 +1755,18 @@ class LiveBlendRefresher:
                 # its own group in its own write session, as a singleton does,
                 # rather than every stamp first waiting on a separate session's
                 # read of all of them. A read failure stays with its own event.
+                # A larger fresh population has a claim order to decide, and
+                # only that: it reads which of its events are live, not every
+                # group. Each stamp still reads its own group in its own write
+                # session, so the first claims no longer wait on a read of all
+                # of them, nor the queued ones on that read plus a reread.
                 prepared = None
+                live_now = None
                 try:
-                    if not head_only and (
-                        pending_only or len(population) > FRESH_STAMP_WORKERS
-                    ):
+                    if not head_only and pending_only:
                         prepared = await self._prepare_groups(list(population))
+                    elif not head_only and len(population) > FRESH_STAMP_WORKERS:
+                        live_now = await self._read_live_order(list(population))
                 except Exception as exc:
                     self.stats["errors"] += 1
                     logger.exception(
@@ -1777,6 +1783,8 @@ class LiveBlendRefresher:
                 # Preserve live-first order within each population and numeric
                 # tie-breaking; missing prepared rows remain due as non-live.
                 def stamp_order(event_id: int) -> tuple[bool, int]:
+                    if live_now is not None:
+                        return (event_id not in live_now, event_id)
                     if prepared is None:
                         return (False, event_id)
                     context = prepared.get(event_id)
@@ -2534,6 +2542,32 @@ class LiveBlendRefresher:
         factory = self._session_factory or get_task_session
         async with self._session_slot(), factory() as session:
             return await self._read_groups(session, event_ids)
+
+    async def _read_live_order(self, event_ids: list[int]) -> set[int]:
+        """#10090: the live events among a fresh population, for claim order.
+
+        Exactly the events `_prepare_groups` would return with status live: a
+        prepared row exists only for an event with a market of this source.
+        Read now, not from `_live_event_ids`, which a stamp updates and which
+        misses a game that just went live.
+        """
+        from sqlalchemy import exists, select
+        from app.models.models import Event, FuturesMarket
+        from app.tasks.base import get_task_session
+
+        factory = self._session_factory or get_task_session
+        async with self._session_slot(), factory() as session:
+            rows = await session.execute(
+                select(Event.id).where(
+                    Event.id.in_(event_ids),
+                    Event.status == "live",
+                    exists().where(
+                        FuturesMarket.event_id == Event.id,
+                        FuturesMarket.source == self.source,
+                    ),
+                )
+            )
+            return set(rows.scalars())
 
     def _session_slot(self):
         """The run's existing three slots, across quote and history owners."""
