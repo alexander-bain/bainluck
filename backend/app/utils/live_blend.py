@@ -46,8 +46,8 @@ from app.utils.game_market_class import (
     competition_prefix_tail,
     outcomes_refute_game_winner,
 )
+from app.utils import prediction_market_matching as _pmm
 from app.utils.prediction_market_matching import (
-    _fuzzy_team_match,
     _strip_category_prefix,
     extract_matchup_with_ticker_fallback,
     feeds_win_prob_blend,
@@ -250,8 +250,9 @@ def _is_unique_named_home_quote(
     named_home = [
         candidate
         for candidate in entry.outcomes
-        if candidate.name and _fuzzy_team_match(candidate.name, home_team_name)
-        and not _fuzzy_team_match(candidate.name, away_team_name)
+        if candidate.name
+        and _pmm._outcome_names_team(candidate.name, home_team_name)
+        and not _pmm._outcome_names_team(candidate.name, away_team_name)
     ]
     return len(named_home) == 1 and named_home[0] is outcome
 
@@ -331,12 +332,17 @@ def away_leg_complement_is_not_home(
     P(Croatia) + P(Tie) as Croatia's line, and a later run oriented on the
     Croatia leg — the two series interleaved into a 23%<->80% square wave.
     One rule, one copy (#1951).
+
+    Sides are named by the resolver's own test, read through the module so a
+    patched resolver patches this guard too. On the linker's narrower rule,
+    ``Los Angeles G`` (the LA Galaxy row the resolver selects) named no side
+    here, and P(home) + P(Tie) was published as home (#10090).
     """
     if yes_is_home:
         return False
     if not (
-        _fuzzy_team_match(outcome.name, away_team_name)
-        and not _fuzzy_team_match(outcome.name, home_team_name)
+        _pmm._outcome_names_team(outcome.name, away_team_name)
+        and not _pmm._outcome_names_team(outcome.name, home_team_name)
     ):
         return False
     from app.utils.venue_settlement import _names_a_draw
