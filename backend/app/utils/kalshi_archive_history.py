@@ -1,0 +1,390 @@
+"""Kalshi's historical (archive) tier → an exact-ID recovery plan. Pure. (#683)
+
+PILLAR: TRUTH. SHIP: settled Kalshi questions that have no price history get
+back their real pre-resolution probability timeline, and archive provenance stays
+separate from live capture.
+
+WHY AN ARCHIVE ARM. ``kalshi_retention`` measured that live ``/markets`` reads go
+200-empty for a market settled more than ~74–86 days ago, and every recovery rail
+was floored at that bound. That floor was right for the LIVE endpoints. It does
+not prove the history was deleted: Kalshi moves a market settled before
+``GET /historical/cutoff``'s ``market_settled_ts`` into ``/historical/*``. On
+2026-10-15 Alex ran an independent sample in plain Mac Terminal: 57 GETs, all 200
+(``artifacts/calibration-683-archive-20261015/ROOT-AUDIT.md``). Five series had
+usable hourly archive prices before settlement, on 20 of 22 sampled markets.
+That is a sample, not a population. This module turns it into a plan that can be
+reviewed, and never into a write.
+
+WHAT THIS MODULE DECIDES, AND THE RULES IT WILL NOT BEND
+
+1. **Routing comes from the provider's cutoff, read fresh.** A market settled
+   before ``market_settled_ts`` is ``archive``, one settled at or after it is
+   ``recent`` (the live rails' job), and one with no settlement time is
+   ``unknown``. ``market_settled_ts`` moves about a day per day, so it is never a
+   constant here.
+2. **Identity is exact.** The archive row must carry the STORED outcome ticker
+   byte for byte, under the STORED event ticker, in a settled state. A near miss
+   refuses. It never "finds the closest market".
+3. **A price is an observation from the interval, never a carried value.**
+   Archive candles name their prices without the ``_dollars`` suffix
+   (``price.close``, ``yes_bid.close``). They are mapped onto the house reducer
+   :func:`~app.utils.kalshi_candle_price.candle_yes_price`, so no second price
+   policy exists, and ``price.previous`` is DROPPED first. ``previous`` is the
+   last trade from some EARLIER interval, so a candle whose only price is
+   ``previous`` has no price of its own. Kalshi returns exactly that shape for
+   zero-volume intervals (``KXNBA-26-WAS``: ``close null … previous "0.0100"``,
+   ``volume "0.00"``). A row also records whether a trade happened in its
+   interval (``traded_interval``) or only a quote was standing (``quote_only``).
+   A non-null candle count is not a trade count.
+4. **PRE-SETTLEMENT IS NOT PREGAME.** Some spread and total markets open during
+   play: ``KXNCAAMBSPREAD-26APR06CONNMICH-MICH20`` opened at 02:31Z and settled
+   at 03:28Z. A candle is admitted as a FORECAST only when the WHOLE interval
+   ends at or before the authoritative forecast cutoff,
+   ``min(event start, settlement)``. The start is admitted only when the existing
+   house guard :func:`~app.utils.calibration_paired_prestart.start_refusal`
+   passes it. A start stamped by a venue (``kalshi``, ``kalshi_occurrence``,
+   ``polymarket``: gotcha #14, a close or expiry or listing time) is also refused
+   for this arm. No start, or a start nobody can vouch for, means the candle is at
+   most ``reader_only``. It is never a forecast.
+5. **Nothing at or after settlement.** A candle that ends at or after the venue's
+   own ``settlement_ts`` is refused outright, including one that straddles it.
+   It may hold earlier activity, but it cannot be told apart from what came after.
+
+The plan carries its provenance on every row (``source``, interval start and end,
+period, archive cutoff, forecast cutoff, and the reason a row is not a forecast).
+:func:`plan_digest` makes it a reviewable, repeatable artifact: the same inputs
+give the same digest, which is what makes a later import idempotent.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import json
+from dataclasses import asdict, dataclass, field
+from datetime import datetime, timedelta, timezone
+from typing import Any, Iterable, Optional
+
+from app.utils.calibration_paired_prestart import start_refusal
+from app.utils.event_completion import VENUE_STAMP_COMMENCE_SOURCES
+from app.utils.kalshi_candle_price import candle_yes_price
+
+#: Provenance stamped on every planned row. Deliberately NOT ``kalshi``. Where
+#: and how this is stored is an open schema decision (see
+#: ``app.services.kalshi_archive_recovery``), so it is plan vocabulary only today.
+ARCHIVE_SOURCE = "kalshi_archive"
+
+#: Candle widths the archive endpoint takes, in minutes.
+PERIOD_MINUTE = 1
+PERIOD_HOUR = 60
+PERIOD_DAY = 1440
+
+#: At or under this open→settlement span, ask for one-minute candles. Hourly
+#: candles cannot resolve a market that lives a couple of hours, and daily
+#: candles missed every sampled NCAA spread market. 6h of one-minute candles is
+#: at most 360 rows, so the response stays small.
+SHORT_MARKET_SPAN = timedelta(hours=6)
+
+#: Our own per-request bound on candles. This is a request-size limit WE chose.
+#: It is not a claim about Kalshi's limit. A span with more hourly candles than
+#: this drops to daily rather than being chunked into many requests.
+CANDLES_PER_REQUEST_BOUND = 4000
+
+#: When the archive listing carries no ``open_time``, how far back of settlement
+#: to ask. Bounded so a missing field can never become an unbounded window.
+MISSING_OPEN_LOOKBACK = timedelta(days=30)
+
+#: Venue states that mean "settled". Anything else is not a settled market.
+ARCHIVE_SETTLED_STATUSES = frozenset({"finalized", "settled"})
+
+ROUTE_ARCHIVE = "archive"
+ROUTE_RECENT = "recent"
+ROUTE_UNKNOWN = "unknown"
+
+ADMIT_FORECAST = "forecast"
+ADMIT_READER_ONLY = "reader_only"
+REFUSE_POST_SETTLEMENT = "post_settlement"
+REFUSE_NO_PRICE = "no_price"
+
+BASIS_TRADED = "traded_interval"
+BASIS_QUOTE = "quote_only"
+BASIS_PREVIOUS_ONLY = "previous_only"
+BASIS_NONE = "no_price"
+
+#: Why a start may not bound a forecast in this arm, beyond ``start_refusal``.
+CUTOFF_VENUE_STAMP = "start_is_venue_stamp"
+CUTOFF_NO_SETTLEMENT = "settlement_unknown"
+
+
+def parse_instant(value: Any) -> Optional[datetime]:
+    """An ISO string, epoch number or datetime, as aware UTC. ``None`` if unusable."""
+    if value is None or value == "":
+        return None
+    if isinstance(value, datetime):
+        return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        try:
+            return datetime.fromtimestamp(float(value), tz=timezone.utc)
+        except (OverflowError, OSError, ValueError):
+            return None
+    if isinstance(value, str):
+        try:
+            parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+        return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+    return None
+
+
+def archive_settled_cutoff(cutoff_payload: Any) -> Optional[datetime]:
+    """``market_settled_ts`` from ``/historical/cutoff``; ``None`` fails closed."""
+    if not isinstance(cutoff_payload, dict):
+        return None
+    return parse_instant(cutoff_payload.get("market_settled_ts"))
+
+
+def route_market(settled_at: Optional[datetime], archive_cutoff: datetime) -> str:
+    """Which tier answers for a market settled at ``settled_at``."""
+    if settled_at is None:
+        return ROUTE_UNKNOWN
+    return ROUTE_ARCHIVE if settled_at < archive_cutoff else ROUTE_RECENT
+
+
+def identity_refusal(
+    stored_ticker: str, stored_event_ticker: Optional[str], listed: Any
+) -> Optional[str]:
+    """``None`` when ``listed`` IS the stored market; otherwise the reason it is not."""
+    if not isinstance(listed, dict):
+        return "listing_row_malformed"
+    if listed.get("ticker") != stored_ticker:
+        return "ticker_mismatch"
+    if not stored_event_ticker or listed.get("event_ticker") != stored_event_ticker:
+        return "event_ticker_mismatch"
+    if listed.get("status") not in ARCHIVE_SETTLED_STATUSES:
+        return "not_settled_at_venue"
+    if parse_instant(listed.get("settlement_ts")) is None:
+        return "settlement_ts_missing"
+    return None
+
+
+def choose_period(open_time: Optional[datetime], settled_at: datetime) -> int:
+    """The finest candle width that resolves this market inside the request bound."""
+    start = open_time if open_time is not None else settled_at - MISSING_OPEN_LOOKBACK
+    span = max(settled_at - start, timedelta(0))
+    if span <= SHORT_MARKET_SPAN:
+        return PERIOD_MINUTE
+    if span / timedelta(minutes=PERIOD_HOUR) <= CANDLES_PER_REQUEST_BOUND:
+        return PERIOD_HOUR
+    return PERIOD_DAY
+
+
+def request_window(
+    open_time: Optional[datetime], settled_at: datetime, period_minutes: int
+) -> tuple[int, int]:
+    """``(start_ts, end_ts)``, clamped so it never holds more than the bound."""
+    start = open_time if open_time is not None else settled_at - MISSING_OPEN_LOOKBACK
+    floor = settled_at - timedelta(minutes=period_minutes * CANDLES_PER_REQUEST_BOUND)
+    start = min(max(start, floor), settled_at)
+    return int(start.timestamp()), int(settled_at.timestamp())
+
+
+def _side(container: Any, keys: Iterable[str]) -> dict:
+    """Map an archive price block (``close``) onto the live spelling (``close_dollars``)."""
+    out: dict = {}
+    if not isinstance(container, dict):
+        return out
+    for key in keys:
+        value = container.get(f"{key}_dollars")
+        if value is None:
+            value = container.get(key)
+        if value is not None and value != "":
+            out[f"{key}_dollars"] = value
+    return out
+
+
+def archive_candle_price(candle: Any) -> tuple[Optional[float], str]:
+    """``(probability, basis)`` for one archive candle, or ``(None, why not)``.
+
+    The reduction is the house one. Only the spelling is adapted, and
+    ``price.previous`` is removed so a carried value can never become a point.
+    """
+    if not isinstance(candle, dict):
+        return None, BASIS_NONE
+    price_block = _side(candle.get("price"), ("close", "mean"))
+    normalized = {
+        "yes_bid": _side(candle.get("yes_bid"), ("close",)),
+        "yes_ask": _side(candle.get("yes_ask"), ("close",)),
+        "price": price_block,
+    }
+    probability = candle_yes_price(normalized)
+    if probability is None:
+        previous = _side(candle.get("price"), ("previous",))
+        return None, (BASIS_PREVIOUS_ONLY if previous else BASIS_NONE)
+    return probability, (BASIS_TRADED if price_block else BASIS_QUOTE)
+
+
+def forecast_cutoff(
+    event: Any, settled_at: Optional[datetime]
+) -> tuple[Optional[datetime], Optional[str]]:
+    """``(cutoff, None)`` when a forecast boundary is known, else ``(None, reason)``.
+
+    ``event`` is duck-typed on ``commence_time``, ``commence_time_source``,
+    ``created_at`` and ``completed_at`` (``None`` when nothing is linked). The
+    settlement passed in is the VENUE's ``settlement_ts``, not
+    ``futures_markets.resolution_date``, which is a backstop (CAL-P989).
+    """
+    if settled_at is None:
+        return None, CUTOFF_NO_SETTLEMENT
+    refusal = start_refusal(event, resolution_date=settled_at)
+    if refusal is not None:
+        return None, refusal
+    if getattr(event, "commence_time_source", None) in VENUE_STAMP_COMMENCE_SOURCES:
+        return None, CUTOFF_VENUE_STAMP
+    commence = parse_instant(getattr(event, "commence_time", None))
+    return min(commence, settled_at), None
+
+
+@dataclass(frozen=True)
+class PlannedPoint:
+    """One archive interval and the decision made about it. Never a write."""
+
+    outcome_id: int
+    ticker: str
+    interval_start: str
+    interval_end: str
+    period_minutes: int
+    admission: str
+    reason: Optional[str]
+    price_basis: str
+    probability: Optional[float]
+    volume: Optional[str]
+    source: str = ARCHIVE_SOURCE
+    already_stored: bool = False
+
+
+@dataclass
+class OutcomePlan:
+    """Everything decided for one stored outcome."""
+
+    outcome_id: int
+    ticker: str
+    route: str
+    refusal: Optional[str] = None
+    period_minutes: Optional[int] = None
+    settled_at: Optional[str] = None
+    forecast_cutoff: Optional[str] = None
+    cutoff_refusal: Optional[str] = None
+    counts: dict = field(default_factory=dict)
+    points: list = field(default_factory=list)
+
+
+def classify_candles(
+    *,
+    outcome_id: int,
+    ticker: str,
+    candles: Iterable[Any],
+    period_minutes: int,
+    settled_at: datetime,
+    cutoff: Optional[datetime],
+    cutoff_refusal: Optional[str],
+    stored_instants: Iterable[datetime] = (),
+) -> tuple[list[PlannedPoint], dict]:
+    """Decide every candle. Returns ``(points, counts)``; refused rows are kept.
+
+    ``stored_instants`` are ``captured_at`` values this outcome already has. A
+    point at one of them is marked ``already_stored`` and is never importable,
+    so a plan built twice, or after a partial import, cannot double a row.
+    """
+    stored = {parse_instant(t) for t in stored_instants}
+    period = timedelta(minutes=period_minutes)
+    counts = {
+        ADMIT_FORECAST: 0,
+        ADMIT_READER_ONLY: 0,
+        REFUSE_POST_SETTLEMENT: 0,
+        REFUSE_NO_PRICE: 0,
+        "previous_only": 0,
+        "malformed": 0,
+        "duplicate_interval": 0,
+        "already_stored": 0,
+    }
+    seen: set = set()
+    points: list[PlannedPoint] = []
+    for candle in candles:
+        end = (
+            parse_instant(candle.get("end_period_ts"))
+            if isinstance(candle, dict)
+            else None
+        )
+        if end is None or not isinstance(candle.get("end_period_ts"), (int, float)):
+            counts["malformed"] += 1
+            continue
+        if end in seen:
+            counts["duplicate_interval"] += 1
+            continue
+        seen.add(end)
+        start = end - period
+        probability, basis = archive_candle_price(candle)
+        reason: Optional[str] = None
+        if end >= settled_at:
+            admission = REFUSE_POST_SETTLEMENT
+            reason = (
+                "interval_crosses_settlement"
+                if start < settled_at
+                else "after_settlement"
+            )
+        elif probability is None:
+            admission = REFUSE_NO_PRICE
+            reason = basis
+            if basis == BASIS_PREVIOUS_ONLY:
+                counts["previous_only"] += 1
+        elif cutoff is not None and end <= cutoff:
+            admission = ADMIT_FORECAST
+        else:
+            admission = ADMIT_READER_ONLY
+            if cutoff is None:
+                reason = f"forecast_cutoff_unknown:{cutoff_refusal}"
+            elif start < cutoff:
+                reason = "interval_crosses_forecast_cutoff"
+            else:
+                reason = "after_forecast_cutoff"
+        counts[admission] += 1
+        already = end in stored and admission in (ADMIT_FORECAST, ADMIT_READER_ONLY)
+        if already:
+            counts["already_stored"] += 1
+        volume = candle.get("volume_fp", candle.get("volume"))
+        points.append(
+            PlannedPoint(
+                outcome_id=outcome_id,
+                ticker=ticker,
+                interval_start=start.isoformat(),
+                interval_end=end.isoformat(),
+                period_minutes=period_minutes,
+                admission=admission,
+                reason=reason,
+                price_basis=basis,
+                probability=None if probability is None else round(probability, 6),
+                volume=None if volume is None else str(volume),
+                already_stored=already,
+            )
+        )
+    return points, counts
+
+
+def importable(points: Iterable[PlannedPoint]) -> list[PlannedPoint]:
+    """The points a FUTURE import could write: priced, pre-settlement, not stored."""
+    return [
+        p
+        for p in points
+        if p.admission in (ADMIT_FORECAST, ADMIT_READER_ONLY) and not p.already_stored
+    ]
+
+
+def plan_digest(points: Iterable[PlannedPoint]) -> str:
+    """SHA-256 over the importable points in canonical order. Order-independent."""
+    rows = sorted(
+        (asdict(p) for p in importable(points)),
+        key=lambda r: (r["outcome_id"], r["interval_end"], r["period_minutes"]),
+    )
+    blob = json.dumps(rows, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(blob.encode()).hexdigest()
