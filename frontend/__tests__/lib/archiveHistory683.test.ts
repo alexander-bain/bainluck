@@ -1,5 +1,5 @@
 /**
- * #683 — the words a chart uses for points recovered from Kalshi's archive.
+ * #683 — the words a chart uses for points recovered from the market's archive.
  *
  * Fixtures follow calibration's documented additive contract (PR #11083 head
  * e882cb665b, not yet published): an archive point is
@@ -75,7 +75,7 @@ describe("archiveChartNote", () => {
   it("names the span from the first interval's OPEN to the last close, hourly trades", () => {
     const note = archiveChartNote(series(...hours(72)), OPTS)!;
     expect(note.text).toBe(
-      "From Mar 2 to Mar 5, this line is hourly trade prices recovered from Kalshi's records, not our own live price checks.",
+      "From Mar 2 to Mar 5, this line is hourly trade prices recovered from the market's archive, not our own live price checks.",
     );
     expect(note.from).toBe(new Date(START).toISOString());
     expect(note.through).toBe(new Date(START + 72 * HOUR).toISOString());
@@ -153,6 +153,9 @@ describe("archiveChartNote", () => {
     for (const raw of ["kalshi_archive", "traded_interval", "quote_only", "period_minutes", "provenance"]) {
       expect(text).not.toContain(raw);
     }
+    // ruling 141: the venue may label a number, never be the sentence's subject
+    expect(text).not.toMatch(/\bKalshi\b/);
+    expect(archiveTooltipNote(all)).not.toMatch(/\bKalshi\b/);
   });
 });
 
@@ -163,11 +166,11 @@ describe("archiveTooltipNote", () => {
   });
 
   it("says From / Partly from, with the cadence, and no trades when every one is a quote", () => {
-    expect(archiveTooltipNote([archive(0), archive(0)])).toBe("From Kalshi's hourly record");
-    expect(archiveTooltipNote([archive(0), live(START)])).toBe("Partly from Kalshi's hourly record");
+    expect(archiveTooltipNote([archive(0), archive(0)])).toBe("From the market's hourly archive");
+    expect(archiveTooltipNote([archive(0), live(START)])).toBe("Partly from the market's hourly archive");
     expect(archiveTooltipNote([archive(0, { price_basis: "quote_only" })])).toBe(
-      "From Kalshi's hourly record · no trades",
+      "From the market's hourly archive · no trades",
     );
-    expect(archiveTooltipNote([archive(0), archive(0, { period_minutes: 1 })])).toBe("From Kalshi's record");
+    expect(archiveTooltipNote([archive(0), archive(0, { period_minutes: 1 })])).toBe("From the market's archive");
   });
 });

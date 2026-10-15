@@ -26,7 +26,8 @@
  *
  * The span the archive covers, the cadence (hourly / minute-by-minute), and
  * whether the prices are trades or quotes from intervals with no trades — in
- * words, never the field strings. "From … to …, this line is" only when no live
+ * words, never the field strings, and without the venue's name as a sentence
+ * subject (ruling 141; `shippedCopyBans` scans the bundle for it). "From … to …, this line is" only when no live
  * point sits inside that span; otherwise "Some points from … to … are", because
  * the store withholds intervals that overlap a live capture and the two can
  * interleave.
@@ -133,7 +134,10 @@ export function archiveChartNote(
   const a = day.format(fromMs);
   const b = day.format(throughMs);
   const what = [cadenceWord(archive), basisPhrase(archive)].filter(Boolean).join(" ");
-  const tail = `${what} recovered from Kalshi's records, not our own live price checks.`;
+  // Ruling 141 as amended: a venue name may label a number, never be the
+  // subject of a sentence (`VENUE_BANS`), so the sentence names the market's
+  // archive and the venue stays on the source marks.
+  const tail = `${what} recovered from the market's archive, not our own live price checks.`;
   const text =
     a === b
       ? whole
@@ -161,7 +165,7 @@ export function archiveTooltipNote(points: readonly (PointLike | null | undefine
   const archive = shown.filter(isArchivePoint);
   if (archive.length === 0) return null;
   const cadence = cadenceWord(archive);
-  const record = cadence ? `Kalshi's ${cadence} record` : "Kalshi's record";
+  const record = cadence ? `the market's ${cadence} archive` : "the market's archive";
   const lead = archive.length === shown.length ? "From" : "Partly from";
   const noTrades = archive.every((p) => p.price_basis === "quote_only") ? " · no trades" : "";
   return `${lead} ${record}${noTrades}`;

@@ -1,5 +1,5 @@
 /**
- * #683 — ON THE CHART, a point recovered from Kalshi's archive says so.
+ * #683 — ON THE CHART, a point recovered from the market's archive says so.
  *
  * `archiveHistory683.test.ts` proves the words. This proves the WIRING in
  * `FuturesChart`, the kernel every web `/history` and `/multi-history` reader
@@ -59,14 +59,14 @@ describe("#683 the archive caption", () => {
     const html = renderToStaticMarkup(<FuturesChart historyData={[yes(archiveOnly)]} settled />);
     expect(html).toContain('data-testid="futures-chart-archive"');
     expect(html).toContain('data-archive-points="48"');
-    expect(html).toContain("this line is hourly trade prices recovered from Kalshi");
+    expect(html).toContain("this line is hourly trade prices recovered from the market");
     expect(html).not.toContain("kalshi_archive<");
   });
 
   it("CONTROL: the same points without the archive markers render no caption", () => {
     const html = renderToStaticMarkup(<FuturesChart historyData={[yes(archiveOnly.map(unmarked))]} settled />);
     expect(html).not.toContain("futures-chart-archive");
-    expect(html).not.toContain("Kalshi&#x27;s records");
+    expect(html).not.toContain("market&#x27;s archive");
   });
 
   it("live captures interleaved inside the archive span make it 'Some points'", () => {
@@ -134,11 +134,11 @@ describe("#683 the hover tooltip names the archive for the row it reads", () => 
     ...Array.from({ length: 48 }, (_, i) => live(START + (49 + i) * HOUR)),
   ];
 
-  it("over the archive stretch: 'From Kalshi's hourly record'; over live captures: nothing", () => {
+  it("over the archive stretch: 'From the market's hourly archive'; over live captures: nothing", () => {
     act(() => root.render(<FuturesChart historyData={[yes(history)]} />));
     hoverAt(host, 60); // just inside the left padding — the first archive interval
     expect(host.textContent).toContain("%");
-    expect(tooltipLine(host)).toBe("From Kalshi's hourly record");
+    expect(tooltipLine(host)).toBe("From the market's hourly archive");
     hoverAt(host, 770); // just inside the right padding — the newest live capture
     expect(host.textContent).toContain("%");
     expect(tooltipLine(host)).toBeNull();
@@ -148,7 +148,7 @@ describe("#683 the hover tooltip names the archive for the row it reads", () => 
     const quotes = Array.from({ length: 48 }, (_, i) => archive(i, "quote_only"));
     act(() => root.render(<FuturesChart historyData={[yes(quotes)]} />));
     hoverAt(host, 60);
-    expect(tooltipLine(host)).toBe("From Kalshi's hourly record · no trades");
+    expect(tooltipLine(host)).toBe("From the market's hourly archive · no trades");
   });
 
   it("CONTROL: the same points without the markers show no tooltip line", () => {
