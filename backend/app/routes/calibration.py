@@ -2185,9 +2185,11 @@ async def calibration_examples(
                     if isinstance(exc, _ExamplesDeadline)
                     else "examples_query_timeout"
                 )
+                # #994: no request-derived value in the log line (CodeQL
+                # py/log-injection); `reason` is one of two literals above.
                 logger.warning(
-                    "calibration examples: %s bucket %s spent its request budget (%s)",
-                    source, bucket, reason,
+                    "calibration examples: a source-scoped bucket spent its "
+                    "request budget (%s)", reason,
                 )
                 return JSONResponse(status_code=503, content={
                     "source": source, "bucket_idx": bucket, "reason": reason,
@@ -2196,8 +2198,8 @@ async def calibration_examples(
                 if not is_query_canceled(exc):
                     raise
                 logger.warning(
-                    "calibration examples: %s bucket %s hit its statement budget",
-                    source, bucket,
+                    "calibration examples: a source-scoped bucket hit its "
+                    "statement budget"
                 )
                 return JSONResponse(status_code=503, content={
                     "source": source, "bucket_idx": bucket,
@@ -2208,8 +2210,8 @@ async def calibration_examples(
                 # the published one; refuse rather than show rows from a shape
                 # the reader did not click. Not cached: the data can change.
                 logger.warning(
-                    "calibration examples: %s shares a group/event id with "
-                    "another source; scoped sample refused", source,
+                    "calibration examples: a source-scoped sample shares a "
+                    "group/event id with another source; refused"
                 )
                 return JSONResponse(status_code=503, content={
                     "source": source, "bucket_idx": bucket,

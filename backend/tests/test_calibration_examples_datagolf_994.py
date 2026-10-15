@@ -529,3 +529,33 @@ class TestOwnership:
             await request.close()
         finally:
             await engine.dispose()
+
+
+class TestLogLinesCarryNoRequestValues:
+    """CodeQL py/log-injection (#4044–#4048) on PR #11072: the scoped branch's
+    warnings interpolated the request's ``source`` and ``bucket``. A log line in
+    this handler carries trusted literals only; ``reason`` is chosen from two
+    in-code literals and may stay."""
+
+    def test_no_logger_call_in_the_handler_reads_source_or_bucket(self):
+        import ast
+        import inspect
+        import textwrap
+
+        tree = ast.parse(textwrap.dedent(inspect.getsource(cal.calibration_examples)))
+        calls = [
+            n for n in ast.walk(tree)
+            if isinstance(n, ast.Call)
+            and isinstance(n.func, ast.Attribute)
+            and isinstance(n.func.value, ast.Name)
+            and n.func.value.id == "logger"
+        ]
+        assert len(calls) >= 3, "the scoped branch's three warnings went missing"
+        tainted = sorted({
+            (c.lineno, name.id)
+            for c in calls
+            for arg in [*c.args, *(k.value for k in c.keywords)]
+            for name in ast.walk(arg)
+            if isinstance(name, ast.Name) and name.id in {"source", "bucket"}
+        })
+        assert tainted == [], f"request-derived value in a log line: {tainted}"
