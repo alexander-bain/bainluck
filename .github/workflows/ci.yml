@@ -4180,6 +4180,24 @@ jobs:
             exit 1
           fi
 
+      - name: "#994 a DataGolf bucket drill-in returns the rows the published chain admits (real Postgres)"
+        # /calibration/examples sampled only Kalshi and Polymarket, so every
+        # DataGolf point opened an empty panel. DataGolf now samples the
+        # canonical chain scoped to its own markets. Runs the REAL route on
+        # seeded rows: pre-start forecasts come back with their ids and results,
+        # a post-start opening (#5355) and a void (#762) never do, the scoped
+        # sample equals the bucket in the UNSCOPED chain for both cohorts, and a
+        # group shared with another source is refused.
+        if: matrix.group == 'shared-tail'
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_calibration_examples_datagolf_994_pg.py \
+            -v -s -rs 2>&1 | tee /tmp/dg_examples_994.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/dg_examples_994.txt; then
+            echo "::error::#994 DataGolf examples gate SKIPPED — the gate did not run"
+            exit 1
+          fi
+
       - name: "#938 a Kalshi golf round price no stored time places before the round is not scored (real Postgres)"
         # Kalshi gives a golf round market only the round's close as a start
         # time, so every closing-line selector bounded on it can store a quote
