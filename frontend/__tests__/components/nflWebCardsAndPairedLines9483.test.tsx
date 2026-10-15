@@ -292,3 +292,67 @@ describe("#9483 the chart draws both teams' lines on an admitted NFL blend", () 
     expect(html).toBe(chart({ backendBlendServed: false }));
   });
 });
+
+// ─── #9483 NBA slice: the ladder cards' ink ────────────────────────────────
+
+import nbaFinal from "../fixtures/nbaFinalMatrix15320337.json";
+import nbaPregame from "../fixtures/nbaPregameMatrix15327183.json";
+import { decodeQuestionMatrix, marginLadderCard, totalLadderCard, type LadderInputs } from "@/lib/nbaEventCards";
+
+const NBA_TEAMS = { awayName: "Golden State Warriors", homeName: "Los Angeles Clippers", awayColor: "#1D428A", homeColor: "#C8102E" };
+
+function nbaInputs(body: { game_question_matrix: unknown }, over: Partial<LadderInputs>): LadderInputs {
+  return {
+    questions: decodeQuestionMatrix(body.game_question_matrix),
+    status: "completed",
+    commenceTime: "2026-10-04T23:00:00Z",
+    homeScore: 104,
+    awayScore: 101,
+    pregameProjection: null,
+    homeShort: "Clippers",
+    awayShort: "Warriors",
+    nowMs: Date.parse("2026-10-05T04:00:00Z"),
+    ...over,
+  };
+}
+
+describe("#9483 NBA ladder cards", () => {
+  it("a final with no admitted pin: actual and verdict, no chance axis and no dot", () => {
+    const total = totalLadderCard(nbaInputs(nbaFinal, {}))!;
+    const margin = marginLadderCard(nbaInputs(nbaFinal, {}))!;
+    const html = deck([margin, total]);
+    expect(html).toContain("Winning margin");
+    expect(html).toContain("Scoring expectations");
+    expect(html).toContain("Clippers by 3");
+    expect(html).toContain("205 points");
+    expect((html.match(/>Pregame chance unavailable for these lines</g) ?? []).length).toBe(2);
+    expect(html).not.toMatch(/>100%<\/text>/);
+    expect(html).not.toMatch(/<circle/);
+    expect(html).toContain('data-actual="205"');
+    expect(html).toContain('data-actual="3"');
+    // Opens on the line nearest what happened, with the producer's verdict.
+    expect(html).toContain("Over 204.5");
+    expect(html).toContain("HIT");
+  });
+
+  it("before tip-off: each recent quote is a dot on its own team's side, with the Tie axis", () => {
+    const margin = marginLadderCard(
+      nbaInputs(nbaPregame, {
+        status: "scheduled",
+        commenceTime: "2026-10-15T23:30:00Z",
+        homeScore: null,
+        awayScore: null,
+        homeShort: "Knicks",
+        awayShort: "Raptors",
+        nowMs: Date.parse("2026-10-15T18:40:00Z"),
+      }),
+    )!;
+    const html = deck([margin]);
+    expect(html).toContain("Pregame chance of winning by more than each margin");
+    expect(html).toMatch(/>Tie<\/text>/);
+    expect(html).toContain("← Raptors by");
+    expect(html).toContain("Knicks by →");
+    expect((html.match(/<circle/g) ?? []).length).toBe(margin.points.filter((p) => p.chance !== null).length);
+    expect(html).not.toContain('data-mark="actual"');
+  });
+});

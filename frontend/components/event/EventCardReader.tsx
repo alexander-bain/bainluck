@@ -35,6 +35,7 @@ import {
   type ReaderHeader,
   type ReaderState,
 } from "@/lib/nflEventCardDeck";
+import type { OptionDetail } from "@/lib/nbaEventCards";
 import { EventCardView, type CardSelection, type CardTeams } from "./NFLEventCards";
 
 /** Re-read the clock each minute so a held number past its validity leaves. */
@@ -154,7 +155,14 @@ export default function EventCardReader({
     if (Math.abs(dx) >= SWIPE_PX && Math.abs(dx) > Math.abs(dy) * 1.5) step(dx < 0 ? 1 : -1);
   };
 
-  const detailsRow = state.detailsRowId ? state.heldRows[state.detailsRowId] : undefined;
+  // A prop line's original is in the held rows; an NBA ladder line's original
+  // is frozen inside its held card. Either way Details read what was held.
+  const detailsRow: NflPropRow | OptionDetail | undefined = state.detailsRowId
+    ? (state.heldRows[state.detailsRowId] ??
+      state.held
+        .flatMap((c) => (c.kind === "ladder" ? c.points : []))
+        .find((p) => p.optionKey === state.detailsRowId)?.detail)
+    : undefined;
 
   return (
     <div
@@ -290,10 +298,11 @@ export function LineDetails({
   onDone,
   doneRef,
 }: {
-  row: NflPropRow | undefined;
+  row: NflPropRow | OptionDetail | undefined;
   onDone: () => void;
   doneRef?: Ref<HTMLButtonElement>;
 }) {
+  if (row && "detail" in row) return <OptionDetails row={row} onDone={onDone} doneRef={doneRef} />;
   const venue = row ? sourceLabel(row.source) : null;
   return (
     <div
@@ -367,6 +376,54 @@ export function LineDetails({
         ) : (
           <p className="text-sm text-text-secondary">This line is no longer offered.</p>
         )}
+      </div>
+    </div>
+  );
+}
+
+/** #9483 NBA — the served option behind a ladder line, each number named for what it is. */
+function OptionDetails({ row, onDone, doneRef }: { row: OptionDetail; onDone: () => void; doneRef?: Ref<HTMLButtonElement> }) {
+  const venue = row.source ? sourceLabel(row.source) : null;
+  return (
+    <div role="dialog" aria-modal="true" aria-label="Line details" className="absolute inset-0 z-10 bg-surface-card overflow-y-auto" data-testid="line-details">
+      <div className="max-w-[720px] mx-auto p-4 flex flex-col gap-3">
+        <div className="flex items-center justify-between">
+          <h3 className="text-base font-semibold text-text-primary">Line details</h3>
+          <button ref={doneRef} type="button" onClick={onDone} className="min-h-11 px-3 rounded-md text-sm font-semibold text-accent-brand hover:bg-surface-elevated">
+            Done
+          </button>
+        </div>
+        <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-2 text-sm">
+          <dt className="col-span-2 font-semibold text-text-primary">{row.label}</dt>
+          <dt className="text-text-secondary">Market</dt>
+          <dd className="text-text-primary">{row.marketName}</dd>
+          <dt className="text-text-secondary">Pregame baseline</dt>
+          <dd className="text-text-primary tabular-nums">
+            {row.baseline !== null ? formatProbability(row.baseline) : "Unavailable"}
+            {row.baselineObservedAt ? ` · ${formatSourceStamp(row.baselineObservedAt)}` : ""}
+          </dd>
+          {row.quoted !== null && (
+            <>
+              <dt className="text-text-secondary">Last quote</dt>
+              <dd className="text-text-primary tabular-nums">{formatProbability(row.quoted)}</dd>
+              <dt className="text-text-secondary">Quoted</dt>
+              <dd className="text-text-primary">{formatSourceStamp(row.observedAt) ?? "Time unknown"}</dd>
+            </>
+          )}
+          {venue && (
+            <>
+              <dt className="text-text-secondary">Venue</dt>
+              <dd className="text-text-primary">{venue}</dd>
+            </>
+          )}
+          {row.result !== null && (
+            <>
+              <dt className="col-span-2 pt-2 font-semibold text-text-primary">Result</dt>
+              <dt className="text-text-secondary">Graded</dt>
+              <dd className="text-text-primary">{propVerdictLabel(row.result)}</dd>
+            </>
+          )}
+        </dl>
       </div>
     </div>
   );

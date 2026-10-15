@@ -151,14 +151,17 @@ import {
   buildFinishCard,
   cardAt,
   milestoneCards,
+  nbaEventCards,
   nflCardsApply,
   nflEventCards,
+  storyCardsApply,
   readerHeader,
   returnTarget,
   rowsForCards,
   type ReaderState,
 } from "@/lib/nflEventCardDeck";
 import { projectedTeamStrokes } from "@/lib/teamLineStrokes";
+import { decodeQuestionMatrix, marginLadderCard, totalLadderCard } from "@/lib/nbaEventCards";
 import { NFLEventCardDeck, type CardSelection } from "@/components/event/NFLEventCards";
 const EventCardReader = dynamic(() => import("@/components/event/EventCardReader"), { ssr: false });
 import { authorityStoppageLabel, formatLiveClockLabel } from "@/lib/gameTimeLabel";
@@ -1326,17 +1329,42 @@ export default function EventPage({ params }: EventPageProps) {
   // page already holds: no fetch of their own, so nothing here can delay the
   // win-probability anchor. The minute tick lets a pregame price that stops
   // being observed lose its number on the page too.
+  // #9483 NBA slice: NBA pages carry the same deck shape — winning margin and
+  // scoring expectations from the served question matrix, then the projected finish.
   const nflCardsOn = nflCardsApply(event?.sport);
+  const storyCardsOn = storyCardsApply(event?.sport);
   const [nflCardClock, setNflCardClock] = useState(() => Date.now());
   useEffect(() => {
-    if (!nflCardsOn) return;
+    if (!storyCardsOn) return;
     const id = window.setInterval(() => setNflCardClock(Date.now()), 60_000);
     return () => window.clearInterval(id);
-  }, [nflCardsOn]);
+  }, [storyCardsOn]);
   const nflFinishCard = useMemo(
-    () => (nflCardsOn && projectedFinalPoints.mount ? buildFinishCard(projectedFinalPoints.input) : null),
-    [nflCardsOn, projectedFinalPoints],
+    () => (storyCardsOn && projectedFinalPoints.mount ? buildFinishCard(projectedFinalPoints.input) : null),
+    [storyCardsOn, projectedFinalPoints],
   );
+  const nbaLadders = useMemo(() => {
+    if (event?.sport !== "basketball_nba" || !gameMarkets || gameMarkets.event_id !== event.id) {
+      return { margin: null, total: null };
+    }
+    const shorts = teamShortNames(
+      { name: event.home_team, abbreviation: event.home_team_data?.abbreviation },
+      { name: event.away_team, abbreviation: event.away_team_data?.abbreviation },
+      event.sport,
+    );
+    const inputs = {
+      questions: decodeQuestionMatrix(gameMarkets.game_question_matrix),
+      status: event.status,
+      commenceTime: event.commence_time,
+      homeScore: gameMarkets.home_score,
+      awayScore: gameMarkets.away_score,
+      pregameProjection: nflFinishCard ? { home: nflFinishCard.pregame.home, away: nflFinishCard.pregame.away } : null,
+      homeShort: shorts.home,
+      awayShort: shorts.away,
+      nowMs: nflCardClock,
+    };
+    return { margin: marginLadderCard(inputs), total: totalLadderCard(inputs) };
+  }, [event, gameMarkets, nflFinishCard, nflCardClock]);
   const nflMilestoneCards = useMemo(
     () =>
       nflCardsOn && gameMarkets && event && gameMarkets.event_id === event.id
@@ -1352,8 +1380,12 @@ export default function EventPage({ params }: EventPageProps) {
     [nflCardsOn, gameMarkets, event, nflCardClock],
   );
   const nflCards = useMemo(
-    () => nflEventCards(event?.sport, nflFinishCard, nflMilestoneCards).map((card) => cardAt(card, nflCardClock)),
-    [event?.sport, nflFinishCard, nflMilestoneCards, nflCardClock],
+    () =>
+      (nflCardsOn
+        ? nflEventCards(event?.sport, nflFinishCard, nflMilestoneCards)
+        : nbaEventCards(event?.sport, nflFinishCard, nbaLadders)
+      ).map((card) => cardAt(card, nflCardClock)),
+    [nflCardsOn, event?.sport, nflFinishCard, nflMilestoneCards, nbaLadders, nflCardClock],
   );
   const nflCardRows = useMemo(
     () => (gameMarkets ? rowsForCards(nflCards, gameMarkets.player_props) : {}),
@@ -3203,8 +3235,8 @@ export default function EventPage({ params }: EventPageProps) {
               homeTeamAbbrev={event.home_team_data?.abbreviation || undefined}
               awayTeamAbbrev={event.away_team_data?.abbreviation || undefined}
               awayWithheld={awaySlotWithheld}
-              /* #9483 — NFL: both teams' lines (design freeze v328). */
-              pairedAwayLine={nflCardsOn}
+              /* #9483 — NFL and NBA: both teams' lines (design freeze v328). */
+              pairedAwayLine={storyCardsOn}
               onActivePointChange={setActiveChartPoint}
               onRenderedDomain={handleRenderedDomain}
               publications={isFinished ? publications : undefined}
@@ -3843,7 +3875,7 @@ export default function EventPage({ params }: EventPageProps) {
               /* #6238 — the fullscreen chart is the same chart. A reader who
                  taps expand must not get the withheld number back. */
               awayWithheld={awaySlotWithheld}
-              pairedAwayLine={nflCardsOn}
+              pairedAwayLine={storyCardsOn}
               /* #10362 — and it opens on the range the card shows. Without these the
                  expanded chart fell back to its own default window: a reader on "All"
                  tapped expand and got "Since Start", with no way back. The toggle here
