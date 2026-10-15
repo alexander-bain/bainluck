@@ -628,10 +628,20 @@ class TestFullRange:
 
     def test_every_chart_route_reads_its_older_live_captures_under_full(self):
         """Archive-only Full is the defect: each route's live arm reaches its
-        lifetime and hands the thinned spans to the archive's overlap rule."""
+        lifetime and a thinned read's skipped captures reach the overlap rule."""
         src = (APP / "routes" / "futures.py").read_text()
         assert src.count("await read_older_live(") == 3
-        assert src.count("claim_spans=older_live.spans if older_live is not None else None") == 3
+        # Rule 4: every archive arm asks the store about the skipped captures,
+        # and both venue arms do; nothing is claimed by a presence range.
+        assert src.count("await older_live.archive_claims(") == 3
+        assert src.count("await older_live.withhold_venue(") == 2
+        assert "claim_spans" not in src and "older_live.spans" not in src
+        # A skipped capture claims only if the chart would draw it: every
+        # admission is handed the route's own support filter, bound once.
+        # The two seat rules after it (CERT-4139: merged instant; timeline cell).
+        assert src.count("await older_live.instant_claims(") == 2
+        assert src.count("supported=_support_filter(") == 7
+        assert "def _support_filter(" in src
         assert src.count("live_thinned=bool(older_live and older_live.thinned)") == 3
 
     def test_window_starts_at_our_first_capture_when_live_is_oldest(self):
@@ -657,48 +667,167 @@ class TestFullRange:
         assert self._history().range_block(self.T0, [], [1], live_thinned=True)["live_thinned"] is True
 
 
-class TestSpanClaims:
-    """``full_range_live`` rule 4: a thinned live read still holds its spans."""
+class TestExactAdmission:
+    """``full_range_live`` rule 4: a skipped capture claims only what it sits in.
+
+    Root executed the span cut (6804c13fc2) on the real 2,000-instant cap: one
+    skipped capture four hours from the dense run stretched a ``lo..hi`` span
+    over the empty hours between and erased a valid archive interval. These
+    pin the replacement: an interval or venue point is claimed only by a real,
+    supported capture of its OWN outcome inside it.
+    """
 
     T0 = datetime(2026, 4, 1, tzinfo=UTC)
 
-    def _history(self, ends):
+    def _history(self, ends, oid=1):
         h = reader.ArchiveHistory()
-        h.rows = {1: [_row_at(1, self.T0 + timedelta(hours=x)) for x in ends]}
+        h.rows = {oid: [_row_at(oid, self.T0 + timedelta(hours=x)) for x in ends]}
         h.state = "warm"
         return h
 
-    def test_an_interval_touching_a_span_yields_and_one_outside_stands(self):
-        h = self._history([1, 2, 3, 4, 5])
-        span = (self.T0 + timedelta(hours=1, minutes=30), self.T0 + timedelta(hours=3))
-        served = h.served(self.T0, [], [1], claim_spans={1: [span]})
-        # +2h (1h–2h) and +3h (2h–3h) lie in the span; +4h starts AT its end.
-        assert [r.captured_at for r in served[1]] == [
-            self.T0 + timedelta(hours=1), self.T0 + timedelta(hours=5)
-        ]
-        assert h.claimed_by_live == 3
-
-    def test_another_outcomes_span_claims_nothing(self):
-        h = self._history([1, 2])
-        span = (self.T0, self.T0 + timedelta(hours=9))
-        assert len(h.served(self.T0, [], [1], claim_spans={2: [span]})[1]) == 2
-
-    def test_no_spans_is_exactly_the_row_rule(self):
-        h = self._history([1, 2, 3])
-        live = [_live(1, self.T0 + timedelta(hours=1, minutes=40))]
-        assert h.served(self.T0, live, [1]) == h.served(self.T0, live, [1], claim_spans={})
-
-    def test_venue_points_inside_a_span_are_withheld(self):
+    def _older(self, captures, *, oldest=None, ids=(1,)):
         from app.utils.full_range_live import OlderLive
 
-        older = OlderLive(thinned=True, spans={
-            1: [(self.T0 + timedelta(hours=1), self.T0 + timedelta(hours=3))]
-        })
-        rows = [_live(1, self.T0 + timedelta(hours=h)) for h in (0, 1, 2, 3, 4)]
-        rows.append(_live(2, self.T0 + timedelta(hours=2)))
-        kept = older.withhold(rows)
-        assert [(r.outcome_id, r.captured_at.hour) for r in kept] == [(1, 0), (1, 4), (2, 2)]
-        assert OlderLive().withhold(rows) == rows
+        return OlderLive(
+            thinned=True, ids=list(ids), before=self.T0 + timedelta(days=30),
+            oldest=oldest or self.T0,
+        ), _AdmitDb(captures)
+
+    def test_unclaimed_windows_are_the_intervals_no_drawn_claim_overlaps(self):
+        h = self._history([1, 2, 3])
+        live = [_live(1, self.T0 + timedelta(hours=1, minutes=30))]
+        assert h.unclaimed_windows(live, [1]) == [
+            (1, self.T0, self.T0 + timedelta(hours=1)),
+            (1, self.T0 + timedelta(hours=2), self.T0 + timedelta(hours=3)),
+        ]
+        assert h.unclaimed_windows([], [2]) == []
+
+    async def test_root_sparse_gap_an_empty_interval_between_captures_stands(self):
+        """The defect's shape: captures at +0:30 and +4:20, archive +1h..+5h."""
+        h = self._history([1, 2, 3, 4, 5])
+        caps = [_cap(10, 1, self.T0 + timedelta(minutes=30)),
+                _cap(11, 1, self.T0 + timedelta(hours=4, minutes=20))]
+        older, db = self._older(caps)
+        claims = await older.archive_claims(db, h, [], [1], supported=_ok)
+        served = h.served(self.T0, claims, [1])
+        assert [r.captured_at for r in served[1]] == [
+            self.T0 + timedelta(hours=h_) for h_ in (2, 3, 4)
+        ], "only the intervals a capture actually sits in yield"
+        assert h.claimed_by_live == 2
+
+    async def test_a_skipped_capture_still_claims_its_own_interval(self):
+        h = self._history([1, 2])
+        older, db = self._older([_cap(10, 1, self.T0 + timedelta(hours=1, minutes=5))])
+        claims = await older.archive_claims(db, h, [], [1], supported=_ok)
+        assert [r.captured_at for r in h.served(self.T0, claims, [1])[1]] == [
+            self.T0 + timedelta(hours=1)
+        ]
+
+    async def test_a_refused_skipped_capture_claims_nothing_a_supported_one_behind_it_does(self):
+        h = self._history([1, 2])
+        caps = [_cap(10, 1, self.T0 + timedelta(minutes=10), ok=False),
+                _cap(11, 1, self.T0 + timedelta(hours=1, minutes=10), ok=False),
+                _cap(12, 1, self.T0 + timedelta(hours=1, minutes=40))]
+        older, db = self._older(caps)
+        claims = await older.archive_claims(db, h, [], [1], supported=_ok)
+        # +1h holds only a refused capture: it stands, exactly as unthinned.
+        # +2h's first capture is refused, its second is supported: it yields.
+        assert [r.captured_at for r in h.served(self.T0, claims, [1])[1]] == [
+            self.T0 + timedelta(hours=1)
+        ]
+        assert db.rounds == 2, "the refused window is paged on, never re-read"
+
+    async def test_another_outcomes_capture_claims_nothing(self):
+        h = self._history([1, 2])
+        older, db = self._older([_cap(10, 2, self.T0 + timedelta(minutes=30))], ids=(1, 2))
+        claims = await older.archive_claims(db, h, [], [1], supported=_ok)
+        assert len(h.served(self.T0, claims, [1])[1]) == 2
+
+    async def test_a_window_out_of_budget_yields_to_live_and_is_counted(self, monkeypatch):
+        from app.utils import full_range_live as frl
+
+        monkeypatch.setattr(frl, "ADMIT_ROUND_LIMITS", (1, 2))
+        h = self._history([1])
+        caps = [_cap(10 + i, 1, self.T0 + timedelta(minutes=i + 1), ok=False) for i in range(5)]
+        older, db = self._older(caps)
+        claims = await older.archive_claims(db, h, [], [1], supported=_ok)
+        assert h.served(self.T0, claims, [1]) == {}
+        assert older.unresolved == 1
+
+    async def test_unthinned_and_out_of_range_windows_issue_nothing(self):
+        from app.utils.full_range_live import OlderLive
+
+        h = self._history([1, 2])
+        db = _AdmitDb([_cap(10, 1, self.T0 + timedelta(minutes=30))])
+        assert await OlderLive().archive_claims(db, h, [], [1], supported=_ok) == []
+        # Every interval ends before the oldest capture: nothing can lie in one.
+        older, db = self._older([], oldest=self.T0 + timedelta(hours=3))
+        assert await older.archive_claims(db, h, [], [1], supported=_ok) == []
+        assert db.rounds == 0
+
+    async def test_venue_points_yield_only_within_the_capture_claim_radius(self):
+        caps = [_cap(10, 1, self.T0 + timedelta(hours=1))]
+        older, db = self._older(caps, ids=(1, 2))
+        rows = [_venue(1, self.T0 + timedelta(minutes=m)) for m in (0, 55, 60, 65, 200)]
+        rows.append(_venue(2, self.T0 + timedelta(hours=1)))
+        kept = await older.withhold_venue(db, rows, supported=_ok)
+        # A 1-minute tier claims +/-30 s: only the point AT the capture yields;
+        # +0:55 and +1:05 are real minutes no capture restates.
+        assert [(r.outcome_id, r.captured_at) for r in kept] == [
+            (1, self.T0), (1, self.T0 + timedelta(minutes=55)),
+            (1, self.T0 + timedelta(minutes=65)), (1, self.T0 + timedelta(minutes=200)),
+            (2, self.T0 + timedelta(hours=1)),
+        ]
+
+    async def test_venue_points_in_an_empty_gap_stand(self):
+        caps = [_cap(10, 1, self.T0), _cap(11, 1, self.T0 + timedelta(hours=8))]
+        older, db = self._older(caps)
+        rows = [_venue(1, self.T0 + timedelta(hours=h_), tier="kalshi_candle_60m") for h_ in range(9)]
+        kept = await older.withhold_venue(db, rows, supported=_ok)
+        assert [r.captured_at for r in kept] == [
+            self.T0 + timedelta(hours=h_) for h_ in range(1, 8)
+        ]
+
+
+def _ok(rows):
+    return [r for r in rows if getattr(r, "ok", True)]
+
+
+def _cap(id_, oid, at, ok=True):
+    return SimpleNamespace(id=id_, outcome_id=oid, captured_at=at, ok=ok)
+
+
+def _venue(oid, at, tier="kalshi_candle_1m"):
+    return SimpleNamespace(outcome_id=oid, captured_at=at, tier=tier)
+
+
+class _AdmitDb:
+    """Answers ``_ADMIT_SQL`` and the by-id read from canned captures, as SQL would."""
+
+    def __init__(self, captures):
+        self.captures = sorted(captures, key=lambda c: (c.captured_at, c.id))
+        self.rounds = 0
+        self._last: list = []
+
+    async def execute(self, stmt, params=None):
+        frl = _full_range_live()
+        if stmt is frl._ADMIT_SQL:
+            self.rounds += 1
+            out = []
+            for w, oid, lo, hi, ats, aid in zip(
+                params["ws"], params["oids"], params["los"], params["his"],
+                params["ats"], params["aids"],
+            ):
+                page = [
+                    c for c in self.captures
+                    if c.outcome_id == oid and lo <= c.captured_at <= hi
+                    and c.captured_at < params["before"]
+                    and (c.captured_at, c.id) > (ats, aid)
+                ][: params["m"]]
+                out.extend(SimpleNamespace(w=w, id=c.id) for c in page)
+            self._last = [c for c in self.captures if c.id in {o.id for o in out}]
+            return _FakeResult(out)
+        return _Scalars(self._last)
 
 
 class _OlderLiveDb:
@@ -712,10 +841,6 @@ class _OlderLiveDb:
         self.calls.append((stmt, params))
         if stmt is _full_range_live()._INSTANTS_SQL:
             return _FakeResult([SimpleNamespace(captured_at=t, n=self.n) for t in self.instants])
-        if stmt is _full_range_live()._SPANS_SQL:
-            return _FakeResult([SimpleNamespace(
-                outcome_id=1, lo=self.instants[0], hi=self.instants[-1],
-            )])
         return _Scalars([])
 
 
@@ -746,21 +871,25 @@ class TestReadOlderLive:
         assert [c[0] for c in db.calls[:1]] == [frl._INSTANTS_SQL]
         assert db.calls[0][1]["ids"] == [1, 2]
         assert db.calls[0][1]["cap"] == frl.OLDER_LIVE_INSTANT_CAP
-        assert len(db.calls) == 2  # instants + rows; no span read
+        assert len(db.calls) == 2  # instants + rows
         rows_sql = str(db.calls[1][0].compile(compile_kwargs={"literal_binds": False}))
         assert "captured_at IN" not in rows_sql
-        assert out.thinned is False and out.spans == {} and out.instants == 2
+        assert out.thinned is False and out.instants == 2
 
-    async def test_over_the_cap_only_the_strided_instants_are_read_and_spans_are_asked(self):
+    async def test_over_the_cap_only_the_strided_instants_are_read_and_nothing_is_claimed_yet(self):
         frl = _full_range_live()
         picked = [self.T0, self.T0 + timedelta(hours=3)]
+        before = self.T0 + timedelta(days=1)
         db = _OlderLiveDb(picked, n=7)
-        out = await frl.read_older_live(db, [1], before=self.T0 + timedelta(days=1), cap=2)
+        out = await frl.read_older_live(db, [1], before=before, cap=2)
         assert out.thinned is True and out.instants == 7
         rows_sql = str(db.calls[1][0])
         assert "captured_at IN" in rows_sql
-        assert db.calls[2][0] is frl._SPANS_SQL and db.calls[2][1]["k"] == 4  # ceil(7/2)
-        assert out.spans == {1: [(picked[0], picked[-1])]}
+        # No presence range is read up front: skipped captures are asked per
+        # candidate interval/venue point at serve time (rule 4).
+        assert len(db.calls) == 2
+        assert (out.ids, out.before, out.oldest) == ([1], before, picked[0])
+        assert not hasattr(frl, "_SPANS_SQL")
 
     async def test_no_older_instant_issues_one_statement(self):
         frl = _full_range_live()
@@ -778,6 +907,14 @@ class TestReadOlderLive:
         sql = str(_full_range_live()._INSTANTS_SQL)
         assert "s.rn = 1 OR s.rn = s.n" in sql
         assert "CEIL(s.n::numeric / :cap)" in sql
+
+    def test_admission_is_an_exact_bounded_probe_of_the_same_outcome(self):
+        sql = " ".join(str(_full_range_live()._ADMIT_SQL).split())
+        assert "f.outcome_id = c.oid" in sql
+        assert "f.captured_at >= c.lo AND f.captured_at <= c.hi" in sql
+        assert "f.captured_at < :before" in sql
+        assert "(f.captured_at, f.id) > (c.ats, c.aid)" in sql
+        assert "LIMIT :m" in sql
         assert "captured_at < :before" in sql
 
 

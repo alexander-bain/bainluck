@@ -633,16 +633,35 @@ def unclaimed_instants(
     venue = sorted({ts for ts in venue_times if ts is not None})
     if not venue:
         return set()
-    from app.utils.futures_chart_series import (
-        MAX_CLAIM_RADIUS_SECONDS,
-        claim_radius_seconds,
-        finest_declared_resolution_seconds,
-        layer_tiers,
-    )
+    from app.utils.futures_chart_series import layer_tiers
 
     captures = sorted({ts for ts in capture_times if ts is not None})
     # The values are irrelevant to the claim; the instants are what is layered.
     venue_tier = [(ts, 0.0) for ts in venue]
+    merged = layer_tiers(
+        [[(ts, 0.0) for ts in captures], venue_tier],
+        cap_s=capture_claim_cap_seconds(venue, venue_tiers=venue_tiers),
+    )
+    capture_set = set(captures)
+    return {ts for ts, _ in merged if ts not in capture_set}
+
+
+def capture_claim_cap_seconds(
+    venue_times: Sequence[datetime],
+    *,
+    venue_tiers: Iterable[str | None] = (),
+) -> float:
+    """The most a capture may claim of these venue instants (see above).
+
+    Also asked by ``full_range_live`` (#683): a capture a thinned Full read
+    skipped claims a venue instant within this radius and no further.
+    """
+    from app.utils.futures_chart_series import (
+        MAX_CLAIM_RADIUS_SECONDS,
+        claim_radius_seconds,
+        finest_declared_resolution_seconds,
+    )
+
     declared = finest_declared_resolution_seconds(venue_tiers)
     if declared is not None:
         # NARROWS ONLY. The declared grain of the COARSE tiers is enormous — a
@@ -651,15 +670,9 @@ def unclaimed_instants(
         # last resort a twelve-hour veto and re-open the staleness
         # `MAX_CLAIM_RADIUS_SECONDS` exists to stop. The declaration may make the
         # claim finer than the default; it may never make it coarser.
-        cap_s = min(declared / 2.0, float(MAX_CLAIM_RADIUS_SECONDS))
-    else:
-        cap_s = claim_radius_seconds(venue_tier)
-    merged = layer_tiers(
-        [[(ts, 0.0) for ts in captures], venue_tier],
-        cap_s=cap_s,
-    )
-    capture_set = set(captures)
-    return {ts for ts, _ in merged if ts not in capture_set}
+        return min(declared / 2.0, float(MAX_CLAIM_RADIUS_SECONDS))
+    venue = sorted({ts for ts in venue_times if ts is not None})
+    return claim_radius_seconds([(ts, 0.0) for ts in venue])
 
 
 #: How much coarser than the venue's fine tier our own captures must be spaced

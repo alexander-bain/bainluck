@@ -46,8 +46,9 @@ THE RULES THIS ARM HOLDS
    SPAN-KEEPING (its newest run in full, everything older as an evenly ranked
    skeleton that keeps the first interval) instead of newest-first tail-cut, and
    is named in ``thinned_outcomes``. Live captures reach their lifetime too
-   (``full_range_live``: whole instants, bounded, span-keeping), so an interval
-   our own capture holds still yields to it however old both are — Root
+   (``full_range_live``: whole instants, bounded, exact admission of skipped
+   captures), so an interval our own capture holds still yields to it however
+   old both are, and one no capture touches still stands — Root
    executed the earlier cut, which kept live on ``hours``, and found 189-day
    captures replaced by archive intervals. ``history_range`` states the window
    drawn, why it starts there, and the import's own coverage word, because the
@@ -183,40 +184,29 @@ class ArchiveHistory:
         cutoff: datetime,
         claims: Iterable[Any],
         outcome_ids: Iterable[int],
-        *,
-        claim_spans: Optional[dict] = None,
     ) -> dict[int, list[ArchiveRow]]:
         """Per outcome, the intervals at/after ``cutoff`` no live point overlaps.
 
         ``claims`` are the live rows the chart already draws (``outcome_id`` and
-        ``captured_at``). ``claim_spans`` (``range=full`` with a thinned live
-        read, ``full_range_live`` rule 4) are outcome -> ``[(lo, hi)]`` spans our
-        captures hold though not every one was read; an interval touching one
-        yields to live too. Counts withheld intervals in ``claimed_by_live``.
+        ``captured_at``). Under ``range=full`` with a thinned live read, the
+        route first adds every skipped capture that actually sits inside an
+        interval (``full_range_live.OlderLive.archive_claims``), so this one
+        rule decides overlap for read and skipped captures alike. Counts
+        withheld intervals in ``claimed_by_live``.
         """
         if not self.rows:
             return {}
-        live: dict[int, list[datetime]] = defaultdict(list)
-        for row in claims:
-            stamp = getattr(row, "captured_at", None)
-            if stamp is not None:
-                live[int(row.outcome_id)].append(stamp)
-        for stamps in live.values():
-            stamps.sort()
+        live = _claim_stamps(claims)
         out: dict[int, list[ArchiveRow]] = {}
         self.claimed_by_live = 0
         self.compacted_from = {}
         for oid in outcome_ids:
             stamps = live.get(int(oid), [])
             kept: list[ArchiveRow] = []
-            spans = (claim_spans or {}).get(int(oid), ())
             for row in self.rows.get(int(oid), ()):
                 if row.captured_at < cutoff:
                     continue
-                i = bisect.bisect_left(stamps, row.interval_start)
-                if (i < len(stamps) and stamps[i] <= row.captured_at) or any(
-                    lo <= row.captured_at and hi >= row.interval_start for lo, hi in spans
-                ):
+                if _overlaps(stamps, row):
                     self.claimed_by_live += 1
                     continue
                 kept.append(row)
@@ -226,6 +216,20 @@ class ArchiveHistory:
             if kept:
                 out[int(oid)] = kept
         return out
+
+    def unclaimed_windows(
+        self, claims: Iterable[Any], outcome_ids: Iterable[int]
+    ) -> list[tuple[int, datetime, datetime]]:
+        """``(outcome, interval_start, interval_end)`` of every held interval the
+        ``claims`` do not already overlap: the candidates a thinned live read
+        must ask the store about (``full_range_live`` rule 4)."""
+        live = _claim_stamps(claims)
+        return [
+            (int(oid), row.interval_start, row.captured_at)
+            for oid in outcome_ids
+            for row in self.rows.get(int(oid), ())
+            if not _overlaps(live.get(int(oid), []), row)
+        ]
 
     def describe(
         self, served_rows: list[ArchiveRow], *, scale_refused: Optional[str] = None
@@ -299,6 +303,23 @@ class ArchiveHistory:
             "thinned_outcomes": [oid for oid in sorted(self.thinned) if oid in charted],
             "live_thinned": bool(live_thinned),
         }
+
+
+def _claim_stamps(claims: Iterable[Any]) -> dict[int, list[datetime]]:
+    live: dict[int, list[datetime]] = defaultdict(list)
+    for row in claims:
+        stamp = getattr(row, "captured_at", None)
+        if stamp is not None:
+            live[int(row.outcome_id)].append(stamp)
+    for stamps in live.values():
+        stamps.sort()
+    return live
+
+
+def _overlaps(stamps: list[datetime], row: ArchiveRow) -> bool:
+    """Rule 1: a live instant inside ``[interval_start, interval_end]``."""
+    i = bisect.bisect_left(stamps, row.interval_start)
+    return i < len(stamps) and stamps[i] <= row.captured_at
 
 
 def _compact(rows: list[ArchiveRow]) -> list[ArchiveRow]:
