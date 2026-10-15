@@ -49,8 +49,10 @@ def rig(
     failed_price=None
 ):
     batch = dict(batch if batch is not None else {1: 0.6, 2: 0.4, 900: 0.1})
-    # #10090: 900 is a BRIDGED open leg (event 90), so it stays on the game
-    # flush; an eventless open leg is `flush_standalone`'s.
+    # #10090: 900 is an unrelated game's leg (event 90), written by the game
+    # flush. An eventless open leg is `flush_standalone`'s, and a bridged open
+    # cohort is the bridged writer's (test_pm_bridged_writer_10090.py), so
+    # these rigs' second event is a slate event unless a test makes it open.
     mapping = mapping or {1: 10, 2: 10, 900: 90}
     books = dict(books if books is not None else {1: (0.1, 0.9)})
     trace, marks = [], []
@@ -132,7 +134,7 @@ def rig(
         "event_id_by_outcome": mapping,
         "market_by_outcome": {oid: oid for oid in batch},
         "non_blend_outcome_ids": set(),
-        "open_outcome_ids": {900, 901},
+        "open_outcome_ids": set(),
         "open_complement_of": {1: 2, 2: 1},
         "stats": defaultdict(int),
         "write_chunk": write,
@@ -199,6 +201,7 @@ def test_game_is_refreshed_before_unrelated_blocked_write():
 def test_event_waits_for_its_later_chunk_and_keeps_binary_pair_atomic():
     async def run():
         r = rig(batch={1: 0.6, 2: 0.4, 3: 0.7, 900: 0.1}, mapping={1: 10, 2: 10, 3: 10})
+        r.ns["open_outcome_ids"].add(900)  # open, no event -> standalone
         r.release.set()
         assert await r.ns["flush_prices"]()
         assert (

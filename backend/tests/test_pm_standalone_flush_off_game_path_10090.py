@@ -99,6 +99,7 @@ class TestTheTwoFlushes:
             mapping={1: 10, 2: 10},  # 900: open, no event -> standalone
             books={1: (0.1, 0.9), 900: (0.3, 0.7)},
         )
+        r.ns["open_outcome_ids"].add(900)
         r.release.set()
         assert await r.ns["flush_prices"](flush_started=100)
         game = list(r.trace)

@@ -17,8 +17,17 @@ from tests.test_polymarket_withdrawal_speed_10651 import ROOT, rig
 
 pytestmark = pytest.mark.asyncio
 
-PIPELINED = "stamp_owner.task = asyncio.create_task(blend_refresher.refresh("
-SERIAL = "await (blend_refresher.refresh("
+# The chunk loop's pipelined stamp. #10090: a committed bridged cohort's stamp
+# starts through the same owner earlier in the flush (`refresh(start_events`),
+# so the anchor names the chunk's own cohort.
+PIPELINED = (
+    "stamp_owner.fresh = set(refresh_events)\n"
+    "                        stamp_owner.task = asyncio.create_task(blend_refresher.refresh("
+)
+SERIAL = (
+    "stamp_owner.fresh = set(refresh_events)\n"
+    "                        await (blend_refresher.refresh("
+)
 
 
 def held_refresher(r, hold_ids=(10,), pending_events=()):

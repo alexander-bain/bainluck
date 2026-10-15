@@ -112,6 +112,12 @@ async def test_capped_out_tail_preserves_the_existing_planned_chunk_boundary():
             mapping={1: 10, 2: 10, 900: 90, 901: 90}, books={})
     x.ns["FLUSH_CHUNK_ROWS"] = 1
     x.ns["OPEN_FLUSH_CHUNKS_PER_FLUSH"] = 1
+    # #10090: 900/901 are open legs of a MIXED event (silent slate sibling 3),
+    # so the game flush plans them under the open cap. A pure bridged event's
+    # cohort is the bridged writer's, bounded by its own queue
+    # (test_pm_bridged_writer_10090.py, saturation case).
+    x.ns["open_outcome_ids"].update({900, 901})
+    x.ns["event_id_by_outcome"][3] = 90
     x.release.set()
     r = Recording(x.trace)
     r.adopt_pending([90])

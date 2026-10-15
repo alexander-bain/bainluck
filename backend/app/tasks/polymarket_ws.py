@@ -86,6 +86,8 @@ class _PMCatalogFlushBoundary:
         self.prop_wake = asyncio.Event()
         self.prop_work = 0
         self.side_writer = asyncio.Lock()
+        #: #10090: bridged open cohorts written beside the game flush.
+        self.bridges = _PMBridgeWriter(wake=self.flush_wake)
 
     def stamp_owner(self, refresher) -> "_PMStampOwner":
         if self.stamps is None:
@@ -122,6 +124,10 @@ class _PMCatalogFlushBoundary:
                 self.prop_wake.set()
                 continue
             if fenced and event_id_by_outcome.get(oid) in fenced:
+                continue
+            # A bridged cohort still being written: its writer wakes the game
+            # flush when it is done (`_PMBridgeWriter`).
+            if event_id_by_outcome.get(oid) in self.bridges.reserved:
                 continue
             self.flush_wake.set()
             return
@@ -197,6 +203,10 @@ class _PMCatalogFlushBoundary:
                 timing.finish(_handover_outcome(exc))
                 raise
         try:
+            # #10090: no bridged cohort starts while side flushes are fenced
+            # (`_flush_prices`); the one already running finishes, so its
+            # committed cohort is handed over before any map changes.
+            await self.bridges.join()
             await self._settle_stamp()
         except BaseException as exc:
             async with self.condition:
@@ -219,6 +229,10 @@ class _PMCatalogFlushBoundary:
             # No maps change beneath a stamp left running by an earlier batch.
             timing.enter("stamps")
             await self.join_stamps()
+            if self.stamps is not None:
+                # Committed bridged cohorts no game flush has stamped yet become
+                # debt keyed by event, which survives the new maps.
+                self.bridges.transfer(self.stamps.refresher)
             yield
         except BaseException as exc:
             outcome = _handover_outcome(exc)
@@ -458,6 +472,274 @@ class _PMStampOwner:
             )
         if interrupted is not None:
             raise interrupted
+
+
+#: #10090: bridged cohorts queued or being written at once. Past this a pure
+#: bridged event's prices stay buffered for a later flush (oldest first); the
+#: game flush never writes them itself, so a held bridged write cannot
+#: reach an unrelated game through a full queue.
+PM_BRIDGE_QUEUE_LIMIT = 2
+
+
+def _pm_pure_bridged_legs(
+    batch_ids,
+    open_outcome_ids,
+    event_id_by_outcome: dict,
+    complement_of: dict,
+    non_blend_outcome_ids,
+) -> dict[int, list[int]]:
+    """#10090 — the buffered open legs of PURE bridged events, by event, in
+    buffer order.
+
+    Pure: the event's every blend-read outcome in the WHOLE catalog is an open
+    leg. One linked slate outcome anywhere in the catalog (a silent sibling
+    with nothing buffered included) keeps the event on the game flush, so the
+    two writers never share an event and no stamp needs both. A venue-refuted
+    prop (`non_blend_outcome_ids`) is not read by the blend and has its own
+    loop already, so it does not make an event mixed. A binary pair travels
+    whole: a partner that is not open, or names another event, keeps both
+    events on the game flush (CERT-3868). Scans the catalog only when a
+    bridged leg is buffered.
+    """
+    by_event: dict[int, list[int]] = {}
+    mixed: set[int] = set()
+    for oid in batch_ids:
+        if oid not in open_outcome_ids:
+            continue
+        eid = event_id_by_outcome.get(oid)
+        other = complement_of.get(oid)
+        other_eid = None if other is None else event_id_by_outcome.get(other)
+        if eid is None:
+            eid = other_eid
+        if eid is None:
+            continue
+        if other is not None and (
+            other not in open_outcome_ids or other_eid not in (None, eid)
+        ):
+            mixed.add(eid)
+            if other_eid is not None:
+                mixed.add(other_eid)
+        by_event.setdefault(eid, []).append(oid)
+    if not by_event:
+        return {}
+    mixed.update(
+        eid for oid, eid in event_id_by_outcome.items()
+        if eid in by_event
+        and oid not in open_outcome_ids
+        and oid not in non_blend_outcome_ids
+    )
+    return {eid: legs for eid, legs in by_event.items() if eid not in mixed}
+
+
+class _PMBridgeWriter:
+    """#10090 — the one bounded writer for PURE event-bridged open cohorts.
+
+    A bridged open leg feeds its event's blend, so it stays off the standalone
+    loop; written inside the game flush, one slow bridged transaction held the
+    flush's return and every unrelated game's next quote with it (Root's
+    bridged-tail rig: the selected event's 0.65 unwritten after 1 s, unheld
+    control passed). The game flush now hands a pure bridged event's whole
+    cohort here and moves on (`_pm_pure_bridged_legs`: membership is by whole
+    event over the full catalog, so no event is written by both). This writer
+    takes the existing side connection (`side_writer`), so no new pool member
+    competes, and never stamps: each committed cohort is handed back as owed
+    work (`take_completed`) that the next game flush stamps through the one
+    existing stamp owner, before this writer waits for the cohort's market
+    notification.
+
+    ``reserved`` — events a queued or running cohort may still write or
+    notify: game writes and withdrawals skip them, and no newer cohort of the
+    same event is offered, so one event's writes and notifications stay in
+    order. ``unstamped`` — the reserved events not yet committed: every stamp
+    defers them, so no stamp reads a board this writer is about to change.
+    A committed price whose stamp is owed is never lost: the commit is
+    recorded before any cancellable step and settled in ``finally``. Before
+    COMMIT, cancellation leaves the prices buffered.
+    """
+
+    def __init__(self, wake: Optional[asyncio.Event] = None) -> None:
+        self.wake = wake
+        self.task: Optional[asyncio.Task] = None
+        self.reserved: set[int] = set()
+        self.unstamped: set[int] = set()
+        self.queue: list[tuple] = []
+        self.completed: list[tuple[list, dict, set]] = []
+        #: A failed (non-lock) write leaves later cohorts buffered until this
+        #: clock, as the game flush's own failure would: no retry storm.
+        self.hold_until = 0.0
+        #: Retry-held events' last offer (`_flush_prices` rotates them).
+        self.retry_offered: dict[int, float] = {}
+        self._entry: Optional[dict] = None
+
+    def busy(self) -> bool:
+        return self.task is not None and not self.task.done()
+
+    def accepting(self) -> bool:
+        return (
+            time.monotonic() >= self.hold_until
+            and len(self.queue) + (self._entry is not None) < PM_BRIDGE_QUEUE_LIMIT
+        )
+
+    def offer(
+        self, ids, events, *, write, publish,
+        side_writer, buffer_lock, price_buffer, input_marks,
+    ) -> None:
+        """Queue one bridged cohort; reserves ``events`` before returning."""
+        events = set(events)
+        self.reserved.update(events)
+        self.unstamped.update(events)
+        self.queue.append((list(ids), events))
+        if not self.busy():
+            self.task = asyncio.create_task(
+                self._run(write, publish, side_writer, buffer_lock, price_buffer, input_marks),
+                name="polymarket-bridged-open-writer",
+            )
+            self.task.add_done_callback(self._on_done)
+
+    def take_completed(self) -> list[tuple[list, dict, set]]:
+        completed, self.completed = self.completed, []
+        return completed
+
+    def transfer(self, refresher) -> int:
+        """Hand committed cohorts to the refresher's debt (lifecycle only:
+        catalog handover before maps change, shutdown before the drain)."""
+        completed = self.take_completed()
+        keep_owed = getattr(refresher, "keep_owed", None)
+        for ids, marks, events in completed:
+            if events and keep_owed is not None:
+                keep_owed(events, marks=[marks[oid] for oid in ids if oid in marks])
+            elif events:
+                refresher.adopt_pending(events)
+        return len(completed)
+
+    def _expose(self, entry: dict) -> None:
+        # Once per cohort: its committed ids (every chunk id when the write's
+        # own result never arrived; none when a zero-return write changed no
+        # row) owe a stamp, and no stamp defers the event any longer.
+        if entry["exposed"]:
+            return
+        entry["exposed"] = True
+        self.unstamped.difference_update(entry["events"])
+        ids = entry["committed"] or []
+        self._complete(
+            ids, {oid: entry["marks"][oid] for oid in ids if oid in entry["marks"]},
+            entry["events"],
+        )
+
+    def _complete(self, ids, marks, events) -> None:
+        if ids:
+            self.completed.append((list(ids), dict(marks), set(events)))
+            if self.wake is not None:
+                self.wake.set()
+
+    def _settle_entry(self, entry: dict) -> None:
+        self._expose(entry)
+        self.reserved.difference_update(entry["events"])
+        self.unstamped.difference_update(entry["events"])
+        if entry["events"] and self.wake is not None:
+            # Inputs on a reserved event did not wake the game flush
+            # (`wake_for_outcomes`); a cohort that committed nothing (a refused
+            # lock, a failure, an emptied chunk) still owes them that wake.
+            self.wake.set()
+
+    async def _run(self, write, publish, side_writer, buffer_lock, price_buffer, input_marks):
+        while self.queue:
+            ids, events = self.queue.pop(0)
+            entry = self._entry = {
+                "events": events, "committed": None, "marks": {}, "exposed": False,
+            }
+            publishing = None
+            try:
+                async with side_writer:
+                    async with buffer_lock:
+                        chunk = {oid: price_buffer[oid] for oid in ids if oid in price_buffer}
+                        entry["marks"] = {
+                            oid: input_marks[oid] for oid in chunk if oid in input_marks
+                        }
+                    if not chunk:
+                        continue
+
+                    def committed(session):
+                        nonlocal publishing
+                        # Synchronous, straight after COMMIT: the stamp is owed
+                        # from here even if the rest of this task is cancelled.
+                        entry["committed"] = list(chunk)
+                        self.unstamped.difference_update(events)
+                        publishing = asyncio.create_task(
+                            publish(session), name="polymarket-bridged-market-publish",
+                        )
+
+                    wrote = await write(chunk, start_market_publish=committed)
+                    if wrote and entry["committed"] is not None:
+                        entry["committed"] = list(getattr(wrote, "written_ids", chunk))
+                    elif wrote is False:
+                        self.hold_until = time.monotonic() + PRICE_FLUSH_SECONDS
+                    # The event's stamp goes ahead of its market notification,
+                    # as a game chunk's does (`test_pm_event_before_notification`):
+                    # a held notification no longer holds the event frame.
+                    self._expose(entry)
+            finally:
+                try:
+                    if publishing is not None:
+                        # Committed but interrupted before `_expose` above (a
+                        # cancellation in write_chunk's buffer cleanup, after
+                        # its commit callback): the stamp is owed now, from
+                        # every chunk id, not after a held notification.
+                        self._expose(entry)
+                        await _join_publication(publishing)
+                finally:
+                    self._entry = None
+                    self._settle_entry(entry)
+
+    def _on_done(self, task: asyncio.Task) -> None:
+        if self.task is not task:
+            return
+        # Cancelled before its first turn or between cohorts: queued cohorts
+        # wrote nothing, so their prices are still buffered and owe nothing.
+        if self._entry is not None:
+            self._settle_entry(self._entry)
+            self._entry = None
+        self.queue.clear()
+        self.reserved.clear()
+        self.unstamped.clear()
+        if self.wake is not None:
+            self.wake.set()
+        if not task.cancelled() and task.exception() is not None:
+            logger.error(
+                "Polymarket WS: bridged open writer raised", exc_info=task.exception(),
+            )
+
+    async def join(self) -> None:
+        """Wait for the writer to finish — to completion, never cancelled: a
+        second cancellation is recorded and re-raised after the join."""
+        interrupted = None
+        while self.busy():
+            try:
+                await asyncio.wait({self.task})
+            except asyncio.CancelledError as exc:
+                interrupted = exc
+        if interrupted is not None:
+            raise interrupted
+
+
+async def _join_publication(task: asyncio.Task) -> None:
+    """Await a committed market publication; a cancellation cancels it, waits
+    for it, then propagates. Its own failure is logged, never raised."""
+    interrupted = None
+    while not task.done():
+        try:
+            await asyncio.wait({task})
+        except asyncio.CancelledError as exc:
+            interrupted = exc
+            if not task.cancelling():
+                task.cancel()
+    if not task.cancelled() and task.exception() is not None:
+        logger.error(
+            "Polymarket WS: committed market publication failed",
+            exc_info=task.exception(),
+        )
+    if interrupted is not None:
+        raise interrupted
 
 
 def pm_non_speaking_metadata(metadata: Any) -> bool:
@@ -2471,7 +2753,10 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
         lock-held whole chunks retain their own eligibility cooldown. #10090
         ``flush_started`` is this flush's start, for the refresher's floor."""
         import asyncio  # the pipelined stamp below; executed rigs bring no globals
-        from app.tasks.polymarket_ws import _PMHeadlineEvents, _pm_lock_isolated_chunks
+        from app.tasks.live_blend_refresh import _mono
+        from app.tasks.polymarket_ws import (
+            _PMHeadlineEvents, _pm_lock_isolated_chunks, _pm_pure_bridged_legs,
+        )
 
         stamp_owner = catalog_boundary.stamp_owner(blend_refresher)
         # Reap completion before deciding whether the next batch can overlap.
@@ -2617,6 +2902,183 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
         # #10090: events whose stamp the running refresh still held when their
         # chunk came up; their prices stay buffered for a later flush.
         fenced_events: set[int] = set()
+        # #10090: bridged cohorts the bridged writer committed since the last
+        # flush owe their stamp exactly as a chunk this flush committed does,
+        # with the committed input marks (over any newer unwritten one). Taken
+        # here, they are this flush's alone, so they are recorded as debt
+        # FIRST, before any await: a flush cancelled before stamping them
+        # leaves them owed, never lost. Stamping them below (fresh, as
+        # before) settles that debt with them.
+        taken = catalog_boundary.bridges.take_completed()
+        adopt_pending = getattr(blend_refresher, "adopt_pending", None)
+        for done_ids, done_marks, _ in taken:
+            note_flush_work()
+            if adopt_pending is not None:
+                adopt_pending(event_ids_for_outcomes(headline_event_ids, done_ids))
+            for oid in done_ids:
+                if oid not in owed:
+                    owed.append(oid)
+                if oid in done_marks:
+                    batch_marks[oid] = done_marks[oid]
+        # #10090: pure bridged events' buffered legs. This flush never writes
+        # them (the partition below hands them to the bridged writer), so
+        # they never defer a committed cohort's stamp here.
+        bridged: dict[int, list[int]] = {}
+        if batch and not final and flush_started is not None:
+            bridged = _pm_pure_bridged_legs(
+                batch, open_outcome_ids, event_id_by_outcome, open_complement_of,
+                non_blend_outcome_ids,
+            )
+        if owed and not final and flush_started is not None:
+            # #10090: a timed flush starts the committed bridged cohorts' stamp
+            # through the one stamp owner NOW — admitted to the running call,
+            # or as its task — exactly as a chunk's ready cohort is. Left to
+            # the tail, a flush with no game price of its own awaited that
+            # stamp inline, so one held bridged event's stamp held every
+            # unrelated game's next quote. Deferred: events this flush may
+            # still write or withdraw (their stamp follows that), and any the
+            # bridged writer still owns. A refused event stays the debt
+            # recorded above; nothing is joined.
+            #
+            # A newer price for a pure bridged event is NOT this flush's write:
+            # the stamp goes first, and the partition below keeps that price
+            # buffered while the stamp holds the event. Deferring it here
+            # handed the newer write to the bridged writer instead, so on a
+            # continuously ticking event every committed cohort's stamp was
+            # deferred behind the next one (Root: seven cohorts committed,
+            # zero event frames until the venue went quiet). A stamp refused
+            # here (a call that no longer admits) stays debt; the newer pair
+            # then goes ahead and its own completion takes the next turn.
+            async with buffer_lock:
+                defer = (
+                    event_ids_for_outcomes(
+                        headline_event_ids,
+                        [oid for oid in batch if headline_event_ids.get(oid) not in bridged],
+                    )
+                    | event_ids_for_outcomes(headline_event_ids, withdraw_buffer)
+                    | catalog_boundary.bridges.unstamped
+                )
+            ready = [
+                oid for oid in owed
+                if headline_event_ids.get(oid) is not None
+                and headline_event_ids.get(oid) not in defer
+            ]
+            start_events = event_ids_for_outcomes(headline_event_ids, ready)
+            ready_marks = [
+                batch_marks[oid] for oid in ready
+                if oid in batch_marks and oid not in headline_event_ids.non_speakers
+            ]
+            if start_events and stamp_owner.task is not None and not stamp_owner.task.done():
+                admitted = blend_refresher.admit_fresh(
+                    start_events, flush_started=flush_started, marks=ready_marks,
+                    defer_event_ids=defer,
+                )
+                stamp_owner.fresh.update(admitted)
+                if stamp_owner.events is not None:
+                    stamp_owner.events.update(admitted)
+            elif start_events:
+                tail_receipts.stage(ready_marks)
+                pending_reader = getattr(blend_refresher, "pending_event_ids", None)
+                stamp_owner.events = (
+                    None if pending_reader is None
+                    else (start_events | set(pending_reader())).difference(defer)
+                )
+                stamp_owner.fresh = set(start_events)
+                stamp_owner.task = asyncio.create_task(blend_refresher.refresh(
+                    start_events, flush_started=flush_started, defer_event_ids=defer,
+                ))
+                try:
+                    # One turn: the call takes its receipts and opens its door,
+                    # so the partition below sees these events as held.
+                    await asyncio.sleep(0)
+                except asyncio.CancelledError:
+                    await stamp_owner.join(cancel=True)
+                    raise
+            # Every completion is now started, admitted or owed as debt (a
+            # deferred one is stamped after the write or withdrawal that
+            # deferred it, or from that debt): none rides this flush's tail.
+            owed = []
+        # #10090: pure bridged events whose cohort waits for the bridged
+        # writer this flush (in flight, fenced, cooling down or queue full).
+        # Their prices stay buffered and their withdrawals wait with them.
+        bridge_waiting: set[int] = set()
+        if bridged:
+            # WHOLE-EVENT PARTITION: a pure bridged event's legs are never
+            # this flush's write; they go to the one bridged writer, a
+            # whole event per cohort, oldest first, or stay buffered.
+            for legs in bridged.values():
+                for oid in legs:
+                    del batch[oid]
+            bridges = catalog_boundary.bridges
+            held: Optional[set[int]] = set()
+            if stamp_owner.task is not None and not stamp_owner.task.done():
+                held = stamp_owner.held_events()
+            now = _mono()
+            cohort: list[int] = []
+            cohort_events: set[int] = set()
+
+            def offer_cohort():
+                for eid in cohort_events.intersection(lock_retry_events):
+                    bridges.retry_offered[eid] = now
+                bridges.offer(
+                    cohort, cohort_events,
+                    write=write_chunk, publish=blend_refresher.publish_market_changes,
+                    side_writer=catalog_boundary.side_writer, buffer_lock=buffer_lock,
+                    price_buffer=price_buffer, input_marks=input_marks,
+                )
+                stats["bridged_handed_off"] = (
+                    stats.get("bridged_handed_off", 0) + len(cohort)
+                )
+
+            # Retry isolation, as `_pm_lock_isolated_chunks` gives the game
+            # flush: an event a lock rollback left retry-held is its own
+            # cohort, after every healthy event, so its next NOWAIT refusal
+            # rolls back no other event. Packed with a healthy event, each
+            # refusal on the held one rolled the healthy one back with it
+            # (Root: two flushes, both attempts (900, 901, 902, 903)).
+            # Retried events take turns, least recently offered first, so
+            # a few held ones cannot keep a later one out of the queue.
+            bridges.retry_offered = {
+                eid: at for eid, at in bridges.retry_offered.items()
+                if eid in lock_retry_events
+            }
+            order = [eid for eid in bridged if eid not in lock_retry_events]
+            order += sorted(
+                (eid for eid in bridged if eid in lock_retry_events),
+                key=lambda eid: bridges.retry_offered.get(eid, 0.0),
+            )
+            for eid in order:
+                legs = bridged[eid]
+                if (
+                    held is None or eid in held or eid in bridges.reserved
+                    or catalog_boundary.standalone_fenced or catalog_boundary.changing
+                    or any(lock_retry_until.get(oid, 0) > now for oid in legs)
+                ):
+                    bridge_waiting.add(eid)
+                    continue
+                if cohort and (
+                    len(cohort) + len(legs) > FLUSH_CHUNK_ROWS
+                    or eid in lock_retry_events
+                    or not cohort_events.isdisjoint(lock_retry_events)
+                ):
+                    if bridges.accepting():
+                        offer_cohort()
+                    else:
+                        bridge_waiting.update(cohort_events)
+                    cohort, cohort_events = [], set()
+                cohort.extend(legs)
+                cohort_events.add(eid)
+            if cohort:
+                if bridges.accepting():
+                    offer_cohort()
+                else:
+                    bridge_waiting.update(cohort_events)
+            if held and bridge_waiting:
+                stamp_owner.note_fenced(bridge_waiting.intersection(held))
+            stats["bridge_waiting"] = (
+                stats.get("bridge_waiting", 0) + len(bridge_waiting)
+            )
+            note_flush_work()
         if batch:
             # #9484: every linked row, then a bounded number of open-contract
             # chunks, oldest-dirty first (the buffer's insertion order). Open
@@ -2793,6 +3255,24 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                             if traced is not None:
                                 stage_trace.chunk_write(traced, {}, {})
                             continue
+                    if catalog_boundary.bridges.reserved:
+                        # #10090: a cohort the bridged writer still owns stays
+                        # buffered, as a fenced one does; it wakes us when done.
+                        reserved = catalog_boundary.bridges.reserved
+                        kept = [
+                            oid for oid in chunk_ids
+                            if event_id_by_outcome.get(oid) not in reserved
+                            and event_id_by_outcome.get(open_complement_of.get(oid))
+                            not in reserved
+                        ]
+                        stats["bridge_reserved"] = (
+                            stats.get("bridge_reserved", 0) + len(chunk_ids) - len(kept)
+                        )
+                        chunk_ids = kept
+                        if not chunk_ids:
+                            if traced is not None:
+                                stage_trace.chunk_write(traced, {}, {})
+                            continue
                     note_flush_work()
                     # The plan freezes membership/caps, not a later chunk's
                     # prices. Adopt the newest values and their matching input
@@ -2856,6 +3336,8 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                         if last_price_chunk_of_event.get(eid, len(chunks)) <= index
                         and eid not in failed_price_events
                         and eid not in fenced_events
+                        and eid not in catalog_boundary.bridges.reserved
+                        and eid not in bridge_waiting
                     }
                     if mature:
                         # Withdrawals retain their existing order after a
@@ -2906,6 +3388,7 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                         unfinished_events = (
                             event_ids_for_outcomes(headline_event_ids, unfinished_price_ids)
                             | speaking_withdrawals
+                            | catalog_boundary.bridges.unstamped
                         )
                         if stamp_owner.task is not None and not stamp_owner.task.done():
                             # A committed whole cohort in this or a later flush may use
@@ -3003,7 +3486,10 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
             # A withdrawal on the held cohort would immediately reacquire its
             # blocked outcome locks and bypass the price eligibility cooldown.
             # A fenced event's prices are still buffered: its withdrawal waits too.
-            exclude_events=attempted_withdraw_events | lock_deferred_events | fenced_events,
+            exclude_events=(
+                attempted_withdraw_events | lock_deferred_events | fenced_events
+                | catalog_boundary.bridges.reserved | bridge_waiting
+            ),
             standalone=None if final else False,
             props=None if final else False,
             final=final,
@@ -3023,8 +3509,9 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                     headline_event_ids,
                     withdraw_cohort_ids.intersection(withdraw_buffer),
                 )
+                | catalog_boundary.bridges.unstamped
             )
-        if not batch and not withdrawn_events:
+        if not batch and not withdrawn_events and not owed:
             # #837 tail — a flush with no new prices still owes the stamps a row
             # lock deferred: those prices are already stored, so waiting for the
             # next venue tick would strand them on a quiet market. Free when
@@ -3328,6 +3815,14 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                     ", ".join(running), LOOP_REAP_TIMEOUT_S,
                 )
         try:
+            try:
+                # #10090: the bridged writer too, to completion (its write is
+                # bounded by the lock budget). No game flush is left to start
+                # another, and its committed cohorts become debt for the drain.
+                await catalog_boundary.bridges.join()
+            except asyncio.CancelledError as exc:
+                interrupted = exc
+            catalog_boundary.bridges.transfer(blend_refresher)
             try:
                 await catalog_boundary.join_stamps()
             except asyncio.CancelledError as exc:
