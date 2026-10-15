@@ -1608,9 +1608,9 @@ async def enrich_cu_v2_profiles(limit: int = 125):
                     messages=[{"role": "user", "content": prompt}],
                     response_format={"type": "json_object"},
                 )
-                content = response.choices[0].message.content or "{}"
-                raw = _json_from_llm_response(content)
-
+                # Account BEFORE reading the answer (CERT-4125): a returned
+                # completion is paid for whether or not its content parses, and a
+                # parse error raising first used to book a paid call as $0.
                 usage = getattr(response, "usage", None)
                 cost = estimate_cost_usd(request["model"], usage)
                 if cost is None:
@@ -1619,6 +1619,9 @@ async def enrich_cu_v2_profiles(limit: int = 125):
                     stats["input_tokens"] += usage.prompt_tokens
                     stats["output_tokens"] += usage.completion_tokens
                     stats["estimated_cost_usd"] += cost
+
+                content = response.choices[0].message.content or "{}"
+                raw = _json_from_llm_response(content)
 
                 liveness = _compute_liveness(item["outcome_probs"], item["status"])
 

@@ -279,16 +279,20 @@ def test_an_unpriced_model_has_unknown_cost():
 
 
 class _RecordingClient:
-    def __init__(self, usage):
+    """``contents``: one answer per call, cycling; the default is a valid profile."""
+
+    def __init__(self, usage, contents=None):
         self.calls = []
         outer = self
+        answers = list(contents or [json.dumps(_llm_payload())])
 
         class _Completions:
             def create(self, **kwargs):
+                content = answers[len(outer.calls) % len(answers)]
                 outer.calls.append(kwargs)
                 return type("R", (), {
                     "choices": [type("C", (), {
-                        "message": type("M", (), {"content": json.dumps(_llm_payload())})()
+                        "message": type("M", (), {"content": content})()
                     })()],
                     "usage": usage,
                 })()
@@ -301,7 +305,7 @@ async def _cm(session):
     yield session
 
 
-def _install(monkeypatch, *, usage, rows=1):
+def _install(monkeypatch, *, usage, rows=1, contents=None):
     read_rows = [{
         "id": 1234 + i, "name": T_CLARK, "source": "kalshi", "status": "open",
         "category": "basketball", "resolution_date": None, "market_metadata": {},
@@ -310,7 +314,7 @@ def _install(monkeypatch, *, usage, rows=1):
     write_session = _FakeSession()
     sessions = iter([_FakeSession([_FakeResult(read_rows)]), write_session, _FakeSession()])
     monkeypatch.setattr("app.tasks.enrich_markets.get_task_session", lambda: _cm(next(sessions)))
-    client = _RecordingClient(usage)
+    client = _RecordingClient(usage, contents)
     monkeypatch.setattr("app.services.llm._get_client", lambda: client)
 
     async def no_aliases(session, names, **kw):
@@ -373,3 +377,41 @@ async def test_cu_v2_with_known_cost_processes_every_item(monkeypatch):
     stats = await enrich_cu_v2_profiles(limit=3)
     assert len(client.calls) == 3
     assert stats["cost_unknown_responses"] == 0
+
+
+# CERT-4125's counterexamples: the answer's content is read AFTER it is paid for.
+_MALFORMED = "not json at all"
+
+
+async def test_cu_v2_malformed_answers_with_no_usage_still_stop_the_batch(monkeypatch):
+    client, write_session = _install(monkeypatch, usage=None, rows=3, contents=[_MALFORMED])
+    stats = await enrich_cu_v2_profiles(limit=3)
+    assert len(client.calls) == 1
+    assert stats["cost_unknown_responses"] == 1 and stats["errors"] == 1
+    assert _profiles(write_session) == []
+
+
+async def test_cu_v2_first_answer_malformed_with_no_usage_stops_before_the_second(monkeypatch):
+    client, write_session = _install(
+        monkeypatch, usage=None, rows=3, contents=[_MALFORMED, json.dumps(_llm_payload())]
+    )
+    stats = await enrich_cu_v2_profiles(limit=3)
+    assert len(client.calls) == 1
+    assert stats["cost_unknown_responses"] == 1
+
+
+async def test_cu_v2_a_malformed_answer_with_known_usage_is_still_paid_for(monkeypatch):
+    client, _ = _install(monkeypatch, usage=_Usage(900, 260), rows=1, contents=[_MALFORMED])
+    stats = await enrich_cu_v2_profiles(limit=1)
+    assert len(client.calls) == 1 and stats["errors"] == 1
+    assert stats["estimated_cost_usd"] == pytest.approx((900 * 0.15 + 260 * 0.60) / 1e6)
+    assert (stats["input_tokens"], stats["output_tokens"]) == (900, 260)
+
+
+@pytest.mark.parametrize("usage", [_Usage(900, None), _Usage(None, 260)])
+async def test_cu_v2_incomplete_usage_stops_the_batch(monkeypatch, usage):
+    client, write_session = _install(monkeypatch, usage=usage, rows=3)
+    stats = await enrich_cu_v2_profiles(limit=3)
+    assert len(client.calls) == 1
+    assert stats["cost_unknown_responses"] == 1 and stats["estimated_cost_usd"] == 0.0
+    assert len(_profiles(write_session)) == 1
