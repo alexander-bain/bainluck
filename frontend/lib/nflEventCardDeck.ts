@@ -561,16 +561,21 @@ export function readerHasUpdate(opts: {
 
 /**
  * The card on screen after Refresh replaces `old` with `next`: the same card
- * when it survived; otherwise the nearest that did (the next one in the old
- * order, else the previous one, else the first new card). Null only when no
- * card is left, never an id no card carries.
+ * when it survived; otherwise the survivor nearest to it in the old order (at
+ * equal distance the following one wins); otherwise the first new card. Null
+ * only when no card is left, never an id no card carries.
  */
 export function reconcileVisible(visible: string | null, old: string[], next: string[]): string | null {
   if (visible !== null && next.includes(visible)) return visible;
-  const startAt = visible !== null ? old.indexOf(visible) : -1;
-  const start = startAt >= 0 ? startAt : 0;
-  for (let i = start + 1; i < old.length; i++) if (next.includes(old[i])) return old[i];
-  for (let i = start - 1; i >= 0; i--) if (next.includes(old[i])) return old[i];
+  const at = visible !== null ? old.indexOf(visible) : -1;
+  if (at >= 0) {
+    for (let d = 1; d < old.length; d++) {
+      const after = old[at + d];
+      if (after !== undefined && next.includes(after)) return after;
+      const before = old[at - d];
+      if (before !== undefined && next.includes(before)) return before;
+    }
+  }
   return next[0] ?? null;
 }
 

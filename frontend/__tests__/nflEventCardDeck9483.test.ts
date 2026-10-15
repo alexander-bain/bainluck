@@ -352,6 +352,19 @@ describe("#9483 journeys 7–8 — the reader's hold, Refresh and Back", () => {
     expect(reconcileVisible(b.id, [finish.id, a.id, b.id], [finish.id, a.id])).toBe(a.id);
   });
 
+  it("a removed card hands over to the survivor NEAREST to it, the following one on a tie, never a farther one", () => {
+    const old = ["c1", "c2", "c3", "open", "c5", "c6"];
+    // c5 left with the open card: c3 is one away, c6 two — c3, not the first survivor after it.
+    expect(reconcileVisible("open", old, ["c1", "c2", "c3", "c6"])).toBe("c3");
+    expect(reconcileVisible("open", old, ["c6", "c3", "c1"])).toBe("c3");
+    // Equal distance: the following card wins.
+    expect(reconcileVisible("open", old, ["c3", "c5"])).toBe("c5");
+    expect(reconcileVisible("open", old, ["c2", "c6"])).toBe("c6");
+    // No old card survived: the new first card; nothing left: null.
+    expect(reconcileVisible("open", old, ["n1", "n2"])).toBe("n1");
+    expect(reconcileVisible("open", old, [])).toBeNull();
+  });
+
   it("Refresh to an empty deck is the empty state, never a stale id", () => {
     const state = openReader({ cardId: a.id, live: deck, liveHeader: header, liveRows: rows });
     const empty = readerReducer(state, { type: "refresh", live: [], liveHeader: header, liveRows: {} });
