@@ -4762,6 +4762,27 @@ jobs:
             exit 1
           }
 
+      - name: "#10090 PM release wake with the stage trace off and on (real Postgres)"
+        if: matrix.group == 'shared-tail'
+        run: |
+          if python -m pytest tests/integration/test_pm_stamp_release_wake_10090_pg.py \
+            -v -rs > /tmp/release-wake10090.txt 2>&1; then
+            gate_status=0
+          else
+            gate_status=$?
+          fi
+          cat /tmp/release-wake10090.txt
+          echo "EXIT CODE: $gate_status"
+          test "$gate_status" -eq 0
+          if grep -qiE "[0-9]+ skipped" /tmp/release-wake10090.txt; then
+            echo "::error::#10090 PM release-wake gate SKIPPED"
+            exit 1
+          fi
+          grep -qE "[^0-9]11 passed[,[:space:]]" /tmp/release-wake10090.txt || {
+            echo "::error::#10090 PM release-wake gate did not run all eleven cases"
+            exit 1
+          }
+
       - name: "#10702 exact Kalshi trace commit and rollback controls (real Postgres)"
         # Each case owns and drops a random schema in the job's disposable DB.
         if: matrix.group == 'isolated'

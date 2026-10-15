@@ -16,7 +16,7 @@ import logging
 import math
 import os
 import time
-from collections.abc import Collection, Iterator, Mapping
+from collections.abc import Collection, Iterable, Iterator, Mapping
 from typing import Any, Optional
 from datetime import datetime, timezone
 
@@ -79,8 +79,42 @@ class _PMCatalogFlushBoundary:
 
     def stamp_owner(self, refresher) -> "_PMStampOwner":
         if self.stamps is None:
-            self.stamps = _PMStampOwner(refresher)
+            self.stamps = _PMStampOwner(refresher, wake=self.flush_wake)
         return self.stamps
+
+    def wake_for_outcomes(
+        self,
+        outcome_ids: Iterable[int],
+        open_outcome_ids,
+        event_id_by_outcome: dict[int, int],
+        non_blend_outcome_ids=(),
+    ) -> None:
+        """Set `flush_wake` when any outcome can advance in the next game flush.
+
+        Outcomes whose headline event already had a buffered cohort fenced by
+        the running stamp stay quiet until that event's stamp releases: another
+        flush while the stamp still holds the event would only fence it again.
+        Non-speaking props (`non_blend_outcome_ids`) and standalone open legs
+        are never fenced by `fenced_events`.
+        """
+        fenced = (
+            self.stamps.fenced
+            if self.stamps is not None
+            and self.stamps.task is not None
+            and not self.stamps.task.done()
+            else ()
+        )
+        for oid in outcome_ids:
+            if oid in open_outcome_ids and event_id_by_outcome.get(oid) is None:
+                continue
+            if (
+                fenced
+                and oid not in non_blend_outcome_ids
+                and event_id_by_outcome.get(oid) in fenced
+            ):
+                continue
+            self.flush_wake.set()
+            return
 
     async def join_stamps(self, *, cancel=False) -> None:
         if self.stamps is not None:
@@ -287,13 +321,67 @@ class _PMStampOwner:
     boundaries join it instead. No second mutable refresher call runs beside it.
     """
 
-    def __init__(self, refresher) -> None:
+    def __init__(self, refresher, *, wake: Optional[asyncio.Event] = None) -> None:
         self.refresher = refresher
-        self.task: Optional[asyncio.Task] = None
+        self.wake = wake
+        self._task: Optional[asyncio.Task] = None
         self.events: Optional[set[int]] = None
         self.fresh: set[int] = set()
+        #: #10090: events whose buffered price/withdrawal was fenced by a game
+        #: flush while this owner's refresh held them; releasing one wakes the
+        #: game flush loop so the buffered cohort does not wait for the next
+        #: periodic timer on a quiet market.
+        self.fenced: set[int] = set()
         #: #10090: seconds flushes spent waiting here on a running refresh.
         self.waited_s = 0.0
+        if hasattr(refresher, "release_wake"):
+            refresher.release_wake = self._on_release
+
+    @property
+    def task(self) -> Optional[asyncio.Task]:
+        return self._task
+
+    @task.setter
+    def task(self, value: Optional[asyncio.Task]) -> None:
+        self._task = value
+        if value is not None and hasattr(value, "add_done_callback"):
+            value.add_done_callback(self._on_task_done)
+
+    def note_fenced(self, event_ids: Iterable[int]) -> None:
+        if self._task is None or self._task.done():
+            return
+        held = self.held_events()
+        if held is None:
+            self.fenced.update(event_ids)
+        else:
+            self.fenced.update(held.intersection(event_ids))
+
+    def _on_release(self, event_ids: Iterable[int]) -> None:
+        if not self.fenced:
+            return
+        released = self.fenced.intersection(event_ids)
+        if not released:
+            return
+        self.fenced.difference_update(released)
+        if (
+            self.wake is not None
+            and self._task is not None
+            and not self._task.cancelling()
+        ):
+            self.wake.set()
+
+    def _on_task_done(self, task: asyncio.Task) -> None:
+        if self._task is not task:
+            return
+        if not self.fenced:
+            return
+        self.fenced.clear()
+        if (
+            self.wake is not None
+            and not task.cancelled()
+            and task.exception() is None
+        ):
+            self.wake.set()
 
     def held_events(self) -> Optional[set[int]]:
         """#10090 — the events the running refresh is still stamping.
@@ -313,9 +401,11 @@ class _PMStampOwner:
         return set(holding)
 
     async def join(self, *, cancel=False) -> None:
-        if self.task is None:
+        if self._task is None:
             return
-        task = self.task
+        task = self._task
+        if cancel:
+            self.fenced.clear()
         if not task.done():
             # #10090: a running call keeps admitting later flushes' cohorts.
             # A join is a lifecycle drain: close the door first, so this waits
@@ -332,10 +422,11 @@ class _PMStampOwner:
                 await asyncio.wait({task})
             except asyncio.CancelledError as exc:
                 interrupted = exc
+                self.fenced.clear()
                 if not task.cancelling():
                     task.cancel()
         self.waited_s += time.monotonic() - started
-        if self.task is not task:
+        if self._task is not task:
             # #10090: a catalog settle's cancel joins while game flushes still
             # run, so a flush's join of the same call can finish first and
             # start the next call. That joiner already took this call's debt;
@@ -343,7 +434,8 @@ class _PMStampOwner:
             if interrupted is not None:
                 raise interrupted
             return
-        self.task = None
+        self._task = None
+        self.fenced.clear()
         fresh, self.fresh = self.fresh, set()
         self.events = None
         if task.cancelled() or task.exception() is not None:
@@ -2015,6 +2107,16 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
     # entry per subscribed outcome) and holds the mark of the buffered value.
     tail_receipts = TailReceipts("polymarket")
     blend_refresher.receipts = tail_receipts
+    # #10090 stage trace: OFF unless ONE event, its explicit outcomes and an
+    # absolute expiry <=600 s away are configured (`app/utils/pm_stage_trace.py`).
+    # Evidence only; it never changes a price, a schedule or a retry.
+    tail_receipts.exact_trace = None
+    with contextlib.suppress(Exception):
+        from app.utils.pm_stage_trace import PMStageTrace
+
+        tail_receipts.exact_trace = PMStageTrace.from_env(
+            os.environ, run=tail_receipts.run, event_of=event_id_by_outcome,
+        )
     # #9462 review: stamps the previous run still owed when it recycled. Its
     # prices are already stored; the first flush below stamps them.
     stats["blend_pending_adopted"] = adopt_handed_off(blend_refresher)
@@ -2065,9 +2167,18 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
         from app.tasks.live_blend_refresh import _mono
         from app.tasks.polymarket_ws import _PMPriceWriteResult, PM_QUOTE_LIVENESS_SECONDS
 
+        # #10090 stage trace (OFF by default): times only the chunk the game
+        # flush registered for its selected outcomes; never raises. Reached
+        # through the refresher this writer already publishes with (its
+        # `receipts` IS `tail_receipts`), so the writer gains no new name.
+        stage_trace = getattr(
+            getattr(blend_refresher, "receipts", None), "exact_trace", None
+        )
         # None means a lock-held whole chunk, not a global cadence failure.
         # Newer ticks on its rows cannot bypass the existing two-second hold.
         if not final and any(lock_retry_until.get(oid, 0) > _mono() for oid in chunk):
+            if stage_trace is not None:
+                stage_trace.write_stage(chunk, "COOLDOWN_SKIP")
             return None
         # #10090: a row a lock already refused stays in `lock_retry_until`
         # until a write lands, and it is the one most likely still held.
@@ -2080,6 +2191,8 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
         probe_refused = False
         try:
             async with get_task_session() as session:
+                if stage_trace is not None:
+                    stage_trace.write_stage(chunk, "SESSION")
                 if not final:
                     await session.execute(
                         SET_LOCK_TIMEOUT_SQL,
@@ -2095,6 +2208,8 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                     or now - successful_price_write_at[oid] >= PM_QUOTE_LIVENESS_SECONDS
                 }
                 try:
+                    if stage_trace is not None:
+                        stage_trace.write_stage(chunk, "STATEMENT_START")
                     result = await session.execute(
                         chunk_price_update_stmt(chunk, force_ids=forced, nowait=probe)
                     )
@@ -2109,6 +2224,8 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                     probe_refused = probe and is_price_row_lock_refusal(exc)
                     raise
                 written_rows = sorted(result.all(), key=lambda r: r.ord)
+                if stage_trace is not None:
+                    stage_trace.write_stage(chunk, "STATEMENT_END")
                 # #9484: only a row the UPDATE returned is evidence — a
                 # buffered id whose row is gone signals nothing. And only
                 # a row whose stored price moved: the same price again
@@ -2149,6 +2266,13 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                 1 for row in written_rows if row.id in open_outcome_ids
             )
         except Exception as exc:
+            if stage_trace is not None:
+                stage_trace.write_stage(
+                    chunk, "FAILED",
+                    reason="LOCK_PROBE_REFUSED" if probe_refused
+                    else "LOCK_TIMEOUT" if is_lock_timeout(exc)
+                    else type(exc).__name__,
+                )
             # Q491 — THE SHIP. The chunk is still in `price_buffer`, so the next
             # flush retries it. Before Q491 the buffer was drained up front and
             # a failed write DISCARDED those prices outright: the socket only
@@ -2195,6 +2319,8 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                 return None
             return False
 
+        if stage_trace is not None:
+            stage_trace.write_stage(chunk, "COMMITTED", rows=written_rows)
         for oid in chunk:
             lock_retry_until.pop(oid, None)
         successful_price_write_at.update(dict.fromkeys(
@@ -2342,6 +2468,49 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
             event_id_by_outcome, () if final else non_blend_outcome_ids,
         )
 
+        work_noted = False
+
+        def note_flush_work():
+            nonlocal work_noted
+            if not work_noted:
+                work_noted = True
+                catalog_boundary.flush_work += 1
+
+        async def refresh_owed(unfinished_events):
+            # #10090: the quiet ending's owed stamps. Awaited here, one held
+            # event's debt (a stamp waiting on its row lock) held this flush's
+            # return, so the cadence could start no flush and every unrelated
+            # fresh quote waited behind it (Root, real PG: 0.81 s vs 0.13 s).
+            # A timed flush instead hands the debt to the one stamp owner and
+            # returns, exactly as a fresh chunk does: later flushes write and
+            # `admit_fresh` beside it, and the held event stays fenced. The
+            # final drain and untimed calls still await it (no later flush
+            # would finish it), as does a call with nothing owed (free).
+            pending_reader = getattr(blend_refresher, "pending_event_ids", None)
+            owed_events = (
+                None if pending_reader is None
+                else set(pending_reader()).difference(unfinished_events)
+            )
+            if final or flush_started is None or owed_events == set():
+                await blend_refresher.refresh_pending(
+                    flush_started=flush_started, defer_event_ids=unfinished_events,
+                )
+                return
+            # Capture BEFORE the call consumes the debt, as the fresh chunk's
+            # owner start does. Existing debt, so nothing is fresh.
+            stamp_owner.events = owed_events
+            stamp_owner.fresh = set()
+            stamp_owner.task = asyncio.create_task(blend_refresher.refresh_pending(
+                flush_started=flush_started, defer_event_ids=unfinished_events,
+            ))
+            try:
+                # One turn: the call takes its debt and asks for a connection.
+                await asyncio.sleep(0)
+            except asyncio.CancelledError:
+                # Outside the chunk loop's handler: join the owner we started.
+                await stamp_owner.join(cancel=True)
+                raise
+
         async def join_stamp_reading(books):
             # #10090: a withdrawal follows the running stamp unless every leg
             # in it is one no blend reads (a venue-refuted prop) and the
@@ -2349,9 +2518,11 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
             # snapshot, so a book arriving after it belongs to a later pass.
             # Returns the books to withdraw now (None: all of them).
             if stamp_owner.task is None:
+                note_flush_work()
                 return None
             speaking = event_ids_for_outcomes(headline_event_ids, books)
             if stamp_owner.events is not None and not speaking:
+                note_flush_work()
                 return None
             held = (
                 None
@@ -2359,6 +2530,7 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                 else stamp_owner.held_events()
             )
             if held is None:
+                note_flush_work()
                 await stamp_owner.join()
                 return None
             # #10090, as the price fence: joining here waited for the WHOLE
@@ -2370,12 +2542,16 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
             # returned one (admitted again, or the joined path below).
             fenced = held.intersection(speaking)
             if not fenced:
+                note_flush_work()
                 return books
+            stamp_owner.note_fenced(fenced)
             kept = {
                 oid: book for oid, book in books.items()
                 if headline_event_ids.get(oid) not in fenced
             }
             stats["stamp_fenced"] += len(books) - len(kept)
+            if kept:
+                note_flush_work()
             return kept
 
         async with buffer_lock:
@@ -2389,6 +2565,9 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                 ):
                     del batch[oid]
             batch_marks = {oid: input_marks[oid] for oid in batch if oid in input_marks}
+            stage_trace = getattr(tail_receipts, "exact_trace", None)
+            if stage_trace is not None:
+                stage_trace.flush_begin(flush_started, final, batch_marks, batch)
             # #10090 / #837: events a held-price withdrawal may still touch
             # this flush. Their refresh waits for that transaction when the
             # withdrawn leg is one the blend reads (`speaking_withdrawals`).
@@ -2400,13 +2579,10 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                 withdraw_cohort_ids, open_outcome_ids, event_id_by_outcome,
                 open_complement_of,
             )
-            pending_reader = getattr(blend_refresher, "pending_event_ids", None)
-            if batch or withdraw_cohort_ids - standalone_books or (
-                pending_reader is not None and pending_reader()
+            if (withdraw_cohort_ids - standalone_books).intersection(
+                withdrawal_retry_until
             ):
-                # This flush attempts real price, withdrawal or owed blend
-                # work. An empty timer probe does not spend its rate budget.
-                catalog_boundary.flush_work += 1
+                note_flush_work()
         unfinished_price_ids: set[int] = set()
         # Committed this flush, refresh not yet called.
         owed: list[int] = []
@@ -2454,6 +2630,8 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
             stats["open_contract_flush_deferred"] += len(batch) - sum(
                 len(c) for c in chunks
             )
+            if not chunks:
+                note_flush_work()
             # Preserve the existing planned-chunk boundary. Capped-out tail
             # and newer inputs still belong to later flushes; this exclusion
             # covers unfinished/failed writes admitted to THIS flush only.
@@ -2534,6 +2712,10 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
 
             try:
                 for index, chunk_ids in enumerate(chunks):
+                    traced = (
+                        None if stage_trace is None
+                        else stage_trace.chunk_begin(index, chunk_ids)
+                    )
                     await market_publish_done()
                     async with buffer_lock:
                         withdraw_cohort_ids.update(withdraw_buffer)
@@ -2559,6 +2741,8 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                             if stamp_owner.events is None or not stamp_owner.events.isdisjoint(
                                 unwritten_events | speaking_withdrawals
                             ):
+                                if traced is not None:
+                                    stage_trace.chunk_note(traced, "JOINED_RUNNING_STAMP")
                                 await stamp_done()
                         else:
                             # #10090, twin of the Kalshi socket's: joining here
@@ -2576,9 +2760,14 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                             # returned is written and admitted again. Its
                             # withdrawals wait the same way
                             # (`join_stamp_reading`).
-                            fenced_events.update(held.intersection(
+                            newly_fenced = held.intersection(
                                 event_ids_for_outcomes(headline_event_ids, chunk_ids)
-                            ))
+                            )
+                            if newly_fenced:
+                                fenced_events.update(newly_fenced)
+                                stamp_owner.note_fenced(newly_fenced)
+                            if traced is not None:
+                                stage_trace.fence(traced, held, fenced_events)
                     if fenced_events:
                         kept = [
                             oid for oid in chunk_ids
@@ -2587,7 +2776,10 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                         stats["stamp_fenced"] += len(chunk_ids) - len(kept)
                         chunk_ids = kept
                         if not chunk_ids:
+                            if traced is not None:
+                                stage_trace.chunk_write(traced, {}, {})
                             continue
+                    note_flush_work()
                     # The plan freezes membership/caps, not a later chunk's
                     # prices. Adopt the newest values and their matching input
                     # marks together, after any preceding stamp has joined.
@@ -2600,10 +2792,14 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                                 batch_marks[oid] = input_marks[oid]
                             else:
                                 batch_marks.pop(oid, None)
+                    if traced is not None:
+                        stage_trace.chunk_write(traced, current_chunk, batch_marks)
                     wrote = await write_chunk(
                         current_chunk, final=final,
                         start_market_publish=start_market_publish,
                     )
+                    if traced is not None:
+                        stage_trace.chunk_end(traced, wrote)
                     # A wide book can arrive during the earlier write or this
                     # one. It must mature/hold this event before its fresh stamp.
                     async with buffer_lock:
@@ -2818,6 +3014,10 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
             # next venue tick would strand them on a quiet market. Free when
             # nothing is queued (no session is opened).
             pending_reader = getattr(blend_refresher, "pending_event_ids", None)
+            if pending_reader is not None and set(pending_reader()).difference(
+                unfinished_events,
+            ):
+                note_flush_work()
             if stamp_owner.task is not None:
                 # Do not overlap a second refresh with the active owner. If
                 # nothing else is owed, this quiet batch has no work to join.
@@ -2836,14 +3036,16 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                               defer_event_ids=unfinished_events)
                     return wrote_all
                 await stamp_owner.join()
-            await blend_refresher.refresh_pending(
-                flush_started=flush_started, defer_event_ids=unfinished_events,
-            )
+            await refresh_owed(unfinished_events)
             return wrote_all
         if not owed and not withdrawn_events:
             # A cohort excluded from an earlier chunk's stamp may now be
             # complete even when it contributed no additional ready inputs.
             pending_reader = getattr(blend_refresher, "pending_event_ids", None)
+            if pending_reader is not None and set(pending_reader()).difference(
+                unfinished_events,
+            ):
+                note_flush_work()
             if stamp_owner.task is not None:
                 # Do not overlap a second refresh with the active owner. If
                 # nothing else is owed, this quiet batch has no work to join.
@@ -2862,9 +3064,7 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                               defer_event_ids=unfinished_events)
                     return wrote_all
                 await stamp_owner.join()
-            await blend_refresher.refresh_pending(
-                flush_started=flush_started, defer_event_ids=unfinished_events,
-            )
+            await refresh_owed(unfinished_events)
             return wrote_all
         # The prices held for a withdrawal, and the withdrawal itself: one
         # refresh, never a second for an event the chunks already refreshed.
@@ -3117,7 +3317,15 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                     return
                 for outcome_id, leg_bid, leg_ask in legs:
                     withdraw_buffer[outcome_id] = (leg_bid, leg_ask)
-                if any(
+                wake_outcomes = getattr(catalog_boundary, "wake_for_outcomes", None)
+                if wake_outcomes is not None:
+                    wake_outcomes(
+                        (oid for oid, _bid, _ask in legs),
+                        open_outcome_ids,
+                        event_id_by_outcome,
+                        non_blend_outcome_ids,
+                    )
+                elif any(
                     oid not in open_outcome_ids or event_id_by_outcome.get(oid) is not None
                     for oid, _bid, _ask in legs
                 ):
@@ -3148,7 +3356,15 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
             for outcome_id, leg_prob in priced:
                 price_buffer[outcome_id] = leg_prob
                 _mark_input(outcome_id, leg_prob, "price", msg)
-            if any(
+            wake_outcomes = getattr(catalog_boundary, "wake_for_outcomes", None)
+            if wake_outcomes is not None:
+                wake_outcomes(
+                    (oid for oid, _prob in priced),
+                    open_outcome_ids,
+                    event_id_by_outcome,
+                    non_blend_outcome_ids,
+                )
+            elif any(
                 oid not in open_outcome_ids or event_id_by_outcome.get(oid) is not None
                 for oid, _prob in priced
             ):
@@ -3195,6 +3411,9 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
             return
         if mark is not None:
             input_marks[outcome_id] = mark
+            stage_trace = getattr(tail_receipts, "exact_trace", None)
+            if stage_trace is not None:
+                stage_trace.input_accepted(mark)  # never raises
 
     async def handle_trade(msg: dict):
         """Handle last_trade_price event."""
@@ -3244,7 +3463,15 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
             for outcome_id, leg_prob in priced:
                 price_buffer[outcome_id] = leg_prob
                 _mark_input(outcome_id, leg_prob, "trade", msg)
-            if any(
+            wake_outcomes = getattr(catalog_boundary, "wake_for_outcomes", None)
+            if wake_outcomes is not None:
+                wake_outcomes(
+                    (oid for oid, _prob in priced),
+                    open_outcome_ids,
+                    event_id_by_outcome,
+                    non_blend_outcome_ids,
+                )
+            elif any(
                 oid not in open_outcome_ids or event_id_by_outcome.get(oid) is not None
                 for oid, _prob in priced
             ):

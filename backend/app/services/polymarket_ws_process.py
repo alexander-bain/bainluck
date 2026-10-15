@@ -209,7 +209,13 @@ class PolymarketOpenReceiverProcess:
             self._wanted = None
             self._routed = None
             self._stats = {**self._stats, "connected": False, "shards_connected": 0}
-            await _to_completion(_teardown(spawn, tasks))
+            try:
+                await _to_completion(_teardown(spawn, tasks))
+            finally:
+                # #10090: the reader runs until teardown joins it and may apply
+                # one more `connected: True` frame after the line above. The
+                # run's final state is written once the reader is gone.
+                self._stats = {**self._stats, "connected": False, "shards_connected": 0}
 
     async def _dispatch(self, child) -> None:
         """The child's frames, to the callbacks one at a time, in pipe order."""

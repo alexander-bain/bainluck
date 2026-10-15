@@ -34,6 +34,9 @@ struct EventDetailView: View {
     /// #10863 — the book table past its first `collapsedBookmakerRowLimit` rows.
     @State private var showAllBookmakers = false
     @State private var showProbabilityDetails = false
+    /// #9483 — the NFL cards' open card and selections, owned by the page so
+    /// they survive the deck → full size → deck round trip.
+    @StateObject private var nflCards = NFLCardDeckState9483()
     /// The width of a row in the sources disclosure, reported by the
     /// `GeometryReader` behind the whole panel, so both lists inside it can size
     /// their label column against the room the row actually has rather than a
@@ -473,6 +476,20 @@ struct EventDetailView: View {
                             .padding(.horizontal, 4)
                     }
                     #endif
+                    let projectedInput = projectedPointsInput(event)
+                    let projectionReplacesDifferential = ProjectedFinalPointsMount.replacesScoreDifferential(projectedInput)
+                    // #9483 — the NFL cards sit directly under the paired chart:
+                    // the forecast against what happened, and the top player
+                    // milestones. Each opens full size. Every section below,
+                    // including the full projected-points chart and all props,
+                    // stays where it is.
+                    let nflDeck = nflCardDeck(event, projectedInput: projectedInput)
+                    if !nflDeck.isEmpty {
+                        NFLEventCardDeckView9483(
+                            cards: nflDeck, awayName: nflNames(event).away, homeName: nflNames(event).home,
+                            awayColor: teamColors(event).away, homeColor: teamColors(event).home,
+                            state: nflCards)
+                    }
                     // #9483 C3 — the venue's winner price is read under the
                     // chart, never between the hero's result and the chart.
                     if let gameMarkets = vm.gameMarkets,
@@ -518,11 +535,6 @@ struct EventDetailView: View {
                     // chart, that chart takes the Score Differential card's place
                     // (never two answers to one question); every refusal keeps
                     // the differential.
-                    let projectedInput = ProjectedFinalPointsMount.input(
-                        sportKey: event.sport, eventStatus: event.status, history: vm.history,
-                        finalHome: event.homeScore, finalAway: event.awayScore,
-                        asOf: vm.historyArrivedAt)
-                    let projectionReplacesDifferential = ProjectedFinalPointsMount.replacesScoreDifferential(projectedInput)
                     // Score Differential Chart
                     if let history = vm.history, (isLive || isFinished), !projectionReplacesDifferential {
                         ScoreDifferentialChartView(
@@ -811,6 +823,13 @@ struct EventDetailView: View {
             .onChange(of: LiveTimingSeam.presented(event, liveBlend: vm.liveBlend)) { old, new in
                 LiveTimingSeam.viewUpdated(from: old, to: new)
             }
+            // #9483 — a card opened full size: the page stays mounted beneath,
+            // so Back lands on the card it was opened from.
+            #if os(iOS)
+            .fullScreenCover(isPresented: nflReaderPresented) { nflReader(event) }
+            #else
+            .sheet(isPresented: nflReaderPresented) { nflReader(event).frame(minWidth: 420, minHeight: 640) }
+            #endif
         }
     }
 
@@ -1311,6 +1330,13 @@ struct EventDetailView: View {
                 }
             }
 
+            // #9483 — the recognizable NFL page (design ref #10868 v105/v107):
+            // both chances lead, each under its own team with its pregame
+            // number, the actual score between them. Arms the paired headline
+            // does not adopt keep the hero below, unchanged.
+            if let paired = nflPairedHeadline(event, hasScore: hasScore) {
+                nflPairedHeadlineView(event, paired, colors: colors, stacked: stacked, hasScore: hasScore)
+            } else {
             // At larger text sizes the probability takes its own full-width
             // row FIRST and the competitors share the row beneath it (#10796;
             // #9483 put the pair on top — `EventHeroTeamLayout`).
@@ -1532,10 +1558,9 @@ struct EventDetailView: View {
                             // derived home re-opens the same 101 from the other side,
                             // and an older deploy can carry one field and not the
                             // other, so the pair falls back whole.
-                            let duelFallback = complementDisplayPercents(away: away, home: home)
-                            let bothServed = shown.awayRenderedPercent != nil && shown.homeRenderedPercent != nil
-                            let awayPct = bothServed ? shown.awayRenderedPercent : duelFallback[0]
-                            let homePct = bothServed ? shown.homeRenderedPercent : duelFallback[1]
+                            let percents = Self.heroPairPercents(shown, away: away, home: home)
+                            let awayPct = percents.away
+                            let homePct = percents.home
                             HStack(spacing: 8) {
                                 Text(formatProbability(away, renderedPercent: awayPct))
                                     .acceptedValueChange(heroValue(away: true), rising: heroRising(away: true), animates: heroMoves)
@@ -1602,24 +1627,15 @@ struct EventDetailView: View {
                         // recorded" on a page left open with no new price.
                         if EventHeadlinePhase9483.applies(
                             status: event.status, isOpeningLine: shown.isOpeningLine) {
-                            TimelineView(.periodic(from: .now, by: 60)) { tick in
-                                if let phase = EventHeadlinePhase9483.resolve(
-                                    status: event.status, commenceTime: event.commenceTime?.asDate,
-                                    isOpeningLine: shown.isOpeningLine,
-                                    observedAt: event.heroProbabilityObservedAt?.asDate,
-                                    deliveryInterrupted: vm.liveUpdateStatus == .interrupted,
-                                    now: tick.date) {
-                                    EventHeadlinePhaseLabel9483(
-                                        phase: phase,
-                                        baseline: event.status == "live"
-                                            ? EventHeadlinePhase9483.baselineText(
-                                                prematch: event.prematchOdds, opening: event.openingOdds,
-                                                sport: event.sport,
-                                                awayTeam: event.awayTeam, homeTeam: event.homeTeam)
-                                            : nil,
-                                        maxWidth: Self.heroVerdictWidth(at: dynamicTypeSize))
-                                }
-                            }
+                            headlinePhaseLabel(
+                                event, isOpeningLine: shown.isOpeningLine,
+                                baseline: event.status == "live"
+                                    ? EventHeadlinePhase9483.baselineText(
+                                        prematch: event.prematchOdds, opening: event.openingOdds,
+                                        sport: event.sport,
+                                        awayTeam: event.awayTeam, homeTeam: event.homeTeam)
+                                    : nil,
+                                maxWidth: Self.heroVerdictWidth(at: dynamicTypeSize))
                         }
                         // Trend indicator (change since opening).
                         //
@@ -1815,6 +1831,7 @@ struct EventDetailView: View {
                 }
                 .frame(maxWidth: .infinity)
             }
+            }
 
         }
         .padding()
@@ -1830,6 +1847,312 @@ struct EventDetailView: View {
             )
         )
         .clipShape(RoundedRectangle(cornerRadius: 16))
+    }
+
+    // MARK: - #9483 NFL cards
+
+    /// #10239 / #10549 — the ONE projected-points admission. The page body and
+    /// the NFL card reader (#9483) both read it here, so the differential, the
+    /// projected-points chart and the forecast card can never disagree on it.
+    private func projectedPointsInput(_ event: EventDetail) -> ProjectedFinalPointsSeries.Input? {
+        ProjectedFinalPointsMount.input(
+            sportKey: event.sport, eventStatus: event.status, history: vm.history,
+            finalHome: event.homeScore, finalAway: event.awayScore,
+            asOf: vm.historyArrivedAt)
+    }
+
+    private func nflNames(_ event: EventDetail) -> (away: String, home: String) {
+        TeamShortName.shortPair(away: event.awayTeam, home: event.homeTeam, sportKey: event.sport)
+    }
+
+    private func nflCardDeck(
+        _ event: EventDetail, projectedInput: ProjectedFinalPointsSeries.Input?
+    ) -> [NFLEventCard9483] {
+        guard NFLRecognizablePage9483.applies(sportKey: event.sport) else { return [] }
+        return NFLEventCardDeck9483.cards(
+            sportKey: event.sport,
+            finish: NFLFinishCard9483.build(projectedInput),
+            milestones: NFLMilestoneCard9483.cards(
+                props: vm.gameMarkets?.playerProps ?? [], eventStatus: event.status,
+                commenceTime: event.commenceTime?.asDate,
+                homeTeam: event.homeTeam, awayTeam: event.awayTeam))
+    }
+
+    private var nflReaderPresented: Binding<Bool> {
+        Binding(get: { nflCards.openCardID != nil }, set: { if !$0 { nflCards.close() } })
+    }
+
+    /// The reader's match line, from the same values the headline prints.
+    /// Live, it carries the admitted quarter and clock (`PeriodLabel`, the
+    /// title's own rule), falling back to "Live" only when none is admitted.
+    private func nflReaderHeader(_ event: EventDetail) -> NFLReaderHeader9483 {
+        let names = nflNames(event)
+        let hasScore = EventDetailView.showsScore(
+            status: event.status, away: event.awayScore, home: event.homeScore)
+        let liveState = PeriodLabel.liveStatusText(period: event.espn?.period, gameClock: event.espn?.gameClock)
+        let state = isFinished ? "Final" : isLive ? (liveState.flatMap { $0.isEmpty ? nil : $0 } ?? "Live") : "Pregame"
+        let match = hasScore
+            ? "\(names.away) \(event.awayScore ?? 0)\u{2013}\(event.homeScore ?? 0) \(names.home) · \(state)"
+            : "\(names.away) vs \(names.home) · \(state)"
+        guard let headline = nflPairedHeadline(event, hasScore: hasScore) else {
+            return NFLReaderHeader9483(match: match, chances: "")
+        }
+        // After the final the score says who won; a second line saying it
+        // again is the repetition the large-text reader cannot afford.
+        if headline.away.won != nil { return NFLReaderHeader9483(match: match, chances: "") }
+        return NFLReaderHeader9483(
+            match: match,
+            chances: "Win chances · \(names.away) \(headline.away.figure) · \(names.home) \(headline.home.figure)")
+    }
+
+    private func nflReader(_ event: EventDetail) -> some View {
+        let projectedInput = projectedPointsInput(event)
+        let props = vm.gameMarkets?.playerProps ?? []
+        let cards = nflCardDeck(event, projectedInput: projectedInput)
+        return NFLCardReader9483(
+            liveCards: cards,
+            liveHeader: nflReaderHeader(event),
+            awayName: nflNames(event).away, homeName: nflNames(event).home,
+            awayColor: teamColors(event).away, homeColor: teamColors(event).home,
+            state: nflCards,
+            liveRows: NFLCardReaderHold9483.rows(for: cards, in: props))
+    }
+
+    // MARK: - #9483 NFL paired headline
+
+    /// #2085 — THE HERO PAIR'S PERCENTS, for both headline arrangements (the
+    /// crest/centre/crest hero and #9483's NFL paired headline), so the two can
+    /// never round one price differently. `current_odds.away_probability` is
+    /// `round(1 - home, 6)` on the backend, so rounding the sides independently
+    /// printed 101; the served integers are used BOTH OR NEITHER, because a
+    /// served away beside a locally derived home re-opens the same 101 from the
+    /// other side.
+    static func heroPairPercents(_ shown: OpeningLineHero, away: Double, home: Double) -> (away: Int?, home: Int?) {
+        let duelFallback = complementDisplayPercents(away: away, home: home)
+        let bothServed = shown.awayRenderedPercent != nil && shown.homeRenderedPercent != nil
+        return (away: bothServed ? shown.awayRenderedPercent : duelFallback[0],
+                home: bothServed ? shown.homeRenderedPercent : duelFallback[1])
+    }
+
+    /// The NFL paired headline, or nil to keep today's hero. Reads the same
+    /// values the hero's centre column reads, in the same order, so the two can
+    /// never print different numbers for one price: the venue-settled verdict
+    /// and every unadopted arm decline (`NFLPairedHeadline9483`).
+    private func nflPairedHeadline(_ event: EventDetail, hasScore: Bool) -> NFLPairedHeadline9483? {
+        guard NFLRecognizablePage9483.applies(sportKey: event.sport) else { return nil }
+        let score = hasScore ? (away: event.awayScore ?? 0, home: event.homeScore ?? 0) : nil
+        let pregame = PrematchReading.resolve(prematch: event.prematchOdds, opening: event.openingOdds)
+        if isFinished {
+            let outcome = heroOutcome(event)
+            return NFLPairedHeadline9483.final(
+                homeWon: outcome == .home ? true : outcome == .away ? false : nil,
+                score: score, pregame: pregame)
+        }
+        guard !EventState.showsVenueSettledVerdict(
+                event.status, venueSettled: event.venueSettled,
+                commenceTime: event.commenceTime?.asDate),
+              let odds = event.currentOdds,
+              case let shown = OpeningLineHero.resolve(odds, for: event),
+              !shown.isOpeningLine,
+              let pair = DrawPricedWinner.printablePair(
+                away: shown.awayProbability, home: shown.homeProbability, sport: event.sport),
+              let away = pair.away
+        else { return nil }
+        // #2085 — the hero pair's own percents, from the one rule both
+        // arrangements read.
+        let percents = Self.heroPairPercents(shown, away: away, home: pair.home)
+        return NFLPairedHeadline9483.priced(
+            awayText: formatProbability(away, renderedPercent: percents.away),
+            homeText: formatProbability(pair.home, renderedPercent: percents.home),
+            live: event.status == "live", score: score, pregame: pregame)
+    }
+
+    private func nflPairedHeadlineView(
+        _ event: EventDetail, _ headline: NFLPairedHeadline9483,
+        colors: (away: Color, home: Color), stacked: Bool, hasScore: Bool
+    ) -> some View {
+        let names = TeamShortName.shortPair(
+            away: event.awayTeam, home: event.homeTeam, sportKey: event.sport)
+        let priced = headline.away.won == nil
+        // Stacked, a bare "vs" would take a whole row to say nothing.
+        let centerRow = !stacked || headline.center != .versus
+        return VStack(spacing: 6) {
+            // The two figures share a baseline even when one name shrinks.
+            HStack(alignment: .nflPairedFigure9483, spacing: 8) {
+                nflPairedSide(event, headline.away, name: names.away, isAway: true,
+                              color: colors.away, logo: event.awayTeamData?.logoSmall,
+                              opponent: event.homeTeam)
+                if !stacked {
+                    nflPairedCenter(event, headline, colors: colors, movement: .reserved)
+                        .alignmentGuide(.nflPairedFigure9483) { $0[VerticalAlignment.center] }
+                }
+                nflPairedSide(event, headline.home, name: names.home, isAway: false,
+                              color: colors.home, logo: event.homeTeamData?.logoSmall,
+                              opponent: event.awayTeam)
+            }
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(headline.accessibilityLabel(awayName: names.away, homeName: names.home))
+            // The live move caption sits under the score, but the row above is
+            // ONE VoiceOver element that ignores its children, so the caption
+            // inside it was unreachable (native review of ffa5f83d97). It draws
+            // here instead, outside that element, on the same line: the centre
+            // column again, its score invisible, aligned on the figures' line
+            // exactly as the reserved copy in the row is.
+            .overlay(alignment: Alignment(horizontal: .center, vertical: .nflPairedFigure9483)) {
+                if !stacked {
+                    nflPairedCenter(event, headline, colors: colors, movement: .only)
+                        .alignmentGuide(.nflPairedFigure9483) { $0[VerticalAlignment.center] }
+                }
+            }
+            if stacked && centerRow { nflPairedCenter(event, headline, colors: colors, movement: .shown) }
+            if priced {
+                // The pair's subject and its age, as the hero words it (#9483
+                // F1), on one line with the delivery control where it fits.
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: 8) { nflPairedPhase(event); nflPairedDetails(event) }
+                    VStack(spacing: 2) { nflPairedPhase(event); nflPairedDetails(event) }
+                }
+            }
+            // The admitted projection shares the composition (#5697's gate,
+            // `projectionText`'s one spelling); Game Info stops repeating it.
+            if let projection = projectionText(event, hasScore: hasScore) {
+                Text(projection)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(Color.primary)
+            }
+        }
+    }
+
+    /// The pair's subject and age (#9483 F1) — ONE mount for both headline
+    /// arrangements, resolved on the hero quote's own clock each minute so a
+    /// quote ages into "last recorded" on a page left open with no new price.
+    private func headlinePhaseLabel(
+        _ event: EventDetail, isOpeningLine: Bool, baseline: String?, maxWidth: CGFloat?
+    ) -> some View {
+        TimelineView(.periodic(from: .now, by: 60)) { tick in
+            if let phase = EventHeadlinePhase9483.resolve(
+                status: event.status, commenceTime: event.commenceTime?.asDate,
+                isOpeningLine: isOpeningLine,
+                observedAt: event.heroProbabilityObservedAt?.asDate,
+                deliveryInterrupted: vm.liveUpdateStatus == .interrupted,
+                now: tick.date) {
+                EventHeadlinePhaseLabel9483(phase: phase, baseline: baseline, maxWidth: maxWidth)
+            }
+        }
+    }
+
+    /// The NFL arrangement prints each side's pregame number under its own
+    /// chance, so its phase line carries no baseline.
+    private func nflPairedPhase(_ event: EventDetail) -> some View {
+        headlinePhaseLabel(event, isOpeningLine: false, baseline: nil, maxWidth: nil)
+    }
+
+    /// #490 — the hero's confidence tier, on the hero's own home price.
+    private func nflPairedDetails(_ event: EventDetail) -> some View {
+        let home = event.currentOdds.flatMap { OpeningLineHero.resolve($0, for: event).homeProbability }
+        return probabilityDetails(confidenceTier: Confidence.fromSources(
+            sourceCount: event.winProbabilitySources?.count,
+            hasMovement: home.flatMap { h in
+                event.openingOdds?.homeProbability.map { abs(h - $0) > 0.001 } } ?? false
+        )?.rawValue)
+    }
+
+    private func nflPairedSide(
+        _ event: EventDetail, _ side: NFLPairedHeadline9483.Side, name: String, isAway: Bool,
+        color: Color, logo: String?, opponent: String
+    ) -> some View {
+        VStack(alignment: isAway ? .leading : .trailing, spacing: 3) {
+            HStack(spacing: 6) {
+                if !isAway { Spacer(minLength: 0) }
+                TeamLogoView(url: logo, teamName: isAway ? event.awayTeam : event.homeTeam,
+                             color: color, size: 24, sportKey: event.sport, opponentName: opponent)
+                // One line, shrunk before it hyphenates ("Sea-hawks" at AX sizes).
+                Text(name)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(color)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.5)
+                    .allowsTightening(true)
+                if isAway { Spacer(minLength: 0) }
+            }
+            Text(side.figure)
+                .acceptedValueChange(heroValue(away: isAway), rising: heroRising(away: isAway), animates: heroMoves)
+                .font(.system(size: sizeClass == .regular ? 40 : 34, weight: .black, design: .rounded).monospacedDigit())
+                .foregroundStyle(side.won == false ? Color.secondary : color)
+                .lineLimit(1)
+                .minimumScaleFactor(0.6)
+                .livePriceChangeFeedback(sequence: vm.priceActivity?.sequence ?? 0,
+                                         valueChanged: vm.priceActivity.map {
+                                             isAway ? $0.previousAwayLabel != $0.awayLabel
+                                                    : $0.previousHomeLabel != $0.homeLabel } ?? false,
+                                         color: color, isEnabled: priceStreamingEligible && vm.liveUpdateStatus != .interrupted)
+                // Outermost: set inside the value-change wrapper (a ZStack) it
+                // did not reach the row, and a shrunk name lifted one figure
+                // ~4pt off the other's line at AX-XL (native review).
+                .alignmentGuide(.nflPairedFigure9483) { $0[VerticalAlignment.center] }
+            if let pregame = side.pregame {
+                // The figure is a fixed size, so its caption may not outgrow it:
+                // at AX5 an unbounded "Pre-match 38%" wrapped to three lines
+                // larger than "55%" (native review). One line, shrunk like the
+                // name, and no larger than AX1.
+                Text(pregame)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.5)
+                    .dynamicTypeSize(...Self.nflPairedCaptionTypeCeiling)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: isAway ? .leading : .trailing)
+    }
+
+    /// The headline's figures are fixed sizes, so its captions stop growing
+    /// here: past AX1 "Score" outgrew "27–24" and "Pre-match 38%" outgrew "55%".
+    static let nflPairedCaptionTypeCeiling = DynamicTypeSize.accessibility1
+
+    /// Where the centre column's live move caption goes. The default row is one
+    /// VoiceOver element, so there the caption is `.reserved` (its room kept,
+    /// nothing drawn) and an overlay outside the element draws it `.only`.
+    enum NFLPairedMovement { case shown, reserved, only }
+
+    /// The score (or "vs") between the chances, with the live move caption
+    /// under it — the one slot in the headline that has the room.
+    private func nflPairedCenter(
+        _ event: EventDetail, _ headline: NFLPairedHeadline9483, colors: (away: Color, home: Color),
+        movement: NFLPairedMovement
+    ) -> some View {
+        VStack(spacing: 2) {
+            Group {
+                switch headline.center {
+                case .versus:
+                    Text("vs")
+                        .font(.title3.weight(.medium))
+                        .foregroundStyle(.secondary)
+                case let .score(away, home, _):
+                    Text("\(away)\u{2013}\(home)")
+                        .font(.system(size: 24, weight: .bold, design: .rounded).monospacedDigit())
+                        .foregroundStyle(Color.primary)
+                        .fixedSize()
+                    if let caption = headline.centerCaption {
+                        Text(caption)
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.5)
+                            .dynamicTypeSize(...Self.nflPairedCaptionTypeCeiling)
+                    }
+                }
+            }
+            // The row's one label already reads the score; stacked, this copy
+            // sits outside that element and VoiceOver read the score twice.
+            .accessibilityHidden(true)
+            .opacity(movement == .only ? 0 : 1)
+            if headline.away.won == nil && priceStreamingEligible {
+                movementCaptionSlot(event, colors: colors)
+                    .opacity(movement == .reserved ? 0 : 1)
+                    .accessibilityHidden(movement == .reserved)
+            }
+        }
     }
 
     /// The widest the hero's centre verdict may be, in points.
@@ -1910,18 +2233,28 @@ struct EventDetailView: View {
         let showsBroadcast = event.espn?.broadcast != nil
             && EventDetailView.showsBroadcast(
                 status: event.status, commenceTime: event.commenceTime?.asDate)
+        let gameInfoHasScore = EventDetailView.showsScore(
+            status: event.status, away: event.awayScore, home: event.homeScore)
         // #8320 — what the live hero handed over. Empty on every other state,
         // whose hero still carries it.
-        let handedOver: [(icon: String, text: String)] =
+        // #9483 — the NFL paired headline carries no records or opening line
+        // in any state, so Game Info holds them; it carries the projection, so
+        // Game Info does not repeat it.
+        let nflHeadline = nflPairedHeadline(event, hasScore: gameInfoHasScore) != nil
+        let nflHandedOver: [(icon: String, text: String)] = nflHeadline ? [
+            recordsText(event).map { ("list.number", $0) },
+            openedText(event).map { ("flag", $0) },
+        ].compactMap { $0 } : []
+        let heroHandedOver: [(icon: String, text: String)] =
             EventDetailView.heroCarriesGameContext(status: event.status) ? [] : [
                 recordsText(event).map { ("list.number", $0) },
                 openedText(event).map { ("flag", $0) },
-                projectionText(
+                nflHeadline ? nil : projectionText(
                     event,
-                    hasScore: EventDetailView.showsScore(
-                        status: event.status, away: event.awayScore, home: event.homeScore)
+                    hasScore: gameInfoHasScore
                 ).map { ("chart.line.uptrend.xyaxis", $0) },
             ].compactMap { $0 }
+        let handedOver = heroHandedOver.isEmpty ? nflHandedOver : heroHandedOver
         let hasData = showsBroadcast || event.commenceTime != nil || !handedOver.isEmpty
         if hasData {
             VStack(alignment: .leading, spacing: 10) {
@@ -3533,4 +3866,13 @@ extension EventDetailView {
         else { return nil }
         return held
     }
+}
+
+/// #9483 — the NFL paired headline's shared line: both chances and the score
+/// between them sit on it, whatever the names above them do.
+private extension VerticalAlignment {
+    enum NFLPairedFigure9483: AlignmentID {
+        static func defaultValue(in d: ViewDimensions) -> CGFloat { d[VerticalAlignment.center] }
+    }
+    static let nflPairedFigure9483 = VerticalAlignment(NFLPairedFigure9483.self)
 }

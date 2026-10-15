@@ -27,11 +27,14 @@ final class StreamDropResume10090Tests: XCTestCase {
 
     /// One scripted connection. `cutAfter` ends the body that long after the 200
     /// (nil = held open until the client leaves). `fail` answers with a transport
-    /// error instead of a response.
+    /// error instead of a response. `empty` answers 200 and ends with zero bytes,
+    /// not even `open`: the server's shape when its first Redis SUBSCRIBE fails
+    /// (event 15329925, 2026-10-14 23:38:54Z, 181 ms).
     nonisolated struct Conn {
         var status = 200
         var cutAfter: TimeInterval?
         var fail = false
+        var empty = false
     }
 
     /// Serves scripted connections in order, and a shared publish timeline. Each
@@ -83,7 +86,12 @@ final class StreamDropResume10090Tests: XCTestCase {
             let response = HTTPURLResponse(url: request.url!, statusCode: conn.status, httpVersion: "HTTP/1.1",
                                            headerFields: ["Content-Type": "text/event-stream"])!
             client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
-            guard conn.status == 200 else {
+            guard conn.status == 200, !conn.empty else {
+                if conn.empty {
+                    Self.lock.lock()
+                    Self.cutAt.append(ProcessInfo.processInfo.systemUptime - Self.t0)
+                    Self.lock.unlock()
+                }
                 client?.urlProtocolDidFinishLoading(self)
                 return
             }
@@ -164,23 +172,28 @@ final class StreamDropResume10090Tests: XCTestCase {
         XCTAssertLessThan(gap, 1.0, "a healthy stream's cut waited \(gap)s, the five seconds the page lost quotes in")
     }
 
-    /// Control: a connection that answers 200 and ends at once is not healthy,
-    /// so it is still retried no faster than `retryDelay`.
-    func testAStreamThatEndsAtOnceIsStillRetriedAtTheFullDelay() async throws {
+    /// Control: connections that answer 200 and end at once are not healthy.
+    /// The first of them gets the run's one quick retry, the way a page's first
+    /// open does; every one after it waits the full `retryDelay`. Never a hammer.
+    func testRepeatedInstantEndsGetOneQuickRetryThenTheFullDelay() async throws {
         let delay: TimeInterval = 1.0
-        Server.script([Conn(cutAfter: 0.05), Conn(cutAfter: 0.05), Conn()])
+        Server.script([Conn(empty: true), Conn(cutAfter: 0.05), Conn(empty: true), Conn()])
         let t = try transport(retryDelay: delay)
         t.connect()
-        await waitUntil(5) { Server.requests.count >= 3 }
+        await waitUntil(6) { Server.requests.count >= 4 }
         t.close()
 
         let req = Server.requests, cuts = Server.cuts
-        guard req.count >= 3, cuts.count >= 2 else {
-            return XCTFail("expected 3 requests and 2 cuts, got \(req.count) and \(cuts.count)")
+        guard req.count >= 4, cuts.count >= 3 else {
+            return XCTFail("expected 4 requests and 3 cuts, got \(req.count) and \(cuts.count)")
         }
-        for i in 0..<2 {
+        print(String(format: "EMPTY200-10090 repeated_gaps_s=%.3f,%.3f,%.3f",
+                     req[1] - cuts[0], req[2] - cuts[1], req[3] - cuts[2]))
+        XCTAssertGreaterThanOrEqual(req[1] - cuts[0], 0.25 - 0.02, "even the quick retry waits a moment")
+        XCTAssertLessThan(req[1] - cuts[0], 0.75, "the run's first failure gets the quick retry")
+        for i in 1..<3 {
             XCTAssertGreaterThanOrEqual(req[i + 1] - cuts[i], delay - 0.02,
-                                        "a connection that never stayed up was retried early: a hammer")
+                                        "a connection that never stayed up was retried early again: a hammer")
         }
     }
 
@@ -232,6 +245,106 @@ final class StreamDropResume10090Tests: XCTestCase {
         t.connect()
         await waitUntil(5) { errored }
         XCTAssertTrue(errored, "the server never cut the stream")
+        XCTAssertTrue(t.isConnecting, "the drop is a retry in progress, not a close")
+        try? await Task.sleep(nanoseconds: 100_000_000)
+        XCTAssertEqual(Server.requests.count, 1, "the quick retry fired before the close could land inside it")
+        t.close()
+        try? await Task.sleep(nanoseconds: 1_000_000_000)
+
+        XCTAssertEqual(Server.requests.count, 1, "a closed transport reopened behind the controller's back")
+        XCTAssertFalse(t.isConnecting)
+    }
+
+    // MARK: - Empty first 200
+
+    /// The case, at the production delays: the page's first connection answers
+    /// 200 and ends with zero bytes. The next request goes out within a second,
+    /// not after the five-second `defaultRetryDelay`.
+    func testAnEmptyFirst200ReopensWithinASecond() async throws {
+        Server.script([Conn(empty: true), Conn()])
+        let t = try transport()
+        var errors = 0, opens = 0
+        var connectingAtError: [Bool] = []
+        t.on("error") { _ in errors += 1; connectingAtError.append(t.isConnecting) }
+        t.on("open") { _ in opens += 1 }
+        t.connect()
+        await waitUntil(LiveEventStreamTransport.defaultRetryDelay + 3) { opens >= 1 }
+        t.close()
+
+        let req = Server.requests, cuts = Server.cuts
+        XCTAssertEqual(errors, 1, "one drop, reported once")
+        XCTAssertEqual(connectingAtError, [true], "the drop reads as a retry in progress, not a death")
+        guard req.count == 2, cuts.count == 1, let cut = cuts.first else {
+            return XCTFail("expected 2 requests and 1 empty answer, got \(req.count) and \(cuts.count)")
+        }
+        let gap = req[1] - cut
+        print(String(format: "EMPTY200-10090 first_empty_to_reopen_s=%.3f", gap))
+        XCTAssertGreaterThanOrEqual(gap, 0.25 - 0.02, "the quick retry still waits a moment, jittered")
+        XCTAssertLessThan(gap, 1.0, "an empty first answer waited \(gap)s before the page asked again")
+    }
+
+    /// The same one quick retry for a first connection that fails on the network.
+    func testAFirstNetworkFailureGetsTheOneQuickRetry() async throws {
+        let delay: TimeInterval = 1.0
+        Server.script([Conn(fail: true), Conn(fail: true), Conn()])
+        let t = try transport(retryDelay: delay)
+        t.connect()
+        await waitUntil(5) { Server.requests.count >= 3 }
+        t.close()
+
+        let req = Server.requests
+        guard req.count >= 3 else { return XCTFail("expected 3 requests, got \(req.count)") }
+        XCTAssertLessThan(req[1] - req[0], 0.75, "the first failure gets the quick retry")
+        XCTAssertGreaterThanOrEqual(req[2] - req[1], delay - 0.02, "the second failure waits the full delay")
+    }
+
+    /// A connection that stays up starts a new run: after an empty first answer
+    /// spent the quick retry and a second waited the full delay, the healthy
+    /// stream that follows is cut and gets the quick retry again.
+    func testAHealthyConnectionStartsANewRun() async throws {
+        let delay: TimeInterval = 1.0
+        Server.script([Conn(empty: true), Conn(empty: true), Conn(cutAfter: delay + 0.2), Conn()])
+        let t = try transport(retryDelay: delay)
+        t.connect()
+        await waitUntil(8) { Server.requests.count >= 4 }
+        t.close()
+
+        let req = Server.requests, cuts = Server.cuts
+        guard req.count >= 4, cuts.count >= 3 else {
+            return XCTFail("expected 4 requests and 3 cuts, got \(req.count) and \(cuts.count)")
+        }
+        XCTAssertLessThan(req[1] - cuts[0], 0.75, "the first failure gets the quick retry")
+        XCTAssertGreaterThanOrEqual(req[2] - cuts[1], delay - 0.02, "the second waits the full delay")
+        XCTAssertLessThan(req[3] - cuts[2], 0.75, "a healthy connection's cut starts a new run")
+    }
+
+    /// A refusal on the initial quick retry is still terminal.
+    func testARefusalAfterAnEmptyFirst200IsStillTerminal() async throws {
+        let delay: TimeInterval = 1.0
+        Server.script([Conn(empty: true), Conn(status: 503)])
+        let t = try transport(retryDelay: delay)
+        var errors = 0
+        t.on("error") { _ in errors += 1 }
+        t.connect()
+        await waitUntil(5) { errors >= 2 }
+        try? await Task.sleep(nanoseconds: UInt64(2 * delay * 1_000_000_000))
+
+        XCTAssertEqual(errors, 2)
+        XCTAssertTrue(t.isClosed, "a 503 is the server saying no")
+        XCTAssertFalse(t.isConnecting)
+        XCTAssertEqual(Server.requests.count, 2, "a refused endpoint must not be hammered")
+    }
+
+    /// `close()` inside the initial quick wait ends the loop.
+    func testCloseDuringTheInitialQuickWaitEndsTheLoop() async throws {
+        let delay: TimeInterval = 1.0
+        Server.script([Conn(empty: true), Conn()])
+        let t = try transport(retryDelay: delay)
+        var errored = false
+        t.on("error") { _ in errored = true }
+        t.connect()
+        await waitUntil(5) { errored }
+        XCTAssertTrue(errored, "the server never answered")
         XCTAssertTrue(t.isConnecting, "the drop is a retry in progress, not a close")
         try? await Task.sleep(nanoseconds: 100_000_000)
         XCTAssertEqual(Server.requests.count, 1, "the quick retry fired before the close could land inside it")
@@ -349,6 +462,67 @@ final class StreamDropResume10090Tests: XCTestCase {
         XCTAssertLessThan(lag, 1.0, "the held page was \(lag)s behind after a cut")
         XCTAssertEqual(vm.event?.currentOdds?.homeProbability ?? -1, Self.probability(26), accuracy: 1e-9)
         XCTAssertEqual(vm.liveBlend.last?.homeProbability ?? -1, Self.probability(26), accuracy: 1e-9,
+                       "the chart edge agrees with the headline")
+    }
+
+    /// The held page opens its stream and the first answer is an empty 200.
+    /// Revisions 21 and 22 are published while it waits to ask again; 23 and 24
+    /// come seconds later. The page adopts the latest revision published before
+    /// the reconnect, within a second of the empty answer, never the older 21,
+    /// every adoption moves forward, and the headline and chart edge agree.
+    func testAHeldPageWhoseFirstStreamIsEmptyGetsTheLatestProbabilityWithinASecond() async throws {
+        var adopted: [(basis: String, at: TimeInterval)] = []
+        var charted: [String] = []
+        LiveTimingSeam.observer = { mark in
+            if mark.name == .modelHeadlineAdopted, mark.basis.hasPrefix("rev:") {
+                adopted.append((mark.basis, Server.now()))
+            }
+            if mark.name == .modelChartAppended, mark.basis.hasPrefix("rev:") { charted.append(mark.basis) }
+        }
+        defer { LiveTimingSeam.observer = nil }
+
+        let publishes: [(at: TimeInterval, data: String)] = [
+            (0.1, Self.folded(21)), (0.2, Self.folded(22)), (2.0, Self.folded(23)), (2.5, Self.folded(24)),
+        ]
+        Server.script([Conn(empty: true), Conn()], publishes: publishes)
+        let s = session()
+        let vm = EventDetailViewModel(
+            eventId: 4242, client: Client(try held()),
+            makeStreamHandle: { id in
+                let t = try LiveEventStreamTransport(eventId: id, baseURL: "https://stub.invalid", session: s)
+                t.connect()
+                return t
+            },
+            now: { Self.base - 595 },
+            sleep: { _ in try? await Task.sleep(nanoseconds: 60_000_000_000) }
+        )
+        await vm.load()
+        defer { vm.stopRefresh() }
+
+        let last = "rev:4242=24;999=5"
+        await waitUntil(LiveEventStreamTransport.defaultRetryDelay + 5) { adopted.last?.basis == last }
+
+        let req = Server.requests
+        guard let emptyAt = Server.cuts.first, req.count >= 2 else {
+            return XCTFail("expected an empty answer and a reconnect, got \(Server.cuts.count) and \(req.count)")
+        }
+        let revs = adopted.compactMap { Int($0.basis.dropFirst("rev:4242=".count).prefix { $0.isNumber }) }
+        XCTAssertEqual(revs, revs.sorted(), "an adoption moved backwards: \(revs)")
+        XCTAssertEqual(Set(revs).count, revs.count, "a revision was adopted twice: \(revs)")
+        XCTAssertEqual(revs.last, 24)
+        XCTAssertEqual(charted, adopted.map(\.basis), "every adopted revision also got its chart point")
+
+        // The replay is the latest revision published before the reconnect landed.
+        let replayed = publishes.lastIndex { $0.at <= req[1] }.map { 21 + $0 }
+        let first = adopted.first
+        let lag = (first?.at ?? .infinity) - emptyAt
+        print(String(format: "EMPTY200-10090 held_empty_to_first_adoption_s=%.3f reopen_s=%.3f first=%@ revs=%@",
+                     lag, req[1] - emptyAt, first?.basis ?? "none", revs.map(String.init).joined(separator: ",")))
+        XCTAssertEqual(revs.first, replayed, "the first adoption is the reconnect's replay of the latest revision")
+        XCTAssertFalse(revs.contains(21), "21 was superseded before any connection could carry it")
+        XCTAssertLessThan(lag, 1.0, "the held page waited \(lag)s for its first streamed probability")
+        XCTAssertEqual(vm.event?.currentOdds?.homeProbability ?? -1, Self.probability(24), accuracy: 1e-9)
+        XCTAssertEqual(vm.liveBlend.last?.homeProbability ?? -1, Self.probability(24), accuracy: 1e-9,
                        "the chart edge agrees with the headline")
     }
 }

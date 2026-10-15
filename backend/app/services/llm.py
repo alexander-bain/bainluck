@@ -1,7 +1,8 @@
 """
 LLM utility service for smart text processing tasks.
 
-Uses OpenAI's GPT-4o-mini for cost-effective classification and extraction.
+Model ids, request shapes and prices live in ``app.services.llm_models`` (#11042);
+every call here builds its arguments with ``chat_request_kwargs``.
 """
 
 import os
@@ -9,6 +10,8 @@ import logging
 from datetime import datetime, timezone
 from typing import Optional
 from functools import lru_cache
+
+from app.services.llm_models import chat_request_kwargs
 
 logger = logging.getLogger(__name__)
 
@@ -103,7 +106,6 @@ def classify(
     text: str,
     categories: list[str],
     context: str = "",
-    model: str = "gpt-4o-mini",
     fallback: Optional[str] = None,
 ) -> Optional[str]:
     """
@@ -113,7 +115,6 @@ def classify(
         text: The text to classify
         categories: List of valid category options
         context: Optional context to help with classification
-        model: OpenAI model to use (default: gpt-4o-mini)
         fallback: Value to return if classification fails (default: None)
 
     Returns:
@@ -156,13 +157,11 @@ Rules:
 
     try:
         response = client.chat.completions.create(
-            model=model,
+            **chat_request_kwargs("classify", max_output_tokens=50, temperature=0),  # Deterministic for classification
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": text},
             ],
-            max_tokens=50,
-            temperature=0,  # Deterministic for classification
         )
 
         result = response.choices[0].message.content.strip().lower()
@@ -540,13 +539,11 @@ Rules:
 
     try:
         response = client.chat.completions.create(
-            model="gpt-4o-mini",
+            **chat_request_kwargs("classify_open_ended", max_output_tokens=20, temperature=0),
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": context_text},
             ],
-            max_tokens=20,
-            temperature=0,
         )
 
         raw = response.choices[0].message.content.strip()
@@ -610,13 +607,11 @@ Example: nba, basketball, mvp, lebron_james, lakers"""
 
     try:
         response = client.chat.completions.create(
-            model="gpt-4o-mini",
+            **chat_request_kwargs("generate_tags", max_output_tokens=100, temperature=0),
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": context_text},
             ],
-            max_tokens=100,
-            temperature=0,
         )
 
         raw = response.choices[0].message.content.strip()
@@ -1001,12 +996,10 @@ Just respond with the number, nothing else."""
 
     try:
         response = client.chat.completions.create(
-            model="gpt-4o-mini",
+            **chat_request_kwargs("match_team_names", max_output_tokens=10, temperature=0),
             messages=[
                 {"role": "user", "content": prompt},
             ],
-            max_tokens=10,
-            temperature=0,
         )
 
         result = response.choices[0].message.content.strip()
@@ -1068,12 +1061,10 @@ Keep variations to 3-5 most common. Include the original input as a variation.""
 
     try:
         response = client.chat.completions.create(
-            model="gpt-4o-mini",
+            **chat_request_kwargs("normalize_team_name", max_output_tokens=200, temperature=0),
             messages=[
                 {"role": "user", "content": prompt},
             ],
-            max_tokens=200,
-            temperature=0,
         )
 
         result = response.choices[0].message.content.strip()
@@ -1160,12 +1151,10 @@ Team name:"""
 
     try:
         response = client.chat.completions.create(
-            model="gpt-4o-mini",
+            **chat_request_kwargs("classify_player_team", max_output_tokens=50, temperature=0),
             messages=[
                 {"role": "user", "content": prompt},
             ],
-            max_tokens=50,
-            temperature=0,
         )
 
         result = response.choices[0].message.content.strip()
@@ -1216,12 +1205,10 @@ def generate_line_movement_explanation(prompt: str) -> Optional[str]:
 
     try:
         response = client.chat.completions.create(
-            model="gpt-4o-mini",
+            **chat_request_kwargs("line_movement_explanation", max_output_tokens=200, temperature=0.1),  # Low temperature for factual, direct output
             messages=[
                 {"role": "user", "content": prompt},
             ],
-            max_tokens=200,
-            temperature=0.1,  # Low temperature for factual, direct output
         )
 
         result = response.choices[0].message.content.strip()
@@ -1282,13 +1269,11 @@ def generate_golf_live_commentary(prompt: str) -> Optional[str]:
 
     try:
         response = client.chat.completions.create(
-            model="gpt-4o-mini",
+            **chat_request_kwargs("golf_live_commentary", max_output_tokens=180, temperature=0.2),
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": prompt},
             ],
-            max_tokens=180,
-            temperature=0.2,
         )
         result = response.choices[0].message.content.strip()
         if result.startswith('"') and result.endswith('"'):
@@ -1365,12 +1350,10 @@ Explanation:"""
 
     try:
         response = client.chat.completions.create(
-            model="gpt-4o-mini",
+            **chat_request_kwargs("market_disagreement_explanation", max_output_tokens=200, temperature=0.3),
             messages=[
                 {"role": "user", "content": prompt},
             ],
-            max_tokens=200,
-            temperature=0.3,
         )
 
         result = response.choices[0].message.content.strip()
@@ -1434,10 +1417,8 @@ Preview:"""
 
     try:
         response = client.chat.completions.create(
-            model="gpt-4o-mini",
+            **chat_request_kwargs("oscars_category_preview", max_output_tokens=150, temperature=0.2),
             messages=[{"role": "user", "content": prompt}],
-            max_tokens=150,
-            temperature=0.2,
         )
         result = response.choices[0].message.content.strip()
         if result.startswith('"') and result.endswith('"'):
@@ -1489,10 +1470,8 @@ Summary:"""
 
     try:
         response = client.chat.completions.create(
-            model="gpt-4o-mini",
+            **chat_request_kwargs("oscars_movers_summary", max_output_tokens=100, temperature=0.2),
             messages=[{"role": "user", "content": prompt}],
-            max_tokens=100,
-            temperature=0.2,
         )
         result = response.choices[0].message.content.strip()
         if result.startswith('"') and result.endswith('"'):
@@ -1596,12 +1575,10 @@ Summary:"""
 
     try:
         response = client.chat.completions.create(
-            model="gpt-4o-mini",
+            **chat_request_kwargs("related_futures_summary", max_output_tokens=250, temperature=0.1),
             messages=[
                 {"role": "user", "content": prompt},
             ],
-            max_tokens=250,
-            temperature=0.1,
         )
 
         result = response.choices[0].message.content.strip()
@@ -1637,10 +1614,8 @@ def audit_match(prompt: str) -> Optional[dict]:
 
     try:
         response = client.chat.completions.create(
-            model="gpt-4o-mini",
+            **chat_request_kwargs("audit_match", max_output_tokens=300, temperature=0),
             messages=[{"role": "user", "content": prompt}],
-            max_tokens=300,
-            temperature=0,
             response_format={"type": "json_object"},
         )
 
@@ -1760,10 +1735,8 @@ def enrich_event_taxonomy(
 
     try:
         response = client.chat.completions.create(
-            model="gpt-4o-mini",
+            **chat_request_kwargs("event_taxonomy", max_output_tokens=150, temperature=0),
             messages=[{"role": "user", "content": prompt}],
-            max_tokens=150,
-            temperature=0,
             response_format={"type": "json_object"},
         )
 
@@ -1844,10 +1817,8 @@ def enrich_market_taxonomy(
 
     try:
         response = client.chat.completions.create(
-            model="gpt-4o-mini",
+            **chat_request_kwargs("market_taxonomy", max_output_tokens=100, temperature=0),
             messages=[{"role": "user", "content": prompt}],
-            max_tokens=100,
-            temperature=0,
             response_format={"type": "json_object"},
         )
 

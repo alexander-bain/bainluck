@@ -17,11 +17,15 @@ private let logger = Logger(subsystem: "com.bainluck", category: "liveStream")
 /// WHAT IT DOES DO, BECAUSE `EventSource` DOES (#920): a connection that DROPS —
 /// the byte stream ends, or the network errors, with no `closed`/`reconnect`
 /// frame — is retried after `retryDelay`, and `isConnecting` reads true until
-/// the next 200. ONE EXCEPTION (#10090): the first retry after a connection that
-/// stayed up at least `retryDelay` waits only `firstRetryDelay`. A release that
-/// ends a healthy stream otherwise cost five seconds of quotes (revs 1871–1875,
-/// 2026-10-12): the server replays only the latest frame on connect, never the
-/// ones published while the page was waiting.
+/// the next 200. ONE EXCEPTION (#10090): the FIRST failure of a run waits only
+/// `firstRetryDelay`. A run starts at `connect()` and again after a connection
+/// that stayed up at least `retryDelay`; every later failure in it waits the full
+/// `retryDelay`. A release that ends a healthy stream otherwise cost five seconds
+/// of quotes (revs 1871–1875, 2026-10-12): the server replays only the latest
+/// frame on connect, never the ones published while the page was waiting. And a
+/// page's first connection that answered 200 with zero bytes (event 15329925,
+/// 2026-10-14, the server's first Redis SUBSCRIBE reset) waited the same five
+/// seconds for its first streamed probability.
 ///
 /// The controller's lifecycle is a port of web's, and web's assumes a transport
 /// that reconnects underneath it: the browser does exactly this, which is why a
@@ -104,11 +108,12 @@ final class LiveEventStreamTransport: LiveStreamHandle {
     /// `retry:` field (`SSE_RETRY_MS`, 5000), which is what a browser waits.
     nonisolated static let defaultRetryDelay: TimeInterval = 5
 
-    /// The wait before re-opening a connection that dropped after a healthy run,
-    /// plus up to the same again of jitter so every phone on a restarted dyno
-    /// does not arrive in the same instant. Only a connection that stayed up at
-    /// least `retryDelay` earns it, so one that answers 200 and ends at once is
-    /// still retried no faster than `retryDelay` — never a hammer.
+    /// The wait before re-opening after the first failure of a run, plus up to
+    /// the same again of jitter so every phone on a restarted dyno does not
+    /// arrive in the same instant. Once per run: a second connection that answers
+    /// 200 and ends at once is retried no faster than `retryDelay` — never a
+    /// hammer. Only a connection that stayed up at least `retryDelay` starts a
+    /// new run.
     nonisolated static let defaultFirstRetryDelay: TimeInterval = 0.25
 
     var isClosed: Bool { closed }
@@ -165,19 +170,23 @@ final class LiveEventStreamTransport: LiveStreamHandle {
     }
 
     /// Open the connection and pump frames until it is refused, closed, or
-    /// cancelled — re-opening after `retryDelay` each time it merely drops, or
-    /// after `firstRetryDelay` when the connection that dropped had been healthy.
+    /// cancelled — re-opening after `firstRetryDelay` on the first failure of a
+    /// run, and after `retryDelay` on every later one.
     func connect() {
         guard task == nil, !closed else { return }
         let delay = retryDelay
         let first = firstRetryDelay
         task = Task { [weak self] in
+            // The first attempt starts a run, so its failure is the run's first.
+            var quickRetryLeft = true
             // `self` is held only for the length of one connection, never across
             // the wait: an owner that walked away without `close()` leaves a
             // loop that ends at its next turn instead of retrying forever.
             while !Task.isCancelled {
                 guard let outcome = await self?.pump(), case .dropped(let healthy) = outcome else { return }
-                let wait = healthy ? first * Double.random(in: 1...2) : delay
+                if healthy { quickRetryLeft = true }
+                let wait = quickRetryLeft ? first * Double.random(in: 1...2) : delay
+                quickRetryLeft = false
                 try? await Task.sleep(nanoseconds: UInt64(wait * 1_000_000_000))
             }
         }

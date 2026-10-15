@@ -6,6 +6,8 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter, Query, Request
 
+from app.services.llm_models import chat_request_kwargs
+
 router = APIRouter(prefix="/admin", tags=["admin-llm"])
 logger = logging.getLogger(__name__)
 
@@ -95,7 +97,7 @@ async def _gather_metrics(secret: str) -> dict:
 
 
 def _run_diagnosis(metrics: dict) -> dict:
-    """Run GPT-4o-mini diagnosis on collected metrics."""
+    """Run the configured model's diagnosis on collected metrics."""
     from app.services.llm import _get_client
 
     client = _get_client()
@@ -106,7 +108,7 @@ def _run_diagnosis(metrics: dict) -> dict:
             "issues": [{
                 "severity": "info",
                 "title": "LLM unavailable",
-                "explanation": "OpenAI API key not configured — diagnosis requires GPT-4o-mini.",
+                "explanation": "OpenAI API key not configured — diagnosis requires the LLM.",
                 "claude_prompt": "",
                 "admin_page": "/admin",
             }],
@@ -134,10 +136,8 @@ Example: [{{"severity":"warning","title":"Background queue backed up","explanati
 
     try:
         response = client.chat.completions.create(
-            model="gpt-4o-mini",
+            **chat_request_kwargs("admin_diagnosis", max_output_tokens=1000, temperature=0.3),
             messages=[{"role": "user", "content": prompt}],
-            temperature=0.3,
-            max_tokens=1000,
         )
         raw = response.choices[0].message.content.strip()
         # Parse JSON from response

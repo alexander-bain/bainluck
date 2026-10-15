@@ -36,6 +36,10 @@ GitHub Issues own priority, scope, acceptance, dependency and execution state. T
 4. At handoff, update the existing issue command's status, delivery owner, next action and evidence. The handoff names issue, exact source, dependencies, tests and remaining delivery checks. A test result is not a deployment or a phone acceptance.
 5. Integrator checks the composed result and merges/releases through existing safeguards. Retain compatible artifact evidence where its identity is established; rerun affected checks when relevant inputs change. No automatic waiver of an existing failed or unrun gate.
 
+Prepare acceptance alongside implementation, before the offer: name the exact source, acceptance owner, release/carriage trigger, eligible specimen or explicit unavailable state, concrete command or reader journey, bounded resource/time allowance, stop/cleanup conditions and evidence destination. Refresh the packet when its source or release inputs change; preparation does not establish acceptance.
+
+Once Integrator verifies that trigger, its next handoff is one actionable receipt to the named acceptance owner in the existing inbox, before optional work or cycle cleanup. Include the issue, exact source and release, required worker/surface carriage proof, release and receipt times, prepared acceptance packet and exact next action. Preserve receipt identity and consumed/running state; unchanged evidence does not dispatch duplicate work. Missing carriage or a newer incompatible release holds acceptance with its specific blocker. Keep source, release and reader acceptance separate. CI infrastructure holds use the bounded [recovery disposition](ci-recovery.md); an absent required check remains a hold.
+
 The shared transition command accepts delivery fields, for example:
 
 ```sh
