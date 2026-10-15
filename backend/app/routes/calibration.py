@@ -1,5 +1,6 @@
 """Public calibration endpoint — no auth required, cached for 1 hour."""
 
+import asyncio
 import hashlib as _hashlib
 import json
 import logging
@@ -1932,7 +1933,109 @@ async def public_calibration(
 
 _examples_cache: dict = {}
 _EXAMPLES_TTL = 3600
-_FUTURES_EXAMPLE_SOURCES = {"kalshi", "polymarket"}
+_FUTURES_EXAMPLE_SOURCES = {"kalshi", "polymarket", "datagolf"}
+
+# #994: sources sampled from the canonical chain SCOPED to the source's own
+# markets (``market_info_extra``), so the request evaluates ~400 markets instead
+# of the whole resolved population. That scope is exact only while the source's
+# markets are closed under the chain's one cross-source interaction:
+# ``ROW_NUMBER() OVER (PARTITION BY cv.vm_id)``. ``vm_id`` is ``m:<market_id>``
+# unless the market's group/event has >=3 SAME-source members, and the group and
+# event sizes are themselves counted per source — so the only way a scoped run
+# can differ from the global one is a ``g:``/``e:`` id shared with another
+# source. :data:`_EXAMPLES_SCOPE_CLOSED_SQL` refuses that case before sampling.
+# DataGolf on 2026-10-15: 395 resolved markets, 0 with a group_id, 0 with an
+# event_id — every vm_id is ``m:``. Kalshi/Polymarket share event ids with each
+# other, so they keep the unscoped chain.
+_SOURCE_SCOPED_EXAMPLE_SOURCES = {"datagolf"}
+_EXAMPLES_SCOPED_MARKET_INFO_EXTRA = "AND fm.source = :source"
+# ONE request budget for the scoped branch, measured from handler entry — not a
+# cap per statement. Two 20 s per-statement caps let the closure check and the
+# sample run 20 s each and answer at ~40 s, past the 30 s Heroku router (Root's
+# offline reproduction, 2026-10-15: both statements under their cap, route over
+# its wall). So:
+#
+#   * every statement is armed with ``statement_timeout`` = what is LEFT of
+#     ``_EXAMPLES_SCOPED_STATEMENT_WALL_S`` (re-armed before each one), so the
+#     server-side work of the whole request sums to at most that wall;
+#   * ``_EXAMPLES_SCOPED_DEADLINE_S`` is an event-loop backstop over the same
+#     work for what ``statement_timeout`` cannot see — pool checkout (the
+#     engine's ``pool_timeout`` defaults to the router's own 30 s), row fetch;
+#   * after the backstop cancels, cleanup is waited on for at most
+#     ``_EXAMPLES_SCOPED_CLEANUP_S``. 25 + 3 = 28 s, inside the router.
+#
+# A spent budget is an honest 503 the drill-in renders as "Couldn't load
+# examples" — never a query that outlives its request.
+_EXAMPLES_SCOPED_STATEMENT_WALL_S = 22.0
+_EXAMPLES_SCOPED_DEADLINE_S = 25.0
+_EXAMPLES_SCOPED_CLEANUP_S = 3.0
+# A statement armed with less than this cannot do useful work; refuse instead.
+_EXAMPLES_SCOPED_MIN_STATEMENT_MS = 100
+# The clock the budget reads. A module attribute so the guards can drive it.
+_examples_clock = time.monotonic
+_EXAMPLES_SCOPE_CLOSED_SQL = """
+    SELECT EXISTS (
+        SELECT 1 FROM futures_markets d
+        JOIN futures_markets o
+          ON o.group_id = d.group_id AND o.source <> d.source
+         AND o.status = 'resolved'
+        WHERE d.source = :source AND d.status = 'resolved'
+          AND d.group_id IS NOT NULL
+    ) OR EXISTS (
+        SELECT 1 FROM futures_markets d
+        JOIN futures_markets o
+          ON o.event_id = d.event_id AND o.source <> d.source
+         AND o.status = 'resolved'
+        WHERE d.source = :source AND d.status = 'resolved'
+          AND d.event_id IS NOT NULL
+    ) AS shares_identity
+"""
+
+
+class _ExamplesBudgetSpent(Exception):
+    """The shared request budget has too little left to start a statement."""
+
+
+class _ExamplesDeadline(Exception):
+    """The event-loop backstop fired before the scoped sample finished."""
+
+
+async def _arm_remaining_statement_budget(db: AsyncSession, started: float) -> int:
+    """Arm the next statement with what is LEFT of the request's one budget."""
+    remaining_ms = int(
+        (started + _EXAMPLES_SCOPED_STATEMENT_WALL_S - _examples_clock()) * 1000
+    )
+    if remaining_ms < _EXAMPLES_SCOPED_MIN_STATEMENT_MS:
+        raise _ExamplesBudgetSpent(remaining_ms)
+    await db.execute(text(f"SET LOCAL statement_timeout = {remaining_ms}"))
+    return remaining_ms
+
+
+async def _within_examples_deadline(work, started: float):
+    """Run ``work()`` under the backstop; cleanup after a cancel is bounded too.
+
+    ``asyncio.wait_for`` would wait for the cancelled task however long its
+    cleanup takes, which is the unbounded tail this exists to remove. A task
+    still cleaning up after ``_EXAMPLES_SCOPED_CLEANUP_S`` is left to finish on
+    its own; its statement is already capped server-side by the armed budget.
+    """
+    task = asyncio.ensure_future(work())
+    remaining = started + _EXAMPLES_SCOPED_DEADLINE_S - _examples_clock()
+    done, _ = await asyncio.wait({task}, timeout=max(0.0, remaining))
+    if task in done:
+        return task.result()
+    task.cancel()
+    await asyncio.wait({task}, timeout=_EXAMPLES_SCOPED_CLEANUP_S)
+
+    def _consume(t: asyncio.Future) -> None:
+        if not t.cancelled():
+            t.exception()
+
+    if task.done():
+        _consume(task)
+    else:
+        task.add_done_callback(_consume)
+    raise _ExamplesDeadline()
 
 
 @router.get("/calibration/examples")
@@ -1952,6 +2055,8 @@ async def calibration_examples(
     core exclusions so the sample reflects what the bucket is actually built from.
     Cached in-process for 1h. Never mutates anything.
     """
+    # #994: the scoped branch's one request budget starts here, at entry.
+    started = _examples_clock()
     source = (source or "").strip()
     wt = str(well_traded) not in ("0", "false", "False", "")
     cache_key = f"{source}|{bucket}|{int(wt)}|{limit}"
@@ -1962,6 +2067,7 @@ async def calibration_examples(
 
     examples: list[dict] = []
     note: str | None = None
+    sampling: dict | None = None
 
     def _fmt_dt(dt) -> str | None:
         return dt.isoformat() if dt is not None else None
@@ -1976,14 +2082,31 @@ async def calibration_examples(
         # esports bundle, prop threshold, weather wide spread, incomplete field) are
         # absent BY CONSTRUCTION — not a hand-maintained subset that drifts. Read-
         # only (gotcha #21). Heavy CTE, but the endpoint is cached 1h in-process.
+        #
+        # #994: DataGolf used to fall through to "No examples available for this
+        # source", so its drill-in was empty whatever the bucket held. It takes
+        # this same branch with ``market_info`` narrowed to its own markets (see
+        # _SOURCE_SCOPED_EXAMPLE_SOURCES); every DataGolf exclusion — opening
+        # timing #5355, recovery residual/unverified, void did_not_play/withdrew
+        # #762, field normalization — lives inside the chain and is untouched.
         from app.tasks.precompute_calibration import _calibration_population_ctes
+        from app.utils.db_cancellation import is_query_canceled
 
+        scoped = source in _SOURCE_SCOPED_EXAMPLE_SOURCES
+        population = (
+            _calibration_population_ctes(
+                market_info_extra=_EXAMPLES_SCOPED_MARKET_INFO_EXTRA
+            )
+            if scoped
+            else _calibration_population_ctes()
+        )
         # Well-traded cohort for futures = the price actually moved off its open
         # (matches the page's price_moved !== false default) — the canonical flag.
         wt_clause = "AND d.price_moved = true" if wt else ""
         sql = text(
-            "WITH " + _calibration_population_ctes() + f"""
-            SELECT fm.name AS market_name, d.outcome_name AS outcome_name,
+            "WITH " + population + f"""
+            SELECT d.market_id AS market_id, d.outcome_id AS outcome_id,
+                fm.name AS market_name, d.outcome_name AS outcome_name,
                 d.adj_opening_probability AS price,
                 d.is_winner AS is_winner,
                 COALESCE(fm.resolution_date, fm.commence_time, fm.updated_at) AS settle_date
@@ -1995,7 +2118,61 @@ async def calibration_examples(
             ORDER BY RANDOM()
             LIMIT :limit
         """)
-        rows = (await db.execute(sql, {"source": source, "bucket": bucket, "limit": limit})).all()
+        params = {"source": source, "bucket": bucket, "limit": limit}
+        if scoped:
+
+            async def _scoped_sample():
+                await _arm_remaining_statement_budget(db, started)
+                shares_identity = (await db.execute(
+                    text(_EXAMPLES_SCOPE_CLOSED_SQL), {"source": source}
+                )).scalar()
+                if shares_identity is True:
+                    return None
+                # Re-armed: the sample gets what the closure check LEFT, so the
+                # two statements together never exceed the one wall.
+                await _arm_remaining_statement_budget(db, started)
+                return (await db.execute(sql, params)).all()
+
+            try:
+                rows = await _within_examples_deadline(_scoped_sample, started)
+            except (_ExamplesBudgetSpent, _ExamplesDeadline) as exc:
+                reason = (
+                    "examples_deadline"
+                    if isinstance(exc, _ExamplesDeadline)
+                    else "examples_query_timeout"
+                )
+                logger.warning(
+                    "calibration examples: %s bucket %s spent its request budget (%s)",
+                    source, bucket, reason,
+                )
+                return JSONResponse(status_code=503, content={
+                    "source": source, "bucket_idx": bucket, "reason": reason,
+                })
+            except Exception as exc:
+                if not is_query_canceled(exc):
+                    raise
+                logger.warning(
+                    "calibration examples: %s bucket %s hit its statement budget",
+                    source, bucket,
+                )
+                return JSONResponse(status_code=503, content={
+                    "source": source, "bucket_idx": bucket,
+                    "reason": "examples_query_timeout",
+                })
+            if rows is None:
+                # The scoped chain could pick a different representative than
+                # the published one; refuse rather than show rows from a shape
+                # the reader did not click. Not cached: the data can change.
+                logger.warning(
+                    "calibration examples: %s shares a group/event id with "
+                    "another source; scoped sample refused", source,
+                )
+                return JSONResponse(status_code=503, content={
+                    "source": source, "bucket_idx": bucket,
+                    "reason": "examples_scope_not_closed",
+                })
+        else:
+            rows = (await db.execute(sql, params)).all()
         examples = [
             {
                 "market_name": r.market_name or "—",
@@ -2003,10 +2180,27 @@ async def calibration_examples(
                 "price": round(float(r.price), 4),
                 "result": "Yes" if r.is_winner else "No",
                 "settle_date": _fmt_dt(r.settle_date),
+                # #994: stable audit ids so a sampled row can be traced to its
+                # outcome; the drill-in renders the readable columns above only.
+                "market_id": r.market_id,
+                "outcome_id": r.outcome_id,
             }
             for r in rows
         ]
-
+        sampling = {
+            # Rows are evaluated NOW under the current population code. The
+            # curve on the page can be an older durable generation, and nothing
+            # here proves a row was a member of THAT generation.
+            "basis": "live_canonical_population",
+            "scope": "source_markets" if scoped else "full_population",
+            "cohort": "price_moved" if wt else "all",
+            "bucket_rule": "LEAST(FLOOR(adj_opening_probability * 10), 9)",
+            "truth": "is_winner",
+            "order": "random",
+            "limit": limit,
+            "sampled_at": datetime.now(timezone.utc).isoformat(),
+            "published_generation_membership": "unverified",
+        }
     elif source in ("odds_api", "odds_api_spreads", "odds_api_totals"):
         # Event-sourced markets: reconstruct the same outcome rows the curve buckets.
         from app.tasks.precompute_calibration import score_unit_mismatch_sql
@@ -2183,6 +2377,9 @@ async def calibration_examples(
         # Queue #262 Item 2: name the population so future drift is visible. For
         # futures sources the examples are sampled from this exact population.
         "population_version": CALIBRATION_POPULATION_VERSION,
+        # #994: how the futures sample was drawn (``None`` for the event-sourced
+        # and unsupported branches, whose rows are not the canonical chain).
+        "sampling": sampling,
     }
     _examples_cache[cache_key] = (result, now)
     return result

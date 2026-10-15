@@ -5,7 +5,8 @@ import ErrorBoundary from "@/components/ErrorBoundary";
 import Link from "next/link";
 import useSWR from "swr";
 import { usePageTracking, useScrollDepth, useEngagementTime } from "@/hooks";
-import { fetchCalibration, fetchCalibrationExamples, ApiError, CalibrationBucket, CalibrationExample } from "@/lib/api";
+import { fetchCalibration, fetchCalibrationExamples, ApiError, CalibrationBucket, CalibrationExample, CalibrationExamplesSampling } from "@/lib/api";
+import { examplesFooterCopy } from "@/lib/calibrationExamples";
 import ErrorState from "@/components/ErrorState";
 import { describeLoadFailure } from "@/lib/loadFailure";
 import LoadingState from "@/components/LoadingState";
@@ -213,6 +214,7 @@ interface DrillInState {
   error: boolean;
   examples: CalibrationExample[];
   note?: string | null;
+  sampling?: CalibrationExamplesSampling | null;
 }
 
 // #7634: Queue 297's `formatAge` moved to `lib/calibrationStaleness.ts` as
@@ -259,6 +261,7 @@ export default function CalibrationPage() {
         source, bucketLabel, bucketIdx,
         loading: false, error: false,
         examples: res.examples, note: res.note ?? null,
+        sampling: res.sampling ?? null,
       });
     } catch {
       setDrillIn({ source, bucketLabel, bucketIdx, loading: false, error: true, examples: [] });
@@ -3753,6 +3756,7 @@ function BucketExamples({ state, onClose, sourceLabel }: {
   sourceLabel: (s: string) => string;
 }) {
   if (!state) return null;
+  const resultClass = (r: string) => (/^(yes|won|true)$/i.test(r) ? "text-green-600" : "text-red-600");
   const fmtDate = (d: string | null) => {
     if (!d) return "—";
     const dt = new Date(d);
@@ -3787,7 +3791,27 @@ function BucketExamples({ state, onClose, sourceLabel }: {
         </div>
       ) : (
         <>
-          <div className="overflow-x-auto">
+          {/* #994: at phone width the five-column table showed only the market
+              name — outcome, price, result and date sat off-screen behind a
+              horizontal scroll nothing advertised. Below `sm` each example is
+              two lines instead; the table is unchanged from `sm` up. */}
+          <ul className="sm:hidden divide-y divide-surface-border" data-testid="calibration-examples-list">
+            {state.examples.map((ex, i) => (
+              <li key={i} className="py-1.5 text-xs">
+                <div className="text-text-secondary break-words">{ex.market_name}</div>
+                <div className="mt-0.5 flex items-baseline justify-between gap-3">
+                  <span className="min-w-0 truncate text-text-primary" title={ex.outcome_name}>{ex.outcome_name}</span>
+                  <span className="shrink-0 tabular-nums whitespace-nowrap">
+                    <span className="text-text-primary">{(ex.price * 100).toFixed(1)}%</span>
+                    {" "}
+                    <span className={`font-medium ${resultClass(ex.result)}`}>{ex.result}</span>
+                    <span className="text-text-muted"> &middot; {fmtDate(ex.settle_date)}</span>
+                  </span>
+                </div>
+              </li>
+            ))}
+          </ul>
+          <div className="hidden sm:block overflow-x-auto">
             <table className="w-full text-xs">
               <thead>
                 <tr className="text-left text-text-muted uppercase tracking-wide">
@@ -3804,16 +3828,14 @@ function BucketExamples({ state, onClose, sourceLabel }: {
                     <td className="py-1.5 pr-3 text-text-secondary max-w-[260px] truncate" title={ex.market_name}>{ex.market_name}</td>
                     <td className="py-1.5 pr-3 text-text-secondary max-w-[160px] truncate" title={ex.outcome_name}>{ex.outcome_name}</td>
                     <td className="py-1.5 pr-3 text-right tabular-nums text-text-primary">{(ex.price * 100).toFixed(1)}%</td>
-                    <td className={`py-1.5 pr-3 text-right font-medium ${
-                      /^(yes|won|true)$/i.test(ex.result) ? "text-green-600" : "text-red-600"
-                    }`}>{ex.result}</td>
+                    <td className={`py-1.5 pr-3 text-right font-medium ${resultClass(ex.result)}`}>{ex.result}</td>
                     <td className="py-1.5 text-right tabular-nums text-text-muted whitespace-nowrap">{fmtDate(ex.settle_date)}</td>
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
-          <p className="text-[11px] text-text-muted mt-2">A representative sample &mdash; not the full bucket.</p>
+          <p className="text-[11px] text-text-muted mt-2" data-testid="calibration-examples-footer">{examplesFooterCopy(state.sampling)}</p>
         </>
       )}
     </div>

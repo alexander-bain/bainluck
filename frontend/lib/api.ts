@@ -2924,6 +2924,20 @@ export interface CalibrationExample {
   price: number; // predicted probability, 0-1
   result: string; // "Yes" / "No" (settled outcome)
   settle_date: string | null;
+  // #994: audit ids for futures sources; never rendered.
+  market_id?: number;
+  outcome_id?: number;
+}
+
+/** #994: how a futures sample was drawn. `published_generation_membership` is
+ *  "unverified" because the rows are evaluated now while the chart can be an
+ *  earlier published update (see lib/calibrationExamples.ts). */
+export interface CalibrationExamplesSampling {
+  basis?: string;
+  scope?: string;
+  cohort?: string;
+  sampled_at?: string;
+  published_generation_membership?: string;
 }
 
 export interface CalibrationExamplesResponse {
@@ -2931,6 +2945,7 @@ export interface CalibrationExamplesResponse {
   bucket_idx: number;
   examples: CalibrationExample[];
   note?: string | null;
+  sampling?: CalibrationExamplesSampling | null;
 }
 
 export async function fetchCalibrationExamples(

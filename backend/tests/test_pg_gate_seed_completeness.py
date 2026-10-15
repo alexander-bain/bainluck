@@ -103,6 +103,11 @@ COVERED = (
     # other — so both are named on every row, and `reading_count` (NOT NULL, no
     # server default) is named on every snapshot.
     "test_calibration_datagolf_post_start_opening_pg.py",
+    # #994. Seeds the same three tables by raw INSERT to run the examples
+    # route on rows; `commence_time`, each snapshot's `captured_at` and
+    # `resolution_source` ARE the subject (#5355 timing, #762 void), and every
+    # snapshot names `reading_count` (NOT NULL, no server default).
+    "test_calibration_examples_datagolf_994_pg.py",
     # #938. Seeds the same three tables by raw INSERT. The ticker
     # (`external_id`) and the market's source/category ARE the subject; every
     # snapshot names `reading_count` (NOT NULL, no server default) and a real
