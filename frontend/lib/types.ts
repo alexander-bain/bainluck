@@ -1320,12 +1320,32 @@ export interface FuturesOutcomeHistory {
   eliminated_at?: string | null;
 }
 
+/** #683 — what a `range=full` history read actually covered. Every field is
+ *  the server's; the client reads it, never infers it from the points. */
+export interface FuturesHistoryRange {
+  requested: "full" | string;
+  /** Where the server began reading, ISO. */
+  window_start?: string | null;
+  /** Why it began there: "archive_first_interval" | "market_created_at" | "hours". */
+  window_start_basis?: string | null;
+  /** The archive plan's own coverage word; null when no plan covers these markets. */
+  archive_coverage?: string | null;
+  /** The venue's open, ISO, when the plan knows it. */
+  archive_venue_open?: string | null;
+  /** Lines whose read was span-sampled to stay bounded (never tail-cut). */
+  thinned_outcomes?: number[] | null;
+}
+
 export interface FuturesHistoryResponse {
   market_id: number;
   market_name: string;
   hours: number;
   /** Actual time window used (may be wider than `hours` if auto-extended for sparse data) */
   actual_hours?: number;
+  /** #683 — the server's account of a `range=full` read (lib/historyRange.ts).
+   *  Absent from a server that does not know the option, and on every other
+   *  request, so absence means "the `hours` window, exactly as before". */
+  history_range?: FuturesHistoryRange | null;
   outcomes: FuturesOutcomeHistory[];
   /** Round/phase boundaries for chart reference lines (from DataGolf round_history) */
   round_boundaries?: { timestamp: string; label: string }[] | null;

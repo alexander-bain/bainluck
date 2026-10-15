@@ -6,6 +6,7 @@ import { FuturesChart } from "@/components/FuturesChart";
 import { EvolutionLeaderboard } from "@/components/EvolutionLeaderboard";
 import { fetchFuturesHistory, fetchMultiMarketHistory, fetchFuturesMarket } from "@/lib/api";
 import { fieldIsOneQuestion } from "@/lib/combinedLinePolicy";
+import { historyRangeDataAttributes, historyRangeOption } from "@/lib/historyRange";
 import type { FuturesOutcomeHistory } from "@/lib/types";
 import {
   SERIES_COLORS,
@@ -182,6 +183,9 @@ export function EvolutionView({
     }
   }, [tournamentStart]);
 
+  // #683 (Root ruling B): "full" also sends `range=full`, so the server reads
+  // the question's whole history — archive intervals included, back past our
+  // own first capture. 4320 stays only as the floor an older server serves.
   const fetchHours = timeRange === "full"
     ? 4320
     : timeRange === "tournament"
@@ -196,6 +200,8 @@ export function EvolutionView({
       ? `tournament-${tournamentFetchHours}`
       : "week";
 
+  const fullRange = historyRangeOption(timeRange);
+
   // Use multi-market aggregation when multiple source market IDs are available.
   // Cache key includes all IDs so switching positions invalidates correctly.
   const cacheKey = activeMarketIds.length > 1
@@ -205,8 +211,8 @@ export function EvolutionView({
   const { data: historyData, error, isLoading } = useSWR(
     cacheKey,
     () => activeMarketIds.length > 1
-      ? fetchMultiMarketHistory(activeMarketIds, fetchHours, 50)
-      : fetchFuturesHistory(activeMarketId, fetchHours, undefined, 50),
+      ? fetchMultiMarketHistory(activeMarketIds, fetchHours, 50, fullRange)
+      : fetchFuturesHistory(activeMarketId, fetchHours, undefined, 50, undefined, fullRange),
     { refreshInterval: 60_000, keepPreviousData: true }
   );
 
@@ -403,7 +409,10 @@ export function EvolutionView({
     </div>
   ) : (
     <>
-      <div className={`flex-1 min-w-0 px-3 sm:px-4 pt-2 pb-1 flex items-center ${isFullscreen ? "min-h-0" : ""}`}>
+      <div
+        className={`flex-1 min-w-0 px-3 sm:px-4 pt-2 pb-1 flex items-center ${isFullscreen ? "min-h-0" : ""}`}
+        {...historyRangeDataAttributes(historyData)}
+      >
         {/* L2-149: the field kernel is now FuturesChart (hand-rolled SVG, no
             smoothing, fixed 0–100 axis by default) — the recharts EvolutionChart
             engine is gone. Selection/hover/combined/round-markers are preserved;

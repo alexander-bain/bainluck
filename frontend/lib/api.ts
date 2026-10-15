@@ -6,6 +6,7 @@ import type { EntityAvailability, EntityTier } from "@/lib/entityPageChrome";
 import type { DiscoverPriceCards } from "@/lib/discover/priceRefresh";
 import type { TournamentPayload } from "@/lib/tournament";
 import type { ClosedPeriodRow } from "@/lib/marketMapUtils";
+import type { HistoryRangeRequest } from "@/lib/historyRange";
 import type {
   EventsResponse,
   EventDetailResponse,
@@ -1063,7 +1064,7 @@ export async function fetchFuturesHistory(
   outcomeId?: number,
   topN?: number,
   champion?: string,
-  options?: { fresh?: boolean; signal?: AbortSignal }
+  options?: { fresh?: boolean; signal?: AbortSignal; range?: HistoryRangeRequest }
 ): Promise<FuturesHistoryResponse> {
   const params = new URLSearchParams();
   params.set("hours", hours.toString());
@@ -1072,6 +1073,9 @@ export async function fetchFuturesHistory(
   // #232: settled winner-field champion name so /history resolves the winner's
   // evolution line to 1.0 (odds_api winner fields never carry an is_winner grade).
   if (champion) params.set("champion", champion);
+  // #683: the question's whole history. `hours` stays as the floor, so a server
+  // that does not know the option serves today's window (lib/historyRange.ts).
+  if (options?.range) params.set("range", options.range);
   if (options?.fresh) params.set("fresh", "true");
 
   return apiFetch<FuturesHistoryResponse>(
@@ -1087,15 +1091,20 @@ export async function fetchFuturesHistory(
 export async function fetchMultiMarketHistory(
   marketIds: number[],
   hours = 168,
-  topN?: number
+  topN?: number,
+  options?: { range?: HistoryRangeRequest }
 ): Promise<FuturesHistoryResponse> {
   if (marketIds.length === 1) {
-    return fetchFuturesHistory(marketIds[0], hours, undefined, topN);
+    return fetchFuturesHistory(
+      marketIds[0], hours, undefined, topN, undefined,
+      options?.range ? { range: options.range } : undefined,
+    );
   }
   const params = new URLSearchParams();
   params.set("market_ids", marketIds.join(","));
   params.set("hours", hours.toString());
   if (topN) params.set("top_n", topN.toString());
+  if (options?.range) params.set("range", options.range);
 
   return apiFetch<FuturesHistoryResponse>(
     `/api/futures/multi-history?${params.toString()}`

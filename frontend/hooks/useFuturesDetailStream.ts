@@ -10,6 +10,7 @@ import {
   createFuturesDetailReconciler, createFuturesReadScheduler,
   futuresDetailSettled, reconcileFuturesHistory,
 } from '@/lib/futuresDetailStream';
+import type { HistoryRangeRequest } from '@/lib/historyRange';
 
 /** Invalidations re-read real detail and real history; neither the transport nor
  * this hook manufactures chart points, observation times, or a sports LIVE state. */
@@ -18,6 +19,9 @@ export function useFuturesDetailStream(options: {
   market: FuturesMarketDetailResponse | undefined;
   history: FuturesHistoryResponse | undefined;
   historyHours: number;
+  /** #683: the chart's `range=full` read. The re-read asks for the same range,
+   *  or a fresh `hours`-only body would replace the whole-history chart. */
+  historyRange?: HistoryRangeRequest;
   setMarket: (market: FuturesMarketDetailResponse) => Promise<unknown>;
   setHistory: (history: FuturesHistoryResponse) => Promise<unknown>;
   /** #10224: the representation this page asks for. Absent ⇒ the default
@@ -59,7 +63,7 @@ export function useFuturesDetailStream(options: {
     if (reconciler.current?.current().id !== initial.id) reconciler.current = createFuturesDetailReconciler(initial);
     history.current = callbacks.current.history?.market_id === initial.id && callbacks.current.history.hours === options.historyHours
       ? callbacks.current.history : undefined;
-    const marketId = options.marketId, hours = options.historyHours;
+    const marketId = options.marketId, hours = options.historyHours, range = options.historyRange;
     const worker = createFuturesReadScheduler({
       now: () => Date.now(),
       read: async (signal, current) => {
@@ -78,11 +82,11 @@ export function useFuturesDetailStream(options: {
           const accepted = reconciler.current!.adopt(next);
           await callbacks.current.setMarket(accepted);
         });
-        const historyRead = fetchFuturesHistory(marketId, hours, undefined, undefined, undefined, { fresh: true, signal }).then(async next => {
+        const historyRead = fetchFuturesHistory(marketId, hours, undefined, undefined, undefined, { fresh: true, signal, range }).then(async next => {
           // Let an authoritative final verdict authorize its final chart value,
           // while the headline itself never waits for history to download.
           await detailRead.catch(() => undefined);
-          if (!current() || callbacks.current.marketId !== marketId || callbacks.current.historyHours !== hours || next.market_id !== marketId || next.hours !== hours) return;
+          if (!current() || callbacks.current.marketId !== marketId || callbacks.current.historyHours !== hours || callbacks.current.historyRange !== range || next.market_id !== marketId || next.hours !== hours) return;
           const parent = callbacks.current.history;
           if (parent?.market_id === marketId && parent.hours === hours && historyParent.current !== parent) {
             history.current = reconcileFuturesHistory(history.current, parent, reconciler.current?.current());
@@ -117,7 +121,7 @@ export function useFuturesDetailStream(options: {
       worker.stop(); clearInterval(timer); document.removeEventListener('visibilitychange', visibility);
       if (scheduler.current === worker) scheduler.current = undefined;
     };
-  }, [ready, options.marketId, options.historyHours]);
+  }, [ready, options.marketId, options.historyHours, options.historyRange]);
 
   useMarketStream({
     marketIds: [options.marketId], enabled,
