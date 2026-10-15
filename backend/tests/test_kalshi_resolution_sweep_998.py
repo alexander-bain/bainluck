@@ -206,6 +206,13 @@ def _fake_backfill(monkeypatch, report, seen: dict):
 
     monkeypatch.setattr(sweep, "run_backfill", _run)
 
+    # #2722: the archive walk runs after the batch and is guarded in its own
+    # file; these tests read the population batch's terminal and cursor only.
+    async def _walk(**kwargs):
+        return {"terminal": "complete"}
+
+    monkeypatch.setattr(sweep, "run_archive_settlements", _walk)
+
 
 def _report(*, candidates, applied, errors=0, unresolvable=0, eligible=None):
     return {

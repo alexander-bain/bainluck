@@ -1,0 +1,160 @@
+{
+ "source": "artifacts/calibration-2722-nine-20261015 (Measurement, 2026-10-15T20:4xZ, 18 public GETs, HTTP 200, no retries)",
+ "events": [
+  {
+   "id": 54069617,
+   "event_ticker": "KXDNCAUTOPSY-26",
+   "classification": "settled"
+  },
+  {
+   "id": 925648,
+   "event_ticker": "KXPAXTONPRIMARYCOUNTIES-26",
+   "classification": "settled"
+  },
+  {
+   "id": 110749,
+   "event_ticker": "KXPGAAWARDS-26-LIM",
+   "classification": "settled"
+  },
+  {
+   "id": 3452978,
+   "event_ticker": "KXNEXTTEAMNFL-26THENDRICKSON",
+   "classification": "settled"
+  },
+  {
+   "id": 11757847,
+   "event_ticker": "KXPRIMARYTURNOUT-SENATETXR26",
+   "classification": "settled"
+  },
+  {
+   "id": 109776,
+   "event_ticker": "KXTXPRIMARY-04R26",
+   "classification": "settled"
+  },
+  {
+   "id": 925724,
+   "event_ticker": "KXTALARICOPRIMARYCOUNTIES-26",
+   "classification": "settled"
+  },
+  {
+   "id": 1631094,
+   "event_ticker": "KXINPRIMARY-01D26",
+   "classification": "settled"
+  },
+  {
+   "id": 110337,
+   "event_ticker": "KXWALESPARLIAMENT-26MAY07",
+   "classification": "settled"
+  }
+ ],
+ "responses": [
+  {
+   "file": "000.json",
+   "url": "https://api.elections.kalshi.com/trade-api/v2/markets?event_ticker=KXDNCAUTOPSY-26&limit=200",
+   "status": 200,
+   "sha256": "50699ea1db13415ea46ec367dcfa58decd9660083271c5dc061561f38337fbac"
+  },
+  {
+   "file": "001.json",
+   "url": "https://api.elections.kalshi.com/trade-api/v2/historical/markets?event_ticker=KXDNCAUTOPSY-26&limit=200",
+   "status": 200,
+   "sha256": "e018351600bede7c81b2dba4f08a3a390f65be39ed63d1b6af9a12d57472b772"
+  },
+  {
+   "file": "002.json",
+   "url": "https://api.elections.kalshi.com/trade-api/v2/markets?event_ticker=KXPAXTONPRIMARYCOUNTIES-26&limit=200",
+   "status": 200,
+   "sha256": "50699ea1db13415ea46ec367dcfa58decd9660083271c5dc061561f38337fbac"
+  },
+  {
+   "file": "003.json",
+   "url": "https://api.elections.kalshi.com/trade-api/v2/historical/markets?event_ticker=KXPAXTONPRIMARYCOUNTIES-26&limit=200",
+   "status": 200,
+   "sha256": "bf672ab2eaa07790d57c3854a211935a91d4fa2d1e8a8b25ad1d70d852eec94f"
+  },
+  {
+   "file": "004.json",
+   "url": "https://api.elections.kalshi.com/trade-api/v2/markets?event_ticker=KXPGAAWARDS-26-LIM&limit=200",
+   "status": 200,
+   "sha256": "50699ea1db13415ea46ec367dcfa58decd9660083271c5dc061561f38337fbac"
+  },
+  {
+   "file": "005.json",
+   "url": "https://api.elections.kalshi.com/trade-api/v2/historical/markets?event_ticker=KXPGAAWARDS-26-LIM&limit=200",
+   "status": 200,
+   "sha256": "5658b61f8a099924d5f5d64f6cb40816c1e58a62589179cef411782a7e6169ef"
+  },
+  {
+   "file": "006.json",
+   "url": "https://api.elections.kalshi.com/trade-api/v2/markets?event_ticker=KXNEXTTEAMNFL-26THENDRICKSON&limit=200",
+   "status": 200,
+   "sha256": "50699ea1db13415ea46ec367dcfa58decd9660083271c5dc061561f38337fbac"
+  },
+  {
+   "file": "007.json",
+   "url": "https://api.elections.kalshi.com/trade-api/v2/historical/markets?event_ticker=KXNEXTTEAMNFL-26THENDRICKSON&limit=200",
+   "status": 200,
+   "sha256": "e12f04b055944e8d00f0f5184cc531ef89023d28384efe31ceb0188d196fbf35"
+  },
+  {
+   "file": "008.json",
+   "url": "https://api.elections.kalshi.com/trade-api/v2/markets?event_ticker=KXPRIMARYTURNOUT-SENATETXR26&limit=200",
+   "status": 200,
+   "sha256": "50699ea1db13415ea46ec367dcfa58decd9660083271c5dc061561f38337fbac"
+  },
+  {
+   "file": "009.json",
+   "url": "https://api.elections.kalshi.com/trade-api/v2/historical/markets?event_ticker=KXPRIMARYTURNOUT-SENATETXR26&limit=200",
+   "status": 200,
+   "sha256": "f915446a038a6f5ef8fc291b760262e24f9aa4c3747bd6aeccaf326acbe1b1d2"
+  },
+  {
+   "file": "010.json",
+   "url": "https://api.elections.kalshi.com/trade-api/v2/markets?event_ticker=KXTXPRIMARY-04R26&limit=200",
+   "status": 200,
+   "sha256": "50699ea1db13415ea46ec367dcfa58decd9660083271c5dc061561f38337fbac"
+  },
+  {
+   "file": "011.json",
+   "url": "https://api.elections.kalshi.com/trade-api/v2/historical/markets?event_ticker=KXTXPRIMARY-04R26&limit=200",
+   "status": 200,
+   "sha256": "27634d09e4261d8cbc58d05b3ed809749e98326709c4851bd31749dbe0a55cfd"
+  },
+  {
+   "file": "012.json",
+   "url": "https://api.elections.kalshi.com/trade-api/v2/markets?event_ticker=KXTALARICOPRIMARYCOUNTIES-26&limit=200",
+   "status": 200,
+   "sha256": "50699ea1db13415ea46ec367dcfa58decd9660083271c5dc061561f38337fbac"
+  },
+  {
+   "file": "013.json",
+   "url": "https://api.elections.kalshi.com/trade-api/v2/historical/markets?event_ticker=KXTALARICOPRIMARYCOUNTIES-26&limit=200",
+   "status": 200,
+   "sha256": "468fa58ccd92b5d02509c6e8e0b55227cf710820e01c2d9fd8c2b39c1691d90b"
+  },
+  {
+   "file": "014.json",
+   "url": "https://api.elections.kalshi.com/trade-api/v2/markets?event_ticker=KXINPRIMARY-01D26&limit=200",
+   "status": 200,
+   "sha256": "50699ea1db13415ea46ec367dcfa58decd9660083271c5dc061561f38337fbac"
+  },
+  {
+   "file": "015.json",
+   "url": "https://api.elections.kalshi.com/trade-api/v2/historical/markets?event_ticker=KXINPRIMARY-01D26&limit=200",
+   "status": 200,
+   "sha256": "e5a2e4e247fec9634507febbdeb5e99b27bd094f42988a15f8cbb6e6fc7470bc"
+  },
+  {
+   "file": "016.json",
+   "url": "https://api.elections.kalshi.com/trade-api/v2/markets?event_ticker=KXWALESPARLIAMENT-26MAY07&limit=200",
+   "status": 200,
+   "sha256": "50699ea1db13415ea46ec367dcfa58decd9660083271c5dc061561f38337fbac"
+  },
+  {
+   "file": "017.json",
+   "url": "https://api.elections.kalshi.com/trade-api/v2/historical/markets?event_ticker=KXWALESPARLIAMENT-26MAY07&limit=200",
+   "status": 200,
+   "sha256": "343947cb5a94d93f5710927be5263e1b570f721519fac563529828692c164856"
+  }
+ ]
+}
