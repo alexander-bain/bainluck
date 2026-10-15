@@ -179,6 +179,12 @@ struct NFLCardReader9483: View {
 
     private struct IdentifiedRow: Identifiable { let id: String }
 
+    /// What the rail's card frames and order depend on (#11060).
+    struct RailGeneration: Equatable {
+        let width: CGFloat
+        let order: [String]
+    }
+
     /// One row of controls — a short Back and, when there is one, Refresh —
     /// then one match summary. At accessibility sizes the text stays large;
     /// it is the repetition that goes, not the type size.
@@ -203,12 +209,16 @@ struct NFLCardReader9483: View {
                         .accessibilityHint("Keeps this card open and shows the newest numbers")
                 }
             }
+            // #11061 — wrap, never truncate: at accessibility sizes a clipped
+            // chances line hid the second team's number.
             Text(header.match)
                 .font(.subheadline.weight(.bold))
+                .fixedSize(horizontal: false, vertical: true)
             if !header.chances.isEmpty {
                 Text(header.chances)
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -254,6 +264,20 @@ struct NFLCardReader9483: View {
                 // One layout later, in case the first scroll ran before the
                 // requested card had geometry.
                 if !seated, let visible {
+                    proxy.scrollTo(visible, anchor: .leading)
+                    seated = true
+                }
+            }
+            // #11060 — a rotation or width change resizes every card, and a
+            // Refresh can reorder them; the old offset then lands on another
+            // card while `visible` (count, dots, focus) still names this one.
+            // Re-seat on the width+order generation and ignore the reports the
+            // re-layout makes until the card has landed again.
+            .onChange(of: RailGeneration(width: width, order: cards.map(\.id))) { _, _ in
+                guard let visible else { return }
+                seated = false
+                proxy.scrollTo(visible, anchor: .leading)
+                Task { @MainActor in
                     proxy.scrollTo(visible, anchor: .leading)
                     seated = true
                 }
