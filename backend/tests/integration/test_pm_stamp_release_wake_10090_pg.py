@@ -688,6 +688,15 @@ async def test_a_cancelled_held_stamp_keeps_its_debt_and_a_new_cadence_recovers(
         with contextlib.suppress(Exception):
             await tx.rollback()
         await holder.close()
+        if not cadence.done():
+            # A failed assertion above: stop and reap the cadence and its stamp
+            # owner before the fixture drops the schema under them.
+            stop.set()
+            t.boundary.flush_wake.set()
+            with contextlib.suppress(Exception):
+                await asyncio.wait_for(cadence, timeout=5.0)
+            with contextlib.suppress(Exception):
+                await t.boundary.join_stamps(cancel=True)
     stop = asyncio.Event()
     restart = len(t.flush_starts)
     t_restart = time.monotonic()
@@ -717,8 +726,9 @@ async def test_quiet_owed_debt_on_a_held_event_never_holds_an_unrelated_quote(
     second transaction holds its row. The cadence's first flush has no price,
     so it is the quiet ending: it hands that debt to the stamp owner and
     returns. Event 2's fresh quote then flushes at the next 250 ms floor and
-    publishes while event 1's stamp still waits in Postgres; event 1 recovers
-    once the holder lets go. Before, the quiet flush awaited the held stamp,
+    publishes while event 1's stamp still waits in Postgres; a newer event-1
+    quote stays fenced behind it; once the holder lets go event 1 publishes its
+    stored value, then the newer one. Before, the quiet flush awaited the held stamp,
     so no flush could start until the release (Root, real PG: 0.81 s)."""
     t = await build(rig, consumer, monkeypatch, trace=False, lock_ms=2000)
     t.r.keep_owed({1})
@@ -736,9 +746,13 @@ async def test_quiet_owed_debt_on_a_held_event_never_holds_an_unrelated_quote(
                 lambda: any(eid == 2 and v == 0.63 for _, eid, v, _ in t.pubs), 1.0,
             )
         peer_before_release = any(eid == 2 for _, eid, _, _ in t.pubs)
+        # A newer quote for the held event: it waits behind its owed stamp.
+        t.accept(EVENT_1_OUTCOME, 0.66)
+        with contextlib.suppress(TimeoutError):  # no flush ran: the asserts say so
+            await wait_for(lambda: t.p.ns["stats"]["stamp_fenced"] >= 1, 1.0)
         still_waiting = await lock_waiters(rig, holder_pid) == 1
         await tx.rollback()
-        await wait_for(lambda: any(eid == 1 for _, eid, _, _ in t.pubs))
+        await wait_for(lambda: any(eid == 1 and v == 0.66 for _, eid, v, _ in t.pubs))
         await wait_for(lambda: any(eid == 2 for _, eid, _, _ in t.pubs))
     finally:
         with contextlib.suppress(Exception):
@@ -754,6 +768,7 @@ async def test_quiet_owed_debt_on_a_held_event_never_holds_an_unrelated_quote(
         ),
         peer_published_after_arrival_s=round(published_at(t, 2, 0.63) - t_peer, 4),
         ev1_values=[v for _, eid, v, _ in t.pubs if eid == 1],
+        ev1_revs=[rev for _, eid, _, rev in t.pubs if eid == 1],
         errors=t.r.stats["errors"],
         price_errors=t.p.ns["stats"]["errors"],
         pending_after=sorted(t.r.pending_event_ids()),
@@ -764,7 +779,9 @@ async def test_quiet_owed_debt_on_a_held_event_never_holds_an_unrelated_quote(
     assert out["peer_before_release"] and out["owed_stamp_still_waiting"], out
     # Scheduling: the next budget floor after the quiet flush, not the release.
     assert out["peer_flush_after_quiet_flush_s"] < PERIOD + FLOOR_MARGIN_S, out
-    # The owed event recovers its stored value; nothing stays owed or buffered.
-    assert out["ev1_values"] == [0.7], out
+    # The owed event recovers its stored value, then its newer quote; revisions
+    # strictly advance; nothing stays owed or buffered.
+    assert out["ev1_values"] == [0.7, 0.66], out
+    assert out["ev1_revs"] == sorted(set(out["ev1_revs"])), out
     assert out["errors"] == 0 and out["price_errors"] == 0, out
     assert out["pending_after"] == [] and out["buffer_after"] == {}, out

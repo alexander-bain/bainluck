@@ -192,3 +192,83 @@ async def test_a_quiet_flush_with_nothing_owed_starts_no_owner(monkeypatch):
     owner = p.ns["catalog_boundary"].stamp_owner(x.r)
     assert await asyncio.wait_for(p.ns["flush_prices"](flush_started=1000.0), 1)
     assert owner.task is None and not x.sessions
+
+
+# Root's two narrow owner-boundary controls (quiet-debt-check/test_owner_boundaries.py,
+# OWNER-BOUNDARIES-RECEIPT.json), carried in verbatim.
+
+
+async def test_cancel_before_owner_body_starts_retains_committed_debt(monkeypatch):
+    p, x = paired(monkeypatch, blocked=(1,))
+    await quiet(p)
+    x.r.keep_owed({1})
+    owner = p.ns["catalog_boundary"].stamp_owner(x.r)
+    entered = False
+    original_pending = x.r.refresh_pending
+
+    async def marked_pending(*args, **kwargs):
+        nonlocal entered
+        entered = True
+        return await original_pending(*args, **kwargs)
+
+    original_create = asyncio.create_task
+    cancelled = []
+
+    def cancel_before_schedule(coro, *args, **kwargs):
+        task = original_create(coro, *args, **kwargs)
+        if getattr(coro, "cr_code", None) is marked_pending.__code__:
+            # Synchronous cancellation: neither the new owner nor the caller
+            # can run again until this interception returns to the event loop.
+            task.cancel()
+            cancelled.append(task)
+            asyncio.current_task().cancel()
+        return task
+
+    with monkeypatch.context() as m:
+        m.setattr(x.r, "refresh_pending", marked_pending)
+        m.setattr(asyncio, "create_task", cancel_before_schedule)
+        flush = original_create(p.ns["flush_prices"](flush_started=1000.0))
+        with pytest.raises(asyncio.CancelledError):
+            await asyncio.wait_for(flush, 1)
+    assert len(cancelled) == 1 and cancelled[0].cancelled()
+    assert not entered, "this control must cancel before the owner body executes"
+    assert owner.task is None and not owner.fenced
+    assert x.r.pending_event_ids() == {1}
+    assert not x.sessions and not x.published
+    x.release.set()
+    assert await asyncio.wait_for(p.ns["flush_prices"](flush_started=1000.25), 1)
+    await asyncio.wait_for(p.ns["catalog_boundary"].join_stamps(), 1)
+    assert x.published == [1] and not x.r.pending_event_ids()
+
+
+async def test_peer_admission_does_not_start_a_second_mutable_refresh(monkeypatch):
+    p, x = paired(monkeypatch, blocked=(1,))
+    await quiet(p)
+    x.r.keep_owed({1})
+    active = maximum = calls = 0
+    original_refresh = x.r.refresh
+
+    async def counted_refresh(*args, **kwargs):
+        nonlocal active, maximum, calls
+        active += 1
+        calls += 1
+        maximum = max(maximum, active)
+        try:
+            return await original_refresh(*args, **kwargs)
+        finally:
+            active -= 1
+
+    monkeypatch.setattr(x.r, "refresh", counted_refresh)
+    try:
+        assert await asyncio.wait_for(p.ns["flush_prices"](flush_started=1000.0), 1)
+        await settle_until(lambda: any(s.event_ids == [1] for s in x.sessions))
+        p.ns["price_buffer"].update({900: 0.71, 901: 0.29})
+        assert await asyncio.wait_for(p.ns["flush_prices"](flush_started=1000.25), 1)
+        await settle_until(lambda: 2 in x.published)
+        assert 1 not in x.published and not x.release.is_set()
+        assert active == maximum == calls == 1
+    finally:
+        x.release.set()
+        await asyncio.wait_for(p.ns["catalog_boundary"].join_stamps(), 1)
+    assert active == 0 and maximum == calls == 1
+    assert x.published == [2, 1] and not x.r.pending_event_ids()
