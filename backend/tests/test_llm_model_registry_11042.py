@@ -64,8 +64,12 @@ def _clean_model_env(monkeypatch):
 # Static guard: call sites cannot choose a model, and the inventory is complete
 # --------------------------------------------------------------------------
 
-_FORBIDDEN_KWARGS = {"model", "max_tokens", "max_completion_tokens", "temperature", "reasoning_effort"}
+_FORBIDDEN_KWARGS = {"model", "max_tokens", "max_completion_tokens", "reasoning_effort"}
 _MODEL_ID = re.compile(r"(gpt-\d[\w.\-]*|o\d(-mini|-pro)?|chatgpt-[\w.\-]+)")
+#: Slice 3: the one file allowed to send a completion. Everything else calls
+#: ``complete_chat``/``complete_chat_detailed`` with a literal registered task.
+REQUEST_LAYER = APP / "services" / "llm_request.py"
+_ENTRY_POINTS = {"complete_chat", "complete_chat_detailed"}
 
 
 def _app_files():
@@ -79,57 +83,58 @@ def _is_completion_call(node: ast.AST) -> bool:
     return node.func.attr == "create" and ("completions" in chain or "responses" in chain)
 
 
-def _registry_task(call: ast.AST) -> str | None:
-    """The literal task of a ``chat_request_kwargs("<task>", ...)`` call, else None."""
-    if (
-        isinstance(call, ast.Call)
-        and isinstance(call.func, ast.Name)
-        and call.func.id == "chat_request_kwargs"
-        and call.args
-        and isinstance(call.args[0], ast.Constant)
-        and isinstance(call.args[0].value, str)
-    ):
-        return call.args[0].value
+def _entry_task(node: ast.AST) -> str | None:
+    """The literal first argument of a request-layer call, else None."""
+    if node.args and isinstance(node.args[0], ast.Constant) and isinstance(node.args[0].value, str):
+        return node.args[0].value
     return None
 
 
 def _completion_sites():
-    """(path, line, task-or-None, forbidden kwargs) for every completion call."""
+    """(path, line, task-or-None, forbidden kwargs) for every request-layer call.
+
+    A raw ``.create`` outside the request layer is reported with task None, so
+    it fails the same assertion as an unregistered task.
+    """
     sites = []
     for path in _app_files():
-        tree = ast.parse(path.read_text())
-        for func in ast.walk(tree):
-            if not isinstance(func, (ast.FunctionDef, ast.AsyncFunctionDef)):
+        for node in ast.walk(ast.parse(path.read_text())):
+            if not isinstance(node, ast.Call):
                 continue
-            assigned = {}
-            for node in ast.walk(func):
-                if isinstance(node, ast.Assign) and len(node.targets) == 1 and isinstance(node.targets[0], ast.Name):
-                    task = _registry_task(node.value)
-                    if task:
-                        assigned[node.targets[0].id] = task
-            for node in ast.walk(func):
-                if not _is_completion_call(node):
-                    continue
-                forbidden = sorted(k.arg for k in node.keywords if k.arg in _FORBIDDEN_KWARGS)
+            name = node.func.id if isinstance(node.func, ast.Name) else (
+                node.func.attr if isinstance(node.func, ast.Attribute) else None
+            )
+            if name in _ENTRY_POINTS and path != REQUEST_LAYER:
+                task = _entry_task(node)
+            elif _is_completion_call(node) and path != REQUEST_LAYER:
                 task = None
-                for k in node.keywords:
-                    if k.arg is None:
-                        task = _registry_task(k.value) or (
-                            assigned.get(k.value.id) if isinstance(k.value, ast.Name) else None
-                        )
-                sites.append((path.relative_to(APP.parent), node.lineno, task, forbidden))
-    # A call nested in two functions is visited once per enclosing def; keep one.
-    return sorted(set((str(p), ln, t, tuple(f)) for p, ln, t, f in sites))
+            else:
+                continue
+            forbidden = sorted(k.arg for k in node.keywords if k.arg in _FORBIDDEN_KWARGS)
+            sites.append((str(path.relative_to(APP.parent)), node.lineno, task, tuple(forbidden)))
+    return sorted(set(sites))
 
 
-def test_every_completion_call_builds_its_arguments_in_the_registry():
+def test_every_completion_call_goes_through_the_request_layer():
     sites = _completion_sites()
     assert len(sites) >= 23, sites  # the 2026-10-14 inventory; fewer means the walk broke
     offenders = [s for s in sites if s[2] is None or s[3]]
     assert offenders == [], (
-        "completion calls must take **chat_request_kwargs(<registered task>, ...) and pass "
-        f"no model/token/sampling kwargs themselves: {offenders}"
+        "completion calls must be complete_chat(<registered task literal>, client, ...) and pass "
+        f"no model/token-limit kwargs themselves: {offenders}"
     )
+
+
+def test_only_the_request_layer_sends_a_completion():
+    tree = ast.parse(REQUEST_LAYER.read_text())
+    assert sum(1 for n in ast.walk(tree) if _is_completion_call(n)) == 1
+    callers = [
+        (str(p.relative_to(APP.parent)), n.lineno)
+        for p in _app_files() if p != REQUEST_LAYER
+        for n in ast.walk(ast.parse(p.read_text()))
+        if isinstance(n, ast.Call) and isinstance(n.func, ast.Name) and n.func.id == "chat_request_kwargs"
+    ]
+    assert callers == [], f"request kwargs are built only inside complete_chat: {callers}"
 
 
 def test_the_task_inventory_matches_the_call_sites_both_ways():
@@ -173,7 +178,7 @@ def test_the_static_guard_bites_on_a_hard_coded_call(tmp_path, monkeypatch):
     )
     monkeypatch.setattr(__import__(__name__, fromlist=["APP"]), "APP", bad.parent)
     sites = _completion_sites()
-    assert sites == [("app/bad.py", 2, None, ("max_tokens", "model", "temperature"))]
+    assert sites == [("app/bad.py", 2, None, ("max_tokens", "model"))]
     with pytest.raises(AssertionError):
         test_no_model_id_literal_outside_the_registry()
 

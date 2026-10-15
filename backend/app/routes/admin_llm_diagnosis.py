@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter, Query, Request
 
-from app.services.llm_models import chat_request_kwargs
+from app.services.llm_request import complete_chat
 
 router = APIRouter(prefix="/admin", tags=["admin-llm"])
 logger = logging.getLogger(__name__)
@@ -135,8 +135,8 @@ Respond ONLY with a JSON array of 3 objects. No other text.
 Example: [{{"severity":"warning","title":"Background queue backed up","explanation":"...","claude_prompt":"...","admin_page":"/admin"}}]"""
 
     try:
-        response = client.chat.completions.create(
-            **chat_request_kwargs("admin_diagnosis", max_output_tokens=1000, temperature=0.3),
+        response = complete_chat(
+            "admin_diagnosis", client, max_output_tokens=1000, temperature=0.3,
             messages=[{"role": "user", "content": prompt}],
         )
         raw = response.choices[0].message.content.strip()

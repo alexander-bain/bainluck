@@ -2,7 +2,8 @@
 LLM utility service for smart text processing tasks.
 
 Model ids, request shapes and prices live in ``app.services.llm_models`` (#11042);
-every call here builds its arguments with ``chat_request_kwargs``.
+every call here goes through ``app.services.llm_request.complete_chat``, which
+reserves budget, bounds concurrency and owns retries (slice 3).
 """
 
 import os
@@ -11,7 +12,7 @@ from datetime import datetime, timezone
 from typing import Optional
 from functools import lru_cache
 
-from app.services.llm_models import chat_request_kwargs
+from app.services.llm_request import complete_chat
 
 logger = logging.getLogger(__name__)
 
@@ -29,7 +30,8 @@ def _get_client():
             if not api_key:
                 logger.warning("OPENAI_API_KEY not set - LLM features disabled")
                 return None
-            _client = OpenAI(api_key=api_key, timeout=30.0)
+            # max_retries=0: complete_chat retries, so each attempt is reserved.
+            _client = OpenAI(api_key=api_key, timeout=30.0, max_retries=0)
         except ImportError:
             logger.warning("openai package not installed - LLM features disabled")
             return None
@@ -156,8 +158,8 @@ Rules:
 {f"Context: {context}" if context else ""}"""
 
     try:
-        response = client.chat.completions.create(
-            **chat_request_kwargs("classify", max_output_tokens=50, temperature=0),  # Deterministic for classification
+        response = complete_chat(
+            "classify", client, max_output_tokens=50, temperature=0,  # Deterministic for classification
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": text},
@@ -538,8 +540,8 @@ Rules:
 - Do NOT say "other" — always pick the most descriptive category possible"""
 
     try:
-        response = client.chat.completions.create(
-            **chat_request_kwargs("classify_open_ended", max_output_tokens=20, temperature=0),
+        response = complete_chat(
+            "classify_open_ended", client, max_output_tokens=20, temperature=0,
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": context_text},
@@ -606,8 +608,8 @@ Rules:
 Example: nba, basketball, mvp, lebron_james, lakers"""
 
     try:
-        response = client.chat.completions.create(
-            **chat_request_kwargs("generate_tags", max_output_tokens=100, temperature=0),
+        response = complete_chat(
+            "generate_tags", client, max_output_tokens=100, temperature=0,
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": context_text},
@@ -995,8 +997,8 @@ Respond with a single number from 0.0 to 1.0 indicating your confidence that the
 Just respond with the number, nothing else."""
 
     try:
-        response = client.chat.completions.create(
-            **chat_request_kwargs("match_team_names", max_output_tokens=10, temperature=0),
+        response = complete_chat(
+            "match_team_names", client, max_output_tokens=10, temperature=0,
             messages=[
                 {"role": "user", "content": prompt},
             ],
@@ -1060,8 +1062,8 @@ Examples:
 Keep variations to 3-5 most common. Include the original input as a variation."""
 
     try:
-        response = client.chat.completions.create(
-            **chat_request_kwargs("normalize_team_name", max_output_tokens=200, temperature=0),
+        response = complete_chat(
+            "normalize_team_name", client, max_output_tokens=200, temperature=0,
             messages=[
                 {"role": "user", "content": prompt},
             ],
@@ -1150,8 +1152,8 @@ Rules:
 Team name:"""
 
     try:
-        response = client.chat.completions.create(
-            **chat_request_kwargs("classify_player_team", max_output_tokens=50, temperature=0),
+        response = complete_chat(
+            "classify_player_team", client, max_output_tokens=50, temperature=0,
             messages=[
                 {"role": "user", "content": prompt},
             ],
@@ -1204,8 +1206,8 @@ def generate_line_movement_explanation(prompt: str) -> Optional[str]:
         return None
 
     try:
-        response = client.chat.completions.create(
-            **chat_request_kwargs("line_movement_explanation", max_output_tokens=200, temperature=0.1),  # Low temperature for factual, direct output
+        response = complete_chat(
+            "line_movement_explanation", client, max_output_tokens=200, temperature=0.1,  # Low temperature for factual, direct output
             messages=[
                 {"role": "user", "content": prompt},
             ],
@@ -1247,8 +1249,9 @@ def generate_golf_live_commentary(prompt: str) -> Optional[str]:
     # limit that SIGKILLed the background worker. The commentary box is a
     # best-effort, live-only nicety: one short attempt with a single retry
     # (~<16s worst case) is plenty, and it degrades to "no box" on any failure.
+    # The single retry is ``max_retries=1`` on the complete_chat call below.
     try:
-        client = client.with_options(timeout=8.0, max_retries=1)
+        client = client.with_options(timeout=8.0)
     except Exception:  # pragma: no cover - defensive (older SDKs)
         pass
 
@@ -1268,8 +1271,8 @@ def generate_golf_live_commentary(prompt: str) -> Optional[str]:
     )
 
     try:
-        response = client.chat.completions.create(
-            **chat_request_kwargs("golf_live_commentary", max_output_tokens=180, temperature=0.2),
+        response = complete_chat(
+            "golf_live_commentary", client, max_output_tokens=180, temperature=0.2, max_retries=1,
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": prompt},
@@ -1349,8 +1352,8 @@ Start directly with the explanation (no preamble).
 Explanation:"""
 
     try:
-        response = client.chat.completions.create(
-            **chat_request_kwargs("market_disagreement_explanation", max_output_tokens=200, temperature=0.3),
+        response = complete_chat(
+            "market_disagreement_explanation", client, max_output_tokens=200, temperature=0.3,
             messages=[
                 {"role": "user", "content": prompt},
             ],
@@ -1416,8 +1419,8 @@ Rules:
 Preview:"""
 
     try:
-        response = client.chat.completions.create(
-            **chat_request_kwargs("oscars_category_preview", max_output_tokens=150, temperature=0.2),
+        response = complete_chat(
+            "oscars_category_preview", client, max_output_tokens=150, temperature=0.2,
             messages=[{"role": "user", "content": prompt}],
         )
         result = response.choices[0].message.content.strip()
@@ -1469,8 +1472,8 @@ Rules:
 Summary:"""
 
     try:
-        response = client.chat.completions.create(
-            **chat_request_kwargs("oscars_movers_summary", max_output_tokens=100, temperature=0.2),
+        response = complete_chat(
+            "oscars_movers_summary", client, max_output_tokens=100, temperature=0.2,
             messages=[{"role": "user", "content": prompt}],
         )
         result = response.choices[0].message.content.strip()
@@ -1574,8 +1577,8 @@ Rules:
 Summary:"""
 
     try:
-        response = client.chat.completions.create(
-            **chat_request_kwargs("related_futures_summary", max_output_tokens=250, temperature=0.1),
+        response = complete_chat(
+            "related_futures_summary", client, max_output_tokens=250, temperature=0.1,
             messages=[
                 {"role": "user", "content": prompt},
             ],
@@ -1613,8 +1616,8 @@ def audit_match(prompt: str) -> Optional[dict]:
         return None
 
     try:
-        response = client.chat.completions.create(
-            **chat_request_kwargs("audit_match", max_output_tokens=300, temperature=0),
+        response = complete_chat(
+            "audit_match", client, max_output_tokens=300, temperature=0,
             messages=[{"role": "user", "content": prompt}],
             response_format={"type": "json_object"},
         )
@@ -1734,8 +1737,8 @@ def enrich_event_taxonomy(
     )
 
     try:
-        response = client.chat.completions.create(
-            **chat_request_kwargs("event_taxonomy", max_output_tokens=150, temperature=0),
+        response = complete_chat(
+            "event_taxonomy", client, max_output_tokens=150, temperature=0,
             messages=[{"role": "user", "content": prompt}],
             response_format={"type": "json_object"},
         )
@@ -1816,8 +1819,8 @@ def enrich_market_taxonomy(
     )
 
     try:
-        response = client.chat.completions.create(
-            **chat_request_kwargs("market_taxonomy", max_output_tokens=100, temperature=0),
+        response = complete_chat(
+            "market_taxonomy", client, max_output_tokens=100, temperature=0,
             messages=[{"role": "user", "content": prompt}],
             response_format={"type": "json_object"},
         )

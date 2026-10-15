@@ -103,6 +103,20 @@ def _reset_rate_limit_module_state():
 
 
 @pytest.fixture(autouse=True)
+def _llm_budget_ledger_in_memory():
+    """#11042 slice 3: every LLM call books against a budget ledger before it is
+    sent. Production's ledger is Redis, which a unit test does not have — and a
+    refused booking falls the call back exactly like a provider outage, so a
+    mocked-client test would silently test its fallback. Each test gets a fresh
+    in-process ledger instead; nothing carries spend from one test to the next."""
+    from app.services import llm_request as _llm_request
+
+    _llm_request.set_ledger(_llm_request.MemoryBudgetLedger())
+    yield
+    _llm_request.set_ledger(None)
+
+
+@pytest.fixture(autouse=True)
 def _reset_live_blend_pending_handoff():
     """#9462 review: a WS consumer run leaves its owed blend stamps for the next
     run of its source in a process-global hand-off. In a suite the "next run"

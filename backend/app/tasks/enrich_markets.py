@@ -18,7 +18,8 @@ from typing import Any
 import httpx
 from sqlalchemy import select, update, func
 
-from app.services.llm_models import chat_request_kwargs, estimate_cost_usd, resolve_model
+from app.services.llm_models import resolve_model
+from app.services.llm_request import JobBudget, LLMCallRefused, complete_chat, complete_chat_detailed
 from app.tasks.base import get_task_session
 from app.utils.futures_market_snapshot import reader_change_24h  # #10248
 from app.utils.image_dimensions import delivered_dimensions
@@ -61,6 +62,8 @@ DISCOVER_LLM_SCHEMA_VERSION = 1
 #: generates nothing (CU-NEXT's named tell).
 CU_WRITER_REV = 6
 CU_V2_SCHEMA_VERSION = 2
+#: Per-run spend ceiling for ``enrich_cu_v2_profiles`` (USD).
+CU_V2_COST_CAP_USD = 30.0
 # How long a CU v2 profile keeps ownership of the shared key without being
 # re-tagged. The v2 writer refreshes its own rows every ~24h, so this only
 # fires if the v2 beat is genuinely dead — at which point v1 reclaiming the
@@ -984,8 +987,8 @@ async def enrich_market_hooks(limit: int = 50):
             )
 
             try:
-                response = client.chat.completions.create(
-                    **chat_request_kwargs("hooks", max_output_tokens=150, temperature=0.7),
+                response = complete_chat(
+                    "hooks", client, max_output_tokens=150, temperature=0.7,
                     messages=[{"role": "user", "content": prompt}],
                 )
                 # FAIL CLOSED, exit 2 of 2: the model is allowed to answer "the evidence
@@ -1210,15 +1213,15 @@ async def enrich_discover_llm_metadata(limit: int = 100):
             )
 
             try:
-                request = chat_request_kwargs("discover_metadata", max_output_tokens=350, temperature=0.1)
-                response = client.chat.completions.create(
-                    **request,
+                result = complete_chat_detailed(
+                    "discover_metadata", client, max_output_tokens=350, temperature=0.1,
                     messages=[{"role": "user", "content": prompt}],
                     response_format={"type": "json_object"},
                 )
+                response = result.response
                 content = response.choices[0].message.content or "{}"
                 raw = _json_from_llm_response(content)
-                metadata = _sanitize_discover_llm_metadata(raw, now=now, model=request["model"])
+                metadata = _sanitize_discover_llm_metadata(raw, now=now, model=result.model)
                 next_metadata = dict(market["market_metadata"] or {})
                 next_metadata[DISCOVER_LLM_METADATA_KEY] = metadata
 
@@ -1476,6 +1479,9 @@ async def enrich_cu_v2_profiles(limit: int = 125):
         # model). Unknown is not zero, so the first one stops the batch — the
         # cap below cannot be enforced past it.
         "cost_unknown_responses": 0,
+        # #11042 slice 3: why the request layer refused the next call (job or
+        # shared budget, ledger down, no slot), or None when nothing refused.
+        "budget_stopped": None,
         # --- #1809 C1: quantitative frame. `frames_absent` (the model saw no
         # number in the title) and `frames_dropped_*` (it produced one that is
         # not in the title) are counted apart: the first is coverage, the
@@ -1496,7 +1502,10 @@ async def enrich_cu_v2_profiles(limit: int = 125):
         "markets_subject_unresolved": 0,
         "subject_resolve_errors": 0,
     }
-    COST_CAP_USD = 30.0
+    COST_CAP_USD = CU_V2_COST_CAP_USD
+    # Reserved BEFORE each call, so the cap holds with the worst case of the
+    # call that would cross it; the after-the-fact check below stays as well.
+    job_budget = JobBudget(COST_CAP_USD)
 
     # Phase 1: ONE upfront read — materialize everything as plain dicts.
     # Zero ORM objects survive into the write loop (gotcha #6).
@@ -1602,17 +1611,18 @@ async def enrich_cu_v2_profiles(limit: int = 125):
             )
 
             try:
-                request = chat_request_kwargs("cu_v2", max_output_tokens=500, temperature=0.1)
-                response = client.chat.completions.create(
-                    **request,
+                result = complete_chat_detailed(
+                    "cu_v2", client, max_output_tokens=500, temperature=0.1,
+                    job_budget=job_budget,
                     messages=[{"role": "user", "content": prompt}],
                     response_format={"type": "json_object"},
                 )
+                response = result.response
                 # Account BEFORE reading the answer (CERT-4125): a returned
                 # completion is paid for whether or not its content parses, and a
                 # parse error raising first used to book a paid call as $0.
                 usage = getattr(response, "usage", None)
-                cost = estimate_cost_usd(request["model"], usage)
+                cost = result.cost_usd
                 if cost is None:
                     stats["cost_unknown_responses"] += 1
                 else:
@@ -1686,7 +1696,7 @@ async def enrich_cu_v2_profiles(limit: int = 125):
                 profile = {
                     "schema_version": CU_V2_SCHEMA_VERSION,
                     "writer_rev": CU_WRITER_REV,
-                    "model": request["model"],
+                    "model": result.model,
                     "generated_at": now.isoformat(),
                     "topic": raw.get("topic"),
                     "subtopic": raw.get("subtopic"),
@@ -1732,6 +1742,12 @@ async def enrich_cu_v2_profiles(limit: int = 125):
                         {"sk": story_key, "mid": item["id"]},
                     )
                 stats["generated"] += 1
+            except LLMCallRefused as exc:
+                # #11042 slice 3: the call was never sent. A refusal is a stop,
+                # not an error to retry on the next item.
+                logger.warning("CU v2: %s, stopping", exc)
+                stats["budget_stopped"] = str(exc)[:200]
+                break
             except Exception as exc:
                 logger.warning("CU v2 failed for market %s: %s", item["id"], exc)
                 stats["errors"] += 1
@@ -1974,8 +1990,8 @@ async def generate_discover_comparison_candidates(limit: int = 60):
     )
 
     try:
-        response = client.chat.completions.create(
-            **chat_request_kwargs("comparison_candidates", max_output_tokens=1800, temperature=0.5),
+        response = complete_chat(
+            "comparison_candidates", client, max_output_tokens=1800, temperature=0.5,
             messages=[{"role": "user", "content": prompt}],
             response_format={"type": "json_object"},
         )
@@ -2121,8 +2137,8 @@ async def evaluate_discover_with_llm(limit: int = 50):
         )
 
         try:
-            response = client.chat.completions.create(
-                **chat_request_kwargs("discover_eval", max_output_tokens=2200, temperature=0.2),
+            response = complete_chat(
+                "discover_eval", client, max_output_tokens=2200, temperature=0.2,
                 messages=[{"role": "user", "content": prompt}],
                 response_format={"type": "json_object"},
             )
@@ -2256,9 +2272,9 @@ async def _llm_rephrase_snippet(
     try:
         import openai
 
-        client = openai.OpenAI(api_key=api_key, timeout=30.0)
-        response = client.chat.completions.create(
-            **chat_request_kwargs("snippet_rephrase", max_output_tokens=60, temperature=0.4),
+        client = openai.OpenAI(api_key=api_key, timeout=30.0, max_retries=0)
+        response = complete_chat(
+            "snippet_rephrase", client, max_output_tokens=60, temperature=0.4,
             messages=[
                 {
                     "role": "user",
