@@ -926,9 +926,18 @@ async def test_web_full_on_one_market_reaches_the_189_day_archive(old_client):
     assert rng["archive_coverage"] == "complete"
     assert datetime.fromisoformat(rng["archive_venue_open"]) == OPEN
     assert rng["thinned_outcomes"] == []
-    # The live window is still the requested one: `hours` is reported unchanged.
+    assert rng["live_thinned"] is False
+    # `hours` echoes the request; the live arm reached its lifetime anyway.
     assert body["hours"] == CLIENT_FULL_HOURS
-    assert body["archive_history"]["withheld_overlapping_live"] == 0
+    # Root's executed BLOCK on aa2f140af6: B's two 189-day captures are OUR
+    # evidence, so they draw and each still claims its own interval (+1h, +5h)
+    # exactly as at the 120-day age — never painted over by the archive.
+    b = {o["outcome_id"]: o for o in body["outcomes"]}[ids["b"]]
+    assert _live_times(b) == {OPEN + timedelta(minutes=30), OPEN + timedelta(hours=4, minutes=20)}
+    assert [p["timestamp"] for p in _archive_points(b)] == [
+        (OPEN + timedelta(hours=h)).isoformat() for h in (2, 3, 4, 6, 7, 8, 9, 10, 11)
+    ]
+    assert body["archive_history"]["withheld_overlapping_live"] == 2
 
 
 async def test_web_full_on_the_combined_chart_reaches_the_189_day_archive(
@@ -969,13 +978,19 @@ async def test_web_full_on_the_combined_chart_reaches_the_189_day_archive(
     assert "history_range" not in control
 
     body = (await c.get("/api/futures/multi-history", params={**base, "range": "full"})).json()
-    # The twin's live capture at +3h is outside the live window (189 days ago),
-    # so nothing claims an interval and every archive close stands.
+    # Root's executed BLOCK on aa2f140af6: this test used to assert the twin's
+    # +3h capture DISAPPEARED under Full. It is our own evidence, so Full draws
+    # it and the merged +3h instant keeps its live value (the archive is never
+    # averaged into a capture) — the same answer as at the 120-day age above.
+    a_line = next(o for o in body["outcomes"] if o["name"] == "A 9+")
+    assert [datetime.fromisoformat(p["timestamp"]) for p in a_line["history"]
+            if p.get("bookmaker") == "consensus"] == [OPEN + timedelta(hours=3)]
     assert _arm(body, "A 9+") == [
-        (OPEN + timedelta(hours=h)).isoformat() for h in range(1, 12)
+        (OPEN + timedelta(hours=h)).isoformat() for h in (1, 2, 4, 5, 6, 7, 8, 9, 10, 11)
     ]
+    # B's own 189-day captures claim their intervals (+1h, +5h), as at 120 days.
     assert _arm(body, "B 3+") == [
-        (OPEN + timedelta(hours=h)).isoformat() for h in range(1, 12)
+        (OPEN + timedelta(hours=h)).isoformat() for h in (2, 3, 4, 6, 7, 8, 9, 10, 11)
     ]
     rng = body["history_range"]
     assert rng["window_start_basis"] == "archive_first_interval"
@@ -1029,6 +1044,159 @@ async def test_a_full_read_over_the_cap_keeps_the_first_interval_and_says_it_thi
     assert ids["a"] in full["history_range"]["thinned_outcomes"]
     assert "read_capped_outcomes" not in full["archive_history"]
     assert datetime.fromisoformat(full["history_range"]["window_start"]) == OPEN
+
+
+# ── Full keeps OUR older captures and their precedence (Root, aa2f140af6) ──
+#
+# Root executed aa2f140af6 on this exact fixture: B's two 189-day captures drew
+# at `hours=4800` and VANISHED at the web's real Full request, with archive
+# intervals painted over the span they had claimed. The test below is Root's
+# control VERBATIM (683-ROOT-aa2-FULL-OLDER-LIVE-CONTROL.py); the rest pin the
+# repair's other arms: native, the window's basis when live predates the
+# archive, the bounded (thinned) read, and an unchanged in-window response.
+
+
+def _live_times(history_outcome):
+    return {
+        datetime.fromisoformat(p["timestamp"]) for p in history_outcome["history"]
+        if p.get("provenance") is None and p.get("bookmaker") != "settlement"
+    }
+
+
+async def test_root_full_retains_older_live_forecasts_and_overlap(old_client):
+    c, ids = old_client
+    url = f"/api/futures/{ids['market']}/history"
+    def live_times(body):
+        b = next(o for o in body['outcomes'] if o['outcome_id']==ids['b'])
+        return {datetime.fromisoformat(p['timestamp']) for p in b['history']
+                if p.get('provenance') is None and p.get('bookmaker') != 'settlement'}
+    expected = {OPEN+timedelta(minutes=30), OPEN+timedelta(hours=4,minutes=20)}
+    wide = await c.get(url, params={'hours':4800,'top_n':50})
+    assert wide.status_code==200,wide.text
+    assert expected.issubset(live_times(wide.json())), 'positive control: existing old live observations must be drawable'
+    full = await c.get(url, params={'hours':4320,'top_n':50,'range':'full'})
+    assert full.status_code==200,full.text
+    assert expected.issubset(live_times(full.json())), 'Full hides older live forecasts that the ordinary wide reader can draw'
+
+
+async def test_native_full_keeps_older_live_captures_and_their_intervals(old_client):
+    c, ids = old_client
+    url = f"/api/futures/{ids['market']}/probability-timeline"
+    base = {"hours": CLIENT_FULL_HOURS, "top": 50}
+    control = (await c.get(url, params=base)).json()
+    assert not any("B 3+" in e.get("outcomes", {}) for e in control.get("timeline", [])), (
+        "control: the 4320h window alone reaches none of B's 189-day evidence"
+    )
+    body = (await c.get(url, params={**base, "range": "full"})).json()
+    b_marks = [e["timestamp"] for e in body["timeline"] if "B 3+" in e.get("archive", {})]
+    # Live at +0:30 and +4:20 claim the +1h and +5h intervals, so neither is an
+    # archive value; the gap between and everything after stand.
+    assert (OPEN + timedelta(hours=1)).isoformat() not in b_marks
+    assert (OPEN + timedelta(hours=5)).isoformat() not in b_marks
+    assert {(OPEN + timedelta(hours=h)).isoformat() for h in (2, 3, 6, 7, 8, 9, 10, 11)} <= set(b_marks)
+    live_b = [e["timestamp"] for e in body["timeline"]
+              if "B 3+" in e.get("outcomes", {}) and "B 3+" not in e.get("archive", {})]
+    assert OPEN.isoformat() in live_b, "B's +0:30 capture draws, unmarked, in its own bucket"
+    assert body["archive_history"]["withheld_overlapping_live"] == 2
+    assert body["history_range"]["live_thinned"] is False
+    assert body["hours"] == CLIENT_FULL_HOURS
+
+
+async def test_full_starts_at_our_first_capture_when_it_predates_the_archive(
+    old_client, old_world
+):
+    """Nothing is assumed about the question's open: the evidence says it."""
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+    from app.models.models import FuturesOddsSnapshot
+
+    c, ids = old_client
+    engine, _ = old_world
+    early = OPEN - timedelta(hours=2)
+    async with AsyncSession(engine, expire_on_commit=False) as s:
+        async with s.begin():
+            s.add(FuturesOddsSnapshot(
+                outcome_id=ids["b"], bookmaker="kalshi", probability=0.48,
+                yes_bid=0.47, yes_ask=0.49, last_price=0.48, captured_at=early,
+            ))
+    body = (await c.get(f"/api/futures/{ids['market']}/history", params={
+        "hours": CLIENT_FULL_HOURS, "top_n": 50, "range": "full",
+    })).json()
+    rng = body["history_range"]
+    assert rng["window_start_basis"] == "live_first_capture"
+    assert datetime.fromisoformat(rng["window_start"]) == early
+    b = {o["outcome_id"]: o for o in body["outcomes"]}[ids["b"]]
+    assert early in _live_times(b)
+
+
+async def test_a_thinned_older_live_read_still_claims_the_instants_it_skipped(
+    old_client, old_world, monkeypatch
+):
+    """Bounded by instant, span-keeping, and live keeps the span it holds."""
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+    from app.models.models import FuturesOddsSnapshot
+    from app.utils import full_range_live
+
+    c, ids = old_client
+    engine, _ = old_world
+    skipped = OPEN + timedelta(hours=2, minutes=30)
+    async with AsyncSession(engine, expire_on_commit=False) as s:
+        async with s.begin():
+            s.add(FuturesOddsSnapshot(
+                outcome_id=ids["b"], bookmaker="kalshi", probability=0.53,
+                yes_bid=0.52, yes_ask=0.54, last_price=0.53, captured_at=skipped,
+            ))
+    url = f"/api/futures/{ids['market']}/history"
+    params = {"hours": CLIENT_FULL_HOURS, "top_n": 50, "range": "full"}
+
+    def _b(body):
+        return {o["outcome_id"]: o for o in body["outcomes"]}[ids["b"]]
+
+    whole = (await c.get(url, params=params)).json()
+    assert _live_times(_b(whole)) == {
+        OPEN + timedelta(minutes=30), skipped, OPEN + timedelta(hours=4, minutes=20)
+    }, "control: under the cap every older instant is read"
+    assert [p["timestamp"] for p in _archive_points(_b(whole))] == [
+        (OPEN + timedelta(hours=h)).isoformat() for h in (2, 4, 6, 7, 8, 9, 10, 11)
+    ]
+    assert whole["history_range"]["live_thinned"] is False
+
+    # Three instants, cap 1: rank stride 3 keeps the first and the last only.
+    monkeypatch.setattr(full_range_live, "OLDER_LIVE_INSTANT_CAP", 1)
+    thin = (await c.get(url, params=params)).json()
+    assert _live_times(_b(thin)) == {
+        OPEN + timedelta(minutes=30), OPEN + timedelta(hours=4, minutes=20)
+    }
+    assert thin["history_range"]["live_thinned"] is True
+    # +2:30 was not drawn, but our capture still holds that span: the archive
+    # does not fill +3h (or anything else inside +0:30..+4:20) in its place.
+    assert [p["timestamp"] for p in _archive_points(_b(thin))] == [
+        (OPEN + timedelta(hours=h)).isoformat() for h in (6, 7, 8, 9, 10, 11)
+    ]
+    # Oldest capture kept, never tail-cut; the window still opens on the archive.
+    assert datetime.fromisoformat(thin["history_range"]["window_start"]) == OPEN
+
+
+async def test_full_on_a_window_that_already_holds_every_capture_changes_no_live_point(
+    client,
+):
+    """The ordinary window already reaches every capture: Full adds nothing live."""
+    c, ids = client
+    url = f"/api/futures/{ids['market']}/history"
+    plain = (await c.get(url, params={"hours": HOURS, "top_n": 50})).json()
+    full = (await c.get(url, params={"hours": HOURS, "top_n": 50, "range": "full"})).json()
+    for oid in (ids["a"], ids["b"]):
+        p = {o["outcome_id"]: o for o in plain["outcomes"]}[oid]
+        f = {o["outcome_id"]: o for o in full["outcomes"]}[oid]
+        assert [x for x in p["history"] if x.get("provenance") is None] == [
+            x for x in f["history"] if x.get("provenance") is None
+        ]
+        assert _archive_points(p) == _archive_points(f)
+    # The requested window already opens before every capture and interval.
+    assert full["history_range"]["window_start_basis"] == "hours"
+    assert full["history_range"]["live_thinned"] is False
+    assert full["actual_hours"] == plain["actual_hours"]
 
 
 async def test_a_non_kalshi_board_is_untouched(client):

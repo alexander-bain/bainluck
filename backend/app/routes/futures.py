@@ -52,11 +52,17 @@ from app.utils.futures_verified_title import (
 )
 from app.utils.generic_market_history import captures_are_coarse, captures_cover_cell
 from app.utils.kalshi_archive_reader import (
+    BASIS_HOURS as ARCHIVE_BASIS_HOURS,
     LIFETIME_FLOOR as ARCHIVE_LIFETIME_FLOOR,
     history_point as archive_history_point,
     load_archive_history,
     timeline_mark as archive_timeline_mark,
     wants_full_range,
+)
+from app.utils.full_range_live import (
+    BASIS_LIVE as FULL_RANGE_BASIS_LIVE,
+    hours_since as full_range_hours_since,
+    read_older_live,
 )
 from app.utils.kalshi_empty_book import KALSHI_BOOKMAKER
 from app.utils.futures_unsupported_price import (
@@ -3924,6 +3930,21 @@ async def get_multi_market_history(
         .order_by(FuturesOddsSnapshot.captured_at)
     )
     snap_result = await db.execute(snapshot_query)
+    _multi_rows = list(snap_result.scalars().all())
+    # #683 — `range=full` reaches OUR captures' lifetime on the combined chart
+    # too (`full_range_live`): a twin's old live capture is evidence the archive
+    # must yield to, not an instant for it to fill. Prepended before the support
+    # filter; the window then starts at the first capture and no tier runs.
+    full_range = wants_full_range(history_range)
+    older_live = None
+    _live_window_start = cutoff
+    _live_basis = ARCHIVE_BASIS_HOURS
+    if full_range:
+        older_live = await read_older_live(db, all_outcome_ids, before=cutoff)
+        if older_live.rows:
+            _multi_rows = older_live.rows + _multi_rows
+            _live_window_start = older_live.first
+            _live_basis = FULL_RANGE_BASIS_LIVE
     # #5898, and this endpoint is the sharper half of it. It merges outcomes
     # ACROSS source markets and averages every book's row at one timestamp into
     # one consensus point, so a refuted Polymarket row here does not just draw a
@@ -3933,7 +3954,7 @@ async def get_multi_market_history(
     _multi_outcomes = [o for m in markets for o in m.outcomes]
     _multi_field_ids = _exclusive_field_outcome_ids(markets)
     snapshots = _drop_unsupported_snapshot_points(
-        list(snap_result.scalars().all()), _multi_outcomes, _multi_field_ids
+        _multi_rows, _multi_outcomes, _multi_field_ids
     )
 
     # ── UX-1052 item 7 — THE SAME SPARSE-WINDOW WIDENING ITS SIBLING HAS ──
@@ -3954,7 +3975,7 @@ async def get_multi_market_history(
     # page charts a stage — went dark while the single-market page charted the
     # very same market fine. Same tiers, same "only if it actually finds more"
     # rule, so a genuinely empty stage still reports empty.
-    if len(snapshots) < _EXTEND_TIERS[0][0]:
+    if not full_range and len(snapshots) < _EXTEND_TIERS[0][0]:
         for threshold, extended_hours in _EXTEND_TIERS:
             if len(snapshots) >= threshold or extended_hours <= hours:
                 continue
@@ -3973,6 +3994,7 @@ async def get_multi_market_history(
             if len(extended) > len(snapshots):
                 snapshots = extended
                 hours = extended_hours
+                _live_window_start = datetime.now(timezone.utc) - timedelta(hours=hours)
 
     # Build outcome_id -> merge_key lookup
     oid_to_merge_key: dict[int, str] = {}
@@ -3988,7 +4010,6 @@ async def get_multi_market_history(
     # instant that already holds any live value keeps it: the archive fills the
     # instants live data never reached and is never averaged into a capture.
     _kalshi_ids = [o.id for m in markets if m.source == "kalshi" for o in m.outcomes]
-    full_range = wants_full_range(history_range)
     archive = await load_archive_history(
         db,
         SimpleNamespace(source="kalshi" if _kalshi_ids else None, id=primary_market.id),
@@ -3996,11 +4017,11 @@ async def get_multi_market_history(
         since=datetime.now(timezone.utc) - timedelta(hours=max(hours, _EXTEND_TIERS[-1][1])),
         full_range=full_range,
     )
-    _live_window_start = datetime.now(timezone.utc) - timedelta(hours=hours)
     _archive_by_outcome = archive.served(
         ARCHIVE_LIFETIME_FLOOR if full_range else _live_window_start,
         claims=snapshots,
         outcome_ids=_kalshi_ids,
+        claim_spans=older_live.spans if older_live is not None else None,
     )
 
     # Group snapshots: merge_key -> captured_at -> [probabilities]
@@ -4086,6 +4107,8 @@ async def get_multi_market_history(
                 _live_window_start,
                 archive_rows_served,
                 [oid for oid in _kalshi_ids if oid_to_merge_key.get(oid) in _served_merge_keys],
+                live_basis=_live_basis,
+                live_thinned=bool(older_live and older_live.thinned),
             )}
             if full_range
             else {}
@@ -7406,6 +7429,21 @@ async def get_probability_timeline(
     )
 
     result = await db.execute(snapshot_query)
+    _timeline_rows = list(result.scalars().all())
+    # #683 — `range=full` reaches OUR captures' lifetime as well as the archive's
+    # (`full_range_live`), never on an in-play market, whose window is pinned to
+    # the start for its own reason (#1138). Prepended before the support filter
+    # so every rule below runs on the older rows unchanged.
+    full_range = wants_full_range(history_range) and not clamped_to_start
+    older_live = None
+    _live_basis = None
+    if full_range:
+        older_live = await read_older_live(db, all_outcome_ids, before=cutoff)
+        if older_live.rows:
+            _timeline_rows = older_live.rows + _timeline_rows
+            cutoff = older_live.first
+            actual_hours = full_range_hours_since(cutoff, now)
+            _live_basis = FULL_RANGE_BASIS_LIVE
     # #5898. This endpoint takes the MEDIAN across bookmakers per bucket, which
     # makes an unsupported row worse than one bad line: a demoted source still
     # decides a median by position, so a refused Polymarket midpoint can BE the
@@ -7413,7 +7451,7 @@ async def get_probability_timeline(
     # sparse decision as `/history`.
     _field_ids = _exclusive_field_outcome_ids([market])
     snapshots = _drop_unsupported_snapshot_points(
-        list(result.scalars().all()), charted_outcomes, _field_ids
+        _timeline_rows, charted_outcomes, _field_ids
     )
 
     # #7351 — the venue's own history for this market's own contracts, from the
@@ -7423,12 +7461,14 @@ async def get_probability_timeline(
     # capture already speaks for. With a cold cache this is `[]` and every line
     # below behaves exactly as it did.
     venue = await _load_generic_venue_history(market, charted_outcomes, _field_ids, db)
-    venue_rows = venue.in_window(cutoff, snapshots, all_outcome_ids)
+    venue_rows = venue.in_window(
+        ARCHIVE_LIFETIME_FLOOR if full_range else cutoff, snapshots, all_outcome_ids
+    )
+    if older_live is not None:
+        venue_rows = older_live.withhold(venue_rows)
     # #683 — the archive store, read once over the widest window the tiers below
     # may adopt and cut to the served one after. Kalshi markets only. `range=full`
-    # reads its whole lifetime instead — never on an in-play market, whose
-    # window is pinned to the start for its own reason (#1138).
-    full_range = wants_full_range(history_range) and not clamped_to_start
+    # reads its whole lifetime instead.
     archive = await load_archive_history(
         db, market, all_outcome_ids,
         since=min(cutoff, now - timedelta(hours=2160)),
@@ -7467,7 +7507,8 @@ async def get_probability_timeline(
     # for in-play markets (#1138): those are pinned to the event start above and
     # are snapshot-dense, so extending would only re-introduce the pre-event dead
     # zone the clamp exists to remove.
-    _TIMELINE_EXTEND_TIERS = [] if clamped_to_start else [
+    # And under `range=full`: the window already starts at the first capture.
+    _TIMELINE_EXTEND_TIERS = [] if clamped_to_start or full_range else [
         (20, 720),   # <20 snapshots -> try 30 days
         (10, 2160),  # <10 snapshots -> try 90 days
     ]
@@ -7510,6 +7551,7 @@ async def get_probability_timeline(
         ARCHIVE_LIFETIME_FLOOR if full_range else window_start,
         claims=list(snapshots) + list(venue_rows),
         outcome_ids=all_outcome_ids,
+        claim_spans=older_live.spans if older_live is not None else None,
     )
     if not snapshots and not venue_rows and not archive_by_outcome:
         return await _finish_verified_timeline(db, market, {
@@ -7880,7 +7922,12 @@ async def get_probability_timeline(
         # #683 — additive, and only when the reader asked for the whole history.
         **(
             {"history_range": archive.range_block(
-                window_start, archive_rows_served, top_outcome_ids
+                window_start, archive_rows_served, top_outcome_ids,
+                live_basis=_live_basis or ARCHIVE_BASIS_HOURS,
+                venue_first=min(
+                    (r.captured_at for r in _venue_rows_served(venue_cells)), default=None
+                ),
+                live_thinned=bool(older_live and older_live.thinned),
             )}
             if full_range
             else {}
@@ -8496,6 +8543,22 @@ async def get_futures_history(
     )
     result = await db.execute(snapshot_query)
     field_rows = list(result.scalars().all())
+    # #683 — `range=full` reaches OUR captures' lifetime too, not only the
+    # archive's (`full_range_live`). The older instants are prepended to the same
+    # field rows, so every rule below runs on them unchanged, and the window then
+    # starts at the first capture drawn. No extend tier runs under full: nothing
+    # older than the first capture exists for one to find.
+    older_live = None
+    _live_basis = None
+    if full_range:
+        older_live = await read_older_live(
+            db, [o.id for o in market.outcomes], before=cutoff
+        )
+        if older_live.rows:
+            field_rows = older_live.rows + field_rows
+            cutoff = older_live.first
+            actual_hours = full_range_hours_since(cutoff)
+            _live_basis = FULL_RANGE_BASIS_LIVE
     # #5898 — filtered BEFORE the sparse-window decision below, never after. The
     # tiers ask "does this outcome have enough points to draw", and a refused
     # point is not a point: counting it can leave a chart thin rather than widen
@@ -8593,7 +8656,15 @@ async def get_futures_history(
     # are drawn" is exactly the drift this bug was: two populations that must
     # agree, kept in two places. One selection, one place.
     _field_outcome_ids = [o.id for o in charted_outcomes]
-    field_venue_rows = venue.in_window(cutoff, _supported_field, _field_outcome_ids)
+    # `range=full`: the venue's own history is read from the lifetime floor, so a
+    # venue point older than our first capture still draws; under a thinned live
+    # read, one inside a span our captures hold yields to them (rule 4).
+    field_venue_rows = venue.in_window(
+        ARCHIVE_LIFETIME_FLOOR if full_range else cutoff,
+        _supported_field, _field_outcome_ids,
+    )
+    if older_live is not None:
+        field_venue_rows = older_live.withhold(field_venue_rows)
     # #683 — the archive store's intervals for the whole field, read ONCE over
     # the widest window the tiers below may adopt, then cut to the window that
     # is actually served. Kalshi markets only; every other board issues no query.
@@ -8630,7 +8701,11 @@ async def get_futures_history(
     for threshold, extended_hours in _EXTEND_TIERS:
         # #7351: an ADMITTED venue observation counts toward "is this sparse" —
         # #7936 makes the count keep that word, so a refused series counts zero.
-        if (len(snapshots) + venue_density) < threshold and extended_hours > actual_hours:
+        if (
+            not full_range
+            and (len(snapshots) + venue_density) < threshold
+            and extended_hours > actual_hours
+        ):
             extended_cutoff = datetime.now(timezone.utc) - timedelta(hours=extended_hours)
             ext_query = (
                 select(FuturesOddsSnapshot)
@@ -8886,12 +8961,14 @@ async def get_futures_history(
     # raw scale (`_venue_scale_refusal`, asked of the archive rows on their own).
     # Live evidence wins actual overlap only: an interval holding a capture or a
     # served venue point is withheld; the rest of the timeline stands.
-    # `range=full`: the archive arm is cut nowhere in time (rule 6 in the reader);
-    # the live arms above keep the requested window exactly.
+    # `range=full`: the archive arm is cut nowhere in time (rule 6 in the reader),
+    # and the live arms above reach their own lifetime, so live keeps precedence
+    # over every interval it actually holds, however old.
     field_archive_by_outcome = archive.served(
         ARCHIVE_LIFETIME_FLOOR if full_range else _archive_window,
         claims=list(_archive_claims) + list(field_venue_rows),
         outcome_ids=_field_outcome_ids,
+        claim_spans=older_live.spans if older_live is not None else None,
     )
     archive_by_outcome: dict[int, list] = {
         oid: rows for oid, rows in field_archive_by_outcome.items() if oid in charted_ids
@@ -9094,7 +9171,10 @@ async def get_futures_history(
     # #683 — additive, and only when the reader asked for the whole history.
     if full_range:
         response["history_range"] = archive.range_block(
-            _archive_window, archive_rows_served, charted_ids
+            _archive_window, archive_rows_served, charted_ids,
+            live_basis=_live_basis or ARCHIVE_BASIS_HOURS,
+            venue_first=min((r.captured_at for r in venue_rows_served), default=None),
+            live_thinned=bool(older_live and older_live.thinned),
         )
 
     return response

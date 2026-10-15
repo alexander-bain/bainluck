@@ -624,6 +624,162 @@ class TestFullRange:
         assert src.count("full_range=full_range,") == 3
         assert src.count('"history_range"') >= 3
 
+    # ── Root's executed BLOCK on aa2f140af6: Full keeps OUR older captures ──
+
+    def test_every_chart_route_reads_its_older_live_captures_under_full(self):
+        """Archive-only Full is the defect: each route's live arm reaches its
+        lifetime and hands the thinned spans to the archive's overlap rule."""
+        src = (APP / "routes" / "futures.py").read_text()
+        assert src.count("await read_older_live(") == 3
+        assert src.count("claim_spans=older_live.spans if older_live is not None else None") == 3
+        assert src.count("live_thinned=bool(older_live and older_live.thinned)") == 3
+
+    def test_window_starts_at_our_first_capture_when_live_is_oldest(self):
+        live = self.T0
+        row = _row_at(1, self.T0 + timedelta(hours=5))
+        block = self._history().range_block(live, [row], [1], live_basis="live_first_capture")
+        assert block["window_start"] == live.isoformat()
+        assert block["window_start_basis"] == "live_first_capture"
+        assert block["live_thinned"] is False
+
+    def test_an_older_venue_point_opens_the_window_and_an_older_interval_beats_it(self):
+        live = self.T0 + timedelta(days=2)
+        venue = self.T0 + timedelta(days=1)
+        block = self._history().range_block(live, [], [1], venue_first=venue)
+        assert (block["window_start"], block["window_start_basis"]) == (
+            venue.isoformat(), "venue_first_observation"
+        )
+        row = _row_at(1, self.T0 + timedelta(hours=1))
+        block = self._history().range_block(live, [row], [1], venue_first=venue)
+        assert block["window_start_basis"] == "archive_first_interval"
+
+    def test_live_thinned_is_reported(self):
+        assert self._history().range_block(self.T0, [], [1], live_thinned=True)["live_thinned"] is True
+
+
+class TestSpanClaims:
+    """``full_range_live`` rule 4: a thinned live read still holds its spans."""
+
+    T0 = datetime(2026, 4, 1, tzinfo=UTC)
+
+    def _history(self, ends):
+        h = reader.ArchiveHistory()
+        h.rows = {1: [_row_at(1, self.T0 + timedelta(hours=x)) for x in ends]}
+        h.state = "warm"
+        return h
+
+    def test_an_interval_touching_a_span_yields_and_one_outside_stands(self):
+        h = self._history([1, 2, 3, 4, 5])
+        span = (self.T0 + timedelta(hours=1, minutes=30), self.T0 + timedelta(hours=3))
+        served = h.served(self.T0, [], [1], claim_spans={1: [span]})
+        # +2h (1h–2h) and +3h (2h–3h) lie in the span; +4h starts AT its end.
+        assert [r.captured_at for r in served[1]] == [
+            self.T0 + timedelta(hours=1), self.T0 + timedelta(hours=5)
+        ]
+        assert h.claimed_by_live == 3
+
+    def test_another_outcomes_span_claims_nothing(self):
+        h = self._history([1, 2])
+        span = (self.T0, self.T0 + timedelta(hours=9))
+        assert len(h.served(self.T0, [], [1], claim_spans={2: [span]})[1]) == 2
+
+    def test_no_spans_is_exactly_the_row_rule(self):
+        h = self._history([1, 2, 3])
+        live = [_live(1, self.T0 + timedelta(hours=1, minutes=40))]
+        assert h.served(self.T0, live, [1]) == h.served(self.T0, live, [1], claim_spans={})
+
+    def test_venue_points_inside_a_span_are_withheld(self):
+        from app.utils.full_range_live import OlderLive
+
+        older = OlderLive(thinned=True, spans={
+            1: [(self.T0 + timedelta(hours=1), self.T0 + timedelta(hours=3))]
+        })
+        rows = [_live(1, self.T0 + timedelta(hours=h)) for h in (0, 1, 2, 3, 4)]
+        rows.append(_live(2, self.T0 + timedelta(hours=2)))
+        kept = older.withhold(rows)
+        assert [(r.outcome_id, r.captured_at.hour) for r in kept] == [(1, 0), (1, 4), (2, 2)]
+        assert OlderLive().withhold(rows) == rows
+
+
+class _OlderLiveDb:
+    """Answers the instant query from canned rows and records every statement."""
+
+    def __init__(self, instants, n):
+        self.instants, self.n = instants, n
+        self.calls: list = []
+
+    async def execute(self, stmt, params=None):
+        self.calls.append((stmt, params))
+        if stmt is _full_range_live()._INSTANTS_SQL:
+            return _FakeResult([SimpleNamespace(captured_at=t, n=self.n) for t in self.instants])
+        if stmt is _full_range_live()._SPANS_SQL:
+            return _FakeResult([SimpleNamespace(
+                outcome_id=1, lo=self.instants[0], hi=self.instants[-1],
+            )])
+        return _Scalars([])
+
+
+class _Scalars:
+    def __init__(self, rows):
+        self._rows = rows
+
+    def scalars(self):
+        return self
+
+    def all(self):
+        return self._rows
+
+
+def _full_range_live():
+    from app.utils import full_range_live
+
+    return full_range_live
+
+
+class TestReadOlderLive:
+    T0 = datetime(2026, 4, 1, tzinfo=UTC)
+
+    async def test_under_the_cap_every_older_capture_is_read_and_nothing_is_thinned(self):
+        frl = _full_range_live()
+        db = _OlderLiveDb([self.T0, self.T0 + timedelta(hours=1)], n=2)
+        out = await frl.read_older_live(db, [2, 1, 1], before=self.T0 + timedelta(days=1))
+        assert [c[0] for c in db.calls[:1]] == [frl._INSTANTS_SQL]
+        assert db.calls[0][1]["ids"] == [1, 2]
+        assert db.calls[0][1]["cap"] == frl.OLDER_LIVE_INSTANT_CAP
+        assert len(db.calls) == 2  # instants + rows; no span read
+        rows_sql = str(db.calls[1][0].compile(compile_kwargs={"literal_binds": False}))
+        assert "captured_at IN" not in rows_sql
+        assert out.thinned is False and out.spans == {} and out.instants == 2
+
+    async def test_over_the_cap_only_the_strided_instants_are_read_and_spans_are_asked(self):
+        frl = _full_range_live()
+        picked = [self.T0, self.T0 + timedelta(hours=3)]
+        db = _OlderLiveDb(picked, n=7)
+        out = await frl.read_older_live(db, [1], before=self.T0 + timedelta(days=1), cap=2)
+        assert out.thinned is True and out.instants == 7
+        rows_sql = str(db.calls[1][0])
+        assert "captured_at IN" in rows_sql
+        assert db.calls[2][0] is frl._SPANS_SQL and db.calls[2][1]["k"] == 4  # ceil(7/2)
+        assert out.spans == {1: [(picked[0], picked[-1])]}
+
+    async def test_no_older_instant_issues_one_statement(self):
+        frl = _full_range_live()
+        db = _OlderLiveDb([], n=0)
+        out = await frl.read_older_live(db, [1], before=self.T0)
+        assert len(db.calls) == 1 and out.rows == [] and out.first is None
+
+    async def test_no_outcomes_issues_nothing(self):
+        frl = _full_range_live()
+        db = _OlderLiveDb([], n=0)
+        assert (await frl.read_older_live(db, [], before=self.T0)).rows == []
+        assert db.calls == []
+
+    def test_the_skeleton_keeps_both_ends_and_strides_by_rank(self):
+        sql = str(_full_range_live()._INSTANTS_SQL)
+        assert "s.rn = 1 OR s.rn = s.n" in sql
+        assert "CEIL(s.n::numeric / :cap)" in sql
+        assert "captured_at < :before" in sql
+
 
 # ── the forecast path stays dormant and the staged bank's SQL is unchanged ──
 
