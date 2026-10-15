@@ -84,6 +84,28 @@ For v3, **the current coordinator** owns scope, bottleneck decisions and the one
 
 ## Testing and code boundaries
 
+For the queued #994/#683/#9483 product fixes, #11075 adds early feedback before
+publication. Once #11076 and #11077 are integrated, validate frontend dependencies
+with `bash scripts/setup-worktree-deps.sh "$PWD" /path/to/compatible-worktree`
+when frontend gates are needed, then run `bash tools/pre-offer-gate.sh origin/master HEAD`
+on the clean committed candidate. Borrow only an install the helper validates;
+otherwise use an exact-lock private install, never `npm ci` through a shared
+dependency symlink. See [the supported early-check scope](https://github.com/alexander-bain/bainluck/blob/fdb317b01456cddf24e859a04ec503ef8c263631/docs/pre-offer-checks.md).
+The offer records the builder, exact head/base, early-check receipt, dependency
+setup result/source and responsible non-author reviewer. These checks supplement
+focused product gates, hosted CI and full exact-composed-tree CI before the
+Integrator pushes master; they do not establish delivery or acceptance.
+
+Reuse a qualified independent review for the same source and scope instead of
+asking another reviewer to repeat it. Name any additional mandatory review's
+distinct scope; security, product, resource and release responsibilities remain
+separate. Changed relevant inputs require review of that change. Before editing
+an overlapping file, coordinate with its existing claimant: sequence the slices,
+or intentionally stack them with explicit dependency and review boundaries.
+Keep unrelated features independent. Adoption requires one real product offer
+using these checks and an integration/delivery receipt or a named external hold;
+documentation or a tooling PR alone does not complete #11078.
+
 Use focused feedback while implementing, affected build/type/integration checks before merging, and broader regression plus representative user journeys on the actual release candidate. Unknown dependency scope takes the broader path. Test selection and caching must preserve coverage, source identity and failures; fewer tests is not itself a success criterion.
 
 Prefer behavior and shared contract tests. Extend existing test families for the same failure class. Consolidate duplicate checks only with retained coverage identified. Keep DB race tests on real DB semantics and genuine UI tests on their UI runtime. Move independent native logic out of simulator-only tests as the corresponding product change warrants it.
