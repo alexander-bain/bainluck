@@ -12,6 +12,10 @@ and stamped 19:23:33.734Z, origin=throttle, no lock/commit/batch failure, with
 Executes the shipped `_flush_prices` closure and the real refresher; the
 database boundary is faked. Proves ordering and ownership, not production
 latency.
+
+Since the props' own loop (`flush_props`), a prop's price and withdrawal never
+run in the game flush at all; `flush` below runs both loops, one after the
+other, as the consumer's two cadences would.
 """
 
 import asyncio
@@ -79,6 +83,7 @@ def game(monkeypatch, *, churn_leg, batch=None, hold_later_chunk=False):
 
 async def flush(p, n):
     assert await p.ns["flush_prices"](flush_started=1000 + 0.25 * n)
+    assert await p.ns["flush_props"](flush_started=1000 + 0.25 * n)
     await p.ns["catalog_boundary"].join_stamps()
 
 
@@ -123,8 +128,9 @@ async def test_quiet_game_prop_withdrawal_releases_owed_debt(monkeypatch):
 async def test_win_stamp_publishes_before_an_unrelated_later_chunk(monkeypatch, prop_quotes):
     # Within the flush: the committed pair publishes right after its own chunk,
     # not at the flush's tail behind event 2's held write (where the parent's
-    # final arm would at best have reached it). With prop quotes in the batch
-    # the prop's withdrawal matures only after the prop chunk, which follows.
+    # final arm would at best have reached it). The prop's price and its
+    # withdrawal are the props' loop's: neither runs in this flush, and the
+    # withdrawal follows the prop's own price there.
     batch = {1: 0.6, 2: 0.4, 900: 0.1}
     if prop_quotes:
         batch.update({3: 0.3, 4: 0.7})
@@ -135,15 +141,20 @@ async def test_win_stamp_publishes_before_an_unrelated_later_chunk(monkeypatch, 
     try:
         await asyncio.wait_for(p.entered.wait(), 1)
         await settle_until(lambda: 1 in x.published)
-        if prop_quotes:
-            assert ("withdraw", [PROP]) not in p.trace  # still waits for its prices
-        else:
-            assert p.trace.index(("withdraw", [PROP])) < p.trace.index(("write", [900]))
+        assert ("withdraw", [PROP]) not in p.trace
         assert not task.done() and 900 in p.ns["price_buffer"]
     finally:
         p.release.set()
         await asyncio.wait_for(task, 2)
         await p.ns["catalog_boundary"].join_stamps()
+    assert ("withdraw", [PROP]) not in p.trace
+    assert not [ids for kind, ids in p.trace if kind == "write" and PROP in ids]
+    assert await p.ns["flush_props"](flush_started=1000.25)
+    if prop_quotes:
+        assert p.trace.index(("write", [3, 4])) < p.trace.index(("withdraw", [PROP]))
+    else:
+        assert ("withdraw", [PROP]) in p.trace
+    await p.ns["catalog_boundary"].join_stamps()
     assert attempts.count(1) == 1 and not x.r.pending_event_ids()
 
 

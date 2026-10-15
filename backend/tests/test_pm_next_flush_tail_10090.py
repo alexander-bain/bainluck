@@ -17,6 +17,10 @@ Since the post-v5710 residual, a speaking leg follows only ITS OWN event's
 running stamp, and without holding the flush: its book stays buffered and the
 first flush after that stamp returns withdraws it (and re-stamps the event).
 Unknown membership still joins.
+
+Since the props' own loop (`flush_props`), a prop's withdrawal is never the
+game flush's: it follows its own price there and never reads the stamp. The
+game flush neither withdraws a prop nor waits for one.
 """
 
 import asyncio
@@ -90,8 +94,10 @@ async def test_next_event_publishes_while_previous_event_stamp_is_held(monkeypat
 
     async def sequential_flushes():
         assert await p.ns["flush_prices"](flush_started=1000)
+        assert await p.ns["flush_props"]()
         next_price(p)  # input for the successor flush, not a later chunk
         assert await p.ns["flush_prices"](flush_started=1000.25)
+        assert await p.ns["flush_props"]()
 
     task = asyncio.create_task(sequential_flushes())
     try:
@@ -99,7 +105,11 @@ async def test_next_event_publishes_while_previous_event_stamp_is_held(monkeypat
         await settle_until(lambda: 2 in x.published)
         assert 1 not in x.committed
         if scenario == "late_unrelated_prop":
-            assert ("withdraw", [NEXT_PROP]) in p.trace
+            # Withdrawn by the props' loop while event 1's read is held.
+            await settle_until(lambda: any(
+                kind == "withdraw" and NEXT_PROP in ids for kind, ids in p.trace
+            ))
+            assert 1 not in x.committed
     finally:
         held.release.set()
         await asyncio.wait_for(task, 2)
@@ -128,6 +138,8 @@ async def test_a_tail_withdrawal_waits_only_when_the_running_read_can_see_it(
         second = asyncio.create_task(p.ns["flush_prices"](flush_started=1000.25))
         assert await asyncio.wait_for(second, 1)
         if leg == PROP:
+            assert seen == [] and leg in p.books  # not the game flush's
+            assert await asyncio.wait_for(p.ns["flush_props"](), 1)
             assert seen == [([PROP], False)]
         else:
             assert seen == [] and leg in p.books
@@ -149,8 +161,11 @@ async def test_a_tail_withdrawal_waits_only_when_the_running_read_can_see_it(
 
 
 async def test_unknown_stamp_membership_keeps_the_withdrawal_serial(monkeypatch):
-    # The running owner cannot name what it reads (no pending reader): even a
-    # prop withdrawal waits, as before.
+    # The running owner cannot name what it reads (no pending reader): a
+    # speaking leg's withdrawal in the game flush waits, as before. (The real
+    # refresher always names it; only a reader-less double reaches this.) A
+    # prop's withdrawal is the props' loop's and reads no stamp, exactly as
+    # that loop's prop price write never did.
     p, x, attempts = game(monkeypatch, churn_leg=PROP)
     p.books.clear()
     held, first = await held_first_flush(p, x)
@@ -159,23 +174,26 @@ async def test_unknown_stamp_membership_keeps_the_withdrawal_serial(monkeypatch)
         assert await asyncio.wait_for(first, 1)
         p.ns["catalog_boundary"].stamps.events = None
         seen = watch_withdrawals(p, x)
-        p.books[PROP] = (0.01, 0.99)
+        p.books[WIN] = (0.01, 0.99)
         second = asyncio.create_task(p.ns["flush_prices"](flush_started=1000.25))
         for _ in range(50):
             await asyncio.sleep(0)
         assert not second.done() and seen == []
+        p.books[PROP] = (0.01, 0.99)
+        assert await asyncio.wait_for(p.ns["flush_props"](), 1)
+        assert seen == [([PROP], False)]
     finally:
         held.release.set()
         if second is not None:
             await asyncio.wait_for(second, 2)
         await p.ns["catalog_boundary"].join_stamps()
-    assert seen == [([PROP], True)]
+    assert seen == [([PROP], False), ([WIN], True)]
 
 
 async def test_next_events_own_prop_withdrawal_does_not_join_the_held_stamp(monkeypatch):
-    # The early (mature-event) pass: event 2's price and its prop's wide book
-    # are in flush 2. Its prop withdrawal must not wait behind event 1's
-    # held read, and event 2 publishes while it is held.
+    # Event 2's price and its prop's wide book arrive for flush 2. Event 2
+    # publishes while event 1's read is held; the prop's withdrawal is the
+    # props' loop's, and it too goes ahead beside that held read.
     p, x, attempts = game(monkeypatch, churn_leg=PROP)
     p.books.clear()
     add_next_prop(p)
@@ -189,8 +207,11 @@ async def test_next_events_own_prop_withdrawal_does_not_join_the_held_stamp(monk
         second = asyncio.create_task(p.ns["flush_prices"](flush_started=1000.25))
         await settle_until(lambda: 2 in x.published)
         assert await asyncio.wait_for(second, 1)
+        assert seen == []
         # The rig re-arms event 1's prop after every withdrawal; that one
         # also withdraws beside its own event's running read.
+        for _ in range(2):
+            assert await asyncio.wait_for(p.ns["flush_props"](), 1)
         assert seen == [([NEXT_PROP], False), ([PROP], False)]
         assert 1 not in x.committed
     finally:

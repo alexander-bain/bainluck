@@ -242,6 +242,7 @@ async def test_final_drain_joins_the_stamp_it_starts_even_after_price_buffer_emp
             for name in (
                 "flush_task",
                 "standalone_task",
+                "prop_task",
                 "admission_task",
                 "game_run_task",
             )
@@ -304,6 +305,7 @@ async def test_repeated_shutdown_cancel_joins_old_owner_then_still_drains_prices
             for name in (
                 "flush_task",
                 "standalone_task",
+                "prop_task",
                 "admission_task",
                 "game_run_task",
             )
