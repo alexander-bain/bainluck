@@ -8,6 +8,7 @@ from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from statistics import mean, median
+from types import SimpleNamespace
 from typing import Optional, Sequence
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
@@ -3967,6 +3968,26 @@ async def get_multi_market_history(
         for oid in entry["outcome_ids"]:
             oid_to_merge_key[oid] = mk
 
+    # #683 — THE COMBINED CHART'S ARCHIVE ARM. The web evolution view asks this
+    # route whenever more than one market is active, so the archive must reach
+    # it here and not only through the single-id delegation above. Only the
+    # Kalshi markets' outcomes are asked. An interval holding a live capture of
+    # the SAME outcome is withheld (live wins actual overlap only), and a merged
+    # instant that already holds any live value keeps it: the archive fills the
+    # instants live data never reached and is never averaged into a capture.
+    _kalshi_ids = [o.id for m in markets if m.source == "kalshi" for o in m.outcomes]
+    archive = await load_archive_history(
+        db,
+        SimpleNamespace(source="kalshi" if _kalshi_ids else None, id=primary_market.id),
+        _kalshi_ids,
+        since=datetime.now(timezone.utc) - timedelta(hours=max(hours, _EXTEND_TIERS[-1][1])),
+    )
+    _archive_by_outcome = archive.served(
+        datetime.now(timezone.utc) - timedelta(hours=hours),
+        claims=snapshots,
+        outcome_ids=_kalshi_ids,
+    )
+
     # Group snapshots: merge_key -> captured_at -> [probabilities]
     # This naturally averages across sources since different outcome_ids
     # from different source markets map to the same merge_key
@@ -3980,6 +4001,17 @@ async def get_multi_market_history(
             if mk is None:
                 continue
             merged_time_groups[mk][snap.captured_at].append(float(snap.probability))
+
+    merged_archive: dict[str, dict] = defaultdict(dict)
+    for oid, rows in _archive_by_outcome.items():
+        mk = oid_to_merge_key.get(oid)
+        if mk is None:
+            continue
+        for row in rows:
+            if row.captured_at in merged_time_groups.get(mk, {}):
+                continue  # a live value already speaks for this instant
+            merged_archive[mk].setdefault(row.captured_at, row)
+    archive_rows_served: list = []
 
     # Build aggregated history per merged outcome
     outcome_history_list = []
@@ -3998,6 +4030,11 @@ async def get_multi_market_history(
                 "american_odds": probability_to_american(avg_prob) if avg_prob > 0 else None,
                 "bookmaker": "consensus",
             })
+        if merged_archive.get(mk):
+            for row in merged_archive[mk].values():
+                history.append(archive_history_point(row))
+                archive_rows_served.append(row)
+            history.sort(key=lambda pt: _parse_stamp(pt["timestamp"]))
 
         elim = _detect_elimination(history)
         outcome_history_list.append({
@@ -4021,6 +4058,12 @@ async def get_multi_market_history(
         "outcomes": outcome_history_list,
         "round_boundaries": round_boundaries,
         "leaderboard": (primary_market.market_metadata or {}).get("leaderboard"),
+        # #683 — additive, and only when the archive store answered.
+        **(
+            {"archive_history": archive.describe(archive_rows_served)}
+            if archive.state not in ("not_applicable", "absent")
+            else {}
+        ),
     }
 
 

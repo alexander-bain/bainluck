@@ -36,9 +36,18 @@ read back immediately after the commit. A failure inside one outcome rolls
 back only that outcome; earlier outcomes stay committed and accounted for
 (gotcha #42). Nothing is rolled back automatically across outcomes.
 
-RESTORE removes exactly the rows one import inserted: the ids in its own
-``inserted_ids``, which must equal the rows that carry its ``import_id``. Any
-difference refuses the restore. There is no broad delete.
+RESTORE removes exactly the rows one import inserted, and only as they were
+written. The apply reads each inserted interval back INSIDE its inserting
+transaction and records its ``xmin`` (row version) and a content seal (SHA-256
+over every column) in ``inserted_seals``; evidence rows record their ``xmin``
+in ``evidence_versions``. A restore locks the import and every one of its rows
+(``FOR UPDATE``, so a concurrent writer waits or has already committed), then
+refuses unless the rows carrying its ``import_id`` are exactly its recorded ids
+AND each row's version and seal still match. A row changed after the import
+(a corrected value, rewritten lineage, even an identical-content UPDATE) is
+therefore never deleted by it. The delete runs only under those locks, so
+nothing can change between the check and the delete. There is no broad delete
+and no force mode.
 """
 
 from __future__ import annotations
@@ -128,7 +137,7 @@ EVIDENCE_SQL = text(
          :open_ts, :settled, :cutoff, :coverage,
          :fingerprint, :cutoff_inputs, :forecast_cutoff, :cutoff_refusal,
          :plan_forecast_cutoff, :plan_cutoff_refusal, :windows, :owed)
-    RETURNING id
+    RETURNING id, xmin::text AS version
     """
 ).bindparams(
     bindparam("cutoff_inputs", type_=JSONB),
@@ -157,10 +166,58 @@ PROGRESS_SQL = text(
     """
     UPDATE kalshi_archive_imports
     SET inserted_ids = inserted_ids || CAST(:ids AS bigint[]),
-        outcome_ids = array_append(outcome_ids, CAST(:oid AS integer))
+        outcome_ids = array_append(outcome_ids, CAST(:oid AS integer)),
+        inserted_seals = inserted_seals || :seals,
+        evidence_versions = evidence_versions || :evidence
     WHERE id = :import_id AND status = 'applying'
     """
+).bindparams(bindparam("seals", type_=JSONB), bindparam("evidence", type_=JSONB))
+
+#: Every stored column of an interval, in seal order. The seal is computed from
+#: the row AS STORED (read back), never from the values we meant to write.
+SEAL_COLUMNS = (
+    "id",
+    "import_id",
+    "evidence_id",
+    "outcome_id",
+    "market_ticker",
+    "event_ticker",
+    "period_minutes",
+    "interval_start",
+    "interval_end",
+    "venue_settlement_ts",
+    "probability",
+    "price_basis",
+    "volume",
+    "echoed_ticker",
+    "raw_response_sha256",
+    "retrieved_at",
+    "admission_at_plan",
+    "admission_at_apply",
+    "created_at",
 )
+_SEAL_SELECT = ", ".join(SEAL_COLUMNS) + ", xmin::text AS version"
+SEAL_READ_SQL = text(
+    f"SELECT {_SEAL_SELECT} FROM kalshi_archive_intervals WHERE id = ANY(:ids)"
+)
+
+
+def row_seal(row: Any) -> str:
+    """SHA-256 over :data:`SEAL_COLUMNS` of a stored interval row."""
+    import hashlib
+    from decimal import Decimal
+
+    def canon(v: Any) -> Any:
+        if hasattr(v, "isoformat"):
+            return parse_instant(v).isoformat()
+        if isinstance(v, (Decimal, float)):
+            return format(Decimal(str(v)).normalize(), "f")
+        return v
+
+    blob = json.dumps(
+        [canon(getattr(row, c)) for c in SEAL_COLUMNS], separators=(",", ":")
+    )
+    return hashlib.sha256(blob.encode()).hexdigest()
 
 READBACK_SQL = text(
     """
@@ -497,7 +554,7 @@ async def _apply_outcome(
             return out
 
         market = plan["market"]
-        evidence_id = (
+        evidence = (
             await session.execute(
                 EVIDENCE_SQL,
                 {
@@ -531,7 +588,8 @@ async def _apply_outcome(
                     "owed": list(plan.get("owed_windows") or ()),
                 },
             )
-        ).scalar_one()
+        ).one()
+        evidence_id, evidence_version = int(evidence.id), evidence.version
         inserted: list[int] = []
         raced: list[PlannedPoint] = []
         for p, admission in fresh:
@@ -569,8 +627,19 @@ async def _apply_outcome(
                 {"outcome_id": oid, "interval_end": p.interval_end, "reason": "raced"}
                 for p in raced
             )
+        seals = {
+            str(int(r.id)): [r.version, row_seal(r)]
+            for r in (await session.execute(SEAL_READ_SQL, {"ids": inserted})).fetchall()
+        }
         await session.execute(
-            PROGRESS_SQL, {"ids": inserted, "oid": oid, "import_id": import_id}
+            PROGRESS_SQL,
+            {
+                "ids": inserted,
+                "oid": oid,
+                "import_id": import_id,
+                "seals": seals,
+                "evidence": {str(evidence_id): evidence_version},
+            },
         )
         await session.commit()
 
@@ -603,7 +672,7 @@ def _conflict(oid: int, planned: PlannedPoint, prior: Any) -> dict:
 
 RESTORE_READ_SQL = text(
     """
-    SELECT id, status, inserted_ids
+    SELECT id, status, inserted_ids, inserted_seals, evidence_versions
     FROM kalshi_archive_imports
     WHERE import_key = :key
     """
@@ -611,7 +680,21 @@ RESTORE_READ_SQL = text(
 RESTORE_LOCK_SQL = text(
     "SELECT id FROM kalshi_archive_imports WHERE id = :import_id FOR UPDATE"
 )
-RESTORE_ROWS_SQL = text("SELECT id FROM kalshi_archive_intervals WHERE import_id = :import_id")
+RESTORE_ROWS_SQL = text(
+    f"SELECT {_SEAL_SELECT} FROM kalshi_archive_intervals WHERE import_id = :import_id"
+)
+RESTORE_ROWS_LOCK_SQL = text(
+    f"SELECT {_SEAL_SELECT} FROM kalshi_archive_intervals"
+    " WHERE import_id = :import_id ORDER BY id FOR UPDATE"
+)
+RESTORE_EVIDENCE_ROWS_SQL = text(
+    "SELECT id, xmin::text AS version FROM kalshi_archive_outcome_evidence"
+    " WHERE import_id = :import_id ORDER BY id"
+)
+RESTORE_EVIDENCE_LOCK_SQL = text(
+    "SELECT id, xmin::text AS version FROM kalshi_archive_outcome_evidence"
+    " WHERE import_id = :import_id ORDER BY id FOR UPDATE"
+)
 RESTORE_DELETE_SQL = text(
     """
     DELETE FROM kalshi_archive_intervals
@@ -623,6 +706,7 @@ RESTORE_EVIDENCE_SQL = text(
     """
     DELETE FROM kalshi_archive_outcome_evidence ev
     WHERE ev.import_id = :import_id
+      AND ev.id = ANY(:ids)
       AND NOT EXISTS (
           SELECT 1 FROM kalshi_archive_intervals k WHERE k.evidence_id = ev.id
       )
@@ -638,6 +722,35 @@ RESTORE_MARK_SQL = text(
 )
 
 
+def restore_drift(found: Any, rows: list, evidence: list) -> Optional[dict]:
+    """``None`` when the stored rows are exactly what this import wrote; else why not."""
+    recorded = {int(i) for i in (found.inserted_ids or ())}
+    seals = {int(k): v for k, v in (found.inserted_seals or {}).items()}
+    versions = {int(k): v for k, v in (found.evidence_versions or {}).items()}
+    actual = {int(r.id) for r in rows}
+    if actual != recorded:
+        return {
+            "reason": (
+                "rows_not_recorded_by_import"
+                if actual - recorded
+                else "recorded_rows_missing"
+            ),
+            "unrecorded": sorted(actual - recorded)[:50],
+            "missing": sorted(recorded - actual)[:50],
+        }
+    if set(seals) != recorded:
+        return {"reason": "seals_do_not_cover_recorded_rows"}
+    changed_version = [int(r.id) for r in rows if seals[int(r.id)][0] != r.version]
+    changed_content = [int(r.id) for r in rows if seals[int(r.id)][1] != row_seal(r)]
+    if changed_content:
+        return {"reason": "row_content_changed_since_import", "ids": changed_content[:50]}
+    if changed_version:
+        return {"reason": "row_version_changed_since_import", "ids": changed_version[:50]}
+    if {int(e.id): e.version for e in evidence} != versions:
+        return {"reason": "evidence_changed_since_import"}
+    return None
+
+
 async def restore_archive_import(
     import_key: str,
     *,
@@ -645,7 +758,7 @@ async def restore_archive_import(
     allow_applying: bool = False,
     session_factory: Callable[[], Any] = _default_session_factory,
 ) -> dict:
-    """Remove exactly one import's own rows. Dry-run unless ``write``."""
+    """Remove exactly one import's own, unchanged rows. Dry-run unless ``write``."""
     result: dict = {
         "mode": "restore" if write else "dry_run",
         "import_key": import_key,
@@ -667,47 +780,53 @@ async def restore_archive_import(
         result["import_id"] = import_id
         if write:
             await session.execute(RESTORE_LOCK_SQL, {"import_id": import_id})
+            # Re-read under the lock: the record may have moved while we waited.
+            found = (await session.execute(RESTORE_READ_SQL, {"key": import_key})).first()
         if found.status == "restored":
             result["refused"] = "already_restored"
             return result
         if found.status == "applying" and not allow_applying:
             result["refused"] = "import_still_applying"
             return result
-        recorded = {int(i) for i in (found.inserted_ids or ())}
-        actual = {
-            int(r.id)
-            for r in (
-                await session.execute(RESTORE_ROWS_SQL, {"import_id": import_id})
-            ).fetchall()
-        }
-        if actual != recorded:
-            result["refused"] = (
-                "rows_not_recorded_by_import"
-                if actual - recorded
-                else "recorded_rows_missing"
+        params = {"import_id": import_id}
+        rows = (
+            await session.execute(
+                RESTORE_ROWS_LOCK_SQL if write else RESTORE_ROWS_SQL, params
             )
-            result["unrecorded"] = sorted(actual - recorded)[:50]
-            result["missing"] = sorted(recorded - actual)[:50]
+        ).fetchall()
+        evidence = (
+            await session.execute(
+                RESTORE_EVIDENCE_LOCK_SQL if write else RESTORE_EVIDENCE_ROWS_SQL, params
+            )
+        ).fetchall()
+        drift = restore_drift(found, rows, evidence)
+        if drift is not None:
+            result["refused"] = drift.pop("reason")
+            result.update(drift)
             return result
+        recorded = sorted(int(r.id) for r in rows)
         result["would_delete"] = len(recorded)
         if not write:
             return result
         deleted = (
             await session.execute(
-                RESTORE_DELETE_SQL, {"import_id": import_id, "ids": sorted(recorded)}
+                RESTORE_DELETE_SQL, {"import_id": import_id, "ids": recorded}
             )
         ).fetchall()
         if len(deleted) != len(recorded):
             await session.rollback()
             result["refused"] = "delete_count_mismatch"
             return result
-        evidence = (
-            await session.execute(RESTORE_EVIDENCE_SQL, {"import_id": import_id})
+        removed_evidence = (
+            await session.execute(
+                RESTORE_EVIDENCE_SQL,
+                {"import_id": import_id, "ids": [int(e.id) for e in evidence]},
+            )
         ).fetchall()
         await session.execute(RESTORE_MARK_SQL, {"import_id": import_id})
         await session.commit()
         result["deleted"] = len(deleted)
-        result["evidence_deleted"] = len(evidence)
+        result["evidence_deleted"] = len(removed_evidence)
     async with session_factory() as session:
         remaining = (
             await session.execute(RESTORE_ROWS_SQL, {"import_id": import_id})

@@ -545,6 +545,158 @@ async def test_restore_refuses_when_rows_and_record_disagree(world):
     assert await _count(engine, "kalshi_archive_intervals") == 11
 
 
+# ── restore refuses rows changed after the import (Root, WIP38c6 review) ──
+
+
+async def _applied(engine, ids, which="a"):
+    from app.services import kalshi_archive_apply as imp
+
+    r = await _plan(engine, [ids[which]])
+    return await imp.apply_archive_plan(
+        r, expected_digest=r["plan_digest"], write=True, session_factory=_factory(engine)
+    )
+
+
+@pytest.mark.parametrize(
+    "change,reason",
+    [
+        # Root's counterexample shape: a legitimate stored value changed later.
+        ("SET probability = 0.7", "row_content_changed_since_import"),
+        ("SET raw_response_sha256 = repeat('c', 64)", "row_content_changed_since_import"),
+        ("SET admission_at_apply = 'reader_only'", "row_content_changed_since_import"),
+        # Same content, new row version: still not the row this import wrote.
+        ("SET probability = probability", "row_version_changed_since_import"),
+    ],
+)
+async def test_restore_refuses_an_interval_changed_after_the_import(world, change, reason):
+    from app.services import kalshi_archive_apply as imp
+
+    engine, ids = world
+    done = await _applied(engine, ids)
+    target = done["outcomes"][0]["inserted_ids"][0]
+    async with engine.begin() as c:
+        await c.execute(text(f"UPDATE kalshi_archive_intervals {change} WHERE id = :id"),
+                        {"id": target})
+    for write in (False, True):
+        refused = await imp.restore_archive_import(
+            done["import_key"], write=write, session_factory=_factory(engine)
+        )
+        assert refused["refused"] == reason and refused["ids"] == [target], write
+    assert await _count(engine, "kalshi_archive_intervals") == 11
+    async with engine.connect() as c:
+        status = (await c.execute(text("SELECT status FROM kalshi_archive_imports"))).scalar()
+    assert status == "applied"
+
+
+async def test_restore_refuses_changed_evidence(world):
+    from app.services import kalshi_archive_apply as imp
+
+    engine, ids = world
+    done = await _applied(engine, ids)
+    async with engine.begin() as c:
+        await c.execute(text("UPDATE kalshi_archive_outcome_evidence SET coverage = coverage"))
+    refused = await imp.restore_archive_import(
+        done["import_key"], write=True, session_factory=_factory(engine)
+    )
+    assert refused["refused"] == "evidence_changed_since_import"
+    assert await _count(engine, "kalshi_archive_intervals") == 11
+
+
+async def test_an_update_committed_while_restore_waits_is_refused(world):
+    """Interleaved: a writer holds the row, restore queues on it, the writer commits."""
+    import asyncio
+
+    from app.services import kalshi_archive_apply as imp
+
+    engine, ids = world
+    done = await _applied(engine, ids)
+    target = done["outcomes"][0]["inserted_ids"][3]
+    async with engine.connect() as writer:
+        await writer.begin()
+        await writer.execute(
+            text("UPDATE kalshi_archive_intervals SET probability = 0.5 WHERE id = :id"),
+            {"id": target},
+        )
+        task = asyncio.create_task(
+            imp.restore_archive_import(
+                done["import_key"], write=True, session_factory=_factory(engine)
+            )
+        )
+        for _ in range(100):  # until the restore is really queued on the row lock
+            async with engine.connect() as probe:
+                waiting = (await probe.execute(text(
+                    "SELECT COUNT(*) FROM pg_stat_activity WHERE wait_event_type = 'Lock'"
+                    " AND datname = current_database()"
+                ))).scalar_one()
+            if waiting:
+                break
+            await asyncio.sleep(0.05)
+        assert waiting and not task.done()
+        await writer.commit()
+    result = await asyncio.wait_for(task, 10)
+    assert result["refused"] == "row_content_changed_since_import"
+    assert result["ids"] == [target]
+    async with engine.connect() as c:
+        kept = (await c.execute(text(
+            "SELECT probability FROM kalshi_archive_intervals WHERE id = :id"
+        ), {"id": target})).scalar_one()
+    assert float(kept) == 0.5 and await _count(engine, "kalshi_archive_intervals") == 11
+
+
+async def test_restore_holds_its_rows_locked_from_check_to_delete(world):
+    """A writer arriving after the check cannot slip a change in before the delete."""
+    from sqlalchemy.exc import DBAPIError
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+    from app.services import kalshi_archive_apply as imp
+
+    engine, ids = world
+    done = await _applied(engine, ids)
+    target = done["outcomes"][0]["inserted_ids"][0]
+    seen: dict = {}
+
+    class Probing(AsyncSession):
+        async def execute(self, statement, *a, **k):
+            out = await super().execute(statement, *a, **k)
+            if "FOR UPDATE" in str(statement) and "kalshi_archive_intervals" in str(statement):
+                async with engine.connect() as other:
+                    await other.execute(text("SET lock_timeout = '300ms'"))
+                    try:
+                        await other.execute(
+                            text("UPDATE kalshi_archive_intervals SET probability = 0.5"
+                                 " WHERE id = :id"), {"id": target})
+                        seen["blocked"] = False
+                    except DBAPIError as e:
+                        seen["blocked"] = "lock timeout" in str(e).lower() or "55P03" in str(e)
+            return out
+
+    result = await imp.restore_archive_import(
+        done["import_key"], write=True,
+        session_factory=lambda: Probing(engine, expire_on_commit=False),
+    )
+    assert seen == {"blocked": True}
+    assert result["refused"] is None and result["deleted"] == 11
+    assert await _count(engine, "kalshi_archive_intervals") == 0
+
+
+async def test_the_import_records_a_version_and_seal_for_every_row(world):
+    from app.services import kalshi_archive_apply as imp
+
+    engine, ids = world
+    done = await _applied(engine, ids)
+    async with engine.connect() as c:
+        rec = (await c.execute(text(
+            "SELECT inserted_ids, inserted_seals, evidence_versions FROM kalshi_archive_imports"
+        ))).one()
+        rows = (await c.execute(text(
+            f"SELECT {imp._SEAL_SELECT} FROM kalshi_archive_intervals"
+        ))).fetchall()
+    assert set(map(int, rec.inserted_seals)) == set(rec.inserted_ids) == {r.id for r in rows}
+    for r in rows:
+        assert rec.inserted_seals[str(r.id)] == [r.version, imp.row_seal(r)]
+    assert len(rec.evidence_versions) == 1 and done["status"] == "applied"
+
+
 # ── the two chart routes ──────────────────────────────────────────────────
 
 
@@ -645,6 +797,52 @@ async def test_the_native_timeline_draws_the_archive_and_marks_it(client):
     for e in body["timeline"]:
         for name in e.get("archive", {}):
             assert name in e["outcomes"]
+
+
+async def test_the_combined_chart_draws_an_archive_only_kalshi_arm(client, world):
+    """The web evolution view's >1-market path (`/multi-history`), Kalshi arm archive-only."""
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+    from app.models.models import FuturesMarket, FuturesOddsSnapshot, FuturesOutcome
+
+    c, ids = client
+    engine, _ = world
+    async with AsyncSession(engine, expire_on_commit=False) as s:
+        async with s.begin():
+            poly = FuturesMarket(
+                source="polymarket", external_id=f"{LABEL}-poly-same", name=f"{LABEL} same",
+                category="game", market_tier=5, mutually_exclusive=False,
+                status="resolved", resolution_date=SETTLED,
+            )
+            s.add(poly)
+            await s.flush()
+            twin = FuturesOutcome(market_id=poly.id, external_id=f"{LABEL}-pa", name="A 9+",
+                                  rank=1, current_probability=0.0)
+            s.add(twin)
+            await s.flush()
+            for at, p in ((OPEN + timedelta(hours=3), 0.31), (OPEN + timedelta(hours=8, minutes=30), 0.33)):
+                s.add(FuturesOddsSnapshot(outcome_id=twin.id, bookmaker="polymarket",
+                                          probability=p, captured_at=at))
+    body = (await c.get("/api/futures/multi-history", params={
+        "market_ids": f"{ids['market']},{poly.id}", "hours": HOURS, "top_n": 50,
+    })).json()
+    line = next(o for o in body["outcomes"] if o["name"] == "A 9+")
+    archive = [p for p in line["history"] if p.get("provenance") == "kalshi_archive"]
+    live = [p for p in line["history"] if p.get("bookmaker") == "consensus"]
+    # The +3h instant already holds a live (Polymarket) value, so the archive
+    # value there is not averaged in. Every other archive close stands.
+    assert [p["timestamp"] for p in archive] == [
+        (OPEN + timedelta(hours=h)).isoformat() for h in (1, 2, 4, 5, 6, 7, 8, 9, 10, 11)
+    ]
+    assert all(p["interval_start"] and p["period_minutes"] == 60 for p in archive)
+    assert [datetime.fromisoformat(p["timestamp"]) for p in live] == [
+        OPEN + timedelta(hours=3), OPEN + timedelta(hours=8, minutes=30)
+    ]
+    b_line = next(o for o in body["outcomes"] if o["name"] == "B 3+")
+    assert [p["timestamp"] for p in b_line["history"] if p.get("provenance")] == [
+        (OPEN + timedelta(hours=h)).isoformat() for h in (2, 3, 4, 6, 7, 8, 9, 10, 11)
+    ]
+    assert body["archive_history"]["state"] == "warm"
 
 
 async def test_a_non_kalshi_board_is_untouched(client):

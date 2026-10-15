@@ -1256,6 +1256,14 @@ class KalshiArchiveImport(Base):
         ARRAY(Integer), server_default=text("'{}'")
     )
     report: Mapped[dict] = mapped_column(JSONB, server_default=text("'{}'"))
+    #: Per inserted interval id: ``[xmin, seal]`` read back from the stored row
+    #: inside the inserting transaction. A restore refuses any row whose version
+    #: or content no longer matches (it was changed after this import wrote it).
+    inserted_seals: Mapped[dict] = mapped_column(JSONB, server_default=text("'{}'"))
+    #: Per inserted evidence id: its ``xmin``, for the same refusal.
+    evidence_versions: Mapped[dict] = mapped_column(
+        JSONB, server_default=text("'{}'")
+    )
 
 
 class KalshiArchiveOutcomeEvidence(Base):
