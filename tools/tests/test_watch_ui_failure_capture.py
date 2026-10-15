@@ -217,9 +217,7 @@ class FailureCaptureTests(unittest.TestCase):
         )
         self.assertEqual(result.returncode, 0, result.stderr)
         args = json.loads(result.stdout)
-        self.assertEqual(
-            args[args.index("-collect-test-diagnostics") + 1], "on-failure"
-        )
+        self.assertEqual(args[args.index("-collect-test-diagnostics") + 1], "never")
         self.assertEqual(
             args[args.index("-default-test-execution-time-allowance") + 1], "180"
         )
@@ -228,6 +226,29 @@ class FailureCaptureTests(unittest.TestCase):
         )
         self.assertIn("-only-testing:ExactCase", args)
         self.assertIn("-test-timeouts-enabled", args)
+        self.assertEqual(
+            args,
+            [
+                "test-without-building",
+                "-xctestrun",
+                "owned.xctestrun",
+                "-destination",
+                "owned-watch",
+                "-parallel-testing-enabled",
+                "NO",
+                "-only-testing:ExactCase",
+                "-resultBundlePath",
+                "owned.xcresult",
+                "-collect-test-diagnostics",
+                "never",
+                "-test-timeouts-enabled",
+                "YES",
+                "-default-test-execution-time-allowance",
+                "180",
+                "-maximum-test-execution-time-allowance",
+                "300",
+            ],
+        )
 
 
 if __name__ == "__main__":

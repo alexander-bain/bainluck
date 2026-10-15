@@ -203,7 +203,7 @@ XCODE_ARGS=(-xctestrun "$XCTESTRUN" -destination "platform=watchOS Simulator,id=
 PHASE='BainLuckWatchUITests full suite from the same built products'
 python3 "$ROOT/tools/watch_ui_stage.py" phase --output-dir "$OUT" --phase "$PHASE"
 if xcodebuild test-without-building "${XCODE_ARGS[@]}" ${TEST_SELECTION[@]+"${TEST_SELECTION[@]}"} \
-  -resultBundlePath "$RESULT" -collect-test-diagnostics on-failure \
+  -resultBundlePath "$RESULT" -collect-test-diagnostics never \
   -test-timeouts-enabled YES -default-test-execution-time-allowance 180 \
   -maximum-test-execution-time-allowance 300 \
   > "$OUT/tests.log" 2>&1; then
