@@ -2576,8 +2576,9 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                 # after it, so it takes them too. A prop chunk written here
                 # held this flush's return, so the cadence started no flush
                 # and a fresh game quote stayed buffered after its own stamp
-                # released (stage trace 43011: 4.67 s; the held-tail rig
-                # 0.60 s vs 0.25 s unheld).
+                # released (Root's held-tail rig: 0.60 s held, 0.25 s unheld).
+                # Stage trace 43011 waited 4.67 s at that boundary; what held
+                # its flush there is not known.
                 for oid in standalone_open_outcome_ids(
                     batch, open_outcome_ids, event_id_by_outcome,
                     open_complement_of,
@@ -3179,8 +3180,9 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
         Their own loop, as the standalone legs': the game flush appended these
         chunks after every game's, and the cadence starts no flush until the
         last returns, so one slow prop transaction held the next game quote
-        though that game's own stamp had released (stage trace 43011: 4.67 s;
-        the held-tail rig: 0.60 s, 0.25 s unheld). A prop's price owes no
+        though that game's own stamp had released (Root's held-tail rig:
+        0.60 s held, 0.25 s unheld; stage trace 43011 waited 4.67 s at that
+        boundary, its occupant unknown). A prop's price owes no
         stamp, so nothing here refreshes a blend or stages a receipt. The game
         flush's prop planning is unchanged: uncapped, complement pairs whole,
         a lock-refused cohort retried apart; each chunk adopts the newest

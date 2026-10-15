@@ -2,11 +2,12 @@
 
 Stage trace 43011 → 44306 → rev 6398: the selected game's earlier stamp
 released, yet its next changed quote stayed buffered 4.67 s until the next
-game flush began. Root's tail falsifier on parent 8bb31cee58 reproduced that
-boundary: the game flush appended every non-speaking prop chunk after the
-game chunks, and the cadence starts no flush until the current one returns,
-so one held prop write kept the new selected quote buffered (held 0.60 s;
-unheld control 0.25 s, the next cadence turn).
+game flush began; what held that flush is not known. Root's tail falsifier on
+parent 8bb31cee58 reproduced the boundary with a prop write: the game flush
+appended every non-speaking prop chunk after the game chunks, and the cadence
+starts no flush until the current one returns, so one held prop write kept
+the new selected quote buffered (held 0.60 s; unheld control 0.25 s, the next
+cadence turn).
 
 The props now have their own loop (`flush_props`). Here BOTH real cadences run
 over the shipped closures and the real refresher; the database boundary is
