@@ -535,6 +535,8 @@ def _quiet_namespace(module, refresher):
         # Polymarket's run-scoped lock-retry isolation; nothing held.
         "lock_retry_events": set(),
         "lock_retry_until": {},
+        # #10090: a withdrawal in its retry backoff counts as flush work; none.
+        "withdrawal_retry_until": {},
     }
     # a5b06f85fa: Kalshi's flush keeps its lock-retry clock and stamp on the
     # run's price owner, which the consumer's lifetime wrapper creates.
