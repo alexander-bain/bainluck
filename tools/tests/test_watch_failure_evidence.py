@@ -117,11 +117,20 @@ class RefusingRunner:
 
 class Base(unittest.TestCase):
     def setUp(self):
+        handlers = {
+            sig: signal.getsignal(sig) for sig in (signal.SIGINT, signal.SIGTERM)
+        }
+        self.addCleanup(self.restore_signal_handlers, handlers)
         self._tmp = tempfile.TemporaryDirectory()
         self.tmp = Path(self._tmp.name)
         self.out = self.tmp / "out"
         self.logs = self.tmp / "logs"
         self.logs.mkdir()
+
+    @staticmethod
+    def restore_signal_handlers(handlers):
+        for signum, handler in handlers.items():
+            signal.signal(signum, handler)
 
     def tearDown(self):
         for path in self.tmp.rglob("*"):
@@ -494,6 +503,80 @@ class RpcBoundTests(Base):
         process.wait.assert_called_once()
         self.assertLessEqual(process.wait.call_args.kwargs["timeout"], 2)
 
+    def test_sigterm_stops_the_helpers_private_rpc_child(self):
+        pid_file = self.tmp / "rpc-child.pid"
+        child = (
+            "import os,time;from pathlib import Path;"
+            f"Path({str(pid_file)!r}).write_text(str(os.getpid()));time.sleep(30)"
+        )
+        script = (
+            "import importlib.util,sys;"
+            f"s=importlib.util.spec_from_file_location('helper',{str(SCRIPT)!r});"
+            "m=importlib.util.module_from_spec(s);s.loader.exec_module(m);"
+            "getattr(m,'install_interrupt_handlers',lambda:None)();"
+            f"m.spawn_bounded([sys.executable,'-c',{child!r}],20)"
+        )
+        helper = subprocess.Popen(
+            [sys.executable, "-c", script],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            start_new_session=True,
+        )
+        try:
+            until = time.monotonic() + 5
+            while (
+                not pid_file.exists()
+                and helper.poll() is None
+                and time.monotonic() < until
+            ):
+                time.sleep(0.01)
+            self.assertTrue(
+                pid_file.exists(), "fixture RPC child must start before SIGTERM"
+            )
+            helper.terminate()  # Only this test's helper process receives SIGTERM.
+            helper.communicate(timeout=3)
+            observed = subprocess.run(
+                ["ps", "-p", pid_file.read_text(), "-o", "stat="],
+                capture_output=True,
+                text=True,
+                timeout=2,
+            )
+            self.assertFalse(
+                observed.stdout.strip(), "private RPC child survived helper SIGTERM"
+            )
+        finally:
+            if helper.poll() is None:
+                helper.kill()
+                helper.communicate(timeout=3)
+            if pid_file.exists():
+                try:
+                    os.killpg(int(pid_file.read_text()), signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+
+    def test_cli_entry_installs_interruption_handlers(self):
+        with mock.patch.object(MODULE, "install_interrupt_handlers") as install:
+            with redirect_stderr(io.StringIO()):
+                MODULE.main(
+                    [
+                        "--output-dir",
+                        str(self.out),
+                        "--watch-id",
+                        "",
+                        "--phone-id",
+                        "",
+                        "--phase",
+                        "fixture",
+                        "--exit-code",
+                        "149",
+                        "--sha",
+                        "abc",
+                    ],
+                    runner=RefusingRunner(),
+                    log_root=self.logs,
+                )
+        install.assert_called_once()
+
     def test_timeout_cleanup_uses_remaining_bound_and_does_not_wait_for_pipe_eof(self):
         process = mock.Mock(pid=345678)
         process.communicate.side_effect = subprocess.TimeoutExpired("fixture", 2)
@@ -558,6 +641,9 @@ class ToolFailureTests(Base):
                 self.assertEqual(evidence["rpc"]["calls"][1]["outcome"], "ok")
                 self.assertEqual(evidence["original_failure"]["exit_code"], 149)
                 if name == "nonzero":
+                    self.assertEqual(
+                        len(runner.calls), 2, "Nonzero RPC must not be retried"
+                    )
                     self.assertEqual(call["returncode"], 72)
                     self.assertEqual(len(call["stderr_tail"]), MODULE.STDERR_BYTES)
                     self.assertTrue(call["stderr_tail"].endswith("connection invalid"))

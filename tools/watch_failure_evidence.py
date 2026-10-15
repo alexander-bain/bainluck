@@ -432,7 +432,18 @@ def collect_failure(
     return evidence
 
 
+def install_interrupt_handlers():
+    def interrupted(_signum, _frame):
+        for signum in (signal.SIGINT, signal.SIGTERM):
+            signal.signal(signum, signal.SIG_IGN)
+        raise KeyboardInterrupt
+
+    for signum in (signal.SIGINT, signal.SIGTERM):
+        signal.signal(signum, interrupted)
+
+
 def main(argv=None, *, runner=spawn_bounded, log_root=None):
+    install_interrupt_handlers()
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--output-dir", required=True, type=Path)
     parser.add_argument("--watch-id", required=True)
