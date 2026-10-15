@@ -154,6 +154,16 @@ FRESH_FLUSH_PENDING_ATTEMPTS = 1
 # writer that is the lent engine's five connections (pool 3 + overflow 2).
 FRESH_STAMP_WORKERS = 3
 
+# #10090 — admitted cohorts are stamped live-first, as a call's own population
+# is. Stage trace 02:14Z 2026-10-15: a live game's admitted stamp started
+# 6.43 s after admission and then took 95 ms; 134 events were held by the call
+# then, which does not say how many were queued ahead of it, their status, or
+# what the three workers were waiting on. This orders a known-live event ahead
+# of queued non-live ones when a worker comes free; it cannot preempt an
+# occupied worker. After this many live stamps in a row, a waiting non-live
+# event goes next, so pre-game prices keep progressing while live ones lead.
+ADMITTED_LIVE_RUN = 3
+
 # Includes the point currently writing and reservations before quote COMMIT.
 # At this finite bound a newly due stamp waits for debt space; no points drop.
 HISTORY_POINT_LIMIT = 64
@@ -1145,7 +1155,11 @@ class _FreshAdmission:
         self.clock = clock
         self.events: set[int] = set(events)
         self.holding: set[int] = set(events)
+        #: Admitted events waiting for a stamp worker: live games (their
+        #: latest read said live) in ``live_queue``, every other in ``queue``.
         self.queue: deque = deque()
+        self.live_queue: deque = deque()
+        self.live_run = 0
         self.workers: set = set()
         self.admitted: set[int] = set()
         self.retry: set[int] = set()
@@ -1182,6 +1196,17 @@ class _FreshAdmission:
         #: #10090 stage trace only (None unless one is configured): told of
         #: every actual release. Never raises into the fence.
         self.on_release: Optional[Callable[[Iterable[int]], None]] = None
+
+    def next_queued(self) -> int:
+        """The admitted event the next free worker stamps: the oldest live
+        one, unless ADMITTED_LIVE_RUN live stamps in a row have started while
+        a non-live one waited — then that oldest non-live one."""
+        if self.live_queue and (not self.queue or self.live_run < ADMITTED_LIVE_RUN):
+            if self.queue:
+                self.live_run += 1
+            return self.live_queue.popleft()
+        self.live_run = 0
+        return self.queue.popleft()
 
     def release(self, event_ids) -> None:
         """These events' stamps returned, or went back to debt unstamped."""
@@ -1355,6 +1380,9 @@ class LiveBlendRefresher:
         self._dispositions: dict[int, tuple] = {}
         #: #10090 — open only while a `refresh` runs (see `admit_fresh`).
         self._admission: Optional[_FreshAdmission] = None
+        #: #10090 — events whose latest stamp read said live: admitted ones
+        #: are stamped ahead of the rest (`_FreshAdmission.next_queued`).
+        self._live_event_ids: set[int] = set()
         #: #10090 — the running call's same-event fence (`holding_event_ids`).
         #: None from a call's first turn until it opens its door.
         self._holding: Optional[set[int]] = None
@@ -2238,7 +2266,9 @@ class LiveBlendRefresher:
             window.holding.update(due)
             window.clocks.update(dict.fromkeys(due, clock))
             window.retry.update(retry)
-            window.queue.extend(due)
+            live = self._live_event_ids
+            window.live_queue.extend(eid for eid in due if eid in live)
+            window.queue.extend(eid for eid in due if eid not in live)
             # A finished worker consumes nothing more: reap it (its outcome
             # retrieved) so it never holds a worker place while the running
             # call's own stamps keep `_admission_join` from reaching it.
@@ -2266,8 +2296,8 @@ class LiveBlendRefresher:
         return window is not None and not window.closed
 
     async def _admitted_worker(self, window: _FreshAdmission) -> None:
-        while window.queue:
-            await self._stamp_admitted(window, window.queue.popleft())
+        while window.live_queue or window.queue:
+            await self._stamp_admitted(window, window.next_queued())
 
     async def _stamp_admitted(self, window: _FreshAdmission, event_id: int) -> None:
         """One admitted event, read in its own session after its cohort
@@ -2708,6 +2738,11 @@ class LiveBlendRefresher:
                 grouped = {
                     eid: prepared[eid] for eid in event_ids if eid in prepared
                 }
+            for eid in event_ids:
+                if eid in grouped and getattr(grouped[eid][0], "status", None) == "live":
+                    self._live_event_ids.add(eid)
+                else:
+                    self._live_event_ids.discard(eid)
             if not grouped:
                 return
 
