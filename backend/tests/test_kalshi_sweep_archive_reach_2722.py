@@ -346,14 +346,15 @@ async def _run_sweep(engine, venue, **kw):
 # ---------------------------------------------------------------------------
 
 
-class TestTheBeatSettlesTheNine:
+class TestTheActivatedSweepSettlesTheNine:
     async def test_run_sweep_settles_all_nine(self, beat):
-        """RED on the pre-#2722 head: every row stays `open`. The beat's entry
-        point, not a helper — "reached, not simply supported by an unused
-        helper"."""
+        """RED on the pre-#2722 head: every row stays `open`. The sweep's own
+        entry point with the walk switched on, not a helper — "reached, not
+        simply supported by an unused helper". The beat does not switch it on
+        yet: see :class:`TestTheBeatDoesNotActivateTheWalk`."""
         engine = _seed()
         venue = _venue()
-        report = await _run_sweep(engine, venue)
+        report = await _run_sweep(engine, venue, archive_walk=True)
 
         state = _state(engine)
         assert {mid: s for mid, (s, _) in state.items()} == {
@@ -385,7 +386,7 @@ class TestTheBeatSettlesTheNine:
     async def test_no_grade_is_written(self, beat):
         engine = _seed()
         before = _grades(engine)
-        await _run_sweep(engine, _venue())
+        await _run_sweep(engine, _venue(), archive_walk=True)
         assert _grades(engine) == before
         assert all(r[1] is None and r[2] is None for r in before)
 
@@ -422,7 +423,7 @@ class TestTheBeatSettlesTheNine:
             events[t] = httpx.Response(
                 200, json={"event": {"event_ticker": t, "markets": [leg]}}
             )
-        report = await _run_sweep(engine, _venue(events=events))
+        report = await _run_sweep(engine, _venue(events=events), archive_walk=True)
         assert report["stats"]["writes_applied"] == 7
         assert report["archive_walk"]["terminal"] == "failed"
         assert "walk exploded" in report["archive_walk"]["terminal_reason"]
@@ -432,9 +433,101 @@ class TestTheBeatSettlesTheNine:
     async def test_a_dry_run_sweep_never_walks(self, beat):
         engine = _seed()
         venue = _venue()
-        report = await _run_sweep(engine, venue, apply=False)
+        report = await _run_sweep(engine, venue, apply=False, archive_walk=True)
         assert "archive_walk" not in report
         assert venue.archive_reads == []
+
+
+    async def test_a_walk_left_owed_makes_the_night_partial(self, beat, monkeypatch):
+        """Debt is not a finished night: a walk that ran out of page budget
+        turns a complete population batch `partial`, and says why."""
+        engine = _seed()
+        # One active live leg per event, so the population batch writes all 7
+        # it selects and reads `complete` on its own.
+        events = {}
+        for t in TICKER.values():
+            leg = copy.deepcopy(_archive_body(t)["markets"][0])
+            leg.update(status="active", close_time="2027-12-01T00:00:00Z",
+                       expiration_time="2027-12-01T00:00:00Z")
+            events[t] = httpx.Response(
+                200, json={"event": {"event_ticker": t, "markets": [leg]}}
+            )
+        real_walk = sweep.run_archive_settlements
+
+        async def _two_pages(**kw):
+            # The walk reads a legless venue with a two-page budget, so seven
+            # of the nine are left owed.
+            return await real_walk(**{**kw, "client_factory": _venue().service,
+                                      "archive_requests": 2, "concurrency": 1})
+
+        monkeypatch.setattr(sweep, "run_archive_settlements", _two_pages)
+        report = await _run_sweep(engine, _venue(events=events), archive_walk=True)
+
+        assert report["stats"]["writes_applied"] == 7
+        walk = report["archive_walk"]
+        assert walk["terminal"] == "partial"
+        assert len(walk["archive_owed_tickers"]) == 7
+        assert "7 rows owed" in walk["terminal_reason"]
+        assert "page budget spent" in walk["terminal_reason"]
+        assert report["terminal"] == "partial"
+        assert "archive walk partial" in report["terminal_reason"]
+
+
+# ---------------------------------------------------------------------------
+# 1b. The activation boundary: deploying this code writes nothing historical
+# ---------------------------------------------------------------------------
+
+
+class TestTheBeatDoesNotActivateTheWalk:
+    """#2722's directive reserves the historical apply; Root's 2026-10-15 hold
+    found the first presentation activated it on deploy. The walk is OFF unless
+    a caller passes ``archive_walk=True``, and the beat does not."""
+
+    async def test_the_sweep_called_as_the_beat_calls_it_reads_no_archive(self, beat):
+        engine = _seed()
+        venue = _venue()
+        # Exactly the beat's arguments (limit, concurrency) plus the rig.
+        report = await sweep.run_sweep(
+            limit=sweep.SWEEP_BATCH_LIMIT,
+            concurrency=sweep.SWEEP_CONCURRENCY,
+            offset=0,
+            session_maker=lambda: _SqliteSession(engine),
+            client_factory=venue.service,
+        )
+        assert venue.archive_reads == []
+        assert beat["walk_writes"] == []
+        assert "archive_walk" not in report
+        assert {s for s, _ in _state(engine).values()} == {"open"}
+
+    def test_the_beat_task_does_not_pass_archive_walk(self):
+        """Pinned on the task's own call: the one place that could switch the
+        walk on in production passes only `limit` and `concurrency`."""
+        import ast
+        import inspect
+
+        from app import tasks
+
+        tree = ast.parse(inspect.getsource(tasks))
+        calls = [
+            node for node in ast.walk(tree)
+            if isinstance(node, ast.Call)
+            and getattr(node.func, "id", None) == "run_sweep"
+        ]
+        assert len(calls) == 1, "the beat's run_sweep call moved; re-pin it"
+        assert sorted(k.arg for k in calls[0].keywords) == ["concurrency", "limit"]
+        assert not calls[0].args
+
+    def test_nothing_in_the_app_calls_the_walk(self):
+        """`run_archive_settlements` is reachable only through run_sweep's
+        opt-in; no other app module names it."""
+        import pathlib
+
+        app_dir = pathlib.Path(sweep.__file__).resolve().parents[1]
+        callers = [
+            str(f.relative_to(app_dir)) for f in app_dir.rglob("*.py")
+            if "run_archive_settlements" in f.read_text()
+        ]
+        assert callers == ["tasks/kalshi_resolution_sweep.py"]
 
 
 # ---------------------------------------------------------------------------
@@ -525,6 +618,70 @@ class TestTheWalkCursor:
     def test_a_full_batch_stops_before_its_first_owed_row(self):
         assert sweep.next_archive_walk_cursor(self.ROWS, {"B", "C"}, limit=3) == 1
 
+    def test_a_short_batch_stops_before_its_first_owed_row(self):
+        """CERT-4137: owed debt outranks the wrap. The end of the population is
+        not the end of the run's debt."""
+        assert sweep.next_archive_walk_cursor(self.ROWS, {"C"}, limit=10) == 2
+
+    async def test_a_head_that_spends_the_budget_cannot_starve_the_tail(self, beat):
+        """CERT-4137's control, at production defaults (1,000 rows, 1,200
+        archive pages, concurrency 6) through the real service and the real
+        select+write: 240 earlier open events whose archive listings run past
+        the per-event page bound spend 5 pages each — the whole budget — before
+        the nine are admitted.
+
+        RED on 91f29374fe: the batch is short, so the cursor wrapped to 0 with
+        all nine owed, and every later night spent the same 1,200 pages on the
+        same head; the nine stayed open forever while the walk read `complete`.
+        Here the first night stops before the first owed specimen and says
+        `partial`; the second starts there and settles all nine."""
+        head = [(i, f"KXHEAD-{i}", None, 3, None, None) for i in range(1, 241)]
+        engine = _seed(head + NINE)
+
+        def venue_for_night():
+            venue = _venue()
+            for _, ticker, *_ in head:
+                venue.live[ticker] = b'{"markets":[],"cursor":""}'
+                venue.archive[ticker] = [
+                    json.dumps({"cursor": f"page{n + 1}", "markets": [{
+                        "ticker": f"{ticker}-LEG{n}", "event_ticker": ticker,
+                        "status": "finalized", "result": "yes"}]}).encode()
+                    for n in range(sweep.ARCHIVE_EVENT_MAX_PAGES + 1)
+                ]
+            return venue
+
+        nights = []
+        for _ in range(2):
+            venue = venue_for_night()
+            report = await sweep.run_archive_settlements(
+                session_maker=lambda: _SqliteSession(engine),
+                client_factory=venue.service,
+                now=NOW,
+            )
+            nights.append((report, venue, _state(engine)))
+
+        (first, _v1, after_first), (second, v2, after_second) = nights
+        assert first["after_id"] == 0
+        assert first["stats"]["archive_requests"] == sweep.ARCHIVE_REQUESTS_PER_RUN
+        assert first["stats"]["archive_truncated"] == 240
+        assert sorted(first["archive_owed_tickers"]) == sorted(TICKER.values())
+        assert first["next_after_id"] == min(IDS) - 1
+        assert first["terminal"] == "partial"
+        assert first["cycle_wrapped"] is False
+        assert {after_first[i][0] for i in IDS} == {"open"}
+
+        assert second["after_id"] == min(IDS) - 1
+        assert {t for t, _ in v2.archive_reads} == set(TICKER.values())
+        assert second["stats"]["archive_requests"] == 9
+        assert second["archive_owed_tickers"] == []
+        assert second["terminal"] == "complete"
+        assert second["next_after_id"] == 0 and second["cycle_wrapped"] is True
+        assert beat["walk_writes"] == [min(IDS) - 1, 0]
+        assert {after_second[i][0] for i in IDS} == {"resolved"}
+        # The head stays open: a listing past the page bound is unread, not
+        # settled.
+        assert {after_second[i][0] for i in range(1, 241)} == {"open"}
+
     async def test_the_walk_resumes_from_its_persisted_position(self, beat):
         engine = _seed()
         venue = _venue()
@@ -555,6 +712,22 @@ class TestTheWalkCursor:
         )
         assert report["next_after_id"] == min(IDS) - 1
         assert beat["walk_writes"] == [min(IDS) - 1]
+        assert report["terminal"] == "partial"
+        assert "archive 429" in report["terminal_reason"]
+
+    async def test_every_row_refused_by_the_venue_is_still_a_failed_walk(self, beat):
+        """The 429 carve-out is only for rows our circuit held back: nine real
+        archive errors are an outage, not debt."""
+        engine = _seed()
+        venue = _venue(archive={t: [httpx.Response(500)] for t in TICKER.values()})
+        report = await sweep.run_archive_settlements(
+            session_maker=lambda: _SqliteSession(engine),
+            client_factory=venue.service,
+            now=NOW,
+        )
+        assert report["stats"]["archive_error"] == 9
+        assert report["archive_owed_tickers"] == []
+        assert report["terminal"] == "failed"
 
     async def test_an_unpersisted_cursor_is_a_failed_walk(self, beat, monkeypatch):
         async def _fail(after_id):
@@ -713,8 +886,9 @@ class TestEveryShortReadLeavesTheRowOpen:
         assert report["stats"]["archive_requests"] == sweep.ARCHIVE_EVENT_MAX_PAGES
 
     async def test_a_429_stops_every_later_archive_read_in_the_run(self):
-        # Every listing would answer 429, so ONE request is the proof the
-        # circuit held, whichever row the selection reaches first.
+        # SERIAL case (concurrency 1): nothing else is in flight, so exactly
+        # ONE request is the proof the circuit held, whichever row the
+        # selection reaches first. Production runs at 6 — see the next test.
         engine = _seed()
         venue = _venue(archive={
             t: [httpx.Response(429, headers={"Retry-After": "5"})]
@@ -730,6 +904,53 @@ class TestEveryShortReadLeavesTheRowOpen:
         assert {s for s, _ in _state(engine).values()} == {"open"}
         assert sorted(report["errored_tickers"]) == sorted(TICKER.values())
 
+    async def test_a_429_at_production_concurrency_stops_admission_not_flight(self):
+        """CERT-4137's in-flight contract, at ``SWEEP_CONCURRENCY``. Every
+        listing answers 429 after a delay, so the reads admitted before the
+        first answer are all in flight together. The circuit stops ADMISSION:
+        at most `concurrency` requests start, every one of them before the first
+        429 came back, none after; all nine stay open and owed."""
+        import asyncio
+
+        engine = _seed()
+        venue = _venue()
+        log: list[str] = []
+        original = venue.handler
+
+        async def delayed(request: httpx.Request) -> httpx.Response:
+            if "/historical/markets" in request.url.path:
+                log.append("start")
+                venue.archive_reads.append(
+                    (request.url.params.get("event_ticker"), None)
+                )
+                await asyncio.sleep(0.01)
+                log.append("429")
+                return httpx.Response(429, headers={"Retry-After": "5"})
+            return original(request)
+
+        def service():
+            svc = KalshiAPIService(api_key="")
+            svc.client = httpx.AsyncClient(transport=httpx.MockTransport(delayed))
+            return svc
+
+        report = await sweep.run_archive_settlements(
+            session_maker=lambda: _SqliteSession(engine),
+            client_factory=service,
+            now=NOW,
+            after_id=0,
+        )
+        stats = report["stats"]
+        assert sweep.SWEEP_CONCURRENCY == 6
+        started = log.count("start")
+        assert 1 <= started <= sweep.SWEEP_CONCURRENCY, log
+        assert "start" not in log[log.index("429"):], log
+        assert stats["archive_requests"] == started
+        assert stats["archive_rate_limited"] == 9
+        assert sorted(report["archive_owed_tickers"]) == sorted(TICKER.values())
+        assert {s for s, _ in _state(engine).values()} == {"open"}
+        assert report["next_after_id"] == min(IDS) - 1
+        assert report["terminal"] == "partial"
+
     async def test_the_run_budget_bounds_archive_requests(self):
         engine = _seed()
         venue = _venue()
@@ -739,6 +960,8 @@ class TestEveryShortReadLeavesTheRowOpen:
         assert stats["archive_requests"] == 3
         assert stats["archive_read"] == 3 and stats["archive_budget"] == 6
         assert sum(s == "resolved" for s, _ in _state(engine).values()) == 3
+        assert len(report["archive_owed_tickers"]) == 6
+        assert report["terminal"] == "partial"
 
     async def test_a_404_event_earns_no_archive_read(self):
         t = "KXDNCAUTOPSY-26"
@@ -762,7 +985,8 @@ class TestEveryShortReadLeavesTheRowOpen:
 def test_only_the_walk_opts_in():
     import inspect
 
-    assert inspect.signature(sweep.run_sweep).parameters["archive_walk"].default is True
+    # The walk is opt-in at run_sweep too: OFF unless a caller asks.
+    assert inspect.signature(sweep.run_sweep).parameters["archive_walk"].default is False
     params = inspect.signature(sweep.run_backfill).parameters
     assert params["archive_requests"].default == 0
     assert params["archive_only"].default is False
