@@ -45,11 +45,13 @@ THE RULES THIS ARM HOLDS
    an outcome holding more than :data:`READ_CAP_PER_OUTCOME` intervals is read
    SPAN-KEEPING (its newest run in full, everything older as an evenly ranked
    skeleton that keeps the first interval) instead of newest-first tail-cut, and
-   is named in ``thinned_outcomes``. Live captures keep the client's ``hours``:
-   this option never widens the snapshot reads, so their payload and statement
-   bounds are exactly today's. ``history_range`` states the window drawn, why it
-   starts there, and the import's own coverage word, because the earliest drawn
-   interval is not proof of the question's open.
+   is named in ``thinned_outcomes``. Live captures reach their lifetime too
+   (``full_range_live``: whole instants, bounded, span-keeping), so an interval
+   our own capture holds still yields to it however old both are — Root
+   executed the earlier cut, which kept live on ``hours``, and found 189-day
+   captures replaced by archive intervals. ``history_range`` states the window
+   drawn, why it starts there, and the import's own coverage word, because the
+   earliest drawn interval is not proof of the question's open.
 """
 
 from __future__ import annotations
@@ -79,6 +81,8 @@ LIFETIME_FLOOR = datetime(1970, 1, 1, tzinfo=timezone.utc)
 #: under ``range=full`` (their window is the client's ``hours``).
 BASIS_ARCHIVE = "archive_first_interval"
 BASIS_HOURS = "hours"
+#: A served venue point older than every capture and interval opens the chart.
+BASIS_VENUE = "venue_first_observation"
 #: How long one process trusts its answer to "is the store there".
 _PRESENCE_TTL_S = 300.0
 _presence: dict = {"value": None, "checked": 0.0}
@@ -175,12 +179,20 @@ class ArchiveHistory:
         self.venue_open: dict[int, datetime] = {}
 
     def served(
-        self, cutoff: datetime, claims: Iterable[Any], outcome_ids: Iterable[int]
+        self,
+        cutoff: datetime,
+        claims: Iterable[Any],
+        outcome_ids: Iterable[int],
+        *,
+        claim_spans: Optional[dict] = None,
     ) -> dict[int, list[ArchiveRow]]:
         """Per outcome, the intervals at/after ``cutoff`` no live point overlaps.
 
         ``claims`` are the live rows the chart already draws (``outcome_id`` and
-        ``captured_at``). Counts withheld intervals in ``claimed_by_live``.
+        ``captured_at``). ``claim_spans`` (``range=full`` with a thinned live
+        read, ``full_range_live`` rule 4) are outcome -> ``[(lo, hi)]`` spans our
+        captures hold though not every one was read; an interval touching one
+        yields to live too. Counts withheld intervals in ``claimed_by_live``.
         """
         if not self.rows:
             return {}
@@ -197,11 +209,14 @@ class ArchiveHistory:
         for oid in outcome_ids:
             stamps = live.get(int(oid), [])
             kept: list[ArchiveRow] = []
+            spans = (claim_spans or {}).get(int(oid), ())
             for row in self.rows.get(int(oid), ()):
                 if row.captured_at < cutoff:
                     continue
                 i = bisect.bisect_left(stamps, row.interval_start)
-                if i < len(stamps) and stamps[i] <= row.captured_at:
+                if (i < len(stamps) and stamps[i] <= row.captured_at) or any(
+                    lo <= row.captured_at and hi >= row.interval_start for lo, hi in spans
+                ):
                     self.claimed_by_live += 1
                     continue
                 kept.append(row)
@@ -244,21 +259,29 @@ class ArchiveHistory:
         live_window_start: datetime,
         served_rows: list[ArchiveRow],
         charted_ids: Iterable[int],
+        *,
+        live_basis: str = BASIS_HOURS,
+        venue_first: Optional[datetime] = None,
+        live_thinned: bool = False,
     ) -> dict:
         """``history_range`` for a ``range=full`` response. Metadata only.
 
-        ``window_start`` is where the drawn chart begins: the first served archive
-        interval's START when that precedes the live window, else the live window.
+        ``window_start`` is where the drawn chart begins: the earliest of the
+        first served archive interval's START, the first served venue point, and
+        the live window — which under ``range=full`` is our own first capture
+        (``live_basis`` = ``live_first_capture``) when one predates ``hours``.
         ``archive_coverage`` is ``complete`` only when EVERY charted outcome
         carries a complete import (one never imported makes it ``incomplete``);
         ``None`` when no charted outcome carries any import at all.
+        ``live_thinned`` says the older live captures were read as a skeleton.
         """
         charted = sorted({int(i) for i in charted_ids})
         first = min((r.interval_start for r in served_rows), default=None)
-        if first is not None and first < live_window_start:
+        start, basis = live_window_start, live_basis
+        if venue_first is not None and venue_first < start:
+            start, basis = venue_first, BASIS_VENUE
+        if first is not None and first < start:
             start, basis = first, BASIS_ARCHIVE
-        else:
-            start, basis = live_window_start, BASIS_HOURS
         asked = [oid for oid in charted if oid in self.coverage]
         if not asked:
             coverage = None
@@ -274,6 +297,7 @@ class ArchiveHistory:
             "archive_coverage": coverage,
             "archive_venue_open": min(opens).isoformat() if opens else None,
             "thinned_outcomes": [oid for oid in sorted(self.thinned) if oid in charted],
+            "live_thinned": bool(live_thinned),
         }
 
 
