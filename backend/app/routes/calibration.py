@@ -2011,30 +2011,70 @@ async def _arm_remaining_statement_budget(db: AsyncSession, started: float) -> i
     return remaining_ms
 
 
-async def _within_examples_deadline(work, started: float):
-    """Run ``work()`` under the backstop; cleanup after a cancel is bounded too.
+# Every scoped-sample task, from creation until it is done. The event loop holds
+# tasks only weakly, so a task cancelled past the cleanup bound needs a strong
+# reference until it finishes unwinding its own session.
+_examples_inflight: set[asyncio.Task] = set()
 
-    ``asyncio.wait_for`` would wait for the cancelled task however long its
-    cleanup takes, which is the unbounded tail this exists to remove. A task
-    still cleaning up after ``_EXAMPLES_SCOPED_CLEANUP_S`` is left to finish on
-    its own; its statement is already capped server-side by the armed budget.
+
+def _owned_examples_session(db: AsyncSession) -> AsyncSession:
+    """A session the scoped sample OWNS, on the request session's own engine.
+
+    The sample can outlive the request: by up to ``_EXAMPLES_SCOPED_CLEANUP_S``
+    after a cancel, and past it if its cleanup overruns. Work that outlives the
+    request must never hold the REQUEST's session — the dependency closes that
+    one at teardown, underneath it. This session is opened inside the task and
+    closed by the task's own ``async with`` as the cancellation unwinds it, so
+    the request's ``db`` is never touched by the scoped branch at all.
     """
-    task = asyncio.ensure_future(work())
-    remaining = started + _EXAMPLES_SCOPED_DEADLINE_S - _examples_clock()
-    done, _ = await asyncio.wait({task}, timeout=max(0.0, remaining))
-    if task in done:
-        return task.result()
+    return AsyncSession(bind=db.bind, expire_on_commit=False)
+
+
+def _retrieve_outcome(t: asyncio.Future) -> None:
+    if not t.cancelled():
+        t.exception()
+
+
+async def _cancel_owned_work(task: asyncio.Task) -> None:
+    """Cancel the sample and wait for its cleanup — for a bounded time only.
+
+    ``asyncio.wait_for`` would wait out the cleanup however long it took, which
+    is the unbounded tail this exists to remove. A task still unwinding after
+    ``_EXAMPLES_SCOPED_CLEANUP_S`` stays referenced in ``_examples_inflight``
+    and finishes on its own session; its statement is capped server-side by the
+    armed budget.
+    """
     task.cancel()
     await asyncio.wait({task}, timeout=_EXAMPLES_SCOPED_CLEANUP_S)
+    if not task.done():
+        logger.warning(
+            "calibration examples: sample still unwinding after %.1f s; "
+            "left to close its own session", _EXAMPLES_SCOPED_CLEANUP_S,
+        )
 
-    def _consume(t: asyncio.Future) -> None:
-        if not t.cancelled():
-            t.exception()
 
-    if task.done():
-        _consume(task)
-    else:
-        task.add_done_callback(_consume)
+async def _within_examples_deadline(work, started: float):
+    """Run ``work()`` under the backstop; EVERY way out cancels it.
+
+    Three exits, one rule. The sample finished: return it. The backstop fired:
+    cancel the sample, bounded cleanup, :class:`_ExamplesDeadline`. The REQUEST
+    was cancelled while waiting (client gone, worker shutdown): cancel the
+    sample under the same bound and re-raise — the request may not leave
+    owned work running behind it (Root's parent-cancel control, 2026-10-15).
+    """
+    task = asyncio.ensure_future(work())
+    _examples_inflight.add(task)
+    task.add_done_callback(_examples_inflight.discard)
+    task.add_done_callback(_retrieve_outcome)
+    try:
+        remaining = started + _EXAMPLES_SCOPED_DEADLINE_S - _examples_clock()
+        done, _ = await asyncio.wait({task}, timeout=max(0.0, remaining))
+    except BaseException:
+        await _cancel_owned_work(task)
+        raise
+    if task in done:
+        return task.result()
+    await _cancel_owned_work(task)
     raise _ExamplesDeadline()
 
 
@@ -2122,16 +2162,20 @@ async def calibration_examples(
         if scoped:
 
             async def _scoped_sample():
-                await _arm_remaining_statement_budget(db, started)
-                shares_identity = (await db.execute(
-                    text(_EXAMPLES_SCOPE_CLOSED_SQL), {"source": source}
-                )).scalar()
-                if shares_identity is True:
-                    return None
-                # Re-armed: the sample gets what the closure check LEFT, so the
-                # two statements together never exceed the one wall.
-                await _arm_remaining_statement_budget(db, started)
-                return (await db.execute(sql, params)).all()
+                # Its own session: this task may outlive the request (see
+                # _owned_examples_session). Rows are materialised before the
+                # session closes.
+                async with _owned_examples_session(db) as owned:
+                    await _arm_remaining_statement_budget(owned, started)
+                    shares_identity = (await owned.execute(
+                        text(_EXAMPLES_SCOPE_CLOSED_SQL), {"source": source}
+                    )).scalar()
+                    if shares_identity is True:
+                        return None
+                    # Re-armed: the sample gets what the closure check LEFT, so
+                    # the two statements together never exceed the one wall.
+                    await _arm_remaining_statement_budget(owned, started)
+                    return (await owned.execute(sql, params)).all()
 
             try:
                 rows = await _within_examples_deadline(_scoped_sample, started)

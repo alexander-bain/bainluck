@@ -116,6 +116,43 @@ class _FakeDB:
         return _Result(rows=self.rows)
 
 
+class _Untouchable:
+    """The REQUEST's session in the ownership tests: the scoped branch must
+    never execute on it, because the dependency closes it at teardown while an
+    abandoned sample could still be running."""
+
+    def __init__(self, owned):
+        self.owned = owned
+
+    async def execute(self, stmt, params=None):
+        raise AssertionError(f"the scoped branch used the request session: {stmt}")
+
+
+class _OwnedCM:
+    """Stands in for ``_owned_examples_session``: opens and closes the fake."""
+
+    def __init__(self, session):
+        self.session = session
+
+    async def __aenter__(self):
+        self.session.opened = getattr(self.session, "opened", 0) + 1
+        return self.session
+
+    async def __aexit__(self, *exc):
+        self.session.closed = getattr(self.session, "closed", 0) + 1
+        return False
+
+
+@pytest.fixture(autouse=True)
+def _owned_session(monkeypatch):
+    monkeypatch.setattr(
+        cal,
+        "_owned_examples_session",
+        lambda db: _OwnedCM(getattr(db, "owned", db)),
+        raising=False,
+    )
+
+
 @pytest.fixture(autouse=True)
 def _clean_cache():
     cal._examples_cache.clear()
@@ -339,6 +376,30 @@ class TestOneRequestBudget:
         assert len(db.statements) == 2
 
 
+class _Hangs:
+    """An owned session whose statement never returns (pool checkout, a lost
+    socket). Records whether it was cancelled and whether it was closed."""
+
+    def __init__(self, release: asyncio.Event | None = None):
+        self.release = release  # set ⇒ cleanup waits for it (overrun)
+        self.cancelled = asyncio.Event()
+        self.entered = asyncio.Event()
+        self.opened = 0
+        self.closed = 0
+
+    async def execute(self, stmt, params=None):
+        if str(stmt).strip().startswith("SET LOCAL"):
+            return _Result()
+        self.entered.set()
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            self.cancelled.set()
+            if self.release is not None:
+                await self.release.wait()  # a cleanup that does not come back
+            raise
+
+
 class TestBackstop:
     """What ``statement_timeout`` cannot see: a hang before the server is asked
     (pool checkout), and a cancellation whose cleanup does not return."""
@@ -346,45 +407,125 @@ class TestBackstop:
     async def test_a_hang_outside_any_statement_answers_at_the_deadline(self, monkeypatch):
         monkeypatch.setattr(cal, "_EXAMPLES_SCOPED_DEADLINE_S", 0.05, raising=False)
         monkeypatch.setattr(cal, "_EXAMPLES_SCOPED_CLEANUP_S", 0.5, raising=False)
-        cancelled = asyncio.Event()
-
-        class Hangs:
-            async def execute(self, stmt, params=None):
-                try:
-                    await asyncio.Event().wait()
-                except asyncio.CancelledError:
-                    cancelled.set()
-                    raise
-
-        res = await _bounded(_call(Hangs()))
+        owned = _Hangs()
+        res = await _bounded(_call(_Untouchable(owned)))
         assert _status(res) == 503
         assert _body(res)["reason"] == "examples_deadline"
-        assert cancelled.is_set(), "the hung work was never cancelled"
+        assert owned.cancelled.is_set(), "the hung work was never cancelled"
+        assert owned.closed == 1, "the sample's own session was not closed"
 
     async def test_cleanup_after_the_cancel_is_bounded_too(self, monkeypatch):
         """``asyncio.wait_for`` would wait for this cleanup however long it took."""
         monkeypatch.setattr(cal, "_EXAMPLES_SCOPED_DEADLINE_S", 0.05, raising=False)
         monkeypatch.setattr(cal, "_EXAMPLES_SCOPED_CLEANUP_S", 0.1, raising=False)
         release = asyncio.Event()
-
-        class SlowCleanup:
-            async def execute(self, stmt, params=None):
-                try:
-                    await asyncio.Event().wait()
-                except asyncio.CancelledError:
-                    await release.wait()  # a cleanup that does not come back
-                    raise
-
+        owned = _Hangs(release)
         t0 = time.monotonic()
-        res = await _bounded(_call(SlowCleanup()))
+        res = await _bounded(_call(_Untouchable(owned)))
         elapsed = time.monotonic() - t0
-        release.set()
-        await asyncio.sleep(0)
         assert _status(res) == 503
         assert _body(res)["reason"] == "examples_deadline"
         # Deadline + cleanup bound is 0.15 s; 3 s only rules out "waited it out".
         assert elapsed < 3.0
+        # Overrun: the sample is still unwinding — on ITS session, held by a
+        # strong reference — and closes that session when it gets there.
+        assert owned.closed == 0
+        live = [t for t in getattr(cal, "_examples_inflight", ()) if not t.done()]
+        assert len(live) == 1
+        release.set()
+        await asyncio.wait(live, timeout=2)
+        assert owned.closed == 1
+        assert not getattr(cal, "_examples_inflight", ())
 
     def test_the_bounds_fit_inside_the_router(self):
         assert cal._EXAMPLES_SCOPED_STATEMENT_WALL_S < cal._EXAMPLES_SCOPED_DEADLINE_S
         assert cal._EXAMPLES_SCOPED_DEADLINE_S + cal._EXAMPLES_SCOPED_CLEANUP_S < 30.0
+
+
+class TestOwnership:
+    """Root's parent-cancel review (2026-10-15, b21169716d): cancelling the
+    REQUEST while it waited left the sample running on the request's session.
+    The request now owns its sample on every exit, and the sample owns its
+    session."""
+
+    async def test_the_scoped_branch_never_touches_the_request_session(self, clock):
+        owned = _FakeDB(clock, rows=[_dg_row(1, 1000, price=0.65, won=True)])
+        res = await _call(_Untouchable(owned))
+        assert _status(res) == 200
+        assert len(owned.statements) == 2  # closure check + sample, on the OWNED one
+        assert (owned.opened, owned.closed) == (1, 1)
+
+    async def test_roots_parent_cancel_control_on_the_helper(self, monkeypatch):
+        """Root's control verbatim in shape: cancel the parent while it waits."""
+        monkeypatch.setattr(cal, "_EXAMPLES_SCOPED_DEADLINE_S", 10, raising=False)
+        monkeypatch.setattr(cal, "_EXAMPLES_SCOPED_CLEANUP_S", 0.1, raising=False)
+        entered = asyncio.Event()
+        child = None
+
+        async def work():
+            nonlocal child
+            child = asyncio.current_task()
+            entered.set()
+            await asyncio.Event().wait()
+
+        parent = asyncio.create_task(cal._within_examples_deadline(work, time.monotonic()))
+        await entered.wait()
+        parent.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await parent
+        pending = not child.done()
+        if pending:  # leave nothing running whatever the verdict
+            child.cancel()
+            await asyncio.wait({child}, timeout=1)
+        assert not pending, "the request exited while its sample was still running"
+
+    async def test_a_cancelled_request_cancels_and_closes_its_sample(self, monkeypatch):
+        monkeypatch.setattr(cal, "_EXAMPLES_SCOPED_DEADLINE_S", 10, raising=False)
+        monkeypatch.setattr(cal, "_EXAMPLES_SCOPED_CLEANUP_S", 0.5, raising=False)
+        owned = _Hangs()
+        parent = asyncio.create_task(_call(_Untouchable(owned)))
+        await asyncio.wait_for(owned.entered.wait(), timeout=2)
+        parent.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await parent
+        assert owned.cancelled.is_set()
+        assert owned.closed == 1, "the sample's session outlived the cancelled request"
+        assert not [t for t in getattr(cal, "_examples_inflight", ()) if not t.done()]
+
+    async def test_a_cancelled_request_with_an_overrunning_cleanup_is_bounded(self, monkeypatch):
+        monkeypatch.setattr(cal, "_EXAMPLES_SCOPED_DEADLINE_S", 10, raising=False)
+        monkeypatch.setattr(cal, "_EXAMPLES_SCOPED_CLEANUP_S", 0.1, raising=False)
+        release = asyncio.Event()
+        owned = _Hangs(release)
+        parent = asyncio.create_task(_call(_Untouchable(owned)))
+        await asyncio.wait_for(owned.entered.wait(), timeout=2)
+        t0 = time.monotonic()
+        parent.cancel()
+        done, _ = await asyncio.wait({parent}, timeout=3)
+        elapsed = time.monotonic() - t0
+        assert parent in done and parent.cancelled(), "the request did not exit"
+        assert elapsed < 3.0
+        assert owned.cancelled.is_set()
+        # Still unwinding, on its OWN session, strongly referenced; the request
+        # session (``_Untouchable``) was never executed on.
+        live = [t for t in getattr(cal, "_examples_inflight", ()) if not t.done()]
+        assert len(live) == 1 and owned.closed == 0
+        release.set()
+        await asyncio.wait(live, timeout=2)
+        assert owned.closed == 1
+
+    async def test_the_owned_session_binds_the_request_sessions_engine(self, monkeypatch):
+        """A NEW session on the request's engine — never the request session."""
+        from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
+
+        monkeypatch.undo()  # the real factory, not the fixture's stand-in
+        engine = create_async_engine("postgresql+asyncpg://nobody@127.0.0.1:1/none")
+        try:
+            request = AsyncSession(bind=engine)
+            owned = cal._owned_examples_session(request)
+            assert owned is not request
+            assert owned.bind is engine
+            await owned.close()
+            await request.close()
+        finally:
+            await engine.dispose()

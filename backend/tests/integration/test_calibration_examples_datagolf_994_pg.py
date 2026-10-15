@@ -306,3 +306,79 @@ async def test_a_group_shared_with_another_source_is_refused(session):
     res = await _examples(session, well_traded=0)
     assert getattr(res, "status_code", None) == 503
     assert json.loads(res.body)["reason"] == "examples_scope_not_closed"
+
+
+# ---------------------------------------------------------------------------
+# The request budget and session ownership, on a real server. The closure check
+# is swapped for a statement that sleeps, so the only thing under test is who
+# stops it and whose session it ran on.
+# ---------------------------------------------------------------------------
+SLEEP_MARK = "994-owned-sample-probe"
+SLEEPING_CLOSURE_SQL = f"SELECT pg_sleep(30) IS NULL AS shares_identity /* {SLEEP_MARK} */"
+
+
+async def _probe_backends(session) -> int:
+    n = (
+        await session.execute(
+            text(
+                "SELECT count(*) FROM pg_stat_activity "
+                "WHERE state = 'active' AND query LIKE :mark AND pid <> pg_backend_pid()"
+            ),
+            {"mark": f"%{SLEEP_MARK}%"},
+        )
+    ).scalar()
+    await session.rollback()
+    return int(n)
+
+
+async def test_the_server_enforces_the_remaining_budget(session, monkeypatch):
+    from app.routes import calibration as cal
+
+    monkeypatch.setattr(cal, "_EXAMPLES_SCOPE_CLOSED_SQL", SLEEPING_CLOSURE_SQL)
+    monkeypatch.setattr(cal, "_EXAMPLES_SCOPED_STATEMENT_WALL_S", 0.3)
+    monkeypatch.setattr(cal, "_EXAMPLES_SCOPED_DEADLINE_S", 5.0)
+    cal._examples_cache.clear()
+    res = await cal.calibration_examples(
+        db=session, source="datagolf", bucket=BUCKET, well_traded=0, limit=10
+    )
+    # Postgres cancelled it (57014) inside the armed remainder — not the backstop.
+    assert getattr(res, "status_code", None) == 503
+    assert json.loads(res.body)["reason"] == "examples_query_timeout"
+    # And the request's own session was never used: no transaction was begun on it.
+    assert not session.in_transaction()
+    assert await _probe_backends(session) == 0
+
+
+async def test_a_cancelled_request_leaves_no_statement_running(session, monkeypatch):
+    import asyncio
+
+    from app.routes import calibration as cal
+
+    monkeypatch.setattr(cal, "_EXAMPLES_SCOPE_CLOSED_SQL", SLEEPING_CLOSURE_SQL)
+    monkeypatch.setattr(cal, "_EXAMPLES_SCOPED_CLEANUP_S", 3.0)
+    cal._examples_cache.clear()
+    parent = asyncio.create_task(
+        cal.calibration_examples(
+            db=session, source="datagolf", bucket=BUCKET, well_traded=0, limit=10
+        )
+    )
+    # Wait until the sample's statement is actually running on the server.
+    for _ in range(100):
+        await asyncio.sleep(0.05)
+        if await _probe_backends(session):
+            break
+    else:
+        parent.cancel()
+        pytest.fail("the sleeping closure never reached the server")
+    parent.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await parent
+    assert not [t for t in cal._examples_inflight if not t.done()], (
+        "the request exited while its sample task was still running"
+    )
+    # The statement is gone from the server, not sleeping out its 30 s.
+    for _ in range(40):
+        if await _probe_backends(session) == 0:
+            break
+        await asyncio.sleep(0.05)
+    assert await _probe_backends(session) == 0
