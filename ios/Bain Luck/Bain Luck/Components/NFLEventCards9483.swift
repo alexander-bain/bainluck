@@ -55,6 +55,7 @@ struct NFLFinishCardView9483: View {
     let awayColor: Color
     let homeColor: Color
     var expanded = false
+    @ScaledMetric(relativeTo: .caption2) private var scaledAxisFont: CGFloat = 12
 
     private var later: NFLFinishCard9483.Pair? { card.final ?? card.projectedNow }
     private var laterLabel: String? {
@@ -90,7 +91,19 @@ struct NFLFinishCardView9483: View {
             }
             .chartXScale(domain: 0...domainMax)
             .chartYScale(domain: [awayName, homeName])
-            .chartXAxis { AxisMarks(values: .stride(by: 7)) { AxisValueLabel(anchor: .top) } }
+            .chartXAxis {
+                AxisMarks(values: pointTicks) { value in
+                    NFLStatAxisLabels9483.reservedLabel(value.as(Double.self).map(Self.points) ?? "",
+                                                        fontSize: axisFontSize)
+                }
+            }
+            .chartOverlay { proxy in
+                GeometryReader { geo in
+                    NFLStatAxisLabels9483(values: pointTicks, texts: pointTicks.map(Self.points),
+                                          keep: nil, fontSize: axisFontSize,
+                                          proxy: proxy, plotFrame: geo[proxy.plotAreaFrame])
+                }
+            }
             .frame(height: expanded ? 220 : 120)
             .accessibilityHidden(true)
             ForEach([false, true], id: \.self) { isHome in
@@ -115,6 +128,10 @@ struct NFLFinishCardView9483: View {
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(accessibilityText)
     }
+
+    private var axisFontSize: CGFloat { EventChartTypography.labelSize(scaled: scaledAxisFont) }
+    /// One tick per touchdown (7 points) across the axis.
+    private var pointTicks: [Double] { Array(stride(from: 0, through: domainMax, by: 7)) }
 
     private func number(_ value: Double, label: String) -> some View {
         VStack(alignment: .trailing, spacing: 0) {
@@ -148,6 +165,8 @@ struct NFLMilestoneCardView9483: View {
     let color: Color
     @ObservedObject var state: NFLCardDeckState9483
     var expanded = false
+    @ScaledMetric(relativeTo: .caption2) private var scaledAxisFont: CGFloat = 12
+    private var axisFontSize: CGFloat { EventChartTypography.labelSize(scaled: scaledAxisFont) }
 
     var body: some View {
         let selected = state.selectedIndex(in: card)
@@ -295,18 +314,125 @@ struct NFLMilestoneCardView9483: View {
             }
         }
         .chartXAxis {
-            // Every quoted line is labelled, priced or not, so a line with no
-            // recent price is still named where it stands.
             AxisMarks(values: card.rungs.map(\.threshold)) { value in
-                AxisValueLabel(collisionResolution: .greedy) {
-                    if let line = value.as(Double.self) { Text(PlayerPropsFamily.targetLabel(line)) }
-                }
+                NFLStatAxisLabels9483.reservedLabel(
+                    value.as(Double.self).map(PlayerPropsFamily.targetLabel) ?? "", fontSize: axisFontSize)
+            }
+        }
+        // Every quoted line has a tick, priced or not, so a line with no
+        // recent price still stands where it is; each label is centred under
+        // its own tick and stem. A row too dense for every label keeps the
+        // selected line's label first and drops whole labels, never overlaps.
+        .chartOverlay { proxy in
+            GeometryReader { geo in
+                NFLStatAxisLabels9483(values: card.rungs.map(\.threshold),
+                                      texts: card.rungs.map { PlayerPropsFamily.targetLabel($0.threshold) },
+                                      keep: card.rungs.firstIndex { $0.rowID == selected?.rowID },
+                                      fontSize: axisFontSize, proxy: proxy,
+                                      plotFrame: geo[proxy.plotAreaFrame], ticks: true)
             }
         }
         .frame(height: expanded ? 240 : 150)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(PlayerMilestoneProfile.spokenSummary(profile, stat: card.stat)
             + (card.actual.map { ". Final \(NFLFinishCardView9483.points($0))" } ?? ""))
+    }
+}
+
+// MARK: - Stat-axis labels
+
+/// The cards' stat-axis labels, drawn by us and centred on their ticks — the
+/// #8481 rule, for the same reason (`ChartTimeAxisLabels`): on iOS 27 an
+/// `AxisValueLabel` hangs RIGHT of its tick whether it is `anchor: .top` or
+/// `collisionResolution: .greedy`, so on a 5- or 10-yard ladder every label
+/// printed under the NEXT stem ("40+" under the 50+ stem, native's runtime
+/// review of PR #11038). The framework keeps an invisible label per tick for
+/// the row's height; this view draws the visible one.
+struct NFLStatAxisLabels9483: View {
+    let values: [Double]
+    let texts: [String]
+    /// The label kept first when the row cannot hold them all (the selected line).
+    let keep: Int?
+    let fontSize: CGFloat
+    let proxy: ChartProxy
+    let plotFrame: CGRect
+    var ticks = false
+
+    /// The framework's label, kept for the row's height, never for its ink.
+    static func reservedLabel(_ text: String, fontSize: CGFloat) -> some AxisMark {
+        AxisValueLabel(anchor: .topTrailing) {
+            Text(text).font(.system(size: fontSize)).foregroundStyle(Color.clear)
+        }
+    }
+
+    /// The width a label's ink takes at `fontSize`, measured in the font it is
+    /// drawn in.
+    static func labelWidth(_ text: String, fontSize: CGFloat) -> CGFloat {
+        #if canImport(UIKit)
+        return (text as NSString).size(withAttributes: [.font: UIFont.systemFont(ofSize: fontSize)]).width
+        #else
+        return CGFloat(text.count) * fontSize * 0.62
+        #endif
+    }
+
+    /// Which labels are drawn, and where each one's centre sits in plot points.
+    ///
+    /// Every label is centred on its tick, then moved inward only as far as it
+    /// must go to stay inside the plot (`OddsChartView.xAxisLabelCenters`).
+    /// Where two would come closer than `xAxisLabelMinGap`, the later one in
+    /// priority order is dropped WHOLE — the kept label (the selected line),
+    /// then the two ends, then the rest left to right — so no label is ever
+    /// printed over another or under a neighbour's stem.
+    static func placements(tickPositions: [CGFloat], widths: [CGFloat], plotWidth: CGFloat,
+                           keep: Int?) -> [(index: Int, center: CGFloat)] {
+        let count = min(tickPositions.count, widths.count)
+        guard count > 0 else { return [] }
+        let centers = (0..<count).map {
+            OddsChartView.xAxisLabelCenters(tickPositions: [tickPositions[$0]], plotWidth: plotWidth,
+                                            labelWidth: widths[$0])[0]
+        }
+        var order = [keep, 0, count - 1].compactMap { $0 }.filter { (0..<count).contains($0) }
+        order += (0..<count).filter { !order.contains($0) }
+        var kept: [Int] = []
+        for index in order where !kept.contains(index) {
+            let clear = kept.allSatisfy { other in
+                abs(centers[index] - centers[other])
+                    >= (widths[index] + widths[other]) / 2 + OddsChartView.xAxisLabelMinGap
+            }
+            if clear { kept.append(index) }
+        }
+        return kept.sorted().map { ($0, centers[$0]) }
+    }
+
+    var body: some View {
+        let count = min(values.count, texts.count)
+        let placed: [(index: Int, x: CGFloat)] = (0..<count).compactMap { index in
+            proxy.position(forX: values[index]).map { (index, $0) }
+        }
+        let labelY = plotFrame.maxY + ChartTimeAxisLabels.labelCenterOffset * fontSize / 9
+        let shown = Self.placements(tickPositions: placed.map(\.x),
+                                    widths: placed.map { Self.labelWidth(texts[$0.index], fontSize: fontSize) },
+                                    plotWidth: plotFrame.width, keep: placed.firstIndex { $0.index == keep })
+        if ticks {
+            ForEach(Array(placed.enumerated()), id: \.offset) { _, item in
+                Rectangle()
+                    .fill(Color.secondary.opacity(0.6))
+                    .frame(width: 1, height: 4)
+                    .position(x: plotFrame.minX + item.x, y: plotFrame.maxY + 2)
+            }
+            .accessibilityHidden(true)
+            .allowsHitTesting(false)
+        }
+        ForEach(shown, id: \.index) { label in
+            Text(texts[placed[label.index].index])
+                .font(.system(size: fontSize))
+                .foregroundStyle(Color.primary)
+                .lineLimit(1)
+                .fixedSize()
+                .position(x: plotFrame.minX + label.center, y: labelY)
+                .accessibilityHidden(true)
+                .allowsHitTesting(false)
+        }
     }
 }
 

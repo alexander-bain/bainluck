@@ -57,6 +57,20 @@ enum NFLCardReaderHold9483 {
             || heldHeader != liveHeader || heldRows != liveRows
     }
 
+    /// The card on screen after Refresh replaces the cards `old` with `new`
+    /// (design supplement of 10/14). The same card when it survived; when it
+    /// did not, deliberately the nearest card that did — the next one in the
+    /// old order, else the previous one, else the first new card — never an
+    /// id no card carries. Nil only when no card is left.
+    static func reconciled(visible: String?, old: [String], new: [String]) -> String? {
+        if let visible, new.contains(visible) { return visible }
+        let start = visible.flatMap { old.firstIndex(of: $0) } ?? 0
+        let after = old.indices.filter { $0 > start }
+        let before = old.indices.filter { $0 < start }.reversed()
+        for index in after + before where new.contains(old[index]) { return old[index] }
+        return new.first
+    }
+
     /// The original rows the cards' lines point at, by row id — what Details
     /// shows, and what the reader holds beside the cards.
     static func rows(for cards: [NFLEventCard9483],
@@ -122,9 +136,16 @@ struct NFLCardReader9483: View {
                 VStack(spacing: 0) {
                     top(now: tick.date)
                     Divider()
-                    rail(cards, width: geo.size.width)
-                    Divider()
-                    bottom(cards)
+                    if cards.isEmpty {
+                        Text("No game stories right now")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    } else {
+                        rail(cards, width: geo.size.width)
+                        Divider()
+                        bottom(cards)
+                    }
                 }
             }
         }
@@ -142,9 +163,18 @@ struct NFLCardReader9483: View {
     }
 
     private func refresh() {
+        let next = NFLCardReaderHold9483.reconciled(visible: visible, old: heldCards.map(\.id),
+                                                    new: liveCards.map(\.id))
         heldCards = liveCards
         heldHeader = liveHeader
         heldRows = liveRows
+        // The open card left the deck: move to the nearest card that stayed,
+        // so the count and the dots name a card that is on screen. With no
+        // card left the reader stays open on its empty state until Back.
+        guard next != visible else { return }
+        seated = true
+        visible = next
+        if let next { state.openCardID = next }
     }
 
     private struct IdentifiedRow: Identifiable { let id: String }
@@ -249,6 +279,8 @@ struct NFLCardReader9483: View {
                     .font(.subheadline.weight(.semibold).monospacedDigit())
                     .foregroundStyle(.secondary)
                     .accessibilityLabel("Card \(position + 1) of \(cards.count)")
+                    // Read before the arrows, which sit higher on screen.
+                    .accessibilitySortPriority(1)
                 HStack(spacing: 6) {
                     ForEach(cards) { card in
                         Capsule()
@@ -268,6 +300,7 @@ struct NFLCardReader9483: View {
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 8)
+        .accessibilityElement(children: .contain)
     }
 
     private func step(_ delta: Int, in cards: [NFLEventCard9483]) {

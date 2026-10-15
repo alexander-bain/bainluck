@@ -30,6 +30,11 @@ import XCTest
 /// - let Details show a newer row than the held card → `testDetailsRowsAreHeldWithTheCardsUntilRefresh`
 /// - plot an actual outside the stat axis → `testTheStatAxisAdmitsActualsBelowWithinAndAboveTheLadder`
 /// - rebuild the large-text chrome → `testTheReaderRendersTheMatchLineCountAndBack`
+///
+/// Native runtime review of 0a69b708 (10/14), PR #11038:
+/// - hang a stat label off its tick (iOS 27 `AxisValueLabel`, "40+" under the 50+ stem) → `testADenseLadderCentresEveryLabelOnItsOwnTick`, `testADenseLadderRendersEachLabelUnderItsOwnStem`
+/// - print two labels over each other, or drop the selected line's → `testADenseLadderCentresEveryLabelOnItsOwnTick`
+/// - leave Refresh on an id no card carries ("1 of 0") → `testRefreshMovesOffACardThatLeftTheDeck`
 @MainActor
 final class NFLEventCards9483Tests: XCTestCase {
 
@@ -478,6 +483,220 @@ final class NFLEventCards9483Tests: XCTestCase {
                 XCTAssertTrue(text.contains("Pregame chance"), "\(name): \(text)")
             }
         }
+    }
+
+
+    // MARK: - Stat-axis labels (native runtime review of 0a69b708)
+
+    /// A 5-yard ladder of 14 lines, at the default and the largest label size,
+    /// on a full-size and a compact plot: every drawn label is centred on its
+    /// own tick (moved inward only at the plot's edges), no two touch, and the
+    /// selected line's label is always one of them.
+    func testADenseLadderCentresEveryLabelOnItsOwnTick() {
+        let lines = stride(from: 39.5, through: 104.5, by: 5).map { $0 }
+        XCTAssertGreaterThanOrEqual(lines.count, 10)
+        let texts = lines.map(PlayerPropsFamily.targetLabel)
+        for (plotWidth, fontSize) in [(CGFloat(330), CGFloat(12)), (330, 16), (260, 12), (260, 16)] {
+            let ticks = lines.map { CGFloat(($0 - 37) / (107 - 37)) * plotWidth }
+            let widths = texts.map { NFLStatAxisLabels9483.labelWidth($0, fontSize: fontSize) }
+            for keep in [1, 6, lines.count - 2] {
+                let shown = NFLStatAxisLabels9483.placements(tickPositions: ticks, widths: widths,
+                                                             plotWidth: plotWidth, keep: keep)
+                let tag = "plot \(plotWidth) font \(fontSize) keep \(keep)"
+                XCTAssertTrue(shown.contains { $0.index == keep }, "\(tag): the selected line keeps its label")
+                XCTAssertGreaterThan(shown.count, 2, "\(tag): a dense row still names several lines")
+                for label in shown {
+                    let half = widths[label.index] / 2
+                    XCTAssertEqual(label.center, min(max(ticks[label.index], half), plotWidth - half),
+                                   accuracy: 0.001, "\(tag): \(texts[label.index]) is centred on its own tick")
+                    XCTAssertGreaterThanOrEqual(label.center - half, -0.001, "\(tag): inside the plot")
+                    XCTAssertLessThanOrEqual(label.center + half, plotWidth + 0.001, "\(tag): inside the plot")
+                }
+                for (left, right) in zip(shown, shown.dropFirst()) {
+                    XCTAssertGreaterThanOrEqual(
+                        right.center - left.center,
+                        (widths[left.index] + widths[right.index]) / 2 + OddsChartView.xAxisLabelMinGap - 0.001,
+                        "\(tag): \(texts[left.index]) and \(texts[right.index]) do not touch")
+                }
+            }
+        }
+        // A sparse row draws every label.
+        let sparse = NFLStatAxisLabels9483.placements(tickPositions: [20, 120, 220], widths: [24, 24, 24],
+                                                      plotWidth: 240, keep: nil)
+        XCTAssertEqual(sparse.map(\.index), [0, 1, 2])
+        XCTAssertEqual(sparse.map(\.center), [20, 120, 220])
+    }
+
+    /// The same dense ladder RENDERED, default size and AX3: each interior
+    /// label the page prints is found by its ink, must sit over a stem drawn
+    /// in the card's colour, and must read as THAT stem's line (native saw
+    /// "40+" under the 50+ stem on iOS 27).
+    @MainActor
+    func testADenseLadderRendersEachLabelUnderItsOwnStem() throws {
+        let lines = stride(from: 39.5, through: 104.5, by: 5).map { $0 }
+        let marks = lines.indices.map { 0.9 - Double($0) * 0.055 }   // 90% … 18.5%, all stems tall enough to see
+        let card = try XCTUnwrap(NFLMilestoneCard9483.cards(
+            props: ladder("Courtland Sutton", "Receiving Yards", lines: lines, prices: marks, marks: marks),
+            eventStatus: "live", commenceTime: t(-60), homeTeam: "Denver Broncos",
+            awayTeam: "Seattle Seahawks", now: t(0)).first)
+        XCTAssertEqual(card.rungs.count, lines.count)
+        for (name, size) in [("axis-large", DynamicTypeSize.large), ("axis-ax3", .accessibility3)] {
+            let view = NFLMilestoneCardView9483(card: card, color: Color(red: 1, green: 0, blue: 0),
+                                                state: NFLCardDeckState9483(), expanded: true)
+                .padding(16)
+                .frame(width: 402)
+                .background(Color.white)
+            let (labels, stems, scale, read) = try labelsAndStems(view, size: size, name: name)
+            let tag = "\(name): labels \(labels.map { "\($0.text)@\(Int($0.x))" }) stems \(stems) read \(read)"
+            XCTAssertEqual(stems.count, lines.count, "\(tag): one stem per line was found")
+            // An END label may move inward off its tick to stay inside the
+            // plot (at most half its width, < 25 pt); every other label may not.
+            let ends = [stems.first ?? 0, stems.last ?? 0]
+            let interior = labels.filter { label in ends.allSatisfy { abs($0 - label.x) / scale > 25 } }
+            XCTAssertGreaterThanOrEqual(interior.count, 2, "\(tag): the row was read")
+            for label in interior {
+                let offsets = stems.map { abs($0 - label.x) }
+                let nearest = offsets.min() ?? .infinity
+                // 3 pt: the ink centre is measured to a pixel; a label hung
+                // off its tick misses by half its own width (~15 pt), and a
+                // neighbouring stem is ≥ 20 pt away.
+                XCTAssertLessThanOrEqual(nearest / scale, 3, "\(tag): \(label.text) sits on a stem")
+                if stems.count == lines.count, let stem = offsets.firstIndex(of: nearest) {
+                    XCTAssertEqual(label.text, PlayerPropsFamily.targetLabel(lines[stem]),
+                                   "\(tag): the label under the \(PlayerPropsFamily.targetLabel(lines[stem])) stem names it")
+                }
+            }
+            // Stems and lines share one linear axis: left to right in line order.
+            let readable = labels.sorted { $0.x < $1.x }.compactMap { Double($0.text.dropLast()) }
+            XCTAssertEqual(readable.count, labels.count, "\(tag): every label read as a line")
+            XCTAssertEqual(readable, readable.sorted(), "\(tag): left to right in line order")
+        }
+    }
+
+    /// Renders `view`; returns the centres of the card-coloured stems and of
+    /// every axis label's ink, in image pixels, with what each label reads.
+    ///
+    /// A first recognition pass only locates the label row. The stems are the
+    /// red columns in a band inside the plot just above it. Each label is the
+    /// run of dark (primary-ink) columns in the row — labels stand at least
+    /// `xAxisLabelMinGap` apart, glyphs far less — so its centre is the ink's,
+    /// not a recognition box's (those ran ~7 pt off on "74.5+"), and its text is
+    /// read from a crop of that one label.
+    @MainActor
+    private func labelsAndStems<V: View>(_ view: V, size: DynamicTypeSize, name: String)
+        throws -> (labels: [(text: String, x: CGFloat)], stems: [CGFloat], scale: CGFloat, read: [String]) {
+        let host = hostForMeasurement(view, at: size)
+        host.view.frame = CGRect(x: 0, y: 0, width: 402, height: 874)
+        let window = UIWindow(frame: host.view.frame)
+        window.rootViewController = host
+        window.isHidden = false
+        defer { window.isHidden = true }
+        let until = Date().addingTimeInterval(0.6)
+        repeat {
+            host.view.setNeedsLayout(); host.view.layoutIfNeeded()
+            RunLoop.current.run(until: Date().addingTimeInterval(0.01))
+        } while Date() < until
+        let image = UIGraphicsImageRenderer(bounds: host.view.bounds).image { _ in
+            host.view.drawHierarchy(in: host.view.bounds, afterScreenUpdates: true)
+        }
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("nfl-cards-9483-\(name).png")
+        try XCTUnwrap(image.pngData()).write(to: url)
+        print("NFL card axis rendered evidence: \(url.path)")
+        let cg = try XCTUnwrap(image.cgImage)
+        let (width, height) = (cg.width, cg.height)
+        let scale = CGFloat(width) / host.view.bounds.width
+        var pixels = [UInt8](repeating: 0, count: width * height * 4)
+        let context = try XCTUnwrap(CGContext(
+            data: &pixels, width: width, height: height, bitsPerComponent: 8, bytesPerRow: width * 4,
+            space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
+        context.draw(cg, in: CGRect(x: 0, y: 0, width: width, height: height))
+
+        /// Recognised strings in `image`, with each one's vertical centre in pixels.
+        func recognise(_ image: CGImage) throws -> [(text: String, mid: CGFloat)] {
+            let request = VNRecognizeTextRequest()
+            request.recognitionLevel = .accurate
+            request.usesLanguageCorrection = false
+            try VNImageRequestHandler(cgImage: image).perform([request])
+            return (request.results ?? []).compactMap { observation in
+                observation.topCandidates(1).first.map {
+                    ($0.string, (1 - observation.boundingBox.midY) * CGFloat(image.height))
+                }
+            }
+        }
+        /// The runs of columns in `columns`, split where a gap exceeds `gap` pixels.
+        func runs(_ columns: Set<Int>, gap: Int) -> [(first: Int, last: Int)] {
+            var found: [(first: Int, last: Int)] = []
+            for x in columns.sorted() {
+                if let last = found.last, x - last.last <= gap { found[found.count - 1].last = x } else { found.append((x, x)) }
+            }
+            return found
+        }
+        func columns(rows: Range<Int>, where test: (Int, Int, Int) -> Bool) -> Set<Int> {
+            var hit = Set<Int>()
+            for y in max(rows.lowerBound, 0)..<min(max(rows.upperBound, 0), height) {
+                for x in 0..<width {
+                    let i = (y * width + x) * 4
+                    if test(Int(pixels[i]), Int(pixels[i + 1]), Int(pixels[i + 2])) { hit.insert(x) }
+                }
+            }
+            return hit
+        }
+
+        // Pass 1: the axis row is the HIGHEST line of "N+" text (the readout's
+        // "74.5+" sits below the chart).
+        let whole = try recognise(cg)
+        let read = whole.map(\.text)
+        guard let rowMid = whole.filter({ $0.text.contains(/\d\+/) }).map(\.mid).min() else {
+            return ([], [], scale, read)
+        }
+
+        // Stems: card-red columns in a band inside the plot above that row. A
+        // label's centre sits 12.7–17 pt below the plot's bottom edge.
+        let stems = runs(columns(rows: Int(rowMid - 32 * scale)..<Int(rowMid - 19 * scale)) { r, g, b in
+            r > 180 && r - g > 40 && r - b > 40
+        }, gap: 1).map { CGFloat($0.first + $0.last) / 2 }
+
+        // Labels: dark ink in the row. The grey tick marks and the grey
+        // y-axis "0%" stay out of it.
+        let rowRange = Int(rowMid - 7 * scale)..<Int(rowMid + 7 * scale)
+        let ink = runs(columns(rows: rowRange) { r, g, b in max(r, g, b) < 110 },
+                       gap: Int(3 * scale))
+        let labels = try ink.map { run -> (text: String, x: CGFloat) in
+            // Crop to this label's own ink, so the readout below never joins it.
+            let inkRows = rowRange.filter { y in
+                (run.first...run.last).contains { x in
+                    let i = (y * width + x) * 4
+                    return max(pixels[i], pixels[i + 1], pixels[i + 2]) < 110
+                }
+            }
+            let pad = 3 * scale
+            let top = CGFloat(inkRows.first ?? Int(rowMid)), bottom = CGFloat(inkRows.last ?? Int(rowMid))
+            let crop = CGRect(x: CGFloat(run.first) - pad, y: top - pad,
+                              width: CGFloat(run.last - run.first) + 2 * pad, height: bottom - top + 2 * pad).integral
+            let found = try recognise(try XCTUnwrap(cg.cropping(to: crop)))
+            let text = found.min { abs($0.mid - crop.height / 2) < abs($1.mid - crop.height / 2) }?.text ?? ""
+            return (text.replacingOccurrences(of: " ", with: ""), CGFloat(run.first + run.last) / 2)
+        }
+        return (labels, stems, scale, read)
+    }
+
+    // MARK: - Refresh reconciliation (design supplement 10/14)
+
+    func testRefreshMovesOffACardThatLeftTheDeck() {
+        let old = ["finish", "milestone:a", "milestone:b"]
+        XCTAssertEqual(NFLCardReaderHold9483.reconciled(visible: "milestone:a", old: old, new: old), "milestone:a",
+                       "a card that stayed stays open")
+        XCTAssertEqual(NFLCardReaderHold9483.reconciled(visible: "milestone:a", old: old,
+                                                        new: ["finish", "milestone:b"]), "milestone:b",
+                       "the open card left: the next card that stayed")
+        XCTAssertEqual(NFLCardReaderHold9483.reconciled(visible: "milestone:b", old: old,
+                                                        new: ["finish", "milestone:a"]), "milestone:a",
+                       "the last card left: the previous card that stayed")
+        XCTAssertEqual(NFLCardReaderHold9483.reconciled(visible: "milestone:b", old: old,
+                                                        new: ["milestone:c"]), "milestone:c",
+                       "nothing old stayed: the first new card")
+        XCTAssertNil(NFLCardReaderHold9483.reconciled(visible: "milestone:b", old: old, new: []),
+                     "no card left: nothing is named")
     }
 
     @MainActor
