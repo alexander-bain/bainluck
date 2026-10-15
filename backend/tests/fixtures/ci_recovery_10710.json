@@ -1,0 +1,159 @@
+{
+  "evidence_note": "Historical incident 37651724603 attempt 1, retrieved October 14, 2026. Source eligibility/policy replay the incident, not current live authorization. Required search-recall was absent; all executed nonconditional jobs passed. No retry performed.",
+  "repository": "alexander-bain/bainluck",
+  "expected_head": "48e1a48c14095425001dace4f472df6de7410807",
+  "current_head": "48e1a48c14095425001dace4f472df6de7410807",
+  "expected_run_id": 37651724603,
+  "expected_attempt": 1,
+  "source_open": true,
+  "active_duplicate": false,
+  "read_errors": [],
+  "required_jobs": [
+    "change-scope",
+    "frontend-build",
+    "backend-tests (1)",
+    "backend-tests (2)",
+    "backend-tests (3)",
+    "backend-tests (4)",
+    "shard-completeness",
+    "search-recall"
+  ],
+  "policy": {
+    "recoveries_used": 0,
+    "retry_prohibited": true,
+    "recovery_authorized": false
+  },
+  "run": {
+    "id": 37651724603,
+    "run_attempt": 1,
+    "head_sha": "48e1a48c14095425001dace4f472df6de7410807",
+    "status": "completed",
+    "conclusion": "failure",
+    "html_url": "https://github.com/alexander-bain/bainluck/actions/runs/37651724603",
+    "repository": {
+      "full_name": "alexander-bain/bainluck"
+    }
+  },
+  "jobs": {
+    "total_count": 13,
+    "jobs": [
+      {
+        "id": 112896468956,
+        "run_id": 37651724603,
+        "run_attempt": 1,
+        "head_sha": "48e1a48c14095425001dace4f472df6de7410807",
+        "name": "golden-baseline-floor",
+        "status": "completed",
+        "conclusion": "success"
+      },
+      {
+        "id": 112896469443,
+        "run_id": 37651724603,
+        "run_attempt": 1,
+        "head_sha": "48e1a48c14095425001dace4f472df6de7410807",
+        "name": "frontend-build",
+        "status": "completed",
+        "conclusion": "success"
+      },
+      {
+        "id": 112896469508,
+        "run_id": 37651724603,
+        "run_attempt": 1,
+        "head_sha": "48e1a48c14095425001dace4f472df6de7410807",
+        "name": "change-scope",
+        "status": "completed",
+        "conclusion": "success"
+      },
+      {
+        "id": 112896469557,
+        "run_id": 37651724603,
+        "run_attempt": 1,
+        "head_sha": "48e1a48c14095425001dace4f472df6de7410807",
+        "name": "Browser-audit contract fixtures",
+        "status": "completed",
+        "conclusion": "success"
+      },
+      {
+        "id": 112896471138,
+        "run_id": 37651724603,
+        "run_attempt": 1,
+        "head_sha": "48e1a48c14095425001dace4f472df6de7410807",
+        "name": "release-required",
+        "status": "completed",
+        "conclusion": "skipped"
+      },
+      {
+        "id": 112896681984,
+        "run_id": 37651724603,
+        "run_attempt": 1,
+        "head_sha": "48e1a48c14095425001dace4f472df6de7410807",
+        "name": "database-integration (isolated)",
+        "status": "completed",
+        "conclusion": "success"
+      },
+      {
+        "id": 112896682016,
+        "run_id": 37651724603,
+        "run_attempt": 1,
+        "head_sha": "48e1a48c14095425001dace4f472df6de7410807",
+        "name": "backend-tests (2)",
+        "status": "completed",
+        "conclusion": "success"
+      },
+      {
+        "id": 112896682055,
+        "run_id": 37651724603,
+        "run_attempt": 1,
+        "head_sha": "48e1a48c14095425001dace4f472df6de7410807",
+        "name": "backend-tests (3)",
+        "status": "completed",
+        "conclusion": "success"
+      },
+      {
+        "id": 112896682079,
+        "run_id": 37651724603,
+        "run_attempt": 1,
+        "head_sha": "48e1a48c14095425001dace4f472df6de7410807",
+        "name": "backend-tests (1)",
+        "status": "completed",
+        "conclusion": "success"
+      },
+      {
+        "id": 112896682156,
+        "run_id": 37651724603,
+        "run_attempt": 1,
+        "head_sha": "48e1a48c14095425001dace4f472df6de7410807",
+        "name": "database-integration (shared)",
+        "status": "completed",
+        "conclusion": "success"
+      },
+      {
+        "id": 112896682225,
+        "run_id": 37651724603,
+        "run_attempt": 1,
+        "head_sha": "48e1a48c14095425001dace4f472df6de7410807",
+        "name": "backend-tests (4)",
+        "status": "completed",
+        "conclusion": "success"
+      },
+      {
+        "id": 112896682290,
+        "run_id": 37651724603,
+        "run_attempt": 1,
+        "head_sha": "48e1a48c14095425001dace4f472df6de7410807",
+        "name": "shard-completeness",
+        "status": "completed",
+        "conclusion": "success"
+      },
+      {
+        "id": 112909691054,
+        "run_id": 37651724603,
+        "run_attempt": 1,
+        "head_sha": "48e1a48c14095425001dace4f472df6de7410807",
+        "name": "deploy",
+        "status": "completed",
+        "conclusion": "skipped"
+      }
+    ]
+  }
+}

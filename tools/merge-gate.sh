@@ -2999,6 +2999,8 @@ fi
 # PR GitHub cannot merge gets NO run scheduled at all, while gitleaks' bare
 # `push:` trigger and Vercel still print passes and `gh pr checks` EXITS 0.
 # ABSENCE OF THE CI ROW IS A STOP, NOT A PASS.
+# For a held CI subject, docs/ci-recovery.md and tools/ci_recovery.py provide
+# read-only, exact-attempt disposition. They never substitute a GO or retry here.
 #
 # `&per_page=100` is load-bearing twice over: master shas carry 35-47 runs and
 # the list pages at 30, so page one can hold no CI row on a sha whose CI passed.
