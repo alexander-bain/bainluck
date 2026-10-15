@@ -27,6 +27,14 @@ import {
   type MilestoneRung,
   type NflEventCard,
 } from "@/lib/nflEventCardDeck";
+import {
+  defaultLadderIndex,
+  ladderCaption,
+  ladderTitle,
+  marginWords,
+  type LadderCard,
+  type LadderPoint,
+} from "@/lib/nbaEventCards";
 
 /** Selected original row per milestone card, keyed by card id. */
 export type CardSelection = Record<string, string>;
@@ -463,6 +471,207 @@ export function MilestoneCardView({
   );
 }
 
+// ─── NBA ladders: scoring expectations and winning margin ──────────────────
+
+/** The selected ladder point: the stored option while still on the card, nothing if it left, else the default. */
+export function selectedLadderIndex(card: LadderCard, selection: CardSelection): number | null {
+  const key = selection[card.id];
+  if (key === undefined) return defaultLadderIndex(card);
+  const index = card.points.findIndex((p) => p.optionKey === key);
+  return index >= 0 ? index : null;
+}
+
+function ladderReadout(card: LadderCard, p: LadderPoint): { main: string; sub: string } {
+  // Before tip-off a missing dot is a stale price; afterwards the caption already
+  // says the pregame chance is unavailable, so the readout does not repeat it.
+  const main =
+    p.chance !== null
+      ? `${p.label} · ${formatProbability(p.chance)}`
+      : card.phase === "before"
+        ? `${p.label} · No recent price`
+        : p.label;
+  const parts: string[] = [];
+  if (p.result !== null) parts.push(propVerdictLabel(p.result));
+  else if (p.chance !== null) parts.push(card.phase === "before" ? "Pregame chance" : "Before tip-off");
+  if (p.now !== null) parts.push(`now ${formatProbability(p.now)}`);
+  return { main, sub: parts.join(" · ") };
+}
+
+function LadderChart({
+  card,
+  selected,
+  teams,
+  expanded,
+}: {
+  card: LadderCard;
+  selected: number | null;
+  teams: CardTeams;
+  expanded: boolean;
+}) {
+  const [boxRef, box] = usePlotBox();
+  const W = box.width;
+  const font = box.font;
+  const margin = card.family === "margin";
+  // With no chance to draw (a final with no admitted pin) there is no chance axis:
+  // the plot collapses to a strip of the lines with the actual marked on it.
+  const hasDots = card.points.some((p) => p.chance !== null);
+  const H = hasDots
+    ? (expanded ? 220 : 150) + (font - AXIS_FONT) * 2 + (margin ? font * 1.6 : 0)
+    : font * (margin ? 5.6 : 4) + 28;
+  const left = hasDots ? Math.ceil(labelWidth("100%", font)) + 10 : 10;
+  const right = 10;
+  const top = font + 10;
+  const bottom = Math.ceil(font * (margin ? 3.6 : 2));
+  const plotW = W - left - right;
+  const plotH = H - top - bottom;
+  const xs = [...card.points.map((p) => p.x), ...(card.actual !== null ? [card.actual] : []), ...(card.forecast !== null ? [card.forecast] : [])];
+  const span = Math.max(...xs) - Math.min(...xs) || 1;
+  const pad = Math.max(span * 0.06, 1);
+  const lo = margin ? -Math.max(...xs.map(Math.abs)) - pad : Math.min(...xs) - pad;
+  const hi = margin ? -lo : Math.max(...xs) + pad;
+  const x = (v: number) => left + ((v - lo) / (hi - lo)) * plotW;
+  const y = (p: number) => top + (1 - p) * plotH;
+  const ink = (p: LadderPoint) =>
+    inkColor(p.side === "home" ? teams.homeColor : p.side === "away" ? teams.awayColor : teams.homeColor);
+  const step = margin ? (hi > 24 ? 10 : 5) : hi - lo > 60 ? 20 : 10;
+  const ticks: number[] = [];
+  for (let t = Math.ceil(lo / step) * step; t <= hi; t += step) ticks.push(t);
+  const tickText = (t: number) => (margin ? (t === 0 ? "Tie" : String(Math.abs(t))) : String(t));
+  const placements = axisLabelPlacements(
+    ticks.map((t) => x(t) - left),
+    ticks.map((t) => labelWidth(tickText(t), font)),
+    plotW,
+    null,
+  );
+  const drawn = card.points.filter((p) => p.chance !== null);
+  const actualText = card.actual === null ? null : margin ? marginWords(card, card.actual) : String(card.actual);
+  const spoken =
+    `${ladderTitle(card)}. ${ladderCaption(card)}: ` +
+    (drawn.length ? drawn.map((p) => `${p.label} ${formatProbability(p.chance!)}`).join(", ") : "none recorded") +
+    (actualText ? `. ${card.phase === "after" ? "Final" : "So far"} ${actualText}` : "") +
+    (card.forecast !== null ? `. Pregame projection ${margin ? marginWords(card, card.forecast) : card.forecast}` : "");
+  return (
+    <div ref={boxRef} className="w-full max-w-[720px]">
+      <svg viewBox={`0 0 ${W} ${H}`} width={W} height={H} role="img" aria-label={spoken} className="block max-w-full" data-testid={`ladder-${card.family}`}>
+        {!hasDots && <line x1={left} x2={W - right} y1={top + plotH} y2={top + plotH} stroke="rgba(0,0,0,0.25)" />}
+        {hasDots && ([[0, "0%"], [0.5, "50%"], [1, "100%"]] as const).map(([p, label]) => (
+          <g key={p}>
+            <line x1={left} x2={W - right} y1={y(p)} y2={y(p)} stroke={p === 0.5 ? "rgba(0,0,0,0.25)" : "rgba(0,0,0,0.08)"} strokeDasharray={p === 0.5 ? "3 3" : undefined} />
+            <text x={left - 6} y={y(p) + font * 0.35} fontSize={font} textAnchor="end" fill="#4B5563">{label}</text>
+          </g>
+        ))}
+        {margin && <line x1={x(0)} x2={x(0)} y1={top} y2={top + plotH} stroke="rgba(0,0,0,0.35)" />}
+        {card.forecast !== null && (
+          <line x1={x(card.forecast)} x2={x(card.forecast)} y1={top - 4} y2={top + plotH} stroke="#4B5563" strokeWidth={1.5} strokeDasharray="4 3" data-mark="forecast" data-forecast={card.forecast} />
+        )}
+        {card.actual !== null && (
+          <line x1={x(card.actual)} x2={x(card.actual)} y1={top - 4} y2={top + plotH} stroke="#111827" strokeWidth={2} data-mark="actual" data-actual={card.actual} />
+        )}
+        {card.points.map((p, i) => {
+          const isSelected = i === selected;
+          const c = ink(p);
+          return (
+            <g key={p.optionKey} data-mark="ladder-line" data-x={p.x} data-selected={isSelected || undefined}>
+              <line x1={x(p.x)} x2={x(p.x)} y1={top + plotH} y2={top + plotH + 4} stroke="rgba(0,0,0,0.45)" />
+              {p.chance !== null && (
+                <>
+                  <line x1={x(p.x)} x2={x(p.x)} y1={y(0)} y2={y(p.chance)} stroke={c} strokeOpacity={isSelected ? 0.9 : 0.3} strokeWidth={isSelected ? 2 : 1.5} />
+                  <circle cx={x(p.x)} cy={y(p.chance)} r={isSelected ? 6 : 4} fill="#FFFFFF" stroke={isSelected ? c : "#6B7280"} strokeWidth={isSelected ? 2.5 : 1.5} />
+                </>
+              )}
+              {p.chance === null && isSelected && (
+                <line x1={x(p.x)} x2={x(p.x)} y1={top + plotH - 10} y2={top + plotH} stroke={c} strokeWidth={2.5} />
+              )}
+            </g>
+          );
+        })}
+        {placements.map((pl) => (
+          <text key={ticks[pl.index]} x={left + pl.center} y={top + plotH + font * 1.5} fontSize={font} textAnchor="middle" fill="#111827">
+            {tickText(ticks[pl.index])}
+          </text>
+        ))}
+        {margin && (
+          <>
+            <text x={left} y={H - font * 0.4} fontSize={font} textAnchor="start" fill="#4B5563">← {card.awayShort} by</text>
+            <text x={W - right} y={H - font * 0.4} fontSize={font} textAnchor="end" fill="#4B5563">{card.homeShort} by →</text>
+          </>
+        )}
+      </svg>
+    </div>
+  );
+}
+
+export function LadderCardView({
+  card,
+  teams,
+  selected,
+  onMove,
+  onDetails,
+  expanded = false,
+}: {
+  card: LadderCard;
+  teams: CardTeams;
+  selected: number | null;
+  onMove: (delta: number) => void;
+  onDetails?: (optionKey: string) => void;
+  expanded?: boolean;
+}) {
+  const margin = card.family === "margin";
+  const point = selected !== null ? card.points[selected] : null;
+  const readout = point ? ladderReadout(card, point) : null;
+  const actualText = card.actual === null ? null : margin ? marginWords(card, card.actual) : String(card.actual);
+  const forecastText = card.forecast === null ? null : margin ? marginWords(card, card.forecast) : String(card.forecast);
+  const pointInk = point ? (point.side === "away" ? teams.awayColor : teams.homeColor) : null;
+  const body = readout ? (
+    <span className="flex flex-col items-center">
+      <span className="text-sm font-semibold tabular-nums" style={{ color: point?.chance !== null ? textColor(pointInk) : undefined }}>{readout.main}</span>
+      <span className="text-[11px] text-text-secondary">{readout.sub}{expanded && onDetails ? (readout.sub ? " · details" : "details") : ""}</span>
+    </span>
+  ) : null;
+  return (
+    <div className="flex flex-col gap-2" data-card-kind={`ladder-${card.family}`}>
+      <p className="text-xs font-bold uppercase tracking-wide text-text-secondary">{ladderTitle(card)}</p>
+      {(actualText || forecastText) && (
+        <div className="flex gap-6">
+          {actualText && (
+            <div className="flex flex-col">
+              <span className="text-[11px] text-text-secondary">{card.phase === "after" ? "Actual final" : "So far"}</span>
+              <strong className="text-lg font-bold tabular-nums text-text-primary">{actualText}{!margin ? " points" : ""}</strong>
+            </div>
+          )}
+          {forecastText && (
+            <div className="flex flex-col">
+              <span className="text-[11px] text-text-secondary">Pregame projection</span>
+              <strong className="text-lg font-bold tabular-nums text-text-primary">{forecastText}{!margin ? " points" : ""}</strong>
+            </div>
+          )}
+        </div>
+      )}
+      <p className="text-xs text-text-secondary">{ladderCaption(card)}</p>
+      <LadderChart card={card} selected={selected} teams={teams} expanded={expanded} />
+      <div className="flex items-center gap-1">
+        <button type="button" onClick={() => onMove(-1)} disabled={selected === null || selected === 0} aria-label="Previous line" className="w-11 h-11 shrink-0 flex items-center justify-center rounded-md text-text-primary hover:bg-surface-elevated disabled:text-text-muted disabled:hover:bg-transparent">
+          <span aria-hidden="true">‹</span>
+        </button>
+        {expanded && onDetails && point ? (
+          <button type="button" onClick={() => onDetails(point.optionKey)} className="flex-1 min-h-11 rounded-md hover:bg-surface-elevated">
+            {body}
+            <span className="sr-only">Shows this line&apos;s exact quote</span>
+          </button>
+        ) : (
+          <div className="flex-1 min-h-11 flex items-center justify-center" aria-live="polite">{body}</div>
+        )}
+        <button type="button" onClick={() => onMove(1)} disabled={selected === null || selected >= card.points.length - 1} aria-label="Next line" className="w-11 h-11 shrink-0 flex items-center justify-center rounded-md text-text-primary hover:bg-surface-elevated disabled:text-text-muted disabled:hover:bg-transparent">
+          <span aria-hidden="true">›</span>
+        </button>
+      </div>
+      {forecastText && (
+        <p className="text-[11px] text-text-secondary">{card.actual !== null ? "Solid line = actual · dashed = pregame projection" : "Dashed line = pregame projection"}</p>
+      )}
+    </div>
+  );
+}
+
 // ─── One card, either family ───────────────────────────────────────────────
 
 export function EventCardView({
@@ -481,6 +690,23 @@ export function EventCardView({
   expanded?: boolean;
 }) {
   if (card.kind === "finish") return <FinishCardView card={card} teams={teams} expanded={expanded} />;
+  if (card.kind === "ladder") {
+    const index = selectedLadderIndex(card, selection);
+    return (
+      <LadderCardView
+        card={card}
+        teams={teams}
+        selected={index}
+        expanded={expanded}
+        onDetails={onDetails}
+        onMove={(delta) => {
+          if (index === null) return;
+          const next = card.points[index + delta];
+          if (next) onSelect(card.id, next.optionKey);
+        }}
+      />
+    );
+  }
   const color = card.side === "home" ? teams.homeColor : card.side === "away" ? teams.awayColor : null;
   const selected = selectedRungIndex(card, selection);
   return (

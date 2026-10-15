@@ -1238,6 +1238,9 @@ export interface GameMarketsResponse {
     _inverted?: boolean;
     _market_id?: number;
   }[];
+  // #9483 NBA slice — the producer's typed question matrix (contract 10238.v1).
+  // Read only through `decodeQuestionMatrix`, which is lenient by design.
+  game_question_matrix?: unknown;
   team_totals: {
     threshold: number;
     over_probability: number;
