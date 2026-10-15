@@ -80,7 +80,9 @@ Every result explicitly denies merge authorization and automated recovery.
 | Wrong head, closed PR or superseded source | Use the current candidate's checks | No retry of stale source |
 | Wrong attempt, partial pagination, API failure or unknown duplicate/policy | Obtain coherent current evidence | Remain held; never clear another claim |
 | Job failure, timeout or action required | Inspect exact job/step and fix its demonstrated cause | Do not infer provider failure or blanket retry |
-| GitHub `startup_failure` | Owner may authorize one failed-jobs recovery after diagnosing the provider failure | Fresh identity/attempt/duplicate check immediately before action; stop on recurrence |
+| Run-level `startup_failure` (including zero jobs) | Inspect workflow validation/file and provider status; an invalid workflow is deterministic | No rerun command or job recovery proposed |
+| Job-level `startup_failure` | Owner may authorize one failed-jobs recovery after diagnosing the provider failure | Fresh identity/attempt/duplicate check immediately before action; stop on recurrence |
+| Missing matrix contexts behind a skipped parent | Inspect change-scope/job `if:` and the existing required-context contract | Unchanged inputs reproduce the skip; no rerun proposed |
 | Required job absent, executed siblings passed | Inspect workflow/provider evidence; keep required-check hold | Failed-jobs rerun cannot target an absent job; whole-run recovery needs separately confirmed provider cause and owner authorization |
 | Cancelled run/job | Obtain owner's disposition and cause | No blind retry, no cancellation of a successful/active release |
 | Required job skipped/neutral, or inconsistent aggregate/result | Inspect required-job contract and dependency outcome | Never synthesize a passing status |

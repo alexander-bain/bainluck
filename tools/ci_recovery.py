@@ -209,6 +209,12 @@ def disposition(snapshot: Any) -> dict[str, Any]:
             "A completed workflow contains unfinished jobs; refresh evidence."
         )
         return result
+    if conclusion == "startup_failure":
+        return finish(
+            "workflow_startup_failure",
+            "The workflow itself could not start; passing or absent jobs do not establish a provider outage.",
+            "Inspect workflow validation/the workflow file and provider status; do not retry an unchanged invalid workflow or propose job recovery.",
+        )
     if conclusion == "cancelled" or any(j["conclusion"] == "cancelled" for j in rows):
         return finish(
             "cancelled",
@@ -221,6 +227,24 @@ def disposition(snapshot: Any) -> dict[str, Any]:
             "job_failure",
             "A job failed, timed out or requires action; infrastructure cause is unproven.",
             "Inspect the exact failed job/step and correct its demonstrated cause; preserve passing evidence.",
+        )
+    skipped_parents = sorted(
+        {
+            job["name"]
+            for job in rows
+            if job["conclusion"] == "skipped"
+            and any(
+                name.startswith(job["name"] + " (") and name.endswith(")")
+                for name in missing
+            )
+        }
+    )
+    if skipped_parents:
+        return finish(
+            "scope_skipped_required_jobs",
+            "Required matrix contexts were not created behind skipped parents: "
+            + ", ".join(skipped_parents),
+            "Inspect change-scope/job if conditions and the existing required-context contract; a rerun with unchanged inputs cannot create these contexts. Keep the hold for Integrator's disposition.",
         )
     by_name = {j["name"]: j for j in rows}
     skipped = [

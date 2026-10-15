@@ -173,6 +173,41 @@ def test_owning_no_retry_rule_overrides_authorization_flag(incident):
     assert "no-retry" in result["action"]
 
 
+def test_run_startup_failure_without_jobs_never_proposes_pointless_rerun(incident):
+    incident["run"]["conclusion"] = "startup_failure"
+    incident["jobs"] = {"total_count": 0, "jobs": []}
+    incident["policy"].update(
+        retry_prohibited=False,
+        recovery_authorized=True,
+        provider_cause_confirmed=True,
+    )
+    result = MODULE.disposition(incident)
+    assert result["classification"] == "workflow_startup_failure"
+    assert result["proposed_command"] is None
+    assert "workflow file" in result["action"]
+
+
+def test_skipped_matrix_parent_does_not_become_provider_outage(incident):
+    parent = deepcopy(incident["jobs"]["jobs"][0])
+    parent.update(id=999999999999, name="backend-tests", conclusion="skipped")
+    incident["jobs"] = {"total_count": 1, "jobs": [parent]}
+    incident["policy"].update(
+        retry_prohibited=False,
+        recovery_authorized=True,
+        provider_cause_confirmed=True,
+    )
+    result = MODULE.disposition(incident)
+    assert result["classification"] == "scope_skipped_required_jobs"
+    assert result["proposed_command"] is None
+    assert "unchanged inputs" in result["action"]
+    assert "backend-tests (1)" in result["missing_required_jobs"]
+
+
+def test_unrelated_skipped_parent_does_not_hide_missing_aggregate(incident):
+    incident["jobs"]["jobs"][0].update(name="backend-tests-old", conclusion="skipped")
+    assert MODULE.disposition(incident)["classification"] == "missing_required_job"
+
+
 def test_cancelled_or_unfinished_evidence_never_retries(incident):
     incident["run"]["conclusion"] = "cancelled"
     assert MODULE.disposition(incident)["classification"] == "cancelled"
