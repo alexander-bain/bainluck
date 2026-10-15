@@ -3993,28 +3993,27 @@ export default function OddsChart({
         {/* Multi-source mode: Bain Luck aggregated line first (always labeled).
             #1003: gated on showBlendLine, not isMultiSource — a legend entry for a
             line the chart did not draw is the same false claim as the line. */}
-        {/* #9483 — paired: one swatch per team line, then the blend's name as
-            its source (it is still one number per question). */}
-        {pairedInk && (
-          <>
-            <span className="sr-only">Each line is that team&apos;s chance to win.</span>
-            {[
-              { team: homeShort, ink: pairedInk.home },
-              { team: awayShort, ink: pairedInk.away },
-            ].map(({ team, ink }) => (
-              <div key={team} className="flex items-center gap-1.5" data-testid="paired-team-key">
-                <svg width="20" height="4" className="shrink-0" aria-hidden="true">
-                  <line x1="0" y1="2" x2="20" y2="2" stroke={ink} strokeWidth="3" />
-                </svg>
-                <span className="text-xs font-semibold" style={{ color: ink }}>{team}</span>
-              </div>
-            ))}
-          </>
-        )}
-        {showBlendLine && pairedInk && (
-          <span className="text-xs text-text-secondary">{BAIN_LUCK_CONFIG.displayName}</span>
-        )}
-        {showBlendLine && !pairedInk && (
+        {showBlendLine && (
+          /* #9483 — paired (only ever on a drawn blend): one swatch per team
+             line, then the blend's name as their source — still one number
+             per question. */
+          pairedInk ? (
+            <>
+              <span className="sr-only">Each line is that team&apos;s chance to win.</span>
+              {[
+                { team: homeShort, ink: pairedInk.home },
+                { team: awayShort, ink: pairedInk.away },
+              ].map(({ team, ink }) => (
+                <div key={team} className="flex items-center gap-1.5" data-testid="paired-team-key">
+                  <svg width="20" height="4" className="shrink-0" aria-hidden="true">
+                    <line x1="0" y1="2" x2="20" y2="2" stroke={ink} strokeWidth="3" />
+                  </svg>
+                  <span className="text-xs font-semibold" style={{ color: ink }}>{team}</span>
+                </div>
+              ))}
+              <span className="text-xs text-text-secondary">{BAIN_LUCK_CONFIG.displayName}</span>
+            </>
+          ) : (
           <div className="flex items-center gap-1.5">
             <svg width="20" height="4" className="shrink-0">
               <line
@@ -4027,6 +4026,7 @@ export default function OddsChart({
               {BAIN_LUCK_CONFIG.displayName}
             </span>
           </div>
+          )
         )}
 
         {/* Multi-source: the individual source lines stay collapsed behind an
