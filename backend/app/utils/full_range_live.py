@@ -23,25 +23,41 @@ THE RULES
    the first and last instant (the archive arm's span-keeping rule), and the
    response says ``live_thinned``. Never tail-cut: the oldest capture is the one
    a Full chart exists to reach.
-4. **Live keeps its precedence over the span it actually holds.** Unthinned,
-   the rows read ARE the claims, exactly as in the ordinary window. Thinned, the
-   skipped instants still exist, so each outcome's presence is read as spans
-   (consecutive skeleton buckets in which that outcome holds any capture) and an
-   archive interval or venue point inside one yields to live — the archive
-   never fills an instant our own capture already spoke for merely because the
-   bound did not draw it.
+4. **Live keeps its precedence over what it actually holds, and nothing
+   more.** Unthinned, the rows read ARE the claims, exactly as in the ordinary
+   window. Thinned, the skipped instants still exist, so before the archive and
+   venue arms are served each of their CANDIDATES is asked of the store
+   directly (:meth:`OlderLive.archive_claims`, :meth:`OlderLive.withhold_venue`):
+   does a supported capture of the SAME outcome lie inside this interval
+   (``[interval_start, interval_end]``, the archive rule's own overlap) or
+   within the capture claim of this venue instant? Only an actual capture says
+   yes. Root executed the earlier cut, which read each outcome's presence as
+   ``lo..hi`` spans over rank buckets, on the real 2,000-instant cap: one
+   skipped instant four hours from the dense run stretched a span across the
+   empty hours between and erased a valid archive interval no capture touched.
+   A thinned read never claims an empty gap, so an interval between two
+   captures stands exactly as it does unthinned. The same holds for the two
+   SEAT rules applied after it (:meth:`OlderLive.instant_claims`): the combined
+   chart's merged instant, which any outcome on the same question holds (the
+   reviewer's CERT-4139 witness: a skipped Polymarket twin capture at the
+   archive close), and the timeline's bucket start, which the outcome's own
+   capture cell holds.
 5. **Explicit short ranges are untouched.** Nothing here runs without
    ``range=full``; every other request issues exactly today's statements.
 """
 
 from __future__ import annotations
 
+import logging
 import math
+from collections import defaultdict
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
-from typing import Any, Iterable, Optional
+from datetime import datetime, timedelta, timezone
+from typing import Any, Callable, Iterable, Optional, Sequence
 
 from sqlalchemy import select, text
+
+logger = logging.getLogger(__name__)
 
 #: Capture instants older than the ``hours`` window read under ``range=full``.
 #: Sized against what the clients' Full ALREADY reads: the web sends
@@ -75,37 +91,41 @@ _INSTANTS_SQL = text(
     """
 )
 
-#: Thinned only: per outcome, the spans of consecutive ``:k``-instant buckets in
-#: which it holds any capture (gaps-and-islands), so a skipped instant still
-#: claims its place. At most one row per island, typically one per outcome.
-_SPANS_SQL = text(
+#: Thinned only (rule 4): per candidate window ``w`` = (outcome, lo, hi), the
+#: next captures of that outcome inside ``[lo, hi]`` and older than ``:before``,
+#: after the keyset cursor ``(ats, aid)``. One index range probe per window on
+#: ``idx_fos_outcome_captured``; never more than ``:m`` rows per window.
+_ADMIT_SQL = text(
     """
-    WITH inst AS (
-        SELECT d.captured_at,
-               (row_number() OVER (ORDER BY d.captured_at) - 1) / :k AS b
-        FROM (
-            SELECT DISTINCT captured_at
-            FROM futures_odds_snapshots
-            WHERE outcome_id = ANY(CAST(:ids AS integer[]))
-              AND captured_at < :before
-        ) d
-    ), per AS (
-        SELECT f.outcome_id, i.b, min(f.captured_at) AS lo, max(f.captured_at) AS hi
+    SELECT c.w, x.id
+    FROM unnest(
+        CAST(:ws AS integer[]), CAST(:oids AS integer[]),
+        CAST(:los AS timestamptz[]), CAST(:his AS timestamptz[]),
+        CAST(:ats AS timestamptz[]), CAST(:aids AS integer[])
+    ) AS c(w, oid, lo, hi, ats, aid)
+    CROSS JOIN LATERAL (
+        SELECT f.id
         FROM futures_odds_snapshots f
-        JOIN inst i ON i.captured_at = f.captured_at
-        WHERE f.outcome_id = ANY(CAST(:ids AS integer[]))
+        WHERE f.outcome_id = c.oid
+          AND f.captured_at >= c.lo
+          AND f.captured_at <= c.hi
           AND f.captured_at < :before
-        GROUP BY f.outcome_id, i.b
-    )
-    SELECT g.outcome_id, min(g.lo) AS lo, max(g.hi) AS hi
-    FROM (
-        SELECT outcome_id, lo, hi,
-               b - row_number() OVER (PARTITION BY outcome_id ORDER BY b) AS grp
-        FROM per
-    ) g
-    GROUP BY g.outcome_id, g.grp
+          AND (f.captured_at, f.id) > (c.ats, c.aid)
+        ORDER BY f.captured_at, f.id
+        LIMIT :m
+    ) x
     """
 )
+
+#: Rows asked per still-open window, per round. A window closes on its first
+#: SUPPORTED capture (claimed) or on a short page (no capture there). The first
+#: round asks one row because nearly every window closes on it; a window whose
+#: rows the support filter refuses asks for more, keyset-paged, never re-read.
+ADMIT_ROUND_LIMITS: tuple[int, ...] = (1, 8, 64)
+
+#: The route's own support filter (``_drop_unsupported_snapshot_points`` bound
+#: to its outcomes): capture rows in, the rows a chart may draw out.
+Supported = Callable[[list], list]
 
 
 @dataclass
@@ -116,24 +136,186 @@ class OlderLive:
     #: Distinct capture instants older than the cutoff (the TRUE count, not read).
     instants: int = 0
     thinned: bool = False
-    #: Thinned only: outcome -> [(lo, hi)] live-presence spans (rule 4).
-    spans: dict[int, list[tuple[datetime, datetime]]] = field(default_factory=dict)
+    #: What was asked, so a thinned read can answer rule 4's admission later.
+    ids: list[int] = field(default_factory=list)
+    before: Optional[datetime] = None
+    #: The oldest capture instant (the skeleton keeps it): nothing older exists.
+    oldest: Optional[datetime] = None
+    #: Thinned only: windows admission could not close inside its row budget.
+    #: Each holds at least ``sum(ADMIT_ROUND_LIMITS)`` real captures, every one
+    #: refused by the support filter; it yields to live and is counted here.
+    unresolved: int = 0
 
     @property
     def first(self) -> Optional[datetime]:
         return min((r.captured_at for r in self.rows), default=None)
 
-    def withhold(self, rows: Iterable[Any]) -> list:
-        """Drop the rows (venue points) inside a live span of their own outcome."""
-        rows = list(rows)
-        if not self.spans:
-            return rows
-        return [
-            r for r in rows
-            if not any(
-                lo <= r.captured_at <= hi for lo, hi in self.spans.get(int(r.outcome_id), ())
-            )
+    async def admit(
+        self,
+        db: Any,
+        windows: Sequence[tuple[int, datetime, datetime]],
+        supported: Supported,
+    ) -> list[Optional[Any]]:
+        """Per window, a SUPPORTED skipped capture inside it, or ``None``.
+
+        Exact: a window is claimed only by a capture of its own outcome whose
+        instant lies in ``[lo, hi]`` and which ``supported`` keeps (the routes
+        pass their own ``_drop_unsupported_snapshot_points``, the rule their
+        claims already went through). Unthinned reads issue nothing.
+        """
+        from app.models.models import FuturesOddsSnapshot
+
+        found: list[Optional[Any]] = [None] * len(windows)
+        if not self.thinned or self.oldest is None or self.before is None:
+            return found
+        # Only a window that can hold a skipped instant is asked: its outcome
+        # was read here, and it reaches into [oldest, before).
+        asked = set(self.ids)
+        open_ = [
+            i for i, (oid, lo, hi) in enumerate(windows)
+            if int(oid) in asked and hi >= self.oldest and lo < self.before
         ]
+        cursor: dict[int, tuple[datetime, int]] = {
+            i: (windows[i][1], -1) for i in open_
+        }
+        for m in ADMIT_ROUND_LIMITS:
+            if not open_:
+                break
+            ids_by_w: dict[int, list[int]] = defaultdict(list)
+            for r in (
+                await db.execute(_ADMIT_SQL, {
+                    "ws": open_,
+                    "oids": [int(windows[i][0]) for i in open_],
+                    "los": [windows[i][1] for i in open_],
+                    "his": [windows[i][2] for i in open_],
+                    "ats": [cursor[i][0] for i in open_],
+                    "aids": [cursor[i][1] for i in open_],
+                    "before": self.before,
+                    "m": m,
+                })
+            ).fetchall():
+                ids_by_w[int(r.w)].append(int(r.id))
+            wanted = sorted({x for v in ids_by_w.values() for x in v})
+            by_id = {}
+            if wanted:
+                by_id = {
+                    row.id: row
+                    for row in (
+                        await db.execute(
+                            select(FuturesOddsSnapshot).where(
+                                FuturesOddsSnapshot.id.in_(wanted)
+                            )
+                        )
+                    ).scalars().all()
+                }
+            kept_ids = {row.id for row in supported(list(by_id.values()))}
+            still: list[int] = []
+            for i in open_:
+                page = [by_id[x] for x in ids_by_w.get(i, ()) if x in by_id]
+                hit = next((row for row in page if row.id in kept_ids), None)
+                if hit is not None:
+                    found[i] = hit
+                elif len(page) >= m:
+                    last = page[-1]
+                    cursor[i] = (last.captured_at, int(last.id))
+                    still.append(i)
+            open_ = still
+        # Out of budget: every row read there was a real capture the support
+        # filter refused, and more lie beyond. Live keeps the window; counted.
+        if open_:
+            self.unresolved += len(open_)
+            logger.info(
+                "full_range_live: %d window(s) unresolved after %d refused captures each",
+                len(open_), sum(ADMIT_ROUND_LIMITS),
+            )
+        for i in open_:
+            found[i] = _Unresolved(int(windows[i][0]), windows[i][1])
+        return found
+
+    async def archive_claims(
+        self,
+        db: Any,
+        archive: Any,
+        claims: Iterable[Any],
+        outcome_ids: Iterable[int],
+        supported: Supported,
+    ) -> list:
+        """``claims`` plus every skipped capture that sits inside an interval.
+
+        The candidates are the archive's own rows that the drawn ``claims`` do
+        not already overlap and that can hold a skipped instant. The answer is
+        appended as ordinary claims, so the archive's row rule
+        (``ArchiveHistory.served``) decides overlap exactly as it does unthinned.
+        """
+        claims = list(claims)
+        if not self.thinned:
+            return claims
+        windows = archive.unclaimed_windows(claims, outcome_ids)
+        return claims + [r for r in await self.admit(db, windows, supported) if r is not None]
+
+    async def instant_claims(
+        self,
+        db: Any,
+        windows: Sequence[tuple[int, datetime, datetime]],
+        supported: Supported,
+    ) -> list[bool]:
+        """Per window, whether a skipped capture that would DRAW lies in it.
+
+        For the two seat rules a chart applies after the interval rule: the
+        combined chart keeps a merged instant for live when ANY contributing
+        outcome holds a capture there (CERT-4139: a skipped Polymarket twin at
+        the archive close), and the timeline seats an outcome at a bucket start
+        its own capture cell holds. Both read only captures with a probability,
+        so a row without one claims no seat here either.
+        """
+        def drawn(rows: list) -> list:
+            return [r for r in supported(rows) if r.probability is not None]
+
+        return [hit is not None for hit in await self.admit(db, windows, drawn)]
+
+    async def withhold_venue(
+        self,
+        db: Any,
+        rows: Iterable[Any],
+        supported: Supported,
+    ) -> list:
+        """Drop the venue points a skipped capture of their own outcome claims.
+
+        A capture claims a venue instant within the radius the venue arm hands
+        captures (``generic_market_history.capture_claim_cap_seconds``: the
+        venue's own declared grain, halved, never over 30 minutes). Measured from
+        each point, so a point in a gap no capture reached stands.
+        """
+        rows = list(rows)
+        if not self.thinned or not rows:
+            return rows
+        from app.utils.generic_market_history import capture_claim_cap_seconds
+
+        by_outcome: dict[int, list] = defaultdict(list)
+        for r in rows:
+            by_outcome[int(r.outcome_id)].append(r)
+        radius = {
+            oid: timedelta(seconds=capture_claim_cap_seconds(
+                [r.captured_at for r in pts],
+                venue_tiers=[getattr(r, "tier", "") for r in pts],
+            ))
+            for oid, pts in by_outcome.items()
+        }
+        windows = [
+            (int(r.outcome_id), r.captured_at - radius[int(r.outcome_id)],
+             r.captured_at + radius[int(r.outcome_id)])
+            for r in rows
+        ]
+        hits = await self.admit(db, windows, supported)
+        return [r for r, hit in zip(rows, hits) if hit is None]
+
+
+@dataclass(frozen=True)
+class _Unresolved:
+    """A window admission could not close: it claims as a capture at ``lo``."""
+
+    outcome_id: int
+    captured_at: datetime
 
 
 def hours_since(start: datetime, now: Optional[datetime] = None) -> int:
@@ -159,7 +341,7 @@ async def read_older_live(
 
     cap = OLDER_LIVE_INSTANT_CAP if cap is None else cap
     ids = sorted({int(i) for i in outcome_ids})
-    out = OlderLive()
+    out = OlderLive(ids=ids, before=before)
     if not ids:
         return out
     picked = (
@@ -169,6 +351,7 @@ async def read_older_live(
         return out
     out.instants = int(picked[0].n)
     out.thinned = out.instants > cap
+    out.oldest = picked[0].captured_at
     query = select(FuturesOddsSnapshot).where(
         FuturesOddsSnapshot.outcome_id.in_(ids),
         FuturesOddsSnapshot.captured_at < before,
@@ -180,10 +363,4 @@ async def read_older_live(
     out.rows = list(
         (await db.execute(query.order_by(FuturesOddsSnapshot.captured_at))).scalars().all()
     )
-    if out.thinned:
-        k = math.ceil(out.instants / cap)
-        for r in (
-            await db.execute(_SPANS_SQL, {"ids": ids, "before": before, "k": k})
-        ).fetchall():
-            out.spans.setdefault(int(r.outcome_id), []).append((r.lo, r.hi))
     return out

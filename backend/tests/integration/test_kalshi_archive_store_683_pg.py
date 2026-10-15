@@ -1129,10 +1129,11 @@ async def test_full_starts_at_our_first_capture_when_it_predates_the_archive(
     assert early in _live_times(b)
 
 
-async def test_a_thinned_older_live_read_still_claims_the_instants_it_skipped(
+async def test_a_thinned_older_live_read_claims_only_the_intervals_its_skipped_capture_sits_in(
     old_client, old_world, monkeypatch
 ):
-    """Bounded by instant, span-keeping, and live keeps the span it holds."""
+    """Bounded by instant, span-keeping, and a skipped capture claims exactly
+    the interval it lies in — never the empty hours around it (Root, 6804c13fc2)."""
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from app.models.models import FuturesOddsSnapshot
@@ -1157,7 +1158,8 @@ async def test_a_thinned_older_live_read_still_claims_the_instants_it_skipped(
     assert _live_times(_b(whole)) == {
         OPEN + timedelta(minutes=30), skipped, OPEN + timedelta(hours=4, minutes=20)
     }, "control: under the cap every older instant is read"
-    assert [p["timestamp"] for p in _archive_points(_b(whole))] == [
+    whole_archive = [p["timestamp"] for p in _archive_points(_b(whole))]
+    assert whole_archive == [
         (OPEN + timedelta(hours=h)).isoformat() for h in (2, 4, 6, 7, 8, 9, 10, 11)
     ]
     assert whole["history_range"]["live_thinned"] is False
@@ -1169,13 +1171,311 @@ async def test_a_thinned_older_live_read_still_claims_the_instants_it_skipped(
         OPEN + timedelta(minutes=30), OPEN + timedelta(hours=4, minutes=20)
     }
     assert thin["history_range"]["live_thinned"] is True
-    # +2:30 was not drawn, but our capture still holds that span: the archive
-    # does not fill +3h (or anything else inside +0:30..+4:20) in its place.
-    assert [p["timestamp"] for p in _archive_points(_b(thin))] == [
-        (OPEN + timedelta(hours=h)).isoformat() for h in (6, 7, 8, 9, 10, 11)
-    ]
+    # +2:30 was not drawn, but it still claims +3h (2h..3h), the one interval it
+    # sits in. +2h and +4h hold no capture of B and stand exactly as unthinned.
+    assert [p["timestamp"] for p in _archive_points(_b(thin))] == whole_archive
+    assert thin["archive_history"]["withheld_overlapping_live"] == (
+        whole["archive_history"]["withheld_overlapping_live"]
+    )
     # Oldest capture kept, never tail-cut; the window still opens on the archive.
     assert datetime.fromisoformat(thin["history_range"]["window_start"]) == OPEN
+
+
+# ── Root's executed BLOCK on 6804c13fc2: the ACTUAL cap and a sparse gap ──
+#
+# Root's control below is VERBATIM (683-ROOT-6804-DEFAULT-CAP-SPARSE-CONTROL.py,
+# second test): 2,000 dense captures plus +0:30, +4:20 and +8:20 cross the real
+# 2,000-instant cap with no monkeypatch. +4:20 is a skipped instant; the span
+# cut stretched B's presence from +0:10 to +8:20 and erased the valid +2h
+# interval. The tests after it hold the same fixture on native's timeline and
+# the combined chart, a refused skipped capture, and the venue arm.
+
+
+async def _add_actual_cap_captures(engine, ids, *extra, dense=2000):
+    """Root's fixture: +8:20 plus 2,000 distinct supported captures in +0:10..+0:44."""
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+    from app.models.models import FuturesOddsSnapshot
+
+    async with AsyncSession(engine, expire_on_commit=False) as db:
+        async with db.begin():
+            db.add(FuturesOddsSnapshot(
+                outcome_id=ids["b"], bookmaker="kalshi", probability=0.44,
+                yes_bid=0.43, yes_ask=0.45, last_price=0.44,
+                captured_at=OPEN + timedelta(hours=8, minutes=20),
+            ))
+            db.add_all([FuturesOddsSnapshot(
+                outcome_id=ids["b"], bookmaker="kalshi", probability=0.44,
+                yes_bid=0.43, yes_ask=0.45, last_price=0.44,
+                captured_at=OPEN + timedelta(minutes=10, milliseconds=123, seconds=i),
+            ) for i in range(dense)])
+            db.add_all(list(extra))
+
+
+async def test_root_thinning_preserves_nonoverlapping_archive(old_client, old_world, monkeypatch):
+    from sqlalchemy.ext.asyncio import AsyncSession
+    from app.models.models import FuturesOddsSnapshot
+    from app.utils import full_range_live as fr
+    c, ids = old_client
+    engine, _ = old_world
+    async with AsyncSession(engine,expire_on_commit=False) as db:
+        async with db.begin():
+            db.add(FuturesOddsSnapshot(outcome_id=ids['b'],bookmaker='kalshi',probability=0.44,
+                yes_bid=0.43,yes_ask=0.45,last_price=0.44,captured_at=OPEN+timedelta(hours=8,minutes=20)))
+    async with AsyncSession(engine,expire_on_commit=False) as db:
+        async with db.begin():
+            db.add_all([FuturesOddsSnapshot(outcome_id=ids['b'],bookmaker='kalshi',probability=0.44,
+                yes_bid=0.43,yes_ask=0.45,last_price=0.44,
+                captured_at=OPEN+timedelta(minutes=10,milliseconds=123,seconds=i)) for i in range(2000)])
+    def archived_times(body):
+        b=next(o for o in body['outcomes'] if o['outcome_id']==ids['b'])
+        return {datetime.fromisoformat(p['timestamp']) for p in b['history'] if p.get('provenance')=='kalshi_archive'}
+    url=f"/api/futures/{ids['market']}/history"
+    wide=await c.get(url,params={'hours':4800,'top_n':50})
+    assert wide.status_code==200,wide.text
+    valid=OPEN+timedelta(hours=2)
+    overlapping=OPEN+timedelta(hours=5)
+    assert valid in archived_times(wide.json()),'positive control: +1h..+2h contains no live capture'
+    assert overlapping not in archived_times(wide.json()),'positive control: +4h..+5h contains a live capture'
+    assert fr.OLDER_LIVE_INSTANT_CAP==2000, 'exercise actual production cap'
+    full=await c.get(url,params={'hours':4320,'top_n':50,'range':'full'})
+    assert full.status_code==200,full.text
+    assert valid in archived_times(full.json()),'Thinning invents dense live coverage and hides a nonoverlapping archive interval'
+    assert overlapping not in archived_times(full.json()),'Archive must still yield to a skipped real live capture'
+
+
+async def test_actual_cap_full_is_thinned_and_serves_the_same_archive_as_the_wide_read(
+    old_client, old_world
+):
+    """The same fixture, every interval: Full equals the ordinary wide window."""
+    c, ids = old_client
+    engine, _ = old_world
+    await _add_actual_cap_captures(engine, ids)
+    url = f"/api/futures/{ids['market']}/history"
+
+    def _b(body):
+        return {o["outcome_id"]: o for o in body["outcomes"]}[ids["b"]]
+
+    wide = (await c.get(url, params={"hours": 4800, "top_n": 50})).json()
+    full = (await c.get(url, params={"hours": CLIENT_FULL_HOURS, "top_n": 50,
+                                     "range": "full"})).json()
+    assert full["history_range"]["live_thinned"] is True, "the real cap is crossed"
+    # +4:20 is rank 2002 of 2003 (stride 2): skipped, so this is the case rule 4
+    # exists for, not one the skeleton happened to draw.
+    assert OPEN + timedelta(hours=4, minutes=20) not in _live_times(_b(full))
+    expected = [(OPEN + timedelta(hours=h)).isoformat() for h in (2, 3, 4, 6, 7, 8, 10, 11)]
+    assert [p["timestamp"] for p in _archive_points(_b(wide))] == expected
+    assert [p["timestamp"] for p in _archive_points(_b(full))] == expected
+
+
+async def test_actual_cap_native_timeline_and_combined_chart_keep_the_sparse_gap(
+    old_client, old_world, monkeypatch
+):
+    from app.utils import full_range_live
+
+    c, ids = old_client
+    engine, _ = old_world
+    await _add_actual_cap_captures(engine, ids)
+    gap = (OPEN + timedelta(hours=2)).isoformat()      # 1h..2h holds no capture
+    skipped = (OPEN + timedelta(hours=5)).isoformat()  # 4h..5h holds the skipped +4:20
+
+    # Native: the thinned timeline serves exactly the unthinned one's archive
+    # marks. (Its seat rule also lets B's +4:20 cell hold +4h, so the timeline
+    # never draws +4h either way; that is why it is compared, not enumerated.)
+    url = f"/api/futures/{ids['market']}/probability-timeline"
+    params = {"hours": CLIENT_FULL_HOURS, "top": 50, "range": "full"}
+
+    def _marks(body):
+        return {e["timestamp"] for e in body["timeline"] if "B 3+" in e.get("archive", {})}
+
+    monkeypatch.setattr(full_range_live, "OLDER_LIVE_INSTANT_CAP", 4000)
+    whole = (await c.get(url, params=params)).json()
+    assert whole["history_range"]["live_thinned"] is False
+    monkeypatch.setattr(full_range_live, "OLDER_LIVE_INSTANT_CAP", 2000)
+    timeline = (await c.get(url, params=params)).json()
+    assert timeline["history_range"]["live_thinned"] is True
+    assert _marks(timeline) == _marks(whole)
+    assert gap in _marks(timeline) and skipped not in _marks(timeline)
+
+    # The combined chart seats by exact instant: Root's pair, and the rest of B.
+    multi = (await c.get("/api/futures/multi-history", params={
+        "market_ids": str(ids["market"]), "hours": CLIENT_FULL_HOURS, "top_n": 50,
+        "range": "full",
+    })).json()
+    assert multi["history_range"]["live_thinned"] is True
+    line = next(o for o in multi["outcomes"] if o["name"] == "B 3+")
+    arm = {p["timestamp"] for p in line["history"] if p.get("provenance") == "kalshi_archive"}
+    assert arm == {(OPEN + timedelta(hours=h)).isoformat() for h in (2, 3, 4, 6, 7, 8, 10, 11)}
+
+
+# ── CERT-4139/4140's executed BLOCK: the merged question's skipped twin ──
+#
+# The reviewer's independent test, VERBATIM (/private/tmp/cert4139-review,
+# test_cert4139_independent_pg.py; only its star-import line is dropped, as it
+# lives in this module): a Polymarket twin's 2,001 old captures cross the cap,
+# rank-striding away its +3h capture, and the Kalshi archive close at that same
+# instant on the same merged question must still yield to it.
+
+
+async def test_default_cap_combined_twin_retains_skipped_live_precedence(old_client, old_world, monkeypatch):
+    from sqlalchemy.ext.asyncio import AsyncSession
+    from app.models.models import FuturesMarket, FuturesOutcome, FuturesOddsSnapshot
+    from app.utils import full_range_live
+    import tests.integration.test_kalshi_archive_store_683_pg as specimen
+    opened = specimen.OPEN
+    settled = specimen.SETTLED
+    c, ids = old_client
+    engine, _ = old_world
+    async with AsyncSession(engine, expire_on_commit=False) as s:
+        async with s.begin():
+            poly = FuturesMarket(source="polymarket", external_id="CERT4139-twin", name="CERT4139 twin", category="game", market_tier=5, mutually_exclusive=False, status="resolved", resolution_date=settled)
+            s.add(poly); await s.flush()  # noqa: E702 — verbatim
+            twin = FuturesOutcome(market_id=poly.id, external_id="CERT4139-A", name="A 9+", rank=1, current_probability=0.0)
+            s.add(twin); await s.flush()  # noqa: E702 — verbatim
+            s.add_all([FuturesOddsSnapshot(outcome_id=twin.id, bookmaker="polymarket", probability=0.31, captured_at=opened + timedelta(seconds=i*10)) for i in range(1, 2002)])
+    params = {"market_ids": f"{ids['market']},{poly.id}", "hours": 4320, "top_n": 50, "range": "full"}
+    at = (opened + timedelta(hours=3)).isoformat()
+    def line(body): return next(o for o in body["outcomes"] if o["name"] == "A 9+")['history']
+    monkeypatch.setattr(full_range_live, 'OLDER_LIVE_INSTANT_CAP', 4000)
+    wide_r = await c.get('/api/futures/multi-history', params=params)
+    assert wide_r.status_code == 200, wide_r.text
+    wide = wide_r.json()
+    assert any(p['timestamp'] == at and p.get('bookmaker') == 'consensus' for p in line(wide))
+    assert not any(p['timestamp'] == at and p.get('provenance') == 'kalshi_archive' for p in line(wide))
+    monkeypatch.setattr(full_range_live, 'OLDER_LIVE_INSTANT_CAP', 2000)
+    thin_r = await c.get('/api/futures/multi-history', params=params)
+    assert thin_r.status_code == 200, thin_r.text
+    thin = thin_r.json()
+    assert thin['history_range']['live_thinned'] is True
+    assert not any(p['timestamp'] == at and p.get('bookmaker') == 'consensus' for p in line(thin)), 'control: rank stride skipped the old twin instant'
+    print('WITNESS', {'at':at, 'uncapped_at':[p for p in line(wide) if p['timestamp']==at], 'default_cap_at':[p for p in line(thin) if p['timestamp']==at], 'live_thinned':thin['history_range']['live_thinned']})
+    assert not any(p['timestamp'] == at and p.get('provenance') == 'kalshi_archive' for p in line(thin)), 'Full replaces a skipped live twin capture with an archive value on the same merged question'
+
+
+async def test_actual_cap_timeline_keeps_a_skipped_captures_own_cell_from_the_archive(
+    old_client, old_world, monkeypatch
+):
+    """Native's seat rule: a capture cell STARTING at an archive close seats the
+    outcome there, so the archive yields. Thinned, the cell's only capture is
+    skipped; it must still hold the seat (no archive at +6h), as unthinned."""
+    from app.models.models import FuturesOddsSnapshot
+    from app.utils import full_range_live
+
+    c, ids = old_client
+    engine, _ = old_world
+    in_cell = OPEN + timedelta(hours=6, minutes=20)  # cell [+6h, +7h); interval 5h..6h untouched
+    # 1,999 dense + +0:30 + +4:20 + +6:20 + +8:20 = 2,003 instants, stride 2:
+    # +6:20 is rank 2002, the one skipped.
+    await _add_actual_cap_captures(engine, ids, FuturesOddsSnapshot(
+        outcome_id=ids["b"], bookmaker="kalshi", probability=0.46,
+        yes_bid=0.45, yes_ask=0.47, last_price=0.46, captured_at=in_cell,
+    ), dense=1999)
+    url = f"/api/futures/{ids['market']}/probability-timeline"
+    params = {"hours": CLIENT_FULL_HOURS, "top": 50, "range": "full"}
+    seat = (OPEN + timedelta(hours=6)).isoformat()
+
+    def _marks(body):
+        return {e["timestamp"] for e in body["timeline"] if "B 3+" in e.get("archive", {})}
+
+    monkeypatch.setattr(full_range_live, "OLDER_LIVE_INSTANT_CAP", 4000)
+    whole = (await c.get(url, params=params)).json()
+    assert whole["history_range"]["live_thinned"] is False
+    assert seat not in _marks(whole), "control: unthinned, B's +6:20 cell seats B at +6h"
+    monkeypatch.setattr(full_range_live, "OLDER_LIVE_INSTANT_CAP", 2000)
+    thin = (await c.get(url, params=params)).json()
+    assert thin["history_range"]["live_thinned"] is True
+    assert seat not in _marks(thin), "a skipped capture's cell must not hand its seat to the archive"
+    assert _marks(thin) == _marks(whole)
+    assert (OPEN + timedelta(hours=2)).isoformat() in _marks(thin), "the empty gap still stands"
+
+
+async def test_actual_cap_admission_pages_past_refused_captures_on_the_real_store(old_world):
+    """Exact admission on PostgreSQL: a window is claimed only by a capture the
+    route's own support filter keeps, found by keyset paging (ties by id).
+
+    This fixture's outcomes are graded, and a graded outcome keeps every point,
+    so the support filter is passed here as a stand-in that refuses one price;
+    the routes pass `_drop_unsupported_snapshot_points` (unit-pinned by count).
+    """
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+    from app.models.models import FuturesOddsSnapshot
+    from app.utils.full_range_live import read_older_live
+
+    engine, ids = old_world
+
+    # The stand-in refuses by a marker the row carries, never by a float.
+    REFUSED = "refused-by-stand-in"
+
+    def _snap(at, bookmaker="kalshi"):
+        return FuturesOddsSnapshot(outcome_id=ids["b"], bookmaker=bookmaker, probability=0.41,
+                                   yes_bid=0.40, yes_ask=0.42, last_price=0.41,
+                                   captured_at=at)
+
+    await _add_actual_cap_captures(
+        engine, ids,
+        _snap(OPEN + timedelta(hours=2, minutes=30), REFUSED),
+        _snap(OPEN + timedelta(hours=6, minutes=10), REFUSED),
+        _snap(OPEN + timedelta(hours=6, minutes=10), REFUSED),  # a tie on the instant
+        _snap(OPEN + timedelta(hours=6, minutes=40)),
+    )
+    before = datetime.now(UTC) - timedelta(hours=CLIENT_FULL_HOURS)
+    windows = [
+        (ids["b"], OPEN + timedelta(hours=2), OPEN + timedelta(hours=3)),  # refused only
+        (ids["b"], OPEN + timedelta(hours=4), OPEN + timedelta(hours=5)),  # +4:20
+        (ids["b"], OPEN + timedelta(hours=6), OPEN + timedelta(hours=7)),  # 2 refused, then kept
+        (ids["a"], OPEN + timedelta(hours=4), OPEN + timedelta(hours=5)),  # A holds nothing
+        (ids["b"], OPEN + timedelta(hours=1), OPEN + timedelta(hours=2)),  # Root's empty gap
+    ]
+    async with AsyncSession(engine, expire_on_commit=False) as db:
+        older = await read_older_live(db, [ids["a"], ids["b"]], before=before)
+        assert older.thinned is True
+        hits = await older.admit(
+            db, windows, supported=lambda rows: [r for r in rows if r.bookmaker != REFUSED]
+        )
+    assert [None if h is None else h.captured_at for h in hits] == [
+        None,
+        OPEN + timedelta(hours=4, minutes=20),
+        OPEN + timedelta(hours=6, minutes=40),
+        None,
+        None,
+    ]
+    assert older.unresolved == 0
+
+
+async def test_actual_cap_venue_points_yield_only_to_a_skipped_capture_beside_them(
+    old_world,
+):
+    """The venue arm's admission on the real store: the exact SQL, real types."""
+    from types import SimpleNamespace
+
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+    from app.utils.full_range_live import read_older_live
+
+    engine, ids = old_world
+    await _add_actual_cap_captures(engine, ids)
+    before = datetime.now(UTC) - timedelta(hours=CLIENT_FULL_HOURS)
+    beside = OPEN + timedelta(hours=4, minutes=20)  # the skipped instant
+    venue = [
+        SimpleNamespace(outcome_id=ids["b"], captured_at=OPEN + timedelta(hours=h),
+                        tier="kalshi_candle_60m")
+        for h in (2, 3)
+    ] + [
+        SimpleNamespace(outcome_id=ids["b"], captured_at=beside + timedelta(minutes=10),
+                        tier="kalshi_candle_60m"),
+        SimpleNamespace(outcome_id=ids["a"], captured_at=beside, tier="kalshi_candle_60m"),
+    ]
+    async with AsyncSession(engine, expire_on_commit=False) as db:
+        older = await read_older_live(db, [ids["a"], ids["b"]], before=before)
+        assert older.thinned is True and beside not in {r.captured_at for r in older.rows}
+        kept = await older.withhold_venue(db, venue, supported=lambda rows: rows)
+    # +2h and +3h sit in the empty gap and stand; +4:30 is ten minutes from B's
+    # skipped capture and yields; A holds no capture, so its point stands.
+    assert [(r.outcome_id, r.captured_at) for r in kept] == [
+        (ids["b"], OPEN + timedelta(hours=2)), (ids["b"], OPEN + timedelta(hours=3)),
+        (ids["a"], beside),
+    ]
 
 
 async def test_full_on_a_window_that_already_holds_every_capture_changes_no_live_point(
