@@ -402,11 +402,15 @@ def _row(
     source="espn",
     resolution_date=SETTLED,
     status="resolved",
+    live_snapshots=0,
 ):
     return SimpleNamespace(
         outcome_id=oid,
         ticker=ticker,
         event_ticker=evt,
+        market_id=500 + oid,
+        event_id=900 if has_event else None,
+        resolution_source=None,
         resolution_date=resolution_date,
         status=status,
         has_event=has_event,
@@ -414,6 +418,7 @@ def _row(
         commence_time_source=source,
         created_at=datetime(2026, 3, 1),
         completed_at=None,
+        live_snapshots=live_snapshots,
     )
 
 
@@ -428,14 +433,17 @@ def _listed(ticker, evt, settled=SETTLED, opened=OPEN):
 
 
 class FakeSession:
-    def __init__(self, rows, stored=()):
+    def __init__(self, rows, stored=(), store_present=True):
         self.rows, self.stored, self.sql = rows, list(stored), []
+        self.store_present = store_present
 
     async def execute(self, clause, params=None):
         sql = str(clause)
         self.sql.append((sql, params))
         if "SET TRANSACTION READ ONLY" in sql:
             return SimpleNamespace(fetchall=lambda: [])
+        if "to_regclass" in sql:
+            return SimpleNamespace(scalar=lambda: self.store_present)
         if "FROM futures_outcomes fo" in sql:
             rows = self.rows
             if "ANY(:outcome_ids)" in sql:
@@ -443,6 +451,8 @@ class FakeSession:
             else:
                 rows = [r for r in rows if r.outcome_id > params["after_id"]]
             # Emulate the local filters only when the SQL really carries them.
+            if "NOT EXISTS (" in sql:
+                rows = [r for r in rows if not r.live_snapshots]
             if "fm.status = 'resolved'" in sql:
                 rows = [r for r in rows if r.status == "resolved"]
             if ":archive_cutoff" in sql:
@@ -453,7 +463,7 @@ class FakeSession:
                     if r.resolution_date is None or r.resolution_date < cut
                 ]
             return SimpleNamespace(fetchall=lambda: rows[: params["lim"]])
-        if "captured_at" in sql:
+        if "FROM kalshi_archive_intervals" in sql:
             return SimpleNamespace(
                 fetchall=lambda: [
                     s for s in self.stored if s.outcome_id in params["ids"]
@@ -504,8 +514,34 @@ class FakeService:
         self._maybe_raise()
         return self.candles.get(ticker, [])
 
+    async def get_historical_market_candlesticks_payload(
+        self, ticker, *, period_interval, start_ts, end_ts
+    ):
+        batch = await self.get_historical_market_candlesticks_raw(
+            ticker, period_interval=period_interval, start_ts=start_ts, end_ts=end_ts
+        )
+        return payload_of(ticker, batch)
+
     async def close(self):
         self.closed = True
+
+
+def payload_of(ticker, candles, echoed=None):
+    """A real ``KalshiArchiveCandlePayload`` built from a real response body."""
+    import hashlib
+    import json as _json
+
+    from app.services.kalshi_api import KalshiArchiveCandlePayload
+
+    body = _json.dumps(
+        {"ticker": ticker if echoed is None else echoed, "candlesticks": candles}
+    )
+    return KalshiArchiveCandlePayload.from_raw(
+        requested_ticker=ticker,
+        raw_body=body,
+        raw_sha256=hashlib.sha256(body.encode()).hexdigest(),
+        retrieved_at="2026-10-15T20:00:00+00:00",
+    )
 
 
 class Clock:
@@ -713,15 +749,41 @@ class TestPlanner:
         ]
         assert report["next_after_id"] is None
 
-    async def test_stored_rows_make_a_rerun_plan_nothing_new(self):
+    async def test_stored_archive_rows_make_a_rerun_plan_nothing_new(self):
+        # Successor (#683 store): "already stored" means already in the ARCHIVE
+        # store at the same period and interval end.
         stored = [
-            SimpleNamespace(outcome_id=1, captured_at=TIPOFF - timedelta(hours=1)),
-            SimpleNamespace(outcome_id=1, captured_at=TIPOFF + timedelta(hours=1)),
+            SimpleNamespace(
+                outcome_id=1, period_minutes=60, interval_end=TIPOFF - timedelta(hours=1)
+            ),
+            SimpleNamespace(
+                outcome_id=1, period_minutes=60, interval_end=TIPOFF + timedelta(hours=1)
+            ),
         ]
         svc = FakeService({E1: [([_listed(T1, E1)], None)]}, {T1: _good_candles()})
         report = await _plan(FakeSession([_row(1)], stored=stored), svc)
+        assert report["archive_store"] == "present"
         assert report["importable_points"] == 0
         assert report["plan_digest"] == kah.plan_digest([])
+
+    async def test_an_archive_row_at_another_period_does_not_hide_this_one(self):
+        stored = [
+            SimpleNamespace(
+                outcome_id=1, period_minutes=1, interval_end=TIPOFF - timedelta(hours=1)
+            )
+        ]
+        svc = FakeService({E1: [([_listed(T1, E1)], None)]}, {T1: _good_candles()})
+        report = await _plan(FakeSession([_row(1)], stored=stored), svc)
+        assert report["importable_points"] == 2
+
+    async def test_before_the_migration_the_planner_still_runs_and_says_so(self):
+        svc = FakeService({E1: [([_listed(T1, E1)], None)]}, {T1: _good_candles()})
+        session = FakeSession([_row(1)], store_present=False)
+        report = await _plan(session, svc)
+        assert report["archive_store"] == "absent"
+        assert report["importable_points"] == 2
+        assert not any("kalshi_archive_intervals\n" in sql and "SELECT outcome_id" in sql
+                       for sql, _ in session.sql)
 
     async def test_unreadable_cutoff_fails_closed_before_any_db_read(self):
         session = FakeSession([_row(1)])

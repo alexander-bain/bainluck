@@ -48,6 +48,9 @@ from app.models.models import Base
 #: the discovery arm below fails if such a gate grows an INSERT and is not
 #: listed, so this list cannot silently fall behind.
 COVERED = (
+    # #683. The constraint case seeds an import, an evidence row and intervals by
+    # raw INSERT to prove the database refuses impossible rows.
+    "test_kalshi_archive_store_683_pg.py",
     "test_serie_a_femminile_seed_10319_pg.py",
     "test_bookmaker_count_real_postgres.py",
     "test_calibration_mode_price_source_scope_pg.py",
