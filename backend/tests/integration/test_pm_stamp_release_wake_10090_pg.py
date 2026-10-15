@@ -785,3 +785,309 @@ async def test_quiet_owed_debt_on_a_held_event_never_holds_an_unrelated_quote(
     assert out["ev1_revs"] == sorted(set(out["ev1_revs"])), out
     assert out["errors"] == 0 and out["price_errors"] == 0, out
     assert out["pending_after"] == [] and out["buffer_after"] == {}, out
+
+
+async def hold_outcome_row(rig, outcome_id):
+    """A second transaction holds futures_outcomes row `outcome_id` FOR UPDATE."""
+    conn = await rig.engine.connect()
+    tx = await conn.begin()
+    pid = await conn.scalar(text("SELECT pg_backend_pid()"))
+    await conn.execute(
+        text("SELECT id FROM futures_outcomes WHERE id = :id FOR UPDATE"),
+        {"id": outcome_id},
+    )
+    return conn, tx, pid
+
+
+def bridged_rig(t):
+    """Event 2's leg becomes an event-bridged OPEN leg (the bridged writer's).
+    The chunk lock budget is raised past the hold so the held UPDATE waits in
+    Postgres for the whole hold instead of timing out (production: 500 ms)."""
+    t.p.ns["open_outcome_ids"].add(PEER_OUTCOME)
+    t.p.ns["PRICE_CHUNK_LOCK_TIMEOUT_MS"] = 5000
+    bridged: list[tuple[float, float, dict]] = []
+    inner = t.p.ns["write_chunk"]
+
+    async def timed(chunk, **kwargs):
+        started = time.monotonic()
+        try:
+            return await inner(chunk, **kwargs)
+        finally:
+            if PEER_OUTCOME in chunk:
+                bridged.append((started, time.monotonic(), dict(chunk)))
+
+    t.p.ns["write_chunk"] = timed
+    return bridged
+
+
+async def test_a_held_bridged_open_write_never_holds_the_next_game_quote(
+    rig, consumer, monkeypatch,
+):
+    """#10090 bridged writer. Event 2's bridged open leg is written by the
+    bridged writer while a second transaction holds its futures_outcomes row,
+    so that UPDATE waits inside Postgres. Event 1's newer quote meanwhile
+    commits, stamps and is acknowledged from its committed row. A newer event-2
+    quote arriving during the hold waits buffered (no second writer, no stamp
+    of event 2 on the old board). After the holder lets go, event 2 commits
+    and its own stamp publishes, then its newer quote: latest wins, revisions
+    advance. On the parent the game flush awaited this write, so event 1's
+    newer quote could not even be written until the release."""
+    t = await build(rig, consumer, monkeypatch, trace=False, lock_ms=2000)
+    bridged = bridged_rig(t)
+    holder, tx, holder_pid = await hold_outcome_row(rig, PEER_OUTCOME)
+    stop = asyncio.Event()
+    t.accept(EVENT_1_OUTCOME, 0.60)
+    t.accept(PEER_OUTCOME, 0.75)
+    cadence = start_cadence(t, stop)
+    selected_before_release = still_waiting = ev2_before_release = False
+    try:
+        await wait_for_lock_waiters(rig, 1, holder_pid)
+        await wait_for(lambda: any(eid == 1 and v == 0.60 for _, eid, v, _ in t.pubs))
+        t_new = time.monotonic()
+        t.accept(EVENT_1_OUTCOME, 0.64)
+        t.accept(PEER_OUTCOME, 0.77)  # newer bridged quote during the hold
+        with contextlib.suppress(TimeoutError):  # the asserts below say so
+            await wait_for(
+                lambda: any(eid == 1 and v == 0.64 for _, eid, v, _ in t.pubs), 1.5,
+            )
+        selected_before_release = any(eid == 1 and v == 0.64 for _, eid, v, _ in t.pubs)
+        still_waiting = await lock_waiters(rig, holder_pid) == 1
+        ev2_before_release = any(eid == 2 for _, eid, _, _ in t.pubs)
+        t_release = time.monotonic()
+        await tx.rollback()
+        await wait_for(lambda: any(eid == 2 and v == 0.77 for _, eid, v, _ in t.pubs))
+    finally:
+        with contextlib.suppress(Exception):
+            await tx.rollback()
+        await holder.close()
+        await stop_cadence(t, stop, cadence)
+    ev2 = [(v, rev) for _, eid, v, rev in t.pubs if eid == 2]
+    out = dict(
+        case="bridged-held-write",
+        selected_before_release=selected_before_release,
+        bridged_write_still_waiting=still_waiting,
+        ev2_published_before_release=ev2_before_release,
+        selected_published_after_arrival_s=round(published_at(t, 1, 0.64) - t_new, 4),
+        bridged_writes=[
+            (round(s - t_release, 4), round(e - t_release, 4), v) for s, e, v in bridged
+        ],
+        ev1_values=[v for _, eid, v, _ in t.pubs if eid == 1],
+        ev2_values=[v for v, _ in ev2],
+        ev2_revs=[rev for _, rev in ev2],
+        handed_off=t.p.ns["stats"].get("bridged_handed_off", 0),
+        errors=t.r.stats["errors"],
+        price_errors=t.p.ns["stats"]["errors"],
+        pending_after=sorted(t.r.pending_event_ids()),
+        buffer_after=dict(t.p.ns["price_buffer"]),
+        reserved_after=sorted(t.boundary.bridges.reserved),
+    )
+    evidence(out)
+    # Event 1's newer quote published while the bridged UPDATE still waited.
+    assert out["selected_before_release"] and out["bridged_write_still_waiting"], out
+    assert not out["ev2_published_before_release"], out
+    # The held write returned only after the release; the newer bridged value
+    # was written after it, never beside it.
+    (first_start, first_end, first), (second_start, _, second) = bridged[:2]
+    assert first == {PEER_OUTCOME: 0.75} and second == {PEER_OUTCOME: 0.77}, out
+    assert first_end >= t_release and second_start >= first_end, out
+    assert out["ev2_values"][-1] == 0.77, out
+    assert out["ev2_revs"] == sorted(set(out["ev2_revs"])), out
+    assert out["ev1_values"][-1] == 0.64, out
+    assert out["handed_off"] >= 2, out
+    assert out["errors"] == 0 and out["price_errors"] == 0, out
+    assert out["pending_after"] == [] and out["buffer_after"] == {}, out
+    assert out["reserved_after"] == [], out
+
+
+async def test_a_catalog_handover_waits_for_the_held_bridged_write_and_keeps_its_stamp(
+    rig, consumer, monkeypatch,
+):
+    """#10090 bridged writer at a catalog handover. A handover that starts while
+    the bridged UPDATE waits in Postgres fences side writes, waits for that
+    write to commit, and hands its owed event-2 stamp to the refresher's debt
+    before any map could change; once the handover ends, the cadence stamps
+    event 2 from the committed row (no stamp read the uncommitted board, none
+    is lost)."""
+    t = await build(rig, consumer, monkeypatch, trace=False, lock_ms=2000)
+    bridged = bridged_rig(t)
+    holder, tx, holder_pid = await hold_outcome_row(rig, PEER_OUTCOME)
+    stop = asyncio.Event()
+    t.accept(PEER_OUTCOME, 0.75)
+    cadence = start_cadence(t, stop)
+    entered = asyncio.Event()
+    debt_at_entry = []
+
+    async def handover():
+        async with t.boundary.updating():
+            debt_at_entry.extend(sorted(t.r.pending_event_ids()))
+            entered.set()
+
+    task = None
+    try:
+        await wait_for_lock_waiters(rig, 1, holder_pid)
+        task = asyncio.create_task(handover())
+        await asyncio.sleep(0.3)
+        entered_while_held = entered.is_set()
+        fenced_while_held = t.boundary.standalone_fenced
+        t_release = time.monotonic()
+        await tx.rollback()
+        await asyncio.wait_for(task, 3.0)
+        await wait_for(lambda: any(eid == 2 and v == 0.75 for _, eid, v, _ in t.pubs))
+    finally:
+        with contextlib.suppress(Exception):
+            await tx.rollback()
+        await holder.close()
+        if task is not None and not task.done():
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+        await stop_cadence(t, stop, cadence)
+    out = dict(
+        case="bridged-catalog-handover",
+        entered_while_held=entered_while_held,
+        fenced_while_held=fenced_while_held,
+        debt_at_entry=debt_at_entry,
+        bridged_end_after_release_s=round(bridged[0][1] - t_release, 4),
+        ev2_values=[v for _, eid, v, _ in t.pubs if eid == 2],
+        errors=t.r.stats["errors"],
+        price_errors=t.p.ns["stats"]["errors"],
+        pending_after=sorted(t.r.pending_event_ids()),
+        buffer_after=dict(t.p.ns["price_buffer"]),
+    )
+    evidence(out)
+    assert not out["entered_while_held"] and out["fenced_while_held"], out
+    assert out["bridged_end_after_release_s"] >= 0, out
+    # Committed before the maps could change, owed as debt keyed by event.
+    assert out["debt_at_entry"] == [2], out
+    assert out["ev2_values"] == [0.75], out
+    assert out["errors"] == 0 and out["price_errors"] == 0, out
+    assert out["pending_after"] == [] and out["buffer_after"] == {}, out
+
+
+async def test_a_locked_bridged_event_never_rolls_back_a_retried_neighbour(
+    rig, consumer, monkeypatch,
+):
+    """#10090 bridged retry isolation (Root's BRIDGE-RETRY-ISOLATION). Events 2
+    and 3 are bridged open legs written together; a second transaction holds
+    event 2's futures_outcomes row, so their joint UPDATE times out and both
+    are left retry-held. After the cooldown each is its own transaction: event
+    3 commits, stamps and is acknowledged from its committed row while event
+    2's row is still held, and event 2 recovers once its holder lets go. Packed
+    together again, every NOWAIT refusal on 2 rolled 3 back with it."""
+    t = await build(rig, consumer, monkeypatch, trace=False, lock_ms=2000)
+    t.p.ns["open_outcome_ids"].update({PEER_OUTCOME, HELD_SIBLING_OUTCOME})
+    t.p.ns["PRICE_CHUNK_LOCK_TIMEOUT_MS"] = 300  # times out inside the hold
+    attempts: list[tuple] = []
+    inner = t.p.ns["write_chunk"]
+
+    async def recorded(chunk, **kwargs):
+        attempts.append(tuple(sorted(chunk)))
+        return await inner(chunk, **kwargs)
+
+    t.p.ns["write_chunk"] = recorded
+    holder, tx, holder_pid = await hold_outcome_row(rig, PEER_OUTCOME)
+    stop = asyncio.Event()
+    t.accept(PEER_OUTCOME, 0.75)
+    t.accept(HELD_SIBLING_OUTCOME, 0.55)
+    cadence = start_cadence(t, stop)
+    ev3_before_release = ev2_before_release = False
+    try:
+        await wait_for_lock_waiters(rig, 1, holder_pid)
+        with contextlib.suppress(TimeoutError):  # the asserts below say so
+            await wait_for(
+                lambda: any(eid == 3 for _, eid, _, _ in t.pubs),
+                pm.PRICE_FLUSH_SECONDS + 2.0,
+            )
+        ev3_before_release = any(eid == 3 and v == 0.55 for _, eid, v, _ in t.pubs)
+        ev2_before_release = any(eid == 2 for _, eid, _, _ in t.pubs)
+        await tx.rollback()
+        await wait_for(lambda: any(eid == 2 and v == 0.75 for _, eid, v, _ in t.pubs))
+    finally:
+        with contextlib.suppress(Exception):
+            await tx.rollback()
+        await holder.close()
+        await stop_cadence(t, stop, cadence)
+    out = dict(
+        case="bridged-retry-isolation",
+        attempts=[list(a) for a in attempts],
+        ev3_published_before_release=ev3_before_release,
+        ev2_published_before_release=ev2_before_release,
+        ev2_values=[v for _, eid, v, _ in t.pubs if eid == 2],
+        ev3_values=[v for _, eid, v, _ in t.pubs if eid == 3],
+        probes_refused=t.p.ns["stats"].get("price_lock_probes_refused", 0),
+        errors=t.r.stats["errors"],
+        price_errors=t.p.ns["stats"]["errors"],
+        pending_after=sorted(t.r.pending_event_ids()),
+        buffer_after=dict(t.p.ns["price_buffer"]),
+        reserved_after=sorted(t.boundary.bridges.reserved),
+    )
+    evidence(out)
+    joint = (PEER_OUTCOME, HELD_SIBLING_OUTCOME)
+    # The first attempt was the joint one; every retry kept them apart.
+    assert attempts[0] == joint, out
+    assert joint not in attempts[1:], out
+    assert out["ev3_published_before_release"], out
+    assert not out["ev2_published_before_release"], out
+    assert out["ev3_values"] == [0.55] and out["ev2_values"] == [0.75], out
+    # The one joint lock timeout is the only counted price error.
+    assert out["price_errors"] == 1 and out["errors"] == 0, out
+    assert out["pending_after"] == [] and out["buffer_after"] == {}, out
+    assert out["reserved_after"] == [], out
+
+
+async def test_a_continuously_ticking_bridged_event_publishes_while_it_ticks(
+    rig, consumer, monkeypatch,
+):
+    """#10090 bridged continuous arrivals (Root's CONTINUOUS-BRIDGE-STAMP-
+    STARVATION). Event 2's bridged open leg takes a new quote every 20 ms for
+    two seconds, so a newer quote is buffered at nearly every flush. Each
+    committed cohort's stamp takes its turn before the next bridged write of
+    that event, so event 2 is acknowledged from its committed row repeatedly
+    WHILE it ticks, revisions advancing, and ends on its last value. Before,
+    every stamp was deferred behind the next cohort until the venue went
+    quiet."""
+    t = await build(rig, consumer, monkeypatch, trace=False, lock_ms=2000)
+    t.p.ns["open_outcome_ids"].add(PEER_OUTCOME)
+    stop = asyncio.Event()
+    cadence = start_cadence(t, stop)
+    values = [round(0.30 + 0.004 * i, 3) for i in range(100)]
+    try:
+        t_first = time.monotonic()
+        for value in values:
+            t.accept(PEER_OUTCOME, value)
+            await asyncio.sleep(0.02)
+        t_last = time.monotonic()
+        await wait_for(lambda: any(eid == 2 and v == values[-1] for _, eid, v, _ in t.pubs))
+    finally:
+        await stop_cadence(t, stop, cadence)
+    ev2 = [(at, v, rev) for at, eid, v, rev in t.pubs if eid == 2]
+    during = [(at, v) for at, v, _ in ev2 if at < t_last]
+    out = dict(
+        case="bridged-continuous",
+        ticking_s=round(t_last - t_first, 3),
+        published_while_ticking=len(during),
+        first_publication_s=round(ev2[0][0] - t_first, 4) if ev2 else None,
+        largest_gap_while_ticking_s=round(max(
+            (b - a for a, b in zip(
+                [t_first] + [at for at, _ in during], [at for at, _ in during] + [t_last],
+            )),
+            default=t_last - t_first,
+        ), 4),
+        bridged_writes=sum(
+            1 for _, chunk in t.writes if PEER_OUTCOME in chunk
+        ),
+        ev2_revs=[rev for _, _, rev in ev2],
+        last_value=ev2[-1][1] if ev2 else None,
+        errors=t.r.stats["errors"],
+        price_errors=t.p.ns["stats"]["errors"],
+        pending_after=sorted(t.r.pending_event_ids()),
+        buffer_after=dict(t.p.ns["price_buffer"]),
+    )
+    evidence(out)
+    # Acknowledged repeatedly while the quotes kept arriving, from committed
+    # rows (the sink reads each back), each a quote that was actually sent.
+    assert out["published_while_ticking"] >= 3, out
+    assert all(v in values for _, v in during), out
+    assert out["ev2_revs"] == sorted(set(out["ev2_revs"])), out
+    assert out["last_value"] == values[-1], out
+    assert out["errors"] == 0 and out["price_errors"] == 0, out
+    assert out["pending_after"] == [] and out["buffer_after"] == {}, out

@@ -294,15 +294,16 @@ class TestTheRealConsumersFlushStartToStart:
 class TestEveryFlushRefreshCarriesTheFlushStart:
     """The quiet-socket arm above reaches only `refresh_pending`. A price-
     carrying flush reaches `refresh`, from one site in the Kalshi flush and
-    two in the Polymarket one (which also has two quiet arms); a site that drops the start reads the
+    three in the Polymarket one (which also has two quiet arms); a site that drops the start reads the
     call-time clock and reopens the deferral. The SET of sites is pinned, so
     a new one is a red test until it is checked too."""
 
     EXPECTED = {
         "_run_kalshi_ws_consumer": {"refresh": 1, "refresh_pending": 1},
         # bd506333e8: a second quiet arm stamps a cohort an earlier chunk's
-        # stamp excluded; it passes the flush start like the first.
-        "_run_polymarket_ws_consumer": {"refresh": 2, "refresh_pending": 2},
+        # stamp excluded; it passes the flush start like the first. #10090: a
+        # committed bridged cohort's stamp starts at the top of a timed flush.
+        "_run_polymarket_ws_consumer": {"refresh": 3, "refresh_pending": 2},
     }
 
     @pytest.mark.parametrize(

@@ -237,6 +237,7 @@ def callbacks():
         ),
     )
     p.ns["open_complement_of"].update({900: 901, 901: 900})
+    p.ns["open_outcome_ids"].update({900, 901})  # open, no event -> standalone
     compile_functions(
         ROOT / "app/tasks/polymarket_ws.py",
         ["handle_price", "handle_trade", "_tick_targets", "_note_raw", "_mark_input"],
