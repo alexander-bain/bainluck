@@ -1107,23 +1107,30 @@ actor APIClient {
     }
 
     /// Fetches outcome probability history for a futures market.
+    /// #683 — `fullRange` adds `range=full`: the server reads the question's whole
+    /// recovered history and treats `hours` as a floor. Off by default, so every
+    /// other request is byte-for-byte what it was.
     func fetchProbabilityTimeline(marketId: Int, top: Int = 50, hours: Int = 168,
-                                  representation: FuturesRepresentation = .source) async throws -> ProbabilityTimelineResponse {
+                                  representation: FuturesRepresentation = .source,
+                                  fullRange: Bool = false) async throws -> ProbabilityTimelineResponse {
         return try await fetch("/api/futures/\(marketId)/probability-timeline", query: [
             "top": "\(top)",
             "hours": "\(hours)",
-        ].merging(Self.representationQuery(representation)) { current, _ in current },
+        ].merging(Self.representationQuery(representation)) { current, _ in current }
+            .merging(EvolutionFullRange.query(fullRange: fullRange)) { current, _ in current },
             requiresNetwork: true, revalidationQuery: ["fresh": "true"])
     }
 
     /// #10244 — a futures market's own `/history`: per outcome, the de-vigged
     /// consensus the source page draws. The verified title chart draws these lines
     /// instead of the timeline's, whose sportsbook line medians raw prices.
-    func fetchFuturesHistory(marketId: Int, hours: Int, topN: Int = 50) async throws -> FuturesHistoryResponse {
+    func fetchFuturesHistory(marketId: Int, hours: Int, topN: Int = 50,
+                             fullRange: Bool = false) async throws -> FuturesHistoryResponse {
         return try await fetch("/api/futures/\(marketId)/history", query: [
             "hours": "\(hours)",
             "top_n": "\(topN)",
-        ], requiresNetwork: true, revalidationQuery: ["fresh": "true"])
+        ].merging(EvolutionFullRange.query(fullRange: fullRange)) { current, _ in current },
+            requiresNetwork: true, revalidationQuery: ["fresh": "true"])
     }
 
     /// The opt-in is a query parameter only when it is not the default.

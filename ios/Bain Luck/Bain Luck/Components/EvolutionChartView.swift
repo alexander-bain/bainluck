@@ -31,13 +31,17 @@ enum EvolutionTimeRange: String, CaseIterable, Identifiable {
 ///
 /// "Season" is kept for the questions that have one — a league's own competitions,
 /// and any market carrying tournament dates, where `Season` sits beside `Event` and
-/// means the tour around it. Everything else gets `6M`, which is what the chart
-/// actually fetches (4,320 hours) and cannot be wrong about.
+/// means the tour around it. Everything else gets `Max`: the most this chart has.
 ///
-/// 🔴 `6M` RATHER THAN `All`: a 2028 election market has been trading since 2025,
-/// so a chip reading "All" over a six-month fetch would trade one wrong word for
-/// another. The default for an unknown or absent category is therefore the honest
-/// generic, never the specific claim (this is an allowlist whose MISS is safe).
+/// 🔴 `Max` RATHER THAN `All`: a 2028 election market has been trading since 2025,
+/// and "All" claims the question's whole life. The chip used to read `6M`, the
+/// 4,320-hour fetch — until #683 made the widest chip ask for the whole recovered
+/// history (`range=full`), which reaches past six months. Neither `6M` nor `All`
+/// survives that: the server may draw more than six months, and a recovered record
+/// whose import is incomplete is still not proof of the question's open. `Max` is
+/// true over a new server and an old one alike. The default for an unknown or
+/// absent category is therefore the honest generic, never the specific claim (this
+/// is an allowlist whose MISS is safe).
 enum EvolutionRangeVocabulary {
     /// Categories whose markets belong to a season, from
     /// `futures_markets.llm_sport_category` as production actually writes it.
@@ -46,7 +50,7 @@ enum EvolutionRangeVocabulary {
         "cricket", "rugby", "handball", "lacrosse", "softball", "motorsports",
     ]
 
-    static let genericWidestWindow = "6M"
+    static let genericWidestWindow = "Max"
 
     static func seasonWord(sportCategory: String?, hasTournamentDates: Bool) -> String {
         if hasTournamentDates { return EvolutionTimeRange.season.rawValue }
@@ -342,7 +346,8 @@ struct EvolutionChartView: View {
                         if let note = Self.coverageNote(
                             coverageHours: data?.coverageHours,
                             observationTimes: data?.observationTimes,
-                            requestedHours: requestedHours
+                            requestedHours: requestedHours,
+                            historyRange: data?.historyRange
                         ) ?? Self.heldSteadyNote(
                             series: plottedSeries,
                             windowInstants: windowInstants,
@@ -427,6 +432,8 @@ struct EvolutionChartView: View {
             let fetchHours: Int
             switch selectedRange {
             case .season:
+                // #683: a floor, not the bound — `range=full` below asks the server
+                // for the whole recovered history; an older server serves just this.
                 fetchHours = 4320 // ~6 months
             case .week:
                 fetchHours = hours
@@ -441,14 +448,16 @@ struct EvolutionChartView: View {
             case .today:
                 fetchHours = 24
             }
+            let fullRange = EvolutionFullRange.asksForFullHistory(selectedRange)
             // #10244: a verified detail draws `/history`'s de-vigged lines, asked
             // alongside the timeline so the chart costs no extra round trip.
             async let detailHistory = Self.verifiedHistoryLines(
-                marketId: marketId, hours: fetchHours,
+                marketId: marketId, hours: fetchHours, fullRange: fullRange,
                 when: VerifiedTitleHistory.drawsSourceHistory(
                     detail: expectation?.representation, response: nil))
             let result = try await APIClient.shared.fetchProbabilityTimeline(
-                marketId: marketId, top: 50, hours: fetchHours, representation: representation
+                marketId: marketId, top: 50, hours: fetchHours, representation: representation,
+                fullRange: fullRange
             )
             guard !Task.isCancelled, generation == requestGeneration else { return }
             let withholds: Bool
@@ -465,7 +474,8 @@ struct EvolutionChartView: View {
             if lines == nil, VerifiedTitleHistory.drawsSourceHistory(
                 detail: expectation?.representation, response: result.effectiveRepresentation) {
                 // The response is verified though the detail was not (yet).
-                lines = try await Self.verifiedHistoryLines(marketId: marketId, hours: fetchHours, when: true)
+                lines = try await Self.verifiedHistoryLines(
+                    marketId: marketId, hours: fetchHours, fullRange: fullRange, when: true)
             }
             guard !Task.isCancelled, generation == requestGeneration else { return }
             withholdsCurrent = withholds
@@ -526,10 +536,11 @@ struct EvolutionChartView: View {
     /// #10244 — the verified chart's lines; nil (draw the timeline as served) for
     /// every source-mode chart.
     private static func verifiedHistoryLines(
-        marketId: Int, hours: Int, when verified: Bool
+        marketId: Int, hours: Int, fullRange: Bool, when verified: Bool
     ) async throws -> FuturesHistoryResponse? {
         guard verified else { return nil }
-        return try await APIClient.shared.fetchFuturesHistory(marketId: marketId, hours: hours)
+        return try await APIClient.shared.fetchFuturesHistory(
+            marketId: marketId, hours: hours, fullRange: fullRange)
     }
 
     // MARK: - Computed
@@ -619,18 +630,25 @@ struct EvolutionChartView: View {
 
     /// Time-filtered cutoff date for chart entries.
     private var timeCutoff: Date? {
-        switch selectedRange {
+        Self.timeCutoff(for: selectedRange, tournamentStart: parsedTournamentStart)
+    }
+
+    /// The client-side cutoff per chip. The widest chip has none, so every instant a
+    /// `range=full` read serves — however far before `hours` it lies — is drawn (#683).
+    static func timeCutoff(for range: EvolutionTimeRange, tournamentStart: Date?,
+                           now: Date = Date()) -> Date? {
+        switch range {
         case .season:
             return nil
         case .week:
-            return Calendar.current.date(byAdding: .day, value: -7, to: Date())
+            return Calendar.current.date(byAdding: .day, value: -7, to: now)
         case .tournament:
-            guard let start = parsedTournamentStart else { return nil }
+            guard let start = tournamentStart else { return nil }
             return start.addingTimeInterval(-3600 * 6)
         case .day:
-            return Calendar.current.date(byAdding: .hour, value: -24, to: Date())
+            return Calendar.current.date(byAdding: .hour, value: -24, to: now)
         case .today:
-            return Calendar.current.startOfDay(for: Date())
+            return Calendar.current.startOfDay(for: now)
         }
     }
 
@@ -885,12 +903,18 @@ struct EvolutionChartView: View {
     ///
     /// Count first, span second: at one or two prices the count IS the story, and
     /// "prices only go back 3d" would imply a line where there are two dots.
+    ///
+    /// #683 — the span sentence is withheld when a full read's drawn span begins on
+    /// a recovered venue record whose import is not complete: "prices only go back
+    /// 30d" would then claim the record's edge is the question's open.
     static func coverageNote(
-        coverageHours: Double?, observationTimes: Int?, requestedHours: Int
+        coverageHours: Double?, observationTimes: Int?, requestedHours: Int,
+        historyRange: FuturesHistoryRange? = nil
     ) -> String? {
         if let seen = observationTimes, seen > 0, seen <= 3 {
             return seen == 1 ? "Only one price seen so far" : "Only \(seen) prices seen so far"
         }
+        guard !EvolutionFullRange.earliestPointIsUnproven(historyRange) else { return nil }
         guard let covered = coverageHours, covered >= 0, requestedHours > 0 else { return nil }
         guard covered < Double(requestedHours) * 0.5 else { return nil }
         return "Prices only go back \(coverageSpanWord(covered))"
@@ -1019,7 +1043,7 @@ struct EvolutionChartView: View {
     /// preposition belongs to the phrase, because `Today` does not take one and
     /// every other window does ("No prices today", "No prices in the last 7 days").
     ///
-    /// Named from the RANGE, never from the chip's own label: `6M` reads fine on a
+    /// Named from the RANGE, never from the chip's own label: `Max` reads fine on a
     /// chip and not in a sentence, and the widest range's cutoff is nil — so when it
     /// is sparse, the window IS everything and the count sentence carries it without
     /// this word at all.
@@ -1937,7 +1961,7 @@ struct EvolutionControlBar: View {
     /// So the last arm gives each group its own row AND lets the chips inside a
     /// group wrap. That makes fitting depend on the widest single CHIP rather than
     /// on the widest group, and the chip vocabulary is closed and short —
-    /// `Season`/`6M`, `7d`, `Event`, `24h`, `Today`, `Sum`, `Top 5/10/20` — so there
+    /// `Season`/`Max`, `7d`, `Event`, `24h`, `Today`, `Sum`, `Top 5/10/20` — so there
     /// is no market and no type size at which this arm can overflow. That is what
     /// makes it a terminal arm; `stackedRows` was called one without the property.
     ///
