@@ -25,30 +25,54 @@ def test_only_present_authoritative_venue_refutations_exclude():
     assert not pm_non_speaking_metadata(future)
 
 
+def prop_writes(x):
+    return [ids for kind, ids in x.trace if kind == "write" and 900 in ids]
+
+
+async def held_prop_flush(x):
+    """#10090: the props' own loop writes the held prop chunk, then returns."""
+    task = asyncio.create_task(x.ns["flush_props"]())
+    try:
+        await asyncio.wait_for(x.entered.wait(), 1)
+        assert not task.done()
+    finally:
+        x.release.set()
+    assert await asyncio.wait_for(task, 1)
+
+
 @pytest.mark.asyncio
 async def test_complete_winner_stamps_before_known_prop_and_unknown_stays_joined():
     for data in (metadata("totals"), {}, metadata("moneyline")):
         x = rig(mapping={1: 10, 2: 10, 900: 10}, books={})
         x.ns["open_outcome_ids"].discard(900)  # known prop is a slate leg
-        if pm_non_speaking_metadata(data):
+        known = pm_non_speaking_metadata(data)
+        if known:
             x.ns["non_blend_outcome_ids"].add(900)
         # Large ordinary chunk would have joined winner and prop; the source
         # must deliberately separate their transaction boundaries.
         x.ns["FLUSH_CHUNK_ROWS"] = 500
-        task = asyncio.create_task(x.ns["flush_prices"]())
-        try:
-            await asyncio.wait_for(x.entered.wait(), 1)
-            if pm_non_speaking_metadata(data):
-                assert ("write", [1, 2]) in x.trace
-                assert ("refresh", [10]) in x.trace
-                assert set(x.ns["price_buffer"]) == {900}
-            else:
+        if known:
+            # #10090: the game flush returns without the held prop write (it
+            # is the props' loop's), so the next game flush is never held.
+            assert await asyncio.wait_for(x.ns["flush_prices"](), 1)
+            assert ("write", [1, 2]) in x.trace
+            assert ("refresh", [10]) in x.trace
+            assert set(x.ns["price_buffer"]) == {900} and not prop_writes(x)
+            await held_prop_flush(x)
+            assert prop_writes(x) == [[900]]
+        else:
+            task = asyncio.create_task(x.ns["flush_prices"]())
+            try:
+                await asyncio.wait_for(x.entered.wait(), 1)
                 assert ("refresh", [10]) not in x.trace
                 assert set(x.ns["price_buffer"]) == {1, 2, 900}
-            assert not task.done()
-        finally:
-            x.release.set()
-            assert await asyncio.wait_for(task, 1)
+                assert not task.done()
+            finally:
+                x.release.set()
+                assert await asyncio.wait_for(task, 1)
+            # An unknown leg is a speaker: the props' loop never takes it.
+            assert await asyncio.wait_for(x.ns["flush_props"](), 1)
+            assert prop_writes(x) == [[1, 2, 900]]
         assert not x.ns["price_buffer"]
         assert x.trace.count(("refresh", [10])) == 1
 
@@ -78,16 +102,12 @@ async def test_known_prop_complements_keep_their_whole_transaction():
     x.ns["open_outcome_ids"].difference_update({900, 901})
     x.ns["open_complement_of"].update({900: 901, 901: 900})
     x.ns["FLUSH_CHUNK_ROWS"] = 1
-    task = asyncio.create_task(x.ns["flush_prices"]())
-    try:
-        await asyncio.wait_for(x.entered.wait(), 1)
-        assert ("write", [1, 2]) in x.trace
-        assert ("refresh", [10]) in x.trace
-        assert ("write", [900, 901]) in x.trace
-        assert set(x.ns["price_buffer"]) == {900, 901}
-    finally:
-        x.release.set()
-        assert await asyncio.wait_for(task, 1)
+    assert await asyncio.wait_for(x.ns["flush_prices"](), 1)
+    assert ("write", [1, 2]) in x.trace
+    assert ("refresh", [10]) in x.trace
+    assert set(x.ns["price_buffer"]) == {900, 901} and not prop_writes(x)
+    await held_prop_flush(x)
+    assert prop_writes(x) == [[900, 901]]
     assert not x.ns["price_buffer"]
 
 
@@ -97,15 +117,19 @@ async def test_prop_withdrawal_waits_for_its_price_but_not_the_win_stamp():
     # cannot move the WIN reading, so the event's stamp no longer waits for it
     # (this test used to pin that it did). The withdrawal itself still judges
     # the prop's final stored price: it follows that write, as before.
+    # Since the props' own loop: both the prop's price and its withdrawal
+    # leave the game flush, in that order, in one loop.
     x = rig(mapping={1: 10, 2: 10, 900: 10}, books={900: (0.2, 0.8)})
     x.ns["non_blend_outcome_ids"].add(900)
     x.ns["open_outcome_ids"].discard(900)
-    task = asyncio.create_task(x.ns["flush_prices"]())
+    assert await asyncio.wait_for(x.ns["flush_prices"](), 1)
+    assert x.trace.index(("write", [1, 2])) < x.trace.index(("refresh", [10]))
+    assert ("withdraw", [900]) not in x.trace and not prop_writes(x)
+    assert 900 in x.ns["price_buffer"] and 900 in x.books
+    task = asyncio.create_task(x.ns["flush_props"]())
     try:
         await asyncio.wait_for(x.entered.wait(), 1)
-        assert x.trace.index(("write", [1, 2])) < x.trace.index(("refresh", [10]))
-        assert ("withdraw", [900]) not in x.trace
-        assert 900 in x.ns["price_buffer"] and 900 in x.books
+        assert ("withdraw", [900]) not in x.trace  # still waits for its price
     finally:
         x.release.set()
         assert await asyncio.wait_for(task, 1)

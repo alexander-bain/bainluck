@@ -116,12 +116,15 @@ async def test_kalshi_override_does_not_change_real_pm_consumer(monkeypatch):
 
     monkeypatch.setattr(poly_task, "PRICE_FLUSH_SECONDS", 3.5)
     calls, instances, wakes = await _run_recording(monkeypatch, "polymarket")
-    # The PM game flush, then its standalone flush on the base timer (962ced).
-    assert calls == [(3.5, 3.5), (3.5, None)]
-    # Only the game flush takes the idle wake and its coalescing pause;
+    # The PM game flush, its linked props' flush (#10090, the game flush's
+    # timer and retry), then its standalone flush on the base timer (962ced).
+    assert calls == [(3.5, 3.5), (3.5, 3.5), (3.5, None)]
+    # The game and prop flushes take the idle wake and its coalescing pause;
     # standalone stays timer-only.
     assert wakes == [
-        (True, 0, poly_task.PM_WAKE_COALESCE_SECONDS), (False, None, None),
+        (True, 0, poly_task.PM_WAKE_COALESCE_SECONDS),
+        (True, 0, poly_task.PM_WAKE_COALESCE_SECONDS),
+        (False, None, None),
     ]
     assert 0 < poly_task.PM_WAKE_COALESCE_SECONDS <= 0.01
     assert instances[0].min_refresh_interval_s == 2

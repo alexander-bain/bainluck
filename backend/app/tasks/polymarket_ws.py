@@ -65,6 +65,12 @@ class _PMCatalogFlushBoundary:
     only attempts admitted since the frontier remain — the parent's residual
     at its own fence instant. Maps change only with no flush of either kind
     and no stamp running.
+
+    "Standalone" here means every SIDE flush: the standalone legs' loop and
+    the linked props' loop (`flush_props`). Both are fenced in the first step.
+    They write disjoint rows but take turns on one connection
+    (`side_writer`), so the socket's five-connection pool still holds three
+    stamps, the game writer and one side writer.
     """
 
     def __init__(self):
@@ -76,6 +82,10 @@ class _PMCatalogFlushBoundary:
         self.stamps: Optional["_PMStampOwner"] = None
         self.flush_wake = asyncio.Event()
         self.flush_work = 0
+        # #10090: the linked props' own loop (`flush_props`).
+        self.prop_wake = asyncio.Event()
+        self.prop_work = 0
+        self.side_writer = asyncio.Lock()
 
     def stamp_owner(self, refresher) -> "_PMStampOwner":
         if self.stamps is None:
@@ -94,8 +104,9 @@ class _PMCatalogFlushBoundary:
         Outcomes whose headline event already had a buffered cohort fenced by
         the running stamp stay quiet until that event's stamp releases: another
         flush while the stamp still holds the event would only fence it again.
-        Non-speaking props (`non_blend_outcome_ids`) and standalone open legs
-        are never fenced by `fenced_events`.
+        Standalone open legs belong to their own loop. Non-speaking props
+        (`non_blend_outcome_ids`) wake theirs (`prop_wake`), never the game
+        flush, which no longer writes them.
         """
         fenced = (
             self.stamps.fenced
@@ -107,11 +118,10 @@ class _PMCatalogFlushBoundary:
         for oid in outcome_ids:
             if oid in open_outcome_ids and event_id_by_outcome.get(oid) is None:
                 continue
-            if (
-                fenced
-                and oid not in non_blend_outcome_ids
-                and event_id_by_outcome.get(oid) in fenced
-            ):
+            if oid in non_blend_outcome_ids:
+                self.prop_wake.set()
+                continue
+            if fenced and event_id_by_outcome.get(oid) in fenced:
                 continue
             self.flush_wake.set()
             return
@@ -2355,6 +2365,7 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
         only_events: Optional[set[int]] = None,
         exclude_events: frozenset[int] | set[int] = frozenset(),
         standalone: Optional[bool] = None,
+        props: Optional[bool] = None,
         final: bool = False,
         before_write=None,
     ) -> Optional[list[int]]:
@@ -2368,6 +2379,8 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
         The tail excludes attempted events, so even a failure is tried once.
         #10090: ``standalone`` True/False takes only/no standalone legs, so
         each loop withdraws after its own prices; None (final drain) takes all.
+        ``props`` True/False likewise takes only/no non-speaking props
+        (`flush_props`), so a prop's withdrawal follows its price in one loop.
         ``before_write(books)`` sees the exact snapshot before its transaction.
         """
         from app.tasks.live_blend_refresh import _mono
@@ -2393,6 +2406,7 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                 oid: book
                 for oid, book in withdraw_buffer.items()
                 if (standalone is None or (oid in alone) == standalone)
+                and (props is None or (oid in non_blend_outcome_ids) == props)
                 and (only_events is None or event_id_by_outcome.get(oid) in only_events)
                 and event_id_by_outcome.get(oid) not in exclude_events
                 and event_id_by_outcome.get(oid) not in held_events
@@ -2557,12 +2571,20 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
         async with buffer_lock:
             batch = dict(price_buffer)
             if not final:
-                # #10090: standalone legs are `flush_standalone`'s; the final
-                # drain has no such loop after it, so it takes them too.
+                # #10090: standalone legs are `flush_standalone`'s and linked
+                # props `flush_props`'s; the final drain has no such loops
+                # after it, so it takes them too. A prop chunk written here
+                # held this flush's return, so the cadence started no flush
+                # and a fresh game quote stayed buffered after its own stamp
+                # released (Root's held-tail rig: 0.60 s held, 0.25 s unheld).
+                # Stage trace 43011 waited 4.67 s at that boundary; what held
+                # its flush there is not known.
                 for oid in standalone_open_outcome_ids(
                     batch, open_outcome_ids, event_id_by_outcome,
                     open_complement_of,
                 ):
+                    del batch[oid]
+                for oid in [oid for oid in batch if oid in non_blend_outcome_ids]:
                     del batch[oid]
             batch_marks = {oid: input_marks[oid] for oid in batch if oid in input_marks}
             stage_trace = getattr(tail_receipts, "exact_trace", None)
@@ -2575,11 +2597,13 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
             withdraw_events = event_ids_for_outcomes(
                 event_id_by_outcome, withdraw_cohort_ids,
             )
-            standalone_books = standalone_open_outcome_ids(
+            side_books = standalone_open_outcome_ids(
                 withdraw_cohort_ids, open_outcome_ids, event_id_by_outcome,
                 open_complement_of,
             )
-            if (withdraw_cohort_ids - standalone_books).intersection(
+            if not final:
+                side_books |= withdraw_cohort_ids & non_blend_outcome_ids
+            if (withdraw_cohort_ids - side_books).intersection(
                 withdrawal_retry_until
             ):
                 note_flush_work()
@@ -2608,9 +2632,6 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                 None if final else OPEN_FLUSH_CHUNKS_PER_FLUSH,
                 open_complement_of,
             )
-            # Split the known unrelated slate questions into their own normal
-            # tail transactions. All linked prices still write; complement
-            # pairs stay atomic and the existing open-contract cap is intact.
             if not final:
                 # A typed rollback may have coupled unrelated events in one
                 # ordinary chunk. Retry only its admitted event/question units;
@@ -2619,14 +2640,6 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                     chunks, lock_retry_events, event_id_by_outcome,
                     market_by_outcome, open_complement_of, FLUSH_CHUNK_ROWS,
                 )
-                prop_chunks = plan_flush_chunks(
-                    (oid for oid in batch if oid in non_blend_outcome_ids),
-                    set(), FLUSH_CHUNK_ROWS, None, open_complement_of,
-                )
-                chunks.extend(_pm_lock_isolated_chunks(
-                    prop_chunks, lock_retry_events, event_id_by_outcome,
-                    market_by_outcome, open_complement_of, FLUSH_CHUNK_ROWS,
-                ))
             stats["open_contract_flush_deferred"] += len(batch) - sum(
                 len(c) for c in chunks
             )
@@ -2647,9 +2660,10 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
             # throttle, so an event a later chunk still writes waits for that
             # chunk, and one with a pending withdrawal waits for it.
             last_chunk_of_event: dict[int, int] = {}
-            # Withdrawals judge the final stored price, including non-speakers.
-            # Their maturity must therefore wait for every planned event price,
-            # even when WIN readiness no longer waits for that prop's quote.
+            # Withdrawals judge the final stored price, including non-speakers
+            # (the final drain writes props here too). Their maturity must
+            # therefore wait for every planned event price, even when WIN
+            # readiness no longer waits for that prop's quote.
             last_price_chunk_of_event: dict[int, int] = {}
             for index, chunk_ids in enumerate(chunks):
                 for oid in chunk_ids:
@@ -2850,6 +2864,7 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                         attempted_withdraw_events.update(mature)
                         early_withdrawn = await flush_withdrawals(
                             only_events=mature, final=final,
+                            props=None if final else False,
                             before_write=join_stamp_reading,
                         )
                         if early_withdrawn is None:
@@ -2990,6 +3005,7 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
             # A fenced event's prices are still buffered: its withdrawal waits too.
             exclude_events=attempted_withdraw_events | lock_deferred_events | fenced_events,
             standalone=None if final else False,
+            props=None if final else False,
             final=final,
             before_write=join_stamp_reading,
         )
@@ -3148,9 +3164,75 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                 len(c) for c in chunks
             )
             for chunk_ids in chunks:
-                if await write_chunk({oid: batch[oid] for oid in chunk_ids}) is False:
+                async with catalog_boundary.side_writer:
+                    wrote = await write_chunk({oid: batch[oid] for oid in chunk_ids})
+                if wrote is False:
                     wrote_all = False
-        if await flush_withdrawals(standalone=True) is None:
+        async with catalog_boundary.side_writer:
+            withdrawn = await flush_withdrawals(standalone=True)
+        if withdrawn is None:
+            wrote_all = False
+        return wrote_all
+
+    async def _flush_props(flush_started=None):
+        """#10090: write the linked props no blend reads, then their withdrawals.
+
+        Their own loop, as the standalone legs': the game flush appended these
+        chunks after every game's, and the cadence starts no flush until the
+        last returns, so one slow prop transaction held the next game quote
+        though that game's own stamp had released (Root's held-tail rig:
+        0.60 s held, 0.25 s unheld; stage trace 43011 waited 4.67 s at that
+        boundary, its occupant unknown). A prop's price owes no
+        stamp, so nothing here refreshes a blend or stages a receipt. The game
+        flush's prop planning is unchanged: uncapped, complement pairs whole,
+        a lock-refused cohort retried apart; each chunk adopts the newest
+        buffered values. Withdrawals follow their own prices, never a stamp,
+        and skip an event whose prop write a lock just refused. Disjoint rows
+        from the other loops; one side transaction at a time (`side_writer`).
+        ``flush_started`` is unused.
+        """
+        from app.tasks.polymarket_ws import _pm_lock_isolated_chunks
+
+        async with buffer_lock:
+            alone = standalone_open_outcome_ids(
+                price_buffer, open_outcome_ids, event_id_by_outcome,
+                open_complement_of,
+            )
+            batch = [
+                oid for oid in price_buffer
+                if oid in non_blend_outcome_ids and oid not in alone
+            ]
+            if batch or set(withdraw_buffer) & non_blend_outcome_ids:
+                catalog_boundary.prop_work += 1
+        wrote_all = True
+        lock_deferred_events: set[int] = set()
+        if batch:
+            chunks = _pm_lock_isolated_chunks(
+                plan_flush_chunks(
+                    batch, set(), FLUSH_CHUNK_ROWS, None, open_complement_of,
+                ),
+                lock_retry_events, event_id_by_outcome,
+                market_by_outcome, open_complement_of, FLUSH_CHUNK_ROWS,
+            )
+            for chunk_ids in chunks:
+                async with catalog_boundary.side_writer:
+                    async with buffer_lock:
+                        chunk = {
+                            oid: price_buffer[oid]
+                            for oid in chunk_ids if oid in price_buffer
+                        }
+                    wrote = await write_chunk(chunk) if chunk else True
+                if wrote is False:
+                    wrote_all = False
+                elif wrote is None:
+                    lock_deferred_events.update(
+                        event_ids_for_outcomes(event_id_by_outcome, chunk)
+                    )
+        async with catalog_boundary.side_writer:
+            withdrawn = await flush_withdrawals(
+                standalone=False, props=True, exclude_events=lock_deferred_events,
+            )
+        if withdrawn is None:
             wrote_all = False
         return wrote_all
 
@@ -3162,6 +3244,11 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
     async def flush_standalone(flush_started=None):
         async with catalog_boundary.flushing(standalone=True):
             return await _flush_standalone(flush_started)
+
+    async def flush_props(flush_started=None):
+        # A side flush: the handover fences it first, as the standalone loop.
+        async with catalog_boundary.flushing(standalone=True):
+            return await _flush_props(flush_started)
 
     async def drain_prices():
         """The LAST flush of this consumer's life — retry, never requeue.
@@ -3210,7 +3297,7 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
             )
 
     async def join_flushes_then_drain():
-        """#10090: producers and both cancelled flush loops finish, then the
+        """#10090: producers and every cancelled flush loop finish, then the
         persistent event-stamp owner joins, before the final drain reads the
         buffer. Stamps launched by that drain join before handoff too.
 
@@ -3222,7 +3309,7 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
         A second cancellation landing on the join is recorded, not obeyed
         early: the join and the drain both still run, then it propagates.
         """
-        flushes = {flush_task, standalone_task, admission_task, game_run_task}
+        flushes = {flush_task, standalone_task, prop_task, admission_task, game_run_task}
         flushes.update(resolution_tasks)
         if open_run_task is not None:
             flushes.add(open_run_task)
@@ -3640,6 +3727,16 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
             flush_standalone, PRICE_FLUSH_SECONDS, stop=loops_stop,
         )
 
+    async def prop_loop():
+        # #10090: the game flush's cadence, retry and wake, for linked props.
+        await run_flush_cadence(
+            flush_props, flush_period, stop=loops_stop,
+            failed_retry_interval_s=PRICE_FLUSH_SECONDS,
+            wake=catalog_boundary.prop_wake,
+            work_count=lambda: catalog_boundary.prop_work,
+            wake_coalesce_s=PM_WAKE_COALESCE_SECONDS,
+        )
+
     async def stats_loop():
         while True:
             await asyncio.sleep(60)
@@ -3676,6 +3773,7 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
             )
 
     flush_task = asyncio.create_task(flush_loop(), name="polymarket-flush-loop")
+    prop_task = asyncio.create_task(prop_loop(), name="polymarket-prop-flush-loop")
     standalone_task = asyncio.create_task(
         standalone_loop(), name="polymarket-standalone-flush-loop"
     )
@@ -4027,6 +4125,7 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
         loops_stop.set()
         flush_task.cancel()
         standalone_task.cancel()
+        prop_task.cancel()
         stats_task.cancel()
         # #9418: an unfinished settle rolls back; the market stays for the
         # Gamma rail, which is where an `unconfirmed` verdict leaves it anyway.
@@ -4071,7 +4170,7 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
             # #10657: a loop that lost its cancellation ends here, after the
             # drain, rather than outliving the run on its closed sessions.
             stats["loops_unreaped"] = await reap_stopped_loops(
-                "polymarket", (flush_task, standalone_task, stats_task),
+                "polymarket", (flush_task, standalone_task, prop_task, stats_task),
             )
             # #9418: closed after the drain, never before it, so a cancellation
             # landing on this await cannot skip a flush.

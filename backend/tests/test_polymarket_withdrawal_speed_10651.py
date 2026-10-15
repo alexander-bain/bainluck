@@ -155,8 +155,10 @@ def rig(
             "flush_withdrawals",
             "_flush_prices",
             "_flush_standalone",
+            "_flush_props",
             "flush_prices",
             "flush_standalone",
+            "flush_props",
         ],
         ns,
     )
