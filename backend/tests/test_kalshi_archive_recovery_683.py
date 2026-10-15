@@ -983,6 +983,116 @@ class TestDeadlineAfterPacing:
         assert clock.t <= 2.0 and report["terminal"] == "partial"
 
 
+class TestCert4130NamedControls:
+    """The controls CERT-4130 named for its repairs, under the names it gave them."""
+
+    # 683-ARCHIVE-DEADLINE-ENFORCEMENT
+    async def test_no_request_is_started_after_deadline_during_pacing(self):
+        # CERT-4130's control: deadline 0.25 s, pace 0.5 s. At ed55fc5fb9 the
+        # listing GET started at t=0.5.
+        svc = FakeService({E1: [([_listed(T1, E1)], None)]}, {T1: _good_candles()})
+        clock = Clock()
+        report = await _plan(
+            FakeSession([_row(1)]), svc, clock=clock, deadline_seconds=0.25
+        )
+        assert svc.calls == [("cutoff",)] and report["requests_sent"] == 1
+        assert report["terminal"] == "partial" and report["next_after_id"] == 0
+        assert report["held_outcome"]["outcome_id"] == 1
+
+    async def test_an_awaited_call_is_bounded_by_the_remaining_deadline(self):
+        import asyncio
+        import time
+
+        class Hanging(FakeService):
+            async def get_historical_markets(self, **kw):
+                self.calls.append(("listing", kw.get("event_ticker"), kw.get("cursor")))
+                await asyncio.sleep(30)  # a GET that never answers in time
+                raise AssertionError("not cancelled")
+
+        svc = Hanging({}, {})
+
+        @asynccontextmanager
+        async def factory():
+            yield FakeSession([_row(1)])
+
+        started = time.monotonic()
+        report = await rec.plan_archive_recovery(
+            session_factory=factory,
+            service_factory=lambda: svc,
+            cooldown_reader=lambda: 0.0,
+            max_wait_seconds=30.0,
+            pace_seconds=0.5,
+            deadline_seconds=0.8,  # real clock: cutoff t=0, listing after the pace
+        )
+        assert time.monotonic() - started < 3.0
+        assert report["terminal"] == "partial" and report["plans"] == []
+        assert report["held_outcome"]["stage"] == "listing"
+        assert report["owed_ids"] == [] and report["next_after_id"] == 0
+
+    async def test_a_timeout_raised_by_the_call_itself_is_an_owed_error(self):
+        svc = FakeService(
+            {E1: [([_listed(T1, E1)], None)]},
+            {T1: _good_candles()},
+            script=[None, TimeoutError("provider read timeout")],
+        )
+        report = await _plan(FakeSession([_row(1)]), svc)
+        assert report["owed_ids"] == [1] and report["held_outcome"] is None
+
+    # 683-ARCHIVE-LISTING-EXHAUSTION-IS-PARTIAL
+    async def test_truncated_listing_is_not_terminal_market_absence(self):
+        # CERT-4130's control: T1 on page four after three unrelated rows, each
+        # with a next cursor. At ed55fc5fb9: absent, complete, cursor 0 -> 1.
+        pages = [([_listed(f"{E1}-U{i}", E1)], str(i + 1)) for i in range(3)]
+        pages.append(([_listed(T1, E1)], None))
+        found = await _plan(
+            FakeSession([_row(1)]),
+            FakeService({E1: pages}, {T1: _good_candles()}),
+        )
+        assert found["plans"][0]["refusal"] is None
+        # And when the budget ends before page four, T1 is held, not absent.
+        held = await _plan(
+            FakeSession([_row(1)]),
+            FakeService({E1: pages}, {T1: _good_candles()}),
+            max_requests=4,
+        )
+        assert held["terminal"] == "partial" and held["plans"] == []
+        assert held["next_after_id"] == 0 and held.get("walk_ended") is False
+        assert held["held_outcome"]["listing_cursor"] == "3"
+
+    async def test_terminal_listing_establishes_absence(self):
+        pages = [([_listed(f"{E1}-U{i}", E1)], str(i + 1)) for i in range(3)]
+        pages.append(([_listed(T2, E1)], None))
+        report = await _plan(FakeSession([_row(1)]), FakeService({E1: pages}, {}))
+        assert report["plans"][0]["refusal"] == "absent_from_archive_listing"
+        assert report["terminal"] == "complete" and report["next_after_id"] == 1
+
+    # 683-ARCHIVE-RETRY-WAIT-CLAMP (named non-blocking follow-up, paid here)
+    async def test_caller_cannot_raise_thirty_second_429_wait_ceiling(self):
+        @asynccontextmanager
+        async def factory():
+            yield FakeSession([_row(1)])
+
+        svc = FakeService(
+            {E1: [([_listed(T1, E1)], None)]},
+            {T1: _good_candles()},
+            script=[None, _429("60")],
+        )
+        clock = Clock()
+        report = await rec.plan_archive_recovery(
+            session_factory=factory,
+            service_factory=lambda: svc,
+            cooldown_reader=lambda: 0.0,
+            max_wait_seconds=120.0,
+            deadline_seconds=200.0,
+            pace_seconds=0.5,
+            sleep=clock.sleep,
+            monotonic=clock.monotonic,
+        )
+        assert 60.0 not in clock.sleeps and report["rate_limit_waits"] == 0
+        assert report["terminal"] == "rate_limited"
+        assert report["stopped_on_cooldown_s"] == 60.0
+
+
 # ── static guards ──────────────────────────────────────────────────────────
 
 

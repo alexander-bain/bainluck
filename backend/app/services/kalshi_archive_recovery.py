@@ -232,7 +232,13 @@ async def plan_archive_recovery(
     limit = max(1, min(int(limit), MAX_OUTCOMES))
     max_requests = max(1, min(int(max_requests), MAX_REQUESTS))
     pace_seconds = max(float(pace_seconds), MIN_PACE_SECONDS)
-    max_wait = _default_max_wait() if max_wait_seconds is None else max_wait_seconds
+    # An override may shorten the house 429 wait ceiling, never raise it.
+    house_max_wait = _default_max_wait()
+    max_wait = (
+        house_max_wait
+        if max_wait_seconds is None
+        else min(float(max_wait_seconds), house_max_wait)
+    )
     exact = [int(i) for i in outcome_ids][:limit] if outcome_ids else None
     deadline = monotonic() + max(float(deadline_seconds), 0.0)
 
@@ -289,7 +295,7 @@ async def plan_archive_recovery(
             state["sent"] += 1
             report["requests_sent"] = state["sent"]
             try:
-                return await call()
+                return await _within_deadline(call)
             except Exception as e:
                 wait = rate_limit_wait(e)
                 if wait is None:
@@ -301,6 +307,22 @@ async def plan_archive_recovery(
                     continue
                 raise _RateLimited(wait) from e
         raise AssertionError("unreachable")
+
+    async def _within_deadline(call: Callable[[], Awaitable[Any]]) -> Any:
+        """Await one GET for at most the time left; on expiry cancel it, stop partial.
+
+        ``asyncio.wait`` (not ``wait_for``) so only OUR deadline reads as a budget
+        stop. A timeout raised by the call itself stays an ordinary owed error.
+        """
+        task = asyncio.ensure_future(call())
+        done, _ = await asyncio.wait({task}, timeout=max(deadline - monotonic(), 0.0))
+        if task in done:
+            return task.result()
+        task.cancel()
+        # Collect the cancelled GET (its outcome is not evidence) without
+        # swallowing a cancellation of the planner itself.
+        await asyncio.gather(task, return_exceptions=True)
+        raise _BudgetSpent()
 
     service = service_factory()
     try:
