@@ -2476,6 +2476,41 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                 work_noted = True
                 catalog_boundary.flush_work += 1
 
+        async def refresh_owed(unfinished_events):
+            # #10090: the quiet ending's owed stamps. Awaited here, one held
+            # event's debt (a stamp waiting on its row lock) held this flush's
+            # return, so the cadence could start no flush and every unrelated
+            # fresh quote waited behind it (Root, real PG: 0.81 s vs 0.13 s).
+            # A timed flush instead hands the debt to the one stamp owner and
+            # returns, exactly as a fresh chunk does: later flushes write and
+            # `admit_fresh` beside it, and the held event stays fenced. The
+            # final drain and untimed calls still await it (no later flush
+            # would finish it), as does a call with nothing owed (free).
+            pending_reader = getattr(blend_refresher, "pending_event_ids", None)
+            owed_events = (
+                None if pending_reader is None
+                else set(pending_reader()).difference(unfinished_events)
+            )
+            if final or flush_started is None or owed_events == set():
+                await blend_refresher.refresh_pending(
+                    flush_started=flush_started, defer_event_ids=unfinished_events,
+                )
+                return
+            # Capture BEFORE the call consumes the debt, as the fresh chunk's
+            # owner start does. Existing debt, so nothing is fresh.
+            stamp_owner.events = owed_events
+            stamp_owner.fresh = set()
+            stamp_owner.task = asyncio.create_task(blend_refresher.refresh_pending(
+                flush_started=flush_started, defer_event_ids=unfinished_events,
+            ))
+            try:
+                # One turn: the call takes its debt and asks for a connection.
+                await asyncio.sleep(0)
+            except asyncio.CancelledError:
+                # Outside the chunk loop's handler: join the owner we started.
+                await stamp_owner.join(cancel=True)
+                raise
+
         async def join_stamp_reading(books):
             # #10090: a withdrawal follows the running stamp unless every leg
             # in it is one no blend reads (a venue-refuted prop) and the
@@ -3001,9 +3036,7 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                               defer_event_ids=unfinished_events)
                     return wrote_all
                 await stamp_owner.join()
-            await blend_refresher.refresh_pending(
-                flush_started=flush_started, defer_event_ids=unfinished_events,
-            )
+            await refresh_owed(unfinished_events)
             return wrote_all
         if not owed and not withdrawn_events:
             # A cohort excluded from an earlier chunk's stamp may now be
@@ -3031,9 +3064,7 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                               defer_event_ids=unfinished_events)
                     return wrote_all
                 await stamp_owner.join()
-            await blend_refresher.refresh_pending(
-                flush_started=flush_started, defer_event_ids=unfinished_events,
-            )
+            await refresh_owed(unfinished_events)
             return wrote_all
         # The prices held for a withdrawal, and the withdrawal itself: one
         # refresh, never a second for an event the chunks already refreshed.
