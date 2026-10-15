@@ -702,6 +702,12 @@ async def test_the_import_records_a_version_and_seal_for_every_row(world):
 
 @pytest.fixture
 async def client(world, monkeypatch):
+    async for served in _serve(world, monkeypatch):
+        yield served
+
+
+async def _serve(world, monkeypatch):
+    """Import the specimen through the real planner + apply, then serve the app."""
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from app.dependencies.auth import get_optional_user
@@ -843,6 +849,186 @@ async def test_the_combined_chart_draws_an_archive_only_kalshi_arm(client, world
         (OPEN + timedelta(hours=h)).isoformat() for h in (2, 3, 4, 6, 7, 8, 9, 10, 11)
     ]
     assert body["archive_history"]["state"] == "warm"
+
+
+# ── the ACTUAL client "Full" request reaches an archive older than 180 days ──
+#
+# Root's finding on d58/c3 (683-ROOT-FULL-RANGE-REVIEW.md): the same import drew
+# its archive at a hand-picked `hours=4800` and NOTHING at the web's real "Full"
+# request, `hours=4320`, once the archive was 189 days old. The tests above all
+# ask 4800, which is exactly how they missed it. These ask what the clients send:
+# web EvolutionView "Full" and /futures "All" (`hours` floor + `range=full`, ux
+# PR #11085's successor) and native's widest range (`hours=4320`). Each carries
+# its own control: the identical request WITHOUT `range=full` still draws none,
+# so the boundary the fix crosses is shown on the same specimen, not assumed.
+
+#: Older than any window a client sends, and than the reader's own 2160h reach.
+OLD_AGE = timedelta(days=189)
+#: The web's "Full" `hours` (EvolutionView.tsx) and native's `.season`.
+CLIENT_FULL_HOURS = 4320
+
+
+@pytest.fixture
+async def old_world(monkeypatch):
+    """The same specimen, opened 189 days ago. Module constants are read at call
+    time by the seed, the candles and the planner, and by the assertions."""
+    mod = importlib.import_module(__name__)
+    opened = (datetime.now(UTC) - OLD_AGE).replace(minute=0, second=0, microsecond=0)
+    monkeypatch.setattr(mod, "OPEN", opened)
+    monkeypatch.setattr(mod, "TIPOFF", opened + timedelta(hours=6))
+    monkeypatch.setattr(mod, "SETTLED", opened + timedelta(hours=11, minutes=3))
+    engine = await _engine()
+    ids = await _seed(engine)
+    yield engine, ids
+    await engine.dispose()
+
+
+@pytest.fixture
+async def old_client(old_world, monkeypatch):
+    async for served in _serve(old_world, monkeypatch):
+        yield served
+
+
+def _hours_ago(at) -> float:
+    return (datetime.now(UTC) - at).total_seconds() / 3600
+
+
+async def test_the_specimen_is_older_than_every_client_window(old_client):
+    _c, _ids = old_client
+    assert _hours_ago(OPEN) > CLIENT_FULL_HOURS
+    assert _hours_ago(OPEN) > 2160  # the reader's own widest tier, too
+
+
+async def test_web_full_on_one_market_reaches_the_189_day_archive(old_client):
+    c, ids = old_client
+    url = f"/api/futures/{ids['market']}/history"
+    base = {"hours": CLIENT_FULL_HOURS, "top_n": 50}
+    control = (await c.get(url, params=base)).json()
+    assert not any(
+        p.get("provenance") == "kalshi_archive"
+        for o in control["outcomes"] for p in o["history"]
+    ), "control: without range=full the 4320h window cannot reach a 189-day archive"
+    assert "history_range" not in control
+
+    r = await c.get(url, params={**base, "range": "full"})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    a = _archive_points({o["outcome_id"]: o for o in body["outcomes"]}[ids["a"]])
+    assert [p["timestamp"] for p in a] == [
+        (OPEN + timedelta(hours=h)).isoformat() for h in range(1, 12)
+    ]
+    assert all(p["period_minutes"] == 60 and p["interval_start"] for p in a)
+    assert all(datetime.fromisoformat(p["timestamp"]) < SETTLED for p in a)
+    rng = body["history_range"]
+    assert rng["requested"] == "full"
+    assert rng["window_start_basis"] == "archive_first_interval"
+    assert datetime.fromisoformat(rng["window_start"]) == OPEN
+    assert rng["archive_coverage"] == "complete"
+    assert datetime.fromisoformat(rng["archive_venue_open"]) == OPEN
+    assert rng["thinned_outcomes"] == []
+    # The live window is still the requested one: `hours` is reported unchanged.
+    assert body["hours"] == CLIENT_FULL_HOURS
+    assert body["archive_history"]["withheld_overlapping_live"] == 0
+
+
+async def test_web_full_on_the_combined_chart_reaches_the_189_day_archive(
+    old_client, old_world
+):
+    """Root's exact arm: `/multi-history`, Kalshi archive-only + a Polymarket twin."""
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+    from app.models.models import FuturesMarket, FuturesOddsSnapshot, FuturesOutcome
+
+    c, ids = old_client
+    engine, _ = old_world
+    async with AsyncSession(engine, expire_on_commit=False) as s:
+        async with s.begin():
+            poly = FuturesMarket(
+                source="polymarket", external_id=f"{LABEL}-poly-old", name=f"{LABEL} old",
+                category="game", market_tier=5, mutually_exclusive=False,
+                status="resolved", resolution_date=SETTLED,
+            )
+            s.add(poly)
+            await s.flush()
+            twin = FuturesOutcome(market_id=poly.id, external_id=f"{LABEL}-po", name="A 9+",
+                                  rank=1, current_probability=0.0)
+            s.add(twin)
+            await s.flush()
+            s.add(FuturesOddsSnapshot(outcome_id=twin.id, bookmaker="polymarket",
+                                      probability=0.31, captured_at=OPEN + timedelta(hours=3)))
+    base = {"market_ids": f"{ids['market']},{poly.id}", "hours": CLIENT_FULL_HOURS, "top_n": 50}
+
+    def _arm(body, name):
+        line = next((o for o in body["outcomes"] if o["name"] == name), None)
+        return [] if line is None else [
+            p["timestamp"] for p in line["history"] if p.get("provenance") == "kalshi_archive"
+        ]
+
+    control = (await c.get("/api/futures/multi-history", params=base)).json()
+    assert _arm(control, "A 9+") == [], "control: Root's 4320h FAIL, unchanged without range"
+    assert "history_range" not in control
+
+    body = (await c.get("/api/futures/multi-history", params={**base, "range": "full"})).json()
+    # The twin's live capture at +3h is outside the live window (189 days ago),
+    # so nothing claims an interval and every archive close stands.
+    assert _arm(body, "A 9+") == [
+        (OPEN + timedelta(hours=h)).isoformat() for h in range(1, 12)
+    ]
+    assert _arm(body, "B 3+") == [
+        (OPEN + timedelta(hours=h)).isoformat() for h in range(1, 12)
+    ]
+    rng = body["history_range"]
+    assert rng["window_start_basis"] == "archive_first_interval"
+    assert datetime.fromisoformat(rng["window_start"]) == OPEN
+    assert rng["archive_coverage"] == "complete"
+    assert body["hours"] == CLIENT_FULL_HOURS
+
+
+async def test_native_widest_range_reaches_the_189_day_archive(old_client):
+    c, ids = old_client
+    url = f"/api/futures/{ids['market']}/probability-timeline"
+    base = {"hours": CLIENT_FULL_HOURS, "top": 50}
+    control = (await c.get(url, params=base)).json()
+    assert not any("archive" in e for e in control.get("timeline", []))
+    assert "history_range" not in control
+
+    body = (await c.get(url, params={**base, "range": "full"})).json()
+    a_marks = [e for e in body["timeline"] if "A 9+" in e.get("archive", {})]
+    assert [e["timestamp"] for e in a_marks] == [
+        (OPEN + timedelta(hours=h)).isoformat() for h in range(1, 12)
+    ]
+    assert body["history_range"]["window_start_basis"] == "archive_first_interval"
+    assert datetime.fromisoformat(body["history_range"]["window_start"]) == OPEN
+
+
+async def test_a_full_read_over_the_cap_keeps_the_first_interval_and_says_it_thinned(
+    old_client, monkeypatch
+):
+    """Span-keeping, never tail-cut: the bounded read alone drops the OLDEST."""
+    from app.utils import kalshi_archive_reader as reader
+
+    c, ids = old_client
+    monkeypatch.setattr(reader, "READ_CAP_PER_OUTCOME", 4)
+    url = f"/api/futures/{ids['market']}/history"
+
+    bounded = (await c.get(url, params={"hours": 4800, "top_n": 50})).json()
+    a = _archive_points({o["outcome_id"]: o for o in bounded["outcomes"]}[ids["a"]])
+    assert [p["timestamp"] for p in a] == [
+        (OPEN + timedelta(hours=h)).isoformat() for h in (8, 9, 10, 11)
+    ], "control: the bounded read keeps only the newest run"
+    assert ids["a"] in bounded["archive_history"]["read_capped_outcomes"]
+
+    full = (await c.get(url, params={"hours": CLIENT_FULL_HOURS, "top_n": 50,
+                                     "range": "full"})).json()
+    a = _archive_points({o["outcome_id"]: o for o in full["outcomes"]}[ids["a"]])
+    # 11 intervals, cap 4: newest four in full (+8h..+11h); the skeleton (rank
+    # stride ceil(11/4)=3 → ranks 1, 4, 7, 10, 11) supplies the older +1h, +4h, +7h.
+    assert [p["timestamp"] for p in a] == [
+        (OPEN + timedelta(hours=h)).isoformat() for h in (1, 4, 7, 8, 9, 10, 11)
+    ]
+    assert ids["a"] in full["history_range"]["thinned_outcomes"]
+    assert "read_capped_outcomes" not in full["archive_history"]
+    assert datetime.fromisoformat(full["history_range"]["window_start"]) == OPEN
 
 
 async def test_a_non_kalshi_board_is_untouched(client):

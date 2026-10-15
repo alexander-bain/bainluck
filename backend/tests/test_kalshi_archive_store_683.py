@@ -461,6 +461,170 @@ class TestReaderOverlap:
         assert h.state == "unavailable" and h.rows == {}
 
 
+class _FakeResult:
+    def __init__(self, rows):
+        self._rows = rows
+
+    def fetchall(self):
+        return list(self._rows)
+
+
+class _FakeArchiveDb:
+    """Answers the reader's three statements from in-memory rows; records each call."""
+
+    def __init__(self, rows, evidence=()):
+        self.rows, self.evidence, self.calls = rows, list(evidence), []
+
+    def begin_nested(self):
+        db = self
+
+        class _Savepoint:
+            async def __aenter__(self):
+                return db
+
+            async def __aexit__(self, *exc):
+                return False
+
+        return _Savepoint()
+
+    async def execute(self, sql, params=None):
+        self.calls.append((sql, dict(params or {})))
+        if sql is reader.READ_SQL:
+            out = []
+            for oid in params["ids"]:
+                mine = sorted(
+                    (r for r in self.rows
+                     if r.outcome_id == oid and r.interval_end >= params["since"]),
+                    key=lambda r: r.interval_end, reverse=True,
+                )
+                out += mine[: params["cap"]]
+            return _FakeResult(out)
+        if sql is reader.SKELETON_SQL:
+            out = []
+            for oid in params["ids"]:
+                mine = sorted((r for r in self.rows if r.outcome_id == oid),
+                              key=lambda r: r.interval_end)
+                n, k = len(mine), max(1, -(-len(mine) // params["cap"]))
+                out += [r for i, r in enumerate(mine, 1)
+                        if i == 1 or i == n or (i - 1) % k == 0]
+            return _FakeResult(out)
+        if sql is reader.EVIDENCE_SQL:
+            return _FakeResult([e for e in self.evidence if e.outcome_id in params["ids"]])
+        raise AssertionError(f"unexpected statement {sql}")
+
+
+def _stored(oid, end):
+    return SimpleNamespace(
+        outcome_id=oid, interval_start=end - timedelta(hours=1), interval_end=end,
+        period_minutes=60, probability=0.4, price_basis="traded_interval",
+    )
+
+
+class TestFullRange:
+    """#683 Root FULL-RANGE finding: `range=full` reads the whole stored lifetime."""
+
+    T0 = datetime(2026, 4, 1, tzinfo=UTC)
+
+    @pytest.fixture(autouse=True)
+    def _present(self, monkeypatch):
+        monkeypatch.setitem(reader._presence, "value", True)
+        monkeypatch.setitem(reader._presence, "checked", 1e18)
+
+    @pytest.mark.parametrize(
+        "value, full",
+        [("full", True), (" FULL ", True), (None, False), ("", False),
+         ("since_start", False), ("fullish", False)],
+    )
+    def test_only_the_literal_word_asks_for_the_lifetime(self, value, full):
+        assert reader.wants_full_range(value) is full
+
+    def test_a_direct_callers_unresolved_query_default_is_todays_read(self):
+        from fastapi import Query
+
+        assert reader.wants_full_range(Query(None, alias="range")) is False
+
+    async def test_without_the_option_the_read_is_exactly_the_bounded_one(self):
+        db = _FakeArchiveDb([_stored(1, self.T0 + timedelta(hours=h)) for h in range(1, 4)])
+        since = self.T0 + timedelta(hours=2)
+        h = await reader.load_archive_history(
+            db, SimpleNamespace(source="kalshi", id=9), [1], since=since
+        )
+        assert [c[0] for c in db.calls] == [reader.READ_SQL]
+        assert db.calls[0][1]["since"] == since
+        assert h.thinned == [] and h.coverage == {} and h.venue_open == {}
+
+    async def test_full_reads_from_the_floor_and_asks_the_skeleton_only_over_the_cap(
+        self, monkeypatch
+    ):
+        monkeypatch.setattr(reader, "READ_CAP_PER_OUTCOME", 4)
+        rows = [_stored(1, self.T0 + timedelta(hours=h)) for h in range(1, 12)]
+        rows += [_stored(2, self.T0 + timedelta(hours=h)) for h in range(1, 3)]
+        db = _FakeArchiveDb(rows, evidence=[
+            SimpleNamespace(outcome_id=1, coverage="complete", venue_open_ts=self.T0),
+        ])
+        h = await reader.load_archive_history(
+            db, SimpleNamespace(source="kalshi", id=9), [1, 2],
+            since=self.T0 + timedelta(days=400), full_range=True,
+        )
+        calls = [c[0] for c in db.calls]
+        assert calls == [reader.READ_SQL, reader.SKELETON_SQL, reader.EVIDENCE_SQL]
+        assert db.calls[0][1]["since"] == reader.LIFETIME_FLOOR
+        assert db.calls[1][1]["ids"] == [1]  # outcome 2 is under the cap: never re-read
+        ends = [(r.captured_at - self.T0) // timedelta(hours=1) for r in h.rows[1]]
+        assert ends == [1, 4, 7, 8, 9, 10, 11]
+        assert h.thinned == [1] and h.read_capped == []
+        assert len(h.rows[2]) == 2
+
+    def _history(self, coverage=None, opens=None, thinned=()):
+        h = reader.ArchiveHistory()
+        h.coverage = coverage or {}
+        h.venue_open = opens or {}
+        h.thinned = list(thinned)
+        return h
+
+    def test_window_starts_at_the_first_interval_when_it_precedes_the_live_window(self):
+        live = self.T0 + timedelta(days=10)
+        row = _row_at(1, self.T0 + timedelta(hours=1))
+        block = self._history().range_block(live, [row], [1])
+        assert block["window_start"] == self.T0.isoformat()
+        assert block["window_start_basis"] == "archive_first_interval"
+        assert block["requested"] == "full"
+
+    def test_window_is_the_live_one_when_nothing_older_was_drawn(self):
+        live = self.T0
+        row = _row_at(1, self.T0 + timedelta(hours=5))
+        for served in ([row], []):
+            block = self._history().range_block(live, served, [1])
+            assert block["window_start"] == live.isoformat()
+            assert block["window_start_basis"] == "hours"
+
+    def test_coverage_is_complete_only_when_every_charted_outcome_is(self):
+        both = self._history({1: {"complete"}, 2: {"complete"}})
+        assert both.range_block(self.T0, [], [1, 2])["archive_coverage"] == "complete"
+        # Outcome 2 never imported: incomplete, and no KeyError on the missing leg.
+        one = self._history({1: {"complete"}})
+        assert one.range_block(self.T0, [], [1, 2])["archive_coverage"] == "incomplete"
+        partial = self._history({1: {"incomplete"}})
+        assert partial.range_block(self.T0, [], [1])["archive_coverage"] == "incomplete"
+        assert self._history().range_block(self.T0, [], [1])["archive_coverage"] is None
+
+    def test_thinned_and_venue_open_name_only_charted_outcomes(self):
+        h = self._history(
+            {1: {"complete"}, 3: {"complete"}},
+            {1: self.T0 + timedelta(hours=2), 3: self.T0},
+            thinned=[1, 3],
+        )
+        block = h.range_block(self.T0 + timedelta(days=1), [], [1])
+        assert block["thinned_outcomes"] == [1]
+        assert block["archive_venue_open"] == (self.T0 + timedelta(hours=2)).isoformat()
+
+    def test_every_chart_route_accepts_the_option_and_answers_it(self):
+        src = (APP / "routes" / "futures.py").read_text()
+        assert src.count('Query(None, alias="range", description=_FULL_RANGE_DOC)') == 3
+        assert src.count("full_range=full_range,") == 3
+        assert src.count('"history_range"') >= 3
+
+
 # ── the forecast path stays dormant and the staged bank's SQL is unchanged ──
 
 

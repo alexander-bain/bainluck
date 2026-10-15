@@ -52,9 +52,11 @@ from app.utils.futures_verified_title import (
 )
 from app.utils.generic_market_history import captures_are_coarse, captures_cover_cell
 from app.utils.kalshi_archive_reader import (
+    LIFETIME_FLOOR as ARCHIVE_LIFETIME_FLOOR,
     history_point as archive_history_point,
     load_archive_history,
     timeline_mark as archive_timeline_mark,
+    wants_full_range,
 )
 from app.utils.kalshi_empty_book import KALSHI_BOOKMAKER
 from app.utils.futures_unsupported_price import (
@@ -2597,6 +2599,14 @@ _EXTEND_TIERS = [
     (10, 2160),  # <10 snapshots -> try 90 days
 ]
 
+#: #683 — the `range` query parameter the three futures history routes share.
+_FULL_RANGE_DOC = (
+    "`full` (#683): the archive arm reads the question's whole stored lifetime "
+    "(span-keeping, never tail-cut) and the response carries `history_range`. "
+    "`hours` stays the live-capture window and the floor an older server serves. "
+    "Absent or any other value: today's response."
+)
+
 
 #: UX-1052 item 3 — how many players a placement grid puts on a FEED card.
 #: The concept page's version of the same grid shows 20; a strip card is a
@@ -3784,6 +3794,7 @@ async def get_multi_market_history(
     hours: int = Query(168, description="Hours of history (default 7 days)"),
     top_n: int = Query(10, description="Number of top outcomes to return (default 10, max 50)"),
     db: AsyncSession = Depends(get_db),
+    history_range: Optional[str] = Query(None, alias="range", description=_FULL_RANGE_DOC),
 ):
     """
     Get aggregated historical odds across multiple markets (cross-source).
@@ -3824,6 +3835,7 @@ async def get_multi_market_history(
             top_n=top_n,
             champion=None,
             db=db,
+            history_range=history_range if wants_full_range(history_range) else None,
         )
 
     # Load all markets with their outcomes
@@ -3976,14 +3988,17 @@ async def get_multi_market_history(
     # instant that already holds any live value keeps it: the archive fills the
     # instants live data never reached and is never averaged into a capture.
     _kalshi_ids = [o.id for m in markets if m.source == "kalshi" for o in m.outcomes]
+    full_range = wants_full_range(history_range)
     archive = await load_archive_history(
         db,
         SimpleNamespace(source="kalshi" if _kalshi_ids else None, id=primary_market.id),
         _kalshi_ids,
         since=datetime.now(timezone.utc) - timedelta(hours=max(hours, _EXTEND_TIERS[-1][1])),
+        full_range=full_range,
     )
+    _live_window_start = datetime.now(timezone.utc) - timedelta(hours=hours)
     _archive_by_outcome = archive.served(
-        datetime.now(timezone.utc) - timedelta(hours=hours),
+        ARCHIVE_LIFETIME_FLOOR if full_range else _live_window_start,
         claims=snapshots,
         outcome_ids=_kalshi_ids,
     )
@@ -4002,6 +4017,7 @@ async def get_multi_market_history(
                 continue
             merged_time_groups[mk][snap.captured_at].append(float(snap.probability))
 
+    _served_merge_keys = {mk for mk, _ in top_entries}
     merged_archive: dict[str, dict] = defaultdict(dict)
     for oid, rows in _archive_by_outcome.items():
         mk = oid_to_merge_key.get(oid)
@@ -4062,6 +4078,16 @@ async def get_multi_market_history(
         **(
             {"archive_history": archive.describe(archive_rows_served)}
             if archive.state not in ("not_applicable", "absent")
+            else {}
+        ),
+        # #683 — additive, and only when the reader asked for the whole history.
+        **(
+            {"history_range": archive.range_block(
+                _live_window_start,
+                archive_rows_served,
+                [oid for oid in _kalshi_ids if oid_to_merge_key.get(oid) in _served_merge_keys],
+            )}
+            if full_range
             else {}
         ),
     }
@@ -7214,6 +7240,7 @@ async def get_probability_timeline(
             "market's own."
         ),
     ),
+    history_range: Optional[str] = Query(None, alias="range", description=_FULL_RANGE_DOC),
 ):
     """
     Get a time-bucketed probability timeline for a futures market.
@@ -7398,10 +7425,14 @@ async def get_probability_timeline(
     venue = await _load_generic_venue_history(market, charted_outcomes, _field_ids, db)
     venue_rows = venue.in_window(cutoff, snapshots, all_outcome_ids)
     # #683 — the archive store, read once over the widest window the tiers below
-    # may adopt and cut to the served one after. Kalshi markets only.
+    # may adopt and cut to the served one after. Kalshi markets only. `range=full`
+    # reads its whole lifetime instead — never on an in-play market, whose
+    # window is pinned to the start for its own reason (#1138).
+    full_range = wants_full_range(history_range) and not clamped_to_start
     archive = await load_archive_history(
         db, market, all_outcome_ids,
         since=min(cutoff, now - timedelta(hours=2160)),
+        full_range=full_range,
     )
     # Thin is judged on OUR captures in the window the reader ASKED for — the
     # same `< 20` this route has always used to call a window sparse — so a
@@ -7476,7 +7507,8 @@ async def get_probability_timeline(
     # #683: a zero-snapshot outcome whose only history is the archive's is the
     # case this arm exists for, so the archive is asked BEFORE "nothing to draw".
     archive_by_outcome = archive.served(
-        window_start, claims=list(snapshots) + list(venue_rows),
+        ARCHIVE_LIFETIME_FLOOR if full_range else window_start,
+        claims=list(snapshots) + list(venue_rows),
         outcome_ids=all_outcome_ids,
     )
     if not snapshots and not venue_rows and not archive_by_outcome:
@@ -7843,6 +7875,14 @@ async def get_probability_timeline(
         **(
             {"archive_history": archive.describe(archive_rows_served)}
             if archive.state not in ("not_applicable", "absent")
+            else {}
+        ),
+        # #683 — additive, and only when the reader asked for the whole history.
+        **(
+            {"history_range": archive.range_block(
+                window_start, archive_rows_served, top_outcome_ids
+            )}
+            if full_range
             else {}
         ),
     }
@@ -8320,6 +8360,7 @@ async def get_futures_history(
         "evolution line to 1.0. Callers pass the concept's authoritative structural crown.",
     ),
     db: AsyncSession = Depends(get_db),
+    history_range: Optional[str] = Query(None, alias="range", description=_FULL_RANGE_DOC),
 ):
     """
     Get historical odds movement for a futures market.
@@ -8333,6 +8374,8 @@ async def get_futures_history(
     # the unresolved Query sentinel rather than None).
     if not isinstance(champion, str) or not champion.strip():
         champion = None
+    # #683 — the same resolution for `range`, so a direct call's sentinel is today's read.
+    full_range = wants_full_range(history_range)
 
     # Verify market exists
     result = await db.execute(
@@ -8557,6 +8600,7 @@ async def get_futures_history(
     archive = await load_archive_history(
         db, market, _field_outcome_ids,
         since=min(cutoff, datetime.now(timezone.utc) - timedelta(hours=_EXTEND_TIERS[-1][1])),
+        full_range=full_range,
     )
     # The live rows an archive interval must yield to: the field's supported
     # captures in the SERVED window (re-pointed if a wider window is adopted).
@@ -8842,8 +8886,10 @@ async def get_futures_history(
     # raw scale (`_venue_scale_refusal`, asked of the archive rows on their own).
     # Live evidence wins actual overlap only: an interval holding a capture or a
     # served venue point is withheld; the rest of the timeline stands.
+    # `range=full`: the archive arm is cut nowhere in time (rule 6 in the reader);
+    # the live arms above keep the requested window exactly.
     field_archive_by_outcome = archive.served(
-        _archive_window,
+        ARCHIVE_LIFETIME_FLOOR if full_range else _archive_window,
         claims=list(_archive_claims) + list(field_venue_rows),
         outcome_ids=_field_outcome_ids,
     )
@@ -9044,6 +9090,11 @@ async def get_futures_history(
     if archive.state not in ("not_applicable", "absent"):
         response["archive_history"] = archive.describe(
             archive_rows_served, scale_refused=archive_scale_refusal
+        )
+    # #683 — additive, and only when the reader asked for the whole history.
+    if full_range:
+        response["history_range"] = archive.range_block(
+            _archive_window, archive_rows_served, charted_ids
         )
 
     return response
