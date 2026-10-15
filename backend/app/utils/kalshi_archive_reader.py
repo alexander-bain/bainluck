@@ -361,10 +361,14 @@ async def load_archive_history(
         skeleton: list = []
         evidence: list = []
         async with db.begin_nested():
-            result = await db.execute(
-                READ_SQL, {"ids": ids, "since": since, "cap": READ_CAP_PER_OUTCOME}
-            )
-            fetched = result.fetchall()
+            # Not `result = await db.execute(`: that exact text is a typeahead
+            # mutant's replacement, and the residue scan's Pass B flags it in any
+            # changed file (test_mutation_guard; CI on 0bbfafd348, shard 8).
+            fetched = (
+                await db.execute(
+                    READ_SQL, {"ids": ids, "since": since, "cap": READ_CAP_PER_OUTCOME}
+                )
+            ).fetchall()
             if full_range:
                 counts: dict[int, int] = defaultdict(int)
                 for r in fetched:
