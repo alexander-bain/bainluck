@@ -92,7 +92,12 @@ final class EvolutionArchiveProvenance683Tests: XCTestCase {
     }
 
     func testOnlyTheDrawnLinesAreCounted() throws {
-        XCTAssertNil(try note(names: [Self.celtics]),
+        // From 15:00 the Celtics' values are all live (their one mark is the 14:00
+        // traded hour); the Thunder's 15:00 quoted hour is in the window but not drawn.
+        let fromThree = try XCTUnwrap("2026-04-01T15:00:00+00:00".asDate)
+        XCTAssertNotNil(try note(cutoff: fromThree, names: [Self.thunder]),
+                        "control: the Thunder's mark is inside this window")
+        XCTAssertNil(try note(cutoff: fromThree, names: [Self.celtics]),
                      "the Celtics' values here are all live; the Thunder's marks are not on screen")
         XCTAssertNil(try note(names: []))
     }
