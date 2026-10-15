@@ -169,8 +169,11 @@ def _validate_offloaded_reset(worker, source):
     binding = next(n for n in tree.body if isinstance(n, ast.Assign)
                    and any(isinstance(t, ast.Name) and t.id == "DB_URL" for t in n.targets))
     assert ast.unparse(binding.value) == "os.environ.get('SEARCH_TEST_DATABASE_URL')"
-    reset = {ast.unparse(n.args[0]): n.lineno for n in calls
-             if ast.unparse(n.func) == "conn.run_sync" and n.args}
+    reset_calls = [n for n in calls if ast.unparse(n.func) == "conn.run_sync" and n.args]
+    for call in reset_calls:
+        if ast.unparse(call.args[0]) in ("Base.metadata.drop_all", "Base.metadata.create_all"):
+            assert len(call.args) == 1 and not call.keywords, "full metadata reset required"
+    reset = {ast.unparse(n.args[0]): n.lineno for n in reset_calls}
     extension = next(n.lineno for n in calls if ast.unparse(n.func) == "text"
                      and n.args and isinstance(n.args[0], ast.Constant)
                      and n.args[0].value == "CREATE EXTENSION IF NOT EXISTS pg_trgm")
@@ -186,7 +189,8 @@ def test_offloaded_chain_starts_with_a_full_registered_schema_and_extension_rese
 
 
 @pytest.mark.parametrize("mutation", ["split_chain", "missing_unit", "missing_reset",
-                                     "missing_extension", "missing_registration", "wrong_url"])
+                                     "missing_extension", "missing_registration", "wrong_url",
+                                     "limited_drop", "limited_create"])
 def test_offloaded_boundary_refuses_unsafe_assignment_or_fixture(mutation):
     jobs, _ = _inputs()
     worker = jobs["database-integration"]
@@ -201,6 +205,10 @@ def test_offloaded_boundary_refuses_unsafe_assignment_or_fixture(mutation):
         source = source.replace("CREATE EXTENSION IF NOT EXISTS pg_trgm", "SELECT 1")
     elif mutation == "missing_registration":
         source = source.replace("import app.models.models", "import os")
+    elif mutation in ("limited_drop", "limited_create"):
+        operation = "drop_all" if mutation == "limited_drop" else "create_all"
+        source = source.replace(f"conn.run_sync(Base.metadata.{operation})",
+                                f"conn.run_sync(Base.metadata.{operation}, tables=[])")
     else:
         source = source.replace('os.environ.get("SEARCH_TEST_DATABASE_URL")', 'os.environ.get("OTHER_DATABASE_URL")')
     with pytest.raises((AssertionError, KeyError, StopIteration)):
