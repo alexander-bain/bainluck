@@ -1,7 +1,8 @@
 "use client";
 
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { FuturesOutcomeHistory } from "@/lib/types";
+import type { FuturesHistoryPoint, FuturesOutcomeHistory } from "@/lib/types";
+import { archiveChartNote, archiveTooltipNote } from "@/lib/archiveHistory";
 import { axisTimeFormat, formatAxisTime } from "@/lib/chartAxisTimeLabel";
 import { chartYTicks } from "@/lib/chartCeiling";
 import { canZoomSeries, computeZoomBound, resolveYAxisMax } from "@/lib/chartZoom";
@@ -254,7 +255,7 @@ export function FuturesChart({
   const [hoverInfo, setHoverInfo] = useState<{
     svgX: number;
     time: number;
-    values: { outcomeId: number; name: string; prob: number; color: string }[];
+    values: { outcomeId: number; name: string; prob: number; color: string; point: FuturesHistoryPoint }[];
   } | null>(null);
 
   // L2-164: zoom state for the opt-in low-prob zoom chip — also before any
@@ -367,6 +368,11 @@ export function FuturesChart({
     undefined,
     { settled },
   );
+  // #683 — a plain call beside `freshness`, over the same drawn outcomes.
+  const archiveNote = archiveChartNote(displayedOutcomes);
+  const hoverArchiveNote = hoverInfo
+    ? archiveTooltipNote(hoverInfo.values.map((v) => v.point))
+    : null;
 
   // L2-164: the raw series max (before any axis pinning) drives the zoom chip.
   const dataMax = maxProb;
@@ -430,6 +436,7 @@ export function FuturesChart({
     const values = displayedOutcomes
       .map((outcome, idx) => {
         let best: number | null = null;
+        let bestPoint: FuturesHistoryPoint | null = null;
         let bestDist = Infinity;
         for (const pt of outcome.history) {
           if (pt.probability === null) continue;
@@ -437,9 +444,10 @@ export function FuturesChart({
           if (d < bestDist) {
             bestDist = d;
             best = pt.probability;
+            bestPoint = pt;
           }
         }
-        return best !== null
+        return best !== null && bestPoint !== null
           ? {
               outcomeId: outcome.outcome_id,
               // #7813: the tooltip is the legend's second printing of the same
@@ -448,6 +456,9 @@ export function FuturesChart({
               name: seriesLabel(outcome.name),
               prob: best,
               color: colorFor(outcome, idx),
+              // #683: which point the row reads, so the tooltip can say when it
+              // is a recovered archive interval rather than a live capture.
+              point: bestPoint,
             }
           : null;
       })
@@ -819,6 +830,14 @@ export function FuturesChart({
                 <div className="text-[10px] text-text-muted mb-1 font-mono">
                   {formatTooltipTime(hoverInfo.time)}
                 </div>
+                {hoverArchiveNote && (
+                  <div
+                    className="text-[10px] text-text-muted mb-1"
+                    data-testid="futures-chart-archive-tooltip"
+                  >
+                    {hoverArchiveNote}
+                  </div>
+                )}
                 {hoverInfo.values.map((v, i) => (
                   <div key={i} className="flex items-center gap-2 py-0.5">
                     <span
@@ -937,6 +956,21 @@ export function FuturesChart({
           data-series-state={freshness.state}
         >
           {freshness.note}
+        </p>
+      )}
+      {/* #683 — points recovered from Kalshi's archive are intervals from the
+          venue's own record, not our captures, and the line would otherwise
+          draw them as if they were. One caption, from the drawn points only
+          (`lib/archiveHistory.ts`); absent when none is drawn. */}
+      {!mini && archiveNote && (
+        <p
+          className="text-xs text-text-muted"
+          data-testid="futures-chart-archive"
+          data-archive-from={archiveNote.from}
+          data-archive-through={archiveNote.through}
+          data-archive-points={archiveNote.points}
+        >
+          {archiveNote.text}
         </p>
       )}
 
