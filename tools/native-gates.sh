@@ -577,8 +577,12 @@ run_compile_fallback () {   # <root> <newline-separated relative files> <logfile
     [ -n "$_rf_f" ] && touch "$1/$_rf_f"
   done <<< "$2"
   _rf_t0=$(date +%s)
+  # Same reason as the main run's flag (see "-collect-test-diagnostics never"
+  # below); it is a test-action option, so a build-mode fallback does not get it.
+  _rf_diag=(); [ "$FB_MODE" = test ] && _rf_diag=(-collect-test-diagnostics never)
   set -m
   "$XCODEBUILD" "$FB_MODE" -project "$PROJECT" -scheme "$SCHEME" -destination "id=$UDID" \
+    ${_rf_diag[@]+"${_rf_diag[@]}"} \
     ${SPM_FLAGS[@]+"${SPM_FLAGS[@]}"} ${FB_ONLY[@]+"${FB_ONLY[@]}"} \
     OTHER_SWIFT_FLAGS="$SWIFT_FLAGS" > "$FB_LOG" 2>&1 &
   _rf_pid=$!
@@ -988,6 +992,7 @@ $FIX" "$_pv_map" PASS_LINE "$PV/fb-a.txt" > "$PV/a.out"
   pv_lacks "A: NOT the cached file's (no full rerun, no re-test of what is proven)" "$_pv_argv" "FooTests"
   pv_lacks "A: NOT a lookalike class" "$_pv_argv" "NotATest"
   pv_has "A: on the run's own simulator" "$_pv_argv" "id=SELFTEST-UDID"
+  pv_has "A: no post-suite simctl diagnose to outlive STALL_LIMIT (#10090)" "$_pv_argv" "-collect-test-diagnostics never"
   pv_ok "A: evidence rows are cache/fallback/fallback" \
     "$(cut -f3 "$EVIDENCE_TSV" | tr '\n' ' ')" "cache fallback fallback "
   cached_compile_evidence "$GATE_ROOT" "$BAR" "$_pv_map" PASS_LINE
@@ -1025,6 +1030,7 @@ $FIX" "$_pv_map" PASS_LINE "$PV/fb-a.txt" > "$PV/a.out"
     provenance_for_unseen "$GATE_ROOT" "$FIX" "$_pv_map" PASS_LINE "$PV/fb-f.txt" > "$PV/f.out"
   pv_ok "F: a helper-only set is proven by build-for-testing" "${STILL_UNSEEN:-nothing}" nothing
   pv_ok "F: ...which is what was run" "$(head -1 "$PV/argv")" build-for-testing
+  pv_lacks "F: ...without the test-action-only diagnostics flag" "$(tr '\n' ' ' < "$PV/argv")" "-collect-test-diagnostics"
   unset NATIVE_GATES_EVIDENCE_LEDGER
 
   # ── the manifest, and whether it can stand for another run ──
@@ -1091,6 +1097,11 @@ $FIX" "$_pv_map" PASS_LINE "$PV/fb-a.txt" > "$PV/a.out"
     "$([ -n "$_pv_call" ] && echo yes || echo no)" yes
   pv_ok "...after notice10_select has set that verdict" \
     "$([ -n "$_pv_call" ] && [ -n "$_pv_sel" ] && [ "$_pv_sel" -lt "$_pv_call" ] && echo yes || echo no)" yes
+  # The main suite run needs Xcode too: pin that it never waits on xcodebuild's
+  # failure diagnostics (a 600 s `simctl diagnose` after "N tests, 0 failures").
+  _pv_main=$(/usr/bin/grep -n '^"\$XCODEBUILD" test \\$' "$_pv_self" | head -1 | cut -d: -f1)
+  pv_ok "the main BainLuckTests run passes -collect-test-diagnostics never (#10090)" \
+    "$([ -n "$_pv_main" ] && sed -n "${_pv_main},$((_pv_main+5))p" "$_pv_self" | /usr/bin/grep -q -- '-collect-test-diagnostics never' && echo yes || echo no)" yes
 
   rm -rf "$PV"
 }
@@ -1724,11 +1735,20 @@ STALL_LIMIT=${NATIVE_GATES_STALL_LIMIT:-300}
 # no such group, and killing the leader alone orphans the xcodebuild children
 # that are holding the simulator — the stall would be reported and the machine
 # would keep the hung run. macOS ships no `setsid`; this is the portable form.
+#
+# `-collect-test-diagnostics never` (#10090, 2026-10-15): when xcodebuild judges a
+# run failed — even one that printed N tests, 0 failures — it runs
+# `simctl diagnose --timeout=600` AFTER the suite, silently. That outlives
+# STALL_LIMIT, so a finished suite was killed and read as STALLED 143 (five runs
+# on 8bb31cee58/24153908d9; the app and runner were already gone, the diagnose
+# child was the only thing left). Here it times out at 600 s every time and yields
+# nothing the log and the .xcresult do not already hold.
 TEST_T0=$(date +%s)
 set -m
 "$XCODEBUILD" test \
   -project "$PROJECT" -scheme "$SCHEME" \
   -destination "id=$UDID" \
+  -collect-test-diagnostics never \
   ${SPM_FLAGS[@]+"${SPM_FLAGS[@]}"} \
   OTHER_SWIFT_FLAGS="$SWIFT_FLAGS" > "$TESTLOG" 2>&1 &
 XCB_PID=$!
