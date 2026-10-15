@@ -9,6 +9,8 @@ import XCTest
 @MainActor
 final class InstalledTimingSeam10090Tests: XCTestCase {
     private static let sources = #""polymarket":{"value":0.6,"updated_at":"2026-09-25T17:00:00Z"}"#
+    /// This page and the foreign game its frames are tested against.
+    nonisolated private static let events: Set<Int> = [4242, 777]
     private static let oneRow = #"{"4242":20}"#
     private static let folded = #"{"4242":20,"999":5}"#
 
@@ -16,7 +18,13 @@ final class InstalledTimingSeam10090Tests: XCTestCase {
 
     override func setUp() async throws {
         marks = []
-        LiveTimingSeam.observer = { [weak self] in self?.marks.append($0) }
+        // The host app runs its own live streams against production while the
+        // tests run, and their marks reach this observer too (a live Dodgers
+        // game's frame failed the foreign-frame test). Keep the fixtures' own.
+        LiveTimingSeam.observer = { [weak self] in
+            guard Self.events.contains($0.eventId) else { return }
+            self?.marks.append($0)
+        }
     }
 
     override func tearDown() async throws {
@@ -168,6 +176,16 @@ final class InstalledTimingSeam10090Tests: XCTestCase {
         XCTAssertEqual(marks.map(\.basis), ["rev:4242=21", "rev:4242=19", "rev:4242=22", "rev:777=30"])
         XCTAssertEqual(vm.event?.currentOdds?.homeProbability, 0.55)
         XCTAssertEqual(vm.liveBlend.count, points)
+    }
+
+    /// The host app's own live page emits marks into the same process-wide
+    /// observer. One landing mid-test (15329526, a live Dodgers game) failed the
+    /// test above; such marks must never reach these assertions.
+    func testAMarkFromTheHostAppsOwnLiveGameNeverReachesTheseAssertions() {
+        LiveTimingSeam.modelChartAppended(eventId: 15329526, path: "stream", basis: "rev:15329526=5380", at: Date())
+        XCTAssertEqual(marks, [])
+        LiveTimingSeam.modelChartAppended(eventId: 4242, path: "stream", basis: "rev:4242=21", at: Date())
+        XCTAssertEqual(marks.map(\.basis), ["rev:4242=21"], "the fixture's own mark is still recorded")
     }
 
     // MARK: - Folded
