@@ -4,6 +4,7 @@ import importlib.util
 import io
 import json
 import os
+import signal
 from pathlib import Path
 import stat
 import subprocess
@@ -11,6 +12,7 @@ import sys
 import tempfile
 import time
 import unittest
+from unittest import mock
 from contextlib import redirect_stderr
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -35,14 +37,26 @@ def devices_json(*, watch_available=True):
                         "name": "codex-watch-ui-journey",
                         "state": "Booted",
                         "isAvailable": watch_available,
-                        "availabilityError": None if watch_available else "runtime profile not found",
+                        "availabilityError": (
+                            None if watch_available else "runtime profile not found"
+                        ),
                         "deviceTypeIdentifier": "watch-type",
                         "dataPath": "/private/should-not-be-copied",
                     },
-                    {"udid": STOCK, "name": "Stock Watch", "state": "Shutdown", "isAvailable": True},
+                    {
+                        "udid": STOCK,
+                        "name": "Stock Watch",
+                        "state": "Shutdown",
+                        "isAvailable": True,
+                    },
                 ],
                 "com.apple.CoreSimulator.SimRuntime.iOS-18-0": [
-                    {"udid": PHONE, "name": "codex-watch-ui-companion", "state": "Shutdown", "isAvailable": True}
+                    {
+                        "udid": PHONE,
+                        "name": "codex-watch-ui-companion",
+                        "state": "Shutdown",
+                        "isAvailable": True,
+                    }
                 ],
             }
         }
@@ -118,7 +132,9 @@ class Base(unittest.TestCase):
                 pass
         self._tmp.cleanup()
 
-    def write_logs(self, host=b"host line\n", watch=b"watch line\n", phone=b"phone line\n"):
+    def write_logs(
+        self, host=b"host line\n", watch=b"watch line\n", phone=b"phone line\n"
+    ):
         if host is not None:
             (self.logs / "CoreSimulator.log").write_bytes(host)
         for udid, body in ((WATCH, watch), (PHONE, phone)):
@@ -152,8 +168,12 @@ class PositiveExactPairTests(Base):
         self.assertEqual(on_disk, evidence)
         self.assertEqual(
             evidence["original_failure"],
-            {"status": "unpaid", "phase": "preinstall", "exit_code": 149,
-             "sha": "77cb03bb092475ce76d378565b7611a8815263f0"},
+            {
+                "status": "unpaid",
+                "phase": "preinstall",
+                "exit_code": 149,
+                "sha": "77cb03bb092475ce76d378565b7611a8815263f0",
+            },
         )
         self.assertIs(evidence["test_receipt"], False)
         self.assertTrue(evidence["identity"]["complete"])
@@ -165,17 +185,29 @@ class PositiveExactPairTests(Base):
         self.assertEqual(evidence["pairs"]["exact_pair_count"], 1)
         self.assertEqual(evidence["pairs"]["pairs_with_only_one_device"], [])
         serialized = (self.out / "failure-evidence.json").read_text()
-        for absent in (STOCK, OTHER_PHONE, "PAIR-STOCK", "Stock Watch", "PASS", "verdict"):
+        for absent in (
+            STOCK,
+            OTHER_PHONE,
+            "PAIR-STOCK",
+            "Stock Watch",
+            "PASS",
+            "verdict",
+        ):
             self.assertNotIn(absent, serialized)
         self.assertEqual(evidence["diagnostics_unavailable"], [])
-        for role, body in (("coresimulator", "host line\n"), ("watch-system", "watch line\n"),
-                           ("phone-system", "phone line\n")):
+        for role, body in (
+            ("coresimulator", "host line\n"),
+            ("watch-system", "watch line\n"),
+            ("phone-system", "phone line\n"),
+        ):
             record = self.tail(evidence, role)
             self.assertEqual(record["outcome"], "ok")
             self.assertEqual((self.out / record["output_file"]).read_text(), body)
             self.assertTrue(record["output_file"].endswith(".log"))
-        self.assertEqual(self.tail(evidence, "watch-system")["source"],
-                         str(self.logs / WATCH / "system.log"))
+        self.assertEqual(
+            self.tail(evidence, "watch-system")["source"],
+            str(self.logs / WATCH / "system.log"),
+        )
 
     def test_lowercase_ids_are_canonicalised_for_matching_and_exact_paths(self):
         self.write_logs()
@@ -185,14 +217,29 @@ class PositiveExactPairTests(Base):
         self.assertEqual(self.tail(evidence, "phone-system")["outcome"], "ok")
 
     def test_pair_of_only_one_device_is_not_selected(self):
-        pairs = json.dumps({"pairs": {"P": {"watch": {"udid": WATCH}, "phone": {"udid": OTHER_PHONE},
-                                            "state": "(active, connected)"}}}).encode()
-        runner = FakeRunner({MODULE.DEVICES_COMMAND: (0, devices_json(), b""),
-                             MODULE.PAIRS_COMMAND: (0, pairs, b"")})
+        pairs = json.dumps(
+            {
+                "pairs": {
+                    "P": {
+                        "watch": {"udid": WATCH},
+                        "phone": {"udid": OTHER_PHONE},
+                        "state": "(active, connected)",
+                    }
+                }
+            }
+        ).encode()
+        runner = FakeRunner(
+            {
+                MODULE.DEVICES_COMMAND: (0, devices_json(), b""),
+                MODULE.PAIRS_COMMAND: (0, pairs, b""),
+            }
+        )
         evidence = self.collect(runner=runner)
         self.assertIsNone(evidence["pairs"]["selected_pair"])
         self.assertEqual(evidence["pairs"]["exact_pair_count"], 0)
-        self.assertEqual(evidence["pairs"]["pairs_with_only_one_device"][0]["pair_id"], "P")
+        self.assertEqual(
+            evidence["pairs"]["pairs_with_only_one_device"][0]["pair_id"], "P"
+        )
 
 
 class IdentityGuardTests(Base):
@@ -211,16 +258,22 @@ class IdentityGuardTests(Base):
         for name, (watch, phone, problems) in self.CASES.items():
             with self.subTest(name):
                 self.write_logs()
-                evidence = self.collect(watch=watch, phone=phone, runner=RefusingRunner())
+                evidence = self.collect(
+                    watch=watch, phone=phone, runner=RefusingRunner()
+                )
                 self.assertFalse(evidence["identity"]["complete"])
                 self.assertEqual(evidence["identity"]["problems"], problems)
                 self.assertEqual(evidence["rpc"]["skipped"], "missing_identity")
                 self.assertEqual(evidence["rpc"]["calls"], [])
                 self.assertIsNone(evidence["devices"])
                 self.assertIsNone(evidence["pairs"])
-                self.assertEqual([t["role"] for t in evidence["log_tails"]], ["coresimulator"])
+                self.assertEqual(
+                    [t["role"] for t in evidence["log_tails"]], ["coresimulator"]
+                )
                 self.assertEqual(self.tail(evidence, "coresimulator")["outcome"], "ok")
-                self.assertFalse((self.out / "failure-evidence-watch-system.log").exists())
+                self.assertFalse(
+                    (self.out / "failure-evidence-watch-system.log").exists()
+                )
                 self.assertIn("simctl_devices", evidence["diagnostics_unavailable"])
                 self.assertEqual(evidence["original_failure"]["exit_code"], 149)
 
@@ -233,7 +286,9 @@ class MissingFileAndModeTests(Base):
             self.assertIn(f"log_{role}", evidence["diagnostics_unavailable"])
             self.assertNotIn("output_file", self.tail(evidence, role))
         self.assertEqual(evidence["original_failure"]["status"], "unpaid")
-        self.assertEqual(sorted(p.name for p in self.out.iterdir()), ["failure-evidence.json"])
+        self.assertEqual(
+            sorted(p.name for p in self.out.iterdir()), ["failure-evidence.json"]
+        )
 
     def test_symlink_directory_and_fifo_are_not_read(self):
         secret = self.tmp / "elsewhere.log"
@@ -247,8 +302,9 @@ class MissingFileAndModeTests(Base):
         self.assertLess(time.monotonic() - started, 5)
         for role in ("coresimulator", "watch-system", "phone-system"):
             self.assertEqual(self.tail(evidence, role)["outcome"], "not_regular_file")
-        self.assertNotIn("must not be copied", "".join(
-            p.read_text() for p in self.out.iterdir()))
+        self.assertNotIn(
+            "must not be copied", "".join(p.read_text() for p in self.out.iterdir())
+        )
 
     @unittest.skipIf(os.geteuid() == 0, "root ignores file modes")
     def test_permission_denied_is_recorded(self):
@@ -256,8 +312,12 @@ class MissingFileAndModeTests(Base):
         (self.logs / "CoreSimulator.log").chmod(0)
         (self.logs / WATCH).chmod(0)
         evidence = self.collect()
-        self.assertEqual(self.tail(evidence, "coresimulator")["outcome"], "permission_denied")
-        self.assertEqual(self.tail(evidence, "watch-system")["outcome"], "permission_denied")
+        self.assertEqual(
+            self.tail(evidence, "coresimulator")["outcome"], "permission_denied"
+        )
+        self.assertEqual(
+            self.tail(evidence, "watch-system")["outcome"], "permission_denied"
+        )
         self.assertEqual(self.tail(evidence, "phone-system")["outcome"], "ok")
 
     def test_never_more_than_three_tails_and_no_other_file_is_read(self):
@@ -283,8 +343,12 @@ class TailCapTests(Base):
         self.assertEqual(record["bytes_read"], MODULE.TAIL_BYTES)
         self.assertEqual(record["file_size"], len(body))
         self.assertTrue(record["truncated"])
-        self.assertEqual((self.out / record["output_file"]).read_bytes(), body[-MODULE.TAIL_BYTES:])
-        self.assertEqual((source.stat().st_mode, source.stat().st_mtime, source.read_bytes()), before)
+        self.assertEqual(
+            (self.out / record["output_file"]).read_bytes(), body[-MODULE.TAIL_BYTES :]
+        )
+        self.assertEqual(
+            (source.stat().st_mode, source.stat().st_mtime, source.read_bytes()), before
+        )
 
     def test_small_file_is_whole_and_not_truncated(self):
         self.write_logs(host=b"short\n")
@@ -293,7 +357,9 @@ class TailCapTests(Base):
 
     def test_cut_inside_a_multibyte_character_still_decodes(self):
         body = b"x" * 10 + "é".encode() * MODULE.TAIL_BYTES + b"\n"
-        self.assertEqual((len(body) - MODULE.TAIL_BYTES - 10) % 2, 1)  # cut lands mid-character
+        self.assertEqual(
+            (len(body) - MODULE.TAIL_BYTES - 10) % 2, 1
+        )  # cut lands mid-character
         self.write_logs(host=body)
         record = self.tail(self.collect(), "coresimulator")
         self.assertEqual(record["outcome"], "ok")
@@ -303,7 +369,9 @@ class TailCapTests(Base):
     def test_invalid_utf8_is_encoding_unavailable(self):
         self.write_logs(watch=b"ok\n\xff\xfe broken\n")
         evidence = self.collect()
-        self.assertEqual(self.tail(evidence, "watch-system")["outcome"], "encoding_error")
+        self.assertEqual(
+            self.tail(evidence, "watch-system")["outcome"], "encoding_error"
+        )
         self.assertIn("log_watch-system", evidence["diagnostics_unavailable"])
         self.assertFalse((self.out / "failure-evidence-watch-system.log").exists())
         self.assertEqual(self.tail(evidence, "phone-system")["outcome"], "ok")
@@ -313,32 +381,57 @@ class ReadOnlyCommandTests(Base):
     def test_only_the_two_list_commands_run_once_each_in_order(self):
         runner = FakeRunner()
         self.collect(runner=runner)
-        self.assertEqual([argv for argv, _ in runner.calls],
-                         [MODULE.DEVICES_COMMAND, MODULE.PAIRS_COMMAND])
-        self.assertEqual(MODULE.READ_ONLY_COMMANDS,
-                         {("xcrun", "simctl", "list", "devices", "--json"),
-                          ("xcrun", "simctl", "list", "pairs", "--json")})
-        mutating = {"create", "boot", "pair", "install", "launch", "erase", "shutdown",
-                    "delete", "terminate", "spawn", "unpair", "kill"}
+        self.assertEqual(
+            [argv for argv, _ in runner.calls],
+            [MODULE.DEVICES_COMMAND, MODULE.PAIRS_COMMAND],
+        )
+        self.assertEqual(
+            MODULE.READ_ONLY_COMMANDS,
+            {
+                ("xcrun", "simctl", "list", "devices", "--json"),
+                ("xcrun", "simctl", "list", "pairs", "--json"),
+            },
+        )
+        mutating = {
+            "create",
+            "boot",
+            "pair",
+            "install",
+            "launch",
+            "erase",
+            "shutdown",
+            "delete",
+            "terminate",
+            "spawn",
+            "unpair",
+            "kill",
+        }
         for argv in MODULE.READ_ONLY_COMMANDS:
             self.assertFalse(mutating & set(argv))
 
     def test_call_refuses_anything_outside_the_read_only_set(self):
-        for argv in (("xcrun", "simctl", "boot", WATCH), ("xcrun", "simctl", "list", "--json"),
-                     (sys.executable, "-c", "pass")):
+        for argv in (
+            ("xcrun", "simctl", "boot", WATCH),
+            ("xcrun", "simctl", "list", "--json"),
+            (sys.executable, "-c", "pass"),
+        ):
             with self.subTest(argv), self.assertRaises(ValueError):
                 MODULE._call(argv, RefusingRunner(), FakeClock(), 1e9)
 
 
 class RpcBoundTests(Base):
     def test_timeout_is_recorded_and_never_retried(self):
-        runner = FakeRunner({
-            MODULE.DEVICES_COMMAND: subprocess.TimeoutExpired("xcrun", 2),
-            MODULE.PAIRS_COMMAND: subprocess.TimeoutExpired("xcrun", 2),
-        })
+        runner = FakeRunner(
+            {
+                MODULE.DEVICES_COMMAND: subprocess.TimeoutExpired("xcrun", 2),
+                MODULE.PAIRS_COMMAND: subprocess.TimeoutExpired("xcrun", 2),
+            }
+        )
         evidence = self.collect(runner=runner)
         self.assertEqual(len(runner.calls), 2)
-        self.assertEqual([c["outcome"] for c in evidence["rpc"]["calls"]], ["timeout", "timeout"])
+        self.assertEqual(
+            [c["outcome"] for c in evidence["rpc"]["calls"]], ["timeout", "timeout"]
+        )
         self.assertEqual([c["attempts"] for c in evidence["rpc"]["calls"]], [1, 1])
         self.assertEqual(evidence["rpc"]["retries"], 0)
         self.assertIn("simctl_pairs", evidence["diagnostics_unavailable"])
@@ -372,12 +465,70 @@ class RpcBoundTests(Base):
             MODULE.spawn_bounded((sys.executable, "-c", code), 0.4)
         self.assertLess(time.monotonic() - started, 3)
         time.sleep(2)
-        self.assertFalse(marker.exists(), "descendant in the helper's session outlived the bound")
+        self.assertFalse(
+            marker.exists(), "descendant in the helper's session outlived the bound"
+        )
 
     def test_default_spawn_returns_status_and_output(self):
         status, out, err = MODULE.spawn_bounded(
-            (sys.executable, "-c", "import sys;print('o');sys.stderr.write('e');sys.exit(5)"), 5)
+            (
+                sys.executable,
+                "-c",
+                "import sys;print('o');sys.stderr.write('e');sys.exit(5)",
+            ),
+            5,
+        )
         self.assertEqual((status, out.strip(), err), (5, b"o", b"e"))
+
+    def test_interruption_closes_pipes_and_stops_only_the_private_rpc_group(self):
+        process = mock.Mock(pid=345678)
+        process.communicate.side_effect = KeyboardInterrupt()
+        with mock.patch.object(
+            MODULE.subprocess, "Popen", return_value=process
+        ), mock.patch.object(MODULE.os, "killpg") as stop:
+            with self.assertRaises(KeyboardInterrupt):
+                MODULE.spawn_bounded(MODULE.DEVICES_COMMAND, 2)
+        stop.assert_called_once_with(process.pid, signal.SIGKILL)
+        process.stdout.close.assert_called_once()
+        process.stderr.close.assert_called_once()
+        process.wait.assert_called_once()
+        self.assertLessEqual(process.wait.call_args.kwargs["timeout"], 2)
+
+    def test_timeout_cleanup_uses_remaining_bound_and_does_not_wait_for_pipe_eof(self):
+        process = mock.Mock(pid=345678)
+        process.communicate.side_effect = subprocess.TimeoutExpired("fixture", 2)
+        with mock.patch.object(
+            MODULE.subprocess, "Popen", return_value=process
+        ), mock.patch.object(MODULE.os, "killpg"), mock.patch.object(
+            MODULE.time, "monotonic", side_effect=[10, 10.05, 11.95]
+        ):
+            with self.assertRaises(subprocess.TimeoutExpired):
+                MODULE.spawn_bounded(MODULE.DEVICES_COMMAND, 2)
+        self.assertEqual(process.communicate.call_count, 1)
+        self.assertAlmostEqual(process.wait.call_args.kwargs["timeout"], 0.05)
+
+    def test_escaped_pipe_holder_does_not_add_a_second_cleanup_budget(self):
+        pid_path = self.tmp / "escaped.pid"
+        escaped = (
+            "import os,pathlib,time;"
+            f"pathlib.Path({str(pid_path)!r}).write_text(str(os.getpid()));time.sleep(30)"
+        )
+        command = (
+            "import subprocess,sys,time;"
+            f"subprocess.Popen([sys.executable,'-c',{escaped!r}],start_new_session=True);time.sleep(30)"
+        )
+        started = time.monotonic()
+        try:
+            with self.assertRaises(subprocess.TimeoutExpired):
+                MODULE.spawn_bounded((sys.executable, "-c", command), 0.4)
+            self.assertLess(time.monotonic() - started, 0.9)
+        finally:
+            # Only this test's explicitly recorded escaped session is stopped.
+            if pid_path.exists():
+                try:
+                    os.killpg(int(pid_path.read_text()), signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
 
 
 class ToolFailureTests(Base):
@@ -386,13 +537,20 @@ class ToolFailureTests(Base):
             "malformed": ((0, b"{not json", b""), "malformed_json"),
             "not_object": ((0, b"[]", b""), "malformed_json"),
             "wrong_shape": ((0, b'{"devices": []}', b""), "malformed_json"),
-            "nonzero": ((72, b"", b"x" * 5000 + b"CoreSimulatorService connection invalid"), "nonzero_exit"),
+            "nonzero": (
+                (72, b"", b"x" * 5000 + b"CoreSimulatorService connection invalid"),
+                "nonzero_exit",
+            ),
             "no_xcrun": (FileNotFoundError(2, "No such file", "xcrun"), "unavailable"),
         }
         for name, (response, outcome) in cases.items():
             with self.subTest(name):
-                runner = FakeRunner({MODULE.DEVICES_COMMAND: response,
-                                     MODULE.PAIRS_COMMAND: (0, pairs_json(), b"")})
+                runner = FakeRunner(
+                    {
+                        MODULE.DEVICES_COMMAND: response,
+                        MODULE.PAIRS_COMMAND: (0, pairs_json(), b""),
+                    }
+                )
                 evidence = self.collect(runner=runner)
                 call = evidence["rpc"]["calls"][0]
                 self.assertEqual(call["outcome"], outcome)
@@ -405,20 +563,42 @@ class ToolFailureTests(Base):
                     self.assertTrue(call["stderr_tail"].endswith("connection invalid"))
 
     def test_malformed_pairs_shape_is_unavailable(self):
-        runner = FakeRunner({MODULE.DEVICES_COMMAND: (0, devices_json(), b""),
-                             MODULE.PAIRS_COMMAND: (0, b'{"pairs": []}', b"")})
+        runner = FakeRunner(
+            {
+                MODULE.DEVICES_COMMAND: (0, devices_json(), b""),
+                MODULE.PAIRS_COMMAND: (0, b'{"pairs": []}', b""),
+            }
+        )
         evidence = self.collect(runner=runner)
         self.assertEqual(evidence["rpc"]["calls"][1]["outcome"], "malformed_json")
         self.assertIn("simctl_pairs", evidence["diagnostics_unavailable"])
 
     def test_unavailable_and_absent_devices_are_recorded_as_listed(self):
-        devices = json.dumps({"devices": {"r": [{"udid": WATCH, "isAvailable": False,
-                                                  "availabilityError": "runtime profile not found"}]}}).encode()
-        runner = FakeRunner({MODULE.DEVICES_COMMAND: (0, devices, b""),
-                             MODULE.PAIRS_COMMAND: (0, b'{"pairs": {}}', b"")})
+        devices = json.dumps(
+            {
+                "devices": {
+                    "r": [
+                        {
+                            "udid": WATCH,
+                            "isAvailable": False,
+                            "availabilityError": "runtime profile not found",
+                        }
+                    ]
+                }
+            }
+        ).encode()
+        runner = FakeRunner(
+            {
+                MODULE.DEVICES_COMMAND: (0, devices, b""),
+                MODULE.PAIRS_COMMAND: (0, b'{"pairs": {}}', b""),
+            }
+        )
         evidence = self.collect(runner=runner)
         self.assertEqual(evidence["devices"]["watch"]["isAvailable"], False)
-        self.assertEqual(evidence["devices"]["watch"]["availabilityError"], "runtime profile not found")
+        self.assertEqual(
+            evidence["devices"]["watch"]["availabilityError"],
+            "runtime profile not found",
+        )
         self.assertEqual(evidence["devices"]["phone"], {"found": False})
         self.assertIsNone(evidence["pairs"]["selected_pair"])
 
@@ -428,13 +608,24 @@ class WriteErrorTests(Base):
         blocker = self.tmp / "file"
         blocker.write_text("x")
         with self.assertRaises(MODULE.WriteError):
-            MODULE.collect_failure(blocker / "out", WATCH, PHONE, "p", 149, "s",
-                                   runner=FakeRunner(), clock=FakeClock(), log_root=self.logs)
+            MODULE.collect_failure(
+                blocker / "out",
+                WATCH,
+                PHONE,
+                "p",
+                149,
+                "s",
+                runner=FakeRunner(),
+                clock=FakeClock(),
+                log_root=self.logs,
+            )
         self.out.mkdir()
         (self.out / "failure-evidence.json").mkdir()
         with self.assertRaises(MODULE.WriteError):
             self.collect()
-        self.assertEqual([p.name for p in self.out.iterdir() if p.name.endswith(".pending")], [])
+        self.assertEqual(
+            [p.name for p in self.out.iterdir() if p.name.endswith(".pending")], []
+        )
 
     def test_tail_write_error_is_recorded_and_evidence_still_written(self):
         self.write_logs()
@@ -450,9 +641,24 @@ class WriteErrorTests(Base):
         blocker.write_text("x")
         stderr = io.StringIO()
         with redirect_stderr(stderr):
-            status = MODULE.main(["--output-dir", str(blocker / "o"), "--watch-id", WATCH,
-                                  "--phone-id", PHONE, "--phase", "p", "--exit-code", "149",
-                                  "--sha", "s"], runner=FakeRunner(), log_root=self.logs)
+            status = MODULE.main(
+                [
+                    "--output-dir",
+                    str(blocker / "o"),
+                    "--watch-id",
+                    WATCH,
+                    "--phone-id",
+                    PHONE,
+                    "--phase",
+                    "p",
+                    "--exit-code",
+                    "149",
+                    "--sha",
+                    "s",
+                ],
+                runner=FakeRunner(),
+                log_root=self.logs,
+            )
         self.assertEqual(status, 3)
         self.assertIn("not written", stderr.getvalue())
 
@@ -462,45 +668,113 @@ class FailureIdentityTests(Base):
         for code in (1, 124, 149, 405, -9):
             with self.subTest(code):
                 with redirect_stderr(io.StringIO()):
-                    status = MODULE.main(["--output-dir", str(self.out), "--watch-id", WATCH,
-                                          "--phone-id", PHONE, "--phase", "preinstall",
-                                          "--exit-code", str(code), "--sha", "abc"],
-                                         runner=FakeRunner(), log_root=self.logs)
+                    status = MODULE.main(
+                        [
+                            "--output-dir",
+                            str(self.out),
+                            "--watch-id",
+                            WATCH,
+                            "--phone-id",
+                            PHONE,
+                            "--phase",
+                            "preinstall",
+                            "--exit-code",
+                            str(code),
+                            "--sha",
+                            "abc",
+                        ],
+                        runner=FakeRunner(),
+                        log_root=self.logs,
+                    )
                 self.assertEqual(status, 0)
                 record = json.loads((self.out / "failure-evidence.json").read_text())
                 self.assertEqual(record["original_failure"]["exit_code"], code)
                 self.assertEqual(record["original_failure"]["status"], "unpaid")
 
     def test_zero_or_unusable_failure_identity_is_refused(self):
-        for kwargs in ({"exit_code": 0}, {"exit_code": True}, {"exit_code": "149"},
-                       {"phase": "  "}, {"sha": ""}):
+        for kwargs in (
+            {"exit_code": 0},
+            {"exit_code": True},
+            {"exit_code": "149"},
+            {"phase": "  "},
+            {"sha": ""},
+        ):
             args = dict(exit_code=149, phase="p", sha="s")
             args.update(kwargs)
             with self.subTest(kwargs), self.assertRaises(ValueError):
-                MODULE.collect_failure(self.out, WATCH, PHONE, args["phase"], args["exit_code"],
-                                       args["sha"], runner=RefusingRunner(), log_root=self.logs)
+                MODULE.collect_failure(
+                    self.out,
+                    WATCH,
+                    PHONE,
+                    args["phase"],
+                    args["exit_code"],
+                    args["sha"],
+                    runner=RefusingRunner(),
+                    log_root=self.logs,
+                )
         self.assertFalse(self.out.exists())
 
-    def test_real_cli_subprocess_with_empty_ids_runs_no_tool(self):
-        home = self.tmp / "home"
-        host_log = home / "Library/Logs/CoreSimulator/CoreSimulator.log"
-        host_log.parent.mkdir(parents=True)
+    def test_isolated_cli_subprocess_with_empty_ids_runs_no_tool(self):
+        host_log = self.logs / "CoreSimulator.log"
+        host_log.parent.mkdir(parents=True, exist_ok=True)
         host_log.write_text("service line\n")
-        env = dict(os.environ, HOME=str(home), PATH="")
+        env = dict(os.environ, PATH="")
+        launch = [
+            sys.executable,
+            "-c",
+            "import importlib.util,sys;from pathlib import Path;"
+            "s=importlib.util.spec_from_file_location('helper',sys.argv[1]);"
+            "m=importlib.util.module_from_spec(s);s.loader.exec_module(m);"
+            "raise SystemExit(m.main(sys.argv[3:],log_root=Path(sys.argv[2])))",
+            str(SCRIPT),
+            str(self.logs),
+        ]
         result = subprocess.run(
-            [sys.executable, str(SCRIPT), "--output-dir", str(self.out), "--watch-id", "",
-             "--phone-id", "", "--phase", "preinstall", "--exit-code", "149", "--sha", "77cb03bb09"],
-            capture_output=True, text=True, env=env, timeout=30,
+            [
+                *launch,
+                "--output-dir",
+                str(self.out),
+                "--watch-id",
+                "",
+                "--phone-id",
+                "",
+                "--phase",
+                "preinstall",
+                "--exit-code",
+                "149",
+                "--sha",
+                "77cb03bb09",
+            ],
+            capture_output=True,
+            text=True,
+            env=env,
+            timeout=30,
         )
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(result.stdout, "")
         record = json.loads((self.out / "failure-evidence.json").read_text())
         self.assertEqual(record["rpc"]["skipped"], "missing_identity")
-        self.assertEqual((self.out / "failure-evidence-coresimulator.log").read_text(), "service line\n")
+        self.assertEqual(
+            (self.out / "failure-evidence-coresimulator.log").read_text(),
+            "service line\n",
+        )
         for bad in (["--exit-code", "0"], ["--exit-code", "x"]):
-            argv = [sys.executable, str(SCRIPT), "--output-dir", str(self.out), "--watch-id", "",
-                    "--phone-id", "", "--phase", "p", "--sha", "s"] + bad
-            refused = subprocess.run(argv, capture_output=True, text=True, env=env, timeout=30)
+            argv = [
+                *launch,
+                "--output-dir",
+                str(self.out),
+                "--watch-id",
+                "",
+                "--phone-id",
+                "",
+                "--phase",
+                "p",
+                "--sha",
+                "s",
+            ] + bad
+            refused = subprocess.run(
+                argv, capture_output=True, text=True, env=env, timeout=30
+            )
             self.assertEqual(refused.returncode, 2, refused.stderr)
 
     def test_outputs_match_the_existing_preparation_upload_globs(self):

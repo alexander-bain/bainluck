@@ -32,6 +32,9 @@ on:
       - 'ios/Bain Luck/BainLuckTests/DiscoverViewModelPaginationTests.swift'
       - 'ios/Bain Luck/BainLuckWatchUITests/**'
       - 'tools/watch-ui-journey.sh'
+      - 'tools/watch_failure_evidence.py'
+      - 'tools/tests/test_watch_failure_evidence.py'
+      - 'tools/tests/test_watch_ui_failure_capture.py'
       - 'tools/watch-ui-products.sh'
       - 'tools/watch_ui_products.py'
       - 'tools/watch_ui_stage.py'
@@ -105,6 +108,9 @@ on:
       - 'ios/Bain Luck/BainLuckTests/DiscoverViewModelPaginationTests.swift'
       - 'ios/Bain Luck/BainLuckWatchUITests/**'
       - 'tools/watch-ui-journey.sh'
+      - 'tools/watch_failure_evidence.py'
+      - 'tools/tests/test_watch_failure_evidence.py'
+      - 'tools/tests/test_watch_ui_failure_capture.py'
       - 'tools/watch-ui-products.sh'
       - 'tools/watch_ui_products.py'
       - 'tools/watch_ui_stage.py'
@@ -317,7 +323,10 @@ jobs:
       - name: Verify simulator architecture selection fails closed
         run: python3 -m unittest discover -s tools/tests -p test_watch_simulator_architecture.py
       - name: Verify failed gates retain evidence before job cancellation
-        run: python3 -m unittest discover -s tools/tests -p test_watch_ui_deadline.py
+        run: |
+          python3 -m unittest discover -s tools/tests -p test_watch_ui_deadline.py
+          python3 -m unittest discover -s tools/tests -p test_watch_failure_evidence.py
+          python3 -m unittest discover -s tools/tests -p test_watch_ui_failure_capture.py
       - name: Verify products and prepare one fresh pair within the global budget
         run: python3 tools/watch_ui_stage.py prepare --output-dir build/watch-ui-journey -- bash tools/watch-ui-journey.sh prepare
       - name: Preserve preparation evidence before starting XCTest

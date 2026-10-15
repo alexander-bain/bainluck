@@ -65,7 +65,9 @@ def default_log_root():
 
 
 def spawn_bounded(argv, timeout):
-    """Run one command once in its own session; kill that session on timeout."""
+    """Keep request and cleanup inside one bound, including interruption."""
+    deadline = time.monotonic() + timeout
+    cleanup_reserve = min(0.1, timeout / 2)
     process = subprocess.Popen(
         list(argv),
         stdin=subprocess.DEVNULL,
@@ -74,16 +76,23 @@ def spawn_bounded(argv, timeout):
         start_new_session=True,
     )
     try:
-        stdout, stderr = process.communicate(timeout=timeout)
-    except subprocess.TimeoutExpired:
+        stdout, stderr = process.communicate(
+            timeout=max(0, deadline - time.monotonic() - cleanup_reserve)
+        )
+    except BaseException:
+        # The caller can be interrupted by its unchanged preparation deadline.
+        # This private RPC session must not outlive that caller. Do not wait
+        # for EOF from an escaped descendant holding a pipe open.
         try:
             os.killpg(process.pid, signal.SIGKILL)
         except OSError:
             pass
+        for stream in (process.stdout, process.stderr):
+            stream.close()
         try:
-            process.communicate(timeout=1)
+            process.wait(timeout=max(0, deadline - time.monotonic()))
         except subprocess.TimeoutExpired:
-            pass  # An escaped descendant holds the pipes; abandon them.
+            pass
         raise
     return process.returncode, stdout, stderr
 
@@ -122,7 +131,7 @@ def _identity(watch_id, phone_id):
         "phone_id": phone or (phone_id or "")[:TEXT_LIMIT],
         "complete": not problems,
         "problems": problems,
-    }, (watch, phone) if not problems else None
+    }, ((watch, phone) if not problems else None)
 
 
 def _stderr_tail(data):
@@ -279,9 +288,7 @@ def _read_tail(path):
     finally:
         os.close(descriptor)
     data = b"".join(chunks)
-    record.update(
-        file_size=opened.st_size, bytes_read=len(data), truncated=start > 0
-    )
+    record.update(file_size=opened.st_size, bytes_read=len(data), truncated=start > 0)
     lead = 0
     if start > 0:  # The cut may land inside one multi-byte character.
         while lead < min(3, len(data)) and 0x80 <= data[lead] <= 0xBF:
