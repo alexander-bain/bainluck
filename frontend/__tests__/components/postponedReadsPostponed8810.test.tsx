@@ -170,9 +170,10 @@ describe("the event page feeds the authority's word from the payload", () => {
     expect(src).toMatch(/"home-away",[\s\S]{0,200}stoppageLabel,\s*\)/);
     expect(src).toContain("authorityStoppageDescription(stoppageLabel)");
     expect(src).toContain("stopped={stoppageLabel !== null}");
-    // Both hero scores, the score chart, and (#10239) the final score handed to the projected final
-    // points module: a postponed match's 0–0 filler is never passed in as a final.
-    expect(src.match(/!heroScoreIsStoppageFiller/g)?.length).toBe(4);
+    // Both hero scores, the score chart, (#10239) the final score handed to the projected final
+    // points module, and (#9483) the NFL card reader's match line: a postponed match's 0–0 filler
+    // is never passed in as a final or printed as a score.
+    expect(src.match(/!heroScoreIsStoppageFiller/g)?.length).toBe(5);
   });
 });
 

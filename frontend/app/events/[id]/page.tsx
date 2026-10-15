@@ -147,6 +147,20 @@ import { isCloseGame, calculateMinutesToStart } from "@/lib/analytics";
 import { isPregameStatus } from "@/lib/settledQuote";
 import { derivePeriodBoundaries } from "@/lib/periodMarkers";
 import { useProjectedFinalPointsMount } from "@/lib/projectedFinalPointsSeries";
+import {
+  buildFinishCard,
+  cardAt,
+  milestoneCards,
+  nflCardsApply,
+  nflEventCards,
+  readerHeader,
+  returnTarget,
+  rowsForCards,
+  type ReaderState,
+} from "@/lib/nflEventCardDeck";
+import { projectedTeamStrokes } from "@/lib/teamLineStrokes";
+import { NFLEventCardDeck, type CardSelection } from "@/components/event/NFLEventCards";
+const EventCardReader = dynamic(() => import("@/components/event/EventCardReader"), { ssr: false });
 import { authorityStoppageLabel, formatLiveClockLabel } from "@/lib/gameTimeLabel";
 import { restingGameClock } from "@/lib/restingGameClock";
 import {
@@ -1307,6 +1321,62 @@ export default function EventPage({ params }: EventPageProps) {
   // Score Differential card steps aside on it — never two answers to one question.
   const projectedFinalPoints = useProjectedFinalPointsMount(event?.sport, event?.status, historyData);
 
+  // #9483 — the NFL game-story cards under the chart (design freeze v328). Built
+  // only from the projected-points input above and the served player props the
+  // page already holds: no fetch of their own, so nothing here can delay the
+  // win-probability anchor. The minute tick lets a pregame price that stops
+  // being observed lose its number on the page too.
+  const nflCardsOn = nflCardsApply(event?.sport);
+  const [nflCardClock, setNflCardClock] = useState(() => Date.now());
+  useEffect(() => {
+    if (!nflCardsOn) return;
+    const id = window.setInterval(() => setNflCardClock(Date.now()), 60_000);
+    return () => window.clearInterval(id);
+  }, [nflCardsOn]);
+  const nflFinishCard = useMemo(
+    () => (nflCardsOn && projectedFinalPoints.mount ? buildFinishCard(projectedFinalPoints.input) : null),
+    [nflCardsOn, projectedFinalPoints],
+  );
+  const nflMilestoneCards = useMemo(
+    () =>
+      nflCardsOn && gameMarkets && event && gameMarkets.event_id === event.id
+        ? milestoneCards({
+            props: gameMarkets.player_props,
+            eventStatus: event.status,
+            commenceTime: event.commence_time,
+            homeTeam: event.home_team,
+            awayTeam: event.away_team,
+            nowMs: nflCardClock,
+          })
+        : [],
+    [nflCardsOn, gameMarkets, event, nflCardClock],
+  );
+  const nflCards = useMemo(
+    () => nflEventCards(event?.sport, nflFinishCard, nflMilestoneCards).map((card) => cardAt(card, nflCardClock)),
+    [event?.sport, nflFinishCard, nflMilestoneCards, nflCardClock],
+  );
+  const nflCardRows = useMemo(
+    () => (gameMarkets ? rowsForCards(nflCards, gameMarkets.player_props) : {}),
+    [nflCards, gameMarkets],
+  );
+  const [nflCardSelection, setNflCardSelection] = useState<CardSelection>({});
+  const [nflOpenCard, setNflOpenCard] = useState<string | null>(null);
+  const nflCardOpeners = useRef(new Map<string, HTMLButtonElement>());
+  const nflDeckHeadingRef = useRef<HTMLHeadingElement>(null);
+  const selectNflCardRow = useCallback(
+    (cardId: string, rowId: string) => setNflCardSelection((prev) => ({ ...prev, [cardId]: rowId })),
+    [],
+  );
+  const registerNflCardOpener = useCallback((cardId: string, el: HTMLButtonElement | null) => {
+    if (el) nflCardOpeners.current.set(cardId, el);
+    else nflCardOpeners.current.delete(cardId);
+  }, []);
+  // Another event is another deck: nothing open, nothing selected.
+  useEffect(() => {
+    setNflOpenCard(null);
+    setNflCardSelection({});
+  }, [event?.id]);
+
   // Shared chart domain (see eventKeyStats.ts)
   const sharedChartDomain = useMemo(
     () =>
@@ -2150,6 +2220,38 @@ export default function EventPage({ params }: EventPageProps) {
     </div>
     </SectionErrorBoundary>
   ) : null;
+  // #9483 — the game-story cards and their reader take the page's one team-line
+  // pair (#10547), and the reader's match line is the hero's own numbers.
+  const nflStrokes = projectedTeamStrokes(event.home_team_data?.primary_color, event.away_team_data?.primary_color);
+  const nflCardTeams = {
+    awayName: event.away_team,
+    homeName: event.home_team,
+    awayColor: nflStrokes.away,
+    homeColor: nflStrokes.home,
+  };
+  const nflScored = (isLive || isFinished) && !heroScoreIsStoppageFiller && bestHomeScore != null && bestAwayScore != null;
+  const nflReaderHeader = readerHeader({
+    awayShort: heroShortNames.away,
+    homeShort: heroShortNames.home,
+    awayScore: nflScored ? bestAwayScore : null,
+    homeScore: nflScored ? bestHomeScore : null,
+    stateLabel: stoppageLabel ?? (isFinished ? "Final" : effectivelyLive ? liveClockLabel || "Live" : isLive ? "Live" : "Pregame"),
+    awayChance: awayProb != null ? formatProbability(awayProb, { rendered: awayPct }) : null,
+    homeChance: homeProb != null ? formatProbability(homeProb, { rendered: homePct }) : null,
+    finished: isFinished,
+  });
+  // Back returns focus to the card the reader was opened on, or the nearest
+  // card left in the deck, or the deck's heading when none is.
+  const closeNflReader = (state: ReaderState) => {
+    const target = returnTarget(state, nflCards.map((card) => card.id));
+    setNflOpenCard(null);
+    window.requestAnimationFrame(() => {
+      const el = (target !== null ? nflCardOpeners.current.get(target) : null) ?? nflDeckHeadingRef.current;
+      el?.focus();
+      el?.scrollIntoView?.({ block: "nearest", inline: "nearest" });
+    });
+  };
+
   const projectedFinalPointsModule = (
     <ProjectedFinalPointsModule
       decision={projectedFinalPoints}
@@ -3101,6 +3203,8 @@ export default function EventPage({ params }: EventPageProps) {
               homeTeamAbbrev={event.home_team_data?.abbreviation || undefined}
               awayTeamAbbrev={event.away_team_data?.abbreviation || undefined}
               awayWithheld={awaySlotWithheld}
+              /* #9483 — NFL: both teams' lines (design freeze v328). */
+              pairedAwayLine={nflCardsOn}
               onActivePointChange={setActiveChartPoint}
               onRenderedDomain={handleRenderedDomain}
               publications={isFinished ? publications : undefined}
@@ -3215,6 +3319,21 @@ export default function EventPage({ params }: EventPageProps) {
       </div>
 
       </SectionErrorBoundary>
+      )}
+
+      {/* #9483 — the NFL game stories, each openable full size. */}
+      {nflCards.length > 0 && !venueVoided && (
+        <SectionErrorBoundary label="Game stories" resetKey={event.id}>
+          <NFLEventCardDeck
+            cards={nflCards}
+            teams={nflCardTeams}
+            selection={nflCardSelection}
+            onSelect={selectNflCardRow}
+            onOpen={setNflOpenCard}
+            openerRef={registerNflCardOpener}
+            headingRef={nflDeckHeadingRef}
+          />
+        </SectionErrorBoundary>
       )}
 
       {/* #6421: the same disclosure, standing on its own, when the card that
@@ -3724,6 +3843,7 @@ export default function EventPage({ params }: EventPageProps) {
               /* #6238 — the fullscreen chart is the same chart. A reader who
                  taps expand must not get the withheld number back. */
               awayWithheld={awaySlotWithheld}
+              pairedAwayLine={nflCardsOn}
               /* #10362 — and it opens on the range the card shows. Without these the
                  expanded chart fell back to its own default window: a reader on "All"
                  tapped expand and got "Since Start", with no way back. The toggle here
@@ -3738,6 +3858,18 @@ export default function EventPage({ params }: EventPageProps) {
               publications={isFinished ? publications : undefined}
             />
         </ChartFullscreenDialog>
+      )}
+      {nflOpenCard !== null && (
+        <EventCardReader
+          openCardId={nflOpenCard}
+          liveCards={nflCards}
+          liveHeader={nflReaderHeader}
+          liveRows={nflCardRows}
+          teams={nflCardTeams}
+          selection={nflCardSelection}
+          onSelect={selectNflCardRow}
+          onClose={closeNflReader}
+        />
       )}
     </div>
     </ErrorBoundary>

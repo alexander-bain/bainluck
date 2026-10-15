@@ -1229,6 +1229,14 @@ export interface GameMarketsResponse {
     // line it falls back to before the commence-time mark is pinned.
     pregame_mark?: number | null;
     opening_over_probability?: number | null;
+    // #9483 — served on every row (production /events/14780559/game-markets,
+    // 2026-10-15): the quote's observation clock, the venue outcomes behind it,
+    // and whether the row was inverted onto the over axis. Optional because an
+    // older body may omit them; the cards treat an absent clock as not recent.
+    observed_at?: string | null;
+    contributor_outcome_ids?: number[];
+    _inverted?: boolean;
+    _market_id?: number;
   }[];
   team_totals: {
     threshold: number;

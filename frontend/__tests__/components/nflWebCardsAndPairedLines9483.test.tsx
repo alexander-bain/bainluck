@@ -1,0 +1,294 @@
+/**
+ * #9483 — the NFL web slice's ink (design freeze v328): the game-story deck
+ * under the chart, the full-size reader, a line's exact details, and the
+ * chart's second team line. The decisions are pinned in
+ * `__tests__/nflEventCardDeck9483.test.ts`; this file reads the markup.
+ *
+ * Controls: a chart without `pairedAwayLine` is byte-identical to today's, and
+ * the pair is refused on a draw-priced winner and where no backend blend is the
+ * line on the plot (a single source, or sportsbooks only).
+ *
+ * 🪤 recharts draws nothing inside a `ResponsiveContainer` without a viewport,
+ * so it is mocked to 390×300, as in `oddsChartDrawsRecordedCheckpoints4974`.
+ */
+
+import React from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+
+import OddsChart from "@/components/OddsChart";
+import { AnalyticsProvider } from "@/components/Analytics";
+import EventCardReader, { LineDetails } from "@/components/event/EventCardReader";
+import { NFLEventCardDeck } from "@/components/event/NFLEventCards";
+import {
+  milestoneCards,
+  propRowId,
+  readerHeader,
+  rowsForCards,
+  type FinishCard,
+  type NflEventCard,
+  type NflPropRow,
+} from "@/lib/nflEventCardDeck";
+import { projectedTeamStrokes } from "@/lib/teamLineStrokes";
+
+jest.mock("recharts", () => {
+  const actual = jest.requireActual("recharts");
+  return {
+    __esModule: true,
+    ...actual,
+    ResponsiveContainer: ({ children }: { children: React.ReactElement }) =>
+      React.cloneElement(children, { width: 390, height: 300 }),
+  };
+});
+
+const KICKOFF = Date.UTC(2026, 9, 16, 0, 15, 0);
+const MIN = 60_000;
+const iso = (offsetMin: number) => new Date(KICKOFF + offsetMin * MIN).toISOString();
+const HOME = "Denver Broncos";
+const AWAY = "Seattle Seahawks";
+// Production colours for /events/14780559: two navies (#10547's case).
+const HOME_HEX = "#0a2343";
+const AWAY_HEX = "#002a5c";
+
+const row = (player: string, line: number, p: number, extra: Partial<NflPropRow> = {}): NflPropRow => ({
+  market_name: "Seattle vs Denver: Receiving Yards",
+  outcome_name: `${player}: ${line}+`,
+  threshold: line,
+  over_probability: p,
+  source: "kalshi",
+  observed_at: iso(-30),
+  pregame_mark: p - 0.05,
+  player_team: "away",
+  ...extra,
+});
+const PROPS = [
+  ...[39.5, 49.5, 59.5, 69.5, 79.5].map((l, i) => row("Jaxon Smith-Njigba", l, [0.85, 0.71, 0.58, 0.4, 0.27][i], { actual: 84, hit: true })),
+  ...[29.5, 39.5, 49.5].map((l, i) => row("Courtland Sutton", l, [0.7, 0.5, 0.3][i], { player_team: "home", actual: 0, hit: false })),
+];
+const FINISH: FinishCard = {
+  kind: "finish",
+  id: "finish",
+  phase: "after",
+  pregame: { away: 20.5, home: 23.5, at: KICKOFF - MIN },
+  projectedNow: null,
+  final: { away: 27, home: 17, at: KICKOFF + 200 * MIN },
+};
+const strokes = projectedTeamStrokes(HOME_HEX, AWAY_HEX);
+const TEAMS = { awayName: AWAY, homeName: HOME, awayColor: strokes.away, homeColor: strokes.home };
+const finalCards = milestoneCards({
+  props: PROPS,
+  eventStatus: "completed",
+  commenceTime: iso(0),
+  homeTeam: HOME,
+  awayTeam: AWAY,
+  nowMs: KICKOFF + 240 * MIN,
+});
+const DECK: NflEventCard[] = [FINISH, ...finalCards];
+const HEADER = readerHeader({
+  awayShort: "SEA",
+  homeShort: "DEN",
+  awayScore: 27,
+  homeScore: 17,
+  stateLabel: "Final",
+  awayChance: null,
+  homeChance: null,
+  finished: true,
+});
+
+const noop = () => undefined;
+
+function deck(cards: NflEventCard[] = DECK) {
+  return renderToStaticMarkup(
+    <NFLEventCardDeck cards={cards} teams={TEAMS} selection={{}} onSelect={noop} onOpen={noop} openerRef={noop} />,
+  );
+}
+
+function reader(openCardId: string, liveCards: NflEventCard[] = DECK) {
+  return renderToStaticMarkup(
+    <EventCardReader
+      openCardId={openCardId}
+      liveCards={liveCards}
+      liveHeader={HEADER}
+      liveRows={rowsForCards(liveCards, PROPS)}
+      teams={TEAMS}
+      selection={{}}
+      onSelect={noop}
+      onClose={noop}
+    />,
+  );
+}
+
+describe("#9483 the deck under the chart", () => {
+  it("draws the finish card and both player cards, each with its own Open control", () => {
+    const html = deck();
+    expect(html).toContain("Game stories");
+    expect(html).toContain("3 cards");
+    expect(html).toContain("Final vs forecast");
+    expect(html).toContain("Seattle Seahawks beat the forecast");
+    expect(html).toContain('aria-label="Open Jaxon Smith-Njigba · Receiving Yards full size"');
+    expect(html).toContain('aria-label="Open Courtland Sutton · Receiving Yards full size"');
+    expect((html.match(/>Open full size</g) ?? []).length).toBe(3);
+  });
+
+  it("a final separates the actual (stat axis) from the pregame chances (0–100%) — journey 5", () => {
+    const html = deck();
+    // 84 sits above every line; 0 sits below the ladder. Both are drawn as a rule on the stat axis.
+    expect(html).toContain('data-actual="84"');
+    expect(html).toContain('data-actual="0"');
+    expect(html).toMatch(/>0%<\/text>/);
+    expect(html).toMatch(/>100%<\/text>/);
+    expect(html).toContain("Chance before kickoff to reach each line");
+    // The selected line (nearest even odds: 59.5+ at the 53% mark) reads its pregame mark and the grade.
+    expect(html).toContain("59.5+ · 53%");
+    expect(html).toContain("HIT");
+    // A final never prints the terminal quote as the chance.
+    expect(html).not.toContain("59.5+ · 58%");
+  });
+
+  it("an empty deck draws nothing", () => {
+    expect(deck([])).toBe("");
+  });
+
+  it("the finish card legend says which mark is which", () => {
+    expect(deck()).toContain("Points · outline = pregame · cross = final");
+  });
+});
+
+describe("#9483 the full-size reader", () => {
+  it("opens on the card it was asked for, with a count, and only that card is exposed", () => {
+    const target = finalCards[0].id;
+    const html = reader(target);
+    expect(html).toContain('data-testid="reader-count">2 of 3<');
+    expect(html).toContain("SEA 27–17 DEN · Final");
+    const active = html.match(/data-card-id="([^"]+)"(?: data-active="true")/);
+    expect(active?.[1]).toBe(target);
+    // Inactive cards are hidden from assistive reading and inert.
+    expect((html.match(/aria-hidden="true" inert=""/g) ?? []).length).toBe(2);
+    // A held deck that matches the live one offers no Refresh.
+    expect(html).not.toContain('data-testid="reader-refresh"');
+  });
+
+  it("an empty deck is a readable empty state, never “1 of 0” — journey 8", () => {
+    const html = reader(finalCards[0].id, []);
+    expect(html).toContain("No game stories right now");
+    expect(html).not.toMatch(/of 0</);
+    expect(html).not.toContain('data-testid="reader-count"');
+  });
+
+  it("Back is the first control and names where it goes", () => {
+    const html = reader("finish");
+    expect(html.indexOf('aria-label="Back to the game"')).toBeLessThan(html.indexOf('aria-label="Previous card"'));
+    expect(html).toContain('role="dialog" aria-modal="true" aria-label="Game story cards"');
+  });
+});
+
+describe("#9483 a line's exact details", () => {
+  it("names each number for what it is and always dates the last quote", () => {
+    const html = renderToStaticMarkup(<LineDetails row={PROPS[2]} onDone={noop} />);
+    expect(html).toContain("Pregame baseline");
+    expect(html).toContain("Last quote");
+    expect(html).toContain("Quoted");
+    expect(html).not.toContain("Time unknown");
+    expect(html).toContain("Kalshi");
+    expect(html).toContain("Result");
+    expect(html).toContain("Graded");
+    expect(html).toContain(">HIT<");
+    const undated = renderToStaticMarkup(<LineDetails row={{ ...PROPS[2], observed_at: null }} onDone={noop} />);
+    expect(undated).toContain("Time unknown");
+  });
+
+  it("a row that is no longer served says so", () => {
+    expect(renderToStaticMarkup(<LineDetails row={undefined} onDone={noop} />)).toContain("This line is no longer offered.");
+    expect(propRowId(PROPS[0])).toBe("kalshi|Seattle vs Denver: Receiving Yards|Jaxon Smith-Njigba: 39.5+");
+  });
+});
+
+// ─── The chart's second team line ──────────────────────────────────────────
+
+const series = (f: (m: number) => number, step = 1) => {
+  const out: Array<{ timestamp: string; home_probability: number; away_probability: number }> = [];
+  for (let m = 0; m <= 180; m += step) {
+    const p = f(m);
+    out.push({ timestamp: iso(m), home_probability: p, away_probability: 1 - p });
+  }
+  return out;
+};
+const blend = (m: number) => 0.6 - 0.3 * (m / 180);
+type ChartProps = Partial<React.ComponentProps<typeof OddsChart>>;
+
+function chart(over: ChartProps = {}): string {
+  return renderToStaticMarkup(
+    React.createElement(
+      AnalyticsProvider,
+      null,
+      <OddsChart
+        history={series(blend, 10) as never}
+        homeTeam={HOME}
+        awayTeam={AWAY}
+        sportKey="americanfootball_nfl"
+        commenceTime={iso(0)}
+        eventStatus="live"
+        isLive
+        winProbHistory={{ espn: series((m) => blend(m) + 0.01, 5), kalshi: series((m) => blend(m) - 0.01, 5) } as never}
+        aggregateLine={series(blend)}
+        backendBlendServed
+        homeTeamColor={HOME_HEX}
+        awayTeamColor={AWAY_HEX}
+        externalTimeRange="all"
+        {...over}
+      />,
+    ),
+  )
+    .replace(/recharts\d+-clip/g, "recharts#-clip")
+    .replace(/recharts-(line|scatter)-\d+/g, "recharts-$1-#");
+}
+
+describe("#9483 the chart draws both teams' lines on an admitted NFL blend", () => {
+  it("adds the away line in its team colour, keys both lines, and drops the up/down poles", () => {
+    const html = chart({ pairedAwayLine: true });
+    expect(html).toContain("paired-away-line");
+    expect(html).toMatch(new RegExp(`class="recharts-curve recharts-line-curve"[^>]*stroke="${strokes.away}"|stroke="${strokes.away}"[^>]*class="recharts-curve`));
+    expect(html).toMatch(new RegExp(`stroke="${strokes.home}"`));
+    expect((html.match(/data-testid="paired-team-key"/g) ?? []).length).toBe(2);
+    expect(html).toContain("Each line is that team&#x27;s chance to win.");
+    expect(html).not.toContain("The line rises towards");
+    // Two navies are not drawn as one line (#10547's rescue).
+    expect(strokes.home).not.toBe(HOME_HEX);
+    // The faint per-source lines wait behind "+ N sources" while both teams are drawn.
+    expect(html).not.toContain('name="Kalshi"');
+    expect(chart()).toMatch(/stroke-opacity="0.28"/);
+    expect(html).not.toMatch(/stroke-opacity="0.28"/);
+    expect(html).toContain("+ 3 sources");
+  });
+
+  it("the away line is the blend read from the other side, vertex for vertex", () => {
+    const html = chart({ pairedAwayLine: true });
+    const paths = [...html.matchAll(/<path[^>]*class="recharts-curve recharts-line-curve"[^>]*d="([^"]+)"/g)].map((m) => m[1]);
+    expect(paths.length).toBeGreaterThanOrEqual(2);
+    const points = (d: string) => (d.match(/-?\d+(?:\.\d+)?,-?\d+(?:\.\d+)?/g) ?? []).map((p) => p.split(",").map(Number));
+    const byLen = paths.map(points).filter((p) => p.length > 100);
+    const [home, away] = [byLen[byLen.length - 2], byLen[byLen.length - 1]];
+    expect(home.length).toBe(away.length);
+    // Same x for every vertex; the two y's sit symmetric about the 50% line.
+    const mid = (home[0][1] + away[0][1]) / 2;
+    for (let i = 0; i < home.length; i += 17) {
+      expect(home[i][0]).toBeCloseTo(away[i][0], 3);
+      expect((home[i][1] + away[i][1]) / 2).toBeCloseTo(mid, 0);
+    }
+  });
+
+  it("CONTROL: without the prop the chart is byte-identical to today's", () => {
+    expect(chart({ pairedAwayLine: false })).toBe(chart());
+  });
+
+  it("CONTROL: a draw-priced winner keeps one line", () => {
+    const html = chart({ pairedAwayLine: true, awayWithheld: true });
+    expect(html).not.toContain("paired-away-line");
+    expect(html).toBe(chart({ awayWithheld: true }));
+  });
+
+  it("CONTROL: no backend blend on the plot keeps one line", () => {
+    const html = chart({ pairedAwayLine: true, backendBlendServed: false });
+    expect(html).not.toContain("paired-away-line");
+    expect(html).toBe(chart({ backendBlendServed: false }));
+  });
+});

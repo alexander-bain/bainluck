@@ -166,6 +166,8 @@ describe("the event page actually wraps its sections", () => {
     const labels = [
       "The score and probability",
       "The win probability chart",
+      // #9483: the NFL game-story cards under the chart render independently of it.
+      "Game stories",
       // #6421: the sportsbook price table used to be markup INSIDE the win
       // probability card, so it shared that card's boundary and vanished with
       // it when `suppressWinProbabilityCard` fired. It now also stands on its
