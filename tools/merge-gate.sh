@@ -868,6 +868,38 @@ required_contexts_scan () {
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
+# #10712: one complete check-run snapshot per gate invocation, never a cache
+# across candidates or invocations. Failed reads cannot become empty passes.
+CHECK_SNAPSHOT_VERDICT=""; CHECK_SNAPSHOT_DETAIL=""; CHECK_RUNS_JSON=""
+check_runs_snapshot_scan () {
+  local pages="$1" api_rc="$2" expected_sha="$3"
+  CHECK_SNAPSHOT_VERDICT=unanswered
+  CHECK_SNAPSHOT_DETAIL="check-run snapshot unavailable or incomplete"
+  CHECK_RUNS_JSON=""
+  [ "$api_rc" = 0 ] || { CHECK_SNAPSHOT_DETAIL="check-runs API failed (exit $api_rc)"; return; }
+  CHECK_RUNS_JSON="$(printf '%s' "$pages" | jq -ce --arg sha "$expected_sha" '
+    if type != "array" or length == 0 then error("missing pages") else . end
+    | if all(.[]; type == "object"
+        and (.total_count | type) == "number"
+        and .total_count >= 0 and (.total_count | floor) == .total_count
+        and (.check_runs | type) == "array") then . else error("bad page") end
+    | . as $pages
+    | if ([.[].total_count] | unique | length) == 1 then .
+      else error("count changed during pagination") end
+    | [.[].check_runs[]] as $runs
+    | if ($runs | length) == $pages[0].total_count
+        and ([$runs[].id] | unique | length) == ($runs | length)
+        and all($runs[]; (.id | type) == "number" and .id > 0
+          and (.id | floor) == .id
+          and (.name | type) == "string" and (.name | length) > 0
+          and .head_sha == $sha)
+      then {total_count: $pages[0].total_count, check_runs: $runs}
+      else error("partial, duplicate or wrong-head checks") end
+  ' 2>/dev/null)" || { CHECK_RUNS_JSON=""; return; }
+  CHECK_SNAPSHOT_VERDICT=ok
+  CHECK_SNAPSHOT_DETAIL="complete exact-head snapshot; reused only inside this invocation"
+}
+
 # WHAT THE PUSH WILL CLOSE — the PR-body half of the closing question (int412,
 # routed to this file by int414).
 #
@@ -1278,6 +1310,41 @@ if [ "$SHA_IN" = "--selftest" ]; then
   # and only the selftest's own mentions remained. Vacuous guards are the thing.
   check "check-runs are reduced to the newest run per check, not read flat" \
     "/usr/bin/grep -q '^CR_LATEST=' '$self' && [ \$(/usr/bin/grep -c '[\$]CR_LATEST' '$self') -eq 2 ]"
+
+  # The actual #10712 saving is four identical HTTP reads -> one paginated
+  # read. Do not turn a failed/partial API response into an empty refusal set.
+  snapshot_test_sha=0000000000000000000000000000000000000001
+  snapshot_pages="$(jq -cn --arg sha "$snapshot_test_sha" '
+    [{total_count:2,check_runs:[{id:1,name:"CI",head_sha:$sha}]},
+     {total_count:2,check_runs:[{id:2,name:"CodeQL",head_sha:$sha}]}]')"
+  check_runs_snapshot_scan "$snapshot_pages" 0 "$snapshot_test_sha"
+  check "complete multipage checks preserve every check" \
+    '[ "$CHECK_SNAPSHOT_VERDICT" = ok ] && [ "$(printf "%s" "$CHECK_RUNS_JSON" | jq ".check_runs|length")" = 2 ]'
+  check_runs_snapshot_scan "$snapshot_pages" 1 "$snapshot_test_sha"
+  check "API failure never borrows the preceding successful snapshot" \
+    '[ "$CHECK_SNAPSHOT_VERDICT" = unanswered ] && [ -z "$CHECK_RUNS_JSON" ]'
+  check_runs_snapshot_scan "$snapshot_pages" 0 0000000000000000000000000000000000000002
+  check "a different source SHA refuses snapshot reuse" \
+    '[ "$CHECK_SNAPSHOT_VERDICT" = unanswered ] && [ -z "$CHECK_RUNS_JSON" ]'
+  snapshot_partial="$(printf '%s' "$snapshot_pages" | jq -c '.[0:1]')"
+  check_runs_snapshot_scan "$snapshot_partial" 0 "$snapshot_test_sha"
+  check "an unreturned page is unknown, never a clean partial verdict" \
+    '[ "$CHECK_SNAPSHOT_VERDICT" = unanswered ] && [ -z "$CHECK_RUNS_JSON" ]'
+  snapshot_duplicate="$(printf '%s' "$snapshot_pages" | jq -c '.[1].check_runs[0].id=1')"
+  check_runs_snapshot_scan "$snapshot_duplicate" 0 "$snapshot_test_sha"
+  check "overlapping pages cannot satisfy the complete population count" \
+    '[ "$CHECK_SNAPSHOT_VERDICT" = unanswered ] && [ -z "$CHECK_RUNS_JSON" ]'
+  snapshot_moved="$(printf '%s' "$snapshot_pages" | jq -c '.[1].total_count=3')"
+  check_runs_snapshot_scan "$snapshot_moved" 0 "$snapshot_test_sha"
+  check "a population changing during pagination refuses the mixed snapshot" \
+    '[ "$CHECK_SNAPSHOT_VERDICT" = unanswered ] && [ -z "$CHECK_RUNS_JSON" ]'
+  for snapshot_bad in '' '{}' '[]' 'not JSON' '[{"total_count":0,"check_runs":null}]'; do
+    check_runs_snapshot_scan "$snapshot_bad" 0 "$snapshot_test_sha"
+    check "empty/malformed snapshot input refuses a passing result" \
+      '[ "$CHECK_SNAPSHOT_VERDICT" = unanswered ] && [ -z "$CHECK_RUNS_JSON" ]'
+  done
+  check "the live path fetches check-runs once, with complete pagination" \
+    '[ "$(/usr/bin/grep -c '\''gh api "[$]CHECK_RUNS_URL"'\'' "$self")" = 1 ] && /usr/bin/grep -q '\''gh api "[$]CHECK_RUNS_URL" --paginate --slurp'\'' "$self"'
   # notice 48. The row must exist, and — the fail-open direction — an empty
   # answer must PRINT rather than vanish, because a missing row reads as "no
   # heavy involvement". Deleting the `else` branch is the regression.
@@ -3056,15 +3123,22 @@ esac
 # ─────────────────────────────────────────────────────────────────────────────
 # Defined once so the refusal query and the counts below can never drift apart.
 CR_LATEST='[.check_runs[]] | group_by([(.app.slug // ""), .name]) | map(sort_by([(.started_at // ""), .id]) | last)'
-refusal="$(gh api "repos/$REPO_SLUG/commits/$SHA/check-runs?per_page=100" \
-  --jq "$CR_LATEST"'|.[]|select((.conclusion=="failure") or (((.output.title) // "")|test("high|critical|security vulnerability";"i")))|"\(.name): \(.conclusion) — \((.output.title) // "null")"' 2>/dev/null)"
-refusal_rc=$?
+CHECK_RUNS_URL="repos/$REPO_SLUG/commits/$SHA/check-runs?per_page=100"
+check_pages="$(gh api "$CHECK_RUNS_URL" --paginate --slurp 2>/dev/null)"
+check_api_rc=$?
+check_runs_snapshot_scan "$check_pages" "$check_api_rc" "$SHA"
+if [ "$CHECK_SNAPSHOT_VERDICT" = ok ]; then
+  refusal="$(printf '%s' "$CHECK_RUNS_JSON" | jq -r "$CR_LATEST"'|.[]|select((.conclusion=="failure") or (((.output.title) // "")|test("high|critical|security vulnerability";"i")))|"\(.name): \(.conclusion) — \((.output.title) // "null")"' 2>/dev/null)"
+  refusal_rc=$?
+else
+  refusal=""; refusal_rc=2
+fi
 if [ "$refusal_rc" -ne 0 ]; then
-  stopq "notice 32 check-runs" "the check-runs query failed (exit $refusal_rc); an empty result here is NOT a pass"
+  stopq "notice 32 check-runs" "the check-runs query failed (exit $refusal_rc; $CHECK_SNAPSHOT_DETAIL); an empty result here is NOT a pass"
 elif [ -z "$refusal" ]; then
   # One call, both numbers: the current set that was judged, and the raw total,
   # so a reader can see how much history was superseded rather than guess.
-  n_pair="$(gh api "repos/$REPO_SLUG/commits/$SHA/check-runs?per_page=100" --jq "[($CR_LATEST|length), (.check_runs|length)]|@tsv" 2>/dev/null)"
+  n_pair="$(printf '%s' "$CHECK_RUNS_JSON" | jq -r "[($CR_LATEST|length), (.check_runs|length)]|@tsv" 2>/dev/null)"
   n_latest="$(printf '%s' "$n_pair" | cut -f1)"
   n_runs="$(printf '%s' "$n_pair" | cut -f2)"
   pass "notice 32 check-runs" "refusal set empty at exit 0 over ${n_latest:-?} current checks, newest run per app+name (${n_runs:-?} raw runs incl. superseded re-runs)"
@@ -3127,13 +3201,17 @@ esac
 req_ctx="$(gh api "repos/$REPO_SLUG/branches/$BASE_BRANCH/protection" \
   --jq '.required_status_checks.contexts[]?' 2>/dev/null)"
 # Union of both kinds of signal — see the note on `required_contexts_scan`.
-present_ctx="$(
-  gh api "repos/$REPO_SLUG/commits/$SHA/check-runs?per_page=100" --jq '.check_runs[].name' 2>/dev/null
-  gh api "repos/$REPO_SLUG/commits/$SHA/status?per_page=100"     --jq '.statuses[].context' 2>/dev/null
-)"
-skipped_ctx="$(gh api "repos/$REPO_SLUG/commits/$SHA/check-runs?per_page=100" \
-  --jq '.check_runs[]|select(.conclusion=="skipped")|.name' 2>/dev/null)"
-required_contexts_scan "$req_ctx" "$present_ctx" "$skipped_ctx"
+if [ "$CHECK_SNAPSHOT_VERDICT" = ok ]; then
+  present_ctx="$(
+    printf '%s' "$CHECK_RUNS_JSON" | jq -r '.check_runs[].name'
+    gh api "repos/$REPO_SLUG/commits/$SHA/status?per_page=100" --jq '.statuses[].context' 2>/dev/null
+  )"
+  skipped_ctx="$(printf '%s' "$CHECK_RUNS_JSON" | jq -r '.check_runs[]|select(.conclusion=="skipped")|.name')"
+  required_contexts_scan "$req_ctx" "$present_ctx" "$skipped_ctx"
+else
+  RCS_VERDICT=unanswered
+  RCS_DETAIL="$CHECK_SNAPSHOT_DETAIL; required-context presence cannot be established"
+fi
 case "$RCS_VERDICT" in
   ok)         pass  "required contexts" "$RCS_DETAIL" ;;
   unanswered) stopq "required contexts" "$RCS_DETAIL" ;;
