@@ -2256,6 +2256,28 @@ def _team_meta_for_label(
     return (team_meta.get(college_form) or {}) if college_form else {}
 
 
+def _grid_row_display_name(label: str, meta: dict) -> str:
+    """The name a grid row prints: the team's own name when the venue's label is its city (#11065).
+
+    The row label is whatever outcome the builder met first, so a Kalshi
+    `Playoff Qualifiers` leg spelling a club by its city alone ("Dallas") named
+    the row, while the crest, colours and `short_name` beside it already came
+    from the resolved `teams` row ("Dallas Wings"). Every other surface prints
+    the team's name, so the grid printed two of thirteen WNBA rows differently.
+
+    Only a WHOLE-WORD PREFIX is replaced. The meta has already chosen the team,
+    so its name is no new identity claim — but a label that is merely spelled
+    differently (Kalshi `St. Louis Cardinals` against our `St.Louis Cardinals`)
+    is already the team's full name and is left exactly as the venue wrote it.
+    """
+    team_name = meta.get("name")
+    if not label or not team_name:
+        return label
+    if _normalize_team_name(team_name).startswith(_normalize_team_name(label) + " "):
+        return team_name
+    return label
+
+
 async def _get_team_metadata(
     session: AsyncSession,
     team_names: set[str],
@@ -6723,6 +6745,9 @@ async def get_playoff_grid(
     # can be attached later. Rows with no cells are skipped, so this cannot be
     # reconstructed by zipping teams against grid_raw.
     row_by_entity: dict[str, dict] = {}
+    # The label each row's venue wrote, for readers keyed on it (an admin
+    # exclude names the source spelling) once the row prints the team's name.
+    venue_label_by_row: dict[int, str] = {}
     championship_col = config.columns[-1].key  # Last column is typically championship
 
     for norm_name, col_map in grid_raw.items():
@@ -6740,6 +6765,8 @@ async def get_playoff_grid(
         # canonical entity, which may not be spelled the way the Team table
         # normalizes, so fall back to the display name before giving up.
         meta = _team_meta_for_label(team_meta, norm_name, display_name)
+        venue_label = display_name
+        display_name = _grid_row_display_name(display_name, meta)
 
         cells = {}
         for col in config.columns:
@@ -6884,7 +6911,7 @@ async def get_playoff_grid(
             and not region
             and _bracket_metadata_applies(config, NCAA_BRACKET_SEASON)
         ):
-            bracket_info = _lookup_ncaa_bracket(display_name)
+            bracket_info = _lookup_ncaa_bracket(venue_label)
             if bracket_info:
                 region = bracket_info["region"]
                 seed = seed or bracket_info["seed"]
@@ -6893,7 +6920,7 @@ async def get_playoff_grid(
             and not region
             and _bracket_metadata_applies(config, WNCAA_BRACKET_SEASON)
         ):
-            bracket_info = _lookup_wncaa_bracket(display_name)
+            bracket_info = _lookup_wncaa_bracket(venue_label)
             if bracket_info:
                 region = bracket_info["region"]
                 seed = seed or bracket_info["seed"]
@@ -6916,6 +6943,7 @@ async def get_playoff_grid(
         }
         teams.append(team_row)
         row_by_entity[norm_name] = team_row
+        venue_label_by_row[id(team_row)] = venue_label
 
     # -----------------------------------------------------------------------
     # 4r. Register terminal + missing states
@@ -6937,6 +6965,8 @@ async def get_playoff_grid(
             if row is None:
                 display = entity_names.get(entity_key, entity_key)
                 meta = _team_meta_for_label(team_meta, entity_key, display)
+                venue_label = display
+                display = _grid_row_display_name(display, meta)
                 row = {
                     "name": display,
                     "short_name": meta.get("short_name") or display,
@@ -6952,6 +6982,7 @@ async def get_playoff_grid(
                     "cells": {},
                 }
                 rows_by_entity[entity_key] = row
+                venue_label_by_row[id(row)] = venue_label
                 teams.append(row)
 
             stage = entry.get("stage")
@@ -7091,6 +7122,7 @@ async def get_playoff_grid(
         teams = [
             t for t in teams
             if _normalize_team_name(t["name"]) not in exclude_teams
+            and _normalize_team_name(venue_label_by_row.get(id(t), t["name"])) not in exclude_teams
         ]
         excluded_count = before_count - len(teams)
         if excluded_count:
