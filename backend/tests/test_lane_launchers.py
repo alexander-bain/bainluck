@@ -2800,6 +2800,45 @@ def test_a_due_directive_is_taken_exactly_once(tmp_path):
     assert not any(n.endswith(".md") for n in names), names
 
 
+def test_context_then_completed_release_receipt_launches_once(tmp_path):
+    """#10711: durable intake retains FYI and takes one already-due action.
+
+    Source/release admission belongs to the prepared acceptance controller;
+    this drives only the real runner's context, take and consume boundary.
+    """
+    context = _stage(
+        tmp_path,
+        "A-release-context.md",
+        "dispatch: context\nExisting release evidence for the next assignment.\n",
+    )
+    original = context.read_bytes()
+    rc, out, fired = _take_once(tmp_path, now=1789519000)
+    assert rc == 0 and fired == 0, out
+    retained = tmp_path / "handoff/runner-inbox/demo/context" / context.name
+    assert not context.exists()
+    assert retained.read_bytes() == original
+
+    # The dependency/receipt predates this new runner invocation. No listener
+    # needs to be present when a durable action becomes ready.
+    receipt = _stage(
+        tmp_path,
+        "B-release-ready.md",
+        "dispatch: action\nnot-before: 2026-09-16T00:30:00Z\n"
+        "Invoke the existing prepared acceptance under its source guard.\n",
+    )
+    rc, out, fired = _take_once(tmp_path, now=1789519000)
+    assert rc == 0 and fired == 1, out
+    assert not receipt.exists()
+    consumed = list(receipt.parent.glob("B-release-ready.consumed-*"))
+    assert len(consumed) == 1
+    assert retained.read_bytes() == original
+
+    rc, out, fired = _take_once(tmp_path, now=1789519000)
+    assert rc == 0 and fired == 1, out
+    assert list(receipt.parent.glob("B-release-ready.consumed-*")) == consumed
+    assert retained.read_bytes() == original
+
+
 def test_a_deferred_item_does_not_block_a_fresh_assignment(tmp_path):
     """Acceptance: an OLDER deferred item cannot stand in front of urgent work.
 
