@@ -24,6 +24,22 @@ TAIL_PROVISIONER = "#10703 shared tail — provision pg_trgm on the fresh databa
 MIDDLE_PROVISIONER = "#10717 shared middle — provision pg_trgm on the fresh database"
 MIDDLE_FIRST_GATE = "#8466 a Polymarket leg resolves on its own date, and a re-ingest repairs it (real Postgres)"
 TAIL_FIRST_GATE = "#2927 container assembly writes and re-writes (real Postgres)"
+OFFLOADED_FIRST = "#10024 'dodgers world series' reaches the World Series board, not No results (real Postgres)"
+OFFLOADED_LAST = "#11007 an undecided Polymarket leg stops reading as settled and Lost, and the undo round-trips (real Postgres)"
+
+
+def _offloaded_suffix(worker):
+    """The one reviewed reset boundary, never an arbitrary regrouping exception."""
+    chain = [s for s in worker["steps"] if s.get("if") in (
+        "matrix.group == 'shared'", "matrix.group == 'shared-middle'",
+        "matrix.group == 'shared-tail'",
+    )]
+    names = [s["name"] for s in chain]
+    first, last = names.index(OFFLOADED_FIRST), names.index(OFFLOADED_LAST)
+    suffix = chain[first:last + 1]
+    assert len(suffix) == 35
+    assert all(s["if"] == "matrix.group == 'shared'" for s in suffix)
+    return {s["name"] for s in suffix}
 
 
 def _validate_tail_provisioner(step):
@@ -53,6 +69,7 @@ def _validate_tail_provisioner(step):
 
 
 def _validate_fresh_tail(worker, fixture_source):
+    offloaded = _offloaded_suffix(worker)
     tail = [
         step for step in worker["steps"]
         if step.get("if") == "matrix.group == 'shared-tail'"
@@ -62,11 +79,13 @@ def _validate_fresh_tail(worker, fixture_source):
         step["name"] for step in worker["steps"]
         if step.get("if") in ("matrix.group == 'shared'", "matrix.group == 'shared-middle'", "matrix.group == 'shared-tail'")
         and step.get("name") not in (TAIL_PROVISIONER, MIDDLE_PROVISIONER)
+        and step.get("name") not in offloaded
     ]
     prefix = [
         step["name"] for step in worker["steps"]
         if step.get("if") in ("matrix.group == 'shared'", "matrix.group == 'shared-middle'")
         and step.get("name") != MIDDLE_PROVISIONER
+        and step.get("name") not in offloaded
     ]
     boundary = original_shared.index(TAIL_FIRST_GATE)
     assert prefix == original_shared[:boundary]
@@ -130,6 +149,62 @@ def test_fresh_tail_guard_rejects_broken_provisioning(mutation):
 
 def _inputs():
     return yaml.safe_load(WORKFLOW.read_text())["jobs"], json.loads(MANIFEST.read_text())
+
+
+def _offloaded_fixture_source():
+    return (ROOT / "backend/tests/integration/test_search_team_plus_competition_pg_10024.py").read_text()
+
+
+def _validate_offloaded_reset(worker, source):
+    offloaded = _offloaded_suffix(worker)
+    selected = [s for s in worker["steps"] if s.get("name") in offloaded]
+    assert "tests/integration/test_search_team_plus_competition_pg_10024.py" in selected[0]["run"]
+    tree = ast.parse(source)
+    fixture = next(n for n in tree.body if isinstance(n, ast.AsyncFunctionDef) and n.name == "maker")
+    register = next(n.lineno for n in fixture.body if isinstance(n, ast.Import)
+                    and any(a.name == "app.models.models" for a in n.names))
+    calls = [n for n in ast.walk(fixture) if isinstance(n, ast.Call)]
+    engine = next(n for n in calls if ast.unparse(n.func) == "create_async_engine")
+    assert ast.unparse(engine.args[0]) == "DB_URL"
+    binding = next(n for n in tree.body if isinstance(n, ast.Assign)
+                   and any(isinstance(t, ast.Name) and t.id == "DB_URL" for t in n.targets))
+    assert ast.unparse(binding.value) == "os.environ.get('SEARCH_TEST_DATABASE_URL')"
+    reset = {ast.unparse(n.args[0]): n.lineno for n in calls
+             if ast.unparse(n.func) == "conn.run_sync" and n.args}
+    extension = next(n.lineno for n in calls if ast.unparse(n.func) == "text"
+                     and n.args and isinstance(n.args[0], ast.Constant)
+                     and n.args[0].value == "CREATE EXTENSION IF NOT EXISTS pg_trgm")
+    yielded = next(n.lineno for n in ast.walk(fixture) if isinstance(n, ast.Yield))
+    assert register < extension < reset["Base.metadata.drop_all"] < reset["Base.metadata.create_all"] < yielded
+    route = next(n for n in tree.body if isinstance(n, ast.AsyncFunctionDef) and n.name == "search")
+    assert "maker" in [a.arg for a in route.args.args]
+
+
+def test_offloaded_chain_starts_with_a_full_registered_schema_and_extension_reset():
+    jobs, _ = _inputs()
+    _validate_offloaded_reset(jobs["database-integration"], _offloaded_fixture_source())
+
+
+@pytest.mark.parametrize("mutation", ["split_chain", "missing_unit", "missing_reset",
+                                     "missing_extension", "missing_registration", "wrong_url"])
+def test_offloaded_boundary_refuses_unsafe_assignment_or_fixture(mutation):
+    jobs, _ = _inputs()
+    worker = jobs["database-integration"]
+    source = _offloaded_fixture_source()
+    if mutation == "split_chain":
+        next(s for s in worker["steps"] if s.get("name", "").startswith("#9947 "))["if"] = "matrix.group == 'shared-tail'"
+    elif mutation == "missing_unit":
+        worker["steps"] = [s for s in worker["steps"] if not s.get("name", "").startswith("#9947 ")]
+    elif mutation == "missing_reset":
+        source = source.replace("await conn.run_sync(Base.metadata.drop_all)", "pass")
+    elif mutation == "missing_extension":
+        source = source.replace("CREATE EXTENSION IF NOT EXISTS pg_trgm", "SELECT 1")
+    elif mutation == "missing_registration":
+        source = source.replace("import app.models.models", "import os")
+    else:
+        source = source.replace('os.environ.get("SEARCH_TEST_DATABASE_URL")', 'os.environ.get("OTHER_DATABASE_URL")')
+    with pytest.raises((AssertionError, KeyError, StopIteration)):
+        _validate_offloaded_reset(worker, source)
 
 
 def _validate_assignments(worker, manifest):
@@ -309,10 +384,11 @@ def test_actual_aggregate_command_only_accepts_completed_success(scope_result, i
 
 
 def _validate_fresh_middle(worker, fixture_source):
+    offloaded = _offloaded_suffix(worker)
     chain = [s for s in worker["steps"]
              if s.get("if") in ("matrix.group == 'shared'", "matrix.group == 'shared-middle'")
-             and s.get("name") != MIDDLE_PROVISIONER]
-    prefix = [s["name"] for s in worker["steps"] if s.get("if") == "matrix.group == 'shared'"]
+             and s.get("name") != MIDDLE_PROVISIONER and s.get("name") not in offloaded]
+    prefix = [s["name"] for s in worker["steps"] if s.get("if") == "matrix.group == 'shared'" and s.get("name") not in offloaded]
     middle = [s for s in worker["steps"] if s.get("if") == "matrix.group == 'shared-middle'"]
     boundary = next(i for i, s in enumerate(chain) if s["name"] == MIDDLE_FIRST_GATE)
     assert prefix == [s["name"] for s in chain[:boundary]]
