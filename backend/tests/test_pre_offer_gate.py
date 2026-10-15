@@ -98,7 +98,9 @@ def test_main_refuses_midrun_mutation_and_runs_both_children(repo, monkeypatch):
     monkeypatch.setattr(gate, "execute", child)
     assert gate.main(["HEAD"]) == 1
     assert commands[0][0][3:3 + len(gate.GUARDS)] == list(gate.GUARDS)
-    assert commands[1][0] == ["npm", "run", "contract"]
+    assert commands[1][0][1:] == ["scripts/evals/scan_mutation_residue.py", "--base",
+                                 git(repo, "rev-parse", "HEAD"), "--head", git(repo, "rev-parse", "HEAD")]
+    assert commands[2][0] == ["npm", "run", "contract"]
 
 
 def test_first_child_failure_never_emits_pass(repo, monkeypatch, capsys):
@@ -137,3 +139,9 @@ def test_configured_selection_is_preserved_and_triggers_binding(tmp_path):
     workflow.write_text(yaml.safe_dump({"jobs": {"database-integration": {"steps": [{"run": run}]}}}))
     with pytest.raises(gate.Refusal, match="actual collection selects 1"):
         gate.check_release_wake(tmp_path, {"backend/pytest.ini"})
+
+
+def test_malformed_selected_node_receipt_refuses(monkeypatch):
+    monkeypatch.setattr(gate, "execute", lambda *args: "PREFLIGHT_NODE_IDS={broken\n")
+    with pytest.raises(gate.Refusal, match="invalid collection receipt"):
+        gate.check_release_wake(ROOT, {gate.WORKFLOW})

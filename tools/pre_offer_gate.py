@@ -150,7 +150,7 @@ def check_release_wake(root: Path, paths: set[str]) -> None:
         raise Refusal("collection did not return exactly one selected-node receipt")
     try:
         nodes = json.loads(receipts[0])
-    except ValueError as exc:
+    except json.JSONDecodeError as exc:
         raise Refusal("invalid collection receipt") from exc
     if not isinstance(nodes, list) or not all(isinstance(n, str) and n.startswith(COUNT_FILE + "::") for n in nodes):
         raise Refusal("collection returned unsupported node identities")
@@ -170,6 +170,10 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Early preflight base={base} head={head}", flush=True)
         execute(
             [sys.executable, "-m", "pytest", *GUARDS, "-q", "-p", "no:cacheprovider"],
+            ROOT / "backend",
+        )
+        execute(
+            [sys.executable, "scripts/evals/scan_mutation_residue.py", "--base", base, "--head", head],
             ROOT / "backend",
         )
         check_release_wake(ROOT, paths)

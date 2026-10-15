@@ -14,7 +14,8 @@ Use a locally available ancestor as the first argument if appropriate; the
 command does not fetch. The requested head must be the checkout's actual HEAD.
 Dirty or untracked source, missing inputs, failed children and timeouts refuse
 the check. It runs existing startup, PostgreSQL assignment, warning-count,
-cross-tier manifest, required-context and backend-sharding guards, followed by
+cross-tier manifest, required-context and backend-sharding guards, the existing
+mutation-residue scanner on the exact committed base/head range, followed by
 the same dependency-free Node contract command used by CI.
 
 When the workflow, pytest configuration/conftest, or #10090 release-wake test changes, it also collects that
