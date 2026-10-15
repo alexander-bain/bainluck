@@ -39,6 +39,7 @@ import pickle
 import signal
 import struct
 import sys
+import time
 from typing import Any, Callable, Optional
 
 logger = logging.getLogger(__name__)
@@ -72,6 +73,148 @@ RECEIVER_SCRIPT = os.path.join(
 )
 
 PRICE, TRADE, STATS, START, ASSETS = "p", "t", "s", "start", "assets"
+
+#: #10090 — the open fleet's subscribe-snapshot quotes reach the consumer at
+#: most this many per second (``POLYMARKET_WS_OPEN_SNAPSHOT_QUOTES_PER_SECOND``;
+#: ``0`` forwards them unpaced, as before). The consumer writes standalone open
+#: rows at most ``OPEN_FLUSH_CHUNKS_PER_FLUSH`` x ``FLUSH_CHUNK_ROWS`` per
+#: ``PRICE_FLUSH_SECONDS`` (2 x 500 / 2 s = 500 rows/s) and a binary's quote
+#: prices both legs, so 250 quotes/s already fills that write capacity: a
+#: faster arrival only grows the consumer's buffer. Measured startup (Boyer
+#: trace, 10/15): ~15k snapshot quotes reached the consumer in the 14 s after
+#: the open handover while only 3,149 open rows were written.
+OPEN_SNAPSHOT_QUOTES_PER_SECOND = 250.0
+
+
+def open_snapshot_quotes_per_second() -> float:
+    raw = os.getenv("POLYMARKET_WS_OPEN_SNAPSHOT_QUOTES_PER_SECOND")
+    if raw is None:
+        return OPEN_SNAPSHOT_QUOTES_PER_SECOND
+    try:
+        rate = float(raw)
+    except ValueError:
+        return OPEN_SNAPSHOT_QUOTES_PER_SECOND
+    return rate if rate > 0 and rate != float("inf") else 0.0
+
+
+class SnapshotPacer:
+    """#10090 — the child's subscribe-snapshot quotes, paced; live frames never.
+
+    On startup (and every reconnect) each open shard answers its subscribe with
+    a full-depth book for every token, and the client turns each into a quote
+    (``book_snapshot``). Forwarded as they decode, ~66k such quotes arrive on
+    the consumer's loop within about a minute of the catalog handover, beside
+    the live game stream that loop also owns, and pile up in its price buffer
+    far faster than the open rows can be written.
+
+    Held here instead: the LATEST snapshot quote per token, released at most
+    ``rate`` quotes a second. Semantics the consumer relies on are kept:
+
+    - A live price or trade for a token first releases every pending snapshot
+      quote of the same venue market (its own and its binary partner's, in
+      arrival order), then is forwarded at once. So per token, and across one
+      binary's complementary legs, the consumer sees exactly the order the
+      client produced; only snapshot quotes of OTHER markets move later.
+    - A newer snapshot of a token replaces its pending one (latest state).
+    - The pacer never waits on the sockets: holding a quote costs one dict
+      entry per token, bounded by the catalog. Live frames keep the existing
+      pipe backpressure.
+
+    A snapshot quote still pending when the child stops is not forwarded; the
+    consumer's next run subscribes again and receives a fresh snapshot.
+    """
+
+    def __init__(self, write: Callable[[str, Any], None], drain, rate: float, *,
+                 sleep=asyncio.sleep, clock=time.monotonic):
+        self._write = write
+        self._drain = drain
+        self._rate = float(rate)
+        self._sleep = sleep
+        self._clock = clock
+        self._seq = 0
+        #: token -> (arrival seq, group, quote); dict order = oldest pending first
+        self._pending: dict[str, tuple[int, str, dict]] = {}
+        self._groups: dict[str, set[str]] = {}
+        self._wake = asyncio.Event()
+        self.released = 0
+
+    @property
+    def pending(self) -> int:
+        return len(self._pending)
+
+    @staticmethod
+    def _token(message: Any) -> Optional[str]:
+        if not isinstance(message, dict):
+            return None
+        return message.get("asset_id") or message.get("assetId") or None
+
+    def _group(self, message: dict, token: str) -> str:
+        return message.get("market") or token
+
+    async def price(self, message: Any) -> None:
+        token = self._token(message)
+        if token is not None and message.get("book_snapshot"):
+            self._seq += 1
+            group = self._group(message, token)
+            held = self._pending.get(token)
+            if held is not None and held[1] != group:
+                self._discard(token)
+                held = None
+            if held is None:
+                self._groups.setdefault(group, set()).add(token)
+            # Assigning an existing key keeps its place in the release order.
+            self._pending[token] = (self._seq, group, message)
+            self._wake.set()
+            return
+        await self._live(PRICE, message)
+
+    async def trade(self, message: Any) -> None:
+        await self._live(TRADE, message)
+
+    async def _live(self, kind: str, message: Any) -> None:
+        token = self._token(message)
+        if token is not None and self._pending:
+            self._release(self._group(message, token), token)
+        self._write(kind, message)
+        await self._drain()
+
+    def _discard(self, token: str) -> None:
+        _seq, group, _quote = self._pending.pop(token)
+        members = self._groups.get(group)
+        if members is not None:
+            members.discard(token)
+            if not members:
+                del self._groups[group]
+
+    def _release(self, group: str, token: Optional[str] = None) -> int:
+        """Write every pending quote of ``group`` (and ``token``'s), oldest first."""
+        names = set(self._groups.get(group, ()))
+        if token is not None and token in self._pending:
+            names.add(token)
+            names.update(self._groups.get(self._pending[token][1], ()))
+        held = sorted(
+            (self._pending[name] for name in names if name in self._pending),
+            key=lambda entry: entry[0],
+        )
+        for _seq, _group, quote in held:
+            self._discard(self._token(quote))
+        for _seq, _group, quote in held:
+            self._write(PRICE, quote)
+        self.released += len(held)
+        return len(held)
+
+    async def run(self) -> None:
+        """Release pending snapshot quotes, a whole market at a time, <= rate/s."""
+        while True:
+            if not self._pending:
+                self._wake.clear()
+                await self._wake.wait()
+                continue
+            token = next(iter(self._pending))
+            sent = self._release(self._pending[token][1], token)
+            await self._drain()
+            if sent:
+                await self._sleep(sent / self._rate)
 
 
 def encode_frame(message: Any, max_bytes: int = MAX_FRAME_BYTES) -> bytes:
@@ -112,6 +255,7 @@ class PolymarketOpenReceiverProcess:
         self._max_concurrent_handshakes = max_concurrent_handshakes
         self._max_queue = max_queue
         self._price_book_snapshots = price_book_snapshots
+        self._snapshot_quotes_per_second = open_snapshot_quotes_per_second()
         self._command = command or [sys.executable, RECEIVER_SCRIPT]
         self._stats: dict = {}
         self._wanted: Optional[tuple[list[str], bool]] = None
@@ -175,6 +319,7 @@ class PolymarketOpenReceiverProcess:
             "price_book_snapshots": self._price_book_snapshots,
             "max_concurrent_handshakes": self._max_concurrent_handshakes,
             "max_queue": self._max_queue,
+            "snapshot_quotes_per_second": self._snapshot_quotes_per_second,
         })
         self._wake = asyncio.Event()
         self._wanted = None
@@ -357,12 +502,26 @@ async def serve_receiver(client_cls, *, read_fd: int = 0, write_fd: int = 1) -> 
         writer.write(encode_frame((kind, message)))
         await writer.drain()
 
-    client.on_price = lambda message: forward(PRICE, message)
-    client.on_trade = lambda message: forward(TRADE, message)
+    pacer = None
+    rate = config.get("snapshot_quotes_per_second") or 0
+    if rate > 0:
+        pacer = SnapshotPacer(
+            lambda kind, message: writer.write(encode_frame((kind, message))),
+            writer.drain, rate,
+        )
+        client.on_price = pacer.price
+        client.on_trade = pacer.trade
+    else:
+        client.on_price = lambda message: forward(PRICE, message)
+        client.on_trade = lambda message: forward(TRADE, message)
 
     async def report():
         while True:
-            await forward(STATS, client.stats)
+            stats = client.stats
+            if pacer is not None:
+                stats = {**stats, "snapshot_quotes_pending": pacer.pending,
+                         "snapshot_quotes_released": pacer.released}
+            await forward(STATS, stats)
             await asyncio.sleep(STATS_SECONDS)
 
     async def control():
@@ -383,6 +542,8 @@ async def serve_receiver(client_cls, *, read_fd: int = 0, write_fd: int = 1) -> 
     ))
     await asyncio.sleep(0)
     tasks = [run, asyncio.create_task(control()), asyncio.create_task(report())]
+    if pacer is not None:
+        tasks.append(asyncio.create_task(pacer.run()))
     try:
         done, _ = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
         if run in done:
