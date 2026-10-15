@@ -360,8 +360,8 @@ async def test_cancelling_the_awaiter_does_not_free_the_slot_while_the_call_runs
     task = asyncio.ensure_future(asyncio.to_thread(_call, _Blocking()))
     assert await asyncio.to_thread(started.wait, 5)
     task.cancel()
-    with pytest.raises(asyncio.CancelledError):
-        await task
+    await asyncio.wait([task])
+    assert task.cancelled()
     with pytest.raises(LLMConcurrencyExhausted):
         _call(_Client(_Usage(1, 1)))  # the orphaned thread still holds the only slot
     finish.set()
@@ -534,3 +534,78 @@ async def test_cu_v2_reserves_against_its_own_per_run_cap(monkeypatch):
     stats = await enrich_markets.enrich_cu_v2_profiles(limit=3)
     assert client.calls == [] and reg._profiles(write_session) == []
     assert "job budget" in stats["budget_stopped"]
+
+
+# --------------------------------------------------------------------------
+# CERT-4127 repair: the UTC day is read per attempt, after the slot and backoff
+# --------------------------------------------------------------------------
+
+from datetime import datetime, timezone  # noqa: E402
+
+D1_LATE = datetime(2026, 12, 1, 23, 59, 59, tzinfo=timezone.utc)
+D2_EARLY = datetime(2026, 12, 2, 0, 0, 1, tzinfo=timezone.utc)
+
+
+class _Clock:
+    def __init__(self, now):
+        self.now = now
+
+    def __call__(self):
+        return self.now
+
+
+def test_a_retry_after_midnight_books_the_new_days_budget(ledger, monkeypatch):
+    """Yesterday has room for one reservation and spends it; the retry must not be refused on it."""
+    clock = _Clock(D1_LATE)
+    monkeypatch.setattr(llm_request, "_utc_now", clock)
+    monkeypatch.setattr(llm_request, "_sleep", lambda s: setattr(clock, "now", D2_EARLY))  # midnight passes in the backoff
+    monkeypatch.setenv(llm_request.DAILY_BUDGET_ENV, str(1.5 * RESERVATION / 1e6))
+    client = _Client(openai.APITimeoutError(request=_request()), _Usage(900, 20))
+    result = _call(client, today=None)
+    assert len(client.calls) == 2 and result.cost_usd is not None
+    assert ledger.totals["2026-12-01"] == RESERVATION  # the timed-out attempt stays booked where it was taken
+    assert ledger.totals["2026-12-02"] == _micros((900 * 0.15 + 20 * 0.60) / 1e6)
+
+
+def test_a_slot_wait_across_midnight_books_the_new_day(ledger, monkeypatch):
+    clock = _Clock(D1_LATE)
+    monkeypatch.setattr(llm_request, "_utc_now", clock)
+
+    class _SlowSlots:
+        def acquire(self, timeout):
+            clock.now = D2_EARLY  # the wait for a slot outlasts the day
+            return True
+
+        def release(self):
+            pass
+
+    monkeypatch.setattr(llm_request, "_get_slots", lambda: _SlowSlots())
+    _call(_Client(None), today=None)
+    assert ledger.totals == {"2026-12-02": RESERVATION}
+
+
+def test_a_hold_settles_on_the_day_it_was_booked(ledger, monkeypatch):
+    clock = _Clock(D1_LATE)
+    monkeypatch.setattr(llm_request, "_utc_now", clock)
+    client = _Client(_Usage(900, 20))
+    inner = client.chat.completions.create
+
+    def create(**kw):
+        clock.now = D2_EARLY  # the answer arrives after midnight
+        return inner(**kw)
+
+    client.chat.completions.create = create
+    _call(client, today=None)
+    assert ledger.totals == {"2026-12-01": _micros((900 * 0.15 + 20 * 0.60) / 1e6)}
+
+
+def test_a_retry_past_the_shutdown_date_asks_for_the_replacement(ledger, monkeypatch):
+    clock = _Clock(datetime(2027, 1, 13, 23, 59, 59, tzinfo=timezone.utc))
+    monkeypatch.setattr(llm_request, "_utc_now", clock)
+    monkeypatch.setattr(
+        llm_request, "_sleep", lambda s: setattr(clock, "now", datetime(2027, 1, 14, 0, 0, 1, tzinfo=timezone.utc))
+    )
+    client = _Client(openai.APITimeoutError(request=_request()), _Usage(10, 1))
+    result = _call(client, today=None)
+    assert [c["model"] for c in client.calls] == [LEGACY_MODEL, REPLACEMENT_MODEL]
+    assert result.model == REPLACEMENT_MODEL

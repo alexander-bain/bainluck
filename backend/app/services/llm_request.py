@@ -330,8 +330,8 @@ def _retry_delay(attempt: int, exc: Any) -> float:
     return random.uniform(0, min(BACKOFF_CAP_S, BACKOFF_BASE_S * (2 ** attempt)))
 
 
-def _utc_day(today: Optional[date]) -> str:
-    return (today or datetime.now(timezone.utc).date()).isoformat()
+def _utc_now() -> datetime:
+    return datetime.now(timezone.utc)
 
 
 # --------------------------------------------------------------------------
@@ -358,11 +358,13 @@ def complete_chat_detailed(
     ``LLMCallRefused`` when a bound refuses, and the SDK's error after the last
     retry.
     """
-    request = chat_request_kwargs(task, max_output_tokens=max_output_tokens, temperature=temperature, today=today)
-    model = request["model"]
-    reservation = _to_micros(cost_upper_bound_usd(model, messages, max_output_tokens))
+    # Refuse an unregistered task or unpriced model before waiting for a slot.
+    # The request is built again per attempt below, on that attempt's day.
+    cost_upper_bound_usd(
+        chat_request_kwargs(task, max_output_tokens=max_output_tokens, temperature=temperature, today=today)["model"],
+        messages, max_output_tokens,
+    )
     cap = daily_budget_micros()
-    day = _utc_day(today)
     retries = max(0, min(int(max_retries), MAX_RETRIES_CEILING))
     status_errors, transport_errors = _openai_errors()
 
@@ -372,7 +374,16 @@ def complete_chat_detailed(
     try:
         attempt = 0
         while True:
-            hold = _reserve(task, reservation, cap, job_budget, day)
+            # CERT-4127: the day is read per attempt, AFTER the slot wait and any
+            # backoff, so a retry past midnight books today's budget. A hold
+            # keeps the day it booked, so its settlement lands where it was taken.
+            day = today or _utc_now().date()
+            request = chat_request_kwargs(
+                task, max_output_tokens=max_output_tokens, temperature=temperature, today=day
+            )
+            model = request["model"]
+            reservation = _to_micros(cost_upper_bound_usd(model, messages, max_output_tokens))
+            hold = _reserve(task, reservation, cap, job_budget, day.isoformat())
             try:
                 response = client.chat.completions.create(**request, messages=messages, **extra)
             except status_errors as exc:
