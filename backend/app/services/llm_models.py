@@ -195,6 +195,45 @@ def chat_request_kwargs(
     return {"model": model, "max_tokens": max_output_tokens, "temperature": temperature}
 
 
+#: Chat Completions frames each message with a few special tokens and primes
+#: the reply with a few more (3-4 each today). Both are over-provisioned: the
+#: bound below is a reservation, and a low bound would undercount.
+_MESSAGE_FRAME_TOKENS = 8
+_REPLY_PRIMER_TOKENS = 8
+
+
+def prompt_tokens_upper_bound(messages: Any) -> int:
+    """An upper bound on the prompt tokens ``messages`` will be billed for.
+
+    Byte-level BPE tokens each cover at least one byte, so a message's UTF-8
+    byte count bounds its token count without loading a tokenizer. Non-string
+    fields are counted as their JSON text, which is longer than what is sent.
+    """
+    import json
+
+    total = _REPLY_PRIMER_TOKENS
+    for message in messages:
+        total += _MESSAGE_FRAME_TOKENS
+        for value in message.values():
+            text = value if isinstance(value, str) else json.dumps(value, default=str)
+            total += len(text.encode("utf-8"))
+    return total
+
+
+def cost_upper_bound_usd(model: str, messages: Any, max_output_tokens: int) -> float:
+    """The most one request can be billed: the prompt bound plus a full answer.
+
+    With ``max_completion_tokens`` the output limit caps reasoning and visible
+    tokens together, so it bounds both. Raises ``UnsupportedModelError`` for an
+    unrecorded model — an unpriced call cannot be reserved.
+    """
+    spec = MODELS.get(model)
+    if spec is None:
+        raise UnsupportedModelError(f"no recorded price for model {model!r}")
+    prompt = prompt_tokens_upper_bound(messages)
+    return (prompt * spec.input_per_m + max_output_tokens * spec.output_per_m) / 1_000_000
+
+
 def estimate_cost_usd(model: str, usage: Any) -> Optional[float]:
     """USD for one response's ``usage``, or ``None`` when it cannot be known.
 
