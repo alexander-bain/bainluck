@@ -871,6 +871,8 @@ required_contexts_scan () {
 # #10712: one complete check-run snapshot per gate invocation, never a cache
 # across candidates or invocations. Failed reads cannot become empty passes.
 CHECK_SNAPSHOT_VERDICT=""; CHECK_SNAPSHOT_DETAIL=""; CHECK_RUNS_JSON=""
+# Notice32's standing severity rule, shared with the executable selftest.
+CR_REFUSAL_FILTER='.[]|select((.conclusion=="failure") or (((.output.title) // "")|test("high|critical|medium|security vulnerabilit";"i")))|"\(.name): \(.conclusion) — \((.output.title) // "null")"'
 check_runs_snapshot_scan () {
   local pages="$1" api_rc="$2" expected_sha="$3"
   CHECK_SNAPSHOT_VERDICT=unanswered
@@ -1345,6 +1347,19 @@ if [ "$SHA_IN" = "--selftest" ]; then
   done
   check "the live path fetches check-runs once, with complete pagination" \
     '[ "$(/usr/bin/grep -c '\''gh api "[$]CHECK_RUNS_URL"'\'' "$self")" = 1 ] && /usr/bin/grep -q '\''gh api "[$]CHECK_RUNS_URL" --paginate --slurp'\'' "$self"'
+
+  for severity_title in '1 new alert: medium severity' '2 security vulnerabilities' '1 security vulnerability' 'HIGH severity' 'critical severity'; do
+    severity_rows="$(jq -cn --arg title "$severity_title" '[{name:"CodeQL",conclusion:"success",output:{title:$title}}]')"
+    severity_refusal="$(printf '%s' "$severity_rows" | jq -r "$CR_REFUSAL_FILTER")"
+    check "standing security severity refuses: $severity_title" '[ -n "$severity_refusal" ]'
+  done
+  for clean_title in 'No new alerts in code changed by this pull request' '1 new alert: warning' '2 new alerts: note'; do
+    severity_rows="$(jq -cn --arg title "$clean_title" '[{name:"CodeQL",conclusion:"success",output:{title:$title}}]')"
+    severity_refusal="$(printf '%s' "$severity_rows" | jq -r "$CR_REFUSAL_FILTER")"
+    check "clean/style-only title does not manufacture a security refusal" '[ -z "$severity_refusal" ]'
+  done
+  severity_refusal="$(printf '%s' '[{"name":"deploy","conclusion":"skipped","output":{"title":null}},{"name":"tests","conclusion":"failure","output":{"title":null}}]' | jq -r "$CR_REFUSAL_FILTER")"
+  check "null titles remain safe and a failed conclusion still refuses" '[ "$severity_refusal" = "tests: failure — null" ]'
   # notice 48. The row must exist, and — the fail-open direction — an empty
   # answer must PRINT rather than vanish, because a missing row reads as "no
   # heavy involvement". Deleting the `else` branch is the regression.
@@ -3091,7 +3106,8 @@ esac
 # high severity", because the WORKFLOW had run successfully.
 #
 # The refuse test is (a) conclusion == failure, or (b) a CodeQL title reporting
-# alerts with a security severity. Read titles as SENTENCES: the clean message
+# alerts with high/critical/medium or security-vulnerability severity (including
+# the plural). Read titles as SENTENCES: the clean message
 # "No new alerts in code changed by this pull request" contains the word alert,
 # and `success — N new alerts` at note/warning level is style lint, not a refuse.
 #
@@ -3128,7 +3144,7 @@ check_pages="$(gh api "$CHECK_RUNS_URL" --paginate --slurp 2>/dev/null)"
 check_api_rc=$?
 check_runs_snapshot_scan "$check_pages" "$check_api_rc" "$SHA"
 if [ "$CHECK_SNAPSHOT_VERDICT" = ok ]; then
-  refusal="$(printf '%s' "$CHECK_RUNS_JSON" | jq -r "$CR_LATEST"'|.[]|select((.conclusion=="failure") or (((.output.title) // "")|test("high|critical|security vulnerability";"i")))|"\(.name): \(.conclusion) — \((.output.title) // "null")"' 2>/dev/null)"
+  refusal="$(printf '%s' "$CHECK_RUNS_JSON" | jq -r "$CR_LATEST|$CR_REFUSAL_FILTER" 2>/dev/null)"
   refusal_rc=$?
 else
   refusal=""; refusal_rc=2
