@@ -137,6 +137,13 @@ NBA_CONFIG = LeagueConfig(
         r"\bConference\s+Finals\s+Qualif",
         r"\bConference\s+to\s+Win\b",
         r"\bNext\s+Conference\b",
+        # #11057: Polymarket's "NBA: 2027 Finals Winning Conference" is the same
+        # question as "Conference to Win" above under its other name. Its two
+        # answers ("Western Conference" .59 / "Eastern Conference" .41) carry no
+        # team, so the grid dropped them as rows but still counted them in the
+        # Conference column sum: 2.0 / (2.075 + 1.00) scaled every club to 65%
+        # of its venue price, and OKC read 22% to win the West (Kalshi .335).
+        r"\bFinals\s+(?:Winning\s+Conference|Conference\s+Winner)\b",
     ],
     columns=[
         GridColumn(key="make_playoffs", label="Make Playoffs", order=1),
@@ -201,6 +208,11 @@ NHL_CONFIG = LeagueConfig(
     sport_keys=["icehockey_nhl"],
     stage_key="hockey",
     external_id_prefixes=["KXNHL"],
+    # #11057: see the NBA block — which conference wins the Cup is not which
+    # club wins its conference, and its two answers would shrink the column.
+    league_exclude_patterns=[
+        r"\bStanley\s+Cup\s+(?:Winning\s+Conference|Conference\s+Winner)\b",
+    ],
     league_name_patterns=[
         r"\bNHL\b",
         r"\bStanley\s+Cup\b",
@@ -485,6 +497,9 @@ NFL_CONFIG = LeagueConfig(
     # above the conference-winner lines. Reaching is not winning (#8885).
     league_exclude_patterns=[
         r"\bConference\s+Championship\s+(?:Game\s+)?Qualif",
+        # #11057: which conference wins the Super Bowl is not which club wins
+        # its conference; its two answers would be counted in the column sum.
+        r"\bSuper\s+Bowl\s+(?:Winning\s+Conference|Conference\s+Winner)\b",
     ],
     stage_key="football",
     league_name_patterns=[

@@ -261,6 +261,9 @@ _STAGE_SPECIMENS = {
         (52755664, "KXNBACONF-27", "Conference to Win Pro Basketball Finals", 2, False),
         (55686462, "KXNBANEXTTEAMCONF-26LJAMES23", "LeBron James' Next Conference", 2, False),
         (61461612, "KXNBAWCFQUAL-27", "Pro Basketball Western Conference Finals Qualifiers", 2, False),
+        # #11057: served in the column on 2026-10-15 (`/api/playoffs/nba`); its
+        # two team-less answers shrank every Conference cell to 0.650x.
+        (65677913, "1183322", "NBA: 2027 Finals Winning Conference", 2, False),
     ],
     ("wnba", "championship"): [
         (9413479, "350828", "WNBA: 2026 Champion", 1, True),
@@ -348,6 +351,46 @@ class TestTheWorldSeriesColumnHoldsOnlyClubs:
     def test_the_club_markets_still_pass(self, name, eid):
         """The control: "League", "Division" and "Winner" alone refuse nothing."""
         assert _market_passes_league_filter(name, eid, get_league_config("mlb")), name
+
+
+class TestTheConferenceColumnHoldsOnlyClubs:
+    """#11057: "which conference wins the title" is refused by what it asks.
+    Its answers are conferences, not clubs; counted in the Conference column
+    sum (expected 2.0) they scaled every NBA club to 65% of its venue price."""
+
+    @pytest.mark.parametrize(
+        "slug,name,eid",
+        [
+            ("nba", "NBA: 2027 Finals Winning Conference", "1183322"),
+            ("nba", "nba 2028:  finals  winning conference", "1300001"),
+            ("nba", "NBA Finals Conference Winner", "1300002"),
+            ("nhl", "NHL: 2027 Stanley Cup Winning Conference", "1300003"),
+            ("nhl", "Stanley Cup Conference Winner", "1300004"),
+            ("nfl", "NFL: 2027 Super Bowl Winning Conference", "1300005"),
+            ("nfl", "Super Bowl Conference Winner", "1300006"),
+        ],
+    )
+    def test_the_which_conference_question_is_refused(self, slug, name, eid):
+        assert not _market_passes_league_filter(name, eid, get_league_config(slug)), name
+
+    @pytest.mark.parametrize(
+        "slug,name,eid",
+        [
+            ("nba", "Pro Basketball Western Conference Champion", "KXNBAWEST-27"),
+            ("nba", "Pro Basketball Eastern Conference Champion", "KXNBAEAST-27"),
+            ("nba", "NBA Western Conference Finals Winner", "1300010"),
+            ("nba", "NBA Finals Winner", "basketball_nba_championship_winner"),
+            ("nhl", "NHL Western Conference Finals Winner", "KXNHLWEST-27"),
+            ("nhl", "NHL Eastern Conference Finals Winner", "KXNHLEAST-27"),
+            ("nhl", "NHL Stanley Cup Winner", "1300011"),
+            ("nfl", "NFC Championship Winner", "KXNFLNFCCHAMP-27"),
+            ("nfl", "Pro Football: 2027 AFC Champion ", "203722"),
+            ("nfl", "NFL Super Bowl Winner", "1300012"),
+        ],
+    )
+    def test_the_club_markets_still_pass(self, slug, name, eid):
+        """The control: "Conference", "Finals" and "Winner" alone refuse nothing."""
+        assert _market_passes_league_filter(name, eid, get_league_config(slug)), name
 
 
 class TestPrefilterNeverNarrows:
