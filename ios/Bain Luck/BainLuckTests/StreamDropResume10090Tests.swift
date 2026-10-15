@@ -414,6 +414,7 @@ final class StreamDropResume10090Tests: XCTestCase {
         var adopted: [(basis: String, at: TimeInterval)] = []
         var charted: [String] = []
         LiveTimingSeam.observer = { mark in
+            guard mark.eventId == 4242 else { return }  // not the host app's own live streams
             if mark.name == .modelHeadlineAdopted, mark.basis.hasPrefix("rev:") {
                 adopted.append((mark.basis, Server.now()))
             }
@@ -474,6 +475,7 @@ final class StreamDropResume10090Tests: XCTestCase {
         var adopted: [(basis: String, at: TimeInterval)] = []
         var charted: [String] = []
         LiveTimingSeam.observer = { mark in
+            guard mark.eventId == 4242 else { return }  // not the host app's own live streams
             if mark.name == .modelHeadlineAdopted, mark.basis.hasPrefix("rev:") {
                 adopted.append((mark.basis, Server.now()))
             }
