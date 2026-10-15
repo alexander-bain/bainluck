@@ -401,8 +401,8 @@ jobs:
   # session, so the WHERE clause never touches data and this whole defect class
   # was unguarded on a p1 surface. This job is that rail, and it is
   # deploy-blocking (see `deploy.needs`).
-  # #9670 / #10703 / #10717: four runners, split only at full schema resets.
-  # #10707 moves the #10024–#11007 suffix to the prefix runner at a full
+  # #9670 / #10703 / #10717: five runners, split only at full schema resets.
+  # #10707 moves the #10024–#11007 suffix to its own runner at a full
   # schema reset; each contiguous chain keeps its original sequence in
   # order: some legacy fixtures inherit earlier schema/seed state. Only chains
   # with their own provisioning, or full schema-reset fixtures, run separately.
@@ -414,7 +414,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        group: [shared, shared-middle, shared-tail, isolated]
+        group: [shared, shared-middle, shared-tail, isolated, shared-suffix]
     # #5007 — the recall rail exercises backend search. A candidate confined to
     # `frontend/` and touching no cross-tier path cannot change what it measures.
     needs: change-scope
@@ -5425,7 +5425,7 @@ jobs:
         # and one outcome; the split arms are trigram ILIKEs, a whole-word regex
         # and a correlated EXISTS read only when tier<=1 comes back short — all
         # Postgres facts. The in-rig strawman proves the cases measure the fix.
-        if: matrix.group == 'shared'
+        if: matrix.group == 'shared-suffix'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_search_team_plus_competition_pg_10024.py \
@@ -5441,7 +5441,7 @@ jobs:
         # every open market and blow the arm's 1,000 ms bound; the ARRAY form
         # resolves the match set once. Postgres parses and runs the rendered
         # `ANY (array((SELECT ...)))` and proves it set-identical to IN.
-        if: matrix.group == 'shared'
+        if: matrix.group == 'shared-suffix'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_search_outcome_arm_any_array_pg_9947.py \
@@ -5458,7 +5458,7 @@ jobs:
         # onto the ILIKE threw the row away (93 rows in the window, 17 live).
         # Only Postgres tokenises. Strawman on master fails 6 of 7; a substring
         # loosening fails the `fed` case; a double-split fails the rank case.
-        if: matrix.group == 'shared'
+        if: matrix.group == 'shared-suffix'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_search_slash_doubles_pg_9735.py \
@@ -5479,7 +5479,7 @@ jobs:
         # per-term ILIKE + FTS arms, so it is proved here, over Postgres, on both
         # routes; the no-DB pin is `tests/test_search_superbowl_synonym_8427.py`.
         # Same skip detection as every gate in this job.
-        if: matrix.group == 'shared'
+        if: matrix.group == 'shared-suffix'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_search_superbowl_joined_pg_8427.py \
@@ -5496,7 +5496,7 @@ jobs:
         # board. The fix is an ORDER BY key, so the page it produces needs a real
         # ranking; the no-DB pin is `TestTheNamedYearOrdersTheFuturesWindow` in
         # `test_route_search_intent_5688.py`. Same skip detection as every gate here.
-        if: matrix.group == 'shared'
+        if: matrix.group == 'shared-suffix'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_search_named_year_pg_8805.py \
@@ -5530,7 +5530,7 @@ jobs:
         # same shape and drift between them is the likeliest regression.
         #
         # Same skip detection as every gate in this job, for the same reason.
-        if: matrix.group == 'shared'
+        if: matrix.group == 'shared-suffix'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_repair_club_noun_apply_restore_6955_pg.py \
@@ -5545,7 +5545,7 @@ jobs:
         # whose own FK actions (CASCADE / SET NULL) would silently destroy or
         # orphan any reference the repoint missed. Only a real server runs those.
         # Same skip detection as every gate in this job.
-        if: matrix.group == 'shared'
+        if: matrix.group == 'shared-suffix'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_repair_7021_fold_apply_restore_pg.py \
@@ -5560,7 +5560,7 @@ jobs:
         # soccer rows onto the right sport; its undo must put back ONLY rows
         # still where the repair left them. Those guarded writes are SQL, so
         # only a real server runs them. Same skip detection as every gate here.
-        if: matrix.group == 'shared'
+        if: matrix.group == 'shared-suffix'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_repair_8636_venue_contradicted_rows_pg.py \
@@ -5575,7 +5575,7 @@ jobs:
         # compare-and-set; a writer landing between its read and its UPDATE must
         # change zero rows and roll the whole run back, and the undo touches only
         # the ids it is given. Those are SQL, so only a real server runs them.
-        if: matrix.group == 'shared'
+        if: matrix.group == 'shared-suffix'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_repair_1109_football_shelf_apply_restore_pg.py \
@@ -5590,7 +5590,7 @@ jobs:
         # into the NBL, banking each sport_id first; a row that changes under
         # the run rolls every write back, and the undo touches only rows still
         # in the league. Those are SQL, so only a real server runs them.
-        if: matrix.group == 'shared'
+        if: matrix.group == 'shared-suffix'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_repair_8100_phoenix_placement_apply_restore_pg.py \
@@ -5605,7 +5605,7 @@ jobs:
         # compare-and-swap binds Decimal / aware datetime / int against numeric,
         # timestamptz and integer columns, and its undo writes the exact BEFORE
         # back. Only a real server runs those. Same skip detection as every gate here.
-        if: matrix.group == 'shared'
+        if: matrix.group == 'shared-suffix'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_repair_9850_trammell_seeded_opening_pg.py \
@@ -5621,7 +5621,7 @@ jobs:
         # silently destroy or orphan any reference the repoint missed, and the
         # after-state is read back through the serve path's own name lookup.
         # Only a real server runs those. Same skip detection as every gate here.
-        if: matrix.group == 'shared'
+        if: matrix.group == 'shared-suffix'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_repair_6974_fold_mls_apply_restore_pg.py \
@@ -5635,7 +5635,7 @@ jobs:
         # Same shape as the MLS gate above, plus a mapping repointed BEFORE the
         # fold (the delete's CASCADE would destroy it) and the after-state read
         # back through the search route's own Teams filter and rank.
-        if: matrix.group == 'shared'
+        if: matrix.group == 'shared-suffix'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_repair_6974_fold_nhl_apply_restore_pg.py \
@@ -5649,7 +5649,7 @@ jobs:
         # The NHL gate's shape, plus mappings banked whole and deleted before the
         # fold, and the ship read back through the search route: "lafc" answers
         # with one club, and that club's row carries the game only the duplicate named.
-        if: matrix.group == 'shared'
+        if: matrix.group == 'shared-suffix'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_repair_6974_fold_lafc_apply_restore_pg.py \
@@ -5663,7 +5663,7 @@ jobs:
         # The LAFC gate's shape, plus legs that are another club's moved (or a
         # college leg unlinked) before the fold, and the ship read back through the
         # #9617 league step: Kalshi's "Detroit" and "Portland" bind to the real club.
-        if: matrix.group == 'shared'
+        if: matrix.group == 'shared-suffix'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_repair_6974_fold_nba_apply_restore_pg.py \
@@ -5677,7 +5677,7 @@ jobs:
         # One pinned pair: ESPN 761660 moved inside the real partial unique index,
         # the market re-pointed with its immutable link-change row, and the ship read
         # back through not_a_proven_duplicate — search shows the kept row only.
-        if: matrix.group == 'shared'
+        if: matrix.group == 'shared-suffix'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_repair_2841_chifire_van_fold_apply_restore_pg.py \
@@ -5693,7 +5693,7 @@ jobs:
         # matcher's own read, skip any row whose league already holds its game,
         # move `sport_id` guarded on the value read, and undo only what they
         # moved. Same skip detection as every gate here.
-        if: matrix.group == 'shared'
+        if: matrix.group == 'shared-suffix'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_repair_5576_venue_named_competition_pg.py \
@@ -6365,7 +6365,7 @@ jobs:
         # ZERO collected is a collection error wearing a green hat, and a short
         # count means something was deselected. The exit code is read for its
         # VALUE (gotcha #54) — 1 is a result, anything else is a harness story.
-        if: matrix.group == 'shared'
+        if: matrix.group == 'shared-suffix'
         run: |
           # `set +e` on purpose: the step runs under `bash -e`, so a red suite
           # would abort HERE and the refusals below would never execute.
@@ -6432,7 +6432,7 @@ jobs:
         # Same skip-detection as every gate here — a skipped gate reads exactly
         # like a passing one, and this file would skip silently on every other
         # runner in the matrix.
-        if: matrix.group == 'shared'
+        if: matrix.group == 'shared-suffix'
         run: |
           set -o pipefail
           python -m pytest \
@@ -6450,7 +6450,7 @@ jobs:
         # sportsbook rows have no spread), and whether that matches, re-runs as
         # a no-op, and lets the restore spare a row written since is decided by
         # the server. Same skip-detection as every gate here.
-        if: matrix.group == 'shared'
+        if: matrix.group == 'shared-suffix'
         run: |
           set -o pipefail
           python -m pytest \
@@ -6756,7 +6756,7 @@ jobs:
         # GETs /api/events/{id}/history through the real app and reads the
         # served JSON for every evidence kind. Shared `bl_searchtest`, reserved
         # ids, ORM seeding. Skip detection plus a count.
-        if: matrix.group == 'shared'
+        if: matrix.group == 'shared-suffix'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_winprob_evidence_wire_7878_pg.py \
@@ -7032,7 +7032,7 @@ jobs:
         # Same skip detection as every gate in this job, and a count so a
         # dropped case cannot print green: 3 = family roster (MLB/NPB/KBO) +
         # NHL/WNBA/NCAAF pages + the one-roster-read arm.
-        if: matrix.group == 'shared'
+        if: matrix.group == 'shared-suffix'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_route_related_futures_team_paths_7867_pg.py \
@@ -7107,7 +7107,7 @@ jobs:
         # + #9450's two, the whole matcher attempt: a not-game-level child
         # (Harris v Galarneau's match market) is stored on its group's row,
         # and a group holding no row leaves it unlinked.
-        if: matrix.group == 'shared'
+        if: matrix.group == 'shared-suffix'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_polymarket_group_sibling_8430_pg.py \
@@ -7134,7 +7134,7 @@ jobs:
         # 3 = the probe's positive control (a held row reads `locked`) + one arm
         # per pass. Each arm also asserts the pass really wrote `betting` on the
         # row it probes, and that it parked mid-pass.
-        if: matrix.group == 'shared'
+        if: matrix.group == 'shared-suffix'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_a_poll_releases_its_event_rows_per_sport_837_pg.py \
@@ -7159,7 +7159,7 @@ jobs:
         #
         # 3 = the ship arm + the refresher-bound control + the failed-game
         # rollback/publication control.
-        if: matrix.group == 'shared'
+        if: matrix.group == 'shared-suffix'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_a_poll_releases_each_game_before_the_next_games_snapshots_10090_pg.py \
@@ -7183,7 +7183,7 @@ jobs:
         #
         # 3 = the parent strawman (writes leave pages pending) + the migration's
         # upgrade (zero pending, fastupdate=off) + its downgrade (parent restored).
-        if: matrix.group == 'shared'
+        if: matrix.group == 'shared-suffix'
         run: |
           set +e
           python -m pytest tests/integration/test_futures_outcome_writes_never_merge_a_search_backlog_10090_pg.py \
@@ -7220,7 +7220,7 @@ jobs:
         # 4 = the probe's positive control + the scores-loop arm + one rollback
         # arm per pass. The rollback arms inject a real Postgres error, and the
         # discover arm fails with MissingGreenlet on the ORM-loop mutant.
-        if: matrix.group == 'shared'
+        if: matrix.group == 'shared-suffix'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_a_failed_sport_and_the_scores_loop_release_837_pg.py \
@@ -7246,7 +7246,7 @@ jobs:
         # => :n)` both sides of now, any status), the moneyline and
         # `futures_markets` holder reads, and the phantom tagged from /scores; and
         # a phantom holding a market refused. 8 total.
-        if: matrix.group == 'shared'
+        if: matrix.group == 'shared-suffix'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_odds_api_reissued_twin_8422_pg.py \
@@ -7268,7 +7268,7 @@ jobs:
         # `--restore-undrifted` leaves a repointed leg and its backup standing.
         # Locks, jsonb, null-safe binds and rowcount are a server's answers; a
         # session double reads green on all of them. 19 cases.
-        if: matrix.group == 'shared'
+        if: matrix.group == 'shared-suffix'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_settlement_capture_verdicts_repair_8126_pg.py \
@@ -7289,7 +7289,7 @@ jobs:
         # the drift refusal and the row-version-exact restore are compare-and-
         # swaps a session double reads green on. Runs in its own throwaway
         # database. 11 cases (9 tests, one parametrized over three event drifts).
-        if: matrix.group == 'shared'
+        if: matrix.group == 'shared-suffix'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_repair_team_total_game_score_2351_pg.py \
@@ -7311,7 +7311,7 @@ jobs:
         # a restore that never overwrites a later writer are SQL a session double
         # reads green on. Runs in its own throwaway database. 19 cases (the 9
         # classifier/apply/restore cases + the backup-pair collision falsifiers).
-        if: matrix.group == 'shared'
+        if: matrix.group == 'shared-suffix'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_repair_pm_under_inverted_history_2027_pg.py \
@@ -7333,7 +7333,7 @@ jobs:
         # stopped run and a restore that never overwrites a later writer are SQL
         # a session double reads green on. Golf, football, two-leg, Kalshi and
         # no-Draw controls must never move. Runs in its own throwaway database.
-        if: matrix.group == 'shared'
+        if: matrix.group == 'shared-suffix'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_repair_winner_field_guarded_apply_1527_pg.py \
@@ -7358,7 +7358,7 @@ jobs:
         # contradictory, disagreeing, unknown/sourceless-authority, incoherent,
         # ungraded, two-leg, Kalshi and already-resolved markets must never move.
         # Runs in its own throwaway database on the real ORM schema.
-        if: matrix.group == 'shared'
+        if: matrix.group == 'shared-suffix'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_repair_settled_status_1527_pg.py \
@@ -7380,7 +7380,7 @@ jobs:
         # control proves the replay reaches the opening writer; and the real
         # detail route serves the settled market as resolved with one winner.
         # Runs in its own throwaway database on the real ORM schema.
-        if: matrix.group == 'shared'
+        if: matrix.group == 'shared-suffix'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_reingest_keeps_settled_soccer_field_1527_pg.py \
@@ -7409,7 +7409,7 @@ jobs:
         # reproduce the defect), and the REAL sunk-recovery selector reaching the
         # parent it could not reach before. Runs in its own throwaway database on
         # the real ORM schema.
-        if: matrix.group == 'shared'
+        if: matrix.group == 'shared-suffix'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_repair_pm_open_leg_grade_11007_pg.py \

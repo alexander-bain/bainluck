@@ -32,13 +32,13 @@ def _offloaded_suffix(worker):
     """The one reviewed reset boundary, never an arbitrary regrouping exception."""
     chain = [s for s in worker["steps"] if s.get("if") in (
         "matrix.group == 'shared'", "matrix.group == 'shared-middle'",
-        "matrix.group == 'shared-tail'",
+        "matrix.group == 'shared-tail'", "matrix.group == 'shared-suffix'",
     )]
     names = [s["name"] for s in chain]
     first, last = names.index(OFFLOADED_FIRST), names.index(OFFLOADED_LAST)
     suffix = chain[first:last + 1]
     assert len(suffix) == 35
-    assert all(s["if"] == "matrix.group == 'shared'" for s in suffix)
+    assert all(s["if"] == "matrix.group == 'shared-suffix'" for s in suffix)
     return {s["name"] for s in suffix}
 
 
@@ -257,7 +257,7 @@ def test_common_setup_services_and_intentional_scope_skip():
     assert worker["needs"] == "change-scope"
     assert worker["if"] == "needs.change-scope.outputs.scope != 'frontend'"
     assert worker["strategy"]["fail-fast"] is False
-    assert worker["strategy"]["matrix"]["group"] == ["shared", "shared-middle", "shared-tail", "isolated"]
+    assert worker["strategy"]["matrix"]["group"] == ["shared", "shared-middle", "shared-tail", "isolated", "shared-suffix"]
     assert worker["services"]["postgres"]["image"] == "postgres:15"
     assert worker["services"]["postgres"]["env"]["POSTGRES_DB"] == "bl_searchtest"
     assert worker["services"]["redis"]["ports"] == ["56379:6379"]
