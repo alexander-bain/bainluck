@@ -41,6 +41,7 @@ import {
   isFuturesRangeKey,
   type FuturesRangeKey,
 } from "@/lib/futuresHistoryRange";
+import { archiveWidenedRange, historyRangeDataAttributes, historyRangeOption } from "@/lib/historyRange";
 import { renderedOutcomeRowPercents } from "@/lib/renderedPercent";
 import ErrorMessage from "@/components/ErrorMessage";
 import { usePinnedFutures } from "@/hooks";
@@ -206,6 +207,11 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
     [effectiveRange, market?.created_at]
   );
 
+  // #683 (Root ruling B): "All" also asks the server for the question's whole
+  // history, so archive intervals the venue recorded before our own first
+  // capture are read too. `historyHours` stays the floor an older server serves.
+  const historyRange = historyRangeOption(effectiveRange)?.range;
+
   // Put the choice in the URL so it survives a refresh and travels in a shared
   // link. `history.replaceState` rather than `router.replace`: this is the same
   // page with a different chip lit, so it should not push a navigation, refetch
@@ -235,8 +241,11 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
     isLoading: historyLoading,
     mutate: refreshHistory,
   } = useSWR(
-    market ? ["futures-history", marketId, historyHours] : null,
-    () => fetchFuturesHistory(marketId, historyHours),
+    market ? ["futures-history", marketId, historyHours, historyRange ?? ""] : null,
+    () => fetchFuturesHistory(
+      marketId, historyHours, undefined, undefined, undefined,
+      historyRange ? { range: historyRange } : undefined,
+    ),
     // #7545 — hold the previous rung's chart on screen while the next one loads.
     // Without this the card unmounts on every chip tap, which takes the CHIPS
     // down with it: the reader's own tap removes the control they just used, and
@@ -507,7 +516,7 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
   }, [market?.outcomes, leadOutcome]);
 
   useFuturesDetailStream({
-    marketId, market, history: historyData, historyHours,
+    marketId, market, history: historyData, historyHours, historyRange,
     setMarket: next => refreshMarket(next, { revalidate: false }),
     setHistory: next => refreshHistory(next, { revalidate: false }),
     representation: VERIFIED_TITLE,
@@ -1187,7 +1196,10 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
         </div>
       )}
       {historyData && historyOutcomes.length > 0 && (
-        <div className="bg-surface-card rounded-card shadow-card p-6">
+        <div
+          className="bg-surface-card rounded-card shadow-card p-6"
+          {...historyRangeDataAttributes(historyData)}
+        >
           <div className="flex items-center justify-between mb-4">
             <div>
               <h2 className="text-title-3 font-semibold text-text-primary flex items-center gap-2">
@@ -1211,7 +1223,11 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
                 range={effectiveRange}
                 onSelect={selectRange}
                 requestedHours={historyHours}
-                actualHours={historyData.actual_hours}
+                /* #683: when the drawn span began at an archive interval,
+                   `actual_hours` no longer says what is on screen, so the
+                   sparse-data note would understate it. A full read that began
+                   at `hours` keeps the note: that widening is still real. */
+                actualHours={archiveWidenedRange(historyData) ? undefined : historyData.actual_hours}
                 /* #8135: `sparse` asks how MUCH history there is; `dormant` asks
                    whether any of it is recent. The specimen was sparse, open and
                    four weeks cold, so the old gate returned the live promise over
@@ -1335,7 +1351,7 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
           range={effectiveRange}
           onSelect={selectRange}
           requestedHours={historyHours}
-          actualHours={historyData?.actual_hours}
+          actualHours={archiveWidenedRange(historyData) ? undefined : historyData?.actual_hours}
           createdAt={market?.created_at}
         />
       )}
