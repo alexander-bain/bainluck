@@ -165,6 +165,25 @@ export function buildFinishCard(input: ProjectedFinalPointsInput | null | undefi
   };
 }
 
+/**
+ * #11103 — the page prints one projected final. While the hero prints one, the
+ * finish card's "projected now" is that pair, not the stored series' latest,
+ * which lags the quote (SEA@DEN: the card said Seattle 18.8 directly above the
+ * Projected final points card's 16). Only a card that already holds a current
+ * projection takes it; pregame, final and the freshness gate are unchanged.
+ */
+export function withPageProjection(
+  cards: NflEventCard[],
+  pair: { home: number; away: number } | null,
+): NflEventCard[] {
+  if (!pair) return cards;
+  return cards.map((card) =>
+    card.kind === "finish" && card.phase === "during" && card.projectedNow
+      ? { ...card, projectedNow: { ...card.projectedNow, home: pair.home, away: pair.away } }
+      : card,
+  );
+}
+
 /** A projection keeps its half point; a final score is whole. */
 export function formatPoints(value: number): string {
   return Math.round(value) === value ? String(value) : value.toFixed(1);

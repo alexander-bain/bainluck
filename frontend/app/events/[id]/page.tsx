@@ -149,6 +149,7 @@ import { derivePeriodBoundaries } from "@/lib/periodMarkers";
 import { useProjectedFinalPointsMount } from "@/lib/projectedFinalPointsSeries";
 import {
   buildFinishCard,
+  withPageProjection,
   cardAt,
   milestoneCards,
   nbaEventCards,
@@ -1609,6 +1610,8 @@ export default function EventPage({ params }: EventPageProps) {
         : null,
     [heroProjectedHome, heroProjectedAway]
   );
+  // #11103 — the game-story cards print the hero's projected final, never a second one.
+  const nflCardsShown = useMemo(() => withPageProjection(nflCards, heroProjectedFinal), [nflCards, heroProjectedFinal]);
 
   // #4571 — the age of the score PAIR the two lines above just resolved.
   //
@@ -3359,7 +3362,7 @@ export default function EventPage({ params }: EventPageProps) {
       {nflCards.length > 0 && !venueVoided && (
         <SectionErrorBoundary label="Game stories" resetKey={event.id}>
           <NFLEventCardDeck
-            cards={nflCards}
+            cards={nflCardsShown}
             teams={nflCardTeams}
             selection={nflCardSelection}
             onSelect={selectNflCardRow}
@@ -3896,7 +3899,7 @@ export default function EventPage({ params }: EventPageProps) {
       {nflOpenCard !== null && (
         <EventCardReader
           openCardId={nflOpenCard}
-          liveCards={nflCards}
+          liveCards={nflCardsShown}
           liveHeader={nflReaderHeader}
           liveRows={nflCardRows}
           teams={nflCardTeams}

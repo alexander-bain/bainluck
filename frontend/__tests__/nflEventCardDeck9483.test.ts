@@ -39,6 +39,7 @@ import {
   statDomain,
   statLabel,
   targetLabel,
+  withPageProjection,
   type FinishCard,
   type MilestoneCard,
   type NflEventCard,
@@ -412,5 +413,39 @@ describe("#9483 journeys 7–8 — the reader's hold, Refresh and Back", () => {
   it("statLabel keeps a prefix that does not name both teams", () => {
     expect(statLabel("Sam Darnold: Passing Touchdowns O/U 2.5", HOME, AWAY, "Sam Darnold")).toBe("Passing Touchdowns O/U 2.5");
     expect(statLabel("Weird: Thing", HOME, AWAY, "Someone")).toBe("Weird: Thing");
+  });
+});
+
+describe("#11103 one projected final per page", () => {
+  const during: FinishCard = {
+    kind: "finish",
+    id: "finish",
+    phase: "during",
+    pregame: { away: 21.5, home: 19, at: KICKOFF - MIN },
+    projectedNow: { away: 18.8, home: 23.8, at: KICKOFF + 66 * MIN },
+    final: null,
+  };
+
+  it("the finish card's projected now is the hero's pair, keeping its own capture clock (SEA@DEN 01:21Z)", () => {
+    const [shown] = withPageProjection([during], { home: 24, away: 16 }) as FinishCard[];
+    expect(shown.projectedNow).toEqual({ away: 16, home: 24, at: during.projectedNow!.at });
+    expect(shown.pregame).toEqual(during.pregame);
+    expect(finishHeadline(shown, "Seattle Seahawks", "Denver Broncos")).toBe(finishHeadline(during, "Seattle Seahawks", "Denver Broncos"));
+  });
+
+  it("control: no hero pair leaves the series' latest; no current projection is not invented; final untouched", () => {
+    expect(withPageProjection([during], null)).toEqual([during]);
+    const stale: FinishCard = { ...during, projectedNow: null };
+    expect(withPageProjection([stale], { home: 24, away: 16 })).toEqual([stale]);
+    const after: FinishCard = { ...during, phase: "after", projectedNow: null, final: { away: 13, home: 27, at: KICKOFF + 200 * MIN } };
+    expect(withPageProjection([after], { home: 24, away: 16 })).toEqual([after]);
+  });
+
+  it("the page hands the deck AND the reader the projected cards — no render site reads the raw series", () => {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const src: string = require("fs").readFileSync(require("path").join(__dirname, "../app/events/[id]/page.tsx"), "utf8");
+    expect(src).toMatch(/withPageProjection\(nflCards, heroProjectedFinal\)/);
+    const sites = [...src.matchAll(/(cards|liveCards)=\{(\w+)\}/g)].map((m) => `${m[1]}=${m[2]}`);
+    expect(sites.sort()).toEqual(["cards=nflCardsShown", "liveCards=nflCardsShown"]);
   });
 });
