@@ -151,6 +151,11 @@ final class ContextualTips10876Tests: XCTestCase {
         XCTAssertTrue(tips.contains("notificationSettings().authorizationStatus"))
         XCTAssertTrue(tips.contains("NotificationManager.shouldRequestPermission()"),
                       "the suppression launch argument is the manager's own, not a copy")
+        // lane1b H1: the anchor must pass the LIVE read into the gate, not a literal.
+        XCTAssertTrue(tips.contains("let promptSettled = await ContextualTips10876.notificationPromptSettled()"),
+                      "the anchor no longer reads the permission status")
+        XCTAssertTrue(tips.contains("notificationPromptSettled: promptSettled) else {"),
+                      "the gate no longer receives the status the anchor read")
         for source in [tips, rules] {
             XCTAssertFalse(source.contains("launchGrace"), "a launch-relative grace cannot promise to follow loadPins()")
             XCTAssertFalse(source.contains("kinfo_proc"), "kernel start time includes iOS prewarm")
@@ -190,6 +195,11 @@ final class ContextualTips10876Tests: XCTestCase {
                                  encoding: .utf8)
         XCTAssertTrue(manager.contains("binding.userID != nil, loadState != .loaded {"),
                       "togglePin's add refusal changed; re-derive pinStoreAcceptsAdds")
+        // lane1b H1: the bookmark passes its store's real state, not a constant.
+        let button = try String(contentsOf: Self.appDir.appendingPathComponent("Components/PinButton.swift"),
+                                encoding: .utf8)
+        XCTAssertTrue(button.contains("pinLoadState: pinManager.loadState,"),
+                      "the pin tip no longer sees the pin store's load state")
     }
 
     // MARK: - Pin engagement
