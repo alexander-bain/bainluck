@@ -175,7 +175,7 @@ def _validate_current_composed_promotion(
                 "continue-on-error" not in step
             ), f"{name} step failure cannot be waived"
             assert "artifact" not in str(step.get("uses", "")).lower() or (
-                name == "change-scope"
+                name in ("change-scope", "backend-tests")
                 and step.get("uses") == "actions/upload-artifact@v4"
                 and step.get("name") == "Publish compose checkout provenance"
             ), "only explicit compose test-provenance upload; no build artifact credit"
@@ -200,7 +200,7 @@ def _validate_current_composed_promotion(
     assert backend["steps"].index(_step(backend, "Install dependencies")) < backend[
         "steps"
     ].index(command)
-    assert len(backend["steps"]) == 6, "new source preparation needs review"
+    assert len(backend["steps"]) == 8, "new source preparation needs review"
     verifier = jobs["shard-completeness"]
     assert verifier.get("if") == SCOPE_RUNS
     assert verifier["steps"][-1].get("if") == REUSE

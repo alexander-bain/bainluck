@@ -37,7 +37,7 @@ def git(*args):
     ).strip()
 
 
-def record(env):
+def record(env, identity="change-scope"):
     head, tree, base = (
         git("rev-parse", "HEAD"),
         git("rev-parse", "HEAD^{tree}"),
@@ -49,8 +49,19 @@ def record(env):
         check=True,
         timeout=10,
     )
+    job = env["GITHUB_JOB"]
+    require(
+        identity == job
+        or (
+            job == "backend-tests"
+            and re.fullmatch(r"backend-tests-[1-9][0-9]*", identity)
+        ),
+        "unexpected provenance identity",
+    )
     return {
-        "schema": 1,
+        "schema": 2,
+        "identity": identity,
+        "job": job,
         "head": head,
         "tree": tree,
         "base": base,
@@ -197,6 +208,57 @@ def stamp(value):
     return dt.datetime.fromisoformat(value.replace("Z", "+00:00"))
 
 
+def expected_steps(kind, value, count, block):
+    """Only the reviewed condition grammar; unknown conditions refuse reuse."""
+    reuse = "needs.change-scope.outputs.reuse != 'true'"
+    scope = "needs.change-scope.outputs.scope != 'frontend'"
+    compose = "github.event_name == 'push' && startsWith(github.ref, 'refs/heads/integrator/compose-')"
+    executing = {
+        None,
+        reuse,
+        f"{scope} && {reuse}",
+        compose,
+        f"{scope} && {reuse} && {compose}",
+    }
+    skipped = {
+        "needs.change-scope.outputs.reuse == 'true'",
+        "needs.change-scope.outputs.scope == 'frontend'",
+        "github.event_name == 'push' && github.ref == 'refs/heads/master'",
+    }
+    required = []
+    for definition in re.split(r"^      - ", block, flags=re.M)[1:]:
+        match = re.match(r"name: (.+)\n", definition)
+        condition = re.search(r"^        if: (.+)$", definition, re.M)
+        expression = condition.group(1) if condition else None
+        group = re.fullmatch(
+            r"matrix\.group == '([\w-]+)' && " + re.escape(reuse), expression or ""
+        )
+        require(
+            expression in executing | skipped
+            or (kind == "database-integration" and group is not None),
+            "unreviewed step condition",
+        )
+        if expression in skipped or (group and group.group(1) != value) or not match:
+            continue
+        label = match.group(1).strip()
+        if label.startswith('"'):
+            label = json.loads(label)
+        elif label.startswith("'"):
+            require(label.endswith("'"), "unterminated step quote")
+            label = label[1:-1].replace("''", "'")
+        else:
+            label = re.split(r"\s+#", label, maxsplit=1)[0].rstrip()
+        label = label.replace("${{ matrix.shard }}", str(value)).replace(
+            "${{ strategy.job-total }}", str(count)
+        )
+        required.append(label)
+    require(
+        bool(required) and len(required) == len(set(required)),
+        "missing/ambiguous expected steps",
+    )
+    return required
+
+
 def validate_jobs(jobs, expected):
     names = [j["name"] for j in jobs]
     require(len(names) == len(set(names)), "ambiguous job names")
@@ -212,71 +274,68 @@ def validate_jobs(jobs, expected):
             f"unpaid job {name}",
         )
         steps = job["steps"]
+        for label in expected_steps(kind, value, count, block):
+            found = [step for step in steps if step["name"] == label]
+            require(
+                len(found) == 1
+                and found[0]["status"] == "completed"
+                and found[0]["conclusion"] == "success",
+                f"unpaid executing step {name}: {label}",
+            )
+
+
+def provenance_ids(expected):
+    """Every history-sensitive checkout must witness the same original master."""
+    identities = {
+        "change-scope": "change-scope",
+        "golden-baseline-floor": "golden-baseline-floor",
+    }
+    for kind, value, _, _ in expected.values():
         if kind == "backend-tests":
-            test = [
-                s for s in steps if s["name"] == f"Run tests (shard {value}/{count})"
-            ]
-            require(
-                len(test) == 1 and test[0]["conclusion"] == "success",
-                f"unrun shard {value}",
-            )
-        elif kind == "database-integration":
-            # Each pinned test unit is a named step conditioned only on its group
-            # (plus our reuse condition). Inspect ALL applicable named steps,
-            # including provisioning and explicit no-skip/count checks.
-            definitions = re.split(r"^      - ", block, flags=re.M)[1:]
-            required = []
-            for definition in definitions:
-                match = re.match(r"name: (.+)\n", definition)
-                if (
-                    not match
-                    or match.group(1).strip() == "Reused exact-commit test evidence"
-                ):
-                    continue
-                condition = re.search(r"^        if: (.+)$", definition, re.M)
-                if condition:
-                    expression = condition.group(1)
-                    common = "needs.change-scope.outputs.reuse != 'true'"
-                    group = re.fullmatch(
-                        r"matrix\.group == '([\w-]+)' && " + re.escape(common),
-                        expression,
-                    )
-                    require(
-                        expression == common or group is not None,
-                        "unreviewed DB step condition",
-                    )
-                    if group and group.group(1) != value:
-                        continue
-                label = match.group(1).strip()
-                if label.startswith('"'):
-                    label = json.loads(label)
-                elif label.startswith("'"):
-                    require(label.endswith("'"), "unterminated step quote")
-                    label = label[1:-1].replace("''", "'")
-                else:
-                    label = re.split(r"\s+#", label, maxsplit=1)[0].rstrip()
-                required.append(label)
-            require(bool(required), "empty DB test membership")
-            for label in required:
-                found = [s for s in steps if s["name"] == label]
-                require(
-                    len(found) == 1 and found[0]["conclusion"] == "success",
-                    f"unpaid DB step {name}: {label}",
-                )
-        else:
-            ignored = {
-                "Complete job",
-                "Reused exact-commit test evidence",
-                "Validate prior exact-commit evidence",
-            }
-            require(
-                all(
-                    s["conclusion"] == "success"
-                    for s in steps
-                    if s["name"] not in ignored
-                ),
-                f"skipped work in {name}",
-            )
+            identities[f"backend-tests-{value}"] = kind
+    return identities
+
+
+def validate_provenance(api, artifacts, run, expected, head, tree, before, repo_id):
+    for identity, job in provenance_ids(expected).items():
+        name = f"compose-source-provenance-{run['run_attempt']}-{identity}"
+        matched = [artifact for artifact in artifacts if artifact["name"] == name]
+        require(
+            len(matched) == 1 and not matched[0]["expired"],
+            "missing/ambiguous/expired provenance",
+        )
+        archive = zipfile.ZipFile(
+            io.BytesIO(api.raw(f"actions/artifacts/{matched[0]['id']}/zip", 1_000_000))
+        )
+        require(
+            archive.namelist() == ["ci-provenance.json"],
+            "unexpected provenance archive",
+        )
+        require(
+            archive.getinfo("ci-provenance.json").file_size <= 64_000,
+            "oversize provenance",
+        )
+        proof = json.loads(archive.read("ci-provenance.json"))
+        require(
+            proof["schema"] == 2
+            and proof["identity"] == identity
+            and proof["job"] == job,
+            "provenance job mismatch",
+        )
+        require(
+            proof["event"] == "push"
+            and proof["head"] == head
+            and proof["tree"] == tree
+            and proof["base"] == before,
+            "provenance source/base mismatch",
+        )
+        require(
+            proof["repository_id"] == repo_id
+            and proof["run_id"] == run["id"]
+            and proof["attempt"] == run["run_attempt"]
+            and proof["ref"] == f"refs/heads/{run['head_branch']}",
+            "provenance run mismatch",
+        )
 
 
 def decide(api, env, text, tree, before):
@@ -335,45 +394,12 @@ def decide(api, env, text, tree, before):
         candidates.append(run)
     require(len(candidates) == 1, "missing or ambiguous compose evidence")
     run = candidates[0]
+    expected = membership(text)
     validate_jobs(
-        api.pages(f"actions/runs/{run['id']}/jobs?filter=latest", "jobs"),
-        membership(text),
+        api.pages(f"actions/runs/{run['id']}/jobs?filter=latest", "jobs"), expected
     )
     artifacts = api.pages(f"actions/runs/{run['id']}/artifacts", "artifacts")
-    artifacts = [
-        a
-        for a in artifacts
-        if a["name"] == f"compose-source-provenance-{run['run_attempt']}"
-    ]
-    require(
-        len(artifacts) == 1 and not artifacts[0]["expired"],
-        "missing/ambiguous/expired provenance",
-    )
-    archive = zipfile.ZipFile(
-        io.BytesIO(api.raw(f"actions/artifacts/{artifacts[0]['id']}/zip", 1_000_000))
-    )
-    require(
-        archive.namelist() == ["ci-provenance.json"], "unexpected provenance archive"
-    )
-    require(
-        archive.getinfo("ci-provenance.json").file_size <= 64_000, "oversize provenance"
-    )
-    evidence = json.loads(archive.read("ci-provenance.json"))
-    require(
-        evidence["schema"] == 1
-        and evidence["event"] == "push"
-        and evidence["head"] == head
-        and evidence["tree"] == tree
-        and evidence["base"] == before,
-        "provenance source/base mismatch",
-    )
-    require(
-        evidence["repository_id"] == repo_id
-        and evidence["run_id"] == run["id"]
-        and evidence["attempt"] == run["run_attempt"]
-        and evidence["ref"] == f"refs/heads/{run['head_branch']}",
-        "provenance run mismatch",
-    )
+    validate_provenance(api, artifacts, run, expected, head, tree, before, repo_id)
     checks = api.pages(f"commits/{head}/check-runs?filter=all", "check_runs")
     suites = {}
     security_paid = set()
@@ -432,9 +458,12 @@ def decide(api, env, text, tree, before):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--record", type=Path)
+    parser.add_argument("--identity", default="change-scope")
     args = parser.parse_args()
     if args.record:
-        args.record.write_text(json.dumps(record(os.environ), sort_keys=True) + "\n")
+        args.record.write_text(
+            json.dumps(record(os.environ, args.identity), sort_keys=True) + "\n"
+        )
         return
     result = {"reuse": "false"}
     try:

@@ -110,7 +110,7 @@ def fixture():
         }
     )
     provenance = {
-        "schema": 1,
+        "schema": 2,
         "head": HEAD,
         "tree": TREE,
         "base": BASE,
@@ -133,8 +133,22 @@ class FakeAPI:
         )
         self.rows = [copy.deepcopy(run)]
         self.artifacts = [
-            {"id": 700, "name": "compose-source-provenance-1", "expired": False}
+            {
+                "id": 700 + i,
+                "name": f"compose-source-provenance-1-{identity}",
+                "expired": False,
+            }
+            for i, identity in enumerate(
+                evidence.provenance_ids(evidence.membership(TEXT))
+            )
         ]
+        self.identities = {
+            artifact["id"]: artifact["name"].removeprefix(
+                "compose-source-provenance-1-"
+            )
+            for artifact in self.artifacts
+        }
+        self.proof_overrides = {}
         self.suite_branch = BRANCH
         self.reread_move = False
         self.reads = 0
@@ -172,9 +186,19 @@ class FakeAPI:
         raise AssertionError(path)
 
     def raw(self, path, limit):
+        artifact_id = int(path.split("/")[-2])
+        identity = self.identities[artifact_id]
+        proof = {
+            **self.provenance,
+            "identity": identity,
+            "job": (
+                "backend-tests" if identity.startswith("backend-tests-") else identity
+            ),
+            **self.proof_overrides.get(identity, {}),
+        }
         buffer = io.BytesIO()
         with zipfile.ZipFile(buffer, "w") as archive:
-            archive.writestr("ci-provenance.json", json.dumps(self.provenance))
+            archive.writestr("ci-provenance.json", json.dumps(proof))
         return buffer.getvalue()
 
 
@@ -392,6 +416,14 @@ def test_reuse_conditions_are_an_explicit_addition_to_every_paid_step():
                 "name", ""
             ):
                 continue
+            if step.get("name") in (
+                "Record compose checkout provenance",
+                "Publish compose checkout provenance",
+            ):
+                assert name == "backend-tests" and step["if"].startswith(
+                    "needs.change-scope.outputs.scope != 'frontend' && " + reuse
+                )
+                continue
             assert step.get("if", "").endswith(reuse), (name, step)
     # Contract fixture work itself is never paid by reused credit.
     assert all(
@@ -406,5 +438,53 @@ def test_unknown_db_condition_is_not_silently_excluded_from_coverage():
         "matrix.group != 'isolated' && needs.change-scope.outputs.reuse != 'true'",
         1,
     )
-    with pytest.raises(ValueError, match="unreviewed DB step condition"):
+    with pytest.raises(ValueError, match="unreviewed step condition"):
         evidence.decide(api, ENV, bad, TREE, BASE)
+
+
+@pytest.mark.parametrize(
+    "identity", [f"backend-tests-{i}" for i in range(1, 9)] + ["golden-baseline-floor"]
+)
+def test_each_history_reader_must_observe_the_recorded_master_A_not_later_B(identity):
+    api = fixture()
+    assert api.provenance["base"] == BASE
+    api.proof_overrides[identity] = {"base": "d" * 40}
+    with pytest.raises(ValueError, match="provenance source/base mismatch"):
+        decide(api)
+
+
+@pytest.mark.parametrize("identity", ["backend-tests-8", "golden-baseline-floor"])
+def test_history_reader_cannot_borrow_change_scope_provenance(identity):
+    api = fixture()
+    api.artifacts = [a for a in api.artifacts if not a["name"].endswith("-" + identity)]
+    with pytest.raises(ValueError, match="missing/ambiguous/expired provenance"):
+        decide(api)
+
+
+@pytest.mark.parametrize("job_name", ["frontend-build", "shard-completeness"])
+@pytest.mark.parametrize(
+    "mode", ["empty", "missing_executing_step", "only_one_named_step"]
+)
+def test_complete_named_execution_proof_is_required_not_all_empty(job_name, mode):
+    api = fixture()
+    job = next(j for j in api.jobs if j["name"] == job_name)
+    if mode == "empty":
+        job["steps"] = []
+    elif mode == "only_one_named_step":
+        job["steps"] = job["steps"][:1]
+    else:
+        job["steps"].pop()
+    with pytest.raises(ValueError, match="unpaid executing step"):
+        decide(api)
+
+
+def test_provenance_is_captured_immediately_after_each_history_reader_checkout():
+    for kind in ("backend-tests", "golden-baseline-floor"):
+        steps = JOBS[kind]["steps"]
+        checkout = next(
+            i
+            for i, step in enumerate(steps)
+            if str(step.get("uses", "")).startswith("actions/checkout@")
+        )
+        assert steps[checkout + 1]["name"] == "Record compose checkout provenance"
+        assert steps[checkout + 2]["name"] == "Publish compose checkout provenance"

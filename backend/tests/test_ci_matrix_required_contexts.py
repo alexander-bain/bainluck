@@ -34,6 +34,10 @@ SCOPE_RUNS = "needs.change-scope.outputs.scope != 'frontend'"
 REUSE = "needs.change-scope.outputs.reuse != 'true'"
 RUNS = f"{SCOPE_RUNS} && {REUSE}"
 REUSED = "needs.change-scope.outputs.reuse == 'true'"
+COMPOSE_RECORD = (
+    RUNS
+    + " && github.event_name == 'push' && startsWith(github.ref, 'refs/heads/integrator/compose-')"
+)
 MARKER = "needs.change-scope.outputs.scope == 'frontend'"
 
 
@@ -54,6 +58,8 @@ def _evaluate(cond: str | None, scope, reuse="") -> bool:
         return value != "frontend" and reuse != "true"
     if cond.strip() == REUSED:
         return reuse == "true"
+    if cond.strip() == COMPOSE_RECORD:
+        return False  # These shape cases model a lane PR, not a compose push.
     if cond.strip() == MARKER:
         return value == "frontend"
     raise AssertionError(f"unrecognised backend-tests step condition: {cond!r}")
@@ -127,7 +133,7 @@ def test_every_backend_tests_step_carries_one_of_the_two_scope_conditions():
     steps = _jobs()["backend-tests"]["steps"]
     for step in steps:
         label = step.get("name") or step.get("uses")
-        assert step.get("if") in (RUNS, MARKER, REUSED), (
+        assert step.get("if") in (RUNS, MARKER, REUSED, COMPOSE_RECORD), (
             f"backend-tests step {label!r} has condition {step.get('if')!r}. Every step must "
             f"carry `{RUNS}` (real work) or be the frontend marker; an unconditioned step "
             "runs on a frontend-only candidate with no checkout and spends #5007's saving."

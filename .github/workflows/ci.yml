@@ -169,7 +169,7 @@ jobs:
         if: github.event_name == 'push' && startsWith(github.ref, 'refs/heads/integrator/compose-')
         uses: actions/upload-artifact@v4
         with:
-          name: compose-source-provenance-${{ github.run_attempt }}
+          name: compose-source-provenance-${{ github.run_attempt }}-change-scope
           path: ${{ runner.temp }}/ci-provenance.json
           if-no-files-found: error
           retention-days: 2
@@ -255,6 +255,20 @@ jobs:
         with:
           fetch-depth: 0
           filter: blob:none
+
+      - name: Record compose checkout provenance
+        if: needs.change-scope.outputs.scope != 'frontend' && needs.change-scope.outputs.reuse != 'true' && github.event_name == 'push' && startsWith(github.ref, 'refs/heads/integrator/compose-')
+        working-directory: .
+        run: python3 .github/scripts/ci-prior-evidence.py --record "$RUNNER_TEMP/ci-provenance.json" --identity backend-tests-${{ matrix.shard }}
+
+      - name: Publish compose checkout provenance
+        if: needs.change-scope.outputs.scope != 'frontend' && needs.change-scope.outputs.reuse != 'true' && github.event_name == 'push' && startsWith(github.ref, 'refs/heads/integrator/compose-')
+        uses: actions/upload-artifact@v4
+        with:
+          name: compose-source-provenance-${{ github.run_attempt }}-backend-tests-${{ matrix.shard }}
+          path: ${{ runner.temp }}/ci-provenance.json
+          if-no-files-found: error
+          retention-days: 2
 
       - uses: actions/setup-python@v7
         if: needs.change-scope.outputs.scope != 'frontend' && needs.change-scope.outputs.reuse != 'true'
@@ -423,6 +437,20 @@ jobs:
         with:
           fetch-depth: 0
           filter: blob:none
+
+      - name: Record compose checkout provenance
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/heads/integrator/compose-')
+        working-directory: .
+        run: python3 .github/scripts/ci-prior-evidence.py --record "$RUNNER_TEMP/ci-provenance.json" --identity golden-baseline-floor
+
+      - name: Publish compose checkout provenance
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/heads/integrator/compose-')
+        uses: actions/upload-artifact@v4
+        with:
+          name: compose-source-provenance-${{ github.run_attempt }}-golden-baseline-floor
+          path: ${{ runner.temp }}/ci-provenance.json
+          if-no-files-found: error
+          retention-days: 2
 
       - uses: actions/setup-python@v7
         with:
