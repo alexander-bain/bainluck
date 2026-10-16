@@ -17,7 +17,9 @@ stop being the thing that was reviewed:
    predicate has to stay A11's own two clauses verbatim. Any drift can stop the
    planner proving the index is usable, and nothing fails when that happens.
 2. A plain key. A covering variant was measured and rejected: it skips the heap
-   only on all-visible pages, and a touch-stamped row is never all-visible.
+   only on all-visible pages, a re-stamp clears that bit until vacuum sets it
+   again, and in the rig's churn state it saved nothing. That is the tested
+   state, not an invariant.
 3. No migration executes it. Gotcha #31: a concurrent build inside the release
    phase is the May 22 outage. A non-concurrent one locks the pollers out.
 
