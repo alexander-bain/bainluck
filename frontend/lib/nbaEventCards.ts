@@ -16,11 +16,14 @@
  * - once play starts: the producer's admitted pregame pin
  *   (`comparison.state == comparable`, `baseline.basis == pregame_pin`, dated),
  *   never a live or settled price;
- * - after the final the producer serves no pin on a settled option
- *   (`not_quoted`), so the card says the pregame chance is unavailable rather
- *   than reading 0/100 or reconstructing it from movement. The richer final
- *   story waits for an admitted settled-baseline field (dependency recorded on
- *   #9483).
+ * - after the final: ONLY the producer's `pregame_reading` (contract
+ *   `artifacts/authority-9483-pregame-reading/CONTRACT.md`, PR #11125) — the
+ *   option's own stored pin, admitted by the same pregame clock rule, served
+ *   on settled options where `comparison` says `not_quoted`. It counts only
+ *   when every field is whole and its outcome is the option's single
+ *   contributor; anything else (an older server, `unavailable`, a basis or
+ *   clock this does not know) leaves the line's pregame chance unavailable.
+ *   Never the terminal 0/100, `source_evidence`, a complement or movement.
  * Results are the producer's `result.state`, shown only on a finished page.
  */
 
@@ -52,6 +55,9 @@ export interface MatrixOption {
   baseline: number | null;
   baselineObservedAt: string | null;
   comparisonReason: string | null;
+  /** The producer's settled-safe pregame reading, only when fully valid (see `admittedReading`). */
+  reading: number | null;
+  readingObservedAt: string | null;
   /** `won` → true, `lost` → false, anything else → null. */
   result: boolean | null;
 }
@@ -81,6 +87,31 @@ const prob = (v: unknown): number | null => {
   return n !== null && n >= 0 && n <= 1 ? n : null;
 };
 
+const isoClock = (v: unknown): string | null => {
+  const s = str(v);
+  return s !== null && !Number.isNaN(Date.parse(s)) ? s : null;
+};
+
+/**
+ * `pregame_reading`, only when it is whole: `available`, no reason, basis
+ * `pregame_pin`, a probability strictly inside (0, 1), a readable clock, on a
+ * quoted or result option whose ONE contributor is the reading's outcome.
+ * Everything else is unavailable — it is never repaired from other fields.
+ */
+function admittedReading(o: Raw, valueState: string | null): { probability: number; observedAt: string } | null {
+  const r = obj(o.pregame_reading);
+  if (!r || r.state !== "available" || (r.reason !== null && r.reason !== undefined) || r.basis !== "pregame_pin") return null;
+  if (valueState !== "quoted" && valueState !== "result") return null;
+  const probability = num(r.probability);
+  if (probability === null || !(probability > 0 && probability < 1)) return null;
+  const observedAt = isoClock(r.observed_at);
+  if (observedAt === null) return null;
+  const outcome = r.outcome_id;
+  const contributors = o.contributor_outcome_ids;
+  if (!Number.isInteger(outcome) || !Array.isArray(contributors) || contributors.length !== 1 || contributors[0] !== outcome) return null;
+  return { probability, observedAt };
+}
+
 function decodeOption(raw: unknown): MatrixOption | null {
   const o = obj(raw);
   const key = str(o?.option_key);
@@ -95,6 +126,7 @@ function decodeOption(raw: unknown): MatrixOption | null {
     baseline?.basis === "pregame_pin" &&
     prob(baseline?.probability) !== null &&
     !!str(baseline?.observed_at);
+  const reading = admittedReading(o, valueState);
   return {
     optionKey: key,
     label: str(o.label) ?? "",
@@ -106,6 +138,8 @@ function decodeOption(raw: unknown): MatrixOption | null {
     baseline: pinned ? prob(baseline!.probability) : null,
     baselineObservedAt: pinned ? str(baseline!.observed_at) : null,
     comparisonReason: str(comparison.reason),
+    reading: reading?.probability ?? null,
+    readingObservedAt: reading?.observedAt ?? null,
     result: result === "won" ? true : result === "lost" ? false : null,
   };
 }
@@ -202,11 +236,14 @@ function pointChance(o: MatrixOption, phase: LadderPhase, nowMs: number): { chan
     const recent = o.quoted !== null && isRecentQuote(o.observedAt, nowMs);
     return { chance: recent ? o.quoted : null, observedAt: o.observedAt, now: null };
   }
-  const now = phase === "during" && o.quoted !== null && isRecentQuote(o.observedAt, nowMs) ? o.quoted : null;
+  // A settled card reads the producer's pregame reading and nothing else.
+  if (phase === "after") return { chance: o.reading, observedAt: null, now: null };
+  const now = o.quoted !== null && isRecentQuote(o.observedAt, nowMs) ? o.quoted : null;
   return { chance: o.baseline, observedAt: null, now };
 }
 
-function detailOf(q: MatrixQuestion, o: MatrixOption): OptionDetail {
+function detailOf(q: MatrixQuestion, o: MatrixOption, phase: LadderPhase): OptionDetail {
+  const settled = phase === "after";
   return {
     detail: "option",
     label: o.label || q.label,
@@ -214,8 +251,8 @@ function detailOf(q: MatrixQuestion, o: MatrixOption): OptionDetail {
     source: o.source,
     quoted: o.quoted,
     observedAt: o.observedAt,
-    baseline: o.baseline,
-    baselineObservedAt: o.baselineObservedAt,
+    baseline: settled ? o.reading : o.baseline,
+    baselineObservedAt: settled ? o.readingObservedAt : o.baselineObservedAt,
     result: o.result,
   };
 }
@@ -263,7 +300,7 @@ export function totalLadderCard(i: LadderInputs): LadderCard | null {
       side: "game",
       ...pointChance(o, phase, i.nowMs),
       result: phase === "after" ? o.result : null,
-      detail: detailOf(q, o),
+      detail: detailOf(q, o, phase),
     });
   }
   return ladder("total", phase, points, i, (s) => s.home + s.away);
@@ -293,7 +330,7 @@ export function marginLadderCard(i: LadderInputs): LadderCard | null {
       side,
       ...pointChance(o, phase, i.nowMs),
       result: phase === "after" ? o.result : null,
-      detail: detailOf(q, o),
+      detail: detailOf(q, o, phase),
     });
   }
   return ladder("margin", phase, points, i, (s) => s.home - s.away);

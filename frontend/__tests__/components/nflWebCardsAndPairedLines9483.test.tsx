@@ -408,6 +408,35 @@ describe("#9483 NBA ladder cards", () => {
     expect(html).toContain("HIT");
   });
 
+  it("a final with the producer's pregame_reading: one dot, its chance named apart from the verdict", () => {
+    const m = JSON.parse(JSON.stringify(nbaFinal.game_question_matrix));
+    for (const q of m.questions)
+      for (const o of q.options)
+        if (o.option_key === "o:240505185")
+          o.pregame_reading = { state: "available", reason: null, probability: 0.61, observed_at: "2026-10-04T22:50:00+00:00", basis: "pregame_pin", outcome_id: 240505185 };
+    const total = totalLadderCard(nbaInputs({ game_question_matrix: m }, {}))!;
+    const html = deck([total]);
+    expect(html).toContain("Chance before tip-off of finishing above each line");
+    expect((html.match(/<circle/g) ?? []).length).toBe(1);
+    expect(html).toContain("Over 206.5 · 61%");
+    expect(html).toContain("Before tip-off · MISS");
+    expect(html).toContain('data-actual="205"');
+    expect(html).not.toMatch(/>Pregame chance unavailable for these lines</);
+    // A line beside it with no reading (Over 204.5, won) says so itself, and keeps its verdict.
+    const selected = renderToStaticMarkup(
+      <NFLEventCardDeck cards={[total]} teams={TEAMS} selection={{ total: "o:240505186" }} onSelect={noop} onOpen={noop} openerRef={noop} />,
+    );
+    expect(selected).toContain("Pregame chance unavailable · HIT");
+    expect(selected).not.toContain("Before tip-off · MISS");
+    // Details: the reading is the pregame baseline, dated; the result stays its own row.
+    const line = total.points.find((x) => x.optionKey === "o:240505185")!;
+    const details = renderToStaticMarkup(<LineDetails row={line.detail} onDone={noop} />);
+    expect(details).toContain("Pregame baseline");
+    expect(details).toMatch(/61%/);
+    expect(details).toContain("Graded");
+    expect(details).not.toContain("Last quote");
+  });
+
   it("before tip-off: each recent quote is a dot on its own team's side, with the Tie axis", () => {
     const margin = marginLadderCard(
       nbaInputs(nbaPregame, {
