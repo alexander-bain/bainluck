@@ -117,7 +117,7 @@ describe("#683 render: one caption, every point drawn as before", () => {
   it("historyWithheld renders the caption exactly once", () => {
     const html = renderToStaticMarkup(<FuturesChart historyData={series} settled historyWithheld />);
     expect(html.match(CAPTION_TAG)).toHaveLength(1);
-    expect(html).toContain(PARTIAL_HISTORY_CAPTION.replace("'", "&#x27;"));
+    expect(html).toContain(PARTIAL_HISTORY_CAPTION.replace(/'/g, "&#x27;"));
   });
 
   it("CONTROL: without the flag there is no caption", () => {
