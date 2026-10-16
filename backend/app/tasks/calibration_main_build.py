@@ -790,6 +790,16 @@ class PhaseRunner:
         #: CAL-P1064 (#4275) adds the second setter, in :func:`build_runner`: a
         #: beat that CARRIES the futures phase never reaches the first one.
         self.rebuild_deferred: bool = False
+        #: #994. The finalized bank's DataGolf membership, verified against the
+        #: fold the curve is built from (cell key -> n/winners/members), or
+        #: ``None``. Set only by the staged futures phase's Stage 3; read once by
+        #: the publisher, which binds it to the payload it publishes. ``None``
+        #: with :attr:`examples_membership_reason` saying why — a carried phase,
+        #: an unstaged build or a bank resumed from before #994 all publish no
+        #: membership, and the drill-in says its examples are unverified.
+        self.examples_membership: Optional[dict[str, Any]] = None
+        self.examples_membership_reason: str = "not_computed"
+        self.examples_membership_bank: dict[str, Any] = {}
 
     # -- staging --------------------------------------------------------------
 
@@ -1367,6 +1377,10 @@ class NullPhaseRunner:
     #: rather than a settable one — the route must not be able to schedule
     #: background work off the back of a cold-cache serve.
     rebuild_deferred = False
+    #: #994: never — no staged bank, so no membership to publish.
+    examples_membership = None
+    examples_membership_reason = "no_runner"
+    examples_membership_bank: dict = {}
 
     def __init__(self) -> None:
         self.outcome: dict[str, Any] = {

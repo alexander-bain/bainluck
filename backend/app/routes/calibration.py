@@ -2192,6 +2192,220 @@ async def _within_examples_deadline(work, started: float):
     raise _ExamplesDeadline()
 
 
+# ---------------------------------------------------------------------------
+# #994: the PUBLISHED membership path — the exact rows behind the served curve
+# ---------------------------------------------------------------------------
+#
+# The staged build now publishes, beside each payload, every DataGolf member of
+# every cell it counted (``app.utils.calibration_examples_membership``). When
+# that membership provably belongs to the curve being served, a click samples
+# from it: one shared-store GET, an in-process membership (one primary-key read
+# per dyno per publish), and one primary-key lookup of the sampled rows — no
+# roster, no chunk statements, no owned session. Anything short of proof falls
+# through to the bounded live path below, labelled unverified as before.
+
+_SERVED_MAIN_KEYS = ("bainluck:calibration:main", "bainluck:calibration:main:last_good")
+#: A loaded membership is re-used while the served artifact is unchanged; the
+#: TTL only bounds how long one dyno keeps it (one entry, so one membership).
+_MEMBERSHIP_TTL_S = 3600.0
+#: An absent/unusable membership is re-read at most this often per served
+#: artifact, so a generation without one never costs a read per click.
+_MEMBERSHIP_MISS_TTL_S = 300.0
+_membership_cache: dict = {"key": None, "membership": None, "reason": None, "at": 0.0}
+_membership_lock_state: dict = {"loop": None, "lock": None}
+
+_EXAMPLES_HYDRATE_SQL = """
+    SELECT fo.id AS outcome_id, fo.market_id AS market_id,
+        fo.name AS outcome_name, fm.name AS market_name,
+        fo.is_winner AS current_winner,
+        COALESCE(fm.resolution_date, fm.commence_time, fm.updated_at) AS settle_date
+    FROM futures_outcomes fo
+    JOIN futures_markets fm ON fm.id = fo.market_id
+    WHERE fo.id = ANY(:outcome_ids)
+"""
+
+
+def _membership_lock() -> asyncio.Lock:
+    """One loader per dyno, so concurrent first clicks read the row once."""
+    loop = asyncio.get_running_loop()
+    if _membership_lock_state["loop"] is not loop:
+        _membership_lock_state["loop"] = loop
+        _membership_lock_state["lock"] = asyncio.Lock()
+    return _membership_lock_state["lock"]
+
+
+async def _served_main_identity(db: AsyncSession) -> tuple[Optional[str], Optional[dict]]:
+    """``(raw sha256, decoded payload)`` of the main artifact being served.
+
+    The shared store first, by its raw bytes (no decode — gotcha #38): main,
+    then last_good, the order the public route reads them. Only when neither
+    answers is the durable copy read, and then its decoded payload is returned
+    for a field-and-count comparison instead.
+    """
+    from app.utils import request_cache as _rc
+
+    for key in _SERVED_MAIN_KEYS:
+        try:
+            rc = await _rc.get_shared_async_redis()
+            res = await _rc.bounded_redis_call(lambda key=key: rc.get(key))
+            raw = res.value if res.is_ok else None
+        except Exception:  # noqa: BLE001 — unreadable is not a match
+            raw = None
+        digest = main_artifact_fingerprint(raw)
+        if digest is not None:
+            return digest, None
+    try:
+        from app.services.durable_snapshots import read_snapshot
+        from app.utils.calibration_publish_gate import SERVE_MAX_AGE_S
+
+        durable = await read_snapshot(db, "calibration:main", max_age_s=SERVE_MAX_AGE_S)
+        if durable.ok and isinstance(durable.envelope.payload, dict):
+            return None, durable.envelope.payload
+    except Exception:  # noqa: BLE001
+        pass
+    return None, None
+
+
+async def _load_published_membership(db: AsyncSession, served_key: str):
+    """The stored membership, parsed and re-validated, cached per served artifact."""
+    from app.services.durable_snapshots import read_snapshot
+    from app.utils.calibration_examples_membership import (
+        DURABLE_IDENTITY,
+        PUBLISHED_SCHEMA,
+        REASON_ABSENT,
+        parse_published_membership,
+    )
+    from app.utils.calibration_publish_gate import SERVE_MAX_AGE_S
+
+    def _cached():
+        c = _membership_cache
+        ttl = _MEMBERSHIP_TTL_S if c["membership"] is not None else _MEMBERSHIP_MISS_TTL_S
+        if c["key"] == served_key and time.monotonic() - c["at"] < ttl:
+            return c["membership"], c["reason"]
+        return None
+
+    hit = _cached()
+    if hit is not None:
+        return hit
+    async with _membership_lock():
+        hit = _cached()
+        if hit is not None:
+            return hit
+        durable = await read_snapshot(
+            db, DURABLE_IDENTITY, expected_version=PUBLISHED_SCHEMA,
+            max_age_s=SERVE_MAX_AGE_S,
+        )
+        if durable.status == "missing":
+            membership, reason = None, REASON_ABSENT
+        elif not durable.ok or durable.envelope is None:
+            membership, reason = None, "membership_unreadable"
+        else:
+            membership, reason = parse_published_membership(durable.envelope.payload)
+        _membership_cache.update(
+            key=served_key, membership=membership, reason=reason, at=time.monotonic()
+        )
+        return membership, reason
+
+
+async def _published_membership_examples(
+    db: AsyncSession,
+    *,
+    bucket: int,
+    wt: bool,
+    limit: int,
+    generation: Optional[str],
+    started: float,
+):
+    """``(examples, sampling, None)`` from the verified membership, or ``(None, None, reason)``.
+
+    ``reason`` is a trusted literal naming why the membership could not answer;
+    the caller falls through to the bounded live path and discloses it.
+    """
+    from app.utils.calibration_examples_membership import (
+        BUCKET_RULE,
+        membership_matches_served,
+        parse_record,
+        select_members,
+    )
+
+    served_sha, served_payload = await _served_main_identity(db)
+    if served_sha is None and served_payload is None:
+        return None, None, "served_unreadable"
+    served_key = served_sha or f"durable:{served_payload.get('generated_at')}"
+    membership, reason = await _load_published_membership(db, served_key)
+    if membership is None:
+        return None, None, reason
+    ok, reason = membership_matches_served(
+        membership,
+        served_sha256=served_sha,
+        served_payload=served_payload,
+        reader_generation=generation,
+    )
+    if not ok:
+        return None, None, reason
+
+    records = select_members(membership, bucket=bucket, moved_only=wt)
+    # The whole known membership of this bucket, sampled once: uniform, without
+    # replacement — the live path's ORDER BY RANDOM() LIMIT, over the rows the
+    # published curve actually counted.
+    picked = [parse_record(r) for r in random.sample(records, min(limit, len(records)))]
+    if any(m is None for m in picked):
+        return None, None, "malformed_record"
+    current: dict = {}
+    if picked:
+        await _arm_remaining_statement_budget(db, started)
+        rows = (await db.execute(
+            text(_EXAMPLES_HYDRATE_SQL),
+            {"outcome_ids": [m.outcome_id for m in picked]},
+        )).all()
+        current = {int(r.outcome_id): r for r in rows}
+
+    def _fmt_dt(dt) -> Optional[str]:
+        return dt.isoformat() if dt is not None else None
+
+    def _grade(value) -> Optional[str]:
+        return None if value is None else ("Yes" if value else "No")
+
+    examples = []
+    for m in picked:
+        row = current.get(m.outcome_id)
+        # Names and dates are read NOW by id; the price and the result are the
+        # published ones. A row that has since left its market is not this
+        # member any more, so nothing current is attributed to it.
+        same = row is not None and int(row.market_id) == m.market_id
+        published = "Yes" if m.winner else "No"
+        current_result = _grade(row.current_winner) if same else None
+        examples.append({
+            "market_name": (row.market_name if same else None) or "—",
+            "outcome_name": (row.outcome_name if same else None) or "—",
+            "price": round(float(m.price), 4),
+            # The grade the published curve counted — labelled as such, never
+            # presented as the current one.
+            "result": published,
+            "result_basis": "published",
+            "current_result": current_result,
+            "grade_changed_since_publish": current_result != published,
+            "settle_date": _fmt_dt(row.settle_date) if same else None,
+            "market_id": m.market_id,
+            "outcome_id": m.outcome_id,
+        })
+    sampling = {
+        "basis": "published_generation",
+        "scope": "published_membership",
+        "cohort": "price_moved" if wt else "all",
+        "bucket_rule": BUCKET_RULE,
+        "truth": "is_winner",
+        "order": "random",
+        "limit": limit,
+        "sampled_at": datetime.now(timezone.utc).isoformat(),
+        "published_generation_membership": "verified",
+        "generation": membership.generated_at,
+        "population_version": membership.population_version,
+        "members_in_bucket": len(records),
+    }
+    return examples, sampling, None
+
+
 @router.get("/calibration/examples")
 async def calibration_examples(
     db: AsyncSession = Depends(get_db),
@@ -2199,6 +2413,7 @@ async def calibration_examples(
     bucket: int = Query(..., ge=0, le=9),
     well_traded: int = Query(1),
     limit: int = Query(5, ge=1, le=10),
+    generation: Optional[str] = Query(None, max_length=64),
 ):
     """A representative sample of the real outcomes inside one calibration bucket.
 
@@ -2213,11 +2428,72 @@ async def calibration_examples(
     started = _examples_clock()
     source = (source or "").strip()
     wt = str(well_traded) not in ("0", "false", "False", "")
+    membership_status: str | None = None
+    if source in _SOURCE_SCOPED_EXAMPLE_SOURCES:
+        # #994: the published membership answers first, and is never served
+        # from the live-path cache below — that cache holds rows evaluated NOW.
+        from app.tasks.precompute_calibration import CALIBRATION_POPULATION_VERSION
+        from app.utils.db_cancellation import is_query_canceled
+
+        try:
+            verified, verified_sampling, membership_status = (
+                await _published_membership_examples(
+                    db, bucket=bucket, wt=wt, limit=limit,
+                    generation=(
+                        generation.strip() or None if isinstance(generation, str) else None
+                    ),
+                    started=started,
+                )
+            )
+        except _ExamplesBudgetSpent:
+            return JSONResponse(status_code=503, content={
+                "source": source, "bucket_idx": bucket, "reason": "examples_query_timeout",
+            })
+        except Exception as exc:
+            if is_query_canceled(exc):
+                logger.warning(
+                    "calibration examples: a published-membership lookup hit its "
+                    "statement budget"
+                )
+                return JSONResponse(status_code=503, content={
+                    "source": source, "bucket_idx": bucket,
+                    "reason": "examples_query_timeout",
+                })
+            logger.warning(
+                "calibration examples: published membership unusable (%s); "
+                "using the live sample", type(exc).__name__,
+            )
+            verified, verified_sampling, membership_status = None, None, "membership_error"
+        finally:
+            # The membership reads (and the durable read's own SET LOCAL) end
+            # here: nothing they armed may leak into the live path, which never
+            # touches the request's session.
+            try:
+                await db.rollback()
+            except Exception:  # noqa: BLE001 — a closed session has nothing to end
+                pass
+        if verified is not None:
+            return {
+                "source": source,
+                "bucket_idx": bucket,
+                "examples": verified,
+                "note": None if verified else (
+                    "No examples matched this bucket for the current view."
+                ),
+                "population_version": CALIBRATION_POPULATION_VERSION,
+                "sampling": verified_sampling,
+            }
     cache_key = f"{source}|{bucket}|{int(wt)}|{limit}"
     now = time.time()
     hit = _examples_cache.get(cache_key)
     if hit and (now - hit[1]) < _EXAMPLES_TTL:
-        return hit[0]
+        cached = hit[0]
+        if membership_status is not None and isinstance(cached.get("sampling"), dict):
+            cached = {
+                **cached,
+                "sampling": {**cached["sampling"], "membership_status": membership_status},
+            }
+        return cached
 
     examples: list[dict] = []
     note: str | None = None
@@ -2368,6 +2644,10 @@ async def calibration_examples(
             "sampled_at": datetime.now(timezone.utc).isoformat(),
             "published_generation_membership": "unverified",
         }
+        if membership_status is not None:
+            # #994: why the published membership could not answer — a trusted
+            # literal from the membership module, never request text.
+            sampling["membership_status"] = membership_status
     elif source in ("odds_api", "odds_api_spreads", "odds_api_totals"):
         # Event-sourced markets: reconstruct the same outcome rows the curve buckets.
         from app.tasks.precompute_calibration import score_unit_mismatch_sql
