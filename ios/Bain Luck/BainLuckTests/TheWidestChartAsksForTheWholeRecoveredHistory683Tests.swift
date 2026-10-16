@@ -292,4 +292,128 @@ final class TheWidestChartAsksForTheWholeRecoveredHistory683Tests: XCTestCase {
                     archiveCoverage: "complete", servedHistory: "partial")),
             partial, "the span sentence would claim the drawn edge is the record's edge")
     }
+
+    // MARK: - A partial read says so with too few prices to draw (CERT-4158)
+
+    private func sparse(_ timeline: String, block: String) -> String {
+        """
+        {"market_id": 68306, "market_name": "Specimen", "sport_category": "politics",
+         "source": "kalshi", "hours": 4320, "top": 50, "bucket_seconds": 3600,
+         "timeline": \(timeline),
+         "outcomes": [{"id": 9001, "name": "Yes", "current_probability": 64.0}],
+         "history_range": \(block)}
+        """
+    }
+
+    private let partialBlock = """
+        {"requested": "full", "window_start_basis": "archive_first_interval",
+         "archive_coverage": "incomplete", "served_history": "partial",
+         "unresolved_withheld": {"archive_intervals": 3, "venue_points": 0}}
+        """
+
+    /// The card the decoded payload draws, decided exactly as the body decides it:
+    /// the widest chip has no cutoff, so the window holds every served instant, and
+    /// the payload's own block rides in.
+    private func card(_ payload: ProbabilityTimelineResponse, points: Int) -> EvolutionChartView.CardBody {
+        let instants = payload.timeline.filter { $0.timestamp.asDate != nil }.count
+        return EvolutionChartView.cardBody(
+            windowPoints: points, windowInstants: instants, totalInstants: instants,
+            windowWord: EvolutionChartView.windowWord(for: .season),
+            historyRange: payload.historyRange)
+    }
+
+    /// CERT-4158: an EMPTY Full read the server served `partial` fell to the sparse
+    /// branch, which never read the block, and printed "No price history yet" over
+    /// prices the server withheld. Real client, real decode, the body's own rule.
+    func testAnEmptyPartialFullReadSaysPricesAreWithheldNotThatThereAreNone() async throws {
+        Origin.reset(bodies: ["/api/futures/68306/probability-timeline": sparse("[]", block: partialBlock)])
+        let payload = try await client().fetchProbabilityTimeline(
+            marketId: 68306, top: 50, hours: 4320, fullRange: true)
+        XCTAssertTrue(payload.timeline.isEmpty, "nothing is drawn, nothing is invented")
+        XCTAssertEqual(
+            card(payload, points: 0),
+            .sparse(.init(note: "Some older prices aren't shown", hint: nil)))
+    }
+
+    /// One served price: still too few to draw, and "Only one price seen so far" is
+    /// untrue when the server withheld older ones.
+    func testAOneValuePartialFullReadSaysPricesAreWithheld() async throws {
+        Origin.reset(bodies: ["/api/futures/68306/probability-timeline": sparse(
+            #"[{"timestamp": "2026-10-14T22:00:00+00:00", "outcomes": {"Yes": 64.0}}]"#,
+            block: partialBlock)])
+        let payload = try await client().fetchProbabilityTimeline(
+            marketId: 68306, top: 50, hours: 4320, fullRange: true)
+        XCTAssertEqual(payload.timeline.count, 1)
+        XCTAssertEqual(
+            card(payload, points: 1),
+            .sparse(.init(note: "Some older prices aren't shown", hint: nil)))
+    }
+
+    /// The instant/point split #7350 pinned: two served instants that draw one point
+    /// (the other carries only an undisplayed outcome) are still the sparse card.
+    func testTwoInstantsDrawingOnePointStillSayPricesAreWithheld() {
+        let partial = FuturesHistoryRange(requested: "full", servedHistory: "partial")
+        XCTAssertEqual(
+            EvolutionChartView.cardBody(
+                windowPoints: 1, windowInstants: 2, totalInstants: 2,
+                windowWord: EvolutionChartView.windowWord(for: .season), historyRange: partial),
+            .sparse(.init(note: "Some older prices aren't shown", hint: nil)))
+    }
+
+    /// Controls: everything that is not a served partial full read keeps today's words.
+    func testOnlyAServedPartialFullReadChangesTheSparseCard() {
+        let word = EvolutionChartView.windowWord(for: .season)
+        func copy(_ range: FuturesHistoryRange?, window: Int, total: Int,
+                  word: String = word) -> EvolutionChartView.SparseCopy {
+            EvolutionChartView.sparseCopy(
+                windowInstants: window, totalInstants: total, windowWord: word, historyRange: range)
+        }
+        let none = EvolutionChartView.SparseCopy(note: "No price history yet", hint: nil)
+        let one = EvolutionChartView.SparseCopy(note: "Only one price seen so far", hint: nil)
+        for range in [
+            FuturesHistoryRange(requested: "full", servedHistory: "complete"),
+            FuturesHistoryRange(requested: "full"),                               // older server
+            FuturesHistoryRange(requested: "full", servedHistory: "a_future_word"),
+            FuturesHistoryRange(requested: "since_start", servedHistory: "partial"), // non-full
+            nil,                                                                  // short chip / no block
+        ] as [FuturesHistoryRange?] {
+            XCTAssertEqual(copy(range, window: 0, total: 0), none, "a genuinely empty history: \(String(describing: range))")
+            XCTAssertEqual(copy(range, window: 1, total: 1), one, "\(String(describing: range))")
+        }
+
+        // A window with earlier prices outside it keeps its own sentence and its way
+        // out: the sentence is about the window, and the widest chip says the rest.
+        let partial = FuturesHistoryRange(requested: "full", servedHistory: "partial")
+        XCTAssertEqual(
+            copy(partial, window: 0, total: 3, word: "in the last 7 days"),
+            .init(note: "No prices in the last 7 days — 3 earlier prices", hint: "Try a longer range"))
+        // Two points still plot — the partial caption there is `coverageNote`'s.
+        XCTAssertEqual(
+            EvolutionChartView.cardBody(
+                windowPoints: 2, windowInstants: 2, totalInstants: 2, windowWord: word,
+                historyRange: partial),
+            .plot)
+    }
+
+    /// The rule above is only the reader's if the body hands it the payload's block —
+    /// the opaque `body` cannot be called, so the call site is scanned (comments
+    /// stripped, whitespace collapsed), as #7350's seam test does.
+    func testTheSparseCardIsDecidedWithThePayloadsBlockAndKeepsArchiveProvenance() throws {
+        let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+        let source = try String(
+            contentsOf: root.appendingPathComponent("Bain Luck/Components/EvolutionChartView.swift"),
+            encoding: .utf8)
+        let flat = source
+            .split(separator: "\n", omittingEmptySubsequences: false)
+            .filter { !$0.trimmingCharacters(in: .whitespaces).hasPrefix("//") }
+            .joined(separator: "\n")
+            .split(whereSeparator: \.isWhitespace).joined(separator: " ")
+        XCTAssertTrue(flat.contains("struct EvolutionChartView"))
+        XCTAssertTrue(
+            flat.contains("windowWord: windowWord, historyRange: data?.historyRange ) { case .sparse(let copy):"),
+            "the body must decide the card with the served block")
+        XCTAssertTrue(
+            flat.contains("emptyState(copy.note, hint: copy.hint) if let note = archiveNote {"),
+            "a counted archived price keeps its provenance line on the sparse card")
+    }
 }

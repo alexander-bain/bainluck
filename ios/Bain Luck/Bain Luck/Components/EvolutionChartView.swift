@@ -332,13 +332,23 @@ struct EvolutionChartView: View {
                     windowPoints: chartEntries.count,
                     windowInstants: windowInstants,
                     totalInstants: totalInstants,
-                    windowWord: windowWord
+                    windowWord: windowWord,
+                    historyRange: data?.historyRange
                 ) {
                 case .sparse(let copy):
                     VStack(spacing: 0) {
                         controlBar
                         historyCaptionRow
                         emptyState(copy.note, hint: copy.hint)
+                        if let note = archiveNote {
+                            Text(note)
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(.horizontal)
+                                .padding(.bottom, 6)
+                                .accessibilityIdentifier(Self.archiveNoteIdentifier)
+                        }
                     }
                     .background(Color.cardBackground)
                     .clipShape(RoundedRectangle(cornerRadius: 12))
@@ -1008,13 +1018,15 @@ struct EvolutionChartView: View {
     }
 
     static func cardBody(
-        windowPoints: Int, windowInstants: Int, totalInstants: Int, windowWord: String
+        windowPoints: Int, windowInstants: Int, totalInstants: Int, windowWord: String,
+        historyRange: FuturesHistoryRange? = nil
     ) -> CardBody {
         guard windowPoints < 2 else { return .plot }
         return .sparse(sparseCopy(
             windowInstants: windowInstants,
             totalInstants: totalInstants,
-            windowWord: windowWord
+            windowWord: windowWord,
+            historyRange: historyRange
         ))
     }
 
@@ -1025,8 +1037,16 @@ struct EvolutionChartView: View {
     /// one sentence it replaces could not (gotcha #53 — an empty window and an empty
     /// history had the same words). The hint appears only in the second case, so it
     /// is never an instruction to go looking for something that is not there.
+    ///
+    /// #683 (CERT-4158) — a full read the server served `partial` withheld older
+    /// prices it could not place, so when the window already holds everything the
+    /// response carries, "No price history yet" and "… seen so far" are both untrue:
+    /// the card says the one partial sentence instead, as `coverageNote` does over a
+    /// plot. A window with earlier prices outside it keeps its own sentence and its
+    /// hint — that sentence is about the window, and the widest chip says the rest.
     static func sparseCopy(
-        windowInstants: Int, totalInstants: Int, windowWord: String
+        windowInstants: Int, totalInstants: Int, windowWord: String,
+        historyRange: FuturesHistoryRange? = nil
     ) -> SparseCopy {
         // ONE clamp, not two: `guard seen > 0` below already sends every
         // non-positive total to the honest sentence, so wrapping this in
@@ -1038,6 +1058,10 @@ struct EvolutionChartView: View {
         let seen = totalInstants
         let inWindow = max(0, min(windowInstants, seen))
         let earlier = seen - inWindow
+
+        if earlier <= 0, EvolutionFullRange.servedPartially(historyRange) {
+            return SparseCopy(note: EvolutionFullRange.partialNote, hint: nil)
+        }
 
         guard seen > 0 else { return SparseCopy(note: "No price history yet", hint: nil) }
 
