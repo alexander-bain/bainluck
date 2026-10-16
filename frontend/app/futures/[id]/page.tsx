@@ -102,6 +102,12 @@ import { buildAmbientPoints } from "@/lib/futuresAmbient";
 import { formatResolvesLabel } from "@/lib/gameTimeLabel";
 import { settlementBannerText } from "@/lib/settlementBanner";
 import { independentOutcomesNote } from "@/lib/outcomeExclusivity";
+import {
+  boardResultCertainty,
+  isResultUnknown,
+  settledChartCaption,
+  withSettledResultCertainty,
+} from "@/lib/settledResultDisplay";
 
 interface FuturesDetailPageProps {
   params: { id: string };
@@ -170,7 +176,7 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
   const marketIsPinned = isPinned(marketId);
 
   const {
-    data: market,
+    data: servedMarket,
     error: marketError,
     isLoading: marketLoading,
     mutate: refreshMarket,
@@ -183,6 +189,12 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
     () => fetchFuturesMarket(marketId, { representation: VERIFIED_TITLE }),
     { refreshInterval: 0, keepPreviousData: true, revalidateOnFocus: false, revalidateOnReconnect: false }
   );
+  // #698 — every consumer below (rows, hero, sort, ladder, chart caption) reads
+  // ONE effective settled-result decision per row, made here once. A resolved
+  // Polymarket row whose result is unknown keeps its name and price but stops
+  // reading as graded, so no surface on this page can call it Lost, 0% or a
+  // champion while another says "Result unknown". See `lib/settledResultDisplay`.
+  const market = useMemo(() => withSettledResultCertainty(servedMarket), [servedMarket]);
 
   // #7545 — the history window is a RUNG THE READER CAN SEE AND MOVE, not a
   // number derived behind the chart.
@@ -675,7 +687,11 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
     () =>
       partitionOutcomesByPrice(
         sortedOutcomes,
-        (outcome) => outcomeRowVerdict(outcome, market?.status === "resolved") !== null,
+        // #698: a settled row whose result is unknown is listed too — it keeps
+        // its name and "Result unknown" in the table, never a closed fold.
+        (outcome) =>
+          outcomeRowVerdict(outcome, market?.status === "resolved") !== null ||
+          isResultUnknown(outcome, market?.status === "resolved"),
       ),
     [sortedOutcomes, market?.status],
   );
@@ -932,6 +948,11 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
   // `outcomeName &&`, so withholding it leaves the title and the grey chip and
   // no hole. The "Final Results" table below is honest and carries the page.
   const heroNamesNobody = isResolved && gradedChampion === null;
+  // #698 — how much of this settled board has no result to state. `all` puts
+  // "Result unknown" beside the RESOLVED chip and in the chart caption; `some`
+  // keeps every definite row and says so in the caption. A field whose rows all
+  // definitely LOST is not unknown (an independent field may have no winner).
+  const resultCertainty = boardResultCertainty(market.outcomes, isResolved);
   // L2-161 Hero C: the hero outcome's own 7-day curve, drawn as ambient texture
   // behind the numeral. Empty ⇒ the hero falls back to a plain numeral.
   // #10224 — the ambient curve is the requested source's history, so it draws
@@ -1080,6 +1101,7 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
         sparklinePoints={ambientPoints}
         resolved={isResolved}
         resolvedWon={gradedChampion !== null}
+        resultUnknown={resultCertainty === "all"}
       />
 
       {/* L2-65 / B7 L2-91: breadcrumb UP into the richer event-concept surface
@@ -1336,7 +1358,14 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
                   Korea Open: A vs B Set 1 O/U 9.5 won." is the title again plus
                   four words. The helper refuses every shape it cannot shorten, so
                   a normal champion's name reaches this sentence untouched. */}
-              Settled{gradedChampion ? ` — ${boardOutcomeLabel(gradedChampion.name, market?.name)} won.` : "."}
+              {/* #698 — and from the same effective verdicts as the rows: a board
+                  with no stated result says so instead of a bare "Settled.". */}
+              <span data-testid="futures-settled-caption">
+                {settledChartCaption(
+                  resultCertainty,
+                  gradedChampion ? boardOutcomeLabel(gradedChampion.name, market?.name) : null,
+                )}
+              </span>
             </p>
           )}
         </div>

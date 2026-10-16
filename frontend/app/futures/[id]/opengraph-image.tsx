@@ -12,6 +12,7 @@ import {
 import { unresolvedCardCopy } from "@/lib/unresolvedCardCopy";
 import type { ResolutionFailure } from "@/lib/unresolvedShareMeta";
 import { unfurlImageOptions } from "@/lib/unfurlImageCache";
+import { withSettledResultCertainty } from "@/lib/settledResultDisplay";
 
 export const runtime = "edge";
 export const alt = "Bain Luck market probability";
@@ -128,7 +129,9 @@ export default async function Image({ params }: { params: { id: string } }) {
     );
   }
 
-  const market = lookup.market;
+  // #698 — the same effective settled verdicts as the page, so a row whose
+  // result is unknown cannot be named the winner in a shared link either.
+  const market = withSettledResultCertainty(lookup.market);
   const leader = topOutcome(market);
 
   // ═══ #6127 — A MARKET NOBODY HAS PRICED DOES NOT GET A NUMBER, A LEADER OR A

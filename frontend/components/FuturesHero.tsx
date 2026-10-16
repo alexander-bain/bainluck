@@ -47,6 +47,10 @@ interface FuturesHeroProps {
   resolved?: boolean;
   /** Whether the featured outcome won (for the resolved chip styling). */
   resolvedWon?: boolean;
+  /** #698 — the board is settled but no row states a result (e.g. a 50/50 last
+   *  price on both legs). The lifecycle chip stays RESOLVED and one neutral
+   *  "Result unknown" sits beside it; nobody is crowned and no live % returns. */
+  resultUnknown?: boolean;
 }
 
 export function FuturesHero({
@@ -65,6 +69,7 @@ export function FuturesHero({
   isMultiOutcome,
   resolved = false,
   resolvedWon,
+  resultUnknown = false,
 }: FuturesHeroProps) {
   // #8482 — `Math.round(p * 100)` here printed 57 over a row printing 58 for a
   // wire 0.575 (`/futures/61318328`): the #3867 half-point case. The number is
@@ -134,6 +139,14 @@ export function FuturesHero({
             >
               {resolvedWon ? "Won" : "Resolved"}
             </span>
+            {resultUnknown && !resolvedWon && (
+              <span
+                data-testid="hero-result-unknown"
+                className="text-[13px] text-text-secondary"
+              >
+                Result unknown
+              </span>
+            )}
           </div>
           {/* Upset note (pure copy, no new data): a low last price before winning. */}
           {resolvedWon && pct != null && pct < 25 && (
