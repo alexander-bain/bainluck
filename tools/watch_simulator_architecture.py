@@ -138,6 +138,100 @@ def select_runtime_pair(info, pairs, watch_id, phone_id, products):
     }
 
 
+def _version(value):
+    # Exact dotted numeric version; "27" and "27.0.0" both mean 27.0.0.
+    parts = value.split(".") if isinstance(value, str) else []
+    if not 1 <= len(parts) <= 3 or not all(p.isdigit() and p.isascii() for p in parts):
+        raise ValueError("Runtime or SDK version is missing or malformed")
+    return tuple(int(p) for p in parts + ["0"] * (3 - len(parts)))
+
+
+def select_build_runtime_pair(
+    info,
+    watch_runtime_id,
+    phone_runtime_id,
+    watch_sdk,
+    phone_sdk,
+    watch_device_type=None,
+    phone_device_type=None,
+):
+    """Producer-only build architecture from exact runtime metadata.
+
+    Reads no device, pair or host state and creates nothing; the consumer's
+    select_runtime_pair still verifies the actual booted pair it executes on.
+    """
+    if (
+        not isinstance(watch_runtime_id, str)
+        or not isinstance(phone_runtime_id, str)
+        or not watch_runtime_id
+        or not phone_runtime_id
+        or watch_runtime_id == phone_runtime_id
+    ):
+        raise ValueError("Two distinct exact runtime identifiers are required")
+    runtimes = info.get("runtimes") if isinstance(info, dict) else None
+    if not isinstance(runtimes, list) or not all(isinstance(r, dict) for r in runtimes):
+        raise ValueError("Simulator runtime list is missing or malformed")
+    observations = []
+    supported = []
+    for runtime_id, platform, family, sdk, device_type in [
+        (watch_runtime_id, "watchOS", "Apple Watch", watch_sdk, watch_device_type),
+        (phone_runtime_id, "iOS", "iPhone", phone_sdk, phone_device_type),
+    ]:
+        matches = [r for r in runtimes if r.get("identifier") == runtime_id]
+        if len(matches) != 1:
+            raise ValueError("Exact runtime record is missing or duplicated")
+        runtime = matches[0]
+        if (
+            runtime.get("isAvailable") is not True
+            or runtime.get("platform") != platform
+            or _version(runtime.get("version")) != _version(sdk)
+        ):
+            raise ValueError("Unavailable, wrong-platform or SDK-mismatched runtime")
+        kinds = runtime.get("supportedDeviceTypes")
+        if not isinstance(kinds, list) or not all(isinstance(k, dict) for k in kinds):
+            raise ValueError("Runtime device types are missing or malformed")
+        kinds = [
+            k
+            for k in kinds
+            if k.get("productFamily") == family
+            and (device_type is None or k.get("identifier") == device_type)
+        ]
+        if not kinds or (device_type is not None and len(kinds) != 1):
+            raise ValueError("Runtime does not support the exact device family/type")
+        listed = runtime.get("supportedArchitectures")
+        if (
+            not isinstance(listed, list)
+            or not listed
+            or len(set(listed)) != len(listed)
+            or not all(isinstance(a, str) for a in listed)
+            or not set(listed) <= {"arm64", "x86_64"}
+        ):
+            raise ValueError("Runtime architecture missing, malformed or unsupported")
+        supported.append(set(listed))
+        observations.append(
+            {
+                "runtime": runtime_id,
+                "platform": platform,
+                "version": runtime["version"],
+                "sdk": sdk,
+                "runtime_build": runtime.get("buildversion"),
+                "device_type": device_type,
+                "architectures": sorted(listed),
+            }
+        )
+    shared = supported[0] & supported[1]
+    if len(shared) != 1:
+        raise ValueError("Runtimes must share one unambiguous architecture")
+    return {
+        "verdict": "PASS",
+        "architecture": next(iter(shared)),
+        "watch_runtime": watch_runtime_id,
+        "phone_runtime": phone_runtime_id,
+        "runtimes": observations,
+        "scope": "Producer build architecture from exact runtime metadata only; no device, pair or execution accepted",
+    }
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--runtime-pair", action="store_true")
@@ -145,28 +239,62 @@ def main():
     parser.add_argument("--pairs", type=Path)
     parser.add_argument("--products", type=Path)
     parser.add_argument("--watch-destinations", type=Path)
-    parser.add_argument("--watch-id", required=True)
+    parser.add_argument("--watch-id")
     parser.add_argument("--phone-destinations", type=Path)
-    parser.add_argument("--phone-id", required=True)
+    parser.add_argument("--phone-id")
+    parser.add_argument("--build-runtime-pair", action="store_true")
+    parser.add_argument("--watch-runtime")
+    parser.add_argument("--phone-runtime")
+    parser.add_argument("--watch-sdk")
+    parser.add_argument("--phone-sdk")
+    parser.add_argument("--watch-device-type")
+    parser.add_argument("--phone-device-type")
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
+    build_fields = [
+        args.simulators,
+        args.watch_runtime,
+        args.phone_runtime,
+        args.watch_sdk,
+        args.phone_sdk,
+    ]
+    if args.build_runtime_pair:
+        # The producer selector reads runtimes only; a device id here is a misuse.
+        if args.runtime_pair or args.watch_id or args.phone_id:
+            parser.error("--build-runtime-pair reads runtimes only, never device ids")
+        if not all(build_fields):
+            parser.error(
+                "--build-runtime-pair requires --simulators, --watch-runtime, "
+                "--phone-runtime, --watch-sdk and --phone-sdk"
+            )
+    elif args.watch_id is None or args.phone_id is None:
+        parser.error("the following arguments are required: --watch-id, --phone-id")
     try:
-        result = (
-            select_runtime_pair(
+        if args.build_runtime_pair:
+            result = select_build_runtime_pair(
+                json.loads(args.simulators.read_text()),
+                args.watch_runtime,
+                args.phone_runtime,
+                args.watch_sdk,
+                args.phone_sdk,
+                args.watch_device_type,
+                args.phone_device_type,
+            )
+        elif args.runtime_pair:
+            result = select_runtime_pair(
                 json.loads(args.simulators.read_text()),
                 json.loads(args.pairs.read_text()),
                 args.watch_id,
                 args.phone_id,
                 json.loads(args.products.read_text()),
             )
-            if args.runtime_pair
-            else select(
+        else:
+            result = select(
                 args.watch_destinations.read_text(),
                 args.watch_id,
                 args.phone_destinations.read_text(),
                 args.phone_id,
             )
-        )
     except (OSError, ValueError, KeyError, TypeError) as error:
         args.output.write_text(
             json.dumps({"verdict": "UNPAID", "reason": str(error)}, indent=2) + "\n"

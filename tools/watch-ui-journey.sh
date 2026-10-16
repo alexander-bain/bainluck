@@ -22,10 +22,24 @@ PHASE=preflight
 python3 "$ROOT/tools/watch_ui_stage.py" phase --output-dir "$OUT" --phase "$PHASE"
 failure() {
   local status=$?
+  trap - ERR
+  if [[ -f "$ROOT/tools/watch_failure_evidence.py" ]]; then
+    python3 "$ROOT/tools/watch_failure_evidence.py" --output-dir "$OUT" \
+      --watch-id "${TEST_UDID:-}" --phone-id "${PHONE_UDID:-}" \
+      --phase "$PHASE" --exit-code "$status" --sha "${SHA:-}" \
+      >> "$OUT/preflight.log" 2>&1 || echo 'Preparation failure snapshot unavailable; original failure retained.' >&2
+  fi
   echo "Watch UI journey unpaid: $PHASE failed (exit $status)." >&2
   if [[ -f "$OUT/preflight.log" ]]; then tail -80 "$OUT/preflight.log" >&2; fi
   if [[ -f "$OUT/tests.log" ]]; then tail -80 "$OUT/tests.log" >&2; fi
   exit "$status"
+}
+install_product() {
+  local device="$1" product="$2" role="$3" status=0
+  printf '%s %s install-start\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "$role" >> "$OUT/install-lifecycle.txt"
+  xcrun simctl install "$device" "$product" >> "$OUT/preflight.log" 2>&1 || status=$?
+  printf '%s %s install-end exit=%s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "$role" "$status" >> "$OUT/install-lifecycle.txt"
+  return "$status"
 }
 trap failure ERR
 : > "$OUT/preflight.log"
@@ -147,8 +161,8 @@ BUILT_APP="$BUILT_PHONE/Watch/BainLuckWatch Watch App.app"
 PHASE='explicitly install companion and nested Watch app on the new pair'
 python3 "$ROOT/tools/watch_ui_stage.py" phase --output-dir "$OUT" --phase "$PHASE"
 date -u '+%Y-%m-%dT%H:%M:%SZ preinstall' >> "$OUT/install-lifecycle.txt"
-xcrun simctl install "$PHONE_UDID" "$BUILT_PHONE" >> "$OUT/preflight.log" 2>&1
-xcrun simctl install "$TEST_UDID" "$BUILT_APP" >> "$OUT/preflight.log" 2>&1
+install_product "$PHONE_UDID" "$BUILT_PHONE" phone
+install_product "$TEST_UDID" "$BUILT_APP" watch
 xcrun simctl get_app_container "$PHONE_UDID" com.bainluck.Bain-Luck app >> "$OUT/install-lifecycle.txt"
 xcrun simctl get_app_container "$TEST_UDID" com.bainluck.Bain-Luck.watchkitapp app >> "$OUT/install-lifecycle.txt"
 PHASE='post-install shutdown of only this run disposable Watch'
