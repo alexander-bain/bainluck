@@ -95,11 +95,13 @@ final class TheWidestChartAsksForTheWholeRecoveredHistory683Tests: XCTestCase {
         _ = try? await api.fetchFuturesHistory(marketId: 68301, hours: 4320, fullRange: true)
         let sent = Origin.requests.map(query)
         XCTAssertEqual(sent.count, 2)
-        XCTAssertEqual(sent.first, ["top": "50", "hours": "4320", "range": "full"])
-        XCTAssertEqual(sent.last, ["hours": "4320", "top_n": "50", "range": "full"])
+        XCTAssertEqual(sent.first, ["top": "50", "hours": "4320", "range": "full", "fresh": "true"])
+        XCTAssertEqual(sent.last, ["hours": "4320", "top_n": "50", "range": "full", "fresh": "true"])
     }
 
     /// Every other request is byte-for-byte what it was: no `range` key at all.
+    /// (`fresh=true` is the client's existing revalidation key on every futures
+    /// read, on master before #683.)
     func testAShorterChipsRequestIsUnchanged() async throws {
         let api = client()
         _ = try? await api.fetchProbabilityTimeline(marketId: 68302, top: 50, hours: 168)
@@ -108,9 +110,9 @@ final class TheWidestChartAsksForTheWholeRecoveredHistory683Tests: XCTestCase {
         _ = try? await api.fetchFuturesHistory(marketId: 68302, hours: 168)
         let sent = Origin.requests.map(query)
         XCTAssertEqual(sent, [
-            ["top": "50", "hours": "168"],
-            ["top": "50", "hours": "24", "representation": "verified_title"],
-            ["hours": "168", "top_n": "50"],
+            ["top": "50", "hours": "168", "fresh": "true"],
+            ["top": "50", "hours": "24", "representation": "verified_title", "fresh": "true"],
+            ["hours": "168", "top_n": "50", "fresh": "true"],
         ])
     }
 
