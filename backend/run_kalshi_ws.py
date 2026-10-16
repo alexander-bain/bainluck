@@ -14,6 +14,7 @@ Usage (Procfile):
 
 import argparse
 import asyncio
+import gc
 import logging
 import os
 import signal
@@ -55,17 +56,76 @@ class LoopLoad:
     it can pass 1.00). `lag` is how late a `LOOP_SAMPLE_SECONDS` sleep woke
     (p50 / p95 / max); it is a scheduling sample, not per-stamp latency. In
     venue mode each line describes that venue's process, not the whole dyno.
+
+    `detail()` says WHEN, for the same window: the worst late wake's interval
+    (when it was due → when it woke), how many generation-2 collections ran, and
+    the longest collection pause with its generation and interval, plus their
+    overlap measured on the monotonic clock. Wall times only locate the
+    intervals in logs. Two disjoint maxima, or a slow window with other
+    collections, prove nothing either way; only an overlap is a GC candidate.
     """
 
-    def __init__(self, clock=time.monotonic, cpu=time.process_time):
-        self._clock, self._cpu = clock, cpu
+    def __init__(self, clock=time.monotonic, cpu=time.process_time, wall=time.time):
+        self._clock, self._cpu, self._wall = clock, cpu, wall
+        self._gc_started = None
         self._reset()
 
     def _reset(self):
         self._wall0, self._cpu0, self._lags = self._clock(), self._cpu(), []
+        self._worst = None  # (lateness, due, woke), monotonic
+        self._gen2 = 0
+        self._gc_worst = None  # (pause, start, end, generation), monotonic
 
-    def sample(self, lag):
-        self._lags.append(max(0.0, lag))
+    def sample(self, lag, due=None, woke=None):
+        lag = max(0.0, lag)
+        self._lags.append(lag)
+        if due is not None and (self._worst is None or lag > self._worst[0]):
+            self._worst = (lag, due, woke)
+
+    def on_gc(self, phase, info):
+        """`gc.callbacks` hook: clock reads and one int; never keeps `info`,
+        never raises into the collector."""
+        try:
+            if phase == "start":
+                self._gc_started = self._clock()
+                return
+            started, self._gc_started = self._gc_started, None
+            if started is None:
+                return
+            end, generation = self._clock(), info.get("generation")
+            if generation == 2:
+                self._gen2 += 1
+            if self._gc_worst is None or end - started > self._gc_worst[0]:
+                self._gc_worst = (end - started, started, end, generation)
+        except Exception:
+            return
+
+    def detail(self):
+        """The window's timing fields; read BEFORE `line()`, which resets."""
+        offset = self._wall() - self._clock()
+
+        def at(mono):
+            ms = round((mono + offset) * 1000)
+            return time.strftime("%H:%M:%S", time.gmtime(ms // 1000)) + f".{ms % 1000:03d}"
+
+        parts = []
+        if self._worst is None:
+            parts.append("max_at=-")
+        else:
+            _lag, due, woke = self._worst
+            parts.append(f"max_at={at(due)}-{at(woke)}Z")
+        parts.append(f"gc2={self._gen2}")
+        if self._gc_worst is None:
+            parts.append("gc_max=-")
+        else:
+            pause, start, end, generation = self._gc_worst
+            parts.append(
+                f"gc_max={pause * 1000:.0f}ms gen={generation} gc_at={at(start)}-{at(end)}Z"
+            )
+            if self._worst is not None:
+                overlap = max(0.0, min(self._worst[2], end) - max(self._worst[1], start))
+                parts.append(f"gc_overlap={overlap * 1000:.0f}ms")
+        return " ".join(parts)
 
     def line(self):
         wall = self._clock() - self._wall0
@@ -189,25 +249,34 @@ async def heartbeat(arms=HEARTBEAT_ARMS):
 
     started = time.monotonic()
     load = LoopLoad()
-    while True:
-        # #10090: the same interval, slept in short steps so each wake can be
-        # timed. Always at least one await, so an interval of 0 still yields.
-        deadline = time.monotonic() + HEARTBEAT_SECONDS
+    # #10090: this heartbeat's own GC hook, for exactly its lifetime.
+    on_gc = load.on_gc
+    gc.callbacks.append(on_gc)
+    try:
         while True:
-            step = min(LOOP_SAMPLE_SECONDS, max(0.0, deadline - time.monotonic()))
-            before = time.monotonic()
-            await asyncio.sleep(step)
-            load.sample(time.monotonic() - before - step)
-            if time.monotonic() >= deadline:
-                break
-        try:
-            now = time.monotonic()
-            logger.info(
-                "%s uptime=%ds %s",
-                render(arms, now), int(now - started), load.line(),
-            )
-        except Exception:
-            logger.exception("worker-ws heartbeat failed")
+            # #10090: the same interval, slept in short steps so each wake can be
+            # timed. Always at least one await, so an interval of 0 still yields.
+            deadline = time.monotonic() + HEARTBEAT_SECONDS
+            while True:
+                step = min(LOOP_SAMPLE_SECONDS, max(0.0, deadline - time.monotonic()))
+                before = time.monotonic()
+                await asyncio.sleep(step)
+                woke = time.monotonic()
+                load.sample(woke - before - step, before + step, woke)
+                if time.monotonic() >= deadline:
+                    break
+            try:
+                now = time.monotonic()
+                timing = load.detail()
+                logger.info(
+                    "%s uptime=%ds %s %s",
+                    render(arms, now), int(now - started), load.line(), timing,
+                )
+            except Exception:
+                logger.exception("worker-ws heartbeat failed")
+    finally:
+        while on_gc in gc.callbacks:
+            gc.callbacks.remove(on_gc)
 
 
 async def main():
