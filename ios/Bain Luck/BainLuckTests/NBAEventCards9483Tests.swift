@@ -68,9 +68,10 @@ final class NBAEventCards9483Tests: XCTestCase {
     }
 
     private func pregameInput(status: String = "scheduled", homeScore: Int? = nil, awayScore: Int? = nil,
-                              now: Date? = nil, matrix: EventQuestionMatrix? = nil) throws -> NBALadderCard9483.Input {
+                              now: Date? = nil, matrix: EventQuestionMatrix? = nil,
+                              commenceTime: String = "2026-10-15T23:30:00Z") throws -> NBALadderCard9483.Input {
         .init(matrix: try matrix ?? pregameBody().gameQuestionMatrix, status: status,
-              commenceTime: date("2026-10-15T23:30:00Z"), homeScore: homeScore, awayScore: awayScore,
+              commenceTime: date(commenceTime), homeScore: homeScore, awayScore: awayScore,
               pregameProjection: nil, homeShort: "Knicks", awayShort: "Raptors", now: now ?? pregameNow)
     }
 
@@ -338,11 +339,30 @@ final class NBAEventCards9483Tests: XCTestCase {
         XCTAssertEqual(card.actual, 205, "the score so far")
     }
 
-    func testASuspendedGameShowsNoCurrentPrice() throws {
-        let card = try XCTUnwrap(NBALadderCard9483.total(pregameInput(status: "suspended", homeScore: 60, awayScore: 58)))
+    /// lane1b R1 on 04bf6ddc2e: `suspended` is not proof the game began (#4021).
+    /// Suspended before tip-off, the recent pregame quotes stay drawn.
+    func testASuspendedGameBeforeTipOffKeepsItsPregameQuotes() throws {
+        let scheduled = try XCTUnwrap(NBALadderCard9483.total(pregameInput()))
+        let card = try XCTUnwrap(NBALadderCard9483.total(pregameInput(status: "suspended")))
+        XCTAssertEqual(card.phase, .before)
+        XCTAssertTrue(card.points.contains { $0.chance != nil }, "the recent pregame quotes are drawn")
+        XCTAssertEqual(card.points.map(\.chance), scheduled.points.map(\.chance))
+        XCTAssertTrue(card.points.allSatisfy { $0.now == nil })
+    }
+
+    /// Suspended after tip-off with quotes still recent: in play, but no current
+    /// price beside the pin. The same input as `live` does carry one.
+    func testASuspendedGamePastTipOffShowsNoCurrentPrice() throws {
+        let started = "2026-10-15T18:00:00Z"
+        let card = try XCTUnwrap(NBALadderCard9483.total(
+            pregameInput(status: "suspended", homeScore: 60, awayScore: 58, commenceTime: started)))
         XCTAssertEqual(card.phase, .during)
         XCTAssertTrue(card.points.allSatisfy { $0.now == nil && $0.chance == nil })
         XCTAssertFalse(card.points.isEmpty, "the lines stay")
+        let live = try XCTUnwrap(NBALadderCard9483.total(
+            pregameInput(status: "live", homeScore: 60, awayScore: 58, commenceTime: started)))
+        XCTAssertEqual(live.phase, .during)
+        XCTAssertTrue(live.points.contains { $0.now != nil }, "the control: live carries its current price")
     }
 
     // MARK: - The deck, the finish, the reader

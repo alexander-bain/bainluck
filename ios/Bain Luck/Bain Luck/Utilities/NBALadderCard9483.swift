@@ -233,8 +233,11 @@ nonisolated struct NBALadderCard9483: Equatable, Identifiable {
     @MainActor
     private static func phase(_ input: Input) -> Phase {
         if EventState.isFinished(input.status) { return .after }
-        // `suspended` is written by something that watched the game begin.
-        if input.status == "live" || EventState.isSuspended(input.status)
+        // `suspended` is NOT proof the game began (#4021, `EventState`): a game
+        // suspended before its tip-off keeps its pregame quotes, so the clock
+        // decides. A suspended game past tip-off is `.during` with no "now"
+        // (see `point`), the NFL milestone rule.
+        if input.status == "live"
             || EventState.hasStarted(commenceTime: input.commenceTime, now: input.now) {
             return .during
         }
