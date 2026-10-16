@@ -2258,6 +2258,8 @@ export default function EventPage({ params }: EventPageProps) {
   const nflCardTeams = {
     awayName: event.away_team,
     homeName: event.home_team,
+    awayShort: heroShortNames.away,
+    homeShort: heroShortNames.home,
     awayColor: nflStrokes.away,
     homeColor: nflStrokes.home,
   };

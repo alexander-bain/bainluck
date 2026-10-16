@@ -74,7 +74,7 @@ const FINISH: FinishCard = {
   final: { away: 27, home: 17, at: KICKOFF + 200 * MIN },
 };
 const strokes = projectedTeamStrokes(HOME_HEX, AWAY_HEX);
-const TEAMS = { awayName: AWAY, homeName: HOME, awayColor: strokes.away, homeColor: strokes.home };
+const TEAMS = { awayName: AWAY, homeName: HOME, awayShort: "Seahawks", homeShort: "Broncos", awayColor: strokes.away, homeColor: strokes.home };
 const finalCards = milestoneCards({
   props: PROPS,
   eventStatus: "completed",
@@ -151,6 +151,26 @@ describe("#9483 the deck under the chart", () => {
 
   it("the finish card legend says which mark is which", () => {
     expect(deck()).toContain("Points · outline = pregame · cross = final");
+  });
+});
+
+describe("#11098 the finish card's row labels use the hero's short names", () => {
+  // SEA@DEN live, 390px: the rows read "Seattle Se…" / "Denver Bro…" beside the number columns.
+  const rowLabels = (html: string) =>
+    [...html.matchAll(/<span class="text-sm font-semibold min-w-0 flex-1 truncate"[^>]*>([^<]*)<\/span>/g)].map((m) => m[1]);
+
+  it("labels each row with the short name, keeping the full names in the headline and the spoken label", () => {
+    const html = deck([FINISH]);
+    expect(rowLabels(html)).toEqual(["Seahawks", "Broncos"]);
+    expect(html).toContain("Seattle Seahawks beat the forecast");
+    expect(html).toMatch(/aria-label="[^"]*Pregame projection Seattle Seahawks 20\.5, Denver Broncos 23\.5/);
+  });
+
+  it("control: a caller with no short names keeps today's full-name rows", () => {
+    const html = renderToStaticMarkup(
+      <NFLEventCardDeck cards={[FINISH]} teams={{ ...TEAMS, awayShort: undefined, homeShort: undefined }} selection={{}} onSelect={noop} onOpen={noop} openerRef={noop} />,
+    );
+    expect(rowLabels(html)).toEqual(["Seattle Seahawks", "Denver Broncos"]);
   });
 });
 

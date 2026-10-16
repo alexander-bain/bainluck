@@ -42,6 +42,10 @@ export type CardSelection = Record<string, string>;
 export interface CardTeams {
   awayName: string;
   homeName: string;
+  /** The hero's short names ("Seahawks"). Row labels beside number columns use
+   *  them; at phone width the full name truncated to "Seattle Se…" (#11098). */
+  awayShort?: string | null;
+  homeShort?: string | null;
   /** Served primary colours; may be absent or too light for text. */
   awayColor?: string | null;
   homeColor?: string | null;
@@ -142,8 +146,8 @@ export function FinishCardView({ card, teams, expanded = false }: { card: Finish
   const ticks: number[] = [];
   for (let t = 0; t <= domainMax; t += 7) ticks.push(t);
   const rows = [
-    { name: teams.awayName, color: teams.awayColor, pregame: card.pregame.away, later: later?.away },
-    { name: teams.homeName, color: teams.homeColor, pregame: card.pregame.home, later: later?.home },
+    { name: teams.awayName, label: teams.awayShort || teams.awayName, color: teams.awayColor, pregame: card.pregame.away, later: later?.away },
+    { name: teams.homeName, label: teams.homeShort || teams.homeName, color: teams.homeColor, pregame: card.pregame.home, later: later?.home },
   ];
   const headline = finishHeadline(card, teams.awayName, teams.homeName);
   const placements = axisLabelPlacements(
@@ -223,7 +227,7 @@ export function FinishCardView({ card, teams, expanded = false }: { card: Finish
       {rows.map((row) => (
         <div key={row.name} className="flex items-baseline gap-2">
           <span className="text-sm font-semibold min-w-0 flex-1 truncate" style={{ color: textColor(row.color) }}>
-            {row.name}
+            {row.label}
           </span>
           <span className="flex flex-col items-end">
             <span className="text-base font-semibold tabular-nums text-text-primary">{formatPoints(row.pregame)}</span>
