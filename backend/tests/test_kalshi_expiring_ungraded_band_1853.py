@@ -35,6 +35,7 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 import app.tasks.backfill_winners as bw
+from tests import _kalshi_service_fake as kalshi_service_fake
 from tests.test_kalshi_settlement_recency_band_4057 import (
     _FakeKalshi,
     _FakeRedis,
@@ -161,9 +162,10 @@ async def _drive(
         monkeypatch.setattr(bw, name, _empty)
     monkeypatch.setattr(bw, "get_task_session", _SessionCM(session))
     monkeypatch.setattr("app.tasks.redis_state.get_redis_client", lambda *a, **k: rc)
-    monkeypatch.setattr("app.services.kalshi_api.KalshiAPIService", lambda *a, **k: venue)
+    fake_service = kalshi_service_fake.install(monkeypatch, venue)
 
     stats = await bw._backfill_kalshi_winners(limit=limit, fast_lane_only=fast_lane_only)
+    kalshi_service_fake.assert_not_captured(fake_service)
     return stats, rc, venue, seen
 
 

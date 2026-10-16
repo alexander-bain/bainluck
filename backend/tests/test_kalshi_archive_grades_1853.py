@@ -30,6 +30,7 @@ import pytest
 
 import app.tasks.backfill_winners as bw
 from app.utils import kalshi_archive_grades as kag
+from tests import _kalshi_service_fake as kalshi_service_fake
 
 ROOT = Path(__file__).resolve().parents[1]
 STORED = json.loads((ROOT / "tests" / "fixtures" / "kalshi_archive_1853_stored.json").read_text())
@@ -239,8 +240,10 @@ async def _drive(monkeypatch, venue, session, **kw):
         monkeypatch.setattr(bw, name, _none)
     monkeypatch.setattr(bw, "get_task_session", _SessionCM(session))
     monkeypatch.setattr("app.tasks.redis_state.get_redis_client", lambda *a, **k: _FakeRedis())
-    monkeypatch.setattr("app.services.kalshi_api.KalshiAPIService", lambda *a, **k: venue)
-    return await bw._backfill_kalshi_winners(limit=100, **kw)
+    fake_service = kalshi_service_fake.install(monkeypatch, venue)
+    stats = await bw._backfill_kalshi_winners(limit=100, **kw)
+    kalshi_service_fake.assert_not_captured(fake_service)
+    return stats
 
 
 @pytest.mark.asyncio
