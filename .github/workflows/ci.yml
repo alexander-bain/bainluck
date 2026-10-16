@@ -2978,8 +2978,8 @@ jobs:
             echo "::error::#683 archive store gate SKIPPED — the gate did not run"
             exit 1
           fi
-          grep -qE "(^|[^0-9])35 passed([,[:space:]]|$)" /tmp/archive683.txt || {
-            echo "::error::#683 archive store gate did not run all thirty-five cases"
+          grep -qE "(^|[^0-9])48 passed([,[:space:]]|$)" /tmp/archive683.txt || {
+            echo "::error::#683 archive store gate did not run all forty-eight cases"
             exit 1
           }
 
