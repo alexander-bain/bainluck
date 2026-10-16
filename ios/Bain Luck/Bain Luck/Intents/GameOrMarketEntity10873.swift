@@ -173,7 +173,7 @@ enum GameOrMarketCatalog10873 {
     /// "MLB · Final · Oct 14, 2026", "NFL · Oct 18, 1:00 PM", "MLB · Live".
     static func gameDetail(
         league: String?, status: String?, authorityPeriod: String?,
-        commenceTime: String?, startIsTbd: Bool
+        commenceTime: String?, startIsTbd: Bool, now: Date = Date()
     ) -> String? {
         var parts: [String] = []
         if let league, !league.isEmpty { parts.append(league) }
@@ -181,7 +181,8 @@ enum GameOrMarketCatalog10873 {
             parts.append("Live")
         } else if EventState.isFinished(status) {
             parts.append("Final")
-        } else if EventState.isSuspended(status) {
+        } else if EventState.isSuspendedAndStarted(status, commenceTime: commenceTime?.asDate, now: now) {
+            // #4021: a future-dated suspended row is not a stopped game yet.
             parts.append(EventState.suspendedLabel(authorityPeriod: authorityPeriod))
         }
         if EventState.isFinished(status) {

@@ -119,8 +119,9 @@ extension ProbabilityAnswer10873 {
             return Self(kind: .noResult, text: "\(subject) ended with no winner.", figure: nil)
         }
 
-        // A stopped game keeps its badge word beside whatever the pair says.
-        let stopped = EventState.isSuspended(event.status)
+        // A stopped game keeps its badge word beside whatever the pair says —
+        // only once it has started (#4021: the hero asks the clock too).
+        let stopped = EventState.isSuspendedAndStarted(event.status, commenceTime: commence, now: now)
             ? "Game status: \(EventState.suspendedLabel(authorityPeriod: event.espn?.period))."
             : nil
 

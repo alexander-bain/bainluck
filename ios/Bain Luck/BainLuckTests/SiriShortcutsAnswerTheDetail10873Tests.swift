@@ -190,6 +190,32 @@ final class SiriShortcutsAnswerTheDetail10873Tests: XCTestCase {
         XCTAssertTrue(answer.text.hasSuffix("Game status: Postponed."), answer.text)
     }
 
+    /// #4021: `suspended` on a row whose start is still in the future is not a
+    /// stopped game. Siri must not say "Game status: Postponed." about a game
+    /// nobody has started, and the entity row must not label it stopped either.
+    func testASuspendedGameThatHasNotStartedIsNeverSpokenAsStopped() throws {
+        let fields = """
+        "status":"suspended","commence_time":"\(futureStart)","espn":{"period":"Postponed"},
+        "current_odds":{"home_probability":0.6,"away_probability":0.4},
+        "hero_probability_observed_at":"\(freshStamp)"
+        """
+        let e = try event(fields)
+        let answer = ProbabilityAnswer10873.game(e, side: .home, now: now)
+        XCTAssertFalse(answer.text.contains("Game status"), answer.text)
+        XCTAssertFalse(answer.text.contains("Postponed"), answer.text)
+
+        let detail = GameOrMarketCatalog10873.gameDetail(
+            league: "MLB", status: "suspended", authorityPeriod: "Postponed",
+            commenceTime: futureStart, startIsTbd: false, now: now)
+        XCTAssertFalse(detail?.contains("Postponed") == true, detail ?? "nil")
+
+        // Control: the same row once started keeps the stopped word in both places.
+        let started = GameOrMarketCatalog10873.gameDetail(
+            league: "MLB", status: "suspended", authorityPeriod: "Postponed",
+            commenceTime: pastStart, startIsTbd: false, now: now)
+        XCTAssertTrue(started?.contains("Postponed") == true, started ?? "nil")
+    }
+
     func testAGameWithNoPairSaysItHasNoChanceToShow() throws {
         let e = try event(#""status":"scheduled","commence_time":"2026-10-16T23:05:00Z""#)
         let answer = ProbabilityAnswer10873.game(e, side: .home, now: now)
