@@ -106,6 +106,34 @@ and no assertion is loosened. Nobody may report "the untouched 24 passed".
 #7586 (2026-09-24) amends A1/A2 once more and adds `test_7c` / `test_7d`: 27.
 See the block above `test_7`.
 
+── AMENDMENT A3 (calibration, #2408, 2026-10-13) ────────────────────────────
+
+#2408 moved the column's meaning upstream: `update_max_movement`'s statement
+A11 stores `current - basis` on A8's own dated basis, or NULL where none
+qualifies, and the production writers carry that basis between sweeps
+(`app.utils.movement_basis`). The artifact was written against per-write
+storage and three of its tests pinned STORAGE, not serving:
+
+  * `test_3a` asserted, as a PRECONDITION, that the per-write +0.05 is "still
+    stored after the sweep". With no dated basis A11 now stores NULL; the test
+    asserts that instead, and keeps every serving assertion (unavailable,
+    price kept). Stronger, not looser: the column itself stops claiming.
+  * `test_4`'s MISSING row is seeded with a per-write +0.03 and no evidence;
+    after the sweep it is NULL for the same reason. The served-value and
+    distinguishability assertions are unchanged.
+  * `test_8` pinned `max_movement_24h == MAX|per-write|` and that
+    `/api/futures/movers` "must still ORDER on the stored per-write delta …
+    a dated re-rank is a new ranking policy". #2408 IS that policy change, by
+    issue scope ("Dead markets currently rank as movers in Discover"): the maxima
+    and the movers order now follow the DATED change, still recomputed upstream
+    so the pooled-movers identity holds. The read-only-serving and
+    bank-never-ranks assertions are unchanged.
+
+`_poll_write` deliberately still writes the PRE-#2408 per-write delta: it now
+stands for a legacy row or a delta-blind price writer between sweeps — the case
+where the column and the bank disagree, which is the harder one for the
+readers, who must keep serving the bank's dated number.
+
 ── SAFETY ───────────────────────────────────────────────────────────────────
 
 This module DROPS AND RECREATES THE WHOLE SCHEMA. It therefore refuses to touch
@@ -372,10 +400,12 @@ async def _sql(stmt: str, params: dict | None = None, *, fetch=True):
 def _poll_write(outcome_id: int, new_price: float):
     """SYNTHETIC STAND-IN FOR A POLL landing between two sweeps.
 
-    Writes exactly what all four production writers write — `new - previous` at
-    write time into `probability_change_24h`, the new price, `last_updated`, and
-    one snapshot row — without calling a provider. It does NOT touch the bank:
-    that is the point.
+    Writes what all four production writers wrote BEFORE #2408 — `new -
+    previous` at write time into `probability_change_24h`, the new price,
+    `last_updated`, and one snapshot row — without calling a provider. It does
+    NOT touch the bank: that is the point. Since #2408 the real writers carry a
+    dated move instead (amendment A3); this keeps the per-write shape as the
+    legacy / delta-blind case the readers must still survive.
     """
     _arun(
         _sql(
@@ -952,11 +982,12 @@ def test_3a_real_writer_refuses_a_basis_so_the_number_is_unavailable(label, obs)
     mid, a = s.market["c3"], s.outcome[("c3", "Alpha Story")]
     _run_real_sweep()
     assert _bank(mid).get(str(a)) is None, f"PRECONDITION: writer banked {label}: {_bank(mid)!r}"
+    # A3 (#2408): with no dated basis, A11 stores NULL — the column stops
+    # claiming the per-write +0.05 at the source, not only at the reader.
     stored = _stored(a)[1]
-    if stored is None:
-        pytest.fail(
-            f"PRECONDITION ({label}): the sweep retired the per-write delta, so this arm "
-            "no longer exercises the serving path. Harness needs a new specimen.", pytrace=False)
+    assert stored is None, (
+        f"#2408 ({label}): no qualifying dated basis, so statement A11 must store "
+        f"NULL; the column still holds {stored!r}")
     reads = _reads(mid, category="entertainment")
     _check_each(reads, outcome_id=a, name="Alpha Story",
                 check=lambda v, r, w: _assert_unavailable(v, per_write=0.05, where=f"{label}: {w}"))
@@ -1040,7 +1071,8 @@ def test_4_a_real_zero_dated_move_is_distinguishable_from_missing_evidence():
     _require_real_bank(zmid, z, 0.50)
     _poll_write(z, 0.50)
     assert abs(_stored(z)[1] - 0.03) < TOL
-    assert _bank(mmid).get(str(m_)) is None and abs(_stored(m_)[1] - 0.03) < TOL
+    # A3 (#2408): no evidence, so A11 stored NULL rather than the per-write +0.03.
+    assert _bank(mmid).get(str(m_)) is None and _stored(m_)[1] is None
 
     zr = _reads(zmid, category="entertainment")
     mr = _reads(mmid, category="economics")
@@ -1324,9 +1356,10 @@ def test_8_serving_is_read_only_and_ranking_inputs_are_untouched():
 
       * serving the feed and the detail page leaves `probability_change_24h`,
         `current_probability`, `max_movement_24h` and the bank byte-identical;
-      * `max_movement_24h` is still MAX(ABS(per-write delta)) after a sweep;
-      * `/api/futures/movers` still ORDERS on the stored per-write delta (its
-        printed values are out of this brief's scope and are not asserted);
+      * `max_movement_24h` is MAX(ABS(probability_change_24h)) after a sweep —
+        since #2408 (amendment A3) that column is the DATED change;
+      * `/api/futures/movers` ORDERS on that stored dated change (its printed
+        values are out of this brief's scope and are not asserted);
       * a card's feed score and position do not depend on whether a bank exists
         — the bank decides what may be SAID, never what ranks.
     """
@@ -1341,10 +1374,12 @@ def test_8_serving_is_read_only_and_ranking_inputs_are_untouched():
     _run_real_sweep()
     _require_real_bank(xm, xa, 0.40)
     _poll_write(xa, 0.50)  # per-write +0.05, dated +0.10 — smaller per-write than y's 0.08
-    _run_real_sweep()      # recompute max_movement_24h over the post-write deltas
+    _run_real_sweep()      # A11 re-states x on its dated basis, then B/C recompute
 
     before = (_stored(xa), _stored(ya))
-    assert abs(before[0][2] - 0.05) < TOL, f"max_movement_24h must be MAX|per-write|: {before[0]}"
+    # A3 (#2408): the column is the DATED change, and so is the max over it.
+    assert abs(before[0][1] - 0.10) < TOL, f"x must store its dated +0.10: {before[0]}"
+    assert abs(before[0][2] - 0.10) < TOL, f"max_movement_24h must be MAX|dated|: {before[0]}"
     assert abs(before[1][2] - 0.08) < TOL, before[1]
 
     with_bank = _feed_item(xm, category="entertainment")
@@ -1356,9 +1391,9 @@ def test_8_serving_is_read_only_and_ranking_inputs_are_untouched():
     rows = movers if isinstance(movers, list) else (movers.get("movers") or movers.get("items") or [])
     order = [r.get("market_id") or (r.get("market") or {}).get("id") for r in rows]
     assert ym in order and xm in order, f"PRECONDITION: movers payload shape changed: {str(movers)[:300]}"
-    assert order.index(ym) < order.index(xm), (
-        "movers must still ORDER on the stored per-write delta (y 0.08 before x 0.05); "
-        f"got {order} — a dated re-rank is a new ranking policy")
+    assert order.index(xm) < order.index(ym), (
+        "#2408 (A3): movers ORDER on the stored DATED change (x 0.10 before y 0.08); "
+        f"got {order} — ordering on x's per-write +0.05 is the defect #2408 removes")
 
     _arun(_sql("UPDATE futures_markets SET market_metadata = market_metadata - 'dated_movement_basis' "
                "WHERE id = :id", {"id": xm}, fetch=False))

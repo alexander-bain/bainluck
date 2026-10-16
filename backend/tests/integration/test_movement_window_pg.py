@@ -222,8 +222,21 @@ def _run_task(
     contradicted_batch: int | None = None,
     stale_rank_batch: int | None = None,
     graded_rank_batch: int | None = None,
+    reanchor_batch: int | None = 0,
 ):
-    """Drive the REAL `update_max_movement` against this database."""
+    """Drive the REAL `update_max_movement` against this database.
+
+    `reanchor_batch` DEFAULTS TO 0 — statement A11 (#2408) held off — and that
+    default is the only way the cases written for A..A10 can still observe
+    their own statement. A11 runs after every retirement and RE-STATES the
+    column from dated evidence: a fresh row with no observation becomes NULL,
+    and a row A4/A7 retired gets its dated move back. Every pre-#2408 case
+    seeds deltas with no dated basis on purpose (the default fixture has no
+    snapshots at all), so with A11 on their post-state is A11's, not the
+    statement under test's. The #2408 section below runs A11 explicitly
+    (`reanchor_batch=None`, the production constant), including one case that
+    composes it with A..A7 on the same rows.
+    """
     import app.tasks.base as base_mod
     import app.tasks.futures_movers_warm as warm_mod
     from app.tasks import update_max_movement
@@ -254,6 +267,7 @@ def _run_task(
     real_contradicted_batch = tasks_mod.CONTRADICTED_DIRECTION_BATCH
     real_stale_rank_batch = tasks_mod.STALE_RANK_BATCH
     real_graded_rank_batch = tasks_mod.GRADED_RANK_BATCH
+    real_reanchor_batch = tasks_mod.REANCHOR_BATCH
     base_mod.get_task_session = lambda: _Ctx()
     warm_mod.warm_futures_movers = _no_warm
     if batch is not None:
@@ -270,6 +284,8 @@ def _run_task(
         tasks_mod.STALE_RANK_BATCH = stale_rank_batch
     if graded_rank_batch is not None:
         tasks_mod.GRADED_RANK_BATCH = graded_rank_batch
+    if reanchor_batch is not None:
+        tasks_mod.REANCHOR_BATCH = reanchor_batch
     try:
         return update_max_movement.run()
     finally:
@@ -282,6 +298,7 @@ def _run_task(
         tasks_mod.CONTRADICTED_DIRECTION_BATCH = real_contradicted_batch
         tasks_mod.STALE_RANK_BATCH = real_stale_rank_batch
         tasks_mod.GRADED_RANK_BATCH = real_graded_rank_batch
+        tasks_mod.REANCHOR_BATCH = real_reanchor_batch
 
 
 async def _read(ids):
@@ -2564,3 +2581,315 @@ def test_a_market_row_held_past_the_budget_rolls_the_whole_core_back() -> None:
         "A2 cleared the outcome but C never recomputed its market — the core "
         "must roll back whole when its lock budget fires."
     )
+
+
+# ---------------------------------------------------------------------------
+# #2408 — the column STATES a dated move (A11), and the writers carry it
+#
+# Every case above proves a statement that RETIRES. These prove the one that
+# states: A11 sets `probability_change_24h = current - basis` on A8's dated
+# basis (oldest in-window priced observation, one source, same scale, at least
+# `DATED_BASIS_MIN_AGE_HOURS` old), or NULL where nothing qualifies, and the
+# production writers carry that basis between sweeps through
+# `app.utils.movement_basis.carried_change_value`. Each runs A11 on (the
+# production `REANCHOR_BATCH`) unless it says otherwise.
+#
+# The REGRESSIONS below fail on the per-write behaviour: before #2408 a fresh,
+# ungraded, legal, in-extrema, right-signed per-write delta survived every
+# statement untouched, and the writers stored `new - previous` whatever the
+# age of `previous`.
+# ---------------------------------------------------------------------------
+
+
+def _run_with_reanchor(**kwargs):
+    return _run_task(reanchor_batch=None, **kwargs)
+
+
+async def _carried_write(outcome_id: int, new_price: float, *, snapshot: bool = True):
+    """What the four production delta writers now write for one leg (#2408).
+
+    The SET is built from `carried_change_value` itself — the expression
+    `kalshi`, `polymarket` x2 and `futures` route through (pinned by
+    `tests/test_movement_window.py::TestTheWritersCarryADatedMove`) — so this is
+    the writers' arithmetic, not a restatement of it. PostgreSQL evaluates every
+    SET expression against the OLD row, exactly as in the writers' upserts.
+    """
+    from decimal import Decimal
+
+    from sqlalchemy import func, insert, update
+
+    from app.models.models import FuturesOddsSnapshot, FuturesOutcome
+    from app.utils.movement_basis import carried_change_value
+
+    price = Decimal(str(new_price))
+    engine = _engine()
+    try:
+        async with engine.begin() as conn:
+            await conn.execute(
+                update(FuturesOutcome)
+                .where(FuturesOutcome.id == outcome_id)
+                .values(
+                    probability_change_24h=carried_change_value(
+                        FuturesOutcome.probability_change_24h,
+                        FuturesOutcome.current_probability,
+                        FuturesOutcome.last_updated,
+                        price,
+                    ),
+                    current_probability=price,
+                    last_updated=func.now(),
+                )
+            )
+            if snapshot:
+                await conn.execute(
+                    insert(FuturesOddsSnapshot).values(
+                        outcome_id=outcome_id,
+                        bookmaker="kalshi",
+                        probability=price,
+                        captured_at=func.now(),
+                        reading_count=1,
+                    )
+                )
+    finally:
+        await engine.dispose()
+
+
+async def _set_market_source(market_id: int, source: str) -> None:
+    from sqlalchemy import text
+
+    engine = _engine()
+    try:
+        async with engine.begin() as conn:
+            await conn.execute(
+                text("UPDATE futures_markets SET source = :s WHERE id = :i"),
+                {"s": source, "i": market_id},
+            )
+    finally:
+        await engine.dispose()
+
+
+def test_the_issue_specimen_write_does_not_carry_ten_days_into_a_day() -> None:
+    """REGRESSION + the fresh-row, old-prior GUARD, at the writer (#2408).
+
+    Outcome 1597099's shape: last written 08-18 at 0.985, next written 08-28 at
+    0.270. The poll that lands on a row last written ten days ago used to store
+    `0.270 - 0.985 = -0.715` and serve it as "the last 24 hours" for a day. The
+    row here still carries a stale delta (statement A had not reached it — its
+    batch is magnitude-ordered and skips locked rows), so the guard, not A, is
+    what stands between the poll and the lie.
+    """
+    ids = asyncio.run(
+        _reset_and_seed([("amazon", "open", 240, -0.2, None, None, 0.985)])
+    )
+    asyncio.run(_carried_write(ids["amazon"][1], 0.270))
+    after = asyncio.run(_read(ids))
+    assert after["amazon"][0] is None, (
+        "the poll carried a delta across a row last written ten days ago — "
+        f"the per-write -0.715 class #2408 removes: {after}"
+    )
+
+
+def test_a_carried_write_keeps_the_basis_between_sweeps() -> None:
+    """A poll after A11 moves the dated change by the price move — it does not
+    replace it with the poll's own delta — and a NULL stays NULL."""
+    ids = asyncio.run(
+        _reset_and_seed(
+            [
+                ("dated", "open", 1, 0.02, None, None, 0.62,
+                 [(20, 0.40), (1, 0.60)]),
+                ("unknown", "open", 1, None, None, None, 0.50, [(1, 0.50)]),
+            ]
+        )
+    )
+    _run_with_reanchor()
+    assert asyncio.run(_read(ids))["dated"][0] == pytest.approx(0.22)
+
+    asyncio.run(_carried_write(ids["dated"][1], 0.65))
+    asyncio.run(_carried_write(ids["unknown"][1], 0.58))
+    after = asyncio.run(_read(ids))
+    assert after["dated"][0] == pytest.approx(0.25), (
+        f"the write replaced the dated +0.25 with its own per-write move: {after}"
+    )
+    assert after["unknown"][0] is None, after
+
+
+def test_a_fresh_in_range_right_signed_delta_is_restated_as_the_dated_move() -> None:
+    """REGRESSION. 0.40 twenty hours ago, 0.60 an hour ago, 0.62 now, per-write
+    +0.02. A4 keeps it (inside the extrema), A7 keeps it (right sign), A/A2/A3
+    do not apply — so before #2408 the card said "+2 today" about a +22 day.
+    """
+    ids = asyncio.run(
+        _reset_and_seed(
+            [("rose", "open", 1, 0.02, 0.02, None, 0.62, [(20, 0.40), (1, 0.60)])]
+        )
+    )
+    before_a11 = _run_task()  # A..A10 only
+    assert asyncio.run(_read(ids))["rose"][0] == pytest.approx(0.02), (
+        "PRECONDITION: a retiring statement touched the per-write delta, so this "
+        f"case no longer isolates A11: {before_a11}"
+    )
+
+    result = _run_with_reanchor()
+    after = asyncio.run(_read(ids))
+    assert after["rose"] == (pytest.approx(0.22), pytest.approx(0.22)), after
+    assert result["reanchored"] == 1, result
+    assert asyncio.run(_identity_holds()) == []
+
+
+def test_no_dated_basis_is_an_honest_unknown() -> None:
+    """NULL — never the per-write number, never 0 — when nothing can date it."""
+    ids = asyncio.run(
+        _reset_and_seed(
+            [
+                ("unseen", "open", 1, 0.05, 0.05, None, 0.45),
+                ("too_young", "open", 1, 0.05, 0.05, None, 0.45, [(5, 0.40), (1, 0.45)]),
+                ("expired_only", "open", 1, 0.05, 0.05, None, 0.45, [(30, 0.40)]),
+                ("sportsbook", "open", 1, 0.05, 0.05, None, 0.45,
+                 [(20, 0.40, "draftkings"), (1, 0.45, "draftkings")]),
+                ("two_sources", "open", 1, 0.05, 0.05, None, 0.45,
+                 [(20, 0.40, "kalshi"), (1, 0.45, "polymarket")]),
+            ]
+        )
+    )
+    _run_with_reanchor()
+    after = asyncio.run(_read(ids))
+    for label in ids:
+        assert after[label] == (None, None), (label, after[label])
+
+
+def test_an_evidenced_day_with_a_null_delta_is_stated() -> None:
+    """#7176's `US bank failure` shape: a real dated -9.0 point move whose
+    per-write delta is NULL was silent everywhere. The column now carries it,
+    so the market can rank on it — the selection change #2408 makes upstream."""
+    ids = asyncio.run(
+        _reset_and_seed(
+            [("bank_failure", "open", 1, None, None, None, 0.70, [(20, 0.79), (1, 0.70)])]
+        )
+    )
+    _run_with_reanchor()
+    assert asyncio.run(_read(ids))["bank_failure"] == (
+        pytest.approx(-0.09), pytest.approx(0.09),
+    )
+
+
+def test_the_basis_is_the_oldest_observation_that_was_a_price() -> None:
+    """A8's #8594 rule, shared: a last trade across an empty book is skipped."""
+    ids = asyncio.run(
+        _reset_and_seed(
+            [
+                ("thune", "open", 1, -0.66, None, None, 0.20,
+                 [(22, 0.84, "kalshi", 0.11, 0.88), (14, 0.18, "kalshi", 0.14, 0.22),
+                  (1, 0.20, "kalshi", 0.19, 0.21)]),
+            ]
+        )
+    )
+    _run_with_reanchor()
+    after = asyncio.run(_read(ids))
+    assert after["thune"][0] == pytest.approx(0.02), (
+        f"the basis was the 0.84 junk print, not the oldest priced 0.18: {after}"
+    )
+
+
+def test_a11_never_reaches_past_its_scope() -> None:
+    """Graded (A2's), unwritten-for-a-day (A's), closed and DataGolf rows are
+    not A11's — each keeps what its own owner left, even with a dated basis."""
+    obs = [(20, 0.40), (1, 0.60)]
+    ids = asyncio.run(
+        _reset_and_seed(
+            [
+                ("graded", "open", 1, 0.02, 0.02, "api_settlement", 0.62, obs),
+                ("stale", "open", 30, 0.02, 0.02, None, 0.62, [(20, 0.40)]),
+                ("closed", "closed", 1, 0.02, 0.02, None, 0.62, obs),
+                ("golf", "open", 1, 0.02, 0.02, None, 0.62, obs),
+            ]
+        )
+    )
+    asyncio.run(_set_market_source(ids["golf"][0], "datagolf"))
+    _run_with_reanchor()
+    after = asyncio.run(_read(ids))
+    assert after["graded"][0] is None, after      # A2 retired it; A11 left it
+    assert after["stale"][0] is None, after       # A retired it; A11 left it
+    assert after["closed"][0] == pytest.approx(0.02), after
+    assert after["golf"][0] == pytest.approx(0.02), (
+        f"A11 reinterpreted a DataGolf per-write delta (#10248's arm): {after}"
+    )
+
+
+def test_the_column_and_the_bank_agree_on_the_move() -> None:
+    """One basis, two carriers: `current - change` IS the banked basis."""
+    ids = asyncio.run(
+        _reset_and_seed(
+            [("rose", "open", 1, 0.02, None, None, 0.62, [(20, 0.40), (1, 0.60)])]
+        )
+    )
+    _run_with_reanchor()
+    change = asyncio.run(_read(ids))["rose"][0]
+    cell = asyncio.run(_read_bank(ids))["rose"]
+    assert cell is not None, "A8 did not bank a market A11 just gave a +22 claim"
+    assert 0.62 - change == pytest.approx(float(cell[0])), (change, cell)
+
+
+def test_a11_is_bounded_and_corrects_the_biggest_lie_first() -> None:
+    ids = asyncio.run(
+        _reset_and_seed(
+            [
+                ("small", "open", 1, 0.02, None, None, 0.45, [(20, 0.40), (1, 0.43)]),
+                ("large", "open", 1, 0.02, None, None, 0.62, [(20, 0.30), (1, 0.60)]),
+            ]
+        )
+    )
+    result = _run_task(reanchor_batch=1)
+    after = asyncio.run(_read(ids))
+    assert result["reanchored"] == 1 and result["reanchor_drained"] is False, result
+    assert after["large"][0] == pytest.approx(0.32), after
+    assert after["small"][0] == pytest.approx(0.02), after
+    assert asyncio.run(_identity_holds()) == []
+
+
+def test_a11_skips_a_quote_locked_row_and_restates_it_next_run() -> None:
+    ids = asyncio.run(
+        _reset_and_seed(
+            [("held", "open", 1, 0.02, 0.02, None, 0.62, [(20, 0.40), (1, 0.60)])]
+        )
+    )
+    holder = _hold_row_lock("futures_outcomes", ids["held"][1])
+    try:
+        _run_with_reanchor()
+        during = asyncio.run(_read(ids))
+    finally:
+        holder.rollback()
+        holder.close()
+    assert during["held"] == (pytest.approx(0.02), pytest.approx(0.02)), during
+
+    _run_with_reanchor()
+    assert asyncio.run(_read(ids))["held"] == (pytest.approx(0.22), pytest.approx(0.22))
+
+
+def test_a11_composed_with_every_retiring_statement_keeps_the_identity() -> None:
+    """All statements on, one book: each class lands where #2408 says, the
+    honest control keeps its number, and the pooled-movers identity holds."""
+    ids = asyncio.run(
+        _reset_and_seed(
+            [
+                # honest: per-write already equals the dated move — byte-for-byte
+                ("honest", "open", 1, 0.20, None, None, 0.60, [(20, 0.40), (1, 0.60)]),
+                # A4's specimen shape: claims -0.74 on a 5-10% day; dated +0.02
+                ("overstated", "open", 1, -0.74, None, None, 0.07,
+                 [(20, 0.05), (10, 0.10), (1, 0.07)]),
+                # A3's: implied prior -0.72; dated +0.03
+                ("impossible", "open", 1, 0.80, None, None, 0.08, [(20, 0.05), (1, 0.08)]),
+                # A7's: claims down, dated up
+                ("contradicted", "open", 1, -0.10, None, None, 0.50,
+                 [(23, 0.40), (1, 0.60)]),
+                ("graded", "open", 1, 0.30, None, "api_settlement", 0.60, [(20, 0.30)]),
+                ("stale", "open", 30, 0.30, None, None, 0.60),
+            ]
+        )
+    )
+    _run_with_reanchor()
+    after = asyncio.run(_read(ids))
+    assert after["honest"][0] == pytest.approx(0.20), after
+    assert after["overstated"][0] == pytest.approx(0.02), after
+    assert after["impossible"][0] == pytest.approx(0.03), after
+    assert after["contradicted"][0] == pytest.approx(0.10), after
+    assert after["graded"][0] is None and after["stale"][0] is None, after
+    assert asyncio.run(_identity_holds()) == []
