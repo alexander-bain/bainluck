@@ -90,6 +90,7 @@
     "futures_outcomes grade schema parity (real Postgres)",
     "Odds-enrichment equivalence (real Postgres)",
     "Bookmaker-count equivalence (real Postgres)",
+    "#2316 related-futures name match: one lowercase per row (real Postgres)",
     "#6757 a no-result marker cannot protect an unsupported price (real Postgres)",
     "#7021 twin drain candidate SQL folds punctuation (real Postgres)",
     "#5789 the #5621 repair cannot select a real game (real Postgres)",
