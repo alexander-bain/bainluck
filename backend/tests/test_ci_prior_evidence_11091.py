@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import copy
+import base64
 import importlib.util
 import io
 import json
 from pathlib import Path
 import subprocess
 import sys
+from types import SimpleNamespace
 import zipfile
 
 import pytest
@@ -132,6 +134,69 @@ class FakeAPI:
             provenance,
         )
         self.rows = [copy.deepcopy(run)]
+        self.security_run = {
+            **copy.deepcopy(run),
+            "id": 110,
+            "path": evidence.CODEQL_WORKFLOW,
+            "repository": {"id": 12, "full_name": "owner/repo"},
+        }
+        self.rows.append(copy.deepcopy(self.security_run))
+        self.security_jobs = [
+            {
+                **success(f"Analyze ({language})"),
+                "run_attempt": 1,
+                "steps": [
+                    {
+                        **success(name),
+                        "started_at": "2026-10-15T22:30:00Z",
+                        "completed_at": "2026-10-15T22:59:00Z",
+                    }
+                    for name in ("Perform CodeQL Analysis", *SECURITY_STEPS)
+                ],
+            }
+            for language in evidence.SECURITY_LANGUAGES
+        ]
+        self.security_artifacts = [
+            {"id": 900 + i, "name": f"codeql-security-1-{language}", "expired": False}
+            for i, language in enumerate(evidence.SECURITY_LANGUAGES)
+        ]
+        self.security_receipts = {
+            language: {
+                "schema": 1,
+                "type": "codeql_security",
+                "job": "analyze",
+                "role": "compose",
+                "repository": "owner/repo",
+                "repository_id": 12,
+                "head": HEAD,
+                "tree": TREE,
+                "base": BASE,
+                "event": "push",
+                "ref": f"refs/heads/{BRANCH}",
+                "run_id": 110,
+                "attempt": 1,
+                "language": language,
+                "category": "/language:" + language,
+                "analysis_key": evidence.CODEQL_ANALYSIS_KEY,
+                "environment": {"language": language},
+                "analysis_id": 800 + i,
+                "sarif_id": f"00000000-0000-0000-0000-{i+1:012d}",
+                "results_count": 3,
+                "rules_count": 3,
+                "qualified": True,
+                "qualification": "PASS",
+                "delta": {"new_alert_ids": [], "new_qualifying_ids": []},
+                "baseline": {
+                    "head": BASE,
+                    "run_id": 90,
+                    "attempt": 1,
+                    "analysis_id": 700 + i,
+                    "sarif_id": f"00000000-0000-0000-0000-{i+3:012d}",
+                    "selection": "legacy-window",
+                },
+            }
+            for i, language in enumerate(evidence.SECURITY_LANGUAGES)
+        }
         self.artifacts = [
             {
                 "id": 700 + i,
@@ -154,6 +219,8 @@ class FakeAPI:
         self.reads = 0
 
     def get(self, path):
+        if path == "actions/runs/110":
+            return copy.deepcopy(self.security_run)
         if path == "actions/runs/200":
             return {
                 "created_at": "2026-10-15T23:01:00Z",
@@ -175,6 +242,8 @@ class FakeAPI:
         raise AssertionError(path)
 
     def pages(self, path, key):
+        if path.startswith("actions/runs/110/"):
+            return self.security_jobs if key == "jobs" else self.security_artifacts
         if key == "workflow_runs":
             return self.rows
         if key == "jobs":
@@ -187,6 +256,14 @@ class FakeAPI:
 
     def raw(self, path, limit):
         artifact_id = int(path.split("/")[-2])
+        if artifact_id in (900, 901):
+            language = evidence.SECURITY_LANGUAGES[artifact_id - 900]
+            buffer = io.BytesIO()
+            with zipfile.ZipFile(buffer, "w") as archive:
+                archive.writestr(
+                    "codeql-security.json", json.dumps(self.security_receipts[language])
+                )
+            return buffer.getvalue()
         identity = self.identities[artifact_id]
         proof = {
             **self.provenance,
@@ -317,9 +394,11 @@ def test_uncertain_partial_or_refused_evidence_never_reuses(mutation):
     elif mutation == "security_failure":
         api.checks[0]["conclusion"] = "failure"
     elif mutation == "missing_security":
-        api.checks.pop(0)
+        api.checks.pop(
+            1
+        )  # Official Analyze stays mandatory; PR-only summary may be absent.
     elif mutation == "foreign_security_app":
-        api.checks[0]["app"]["id"] = 999
+        api.checks[1]["app"]["id"] = 999
     elif mutation == "unfinished_compose_security":
         api.checks[0]["status"] = "in_progress"
     else:
@@ -559,3 +638,1066 @@ def test_new_master_execution_units_require_their_own_complete_proof(
         step["conclusion"] = "skipped"
     with pytest.raises(ValueError, match="unpaid executing step"):
         decide(api)
+
+
+SECURITY_STEPS = (
+    "Record CodeQL checkout provenance",
+    "Qualify compose security or record master baseline",
+    "Publish CodeQL security receipt",
+)
+SECURITY_CONDITION = (
+    "github.event_name == 'push' && (github.ref == 'refs/heads/master' || "
+    "startsWith(github.ref, 'refs/heads/integrator/compose-'))"
+)
+
+
+def test_push_security_preserves_original_pr_and_scheduled_analysis_behavior():
+    """No new producer runs on PR/schedule; all original scanner inputs survive."""
+    original = yaml.safe_load(
+        subprocess.check_output(
+            [
+                "git",
+                "-C",
+                str(ROOT),
+                "show",
+                "6fe7d197f4d6289282461585e1adb71057b7fd38:.github/workflows/codeql.yml",
+            ],
+            text=True,
+        )
+    )
+    current = yaml.safe_load((ROOT / ".github/workflows/codeql.yml").read_text())
+    old_job, new_job = original["jobs"]["analyze"], current["jobs"]["analyze"]
+    assert original.get("on", original.get(True)) == current.get(
+        "on", current.get(True)
+    )
+    for key in ("name", "runs-on", "permissions", "strategy"):
+        assert old_job[key] == new_job[key]
+    kept = [s for s in new_job["steps"] if s["name"] not in SECURITY_STEPS]
+    assert len(kept) == len(old_job["steps"])
+    for old, new in zip(old_job["steps"], kept):
+        new = copy.deepcopy(new)
+        if old["name"] == "Checkout":
+            checkout_options = new.pop("with")
+            assert checkout_options == {
+                "fetch-depth": "${{ github.event_name == 'push' && '0' || '1' }}"
+            }
+        if old["name"] == "Perform CodeQL Analysis":
+            analysis_step_id = new.pop("id")
+            assert analysis_step_id == "codeql_analysis"
+        assert new == old
+    assert all(
+        s["if"] == SECURITY_CONDITION
+        for s in new_job["steps"]
+        if s["name"] in SECURITY_STEPS
+    )
+
+
+def test_security_qualification_and_receipt_publish_follow_paid_analysis():
+    steps = yaml.safe_load((ROOT / ".github/workflows/codeql.yml").read_text())["jobs"][
+        "analyze"
+    ]["steps"]
+    names = [s["name"] for s in steps]
+    assert names.index(SECURITY_STEPS[0]) == names.index("Checkout") + 1
+    assert names.index(SECURITY_STEPS[1]) == names.index("Perform CodeQL Analysis") + 1
+    assert names.index(SECURITY_STEPS[2]) == names.index(SECURITY_STEPS[1]) + 1
+    qualifier = steps[names.index(SECURITY_STEPS[1])]
+    assert (
+        qualifier["env"]["SECURITY_SARIF_ID"]
+        == "${{ steps.codeql_analysis.outputs.sarif-id }}"
+    )
+    assert "${{" not in qualifier["run"]
+    assert '--sarif-id "$SECURITY_SARIF_ID"' in qualifier["run"]
+    publish = steps[names.index(SECURITY_STEPS[2])]
+    assert publish["with"]["if-no-files-found"] == "error"
+    assert (
+        publish["with"]["name"]
+        == "codeql-security-${{ github.run_attempt }}-${{ matrix.language }}"
+    )
+    assert publish["with"]["path"] == "codeql-security.json"
+
+
+ANALYSES_PATH = (
+    "code-scanning/analyses?ref=refs%2Fheads%2Fmaster&sort=created&direction=desc"
+)
+
+
+def array_api(monkeypatch, pages):
+    api = evidence.API("owner/repo", "offline-test-token")
+    calls = []
+
+    def response(path, *args):
+        calls.append(path)
+        index = len(calls) - 1
+        assert index < len(pages), "unexpected extra pagination request"
+        rows, headers = pages[index]
+        return json.dumps(rows).encode(), headers
+
+    monkeypatch.setattr(api, "_response", response)
+    return api, calls
+
+
+def analysis_row(identity, created="2026-10-16T05:30:00Z"):
+    return {"id": identity, "created_at": created}
+
+
+def next_analysis_link(page):
+    return (
+        "<https://api.github.com/repos/owner/repo/"
+        + ANALYSES_PATH
+        + f'&per_page=100&page={page}>; rel="next"'
+    )
+
+
+def test_bootstrap_consumes_timestamp_ties_until_strictly_older_watermark(monkeypatch):
+    tie = "2026-10-16T05:30:00Z"
+    api, calls = array_api(
+        monkeypatch,
+        [
+            ([analysis_row(1, tie)], {"Link": next_analysis_link(2)}),
+            ([analysis_row(2, tie)], {"Link": next_analysis_link(3)}),
+            (
+                [analysis_row(3, "2026-10-16T05:29:59Z")],
+                {"Link": next_analysis_link(4)},
+            ),
+        ],
+    )
+    assert [r["id"] for r in api.array_pages(ANALYSES_PATH, older_than=tie)] == [
+        1,
+        2,
+        3,
+    ]
+    assert len(calls) == 3
+
+
+@pytest.mark.parametrize(
+    "bound,linked,accepted", [(12, 12, True), (12, 13, False), (None, 12, False)]
+)
+def test_numeric_github_pagination_route_requires_authenticated_exact_repository(
+    monkeypatch, bound, linked, accepted
+):
+    link = next_analysis_link(2).replace(
+        "/repos/owner/repo/", f"/repositories/{linked}/"
+    )
+    api, calls = array_api(
+        monkeypatch, [([analysis_row(1)], {"Link": link}), ([analysis_row(2)], {})]
+    )
+    if bound is not None:
+        api.bind_repository({"id": bound, "full_name": "owner/repo"})
+    if accepted:
+        assert len(api.array_pages(ANALYSES_PATH)) == 2
+        assert all(path.startswith("code-scanning/analyses?") for path in calls)
+    else:
+        with pytest.raises(ValueError, match="untrusted or changed pagination link"):
+            api.array_pages(ANALYSES_PATH)
+
+
+@pytest.mark.parametrize(
+    "mutant",
+    [
+        "different-host",
+        "different-path",
+        "changed-ref",
+        "repeated-page",
+        "duplicate-next",
+        "malformed-link",
+        "duplicate-id",
+        "ascending-time",
+        "empty-successor",
+        "watermark-unreachable",
+    ],
+)
+def test_analysis_pagination_mutants_cannot_claim_complete_clean_history(
+    monkeypatch, mutant
+):
+    first = ([analysis_row(1)], {"Link": next_analysis_link(2)})
+    pages = [first, ([analysis_row(2, "2026-10-16T05:29:59Z")], {})]
+    if mutant == "different-host":
+        first[1]["Link"] = next_analysis_link(2).replace(
+            "api.github.com", "example.invalid"
+        )
+    elif mutant == "different-path":
+        first[1]["Link"] = next_analysis_link(2).replace("owner/repo/", "other/repo/")
+    elif mutant == "changed-ref":
+        first[1]["Link"] = next_analysis_link(2).replace("master", "feature")
+    elif mutant == "repeated-page":
+        first[1]["Link"] = next_analysis_link(1)
+    elif mutant == "duplicate-next":
+        first[1]["Link"] += ", " + next_analysis_link(2)
+    elif mutant == "malformed-link":
+        first[1]["Link"] = next_analysis_link(2).replace('rel="next"', "rel=next")
+    elif mutant == "duplicate-id":
+        pages[1][0][0]["id"] = 1
+    elif mutant == "ascending-time":
+        pages[1][0][0]["created_at"] = "2026-10-16T05:31:00Z"
+    elif mutant == "empty-successor":
+        pages[0] = ([], first[1])
+    elif mutant == "watermark-unreachable":
+        pages = [
+            ([analysis_row(i)], {"Link": next_analysis_link(i + 1)})
+            for i in range(1, 21)
+        ]
+    api, _ = array_api(monkeypatch, pages)
+    with pytest.raises(ValueError):
+        api.array_pages(ANALYSES_PATH, older_than="2026-10-16T05:30:00Z")
+
+
+def test_sarif_larger_byte_bound_is_endpoint_specific(monkeypatch):
+    api = evidence.API("owner/repo", "offline-test-token")
+    calls = []
+
+    def response(path, limit=2_000_000, accept="application/vnd.github+json"):
+        calls.append((path, limit, accept))
+        return b"{}", {}
+
+    monkeypatch.setattr(api, "_response", response)
+    api.sarif("code-scanning/analyses/123")
+    api.get("actions/runs/123")
+    assert evidence.SARIF_MAX_BYTES >= 2 * 3_540_000
+    assert calls == [
+        (
+            "code-scanning/analyses/123",
+            evidence.SARIF_MAX_BYTES,
+            "application/sarif+json",
+        ),
+        ("actions/runs/123", 2_000_000, "application/vnd.github+json"),
+    ]
+    with pytest.raises(ValueError):
+        api.sarif("actions/runs/123")
+
+
+@pytest.mark.parametrize("endpoint", ["sarif", "ordinary"])
+def test_oversized_evidence_response_refuses_instead_of_truncating(endpoint):
+    api = evidence.API("owner/repo", "offline-test-token")
+
+    class OversizeResponse:
+        status = 200
+        headers = {}
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def read(self, limit):
+            return b" " * limit
+
+    api.opener = SimpleNamespace(open=lambda request, timeout: OversizeResponse())
+    with pytest.raises(ValueError, match="oversize evidence response"):
+        if endpoint == "sarif":
+            api.sarif("code-scanning/analyses/123")
+        else:
+            api.raw("actions/runs/123")
+
+
+def security_snapshot_fixture():
+    metadata = {
+        "commit_sha": HEAD,
+        "ref": f"refs/heads/{BRANCH}",
+        "tool": {"name": "CodeQL", "version": "2.27.2"},
+        "category": "/language:python",
+        "rules_count": 3,
+        "results_count": 3,
+    }
+    driver = {
+        "name": "CodeQL",
+        "semanticVersion": "2.27.2",
+        "rules": [
+            {"id": "style", "defaultConfiguration": {"level": "warning"}},
+        ],
+    }
+    extension = {
+        "name": "python-queries",
+        "rules": [
+            {
+                "id": "medium",
+                "properties": {"security-severity": "4.0", "tags": ["security"]},
+            },
+            {"id": "error", "defaultConfiguration": {"level": "error"}},
+        ],
+    }
+    results = []
+    for aid, rule, index, component in (
+        (11, "medium", 0, 0),
+        (12, "error", 1, 0),
+        (13, "style", 0, None),
+    ):
+        reference = {"id": rule, "index": index}
+        if component is not None:
+            reference["toolComponent"] = {"index": component}
+        results.append(
+            {
+                "ruleId": rule,
+                "rule": reference,
+                "properties": {
+                    "github/alertNumber": aid,
+                    "github/alertUrl": f"https://api.github.com/repos/owner/repo/code-scanning/alerts/{aid}",
+                },
+            }
+        )
+    return {
+        "version": "2.1.0",
+        "runs": [
+            {
+                "tool": {"driver": driver, "extensions": [extension]},
+                "automationDetails": {"id": "/language:python/"},
+                "versionControlProvenance": [
+                    {
+                        "revisionId": HEAD,
+                        "branch": metadata["ref"],
+                        "repositoryUri": "https://github.com/owner/repo",
+                    }
+                ],
+                "results": results,
+            }
+        ],
+    }, metadata
+
+
+def parse_security(sarif, metadata):
+    return evidence.parse_security_snapshot(sarif, metadata, "owner/repo")
+
+
+def test_inherited_security_and_error_findings_are_retained_without_being_called_new():
+    sarif, metadata = security_snapshot_fixture()
+    snapshot = parse_security(sarif, metadata)
+    assert snapshot["qualifying_ids"] == [11, 12]
+    assert evidence.compare_security_snapshots(snapshot, copy.deepcopy(snapshot)) == {
+        "new_alert_ids": [],
+        "new_qualifying_ids": [],
+    }
+
+
+@pytest.mark.parametrize("mutant", ["new-medium", "new-error", "reintroduced-medium"])
+def test_new_or_reintroduced_native_qualifying_alert_fails_before_master_push(mutant):
+    sarif, metadata = security_snapshot_fixture()
+    if mutant == "reintroduced-medium":
+        candidate = parse_security(sarif, metadata)
+        sarif["runs"][0]["results"].pop(0)
+        metadata["results_count"] -= 1
+        with pytest.raises(evidence.NewFinding):
+            evidence.compare_security_snapshots(
+                parse_security(sarif, metadata), candidate
+            )
+        return
+    original = parse_security(sarif, metadata)
+    candidate = copy.deepcopy(sarif)
+    index = 1 if mutant == "new-error" else 0
+    candidate["runs"][0]["results"][index]["properties"]["github/alertNumber"] = 99
+    candidate["runs"][0]["results"][index]["properties"][
+        "github/alertUrl"
+    ] = "https://api.github.com/repos/owner/repo/code-scanning/alerts/99"
+    # An old global ID absent from this exact baseline is deliberately indistinguishable
+    # from a new ID: both are newly appearing relative to the admitted source.
+    with pytest.raises(evidence.NewFinding):
+        evidence.compare_security_snapshots(
+            original, parse_security(candidate, metadata)
+        )
+
+
+def test_new_nonqualifying_note_is_not_mislabeled_as_security_failure():
+    sarif, metadata = security_snapshot_fixture()
+    base = parse_security(sarif, metadata)
+    result = copy.deepcopy(sarif["runs"][0]["results"][2])
+    result["properties"] = {"github/alertNumber": 99}
+    sarif["runs"][0]["results"].append(result)
+    metadata["results_count"] += 1
+    assert evidence.compare_security_snapshots(base, parse_security(sarif, metadata))[
+        "new_alert_ids"
+    ] == [99]
+
+
+@pytest.mark.parametrize(
+    "mutant",
+    [
+        "missing-native-id",
+        "duplicate-native-id",
+        "foreign-alert-url",
+        "unknown-rule",
+        "wrong-extension-index",
+        "wrong-rule-index",
+        "missing-results",
+        "missing-rules",
+        "wrong-revision",
+        "wrong-ref",
+        "wrong-repository",
+        "wrong-category",
+        "wrong-version",
+        "nonfinite-score",
+        "invalid-score-type",
+        "missing-security-score",
+        "unknown-level",
+        "conflicting-legacy-rule-index",
+    ],
+)
+def test_incomplete_or_ambiguous_sarif_cannot_qualify_security(mutant):
+    sarif, metadata = security_snapshot_fixture()
+    run = sarif["runs"][0]
+    result = run["results"][0]
+    if mutant == "missing-native-id":
+        del result["properties"]["github/alertNumber"]
+    elif mutant == "duplicate-native-id":
+        result["properties"]["github/alertNumber"] = 12
+    elif mutant == "foreign-alert-url":
+        result["properties"]["github/alertUrl"] = "https://example.invalid/11"
+    elif mutant == "unknown-rule":
+        result["ruleId"] = "missing"
+    elif mutant == "wrong-extension-index":
+        result["rule"]["toolComponent"]["index"] = 5
+    elif mutant == "wrong-rule-index":
+        result["rule"]["index"] = 1
+    elif mutant == "missing-results":
+        run["results"].pop()
+    elif mutant == "missing-rules":
+        run["tool"]["extensions"][0]["rules"].pop()
+    elif mutant == "wrong-revision":
+        run["versionControlProvenance"][0]["revisionId"] = BASE
+    elif mutant == "wrong-ref":
+        run["versionControlProvenance"][0]["branch"] = "refs/heads/master"
+    elif mutant == "wrong-repository":
+        run["versionControlProvenance"][0][
+            "repositoryUri"
+        ] = "https://github.com/other/repo"
+    elif mutant == "wrong-category":
+        run["automationDetails"]["id"] = "/language:javascript/"
+    elif mutant == "wrong-version":
+        sarif["version"] = "2.0.0"
+    elif mutant == "nonfinite-score":
+        run["tool"]["extensions"][0]["rules"][0]["properties"][
+            "security-severity"
+        ] = "nan"
+    elif mutant == "invalid-score-type":
+        run["tool"]["extensions"][0]["rules"][0]["properties"][
+            "security-severity"
+        ] = True
+    elif mutant == "missing-security-score":
+        del run["tool"]["extensions"][0]["rules"][0]["properties"]["security-severity"]
+    elif mutant == "unknown-level":
+        result["level"] = "unknown"
+    elif mutant == "conflicting-legacy-rule-index":
+        result["ruleIndex"] = 99
+    with pytest.raises((ValueError, KeyError)):
+        parse_security(sarif, metadata)
+
+
+@pytest.mark.parametrize(
+    "mutant", ["tool-change", "query-change", "inherited-classification-change"]
+)
+def test_changed_security_profile_is_unknown_not_a_borrowed_clean_baseline(mutant):
+    sarif, metadata = security_snapshot_fixture()
+    base = parse_security(sarif, metadata)
+    sarif, metadata = copy.deepcopy(sarif), copy.deepcopy(metadata)
+    if mutant == "tool-change":
+        sarif["runs"][0]["tool"]["driver"]["semanticVersion"] = "2.28.0"
+        metadata["tool"]["version"] = "2.28.0"
+    elif mutant == "query-change":
+        sarif["runs"][0]["tool"]["extensions"][0]["rules"][0]["properties"][
+            "security-severity"
+        ] = "5.0"
+    else:
+        sarif["runs"][0]["results"][0]["level"] = "error"
+    with pytest.raises(ValueError):
+        evidence.compare_security_snapshots(base, parse_security(sarif, metadata))
+
+
+def test_real_push_security_needs_no_pr_only_summary_check():
+    api = fixture()
+    api.checks = [c for c in api.checks if c["name"] != "CodeQL"]
+    assert decide(api)["reuse"] == "true"
+
+
+@pytest.mark.parametrize(
+    "mutant",
+    [
+        "missing-language",
+        "expired-receipt",
+        "duplicate-receipt",
+        "old-artifact-attempt",
+        "receipt-head",
+        "receipt-tree",
+        "receipt-base",
+        "receipt-run",
+        "receipt-attempt",
+        "receipt-language",
+        "receipt-repository",
+        "receipt-upload",
+        "receipt-baseline-head",
+        "receipt-unqualified",
+        "receipt-has-new-finding",
+        "source-cancelled",
+        "source-running",
+        "source-attempt-moved",
+        "source-completed-after-master-push",
+        "partial-language-job",
+        "skipped-qualifier",
+        "missing-publish",
+    ],
+)
+def test_unpaid_security_receipt_or_attempt_cannot_borrow_complete_test_green(mutant):
+    api = fixture()
+    receipt = api.security_receipts["python"]
+    if mutant == "missing-language":
+        api.security_artifacts.pop()
+    elif mutant == "expired-receipt":
+        api.security_artifacts[0]["expired"] = True
+    elif mutant == "duplicate-receipt":
+        api.security_artifacts.append(copy.deepcopy(api.security_artifacts[0]))
+    elif mutant == "old-artifact-attempt":
+        api.security_artifacts[0]["name"] = "codeql-security-0-python"
+    elif mutant == "receipt-head":
+        receipt["head"] = BASE
+    elif mutant == "receipt-tree":
+        receipt["tree"] = BASE
+    elif mutant == "receipt-base":
+        receipt["base"] = HEAD
+    elif mutant == "receipt-run":
+        receipt["run_id"] = 111
+    elif mutant == "receipt-attempt":
+        receipt["attempt"] = 2
+    elif mutant == "receipt-language":
+        receipt["language"] = "javascript-typescript"
+    elif mutant == "receipt-repository":
+        receipt["repository"] = "other/repo"
+    elif mutant == "receipt-upload":
+        receipt["sarif_id"] = "unknown"
+    elif mutant == "receipt-baseline-head":
+        receipt["baseline"]["head"] = HEAD
+    elif mutant == "receipt-unqualified":
+        receipt["qualified"] = False
+    elif mutant == "receipt-has-new-finding":
+        receipt["delta"]["new_qualifying_ids"] = [99]
+    elif mutant == "source-cancelled":
+        api.security_run["conclusion"] = "cancelled"
+    elif mutant == "source-running":
+        api.security_run["status"] = "in_progress"
+    elif mutant == "source-attempt-moved":
+        api.security_run["run_attempt"] = 2
+    elif mutant == "source-completed-after-master-push":
+        api.security_run["updated_at"] = "2026-10-15T23:02:00Z"
+    elif mutant == "partial-language-job":
+        api.security_jobs.pop()
+    elif mutant == "skipped-qualifier":
+        next(
+            s for s in api.security_jobs[0]["steps"] if s["name"] == SECURITY_STEPS[1]
+        )["conclusion"] = "skipped"
+    elif mutant == "missing-publish":
+        api.security_jobs[0]["steps"] = [
+            s for s in api.security_jobs[0]["steps"] if s["name"] != SECURITY_STEPS[2]
+        ]
+    with pytest.raises((ValueError, KeyError)):
+        decide(api)
+
+
+@pytest.mark.parametrize(
+    "role,outcome",
+    [
+        ("compose", "unknown"),
+        ("master", "unknown"),
+        ("compose", "new-finding"),
+    ],
+)
+def test_security_cli_failure_is_visible_nonzero_and_removes_stale_pass(
+    monkeypatch, tmp_path, capsys, role, outcome
+):
+    proof = tmp_path / "provenance.json"
+    proof.write_text("{}")
+    output = tmp_path / "codeql-security.json"
+    output.write_text('{"qualified":true}')
+    monkeypatch.setenv(
+        "GITHUB_REF",
+        "refs/heads/master" if role == "master" else f"refs/heads/{BRANCH}",
+    )
+    monkeypatch.setenv("GITHUB_RUN_ID", "110")
+    monkeypatch.setenv("GITHUB_REPOSITORY", "owner/repo")
+    monkeypatch.setenv("GH_TOKEN", "offline-test-token")
+    monkeypatch.setattr(evidence, "API", lambda *args: object())
+
+    def refuse(*args):
+        raise (
+            evidence.NewFinding("99")
+            if outcome == "new-finding"
+            else ValueError("incomplete")
+        )
+
+    monkeypatch.setattr(evidence, "qualify_security", refuse)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            str(SCRIPT),
+            "--security-qualify",
+            str(proof),
+            "--security-output",
+            str(output),
+            "--sarif-id",
+            "00000000-0000-0000-0000-000000000001",
+            "--language",
+            "python",
+        ],
+    )
+    with pytest.raises(SystemExit) as result:
+        evidence.main()
+    assert result.value.code == 1
+    assert not output.exists()
+    text = capsys.readouterr().out
+    assert (
+        "SECURITY NEW-FINDING" in text
+        if outcome == "new-finding"
+        else "SECURITY EVIDENCE INCOMPLETE" in text
+    )
+    if outcome == "unknown":
+        assert "fresh full attempt" in text
+        assert "Re-run ALL jobs" in text
+        assert "historical failed checks still force full master CI" in text
+        assert "Never re-stamp the same tree" in text
+        assert "UNKNOWN again, do not land" in text
+        assert "reviewed fix or revert" in text
+        assert f"exact {role} CodeQL run 110" in text
+        assert (
+            "legacy bootstrap" in text
+            if role == "master"
+            else "full test run does not clear" in text
+        )
+    else:
+        assert "new exact candidate" in text
+    assert "offline-test-token" not in text
+
+
+@pytest.mark.parametrize(
+    "mutant",
+    [
+        "wrong-upload",
+        "wrong-head",
+        "wrong-ref",
+        "wrong-key",
+        "wrong-category",
+        "wrong-environment",
+        "wrong-tool",
+        "processing-error",
+        "processing-warning",
+        "missing-rules",
+        "negative-results",
+        "invalid-created-time",
+    ],
+)
+def test_unqualified_analysis_identity_or_processing_never_pays_security(mutant):
+    _, metadata = security_snapshot_fixture()
+    upload = "00000000-0000-0000-0000-000000000001"
+    metadata.update(
+        {
+            "id": 123,
+            "sarif_id": upload,
+            "analysis_key": evidence.CODEQL_ANALYSIS_KEY,
+            "environment": '{"language":"python"}',
+            "error": "",
+            "warning": "",
+            "created_at": "2026-10-16T05:30:00Z",
+        }
+    )
+    if mutant == "wrong-upload":
+        metadata["sarif_id"] = "00000000-0000-0000-0000-000000000002"
+    elif mutant == "wrong-head":
+        metadata["commit_sha"] = BASE
+    elif mutant == "wrong-ref":
+        metadata["ref"] = "refs/heads/master"
+    elif mutant == "wrong-key":
+        metadata["analysis_key"] = ".github/workflows/other.yml:analyze"
+    elif mutant == "wrong-category":
+        metadata["category"] = "/language:other"
+    elif mutant == "wrong-environment":
+        metadata["environment"] = '{"language":"swift"}'
+    elif mutant == "wrong-tool":
+        metadata["tool"]["name"] = "other"
+    elif mutant == "processing-error":
+        metadata["error"] = "incomplete"
+    elif mutant == "processing-warning":
+        metadata["warning"] = "partial extraction"
+    elif mutant == "missing-rules":
+        metadata["rules_count"] = 0
+    elif mutant == "negative-results":
+        metadata["results_count"] = -1
+    elif mutant == "invalid-created-time":
+        metadata["created_at"] = "not-a-time"
+    with pytest.raises(ValueError):
+        evidence._validate_analysis(
+            metadata, HEAD, f"refs/heads/{BRANCH}", "python", sarif_id=upload
+        )
+
+
+@pytest.mark.parametrize(
+    "mutant",
+    ["pull-request", "schedule", "other-branch", "other-job", "other-language"],
+)
+def test_security_provenance_is_exclusive_to_official_master_or_compose_push(
+    monkeypatch, mutant
+):
+    env = {
+        **ENV,
+        "GITHUB_REPOSITORY": "owner/repo",
+        "GITHUB_RUN_ATTEMPT": "1",
+        "GITHUB_JOB": "analyze",
+        "GITHUB_REF": f"refs/heads/{BRANCH}",
+    }
+    language = "python"
+    monkeypatch.setattr(
+        evidence,
+        "git",
+        lambda *args: (
+            TREE
+            if args[-1] == "HEAD^{tree}"
+            else BASE if args[-1] == "origin/master" else HEAD
+        ),
+    )
+    monkeypatch.setattr(
+        evidence.subprocess,
+        "run",
+        lambda *args, **kwargs: SimpleNamespace(returncode=0),
+    )
+    if mutant == "pull-request":
+        env["GITHUB_EVENT_NAME"] = "pull_request"
+    elif mutant == "schedule":
+        env["GITHUB_EVENT_NAME"] = "schedule"
+    elif mutant == "other-branch":
+        env["GITHUB_REF"] = "refs/heads/feature"
+    elif mutant == "other-job":
+        env["GITHUB_JOB"] = "backend-tests"
+    elif mutant == "other-language":
+        language = "swift"
+    with pytest.raises(ValueError):
+        evidence.security_record(env, language)
+
+
+class BaseSecurityAPI:
+    """Complete tiny official run/snapshot specimen; no network or policy stubs."""
+
+    def __init__(self, declared=False):
+        source = fixture()
+        self.run = {
+            **source.security_run,
+            "id": 90,
+            "head_sha": BASE,
+            "head_branch": "master",
+        }
+        self.runs = [copy.deepcopy(self.run)]
+        self.jobs = copy.deepcopy(source.security_jobs)
+        if not declared:
+            for job in self.jobs:
+                job["steps"] = [
+                    s for s in job["steps"] if s["name"] == "Perform CodeQL Analysis"
+                ]
+        text = (
+            (ROOT / ".github/workflows/codeql.yml").read_text()
+            if declared
+            else "name: CodeQL\n"
+        )
+        self.content = {
+            "type": "file",
+            "encoding": "base64",
+            "content": base64.b64encode(text.encode()).decode(),
+        }
+        self.metadata, self.snapshots = {}, {}
+        for index, language in enumerate(evidence.SECURITY_LANGUAGES):
+            sarif, meta = security_snapshot_fixture()
+            meta.update(
+                {
+                    "id": 500 + index,
+                    "sarif_id": f"00000000-0000-0000-0000-{index+1:012d}",
+                    "commit_sha": BASE,
+                    "ref": "refs/heads/master",
+                    "analysis_key": evidence.CODEQL_ANALYSIS_KEY,
+                    "category": "/language:" + language,
+                    "environment": json.dumps({"language": language}),
+                    "error": "",
+                    "warning": "",
+                    "created_at": "2026-10-15T22:45:00Z",
+                }
+            )
+            run = sarif["runs"][0]
+            run["automationDetails"]["id"] = meta["category"]
+            run["versionControlProvenance"][0].update(
+                {"revisionId": BASE, "branch": "refs/heads/master"}
+            )
+            self.metadata[meta["id"]] = meta
+            self.snapshots[meta["id"]] = sarif
+        self.history = list(copy.deepcopy(self.metadata).values())
+        self.array_calls = 0
+        self.reads = 0
+        self.move_after_read = False
+
+    def pages(self, path, key):
+        if key == "workflow_runs":
+            return copy.deepcopy(self.runs)
+        if key == "jobs":
+            return copy.deepcopy(self.jobs)
+        if key == "artifacts":
+            return []
+        raise AssertionError(path)
+
+    def get(self, path):
+        if path.startswith("contents/"):
+            return copy.deepcopy(self.content)
+        if path.startswith("actions/runs/"):
+            self.reads += 1
+            value = copy.deepcopy(self.run)
+            if self.move_after_read and self.reads > 1:
+                value["run_attempt"] += 1
+            return value
+        if path.startswith("code-scanning/analyses/"):
+            return copy.deepcopy(self.metadata[int(path.split("/")[-1])])
+        raise AssertionError(path)
+
+    def array_pages(self, path, *, older_than=None):
+        self.array_calls += 1
+        assert older_than == "2026-10-15T22:30:00Z"
+        return copy.deepcopy(self.history)
+
+    def sarif(self, path):
+        return copy.deepcopy(self.snapshots[int(path.split("/")[-1])])
+
+
+def test_legacy_bootstrap_requires_the_exact_official_base_window_and_both_languages():
+    api = BaseSecurityAPI()
+    selected = evidence.select_base_security(api, BASE, 12, "python")
+    assert selected["selection"] == "legacy-window"
+    assert selected["run"]["id"] == 90
+    assert selected["snapshot"]["qualifying_ids"] == [11, 12]
+    assert api.array_calls == 1
+
+
+@pytest.mark.parametrize(
+    "mutant",
+    [
+        "missing-language",
+        "duplicate-analysis",
+        "outside-step-window",
+        "wrong-analysis-key",
+        "failed-processing",
+        "missing-job",
+        "skipped-analysis",
+        "cancelled-run",
+        "ambiguous-run",
+        "stale-attempt",
+        "attempt-moves-on-reread",
+    ],
+)
+def test_legacy_bootstrap_mutants_never_pay_an_unknown_baseline(mutant):
+    api = BaseSecurityAPI()
+    if mutant == "missing-language":
+        api.history.pop()
+    elif mutant == "duplicate-analysis":
+        api.history.append(copy.deepcopy(api.history[0]))
+    elif mutant == "outside-step-window":
+        api.history[0]["created_at"] = "2026-10-15T23:30:00Z"
+    elif mutant == "wrong-analysis-key":
+        api.history[0]["analysis_key"] = "other:analyze"
+    elif mutant == "failed-processing":
+        api.history[0]["error"] = "incomplete"
+    elif mutant == "missing-job":
+        api.jobs.pop()
+    elif mutant == "skipped-analysis":
+        api.jobs[0]["steps"][0]["conclusion"] = "skipped"
+    elif mutant == "cancelled-run":
+        api.run["conclusion"] = "cancelled"
+    elif mutant == "ambiguous-run":
+        api.runs.append(copy.deepcopy(api.runs[0]))
+    elif mutant == "stale-attempt":
+        api.run["run_attempt"] = 2
+    elif mutant == "attempt-moves-on-reread":
+        api.move_after_read = True
+    with pytest.raises(ValueError):
+        evidence.select_base_security(api, BASE, 12, "python")
+
+
+def test_declared_producer_missing_receipts_never_escapes_into_legacy_bootstrap():
+    api = BaseSecurityAPI(declared=True)
+    with pytest.raises(evidence.SecurityIncomplete) as result:
+        evidence.select_base_security(api, BASE, 12, "python")
+    assert api.array_calls == 0
+    assert "exact master CodeQL run 90" in result.value.recovery
+    assert "fresh full attempt" in result.value.recovery
+
+
+class ComposeSecurityAPI(BaseSecurityAPI):
+    def __init__(self, language="python", attempt=1):
+        super().__init__()
+        self.current = {
+            **self.run,
+            "id": 110,
+            "head_sha": HEAD,
+            "head_branch": BRANCH,
+            "run_attempt": attempt,
+            "status": "in_progress",
+            "conclusion": None,
+        }
+        index = evidence.SECURITY_LANGUAGES.index(language)
+        self.candidate = copy.deepcopy(self.metadata[500 + index])
+        self.candidate.update(
+            {
+                "id": 600 + index,
+                "commit_sha": HEAD,
+                "ref": f"refs/heads/{BRANCH}",
+                "sarif_id": f"00000000-0000-0000-0000-{index+7:012d}",
+            }
+        )
+        self.metadata[600 + index] = self.candidate
+        sarif = copy.deepcopy(self.snapshots[500 + index])
+        sarif["runs"][0]["versionControlProvenance"][0].update(
+            {"revisionId": HEAD, "branch": f"refs/heads/{BRANCH}"}
+        )
+        self.snapshots[600 + index] = sarif
+        self.env = {
+            **ENV,
+            "GITHUB_RUN_ID": "110",
+            "GITHUB_RUN_ATTEMPT": str(attempt),
+            "GITHUB_REF": f"refs/heads/{BRANCH}",
+            "GITHUB_JOB": "analyze",
+            "GITHUB_REPOSITORY": "owner/repo",
+        }
+        self.proof = {
+            **evidence._security_context(self.env, language),
+            "tree": TREE,
+            "base": BASE,
+        }
+        self.language = language
+        self.current_jobs = copy.deepcopy(self.jobs)
+        for job in self.current_jobs:
+            job["run_attempt"] = attempt
+
+    def get(self, path):
+        if path == "actions/runs/110":
+            return copy.deepcopy(self.current)
+        return super().get(path)
+
+    def pages(self, path, key):
+        if path.startswith("actions/runs/110/") and key == "jobs":
+            return copy.deepcopy(self.current_jobs)
+        return super().pages(path, key)
+
+    def array_pages(self, path, *, older_than=None):
+        if "sarif_id=" in path:
+            return [copy.deepcopy(self.candidate)]
+        return super().array_pages(path, older_than=older_than)
+
+    def qualify(self):
+        return evidence.qualify_security(
+            self, self.env, self.proof, self.candidate["sarif_id"], self.language
+        )
+
+
+def test_complete_compose_producer_emits_source_bound_qualified_receipt():
+    api = ComposeSecurityAPI()
+    receipt = api.qualify()
+    assert receipt["qualified"] is True
+    assert receipt["qualification"] == "PASS"
+    assert (
+        receipt["head"] == HEAD and receipt["tree"] == TREE and receipt["base"] == BASE
+    )
+    assert receipt["baseline"]["run_id"] == 90
+    assert receipt["baseline"]["selection"] == "legacy-window"
+
+
+@pytest.mark.parametrize(
+    "mutant",
+    [
+        "wrong-checkout-base",
+        "wrong-checkout-head",
+        "stale-provenance-attempt",
+        "wrong-current-head",
+        "wrong-upload",
+        "new-finding",
+        "upload-outside-current-step",
+        "skipped-current-analysis",
+        "old-current-job-attempt",
+    ],
+)
+def test_producer_context_and_native_findings_cannot_become_passing_receipts(mutant):
+    api = ComposeSecurityAPI()
+    if mutant == "wrong-checkout-base":
+        api.proof["base"] = "unknown"
+    elif mutant == "wrong-checkout-head":
+        api.proof["head"] = BASE
+    elif mutant == "stale-provenance-attempt":
+        api.proof["attempt"] = 2
+    elif mutant == "wrong-current-head":
+        api.current["head_sha"] = BASE
+    elif mutant == "wrong-upload":
+        api.candidate["sarif_id"] = "unknown"
+    elif mutant == "new-finding":
+        result = api.snapshots[600]["runs"][0]["results"][0]
+        result["properties"] = {"github/alertNumber": 99}
+    elif mutant == "upload-outside-current-step":
+        api.candidate["created_at"] = "2026-10-15T22:29:59Z"
+    elif mutant == "skipped-current-analysis":
+        api.current_jobs[0]["steps"][0]["conclusion"] = "skipped"
+    elif mutant == "old-current-job-attempt":
+        api.current_jobs[0]["run_attempt"] = 2
+    with pytest.raises(ValueError):
+        api.qualify()
+
+
+def test_successful_unknown_recovery_still_takes_full_master_tests_on_historical_failure(
+    monkeypatch, tmp_path
+):
+    # Fresh successful security attempt earns receipts, while the conservative
+    # historical-check policy still disallows test reuse for this same head.
+    api = fixture()
+    for language in evidence.SECURITY_LANGUAGES:
+        recovered = ComposeSecurityAPI(language, attempt=2).qualify()
+        api.security_receipts[language] = recovered
+    api.security_run["run_attempt"] = 2
+    api.rows[1]["run_attempt"] = 2
+    for job in api.security_jobs:
+        job["run_attempt"] = 2
+    for artifact in api.security_artifacts:
+        artifact["name"] = artifact["name"].replace("-1-", "-2-")
+    evidence.validate_security_receipts(api, api.rows, HEAD, TREE, BASE, 12, BRANCH)
+    failed = copy.deepcopy(api.checks[1])
+    failed.update({"id": 9999, "conclusion": "failure"})
+    api.checks.append(failed)
+    event = tmp_path / "event.json"
+    event.write_text(json.dumps({"before": BASE}))
+    output = tmp_path / "outputs"
+    for key, value in {
+        **ENV,
+        "GITHUB_REPOSITORY": "owner/repo",
+        "GITHUB_EVENT_PATH": str(event),
+        "GITHUB_OUTPUT": str(output),
+    }.items():
+        monkeypatch.setenv(key, value)
+    monkeypatch.setattr(evidence, "API", lambda *args: api)
+    monkeypatch.setattr(
+        evidence, "git", lambda *args: TREE if args[-1] == "HEAD^{tree}" else HEAD
+    )
+    monkeypatch.setattr(sys, "argv", [str(SCRIPT)])
+    assert evidence.main() is None
+    assert output.read_text() == "reuse=false\n"
+
+
+def test_historical_failed_check_refusal_stays_byte_identical():
+    source = SCRIPT.read_text()
+    assert 'api.pages(f"commits/{head}/check-runs?filter=all", "check_runs")' in source
+    assert (
+        """        require(
+            check["conclusion"] != "failure"
+            and not REFUSAL.search((check.get("output") or {}).get("title") or ""),
+            "security/check refusal",
+        )"""
+        in source
+    )
+
+
+def test_rerunning_only_one_language_cannot_pay_current_security_attempt():
+    producer = ComposeSecurityAPI(attempt=2)
+    producer.current_jobs[1]["run_attempt"] = 1
+    with pytest.raises(ValueError, match="mixed producer attempts"):
+        producer.qualify()
+    consumer = fixture()
+    consumer.security_run["run_attempt"] = 2
+    consumer.rows[1]["run_attempt"] = 2
+    for job in consumer.security_jobs:
+        job["run_attempt"] = 2
+    for artifact in consumer.security_artifacts:
+        artifact["name"] = artifact["name"].replace("-1-", "-2-")
+    consumer.security_receipts["python"]["attempt"] = 2
+    with pytest.raises(ValueError, match="security receipt source/run mismatch"):
+        decide(consumer)
