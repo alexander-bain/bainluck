@@ -147,13 +147,13 @@ describe("CI trap #2: every pull request gets a CI run, whatever its base", () =
     );
   });
 
-  it("push stays master-only, so branch pushes do not double-run alongside their PR", () => {
+  it("push admits only master and dedicated compose branches; lane branches remain PR-only", () => {
     const on = topLevelBlock(readWorkflow(), "on");
     const push = nestedBlock(on, "push");
     assert.notEqual(push, null, "no `push:` key under `on:` in ci.yml.");
     assert.ok(
-      push.some((l) => /^\s+branches:\s*\[\s*master\s*\]/.test(l)),
-      "ci.yml's `push:` trigger is no longer restricted to master. Removing the PULL_REQUEST " +
+      push.some((l) => /^\s+branches:\s*\[master, \'integrator\/compose-\*\*\'\]/.test(l)),
+      "ci.yml's `push:` trigger must be restricted to master and dedicated compose branches. Removing the PULL_REQUEST " +
         "filter is the fix; removing the PUSH filter just runs the whole suite twice for every " +
         "branch that has a PR open."
     );
@@ -339,4 +339,17 @@ describe("CI trap #2, generalized: no PR-reporting workflow filters by base bran
       );
     });
   }
+});
+
+
+describe("compose push evidence cannot release", () => {
+  it("both release jobs remain restricted to master", () => {
+    const workflow = codeOf(readWorkflow());
+    for (const job of ["release-required", "deploy"]) {
+      const start = workflow.indexOf(`  ${job}:`);
+      assert.ok(start >= 0);
+      const body = workflow.slice(start).split(/\n  [a-z][\w-]*:/)[0];
+      assert.match(body, /if:.*github\.ref == 'refs\/heads\/master'.*github\.event_name == 'push'/);
+    }
+  });
 });

@@ -30,13 +30,13 @@ on:
   # Deploy is unaffected. The `deploy` job is separately gated on
   # `github.ref == 'refs/heads/master' && github.event_name == 'push'`, so a PR
   # into any base still cannot release — see the job's own comment. The `push:`
-  # filter below stays master-only so branch pushes do not double-run CI
-  # alongside their own PR.
+  # filter below admits master plus the desk's compose branches only. The desk
+  # uses compose PUSH CI instead of a composition PR; lane PRs are unchanged.
   #
   # Guarded by `frontend/e2e/contract/ciTriggerCoverage.contract.test.js`.
   pull_request:
   push:
-    branches: [master]
+    branches: [master, 'integrator/compose-**']
 
 # SUPERSEDED PULL-REQUEST SHAS STOP HOLDING RUNNERS. NOTHING ELSE CHANGES.
 #
@@ -101,10 +101,21 @@ jobs:
   # `false` and `deploy` was already skipping — the reduced set is a strict
   # subset of the no-release set. That invariant is asserted by
   # `test_a_frontend_scope_always_implies_no_heroku_release`, not left to reading.
+  # #11091 accepts complete compose PUSH evidence for this exact commit only.
+  # Any uncertainty executes the original full path. PR merge-ref credit is forbidden.
   change-scope:
+    permissions:
+      contents: read
+      actions: read
+      checks: read
     runs-on: ubuntu-latest
     outputs:
       scope: ${{ steps.decide.outputs.scope }}
+      reuse: ${{ steps.prior.outputs.reuse }}
+      reuse_run: ${{ steps.prior.outputs.reuse_run }}
+      reuse_attempt: ${{ steps.prior.outputs.reuse_attempt }}
+      reuse_head: ${{ steps.prior.outputs.reuse_head }}
+      reuse_base: ${{ steps.prior.outputs.reuse_base }}
     steps:
       - uses: actions/checkout@v6
         with:
@@ -126,6 +137,9 @@ jobs:
                                    '${{ github.event.pull_request.head.sha }}' 2>/dev/null \
                      || echo '${{ github.event.pull_request.base.sha }}')"
             HEAD='${{ github.event.pull_request.head.sha }}'
+          elif [[ "$GITHUB_REF" == refs/heads/integrator/compose-* ]]; then
+            HEAD='${{ github.sha }}'
+            BASE="$(git merge-base origin/master "$HEAD" || echo '')"
           else
             HEAD='${{ github.sha }}'
             # #7610. NOT `github.event.before` on its own: that is the previous
@@ -146,6 +160,26 @@ jobs:
           esac
           echo "scope=$SCOPE" >> "$GITHUB_OUTPUT"
           echo "change scope: $SCOPE (base=$BASE head=$HEAD)"
+
+      - name: Record compose checkout provenance
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/heads/integrator/compose-')
+        run: python3 .github/scripts/ci-prior-evidence.py --record "$RUNNER_TEMP/ci-provenance.json"
+
+      - name: Publish compose checkout provenance
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/heads/integrator/compose-')
+        uses: actions/upload-artifact@v4
+        with:
+          name: compose-source-provenance-${{ github.run_attempt }}-change-scope
+          path: ${{ runner.temp }}/ci-provenance.json
+          if-no-files-found: error
+          retention-days: 2
+
+      - name: Validate prior exact-commit evidence
+        if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+        id: prior
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 .github/scripts/ci-prior-evidence.py
 
   # Queue 312 — sharded because this job WAS the merge-to-deploy path: 8m23s of a
   # 9m31s run (measured, run 31436687919), with every other job finishing minutes
@@ -189,6 +223,16 @@ jobs:
         working-directory: backend
 
     steps:
+      - name: Reused exact-commit test evidence
+        if: needs.change-scope.outputs.reuse == 'true'
+        working-directory: .
+        env:
+          REUSE_RUN: ${{ needs.change-scope.outputs.reuse_run }}
+          REUSE_ATTEMPT: ${{ needs.change-scope.outputs.reuse_attempt }}
+          REUSE_HEAD: ${{ needs.change-scope.outputs.reuse_head }}
+          REUSE_BASE: ${{ needs.change-scope.outputs.reuse_base }}
+        run: echo "reused run $REUSE_RUN attempt $REUSE_ATTEMPT, tested $REUSE_HEAD, base $REUSE_BASE"
+
       # Says so in the log, so a green leg that did no work never reads as a
       # tested one. Runs from the workspace root: nothing is checked out.
       - name: Frontend-only candidate — this leg runs no tests (#5007)
@@ -212,24 +256,38 @@ jobs:
       # blobs stay on the server and are fetched lazily if something else asks.
       # `fetch-depth: 0` alone would pull the whole 850 MiB on all four shards.
       - uses: actions/checkout@v6
-        if: needs.change-scope.outputs.scope != 'frontend'
+        if: needs.change-scope.outputs.scope != 'frontend' && needs.change-scope.outputs.reuse != 'true'
         with:
           fetch-depth: 0
           filter: blob:none
 
+      - name: Record compose checkout provenance
+        if: needs.change-scope.outputs.scope != 'frontend' && needs.change-scope.outputs.reuse != 'true' && github.event_name == 'push' && startsWith(github.ref, 'refs/heads/integrator/compose-')
+        working-directory: .
+        run: python3 .github/scripts/ci-prior-evidence.py --record "$RUNNER_TEMP/ci-provenance.json" --identity backend-tests-${{ matrix.shard }}
+
+      - name: Publish compose checkout provenance
+        if: needs.change-scope.outputs.scope != 'frontend' && needs.change-scope.outputs.reuse != 'true' && github.event_name == 'push' && startsWith(github.ref, 'refs/heads/integrator/compose-')
+        uses: actions/upload-artifact@v4
+        with:
+          name: compose-source-provenance-${{ github.run_attempt }}-backend-tests-${{ matrix.shard }}
+          path: ${{ runner.temp }}/ci-provenance.json
+          if-no-files-found: error
+          retention-days: 2
+
       - uses: actions/setup-python@v7
-        if: needs.change-scope.outputs.scope != 'frontend'
+        if: needs.change-scope.outputs.scope != 'frontend' && needs.change-scope.outputs.reuse != 'true'
         with:
           python-version: "3.11"
           cache: pip
           cache-dependency-path: backend/requirements.txt
 
       - name: Install dependencies
-        if: needs.change-scope.outputs.scope != 'frontend'
+        if: needs.change-scope.outputs.scope != 'frontend' && needs.change-scope.outputs.reuse != 'true'
         run: pip install -r requirements.txt
 
       - name: Run tests (shard ${{ matrix.shard }}/${{ strategy.job-total }})
-        if: needs.change-scope.outputs.scope != 'frontend'
+        if: needs.change-scope.outputs.scope != 'frontend' && needs.change-scope.outputs.reuse != 'true'
         # `strategy.job-total` rather than a literal 4: the matrix list is then
         # the single place the shard count is written, so growing it to 5 cannot
         # leave a stale divisor here silently running the wrong partition.
@@ -304,18 +362,32 @@ jobs:
         working-directory: backend
 
     steps:
+      - name: Reused exact-commit test evidence
+        if: needs.change-scope.outputs.reuse == 'true'
+        working-directory: .
+        env:
+          REUSE_RUN: ${{ needs.change-scope.outputs.reuse_run }}
+          REUSE_ATTEMPT: ${{ needs.change-scope.outputs.reuse_attempt }}
+          REUSE_HEAD: ${{ needs.change-scope.outputs.reuse_head }}
+          REUSE_BASE: ${{ needs.change-scope.outputs.reuse_base }}
+        run: echo "reused run $REUSE_RUN attempt $REUSE_ATTEMPT, tested $REUSE_HEAD, base $REUSE_BASE"
+
       - uses: actions/checkout@v6
+        if: needs.change-scope.outputs.reuse != 'true'
 
       - uses: actions/setup-python@v7
+        if: needs.change-scope.outputs.reuse != 'true'
         with:
           python-version: "3.11"
           cache: pip
           cache-dependency-path: backend/requirements.txt
 
       - name: Install dependencies
+        if: needs.change-scope.outputs.reuse != 'true'
         run: pip install -r requirements.txt
 
       - name: The shards must cover the whole suite, exactly once each
+        if: needs.change-scope.outputs.reuse != 'true'
         # Keep --of in step with the matrix above. A mismatch is not a
         # correctness hole (the partition is total for any N) but it would
         # report balance for a split nobody runs.
@@ -364,7 +436,7 @@ jobs:
   # target and exits 2 — which it announces as "The comparison did NOT run. Do
   # not read this as a pass." — but only to a log nobody opens on a green run.
   golden-baseline-floor:
-    if: github.event_name == 'pull_request'
+    if: github.event_name == 'pull_request' || (github.event_name == 'push' && startsWith(github.ref, 'refs/heads/integrator/compose-'))
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -375,6 +447,20 @@ jobs:
         with:
           fetch-depth: 0
           filter: blob:none
+
+      - name: Record compose checkout provenance
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/heads/integrator/compose-')
+        working-directory: .
+        run: python3 .github/scripts/ci-prior-evidence.py --record "$RUNNER_TEMP/ci-provenance.json" --identity golden-baseline-floor
+
+      - name: Publish compose checkout provenance
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/heads/integrator/compose-')
+        uses: actions/upload-artifact@v4
+        with:
+          name: compose-source-provenance-${{ github.run_attempt }}-golden-baseline-floor
+          path: ${{ runner.temp }}/ci-provenance.json
+          if-no-files-found: error
+          retention-days: 2
 
       - uses: actions/setup-python@v7
         with:
@@ -462,18 +548,32 @@ jobs:
       DATABASE_URL: postgresql+asyncpg://postgres:postgres@localhost:5432/bl_searchtest
 
     steps:
+      - name: Reused exact-commit test evidence
+        if: needs.change-scope.outputs.reuse == 'true'
+        working-directory: .
+        env:
+          REUSE_RUN: ${{ needs.change-scope.outputs.reuse_run }}
+          REUSE_ATTEMPT: ${{ needs.change-scope.outputs.reuse_attempt }}
+          REUSE_HEAD: ${{ needs.change-scope.outputs.reuse_head }}
+          REUSE_BASE: ${{ needs.change-scope.outputs.reuse_base }}
+        run: echo "reused run $REUSE_RUN attempt $REUSE_ATTEMPT, tested $REUSE_HEAD, base $REUSE_BASE"
+
       - uses: actions/checkout@v6
+        if: needs.change-scope.outputs.reuse != 'true'
 
       - uses: actions/setup-python@v7
+        if: needs.change-scope.outputs.reuse != 'true'
         with:
           python-version: "3.11"
           cache: pip
           cache-dependency-path: backend/requirements.txt
 
       - name: Install dependencies
+        if: needs.change-scope.outputs.reuse != 'true'
         run: pip install -r requirements.txt
 
       - name: Verify the gate is actually armed
+        if: needs.change-scope.outputs.reuse != 'true'
         # A skipped recall gate is indistinguishable from a passing one, which
         # is exactly how criterion 3 stayed "owed" across two cycles. Fail loudly
         # if the DB never came up rather than let the job go green on skips.
@@ -489,7 +589,7 @@ jobs:
       - name: "#10703 shared tail — provision pg_trgm on the fresh database"
         # Search recall supplies this non-table baseline on the prefix runner.
         # The tail's first fixture rebuilds every ORM table before yielding.
-        if: matrix.group == 'shared-tail'
+        if: matrix.group == 'shared-tail' && needs.change-scope.outputs.reuse != 'true'
         run: |
           python - <<'PYPG'
           import asyncio
@@ -517,7 +617,7 @@ jobs:
         # test skips, and a silently-skipped gate reads exactly like a passing
         # one. That is the failure mode this whole job exists to end, so it is
         # not allowed to recur in the job's own plumbing.
-        if: matrix.group == 'shared'
+        if: matrix.group == 'shared' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_search_recall_contract.py \
@@ -547,7 +647,7 @@ jobs:
         # Same skip detection as every gate in this job: pytest exits 0 when
         # each test skips, and a gate that silently did not run reads exactly
         # like one that passed.
-        if: matrix.group == 'shared'
+        if: matrix.group == 'shared' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_search_proven_duplicate_pg.py \
@@ -567,7 +667,7 @@ jobs:
         # UPDATE. A fake session never blocks and
         # returns whatever rowcount it is told, so this cannot be a unit test.
         # Same skip refusal as every gate in this job, plus the exact count.
-        if: matrix.group == 'shared'
+        if: matrix.group == 'shared' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_reconcile_anchor_schedule_member_10305_pg.py \
@@ -590,7 +690,7 @@ jobs:
         # flush that erases every tag still meets the code denylist on the next
         # pass (with a control that re-fills). A fake session can do none of it.
         # Same skip refusal as every gate in this job, plus the exact count.
-        if: matrix.group == 'shared'
+        if: matrix.group == 'shared' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_espn_participant_fill_pg.py \
@@ -633,7 +733,7 @@ jobs:
         # Same skip detection as every gate in this job: pytest exits 0 when
         # each test skips, and a gate that silently did not run reads exactly
         # like one that passed.
-        if: matrix.group == 'shared'
+        if: matrix.group == 'shared' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_typeahead_next_fixture_pg.py \
@@ -649,7 +749,7 @@ jobs:
         # typed text matched markets; the controls (the market closed, `tigerz`)
         # are properties of which rows the route returns, so they need the route
         # and a real database. Same skip detection as above.
-        if: matrix.group == 'shared'
+        if: matrix.group == 'shared' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_search_did_you_mean_withdrawn_8750_pg.py \
@@ -666,7 +766,7 @@ jobs:
         # (`cowboys`, `nfl`, a newer same-city WNBA final, a 40-day-old meeting,
         # `new york`) are properties of which rows the route returns, so they
         # need the route and a real database. Same skip detection as above.
-        if: matrix.group == 'shared'
+        if: matrix.group == 'shared' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_typeahead_matchup_last_meeting_8428_pg.py \
@@ -681,7 +781,7 @@ jobs:
         # ordered the finals ahead of recency and last night's game sat 14th.
         # Settled rows now take no tag boost; upcoming rows keep it (the
         # control). JSONB `@>` + ts_rank_cd through the route need Postgres.
-        if: matrix.group == 'shared'
+        if: matrix.group == 'shared' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_search_settled_recency_pg_8505.py \
@@ -697,7 +797,7 @@ jobs:
         # TEAMS card's leader owns every word, a game whose words split across
         # both sides now sinks below the club's games; a matchup query and a
         # one-word query are the controls. Reads the route's teams statement.
-        if: matrix.group == 'shared'
+        if: matrix.group == 'shared' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_search_split_terms_sink_pg_9044.py \
@@ -713,7 +813,7 @@ jobs:
         # date. A query whose TEAMS card names a club now orders its upcoming
         # games by date; no card keeps the tag tier (the control). The club gate
         # reads the route's teams statement, so it needs the route and Postgres.
-        if: matrix.group == 'shared'
+        if: matrix.group == 'shared' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_search_club_schedule_date_order_pg_8942.py \
@@ -728,7 +828,7 @@ jobs:
         # finals (the TEAMS card's leader, #8738) above that result — page 3.
         # Finished games now order by Eastern day first, the leader within it;
         # the upcoming tier still follows the leader (the control).
-        if: matrix.group == 'shared'
+        if: matrix.group == 'shared' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_search_settled_day_over_lead_club_pg_9040.py \
@@ -745,7 +845,7 @@ jobs:
         # the #8738 leader case (a namesake tomorrow is not "next"), and a
         # namesake with NO Team row (#8697's teamless key sinks it, so it cannot
         # hold the next game's slot; production `chiefs` 2026-09-27 23:20Z).
-        if: matrix.group == 'shared'
+        if: matrix.group == 'shared' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_search_todays_final_behind_next_pg_9211.py \
@@ -764,7 +864,7 @@ jobs:
         # inside two route bodies, so only a real database can observe it. Both
         # screens, a strawman (slot map emptied -> nothing) and two controls.
         # Three refusals: a skip, a zero count, and a short count.
-        if: matrix.group == 'shared'
+        if: matrix.group == 'shared' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_search_broadcast_slot_pg.py \
@@ -807,7 +907,7 @@ jobs:
         # set SEARCH_TEST_DATABASE_URL — so they SKIPPED on every run, and armed
         # by hand they could not build their own fixture. That is precisely the
         # failure this job's skip detection exists to end, so they are wired here.
-        if: matrix.group == 'shared'
+        if: matrix.group == 'shared' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_search_proven_duplicate_bridge_pg_5821.py \
@@ -826,7 +926,7 @@ jobs:
         # The key is an ORDER BY term over a twenty-row LIMIT window (plus the
         # refill) inside two route bodies, so only a real database cuts it. Three
         # strawmen and two controls. Three refusals.
-        if: matrix.group == 'shared'
+        if: matrix.group == 'shared' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_search_playoffs_now_pg.py \
@@ -855,7 +955,7 @@ jobs:
         # controls. Three refusals: a skip, a zero count, and a short count.
         # 24 = 15 round cases + 9 for #9578 (`playoffs`/`mlb playoffs` show
         # today's Wild Card games, with its strawman and controls).
-        if: matrix.group == 'shared'
+        if: matrix.group == 'shared' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_search_postseason_round_pg.py \
@@ -882,7 +982,7 @@ jobs:
         # as a UNION arm inside two route bodies, so only a real database can
         # observe it. Two strawmen (aliases removed -> nothing; substring compile
         # -> Byron Donalds) and one control. Three refusals.
-        if: matrix.group == 'shared'
+        if: matrix.group == 'shared' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_search_division_series_pg.py \
@@ -911,7 +1011,7 @@ jobs:
         # pool's first key and the scorer's private alias, so only a real
         # database behind the real route can observe it. One strawman (rule
         # disarmed -> NFL leads) and one control. Three refusals.
-        if: matrix.group == 'shared'
+        if: matrix.group == 'shared' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_search_championship_series_lead_pg.py \
@@ -939,7 +1039,7 @@ jobs:
         # The hoist arm restricts the lane's own SQL to the page's ids, so only a
         # real database behind the real route can observe it. One strawman (arm
         # disarmed -> props lead) and two controls. Three refusals.
-        if: matrix.group == 'shared'
+        if: matrix.group == 'shared' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_search_contender_on_page_hoist_9587_pg.py \
@@ -973,7 +1073,7 @@ jobs:
         # building every name match as a set (~1 s on `rangers`). Its file keeps the
         # old candidate-set form as the reference and pins the same rows in the same
         # order, plus the `NOT (...)` NULL mutant. 9 + 3 = 12.
-        if: matrix.group == 'shared'
+        if: matrix.group == 'shared' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_search_sunk_slot_outcome_arm_9597_pg.py \
@@ -1004,7 +1104,7 @@ jobs:
         # page-two reachability; #9762 adds two not-the-club outcomes (a player,
         # a city-named prop) that arm nothing and the club under its venue name,
         # which still arms. Three refusals.
-        if: matrix.group == 'shared'
+        if: matrix.group == 'shared' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_search_bye_team_finals_cap_pg_9632.py \
@@ -1030,7 +1130,7 @@ jobs:
         # database can observe it. The file's strawman case puts the old flat
         # `now - 1h` floor back and asserts the live rows disappear. Three
         # refusals: a skip, a zero count, and a short count.
-        if: matrix.group == 'shared'
+        if: matrix.group == 'shared' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_typeahead_live_game_stays_5030_pg.py \
@@ -1056,7 +1156,7 @@ jobs:
         # can observe it. Two strawmen: the old live/scheduled window (specimen
         # gone, its market back), and no sort term (a suspended row takes a full
         # pool's slot). Three refusals: a skip, a zero count, and a short count.
-        if: matrix.group == 'shared'
+        if: matrix.group == 'shared' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_typeahead_offers_todays_suspended_match_9493_pg.py \
@@ -1083,7 +1183,7 @@ jobs:
         # session's rows, so only a real database can observe it. Strawman: the
         # attach a no-op (production's row). Three refusals: a skip, a zero
         # count, and a short count.
-        if: matrix.group == 'shared'
+        if: matrix.group == 'shared' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_typeahead_venue_settled_pg_9550.py \
@@ -1109,7 +1209,7 @@ jobs:
         # Both routes' term filters and the dropdown's row text, so only a real
         # database can observe it. Strawman: the connector set emptied (search
         # finds no game). Three refusals: a skip, a zero count, a short count.
-        if: matrix.group == 'shared'
+        if: matrix.group == 'shared' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_typeahead_individual_sport_v_pg_9522.py \
@@ -1136,7 +1236,7 @@ jobs:
         # case disables the selector and asserts production's list comes back.
         # #10581 adds a linked-team latest-final HTTP case (6th test). Three
         # refusals: a skip, a zero count, and a short count.
-        if: matrix.group == 'shared'
+        if: matrix.group == 'shared' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_typeahead_todays_final_pg_9211.py \
@@ -1162,7 +1262,7 @@ jobs:
         # a real database can observe the score riding it. The strawman case
         # swaps the rule for an empty one and asserts production's bare row.
         # Three refusals: a skip, a zero count, and a short count.
-        if: matrix.group == 'shared'
+        if: matrix.group == 'shared' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_typeahead_final_score_pg_9226.py \
@@ -1188,7 +1288,7 @@ jobs:
         # clause, so only a real database can observe the word riding it. The
         # strawman case swaps the rule for an empty one and asserts production's
         # bare row. Three refusals: a skip, a zero count, and a short count.
-        if: matrix.group == 'shared'
+        if: matrix.group == 'shared' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_typeahead_stoppage_pg_9208.py \
@@ -1212,7 +1312,7 @@ jobs:
         # rule is pinned on production rows by the #9439 unit file; this drives
         # both routes, with NBA MVP beside NFL MVP as the control. Same skip
         # detection as the gates around it.
-        if: matrix.group == 'shared'
+        if: matrix.group == 'shared' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_search_one_award_race_one_row_9439_pg.py \
@@ -1231,7 +1331,7 @@ jobs:
         # a real database can observe which rows it admits. Both screens, a
         # strawman (round-word set emptied -> Donalds back) and two controls.
         # Three refusals: a skip, a zero count, and a short count.
-        if: matrix.group == 'shared'
+        if: matrix.group == 'shared' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_search_round_word_outcome_arm_pg_9306.py \
@@ -1258,7 +1358,7 @@ jobs:
         # read names the club), so only a real database can observe which rows it
         # admits. A strawman (rule off -> collisions back) and two controls.
         # Three refusals: a skip, a zero count, and a short count.
-        if: matrix.group == 'shared'
+        if: matrix.group == 'shared' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_search_finished_club_word_outcome_arm_pg_9609.py \
@@ -1282,7 +1382,7 @@ jobs:
         # Picture`, both 49% — while /search folded the pair as a post-pass the
         # dropdown never reached. Real Postgres because the claim is that the
         # ROUTE asks the fold; the fold itself is pinned by the #8851 unit file.
-        if: matrix.group == 'shared'
+        if: matrix.group == 'shared' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_typeahead_same_question_fold_9444_pg.py \
@@ -1313,7 +1413,7 @@ jobs:
         # Three refusals, not one: a skip, a zero count, and a short count.
         # pytest exits 0 when every test skips AND when it collects nothing, so
         # the exit code alone cannot tell "8 passed" from "0 collected".
-        if: matrix.group == 'shared'
+        if: matrix.group == 'shared' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_faceted_answerless_rows_6354_real_postgres.py \
@@ -1348,7 +1448,7 @@ jobs:
         # tables — it SELECTs the real expression over JSONB literals — and runs
         # the pre-#5531 expression beside it as a strawman. Same three refusals as
         # the step above: a skip, nothing collected, and a short count.
-        if: matrix.group == 'shared'
+        if: matrix.group == 'shared' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_hook_stamp_survives_ingest_poll_5531_pg.py \
@@ -1377,7 +1477,7 @@ jobs:
         # pre-#8265 expression as a strawman, and the merged row handed to the
         # real route helper. Same three refusals: a skip, nothing collected, a
         # short count.
-        if: matrix.group == 'shared'
+        if: matrix.group == 'shared' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_the_poll_keeps_the_market_shape_8265_pg.py \
@@ -1420,7 +1520,7 @@ jobs:
         # `create_all` is a syntax error on the 14.x Homebrew default).
         #
         # Three refusals, not one: a skip, a zero count, and a short count.
-        if: matrix.group == 'shared'
+        if: matrix.group == 'shared' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_the_route_supplies_the_fleet_stamp_2077_pg.py \
@@ -1462,7 +1562,7 @@ jobs:
         # Same skip detection as every gate in this job: pytest exits 0 when
         # each test skips, and a gate that silently did not run reads exactly
         # like one that passed.
-        if: matrix.group == 'shared'
+        if: matrix.group == 'shared' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_tennis_twin_sweep_pg.py \
@@ -1477,7 +1577,7 @@ jobs:
         # retargets it elsewhere; both are JSONB `-` / `||` / `@>` arithmetic that
         # only a server runs (`duplicate-of:2` vs `duplicate-of:20` is the case a
         # substring would get wrong). Same skip detection as every gate here.
-        if: matrix.group == 'shared'
+        if: matrix.group == 'shared' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_dangling_duplicate_tag_8308_pg.py \
@@ -1492,7 +1592,7 @@ jobs:
         # adjacent-day sweep's UPDATE re-asserts what the plan read — no ESPN id
         # (NULLIF), the same scores and status (IS NOT DISTINCT FROM). SQL only a
         # server runs; named here because a `*_pg.py` nobody adds runs nowhere.
-        if: matrix.group == 'shared'
+        if: matrix.group == 'shared' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_ghost_label_refuses_a_row_that_changed_9187_pg.py \
@@ -1505,7 +1605,7 @@ jobs:
       - name: "#7345 a listing both of whose teams played someone else at that kick-off stops printing (real Postgres)"
         # Two LATERAL joins on exact `commence_time` equality with NULL-false
         # team-id `<>` — SQL only a server runs. Same skip detection.
-        if: matrix.group == 'shared'
+        if: matrix.group == 'shared' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_same_instant_refutation_7345_pg.py \
@@ -1519,7 +1619,7 @@ jobs:
         # "Lukko Rauma" must reach our "Lukko" and never "Rauma" or "Luk": a
         # folded, space-terminated `strpos` plus `translate` for the accents,
         # windowed on the venue stamp — SQL only a server runs. Same skip detection.
-        if: matrix.group == 'shared'
+        if: matrix.group == 'shared' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_pm_venue_name_extension_8440_pg.py \
@@ -1533,7 +1633,7 @@ jobs:
         # The carry's fences are SQL: same-matchup rows on the ticker's
         # Eastern day, and the venue's own game tickers for the later row.
         # Same skip detection.
-        if: matrix.group == 'shared'
+        if: matrix.group == 'shared' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_kalshi_postponed_carry_9120_pg.py \
@@ -1561,7 +1661,7 @@ jobs:
         # Same skip detection as every gate in this job: pytest exits 0 when
         # each test skips, and a gate that silently did not run reads exactly
         # like one that passed.
-        if: matrix.group == 'shared'
+        if: matrix.group == 'shared' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_illegal_settled_tennis_score_recall_2772_pg.py \
@@ -1591,7 +1691,7 @@ jobs:
         # Same skip detection as every gate in this job: pytest exits 0 when
         # each test skips, and a gate that silently did not run reads exactly
         # like one that passed.
-        if: matrix.group == 'shared'
+        if: matrix.group == 'shared' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_reconcile_lookback_reach_5779_pg.py \
@@ -1610,7 +1710,7 @@ jobs:
         # must stay RED: that is the failure the alert exists for.
         #
         # Same skip detection as every gate in this job.
-        if: matrix.group == 'shared'
+        if: matrix.group == 'shared' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_linked_unsourced_priced_10529_pg.py \
@@ -1633,7 +1733,7 @@ jobs:
         # protection turns out to be a statement, not a codebase.
         #
         # Same skip detection as every gate in this job.
-        if: matrix.group == 'shared'
+        if: matrix.group == 'shared' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_repair_3672_bind_contract.py \
@@ -1663,7 +1763,7 @@ jobs:
         # from CI, and reads green in both places.
         #
         # Same skip detection as every gate in this job.
-        if: matrix.group == 'shared'
+        if: matrix.group == 'shared' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_backup_round_trip_jsonb_6215_pg.py \
@@ -1679,7 +1779,7 @@ jobs:
         # judged. ESPN sync writes `teams` on the same app, so a row re-enriched
         # between read and write must be left alone. That is a claim about an
         # `UPDATE ... FROM unnest(...)` on a real server; this step is its reach.
-        if: matrix.group == 'shared'
+        if: matrix.group == 'shared' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_foreign_espn_id_apply_cas_9017_pg.py \
@@ -1705,7 +1805,7 @@ jobs:
         # Same skip detection as every gate in this job — and the same reason
         # the #6215 step gives for existing at all: this job names each PG file
         # explicitly, so a `*_pg.py` nobody adds here runs nowhere.
-        if: matrix.group == 'shared'
+        if: matrix.group == 'shared' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_team_slug_fill_7501_pg.py \
@@ -1724,7 +1824,7 @@ jobs:
         #
         # Same skip detection as every gate in this job; this job names each PG
         # file explicitly, so a `*_pg.py` nobody adds here runs nowhere.
-        if: matrix.group == 'shared'
+        if: matrix.group == 'shared' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_hook_queue_reaches_what_its_gate_allows_5531_pg.py \
@@ -1760,7 +1860,7 @@ jobs:
         # Postgres 14 (the full schema needs 15+ for `NULLS NOT DISTINCT`).
         #
         # Same skip detection as every gate in this job.
-        if: matrix.group == 'shared'
+        if: matrix.group == 'shared' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_durable_venue_history_7807_pg.py \
@@ -1773,7 +1873,7 @@ jobs:
       - name: "#10717 shared middle — provision pg_trgm on the fresh database"
         # Search recall supplies this non-table baseline on the prefix runner.
         # The middle's first fixture rebuilds every ORM table before yielding.
-        if: matrix.group == 'shared-middle'
+        if: matrix.group == 'shared-middle' && needs.change-scope.outputs.reuse != 'true'
         run: |
           python - <<'PYPG'
           import asyncio
@@ -1799,7 +1899,7 @@ jobs:
         # handed; only Postgres says what ON CONFLICT DO UPDATE left in the row,
         # including that a SETTLED leg keeps its stored date. Wired here because
         # this job names each PG file explicitly (the shards skip it).
-        if: matrix.group == 'shared-middle'
+        if: matrix.group == 'shared-middle' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_polymarket_leg_resolution_date_8466_pg.py \
@@ -1817,7 +1917,7 @@ jobs:
         # double neither aborts nor turns COMMIT into ROLLBACK; only Postgres
         # does. Wired here because this job names each PG file explicitly (the
         # shards skip it).
-        if: matrix.group == 'shared-middle'
+        if: matrix.group == 'shared-middle' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_polymarket_batch_savepoint_8935_pg.py \
@@ -1834,7 +1934,7 @@ jobs:
         # over production's own Fitzpatrick rows. Which row that returns, and
         # which rows the two bounds let it see, only Postgres can say. Wired
         # here because this job names each PG file explicitly (the shards skip it).
-        if: matrix.group == 'shared-middle'
+        if: matrix.group == 'shared-middle' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_golf_move_basis_between_rounds_8692_pg.py \
@@ -1860,7 +1960,7 @@ jobs:
         # they never set SEARCH_TEST_DATABASE_URL, so all 10 tests SKIP there
         # and the shard goes green having tested none of them. That is the
         # exact shape this job's skip detection exists to end.
-        if: matrix.group == 'shared-middle'
+        if: matrix.group == 'shared-middle' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_live_stale_touch_reach_5024_pg.py \
@@ -1885,7 +1985,7 @@ jobs:
         # Same skip-detection as the two gates around it: pytest exits 0 when
         # every test skips, so a gate that silently did not run is
         # indistinguishable from one that passed.
-        if: matrix.group == 'shared-middle'
+        if: matrix.group == 'shared-middle' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_provenance_enum_real_postgres.py \
@@ -1911,7 +2011,7 @@ jobs:
         # Real Postgres because `_write_prices` builds its INSERT with `pg_insert`
         # (no other dialect compiles it) and because the defect is a writer/data
         # contract split — every instrument not touching real rows said green.
-        if: matrix.group == 'shared-middle'
+        if: matrix.group == 'shared-middle' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_futures_price_refresh_writes_pg.py \
@@ -1927,7 +2027,7 @@ jobs:
         # the pre-UPDATE row through a scalar subquery in RETURNING — Postgres
         # snapshot semantics; SQLite sees the new row, so only this server can
         # pass or fail it.
-        if: matrix.group == 'shared-middle'
+        if: matrix.group == 'shared-middle' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_ws_quote_moved_9484_pg.py \
@@ -1953,7 +2053,7 @@ jobs:
         # a mutation that widens the retirement fails here rather than in the
         # ship assertion. `stats["stale_zeroed"]` is asserted too — a seed that
         # never reached the block would satisfy "is NULL" by doing nothing.
-        if: matrix.group == 'shared-middle'
+        if: matrix.group == 'shared-middle' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_stale_futures_leg_retires_to_null_5869.py \
@@ -1978,7 +2078,7 @@ jobs:
         # quoted two days ago, a listed-but-silent board (flagged, never closed),
         # a board carrying a venue verdict, and resolved boards WITHOUT the stamp
         # that the price crowners must still grade.
-        if: matrix.group == 'shared-middle'
+        if: matrix.group == 'shared-middle' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_provider_delisted_championship_retires_1541_pg.py \
@@ -1995,7 +2095,7 @@ jobs:
         # Championship crowned Gotterup off a 0.99 captured before the event.
         # The fix is one HAVING arm; only a real database can say which markets
         # that statement selects, so this runs the real rail against real rows.
-        if: matrix.group == 'shared-middle'
+        if: matrix.group == 'shared-middle' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_price_crowned_pm_winner_venue_regrade_9394_pg.py \
@@ -2024,7 +2124,7 @@ jobs:
         # source assertion can see it. Same skip-detection as the gates around
         # it — pytest exits 0 when every test skips, so a gate that silently did
         # not run is indistinguishable from one that passed.
-        if: matrix.group == 'shared-middle'
+        if: matrix.group == 'shared-middle' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_polymarket_resolved_candidate_sql_pg.py \
@@ -2040,7 +2140,7 @@ jobs:
         # Savepoint-per-board, the compare-and-swap's drift count, `jsonb -` on
         # the gate and the undo round trip are server behaviour; the unit file
         # cannot see them. Same skip-detection as its neighbours.
-        if: matrix.group == 'shared-middle'
+        if: matrix.group == 'shared-middle' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_repair_polymarket_false_parent_settlements_10182_pg.py \
@@ -2057,7 +2157,7 @@ jobs:
         # concurrently linked market, lock-budget refusal and the fenced inverse
         # are server behaviour; the unit file's fake cannot see them. Same skip,
         # zero-count and short-count detection as its neighbours.
-        if: matrix.group == 'shared-middle'
+        if: matrix.group == 'shared-middle' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_repair_10319_event15321333_competition_identity_pg.py \
@@ -2094,7 +2194,7 @@ jobs:
         # Same skip-detection as the gates around it: pytest exits 0 when every
         # test skips, so a gate that silently did not run is indistinguishable
         # from one that passed.
-        if: matrix.group == 'shared-middle'
+        if: matrix.group == 'shared-middle' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_movement_window_pg.py \
@@ -2111,7 +2211,7 @@ jobs:
         # `update_max_movement` and the real `/api/futures/{id}` route: basis
         # 0.02 at 19 h, 0.15 now, an unchanged poll storing 0 -> served +0.13;
         # refusals serve None; four strawmen must each turn it red.
-        if: matrix.group == 'shared-middle'
+        if: matrix.group == 'shared-middle' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_datagolf_dated_movement_10248_pg.py \
@@ -2128,7 +2228,7 @@ jobs:
         # one-second lateral at `opening_captured_at`, the
         # `NOT coalesce(priced, false)` arm a one-sided book turns NULL, and the
         # `id % :slices` scope are properties of real rows. Same skip detection.
-        if: matrix.group == 'shared-middle'
+        if: matrix.group == 'shared-middle' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_unpriced_opening_pg_8612.py \
@@ -2156,7 +2256,7 @@ jobs:
         # Same skip-detection as the gates around it: pytest exits 0 when every
         # test skips, so a gate that silently did not run is indistinguishable
         # from one that passed.
-        if: matrix.group == 'shared-middle'
+        if: matrix.group == 'shared-middle' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_restore_3026_jsonb_roundtrip_pg.py \
@@ -2186,7 +2286,7 @@ jobs:
         # Same skip-detection as the gates around it: pytest exits 0 when every
         # test skips, so a gate that silently did not run is indistinguishable
         # from one that passed.
-        if: matrix.group == 'shared-middle'
+        if: matrix.group == 'shared-middle' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_kalshi_fabricated_loss_bind_contract_pg.py \
@@ -2213,7 +2313,7 @@ jobs:
         # Same skip-detection as the gates around it: pytest exits 0 when every
         # test skips, so a gate that silently did not run is indistinguishable
         # from one that passed.
-        if: matrix.group == 'shared-middle'
+        if: matrix.group == 'shared-middle' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_kalshi_sweep_settlement_bind_pg.py \
@@ -2242,7 +2342,7 @@ jobs:
         # Same skip-detection as the gates around it: pytest exits 0 when every
         # test skips, so a gate that silently did not run is indistinguishable
         # from one that passed.
-        if: matrix.group == 'shared-middle'
+        if: matrix.group == 'shared-middle' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_kalshi_sweep_void_bind_pg.py \
@@ -2276,7 +2376,7 @@ jobs:
         # Same skip-detection as the gates around it: pytest exits 0 when every
         # test skips, so a gate that silently did not run is indistinguishable
         # from one that passed.
-        if: matrix.group == 'shared-middle'
+        if: matrix.group == 'shared-middle' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_kalshi_resolved_void_selection_pg.py \
@@ -2292,7 +2392,7 @@ jobs:
         # price. The subject is the task's own UPDATE (jsonb `||` stamp plus a
         # correlated NOT EXISTS over events), which sqlite cannot host. Controls
         # (finished, stale-scheduled, unlinked) must still resolve.
-        if: matrix.group == 'shared-middle'
+        if: matrix.group == 'shared-middle' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_mark_resolved_spares_live_events_8586_pg.py \
@@ -2308,7 +2408,7 @@ jobs:
         # "Kevin Warsh >99%" as live. The subject reads `market_metadata->'shape'`
         # with `->>`/`?` and screens on correlated EXISTS, which sqlite cannot
         # host. One-column controls, including a fully graded ladder, stay open.
-        if: matrix.group == 'shared-middle'
+        if: matrix.group == 'shared-middle' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_mark_resolved_venue_winner_8615_pg.py \
@@ -2349,7 +2449,7 @@ jobs:
         # Same skip-detection as the gates around it: pytest exits 0 when every
         # test skips, so a gate that silently did not run is indistinguishable
         # from one that passed.
-        if: matrix.group == 'shared-middle'
+        if: matrix.group == 'shared-middle' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_venue_void_retirement_pg.py \
@@ -2375,7 +2475,7 @@ jobs:
         # Same skip-detection as the gates around it: pytest exits 0 when every
         # test skips, so a gate that silently did not run is indistinguishable
         # from one that passed.
-        if: matrix.group == 'shared-middle'
+        if: matrix.group == 'shared-middle' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_kalshi_settlement_recency_band_pg.py \
@@ -2403,7 +2503,7 @@ jobs:
         # Same skip-detection as the gates around it: pytest exits 0 when every
         # test skips, so a gate that silently did not run is indistinguishable
         # from one that passed.
-        if: matrix.group == 'shared-middle'
+        if: matrix.group == 'shared-middle' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_typeahead_played_game_suppression_pg.py \
@@ -2430,7 +2530,7 @@ jobs:
         # Same skip-detection as the gates around it: pytest exits 0 when every
         # test skips, so a gate that silently did not run is indistinguishable
         # from one that passed.
-        if: matrix.group == 'shared-middle'
+        if: matrix.group == 'shared-middle' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_repair_pm_ungraded_loss_4788_pg.py \
@@ -2460,7 +2560,7 @@ jobs:
         # Same skip-detection as the gates around it: pytest exits 0 when every
         # test skips, so a gate that silently did not run is indistinguishable
         # from one that passed.
-        if: matrix.group == 'shared-middle'
+        if: matrix.group == 'shared-middle' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_typeahead_final_seven_route_control_pg.py \
@@ -2476,7 +2576,7 @@ jobs:
         # above the Dodgers' own. Real Postgres because the first half is the
         # stemmer and the second is `team_pool` feeding the rerank — neither
         # exists in a session double. Same skip-detection as the gates around it.
-        if: matrix.group == 'shared-middle'
+        if: matrix.group == 'shared-middle' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_typeahead_team_query_cross_sport_5082_pg.py \
@@ -2491,7 +2591,7 @@ jobs:
         # and `niners` ranked "Niners Chemnitz" above the 49ers' own game, whose
         # names never carry the nickname. Real Postgres because the infix row
         # comes from the ILIKE event arm and the lead-team marks from the route.
-        if: matrix.group == 'shared-middle'
+        if: matrix.group == 'shared-middle' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_typeahead_team_query_other_sport_events_5082_pg.py \
@@ -2508,7 +2608,7 @@ jobs:
         # Real Postgres because the claim is that the ROUTE asks the helper over a
         # recalled pool; the helper itself is pinned by the #8378 unit file. Same
         # skip-detection as the gates around it.
-        if: matrix.group == 'shared-middle'
+        if: matrix.group == 'shared-middle' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_typeahead_one_question_one_row_9404_pg.py \
@@ -2524,7 +2624,7 @@ jobs:
         # 2 "EPL World Series" group-stage matches. Real Postgres because the claim
         # is that the ROUTE hands the reranker the sport and nothing later re-sorts
         # the pool; the in-rig strawman proves the order is the fix's doing.
-        if: matrix.group == 'shared-middle'
+        if: matrix.group == 'shared-middle' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_typeahead_world_series_sport_pg_9865.py \
@@ -2540,7 +2640,7 @@ jobs:
         # #5201 rescue arm stayed off and the four-slot cut dropped it. Real
         # Postgres because the defect is the fetch's ORDER BY + LIMIT meeting the
         # cut. Same skip-detection as the gates around it.
-        if: matrix.group == 'shared-middle'
+        if: matrix.group == 'shared-middle' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_typeahead_lead_fixture_survives_the_cut_pg_9435.py \
@@ -2568,7 +2668,7 @@ jobs:
         # Same skip-detection as the gates around it: pytest exits 0 when every
         # test skips, so a gate that silently did not run is indistinguishable
         # from one that passed.
-        if: matrix.group == 'shared-middle'
+        if: matrix.group == 'shared-middle' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_futures_outcome_grade_schema_parity_pg.py \
@@ -2589,7 +2689,7 @@ jobs:
         # Same skip-detection as the recall gate above, for the same reason: pytest
         # exits 0 when every test skips, so a gate that silently did not run is
         # indistinguishable from one that passed.
-        if: matrix.group == 'shared-middle'
+        if: matrix.group == 'shared-middle' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_search_odds_enrichment_equivalence.py \
@@ -2616,7 +2716,7 @@ jobs:
         # Same skip-detection as every gate in this job, for the same reason:
         # pytest exits 0 when every test skips, so a gate that silently did not
         # run is indistinguishable from one that passed.
-        if: matrix.group == 'shared-middle'
+        if: matrix.group == 'shared-middle' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_bookmaker_count_real_postgres.py \
@@ -2639,7 +2739,7 @@ jobs:
         # which is what a mock-session test cannot promise.
         #
         # Same skip-detection as every gate in this job.
-        if: matrix.group == 'shared-middle'
+        if: matrix.group == 'shared-middle' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_futures_no_result_price_exemption_6757_pg.py \
@@ -2664,7 +2764,7 @@ jobs:
         # that shape once shipped a syntax error past 23 unit guards.
         #
         # Same skip-detection as every gate in this job.
-        if: matrix.group == 'shared-middle'
+        if: matrix.group == 'shared-middle' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_twin_fold_candidate_sql_7021_pg.py \
@@ -2692,7 +2792,7 @@ jobs:
         # Same skip-detection as every gate in this job, for the same reason:
         # pytest exits 0 when every test skips, so a gate that silently did not
         # run is indistinguishable from one that passed.
-        if: matrix.group == 'shared-middle'
+        if: matrix.group == 'shared-middle' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest \
@@ -2729,7 +2829,7 @@ jobs:
         # Same skip-detection as every gate in this job, for the same reason:
         # pytest exits 0 when every test skips, so a gate that silently did not
         # run is indistinguishable from one that passed.
-        if: matrix.group == 'shared-middle'
+        if: matrix.group == 'shared-middle' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest \
@@ -2772,7 +2872,7 @@ jobs:
         # the rest non-vacuous.
         #
         # Same skip-detection as every gate in this job, for the same reason.
-        if: matrix.group == 'shared-middle'
+        if: matrix.group == 'shared-middle' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest \
@@ -2799,7 +2899,7 @@ jobs:
         # query twice over the same two Celta rows, with and without the loader.
         #
         # Same skip-detection as every gate in this job, for the same reason.
-        if: matrix.group == 'shared-middle'
+        if: matrix.group == 'shared-middle' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest \
@@ -2830,7 +2930,7 @@ jobs:
         # Same skip-detection as every gate in this job, for the same reason:
         # pytest exits 0 when every test skips, so a gate that silently did not
         # run is indistinguishable from one that passed.
-        if: matrix.group == 'shared-middle'
+        if: matrix.group == 'shared-middle' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_prematch_prior_lateral_equivalence_pg.py \
@@ -2851,7 +2951,7 @@ jobs:
         #
         # Only a real driver enforces a bind type, so this gate lives here.
         # Same skip-detection as the two gates above, for the same reason.
-        if: matrix.group == 'shared-middle'
+        if: matrix.group == 'shared-middle' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_kalshi_cliff_bind_contract.py \
@@ -2880,7 +2980,7 @@ jobs:
         # The file is two-armed on purpose — it reverts each fix and asserts the
         # driver RAISES — so a green run means red-first was proved rather than
         # that nothing objected. Same skip-detection as the gates above.
-        if: matrix.group == 'shared-middle'
+        if: matrix.group == 'shared-middle' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_create_wave_insert_bind_contract.py \
@@ -2908,7 +3008,7 @@ jobs:
         # EXECUTES the reverted (pre-fix) SQL and asserts the suppression comes
         # back, so a green run means red-first was proved rather than that
         # nothing objected. Same skip-detection as every gate in this job.
-        if: matrix.group == 'shared-middle'
+        if: matrix.group == 'shared-middle' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_calibration_mode_price_source_scope_pg.py \
@@ -2935,7 +3035,7 @@ jobs:
         # real Kalshi entertainment markets). Same skip-detection as every gate
         # in this job — and see the guard test that asserts this STEP exists,
         # because a PG-gated file no step names skips silently and exits 0.
-        if: matrix.group == 'shared-middle'
+        if: matrix.group == 'shared-middle' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_calibration_threshold_ladder_pg.py \
@@ -2950,7 +3050,7 @@ jobs:
         # NHL goal-family captures (>= 0.50) and the general >= 0.90 band while
         # keeping the honest NHL low band. Relational claim — which rows the real
         # query returns — so it runs the unmodified impl against seeded rows.
-        if: matrix.group == 'shared-middle'
+        if: matrix.group == 'shared-middle' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_calibration_fair_fight_prop_threshold_1089_pg.py \
@@ -2975,7 +3075,7 @@ jobs:
         # nothing), the terminal `residual` state, and the new retryable
         # `unverified` state, which must be withheld just as symmetrically or it
         # becomes the same censoring in the other direction (D112).
-        if: matrix.group == 'shared-middle'
+        if: matrix.group == 'shared-middle' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest \
@@ -2995,7 +3095,7 @@ jobs:
         # seeded matches, judged by the three-way invariant (n = 3k, winners =
         # k, sum_prob = k) beside a drawn match, a closing pair, a two-way-shaped
         # pair, a pre-cutoff match and a pre-release reading.
-        if: matrix.group == 'shared-middle'
+        if: matrix.group == 'shared-middle' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest \
@@ -3016,7 +3116,7 @@ jobs:
         # and string-typed numbers included — an early cast aborts the census),
         # then drives the real `census()` callable, each arm paired with the
         # scalar-only rule reading the same rows differently.
-        if: matrix.group == 'shared-middle'
+        if: matrix.group == 'shared-middle' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest \
@@ -3046,7 +3146,7 @@ jobs:
         # chains are executed as production strings — the admin one via the
         # module constant CAL-P091 hoisted it into, so a guard cannot pass
         # against a copy while the original regresses.
-        if: matrix.group == 'shared-middle'
+        if: matrix.group == 'shared-middle' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest \
@@ -3080,7 +3180,7 @@ jobs:
         # requires — cricket's published SET must not move under a change that
         # is only allowed to change multiplicity, or the D14 reinvestigation
         # loses its baseline.
-        if: matrix.group == 'shared-middle'
+        if: matrix.group == 'shared-middle' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest \
@@ -3113,7 +3213,7 @@ jobs:
         # while the route drifted) AND executes the pre-fix statement, which is
         # required to fail. A green run therefore means red-first was proved,
         # not that nothing objected. Same skip-detection as every gate here.
-        if: matrix.group == 'shared-middle'
+        if: matrix.group == 'shared-middle' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_tag_counts_real_postgres.py \
@@ -3124,7 +3224,7 @@ jobs:
           fi
 
       - name: "#9238 guarded image apply/restore (real Postgres)"
-        if: matrix.group == 'shared-middle'
+        if: matrix.group == 'shared-middle' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set +e
           python -m pytest tests/integration/test_image_repair_9238_apply_restore_pg.py \
@@ -3165,7 +3265,7 @@ jobs:
         # ORIGINAL one-statement restore and requires it to leave the row gone,
         # so a green run means the repair was proved necessary, not that
         # nothing objected. Same skip-detection as every gate here.
-        if: matrix.group == 'shared-middle'
+        if: matrix.group == 'shared-middle' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_rekey_statpal_anchors_real_postgres.py \
@@ -3198,7 +3298,7 @@ jobs:
         # no statement may touch, so a population test that ever loosens to
         # "not NULL" or "longer than six" fails here. Same skip-detection as
         # every gate in this job.
-        if: matrix.group == 'shared-middle'
+        if: matrix.group == 'shared-middle' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_null_statpal_live_space_3094_real_postgres.py \
@@ -3227,7 +3327,7 @@ jobs:
         # attribution rests on), and whether the CAS declines a moved value.
         #
         # Same skip detection as every gate in this job.
-        if: matrix.group == 'shared-middle'
+        if: matrix.group == 'shared-middle' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_soccer_statpal_manifest_restore_pg.py \
@@ -3256,7 +3356,7 @@ jobs:
         # a clean rowcount and nothing raises, and requires the post-condition
         # query to report it as still-applied. Same skip-detection as every gate
         # here.
-        if: matrix.group == 'shared-middle'
+        if: matrix.group == 'shared-middle' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_link_tennis_statpal_real_postgres.py \
@@ -3284,7 +3384,7 @@ jobs:
         # Batch-size arm included: a one-id batch would execute even if the array
         # binding degenerated to a scalar, so one test runs the real ~70-id pass.
         # Same skip-detection as every gate here.
-        if: matrix.group == 'shared-middle'
+        if: matrix.group == 'shared-middle' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_link_tennis_already_linked_pg.py \
@@ -3325,7 +3425,7 @@ jobs:
         # predicate was proved load-bearing rather than that nothing objected.
         # Its fixture drops and recreates the schema, so it sits beside the other
         # gate that does. Same skip-detection as every gate in this job.
-        if: matrix.group == 'shared-middle'
+        if: matrix.group == 'shared-middle' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_tennis_commence_predicate_real_postgres.py \
@@ -3346,7 +3446,7 @@ jobs:
         # 70-99 into the 1900s, a non-month RAISING mid-beat, and first-match
         # regex semantics) plus the Eastern-vs-UTC night-game case, none of
         # which any fake can decide. Same skip-detection as every gate here.
-        if: matrix.group == 'shared-middle'
+        if: matrix.group == 'shared-middle' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_market_identity_quarantine_sql_real_postgres.py \
@@ -3366,7 +3466,7 @@ jobs:
         # asserts both directions; it also reverts the fix by textual surgery
         # and proves the reverted chain reproduces the finding, so a green run
         # means red-first was executed here rather than assumed.
-        if: matrix.group == 'shared-middle'
+        if: matrix.group == 'shared-middle' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_identity_quarantine_linked_event_date_6275_pg.py \
@@ -3389,7 +3489,7 @@ jobs:
         # way (it has this chain at 1-5 rows), which is why it chose the rescan.
         # The second arm strips the keyword back out and asserts the defect
         # shape returns, so a green run means red-first executed here.
-        if: matrix.group == 'shared-middle'
+        if: matrix.group == 'shared-middle' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_identity_quarantine_single_evaluation_6275_pg.py \
@@ -3436,7 +3536,7 @@ jobs:
         # the market really is re-dated back to midnight.
         # Its fixture drops and recreates the schema, so it sits beside the other
         # gates that do. Same skip-detection as every gate in this job.
-        if: matrix.group == 'shared-middle'
+        if: matrix.group == 'shared-middle' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_stand_in_event_starts_real_postgres.py \
@@ -3484,7 +3584,7 @@ jobs:
         # `on_conflict_do_update` so it shows that CAL-P1004's fixed UPDATE arm
         # does nothing for a row that does not exist yet. The step keeps its
         # gap-create name because the ledger and #1852 cite it by that name.
-        if: matrix.group == 'shared-middle'
+        if: matrix.group == 'shared-middle' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_gap_create_grade_real_postgres.py \
@@ -3519,7 +3619,7 @@ jobs:
         # against "always prefer the occurrence", a different and wrong repair.
         # Runs after the #1852 step because its fixture also drops and recreates
         # the schema. Same skip-detection as every gate here.
-        if: matrix.group == 'shared-middle'
+        if: matrix.group == 'shared-middle' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_kalshi_game_commence_wiring_real_postgres.py \
@@ -3554,7 +3654,7 @@ jobs:
         # accepted, which is the round trip proving these rows are reachable and
         # not merely present. Runs after the #3433 step because its fixture also
         # drops and recreates the schema. Same skip-detection as every gate here.
-        if: matrix.group == 'shared-middle'
+        if: matrix.group == 'shared-middle' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_kalshi_unpriced_outcome_is_recorded_real_postgres.py \
@@ -3572,7 +3672,7 @@ jobs:
         # Each event now writes inside its own savepoint. Only Postgres aborts a
         # transaction, so only Postgres can show the savepoint contains it. Same
         # rig and database as the #3518 step. Skip detection plus a count.
-        if: matrix.group == 'shared-middle'
+        if: matrix.group == 'shared-middle' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_kalshi_poll_survives_one_failed_event_real_postgres_9460.py \
@@ -3594,7 +3694,7 @@ jobs:
         # commits as it finishes. Only Postgres row locks can show that, read
         # from a second connection at the venue call. Same rig and database as
         # the #9460 step. Skip detection plus a count.
-        if: matrix.group == 'shared-middle'
+        if: matrix.group == 'shared-middle' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_kalshi_poll_releases_event_locks_before_metadata_real_postgres_10732.py \
@@ -3615,7 +3715,7 @@ jobs:
         # unreached each). It now orders them by `volume_updated_at`, the stamp
         # only this poll writes, read from the server. Same rig and database as
         # the #9460 step. Skip detection plus a count.
-        if: matrix.group == 'shared-middle'
+        if: matrix.group == 'shared-middle' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_kalshi_poll_reaches_the_stalest_rows_first_real_postgres_9543.py \
@@ -3642,7 +3742,7 @@ jobs:
         # divided by 100 a second time is 0.0022 for a 22% team — inside
         # 0 < p < 1, inside Numeric(5,4), charted without an exception anywhere.
         # An arm has to read the stored value back and judge its SCALE.
-        if: matrix.group == 'shared-middle'
+        if: matrix.group == 'shared-middle' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_live_poll_kalshi_prices_real_postgres.py \
@@ -3660,7 +3760,7 @@ jobs:
         # the shared helper's SQL CASE, and both only mean something on real
         # Postgres. Its fixture drops and recreates the schema, like the steps
         # around it. Same skip-detection as every gate here.
-        if: matrix.group == 'shared-middle'
+        if: matrix.group == 'shared-middle' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_polymarket_refused_leg_withdrawn_9399_real_postgres.py \
@@ -3679,7 +3779,7 @@ jobs:
         # opening COALESCE only mean something on real Postgres. Its fixture
         # drops and recreates the schema, like the steps around it. Same
         # skip-detection as every gate here.
-        if: matrix.group == 'shared-middle'
+        if: matrix.group == 'shared-middle' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_polymarket_resolved_zero_legs_5343_real_postgres.py \
@@ -3703,7 +3803,7 @@ jobs:
         # out, no volume, unregistered, unserved) and each of those is EXECUTED
         # as a control, because "nothing else covers this" is the load-bearing
         # claim. Same skip-detection as every gate here.
-        if: matrix.group == 'shared-middle'
+        if: matrix.group == 'shared-middle' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_linked_game_price_chain_real_postgres.py \
@@ -3721,7 +3821,7 @@ jobs:
         # write — which is also the only place `is_winner`'s `DEFAULT false`
         # can bite, because only Postgres applies a column default.
         # Same skip-detection as every gate here.
-        if: matrix.group == 'shared-middle'
+        if: matrix.group == 'shared-middle' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_dark_polymarket_selector_real_postgres.py \
@@ -3746,7 +3846,7 @@ jobs:
         # that control stops reproducing the defect the gate is decoration, and
         # it fails rather than passing quietly.
         # Same skip-detection as every gate here.
-        if: matrix.group == 'shared-middle'
+        if: matrix.group == 'shared-middle' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_polymarket_kickoff_ordering_pg.py \
@@ -3784,7 +3884,7 @@ jobs:
         # Same skip-detection as every gate in this job, for the same reason:
         # pytest exits 0 when every test skips, so a gate that silently did not
         # run is indistinguishable from one that passed.
-        if: matrix.group == 'shared-middle'
+        if: matrix.group == 'shared-middle' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_containers_migration_real_postgres.py \
@@ -3821,7 +3921,7 @@ jobs:
         # AFTER its edge was written and which therefore requires deleting one.
         #
         # Same skip-detection as every gate in this job, for the same reason.
-        if: matrix.group == 'shared-tail'
+        if: matrix.group == 'shared-tail' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_container_assembly_real_postgres.py \
@@ -3838,7 +3938,7 @@ jobs:
         # unpublished/withdrawn/nested/empty/wrong-edition rows are excluded,
         # a deleted member is not counted, and the array binds work (the
         # local run caught `week-09` spending the only LIMIT slot).
-        if: matrix.group == 'shared-tail'
+        if: matrix.group == 'shared-tail' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_container_discovery_real_postgres.py \
@@ -3857,7 +3957,7 @@ jobs:
         # producer and reader agreeing on key, bytes and page order.
         #
         # Same skip-detection as every gate in this job.
-        if: matrix.group == 'shared-tail'
+        if: matrix.group == 'shared-tail' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_theme_collections_9935_pg.py \
@@ -3876,7 +3976,7 @@ jobs:
         # passes never resurrecting a member a newer roster removed.
         #
         # Same skip-detection as every gate in this job.
-        if: matrix.group == 'shared-tail'
+        if: matrix.group == 'shared-tail' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_provider_event_collections_5343_pg.py \
@@ -3895,7 +3995,7 @@ jobs:
         # schedule outage leaving the published hub untouched.
         #
         # Same skip-detection as every gate in this job.
-        if: matrix.group == 'shared-tail'
+        if: matrix.group == 'shared-tail' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_container_nfl_publication_5341_pg.py \
@@ -3915,7 +4015,7 @@ jobs:
         # mid-move leaving both weeks as they were.
         #
         # Same skip-detection as every gate in this job.
-        if: matrix.group == 'shared-tail'
+        if: matrix.group == 'shared-tail' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_container_nfl_relocation_5344_pg.py \
@@ -3945,7 +4045,7 @@ jobs:
         # Same skip-detection as every gate in this job. Adding the file is not
         # adding the gate: without this step the suite goes green while the
         # file's mere existence reads as coverage (lane1b/102's #4157 lesson).
-        if: matrix.group == 'shared-tail'
+        if: matrix.group == 'shared-tail' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_repair_kalshi_senate_category_4229_real_postgres.py \
@@ -3979,7 +4079,7 @@ jobs:
         #
         # Same skip-detection as every gate in this job: adding the file is not
         # adding the gate.
-        if: matrix.group == 'shared-tail'
+        if: matrix.group == 'shared-tail' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_repair_polymarket_senate_category_4229_real_postgres.py \
@@ -4011,7 +4111,7 @@ jobs:
         #
         # Same skip-detection as every gate in this job: adding the file is not
         # adding the gate.
-        if: matrix.group == 'shared-tail'
+        if: matrix.group == 'shared-tail' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_kalshi_delisted_leg_retirement_pg.py \
@@ -4037,7 +4137,7 @@ jobs:
         #
         # Same skip-detection as every gate in this job: adding the file is not
         # adding the gate.
-        if: matrix.group == 'shared-tail'
+        if: matrix.group == 'shared-tail' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_settled_speaker_sweep_reaches_suspended_5820_pg.py \
@@ -4075,7 +4175,7 @@ jobs:
         #
         # Same skip-detection as every gate in this job: adding the file is not
         # adding the gate.
-        if: matrix.group == 'shared-tail'
+        if: matrix.group == 'shared-tail' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_repair_kalshi_empty_book_openings_1086_real_postgres.py \
@@ -4092,7 +4192,7 @@ jobs:
         # statement (with a positive control) and the repair rail's apply and
         # restore; the numeric and timestamp provenance clauses are database
         # comparisons a mock cannot see.
-        if: matrix.group == 'shared-tail'
+        if: matrix.group == 'shared-tail' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_polymarket_empty_book_openings_9083_real_postgres.py \
@@ -4133,7 +4233,7 @@ jobs:
         #
         # Same skip-detection as every gate in this job: adding the file is not
         # adding the gate.
-        if: matrix.group == 'shared-tail'
+        if: matrix.group == 'shared-tail' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_repair_golf_round_closing_line_1081_real_postgres.py \
@@ -4151,7 +4251,7 @@ jobs:
         # final-round reading). Three arms: DataGolf and non-event controls that
         # must not move, an event-linked leg that must get its closing line, and
         # the removed statement executed on the same rows as the strawman.
-        if: matrix.group == 'shared-tail'
+        if: matrix.group == 'shared-tail' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_calibration_rescue_part_c_pg.py \
@@ -4170,7 +4270,7 @@ jobs:
         # still publish at their own prices, a Polymarket market with only
         # post-start readings is untouched, and every withheld row lands on the
         # new coverage rung rather than the catch-all.
-        if: matrix.group == 'shared-tail'
+        if: matrix.group == 'shared-tail' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_calibration_datagolf_post_start_opening_pg.py \
@@ -4188,7 +4288,7 @@ jobs:
         # a post-start opening (#5355) and a void (#762) never do, the scoped
         # sample equals the bucket in the UNSCOPED chain for both cohorts, and a
         # group shared with another source is refused.
-        if: matrix.group == 'shared-tail'
+        if: matrix.group == 'shared-tail' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_calibration_examples_datagolf_994_pg.py \
@@ -4206,7 +4306,7 @@ jobs:
         # undo puts back only rows still holding this apply's whole after-image —
         # never a control, a later writer, or a row whose marker an undo closed.
         # The witnesses file keeps Root's and CERT-4149's counterexamples verbatim.
-        if: matrix.group == 'shared-tail'
+        if: matrix.group == 'shared-tail' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_kalshi_archive_grades_1853_pg.py \
@@ -4227,7 +4327,7 @@ jobs:
         # year-bearing series, a margin prop, another source and another sport
         # all publish whole at their own prices, and every withheld row lands
         # on the new coverage rung rather than the catch-all.
-        if: matrix.group == 'shared-tail'
+        if: matrix.group == 'shared-tail' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_calibration_golf_round_timing_pg.py \
@@ -4243,7 +4343,7 @@ jobs:
         # that walk over the RETAINED venue bytes with its writes recorded, then
         # applies them by whole-row CAS on frozen before-images; the undo touches
         # only rows still holding the apply's whole after-image.
-        if: matrix.group == 'shared-tail'
+        if: matrix.group == 'shared-tail' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_kalshi_archived_nine_repair_2722_pg.py \
@@ -4276,7 +4376,7 @@ jobs:
         #
         # Same skip-detection as every gate in this job: adding the file is not
         # adding the gate.
-        if: matrix.group == 'shared-tail'
+        if: matrix.group == 'shared-tail' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_census_cap_real_postgres.py \
@@ -4309,7 +4409,7 @@ jobs:
         #
         # Same skip-detection as every gate in this job: adding the file is not
         # adding the gate.
-        if: matrix.group == 'shared-tail'
+        if: matrix.group == 'shared-tail' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_task_session_budget_recycle_pg.py \
@@ -4328,7 +4428,7 @@ jobs:
         # run, while every operation still commits, or rolls back, on its own.
         #
         # Same skip-detection as every gate in this job.
-        if: matrix.group == 'shared-tail'
+        if: matrix.group == 'shared-tail' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_ws_consumer_session_lifetime_2471_pg.py \
@@ -4339,7 +4439,7 @@ jobs:
           fi
 
       - name: "#10664 Polymarket bulk price transaction contracts (real Postgres)"
-        if: matrix.group == 'shared-tail'
+        if: matrix.group == 'shared-tail' && needs.change-scope.outputs.reuse != 'true'
         run: |
           result=0
           python -m pytest tests/test_ws_market_change_hooks_9484.py tests/test_ws_polymarket_open_contract_prices_9484.py tests/test_poly_ws_binary_complement_9733.py tests/test_poly_ws_book_snapshot_prices_9733.py tests/integration/test_pm_bulk_price_write_10664_pg.py tests/test_pm_standalone_flush_off_game_path_10090.py -v -rs > /tmp/pm10664.txt 2>&1 || result=$?
@@ -4351,7 +4451,7 @@ jobs:
           fi
 
       - name: "#10689 Kalshi typed statement transaction contracts (real Postgres)"
-        if: matrix.group == 'shared-tail'
+        if: matrix.group == 'shared-tail' && needs.change-scope.outputs.reuse != 'true'
         run: |
           result=0
           python -m pytest tests/test_kalshi_price_statement_10689.py tests/test_price_change_stamp.py tests/integration/test_kalshi_price_statement_10689_pg.py -v -rs > /tmp/kalshi10689.txt 2>&1 || result=$?
@@ -4363,7 +4463,7 @@ jobs:
           fi
 
       - name: "#10693 guarded Kalshi pipeline supported floor (real Postgres)"
-        if: matrix.group == 'shared-tail'
+        if: matrix.group == 'shared-tail' && needs.change-scope.outputs.reuse != 'true'
         run: |
           # Isolate the exact private compatibility envelope from requirements ranges.
           floor_env=$(mktemp -d)
@@ -4381,7 +4481,7 @@ jobs:
           fi
 
       - name: "#10693 guarded Kalshi pipeline production pair (real Postgres)"
-        if: matrix.group == 'shared-tail'
+        if: matrix.group == 'shared-tail' && needs.change-scope.outputs.reuse != 'true'
         run: |
           # Isolate the exact private compatibility envelope from requirements ranges.
           floor_env=$(mktemp -d)
@@ -4422,7 +4522,7 @@ jobs:
         #
         # Same skip-detection as every gate in this job: adding the file is not
         # adding the gate.
-        if: matrix.group == 'shared-tail'
+        if: matrix.group == 'shared-tail' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_restore_4586_manifest_cas_pg.py \
@@ -4448,7 +4548,7 @@ jobs:
         #
         # Same skip-detection as every gate in this job: a rejected submission
         # is an expensive way to find out the gate never ran.
-        if: matrix.group == 'shared-tail'
+        if: matrix.group == 'shared-tail' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_account_deletion_678_pg.py \
@@ -4476,7 +4576,7 @@ jobs:
         # Same skip detection as every gate in this job: pytest exits 0 when
         # each test skips, and a gate that silently did not run reads exactly
         # like one that passed.
-        if: matrix.group == 'shared-tail'
+        if: matrix.group == 'shared-tail' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_folded_market_sport_net_6221_pg.py \
@@ -4505,7 +4605,7 @@ jobs:
         # Same skip detection as every gate in this job: pytest exits 0 when
         # each test skips, and a gate that silently did not run reads exactly
         # like one that passed.
-        if: matrix.group == 'shared-tail'
+        if: matrix.group == 'shared-tail' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_price_table_fold_6390_pg.py \
@@ -4534,7 +4634,7 @@ jobs:
         # Same skip detection as every gate in this job: pytest exits 0 when
         # each test skips, and a gate that silently did not run reads exactly
         # like one that passed.
-        if: matrix.group == 'shared-tail'
+        if: matrix.group == 'shared-tail' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_event_subresources_resolve_twin_id_6975_pg.py \
@@ -4567,7 +4667,7 @@ jobs:
         # Same skip detection as every gate in this job. Note this file's
         # premise arm runs WITHOUT a database by design, so a fully-skipped run
         # still reports skips here and trips the detector.
-        if: matrix.group == 'shared-tail'
+        if: matrix.group == 'shared-tail' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_prekickoff_leg_withdrawal_5896_pg.py \
@@ -4604,7 +4704,7 @@ jobs:
         # Same skip detection as every gate in this job; this file's premise
         # arm runs WITHOUT a database by design, so a fully-skipped run still
         # reports skips here and trips the detector.
-        if: matrix.group == 'shared-tail'
+        if: matrix.group == 'shared-tail' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_stranded_prekickoff_hero_6511_pg.py \
@@ -4639,7 +4739,7 @@ jobs:
         # tolerance; dropping `yes_ask > 0`; and dropping the ungraded bid arm.
         #
         # Same skip detection as every gate in this job.
-        if: matrix.group == 'shared-tail'
+        if: matrix.group == 'shared-tail' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_grid_book_refuted_price_6532_pg.py \
@@ -4677,7 +4777,7 @@ jobs:
         # pass with the fix reverted.
         #
         # Same skip detection as every gate in this job.
-        if: matrix.group == 'shared-tail'
+        if: matrix.group == 'shared-tail' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_grid_untaken_offer_8220_pg.py \
@@ -4699,7 +4799,7 @@ jobs:
         # bidless books. Measured non-vacuous, five mutants, each killed:
         # unwiring the call site, dropping the sum gate, dropping the trade
         # term, dropping the buyer test, and letting any trade back a price.
-        if: matrix.group == 'shared-tail'
+        if: matrix.group == 'shared-tail' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_grid_polymarket_unbacked_8192_pg.py \
@@ -4727,7 +4827,7 @@ jobs:
         # where the qualified spelling has no ticker and must stay unbound.
         #
         # Same skip detection as every gate in this job.
-        if: matrix.group == 'shared-tail'
+        if: matrix.group == 'shared-tail' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_grid_miami_identity_7829_pg.py \
@@ -4762,7 +4862,7 @@ jobs:
         # Same skip detection as every gate in this job: pytest exits 0 when
         # each test skips, and a gate that silently did not run reads exactly
         # like one that passed.
-        if: matrix.group == 'shared-tail'
+        if: matrix.group == 'shared-tail' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_live_blend_concurrent_stamp_pg.py \
@@ -4775,7 +4875,7 @@ jobs:
           fi
 
       - name: "#8129 earlier completed blend groups release rows and publish (real Postgres)"
-        if: matrix.group == 'shared-tail'
+        if: matrix.group == 'shared-tail' && needs.change-scope.outputs.reuse != 'true'
         run: |
           if python -m pytest tests/integration/test_live_blend_grouped_commit_8129_pg.py \
             -v -rs > /tmp/blend8129.txt 2>&1; then
@@ -4796,7 +4896,7 @@ jobs:
           }
 
       - name: "#10090 next same-game quote owns no history wait (real Postgres)"
-        if: matrix.group == 'shared-tail'
+        if: matrix.group == 'shared-tail' && needs.change-scope.outputs.reuse != 'true'
         run: |
           if python -m pytest tests/integration/test_next_quote_history_owner_10090_pg.py \
             -v -rs > /tmp/next-quote10090.txt 2>&1; then
@@ -4817,7 +4917,7 @@ jobs:
           }
 
       - name: "#10090 PM release wake with the stage trace off and on (real Postgres)"
-        if: matrix.group == 'shared-tail'
+        if: matrix.group == 'shared-tail' && needs.change-scope.outputs.reuse != 'true'
         run: |
           if python -m pytest tests/integration/test_pm_stamp_release_wake_10090_pg.py \
             -v -rs > /tmp/release-wake10090.txt 2>&1; then
@@ -4839,7 +4939,7 @@ jobs:
 
       - name: "#10702 exact Kalshi trace commit and rollback controls (real Postgres)"
         # Each case owns and drops a random schema in the job's disposable DB.
-        if: matrix.group == 'isolated'
+        if: matrix.group == 'isolated' && needs.change-scope.outputs.reuse != 'true'
         run: |
           result=0
           python -m pytest tests/integration/test_kalshi_exact_trace_10702_pg.py -v -rs > /tmp/trace10702.txt 2>&1 || result=$?
@@ -4857,7 +4957,7 @@ jobs:
       - name: "#837 blend stamp deadlock — provision the disposable database"
         # Its own database for the reason the #7617 step above gives: the file
         # drops and creates the tables it touches.
-        if: matrix.group == 'isolated'
+        if: matrix.group == 'isolated' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python - <<'PY' >> "$GITHUB_ENV"
@@ -4890,7 +4990,7 @@ jobs:
         # not freeze the other games' stamps (500ms lock_timeout, retry next
         # flush), plus its control with the timeout off.
         # Skip detection plus a count, as for #7617.
-        if: matrix.group == 'isolated'
+        if: matrix.group == 'isolated' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_live_blend_stamp_deadlock_pg_837.py \
@@ -4917,7 +5017,7 @@ jobs:
         # and the timeout-free drain), each asserting the path the installed
         # SQLAlchemy/asyncpg pair selects. Reuses the #837 database provisioned
         # above; same skip detection plus a count.
-        if: matrix.group == 'isolated'
+        if: matrix.group == 'isolated' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_kalshi_price_lock_budget_pg_10661.py \
@@ -4946,7 +5046,7 @@ jobs:
         # the last quote inside the stamp floor, a quote fenced behind its own
         # running stamp, a bridged open-contract winner. Reuses the #837
         # database; same skip detection plus a count.
-        if: matrix.group == 'isolated'
+        if: matrix.group == 'isolated' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_kalshi_live_beside_inflight_nonlive_10090_pg.py \
@@ -4982,7 +5082,7 @@ jobs:
         # written opt-in on SEARCH_TEST_DATABASE_URL and, until this step, were
         # collected by the unit shards (which do not set it) and named by nothing
         # in this job, i.e. they would have run nowhere.
-        if: matrix.group == 'shared-tail'
+        if: matrix.group == 'shared-tail' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_feed_negative_rank_keeps_discover_eligibility_1927a_pg.py \
@@ -5009,7 +5109,7 @@ jobs:
         # the noise filter off), and the anonymous reader's Discover is unchanged.
         #
         # Same skip detection as every gate in this job, for the same reason.
-        if: matrix.group == 'shared-tail'
+        if: matrix.group == 'shared-tail' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_feed_swipes_rank_never_hide_a_sport_1927_pg.py \
@@ -5044,7 +5144,7 @@ jobs:
         # origin/master before wiring: 4 of 11 red.
         #
         # Same skip detection as every gate in this job, for the same reason.
-        if: matrix.group == 'shared-tail'
+        if: matrix.group == 'shared-tail' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_settled_book_closes_the_market_row_6919_real_postgres.py \
@@ -5083,7 +5183,7 @@ jobs:
         # Runs the SHIPPED scripts with `get_task_session` pointed at this
         # database; only the Gamma HTTP call is substituted. Same skip detection
         # as every gate in this job, for the same reason.
-        if: matrix.group == 'shared-tail'
+        if: matrix.group == 'shared-tail' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_drain_6919_apply_restore_real_postgres.py \
@@ -5101,7 +5201,7 @@ jobs:
         # timeout, while every unit guard passed on a recording session that
         # accepts any type. Proved non-vacuous before wiring: binding the raw
         # string reds both arms with the production error.
-        if: matrix.group == 'shared-tail'
+        if: matrix.group == 'shared-tail' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_sport_category_cursor_resume_2526_real_postgres.py \
@@ -5141,7 +5241,7 @@ jobs:
         # (patched on the restore module, not on `app.tasks.base` — it binds the
         # name at import). Nothing is faked: there is no venue in this pair.
         # Same skip detection as every gate in this job, for the same reason.
-        if: matrix.group == 'shared-tail'
+        if: matrix.group == 'shared-tail' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_restore_8132_undo_real_postgres.py \
@@ -5181,7 +5281,7 @@ jobs:
         # import backfill_winners` binds the Celery TASK, which shadows the
         # module and has no such attribute. Same skip detection as every gate in
         # this job, for the same reason.
-        if: matrix.group == 'shared-tail'
+        if: matrix.group == 'shared-tail' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_price_crown_leg_guard_8132_real_postgres.py \
@@ -5215,7 +5315,7 @@ jobs:
         # NULL-`espn_id` exclusion that share the predicate. Red-first is
         # executed, not remembered: one arm reverts the cast by surgery on the
         # shipped constant and asserts the server still refuses it.
-        if: matrix.group == 'shared-tail'
+        if: matrix.group == 'shared-tail' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_repair_7354_population_sql_real_postgres.py \
@@ -5250,7 +5350,7 @@ jobs:
         # population (a hardcoded 30 fails there). Red-first is executed, not
         # remembered: one arm rebuilds the merged text by surgery on the shipped
         # constant and asserts the server still refuses it.
-        if: matrix.group == 'shared-tail'
+        if: matrix.group == 'shared-tail' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_repair_7739_candidate_sql_real_postgres.py \
@@ -5294,7 +5394,7 @@ jobs:
         # for the arm to mean anything. Red-first is executed, not remembered —
         # one arm reverts the gate by surgery on the shipped planner and asserts
         # the draw's rows flip again.
-        if: matrix.group == 'shared-tail'
+        if: matrix.group == 'shared-tail' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_repair_7354_is_idempotent_real_postgres.py \
@@ -5340,7 +5440,7 @@ jobs:
         # connection AND being enforced, and the dead-tuple read returning no row
         # and no error — the reachable absence whose mishandling got the first
         # candidate for this issue rejected.
-        if: matrix.group == 'shared-tail'
+        if: matrix.group == 'shared-tail' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_vacuum_block_signals_2006_real_postgres.py \
@@ -5381,7 +5481,7 @@ jobs:
         # Same skip detection as every gate in this job: pytest exits 0 when
         # each test skips, and a gate that silently did not run reads exactly
         # like one that passed.
-        if: matrix.group == 'shared-tail'
+        if: matrix.group == 'shared-tail' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_search_diacritic_fold_pg_6977.py \
@@ -5398,7 +5498,7 @@ jobs:
         # word test onto the ILIKE, so only Postgres can show `st` failing to be
         # a word of "Ohio State Buckeyes". Strawman on master fails 4 ship cases;
         # removing either half of the fix alone fails 5-6.
-        if: matrix.group == 'shared-tail'
+        if: matrix.group == 'shared-tail' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_search_college_state_abbrev_pg_9836.py \
@@ -5414,7 +5514,7 @@ jobs:
         # games, not 49ers @ New York Giants. The Teams gate is pure FTS and
         # `angels` stemming to the stem of "Angeles" is a Postgres fact. The
         # in-rig strawman proves the cases measure the fix.
-        if: matrix.group == 'shared-tail'
+        if: matrix.group == 'shared-tail' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_search_city_abbrev_pg_9859.py \
@@ -5430,7 +5530,7 @@ jobs:
         # match (`%oscar%` inside "Boscardin") as the dropdown's second row. The
         # ILIKE and the `oscars` -> `oscar` stem are Postgres facts. The in-rig
         # strawman proves the cases measure the fix.
-        if: matrix.group == 'shared-tail'
+        if: matrix.group == 'shared-tail' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_search_award_plural_event_arm_pg.py \
@@ -5446,7 +5546,7 @@ jobs:
         # not under basketball a month out. The teams window's `ts_rank_cd` over
         # name + aliases is what puts the Bears seventh, a Postgres fact. The
         # in-rig strawman proves the cases measure the fix.
-        if: matrix.group == 'shared-tail'
+        if: matrix.group == 'shared-tail' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_search_city_lead_tier_pg_9897.py \
@@ -5462,7 +5562,7 @@ jobs:
         # counts the city's words twice. `ts_rank_cd` over the weighted
         # team-name vectors is the mechanism, a Postgres fact. The in-rig
         # strawman proves the cases measure the fix.
-        if: matrix.group == 'shared-tail'
+        if: matrix.group == 'shared-tail' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_search_city_rank_ties_pg_9940.py \
@@ -5478,7 +5578,7 @@ jobs:
         # and one outcome; the split arms are trigram ILIKEs, a whole-word regex
         # and a correlated EXISTS read only when tier<=1 comes back short — all
         # Postgres facts. The in-rig strawman proves the cases measure the fix.
-        if: matrix.group == 'shared-suffix'
+        if: matrix.group == 'shared-suffix' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_search_team_plus_competition_pg_10024.py \
@@ -5494,7 +5594,7 @@ jobs:
         # every open market and blow the arm's 1,000 ms bound; the ARRAY form
         # resolves the match set once. Postgres parses and runs the rendered
         # `ANY (array((SELECT ...)))` and proves it set-identical to IN.
-        if: matrix.group == 'shared-suffix'
+        if: matrix.group == 'shared-suffix' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_search_outcome_arm_any_array_pg_9947.py \
@@ -5511,7 +5611,7 @@ jobs:
         # onto the ILIKE threw the row away (93 rows in the window, 17 live).
         # Only Postgres tokenises. Strawman on master fails 6 of 7; a substring
         # loosening fails the `fed` case; a double-split fails the rank case.
-        if: matrix.group == 'shared-suffix'
+        if: matrix.group == 'shared-suffix' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_search_slash_doubles_pg_9735.py \
@@ -5532,7 +5632,7 @@ jobs:
         # per-term ILIKE + FTS arms, so it is proved here, over Postgres, on both
         # routes; the no-DB pin is `tests/test_search_superbowl_synonym_8427.py`.
         # Same skip detection as every gate in this job.
-        if: matrix.group == 'shared-suffix'
+        if: matrix.group == 'shared-suffix' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_search_superbowl_joined_pg_8427.py \
@@ -5549,7 +5649,7 @@ jobs:
         # board. The fix is an ORDER BY key, so the page it produces needs a real
         # ranking; the no-DB pin is `TestTheNamedYearOrdersTheFuturesWindow` in
         # `test_route_search_intent_5688.py`. Same skip detection as every gate here.
-        if: matrix.group == 'shared-suffix'
+        if: matrix.group == 'shared-suffix' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_search_named_year_pg_8805.py \
@@ -5583,7 +5683,7 @@ jobs:
         # same shape and drift between them is the likeliest regression.
         #
         # Same skip detection as every gate in this job, for the same reason.
-        if: matrix.group == 'shared-suffix'
+        if: matrix.group == 'shared-suffix' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_repair_club_noun_apply_restore_6955_pg.py \
@@ -5598,7 +5698,7 @@ jobs:
         # whose own FK actions (CASCADE / SET NULL) would silently destroy or
         # orphan any reference the repoint missed. Only a real server runs those.
         # Same skip detection as every gate in this job.
-        if: matrix.group == 'shared-suffix'
+        if: matrix.group == 'shared-suffix' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_repair_7021_fold_apply_restore_pg.py \
@@ -5613,7 +5713,7 @@ jobs:
         # soccer rows onto the right sport; its undo must put back ONLY rows
         # still where the repair left them. Those guarded writes are SQL, so
         # only a real server runs them. Same skip detection as every gate here.
-        if: matrix.group == 'shared-suffix'
+        if: matrix.group == 'shared-suffix' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_repair_8636_venue_contradicted_rows_pg.py \
@@ -5628,7 +5728,7 @@ jobs:
         # compare-and-set; a writer landing between its read and its UPDATE must
         # change zero rows and roll the whole run back, and the undo touches only
         # the ids it is given. Those are SQL, so only a real server runs them.
-        if: matrix.group == 'shared-suffix'
+        if: matrix.group == 'shared-suffix' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_repair_1109_football_shelf_apply_restore_pg.py \
@@ -5643,7 +5743,7 @@ jobs:
         # into the NBL, banking each sport_id first; a row that changes under
         # the run rolls every write back, and the undo touches only rows still
         # in the league. Those are SQL, so only a real server runs them.
-        if: matrix.group == 'shared-suffix'
+        if: matrix.group == 'shared-suffix' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_repair_8100_phoenix_placement_apply_restore_pg.py \
@@ -5658,7 +5758,7 @@ jobs:
         # compare-and-swap binds Decimal / aware datetime / int against numeric,
         # timestamptz and integer columns, and its undo writes the exact BEFORE
         # back. Only a real server runs those. Same skip detection as every gate here.
-        if: matrix.group == 'shared-suffix'
+        if: matrix.group == 'shared-suffix' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_repair_9850_trammell_seeded_opening_pg.py \
@@ -5674,7 +5774,7 @@ jobs:
         # silently destroy or orphan any reference the repoint missed, and the
         # after-state is read back through the serve path's own name lookup.
         # Only a real server runs those. Same skip detection as every gate here.
-        if: matrix.group == 'shared-suffix'
+        if: matrix.group == 'shared-suffix' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_repair_6974_fold_mls_apply_restore_pg.py \
@@ -5688,7 +5788,7 @@ jobs:
         # Same shape as the MLS gate above, plus a mapping repointed BEFORE the
         # fold (the delete's CASCADE would destroy it) and the after-state read
         # back through the search route's own Teams filter and rank.
-        if: matrix.group == 'shared-suffix'
+        if: matrix.group == 'shared-suffix' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_repair_6974_fold_nhl_apply_restore_pg.py \
@@ -5702,7 +5802,7 @@ jobs:
         # The NHL gate's shape, plus mappings banked whole and deleted before the
         # fold, and the ship read back through the search route: "lafc" answers
         # with one club, and that club's row carries the game only the duplicate named.
-        if: matrix.group == 'shared-suffix'
+        if: matrix.group == 'shared-suffix' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_repair_6974_fold_lafc_apply_restore_pg.py \
@@ -5716,7 +5816,7 @@ jobs:
         # The LAFC gate's shape, plus legs that are another club's moved (or a
         # college leg unlinked) before the fold, and the ship read back through the
         # #9617 league step: Kalshi's "Detroit" and "Portland" bind to the real club.
-        if: matrix.group == 'shared-suffix'
+        if: matrix.group == 'shared-suffix' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_repair_6974_fold_nba_apply_restore_pg.py \
@@ -5730,7 +5830,7 @@ jobs:
         # One pinned pair: ESPN 761660 moved inside the real partial unique index,
         # the market re-pointed with its immutable link-change row, and the ship read
         # back through not_a_proven_duplicate — search shows the kept row only.
-        if: matrix.group == 'shared-suffix'
+        if: matrix.group == 'shared-suffix' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_repair_2841_chifire_van_fold_apply_restore_pg.py \
@@ -5746,7 +5846,7 @@ jobs:
         # matcher's own read, skip any row whose league already holds its game,
         # move `sport_id` guarded on the value read, and undo only what they
         # moved. Same skip detection as every gate here.
-        if: matrix.group == 'shared-suffix'
+        if: matrix.group == 'shared-suffix' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_repair_5576_venue_named_competition_pg.py \
@@ -5774,7 +5874,7 @@ jobs:
         #
         # The nonce is not a credential: it authorises destruction of a scratch
         # database, so it is printed nowhere and is regenerated every run.
-        if: matrix.group == 'isolated'
+        if: matrix.group == 'isolated' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python - <<'PY' > /tmp/mvacc.env
@@ -5838,7 +5938,7 @@ jobs:
         #     deselected — the count is asserted, not eyeballed.
         # pytest's exit code is read for its VALUE (gotcha #54): 1 is a result,
         # anything else is a story about the harness.
-        if: matrix.group == 'isolated'
+        if: matrix.group == 'isolated' && needs.change-scope.outputs.reuse != 'true'
         run: |
           # `set +e` around the pipeline on purpose: the step runs under `bash -e`,
           # so a red suite would abort HERE and the count/skip refusals below —
@@ -5888,7 +5988,7 @@ jobs:
         # CI is the only route for this guard: the Mac's Postgres is 14 and the
         # schema carries a PG15-only `NULLS NOT DISTINCT` unique index, so
         # `Base.metadata.create_all` cannot build it there.
-        if: matrix.group == 'isolated'
+        if: matrix.group == 'isolated' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python - <<'PY' > /tmp/tlroute.env
@@ -5944,7 +6044,7 @@ jobs:
         # and a short count means something was deselected. pytest's exit code is
         # read for its VALUE (gotcha #54) — 1 is a result, anything else is a
         # story about the harness.
-        if: matrix.group == 'isolated'
+        if: matrix.group == 'isolated' && needs.change-scope.outputs.reuse != 'true'
         run: |
           # `set +e` on purpose: the step runs under `bash -e`, so a red suite
           # would abort HERE and the refusals below — the half that cannot be
@@ -5990,7 +6090,7 @@ jobs:
         # any Postgres or Redis that is not loopback or does not carry the nonce,
         # and `GENERIC_HISTORY_*` deliberately do NOT fall back to `$DATABASE_URL`
         # / `$REDIS_URL`.
-        if: matrix.group == 'isolated'
+        if: matrix.group == 'isolated' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python - <<'PY' > /tmp/gmh.env
@@ -6051,7 +6151,7 @@ jobs:
         env:
           REDIS_URL: redis://localhost:56379/15
           KALSHI_API_KEY: ""
-        if: matrix.group == 'isolated'
+        if: matrix.group == 'isolated' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set +e
           python -m pytest \
@@ -6158,7 +6258,7 @@ jobs:
         env:
           REDIS_URL: redis://localhost:56379/15
           KALSHI_API_KEY: ""
-        if: matrix.group == 'isolated'
+        if: matrix.group == 'isolated' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set +e
           python -m pytest \
@@ -6217,7 +6317,7 @@ jobs:
         env:
           REDIS_URL: redis://localhost:56379/15
           KALSHI_API_KEY: ""
-        if: matrix.group == 'isolated'
+        if: matrix.group == 'isolated' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set +e
           python -m pytest \
@@ -6272,7 +6372,7 @@ jobs:
         # planted in BOTH. The suite refuses any Postgres or Redis that is not
         # loopback or does not carry the nonce, and `NASCAR_7548_*` deliberately
         # do NOT fall back to `$DATABASE_URL` / `$REDIS_URL`.
-        if: matrix.group == 'isolated'
+        if: matrix.group == 'isolated' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python - <<'PY' > /tmp/nascar7548.env
@@ -6336,7 +6436,7 @@ jobs:
         # and pytest's exit code is read for its VALUE (gotcha #54).
         env:
           REDIS_URL: redis://localhost:56379/14
-        if: matrix.group == 'isolated'
+        if: matrix.group == 'isolated' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set +e
           python -m pytest \
@@ -6418,7 +6518,7 @@ jobs:
         # ZERO collected is a collection error wearing a green hat, and a short
         # count means something was deselected. The exit code is read for its
         # VALUE (gotcha #54) — 1 is a result, anything else is a harness story.
-        if: matrix.group == 'shared-suffix'
+        if: matrix.group == 'shared-suffix' && needs.change-scope.outputs.reuse != 'true'
         run: |
           # `set +e` on purpose: the step runs under `bash -e`, so a red suite
           # would abort HERE and the refusals below would never execute.
@@ -6485,7 +6585,7 @@ jobs:
         # Same skip-detection as every gate here — a skipped gate reads exactly
         # like a passing one, and this file would skip silently on every other
         # runner in the matrix.
-        if: matrix.group == 'shared-suffix'
+        if: matrix.group == 'shared-suffix' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest \
@@ -6503,7 +6603,7 @@ jobs:
         # sportsbook rows have no spread), and whether that matches, re-runs as
         # a no-op, and lets the restore spare a row written since is decided by
         # the server. Same skip-detection as every gate here.
-        if: matrix.group == 'shared-suffix'
+        if: matrix.group == 'shared-suffix' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest \
@@ -6519,7 +6619,7 @@ jobs:
         # `bl_searchtest` has been populated by eighty steps before it, whose
         # inbound foreign keys make the drop fail outright. Created empty here
         # and thrown away with the runner.
-        if: matrix.group == 'isolated'
+        if: matrix.group == 'isolated' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python - <<'PY' >> "$GITHUB_ENV"
@@ -6566,7 +6666,7 @@ jobs:
         # doubleheader's second game (6h) and a back-to-back's (23h) sit inside
         # the screen's own ±30h window and MUST survive the arm. Restoring that
         # window as the write's identity turns both red.
-        if: matrix.group == 'isolated'
+        if: matrix.group == 'isolated' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_7594_canonical_ownership_pg.py \
@@ -6592,7 +6692,7 @@ jobs:
         # sentinel nonce: unlike #4079 this suite never drops a schema it did not
         # create in the same job, and it reads its own variable rather than
         # falling back to `$DATABASE_URL`.
-        if: matrix.group == 'isolated'
+        if: matrix.group == 'isolated' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python - <<'PY' >> "$GITHUB_ENV"
@@ -6634,7 +6734,7 @@ jobs:
         # exits 0 when each test skips, and four of the six cases here are
         # controls that pass with OR without the fix — a run that lost the two
         # ship cases would still print a green summary.
-        if: matrix.group == 'isolated'
+        if: matrix.group == 'isolated' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_a_delay_is_not_silence_pg_7617.py \
@@ -6657,7 +6757,7 @@ jobs:
         # PRE-GAME-only sibling read so a LIVE_ONLY quota night withdraws
         # nothing) that only Postgres can compute. Reuses the #7617 database:
         # this file drops and creates its own tables, after that step.
-        if: matrix.group == 'isolated'
+        if: matrix.group == 'isolated' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_a_withdrawn_listing_is_not_a_start_pg_8755.py \
@@ -6677,7 +6777,7 @@ jobs:
         # reads `claim_context->>'statpal_start_time'` from JSONB through
         # `ANY(:event_ids)` under asyncpg, which only Postgres can answer.
         # Reuses the #7617 database: this file drops and creates its own tables.
-        if: matrix.group == 'isolated'
+        if: matrix.group == 'isolated' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_a_venue_stamp_later_session_pg_9588.py \
@@ -6698,7 +6798,7 @@ jobs:
         # skipped or blocked is a property of Postgres row locks that only two
         # real sessions can show. Reuses the #7617 database: this file drops
         # and creates its own tables.
-        if: matrix.group == 'isolated'
+        if: matrix.group == 'isolated' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_future_unplayed_live_row_returns_to_scheduled_10300_pg.py \
@@ -6719,7 +6819,7 @@ jobs:
         # and a NOT EXISTS over its siblings read in the same transaction —
         # only Postgres can answer either. Reuses the #7617 database: this
         # file drops and creates its own tables.
-        if: matrix.group == 'isolated'
+        if: matrix.group == 'isolated' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_open_contract_leg_grade_pg_10022.py \
@@ -6741,7 +6841,7 @@ jobs:
         # and whether a market spanning two ticker prefixes must stay inline —
         # is a question about open transactions only Postgres can answer.
         # Reuses the #7617 database: this file drops and creates its own tables.
-        if: matrix.group == 'isolated'
+        if: matrix.group == 'isolated' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_open_contract_deferred_grade_pg_10734.py \
@@ -6758,7 +6858,7 @@ jobs:
       - name: "#7878 win-prob evidence collapse — provision the disposable database"
         # Its own database for the reason the #7617 step above gives: the file
         # drops and creates the five tables it touches.
-        if: matrix.group == 'isolated'
+        if: matrix.group == 'isolated' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python - <<'PY' >> "$GITHUB_ENV"
@@ -6788,7 +6888,7 @@ jobs:
         # longer show the two unobserved hours honestly. The rule is one SQL
         # statement of window functions over a JSONB tuple; only Postgres can
         # say what it keeps. Skip detection plus a count, as for #7617.
-        if: matrix.group == 'isolated'
+        if: matrix.group == 'isolated' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_winprob_evidence_collapse_pg_7878.py \
@@ -6809,7 +6909,7 @@ jobs:
         # GETs /api/events/{id}/history through the real app and reads the
         # served JSON for every evidence kind. Shared `bl_searchtest`, reserved
         # ids, ORM seeding. Skip detection plus a count.
-        if: matrix.group == 'shared-suffix'
+        if: matrix.group == 'shared-suffix' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_winprob_evidence_wire_7878_pg.py \
@@ -6830,7 +6930,7 @@ jobs:
         # Postgres aborts a transaction, so only Postgres can show that the
         # savepoints restore it. Reuses the #7617 database; this file drops and
         # creates its own tables. Skip detection plus a count.
-        if: matrix.group == 'isolated'
+        if: matrix.group == 'isolated' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_espn_pass_survives_one_failed_statement_pg_8796.py \
@@ -6851,7 +6951,7 @@ jobs:
         # anchor. Only Postgres aborts, so only Postgres can show the per-row
         # savepoint restores it. Same database as the #8796 step; this file
         # drops and creates its own tables. Skip detection plus a count.
-        if: matrix.group == 'isolated'
+        if: matrix.group == 'isolated' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_tennis_release_savepoint_pg_9797.py \
@@ -6871,7 +6971,7 @@ jobs:
         # (12-23 s on production), and the socket's price write queued behind
         # it. Only Postgres holds the lock, so only Postgres can show it free.
         # Same database and fixture as the #8796 step. Skip detection + count.
-        if: matrix.group == 'isolated'
+        if: matrix.group == 'isolated' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_espn_pass_releases_rows_pg_9049.py \
@@ -6891,7 +6991,7 @@ jobs:
         # league and ESPN id. Only a database proves what that WHERE does to
         # rows. Same database and table closure as the #8796 step. Skip
         # detection plus a count.
-        if: matrix.group == 'isolated'
+        if: matrix.group == 'isolated' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_certain_postseason_playoff_pg_9602.py \
@@ -6911,7 +7011,7 @@ jobs:
         # ERA of INF serialised as Infinity), the transaction aborted, and every
         # run settled nothing while that game led the 48-hour queue. Only
         # Postgres aborts a transaction. Same database and fixture as #8796.
-        if: matrix.group == 'isolated'
+        if: matrix.group == 'isolated' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_settled_box_pass_survives_one_refused_box_pg_9713.py \
@@ -6932,7 +7032,7 @@ jobs:
         # Only Postgres aborts a transaction, so only Postgres can show the
         # per-game savepoint contains it. Same database and fixture as the
         # #8796 step. Skip detection plus a count.
-        if: matrix.group == 'isolated'
+        if: matrix.group == 'isolated' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_live_box_pass_survives_one_failed_write_pg_8913.py \
@@ -6953,7 +7053,7 @@ jobs:
         # held every slot and a live MLB line score froze for 80 minutes. The
         # defect is the ORDER BY + LIMIT on the JSONB column, so only Postgres
         # shows it. Same database and fixture as the #8796 step.
-        if: matrix.group == 'isolated'
+        if: matrix.group == 'isolated' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_live_box_pass_reaches_every_fetchable_game_pg_9067.py \
@@ -6973,7 +7073,7 @@ jobs:
         # and `bl_searchtest` has inbound foreign keys on `futures_markets` that
         # make that drop die with `DependentObjectsStillExist`. Created empty and
         # thrown away with the runner.
-        if: matrix.group == 'isolated'
+        if: matrix.group == 'isolated' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python - <<'PY' >> "$GITHUB_ENV"
@@ -7024,7 +7124,7 @@ jobs:
         # the point (it is how a silently-dropped case gets caught), but it means
         # the number is part of the test file's contract, not CI boilerplate.
         # 12 = 7 age-floor cases + 4 settled-market cases + 1 consumer wiring case.
-        if: matrix.group == 'isolated'
+        if: matrix.group == 'isolated' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_ws_slate_age_floor_pg_837.py \
@@ -7053,7 +7153,7 @@ jobs:
         # Count pin: 12 = 6 cases x 2 venues. Four of the six are kill controls
         # for the arm's own clauses (status, floor, market, NULL), so a run that
         # lost the ship case would still print green without the count.
-        if: matrix.group == 'isolated'
+        if: matrix.group == 'isolated' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_ws_slate_suspended_open_market_pg_9484.py \
@@ -7085,7 +7185,7 @@ jobs:
         # Same skip detection as every gate in this job, and a count so a
         # dropped case cannot print green: 3 = family roster (MLB/NPB/KBO) +
         # NHL/WNBA/NCAAF pages + the one-roster-read arm.
-        if: matrix.group == 'shared-suffix'
+        if: matrix.group == 'shared-suffix' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_route_related_futures_team_paths_7867_pg.py \
@@ -7102,7 +7202,7 @@ jobs:
       - name: "#10319 women's Serie A identity and season context stay separate from men's (real Postgres)"
         # Both files create and drop only their own schema. The job's explicit
         # SEARCH_TEST_DATABASE_URL arms both the route and seed/undo cases.
-        if: matrix.group == 'isolated'
+        if: matrix.group == 'isolated' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set +e
           python -m pytest \
@@ -7160,7 +7260,7 @@ jobs:
         # + #9450's two, the whole matcher attempt: a not-game-level child
         # (Harris v Galarneau's match market) is stored on its group's row,
         # and a group holding no row leaves it unlinked.
-        if: matrix.group == 'shared-suffix'
+        if: matrix.group == 'shared-suffix' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_polymarket_group_sibling_8430_pg.py \
@@ -7187,7 +7287,7 @@ jobs:
         # 3 = the probe's positive control (a held row reads `locked`) + one arm
         # per pass. Each arm also asserts the pass really wrote `betting` on the
         # row it probes, and that it parked mid-pass.
-        if: matrix.group == 'shared-suffix'
+        if: matrix.group == 'shared-suffix' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_a_poll_releases_its_event_rows_per_sport_837_pg.py \
@@ -7212,7 +7312,7 @@ jobs:
         #
         # 3 = the ship arm + the refresher-bound control + the failed-game
         # rollback/publication control.
-        if: matrix.group == 'shared-suffix'
+        if: matrix.group == 'shared-suffix' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_a_poll_releases_each_game_before_the_next_games_snapshots_10090_pg.py \
@@ -7236,7 +7336,7 @@ jobs:
         #
         # 3 = the parent strawman (writes leave pages pending) + the migration's
         # upgrade (zero pending, fastupdate=off) + its downgrade (parent restored).
-        if: matrix.group == 'shared-suffix'
+        if: matrix.group == 'shared-suffix' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set +e
           python -m pytest tests/integration/test_futures_outcome_writes_never_merge_a_search_backlog_10090_pg.py \
@@ -7273,7 +7373,7 @@ jobs:
         # 4 = the probe's positive control + the scores-loop arm + one rollback
         # arm per pass. The rollback arms inject a real Postgres error, and the
         # discover arm fails with MissingGreenlet on the ORM-loop mutant.
-        if: matrix.group == 'shared-suffix'
+        if: matrix.group == 'shared-suffix' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_a_failed_sport_and_the_scores_loop_release_837_pg.py \
@@ -7299,7 +7399,7 @@ jobs:
         # => :n)` both sides of now, any status), the moneyline and
         # `futures_markets` holder reads, and the phantom tagged from /scores; and
         # a phantom holding a market refused. 8 total.
-        if: matrix.group == 'shared-suffix'
+        if: matrix.group == 'shared-suffix' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_odds_api_reissued_twin_8422_pg.py \
@@ -7321,7 +7421,7 @@ jobs:
         # `--restore-undrifted` leaves a repointed leg and its backup standing.
         # Locks, jsonb, null-safe binds and rowcount are a server's answers; a
         # session double reads green on all of them. 19 cases.
-        if: matrix.group == 'shared-suffix'
+        if: matrix.group == 'shared-suffix' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_settlement_capture_verdicts_repair_8126_pg.py \
@@ -7342,7 +7442,7 @@ jobs:
         # the drift refusal and the row-version-exact restore are compare-and-
         # swaps a session double reads green on. Runs in its own throwaway
         # database. 11 cases (9 tests, one parametrized over three event drifts).
-        if: matrix.group == 'shared-suffix'
+        if: matrix.group == 'shared-suffix' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_repair_team_total_game_score_2351_pg.py \
@@ -7364,7 +7464,7 @@ jobs:
         # a restore that never overwrites a later writer are SQL a session double
         # reads green on. Runs in its own throwaway database. 19 cases (the 9
         # classifier/apply/restore cases + the backup-pair collision falsifiers).
-        if: matrix.group == 'shared-suffix'
+        if: matrix.group == 'shared-suffix' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_repair_pm_under_inverted_history_2027_pg.py \
@@ -7386,7 +7486,7 @@ jobs:
         # stopped run and a restore that never overwrites a later writer are SQL
         # a session double reads green on. Golf, football, two-leg, Kalshi and
         # no-Draw controls must never move. Runs in its own throwaway database.
-        if: matrix.group == 'shared-suffix'
+        if: matrix.group == 'shared-suffix' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_repair_winner_field_guarded_apply_1527_pg.py \
@@ -7411,7 +7511,7 @@ jobs:
         # contradictory, disagreeing, unknown/sourceless-authority, incoherent,
         # ungraded, two-leg, Kalshi and already-resolved markets must never move.
         # Runs in its own throwaway database on the real ORM schema.
-        if: matrix.group == 'shared-suffix'
+        if: matrix.group == 'shared-suffix' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_repair_settled_status_1527_pg.py \
@@ -7433,7 +7533,7 @@ jobs:
         # control proves the replay reaches the opening writer; and the real
         # detail route serves the settled market as resolved with one winner.
         # Runs in its own throwaway database on the real ORM schema.
-        if: matrix.group == 'shared-suffix'
+        if: matrix.group == 'shared-suffix' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_reingest_keeps_settled_soccer_field_1527_pg.py \
@@ -7462,7 +7562,7 @@ jobs:
         # reproduce the defect), and the REAL sunk-recovery selector reaching the
         # parent it could not reach before. Runs in its own throwaway database on
         # the real ORM schema.
-        if: matrix.group == 'shared-suffix'
+        if: matrix.group == 'shared-suffix' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_repair_pm_open_leg_grade_11007_pg.py \
@@ -7481,7 +7581,7 @@ jobs:
         # PUBLISHED. Runs the curve's events_sql (extracted by AST) beside the
         # sentinel's events scan over the same typed rows, read-only, and needs
         # the published n, winners and probability sum to agree case by case.
-        if: matrix.group == 'shared-suffix'
+        if: matrix.group == 'shared-suffix' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_calibration_sentinel_events_parity_1911_pg.py \
@@ -7501,7 +7601,7 @@ jobs:
         # stamp, no point) + released (the refusal lets go of the row before its
         # next statement) + control. Lock removed: race red; guard removed:
         # refused red; refusal's commit removed: released red.
-        if: matrix.group == 'isolated'
+        if: matrix.group == 'isolated' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_live_poll_stamp_race_8910_pg.py \
@@ -7526,7 +7626,7 @@ jobs:
         # (parity with the Python rule) + their numeric control. Matcher unlocked: CE2 red; matcher
         # guard removed: CE1 red; WS guard removed: CE3/CE4/CE5 red; WS guard
         # moved to a read before the UPDATE: CE5 red.
-        if: matrix.group == 'isolated'
+        if: matrix.group == 'isolated' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_live_writers_observation_order_8910_pg.py \
@@ -7546,7 +7646,7 @@ jobs:
         # fixture: every price stamped and framed at its flush. 2 = that case +
         # the old 5s floor on the same rows, which must drop the 85 (the control
         # that tells the floors apart). Floor back at 5s: the first case red.
-        if: matrix.group == 'isolated'
+        if: matrix.group == 'isolated' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_live_blend_rapid_benchmark_837_pg.py \
@@ -7563,7 +7663,7 @@ jobs:
       - name: "#9050 source retirement preserves concurrent live prices (real Postgres)"
         # Uses #8910's disposable full-schema fixture. Two writer races,
         # three healthy controls, fresh membership/lifecycle and two no-op locks.
-        if: matrix.group == 'isolated'
+        if: matrix.group == 'isolated' && needs.change-scope.outputs.reuse != 'true'
         run: |
           python -m pytest tests/integration/test_retirement_preserves_live_sources_9050_pg.py \
             -v -rs > /tmp/retirement9050.txt 2>&1 || {
@@ -7591,7 +7691,7 @@ jobs:
         # folded stale beside the fresh twin. Trigger hook removed: 6 red;
         # frame rev dropped: R4 red; fold's twin revision dropped: R3 red;
         # canonical taken off the loaded row: R6 red.
-        if: matrix.group == 'isolated'
+        if: matrix.group == 'isolated' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_fold_revision_9051_pg.py \
@@ -7607,7 +7707,7 @@ jobs:
 
       - name: "#10542 ActivityKit registration ownership (real Postgres)"
         # Random disposable schema; independent transactions exercise ownership CAS.
-        if: matrix.group == 'isolated'
+        if: matrix.group == 'isolated' && needs.change-scope.outputs.reuse != 'true'
         run: |
           python -m pytest tests/integration/test_activitykit_registration_pg.py \
             -v -rs > /tmp/activitykit-registration10542.txt 2>&1 || {
@@ -7625,7 +7725,7 @@ jobs:
           }
 
       - name: "#10556 durable ActivityKit reservations (real Postgres)"
-        if: matrix.group == 'isolated'
+        if: matrix.group == 'isolated' && needs.change-scope.outputs.reuse != 'true'
         run: |
           python -m pytest tests/integration/test_activitykit_worker_pg.py -v -rs > /tmp/activitykit-worker10556.txt 2>&1 || {
             cat /tmp/activitykit-worker10556.txt
@@ -7642,7 +7742,7 @@ jobs:
           }
 
       - name: "#10564 abandoned ActivityKit credentials expire (real Postgres)"
-        if: matrix.group == 'isolated'
+        if: matrix.group == 'isolated' && needs.change-scope.outputs.reuse != 'true'
         run: |
           python -m pytest tests/integration/test_activitykit_credential_expiry_pg.py -v -rs > /tmp/activitykit-expiry10564.txt 2>&1 || {
             cat /tmp/activitykit-expiry10564.txt
@@ -7659,7 +7759,7 @@ jobs:
           }
 
       - name: "#10568 canonical ActivityKit observation ordering (real Postgres)"
-        if: matrix.group == 'isolated'
+        if: matrix.group == 'isolated' && needs.change-scope.outputs.reuse != 'true'
         run: |
           python -m pytest tests/integration/test_activitykit_observation_pg.py -v -rs > /tmp/activitykit-observation10568.txt 2>&1 || {
             cat /tmp/activitykit-observation10568.txt
@@ -7676,7 +7776,7 @@ jobs:
           }
 
       - name: "#10542 serialized ActivityKit runtime cursor (real Postgres)"
-        if: matrix.group == 'isolated'
+        if: matrix.group == 'isolated' && needs.change-scope.outputs.reuse != 'true'
         run: |
           python -m pytest tests/integration/test_activitykit_runtime_pg.py -v -rs > /tmp/activitykit-runtime10542.txt 2>&1 || {
             cat /tmp/activitykit-runtime10542.txt
@@ -7712,15 +7812,28 @@ jobs:
           echo "All database integration groups passed."
 
   frontend-build:
+    needs: change-scope
     runs-on: ubuntu-latest
     defaults:
       run:
         working-directory: frontend
 
     steps:
+      - name: Reused exact-commit test evidence
+        if: needs.change-scope.outputs.reuse == 'true'
+        working-directory: .
+        env:
+          REUSE_RUN: ${{ needs.change-scope.outputs.reuse_run }}
+          REUSE_ATTEMPT: ${{ needs.change-scope.outputs.reuse_attempt }}
+          REUSE_HEAD: ${{ needs.change-scope.outputs.reuse_head }}
+          REUSE_BASE: ${{ needs.change-scope.outputs.reuse_base }}
+        run: echo "reused run $REUSE_RUN attempt $REUSE_ATTEMPT, tested $REUSE_HEAD, base $REUSE_BASE"
+
       - uses: actions/checkout@v6
+        if: needs.change-scope.outputs.reuse != 'true'
 
       - uses: actions/setup-node@v7
+        if: needs.change-scope.outputs.reuse != 'true'
         with:
           node-version: "20"
           cache: npm
@@ -7745,10 +7858,12 @@ jobs:
       # re-checks it under `-S` in the BACKEND suite, so a new import breaks
       # there, where the fix is, rather than here, where it isn't.
       - uses: actions/setup-python@v7
+        if: needs.change-scope.outputs.reuse != 'true'
         with:
           python-version: "3.11"
 
       - name: Install dependencies
+        if: needs.change-scope.outputs.reuse != 'true'
         run: npm ci
 
       # Item 2 — the ONLY uncached artifact in this workflow. pip is cached by
@@ -7764,6 +7879,7 @@ jobs:
       # lockfile alone, or the cache goes stale the moment sources change while
       # still reporting a hit.
       - name: Cache the Next.js build cache
+        if: needs.change-scope.outputs.reuse != 'true'
         uses: actions/cache@v4
         with:
           path: frontend/.next/cache
@@ -7773,9 +7889,11 @@ jobs:
             next-
 
       - name: Build (ESLint gate — NOT a TypeScript gate, see the step below)
+        if: needs.change-scope.outputs.reuse != 'true'
         run: npm run build
 
       - name: Unit tests (Jest)
+        if: needs.change-scope.outputs.reuse != 'true'
         # L2-233. 116 suites / 1,393 tests that, until this step existed, ran
         # only on an engineer's laptop: no workflow invoked jest, and neither
         # `jest` nor `ts-jest` was even declared in package.json — so `npx jest`
@@ -7812,6 +7930,7 @@ jobs:
         run: npm run test:ci
 
       - name: Type check (fail-on-new)
+        if: needs.change-scope.outputs.reuse != 'true'
         # L2-234. `npm run build` above has never enforced TypeScript:
         # next.config.mjs sets `typescript.ignoreBuildErrors: true` (gotcha
         # #10), so a wrong or missing type deploys green. This is the step that

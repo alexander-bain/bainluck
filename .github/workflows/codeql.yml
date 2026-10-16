@@ -5,7 +5,7 @@ name: "CodeQL"
 # `frontend-build` checks in ci.yml).
 on:
   push:
-    branches: ["master"]
+    branches: ["master", "integrator/compose-**"]
   pull_request:
     # NO `branches:` filter — deliberately, and it is the same named failure
     # `ci.yml` carries (queue 366 item 0). `pull_request: branches: [X]` filters

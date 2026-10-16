@@ -1,11 +1,16 @@
-"""Current composed master must pass its own broad CI before Heroku promotion.
+"""#11091 EXPLICIT POLICY CHANGE: compose PUSH evidence may pay master test work.
+
+Current composed source still passes every broad gate before Heroku promotion.
+Only complete actual-commit compose push evidence with matching master base may
+pay a master's repeated execution; PR merge-ref/equal-tree credit is forbidden.
 
 The scratch fixture distills authority/129's note-policy/membership mismatch:
 base f57121f5, components 3f421a9e46 (#4954) and 37ca9d96e2 (#5139).
 This is a literal minimal semantic reproducer, NOT a replay of those historical
 commits, their database, environment, whole suites, or production behavior.
 
-The production path rebuilds/tests source and accepts no artifact credit. We
+The production path still builds source on Heroku; no build-artifact promotion.
+Only authenticated same-commit test provenance may authorize step-level reuse. We
 reuse the actual matrix guard; existing DB aggregate and deployGuard.contract
 controls own executable DB outcome and deploy-script behavior. GitHub's
 success-only dependency scheduling remains a platform contract. No failing
@@ -25,7 +30,12 @@ import sys
 import pytest
 import yaml
 
-from tests.test_ci_matrix_required_contexts import RUNS, _validate_backend_partition
+from tests.test_ci_matrix_required_contexts import (
+    RUNS,
+    REUSE,
+    SCOPE_RUNS,
+    _validate_backend_partition,
+)
 from tests.test_ci_supersede_concurrency import DEPLOY_NEEDS
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -55,6 +65,7 @@ JOB_ENV_KEYS = {
     "deploy": {"HEROKU_API_KEY"},
 }
 STEP_ENV_KEYS = {
+    ("change-scope", "Validate prior exact-commit evidence"): {"GH_TOKEN"},
     (
         "database-integration",
         "#7351 an ordinary market's chart serves the venue history our polls missed",
@@ -76,6 +87,20 @@ STEP_ENV_KEYS = {
         "INTEGRATION_RESULT",
     },
 }
+
+# Receipt values are data, never workflow-expression interpolation in shell.
+for _receipt_job in (
+    "backend-tests",
+    "shard-completeness",
+    "database-integration",
+    "frontend-build",
+):
+    STEP_ENV_KEYS[(_receipt_job, "Reused exact-commit test evidence")] = {
+        "REUSE_RUN",
+        "REUSE_ATTEMPT",
+        "REUSE_HEAD",
+        "REUSE_BASE",
+    }
 
 
 def _allowed_environment(env, allowed, scope):
@@ -115,7 +140,7 @@ def _current_checkout(job):
         "fetch-depth",
         "filter",
     }, "foreign/relocated/unreviewed checkout"
-    assert step.get("if") in (None, RUNS)
+    assert step.get("if") in (None, RUNS, REUSE)
     assert "GITHUB_SHA" not in job.get("env", {})
     assert all("GITHUB_SHA" not in s.get("env", {}) for s in job["steps"])
     return step
@@ -163,9 +188,11 @@ def _validate_current_composed_promotion(
             assert (
                 "continue-on-error" not in step
             ), f"{name} step failure cannot be waived"
-            assert (
-                "artifact" not in str(step.get("uses", "")).lower()
-            ), "no artifact credit"
+            assert "artifact" not in str(step.get("uses", "")).lower() or (
+                name in ("change-scope", "backend-tests")
+                and step.get("uses") == "actions/upload-artifact@v4"
+                and step.get("name") == "Publish compose checkout provenance"
+            ), "only explicit compose test-provenance upload; no build artifact credit"
     for name in ("backend-tests", "shard-completeness", "database-integration"):
         job = jobs[name]
         checkout = _current_checkout(job)
@@ -175,7 +202,7 @@ def _validate_current_composed_promotion(
             install["run"].strip() == "pip install -r requirements.txt"
         ), "current dependencies"
         assert "working-directory" not in install
-        assert install.get("if") == (RUNS if name == "backend-tests" else None)
+        assert install.get("if") == (RUNS if name == "backend-tests" else REUSE)
         assert job["steps"].index(checkout) < job["steps"].index(install)
     backend = jobs["backend-tests"]
     command = _step(backend, "Run tests")
@@ -187,13 +214,13 @@ def _validate_current_composed_promotion(
     assert backend["steps"].index(_step(backend, "Install dependencies")) < backend[
         "steps"
     ].index(command)
-    assert len(backend["steps"]) == 5, "new source preparation needs review"
+    assert len(backend["steps"]) == 8, "new source preparation needs review"
     verifier = jobs["shard-completeness"]
-    assert verifier.get("if") == RUNS
-    assert verifier["steps"][-1].get("if") is None
+    assert verifier.get("if") == SCOPE_RUNS
+    assert verifier["steps"][-1].get("if") == REUSE
     aggregate = jobs["search-recall"]
     assert set(aggregate["needs"]) == {"change-scope", "database-integration"}
-    assert aggregate["if"] == f"always() && {RUNS}"
+    assert aggregate["if"] == f"always() && {SCOPE_RUNS}"
     for name in ("frontend-build", "e2e-contract", "release-required", "deploy"):
         _current_checkout(jobs[name])
     assert jobs["frontend-build"].get("if") is None

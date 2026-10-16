@@ -6,6 +6,7 @@ Evaluates the actual `${{ }}` expressions in ci.yml against the four event shape
 than asserting on their text. Runs under pytest, or standalone:
     CI_WORKFLOW_PATH=path/to/ci.yml python3 backend/tests/test_ci_supersede_concurrency.py
 """
+
 from __future__ import annotations
 
 import os
@@ -16,15 +17,28 @@ from pathlib import Path
 import yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-CI = Path(os.environ.get("CI_WORKFLOW_PATH") or REPO_ROOT / ".github" / "workflows" / "ci.yml")
+CI = Path(
+    os.environ.get("CI_WORKFLOW_PATH") or REPO_ROOT / ".github" / "workflows" / "ci.yml"
+)
 
 REQUIRED_JOBS = {
-    "change-scope", "backend-tests", "shard-completeness", "golden-baseline-floor",
-    "search-recall", "frontend-build", "e2e-contract", "release-required", "deploy",
+    "change-scope",
+    "backend-tests",
+    "shard-completeness",
+    "golden-baseline-floor",
+    "search-recall",
+    "frontend-build",
+    "e2e-contract",
+    "release-required",
+    "deploy",
 }
 DEPLOY_NEEDS = {
-    "backend-tests", "shard-completeness", "search-recall", "frontend-build",
-    "e2e-contract", "release-required",
+    "backend-tests",
+    "shard-completeness",
+    "search-recall",
+    "frontend-build",
+    "e2e-contract",
+    "release-required",
 }
 
 
@@ -47,28 +61,49 @@ def _evaluate(expr, github: dict):
         return repr(node)
 
     src = re.sub(r"\bgithub(?:\.[A-Za-z_]+)+", ctx, src)
-    fmt = lambda s, *a: re.sub(r"\{(\d+)\}", lambda k: str(a[int(k.group(1))]), s)  # noqa: E731
-    return eval(src, {"__builtins__": {}}, {"format": fmt})  # noqa: S307 - input is this repo's ci.yml
+    fmt = lambda s, *a: re.sub(
+        r"\{(\d+)\}", lambda k: str(a[int(k.group(1))]), s
+    )  # noqa: E731
+    return eval(
+        src, {"__builtins__": {}}, {"format": fmt}
+    )  # noqa: S307 - input is this repo's ci.yml
 
 
 def _slot(github: dict):
     conc = _workflow().get("concurrency")
-    assert conc, "ci.yml has no workflow-level concurrency: every superseded PR sha runs to completion"
-    return _evaluate(conc["group"], github), bool(_evaluate(conc["cancel-in-progress"], github))
+    assert (
+        conc
+    ), "ci.yml has no workflow-level concurrency: every superseded PR sha runs to completion"
+    return _evaluate(conc["group"], github), bool(
+        _evaluate(conc["cancel-in-progress"], github)
+    )
 
 
 def _pr(number, sha, run_id):
-    return {"event_name": "pull_request", "sha": sha, "run_id": run_id, "ref": f"refs/pull/{number}/merge",
-            "event": {"pull_request": {"number": number}}}
+    return {
+        "event_name": "pull_request",
+        "sha": sha,
+        "run_id": run_id,
+        "ref": f"refs/pull/{number}/merge",
+        "event": {"pull_request": {"number": number}},
+    }
 
 
 def _push(sha, run_id):
-    return {"event_name": "push", "sha": sha, "run_id": run_id, "ref": "refs/heads/master", "event": {}}
+    return {
+        "event_name": "push",
+        "sha": sha,
+        "run_id": run_id,
+        "ref": "refs/heads/master",
+        "event": {},
+    }
 
 
 def test_a_newer_sha_on_the_same_pr_cancels_the_older_run():
     old, new = _slot(_pr(6731, "4db0b32", 1)), _slot(_pr(6731, "e76539d", 2))
-    assert old[0] == new[0], "two shas of one PR must share a group or nothing is superseded"
+    assert (
+        old[0] == new[0]
+    ), "two shas of one PR must share a group or nothing is superseded"
     assert new[1] is True
 
 
@@ -80,12 +115,18 @@ def test_master_pushes_are_never_cancelled_and_never_share_a_group():
     # A group holds ONE pending run and drops the rest - it is not a FIFO queue. Two merges
     # three minutes apart (95bd39868, 10740513e) must therefore not share one.
     a, b = _slot(_push("95bd398", 10)), _slot(_push("1074051", 11))
-    assert a[0] != b[0], "master runs share a concurrency group: a third merge would drop the second's tests"
+    assert (
+        a[0] != b[0]
+    ), "master runs share a concurrency group: a third merge would drop the second's tests"
     assert a[1] is False and b[1] is False, "a master run became cancellable"
 
 
 def test_a_rerun_of_a_master_run_is_alone_in_its_group():
-    first, rerun, other = _slot(_push("95bd398", 10)), _slot(_push("95bd398", 10)), _slot(_push("1074051", 11))
+    first, rerun, other = (
+        _slot(_push("95bd398", 10)),
+        _slot(_push("95bd398", 10)),
+        _slot(_push("1074051", 11)),
+    )
     assert first == rerun and rerun[0] != other[0] and rerun[1] is False
 
 
@@ -115,7 +156,9 @@ def test_rerunning_an_OLD_pr_sha_cancels_that_prs_head_run__known_and_fail_close
         "an old-sha re-run left the PR's group — if this ever passes by landing in a DIFFERENT "
         "group, the hazard is gone and this test should be replaced by the stronger claim"
     )
-    assert old_sha_rerun[1] is True, "cancellation is on for PR runs, so the head run is the one that dies"
+    assert (
+        old_sha_rerun[1] is True
+    ), "cancellation is on for PR runs, so the head run is the one that dies"
 
 
 def test_a_pr_run_and_a_master_run_never_share_a_group_even_on_one_sha():
@@ -131,12 +174,23 @@ def test_cancel_in_progress_is_not_a_bare_true():
 def test_triggers_jobs_and_release_serialization_are_untouched():
     wf = _workflow()
     on = wf.get("on", wf.get(True))
-    assert set(on) == {"pull_request", "push"} and on["push"] == {"branches": ["master"]} and not on["pull_request"]
-    assert REQUIRED_JOBS <= set(wf["jobs"]), f"missing jobs: {REQUIRED_JOBS - set(wf['jobs'])}"
+    assert (
+        set(on) == {"pull_request", "push"}
+        and on["push"] == {"branches": ["master", "integrator/compose-**"]}
+        and not on["pull_request"]
+    )
+    assert REQUIRED_JOBS <= set(
+        wf["jobs"]
+    ), f"missing jobs: {REQUIRED_JOBS - set(wf['jobs'])}"
     deploy = wf["jobs"]["deploy"]
     assert set(deploy["needs"]) == DEPLOY_NEEDS
-    assert deploy["concurrency"] == {"group": "heroku-deploy", "cancel-in-progress": False}
-    assert not any("concurrency" in job for name, job in wf["jobs"].items() if name != "deploy")
+    assert deploy["concurrency"] == {
+        "group": "heroku-deploy",
+        "cancel-in-progress": False,
+    }
+    assert not any(
+        "concurrency" in job for name, job in wf["jobs"].items() if name != "deploy"
+    )
 
 
 if __name__ == "__main__":
@@ -144,7 +198,18 @@ if __name__ == "__main__":
     for name, fn in sorted(globals().items()):
         if name.startswith("test_") and callable(fn):
             try:
-                fn(); print(f"PASS {name}")
+                fn()
+                print(f"PASS {name}")
             except AssertionError as exc:
-                failed += 1; print(f"FAIL {name}: {str(exc)[:110]}")
+                failed += 1
+                print(f"FAIL {name}: {str(exc)[:110]}")
     sys.exit(1 if failed else 0)
+
+
+def test_compose_pushes_are_independent_and_cannot_release():
+    a, b = _push("one", 30), _push("two", 31)
+    a["ref"] = b["ref"] = "refs/heads/integrator/compose-example"
+    assert _slot(a)[0] != _slot(b)[0]
+    assert _slot(a)[1] is False
+    for name in ("release-required", "deploy"):
+        assert "github.ref == 'refs/heads/master'" in _workflow()["jobs"][name]["if"]
