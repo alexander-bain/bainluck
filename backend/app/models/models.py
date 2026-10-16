@@ -961,6 +961,20 @@ class FuturesMarket(Base):
 
     __table_args__ = (
         UniqueConstraint("source", "external_id", name="uq_futures_source_external"),
+        # #1586: the settled-Kalshi cohort page walks markets by
+        # `(resolution_date, id)` across EVERY status; the existing
+        # resolution_date indexes are open/eventless partials and cannot drive it.
+        # Production builds this one by a separately attended
+        # `CREATE INDEX CONCURRENTLY` (gotcha #31: never in Alembic/release), so no
+        # migration creates it. It is declared here so the first `--autogenerate`
+        # after it exists does not emit a revision that drops it.
+        Index(
+            "ix_fm_kalshi_resdate_id",
+            "resolution_date",
+            "id",
+            postgresql_where=text("source = 'kalshi' AND resolution_date IS NOT NULL"),
+            sqlite_where=text("source = 'kalshi' AND resolution_date IS NOT NULL"),
+        ),
     )
 
     # Relationships
