@@ -154,7 +154,7 @@ final class VerifiedTitleHistory10244Tests: XCTestCase {
         XCTAssertTrue(code.contains("detail: expectation?.representation, response: nil"))
         XCTAssertTrue(code.contains("detail: expectation?.representation, response: result.effectiveRepresentation"))
         XCTAssertTrue(code.contains("""
-            APIClient.shared.fetchFuturesHistory(
+            client.fetchFuturesHistory(
                         marketId: marketId, hours: hours, fullRange: fullRange)
             """), "#683: the widest chip's /history read carries range=full")
         XCTAssertFalse(code.contains("drawsSourceHistory(detail: representation"),
