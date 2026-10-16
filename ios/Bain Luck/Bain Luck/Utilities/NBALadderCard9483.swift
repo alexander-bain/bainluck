@@ -282,7 +282,9 @@ nonisolated struct NBALadderCard9483: Equatable, Identifiable {
         case .during:
             chance = pin?.probability
             // A suspended game has no current price to set beside the pin.
-            now = recent && !EventState.isSuspended(input.status) ? quoted : nil
+            now = recent
+                && !EventState.isSuspendedAndStarted(input.status, commenceTime: input.commenceTime, now: input.now)
+                ? quoted : nil
         case .after:
             chance = pin?.probability
             now = nil
