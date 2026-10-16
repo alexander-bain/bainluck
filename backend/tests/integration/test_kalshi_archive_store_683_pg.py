@@ -1619,6 +1619,62 @@ async def test_cert4141_specimen_on_the_native_timeline_and_the_combined_chart(
     assert m_thin["history_range"]["unresolved_withheld"]["archive_intervals"] == 1
 
 
+async def test_full_timeline_with_only_unknown_history_still_discloses_partial(old_world, monkeypatch):
+    """CERT-4144 / Root 616 witness: the SOLE interval withheld UNKNOWN empties the chart.
+
+    The real planner+apply import ONE traded A interval; every live capture is
+    the CERT-4141 empty book the support filter refuses. cap 4000 draws the
+    interval (positive control). The default cap 2000 correctly withholds it, and
+    the empty `timeline` must still say so: `served_history=partial`, not a
+    response with no `history_range` that reads as "this market has no history".
+    """
+    from sqlalchemy import delete
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+    from app.models.models import FuturesOddsSnapshot
+    from app.utils import full_range_live
+
+    engine, ids = old_world
+    async with AsyncSession(engine) as session:
+        await session.execute(delete(FuturesOddsSnapshot))
+        await session.commit()
+    original_plan = _plan
+
+    async def one_valid_interval(engine, _ids, candles=None):
+        return await original_plan(engine, [ids["a"]], candles={
+            TA: [_candle(OPEN + timedelta(hours=2), 0.32)]
+        })
+
+    monkeypatch.setattr(importlib.import_module(__name__), "_plan", one_valid_interval)
+    async for client, _seeded in _serve(old_world, monkeypatch):
+        await _cert4141_specimen(engine, ids)
+        url = f"/api/futures/{ids['market']}/probability-timeline"
+        params = {"hours": CLIENT_FULL_HOURS, "top": 50, "range": "full"}
+        monkeypatch.setattr(full_range_live, "OLDER_LIVE_INSTANT_CAP", 4000)
+        whole = (await client.get(url, params=params)).json()
+        assert whole["timeline"], "positive control: the real imported archive interval draws"
+        assert whole["history_range"]["served_history"] == "complete"
+        monkeypatch.setattr(full_range_live, "OLDER_LIVE_INSTANT_CAP", 2000)
+        r = await client.get(url, params=params)
+        assert r.status_code == 200, r.text
+        thin = r.json()
+        assert thin["timeline"] == [] and thin["outcomes"] == [], (
+            "the only interval is correctly withheld fail-closed")
+        rng = thin.get("history_range")
+        assert rng is not None, "an empty Full chart dropped its range statement"
+        assert rng["served_history"] == "partial"
+        assert rng["unresolved_withheld"] == {"archive_intervals": 1, "venue_points": 0}
+        assert rng["live_thinned"] is True
+        arch = thin["archive_history"]
+        assert arch["points_served"] == 0
+        assert arch["withheld_unresolved_overlap"] == 1
+        assert {"scope": "overlap_admission", "reason": "live_overlap_unresolved",
+                "intervals": 1} in arch["refusals"]
+        # The same bytes, not `range=full`: no range statement is invented.
+        plain = (await client.get(url, params={"hours": CLIENT_FULL_HOURS, "top": 50})).json()
+        assert "history_range" not in plain
+
+
 async def test_default_cap_combined_seat_a_twin_cannot_decide_is_withheld_and_disclosed(
     old_client, old_world, monkeypatch
 ):
