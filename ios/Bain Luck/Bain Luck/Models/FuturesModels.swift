@@ -532,6 +532,10 @@ nonisolated struct ProbabilityTimelineResponse: Decodable, Sendable {
     @TolerantNumeric var questionIdentity: FuturesQuestionIdentity? = nil
     @TolerantNumeric var contributingSources: [String]? = nil
     @TolerantNumeric var historyBasis: TimelineHistoryBasis? = nil
+    /// #683 — only on a `range=full` read: where the drawn history begins and how
+    /// much of the venue's record was recovered (`EvolutionFullRange683.swift`).
+    /// `var` so a verified chart can carry `/history`'s block with its lines.
+    @LenientDecode var historyRange: FuturesHistoryRange? = nil
 }
 
 /// #9387 — `{kind: "single_source", source: "odds_api", market_id: 86832}`.

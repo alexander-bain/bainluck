@@ -228,7 +228,7 @@ final class ASparseWindowKeepsItsRangeControls7350Tests: XCTestCase {
                 "\(range.rawValue) reads as a chip, not as a phrase inside a sentence")
             XCTAssertFalse(
                 word.contains(EvolutionRangeVocabulary.genericWidestWindow),
-                "'6M' in prose is the same borrowed-vocabulary defect #7077 fixed on the chip")
+                "'Max' in prose is the same borrowed-vocabulary defect #7077 fixed on the chip")
         }
     }
 
@@ -253,7 +253,7 @@ final class ASparseWindowKeepsItsRangeControls7350Tests: XCTestCase {
     /// drifting: change the word here and the journey goes red in this file first.
     func testTheJourneysCopyOfTheWidestChipStillMatchesTheApps() {
         XCTAssertEqual(
-            EvolutionRangeVocabulary.genericWidestWindow, "6M",
+            EvolutionRangeVocabulary.genericWidestWindow, "Max",
             "BainLuckUITests presses a button with this exact label")
     }
 

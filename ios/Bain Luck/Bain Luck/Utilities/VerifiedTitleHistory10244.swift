@@ -21,6 +21,8 @@ nonisolated struct FuturesHistoryResponse: Decodable, Sendable {
     /// Measured off the points served (#7077), like the timeline's.
     let coverageHours: Double?
     let observationTimes: Int?
+    /// #683 — the `range=full` block for the lines drawn.
+    @LenientDecode var historyRange: FuturesHistoryRange? = nil
 }
 
 nonisolated struct FuturesHistoryOutcome: Decodable, Sendable {
@@ -64,7 +66,8 @@ nonisolated enum VerifiedTitleHistory {
     /// chart keys lines by the names in `outcomes`; a line with no id falls back
     /// to its own name. A row `/history` has no line for draws none — an empty
     /// line is honest, the raw median is the defect. Coverage comes from
-    /// `/history` too, so the axis and the sparse caption describe the points drawn.
+    /// `/history` too, so the axis and the sparse caption describe the points drawn;
+    /// so does the `range=full` block (#683), which describes those same lines.
     static func drawing(_ history: FuturesHistoryResponse,
                         over response: ProbabilityTimelineResponse) -> ProbabilityTimelineResponse {
         let nameById = Dictionary(
@@ -90,6 +93,7 @@ nonisolated enum VerifiedTitleHistory {
                                  archive: $0.value.archive.isEmpty ? nil : $0.value.archive) }
         drawn.coverageHours = history.coverageHours
         drawn.observationTimes = history.observationTimes
+        drawn.historyRange = history.historyRange
         return drawn
     }
 }
