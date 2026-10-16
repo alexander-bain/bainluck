@@ -124,10 +124,10 @@ final class NFLEventCards9483Tests: XCTestCase {
     func testNoProjectionBeforeTheGameMeansNoCard() {
         XCTAssertNil(NFLFinishCard9483.build(input([pair(30, home: 25, away: 18)], floor: 0, now: 40)))
         var other = input([pair(-30, home: 20, away: 18)], floor: 0, now: 40)
-        other = .init(sportKey: "basketball_nba", sourceKey: other.sourceKey, basis: other.basis, pairs: other.pairs,
+        other = .init(sportKey: "basketball_wnba", sourceKey: other.sourceKey, basis: other.basis, pairs: other.pairs,
                       actuals: [], kickoffAt: nil, scoreObservationStartAt: other.scoreObservationStartAt,
                       finalAt: nil, asOf: other.asOf, windowStartAt: nil, requestCutoffAt: nil)
-        XCTAssertNil(NFLFinishCard9483.build(other), "NFL only")
+        XCTAssertNil(NFLFinishCard9483.build(other), "NFL and NBA only")
     }
 
     // MARK: - Player milestones
@@ -211,7 +211,8 @@ final class NFLEventCards9483Tests: XCTestCase {
         XCTAssertEqual(first, ["A Player|Rushing Yards", "B Player|Rushing Yards"])
     }
 
-    func testTheDeckIsNFLOnly() {
+    func testTheDeckIsNFLAndNBAOnly() {
+        XCTAssertTrue(NFLEventCardDeck9483.cards(sportKey: "basketball_wnba", finish: nil, milestones: []).isEmpty)
         XCTAssertTrue(NFLEventCardDeck9483.cards(sportKey: "basketball_nba", finish: nil, milestones: []).isEmpty)
     }
 

@@ -5,7 +5,7 @@ import XCTest
 /// the paired headline and the paired chart's away line.
 ///
 /// What these pin, and the mutation each kills:
-/// - adopt another sport → `testOnlyTheNFLAdoptsThePage`
+/// - adopt another sport, or drop the NBA slice → `testOnlyTheNFLAndTheNBAAdoptThePage`
 /// - draw the away line where the balance ink is refused → `testTheAwayLineNeedsTheBinaryAdmission`
 /// - draw the away line from anything but the blend's own run → `testTheAwayRunIsTheSameRunReadFromTheOtherSide`
 /// - drop or invent a live-tail vertex → `testTheAwayTailEndsWhereTheHomeTailEnds`
@@ -30,9 +30,12 @@ final class RecognizableNFLPage9483Tests: XCTestCase {
 
     // MARK: - Scope
 
-    func testOnlyTheNFLAdoptsThePage() {
+    func testOnlyTheNFLAndTheNBAAdoptThePage() {
         XCTAssertTrue(NFLRecognizablePage9483.applies(sportKey: "americanfootball_nfl"))
-        for other in ["americanfootball_ncaaf", "basketball_nba", "tennis_atp", "soccer_epl", nil] {
+        // v328's NBA slice adopts the same headline, paired journey and deck.
+        XCTAssertTrue(NFLRecognizablePage9483.applies(sportKey: "basketball_nba"))
+        XCTAssertFalse(NFLRecognizablePage9483.isNFL(sportKey: "basketball_nba"), "milestones stay NFL")
+        for other in ["americanfootball_ncaaf", "basketball_wnba", "basketball_ncaab", "tennis_atp", "soccer_epl", nil] {
             XCTAssertFalse(NFLRecognizablePage9483.applies(sportKey: other), "\(other ?? "nil")")
         }
     }
@@ -42,7 +45,9 @@ final class RecognizableNFLPage9483Tests: XCTestCase {
     func testTheAwayLineNeedsTheBinaryAdmission() {
         XCTAssertTrue(PairedWinLines9483.admits(sportKey: "americanfootball_nfl", binaryAdmission: .admittedBinary))
         XCTAssertFalse(PairedWinLines9483.admits(sportKey: "americanfootball_nfl", binaryAdmission: .refused))
-        XCTAssertFalse(PairedWinLines9483.admits(sportKey: "basketball_nba", binaryAdmission: .admittedBinary))
+        XCTAssertTrue(PairedWinLines9483.admits(sportKey: "basketball_nba", binaryAdmission: .admittedBinary))
+        XCTAssertFalse(PairedWinLines9483.admits(sportKey: "basketball_nba", binaryAdmission: .refused))
+        XCTAssertFalse(PairedWinLines9483.admits(sportKey: "basketball_wnba", binaryAdmission: .admittedBinary))
     }
 
     func testTheAwayRunIsTheSameRunReadFromTheOtherSide() {

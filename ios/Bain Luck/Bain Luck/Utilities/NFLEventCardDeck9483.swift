@@ -7,14 +7,20 @@ import Foundation
 /// Every number on a card is one the page already serves. The deck adds no
 /// source and no ranking service; its order is fixed per page state, so a card
 /// never moves while a reader is looking at it (v157/v158).
+///
+/// The NBA page (v328 NBA slice) uses the same deck and reader: its winning
+/// margin and scoring ladders (`NBALadderCard9483`) sit before the projected
+/// finish, and it has no player milestone cards.
 enum NFLEventCard9483: Equatable, Identifiable {
     case finish(NFLFinishCard9483)
     case milestone(NFLMilestoneCard9483)
+    case ladder(NBALadderCard9483)
 
     var id: String {
         switch self {
         case .finish: return "finish"
         case .milestone(let card): return "milestone:\(card.id)"
+        case .ladder(let card): return card.id
         }
     }
 
@@ -22,13 +28,18 @@ enum NFLEventCard9483: Equatable, Identifiable {
         switch self {
         case .finish(let card): return card.kicker
         case .milestone(let card): return "\(card.player) · \(card.stat)"
+        case .ladder(let card): return card.title
         }
     }
 
-    /// The card as it may be shown at `now` (`NFLMilestoneCard9483.current(at:)`).
+    /// The card as it may be shown at `now` (`NFLMilestoneCard9483.current(at:)`,
+    /// `NBALadderCard9483.current(at:)`).
     func current(at now: Date) -> NFLEventCard9483 {
-        guard case .milestone(let card) = self else { return self }
-        return .milestone(card.current(at: now))
+        switch self {
+        case .finish: return self
+        case .milestone(let card): return .milestone(card.current(at: now))
+        case .ladder(let card): return .ladder(card.current(at: now))
+        }
     }
 }
 
@@ -37,13 +48,23 @@ enum NFLEventCardDeck9483 {
     /// every ladder stays in the player props section below.
     static let maximumMilestoneCards = 2
 
-    /// The deck for this page, or empty to draw none. NFL only.
+    /// The deck for this page, or empty to draw none. NFL: the projected
+    /// finish, then the player milestones. NBA: winning margin, scoring
+    /// expectations, then the projected finish — a fixed order per page state,
+    /// no ranking service. Each sport reads only its own families.
     @MainActor
     static func cards(
-        sportKey: String?, finish: NFLFinishCard9483?, milestones: [NFLMilestoneCard9483]
+        sportKey: String?, finish: NFLFinishCard9483?, milestones: [NFLMilestoneCard9483],
+        ladders: [NBALadderCard9483] = []
     ) -> [NFLEventCard9483] {
-        guard NFLRecognizablePage9483.applies(sportKey: sportKey) else { return [] }
-        return (finish.map { [.finish($0)] } ?? []) + milestones.map { .milestone($0) }
+        let finishCard: [NFLEventCard9483] = finish.map { [.finish($0)] } ?? []
+        if NBAEventCards9483.applies(sportKey: sportKey) {
+            let order: [NBALadderCard9483.Family] = [.margin, .total]
+            let ordered = order.compactMap { family in ladders.first { $0.family == family } }
+            return ordered.map { .ladder($0) } + finishCard
+        }
+        guard NFLRecognizablePage9483.isNFL(sportKey: sportKey) else { return [] }
+        return finishCard + milestones.map { .milestone($0) }
     }
 }
 
@@ -76,8 +97,20 @@ nonisolated struct NFLFinishCard9483: Equatable {
     let projectedNow: Pair?
     /// The final score after the final.
     let final: Pair?
+    /// The league's points gridline step (`ProjectedFinalPointsSeries.League`):
+    /// a touchdown in football, twenty in basketball.
+    var tickStep: Double = 7
+    /// What the sport calls the start: "kickoff", "tip-off".
+    var startWord: String = "kickoff"
 
     var kicker: String { phase == .after ? "Final vs forecast" : "Projected finish" }
+
+    /// The same card with its live projection gone (v159: a projection past
+    /// its validity leaves the held card).
+    var withoutProjectedNow: NFLFinishCard9483 {
+        NFLFinishCard9483(phase: phase, pregame: pregame, projectedNow: nil, final: final,
+                          tickStep: tickStep, startWord: startWord)
+    }
 
     /// The card's one sentence. It names a flip only when the projected leader
     /// actually changed, and never says one from a level pregame projection.
@@ -89,8 +122,8 @@ nonisolated struct NFLFinishCard9483: Equatable {
             return "\(name(leads)) projected ahead"
         case .during:
             guard let now = projectedNow else {
-                guard let leads = pregame.homeLeads else { return "Projected level before kickoff" }
-                return "\(name(leads)) projected ahead before kickoff"
+                guard let leads = pregame.homeLeads else { return "Projected level before \(startWord)" }
+                return "\(name(leads)) projected ahead before \(startWord)"
             }
             guard let nowLeads = now.homeLeads else { return "The projected finish is level" }
             if let before = pregame.homeLeads, before != nowLeads { return "The projected finish has flipped" }
@@ -117,18 +150,23 @@ nonisolated struct NFLFinishCard9483: Equatable {
         }
         guard let pregamePoint else { return nil }
         let pregame = Pair(away: pregamePoint.away, home: pregamePoint.home, at: pregamePoint.at)
+        let tickStep = ProjectedFinalPointsSeries.leagues[input.sportKey]?.tickStep ?? 7
+        let startWord = NBAEventCards9483.applies(sportKey: input.sportKey) ? "tip-off" : "kickoff"
         switch series.phase {
         case .before:
-            return NFLFinishCard9483(phase: .before, pregame: pregame, projectedNow: nil, final: nil)
+            return NFLFinishCard9483(phase: .before, pregame: pregame, projectedNow: nil, final: nil,
+                                     tickStep: tickStep, startWord: startWord)
         case .during:
             let latest = series.latest
             let now = !series.latestIntervalUnavailable && floor.map { latest.at >= $0 } == true
                 ? Pair(away: latest.away, home: latest.home, at: latest.at) : nil
-            return NFLFinishCard9483(phase: .during, pregame: pregame, projectedNow: now, final: nil)
+            return NFLFinishCard9483(phase: .during, pregame: pregame, projectedNow: now, final: nil,
+                                     tickStep: tickStep, startWord: startWord)
         case .after:
             guard let actual = series.latestActual else { return nil }
             return NFLFinishCard9483(phase: .after, pregame: pregame, projectedNow: nil,
-                                     final: Pair(away: actual.away, home: actual.home, at: actual.at))
+                                     final: Pair(away: actual.away, home: actual.home, at: actual.at),
+                                     tickStep: tickStep, startWord: startWord)
         }
     }
 }

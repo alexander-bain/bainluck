@@ -44,6 +44,18 @@ final class NFLCardDeckState9483: ObservableObject {
         guard let current = selectedIndex(in: card), card.rungs.indices.contains(current + delta) else { return }
         selectedRow[card.id] = card.rungs[current + delta].rowID
     }
+
+    /// NBA ladders: the selected option, by the producer's option key. An
+    /// option no longer on the card selects nothing, never a neighbour.
+    func selectedIndex(in card: NBALadderCard9483) -> Int? {
+        guard let option = selectedRow[card.id] else { return card.defaultIndex }
+        return card.points.firstIndex { $0.optionKey == option }
+    }
+
+    func move(in card: NBALadderCard9483, by delta: Int) {
+        guard let current = selectedIndex(in: card), card.points.indices.contains(current + delta) else { return }
+        selectedRow[card.id] = card.points[current + delta].optionKey
+    }
 }
 
 // MARK: - Projected finish
@@ -61,9 +73,19 @@ struct NFLFinishCardView9483: View {
     private var laterLabel: String? {
         card.final != nil ? "Final" : card.projectedNow != nil ? "Projected now" : nil
     }
-    private var domainMax: Double {
-        let values = [card.pregame.away, card.pregame.home, later?.away ?? 0, later?.home ?? 0]
-        return max(14, ((values.max() ?? 0) / 7).rounded(.up) * 7 + 3.5)
+    private var domain: ClosedRange<Double> {
+        Self.pointDomain([card.pregame.away, card.pregame.home] + (later.map { [$0.away, $0.home] } ?? []),
+                         step: card.tickStep)
+    }
+
+    /// The points axis: half a gridline past the largest number. Football
+    /// keeps its zero-based touchdown axis; basketball's 100-plus scores would
+    /// crowd the last tenth of a zero-based one, so its axis starts a gridline
+    /// below the smallest number.
+    static func pointDomain(_ values: [Double], step: Double) -> ClosedRange<Double> {
+        let upper = max(2 * step, ((values.max() ?? 0) / step).rounded(.up) * step + step / 2)
+        let lower = step <= 7 ? 0 : max(0, ((values.min() ?? 0) / step).rounded(.down) * step - step)
+        return lower...upper
     }
 
     var body: some View {
@@ -89,7 +111,7 @@ struct NFLFinishCardView9483: View {
                     }
                 }
             }
-            .chartXScale(domain: 0...domainMax)
+            .chartXScale(domain: domain)
             .chartYScale(domain: [awayName, homeName])
             .chartXAxis {
                 AxisMarks(values: pointTicks) { value in
@@ -130,8 +152,10 @@ struct NFLFinishCardView9483: View {
     }
 
     private var axisFontSize: CGFloat { EventChartTypography.labelSize(scaled: scaledAxisFont) }
-    /// One tick per touchdown (7 points) across the axis.
-    private var pointTicks: [Double] { Array(stride(from: 0, through: domainMax, by: 7)) }
+    /// One tick per gridline step (a touchdown in football) across the axis.
+    private var pointTicks: [Double] {
+        Array(stride(from: domain.lowerBound, through: domain.upperBound, by: card.tickStep))
+    }
 
     private func number(_ value: Double, label: String) -> some View {
         VStack(alignment: .trailing, spacing: 0) {
@@ -461,6 +485,9 @@ struct NFLEventCardView9483: View {
                     card: milestone,
                     color: PlayerPropsTeam.color(for: milestone.side, home: homeColor, away: awayColor),
                     state: state, expanded: expanded)
+            case .ladder(let ladder):
+                NBALadderCardView9483(card: ladder, awayColor: awayColor, homeColor: homeColor,
+                                      state: state, expanded: expanded)
             }
         }
         .padding(16)

@@ -1869,13 +1869,35 @@ struct EventDetailView: View {
         _ event: EventDetail, projectedInput: ProjectedFinalPointsSeries.Input?
     ) -> [NFLEventCard9483] {
         guard NFLRecognizablePage9483.applies(sportKey: event.sport) else { return [] }
+        let finish = NFLFinishCard9483.build(projectedInput)
         return NFLEventCardDeck9483.cards(
             sportKey: event.sport,
-            finish: NFLFinishCard9483.build(projectedInput),
-            milestones: NFLMilestoneCard9483.cards(
-                props: vm.gameMarkets?.playerProps ?? [], eventStatus: event.status,
-                commenceTime: event.commenceTime?.asDate,
-                homeTeam: event.homeTeam, awayTeam: event.awayTeam))
+            finish: finish,
+            milestones: NFLRecognizablePage9483.isNFL(sportKey: event.sport)
+                ? NFLMilestoneCard9483.cards(
+                    props: vm.gameMarkets?.playerProps ?? [], eventStatus: event.status,
+                    commenceTime: event.commenceTime?.asDate,
+                    homeTeam: event.homeTeam, awayTeam: event.awayTeam)
+                : [],
+            ladders: nbaLadders(event, finish: finish))
+    }
+
+    /// #9483 NBA slice — the winning-margin and scoring ladders, from the
+    /// served question matrix of THIS event only, the score the page prints,
+    /// and the projected finish's pregame pair.
+    private func nbaLadders(_ event: EventDetail, finish: NFLFinishCard9483?) -> [NBALadderCard9483] {
+        guard NBAEventCards9483.applies(sportKey: event.sport),
+              let gameMarkets = vm.gameMarkets, gameMarkets.eventId == event.id else { return [] }
+        let hasScore = EventDetailView.showsScore(
+            status: event.status, away: event.awayScore, home: event.homeScore)
+        let names = nflNames(event)
+        let input = NBALadderCard9483.Input(
+            matrix: gameMarkets.gameQuestionMatrix, status: event.status,
+            commenceTime: event.commenceTime?.asDate,
+            homeScore: hasScore ? event.homeScore : nil, awayScore: hasScore ? event.awayScore : nil,
+            pregameProjection: finish.map { (home: $0.pregame.home, away: $0.pregame.away) },
+            homeShort: names.home, awayShort: names.away, now: Date())
+        return [NBALadderCard9483.margin(input), NBALadderCard9483.total(input)].compactMap { $0 }
     }
 
     private var nflReaderPresented: Binding<Bool> {
