@@ -110,62 +110,54 @@ UNGRADED = {r["outcome_id"] for r in STORED["stored"] if r["resolution_source"] 
 CONTROLS = {r["outcome_id"] for r in STORED["stored"] if r["resolution_source"]}
 
 
-async def test_plan_backup_apply_and_undo_on_the_specimen(session):
+async def _plan_and_backup(session):
     mod = _script()
     legs = mod.load_archive_legs()
-    before = await _legs(session)
-    controls_before = {k: before[k] for k in CONTROLS}
-
     grades, refused = await mod.build_plan(session, legs)
     await session.rollback()
-    assert {g.outcome_id for g in grades} == UNGRADED and len(grades) == mod.EXPECTED_PLAN
-    assert set(refused["already_graded"]) == CONTROLS
     digest = mod.plan_digest(grades)
-
     assert await mod.backup(session, grades, digest) == 0, "every planned leg has its undo row"
     await session.commit()
-    stats = await mod.apply(session, legs, digest)
-    await session.commit()
-    assert sorted(stats["written_ids"]) == sorted(UNGRADED)
+    return mod, legs, grades, refused, digest
 
+
+async def _apply(session, mod, legs, digest):
+    out = await mod.apply(session, legs, digest)
+    await session.commit()
+    return out
+
+
+async def _restore(session, mod):
+    out = await mod.restore_report(session)
+    await session.commit()
+    return out
+
+
+async def test_plan_backup_apply_and_undo_on_the_specimen(session):
+    before = await _legs(session)
+    mod, legs, grades, refused, digest = await _plan_and_backup(session)
+    assert {g.outcome_id for g in grades} == UNGRADED and len(grades) == mod.EXPECTED_PLAN
+    assert set(refused["already_graded"]) == CONTROLS
+
+    out = await _apply(session, mod, legs, digest)
+    assert sorted(out["written_ids"]) == sorted(UNGRADED)
     after = await _legs(session)
     for oid in UNGRADED:
         assert after[oid] == ("api_settlement", False, 0.0), oid
-    assert {k: after[k] for k in CONTROLS} == controls_before, "the 8 controls never move"
+    assert {k: after[k] for k in CONTROLS} == {k: before[k] for k in CONTROLS}
 
-    # Someone grades one leg differently after the apply: the undo must not revert it.
-    touched = min(UNGRADED)
-    await session.execute(
-        text("UPDATE futures_outcomes SET resolution_source = 'game_score', is_winner = true, "
-             "current_probability = 1.0 WHERE id = :id"),
-        {"id": touched},
-    )
-    await session.commit()
-
-    restored = await mod.restore(session)
-    await session.commit()
-    assert sorted(restored) == sorted(UNGRADED - {touched})
-    final = await _legs(session)
-    for oid in UNGRADED - {touched}:
-        assert final[oid] == (None, None, 0.47), oid
-    assert final[touched] == ("game_score", True, 1.0)
-    assert {k: final[k] for k in CONTROLS} == controls_before
+    undo = await _restore(session, mod)
+    assert sorted(undo["restored"]) == sorted(UNGRADED)
+    assert undo["preserved_changed_since_apply"] == []
+    assert await _legs(session) == before, "the undo puts every row back exactly"
 
 
 async def test_a_second_apply_of_the_same_plan_writes_nothing(session):
-    mod = _script()
-    legs = mod.load_archive_legs()
-    grades, _ = await mod.build_plan(session, legs)
-    await session.rollback()
-    digest = mod.plan_digest(grades)
-    assert await mod.backup(session, grades, digest) == 0
-    await session.commit()
-    first = await mod.apply(session, legs, digest)
-    await session.commit()
-    second = await mod.apply(session, legs, digest)
-    await session.commit()
+    mod, legs, grades, _, digest = await _plan_and_backup(session)
+    first = await _apply(session, mod, legs, digest)
+    second = await _apply(session, mod, legs, digest)
     assert len(first["written_ids"]) == 22
-    assert second["written_ids"] == [], "the CAS refuses a leg that is no longer ungraded"
+    assert second["written_ids"] == [] and second["skipped_changed_since_backup"] == []
     regrades, _ = await mod.build_plan(session, legs)
     await session.rollback()
     assert regrades == [], "once applied, the plan is empty — a re-run cannot re-plan"
@@ -177,28 +169,117 @@ async def test_restore_without_an_apply_refuses(session):
         await mod.restore(session)
 
 
-async def test_a_leg_the_live_grader_wrote_first_is_never_undone(session):
-    """The live arm grades one planned leg between backup and apply — the SAME
-    verdict and source the apply would have written. The apply's CAS skips it,
-    so the undo must skip it too: it was never this repair's write."""
-    mod = _script()
-    legs = mod.load_archive_legs()
-    grades, _ = await mod.build_plan(session, legs)
-    await session.rollback()
-    digest = mod.plan_digest(grades)
-    assert await mod.backup(session, grades, digest) == 0
+# --- the ownership contract: Root's three counterexamples and CERT-4149's ---
+
+
+async def test_root_apply_stays_within_the_frozen_approved_set(session):
+    """A control retracted to NULL after the backup is NOT written: apply reads
+    the frozen set, it never re-plans."""
+    mod, legs, grades, _, digest = await _plan_and_backup(session)
+    raced = min(r["outcome_id"] for r in STORED["stored"]
+                if r["resolution_source"] and r["is_winner"] is False)
+    await session.execute(
+        text("UPDATE futures_outcomes SET resolution_source=NULL, is_winner=NULL, "
+             "last_updated=NOW() WHERE id=:id"), {"id": raced})
     await session.commit()
+    out = await _apply(session, mod, legs, digest)
+    assert set(out["written_ids"]) == UNGRADED and raced not in out["written_ids"]
+    assert (await _legs(session))[raced][:2] == (None, None)
+
+
+async def test_root_restore_preserves_a_later_same_verdict_writer(session):
+    mod, legs, grades, _, digest = await _plan_and_backup(session)
+    await _apply(session, mod, legs, digest)
     raced = min(UNGRADED)
     await session.execute(
-        text("UPDATE futures_outcomes SET resolution_source = 'api_settlement', "
-             "is_winner = false, current_probability = 0.0 WHERE id = :id"),
-        {"id": raced},
+        text("UPDATE futures_outcomes SET resolution_source='api_settlement', is_winner=false, "
+             "current_probability=0.0, last_updated=NOW()+interval '1 minute' WHERE id=:id"),
+        {"id": raced})
+    await session.commit()
+    undo = await _restore(session, mod)
+    assert raced not in undo["restored"] and undo["preserved_changed_since_apply"] == [raced]
+    assert (await _legs(session))[raced] == ("api_settlement", False, 0.0)
+    assert len(undo["restored"]) == 21
+
+
+async def test_root_a_price_moved_after_backup_is_never_written_over(session):
+    """0.47 -> 0.61 between backup and apply: the leg is skipped, not written,
+    so no undo can ever reinstall the stale 0.47."""
+    mod, legs, grades, _, digest = await _plan_and_backup(session)
+    moved = min(UNGRADED)
+    await session.execute(
+        text("UPDATE futures_outcomes SET current_probability=0.61 WHERE id=:id"), {"id": moved})
+    await session.commit()
+    out = await _apply(session, mod, legs, digest)
+    assert out["skipped_changed_since_backup"] == [moved] and len(out["written_ids"]) == 21
+    assert (await _legs(session))[moved] == (None, None, 0.61)
+    await _restore(session, mod)
+    assert (await _legs(session))[moved] == (None, None, 0.61), "the writer's 0.61 stands"
+
+
+async def test_cert4149_apply_undo_later_grader_retry_undo(session):
+    """apply 22 -> undo 22 -> a grader writes one leg -> retry writes 21 -> undo.
+    The second undo must not touch the grader's leg: the first undo closed its
+    marker, and the retry never re-owned it."""
+    mod, legs, grades, _, digest = await _plan_and_backup(session)
+    before = await _legs(session)
+    await _apply(session, mod, legs, digest)
+    first_undo = await _restore(session, mod)
+    assert len(first_undo["restored"]) == 22
+    graded = min(UNGRADED)
+    await session.execute(
+        text("UPDATE futures_outcomes SET resolution_source='api_settlement', is_winner=false, "
+             "current_probability=0.0, last_updated=NOW() WHERE id=:id"), {"id": graded})
+    await session.commit()
+    retry = await _apply(session, mod, legs, digest)
+    assert graded not in retry["written_ids"] and len(retry["written_ids"]) == 21
+    second_undo = await _restore(session, mod)
+    assert graded not in second_undo["restored"] and len(second_undo["restored"]) == 21
+    final = await _legs(session)
+    assert final[graded] == ("api_settlement", False, 0.0), "the grader's result stands"
+    for oid in UNGRADED - {graded}:
+        assert final[oid] == before[oid]
+
+
+async def test_cert4149_a_later_odds_update_is_not_undone(session):
+    """Any column counts, not only grade/source/price: a later odds write makes
+    the row no longer this repair's to undo."""
+    mod, legs, grades, _, digest = await _plan_and_backup(session)
+    await _apply(session, mod, legs, digest)
+    touched = min(UNGRADED)
+    await session.execute(
+        text("UPDATE futures_outcomes SET current_american_odds=-150 WHERE id=:id"), {"id": touched})
+    await session.commit()
+    undo = await _restore(session, mod)
+    assert undo["preserved_changed_since_apply"] == [touched]
+    row = (await session.execute(
+        text("SELECT current_american_odds, resolution_source FROM futures_outcomes WHERE id=:id"),
+        {"id": touched})).one()
+    await session.rollback()
+    assert tuple(row) == (-150, "api_settlement")
+    # And a lost row is closed: a second undo cannot reach it either.
+    assert (await _restore(session, mod))["restored"] == []
+    assert await mod.restore(session) == [], "the list form agrees"
+
+
+async def test_apply_writes_only_its_own_digests_frozen_rows(session):
+    """A backup row frozen under ANOTHER digest is not this apply's to write,
+    even when it is ungraded and its before-image still matches."""
+    mod, legs, grades, _, digest = await _plan_and_backup(session)
+    stranger = 229599999
+    await session.execute(
+        text("INSERT INTO futures_outcomes (id, market_id, external_id, name, "
+             "current_probability, is_winner, resolution_source, volume) VALUES "
+             "(:id, :m, 'KXUECLSCORE-26JUL30LEVIFK-ZZZ', 'zzz', 0.3, NULL, NULL, 10)"),
+        {"id": stranger, "m": MARKET_ID},
     )
     await session.commit()
-    stats = await mod.apply(session, legs, digest)
+    from app.utils.kalshi_archive_grades import ArchiveGrade
+
+    # Frozen through the script's own backup, under another plan's digest.
+    other = [ArchiveGrade(stranger, "KXUECLSCORE-26JUL30LEVIFK-ZZZ", False, "finalized", "no")]
+    assert await mod.backup(session, other, "another-plan") == 0
     await session.commit()
-    assert raced not in stats["written_ids"] and len(stats["written_ids"]) == 21
-    restored = await mod.restore(session)
-    await session.commit()
-    assert raced not in restored and len(restored) == 21
-    assert (await _legs(session))[raced] == ("api_settlement", False, 0.0)
+    out = await _apply(session, mod, legs, digest)
+    assert stranger not in out["written_ids"] and len(out["written_ids"]) == 22
+    assert (await _legs(session))[stranger] == (None, None, 0.3)

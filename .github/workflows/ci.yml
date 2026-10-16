@@ -4202,12 +4202,15 @@ jobs:
         # The live grader read a legless event once the venue archived its
         # markets, so 22 of KXUECLSCORE-26JUL30LEVIFK's 30 legs stayed ungraded.
         # Plans from the RETAINED archive bytes, backs up, writes the 22 and only
-        # the 22 (CAS on "still ungraded"), and the undo puts back only what the
-        # apply wrote — never the 8 authoritative controls or a leg graded since.
+        # the FROZEN 22 by whole-row CAS on each backed-up before-image, and the
+        # undo puts back only rows still holding this apply's whole after-image —
+        # never a control, a later writer, or a row whose marker an undo closed.
+        # The witnesses file keeps Root's and CERT-4149's counterexamples verbatim.
         if: matrix.group == 'shared-tail'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_kalshi_archive_grades_1853_pg.py \
+            tests/integration/test_kalshi_archive_grades_1853_witnesses_pg.py \
             -v -s -rs 2>&1 | tee /tmp/kalshi_archive_grades_1853.txt
           if grep -qiE "[0-9]+ skipped" /tmp/kalshi_archive_grades_1853.txt; then
             echo "::error::#1853 archive-grade repair gate SKIPPED — the gate did not run"

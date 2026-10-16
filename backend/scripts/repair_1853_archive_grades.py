@@ -12,10 +12,13 @@ event read came back legless once the venue archived the markets. This script
 plans ONLY those 22 legs — all ``no`` — from the retained bytes. It recovers no
 new WINNER, and it does not claim the event's place in any grader cohort.
 
-THE DECISION IS SHARED. :func:`app.utils.kalshi_archive_grades.plan_archive_grades`
-decides which legs may be written, for this script and for the grader's dormant
-archive arm alike, and the write is the grader's own ``_grade_from_archive``:
-one CAS per leg on "still no grade and no source".
+THE DECISION IS SHARED, THE WRITE IS NOT. :func:`app.utils.kalshi_archive_grades.
+plan_archive_grades` decides which legs may be graded, for this script and for
+the grader's dormant archive arm alike. The WRITE here is this script's own,
+under the ownership contract above ``SQL`` (CERT-4149 + Root, 2026-10-16): a
+frozen approved set, a whole-row compare-and-set on each backed-up before-image,
+the whole after-image recorded, and an undo that touches only rows still holding
+it. The live arm's "still ungraded" CAS is not enough for an undoable repair.
 
 MODES (attended; nothing here runs on a schedule):
 
@@ -49,34 +52,42 @@ EXPECTED_PLAN = 22
 REQUIRED_APP = "bainluck-heavy"
 BACKUP_TABLE = "backup_1853_archive_grades"
 
+#: THE OWNERSHIP CONTRACT (CERT-4149 + Root's three counterexamples, 2026-10-16).
+#:
+#: * The approved set is FROZEN at backup: the plan's ids, verdicts and digest,
+#:   and each row's FULL before-image (``to_jsonb`` of the whole row). Apply
+#:   reads that set back and never re-plans, so a row that becomes ungraded
+#:   after the review (Root: control 220314801 retracted) is not written.
+#: * Apply is a compare-and-set on the WHOLE row: it writes only while the row
+#:   still equals its backed-up before-image AND is still ungraded. A price
+#:   that moved after the backup (Root: 0.47 -> 0.61) is skipped, never written
+#:   over, so the undo can never reinstall a stale value.
+#: * Apply records the FULL after-image it produced. Restore puts a row back
+#:   only while it still equals that after-image exactly — any later writer,
+#:   including one confirming the identical grade with a later stamp, or one
+#:   touching any other column, is reported and preserved.
+#: * Markers end with the operation: a restore clears ``applied`` and the
+#:   after-image, and a row whose ownership was lost is closed, so a retry or
+#:   a second undo can never act on a stale marker (CERT-4149's apply-undo-
+#:   retry case).
 SQL = {
     "bak_create": f"""
         CREATE TABLE IF NOT EXISTS {BACKUP_TABLE} (
             outcome_id bigint PRIMARY KEY,
-            resolution_source varchar(30),
-            is_winner boolean,
-            current_probability numeric(7,6),
-            current_american_odds integer,
-            price_changed_at timestamptz,
-            last_updated timestamptz,
-            planned_is_winner boolean NOT NULL,
             plan_digest text NOT NULL,
+            planned_is_winner boolean NOT NULL,
+            before_row jsonb NOT NULL,
+            after_row jsonb,
+            applied boolean NOT NULL DEFAULT false,
             backed_up_at timestamptz NOT NULL DEFAULT NOW(),
-            applied boolean NOT NULL DEFAULT false
+            applied_at timestamptz,
+            restored_at timestamptz,
+            ownership_lost_at timestamptz
         )
     """,
-    "mark_applied": f"""
-        UPDATE {BACKUP_TABLE} SET applied = true
-        WHERE outcome_id = ANY(CAST(:ids AS bigint[])) AND plan_digest = :digest
-    """,
     "bak_copy": f"""
-        INSERT INTO {BACKUP_TABLE} (
-            outcome_id, resolution_source, is_winner, current_probability,
-            current_american_odds, price_changed_at, last_updated,
-            planned_is_winner, plan_digest)
-        SELECT fo.id, fo.resolution_source, fo.is_winner, fo.current_probability,
-            fo.current_american_odds, fo.price_changed_at, fo.last_updated,
-            :planned, :digest
+        INSERT INTO {BACKUP_TABLE} (outcome_id, plan_digest, planned_is_winner, before_row)
+        SELECT fo.id, :digest, :planned, to_jsonb(fo)
         FROM futures_outcomes fo
         WHERE fo.id = :outcome_id
           AND fo.resolution_source IS NULL AND fo.is_winner IS NULL
@@ -89,24 +100,59 @@ SQL = {
             WHERE b.outcome_id = t.id AND b.plan_digest = :digest)
     """,
     "bak_exists": f"SELECT to_regclass('{BACKUP_TABLE}') IS NOT NULL",
-    # Undo only what the apply wrote and nobody has touched since.
+    "frozen": f"""
+        SELECT outcome_id, planned_is_winner FROM {BACKUP_TABLE}
+        WHERE plan_digest = :digest AND NOT applied AND ownership_lost_at IS NULL
+        ORDER BY outcome_id
+    """,
+    # One leg: the live arm's own values, only while the row is still exactly
+    # its backed-up before-image and still ungraded. The row lock this UPDATE
+    # takes makes the comparison and the write one step.
+    "apply_one": """
+        UPDATE futures_outcomes fo
+        SET is_winner = :is_winner,
+            resolution_source = 'api_settlement',
+            last_updated = NOW(),
+            {settled}
+        FROM {table} b
+        WHERE fo.id = :outcome_id
+          AND b.outcome_id = fo.id AND b.plan_digest = :digest
+          AND NOT b.applied AND b.ownership_lost_at IS NULL
+          AND to_jsonb(fo) = b.before_row
+          AND fo.resolution_source IS NULL AND fo.is_winner IS NULL
+        RETURNING to_jsonb(fo) AS after_row
+    """,
+    "mark_applied": f"""
+        UPDATE {BACKUP_TABLE}
+        SET applied = true, applied_at = NOW(), after_row = CAST(:after_row AS jsonb),
+            restored_at = NULL
+        WHERE outcome_id = :outcome_id AND plan_digest = :digest
+    """,
+    # Undo only rows still holding EXACTLY what this operation wrote.
     "restore": f"""
         UPDATE futures_outcomes fo
-        SET resolution_source = b.resolution_source,
-            is_winner = b.is_winner,
-            current_probability = b.current_probability,
-            current_american_odds = b.current_american_odds,
-            price_changed_at = b.price_changed_at,
-            last_updated = NOW()
+        SET resolution_source = b.before_row->>'resolution_source',
+            is_winner = (b.before_row->>'is_winner')::boolean,
+            current_probability = (b.before_row->>'current_probability')::numeric,
+            current_american_odds = (b.before_row->>'current_american_odds')::integer,
+            price_changed_at = (b.before_row->>'price_changed_at')::timestamptz,
+            last_updated = (b.before_row->>'last_updated')::timestamptz
         FROM {BACKUP_TABLE} b
-        WHERE fo.id = b.outcome_id
-          AND b.applied
-          AND fo.resolution_source = 'api_settlement'
-          AND fo.is_winner = b.planned_is_winner
-          AND fo.current_probability = CASE WHEN b.planned_is_winner THEN 1.0 ELSE 0.0 END
+        WHERE fo.id = b.outcome_id AND b.applied AND to_jsonb(fo) = b.after_row
         RETURNING fo.id
     """,
-    "restore_count": f"SELECT COUNT(*) FROM {BACKUP_TABLE}",
+    "close_restored": f"""
+        UPDATE {BACKUP_TABLE}
+        SET applied = false, after_row = NULL, restored_at = NOW()
+        WHERE outcome_id = ANY(CAST(:ids AS bigint[]))
+    """,
+    # Applied rows a later writer changed: no longer this operation's to undo.
+    "close_lost": f"""
+        UPDATE {BACKUP_TABLE}
+        SET applied = false, ownership_lost_at = NOW()
+        WHERE applied
+        RETURNING outcome_id
+    """,
 }
 
 
@@ -167,6 +213,7 @@ async def build_plan(session, legs):
 
 
 async def backup(session, grades, digest) -> int:
+    """Freeze the approved set: ids, verdicts, digest and each FULL before-image."""
     from sqlalchemy import text
 
     await session.execute(text(SQL["bak_create"]))
@@ -183,28 +230,73 @@ async def backup(session, grades, digest) -> int:
 
 
 async def apply(session, legs, digest) -> dict:
-    """The grader's own archive write, then the backup rows it actually wrote
-    are marked — so an undo can never revert a leg somebody else graded."""
+    """Write the FROZEN approved legs — never a re-plan — each by whole-row CAS.
+
+    ``legs`` (the retained listing) re-confirms every frozen verdict: a frozen
+    row whose venue verdict no longer matches is refused, not written.
+    """
+    import json as _json
+
     from sqlalchemy import text
 
-    from app.tasks.backfill_winners import _grade_from_archive
-
-    stats: dict = {"archive_graded": 0, "archive_refused": {}, "winners_set": 0,
-                   "losers_set": 0, "expiring_graded": 0}
-    written = await _grade_from_archive(
-        session, EVENT_TICKER, legs, stats, dry_run=False, expiring=False
+    from app.utils import kalshi_market_status as kms
+    from app.utils.settled_price import (
+        SETTLED_NO_PRICE,
+        SETTLED_YES_PRICE,
+        settled_price_set_sql,
     )
-    await session.execute(text(SQL["mark_applied"]), {"ids": written, "digest": digest})
-    stats["written_ids"] = written
-    return stats
+
+    by_ticker = {leg["ticker"]: leg for leg in legs}
+    frozen = (await session.execute(text(SQL["frozen"]), {"digest": digest})).all()
+    tickers = dict((await session.execute(
+        text("SELECT id, external_id FROM futures_outcomes "
+             "WHERE id = ANY(CAST(:ids AS bigint[]))"),
+        {"ids": [r[0] for r in frozen]},
+    )).all())
+    written: list[int] = []
+    skipped: list[int] = []
+    for outcome_id, planned in frozen:
+        leg = by_ticker.get(tickers.get(outcome_id))
+        verdict = kms.gradeable_winner(leg.get("status"), leg.get("result")) if leg else None
+        if verdict is None or verdict != planned:
+            raise Refused(f"outcome {outcome_id}: frozen verdict no longer matches the listing")
+        sql = SQL["apply_one"].format(
+            settled=settled_price_set_sql(
+                SETTLED_YES_PRICE if planned else SETTLED_NO_PRICE, alias="fo"
+            ),
+            table=BACKUP_TABLE,
+        )
+        row = (await session.execute(
+            text(sql), {"is_winner": planned, "outcome_id": outcome_id, "digest": digest}
+        )).first()
+        if row is None:
+            skipped.append(outcome_id)
+            continue
+        after = row[0] if isinstance(row[0], str) else _json.dumps(row[0])
+        await session.execute(
+            text(SQL["mark_applied"]),
+            {"after_row": after, "outcome_id": outcome_id, "digest": digest},
+        )
+        written.append(outcome_id)
+    return {"written_ids": written, "skipped_changed_since_backup": skipped}
 
 
 async def restore(session) -> list[int]:
+    """The ids put back (see :func:`restore_report` for what was preserved)."""
+    return (await restore_report(session))["restored"]
+
+
+async def restore_report(session) -> dict:
+    """Undo every row still holding exactly this repair's after-image; report the rest."""
     from sqlalchemy import text
 
     if not (await session.execute(text(SQL["bak_exists"]))).scalar_one():
         raise Refused(f"{BACKUP_TABLE} does not exist; nothing was applied")
-    return [r[0] for r in (await session.execute(text(SQL["restore"]))).all()]
+    restored = [r[0] for r in (await session.execute(text(SQL["restore"]))).all()]
+    if restored:
+        await session.execute(text(SQL["close_restored"]), {"ids": restored})
+    preserved = [r[0] for r in (await session.execute(text(SQL["close_lost"]))).all()]
+    return {"restored": restored, "preserved_changed_since_apply": preserved}
 
 
 async def run(args, env) -> dict:
@@ -214,9 +306,8 @@ async def run(args, env) -> dict:
     if args.restore:
         refuse_unless_named_app(env)
         async with get_task_session() as session:
-            restored = await restore(session)
+            out.update(await restore_report(session))
             await session.commit()
-        out["restored"] = restored
         return out
 
     legs = load_archive_legs()

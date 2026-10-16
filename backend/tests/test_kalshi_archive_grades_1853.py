@@ -360,8 +360,12 @@ class TestTheRetainedBytes:
             mod.refuse_unless_named_app({})
         mod.refuse_unless_named_app({"HEROKU_APP_NAME": "bainluck-heavy"})
 
-    def test_restore_reverts_only_what_the_apply_marked(self):
-        sql = " ".join(_script().SQL["restore"].split())
-        assert "AND b.applied" in sql
-        assert "fo.resolution_source = 'api_settlement'" in sql
-        assert "fo.is_winner = b.planned_is_winner" in sql
+    def test_the_ownership_contract_is_whole_row(self):
+        """Shape only — the behaviour is the real-PG file's. Apply CASes the WHOLE
+        before-image of a frozen row; restore requires the WHOLE after-image."""
+        sql = {k: " ".join(v.split()) for k, v in _script().SQL.items()}
+        assert "to_jsonb(fo) = b.before_row" in sql["apply_one"]
+        assert "b.plan_digest = :digest" in sql["apply_one"]
+        assert "AND b.applied AND to_jsonb(fo) = b.after_row" in sql["restore"]
+        assert "applied = false, after_row = NULL" in sql["close_restored"]
+        assert "ownership_lost_at = NOW()" in sql["close_lost"]
