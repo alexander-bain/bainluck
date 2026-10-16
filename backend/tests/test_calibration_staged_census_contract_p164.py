@@ -50,6 +50,7 @@ from app.utils.calibration_staged_futures import (
     DEFAULT_CENSUS_COLUMNS,
     GROUP_KEY_COLUMNS,
     INTEGER_ADDITIVE_COLUMNS,
+    MEMBER_COLUMN,
     UndeclaredColumnError,
     merge_futures_rows,
     split_unit_rows,
@@ -156,11 +157,14 @@ class TestTheStatementAndTheDeclarationAgree:
         does not override it, so an undeclared column aborts the very first
         unit — before finalization is ever reached.
         """
+        # #994: the member column is the fourth declared kind — lifted out at
+        # bank time, never census. Declared by name, so a second new column
+        # still reds this guard.
         known = (
             set(DECLARED_CENSUS_COLUMNS)
             | set(ADDITIVE_COLUMNS)
             | set(GROUP_KEY_COLUMNS)
-            | {AVG_PROB_COLUMN}
+            | {AVG_PROB_COLUMN, MEMBER_COLUMN}
         )
         assert not (_emitted_columns() - known), (
             "the statement emits columns the bank-time guard would refuse: "
@@ -173,7 +177,7 @@ class TestTheStatementAndTheDeclarationAgree:
             set(_runtime_census_columns())
             | set(ADDITIVE_COLUMNS)
             | set(GROUP_KEY_COLUMNS)
-            | {AVG_PROB_COLUMN}
+            | {AVG_PROB_COLUMN, MEMBER_COLUMN}
         )
         assert not (_emitted_columns() - known), (
             "the statement emits columns the merge would refuse: "

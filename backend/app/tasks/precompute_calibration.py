@@ -5999,7 +5999,23 @@ def _main_futures_sql(*, frozen: bool = False) -> str:
                 SUM(CASE WHEN is_winner THEN 1 ELSE 0 END) AS winners,
                 AVG(adj_opening_probability) AS avg_prob,
                 SUM(adj_opening_probability::float) AS sum_prob,
-                SUM((adj_opening_probability::float - CASE WHEN is_winner THEN 1.0 ELSE 0.0 END)^2) AS sum_sq_err,
+                SUM((adj_opening_probability::float - CASE WHEN is_winner THEN 1.0 ELSE 0.0 END)^2) AS sum_sq_err,"""
+            # #994: WHO is in each DataGolf cell, from the same rows the mass
+            # above counts — so the Accuracy drill-in can open a published
+            # bucket's exact members instead of re-running this chain per click.
+            # Emitted by both forms (freezing scopes the population, never the
+            # shape of the answer); only the staged bank retains it. NULL for
+            # every other source. Record text is ``market_id,outcome_id,price,
+            # winner`` with price as NUMERIC text and winner the curve's own
+            # CASE, so a cell's record count and winner count are its ``n`` and
+            # ``winners`` by construction.
+            + """
+                string_agg(
+                    bucketed.market_id::text || ',' || bucketed.outcome_id::text
+                        || ',' || bucketed.adj_opening_probability::text
+                        || ',' || CASE WHEN bucketed.is_winner THEN '1' ELSE '0' END,
+                    ';' ORDER BY bucketed.market_id, bucketed.outcome_id
+                ) FILTER (WHERE bucketed.source = 'datagolf') AS datagolf_members,
                 MAX(ls.kalshi_included) AS kalshi_included,
                 MAX(ls.kalshi_excluded) AS kalshi_excluded,
                 MAX(ls.writer_bar_included) AS writer_bar_included,
@@ -7260,11 +7276,47 @@ async def _run_staged_futures(db, runner, sql_builder, *, rebuild_only=False):
             census_columns=census_columns,
             extra_censuses=census_only + global_census,
         )
+    _stage_examples_membership(runner, cursor, chunks, merged)
     logger.info(
         "calibration staged futures: generation %s COMPLETE — %d units, %d merged buckets",
         gen_digest, len(chunks), len(merged),
     )
     return merged
+
+
+def _stage_examples_membership(runner, cursor, chunks, merged) -> None:
+    """#994: hand the publisher this fold's DataGolf members, verified, or why not.
+
+    Reads the SAME bank :func:`collect_unit_results` just finalized from and
+    checks every DataGolf group against ``merged`` before anything is offered
+    for publication. Never raises: a membership that cannot be produced costs
+    the drill-in its verified examples and nothing else — the curve publishes
+    exactly as it would have.
+    """
+    from app.utils.calibration_examples_membership import verify_cells_against_fold
+    from app.utils.calibration_staged_futures import collect_unit_members
+
+    try:
+        cells, reason = collect_unit_members(cursor, chunks)
+        verified = None
+        if cells is not None:
+            verified, reason = verify_cells_against_fold(cells, merged)
+        bank = {
+            "units": len(cursor.committed_units)
+            if cursor.covers(chunks)
+            else len(cursor.served_units),
+            "served_at": float(cursor.served_at or 0.0),
+        }
+    except Exception as exc:  # noqa: BLE001 — membership never blocks the curve
+        logger.warning(
+            "calibration staged futures: examples membership not staged (%s)",
+            type(exc).__name__,
+        )
+        verified, reason, bank = None, "membership_error", {}
+    runner.examples_membership = verified
+    runner.examples_membership_reason = reason
+    runner.examples_membership_bank = bank
+    runner.ledger.record_stage(f"staged:examples_membership:{reason}", 0)
 
 
 def _coverage_census_or_disabled(**kwargs):
@@ -9219,6 +9271,62 @@ def _file_publish_gate_rejection(verdict, *, marker: str = "calibration-publish-
         return {"action": "error", "error": str(exc)[:200]}
 
 
+async def _publish_examples_membership(runner, response: dict, payload_json: str) -> dict:
+    """#994: publish the staged DataGolf membership beside ``response``, or say why not.
+
+    Returns ``{"status": ..., "reason": ...}`` for the run outcome. ``status`` is
+    ``published`` / ``superseded`` / ``not_published`` / ``error``; it is never
+    allowed to stop the payload publishing.
+    """
+    import hashlib
+
+    from app.services.durable_snapshots import publish_snapshot_standalone
+    from app.utils.calibration_examples_membership import (
+        DURABLE_IDENTITY,
+        PUBLISHED_SCHEMA,
+        build_published_membership,
+    )
+    from app.utils.calibration_publish_gate import _parse_generated_at
+    from app.utils.durable_state import DurableEnvelope
+
+    verified = getattr(runner, "examples_membership", None)
+    if verified is None:
+        return {
+            "status": "not_published",
+            "reason": getattr(runner, "examples_membership_reason", "not_computed"),
+        }
+    try:
+        artifact, reason = build_published_membership(
+            verified,
+            response=response,
+            payload_sha256=hashlib.sha256(payload_json.encode("utf-8")).hexdigest(),
+            staged_unit_fingerprint=staged_unit_fingerprint(),
+            bank=getattr(runner, "examples_membership_bank", None),
+        )
+        if artifact is None:
+            return {"status": "not_published", "reason": reason}
+        envelope = DurableEnvelope.build(
+            identity=DURABLE_IDENTITY,
+            schema_version=PUBLISHED_SCHEMA,
+            payload=artifact,
+            generated_at=_parse_generated_at(response.get("generated_at")),
+            source="precompute_calibration",
+        )
+        stage = await publish_snapshot_standalone(envelope)
+    except Exception as exc:  # noqa: BLE001 — never blocks the payload publish
+        logger.warning(
+            "calibration publish: examples membership failed (%s)", type(exc).__name__
+        )
+        return {"status": "error", "reason": type(exc).__name__}
+    status = stage.get("status")
+    return {
+        "status": "published" if status == "ok" else str(status),
+        "reason": "complete",
+        "members": artifact["members_total"],
+        "generation": envelope.generation,
+    }
+
+
 def _publish_calibration_main(rc, payload_json: str) -> dict:
     """Publish the serialized main payload to the durable + fresh keys (Queue 272).
 
@@ -10040,6 +10148,16 @@ async def _run_calibration_main_build(runner=None):
             "calibration publish gate ADMITTED a candidate on an explicit "
             "observation (%s): %s",
             observation["code"], observation["detail"],
+        )
+
+    # #994: the DataGolf membership is published BEFORE the payload it belongs
+    # to, bound to that payload's exact bytes. Written first so a reader can
+    # never see the new curve without its membership already in place; if the
+    # payload write then fails, the orphan names a curve that is not served and
+    # no reader ever matches it. Never raises and never gates the publish.
+    with runner.stage("examples_membership_publish"):
+        runner.outcome["examples_membership"] = await _publish_examples_membership(
+            runner, response, payload_json
         )
 
     t2 = time.monotonic()
