@@ -75,6 +75,8 @@ private struct EvolutionPoint: Identifiable {
     let name: String
     let probability: Double
     let isCombined: Bool
+    /// #683 — set when this value is a recorded interval served at its close.
+    var archive: TimelineArchiveMark? = nil
 }
 
 // MARK: - Crosshair State
@@ -82,6 +84,8 @@ private struct EvolutionPoint: Identifiable {
 private struct CrosshairData: Equatable {
     let date: Date
     let entries: [(name: String, probability: Double, color: Color)]
+    /// #683 — the archive marks of the values read out at `date`.
+    var archiveMarks: [TimelineArchiveMark] = []
 
     static func == (lhs: CrosshairData, rhs: CrosshairData) -> Bool {
         lhs.date == rhs.date && lhs.entries.count == rhs.entries.count
@@ -359,6 +363,15 @@ struct EvolutionChartView: View {
                                 .frame(maxWidth: .infinity, alignment: .leading)
                                 .padding(.horizontal)
                                 .padding(.bottom, 6)
+                        }
+                        if let note = archiveNote {
+                            Text(note)
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(.horizontal)
+                                .padding(.bottom, 6)
+                                .accessibilityIdentifier(Self.archiveNoteIdentifier)
                         }
                         if crosshair != nil {
                             crosshairTooltip
@@ -672,7 +685,8 @@ struct EvolutionChartView: View {
                     date: date,
                     name: name,
                     probability: prob * 100,
-                    isCombined: false
+                    isCombined: false,
+                    archive: entry.archive?[name]
                 ))
                 if effectiveSelected.contains(name) {
                     latestProbs[name] = prob * 100
@@ -731,6 +745,20 @@ struct EvolutionChartView: View {
     }
 
     private var windowWord: String { Self.windowWord(for: selectedRange) }
+
+    /// #683 — the line that says which drawn prices are Kalshi's recorded
+    /// intervals rather than our live readings. Counted over every line the plot
+    /// draws (faint ones included) in the chosen window, so no archived value is
+    /// on screen unlabelled.
+    private var archiveNote: String? {
+        guard let data else { return nil }
+        let drawn = EvolutionArchiveProvenance.drawnMarks(
+            in: data.timeline, names: Set(displayedNames), cutoff: timeCutoff)
+        return EvolutionArchiveProvenance.note(marks: drawn.marks, drawnValues: drawn.values)
+    }
+
+    /// How a UI test finds the archive line.
+    static let archiveNoteIdentifier = "evolution-archive-note"
 
     // MARK: - Axis, Coverage and Observation Marks (#7077)
 
@@ -1324,8 +1352,9 @@ struct EvolutionChartView: View {
         // reader could reach on production 56775596's `24h` — and its response to
         // nothing-to-say was to stop following the finger. See
         // `ChartCrosshairPolicy` for the measurement.
-        let candidates = chartEntries
+        let plotted = chartEntries
             .filter { !$0.isCombined && effectiveSelected.contains($0.name) }
+        let candidates = plotted
             .map { ScrubCandidate(date: $0.date, name: $0.name, probability: $0.probability) }
 
         guard let resolved = ChartCrosshairPolicy.resolve(at: date, among: candidates) else { return }
@@ -1336,7 +1365,12 @@ struct EvolutionChartView: View {
             return (name: point.name, probability: point.probability, color: color)
         }
 
-        crosshair = CrosshairData(date: resolved.date, entries: coloredEntries)
+        let readNames = Set(resolved.entries.map(\.name))
+        let archiveMarks = plotted.compactMap { point in
+            point.date == resolved.date && readNames.contains(point.name) ? point.archive : nil
+        }
+        crosshair = CrosshairData(date: resolved.date, entries: coloredEntries,
+                                  archiveMarks: archiveMarks)
     }
 
     // MARK: - Crosshair Tooltip
@@ -1344,17 +1378,30 @@ struct EvolutionChartView: View {
     private var crosshairTooltip: some View {
         guard let crosshair else { return AnyView(EmptyView()) }
         let dateStr: String
-        if selectedRange == .day || selectedRange == .today {
-            dateStr = crosshair.date.formatted(.dateTime.hour().minute())
+        let style: Date.FormatStyle = (selectedRange == .day || selectedRange == .today)
+            ? .dateTime.hour().minute()
+            : .dateTime.month(.abbreviated).day().hour().minute()
+        // #683: an archived value stands for an interval, so its readout names the
+        // interval (start – close), never the close alone as if it were an instant.
+        if let interval = EvolutionArchiveProvenance.interval(
+            closingAt: crosshair.date, marks: crosshair.archiveMarks) {
+            dateStr = "\(interval.lowerBound.formatted(style)) – "
+                + interval.upperBound.formatted(.dateTime.hour().minute())
         } else {
-            dateStr = crosshair.date.formatted(.dateTime.month(.abbreviated).day().hour().minute())
+            dateStr = crosshair.date.formatted(style)
         }
+        let archiveLine = EvolutionArchiveProvenance.readoutLine(marks: crosshair.archiveMarks)
 
         return AnyView(
             VStack(alignment: .leading, spacing: 4) {
                 Text(dateStr)
                     .font(.caption2)
                     .foregroundStyle(.secondary)
+                if let archiveLine {
+                    Text(archiveLine)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
 
                 ForEach(Array(crosshair.entries.prefix(8).enumerated()), id: \.offset) { _, entry in
                     HStack(spacing: 6) {
