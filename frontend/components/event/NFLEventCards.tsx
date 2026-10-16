@@ -8,7 +8,7 @@
  * `lib/nflEventCardDeck.ts`; this file only draws them.
  */
 
-import { forwardRef, useEffect, useRef, useState, type Ref } from "react";
+import { forwardRef, useEffect, useLayoutEffect, useRef, useState, type Ref } from "react";
 import { formatProbability } from "@/lib/api";
 import { propVerdictLabel } from "@/lib/propGrade";
 import { teamTextColor } from "@/lib/teamColors";
@@ -732,6 +732,32 @@ export function EventCardView({
 // ─── The deck under the chart ──────────────────────────────────────────────
 
 /**
+ * #11120: whether the deck returns to its start when its lead card changes.
+ * The finish card can arrive after the prop cards and is inserted in front of
+ * them; a snapping row keeps the card it had snapped to, so the new lead
+ * opened off-screen to the left. Untouched, the deck shows its lead; once the
+ * reader has swiped, tapped or focused inside it, their position is theirs.
+ */
+export function deckReturnsToStart(prevLeadId: string | null, nextLeadId: string | null, touched: boolean): boolean {
+  return !touched && prevLeadId !== null && nextLeadId !== null && prevLeadId !== nextLeadId;
+}
+
+function useDeckLeadInView(leadId: string | null) {
+  const rowRef = useRef<HTMLDivElement>(null);
+  const touched = useRef(false);
+  const prevLead = useRef(leadId);
+  useLayoutEffect(() => {
+    const el = rowRef.current;
+    if (el && deckReturnsToStart(prevLead.current, leadId, touched.current)) el.scrollLeft = 0;
+    prevLead.current = leadId;
+  }, [leadId]);
+  const touch = () => {
+    touched.current = true;
+  };
+  return { rowRef, touchProps: { onPointerDown: touch, onTouchStart: touch, onWheel: touch, onKeyDown: touch, onFocus: touch } };
+}
+
+/**
  * The compact cards side by side, each with an explicit "Open full size"
  * control: the page scrolls vertically, so a tap on a chart inside a card is
  * never taken as a request to expand it.
@@ -754,6 +780,7 @@ export function NFLEventCardDeck({
   openerRef: (cardId: string, el: HTMLButtonElement | null) => void;
   headingRef?: Ref<HTMLHeadingElement>;
 }) {
+  const { rowRef, touchProps } = useDeckLeadInView(cards[0]?.id ?? null);
   if (cards.length === 0) return null;
   return (
     <section aria-labelledby="nfl-game-stories-heading" className="flex flex-col gap-2" data-testid="nfl-game-stories">
@@ -761,7 +788,7 @@ export function NFLEventCardDeck({
         <DeckHeading ref={headingRef} />
         <span className="text-xs text-text-secondary">{cards.length === 1 ? "1 card" : `${cards.length} cards`}</span>
       </div>
-      <div className="flex gap-3 overflow-x-auto snap-x snap-mandatory pb-1 -mx-1 px-1">
+      <div ref={rowRef} {...touchProps} className="flex gap-3 overflow-x-auto snap-x snap-mandatory pb-1 -mx-1 px-1">
         {cards.map((card) => (
           <div
             key={card.id}
