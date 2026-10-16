@@ -197,6 +197,15 @@
 				Utilities/PeriodLabel.swift,
 				Utilities/SportVocab.swift,
 				Utilities/TeamShortName.swift,
+				Utilities/ComplementProbabilityDisplay.swift,
+				Utilities/EventOutcome.swift,
+				Utilities/EventState.swift,
+				Utilities/FormattingUtilities.swift,
+				Utilities/OutcomeVerdict.swift,
+				Widgets10875/SavedWidgetBridge10875.swift,
+				Widgets10875/SavedWidgetDetail10875.swift,
+				Widgets10875/SavedWidgetReading10875.swift,
+				Widgets10875/SavedWidgetTimeline10875.swift,
 			);
 			target = A7C0000000000000000000F1 /* BainLuckWidget */;
 		};
