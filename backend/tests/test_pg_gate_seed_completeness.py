@@ -108,6 +108,9 @@ COVERED = (
     # `resolution_source` ARE the subject (#5355 timing, #762 void), and every
     # snapshot names `reading_count` (NOT NULL, no server default).
     "test_calibration_examples_datagolf_994_pg.py",
+    # #2722. Seeds the nine futures_markets rows by raw INSERT, as production
+    # held them: status / resolution_date / updated_at ARE the subject.
+    "test_kalshi_archived_nine_repair_2722_pg.py",
     # #938. Seeds the same three tables by raw INSERT. The ticker
     # (`external_id`) and the market's source/category ARE the subject; every
     # snapshot names `reading_count` (NOT NULL, no server default) and a real

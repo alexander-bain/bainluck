@@ -151,6 +151,7 @@
     "/api/calibration/rescue runs Part C, not a private copy (real Postgres)",
     "#5355 a DataGolf opening first read after the start is not scored (real Postgres)",
     "#994 a DataGolf bucket drill-in returns the rows the published chain admits (real Postgres)",
+    "#2722 the nine archived Kalshi questions settle through an attended, undoable first repair (real Postgres)",
     "#938 a Kalshi golf round price no stored time places before the round is not scored (real Postgres)",
     "#4444 the census caps do not move the numbers (real Postgres)",
     "#4482 a task's query budget survives the pool (real Postgres)",
