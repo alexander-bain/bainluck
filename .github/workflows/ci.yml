@@ -4237,6 +4237,22 @@ jobs:
             exit 1
           fi
 
+      - name: "#2722 the nine archived Kalshi questions settle through an attended, undoable first repair (real Postgres)"
+        # The merged archive walk ships inactive (UPDATE_SQL keys on id, no
+        # before-image). This first repair plans the nine reviewed ids by running
+        # that walk over the RETAINED venue bytes with its writes recorded, then
+        # applies them by whole-row CAS on frozen before-images; the undo touches
+        # only rows still holding the apply's whole after-image.
+        if: matrix.group == 'shared-tail'
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_kalshi_archived_nine_repair_2722_pg.py \
+            -v -s -rs 2>&1 | tee /tmp/kalshi_archived_nine_2722.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/kalshi_archived_nine_2722.txt; then
+            echo "::error::#2722 nine-row repair gate SKIPPED — the gate did not run"
+            exit 1
+          fi
+
       - name: "#4444 the census caps do not move the numbers (real Postgres)"
         # The two `precompute_backfill_progress` tiles ran an uncapped
         # per-outcome `COUNT(*)` over `futures_odds_snapshots` and became the two

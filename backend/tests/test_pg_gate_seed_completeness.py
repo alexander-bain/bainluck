@@ -117,6 +117,9 @@ COVERED = (
     # snapshot names `reading_count` (NOT NULL, no server default) and a real
     # two-sided book so the Kalshi liquidity rungs keep their hands off.
     "test_calibration_golf_round_timing_pg.py",
+    # #2722. Seeds the nine futures_markets rows by raw INSERT, as production
+    # held them: status / resolution_date / updated_at ARE the subject.
+    "test_kalshi_archived_nine_repair_2722_pg.py",
     # #1527. Seeds eleven `futures_markets` and their legs by raw INSERT on a
     # hand-built schema to prove the guarded three-winner repair. Its first CI
     # run died here: the throwaway table had no `category` / `external_id`, so
