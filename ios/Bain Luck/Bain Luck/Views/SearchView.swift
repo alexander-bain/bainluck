@@ -73,11 +73,21 @@ private struct QuickSearchItem: Identifiable {
 // MARK: - View
 
 struct SearchView: View {
-    @StateObject private var viewModel = SearchViewModel()
+    @StateObject private var viewModel: SearchViewModel
     @EnvironmentObject private var navCoordinator: NavigationCoordinator
     @FocusState private var isSearchFocused: Bool
     @Environment(\.horizontalSizeClass) private var sizeClass
-    @State private var path = NavigationPath()
+    @State private var path: NavigationPath
+    /// #10878 — the Mac window's kept place for this screen: the query and
+    /// results (the view model), the open detail and the results' scroll
+    /// offset. `nil` everywhere else, which is today's behaviour.
+    private let macPlace: MacReadingPlace<SearchViewModel>?
+
+    init(macPlace: MacReadingPlace<SearchViewModel>? = nil) {
+        self.macPlace = macPlace
+        _viewModel = StateObject(wrappedValue: macPlace?.models(orMake: { SearchViewModel() }) ?? SearchViewModel())
+        _path = State(initialValue: macPlace?.path ?? NavigationPath())
+    }
 
     /// Width available to the iPad card grids, in points. 0 until the first
     /// geometry pass resolves, which `DiscoverMasonry` reads as one column
@@ -198,6 +208,7 @@ struct SearchView: View {
             // late response can't publish onto an absent surface (L2-198).
             viewModel.cancelInFlightWork()
         }
+        .onChange(of: path) { _, newPath in macPlace?.path = newPath }
         .task {
             consumePendingSearchQuery()
             await viewModel.loadTrending()
@@ -1028,6 +1039,7 @@ struct SearchView: View {
         #if os(iOS)
         .listStyle(.insetGrouped)
         #endif
+        .macReadingOffset(macPlace)
     }
 
     // MARK: - Tournament Row

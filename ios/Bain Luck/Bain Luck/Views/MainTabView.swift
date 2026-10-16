@@ -6,9 +6,18 @@ struct MainTabView: View {
     @State private var columnVisibility = NavigationSplitViewVisibility.automatic
 
     var body: some View {
-        if sizeClass == .regular {
+        // #10878: the Mac gets its own window; iPhone and iPad keep the
+        // size-class rule they had.
+        switch MacMainWindow10878.root(isMac: MacMainWindow10878.runsOnMac, sizeClass: sizeClass) {
+        case .macWindow:
+            #if os(macOS)
+            MacMainWindowView()
+            #else
+            EmptyView() // unreachable: `root` answers `.macWindow` only on macOS
+            #endif
+        case .iPadSplit:
             iPadLayout
-        } else {
+        case .phoneTabs:
             iPhoneLayout
         }
     }
