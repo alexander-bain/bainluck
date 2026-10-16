@@ -53,6 +53,14 @@ MODES (attended; nothing here runs on a schedule, and the beat's
 
 Writes refuse unless ``HEROKU_APP_NAME`` is ``bainluck-heavy``; the backup table
 is runtime DDL created only by an attended invocation (notice 47(c)).
+
+EVERY SESSION IS BOUNDED (#4482). Plan, backup/apply and restore each open their
+session with ``STATEMENT_TIMEOUT_MS`` / ``LOCK_TIMEOUT_MS`` passed to
+``get_task_session``, so the budgets ride the connection's startup packet and
+survive every commit and reconnect (a bare ``SET`` would not: the task engine's
+resting bound is 30 minutes and its lock bound is none). A budget that fires is
+a refusal naming the phase and SQLSTATE: that phase's transaction rolls back
+whole, and the run never retries and never restores on its own.
 """
 
 from __future__ import annotations
@@ -84,6 +92,13 @@ REQUIRED_APP = "bainluck-heavy"
 BACKUP_TABLE = "backup_2722_archived_nine"
 #: Archive pages the plan may spend over the retained bytes (one per event).
 PLAN_ARCHIVE_PAGES = 50
+#: Per-engine budgets for every session this script opens. Each phase is a few
+#: primary-key statements over nine rows (milliseconds on a real Postgres), so
+#: 10 s only fires on a stuck server, and 500 ms of lock wait means another
+#: writer holds one of the nine: the attended run stops rather than queue
+#: behind it. Both fail closed.
+STATEMENT_TIMEOUT_MS = 10_000
+LOCK_TIMEOUT_MS = 500
 
 SQL = {
     "rows": """
@@ -188,6 +203,18 @@ SQL = {
 
 class Refused(RuntimeError):
     pass
+
+
+def _stopped(phase: str, exc, consequence: str) -> Refused:
+    """A budget firing (lock_timeout 55P03, statement_timeout 57014) or any other
+    server refusal, as a refusal that names the phase and what it left behind."""
+    orig = getattr(exc, "orig", None)
+    code = getattr(orig, "sqlstate", None) or getattr(orig, "pgcode", None)
+    return Refused(
+        f"the database stopped the {phase} ({type(orig or exc).__name__}, sqlstate "
+        f"{code}); its transaction rolled back, {consequence}. Not retried, not "
+        "restored — re-run the plan and review it before any further step"
+    )
 
 
 def _iso(value) -> Optional[str]:
@@ -433,19 +460,35 @@ async def restore_report(session) -> dict:
 
 
 async def run(args, env) -> dict:
+    from sqlalchemy.exc import DBAPIError
+
     from app.tasks.base import get_task_session
 
     out: dict = {"manifest_sha256": MANIFEST_SHA256}
     if args.restore:
         refuse_unless_named_app(env)
-        async with get_task_session() as session:
-            out.update(await restore_report(session))
-            await session.commit()
+        committed = False
+        try:
+            async with get_task_session(
+                statement_timeout_ms=STATEMENT_TIMEOUT_MS, lock_timeout_ms=LOCK_TIMEOUT_MS
+            ) as session:
+                out.update(await restore_report(session))
+                await session.commit()
+                committed = True
+        except DBAPIError as exc:
+            if committed:
+                raise  # the restore is durable; never report it as rolled back
+            raise _stopped("restore", exc, "no row was restored and no marker closed") from exc
         return out
 
     evidence = load_evidence()
-    async with get_task_session() as session:
-        plan = await build_plan(session, evidence, now=datetime.now(timezone.utc))
+    try:
+        async with get_task_session(
+            statement_timeout_ms=STATEMENT_TIMEOUT_MS, lock_timeout_ms=LOCK_TIMEOUT_MS
+        ) as session:
+            plan = await build_plan(session, evidence, now=datetime.now(timezone.utc))
+    except DBAPIError as exc:
+        raise _stopped("plan", exc, "nothing was read into a plan and nothing written") from exc
     digest = plan_digest(plan["planned"])
     out.update(plan, plan_digest=digest)
     # Printed with each approved version as its hash; the digest covers the row.
@@ -466,17 +509,33 @@ async def run(args, env) -> dict:
         raise Refused("--apply requires --backup (D51: the undo is written first)")
     if args.digest != digest:
         raise Refused(f"--digest {args.digest!r} does not match this plan ({digest})")
-    async with get_task_session() as session:
-        drifted = await backup(session, plan["planned"], digest)
-        if drifted:
-            await session.rollback()
-            raise Refused(
-                f"rows changed since the plan was approved: {drifted}; nothing written "
-                "— re-plan and re-review"
-            )
-        await session.commit()
-        out["applied"] = await apply(session, digest)
-        await session.commit()
+    phase = "backup"
+    try:
+        async with get_task_session(
+            statement_timeout_ms=STATEMENT_TIMEOUT_MS, lock_timeout_ms=LOCK_TIMEOUT_MS
+        ) as session:
+            drifted = await backup(session, plan["planned"], digest)
+            if drifted:
+                await session.rollback()
+                raise Refused(
+                    f"rows changed since the plan was approved: {drifted}; nothing written "
+                    "— re-plan and re-review"
+                )
+            await session.commit()
+            phase = "apply"
+            out["applied"] = await apply(session, digest)
+            await session.commit()
+            phase = "done"
+    except DBAPIError as exc:
+        if phase == "done":
+            raise  # the apply is durable; never report it as rolled back
+        if phase == "backup":
+            raise _stopped("backup", exc, "nothing was backed up or written") from exc
+        raise _stopped(
+            "apply", exc,
+            f"no row of futures_markets was written; the backup for plan {digest} "
+            "stays committed and unapplied, so there is nothing to restore",
+        ) from exc
     out["undo"] = (
         f"heroku run:detached -a {REQUIRED_APP} -- python3 "
         "scripts/repair_2722_archived_nine.py --restore"
