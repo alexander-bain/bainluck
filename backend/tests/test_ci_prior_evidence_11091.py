@@ -1210,6 +1210,13 @@ def test_security_cli_failure_is_visible_nonzero_and_removes_stale_pass(
     monkeypatch.setenv("GITHUB_RUN_ID", "110")
     monkeypatch.setenv("GITHUB_REPOSITORY", "owner/repo")
     monkeypatch.setenv("GH_TOKEN", "offline-test-token")
+    if role == "master":
+        event = tmp_path / "push.json"
+        event.write_text(
+            json.dumps({"before": BASE, "after": HEAD, "ref": "refs/heads/master"})
+        )
+        monkeypatch.setenv("GITHUB_SHA", HEAD)
+        monkeypatch.setenv("GITHUB_EVENT_PATH", str(event))
     monkeypatch.setattr(evidence, "API", lambda *args: object())
 
     def refuse(*args):
@@ -1371,6 +1378,7 @@ class BaseSecurityAPI:
     """Complete tiny official run/snapshot specimen; no network or policy stubs."""
 
     def __init__(self, declared=False):
+        self.deadline = evidence.time.monotonic() + 75
         source = fixture()
         self.run = {
             **source.security_run,
@@ -1560,8 +1568,11 @@ class ComposeSecurityAPI(BaseSecurityAPI):
         }
         self.language = language
         self.current_jobs = copy.deepcopy(self.jobs)
-        for job in self.current_jobs:
+        for index, job in enumerate(self.current_jobs):
+            job["id"] = 800 + index
             job["run_attempt"] = attempt
+            for number, step in enumerate(job["steps"], 6):
+                step["number"] = number
 
     def get(self, path):
         if path == "actions/runs/110":
@@ -1793,3 +1804,516 @@ def test_untrusted_run_status_is_sanitized_before_real_qualifier_refusal(capsys)
     assert "TOKEN" not in text and "UNSAFE" not in text
     assert "SECURITY CHECKPOINT run-validation" in text
     assert "status=untrusted" in text
+
+
+class ReadinessClock:
+    def __init__(self):
+        self.now = 100.0
+        self.waits = []
+
+    def monotonic(self):
+        return self.now
+
+    def sleep(self, delay):
+        self.waits.append(delay)
+        self.now += delay
+
+
+def readiness_api(monkeypatch, *, pending_reads=1):
+    clock = ReadinessClock()
+    monkeypatch.setattr(evidence.time, "monotonic", clock.monotonic)
+    monkeypatch.setattr(evidence.time, "sleep", clock.sleep)
+    api = ComposeSecurityAPI()
+    original = api.pages
+    api.job_reads = 0
+    api.mutate_snapshot = lambda jobs, index: None
+
+    def pages(path, key):
+        jobs = original(path, key)
+        if path.startswith("actions/runs/110/") and key == "jobs":
+            api.job_reads += 1
+            if api.job_reads <= pending_reads:
+                jobs[0].update(status="in_progress", conclusion=None)
+                jobs[0]["steps"][0].update(
+                    status="in_progress", conclusion=None, completed_at=None
+                )
+            api.mutate_snapshot(jobs, api.job_reads)
+        return jobs
+
+    monkeypatch.setattr(api, "pages", pages)
+    return api, clock
+
+
+@pytest.mark.parametrize(
+    "pending_reads,waits", [(0, []), (1, [1]), (2, [1, 2]), (3, [1, 2, 4])]
+)
+def test_only_observed_analysis_readiness_can_wait_then_qualify(
+    monkeypatch, pending_reads, waits
+):
+    api, clock = readiness_api(monkeypatch, pending_reads=pending_reads)
+    receipt = api.qualify()
+    assert receipt["qualified"] is True
+    assert clock.waits == waits and api.job_reads == pending_reads + 1
+    assert api.deadline == 175.0
+
+
+def test_four_pending_snapshots_fail_without_a_fifth_read_or_deadline_reset(
+    monkeypatch,
+):
+    api, clock = readiness_api(monkeypatch, pending_reads=99)
+    with pytest.raises(ValueError, match="analysis step is unpaid"):
+        api.qualify()
+    assert clock.waits == [1, 2, 4] and api.job_reads == 4
+    assert api.deadline == 175.0
+
+
+@pytest.mark.parametrize(
+    "fault",
+    ["job-id", "other-job-id", "step-number", "step-start", "attempt", "step-name"],
+)
+def test_pending_readiness_identity_cannot_move(monkeypatch, fault):
+    api, clock = readiness_api(monkeypatch, pending_reads=1)
+
+    def mutate(jobs, index):
+        if index != 2:
+            return
+        if fault == "job-id":
+            jobs[0]["id"] += 1
+        elif fault == "other-job-id":
+            jobs[1]["id"] += 1
+        elif fault == "step-number":
+            jobs[0]["steps"][0]["number"] += 1
+        elif fault == "step-start":
+            jobs[0]["steps"][0]["started_at"] = "2026-10-15T22:31:00Z"
+        elif fault == "attempt":
+            jobs[1]["run_attempt"] += 1
+        else:
+            jobs[0]["steps"][0]["name"] = "Different analysis"
+
+    api.mutate_snapshot = mutate
+    with pytest.raises(ValueError):
+        api.qualify()
+    assert clock.waits == [1] and api.job_reads == 2
+
+
+@pytest.mark.parametrize(
+    "fault",
+    [
+        "number",
+        "job-id",
+        "start",
+        "completed",
+        "job-terminal",
+        "step-queued",
+        "step-failed",
+        "step-null-success",
+        "duplicate-step",
+    ],
+)
+def test_unobserved_or_malformed_pending_states_never_wait(monkeypatch, fault):
+    api, clock = readiness_api(monkeypatch)
+
+    def mutate(jobs, index):
+        job, step = jobs[0], jobs[0]["steps"][0]
+        if fault == "number":
+            step["number"] = True
+        elif fault == "job-id":
+            job["id"] = "800"
+        elif fault == "start":
+            step["started_at"] = "not-a-timestamp"
+        elif fault == "completed":
+            step["completed_at"] = "not-a-timestamp"
+        elif fault == "job-terminal":
+            job.update(status="completed", conclusion="success")
+        elif fault == "step-queued":
+            step["status"] = "queued"
+        elif fault == "step-failed":
+            step.update(status="completed", conclusion="failure")
+        elif fault == "step-null-success":
+            step["conclusion"] = "success"
+        else:
+            job["steps"].append(copy.deepcopy(step))
+
+    api.mutate_snapshot = mutate
+    with pytest.raises((ValueError, KeyError)):
+        api.qualify()
+    assert clock.waits == [] and api.job_reads == 1
+
+
+@pytest.mark.parametrize(
+    "remaining,expected_reads,waits",
+    [(0, 0, []), (1, 1, []), (2.5, 2, [1]), (6, 3, [1, 2])],
+)
+def test_readiness_waits_share_the_original_deadline(
+    monkeypatch, remaining, expected_reads, waits
+):
+    api, clock = readiness_api(monkeypatch, pending_reads=99)
+    api.deadline = clock.now + remaining
+    fixed_deadline = api.deadline
+    with pytest.raises(ValueError, match="decision deadline"):
+        api.qualify()
+    assert api.job_reads == expected_reads and clock.waits == waits
+    assert api.deadline == fixed_deadline
+
+
+def test_api_error_on_pending_reread_has_no_recovery_retry(monkeypatch):
+    api, clock = readiness_api(monkeypatch, pending_reads=99)
+
+    def fail(jobs, index):
+        if index == 2:
+            raise RuntimeError("offline response error")
+
+    api.mutate_snapshot = fail
+    with pytest.raises(RuntimeError):
+        api.qualify()
+    assert api.job_reads == 2 and clock.waits == [1]
+    assert api.deadline == 175.0
+
+
+def test_readiness_does_not_poll_upload_visibility(monkeypatch):
+    api, clock = readiness_api(monkeypatch, pending_reads=0)
+    calls = []
+
+    def empty_upload(*args, **kwargs):
+        calls.append(args)
+        return []
+
+    monkeypatch.setattr(api, "array_pages", empty_upload)
+    with pytest.raises(ValueError, match="actual SARIF upload"):
+        api.qualify()
+    assert len(calls) == 1 and api.job_reads == 1 and clock.waits == []
+
+
+@pytest.mark.parametrize("pending", [False, True])
+@pytest.mark.parametrize(
+    "fault", ["contradictory-job", "duplicate-job-id", "bool-attempt", "string-attempt"]
+)
+def test_ready_and_pending_jobs_refuse_contradictory_or_malformed_identity(
+    monkeypatch, pending, fault
+):
+    api, clock = readiness_api(monkeypatch, pending_reads=99 if pending else 0)
+
+    def mutate(jobs, index):
+        if fault == "contradictory-job":
+            jobs[0].update(status="in_progress", conclusion="failure")
+        elif fault == "duplicate-job-id":
+            jobs[1]["id"] = jobs[0]["id"]
+        elif fault == "bool-attempt":
+            jobs[1]["run_attempt"] = True
+        else:
+            jobs[1]["run_attempt"] = "1"
+
+    api.mutate_snapshot = mutate
+    with pytest.raises(ValueError):
+        api.qualify()
+    assert api.job_reads == 1 and clock.waits == []
+
+
+def test_successful_snapshot_cannot_arrive_after_original_deadline(monkeypatch):
+    api, clock = readiness_api(monkeypatch, pending_reads=0)
+
+    def consume_budget(jobs, index):
+        clock.now = api.deadline
+
+    api.mutate_snapshot = consume_budget
+    with pytest.raises(ValueError, match="decision deadline"):
+        api.qualify()
+    assert clock.waits == [] and api.job_reads == 1
+
+
+class TransitionBaselineAPI(BaseSecurityAPI):
+    """Authenticated-shape specimens exercise the real transition validators."""
+
+    def __init__(self):
+        super().__init__(declared=True)
+        self.run.update(
+            id=evidence.TRANSITION_MASTER_RUN,
+            head_sha=evidence.TRANSITION_BASE,
+            run_attempt=evidence.TRANSITION_MASTER_ATTEMPT,
+            status="completed",
+            conclusion="failure",
+            repository={
+                "id": evidence.TRANSITION_REPOSITORY_ID,
+                "full_name": evidence.TRANSITION_REPOSITORY,
+            },
+            head_repository={"id": evidence.TRANSITION_REPOSITORY_ID},
+        )
+        self.runs = [copy.deepcopy(self.run)]
+        self.compose = {
+            **self.run,
+            "id": evidence.TRANSITION_RUN,
+            "run_attempt": evidence.TRANSITION_ATTEMPT,
+            "head_branch": evidence.TRANSITION_BRANCH,
+            "conclusion": "success",
+        }
+        self.ref = {
+            "ref": "refs/heads/master",
+            "object": {"type": "commit", "sha": evidence.TRANSITION_BASE},
+        }
+        self.ref_reads = 0
+        self.compose_reads = 0
+        self.move_master = False
+        self.move_compose = False
+        self.move_analysis = False
+        self.receipts = {}
+        self.artifacts = []
+        for i, lang in enumerate(evidence.SECURITY_LANGUAGES):
+            meta = self.metadata[500 + i]
+            meta.update(
+                commit_sha=evidence.TRANSITION_BASE,
+                ref="refs/heads/" + evidence.TRANSITION_BRANCH,
+            )
+            sarif = self.snapshots[500 + i]
+            sarif["runs"][0]["versionControlProvenance"][0].update(
+                revisionId=evidence.TRANSITION_BASE,
+                branch=meta["ref"],
+                repositoryUri="https://github.com/" + evidence.TRANSITION_REPOSITORY,
+            )
+            for result in sarif["runs"][0]["results"]:
+                identity = result["properties"]["github/alertNumber"]
+                result["properties"]["github/alertUrl"] = (
+                    f"https://api.github.com/repos/{evidence.TRANSITION_REPOSITORY}"
+                    f"/code-scanning/alerts/{identity}"
+                )
+            snapshot = evidence.parse_security_snapshot(
+                sarif, meta, evidence.TRANSITION_REPOSITORY
+            )
+            receipt = copy.deepcopy(fixture().security_receipts[lang])
+            receipt.update(
+                repository=evidence.TRANSITION_REPOSITORY,
+                repository_id=evidence.TRANSITION_REPOSITORY_ID,
+                head=evidence.TRANSITION_BASE,
+                tree=evidence.TRANSITION_TREE,
+                base=evidence.TRANSITION_PARENT,
+                ref=meta["ref"],
+                run_id=evidence.TRANSITION_RUN,
+                attempt=1,
+                analysis_id=meta["id"],
+                sarif_id=meta["sarif_id"],
+                sarif_digest=snapshot["sarif_digest"],
+                qualifying_count=len(snapshot["qualifying_ids"]),
+                results_count=meta["results_count"],
+                rules_count=meta["rules_count"],
+            )
+            receipt["baseline"]["head"] = evidence.TRANSITION_PARENT
+            self.receipts[lang] = receipt
+            self.artifacts.append(
+                {"id": 900 + i, "name": "codeql-security-1-" + lang, "expired": False}
+            )
+
+    def get(self, path):
+        if path == "git/ref/heads/master":
+            self.ref_reads += 1
+            value = copy.deepcopy(self.ref)
+            if self.move_master and self.ref_reads > 1:
+                value["object"]["sha"] = HEAD
+            return value
+        if path == "git/commits/" + evidence.TRANSITION_BASE:
+            return {
+                "sha": evidence.TRANSITION_BASE,
+                "tree": {"sha": evidence.TRANSITION_TREE},
+            }
+        if path == f"actions/runs/{evidence.TRANSITION_RUN}":
+            self.compose_reads += 1
+            value = copy.deepcopy(self.compose)
+            if self.move_compose and self.compose_reads > 1:
+                value["run_attempt"] += 1
+            return value
+        value = super().get(path)
+        if self.move_analysis and path.startswith("code-scanning/"):
+            self.reads += 1
+            if self.reads % 2:
+                value["sarif_id"] = "ffffffff-ffff-ffff-ffff-ffffffffffff"
+        return value
+
+    def pages(self, path, key):
+        if key == "artifacts":
+            return copy.deepcopy(self.artifacts)
+        return super().pages(path, key)
+
+    def raw(self, path, limit):
+        i = int(path.split("/")[-2]) - 900
+        buffer = io.BytesIO()
+        with zipfile.ZipFile(buffer, "w") as archive:
+            archive.writestr(
+                "codeql-security.json",
+                json.dumps(self.receipts[evidence.SECURITY_LANGUAGES[i]]),
+            )
+        return buffer.getvalue()
+
+    def select(self):
+        return evidence.select_base_security(
+            self, evidence.TRANSITION_BASE, evidence.TRANSITION_REPOSITORY_ID, "python"
+        )
+
+
+def test_exact_transition_keeps_compose_role_and_failed_master_unpaid():
+    api = TransitionBaselineAPI()
+    result = api.select()
+    assert result["selection"] == evidence.TRANSITION_SELECTION
+    assert result["run"]["id"] == evidence.TRANSITION_RUN
+    assert result["snapshot"]["qualifying_ids"] == [11, 12]
+    assert api.run["conclusion"] == "failure"
+    assert all(r["role"] == "compose" for r in api.receipts.values())
+    assert api.ref_reads == 2
+
+
+@pytest.mark.parametrize(
+    "fault",
+    [
+        "master-moved",
+        "master-attempt",
+        "master-cancelled",
+        "wrong-repository",
+        "wrong-compose-head",
+        "wrong-compose-attempt",
+        "compose-failed",
+        "compose-moves",
+        "missing-language",
+        "expired-receipt",
+        "wrong-receipt-role",
+        "wrong-tree",
+        "wrong-receipt-attempt",
+        "wrong-upload",
+        "wrong-analysis-ref",
+        "bad-digest",
+        "bad-count",
+        "qualifying-delta",
+        "failed-analysis-step",
+        "malformed-sarif",
+        "wrong-baseline-parent",
+        "listing-attempt",
+        "api-error",
+    ],
+)
+def test_transition_refuses_malformed_moved_unpaid_or_foreign_evidence(fault):
+    api = TransitionBaselineAPI()
+    receipt = api.receipts["javascript-typescript"]
+    if fault == "master-moved":
+        api.move_master = True
+    elif fault == "master-attempt":
+        api.run["run_attempt"] += 1
+    elif fault == "master-cancelled":
+        api.run["conclusion"] = "cancelled"
+    elif fault == "wrong-repository":
+        api.run["repository"]["id"] = 1
+    elif fault == "wrong-compose-head":
+        api.compose["head_sha"] = HEAD
+    elif fault == "wrong-compose-attempt":
+        api.compose["run_attempt"] += 1
+    elif fault == "compose-failed":
+        api.compose["conclusion"] = "failure"
+    elif fault == "compose-moves":
+        api.move_compose = True
+    elif fault == "missing-language":
+        api.artifacts.pop()
+    elif fault == "expired-receipt":
+        api.artifacts[1]["expired"] = True
+    elif fault == "wrong-receipt-role":
+        receipt["role"] = "baseline"
+    elif fault == "wrong-tree":
+        receipt["tree"] = TREE
+    elif fault == "wrong-receipt-attempt":
+        receipt["attempt"] = 2
+    elif fault == "wrong-upload":
+        receipt["sarif_id"] = "ffffffff-ffff-ffff-ffff-ffffffffffff"
+    elif fault == "wrong-analysis-ref":
+        api.metadata[501]["ref"] = "refs/heads/master"
+    elif fault == "bad-digest":
+        receipt["sarif_digest"] = "0" * 64
+    elif fault == "bad-count":
+        receipt["qualifying_count"] += 1
+    elif fault == "qualifying-delta":
+        receipt["delta"]["new_qualifying_ids"] = [99]
+    elif fault == "failed-analysis-step":
+        api.jobs[1]["steps"][0]["conclusion"] = "failure"
+    elif fault == "malformed-sarif":
+        api.snapshots[501]["version"] = "unknown"
+    elif fault == "wrong-baseline-parent":
+        receipt["base"] = HEAD
+    elif fault == "listing-attempt":
+        api.runs[0]["run_attempt"] = 1
+    elif fault == "api-error":
+
+        def refused(*args):
+            raise ValueError("API failed")
+
+        api.get = refused
+    with pytest.raises(ValueError):
+        api.select()
+
+
+def test_transition_is_inert_when_exact_master_has_paid_baseline():
+    api = TransitionBaselineAPI()
+    api.run.update(run_attempt=3, conclusion="success")
+    api.runs = [copy.deepcopy(api.run)]
+    for job in api.jobs:
+        job["run_attempt"] = 3
+    for artifact in api.artifacts:
+        artifact["name"] = artifact["name"].replace("-1-", "-3-")
+    for i, lang in enumerate(evidence.SECURITY_LANGUAGES):
+        api.metadata[500 + i]["ref"] = "refs/heads/master"
+        api.snapshots[500 + i]["runs"][0]["versionControlProvenance"][0][
+            "branch"
+        ] = "refs/heads/master"
+        api.receipts[lang].update(
+            role="baseline",
+            qualified=False,
+            qualification="BASELINE",
+            baseline=None,
+            delta=None,
+            run_id=evidence.TRANSITION_MASTER_RUN,
+            attempt=3,
+            ref="refs/heads/master",
+        )
+    result = api.select()
+    assert result["selection"] == "receipt"
+    assert result["run"]["id"] == evidence.TRANSITION_MASTER_RUN
+    assert api.compose_reads == 0 and api.ref_reads == 0
+
+
+def test_transition_receipts_force_full_master_tests(monkeypatch, tmp_path):
+    api = fixture()
+    monkeypatch.setattr(evidence, "TRANSITION_BASE", BASE)
+    monkeypatch.setattr(evidence, "TRANSITION_RUN", 90)
+    for receipt in api.security_receipts.values():
+        receipt["baseline"]["selection"] = evidence.TRANSITION_SELECTION
+    with pytest.raises(ValueError, match="requires full master tests"):
+        decide(api)
+    event = tmp_path / "event.json"
+    event.write_text(json.dumps({"before": BASE}))
+    output = tmp_path / "outputs"
+    for key, value in {
+        **ENV,
+        "GITHUB_REPOSITORY": "owner/repo",
+        "GITHUB_EVENT_PATH": str(event),
+        "GITHUB_OUTPUT": str(output),
+    }.items():
+        monkeypatch.setenv(key, value)
+    monkeypatch.setattr(evidence, "API", lambda *args: api)
+    monkeypatch.setattr(
+        evidence, "git", lambda *args: TREE if args[-1] == "HEAD^{tree}" else HEAD
+    )
+    monkeypatch.setattr(sys, "argv", [str(SCRIPT)])
+    assert evidence.main() is None
+    assert output.read_text() == "reuse=false\n"
+
+
+@pytest.mark.parametrize(
+    "before,stop", [(evidence.TRANSITION_BASE, True), (BASE, False)]
+)
+def test_transition_master_failure_stops_without_second_transition(
+    tmp_path, before, stop
+):
+    path = tmp_path / "event.json"
+    path.write_text(
+        json.dumps({"before": before, "after": HEAD, "ref": "refs/heads/master"})
+    )
+    result = evidence._security_recovery({**ENV, "GITHUB_EVENT_PATH": str(path)})
+    assert result.startswith("STOP:") is stop
+    if stop:
+        assert "No retry or second transition" in result
+
+
+def test_missing_master_recovery_context_never_advises_unapproved_retry():
+    assert evidence._security_recovery(ENV).startswith("STOP:")
