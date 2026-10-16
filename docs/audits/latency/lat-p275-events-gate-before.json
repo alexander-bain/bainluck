@@ -1,0 +1,167 @@
+{
+ "label": "before",
+ "verdict": "RED",
+ "ratio_threshold": 0.25,
+ "expected_indexes": [
+  "ix_events_fts_home",
+  "ix_events_fts_away"
+ ],
+ "terms": {
+  "yank": {
+   "fts_ms": [
+    2859.588,
+    3946.865,
+    3575.16
+   ],
+   "ctrl_ms": [
+    412.259,
+    342.384,
+    439.949
+   ],
+   "fts_median_ms": 3575.2,
+   "ctrl_median_ms": 412.3,
+   "ratio": 8.672,
+   "bitmap_or": false,
+   "seq_scans": 1,
+   "indexes_used": [],
+   "indexes_missing": [
+    "ix_events_fts_home",
+    "ix_events_fts_away"
+   ],
+   "shape_ok": false,
+   "budget_ok": false,
+   "semantics_ok": true,
+   "n_ids": 0
+  },
+  "yankees": {
+   "fts_ms": [
+    3737.069,
+    4906.045,
+    4405.046
+   ],
+   "ctrl_ms": [
+    472.461,
+    313.892,
+    371.68
+   ],
+   "fts_median_ms": 4405.0,
+   "ctrl_median_ms": 371.7,
+   "ratio": 11.852,
+   "bitmap_or": false,
+   "seq_scans": 1,
+   "indexes_used": [],
+   "indexes_missing": [
+    "ix_events_fts_home",
+    "ix_events_fts_away"
+   ],
+   "shape_ok": false,
+   "budget_ok": false,
+   "semantics_ok": true,
+   "n_ids": 301
+  },
+  "celt": {
+   "fts_ms": [
+    5601.32,
+    5703.357,
+    4579.373
+   ],
+   "ctrl_ms": [
+    516.191,
+    302.622,
+    444.471
+   ],
+   "fts_median_ms": 5601.3,
+   "ctrl_median_ms": 444.5,
+   "ratio": 12.602,
+   "bitmap_or": false,
+   "seq_scans": 1,
+   "indexes_used": [],
+   "indexes_missing": [
+    "ix_events_fts_home",
+    "ix_events_fts_away"
+   ],
+   "shape_ok": false,
+   "budget_ok": false,
+   "semantics_ok": true,
+   "n_ids": 0
+  },
+  "celtics": {
+   "fts_ms": [
+    2607.327,
+    2626.834,
+    3027.045
+   ],
+   "ctrl_ms": [
+    230.009,
+    249.889,
+    238.824
+   ],
+   "fts_median_ms": 2626.8,
+   "ctrl_median_ms": 238.8,
+   "ratio": 10.999,
+   "bitmap_or": false,
+   "seq_scans": 1,
+   "indexes_used": [],
+   "indexes_missing": [
+    "ix_events_fts_home",
+    "ix_events_fts_away"
+   ],
+   "shape_ok": false,
+   "budget_ok": false,
+   "semantics_ok": true,
+   "n_ids": 185
+  },
+  "red sox": {
+   "fts_ms": [
+    2443.008,
+    4714.323,
+    2609.138
+   ],
+   "ctrl_ms": [
+    235.868,
+    403.613,
+    216.89
+   ],
+   "fts_median_ms": 2609.1,
+   "ctrl_median_ms": 235.9,
+   "ratio": 11.062,
+   "bitmap_or": false,
+   "seq_scans": 1,
+   "indexes_used": [],
+   "indexes_missing": [
+    "ix_events_fts_home",
+    "ix_events_fts_away"
+   ],
+   "shape_ok": false,
+   "budget_ok": false,
+   "semantics_ok": true,
+   "n_ids": 326
+  },
+  "dodg": {
+   "fts_ms": [
+    2288.455,
+    2385.444,
+    3792.979
+   ],
+   "ctrl_ms": [
+    218.852,
+    208.781,
+    335.03
+   ],
+   "fts_median_ms": 2385.4,
+   "ctrl_median_ms": 218.9,
+   "ratio": 10.9,
+   "bitmap_or": false,
+   "seq_scans": 1,
+   "indexes_used": [],
+   "indexes_missing": [
+    "ix_events_fts_home",
+    "ix_events_fts_away"
+   ],
+   "shape_ok": false,
+   "budget_ok": false,
+   "semantics_ok": true,
+   "n_ids": 0
+  }
+ }
+}
