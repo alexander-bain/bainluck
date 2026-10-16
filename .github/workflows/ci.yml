@@ -3070,7 +3070,7 @@ jobs:
         # 189-day captures, which keep their precedence — Root's control), and the
         # dormant forecast lateral revalidating at consumption. Drops and creates
         # the full schema, like #6757 above.
-        if: matrix.group == 'shared-middle'
+        if: matrix.group == 'shared-middle' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_kalshi_archive_store_683_pg.py \
