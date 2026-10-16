@@ -26,6 +26,8 @@ from app.tasks.calibration_sentinel import (
     DISP_EXCLUSION_WORKING,
     DISP_PUBLISHED_UNKNOWN,
     DISP_REAL_BREAK,
+    PUBLISHED_BASIS_CANONICAL,
+    PUBLISHED_BASIS_LIMITED_MASK,
     PUBLISHED_MIN_N,
     SENTINEL_MCE_THRESHOLD,
     _EVENTS_MINING_SQL,
@@ -165,8 +167,11 @@ def _row(bucket, n, winners, sum_prob, pub_n, pub_winners, pub_sum_prob):
     }
 
 
-def _cohort_from(rows):
-    key = (("provenance", "futures"), ("source", "kalshi"), ("category", "basketball"))
+def _cohort_from(rows, provenance="events"):
+    """Events by default: there the scan's complement IS the published curve
+    (`published_basis` canonical), which is what these published-number tests
+    are about. The futures (limited-mask) arm is asserted explicitly below."""
+    key = (("provenance", provenance), ("source", "kalshi"), ("category", "basketball"))
     c = _new_cohort(key, rows[0])
     for r in rows:
         _fold_row_into_cohort(c, r)
@@ -192,6 +197,25 @@ def test_fold_and_finalize_produce_both_numbers():
         c["mce"], c["published_mce"], c["published_n"], SENTINEL_MCE_THRESHOLD
     )
     assert disp == DISP_EXCLUSION_WORKING
+
+
+def test_a_futures_mask_complement_is_never_reported_as_published():
+    """#1911 parity: the SAME rows on a futures cohort. The scan's six classes
+    are a subset of the canonical gates, so the 300 survivors are a limited
+    mask: published is UNKNOWN (None, None), the mask rides under its own name,
+    and the disposition cannot be `exclusion_working`."""
+    rows = [_row(8, 1000, 300, 850.0, pub_n=300, pub_winners=255, pub_sum_prob=255.0)]
+    c = _cohort_from(rows, provenance="futures")
+    assert c["published_basis"] == PUBLISHED_BASIS_LIMITED_MASK
+    assert c["published_mce"] is None and c["published_n"] is None
+    assert c["mask_survivor_n"] == 300 and c["mask_survivor_mce"] < 1.0
+    disp, why = raw_vs_published(
+        c["mce"], c["published_mce"], c["published_n"] or 0, SENTINEL_MCE_THRESHOLD,
+        basis=c["published_basis"], mask_mce=c["mask_survivor_mce"],
+        mask_n=c["mask_survivor_n"],
+    )
+    assert disp == DISP_PUBLISHED_UNKNOWN
+    assert "not measured by this scan" in why and "limited-mask" in why
 
 
 def test_finalize_refuses_a_published_mce_below_the_n_floor():
@@ -224,6 +248,9 @@ def _body_cohort(mce, published_mce, published_n, disposition, why):
         "total_n": 14315,
         "published_mce": published_mce,
         "published_n": published_n,
+        # These body tests are about a GENUINE published number (#1911); the
+        # limited-mask rendering has its own file (test_..._mask_parity_1911).
+        "published_basis": PUBLISHED_BASIS_CANONICAL,
         "disposition": disposition,
         "disposition_why": why,
         "provenance": "futures",

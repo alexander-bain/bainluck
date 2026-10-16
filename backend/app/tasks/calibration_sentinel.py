@@ -237,6 +237,35 @@ DISP_PUBLISHED_UNKNOWN = "published_unknown"
 #: anything, not about what the pair says.
 DISP_NOT_PROVABLE = "not_provable_selection_biased"
 
+#: #1911 parity (Root, 2026-10-15): WHAT the scan's complement is. The mining
+#: scan counts a FINITE set of exclusion classes; the canonical published chain
+#: (`_calibration_population_ctes`) applies many more — the Kalshi writer bar,
+#: liquidity, opening timing, identity quarantine, field completeness. So the
+#: survivors of the scan's own mask are the published population only where that
+#: mask IS the curve's whole exclusion set. Root's Weather trace (two closed
+#: questions, outcomes 218261839 and 222390511) is the specimen: both rejected by
+#: the canonical chain at `is_below_writer_bar`, both counted by this scan as
+#: PUBLISHED, raw_n = pub_n = 1. A mask survivor is labelled as one, and the
+#: published number it cannot see is UNKNOWN — never filled in from the mask.
+PUBLISHED_BASIS_CANONICAL = "canonical"
+PUBLISHED_BASIS_LIMITED_MASK = "limited_mask"
+
+
+def published_basis(provenance: str | None) -> str:
+    """Whether a cohort's scan complement IS the published population.
+
+    Events: the curve's only events-moneyline exclusion is the soccer two-way
+    one, and the events scan builds its complement from exactly that
+    (``_EVENTS_MINING_SQL``) — a genuine canonical comparison. Futures: the
+    scan's six classes are a strict subset of the canonical gates, so its
+    survivors are a limited mask, not what users see.
+    """
+    return (
+        PUBLISHED_BASIS_CANONICAL
+        if provenance == "events"
+        else PUBLISHED_BASIS_LIMITED_MASK
+    )
+
 
 def raw_vs_published(
     raw_mce: float | None,
@@ -244,6 +273,10 @@ def raw_vs_published(
     published_n: int,
     threshold: float,
     graded_share: float | None = None,
+    *,
+    basis: str = PUBLISHED_BASIS_CANONICAL,
+    mask_mce: float | None = None,
+    mask_n: int = 0,
 ) -> tuple[str, str]:
     """``(disposition, why)`` from the RAW and PUBLISHED miscalibration pair.
 
@@ -280,6 +313,21 @@ def raw_vs_published(
             return DISP_NOT_PROVABLE, why
     if raw_mce is None:
         return DISP_PUBLISHED_UNKNOWN, "raw MCE unavailable"
+    if basis != PUBLISHED_BASIS_CANONICAL:
+        # #1911 parity: no published number exists here to compare against. The
+        # raw alarm stands as raw, and the mask is named as a mask.
+        mask = (
+            f"{mask_mce:.2f}pp over {mask_n} limited-mask survivors"
+            if mask_mce is not None
+            else f"{mask_n} limited-mask survivors, too few for an MCE"
+        )
+        return (
+            DISP_PUBLISHED_UNKNOWN,
+            f"the published curve is not measured by this scan — UNKNOWN, so the "
+            f"raw {raw_mce:.2f}pp is the only number that stands up. The scan's "
+            f"own limited exclusion mask leaves {mask}; that is not what users see "
+            f"(the published curve applies further gates the scan does not count)",
+        )
     if published_mce is None:
         return (
             DISP_PUBLISHED_UNKNOWN,
@@ -755,12 +803,14 @@ def _fold_row_into_cohort(cohort: dict, row: dict) -> None:
     # groups by (source, category, series, structure, bucket), so no OUTCOME is
     # counted by two rows and summing the per-row unions IS the cohort union.
     cohort["overlap_counts"][_UNION_KEY] += row.get("any_known_n") or 0
-    # #1911: the published curve, accumulated in lockstep with the raw one.
-    pb = cohort["published_buckets"][row["bucket"]]
+    # #1911: the scan's complement, accumulated in lockstep with the raw one.
+    # It is the published curve only where `published_basis` says canonical;
+    # `_finalize_cohort` decides which name it is reported under.
+    pb = cohort["survivor_buckets"][row["bucket"]]
     pb["n"] += row.get("pub_n") or 0
     pb["winners"] += row.get("pub_winners") or 0
     pb["sum_prob"] += float(row.get("pub_sum_prob") or 0.0)
-    cohort["published_n"] += row.get("pub_n") or 0
+    cohort["survivor_n"] += row.get("pub_n") or 0
     mca = row.get("min_created_at")
     if mca is not None:
         cur = cohort["min_created_at"]
@@ -777,8 +827,8 @@ def _new_cohort(cohort_key: tuple[tuple[str, str], ...], sample_row: dict) -> di
         "category": d.get("category"),
         "buckets": _empty_buckets(),
         "total_n": 0,
-        "published_buckets": _empty_buckets(),
-        "published_n": 0,
+        "survivor_buckets": _empty_buckets(),
+        "survivor_n": 0,
         "overlap_counts": {
             "malformed_binary": 0,
             "esports_multi_bundle": 0,
@@ -796,14 +846,27 @@ def _new_cohort(cohort_key: tuple[tuple[str, str], ...], sample_row: dict) -> di
 def _finalize_cohort(cohort: dict, now_ts: float) -> dict:
     buckets = cohort["buckets"]
     cohort["mce"] = _compute_horizon_mce(buckets, weighted=True)
-    # #1911: the same metric over the same cohort with the shipped exclusions
-    # applied. `None` when the exclusions leave too little behind to say
-    # anything — an absent number, never a flattering zero (gotcha #54).
-    cohort["published_mce"] = (
-        _compute_horizon_mce(cohort["published_buckets"], weighted=True)
-        if cohort.get("published_n", 0) >= PUBLISHED_MIN_N
+    # #1911: the same metric over the same cohort with the scan's exclusions
+    # applied. `None` when they leave too little behind to say anything — an
+    # absent number, never a flattering zero (gotcha #54).
+    survivor_mce = (
+        _compute_horizon_mce(cohort["survivor_buckets"], weighted=True)
+        if cohort.get("survivor_n", 0) >= PUBLISHED_MIN_N
         else None
     )
+    # #1911 parity: reported as PUBLISHED only where the scan's complement is the
+    # published population. Otherwise the published pair is UNKNOWN (None, None)
+    # and the survivors ride under their own name.
+    basis = published_basis(cohort.get("provenance"))
+    cohort["published_basis"] = basis
+    if basis == PUBLISHED_BASIS_CANONICAL:
+        cohort["published_mce"] = survivor_mce
+        cohort["published_n"] = cohort.get("survivor_n", 0)
+    else:
+        cohort["published_mce"] = None
+        cohort["published_n"] = None
+        cohort["mask_survivor_mce"] = survivor_mce
+        cohort["mask_survivor_n"] = cohort.get("survivor_n", 0)
     mca = cohort["min_created_at"]
     is_new = False
     if mca is not None:
@@ -1099,6 +1162,49 @@ def sample_rows_section(samples: list[dict]) -> list[str]:
     return lines
 
 
+def _published_statement(cohort: dict) -> tuple[str, str | None]:
+    """``(published, mask)`` for a body or a recurrence — #1911 parity.
+
+    ``published`` is what follows the "PUBLISHED (what users see)" label. Where
+    the scan's complement IS the published population (``canonical``) it is
+    that number. Otherwise it is UNKNOWN, said in so many words, and ``mask``
+    names the survivors of the scan's limited mask on a line of their own that
+    cannot be read as what users see.
+    """
+    # Fails closed: a cohort that does not SAY its complement is canonical is
+    # not reported as what users see.
+    if cohort.get("published_basis") != PUBLISHED_BASIS_CANONICAL:
+        mask_mce = cohort.get("mask_survivor_mce")
+        mask_n = cohort.get("mask_survivor_n") or 0
+        mask = (
+            f"{mask_mce:.2f}pp over {mask_n} outcomes"
+            if mask_mce is not None
+            else f"{mask_n} outcomes, too few for an MCE (floor {PUBLISHED_MIN_N})"
+        )
+        return (
+            "UNKNOWN — this scan does not measure the published curve, which "
+            "applies gates the scan does not count.",
+            mask,
+        )
+    published_mce = cohort.get("published_mce")
+    if published_mce is not None:
+        return (
+            f"{published_mce:.2f}pp over {cohort.get('published_n', 0)} outcomes "
+            f"surviving the shipped exclusions",
+            None,
+        )
+    return (
+        f"not computable — only {cohort.get('published_n', 0)} outcomes survive the "
+        f"shipped exclusions (floor {PUBLISHED_MIN_N}). An ABSENT number, not a "
+        f"clean one.",
+        None,
+    )
+
+
+#: The mask line's label: it says what it is NOT, so it cannot be misread.
+_MASK_LABEL = "Limited-mask survivors (the scan's own counted exclusions only — NOT the published curve)"
+
+
 def build_reobservation_comment(cohort: dict) -> str:
     """The recurrence comment on an ALREADY-OPEN cohort issue.
 
@@ -1122,25 +1228,15 @@ def build_reobservation_comment(cohort: dict) -> str:
     thing a reader most needs to see, and it is invisible in a one-number line.
     """
     fp = cohort["fingerprint"]
-    published_mce = cohort.get("published_mce")
-    if published_mce is not None:
-        published_line = (
-            f"- **PUBLISHED (what users see):** {published_mce:.2f}pp over "
-            f"{cohort.get('published_n', 0)} outcomes surviving the shipped exclusions"
-        )
-    else:
-        # Mirrors the body: an ABSENT number, never a flattering zero.
-        published_line = (
-            f"- **PUBLISHED (what users see):** not computable — only "
-            f"{cohort.get('published_n', 0)} outcomes survive the shipped exclusions "
-            f"(floor {PUBLISHED_MIN_N}). An ABSENT number, not a clean one."
-        )
+    # Mirrors the body: an ABSENT or UNKNOWN number, never a flattering zero.
+    published, mask = _published_statement(cohort)
     return "\n".join([
         f"Sentinel re-observed this cohort (fingerprint `{fp}`). Still open.",
         "",
         f"- **RAW (un-excluded):** {cohort['mce']:.2f}pp over "
         f"{cohort['total_n']} resolved outcomes",
-        published_line,
+        f"- **PUBLISHED (what users see):** {published}",
+        *([f"- **{_MASK_LABEL}:** {mask}"] if mask else []),
         f"- **Disposition:** `{cohort.get('disposition', DISP_PUBLISHED_UNKNOWN)}` — "
         f"{cohort.get('disposition_why', 'not evaluated')}",
         # #10516: the body's sample table was printed once, at filing, and never
@@ -1148,6 +1244,14 @@ def build_reobservation_comment(cohort: dict) -> str:
         # a traceable row. Each sweep's fresh sample rides its recurrence.
         *sample_rows_section(cohort.get("sample_rows") or []),
     ])
+
+
+def _published_body_lines(cohort: dict) -> list[str]:
+    published, mask = _published_statement(cohort)
+    lines = [f"**n-weighted MCE (PUBLISHED — what users see):** {published}  "]
+    if mask:
+        lines.append(f"**n-weighted MCE ({_MASK_LABEL}):** {mask}  ")
+    return lines
 
 
 def build_issue_body(cohort: dict, explained_by: str | None, coverage: float) -> str:
@@ -1172,16 +1276,7 @@ def build_issue_body(cohort: dict, explained_by: str | None, coverage: float) ->
         # that would have contradicted it.
         f"**n-weighted MCE (RAW, un-excluded):** {cohort['mce']:.2f}pp "
         f"over {cohort['total_n']} resolved outcomes  ",
-        (
-            f"**n-weighted MCE (PUBLISHED — what users see):** "
-            f"{cohort['published_mce']:.2f}pp over {cohort.get('published_n', 0)} "
-            f"outcomes surviving the shipped exclusions  "
-            if cohort.get("published_mce") is not None
-            else f"**n-weighted MCE (PUBLISHED):** not computable — only "
-                 f"{cohort.get('published_n', 0)} outcomes survive the shipped "
-                 f"exclusions (floor {PUBLISHED_MIN_N}). An ABSENT number, not a "
-                 f"clean one.  "
-        ),
+        *_published_body_lines(cohort),
         f"**Disposition:** `{cohort.get('disposition', DISP_PUBLISHED_UNKNOWN)}` — "
         f"{cohort.get('disposition_why', 'not evaluated')}  ",
         f"**Sample size:** {cohort['total_n']} resolved outcomes  ",
@@ -1726,7 +1821,10 @@ async def _run_calibration_sentinel(
                 else SENTINEL_MCE_THRESHOLD
             )
             disposition, disposition_why = raw_vs_published(
-                c["mce"], c.get("published_mce"), c.get("published_n", 0), threshold
+                c["mce"], c.get("published_mce"), c.get("published_n") or 0, threshold,
+                basis=c.get("published_basis", PUBLISHED_BASIS_LIMITED_MASK),
+                mask_mce=c.get("mask_survivor_mce"),
+                mask_n=c.get("mask_survivor_n") or 0,
             )
             c["disposition"] = disposition
             c["disposition_why"] = disposition_why
@@ -1749,7 +1847,14 @@ async def _run_calibration_sentinel(
                     round(c["published_mce"], 2)
                     if c.get("published_mce") is not None else None
                 ),
-                "published_n": c.get("published_n", 0),
+                "published_n": c.get("published_n"),
+                # #1911 parity: what the pair above is, and the mask beside it.
+                "published_basis": c.get("published_basis"),
+                "mask_survivor_mce": (
+                    round(c["mask_survivor_mce"], 2)
+                    if c.get("mask_survivor_mce") is not None else None
+                ),
+                "mask_survivor_n": c.get("mask_survivor_n"),
                 "disposition": disposition,
                 "disposition_why": disposition_why,
                 "provenance": c["provenance"],
