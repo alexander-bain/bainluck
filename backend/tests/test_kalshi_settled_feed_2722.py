@@ -454,6 +454,9 @@ def _sweep_at(engine, venue, cursor, redis_state):
             session_maker=lambda: _SqliteSession(engine),
             client_factory=lambda: venue,
             limit=500,
+            # The population batch is the subject; #2722's archive walk (which
+            # does reach every open row) is guarded in its own file.
+            archive_walk=False,
         )
     )
 

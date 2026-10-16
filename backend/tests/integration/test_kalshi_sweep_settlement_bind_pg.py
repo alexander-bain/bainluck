@@ -251,3 +251,35 @@ class TestTheSettledFeedLookupPrepares:
         )
         assert [(r[0], r[1]) for r in rows] == [(open_id, "KXFEED-OPEN-26")]
         assert len(rows[0]) == 5
+
+
+class TestTheArchiveWalkSelectPrepares:
+    """#2722, archive walk: its keyset select on real asyncpg — every open
+    Kalshi row by id, after the cursor, as the 5-tuple ``run_backfill`` unpacks."""
+
+    async def test_it_walks_open_rows_by_id_after_the_cursor(self, pg_session):
+        from app.tasks.kalshi_resolution_sweep import ARCHIVE_WALK_SELECT_SQL
+
+        first = await _seed(pg_session, ext="KXWALK-A-26")
+        second = await _seed(pg_session, ext="KXWALK-B-26")
+        resolved = await _seed(pg_session, ext="KXWALK-C-26")
+        await pg_session.execute(
+            text("UPDATE futures_markets SET status = 'resolved' WHERE id = :id"),
+            {"id": resolved},
+        )
+        await pg_session.commit()
+
+        rows = (
+            await pg_session.execute(
+                text(ARCHIVE_WALK_SELECT_SQL), {"after_id": 0, "limit": 10}
+            )
+        ).all()
+        assert [r[0] for r in rows] == [first, second]
+        assert len(rows[0]) == 5
+
+        after = (
+            await pg_session.execute(
+                text(ARCHIVE_WALK_SELECT_SQL), {"after_id": first, "limit": 10}
+            )
+        ).all()
+        assert [r[0] for r in after] == [second]

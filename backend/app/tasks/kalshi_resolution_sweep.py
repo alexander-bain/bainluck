@@ -40,6 +40,13 @@ early final changes nothing in our row that a selection could key on.
 :func:`run_settled_feed` keys on the venue instead: it walks Kalshi's own
 settlement clock and hands over every ``open`` row whose event the venue
 settled, whatever its date, ticker shape or place in the sweep's cursor.
+
+#2722, THE ARCHIVE HALF. Neither of those can see a market Kalshi has moved to
+``/historical/*``: the live listing no longer names it and ``get_event`` omits
+its legs. :func:`read_archived_event_legs` reads that one exact event from the
+archive when the live read returns the event with no legs, and
+:func:`run_archive_settlements` walks every open row by id to reach them. The
+walk is INACTIVE until a reviewed activation: the beat does not turn it on.
 """
 
 from __future__ import annotations
@@ -55,7 +62,7 @@ from sqlalchemy import text
 # `app.services.kalshi_api`. CERT-766 caught the wrong name as an ImportError
 # raised before argparse ran, so the script could not select a row, let alone
 # write one, and the catch-up this whole ship depends on was a no-op.
-from app.services.kalshi_api import KalshiAPIService
+from app.services.kalshi_api import KalshiAPIService, KalshiArchiveResponseMalformed
 from app.utils.kalshi_fabricated_loss import RETRACTION_SOURCE
 from app.utils.kalshi_resolution_window import (
     VENUE_SETTLED_STATUSES,
@@ -889,6 +896,7 @@ def banded_select_sql(n_tokens: int) -> str:
     #7000 adds the fully-retracted rank as a SECOND term, after the played-game
     band and before the inherited ordering — see
     :data:`RETRACTED_COHORT_RANK_SQL` for the two yields that fix that position.
+
     """
     head, sep, tail = SELECT_SQL.partition("ORDER BY")
     if not sep:  # pragma: no cover — a SELECT_SQL with no ORDER BY is a bug
@@ -1058,6 +1066,144 @@ VOID_CHECKED_UPDATE_SQL = """
 """
 
 
+# ---------------------------------------------------------------------------
+# The archive read — #2722, the rows whose legs have left the live API
+# ---------------------------------------------------------------------------
+#
+# WHY NO RUN COULD SEE THEM — two defects, both read off the current source and
+# nine exact production rows on 2026-10-15.
+#
+# 1. THE READ. `run_backfill` reads each candidate with
+# `get_event(ticker, with_nested_markets=True)`, and Kalshi's own spec says what
+# that read omits: "Historical markets settled before the historical cutoff will
+# not be included" (GetEvent, docs/openapi.yaml, saved with Measurement's
+# 2026-10-15 run). The EVENT is always served; its legs are not. So once a
+# market is archived the read answers with an event and no markets, the row is
+# counted `unresolvable_at_venue`, nothing is written, and it keeps its slot.
+# Measured 2026-10-15 on nine exact events still `open` in our table: all nine
+# live listings empty, all nine archive listings populated, 80/80 legs
+# `finalized`.
+#
+# 2. THE WINDOW. The population sweep never reaches them anyway. Its batch is
+# `[offset, offset + 500)` of an ordering led by two STICKY ranks — the
+# played-game band (#3284) and the fully-retracted cohort (#7000, 1,648 rows
+# at the 2026-10-15 04:21Z run). A written row rotates only to the back of its
+# own rank, every row in the window is written (`stranded: 0`), so the offset
+# holds at 5 and the ~3,600 rows in neither rank are never selected. None of
+# the nine is in either rank (no band date, no retracted leg), and that run
+# counted `unresolvable_at_venue: 0` — not one of them was in its batch. Two
+# more (11757847, 54069617) are also behind the 86-day retention floor.
+#
+# So the archive read rides its OWN bounded walk, :func:`run_archive_settlements`:
+# a keyset over `id` across every open Kalshi row, a persisted position, one
+# batch a night inside the same task — once activated, which this code does not
+# do (see the ACTIVATION note above that function). A keyset is a traversal by construction —
+# no rank and no write can move a row behind the cursor — and it ignores the
+# retention floor, because the archive answers past it.
+#
+# THE READ IS ONE EXACT EVENT, EXHAUSTED, OR IT IS NOTHING. `GET
+# /historical/markets?event_ticker=` through #683's certified primitive
+# (`KalshiAPIService.get_historical_markets`, which raises on a 429 and on a
+# malformed 200). Every leg must name the event we asked for and no ticker may
+# repeat; the cursor must run out inside the page bound. Anything short of
+# that — a 429, a malformed page, a looping cursor, a foreign leg, a listing
+# that is still going at the bound, a spent budget — returns no legs, so the
+# row is written by nothing and is asked again next cycle. An exhausted EMPTY
+# listing is also no legs: an empty 200 is a response shape (gotcha #53).
+#
+# IT FEEDS THE SAME READS, NOTHING NEW. The legs go into the same
+# `derive_venue_settlement` / `derive_venue_void` / `derive_resolution_window`
+# calls and the same `UPDATE_SQL` as a live payload. Pending legs keep the row
+# open, a void is a void, and no grade, price or snapshot is written (#1852).
+# The walk writes ONLY what the archive proved: a row whose live read still
+# carries legs is left to the arms that own live rows.
+
+#: Rows ONE archive walk reads. Each costs one live `get_event`, plus archive
+#: pages only when the live read came back legless. The population sweep spends
+#: 500 live reads in ~63 s (2026-10-15 04:21Z), so 1,000 is ~2 minutes of a 900 s
+#: task and covers ~10,000 open rows in about ten nights.
+ARCHIVE_WALK_BATCH = 1000
+
+#: Archive pages ONE walk may request, across every row in it. Every specimen
+#: fit in one page (largest: 32 legs), so this is a full batch of legless rows
+#: plus slack for multi-page events; a run that spends it stops asking, and the
+#: cursor stops at the first row left owed.
+ARCHIVE_REQUESTS_PER_RUN = 1200
+
+#: Pages one event may take before its listing counts as unread. 5 x 200 = 1,000
+#: legs, against a largest measured specimen of 32.
+ARCHIVE_EVENT_MAX_PAGES = 5
+
+#: The primitive's own maximum page size.
+ARCHIVE_PAGE_LIMIT = 200
+
+
+@dataclass
+class ArchiveBudget:
+    """One run's allowance of archive pages, shared by every row in the run.
+
+    `tripped` is set by the first 429 and stops every archive read that has not
+    yet STARTED: the venue asked us to slow down, and the rows behind it are
+    re-asked next cycle rather than spent into more 429s.
+
+    It cancels nothing already sent. Reads share the run's semaphore, so up to
+    ``concurrency`` requests (6 in production) can be in flight when the first
+    429 comes back; they complete, and their rows land as whatever they
+    answered — another 429 is owed like the first. CERT-4137 measured exactly
+    that at production concurrency: six started before the 429, none after.
+    """
+
+    requests_left: int = ARCHIVE_REQUESTS_PER_RUN
+    requests: int = 0
+    tripped: Optional[str] = None
+
+
+async def read_archived_event_legs(
+    client, event_ticker: str, budget: ArchiveBudget
+) -> tuple[Optional[list], str]:
+    """``(legs, outcome)`` for one event's archive listing.
+
+    ``legs`` is set ONLY when ``outcome == "read"``: the listing was exhausted,
+    every leg names ``event_ticker`` and no ticker repeats. Every other outcome
+    returns ``None``: ``empty`` (exhausted, no legs), ``budget``,
+    ``rate_limited``, ``malformed``, ``error``, ``wrong_event``, ``truncated``.
+    """
+    legs: dict = {}
+    cursor: Optional[str] = None
+    seen: set = set()
+    for _page in range(ARCHIVE_EVENT_MAX_PAGES):
+        if budget.tripped is not None:
+            return None, "rate_limited"
+        if budget.requests_left <= 0:
+            return None, "budget"
+        budget.requests_left -= 1
+        budget.requests += 1
+        try:
+            markets, next_cursor = await client.get_historical_markets(
+                event_ticker=event_ticker, limit=ARCHIVE_PAGE_LIMIT, cursor=cursor
+            )
+        except KalshiArchiveResponseMalformed:
+            return None, "malformed"
+        except Exception as exc:  # noqa: BLE001 — the row stays owed
+            if _is_rate_limited(exc):
+                budget.tripped = f"429 on {event_ticker}"
+                return None, "rate_limited"
+            return None, "error"
+        for market in markets:
+            if market.get("event_ticker") != event_ticker:
+                return None, "wrong_event"
+            if market["ticker"] in legs:
+                return None, "malformed"
+            legs[market["ticker"]] = market
+        if not next_cursor:
+            return (list(legs.values()), "read") if legs else (None, "empty")
+        if next_cursor == cursor or next_cursor in seen:
+            return None, "malformed"
+        seen.add(next_cursor)
+        cursor = next_cursor
+    return None, "truncated"
+
+
 async def run_backfill(
     *,
     session_maker: Callable,
@@ -1070,6 +1216,8 @@ async def run_backfill(
     rows: Optional[list] = None,
     void_capture_only: bool = False,
     venue_settled_legs: Optional[dict] = None,
+    archive_requests: int = 0,
+    archive_only: bool = False,
 ) -> dict:
     """Select, derive and (optionally) write. Every dependency is a parameter.
 
@@ -1117,8 +1265,23 @@ async def run_backfill(
     that stamp is never written — the open-row population must stay re-askable,
     and marking thousands of healthy rows "checked" to record a question nobody
     asked of them is exactly the silent widening this flag prevents.
+
+    `archive_requests` (#2722, archive reach) is how many archive pages this run
+    may spend on rows whose live event read came back with an event and no legs
+    (:func:`read_archived_event_legs`). 0 — the default — is the old behaviour
+    exactly: no archive read, and the row is `unresolvable_at_venue`.
+
+    `archive_only` is the archive walk's write policy, a SUBTRACTION like
+    `void_capture_only`: a row whose live read still carries legs is counted
+    (`archive_walk_live_rows`) and not written, so the walk writes nothing the
+    archive did not prove.
     """
     now = now or datetime.now(timezone.utc)
+    archive_budget = (
+        ArchiveBudget(requests_left=int(archive_requests))
+        if archive_requests and archive_requests > 0
+        else None
+    )
     purge_floor = now - timedelta(days=PROVABLY_PURGED_AGE_DAYS)
     band_tokens = past_event_band_tokens(now)
 
@@ -1215,8 +1378,30 @@ async def run_backfill(
         # empty/missing event: it counts the reads a caller holding the venue's
         # settled list must ask again, not a fact about the market.
         "venue_read_unconfirmed": 0,
+        # #2722, archive reach. One counter per outcome of the archive read, so
+        # a run that settles nothing from the archive says why. `archive_read`
+        # rows go on through the ordinary reads below; every other outcome
+        # leaves the row unwritten and owed.
+        "archive_read": 0,
+        "archive_empty": 0,
+        "archive_budget": 0,
+        "archive_rate_limited": 0,
+        "archive_malformed": 0,
+        "archive_error": 0,
+        "archive_wrong_event": 0,
+        "archive_truncated": 0,
+        "archive_requests": 0,
+        # A SUBSET of `venue_settled`: the rows only the archive could settle.
+        "venue_settled_from_archive": 0,
+        # `archive_only`: rows left alone because the live read had legs.
+        "archive_walk_live_rows": 0,
     }
     samples: list[dict] = []
+    archive_settled_samples: list[dict] = []
+    # #2722: rows whose archive read was never answered because THIS run ran
+    # out — a 429 or a spent budget. Transient by nature, so the archive walk
+    # stops its cursor at the first of them rather than skipping a cycle.
+    archive_owed_tickers: list[str] = []
     void_samples: list[dict] = []
     void_ids: list[int] = []
     void_checked_ids: list[int] = []
@@ -1257,6 +1442,8 @@ async def run_backfill(
             # that voided nothing must be the same SHAPE to a reader, or every
             # consumer grows a `.get`.
             "venue_voided_samples": [],
+            "archive_settled_samples": [],
+            "archive_owed_tickers": [],
             "errored_tickers": [],
             "unconfirmed_tickers": [],
         }
@@ -1281,6 +1468,34 @@ async def run_backfill(
                 return None
 
         markets = (event or {}).get("markets") or []
+        from_archive = False
+        if (
+            not markets
+            and archive_budget is not None
+            and isinstance(event, dict)
+            and event.get("event_ticker") == ticker
+        ):
+            # #2722, archive reach. The venue served THIS event and none of its
+            # legs, which is what GetEvent does once they are archived. Only an
+            # event that names our ticker earns the read: `None` (a 404, or
+            # three swallowed failures) proves nothing about where the legs went.
+            async with sem:
+                legs, outcome = await read_archived_event_legs(
+                    client, ticker, archive_budget
+                )
+            stats[f"archive_{outcome}"] += 1
+            if outcome in ("rate_limited", "budget"):
+                archive_owed_tickers.append(ticker)
+            if outcome in ("rate_limited", "malformed", "error"):
+                stats["errors"] += 1
+                errored_tickers.append(ticker)
+                return None
+            if legs:
+                markets = legs
+                from_archive = True
+        elif markets and archive_only:
+            stats["archive_walk_live_rows"] += 1
+            return None
         if not markets:
             # 200-with-no-markets and 404 are NOT the same fact, but neither
             # yields a date. Counted apart from errors so a zero-yield run
@@ -1313,6 +1528,12 @@ async def run_backfill(
         settlement = derive_venue_settlement([m.get("status") for m in markets])
         if settlement.settled:
             stats["venue_settled"] += 1
+            if from_archive:
+                stats["venue_settled_from_archive"] += 1
+                if len(archive_settled_samples) < 15:
+                    archive_settled_samples.append(
+                        {"id": market_id, "ticker": ticker, "legs": len(markets)}
+                    )
         elif settlement.reason == "partially_settled":
             stats["venue_partially_settled"] += 1
 
@@ -1480,6 +1701,10 @@ async def run_backfill(
     else:
         stats["void_checked_writes_applied"] = 0
 
+    if archive_budget is not None:
+        stats["archive_requests"] = archive_budget.requests
+        stats["archive_rate_limit_stop"] = archive_budget.tripped
+
     report = {
         "mode": "APPLY" if apply else "DRY_RUN",
         "measured_at": now.isoformat(),
@@ -1493,6 +1718,9 @@ async def run_backfill(
         # (`/events/{ticker}?with_nested_markets=true`) and a report that only
         # carries a number cannot be audited that way.
         "venue_voided_samples": void_samples,
+        # #2722, archive reach: the rows only the archive could settle, by name.
+        "archive_settled_samples": archive_settled_samples,
+        "archive_owed_tickers": archive_owed_tickers,
         "errored_tickers": errored_tickers,
         "unconfirmed_tickers": unconfirmed_tickers,
     }
@@ -1723,6 +1951,7 @@ async def run_sweep(
     offset: Optional[int] = None,
     session_maker: Optional[Callable] = None,
     client_factory: Optional[Callable[[], object]] = None,
+    archive_walk: bool = False,
 ) -> dict:
     """One bounded beat run, with terminal truth attached.
 
@@ -1749,6 +1978,13 @@ async def run_sweep(
     a run; see :data:`SWEEP_CURSOR_KEY` for the measurement that made the cursor
     necessary — without it this beat writes zero rows every night, forever, and
     looks healthy doing it.
+
+    ``archive_walk`` (#2722) defaults to FALSE, and the beat does not pass it:
+    the walk writes historical status and dates across every open Kalshi row it
+    reaches, which is a stored-value change over a population nobody has
+    reviewed row by row. Deploying this code therefore activates nothing.
+    Turning it on is its own reviewed change — see the ACTIVATION note above
+    :func:`run_archive_settlements`.
     """
     if offset is None:
         start, scanned = await _read_cursor()
@@ -1827,6 +2063,207 @@ async def run_sweep(
     # sweep can never be read as a finished one — the same reason `run_backfill`
     # reports `eligible_total` beside `candidates`.
     report["remaining_after_batch"] = max(0, eligible - applied)
+
+    # #2722: the archive walk, after the population batch has committed, and
+    # isolated from it — a walk that fails must not take the batch's report or
+    # writes with it, and must not read as green either.
+    if archive_walk and apply:
+        try:
+            walk = await run_archive_settlements(
+                session_maker=session_maker or default_session_maker(),
+                client_factory=client_factory or KalshiAPIService,
+                concurrency=concurrency,
+            )
+        except Exception as exc:  # noqa: BLE001 — reported, never swallowed
+            walk = {
+                "terminal": "failed",
+                "terminal_reason": f"{type(exc).__name__}: {str(exc)[:200]}",
+            }
+        report["archive_walk"] = walk
+        # A walk that failed, or that left rows owed because the run ran out
+        # (a 429, a spent page budget), is not a finished night.
+        walk_terminal = walk.get("terminal")
+        if walk_terminal in ("failed", "partial") and report["terminal"] == "complete":
+            report["terminal"] = "partial"
+            report["terminal_reason"] = (
+                f"population batch complete; archive walk {walk_terminal}: "
+                f"{walk.get('terminal_reason')}"
+            )
+    return report
+
+
+# ---------------------------------------------------------------------------
+# The archive walk — #2722
+# ---------------------------------------------------------------------------
+
+#: Every open Kalshi row, by id. No provisional-date screen and no retention
+#: floor: the cohort is "the venue settled it and archived its legs", which no
+#: date column we hold can select (the nine specimens carry resolution dates
+#: from 2026-11 to 2027-11), and the archive answers at any age.
+ARCHIVE_WALK_SELECT_SQL = """
+    SELECT id, external_id, resolution_date, commence_time, market_tier
+    FROM futures_markets
+    WHERE source = 'kalshi'
+      AND status = 'open'
+      AND external_id IS NOT NULL
+      AND id > :after_id
+    ORDER BY id
+    LIMIT :limit
+"""
+
+ARCHIVE_WALK_CURSOR_KEY = "bainluck:kalshi_resolution_sweep:archive_walk_after_id:v1"
+ARCHIVE_WALK_CURSOR_TTL_S = SWEEP_CURSOR_TTL_S
+
+
+def next_archive_walk_cursor(rows: list, owed_tickers: set, limit: int) -> int:
+    """The ``after_id`` the next walk starts from.
+
+    OWED FIRST, ALWAYS. The cursor stops just before the FIRST row this walk
+    left owed because the RUN ran out (a 429, a spent budget), so no such row
+    waits a whole cycle — and that holds on a short batch too. CERT-4137: when
+    the short-batch wrap came first, a population whose head held enough
+    multi-page events to spend the page budget wrapped to 0 every night with
+    its owed tail unread, so the rows behind the head were never asked.
+
+    Only with nothing owed does the cursor move on: past the batch, or — on a
+    short batch, the end of the population — back to the head.
+
+    A malformed listing, an error or a listing still going at the page bound is
+    not rewound to: one permanently bad event must not pin the walk to the same
+    batch every night. Those rows are asked again next cycle.
+
+    PROGRESS. Every row before the first owed one was answered, so a run
+    advances past all of them. A run advances by ZERO only when its first row
+    is owed: a 429 on that read (the venue asked us to wait; re-asking the same
+    row next night is the point), or — not ruled out, since rows are admitted
+    to the page budget roughly but not strictly in id order — a budget spent by
+    later rows while the first row's own live read was still outstanding.
+    """
+    for row in rows:
+        if row[1] in owed_tickers:
+            return int(row[0]) - 1
+    if len(rows) < limit:
+        return 0
+    return int(rows[-1][0])
+
+
+async def _read_walk_cursor() -> Optional[int]:
+    try:
+        from app.tasks.redis_state import get_async_redis_client
+
+        raw = await get_async_redis_client().get(ARCHIVE_WALK_CURSOR_KEY)
+    except Exception:
+        return None
+    try:
+        return max(0, int(raw)) if raw is not None else 0
+    except (TypeError, ValueError):
+        return 0
+
+
+async def _write_walk_cursor(after_id: int) -> bool:
+    try:
+        from app.tasks.redis_state import get_async_redis_client
+
+        await get_async_redis_client().set(
+            ARCHIVE_WALK_CURSOR_KEY, str(int(after_id)), ex=ARCHIVE_WALK_CURSOR_TTL_S
+        )
+        return True
+    except Exception:
+        return False
+
+
+# ACTIVATION — reserved, and not performed by deploying this code.
+#
+# The walk is a historical write: `UPDATE_SQL` moves status, settled_at and the
+# venue dates on every open Kalshi row the archive proves settled, ~1,000 rows
+# read a night across a population with no retention floor — not just the nine
+# reviewed specimens. `UPDATE_SQL` keys on `id` alone and the walk captures no
+# before-image, so a wrong write has no row-version-safe undo. That is a
+# stored-value change over an unreviewed cohort, which #2722's directive
+# reserves for a separate, reviewed step (no production apply granted).
+#
+# So `run_sweep(archive_walk=False)` is the default and the beat
+# (`sweep_kalshi_resolution_window`) does not pass it: nothing calls this
+# function in production. Activation is its own reviewed change, and must bring
+# with it (a) a before-image of every row it writes, (b) a restore that puts a
+# row back only if it still carries the walk's own write (status and the
+# `updated_at` it stamped), (c) a first run pinned to the reviewed ids with an
+# immediate exact-id readback, and only then (d) the beat flag.
+async def run_archive_settlements(
+    *,
+    session_maker: Callable,
+    client_factory: Callable[[], object],
+    limit: int = ARCHIVE_WALK_BATCH,
+    archive_requests: int = ARCHIVE_REQUESTS_PER_RUN,
+    concurrency: int = SWEEP_CONCURRENCY,
+    after_id: Optional[int] = None,
+    now: Optional[datetime] = None,
+) -> dict:
+    """One batch of the archive walk: select by keyset, read, write what the archive proved.
+
+    The read and write are :func:`run_backfill`'s, byte for byte, with the
+    archive read on and ``archive_only`` set. ``after_id`` pins a run (a probe);
+    by default the walk resumes from :data:`ARCHIVE_WALK_CURSOR_KEY`. An
+    unreadable cursor restarts at the head — a bounded re-read, never a skip.
+    """
+    pinned = after_id is not None
+    start = max(0, int(after_id)) if pinned else (await _read_walk_cursor() or 0)
+    async with session_maker() as session:
+        rows = (
+            await session.execute(
+                text(ARCHIVE_WALK_SELECT_SQL), {"after_id": start, "limit": limit}
+            )
+        ).all()
+    rows = [tuple(r) for r in rows]
+
+    report = await run_backfill(
+        session_maker=session_maker,
+        client_factory=client_factory,
+        apply=True,
+        concurrency=concurrency,
+        now=now,
+        rows=rows,
+        archive_requests=archive_requests,
+        archive_only=True,
+    )
+    nxt = next_archive_walk_cursor(
+        rows, set(report.get("archive_owed_tickers") or []), limit
+    )
+    persisted = True if pinned else await _write_walk_cursor(nxt)
+
+    stats = report.get("stats") or {}
+    owed = report.get("archive_owed_tickers") or []
+    report["after_id"] = start
+    report["next_after_id"] = nxt
+    report["cycle_wrapped"] = nxt == 0
+    report["cursor_persisted"] = persisted
+    if not persisted:
+        report["terminal"] = "failed"
+        report["terminal_reason"] = (
+            f"walk cursor not persisted — the next walk repeats after_id {start}"
+        )
+    elif rows and (
+        int(stats.get("errors") or 0) - int(stats.get("archive_rate_limited") or 0)
+    ) >= len(rows):
+        # A 429-owed row is counted in `errors` but was never refused by the
+        # venue — most were never asked. Only real refusals make an outage.
+        report["terminal"] = "failed"
+        report["terminal_reason"] = f"all {len(rows)} walked rows errored at the venue"
+    elif owed:
+        # Debt this run could not pay. Not `complete`: rows the venue may well
+        # have settled were never asked, and the next walk starts at them.
+        report["terminal"] = "partial"
+        report["terminal_reason"] = (
+            f"{len(owed)} rows owed — "
+            + (
+                f"archive 429 ({stats.get('archive_rate_limit_stop')})"
+                if stats.get("archive_rate_limit_stop")
+                else f"archive page budget spent ({stats.get('archive_requests')} pages)"
+            )
+            + f"; the next walk resumes at after_id {nxt}"
+        )
+    else:
+        report["terminal"] = "complete"
     return report
 
 

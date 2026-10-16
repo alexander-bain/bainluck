@@ -927,7 +927,12 @@ _RECORDED_ASYNC_POOL_SITES = {
     # or two writes a run at the head and at most one per venue page (cap 120)
     # while the one-time backlog is walked. Comment read before the entry moved,
     # as this census asks.
-    "tasks/kalshi_resolution_sweep.py": 4,
+    #
+    # 4 -> 6 (#2722, archive walk). The walk's `after_id` read and write. Same
+    # third kind — a pool per call, lazy, one `get` or one `set`, then dropped —
+    # once each per DAILY sweep run, never a request path. Comment read before
+    # the entry moved, as this census asks.
+    "tasks/kalshi_resolution_sweep.py": 6,
     "tasks/live_blend_refresh.py": 1,
     "tasks/tournament_matchup_linker.py": 3,
     "tasks/tournament_price_refresh.py": 2,
