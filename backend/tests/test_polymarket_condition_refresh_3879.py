@@ -552,7 +552,10 @@ class TestTheOrderingIsAcceptanceOneMadeMechanical:
         still fails here.
         """
         sql = " ".join(rail._CANDIDATE_SQL.split())
+        # Both orderings: the per-class rank (which rows reach the list) and the
+        # final ORDER BY (the order they are taken in). #4983 split the two.
         assert "p.priority DESC, s.stalest ASC" in sql
+        assert "c.priority DESC, c.stalest ASC" in sql
 
     def test_a_game_about_to_be_played_leads_even_that(self):
         """#4896: staleness cannot express urgency.
@@ -572,6 +575,23 @@ class TestTheOrderingIsAcceptanceOneMadeMechanical:
         sql = " ".join(rail._CANDIDATE_SQL.split())
         assert (
             "ORDER BY p.kickoff ASC NULLS LAST, p.priority DESC, s.stalest ASC" in sql
+        ), "the per-class rank lost the kickoff key"
+        assert (
+            "ORDER BY c.kickoff ASC NULLS LAST, c.priority DESC, c.stalest ASC" in sql
+        ), "the final ORDER BY lost the kickoff key"
+
+    def test_the_limit_is_per_class_so_the_drain_always_has_candidates(self):
+        """#4983: a single `ORDER BY kickoff ... LIMIT` gave the kickoff class the
+        whole candidate window on a weekend night (05:08Z 09-27: candidates 3600,
+        all kickoff, drain_due 0, 800 of 1,000 ids spent) and the drain reserve
+        had nothing to admit. The limit now applies within each class; that it
+        SELECTS correctly is proved against real Postgres in
+        `tests/integration/test_polymarket_kickoff_ordering_pg.py`."""
+        sql = " ".join(rail._CANDIDATE_SQL.split())
+        assert "PARTITION BY (p.kickoff IS NOT NULL)" in sql
+        assert "WHERE c.class_rank <= :limit" in sql
+        assert "LIMIT :limit" not in sql, (
+            "a global LIMIT is back — it hands the whole window to the kickoff class"
         )
 
     def test_the_kickoff_key_reads_the_event_clock_not_the_market_one(self):

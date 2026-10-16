@@ -265,9 +265,27 @@ def _without_the_kickoff_key(sql: str) -> str:
     Derived from the shipped statement rather than pasted, so the control
     cannot quietly stop being the same query with one key removed.
     """
-    control = sql.replace("p.kickoff ASC NULLS LAST, ", "", 1)
-    assert control != sql, "the kickoff key is not in the ORDER BY at all"
+    # #4983: the key appears twice — in the per-class rank and in the final
+    # ORDER BY — and the control removes it from both, or the final ordering
+    # would still lead with the games and the control could not go red.
+    control = sql.replace("p.kickoff ASC NULLS LAST, ", "", 1).replace(
+        "c.kickoff ASC NULLS LAST, ", "", 1
+    )
+    assert "kickoff ASC NULLS LAST" not in control, (
+        "the kickoff key is not in both ORDER BYs"
+    )
     return control
+
+
+def _with_one_global_limit(sql: str) -> str:
+    """The limit as it read before #4983's drain repair — the red control.
+
+    One LIMIT over the whole kickoff-first ordering, derived from the shipped
+    statement so it stays the same query with only the limit moved.
+    """
+    control = sql.replace("WHERE c.class_rank <= :limit", "WHERE TRUE", 1)
+    assert control != sql, "the per-class limit is not in the statement"
+    return control.rstrip() + "\n     LIMIT :limit\n"
 
 
 class TestAGameAboutToBePlayedLeadsTheQueue:
@@ -477,4 +495,122 @@ class TestTheKeyReordersThePoolWithoutChangingIt:
         assert set(leading) == games, (
             "the kickoff class is not contiguous at the head — some game was "
             f"left behind the ordinary queue. order={order} ids={ids}"
+        )
+
+
+async def _seed_saturated(session, games: int) -> dict[str, list[int]]:
+    """`games` kickoff markets plus one backlog futures market, all stale.
+
+    The production shape of 2026-09-27 05:08Z in miniature: the kickoff class
+    alone is bigger than the candidate limit the test passes, and the backlog
+    row is the Dodgers "more than 99.5 games" market — no event, tier 5,
+    resolving in eight days, last written six days ago.
+    """
+    from app.models.models import Event, FuturesMarket, FuturesOutcome, Sport
+
+    now = datetime.now(UTC)
+    sport = Sport(key="baseball_mlb", name="MLB", group="Baseball")
+    session.add(sport)
+    await session.flush()
+
+    kickoff = []
+    for i in range(games):
+        e = Event(
+            sport_id=sport.id,
+            home_team_name=f"Home {i}",
+            away_team_name=f"Away {i}",
+            commence_time=now + timedelta(hours=2 + i),
+            status="scheduled",
+        )
+        session.add(e)
+        await session.flush()
+        kickoff.append(
+            FuturesMarket(
+                source="polymarket",
+                external_id=f"sat-game-{i}",
+                name=f"Away {i} vs. Home {i}",
+                category="game",
+                market_tier=5,
+                status="open",
+                resolution_date=now + timedelta(days=7),
+                event_id=e.id,
+                sport_id=sport.id,
+            )
+        )
+    backlog = FuturesMarket(
+        source="polymarket",
+        external_id="0xdodgers995",
+        name="Will the Los Angeles Dodgers win more than 99.5 games?",
+        category="futures",
+        market_tier=5,
+        status="open",
+        resolution_date=now + timedelta(days=8),
+        event_id=None,
+        sport_id=sport.id,
+    )
+    session.add_all([*kickoff, backlog])
+    await session.flush()
+    for market, age in [(m, timedelta(hours=1)) for m in kickoff] + [
+        (backlog, timedelta(days=6))
+    ]:
+        session.add(
+            FuturesOutcome(
+                market_id=market.id,
+                external_id=f"0x{market.external_id}",
+                name="Yes",
+                current_probability=0.5,
+                rank=1,
+                is_winner=False,
+                resolution_source=None,
+                last_updated=now - age,
+            )
+        )
+    await session.commit()
+    return {"kickoff": [m.id for m in kickoff], "backlog": [backlog.id]}
+
+
+class TestTheDrainKeepsCandidatesWhenTheKickoffClassFillsTheLimit:
+    """#4983: `DRAIN_RESERVE_IDS` can only admit rows the selector returned."""
+
+    async def test_a_backlog_row_is_a_candidate_behind_a_saturated_kickoff_class(
+        self, pg_session
+    ):
+        from app.tasks import polymarket_condition_refresh as rail
+
+        ids = await _seed_saturated(pg_session, games=3)
+        rows = (
+            await pg_session.execute(
+                text(rail._CANDIDATE_SQL), {"stale_hours": _stale_hours(), "limit": 2}
+            )
+        ).all()
+        order = [r[0] for r in rows]
+
+        # The kickoff class keeps its limit and its order, soonest first...
+        assert order[:2] == ids["kickoff"][:2], f"order={order} ids={ids}"
+        assert ids["kickoff"][2] not in order
+        # ...and the backlog row is still a candidate, after it.
+        assert order[2:] == ids["backlog"], (
+            "the drain has no candidates when the kickoff class fills the "
+            f"limit, so the reserve admits nothing. order={order} ids={ids}"
+        )
+        # The census still counts every stale row, before any limit.
+        assert {int(r[3]) for r in rows} == {4}
+
+    async def test_the_red_control_starves_the_backlog_row(self, pg_session):
+        """The old single LIMIT on the same rows: every candidate is a game and
+        the backlog row never reaches the list — `drain_due 0`, measured."""
+        from app.tasks import polymarket_condition_refresh as rail
+
+        ids = await _seed_saturated(pg_session, games=3)
+        rows = (
+            await pg_session.execute(
+                text(_with_one_global_limit(rail._CANDIDATE_SQL)),
+                {"stale_hours": _stale_hours(), "limit": 2},
+            )
+        ).all()
+        order = [r[0] for r in rows]
+
+        assert order == ids["kickoff"][:2], (
+            "the control did not reproduce the defect, so this file proves "
+            f"nothing; got {order} against {ids}"
         )
