@@ -6,7 +6,7 @@ import { getDiscoverItemAnalytics, recordDiscoverInteraction, sendDiscoverIntera
 import type { FeedItem, FeedFuturesData } from "@/lib/types";
 import { BundleActionBar } from "./BundleActionBar";
 import { BundleHeader } from "./BundleHeader";
-import { bundleSeatCount } from "./constants";
+import { bundleExpandLabel, bundleSeatCount } from "./constants";
 import { FuturesCompactRow } from "./FuturesCard";
 
 interface GroupCardProps {
@@ -37,7 +37,7 @@ interface GroupCardProps {
  * "2 markets". It now carries the question the members are all answers to, on
  * its own line for the same reason ThemeBundleCard does — a question is a
  * sentence and does not fit beside the chip at 390px. The count is not lost:
- * the member rows are underneath and "All N questions" still prints it whenever
+ * the member rows are underneath and "All N markets" (#10877) prints it whenever
  * there is more behind the chevron than the card already seats.
  *
  * #7492: it used to seat `items[0]` and nothing else, so a card whose own
@@ -107,7 +107,7 @@ export function GroupCard({ items, title, sharedQuestion, positionIndex }: Group
           onClick={() => setExpandedWithTracking(true)}
           className="w-full text-center py-2.5 text-xs font-medium text-accent-brand hover:text-accent-brand/80 border-t border-surface-border"
         >
-          All {items.length} questions
+          {bundleExpandLabel(items)}
         </button>
       )}
 

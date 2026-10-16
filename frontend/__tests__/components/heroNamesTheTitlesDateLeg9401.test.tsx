@@ -44,7 +44,7 @@ import DiscoverCard from "../../components/DiscoverCard";
 function bundle(): FeedItem {
   const item = JSON.parse(JSON.stringify(fixture.middle_east)) as FeedItem;
   // #9642: a collapsed bundle now seats three rows (selected design A), and the
-  // specimen was row 5 — behind "All N questions". Hoist the two rows under test
+  // specimen was row 5 — behind "All N markets". Hoist the two rows under test
   // into the peek so the render arms still go through the real entry point; the
   // members themselves stay verbatim.
   const data = item.data as unknown as FeedBundleData;

@@ -4,7 +4,8 @@
  * A is a compact group treatment: a small category eyebrow, the shared question
  * as the card's heading on the card's own white, three questions at equal weight
  * with their probabilities in one right-aligned column, and "All N questions"
- * for the rest. It is a treatment for the groups the feed already builds — not an
+ * for the rest (#10877 renamed that footer "All N markets"; see
+ * bundleExpandLabel10877.test.tsx). It is a treatment for the groups the feed already builds — not an
  * all-group feed — so standalone cards are asserted untouched here too.
  *
  * Both bundle kinds are rendered through `DiscoverCard`, the path the page uses:
@@ -106,10 +107,10 @@ describe("#9642 — bundle cards take selected design A", () => {
     expect(BUNDLE_PEEK_COUNT).toBe(3);
   });
 
-  it.each(KINDS)("%s seats exactly three rows and names the rest as questions", (_label, kind) => {
+  it.each(KINDS)("%s seats exactly three rows and names the rest as markets", (_label, kind) => {
     const html = render(kind);
     expect(seated(html)).toBe(3);
-    expect(html).toContain(`All ${MEMBERS.length} questions`);
+    expect(html).toContain(`All ${MEMBERS.length} markets`);
     expect(html).not.toContain("Show all");
   });
 
@@ -150,6 +151,6 @@ describe("#9642 — bundle cards take selected design A", () => {
     );
     expect(html).toContain("Fed decision in October");
     expect(html).not.toContain('data-testid="bundle-eyebrow"');
-    expect(html).not.toContain("All 5 questions");
+    expect(html).not.toContain("All 5 markets");
   });
 });

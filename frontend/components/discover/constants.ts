@@ -1,5 +1,6 @@
 import { categoryEmoji } from "@/lib/categoryEmoji";
 import { getCategoryForLeague } from "@/lib/sportCategories";
+import type { FeedItem } from "@/lib/types";
 
 /**
  * How many members a collapsed bundle seats before it asks for a tap.
@@ -14,7 +15,7 @@ import { getCategoryForLeague } from "@/lib/sportCategories";
  * from drifting apart again.
  *
  * #9642 — three, not five: Alex's selected Discover design (A, 9/29) seats three
- * related questions at equal weight and puts the rest behind "All N questions".
+ * related questions at equal weight and puts the rest behind "All N markets".
  * Three still answers a comparison, and it lets a group sit beside standalone
  * cards on one phone screen instead of taking the whole screen.
  */
@@ -24,7 +25,7 @@ export const BUNDLE_PEEK_COUNT = 3;
  * How many rows a collapsed bundle of `memberCount` actually seats.
  *
  * The peek, except when exactly one member would be left behind it: then every
- * member is seated and there is no footer. "All 4 questions" under three rows is
+ * member is seated and there is no footer. "All 4 markets" under three rows is
  * a control that costs a row to reveal a row — the defect #7492 removed — and at
  * five-seat peeks (before #9642) a four-member group never needed a tap, so
  * dropping the peek to three must not make one start needing it. Groups of
@@ -32,6 +33,24 @@ export const BUNDLE_PEEK_COUNT = 3;
  */
 export function bundleSeatCount(memberCount: number): number {
   return memberCount <= BUNDLE_PEEK_COUNT + 1 ? memberCount : BUNDLE_PEEK_COUNT;
+}
+
+/**
+ * The words on a collapsed bundle's "see the rest" control.
+ *
+ * #10877 — it read "All N questions" (design A, #9642), and Alex rejected
+ * "question" as the product's umbrella noun. No one word replaces it: the
+ * control names what the tap actually opens. Every member the backend folds
+ * into a bundle is one futures market, so served bundles say "All 6 markets";
+ * N is the member count, which is the market count, and never an outcome count.
+ * Members that are all games say games. A mix gets no noun rather than a wrong
+ * one.
+ */
+export function bundleExpandLabel(members: FeedItem[]): string {
+  const n = members.length;
+  if (members.every((m) => m.type === "futures")) return `All ${n} markets`;
+  if (members.every((m) => m.type === "event")) return `All ${n} games`;
+  return `See all ${n}`;
 }
 
 export const CATEGORY_GRADIENTS: Record<string, string> = {

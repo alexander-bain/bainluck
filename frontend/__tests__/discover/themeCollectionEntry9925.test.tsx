@@ -14,7 +14,7 @@
  *   `/collections/{slug}`, named for the collection (never the card header) and
  *   counting the page's markets (never the preview's). Anything malformed draws
  *   nothing, and a card with no ref is exactly the card it was.
- * - INLINE KEPT: the peek rows, "All N questions" and expand all still work
+ * - INLINE KEPT: the peek rows, "All N markets" and expand all still work
  *   beside the link, in both states.
  * - DISCOVERCARD PASSES IT: the served bundle's ref and id reach the card.
  * - BACK: a reader who opened the collection from an EXPANDED card finds it
@@ -153,8 +153,8 @@ describe("#9925 the card keeps its inline peek, expand and member navigation", (
     const withRef = card({ collectionRef: REF });
     const without = card();
     // Two members both fit the peek, so the footer reads "Expand" (a bigger
-    // bundle reads "All N questions"; the same button either way).
-    expect(withRef).toMatch(/>(Expand|All \d+ questions)<\/button>/);
+    // bundle reads "All N markets"; the same button either way).
+    expect(withRef).toMatch(/>(Expand|All \d+ markets)<\/button>/);
     for (const member of MEMBERS) expect(withRef).toContain(`href="/futures/${(member.data as { id: number }).id}"`);
     // The link is ADDED: removing it leaves the original card byte for byte.
     const link = withRef.match(/<a [^>]*href="\/collections\/oscars-2027"[^>]*>.*?<\/a>/)![0];
@@ -226,10 +226,10 @@ describe("#9925 mounted: open, leave from the expanded card, come Back", () => {
     );
   const text = () => host.textContent ?? "";
   const link = () => descendants(host).find((n) => n.tagName === "A" && n["href"] === "/collections/oscars-2027");
-  // The collapsed footer control ("Expand", or "All N questions" on a bigger
+  // The collapsed footer control ("Expand", or "All N markets" on a bigger
   // bundle). It exists only while the card is collapsed.
   const expandButton = () =>
-    descendants(host).find((n) => n.tagName === "BUTTON" && /^(Expand|All \d+ questions)$/.test(n.textContent ?? ""));
+    descendants(host).find((n) => n.tagName === "BUTTON" && /^(Expand|All \d+ markets)$/.test(n.textContent ?? ""));
 
   it("an expanded card the reader left from comes back expanded, then forgets", () => {
     mount();
