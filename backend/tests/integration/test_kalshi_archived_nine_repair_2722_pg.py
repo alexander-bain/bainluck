@@ -347,3 +347,124 @@ async def test_root_plan_beforeimage_is_frozen_before_backup(session):
     after = (await _rows(session))[raced]
     print('ROOT_PLAN_BACKUP_DRIFT', json.dumps({'raced':raced,'approved_plan_digest':digest,'later_date':later['resolution_date'],'after_date':after['resolution_date'],'written':stats['written_ids']}))
     assert raced not in stats['written_ids'] and after == later, 'repair overwrote a lifecycle writer after review, before backup'
+
+
+# ── #2722 near-apply prerequisite: every session run() opens is bounded ───────
+
+
+def _real_db_task_session(monkeypatch):
+    """Point the task engine at this database. The SAME get_task_session and
+    build_connect_args run, so the budgets reach Postgres exactly as they would
+    on bainluck-heavy (startup packet, not a SET)."""
+    import app.tasks.base as base
+
+    monkeypatch.setattr(base, "DATABASE_URL", DB_URL)
+    return base
+
+
+def _fixed_clock_plan(monkeypatch, mod):
+    real = mod.build_plan
+
+    async def at_now(session, evidence, *, now):
+        return await real(session, evidence, now=NOW)
+
+    monkeypatch.setattr(mod, "build_plan", at_now)
+
+
+def _args(**kw):
+    import argparse
+
+    return argparse.Namespace(**{"backup": False, "apply": False, "digest": "",
+                                 "restore": False, **kw})
+
+
+HEAVY = {"HEROKU_APP_NAME": "bainluck-heavy"}
+
+
+async def test_every_session_run_opens_carries_both_budgets_on_the_wire(session, monkeypatch):
+    """The budgets the script passes are what Postgres enforces, and they
+    survive a commit (a bare SET would be lost at the next reconnect)."""
+    import contextlib
+
+    base = _real_db_task_session(monkeypatch)
+    mod = _script()
+    _fixed_clock_plan(monkeypatch, mod)
+    real = base.get_task_session
+    seen = []
+
+    @contextlib.asynccontextmanager
+    async def spying(**kwargs):
+        async with real(**kwargs) as s:
+            async def read():
+                return [(await s.execute(text(q))).scalar_one() for q in (
+                    "SELECT pg_backend_pid()", "SHOW statement_timeout", "SHOW lock_timeout")]
+
+            first = await read()
+            await s.commit()
+            # A reconnect: the next statement runs on a NEW backend.
+            await (await s.connection()).invalidate()
+            await s.rollback()
+            again = await read()
+            await s.rollback()
+            seen.append((kwargs, first, again))
+            yield s
+
+    monkeypatch.setattr(base, "get_task_session", spying)
+    plan = await mod.run(_args(), HEAVY)
+    out = await mod.run(_args(backup=True, apply=True, digest=plan["plan_digest"]), HEAVY)
+    assert sorted(out["applied"]["written_ids"]) == IDS
+    restored = await mod.run(_args(restore=True), HEAVY)
+    assert sorted(restored["restored"]) == IDS
+    # plan; plan + backup/apply; restore
+    assert len(seen) == 4
+    for kwargs, first, again in seen:
+        assert kwargs == {"statement_timeout_ms": 10_000, "lock_timeout_ms": 500}
+        assert first[0] != again[0], "the second read must be a reconnected backend"
+        assert first[1:] == again[1:] == ["10s", "500ms"]
+
+
+async def test_a_held_row_lock_stops_the_apply_within_its_budget_and_writes_nothing(
+    session, monkeypatch
+):
+    """Another writer holds the FIFTH row: the apply has already written four,
+    waits 500 ms, is refused with 55P03, and its whole transaction rolls back.
+    The backup stays committed and unapplied, nothing is retried or restored,
+    and a later attended re-run of the SAME digest applies all nine."""
+    import time
+
+    from sqlalchemy.ext.asyncio import create_async_engine
+
+    _real_db_task_session(monkeypatch)
+    mod = _script()
+    _fixed_clock_plan(monkeypatch, mod)
+    before = await _rows(session)
+    digest = (await mod.run(_args(), HEAVY))["plan_digest"]
+
+    holder = create_async_engine(DB_URL)
+    conn = await holder.connect()
+    try:
+        await conn.begin()
+        await conn.execute(
+            text("SELECT 1 FROM futures_markets WHERE id = :id FOR UPDATE"), {"id": IDS[4]})
+        t0 = time.monotonic()
+        with pytest.raises(mod.Refused) as refused:
+            await mod.run(_args(backup=True, apply=True, digest=digest), HEAVY)
+        waited = time.monotonic() - t0
+    finally:
+        await conn.rollback()
+        await conn.close()
+        await holder.dispose()
+
+    msg = str(refused.value)
+    assert "stopped the apply" in msg and "sqlstate 55P03" in msg and "nothing to restore" in msg
+    assert waited < 5, f"the lock wait was not bounded ({waited:.2f}s)"
+    assert await _rows(session) == before, "the four rows written before the lock rolled back"
+    held = (await session.execute(text(
+        f"SELECT market_id, applied, after_row IS NULL, ownership_lost_at IS NULL "
+        f"FROM {mod.BACKUP_TABLE} WHERE plan_digest = :d ORDER BY market_id"), {"d": digest})).all()
+    await session.rollback()
+    assert [tuple(r) for r in held] == [(i, False, True, True) for i in IDS]
+
+    again = await mod.run(_args(backup=True, apply=True, digest=digest), HEAVY)
+    assert sorted(again["applied"]["written_ids"]) == IDS
+    assert again["applied"]["skipped_changed_since_backup"] == []
