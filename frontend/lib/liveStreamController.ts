@@ -101,6 +101,15 @@ export interface LiveStreamDeps {
    * `LiveTransportStatus` for what each value does and does not prove.
    */
   onStatusChange?: (status: LiveTransportStatus) => void;
+  /**
+   * #10090 — run `action` once, `ms` from now; returns its cancel. The owner
+   * passes `setTimeout`/`clearTimeout`, so a scheduled reopen fires AT its
+   * deadline instead of at the first `tick()` after it. Omitted, the reopen
+   * waits for `tick()` exactly as before; `tick()` stays the backstop either way.
+   */
+  schedule?: (action: () => void, ms: number) => () => void;
+  /** #10090 — the healthy-rollover wait, in ms. Injected so a test can pin it. */
+  healthyRolloverDelay?: () => number;
 }
 
 /**
@@ -164,8 +173,30 @@ export const RECONNECT_MAX_DELAY_MS = 30_000;
 /** A stream that lasted this long was healthy; its rollover is not a failure. */
 export const HEALTHY_STREAM_MS = 60_000;
 
-/** How often the owner should call `tick()`. */
+/**
+ * #10090 — how long a HEALTHY stream's rollover waits before it reopens:
+ * 250 ms, jittered ×1–2, the same policy native reviewed (PR #11144). The
+ * server rolls every stream at its age ceiling and replays only the latest
+ * frame on the new socket, so every second spent here is a second the page
+ * holds a number no socket stands behind. The jitter keeps one server rolling
+ * every page at once from bringing them all back in the same instant. A FAST
+ * rollover keeps the 1 s doubling backoff above.
+ */
+export const HEALTHY_ROLLOVER_MIN_DELAY_MS = 250;
+export const HEALTHY_ROLLOVER_MAX_DELAY_MS = 500;
+
+/**
+ * How often the owner should call `tick()`. A scheduled reopen does not wait
+ * for it when the owner injects `schedule` (#10090): the controller arms its
+ * own deadline, and `tick()` only backs it up.
+ */
 export const TICK_INTERVAL_MS = 5_000;
+
+/** #10090 — the production `schedule`: one `setTimeout`, cancelled by `clearTimeout`. */
+export function timerSchedule(action: () => void, ms: number): () => void {
+  const id = setTimeout(action, ms);
+  return () => clearTimeout(id);
+}
 
 const EVENT_SOURCE_CONNECTING = 0;
 const EVENT_SOURCE_CLOSED = 2;
@@ -189,7 +220,12 @@ export interface LiveStreamController {
 export function createLiveStreamController(
   deps: LiveStreamDeps,
 ): LiveStreamController {
-  const { open, now, onFrame, onDeliveringChange, onStatusChange, onRecovery } = deps;
+  const { open, now, onFrame, onDeliveringChange, onStatusChange, onRecovery, schedule } = deps;
+  const healthyRolloverDelay =
+    deps.healthyRolloverDelay ??
+    (() =>
+      HEALTHY_ROLLOVER_MIN_DELAY_MS +
+      Math.random() * (HEALTHY_ROLLOVER_MAX_DELAY_MS - HEALTHY_ROLLOVER_MIN_DELAY_MS));
 
   let handle: StreamHandle | null = null;
   let delivering = false;
@@ -202,6 +238,23 @@ export function createLiveStreamController(
   let reopenAt: number | null = null;
   let consecutiveFastRollovers = 0;
   let status: LiveTransportStatus | null = null;
+  // #10090 — the armed reopen deadline's cancel, and which deadline is current.
+  // A deadline that fires after `connect()` or `stop()` already ran (a late
+  // timer, or a tick that got there first) finds its generation retired and
+  // opens nothing, so one rollover can never open two sockets.
+  let cancelReopen: (() => void) | null = null;
+  let reopenGeneration = 0;
+
+  const disarmReopen = () => {
+    reopenGeneration += 1;
+    const cancel = cancelReopen;
+    cancelReopen = null;
+    try {
+      cancel?.();
+    } catch {
+      // A timer that cannot be cancelled is retired by its generation instead.
+    }
+  };
 
   // #10200 — report, never decide. Every call site sits AFTER the decision it
   // describes, so deleting all of them changes no behaviour above.
@@ -233,6 +286,7 @@ export function createLiveStreamController(
   const stop = () => {
     stopped = true;
     reopenAt = null;
+    disarmReopen();
     closeHandle();
     setDelivering(false);
   };
@@ -252,17 +306,47 @@ export function createLiveStreamController(
     setDelivering(false);
     if (lived >= HEALTHY_STREAM_MS) consecutiveFastRollovers = 0;
     else consecutiveFastRollovers += 1;
-    const delay = Math.min(
-      RECONNECT_MAX_DELAY_MS,
-      RECONNECT_BASE_DELAY_MS * 2 ** Math.max(0, consecutiveFastRollovers - 1),
-    );
+    // #10090: a healthy stream comes straight back — see
+    // `HEALTHY_ROLLOVER_MIN_DELAY_MS`. Only a fast one pays the 1 s doubling
+    // backoff, so a server that rolls over instantly is still never hammered.
+    const delay =
+      consecutiveFastRollovers === 0
+        ? healthyRolloverDelay()
+        : Math.min(
+            RECONNECT_MAX_DELAY_MS,
+            RECONNECT_BASE_DELAY_MS * 2 ** (consecutiveFastRollovers - 1),
+          );
     reopenAt = now() + delay;
+    armReopen(delay);
     setStatus('rollover');
+  };
+
+  /**
+   * #10090 — reopen AT the deadline, not at the first tick after it. The owner
+   * ticks every 5 s, so a reopen left to `tick()` waited up to five seconds past
+   * its own delay while the page held a number with no socket behind it.
+   */
+  const armReopen = (delay: number) => {
+    disarmReopen();
+    if (!schedule) return;
+    const generation = reopenGeneration;
+    try {
+      cancelReopen = schedule(() => {
+        // `connect()` and `stop()` both retire the generation, so this is the
+        // whole test; `connect()` itself still refuses once stopped.
+        if (generation !== reopenGeneration) return;
+        connect();
+      }, delay);
+    } catch {
+      // No timer: `reopenAt` is already set, so the next tick reopens instead.
+    }
   };
 
   const connect = () => {
     if (stopped) return;
     reopenAt = null;
+    // Whichever of the deadline and the tick arrives second finds nothing to do.
+    disarmReopen();
     let next: StreamHandle;
     try {
       next = open();
@@ -375,6 +459,8 @@ export function createLiveStreamController(
     if (stopped) return;
     const at = now();
 
+    // The backstop for an armed deadline (#10090), and the only reopen path
+    // for an owner that injects no `schedule`.
     if (reopenAt !== null && at >= reopenAt) {
       connect();
       return;

@@ -7,6 +7,7 @@ import { rememberLiveChartFrame, type LiveChartFrame } from '@/lib/liveChartHist
 import {
   TICK_INTERVAL_MS,
   createLiveStreamController,
+  timerSchedule,
   type LiveStreamFrame,
   type LiveTransportStatus,
   type StreamHandle,
@@ -186,13 +187,16 @@ export function useLiveEventStream(
       onStatusChange: (next) => {
         if (mounted.current) setStatus({ statusEventId: eventId, status: next });
       },
+      // #10090: the reopen after a server-directed rollover fires at its own
+      // deadline rather than at the next 5 s tick. The controller cancels it on
+      // `stop()` below, and a deadline that outlives its rollover opens nothing.
+      schedule: timerSchedule,
     });
 
     controller.start();
-    // ONE interval drives everything the controller schedules — the silence
-    // watchdogs and the reopen after a server-directed rollover. No second
-    // timer, and nothing scheduled inside a listener that a teardown could
-    // miss.
+    // ONE interval drives the silence watchdogs and backs up the reopen
+    // deadline above. Teardown clears it and stops the controller, which
+    // cancels any armed reopen.
     const timer = setInterval(() => controller.tick(), TICK_INTERVAL_MS);
 
     return () => {
