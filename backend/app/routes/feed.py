@@ -12009,6 +12009,13 @@ async def _score_events(
                 # #8954 / #8841 — the STORED tags, where the start-placeholder mark
                 # lives; `inline_tags` above are recomputed and never carry it.
                 stored_tags=event.event_tags,
+                # #10880 — where the stored start came from. Read from what is
+                # already loaded (`__dict__`, as #1698 does) so an expired or
+                # rehydrated row serves "not from a schedule" and never
+                # triggers a lazy load inside this per-item serializer.
+                commence_time_source=getattr(event, "__dict__", {}).get(
+                    "commence_time_source"
+                ),
                 prematch_by_source=prematch_by_event.get(event.id),
                 # #4971 / D136 rung 3 — the card carries the one number, resolved
                 # by the same cascade the event page calls. `event` and not a
