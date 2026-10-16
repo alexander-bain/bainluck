@@ -69,15 +69,15 @@ import hashlib
 import json
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timedelta, timezone
-from typing import Any, Iterable, Optional
+from typing import Any, Iterable, Optional, Sequence
 
 from app.utils.calibration_paired_prestart import start_refusal
 from app.utils.event_completion import VENUE_STAMP_COMMENCE_SOURCES
 from app.utils.kalshi_candle_price import candle_yes_price
 
-#: Provenance stamped on every planned row. Deliberately NOT ``kalshi``. Where
-#: and how this is stored is an open schema decision (see
-#: ``app.services.kalshi_archive_recovery``), so it is plan vocabulary only today.
+#: Provenance stamped on every planned row. Deliberately NOT ``kalshi``. The
+#: rows live in their own archive store (see the #683 models), and the readers
+#: serve this value as each point's provenance.
 ARCHIVE_SOURCE = "kalshi_archive"
 
 #: Candle widths the archive endpoint takes, in minutes. Recovery asks for
@@ -327,6 +327,9 @@ class PlannedPoint:
     volume: Optional[str]
     source: str = ARCHIVE_SOURCE
     already_stored: bool = False
+    #: SHA-256 of the exact provider response this candle was read from. The
+    #: import stores it beside the interval, so every stored row names its bytes.
+    raw_sha256: Optional[str] = None
 
 
 @dataclass
@@ -349,6 +352,19 @@ class OutcomePlan:
     owed_windows: list = field(default_factory=list)
     counts: dict = field(default_factory=dict)
     points: list = field(default_factory=list)
+    #: The stored identity this plan was decided on, and its fingerprint. An
+    #: import re-reads the same fields and refuses the outcome if they moved.
+    event_ticker: Optional[str] = None
+    input_fingerprint: Optional[str] = None
+    #: The listed market fields the plan used (identity, opening, settlement).
+    market: Optional[dict] = None
+    #: One entry per window READ: its bounds, the echoed ticker, the response
+    #: digest and the exact response text. An import re-derives the points from
+    #: these bytes and refuses a plan whose points do not follow from them.
+    windows: list = field(default_factory=list)
+    #: How many live snapshots the outcome already had when planned. Archive
+    #: evidence is kept beside them; the reader decides overlap, not the plan.
+    live_snapshots: int = 0
 
 
 def candle_is_wellformed(candle: Any) -> bool:
@@ -373,14 +389,21 @@ def classify_candles(
     cutoff: Optional[datetime],
     cutoff_refusal: Optional[str],
     stored_instants: Iterable[datetime] = (),
+    candle_lineage: Optional[Sequence[Optional[str]]] = None,
 ) -> tuple[list[PlannedPoint], dict]:
     """Decide every candle. Returns ``(points, counts)``; refused rows are kept.
 
-    ``stored_instants`` are ``captured_at`` values this outcome already has. A
-    point at one of them is marked ``already_stored`` and is never importable,
-    so a plan built twice, or after a partial import, cannot double a row.
+    ``stored_instants`` are interval ends this outcome already holds in the
+    archive store at this period. A point at one of them is marked
+    ``already_stored`` and is never importable, so a plan built twice, or after
+    a partial import, cannot double a row. ``candle_lineage`` is the response
+    digest of each candle, position for position; it rides onto the point.
     """
     stored = {parse_instant(t) for t in stored_instants}
+    candles = list(candles)
+    lineage = list(candle_lineage) if candle_lineage is not None else []
+    if lineage and len(lineage) != len(candles):
+        raise ValueError("candle_lineage must align with candles")
     period = timedelta(minutes=period_minutes)
     counts = {
         ADMIT_FORECAST: 0,
@@ -394,7 +417,7 @@ def classify_candles(
     }
     seen: set = set()
     points: list[PlannedPoint] = []
-    for candle in candles:
+    for index, candle in enumerate(candles):
         if not candle_is_wellformed(candle):
             counts["malformed"] += 1
             continue
@@ -446,6 +469,7 @@ def classify_candles(
                 probability=None if probability is None else round(probability, 6),
                 volume=None if volume is None else str(volume),
                 already_stored=already,
+                raw_sha256=lineage[index] if lineage else None,
             )
         )
     return points, counts
@@ -468,3 +492,115 @@ def plan_digest(points: Iterable[PlannedPoint]) -> str:
     )
     blob = json.dumps(rows, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(blob.encode()).hexdigest()
+
+
+# ── #683 successor: input fingerprint and the continuation carry ───────────
+
+#: The stored fields a plan's decision depends on: identity (which market) and
+#: the forecast-cutoff inputs (``forecast_cutoff``). An import re-reads exactly
+#: these and refuses an outcome whose fingerprint moved since it was planned.
+FINGERPRINT_FIELDS = (
+    "outcome_id",
+    "ticker",
+    "event_ticker",
+    "market_id",
+    "event_id",
+    "commence_time",
+    "commence_time_source",
+    "created_at",
+    "completed_at",
+    "resolution_source",
+)
+
+#: Version of the carry a stopped run hands the next one. A carry from another
+#: version is refused, never guessed at.
+CONTINUATION_VERSION = 1
+
+
+def _canonical(value: Any) -> Any:
+    if isinstance(value, datetime):
+        return parse_instant(value).isoformat()
+    if value is None or isinstance(value, (bool, int, float, str)):
+        return value
+    return str(value)
+
+
+def _digest(obj: Any) -> str:
+    blob = json.dumps(obj, sort_keys=True, separators=(",", ":"), default=str)
+    return hashlib.sha256(blob.encode()).hexdigest()
+
+
+def input_fingerprint(row: Any) -> str:
+    """SHA-256 over :data:`FINGERPRINT_FIELDS` read off ``row`` (duck-typed)."""
+    return _digest({name: _canonical(getattr(row, name, None)) for name in FINGERPRINT_FIELDS})
+
+
+def listed_identity(market: dict) -> dict:
+    """The listed fields a plan relies on, nothing else (no prices, no volumes)."""
+    return {
+        key: market.get(key)
+        for key in ("ticker", "event_ticker", "status", "open_time", "settlement_ts")
+    }
+
+
+def continuation_digest(carry: dict) -> str:
+    """Digest of a carry, over everything except its own ``digest`` field."""
+    return _digest({k: v for k, v in carry.items() if k != "digest"})
+
+
+def seal_continuation(carry: dict) -> dict:
+    """Stamp the version and the digest a later run will check."""
+    sealed = {**carry, "version": CONTINUATION_VERSION}
+    sealed["digest"] = continuation_digest(sealed)
+    return sealed
+
+
+def continuation_refusal(
+    carry: Any, *, outcome_id: int, ticker: str, event_ticker: Optional[str]
+) -> Optional[str]:
+    """``None`` when ``carry`` may resume this stored outcome; else why not.
+
+    Structural checks only (version, seal, identity, listing shape, and that
+    carried windows are exactly the leading windows a fresh plan would ask
+    for). The raw bytes of each carried window are re-verified by the caller,
+    which owns the response parser.
+    """
+    if not isinstance(carry, dict):
+        return "carry_malformed"
+    if carry.get("version") != CONTINUATION_VERSION:
+        return "carry_version"
+    if carry.get("digest") != continuation_digest(carry):
+        return "carry_digest_mismatch"
+    if carry.get("outcome_id") != outcome_id or carry.get("ticker") != ticker:
+        return "carry_identity_mismatch"
+    if carry.get("event_ticker") != event_ticker:
+        return "carry_event_ticker_mismatch"
+    stage = carry.get("stage")
+    if stage == "listing":
+        if not isinstance(carry.get("listing_markets"), dict):
+            return "carry_listing_malformed"
+        if not isinstance(carry.get("listing_cursor"), str) or not carry["listing_cursor"]:
+            return "carry_listing_cursor_missing"
+        return None
+    if stage != "candles":
+        return "carry_stage_unknown"
+    market = carry.get("market")
+    if identity_refusal(ticker, event_ticker, market) is not None:
+        return "carry_market_identity"
+    settled_at = parse_instant(market.get("settlement_ts"))
+    open_time = parse_instant(market.get("open_time"))
+    period = choose_period(open_time, settled_at)
+    if carry.get("period_minutes") != period:
+        return "carry_period_mismatch"
+    expected, _ = request_windows(open_time, settled_at, period)
+    read = carry.get("read_windows")
+    if not isinstance(read, list) or not read or len(read) >= len(expected):
+        return "carry_windows_malformed"
+    for window, want in zip(read, expected):
+        if not isinstance(window, dict) or (
+            window.get("start_ts"),
+            window.get("end_ts"),
+            window.get("period_minutes"),
+        ) != (want.start_ts, want.end_ts, want.period_minutes):
+            return "carry_window_bounds_mismatch"
+    return None
