@@ -286,8 +286,9 @@ class TestBounds:
 
 
 class _TimedFrames:
-    def __init__(self, frames):
+    def __init__(self, frames, consumed):
         self._frames = list(frames)
+        self._consumed = consumed
 
     async def send(self, _payload):
         return None
@@ -300,8 +301,56 @@ class _TimedFrames:
             delay, frame = self._frames.pop(0)
             await asyncio.sleep(delay)
             return frame
+        # Asked again: the consumer has handled every frame it was given.
+        self._consumed.set()
         await asyncio.sleep(3600)
         raise StopAsyncIteration  # pragma: no cover
+
+
+#: The run ends once the consumer has asked for a frame after the last one,
+#: not on a wall-clock recycle. A fixed 0.8 s run counted whatever fit in it:
+#: the Kalshi arm's fourth frame lands ~0.46 s in, and one ~0.35 s stall of
+#: the runner's loop (PR #11111's backend shard, CI 38841151783) left it
+#: popped and cancelled inside the fake socket's own sleep — raw 3, never
+#: handed to the consumer. A consumer that drops a handed frame still asks
+#: for the next one, so it still fails on the counts.
+CONSUMED_BOUND_S = 5.0
+#: The run's own recycle timer, set beyond the bound so it never ends the
+#: observation; the test ends the run itself once every frame is handled.
+NO_RECYCLE_S = 60.0
+
+
+async def _run_until_consumed(monkeypatch, module, consumer, frames):
+    """The real consumer on a timed socket, stopped as the runner stops it
+    once every frame has been handled: its own final drain still runs."""
+    consumed = asyncio.Event()
+
+    def _connect(*_a, **_kw):
+        class _Ctx:
+            async def __aenter__(self):
+                return _TimedFrames(frames, consumed)
+
+            async def __aexit__(self, *_exc):
+                return False
+
+        return _Ctx()
+
+    monkeypatch.setattr(websockets, "connect", _connect)
+    monkeypatch.setattr(module, "SUBSCRIPTION_REFRESH_SECONDS", NO_RECYCLE_S)
+    run = asyncio.create_task(consumer())
+    seen = asyncio.create_task(consumed.wait())
+    try:
+        await asyncio.wait(
+            {run, seen}, timeout=CONSUMED_BOUND_S, return_when=asyncio.FIRST_COMPLETED,
+        )
+    finally:
+        seen.cancel()
+        run.cancel()
+        (ended,) = await asyncio.wait_for(
+            asyncio.gather(run, return_exceptions=True), timeout=5,
+        )
+    if isinstance(ended, Exception):
+        raise ended
 
 
 def _ticker(**msg):
@@ -341,7 +390,6 @@ class TestTheRealKalshiConsumer:
         monkeypatch.setenv("KALSHI_RSA_PRIVATE_KEY", "test-secret")
         monkeypatch.setattr(kalshi_svc, "_load_rsa_key", lambda: object())
         monkeypatch.setattr(kalshi_svc, "_sign_ws_request", lambda _k, _i: {})
-        monkeypatch.setattr(kalshi_task, "SUBSCRIPTION_REFRESH_SECONDS", 0.8)
         monkeypatch.setattr(kalshi_task, "PRICE_FLUSH_SECONDS", 0.02)
         monkeypatch.setattr(blend_mod, "LiveBlendRefresher", _Recording)
         blend_mod._live_handoff["kalshi"] = frozenset({EVENT_ID})  # the previous run
@@ -351,22 +399,12 @@ class TestTheRealKalshiConsumer:
             (0.15, _ticker(yes_bid_dollars="0.40")),  # one-sided: raw, not a price
             (0.15, _ticker(yes_bid_dollars="0.46", yes_ask_dollars="0.50")),
         ]
-
-        def _connect(*_a, **_kw):
-            class _Ctx:
-                async def __aenter__(self):
-                    return _TimedFrames(frames)
-
-                async def __aexit__(self, *_exc):
-                    return False
-
-            return _Ctx()
-
-        monkeypatch.setattr(websockets, "connect", _connect)
         writes: list = []
         _install_slate(monkeypatch, KALSHI_SLATE, writes, {"fail_writes": 0, "failed": 0})
 
-        await kalshi_task._run_kalshi_ws_consumer()
+        await _run_until_consumed(
+            monkeypatch, kalshi_task, kalshi_task._run_kalshi_ws_consumer, frames,
+        )
 
         assert seen["refresher"].receipts is not None
         lines = [x for x in _lines(caplog) if x["event"] == str(EVENT_ID)]
@@ -391,7 +429,6 @@ class TestTheRealPolymarketConsumer:
         """Two book messages for the game's token: a tradeable one (raw and an
         input) and a wide one #1578 refuses (raw only)."""
         import app.tasks.polymarket_ws as poly_task
-        from tests.test_live_blend_tail_receipt_837 import _install_timed_socket
         from tests.test_ws_flush_retry_q491 import (
             POLY_SLATE, YES_OUTCOME_ID, YES_TOKEN, _poly_frame,
         )
@@ -417,18 +454,19 @@ class TestTheRealPolymarketConsumer:
                 if on_committed is not None:
                     on_committed(event_ids)
 
-        monkeypatch.setattr(poly_task, "SUBSCRIPTION_REFRESH_SECONDS", 0.8)
         monkeypatch.setattr(poly_task, "PRICE_FLUSH_SECONDS", 0.02)
         monkeypatch.setattr(blend_mod, "LiveBlendRefresher", _Recording)
         blend_mod._live_handoff["polymarket"] = frozenset({EVENT_ID})
-        _install_timed_socket(monkeypatch, [
+        frames = [
             (0.0, _poly_frame("best_bid_ask", YES_TOKEN, best_bid="0.68", best_ask="0.72")),
             (0.15, _poly_frame("best_bid_ask", YES_TOKEN, best_bid="0.10", best_ask="0.90")),
-        ])
+        ]
         writes: list = []
         _install_slate(monkeypatch, POLY_SLATE, writes, {"fail_writes": 0, "failed": 0})
 
-        await poly_task._run_polymarket_ws_consumer()
+        await _run_until_consumed(
+            monkeypatch, poly_task, poly_task._run_polymarket_ws_consumer, frames,
+        )
 
         lines = [x for x in _lines(caplog) if x["event"] == str(EVENT_ID)]
         assert lines, [m.getMessage() for m in caplog.records][-20:]
