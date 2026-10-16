@@ -2073,3 +2073,382 @@ async def test_the_forecast_lateral_admits_only_revalidated_pregame_intervals(wo
         await c.execute(text("UPDATE events SET commence_time = commence_time + interval '1 minute'"))
     moved = await _run_part_a(engine, True)
     assert moved[ids["a"]] is None  # evidence voided at consumption
+
+
+# ── #683 first attended import rail: operational bounds on a REAL server ──
+#
+# PILLAR: TRUTH. SHIP: a settled Kalshi question with missing history gains its
+# real recoverable older probability journey on web and native, with explicit
+# archive provenance. These cases hold the bounds the first attended import
+# relies on (``app.services.kalshi_archive_bounds``) where only PostgreSQL can:
+# startup parameters across COMMIT and reconnect, the 500 ms lock bound, the
+# FOR SHARE identity fence, and receipts for COMMITs whose answer was lost.
+
+
+def _archive_url(monkeypatch):
+    """Point the task engine (and so ``archive_session``) at this test database."""
+    import app.tasks.base as base
+
+    monkeypatch.setattr(base, "DATABASE_URL", DB_URL)
+
+
+async def _budget(session):
+    rows = (await session.execute(text(
+        "SELECT name, setting FROM pg_settings"
+        " WHERE name IN ('statement_timeout', 'lock_timeout')"
+    ))).all()
+    pid = (await session.execute(text("SELECT pg_backend_pid()"))).scalar_one()
+    return dict(rows), pid
+
+
+async def test_the_archive_session_carries_both_bounds_across_commit_and_reconnect(
+    world, monkeypatch
+):
+    from app.services.kalshi_archive_bounds import archive_session
+    from app.tasks.base import get_task_session
+
+    _archive_url(monkeypatch)
+    want = {"statement_timeout": "10000", "lock_timeout": "500"}
+    async with archive_session() as s:
+        first, pid1 = await _budget(s)
+        await s.commit()
+        after_commit, _ = await _budget(s)
+        await (await s.connection()).invalidate()  # the pool must open a NEW backend
+        await s.rollback()
+        after_reconnect, pid2 = await _budget(s)
+    assert first == after_commit == after_reconnect == want
+    assert pid1 != pid2, "the reconnect case must really be a new connection"
+    # Control: the house task session is untouched (no lock bound, resting statement bound).
+    async with get_task_session() as s:
+        house, _ = await _budget(s)
+    assert house["lock_timeout"] == "0" and house["statement_timeout"] != "10000"
+
+
+async def test_an_unarmed_session_is_refused_before_its_first_statement(world):
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+    from app.services.kalshi_archive_bounds import (
+        ArchiveSessionUnarmed,
+        verify_session_budget,
+    )
+
+    engine, _ = world
+    async with AsyncSession(engine) as s:
+        with pytest.raises(ArchiveSessionUnarmed):
+            await verify_session_budget(s)
+
+
+async def test_the_archive_lock_bound_gives_up_after_500ms(world, monkeypatch):
+    import time
+
+    from sqlalchemy.exc import DBAPIError
+
+    from app.services.kalshi_archive_bounds import archive_session
+
+    engine, ids = world
+    _archive_url(monkeypatch)
+    async with engine.connect() as holder:
+        await holder.begin()
+        await holder.execute(
+            text("SELECT id FROM futures_outcomes WHERE id = :a FOR UPDATE"), {"a": ids["a"]}
+        )
+        t0 = time.monotonic()
+        with pytest.raises(DBAPIError) as info:
+            async with archive_session() as s:
+                await s.execute(
+                    text("SELECT id FROM futures_outcomes WHERE id = :a FOR UPDATE"),
+                    {"a": ids["a"]},
+                )
+        waited = time.monotonic() - t0
+        await holder.rollback()
+    assert "lock timeout" in str(info.value).lower() or "55P03" in str(info.value)
+    assert 0.4 <= waited < 5.0
+
+
+async def test_the_default_factory_applies_through_the_bounded_session(world, monkeypatch):
+    """Control for the fence cases: the production factory, real startup bounds, a clean apply."""
+    from app.services import kalshi_archive_apply as imp
+
+    engine, ids = world
+    _archive_url(monkeypatch)
+    report = await _plan(engine, [ids["a"]])
+    done = await imp.apply_archive_plan(
+        report, expected_digest=report["plan_digest"], write=True,
+        max_outcomes=1, max_points=26,
+    )
+    assert done["status"] == "applied" and done["inserted"] == 11
+    assert done["committed_outcomes"][0]["inserted_ids"] == done["outcomes"][0]["inserted_ids"]
+    assert done["import_row"] == "applied" and done["uncertain_commits"] == []
+
+
+async def test_an_outcome_whose_row_is_being_written_is_refused_within_the_lock_bound(
+    world, monkeypatch
+):
+    import time
+
+    from app.services import kalshi_archive_apply as imp
+
+    engine, ids = world
+    _archive_url(monkeypatch)
+    report = await _plan(engine, [ids["a"]])
+    async with engine.connect() as writer:
+        await writer.begin()
+        await writer.execute(
+            text("UPDATE futures_outcomes SET name = name WHERE id = :a"), {"a": ids["a"]}
+        )
+        t0 = time.monotonic()
+        result = await imp.apply_archive_plan(
+            report, expected_digest=report["plan_digest"], write=True,
+            max_outcomes=1, max_points=26,
+        )
+        waited = time.monotonic() - t0
+        await writer.rollback()
+    assert waited < 5.0
+    assert result["status"] == "partial" and result["inserted"] == 0
+    [err] = result["errors"]
+    assert err["outcome_id"] == ids["a"] and err["committed"] is False
+    assert "lock" in err["error"].lower()
+    assert await _count(engine, "kalshi_archive_intervals") == 0
+    assert await _count(engine, "kalshi_archive_outcome_evidence") == 0
+
+
+async def test_the_fence_holds_identity_from_the_fingerprint_check_to_the_commit(world):
+    """While the outcome's transaction is open, an identity edit must wait for it."""
+    from sqlalchemy.exc import DBAPIError
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+    from app.services import kalshi_archive_apply as imp
+
+    engine, ids = world
+    report = await _plan(engine, [ids["a"]])
+    seen: dict = {}
+
+    class Probing(AsyncSession):
+        async def execute(self, statement, *a, **k):
+            out = await super().execute(statement, *a, **k)
+            if "FROM events e" in str(statement) and "FOR SHARE" in str(statement):
+                for table, sql in (
+                    ("events", "UPDATE events SET commence_time = commence_time"
+                               " - interval '1 hour' WHERE id = :id"),
+                    ("futures_outcomes", "UPDATE futures_outcomes SET resolution_source"
+                                         " = 'x' WHERE id = :id"),
+                ):
+                    async with engine.connect() as other:
+                        await other.execute(text("SET lock_timeout = '300ms'"))
+                        try:
+                            await other.execute(
+                                text(sql),
+                                {"id": ids["event"] if table == "events" else ids["a"]},
+                            )
+                            seen[table] = "changed"
+                        except DBAPIError as e:
+                            seen[table] = (
+                                "blocked" if "55P03" in str(e) or "lock timeout" in str(e).lower()
+                                else str(e)[:80]
+                            )
+            return out
+
+    result = await imp.apply_archive_plan(
+        report, expected_digest=report["plan_digest"], write=True,
+        session_factory=lambda: Probing(engine, expire_on_commit=False),
+    )
+    assert seen == {"events": "blocked", "futures_outcomes": "blocked"}
+    assert result["status"] == "applied" and result["inserted"] == 11
+
+
+def _losing_commit(engine, *, when, really_commit):
+    """Sessions whose COMMIT for ``when`` loses its acknowledgement.
+
+    ``really_commit`` decides whether the server applied it first: the receipt
+    must read the same either way, because the client cannot tell.
+    """
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+    class Losing(AsyncSession):
+        wrote = False
+
+        async def execute(self, statement, *a, **k):
+            if when in str(statement):
+                self.wrote = True
+            return await super().execute(statement, *a, **k)
+
+        async def commit(self):
+            if not self.wrote:
+                return await super().commit()
+            if really_commit:
+                await super().commit()
+            else:
+                await super().rollback()
+            raise ConnectionResetError("connection lost before the COMMIT answer")
+
+    return lambda: Losing(engine, expire_on_commit=False)
+
+
+@pytest.mark.parametrize("really_commit", [True, False])
+async def test_a_lost_outcome_commit_ack_is_uncertain_never_nothing_never_retried(
+    world, really_commit
+):
+    from app.services import kalshi_archive_apply as imp
+
+    engine, ids = world
+    report = await _plan(engine, [ids["a"], ids["b"]])
+    result = await imp.apply_archive_plan(
+        report, expected_digest=report["plan_digest"], write=True,
+        session_factory=_losing_commit(
+            engine, when="ON CONFLICT ON CONSTRAINT uq_kai_interval",
+            really_commit=really_commit,
+        ),
+    )
+    assert result["stopped"] == f"commit_unacknowledged:{ids['a']}"
+    assert result["status"] == "partial" and result["committed_outcomes"] == []
+    [u] = result["uncertain_commits"]
+    assert u["outcome_id"] == ids["a"] and len(u["inserted_ids"]) == 11
+    assert result["readback_owed"]["durability"] == "unknown"
+    assert result["import_row"] == "applying"  # FINISH never ran; B never tried
+    durable = await _count(engine, "kalshi_archive_intervals")
+    assert durable == (11 if really_commit else 0)
+    assert await _count(engine, "kalshi_archive_outcome_evidence") == (1 if really_commit else 0)
+    # The disposition: the read-only restore dry-run tells which world this is.
+    held = await imp.restore_archive_import(result["import_key"], session_factory=_factory(engine))
+    assert held["refused"] == "import_still_applying"
+    told = await imp.restore_archive_import(
+        result["import_key"], allow_applying=True, session_factory=_factory(engine)
+    )
+    if really_commit:
+        assert told["refused"] is None and told["would_delete"] == 11
+    else:
+        assert told["refused"] is None and told["would_delete"] == 0
+
+
+async def test_an_error_after_a_commit_still_reports_the_rows_durable(world):
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+    from app.services import kalshi_archive_apply as imp
+
+    engine, ids = world
+    report = await _plan(engine, [ids["a"]])
+
+    class BrokenReadback(AsyncSession):
+        async def execute(self, statement, *a, **k):
+            if "SELECT id FROM kalshi_archive_intervals" in str(statement):
+                raise ConnectionResetError("readback connection dropped")
+            return await super().execute(statement, *a, **k)
+
+    result = await imp.apply_archive_plan(
+        report, expected_digest=report["plan_digest"], write=True,
+        session_factory=lambda: BrokenReadback(engine, expire_on_commit=False),
+    )
+    [err] = result["errors"]
+    assert err["committed"] is True and len(err["inserted_ids"]) == 11
+    assert result["gained_history_outcome_ids"] == [ids["a"]]
+    assert result["status"] == "partial" and result["import_row"] == "partial"
+    assert await _count(engine, "kalshi_archive_intervals") == 11
+
+
+async def test_a_lost_restore_ack_reports_unknown_and_a_readback_settles_it(world):
+    from app.services import kalshi_archive_apply as imp
+
+    engine, ids = world
+    done = await _applied(engine, ids)
+    lost = await imp.restore_archive_import(
+        done["import_key"], write=True,
+        session_factory=_losing_commit(
+            engine, when="DELETE FROM kalshi_archive_intervals", really_commit=True
+        ),
+    )
+    assert lost["refused"] == "commit_unacknowledged" and lost["deleted"] == "unknown"
+    assert len(lost["uncertain_commits"][0]["would_delete_ids"]) == 11
+    again = await imp.restore_archive_import(done["import_key"], session_factory=_factory(engine))
+    assert again["refused"] == "already_restored"
+    assert await _count(engine, "kalshi_archive_intervals") == 0
+
+
+async def test_a_partial_plan_writes_its_subset_but_is_never_applied(world):
+    import json as _json
+
+    from app.services import kalshi_archive_apply as imp
+    from app.services import kalshi_archive_recovery as rec
+    from tests.test_kalshi_archive_recovery_683 import FakeService
+
+    engine, ids = world
+    listed = [
+        {"ticker": t, "event_ticker": EVT, "status": "finalized",
+         "open_time": OPEN.isoformat(), "settlement_ts": SETTLED.isoformat()}
+        for t in (TA, TB)
+    ]
+
+    async def _sleep(_s):
+        return None
+
+    svc = FakeService({EVT: [(listed, None)]}, {TA: _candles(0.30), TB: _candles(0.50)},
+                      cutoff=ARCHIVE_CUTOFF.isoformat())
+    # cutoff + listing + A's one window: B is held by the request budget.
+    report = _json.loads(_json.dumps(await rec.plan_archive_recovery(
+        outcome_ids=[ids["a"], ids["b"]], session_factory=_factory(engine),
+        service_factory=lambda: svc, cooldown_reader=lambda: 0.0, sleep=_sleep,
+        pace_seconds=0.5, max_requests=3,
+    ), default=str))
+    assert report["terminal"] == "partial" and report["budget_stop"] == "requests"
+    result = await imp.apply_archive_plan(
+        report, expected_digest=report["plan_digest"], write=True,
+        session_factory=_factory(engine),
+    )
+    assert result["inserted"] == 11 and result["status"] == "partial"
+    assert result["incomplete_reasons"] == [
+        "plan_terminal:partial", "plan_held_outcome", "plan_budget_stop:requests",
+    ]
+    async with engine.connect() as c:
+        status = (await c.execute(text("SELECT status FROM kalshi_archive_imports"))).scalar_one()
+    assert status == "partial"
+
+
+async def test_a_zero_point_plan_is_never_applied(world):
+    from app.services import kalshi_archive_apply as imp
+
+    engine, ids = world
+    await _applied(engine, ids)
+    again = await _plan(engine, [ids["a"]])
+    assert again["importable_points"] == 0
+    result = await imp.apply_archive_plan(
+        again, expected_digest=again["plan_digest"], session_factory=_factory(engine)
+    )
+    assert result["status"] == "partial" and result["inserted"] == 0
+    assert result["incomplete_reasons"] == ["plan_has_no_importable_points"]
+
+
+async def test_the_import_cli_runs_the_first_sample_profile_on_a_real_server(
+    world, monkeypatch, tmp_path, capsys
+):
+    import json as _json
+
+    engine, ids = world
+    _archive_url(monkeypatch)
+    report = await _plan(engine, [ids["a"]])
+    plan = tmp_path / "P.json"
+    plan.write_text(_json.dumps(report))
+    path = Path(__file__).resolve().parents[2] / "scripts" / "kalshi_archive_import.py"
+    spec = importlib.util.spec_from_file_location("kalshi_archive_import", path)
+    cli = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(cli)
+    import asyncio
+
+    base = ["apply", "--plan", str(plan), "--expected-digest", report["plan_digest"],
+            "--max-outcomes", "1", "--max-points", "26", "--deadline", "30"]
+    # The CLI owns its own event loop; run it off this test's loop.
+    dry = await asyncio.to_thread(cli.main, base + ["--output", str(tmp_path / "dry.json")])
+    assert dry == 0
+    receipt = _json.loads((tmp_path / "dry.json").read_text())
+    assert receipt["status"] == "applied" and receipt["mode"] == "dry_run"
+    assert receipt["outcomes"][0]["would_insert"] == 11 and receipt["incomplete_reasons"] == []
+    assert await _count(engine, "kalshi_archive_intervals") == 0
+    wrote = await asyncio.to_thread(
+        cli.main, base + ["--write", "--output", str(tmp_path / "write.json")]
+    )
+    assert wrote == 0 and await _count(engine, "kalshi_archive_intervals") == 11
+    key = _json.loads((tmp_path / "write.json").read_text())["import_key"]
+    capsys.readouterr()
+    restore_dry = await asyncio.to_thread(
+        cli.main, ["restore", "--import-key", key, "--deadline", "30"]
+    )
+    assert restore_dry == 0
+    assert _json.loads(capsys.readouterr().out)["would_delete"] == 11
