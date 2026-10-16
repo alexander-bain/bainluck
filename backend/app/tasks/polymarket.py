@@ -2737,19 +2737,17 @@ async def _process_event_batch(
     from app.utils.editorial_patterns import matches_editorial_recall as _matches_editorial_recall
     from app.utils.market_label_normalization import game_prop_category
 
+    import copy
+
     async with get_task_session() as session:
         now = datetime.now(timezone.utc)
 
         for event in events:
-            # #8935: one savepoint per event. The batch shares one transaction
-            # and one closing COMMIT, and a failed statement (a deadlock, a value
-            # too long) aborts that transaction on Postgres: every later event
-            # then failed with "current transaction is aborted", and the COMMIT
-            # became a silent ROLLBACK of every event written before it — up to
-            # 50 events' prices, status flips and stamps, with `events_processed`
-            # still counting them. Rolling back to the savepoint drops only the
-            # failing event's writes. `continue` inside the try RELEASEs it in
-            # `finally`, like a clean pass.
+            # Failed outer COMMIT must not count this event as persisted.
+            before_event = copy.deepcopy(stats)
+            # Keep all writes for one provider event atomic (#8935), including
+            # early-continue paths, and release its locks before the next event.
+            # A failed statement rolls back only this event's savepoint.
             savepoint = await session.begin_nested()
             try:
                 if not event.markets:
@@ -3981,9 +3979,24 @@ async def _process_event_batch(
                 await savepoint.rollback()
                 stats["errors"].append(f"{event.id}: {str(e)}")
                 continue
+            except BaseException:
+                # Cancellation must not turn an incomplete event into a commit
+                # through the successful-continue finalizer below.
+                await session.rollback()
+                raise
             finally:
                 if savepoint.is_active:
-                    await savepoint.commit()
+                    try:
+                        await savepoint.commit()
+                        # Keep one provider event coherent, but release its
+                        # quote locks before touching an unrelated next event.
+                        await session.commit()
+                    except Exception as exc:
+                        await session.rollback()
+                        errors = list(stats["errors"])
+                        stats.clear()
+                        stats.update(before_event)
+                        stats["errors"] = errors + [f"{event.id}: commit failed: {exc}"]
 
         # The parent→sub-market event_id sweep used to run HERE, once per batch.
         # It is now `link_polymarket_sub_markets`, called ONCE per poll — see that
