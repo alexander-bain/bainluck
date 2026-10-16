@@ -4198,6 +4198,22 @@ jobs:
             exit 1
           fi
 
+      - name: "#1853 a settled Kalshi event's archived legs are graded by an attended, undoable repair (real Postgres)"
+        # The live grader read a legless event once the venue archived its
+        # markets, so 22 of KXUECLSCORE-26JUL30LEVIFK's 30 legs stayed ungraded.
+        # Plans from the RETAINED archive bytes, backs up, writes the 22 and only
+        # the 22 (CAS on "still ungraded"), and the undo puts back only what the
+        # apply wrote — never the 8 authoritative controls or a leg graded since.
+        if: matrix.group == 'shared-tail'
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_kalshi_archive_grades_1853_pg.py \
+            -v -s -rs 2>&1 | tee /tmp/kalshi_archive_grades_1853.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/kalshi_archive_grades_1853.txt; then
+            echo "::error::#1853 archive-grade repair gate SKIPPED — the gate did not run"
+            exit 1
+          fi
+
       - name: "#938 a Kalshi golf round price no stored time places before the round is not scored (real Postgres)"
         # Kalshi gives a golf round market only the round's close as a start
         # time, so every closing-line selector bounded on it can store a quote

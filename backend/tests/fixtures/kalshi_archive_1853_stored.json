@@ -1,0 +1,187 @@
+{
+ "source": "artifacts/calibration-1853-receipt-20261015/specimen-result.json (stored, read 2026-10-15)",
+ "market_id": 59280512,
+ "event_ticker": "KXUECLSCORE-26JUL30LEVIFK",
+ "stored": [
+  {
+   "outcome_id": 220314800,
+   "external_id": "KXUECLSCORE-26JUL30LEVIFK-LEV0IFK1",
+   "resolution_source": "api_settlement",
+   "is_winner": true
+  },
+  {
+   "outcome_id": 220314801,
+   "external_id": "KXUECLSCORE-26JUL30LEVIFK-LEV0IFK2",
+   "resolution_source": "api_settlement",
+   "is_winner": false
+  },
+  {
+   "outcome_id": 220314802,
+   "external_id": "KXUECLSCORE-26JUL30LEVIFK-LEV1IFK0",
+   "resolution_source": "api_settlement",
+   "is_winner": false
+  },
+  {
+   "outcome_id": 220314803,
+   "external_id": "KXUECLSCORE-26JUL30LEVIFK-LEV0IFK0",
+   "resolution_source": "api_settlement",
+   "is_winner": false
+  },
+  {
+   "outcome_id": 220314804,
+   "external_id": "KXUECLSCORE-26JUL30LEVIFK-LEV1IFK1",
+   "resolution_source": "api_settlement",
+   "is_winner": false
+  },
+  {
+   "outcome_id": 220314805,
+   "external_id": "KXUECLSCORE-26JUL30LEVIFK-LEV1IFK2",
+   "resolution_source": "api_settlement",
+   "is_winner": false
+  },
+  {
+   "outcome_id": 220314806,
+   "external_id": "KXUECLSCORE-26JUL30LEVIFK-LEV0IFK3",
+   "resolution_source": "api_settlement",
+   "is_winner": false
+  },
+  {
+   "outcome_id": 220314807,
+   "external_id": "KXUECLSCORE-26JUL30LEVIFK-LEV2IFK1",
+   "resolution_source": "api_settlement",
+   "is_winner": false
+  },
+  {
+   "outcome_id": 229512806,
+   "external_id": "KXUECLSCORE-26JUL30LEVIFK-LEV0IFK4",
+   "resolution_source": null,
+   "is_winner": null
+  },
+  {
+   "outcome_id": 229512807,
+   "external_id": "KXUECLSCORE-26JUL30LEVIFK-LEV0IFK5",
+   "resolution_source": null,
+   "is_winner": null
+  },
+  {
+   "outcome_id": 229512808,
+   "external_id": "KXUECLSCORE-26JUL30LEVIFK-LEV1IFK3",
+   "resolution_source": null,
+   "is_winner": null
+  },
+  {
+   "outcome_id": 229512809,
+   "external_id": "KXUECLSCORE-26JUL30LEVIFK-LEV1IFK4",
+   "resolution_source": null,
+   "is_winner": null
+  },
+  {
+   "outcome_id": 229512810,
+   "external_id": "KXUECLSCORE-26JUL30LEVIFK-LEV1IFK5",
+   "resolution_source": null,
+   "is_winner": null
+  },
+  {
+   "outcome_id": 229512811,
+   "external_id": "KXUECLSCORE-26JUL30LEVIFK-LEV2IFK0",
+   "resolution_source": null,
+   "is_winner": null
+  },
+  {
+   "outcome_id": 229512812,
+   "external_id": "KXUECLSCORE-26JUL30LEVIFK-LEV2IFK2",
+   "resolution_source": null,
+   "is_winner": null
+  },
+  {
+   "outcome_id": 229512813,
+   "external_id": "KXUECLSCORE-26JUL30LEVIFK-LEV2IFK3",
+   "resolution_source": null,
+   "is_winner": null
+  },
+  {
+   "outcome_id": 229512814,
+   "external_id": "KXUECLSCORE-26JUL30LEVIFK-LEV2IFK4",
+   "resolution_source": null,
+   "is_winner": null
+  },
+  {
+   "outcome_id": 229512815,
+   "external_id": "KXUECLSCORE-26JUL30LEVIFK-LEV2IFK5",
+   "resolution_source": null,
+   "is_winner": null
+  },
+  {
+   "outcome_id": 229512816,
+   "external_id": "KXUECLSCORE-26JUL30LEVIFK-LEV3IFK0",
+   "resolution_source": null,
+   "is_winner": null
+  },
+  {
+   "outcome_id": 229512817,
+   "external_id": "KXUECLSCORE-26JUL30LEVIFK-LEV3IFK1",
+   "resolution_source": null,
+   "is_winner": null
+  },
+  {
+   "outcome_id": 229512818,
+   "external_id": "KXUECLSCORE-26JUL30LEVIFK-LEV3IFK2",
+   "resolution_source": null,
+   "is_winner": null
+  },
+  {
+   "outcome_id": 229512819,
+   "external_id": "KXUECLSCORE-26JUL30LEVIFK-LEV3IFK3",
+   "resolution_source": null,
+   "is_winner": null
+  },
+  {
+   "outcome_id": 229512820,
+   "external_id": "KXUECLSCORE-26JUL30LEVIFK-LEV3IFK4",
+   "resolution_source": null,
+   "is_winner": null
+  },
+  {
+   "outcome_id": 229512821,
+   "external_id": "KXUECLSCORE-26JUL30LEVIFK-LEV4IFK0",
+   "resolution_source": null,
+   "is_winner": null
+  },
+  {
+   "outcome_id": 229512822,
+   "external_id": "KXUECLSCORE-26JUL30LEVIFK-LEV4IFK1",
+   "resolution_source": null,
+   "is_winner": null
+  },
+  {
+   "outcome_id": 229512823,
+   "external_id": "KXUECLSCORE-26JUL30LEVIFK-LEV4IFK2",
+   "resolution_source": null,
+   "is_winner": null
+  },
+  {
+   "outcome_id": 229512824,
+   "external_id": "KXUECLSCORE-26JUL30LEVIFK-LEV4IFK3",
+   "resolution_source": null,
+   "is_winner": null
+  },
+  {
+   "outcome_id": 229512825,
+   "external_id": "KXUECLSCORE-26JUL30LEVIFK-LEV5IFK0",
+   "resolution_source": null,
+   "is_winner": null
+  },
+  {
+   "outcome_id": 229512826,
+   "external_id": "KXUECLSCORE-26JUL30LEVIFK-LEV5IFK1",
+   "resolution_source": null,
+   "is_winner": null
+  },
+  {
+   "outcome_id": 229512827,
+   "external_id": "KXUECLSCORE-26JUL30LEVIFK-LEV5IFK2",
+   "resolution_source": null,
+   "is_winner": null
+  }
+ ]
+}
