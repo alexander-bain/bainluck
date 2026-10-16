@@ -1,3 +1,4 @@
+import { isAuthoritativeResolution } from "@/lib/resolutionAuthority";
 import type { SettlementDisplay } from "@/lib/types";
 
 /**
@@ -23,8 +24,15 @@ import type { SettlementDisplay } from "@/lib/types";
  * running ahead of the API (Vercel deploys before Heroku) and the same rules run
  * here on the SERVED values, conservatively: anything short of an exact terminal
  * price agreeing with its grade is unknown, so a web-first deploy cannot briefly
- * restore the two losses. That fallback cannot see the stored price or the
- * source registry, so it can only ever say LESS than the server, never more.
+ * restore the two losses. It cannot see the stored price, and it does not hold
+ * the server's full source registry (`KNOWN_SOURCES`), so it accepts only the
+ * tier-3 subset it DOES hold — `AUTHORITATIVE_RESOLUTION_SOURCES`, pinned to the
+ * backend by `resolutionAuthorityMirror6082.test.ts`. Any other source, including
+ * one the server would reject as unrecognised, is unknown here. A subset of the
+ * server's vocabulary plus the same terminal rule means the fallback can only
+ * say LESS than the server, never more (Root counterexample on b0e37eb2b1:
+ * `1 / true / "unrecognized_future_source"` read WON here while the server said
+ * unknown — `settledCoinFlipSaysResultUnknown698.test.tsx` pins it).
  * Every other market — other sources, open boards — is returned untouched and
  * keeps every legacy contract it had (#4788, #6082, #10066, #10964).
  *
@@ -63,7 +71,8 @@ function isTargeted(market: { source?: string | null; status?: string | null }):
 export function clientFallbackSettlement(row: SettledRow): SettlementDisplay {
   const unknown: SettlementDisplay = { verdict: "unknown", basis: CLIENT_FALLBACK_BASIS };
   if (row.resolution_source === RETRACTED_SOURCE) return unknown;
-  if (!row.resolution_source) return unknown;
+  // Fail CLOSED on any source outside the verified tier-3 subset (see above).
+  if (!isAuthoritativeResolution(row.resolution_source)) return unknown;
   const p = row.probability;
   if (p === null || p === undefined || !Number.isFinite(p)) return unknown;
   if (p === 1 && row.is_winner === true) return { verdict: "won", basis: CLIENT_FALLBACK_BASIS };

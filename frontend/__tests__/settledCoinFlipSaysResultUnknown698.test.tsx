@@ -23,6 +23,8 @@
  * restore the two losses. Synthetic boards are labelled synthetic.
  */
 import React from "react";
+import { readFileSync } from "fs";
+import { join } from "path";
 import { renderToStaticMarkup } from "react-dom/server";
 
 jest.mock("next/navigation", () => ({
@@ -416,5 +418,74 @@ describe("the rollout fallback on served values is conservative", () => {
     expect(boardResultCertainty([{ settlement_display: LOST_T }], true)).toBeNull();
     expect(boardResultCertainty([{ settlement_display: UNKNOWN_MID }], false)).toBeNull();
     expect(settledChartCaption(null, "No")).toBe("Settled — No won.");
+  });
+});
+
+/* ───────── Root counterexample on b0e37eb2b1: the fallback must fail CLOSED ───────── */
+
+const AUTHORITY_PY = join(__dirname, "..", "..", "backend", "app", "utils", "resolution_authority.py");
+
+/** Members of a named `frozenset({...})` literal (same reader as the #6082 mirror test). */
+function pythonFrozenset(source: string, name: string): Set<string> {
+  const block = new RegExp(
+    `${name}\\s*:\\s*frozenset\\[str\\]\\s*=\\s*frozenset\\(\\{([\\s\\S]*?)\\}\\)`,
+  ).exec(source);
+  if (!block) throw new Error(`could not find ${name} in resolution_authority.py`);
+  return new Set((block[1].match(/"([^"]+)"/g) ?? []).map((m) => m.slice(1, -1)));
+}
+
+/** The server's rule (`settlement_display.py`) over its OWN `KNOWN_SOURCES`. */
+function serverVerdict(p: number | null, w: boolean | null, src: string | null, known: Set<string>) {
+  if (src === "ungradeable_result" || !src || !known.has(src) || w === null || p === null) return "unknown";
+  if (p > 0 && p < 1) return "unknown";
+  if (p === 1 && w === true) return "won";
+  if (p === 0 && w === false) return "lost";
+  return "unknown";
+}
+
+describe("absent-contract fallback never says more than the server", () => {
+  it.each([
+    [1, true],
+    [0, false],
+  ])("Root's counterexample: p=%s winner=%s with an unrecognised source is unknown", (p, w) => {
+    expect(
+      clientFallbackSettlement({ probability: p, is_winner: w, resolution_source: "unrecognized_future_source" })
+        .verdict,
+    ).toBe("unknown");
+  });
+
+  it("the same row renders Result unknown, never Won, on a resolved Polymarket board", () => {
+    const h = render(
+      synthetic("polymarket", [
+        leg(1, "Alpha Side", 1, true, "unrecognized_future_source"),
+        leg(2, "Beta Side", 0, false, "unrecognized_future_source"),
+      ]),
+    );
+    expect(h).not.toContain('data-testid="outcome-verdict"');
+    expect(h).not.toContain('data-testid="hero-resolved-name"');
+    expect(count(h, 'data-testid="outcome-result-unknown"')).toBe(2);
+  });
+
+  it("over every backend source and every terminal/midrange/null shape, a definite client verdict equals the server's", () => {
+    const py = readFileSync(AUTHORITY_PY, "utf8");
+    const known = new Set(
+      ["AUTHORITATIVE_SOURCES", "DETERMINISTIC_SOURCES", "TERMINAL_SOURCES", "GUESS_FAMILY_SOURCES"].flatMap(
+        (n) => [...pythonFrozenset(py, n)],
+      ),
+    );
+    expect(known.size).toBeGreaterThan(20);
+    const sources: (string | null)[] = [...known, "unrecognized_future_source", "", null];
+    let definite = 0;
+    for (const src of sources)
+      for (const p of [0, 1, 0.5, 0.001, 0.999, null])
+        for (const w of [true, false, null]) {
+          const client = clientFallbackSettlement({ probability: p, is_winner: w, resolution_source: src }).verdict;
+          if (client !== "unknown") {
+            definite += 1;
+            expect([src, p, w, client]).toEqual([src, p, w, serverVerdict(p, w, src, known)]);
+          }
+        }
+    // Not vacuous: the tier-3 subset still yields definite results on terminal rows.
+    expect(definite).toBeGreaterThan(0);
   });
 });
