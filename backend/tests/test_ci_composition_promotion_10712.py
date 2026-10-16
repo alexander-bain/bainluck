@@ -88,6 +88,20 @@ STEP_ENV_KEYS = {
     },
 }
 
+# Receipt values are data, never workflow-expression interpolation in shell.
+for _receipt_job in (
+    "backend-tests",
+    "shard-completeness",
+    "database-integration",
+    "frontend-build",
+):
+    STEP_ENV_KEYS[(_receipt_job, "Reused exact-commit test evidence")] = {
+        "REUSE_RUN",
+        "REUSE_ATTEMPT",
+        "REUSE_HEAD",
+        "REUSE_BASE",
+    }
+
 
 def _allowed_environment(env, allowed, scope):
     env = {} if env is None else env

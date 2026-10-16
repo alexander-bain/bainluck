@@ -226,7 +226,12 @@ jobs:
       - name: Reused exact-commit test evidence
         if: needs.change-scope.outputs.reuse == 'true'
         working-directory: .
-        run: echo 'reused run ${{ needs.change-scope.outputs.reuse_run }} attempt ${{ needs.change-scope.outputs.reuse_attempt }}, tested ${{ needs.change-scope.outputs.reuse_head }}, base ${{ needs.change-scope.outputs.reuse_base }}'
+        env:
+          REUSE_RUN: ${{ needs.change-scope.outputs.reuse_run }}
+          REUSE_ATTEMPT: ${{ needs.change-scope.outputs.reuse_attempt }}
+          REUSE_HEAD: ${{ needs.change-scope.outputs.reuse_head }}
+          REUSE_BASE: ${{ needs.change-scope.outputs.reuse_base }}
+        run: echo "reused run $REUSE_RUN attempt $REUSE_ATTEMPT, tested $REUSE_HEAD, base $REUSE_BASE"
 
       # Says so in the log, so a green leg that did no work never reads as a
       # tested one. Runs from the workspace root: nothing is checked out.
@@ -360,7 +365,12 @@ jobs:
       - name: Reused exact-commit test evidence
         if: needs.change-scope.outputs.reuse == 'true'
         working-directory: .
-        run: echo 'reused run ${{ needs.change-scope.outputs.reuse_run }} attempt ${{ needs.change-scope.outputs.reuse_attempt }}, tested ${{ needs.change-scope.outputs.reuse_head }}, base ${{ needs.change-scope.outputs.reuse_base }}'
+        env:
+          REUSE_RUN: ${{ needs.change-scope.outputs.reuse_run }}
+          REUSE_ATTEMPT: ${{ needs.change-scope.outputs.reuse_attempt }}
+          REUSE_HEAD: ${{ needs.change-scope.outputs.reuse_head }}
+          REUSE_BASE: ${{ needs.change-scope.outputs.reuse_base }}
+        run: echo "reused run $REUSE_RUN attempt $REUSE_ATTEMPT, tested $REUSE_HEAD, base $REUSE_BASE"
 
       - uses: actions/checkout@v6
         if: needs.change-scope.outputs.reuse != 'true'
@@ -541,7 +551,12 @@ jobs:
       - name: Reused exact-commit test evidence
         if: needs.change-scope.outputs.reuse == 'true'
         working-directory: .
-        run: echo 'reused run ${{ needs.change-scope.outputs.reuse_run }} attempt ${{ needs.change-scope.outputs.reuse_attempt }}, tested ${{ needs.change-scope.outputs.reuse_head }}, base ${{ needs.change-scope.outputs.reuse_base }}'
+        env:
+          REUSE_RUN: ${{ needs.change-scope.outputs.reuse_run }}
+          REUSE_ATTEMPT: ${{ needs.change-scope.outputs.reuse_attempt }}
+          REUSE_HEAD: ${{ needs.change-scope.outputs.reuse_head }}
+          REUSE_BASE: ${{ needs.change-scope.outputs.reuse_base }}
+        run: echo "reused run $REUSE_RUN attempt $REUSE_ATTEMPT, tested $REUSE_HEAD, base $REUSE_BASE"
 
       - uses: actions/checkout@v6
         if: needs.change-scope.outputs.reuse != 'true'
@@ -7807,7 +7822,12 @@ jobs:
       - name: Reused exact-commit test evidence
         if: needs.change-scope.outputs.reuse == 'true'
         working-directory: .
-        run: echo 'reused run ${{ needs.change-scope.outputs.reuse_run }} attempt ${{ needs.change-scope.outputs.reuse_attempt }}, tested ${{ needs.change-scope.outputs.reuse_head }}, base ${{ needs.change-scope.outputs.reuse_base }}'
+        env:
+          REUSE_RUN: ${{ needs.change-scope.outputs.reuse_run }}
+          REUSE_ATTEMPT: ${{ needs.change-scope.outputs.reuse_attempt }}
+          REUSE_HEAD: ${{ needs.change-scope.outputs.reuse_head }}
+          REUSE_BASE: ${{ needs.change-scope.outputs.reuse_base }}
+        run: echo "reused run $REUSE_RUN attempt $REUSE_ATTEMPT, tested $REUSE_HEAD, base $REUSE_BASE"
 
       - uses: actions/checkout@v6
         if: needs.change-scope.outputs.reuse != 'true'

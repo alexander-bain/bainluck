@@ -403,6 +403,12 @@ def decide(api, env, text, tree, before):
     checks = api.pages(f"commits/{head}/check-runs?filter=all", "check_runs")
     suites = {}
     security_paid = set()
+    security_required = {
+        ("CodeQL", 57789),
+        ("Analyze (python)", 15368),
+        ("Analyze (javascript-typescript)", 15368),
+        ("gitleaks secret scan", 15368),
+    }
     for check in checks:
         suite_id = check["check_suite"]["id"]
         if suite_id not in suites:
@@ -424,19 +430,15 @@ def decide(api, env, text, tree, before):
             and not REFUSAL.search((check.get("output") or {}).get("title") or ""),
             "security/check refusal",
         )
-        if (
-            suite["head_branch"] == run["head_branch"]
-            and check["conclusion"] == "success"
-        ):
-            security_paid.add((check["name"], check["app"]["id"]))
+        identity = (check["name"], check["app"]["id"])
+        if suite["head_branch"] == run["head_branch"] and identity in security_required:
+            # A successful older check cannot pay an unpaid/cancelled rerun.
+            # Conservatively require every completed required source check to
+            # succeed instead of inferring its workflow attempt from ordering.
+            require(check["conclusion"] == "success", "unpaid compose security check")
+            security_paid.add(identity)
     require(
-        {
-            ("CodeQL", 57789),
-            ("Analyze (python)", 15368),
-            ("Analyze (javascript-typescript)", 15368),
-            ("gitleaks secret scan", 15368),
-        }
-        <= security_paid,
+        security_required <= security_paid,
         "missing complete compose security checks",
     )
     reread = api.get(f"actions/runs/{run['id']}")

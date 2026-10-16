@@ -488,3 +488,28 @@ def test_provenance_is_captured_immediately_after_each_history_reader_checkout()
         )
         assert steps[checkout + 1]["name"] == "Record compose checkout provenance"
         assert steps[checkout + 2]["name"] == "Publish compose checkout provenance"
+
+
+@pytest.mark.parametrize("index", range(4))
+@pytest.mark.parametrize(
+    "unpaid", ["cancelled", "timed_out", "skipped", "action_required", "neutral", None]
+)
+def test_old_security_success_cannot_pay_a_completed_unpaid_rerun(index, unpaid):
+    api = fixture()
+    rerun = copy.deepcopy(api.checks[index])
+    rerun["id"] = 1000 + index
+    rerun["conclusion"] = unpaid
+    api.checks.append(rerun)
+    with pytest.raises(ValueError, match="unpaid compose security check"):
+        decide(api)
+
+
+def test_all_old_security_successes_plus_all_cancelled_reruns_are_refused():
+    api = fixture()
+    for index in range(4):
+        rerun = copy.deepcopy(api.checks[index])
+        rerun["id"] = 1000 + index
+        rerun["conclusion"] = "cancelled"
+        api.checks.append(rerun)
+    with pytest.raises(ValueError, match="unpaid compose security check"):
+        decide(api)

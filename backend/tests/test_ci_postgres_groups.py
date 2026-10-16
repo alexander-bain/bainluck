@@ -7,6 +7,7 @@ every unit in the workflow must appear once, and every entry must execute once.
 from __future__ import annotations
 
 import ast
+import copy
 import json
 import os
 from pathlib import Path
@@ -147,8 +148,48 @@ def test_fresh_tail_guard_rejects_broken_provisioning(mutation):
         _validate_fresh_tail(worker, source)
 
 
+REUSE_GUARD = "needs.change-scope.outputs.reuse != 'true'"
+REUSE_SUFFIX = " && " + REUSE_GUARD
+RECEIPT = "Reused exact-commit test evidence"
+
+
+def _normalize_reuse_worker(worker):
+    """Validate the entire raw reuse boundary before reading original group rules.
+
+    Strip only the reviewed exact suffix. Existing assignment, chain, reset,
+    consumer and mutation assertions below continue to see their original
+    conditions; the receipt is never an execution unit.
+    """
+    normalized = copy.deepcopy(worker)
+    steps = normalized["steps"]
+    assert len(steps) >= 5
+    assert sum(step.get("name") == RECEIPT for step in steps) == 1
+    assert steps[0].get("name") == RECEIPT
+    receipt = steps[0]
+    assert receipt.get("if") == "needs.change-scope.outputs.reuse == 'true'"
+    assert "uses" not in receipt
+    command = receipt["run"]
+    assert all(forbidden not in command for forbidden in (
+        "tests/", "pytest", "GITHUB_ENV", "DATABASE_URL", "REDIS_URL", "postgres:", "postgresql", "redis://"
+    )), "receipt cannot execute tests or write database/runtime environment"
+    assert [step.get("uses", step.get("name")) for step in steps[:5]] == [
+        RECEIPT, "actions/checkout@v6", "actions/setup-python@v7", "Install dependencies",
+        "Verify the gate is actually armed",
+    ]
+    assert all(step.get("if") == REUSE_GUARD for step in steps[1:5])
+    for step in steps[5:]:
+        condition = step.get("if", "")
+        assert condition.endswith(REUSE_SUFFIX), "each unit/provisioner requires exact reuse conjunct"
+        original = condition[:-len(REUSE_SUFFIX)]
+        assert original in [f"matrix.group == '{group}'" for group in worker["strategy"]["matrix"]["group"]], "no widened or different unit condition"
+        step["if"] = original
+    return normalized
+
+
 def _inputs():
-    return yaml.safe_load(WORKFLOW.read_text())["jobs"], json.loads(MANIFEST.read_text())
+    jobs = yaml.safe_load(WORKFLOW.read_text())["jobs"]
+    jobs["database-integration"] = _normalize_reuse_worker(jobs["database-integration"])
+    return jobs, json.loads(MANIFEST.read_text())
 
 
 def _offloaded_fixture_source():
@@ -219,7 +260,7 @@ def _validate_assignments(worker, manifest):
     groups = worker["strategy"]["matrix"]["group"]
     assert set(groups) == set(manifest)
     assert len(groups) == len(set(groups))
-    steps = worker["steps"][4:]
+    steps = worker["steps"][5:]
     names = [s["name"] for s in steps]
     expected = [name for group in groups for name in manifest[group]]
     assert len(expected) == len(set(expected)), "duplicate assignment"
@@ -244,9 +285,9 @@ def test_incomplete_or_duplicate_dispatch_is_rejected(mutation):
     elif mutation == "duplicate":
         manifest["shared"].append(manifest["isolated"][0])
     elif mutation == "unassigned":
-        worker["steps"][4].pop("if")
+        worker["steps"][5].pop("if")
     else:
-        worker["steps"][4]["if"] = "matrix.group == 'typo'"
+        worker["steps"][5]["if"] = "matrix.group == 'typo'"
     with pytest.raises(AssertionError):
         _validate_assignments(worker, manifest)
 
@@ -264,11 +305,11 @@ def test_common_setup_services_and_intentional_scope_skip():
     assert "REDIS_URL" not in worker["env"]  # Only named history steps use Redis.
     assert worker["env"]["DATABASE_URL"] == worker["env"]["SEARCH_TEST_DATABASE_URL"]
     assert worker["defaults"]["run"]["working-directory"] == "backend"
-    assert [s.get("uses", s.get("name")) for s in worker["steps"][:4]] == [
-        "actions/checkout@v6", "actions/setup-python@v7", "Install dependencies",
+    assert [s.get("uses", s.get("name")) for s in worker["steps"][:5]] == [
+        RECEIPT, "actions/checkout@v6", "actions/setup-python@v7", "Install dependencies",
         "Verify the gate is actually armed",
     ]
-    assert all("if" not in s for s in worker["steps"][:4])
+    assert all(s.get("if") == REUSE_GUARD for s in worker["steps"][1:5])
 
 
 def test_disposable_consumers_keep_their_provisioner_on_the_same_runner():
@@ -441,3 +482,60 @@ def test_middle_guard_rejects_broken_fresh_database_boundary(mutation):
         next(s for s in worker["steps"] if s.get("name", "").startswith("#8935 "))["if"] = "matrix.group == 'shared'"
     with pytest.raises((AssertionError, KeyError)):
         _validate_fresh_middle(worker, source)
+
+
+@pytest.mark.parametrize("mutation", [
+    "unit_missing_conjunct", "unit_or_conjunct", "unit_inverted_conjunct", "unit_scope_conjunct",
+    "unit_widened_prefix", "receipt_missing", "receipt_duplicated", "receipt_moved",
+    "receipt_inverted", "receipt_tests", "receipt_pytest", "receipt_env_write", "receipt_database_url", "receipt_literal_database_url",
+    "setup_missing_guard",
+])
+def test_reuse_representation_refuses_lost_or_widened_guards(mutation):
+    worker = yaml.safe_load(WORKFLOW.read_text())["jobs"]["database-integration"]
+    unit = next(step for step in worker["steps"] if step.get("if") == "matrix.group == 'isolated'" + REUSE_SUFFIX)
+    if mutation == "unit_missing_conjunct":
+        unit["if"] = unit["if"].removesuffix(REUSE_SUFFIX)
+    elif mutation == "unit_or_conjunct":
+        unit["if"] = unit["if"].replace(REUSE_SUFFIX, " || " + REUSE_GUARD)
+    elif mutation == "unit_inverted_conjunct":
+        unit["if"] = unit["if"].replace("reuse != 'true'", "reuse == 'true'")
+    elif mutation == "unit_scope_conjunct":
+        unit["if"] = unit["if"].replace("outputs.reuse", "outputs.scope")
+    elif mutation == "unit_widened_prefix":
+        unit["if"] = unit["if"].replace("matrix.group == 'isolated'", "matrix.group == 'isolated' || true")
+    elif mutation == "receipt_missing":
+        worker["steps"].pop(0)
+    elif mutation == "receipt_duplicated":
+        worker["steps"].insert(1, copy.deepcopy(worker["steps"][0]))
+    elif mutation == "receipt_moved":
+        worker["steps"].insert(1, worker["steps"].pop(0))
+    elif mutation == "receipt_inverted":
+        worker["steps"][0]["if"] = REUSE_GUARD
+    elif mutation == "receipt_tests":
+        worker["steps"][0]["run"] = "python tests/integration/example.py"
+    elif mutation == "receipt_pytest":
+        worker["steps"][0]["run"] = "python -m pytest"
+    elif mutation == "receipt_env_write":
+        worker["steps"][0]["run"] = 'echo "X=1" >> "$GITHUB_ENV"'
+    elif mutation == "receipt_database_url":
+        worker["steps"][0]["run"] = 'echo "$DATABASE_URL"'
+    elif mutation == "receipt_literal_database_url":
+        worker["steps"][0]["run"] = 'echo "postgresql+asyncpg://localhost/test"'
+    else:
+        worker["steps"][1].pop("if")
+    with pytest.raises(AssertionError):
+        _normalize_reuse_worker(worker)
+
+
+def test_receipt_values_are_environment_data_never_interpolated_shell():
+    jobs = yaml.safe_load(WORKFLOW.read_text())["jobs"]
+    for name in ("backend-tests", "database-integration", "shard-completeness", "frontend-build"):
+        receipt = jobs[name]["steps"][0]
+        assert receipt["name"] == RECEIPT
+        assert "${{" not in receipt["run"]
+        assert receipt["env"] == {
+            "REUSE_RUN": "${{ needs.change-scope.outputs.reuse_run }}",
+            "REUSE_ATTEMPT": "${{ needs.change-scope.outputs.reuse_attempt }}",
+            "REUSE_HEAD": "${{ needs.change-scope.outputs.reuse_head }}",
+            "REUSE_BASE": "${{ needs.change-scope.outputs.reuse_base }}",
+        }
