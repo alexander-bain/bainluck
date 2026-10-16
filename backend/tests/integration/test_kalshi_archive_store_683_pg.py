@@ -1393,9 +1393,12 @@ async def test_actual_cap_admission_pages_past_refused_captures_on_the_real_stor
     """Exact admission on PostgreSQL: a window is claimed only by a capture the
     route's own support filter keeps, found by keyset paging (ties by id).
 
-    This fixture's outcomes are graded, and a graded outcome keeps every point,
-    so the support filter is passed here as a stand-in that refuses one price;
-    the routes pass `_drop_unsupported_snapshot_points` (unit-pinned by count).
+    The support filter is passed here as a stand-in that refuses one marked
+    price, so the paging itself is what is pinned; the routes pass
+    `_drop_unsupported_snapshot_points` (unit-pinned by count), which DOES
+    refuse rows on archive-eligible outcomes — a graded loser priced above its
+    ask, and every arm on an ungraded or retracted outcome. CERT-4141's
+    route-level witness below runs that real filter.
     """
     from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -1469,13 +1472,293 @@ async def test_actual_cap_venue_points_yield_only_to_a_skipped_capture_beside_th
     async with AsyncSession(engine, expire_on_commit=False) as db:
         older = await read_older_live(db, [ids["a"], ids["b"]], before=before)
         assert older.thinned is True and beside not in {r.captured_at for r in older.rows}
-        kept = await older.withhold_venue(db, venue, supported=lambda rows: rows)
+        kept, unknown = await older.withhold_venue(db, venue, supported=lambda rows: rows)
+    assert unknown == []
     # +2h and +3h sit in the empty gap and stand; +4:30 is ten minutes from B's
     # skipped capture and yields; A holds no capture, so its point stands.
     assert [(r.outcome_id, r.captured_at) for r in kept] == [
         (ids["b"], OPEN + timedelta(hours=2)), (ids["b"], OPEN + timedelta(hours=3)),
         (ids["a"], beside),
     ]
+
+
+# ── CERT-4141's executed BLOCK: an exhausted admission budget is UNKNOWN ──
+#
+# The reviewer's specimen (/private/tmp/cert4141-review,
+# test_cert4141_independent_pg.py): A ungraded, 2,001 empty-book captures inside
+# +1h..+2h, every one refused by the route's own support filter. On 6a25781e00
+# the default cap drew nine archive prices where the unthinned read drew
+# eleven: the budget-exhausted window became a synthetic capture at +1h, which
+# was counted as live's AND erased the preceding +0h..+1h interval through
+# inclusive overlap. Under rule 5 the +1h price returns; +1h..+2h, whose unread
+# remainder (rows 74..2,001) the bounded read cannot see, is withheld fail
+# closed and DISCLOSED, never counted as live's. Root's disposition accepts this
+# separation (ROOT-ARGON-UNKNOWN-DISPOSITION.md: 73+ refused rows stay UNKNOWN
+# within these limits). The reviewer's last assertion, that +2h itself draws at
+# the default cap, is therefore not what this asserts.
+
+
+async def _cert4141_specimen(engine, ids):
+    from sqlalchemy import select, update
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+    from app.models.models import FuturesOddsSnapshot, FuturesOutcome
+    from app.routes.futures import _drop_unsupported_snapshot_points
+
+    async with AsyncSession(engine, expire_on_commit=False) as s:
+        async with s.begin():
+            await s.execute(update(FuturesOutcome).where(FuturesOutcome.id == ids["a"]).values(
+                resolution_source=None, is_winner=None))
+            s.add_all([FuturesOddsSnapshot(
+                outcome_id=ids["a"], bookmaker="kalshi", probability=0.5, yes_bid=0.01,
+                yes_ask=0.99, last_price=None, captured_at=OPEN + timedelta(hours=1, seconds=i),
+            ) for i in range(1, 2002)])
+        outcome = await s.get(FuturesOutcome, ids["a"])
+        raw = list((await s.execute(select(FuturesOddsSnapshot).where(
+            FuturesOddsSnapshot.outcome_id == ids["a"]))).scalars().all())
+    assert len(raw) == 2001
+    assert _drop_unsupported_snapshot_points(raw, [outcome]) == [], (
+        "control: the actual route refuses every empty-book capture"
+    )
+
+
+async def test_cert4141_default_cap_restores_the_adjacent_price_and_discloses_the_unknown(
+    old_client, old_world, monkeypatch
+):
+    from app.utils import full_range_live
+
+    c, ids = old_client
+    engine, _ = old_world
+    await _cert4141_specimen(engine, ids)
+    url = f"/api/futures/{ids['market']}/history"
+    params = {"hours": CLIENT_FULL_HOURS, "top_n": 50, "range": "full"}
+    adjacent = (OPEN + timedelta(hours=1)).isoformat()
+    undecided = (OPEN + timedelta(hours=2)).isoformat()
+
+    def _a(body):
+        line = next(o for o in body["outcomes"] if o["outcome_id"] == ids["a"])
+        return [p["timestamp"] for p in line["history"] if p.get("provenance") == "kalshi_archive"]
+
+    monkeypatch.setattr(full_range_live, "OLDER_LIVE_INSTANT_CAP", 4000)
+    whole = (await c.get(url, params=params)).json()
+    assert whole["history_range"]["live_thinned"] is False
+    assert adjacent in _a(whole) and undecided in _a(whole), "positive control"
+    assert whole["history_range"]["served_history"] == "complete"
+    monkeypatch.setattr(full_range_live, "OLDER_LIVE_INSTANT_CAP", 2000)
+    r = await c.get(url, params=params)
+    assert r.status_code == 200, r.text
+    thin = r.json()
+    assert full_range_live.ADMIT_ROUND_LIMITS == (1, 8, 64)
+    assert thin["history_range"]["live_thinned"] is True
+    assert adjacent in _a(thin), "the synthetic capture no longer erases its neighbour"
+    assert undecided not in _a(thin), "unread rows 74..2,001 may hold a supported capture"
+    assert _a(thin) == [t for t in _a(whole) if t != undecided], "every verified sibling stands"
+    arch = thin["archive_history"]
+    assert arch["withheld_overlapping_live"] == whole["archive_history"]["withheld_overlapping_live"], (
+        "an exhausted budget is never counted as live ownership"
+    )
+    assert arch["withheld_unresolved_overlap"] == 1
+    assert {"scope": "overlap_admission", "reason": "live_overlap_unresolved",
+            "intervals": 1} in arch["refusals"]
+    assert thin["history_range"]["served_history"] == "partial"
+    assert thin["history_range"]["unresolved_withheld"] == {
+        "archive_intervals": 1, "venue_points": 0
+    }
+
+
+async def test_cert4141_specimen_on_the_native_timeline_and_the_combined_chart(
+    old_client, old_world, monkeypatch
+):
+    from app.utils import full_range_live
+
+    c, ids = old_client
+    engine, _ = old_world
+    await _cert4141_specimen(engine, ids)
+    adjacent = (OPEN + timedelta(hours=1)).isoformat()
+    undecided = (OPEN + timedelta(hours=2)).isoformat()
+
+    url = f"/api/futures/{ids['market']}/probability-timeline"
+    params = {"hours": CLIENT_FULL_HOURS, "top": 50, "range": "full"}
+
+    def _marks(body):
+        return {e["timestamp"] for e in body["timeline"] if "A 9+" in e.get("archive", {})}
+
+    monkeypatch.setattr(full_range_live, "OLDER_LIVE_INSTANT_CAP", 4000)
+    whole = (await c.get(url, params=params)).json()
+    monkeypatch.setattr(full_range_live, "OLDER_LIVE_INSTANT_CAP", 2000)
+    thin = (await c.get(url, params=params)).json()
+    assert thin["history_range"]["live_thinned"] is True
+    assert adjacent in _marks(whole) and undecided in _marks(whole), "positive control"
+    # The timeline seats a close in the capture cell STARTING at it: +1h's cell
+    # [+1h, +2h) is the same 2,001 refused captures, so that seat is UNKNOWN
+    # too. Two undecided candidates, both withheld, both counted, none live's.
+    assert _marks(thin) == _marks(whole) - {adjacent, undecided}
+    assert thin["archive_history"]["withheld_unresolved_overlap"] == 2
+    assert thin["archive_history"]["withheld_overlapping_live"] == (
+        whole["archive_history"]["withheld_overlapping_live"]
+    )
+    assert thin["history_range"]["served_history"] == "partial"
+
+    multi_params = {"market_ids": str(ids["market"]), "hours": CLIENT_FULL_HOURS,
+                    "top_n": 50, "range": "full"}
+
+    def _arm(body):
+        line = next(o for o in body["outcomes"] if o["name"] == "A 9+")
+        return {p["timestamp"] for p in line["history"] if p.get("provenance") == "kalshi_archive"}
+
+    monkeypatch.setattr(full_range_live, "OLDER_LIVE_INSTANT_CAP", 4000)
+    m_whole = (await c.get("/api/futures/multi-history", params=multi_params)).json()
+    monkeypatch.setattr(full_range_live, "OLDER_LIVE_INSTANT_CAP", 2000)
+    m_thin = (await c.get("/api/futures/multi-history", params=multi_params)).json()
+    assert m_thin["history_range"]["live_thinned"] is True
+    assert adjacent in _arm(m_whole) and undecided in _arm(m_whole), "positive control"
+    assert _arm(m_thin) == _arm(m_whole) - {undecided}
+    assert m_thin["archive_history"]["withheld_overlapping_live"] == (
+        m_whole["archive_history"]["withheld_overlapping_live"]
+    )
+    assert m_thin["history_range"]["unresolved_withheld"]["archive_intervals"] == 1
+
+
+async def test_default_cap_combined_seat_a_twin_cannot_decide_is_withheld_and_disclosed(
+    old_client, old_world, monkeypatch
+):
+    """The merged SEAT rule's UNKNOWN (CERT-4139's shape, refused twin): a
+    second Kalshi market's ungraded "A 9+" holds 74 empty-book rows AT the +3h
+    close, so the route refuses every one (no historical Polymarket row is
+    refusable today, so the twin is Kalshi's). Unthinned nothing draws there
+    and the archive close stands; thinned, the seat's admission runs out at 73
+    rows and the close is withheld and counted, never painted over row 74."""
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+    from app.models.models import FuturesMarket, FuturesOddsSnapshot, FuturesOutcome
+    from app.utils import full_range_live
+
+    c, ids = old_client
+    engine, _ = old_world
+    at_dt = OPEN + timedelta(hours=3)
+    async with AsyncSession(engine, expire_on_commit=False) as s:
+        async with s.begin():
+            poly = FuturesMarket(source="kalshi", external_id="CERT4141-twin",
+                                 name="CERT4141 twin", category="game", market_tier=5,
+                                 mutually_exclusive=False, status="resolved",
+                                 resolution_date=SETTLED)
+            s.add(poly)
+            await s.flush()
+            twin = FuturesOutcome(market_id=poly.id, external_id="CERT4141-A", name="A 9+",
+                                  rank=1, current_probability=0.0)
+            s.add(twin)
+            await s.flush()
+            # 2,001 supported instants off the hour cross the cap...
+            s.add_all([FuturesOddsSnapshot(
+                outcome_id=twin.id, bookmaker="kalshi", probability=0.31, yes_bid=0.30,
+                yes_ask=0.32, last_price=0.31, captured_at=OPEN + timedelta(seconds=i * 10 + 5),
+            ) for i in range(1, 2002)])
+            # ...and 74 refused rows sit exactly at the close.
+            s.add_all([FuturesOddsSnapshot(
+                outcome_id=twin.id, bookmaker="kalshi", probability=0.5,
+                yes_bid=0.01, yes_ask=0.99, last_price=None, captured_at=at_dt,
+            ) for _ in range(74)])
+    params = {"market_ids": f"{ids['market']},{poly.id}", "hours": CLIENT_FULL_HOURS,
+              "top_n": 50, "range": "full"}
+    at = at_dt.isoformat()
+
+    def _line(body):
+        return next(o for o in body["outcomes"] if o["name"] == "A 9+")["history"]
+
+    monkeypatch.setattr(full_range_live, "OLDER_LIVE_INSTANT_CAP", 4000)
+    whole = (await c.get("/api/futures/multi-history", params=params)).json()
+    assert whole["history_range"]["live_thinned"] is False
+    assert not any(p["timestamp"] == at and p.get("bookmaker") == "consensus"
+                   for p in _line(whole)), "control: the route refuses every row at +3h"
+    assert any(p["timestamp"] == at and p.get("provenance") == "kalshi_archive"
+               for p in _line(whole)), "control: unthinned, the close stands"
+    monkeypatch.setattr(full_range_live, "OLDER_LIVE_INSTANT_CAP", 2000)
+    thin = (await c.get("/api/futures/multi-history", params=params)).json()
+    assert thin["history_range"]["live_thinned"] is True
+    assert not any(p["timestamp"] == at for p in _line(thin)), "UNKNOWN fails closed"
+    assert thin["archive_history"]["withheld_unresolved_overlap"] == 1
+    assert thin["history_range"]["unresolved_withheld"]["archive_intervals"] == 1
+    others = {p["timestamp"] for p in _line(whole) if p.get("provenance") == "kalshi_archive"}
+    assert {p["timestamp"] for p in _line(thin)
+            if p.get("provenance") == "kalshi_archive"} == others - {at}
+
+
+async def test_actual_cap_timeline_cell_admission_cannot_decide_is_withheld_and_disclosed(
+    old_client, old_world, monkeypatch
+):
+    """The timeline SEAT rule's UNKNOWN: A's cell [+6h, +7h) holds 74 refused
+    captures and nothing else; interval +5h..+6h holds none, so it is admitted
+    and its close is asked of the cell, which runs out of budget."""
+    from sqlalchemy import update
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+    from app.models.models import FuturesOddsSnapshot, FuturesOutcome
+    from app.utils import full_range_live
+
+    c, ids = old_client
+    engine, _ = old_world
+    await _add_actual_cap_captures(engine, ids)
+    async with AsyncSession(engine, expire_on_commit=False) as s:
+        async with s.begin():
+            await s.execute(update(FuturesOutcome).where(FuturesOutcome.id == ids["a"]).values(
+                resolution_source=None, is_winner=None))
+            s.add_all([FuturesOddsSnapshot(
+                outcome_id=ids["a"], bookmaker="kalshi", probability=0.5, yes_bid=0.01,
+                yes_ask=0.99, last_price=None,
+                captured_at=OPEN + timedelta(hours=6, minutes=20, seconds=i),
+            ) for i in range(74)])
+    url = f"/api/futures/{ids['market']}/probability-timeline"
+    params = {"hours": CLIENT_FULL_HOURS, "top": 50, "range": "full"}
+    seat = (OPEN + timedelta(hours=6)).isoformat()
+
+    def _marks(body):
+        return {e["timestamp"] for e in body["timeline"] if "A 9+" in e.get("archive", {})}
+
+    monkeypatch.setattr(full_range_live, "OLDER_LIVE_INSTANT_CAP", 4000)
+    whole = (await c.get(url, params=params)).json()
+    assert whole["history_range"]["live_thinned"] is False
+    assert seat in _marks(whole), "control: unthinned, a refused-only cell seats nothing"
+    monkeypatch.setattr(full_range_live, "OLDER_LIVE_INSTANT_CAP", 2000)
+    thin = (await c.get(url, params=params)).json()
+    assert thin["history_range"]["live_thinned"] is True
+    assert seat not in _marks(thin), "UNKNOWN fails closed"
+    assert thin["archive_history"]["withheld_unresolved_overlap"] >= 1
+    assert thin["history_range"]["served_history"] == "partial"
+
+
+async def test_actual_cap_an_unknown_venue_point_is_withheld_and_still_claims_its_interval(
+    old_world,
+):
+    """The venue arm on the real store: 74 refused rows beside a venue point."""
+    from types import SimpleNamespace
+
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+    from app.models.models import FuturesOddsSnapshot
+    from app.utils.full_range_live import read_older_live
+
+    engine, ids = old_world
+    REFUSED = "refused-by-stand-in"
+    near = OPEN + timedelta(hours=2, minutes=30)
+    await _add_actual_cap_captures(engine, ids, *[FuturesOddsSnapshot(
+        outcome_id=ids["b"], bookmaker=REFUSED, probability=0.41, yes_bid=0.40,
+        yes_ask=0.42, last_price=0.41, captured_at=near + timedelta(seconds=i),
+    ) for i in range(74)])
+    before = datetime.now(UTC) - timedelta(hours=CLIENT_FULL_HOURS)
+    venue = [
+        SimpleNamespace(outcome_id=ids["b"], captured_at=near + timedelta(minutes=5),
+                        tier="kalshi_candle_60m"),
+        SimpleNamespace(outcome_id=ids["b"], captured_at=OPEN + timedelta(hours=3, minutes=40),
+                        tier="kalshi_candle_60m"),
+    ]
+    async with AsyncSession(engine, expire_on_commit=False) as db:
+        older = await read_older_live(db, [ids["a"], ids["b"]], before=before)
+        assert older.thinned is True
+        kept, unknown = await older.withhold_venue(
+            db, venue, supported=lambda rows: [r for r in rows if r.bookmaker != REFUSED]
+        )
+    assert [r.captured_at for r in kept] == [OPEN + timedelta(hours=3, minutes=40)]
+    assert [r.captured_at for r in unknown] == [near + timedelta(minutes=5)]
 
 
 async def test_full_on_a_window_that_already_holds_every_capture_changes_no_live_point(

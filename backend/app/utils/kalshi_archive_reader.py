@@ -53,6 +53,16 @@ THE RULES THIS ARM HOLDS
    captures replaced by archive intervals. ``history_range`` states the window
    drawn, why it starts there, and the import's own coverage word, because the
    earliest drawn interval is not proof of the question's open.
+7. **An overlap nobody could decide is withheld, and said.** When a thinned
+   live read runs out of admission budget on an interval (``full_range_live``
+   rule 5), a supported capture may lie in its unread remainder, so the
+   interval is not drawn — but it is NOT live's: it is counted apart from
+   ``withheld_overlapping_live`` as ``withheld_unresolved_overlap``, with a
+   scoped ``overlap_admission`` refusal, and ``history_range`` says the served
+   history is ``partial``. Only that exact interval is withheld; its
+   neighbours are decided on their own evidence. Stored coverage
+   (``archive_coverage``, the import's word) and served completeness
+   (``served_history``) are different questions and never share a field.
 """
 
 from __future__ import annotations
@@ -84,6 +94,12 @@ BASIS_ARCHIVE = "archive_first_interval"
 BASIS_HOURS = "hours"
 #: A served venue point older than every capture and interval opens the chart.
 BASIS_VENUE = "venue_first_observation"
+#: ``history_range.served_history``: every interval and venue point read was
+#: drawn or yielded to proven live evidence, or some were withheld UNKNOWN.
+SERVED_COMPLETE = "complete"
+SERVED_PARTIAL = "partial"
+#: The scoped refusal an UNKNOWN overlap carries, in both history blocks.
+OVERLAP_REFUSAL = {"scope": "overlap_admission", "reason": "live_overlap_unresolved"}
 #: How long one process trusts its answer to "is the store there".
 _PRESENCE_TTL_S = 300.0
 _presence: dict = {"value": None, "checked": 0.0}
@@ -173,6 +189,9 @@ class ArchiveHistory:
         self.rows: dict[int, list[ArchiveRow]] = {}
         self.read_capped: list[int] = []
         self.claimed_by_live = 0
+        #: Rule 7: ``(outcome, interval_start, interval_end)`` of each interval
+        #: withheld because live overlap could not be decided. Never live's.
+        self.unresolved: set[tuple[int, datetime, datetime]] = set()
         self.compacted_from: dict[int, int] = {}
         #: ``range=full`` only: outcomes read span-keeping, and the evidence rows.
         self.thinned: list[int] = []
@@ -184,6 +203,7 @@ class ArchiveHistory:
         cutoff: datetime,
         claims: Iterable[Any],
         outcome_ids: Iterable[int],
+        unresolved: Iterable[tuple[int, datetime, datetime]] = (),
     ) -> dict[int, list[ArchiveRow]]:
         """Per outcome, the intervals at/after ``cutoff`` no live point overlaps.
 
@@ -192,11 +212,15 @@ class ArchiveHistory:
         route first adds every skipped capture that actually sits inside an
         interval (``full_range_live.OlderLive.archive_claims``), so this one
         rule decides overlap for read and skipped captures alike. Counts
-        withheld intervals in ``claimed_by_live``.
+        withheld intervals in ``claimed_by_live``. ``unresolved`` names, by
+        exact ``(outcome, start, end)``, the intervals admission could not
+        decide: those are withheld into :attr:`unresolved` instead (rule 7).
         """
+        self.unresolved = set()
         if not self.rows:
             return {}
         live = _claim_stamps(claims)
+        unknown = {(int(o), lo, hi) for o, lo, hi in unresolved}
         out: dict[int, list[ArchiveRow]] = {}
         self.claimed_by_live = 0
         self.compacted_from = {}
@@ -209,6 +233,9 @@ class ArchiveHistory:
                 if _overlaps(stamps, row):
                     self.claimed_by_live += 1
                     continue
+                if _identity(row) in unknown:
+                    self.unresolved.add(_identity(row))
+                    continue
                 kept.append(row)
             if len(kept) > SERVE_TARGET_PER_OUTCOME:
                 kept = _compact(kept)
@@ -216,6 +243,11 @@ class ArchiveHistory:
             if kept:
                 out[int(oid)] = kept
         return out
+
+    def withhold_unresolved(self, row: ArchiveRow) -> None:
+        """A served interval a SEAT rule could not decide (rule 7): the route
+        leaves it undrawn and it is counted with the interval-rule unknowns."""
+        self.unresolved.add(_identity(row))
 
     def unclaimed_windows(
         self, claims: Iterable[Any], outcome_ids: Iterable[int]
@@ -249,13 +281,19 @@ class ArchiveHistory:
             "periods_minutes": sorted({r.period_minutes for r in served_rows}),
             "price_basis": dict(bases),
             "withheld_overlapping_live": self.claimed_by_live,
+            "withheld_unresolved_overlap": len(self.unresolved),
         }
         if self.compacted_from:
             block["compacted_from"] = {str(k): v for k, v in self.compacted_from.items()}
         if self.read_capped:
             block["read_capped_outcomes"] = sorted(self.read_capped)
+        refusals = []
         if scale_refused:
-            block["refusals"] = [{"scope": "reader", "reason": scale_refused}]
+            refusals.append({"scope": "reader", "reason": scale_refused})
+        if self.unresolved:
+            refusals.append({**OVERLAP_REFUSAL, "intervals": len(self.unresolved)})
+        if refusals:
+            block["refusals"] = refusals
         return block
 
     def range_block(
@@ -267,6 +305,7 @@ class ArchiveHistory:
         live_basis: str = BASIS_HOURS,
         venue_first: Optional[datetime] = None,
         live_thinned: bool = False,
+        venue_unresolved: Iterable[Any] = (),
     ) -> dict:
         """``history_range`` for a ``range=full`` response. Metadata only.
 
@@ -278,6 +317,10 @@ class ArchiveHistory:
         carries a complete import (one never imported makes it ``incomplete``);
         ``None`` when no charted outcome carries any import at all.
         ``live_thinned`` says the older live captures were read as a skeleton.
+        ``served_history`` is ``partial`` when a charted outcome had an archive
+        interval (:attr:`unresolved`) or a venue point (``venue_unresolved``,
+        rows from ``OlderLive.withhold_venue``) withheld UNKNOWN (rule 7);
+        ``unresolved_withheld`` counts each arm's distinct candidates apart.
         """
         charted = sorted({int(i) for i in charted_ids})
         first = min((r.interval_start for r in served_rows), default=None)
@@ -294,6 +337,14 @@ class ArchiveHistory:
         else:
             coverage = COVERAGE_INCOMPLETE
         opens = [self.venue_open[oid] for oid in charted if oid in self.venue_open]
+        withheld = {
+            "archive_intervals": len({k for k in self.unresolved if k[0] in charted}),
+            "venue_points": len({
+                (int(r.outcome_id), r.captured_at)
+                for r in venue_unresolved
+                if int(r.outcome_id) in charted
+            }),
+        }
         return {
             "requested": FULL_RANGE,
             "window_start": start.isoformat(),
@@ -302,6 +353,8 @@ class ArchiveHistory:
             "archive_venue_open": min(opens).isoformat() if opens else None,
             "thinned_outcomes": [oid for oid in sorted(self.thinned) if oid in charted],
             "live_thinned": bool(live_thinned),
+            "served_history": SERVED_PARTIAL if any(withheld.values()) else SERVED_COMPLETE,
+            "unresolved_withheld": withheld,
         }
 
 
@@ -314,6 +367,11 @@ def _claim_stamps(claims: Iterable[Any]) -> dict[int, list[datetime]]:
     for stamps in live.values():
         stamps.sort()
     return live
+
+
+def _identity(row: ArchiveRow) -> tuple[int, datetime, datetime]:
+    """One interval, as ``unclaimed_windows`` names its candidate window."""
+    return (int(row.outcome_id), row.interval_start, row.captured_at)
 
 
 def _overlaps(stamps: list[datetime], row: ArchiveRow) -> bool:

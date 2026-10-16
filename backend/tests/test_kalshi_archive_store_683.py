@@ -643,6 +643,21 @@ class TestFullRange:
         assert src.count("supported=_support_filter(") == 7
         assert "def _support_filter(" in src
         assert src.count("live_thinned=bool(older_live and older_live.thinned)") == 3
+        # Rule 5 (CERT-4141): every UNKNOWN reaches its arm typed, never as a
+        # claim. Each archive arm hands its unknown intervals to `served`, both
+        # seat rules withhold-and-count, and both venue arms disclose and pass
+        # the unknown points back as claims and to `history_range`.
+        assert "_Unresolved" not in src
+        assert src.count("unresolved=_multi_unknown") == 1
+        assert src.count("unresolved=_timeline_unknown") == 1
+        assert src.count("unresolved=_field_unknown") == 1
+        assert src.count("archive.withhold_unresolved(row)") == 2
+        assert src.count("== SEAT_UNKNOWN") == 2
+        assert src.count("ARCHIVE_OVERLAP_REFUSAL") == 3
+        assert "list(venue_rows) + venue_unknown" in src
+        assert "list(field_venue_rows) + field_venue_unknown" in src
+        assert src.count("venue_unresolved=venue_unknown") == 1
+        assert src.count("venue_unresolved=field_venue_unknown") == 1
 
     def test_window_starts_at_our_first_capture_when_live_is_oldest(self):
         live = self.T0
@@ -708,8 +723,9 @@ class TestExactAdmission:
         caps = [_cap(10, 1, self.T0 + timedelta(minutes=30)),
                 _cap(11, 1, self.T0 + timedelta(hours=4, minutes=20))]
         older, db = self._older(caps)
-        claims = await older.archive_claims(db, h, [], [1], supported=_ok)
-        served = h.served(self.T0, claims, [1])
+        claims, unknown = await older.archive_claims(db, h, [], [1], supported=_ok)
+        assert unknown == []
+        served = h.served(self.T0, claims, [1], unknown)
         assert [r.captured_at for r in served[1]] == [
             self.T0 + timedelta(hours=h_) for h_ in (2, 3, 4)
         ], "only the intervals a capture actually sits in yield"
@@ -718,7 +734,7 @@ class TestExactAdmission:
     async def test_a_skipped_capture_still_claims_its_own_interval(self):
         h = self._history([1, 2])
         older, db = self._older([_cap(10, 1, self.T0 + timedelta(hours=1, minutes=5))])
-        claims = await older.archive_claims(db, h, [], [1], supported=_ok)
+        claims, _ = await older.archive_claims(db, h, [], [1], supported=_ok)
         assert [r.captured_at for r in h.served(self.T0, claims, [1])[1]] == [
             self.T0 + timedelta(hours=1)
         ]
@@ -729,7 +745,7 @@ class TestExactAdmission:
                 _cap(11, 1, self.T0 + timedelta(hours=1, minutes=10), ok=False),
                 _cap(12, 1, self.T0 + timedelta(hours=1, minutes=40))]
         older, db = self._older(caps)
-        claims = await older.archive_claims(db, h, [], [1], supported=_ok)
+        claims, _ = await older.archive_claims(db, h, [], [1], supported=_ok)
         # +1h holds only a refused capture: it stands, exactly as unthinned.
         # +2h's first capture is refused, its second is supported: it yields.
         assert [r.captured_at for r in h.served(self.T0, claims, [1])[1]] == [
@@ -740,29 +756,180 @@ class TestExactAdmission:
     async def test_another_outcomes_capture_claims_nothing(self):
         h = self._history([1, 2])
         older, db = self._older([_cap(10, 2, self.T0 + timedelta(minutes=30))], ids=(1, 2))
-        claims = await older.archive_claims(db, h, [], [1], supported=_ok)
+        claims, _ = await older.archive_claims(db, h, [], [1], supported=_ok)
         assert len(h.served(self.T0, claims, [1])[1]) == 2
 
-    async def test_a_window_out_of_budget_yields_to_live_and_is_counted(self, monkeypatch):
+    async def test_a_window_out_of_budget_is_unknown_never_live(self, monkeypatch):
+        """Rule 5 under a patched small budget (CERT-4141 / Root's replay of
+        6a25781e00: this test used to pin the synthetic capture as live's)."""
         from app.utils import full_range_live as frl
 
         monkeypatch.setattr(frl, "ADMIT_ROUND_LIMITS", (1, 2))
         h = self._history([1])
         caps = [_cap(10 + i, 1, self.T0 + timedelta(minutes=i + 1), ok=False) for i in range(5)]
         older, db = self._older(caps)
-        claims = await older.archive_claims(db, h, [], [1], supported=_ok)
-        assert h.served(self.T0, claims, [1]) == {}
-        assert older.unresolved == 1
+        claims, unknown = await older.archive_claims(db, h, [], [1], supported=_ok)
+        assert claims == [], "no synthetic capture is ever a claim"
+        assert unknown == [(1, self.T0, self.T0 + timedelta(hours=1))]
+        assert h.served(self.T0, claims, [1], unknown) == {}
+        assert h.claimed_by_live == 0
+        assert h.unresolved == {(1, self.T0, self.T0 + timedelta(hours=1))}
+
+    # ── CERT-4141 + Root's replay: the real budget, (1, 8, 64) = 73 rows ──
+
+    def _refused_in(self, n, start, first_id=100):
+        """``n`` distinct refused captures from ``start``, one second apart."""
+        return [_cap(first_id + i, 1, start + timedelta(seconds=i), ok=False) for i in range(n)]
+
+    async def test_72_refused_rows_close_on_a_short_page_and_the_interval_stands(self):
+        from app.utils.full_range_live import ADMIT_ROUND_LIMITS
+
+        assert ADMIT_ROUND_LIMITS == (1, 8, 64), "the production budget, unpatched"
+        h = self._history([1])
+        older, db = self._older(self._refused_in(72, self.T0 + timedelta(minutes=1)))
+        claims, unknown = await older.archive_claims(db, h, [], [1], supported=_ok)
+        assert (claims, unknown) == ([], [])
+        assert [r.captured_at for r in h.served(self.T0, claims, [1], unknown)[1]] == [
+            self.T0 + timedelta(hours=1)
+        ]
+        assert (h.claimed_by_live, h.unresolved, older.unresolved) == (0, set(), 0)
+        assert db.rounds == 3
+
+    @pytest.mark.parametrize("n", [73, 74])
+    async def test_73_and_74_refused_rows_are_unknown_withheld_and_never_live(self, n):
+        h = self._history([1])
+        older, db = self._older(self._refused_in(n, self.T0 + timedelta(minutes=1)))
+        claims, unknown = await older.archive_claims(db, h, [], [1], supported=_ok)
+        assert claims == []
+        assert h.served(self.T0, claims, [1], unknown) == {}, "fail closed"
+        assert h.claimed_by_live == 0
+        block = h.describe([])
+        assert block["withheld_overlapping_live"] == 0
+        assert block["withheld_unresolved_overlap"] == 1
+        assert block["refusals"] == [
+            {"scope": "overlap_admission", "reason": "live_overlap_unresolved", "intervals": 1}
+        ]
+        assert block["state"] == "warm", "a scoped refusal never refuses the whole reader"
+        assert db.rounds == 3, "the budget is kept"
+
+    async def test_a_supported_capture_past_the_budget_is_never_painted_over(self):
+        """Why UNKNOWN fails closed: the 74th row, unread, is a supported capture."""
+        h = self._history([1])
+        caps = self._refused_in(73, self.T0 + timedelta(minutes=1))
+        caps.append(_cap(999, 1, self.T0 + timedelta(minutes=50)))
+        older, db = self._older(caps)
+        claims, unknown = await older.archive_claims(db, h, [], [1], supported=_ok)
+        assert 999 not in {c.id for c in db._last}, "control: the supported row is unread"
+        assert h.served(self.T0, claims, [1], unknown) == {}
+        assert len(h.unresolved) == 1 and h.claimed_by_live == 0
+
+    async def test_unknown_withholds_its_own_interval_and_spares_the_adjacent_one(self):
+        """CERT-4141's second loss: the synthetic capture sat at the window's
+        start, which is the PRECEDING interval's inclusive end, so both went.
+        Here the unknown window's first refused capture is AT that shared
+        instant, and the preceding interval still stands on its own evidence."""
+        h = self._history([1, 2, 3])
+        boundary = self.T0 + timedelta(hours=1)
+        older, db = self._older(self._refused_in(74, boundary))
+        claims, unknown = await older.archive_claims(db, h, [], [1], supported=_ok)
+        assert unknown == [(1, boundary, self.T0 + timedelta(hours=2))]
+        served = h.served(self.T0, claims, [1], unknown)
+        assert [r.captured_at for r in served[1]] == [
+            self.T0 + timedelta(hours=1), self.T0 + timedelta(hours=3)
+        ], "verified siblings stand; only the undecided interval is withheld"
+        assert h.unresolved == {(1, boundary, self.T0 + timedelta(hours=2))}
+        assert h.claimed_by_live == 0
+
+    async def test_positive_overlap_behind_refused_rows_is_live_not_unknown(self):
+        h = self._history([1, 2])
+        caps = self._refused_in(2, self.T0 + timedelta(hours=1, minutes=1))
+        caps.append(_cap(50, 1, self.T0 + timedelta(hours=1, minutes=30)))
+        older, db = self._older(caps)
+        claims, unknown = await older.archive_claims(db, h, [], [1], supported=_ok)
+        assert unknown == []
+        assert [r.captured_at for r in h.served(self.T0, claims, [1], unknown)[1]] == [
+            self.T0 + timedelta(hours=1)
+        ]
+        assert (h.claimed_by_live, h.unresolved, older.unresolved) == (1, set(), 0)
+
+    async def test_seats_answer_held_unknown_or_clear(self):
+        from app.utils.full_range_live import SEAT_HELD, SEAT_UNKNOWN
+
+        caps = self._refused_in(74, self.T0 + timedelta(hours=2))
+        caps.append(_cap(50, 1, self.T0 + timedelta(hours=1, minutes=10)))
+        older, db = self._older(caps)
+        windows = [
+            (1, self.T0 + timedelta(hours=1), self.T0 + timedelta(hours=1, minutes=59)),
+            (1, self.T0 + timedelta(hours=2), self.T0 + timedelta(hours=2, minutes=59)),
+            (1, self.T0 + timedelta(hours=5), self.T0 + timedelta(hours=5, minutes=59)),
+        ]
+        assert await older.instant_claims(db, windows, supported=_ok) == [
+            SEAT_HELD, SEAT_UNKNOWN, None
+        ]
+
+    async def test_an_unknown_venue_point_is_withheld_apart_and_still_real(self):
+        caps = self._refused_in(74, self.T0 + timedelta(hours=1, minutes=10))
+        older, db = self._older(caps)
+        rows = [_venue(1, self.T0 + timedelta(minutes=m), tier="kalshi_candle_60m")
+                for m in (90, 240)]
+        kept, unknown = await older.withhold_venue(db, rows, supported=_ok)
+        assert [r.captured_at for r in kept] == [self.T0 + timedelta(hours=4)]
+        assert [r.captured_at for r in unknown] == [self.T0 + timedelta(minutes=90)]
+        # Routes pass it back as a claim: a real venue observation still owns
+        # the archive interval it sits in, so the archive cannot fill it.
+        h = self._history([1, 2])
+        served = h.served(self.T0, unknown, [1])
+        assert [r.captured_at for r in served[1]] == [self.T0 + timedelta(hours=1)]
+        assert h.claimed_by_live == 1 and h.unresolved == set()
+
+    def test_unresolved_is_not_a_capture(self):
+        from app.utils.full_range_live import Unresolved
+
+        u = Unresolved(1, self.T0, self.T0 + timedelta(hours=1))
+        assert not hasattr(u, "captured_at")
+        assert reader._claim_stamps([u]) == {}
+        assert u.window == (1, self.T0, self.T0 + timedelta(hours=1))
+
+    def test_a_seat_unknown_is_counted_once_with_the_interval_unknowns(self):
+        h = self._history([1, 2])
+        rows = h.rows[1]
+        h.served(self.T0, [], [1], [(1, rows[0].interval_start, rows[0].captured_at)])
+        h.withhold_unresolved(rows[1])
+        h.withhold_unresolved(rows[1])
+        assert len(h.unresolved) == 2
+        assert h.describe([])["withheld_unresolved_overlap"] == 2
+
+    def test_history_range_says_partial_and_counts_each_arm_apart(self):
+        h = self._history([1, 2], oid=1)
+        h.rows[2] = [_row_at(2, self.T0 + timedelta(hours=1))]
+        h.withhold_unresolved(h.rows[1][0])
+        h.withhold_unresolved(h.rows[2][0])  # not charted below
+        venue = [_venue(1, self.T0), _venue(1, self.T0), _venue(2, self.T0),
+                 _venue(1, self.T0 + timedelta(minutes=1))]
+        block = h.range_block(self.T0, [], [1], venue_unresolved=venue)
+        assert block["served_history"] == "partial"
+        assert block["unresolved_withheld"] == {"archive_intervals": 1, "venue_points": 2}
+        assert block["archive_coverage"] is None, "stored coverage is a separate word"
+        clean = self._history([1]).range_block(self.T0, [], [1])
+        assert clean["served_history"] == "complete"
+        assert clean["unresolved_withheld"] == {"archive_intervals": 0, "venue_points": 0}
+
+    def test_a_scale_refusal_and_an_overlap_refusal_are_both_stated(self):
+        h = self._history([1])
+        h.withhold_unresolved(h.rows[1][0])
+        block = h.describe([], scale_refused="scale_mismatch")
+        assert block["state"] == "refused"
+        assert [r["scope"] for r in block["refusals"]] == ["reader", "overlap_admission"]
 
     async def test_unthinned_and_out_of_range_windows_issue_nothing(self):
         from app.utils.full_range_live import OlderLive
 
         h = self._history([1, 2])
         db = _AdmitDb([_cap(10, 1, self.T0 + timedelta(minutes=30))])
-        assert await OlderLive().archive_claims(db, h, [], [1], supported=_ok) == []
+        assert await OlderLive().archive_claims(db, h, [], [1], supported=_ok) == ([], [])
         # Every interval ends before the oldest capture: nothing can lie in one.
         older, db = self._older([], oldest=self.T0 + timedelta(hours=3))
-        assert await older.archive_claims(db, h, [], [1], supported=_ok) == []
+        assert await older.archive_claims(db, h, [], [1], supported=_ok) == ([], [])
         assert db.rounds == 0
 
     async def test_venue_points_yield_only_within_the_capture_claim_radius(self):
@@ -770,7 +937,8 @@ class TestExactAdmission:
         older, db = self._older(caps, ids=(1, 2))
         rows = [_venue(1, self.T0 + timedelta(minutes=m)) for m in (0, 55, 60, 65, 200)]
         rows.append(_venue(2, self.T0 + timedelta(hours=1)))
-        kept = await older.withhold_venue(db, rows, supported=_ok)
+        kept, unknown = await older.withhold_venue(db, rows, supported=_ok)
+        assert unknown == []
         # A 1-minute tier claims +/-30 s: only the point AT the capture yields;
         # +0:55 and +1:05 are real minutes no capture restates.
         assert [(r.outcome_id, r.captured_at) for r in kept] == [
@@ -783,7 +951,7 @@ class TestExactAdmission:
         caps = [_cap(10, 1, self.T0), _cap(11, 1, self.T0 + timedelta(hours=8))]
         older, db = self._older(caps)
         rows = [_venue(1, self.T0 + timedelta(hours=h_), tier="kalshi_candle_60m") for h_ in range(9)]
-        kept = await older.withhold_venue(db, rows, supported=_ok)
+        kept, _ = await older.withhold_venue(db, rows, supported=_ok)
         assert [r.captured_at for r in kept] == [
             self.T0 + timedelta(hours=h_) for h_ in range(1, 8)
         ]
@@ -793,8 +961,9 @@ def _ok(rows):
     return [r for r in rows if getattr(r, "ok", True)]
 
 
-def _cap(id_, oid, at, ok=True):
-    return SimpleNamespace(id=id_, outcome_id=oid, captured_at=at, ok=ok)
+def _cap(id_, oid, at, ok=True, probability=0.4):
+    return SimpleNamespace(id=id_, outcome_id=oid, captured_at=at, ok=ok,
+                           probability=probability)
 
 
 def _venue(oid, at, tier="kalshi_candle_1m"):
