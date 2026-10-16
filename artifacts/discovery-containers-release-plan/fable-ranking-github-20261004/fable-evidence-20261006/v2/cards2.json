@@ -1,0 +1,2050 @@
+[
+ {
+  "cid": "j169",
+  "type": "board",
+  "kicker": "Same deadline",
+  "n": 1,
+  "notes": [
+   "q0075: venue title says 'speak' but the rules say Zelenskyy and Putin 'meet'; plain follows the title, rules govern (verify against full rules)",
+   "q0072 and q0073 say 'January 2029' but the deadline is before January 21, 2029",
+   "Members share the Jan 20-21, 2029 deadline"
+  ],
+  "headline": "Before Trump's term ends",
+  "tag": "The world",
+  "rows": [
+   {
+    "text": "Zelenskyy and Putin meet",
+    "id": "q0075",
+    "num": "42",
+    "p": 0.415,
+    "deadline": "2029-01-20",
+    "venues": [
+     "Kalshi"
+    ],
+    "pK": 41.5,
+    "pP": null,
+    "raw": "Will Zelenskyy and Putin speak? \u2014 Before Jan 20, 2029",
+    "plain": "Zelenskyy and Putin meet before January 20, 2029",
+    "fixed": true
+   },
+   {
+    "text": "Israel and Saudi Arabia normalize relations",
+    "id": "q0098",
+    "num": "35",
+    "p": 0.345,
+    "deadline": "2029-01-20",
+    "venues": [
+     "Kalshi"
+    ],
+    "pK": 34.5,
+    "pP": null,
+    "raw": "Will Israel and Saudi Arabia normalize relations during Trump's term?",
+    "plain": "Israel and Saudi Arabia normalize relations before Trump's term ends",
+    "fixed": false
+   },
+   {
+    "text": "The US takes control of any part of Greenland",
+    "id": "q0072",
+    "num": "19",
+    "p": 0.185,
+    "deadline": "2029-01-21",
+    "venues": [
+     "Kalshi"
+    ],
+    "pK": 18.5,
+    "pP": null,
+    "raw": "Will the US take control of any part of Greenland? \u2014 Before January 21, 2029",
+    "plain": "The US takes control of any part of Greenland before January 21, 2029",
+    "fixed": true
+   },
+   {
+    "text": "The US takes control of any part of Canada",
+    "id": "q0073",
+    "num": "11",
+    "p": 0.105,
+    "deadline": "2029-01-21",
+    "venues": [
+     "Kalshi"
+    ],
+    "pK": 10.5,
+    "pP": null,
+    "raw": "Will the US take control of any part of Canada?",
+    "plain": "The US takes control of any part of Canada before January 21, 2029",
+    "fixed": true
+   }
+  ],
+  "venues": [
+   "Kalshi"
+  ]
+ },
+ {
+  "cid": "j159",
+  "type": "yardstick",
+  "kicker": "As likely as",
+  "n": 2,
+  "notes": [
+   "q0135 omits the deadline (first game of the 2028 season) and that an official relocation announcement also counts"
+  ],
+  "headline": null,
+  "connector": "is rated about as likely as",
+  "rows": [
+   {
+    "text": "SpaceX successfully lands something on Mars before 2030",
+    "id": "q0015",
+    "num": "25",
+    "p": 0.245,
+    "deadline": "2030-01-01",
+    "venues": [
+     "Kalshi"
+    ],
+    "pK": 24.5,
+    "pP": null,
+    "raw": "Will SpaceX land anything successfully on Mars before 2030?",
+    "plain": "SpaceX successfully lands something on Mars before 2030",
+    "fixed": false
+   },
+   {
+    "text": "The Chicago Bears move, or announce a move, to Indiana before the 2028 season",
+    "id": "q0135",
+    "num": "25",
+    "p": 0.245,
+    "deadline": "2028-09-07",
+    "venues": [
+     "Kalshi"
+    ],
+    "pK": 24.5,
+    "pP": null,
+    "raw": "Chicago Pro Football Team: Relocation \u2014 Indiana",
+    "plain": "The Chicago Bears move, or announce a move, to Indiana before the 2028 season",
+    "fixed": true
+   }
+  ],
+  "venues": [
+   "Kalshi"
+  ]
+ },
+ {
+  "cid": "j103",
+  "type": "clock",
+  "kicker": "The clock",
+  "n": 3,
+  "notes": [],
+  "headline": "Oklahoma enacts a data center moratorium",
+  "rows": [
+   {
+    "text": "by the end of 2026",
+    "id": "q2035",
+    "num": "5",
+    "p": 0.045,
+    "deadline": "2026-12-31",
+    "venues": [
+     "Polymarket"
+    ],
+    "pK": null,
+    "pP": 4.5,
+    "raw": "Oklahoma enacts data center moratorium by...? \u2014 December 31, 2026",
+    "plain": "Oklahoma enacts a data center moratorium by the end of 2026",
+    "fixed": false
+   },
+   {
+    "text": "by June 30, 2027",
+    "id": "q2036",
+    "num": "12",
+    "p": 0.115,
+    "deadline": "2027-06-30",
+    "venues": [
+     "Polymarket"
+    ],
+    "pK": null,
+    "pP": 11.5,
+    "raw": "Oklahoma enacts data center moratorium by...? \u2014 June 30, 2027",
+    "plain": "Oklahoma enacts a data center moratorium by June 30, 2027",
+    "fixed": false
+   },
+   {
+    "text": "by the end of 2027",
+    "id": "q2037",
+    "num": "16",
+    "p": 0.155,
+    "deadline": "2027-12-31",
+    "venues": [
+     "Polymarket"
+    ],
+    "pK": null,
+    "pP": 15.5,
+    "raw": "Oklahoma enacts data center moratorium by...? \u2014 December 31, 2027",
+    "plain": "Oklahoma enacts a moratorium on new data centers by the end of 2027",
+    "fixed": false
+   },
+   {
+    "text": "by the end of 2028",
+    "id": "q2038",
+    "num": "22",
+    "p": 0.215,
+    "deadline": "2028-12-31",
+    "venues": [
+     "Polymarket"
+    ],
+    "pK": null,
+    "pP": 21.5,
+    "raw": "Oklahoma enacts data center moratorium by...? \u2014 December 31, 2028",
+    "plain": "Oklahoma enacts a data center moratorium by the end of 2028",
+    "fixed": false
+   }
+  ],
+  "venues": [
+   "Polymarket"
+  ]
+ },
+ {
+  "cid": "j059",
+  "type": "board",
+  "kicker": "Same deadline",
+  "n": 4,
+  "notes": [
+   "note: q1387 'AI bubble bursts' resolves on a rules checklist (at least three listed downturn conditions; excerpt cut off)"
+  ],
+  "headline": "By the end of 2026",
+  "tag": "The economy",
+  "rows": [
+   {
+    "text": "The Federal Reserve raises interest rates",
+    "id": "q0101",
+    "num": "75",
+    "p": 0.745,
+    "deadline": "2027-01-01",
+    "venues": [
+     "Kalshi"
+    ],
+    "pK": 74.5,
+    "pP": null,
+    "raw": "Next Fed rate hike? \u2014 Before 2027",
+    "plain": "The Federal Reserve raises interest rates before 2027",
+    "fixed": false
+   },
+   {
+    "text": "The US and Canada agree to lower tariffs",
+    "id": "q1935",
+    "num": "39",
+    "p": 0.39,
+    "deadline": "2026-12-31",
+    "venues": [
+     "Polymarket"
+    ],
+    "pK": null,
+    "pP": 39.0,
+    "raw": "US-Canada diplomatic agreement to lower tariffs by...? \u2014 December 31",
+    "plain": "The US and Canada agree to lower tariffs by the end of 2026",
+    "fixed": false
+   },
+   {
+    "text": "Jerome Powell's departure as a Federal Reserve governor is announced",
+    "id": "q1159",
+    "num": "21",
+    "p": 0.205,
+    "deadline": "2027-01-01",
+    "venues": [
+     "Kalshi"
+    ],
+    "pK": 20.5,
+    "pP": null,
+    "raw": "Jerome Powell departure as Fed Governor announced? \u2014 Before Jan 1, 2027",
+    "plain": "Jerome Powell's departure as a Federal Reserve governor is announced before 2027",
+    "fixed": false
+   },
+   {
+    "text": "The AI bubble bursts",
+    "id": "q1387",
+    "num": "7",
+    "p": 0.074,
+    "deadline": "2026-12-31",
+    "venues": [
+     "Polymarket"
+    ],
+    "pK": null,
+    "pP": 7.4,
+    "raw": "AI bubble burst by...? \u2014 December 31, 2026",
+    "plain": "The AI bubble bursts by December 31, 2026",
+    "fixed": false
+   }
+  ],
+  "venues": [
+   "Kalshi",
+   "Polymarket"
+  ]
+ },
+ {
+  "cid": "j061",
+  "type": "yardstick",
+  "kicker": "As likely as",
+  "n": 5,
+  "notes": [],
+  "headline": null,
+  "connector": "is rated about as likely as",
+  "rows": [
+   {
+    "text": "The US and Cuba reach an economic deal before 2027",
+    "id": "q1604",
+    "num": "11",
+    "p": 0.11,
+    "deadline": "2027-01-01",
+    "venues": [
+     "Polymarket"
+    ],
+    "pK": null,
+    "pP": 11.0,
+    "raw": "US x Cuba economic deal by...?",
+    "plain": "The US and Cuba reach an economic deal before 2027",
+    "fixed": false
+   },
+   {
+    "text": "Rockstar releases GTA VI Online, the game's online mode, before 2027",
+    "id": "q0868",
+    "num": "11",
+    "p": 0.11,
+    "deadline": "2027-01-01",
+    "venues": [
+     "Kalshi"
+    ],
+    "pK": 11.0,
+    "pP": null,
+    "raw": "GTA VI Online: Release date \u2014 Before 2027",
+    "plain": "Rockstar releases GTA VI Online, the game's online mode, before 2027",
+    "fixed": true
+   }
+  ],
+  "venues": [
+   "Kalshi",
+   "Polymarket"
+  ]
+ },
+ {
+  "cid": "j060",
+  "type": "clock",
+  "kicker": "The clock",
+  "n": 6,
+  "notes": [],
+  "headline": "A Millennium Prize for solving a famous math problem is awarded",
+  "rows": [
+   {
+    "text": "before 2027",
+    "id": "q1205",
+    "num": "3",
+    "p": 0.025,
+    "deadline": "2027-01-01",
+    "venues": [
+     "Kalshi"
+    ],
+    "pK": 2.5,
+    "pP": null,
+    "raw": "When will the next Millennium Prize be awarded? \u2014 Before 2027",
+    "plain": "A Millennium Prize for solving a famous math problem is awarded before 2027",
+    "fixed": false
+   },
+   {
+    "text": "before 2028",
+    "id": "q1206",
+    "num": "7",
+    "p": 0.0725,
+    "deadline": "2028-01-01",
+    "venues": [
+     "Kalshi"
+    ],
+    "pK": 7.3,
+    "pP": null,
+    "raw": "When will the next Millennium Prize be awarded? \u2014 Before 2028",
+    "plain": "A new Millennium Prize is awarded before 2028",
+    "fixed": false
+   },
+   {
+    "text": "before 2029",
+    "id": "q1207",
+    "num": "27",
+    "p": 0.2655,
+    "deadline": "2029-01-01",
+    "venues": [
+     "Kalshi"
+    ],
+    "pK": 26.6,
+    "pP": null,
+    "raw": "When will the next Millennium Prize be awarded? \u2014 Before 2029",
+    "plain": "A Millennium Prize is awarded before 2029",
+    "fixed": false
+   },
+   {
+    "text": "before 2030",
+    "id": "q1208",
+    "num": "59",
+    "p": 0.5935,
+    "deadline": "2030-01-01",
+    "venues": [
+     "Kalshi"
+    ],
+    "pK": 59.4,
+    "pP": null,
+    "raw": "When will the next Millennium Prize be awarded? \u2014 Before 2030",
+    "plain": "A Millennium Prize is awarded before 2030",
+    "fixed": false
+   }
+  ],
+  "venues": [
+   "Kalshi"
+  ]
+ },
+ {
+  "cid": "j176",
+  "type": "board",
+  "kicker": "Same deadline",
+  "n": 7,
+  "notes": [
+   "STRUCTURE: q1938 is 'Anthropic IPO happens in November 2026', a November month bucket, not an end-of-October claim; drop it (4 members remain)",
+   "q0761 says 'sign' but rules count a deal agreed to, signed, or accepted",
+   "TONE note: q1947 is war-related (Russia-Ukraine diplomatic meeting), though about diplomacy, not strikes or casualties"
+  ],
+  "headline": "By the end of October",
+  "tag": null,
+  "rows": [
+   {
+    "text": "Google releases Gemini 4.0",
+    "id": "q1430",
+    "num": "88",
+    "p": 0.875,
+    "deadline": "2026-10-31",
+    "venues": [
+     "Polymarket"
+    ],
+    "pK": null,
+    "pP": 87.5,
+    "raw": "Gemini 4.0 released by...? \u2014 October 31",
+    "plain": "Google releases Gemini 4.0 by October 31, 2026",
+    "fixed": false
+   },
+   {
+    "text": "Russia and Ukraine hold a diplomatic meeting",
+    "id": "q1947",
+    "num": "58",
+    "p": 0.575,
+    "deadline": "2026-10-31",
+    "venues": [
+     "Polymarket"
+    ],
+    "pK": null,
+    "pP": 57.5,
+    "raw": "Russia x Ukraine any diplomatic meeting by...? \u2014 October 31",
+    "plain": "Russia and Ukraine hold a diplomatic meeting by October 31, 2026",
+    "fixed": false
+   },
+   {
+    "text": "Trump announces a new White House press secretary",
+    "id": "q0819",
+    "num": "19",
+    "p": 0.185,
+    "deadline": "2026-11-01",
+    "venues": [
+     "Kalshi"
+    ],
+    "pK": 18.5,
+    "pP": null,
+    "raw": "When will Trump\u2019s next Press Secretary be announced? \u2014 Before Nov 1, 2026",
+    "plain": "Trump announces a new White House press secretary before November 2026",
+    "fixed": false
+   },
+   {
+    "text": "The US and Iran reach a new nuclear deal",
+    "id": "q0761",
+    "num": "2",
+    "p": 0.0238,
+    "deadline": "2026-11-01",
+    "venues": [
+     "Kalshi",
+     "Polymarket"
+    ],
+    "pK": 2.5,
+    "pP": 2.2,
+    "raw": "US-Iran nuclear deal? \u2014 Before Nov 1, 2026",
+    "plain": "The US and Iran reach a new nuclear deal before November 1, 2026",
+    "fixed": true
+   }
+  ],
+  "venues": [
+   "Kalshi",
+   "Polymarket"
+  ]
+ },
+ {
+  "cid": "j265",
+  "type": "yardstick",
+  "kicker": "As likely as",
+  "n": 8,
+  "notes": [],
+  "headline": null,
+  "connector": "is rated about as likely as",
+  "rows": [
+   {
+    "text": "Alexandria Ocasio-Cortez wins the 2028 presidential election",
+    "id": "q0057",
+    "num": "10",
+    "p": 0.0995,
+    "deadline": "2029-11-07",
+    "venues": [
+     "Kalshi"
+    ],
+    "pK": 10.0,
+    "pP": null,
+    "raw": "2028 U.S. Presidential Election winner? \u2014 Alexandria Ocasio-Cortez",
+    "plain": "Alexandria Ocasio-Cortez wins the 2028 presidential election",
+    "fixed": false
+   },
+   {
+    "text": "Taylor Swift is Spotify's top artist in the US in 2026",
+    "id": "q0988",
+    "num": "11",
+    "p": 0.11,
+    "deadline": "2026-12-31",
+    "venues": [
+     "Kalshi"
+    ],
+    "pK": 11.0,
+    "pP": null,
+    "raw": "Top Artist on Spotify U.S. 2026 \u2014 Taylor Swift",
+    "plain": "Taylor Swift is Spotify's top artist in the US in 2026",
+    "fixed": false
+   }
+  ],
+  "venues": [
+   "Kalshi"
+  ]
+ },
+ {
+  "cid": "j237",
+  "type": "clock",
+  "kicker": "The clock",
+  "n": 9,
+  "notes": [],
+  "headline": "Trump publicly criticizes Kevin Warsh",
+  "rows": [
+   {
+    "text": "before November 2026",
+    "id": "q0914",
+    "num": "6",
+    "p": 0.06,
+    "deadline": "2026-11-01",
+    "venues": [
+     "Kalshi"
+    ],
+    "pK": 6.0,
+    "pP": null,
+    "raw": "Will Trump publicly criticize Kevin Warsh? \u2014 Before Nov 1, 2026",
+    "plain": "Trump publicly criticizes Kevin Warsh before November 2026",
+    "fixed": false
+   },
+   {
+    "text": "before December 2026",
+    "id": "q0915",
+    "num": "22",
+    "p": 0.215,
+    "deadline": "2026-12-01",
+    "venues": [
+     "Kalshi"
+    ],
+    "pK": 21.5,
+    "pP": null,
+    "raw": "Will Trump publicly criticize Kevin Warsh? \u2014 Before Dec 1, 2026",
+    "plain": "Trump publicly criticizes Kevin Warsh before December 2026",
+    "fixed": false
+   },
+   {
+    "text": "before 2027",
+    "id": "q0916",
+    "num": "31",
+    "p": 0.305,
+    "deadline": "2027-01-01",
+    "venues": [
+     "Kalshi"
+    ],
+    "pK": 30.5,
+    "pP": null,
+    "raw": "Will Trump publicly criticize Kevin Warsh? \u2014 Before Jan 1, 2027",
+    "plain": "Trump publicly criticizes Kevin Warsh before 2027",
+    "fixed": false
+   }
+  ],
+  "venues": [
+   "Kalshi"
+  ]
+ },
+ {
+  "cid": "j181",
+  "type": "board",
+  "kicker": "Same deadline",
+  "n": 10,
+  "notes": [
+   "MEANING: q1235 resolves on OpenAI announcing it has attained AGI, not on AGI itself",
+   "q0787: title says 'announces departure (excluding death)' but rules say 'leaves office'; plain covers only the announcement and drops the death exclusion (verify against full rules)",
+   "TONE note: q0787 venue text references a named person's death as an exclusion",
+   "MEANING: q0154 means all four majors in a single year, not a career Grand Slam",
+   "MEANING note: q0948 resolves if any one of the President, a Cabinet member, a Joint Chief or a federal agency states extraterrestrial life or technology exists",
+   "Members share the Dec 31, 2027 / Jan 1, 2028 deadline"
+  ],
+  "headline": "By the end of 2027",
+  "tag": null,
+  "rows": [
+   {
+    "text": "OpenAI announces it has achieved AGI",
+    "id": "q1235",
+    "num": "45",
+    "p": 0.4505,
+    "deadline": "2028-01-01",
+    "venues": [
+     "Kalshi"
+    ],
+    "pK": 45.1,
+    "pP": null,
+    "raw": "When will OpenAI achieve AGI? \u2014 Before 2028",
+    "plain": "OpenAI announces it has achieved AGI before 2028",
+    "fixed": true
+   },
+   {
+    "text": "Donald Trump leaves office early, or announces he will",
+    "id": "q0787",
+    "num": "19",
+    "p": 0.185,
+    "deadline": "2028-01-01",
+    "venues": [
+     "Kalshi"
+    ],
+    "pK": 18.5,
+    "pP": null,
+    "raw": "Donald Trump announces departure as President? (Excluding death) \u2014 Before 2028",
+    "plain": "Donald Trump leaves office early, or announces he will, before 2028",
+    "fixed": true
+   },
+   {
+    "text": "A top US official or federal agency states that extraterrestrial life or technology exists",
+    "id": "q0948",
+    "num": "15",
+    "p": 0.145,
+    "deadline": "2028-01-01",
+    "venues": [
+     "Kalshi"
+    ],
+    "pK": 14.5,
+    "pP": null,
+    "raw": "Will the U.S. confirm that aliens exist? \u2014 Before Jan 1, 2028",
+    "plain": "A top US official or federal agency states that extraterrestrial life or technology exists before 2028",
+    "fixed": true
+   },
+   {
+    "text": "Anthropic announces bankruptcy",
+    "id": "q1996",
+    "num": "10",
+    "p": 0.095,
+    "deadline": "2027-12-31",
+    "venues": [
+     "Polymarket"
+    ],
+    "pK": null,
+    "pP": 9.5,
+    "raw": "Anthropic announces bankruptcy by...? \u2014 December 31, 2027",
+    "plain": "Anthropic announces bankruptcy by the end of 2027",
+    "fixed": false
+   },
+   {
+    "text": "Scottie Scheffler wins all four golf majors in a single year",
+    "id": "q0154",
+    "num": "6",
+    "p": 0.06,
+    "deadline": "2028-01-01",
+    "venues": [
+     "Kalshi"
+    ],
+    "pK": 6.0,
+    "pP": null,
+    "raw": "Will Scottie Scheffler win the grand slam before 2028?",
+    "plain": "Scottie Scheffler wins all four golf majors in a single year before 2028",
+    "fixed": true
+   }
+  ],
+  "venues": [
+   "Kalshi",
+   "Polymarket"
+  ]
+ },
+ {
+  "cid": "j185",
+  "type": "yardstick",
+  "kicker": "As likely as",
+  "n": 11,
+  "notes": [
+   "MEANING note: q1370 counts domestic (US) opening-weekend gross only"
+  ],
+  "headline": null,
+  "connector": "is rated about as likely as",
+  "rows": [
+   {
+    "text": "Democrats win both the House and Senate in the 2026 midterms",
+    "id": "q0440",
+    "num": "65",
+    "p": 0.645,
+    "deadline": "2027-02-01",
+    "venues": [
+     "Kalshi",
+     "Polymarket"
+    ],
+    "pK": 63.5,
+    "pP": 65.5,
+    "raw": "2026 Midterms: Congress Balance of Power? \u2014 Democrats sweep",
+    "plain": "Democrats win both the House and Senate in the 2026 midterms",
+    "fixed": false
+   },
+   {
+    "text": "Spider-Man: Brand New Day has the biggest US opening weekend of 2026",
+    "id": "q1370",
+    "num": "64",
+    "p": 0.635,
+    "deadline": "2027-02-01",
+    "venues": [
+     "Polymarket"
+    ],
+    "pK": null,
+    "pP": 63.5,
+    "raw": "Which movie has biggest opening weekend in 2026? \u2014 Spider-Man: Brand New Day",
+    "plain": "Spider-Man: Brand New Day has the biggest US opening weekend of 2026",
+    "fixed": true
+   }
+  ],
+  "venues": [
+   "Kalshi",
+   "Polymarket"
+  ]
+ },
+ {
+  "cid": "j238",
+  "type": "clock",
+  "kicker": "The clock",
+  "n": 12,
+  "notes": [
+   "note: q0012 adds 'Do Not Travel' gloss; accurate, harmless"
+  ],
+  "headline": "The US issues a Level 4 'do not travel' advisory for Taiwan",
+  "rows": [
+   {
+    "text": "before 2027",
+    "id": "q0011",
+    "num": "4",
+    "p": 0.0435,
+    "deadline": "2027-01-01",
+    "venues": [
+     "Kalshi"
+    ],
+    "pK": 4.3,
+    "pP": null,
+    "raw": "Will the US issue a Level 4 travel advisory for Taiwan? \u2014 Before Jan 1, 2027",
+    "plain": "The US issues a Level 4 travel advisory for Taiwan before 2027",
+    "fixed": false
+   },
+   {
+    "text": "before 2028",
+    "id": "q0012",
+    "num": "18",
+    "p": 0.18,
+    "deadline": "2028-01-01",
+    "venues": [
+     "Kalshi"
+    ],
+    "pK": 18.0,
+    "pP": null,
+    "raw": "Will the US issue a Level 4 travel advisory for Taiwan? \u2014 Before Jan 1, 2028",
+    "plain": "The US issues a Level 4 \"Do Not Travel\" advisory for Taiwan before 2028",
+    "fixed": false
+   },
+   {
+    "text": "before 2029",
+    "id": "q0013",
+    "num": "30",
+    "p": 0.295,
+    "deadline": "2029-01-01",
+    "venues": [
+     "Kalshi"
+    ],
+    "pK": 29.5,
+    "pP": null,
+    "raw": "Will the US issue a Level 4 travel advisory for Taiwan? \u2014 Before Jan 1, 2029",
+    "plain": "The US issues a Level 4 travel advisory for Taiwan before 2029",
+    "fixed": false
+   },
+   {
+    "text": "before 2030",
+    "id": "q0014",
+    "num": "41",
+    "p": 0.405,
+    "deadline": "2030-01-01",
+    "venues": [
+     "Kalshi"
+    ],
+    "pK": 40.5,
+    "pP": null,
+    "raw": "Will the US issue a Level 4 travel advisory for Taiwan? \u2014 Before Jan 1, 2030",
+    "plain": "The US issues a Level 4 'do not travel' advisory for Taiwan before 2030",
+    "fixed": true
+   }
+  ],
+  "venues": [
+   "Kalshi"
+  ]
+ },
+ {
+  "cid": "j070",
+  "type": "board",
+  "kicker": "Same deadline",
+  "n": 13,
+  "notes": [
+   "q1941: resolves only on FDA approval of one product, Moderna's intismeran autogene, for any indication; not any skin cancer vaccine",
+   "note: q1388 'AI bubble bursts' resolves on a rules checklist (excerpt cut off)"
+  ],
+  "headline": "By mid-2027",
+  "tag": null,
+  "rows": [
+   {
+    "text": "The Federal Reserve raises interest rates",
+    "id": "q0102",
+    "num": "95",
+    "p": 0.945,
+    "deadline": "2027-07-01",
+    "venues": [
+     "Kalshi"
+    ],
+    "pK": 94.5,
+    "pP": null,
+    "raw": "Next Fed rate hike? \u2014 Before July 2027",
+    "plain": "The Federal Reserve raises interest rates before July 2027",
+    "fixed": false
+   },
+   {
+    "text": "Tesla and SpaceX announce a merger",
+    "id": "q1534",
+    "num": "43",
+    "p": 0.425,
+    "deadline": "2027-06-30",
+    "venues": [
+     "Polymarket"
+    ],
+    "pK": null,
+    "pP": 42.5,
+    "raw": "Tesla and SpaceX merger officially announced by...? \u2014 June 30, 2027",
+    "plain": "Tesla and SpaceX announce a merger by June 30, 2027",
+    "fixed": false
+   },
+   {
+    "text": "The FDA approves Moderna's personalized cancer vaccine intismeran autogene",
+    "id": "q1941",
+    "num": "29",
+    "p": 0.285,
+    "deadline": "2027-06-30",
+    "venues": [
+     "Polymarket"
+    ],
+    "pK": null,
+    "pP": 28.5,
+    "raw": "FDA approves skin cancer vaccine by...? \u2014 June 30, 2027",
+    "plain": "The FDA approves Moderna's personalized cancer vaccine intismeran autogene by June 30, 2027",
+    "fixed": true
+   },
+   {
+    "text": "The AI bubble bursts",
+    "id": "q1388",
+    "num": "20",
+    "p": 0.195,
+    "deadline": "2027-06-30",
+    "venues": [
+     "Polymarket"
+    ],
+    "pK": null,
+    "pP": 19.5,
+    "raw": "AI bubble burst by...? \u2014 June 30, 2027",
+    "plain": "The AI bubble bursts by June 30, 2027",
+    "fixed": false
+   },
+   {
+    "text": "Starlink officially announces an IPO",
+    "id": "q0291",
+    "num": "6",
+    "p": 0.055,
+    "deadline": "2027-06-30",
+    "venues": [
+     "Kalshi"
+    ],
+    "pK": 5.5,
+    "pP": null,
+    "raw": "When will Starlink officially announce an IPO? \u2014 Before Jun 30, 2027",
+    "plain": "Starlink officially announces an IPO before June 30, 2027",
+    "fixed": false
+   }
+  ],
+  "venues": [
+   "Kalshi",
+   "Polymarket"
+  ]
+ },
+ {
+  "cid": "j054",
+  "type": "yardstick",
+  "kicker": "As likely as",
+  "n": 14,
+  "notes": [],
+  "headline": null,
+  "connector": "is rated about as likely as",
+  "rows": [
+   {
+    "text": "Democrats win the presidency, House and Senate in the 2028 elections",
+    "id": "q0036",
+    "num": "49",
+    "p": 0.485,
+    "deadline": "2029-11-07",
+    "venues": [
+     "Kalshi"
+    ],
+    "pK": 48.5,
+    "pP": null,
+    "raw": "2028: Who will win the Presidency, House, and Senate? \u2014 Democratic Sweep",
+    "plain": "Democrats win the presidency, House and Senate in the 2028 elections",
+    "fixed": false
+   },
+   {
+    "text": "Miley Cyrus headlines the 2027 Super Bowl halftime show",
+    "id": "q0391",
+    "num": "48",
+    "p": 0.48,
+    "deadline": "2027-02-15",
+    "venues": [
+     "Kalshi"
+    ],
+    "pK": 48.0,
+    "pP": null,
+    "raw": "Pro Football Championship Halftime Show: Headliner(s) \u2014 Miley Cyrus",
+    "plain": "Miley Cyrus headlines the 2027 Super Bowl halftime show",
+    "fixed": false
+   }
+  ],
+  "venues": [
+   "Kalshi"
+  ]
+ },
+ {
+  "cid": "j056",
+  "type": "clock",
+  "kicker": "The clock",
+  "n": 15,
+  "notes": [
+   "rules require a manned NASA mission to land; plain 'NASA lands on the moon' also reads as an uncrewed lander"
+  ],
+  "headline": "NASA lands astronauts on the Moon",
+  "rows": [
+   {
+    "text": "before 2027",
+    "id": "q0963",
+    "num": "1",
+    "p": 0.0085,
+    "deadline": "2027-01-01",
+    "venues": [
+     "Kalshi"
+    ],
+    "pK": 0.9,
+    "pP": null,
+    "raw": "NASA lands on the moon? \u2014 Before 2027",
+    "plain": "NASA lands astronauts on the Moon before 2027",
+    "fixed": true
+   },
+   {
+    "text": "before 2028",
+    "id": "q0964",
+    "num": "3",
+    "p": 0.0325,
+    "deadline": "2028-01-01",
+    "venues": [
+     "Kalshi"
+    ],
+    "pK": 3.2,
+    "pP": null,
+    "raw": "NASA lands on the moon? \u2014 Before 2028",
+    "plain": "NASA lands astronauts on the Moon before 2028",
+    "fixed": true
+   },
+   {
+    "text": "before 2029",
+    "id": "q0965",
+    "num": "24",
+    "p": 0.235,
+    "deadline": "2029-01-01",
+    "venues": [
+     "Kalshi"
+    ],
+    "pK": 23.5,
+    "pP": null,
+    "raw": "NASA lands on the moon? \u2014 Before 2029",
+    "plain": "NASA lands astronauts on the Moon before 2029",
+    "fixed": true
+   }
+  ],
+  "venues": [
+   "Kalshi"
+  ]
+ },
+ {
+  "cid": "j106",
+  "type": "board",
+  "kicker": "Same deadline",
+  "n": 16,
+  "notes": [
+   "q0868: 'GTA VI Online' is the online mode, not the base game (due Nov 19, 2026); 11% reads as the game itself slipping - clarify"
+  ],
+  "headline": "By the end of 2026",
+  "tag": null,
+  "rows": [
+   {
+    "text": "Apple launches an entirely new product category",
+    "id": "q1427",
+    "num": "63",
+    "p": 0.625,
+    "deadline": "2027-01-01",
+    "venues": [
+     "Polymarket"
+    ],
+    "pK": null,
+    "pP": 62.5,
+    "raw": "Will Apple release a new product line before 2027?",
+    "plain": "Apple launches an entirely new product category before 2027",
+    "fixed": true
+   },
+   {
+    "text": "SpaceX launches Starship from Florida",
+    "id": "q0815",
+    "num": "37",
+    "p": 0.365,
+    "deadline": "2027-01-01",
+    "venues": [
+     "Kalshi"
+    ],
+    "pK": 36.5,
+    "pP": null,
+    "raw": "When will SpaceX's Starship launch from Florida? \u2014 Before 2027",
+    "plain": "SpaceX launches Starship from Florida before 2027",
+    "fixed": false
+   },
+   {
+    "text": "OpenAI raises the price of ChatGPT",
+    "id": "q0869",
+    "num": "15",
+    "p": 0.145,
+    "deadline": "2027-01-01",
+    "venues": [
+     "Kalshi"
+    ],
+    "pK": 14.5,
+    "pP": null,
+    "raw": "Will OpenAI increase the cost of ChatGPT?",
+    "plain": "OpenAI raises the price of ChatGPT before 2027",
+    "fixed": false
+   },
+   {
+    "text": "Rockstar releases GTA VI Online, the game's online mode",
+    "id": "q0868",
+    "num": "11",
+    "p": 0.11,
+    "deadline": "2027-01-01",
+    "venues": [
+     "Kalshi"
+    ],
+    "pK": 11.0,
+    "pP": null,
+    "raw": "GTA VI Online: Release date \u2014 Before 2027",
+    "plain": "Rockstar releases GTA VI Online, the game's online mode, before 2027",
+    "fixed": true
+   },
+   {
+    "text": "Kim Kardashian passes the bar exam",
+    "id": "q0855",
+    "num": "5",
+    "p": 0.05,
+    "deadline": "2027-01-01",
+    "venues": [
+     "Kalshi"
+    ],
+    "pK": 5.0,
+    "pP": null,
+    "raw": "Kim Kardashian: Pass the Bar Exam before 2027?",
+    "plain": "Kim Kardashian passes the bar exam before 2027",
+    "fixed": false
+   }
+  ],
+  "venues": [
+   "Kalshi",
+   "Polymarket"
+  ]
+ },
+ {
+  "cid": "j138",
+  "type": "yardstick",
+  "kicker": "As likely as",
+  "n": 17,
+  "notes": [
+   "sentences faithful",
+   "q0389 note: resolves on being announced as headliner of the February 2027 show"
+  ],
+  "headline": null,
+  "connector": "is rated about as likely as",
+  "rows": [
+   {
+    "text": "Tesla and SpaceX announce a merger by June 30, 2027",
+    "id": "q1534",
+    "num": "43",
+    "p": 0.425,
+    "deadline": "2027-06-30",
+    "venues": [
+     "Polymarket"
+    ],
+    "pK": null,
+    "pP": 42.5,
+    "raw": "Tesla and SpaceX merger officially announced by...? \u2014 June 30, 2027",
+    "plain": "Tesla and SpaceX announce a merger by June 30, 2027",
+    "fixed": false
+   },
+   {
+    "text": "Jay-Z headlines the Super Bowl halftime show",
+    "id": "q0389",
+    "num": "44",
+    "p": 0.435,
+    "deadline": "2027-02-15",
+    "venues": [
+     "Kalshi"
+    ],
+    "pK": 43.5,
+    "pP": null,
+    "raw": "Pro Football Championship Halftime Show: Headliner(s) \u2014 JAY-Z",
+    "plain": "Jay-Z headlines the Super Bowl halftime show",
+    "fixed": false
+   }
+  ],
+  "venues": [
+   "Kalshi",
+   "Polymarket"
+  ]
+ },
+ {
+  "cid": "j250",
+  "type": "clock",
+  "kicker": "The clock",
+  "n": 18,
+  "notes": [
+   "note: war-adjacent (US-Iran standoff) but the claim is a diplomatic agreement; not counted as a TONE hit"
+  ],
+  "headline": "The US and Iran reach an agreement on the Strait of Hormuz",
+  "rows": [
+   {
+    "text": "by October 7, 2026",
+    "id": "q1898",
+    "num": "1",
+    "p": 0.0125,
+    "deadline": "2026-10-07",
+    "venues": [
+     "Polymarket"
+    ],
+    "pK": null,
+    "pP": 1.2,
+    "raw": "US-Iran Hormuz Agreement by...? \u2014 October 7",
+    "plain": "The US and Iran reach an agreement on the Strait of Hormuz by October 7",
+    "fixed": false
+   },
+   {
+    "text": "by October 15, 2026",
+    "id": "q1896",
+    "num": "7",
+    "p": 0.065,
+    "deadline": "2026-10-15",
+    "venues": [
+     "Polymarket"
+    ],
+    "pK": null,
+    "pP": 6.5,
+    "raw": "US-Iran Hormuz Agreement by...? \u2014 October 15",
+    "plain": "The US and Iran reach a Strait of Hormuz agreement by October 15",
+    "fixed": false
+   },
+   {
+    "text": "by October 31, 2026",
+    "id": "q1895",
+    "num": "14",
+    "p": 0.135,
+    "deadline": "2026-10-31",
+    "venues": [
+     "Polymarket"
+    ],
+    "pK": null,
+    "pP": 13.5,
+    "raw": "US-Iran Hormuz Agreement by...? \u2014 October 31",
+    "plain": "The US and Iran reach an agreement on the Strait of Hormuz by October 31",
+    "fixed": false
+   },
+   {
+    "text": "by November 30, 2026",
+    "id": "q1897",
+    "num": "23",
+    "p": 0.225,
+    "deadline": "2026-11-30",
+    "venues": [
+     "Polymarket"
+    ],
+    "pK": null,
+    "pP": 22.5,
+    "raw": "US-Iran Hormuz Agreement by...? \u2014 November 30",
+    "plain": "The US and Iran reach an agreement on the Strait of Hormuz by November 30",
+    "fixed": false
+   },
+   {
+    "text": "by December 31, 2026",
+    "id": "q1899",
+    "num": "33",
+    "p": 0.33,
+    "deadline": "2026-12-31",
+    "venues": [
+     "Polymarket"
+    ],
+    "pK": null,
+    "pP": 33.0,
+    "raw": "US-Iran Hormuz Agreement by...? \u2014 December 31",
+    "plain": "The US and Iran reach an agreement on the Strait of Hormuz by December 31",
+    "fixed": false
+   }
+  ],
+  "venues": [
+   "Polymarket"
+  ]
+ },
+ {
+  "cid": "j063",
+  "type": "board",
+  "kicker": "Same deadline",
+  "n": 19,
+  "notes": [
+   "q0949: resolves if any Cabinet member, Joint Chief or federal agency definitively states extraterrestrial life or technology exists; broader than 'the US government confirms aliens exist'",
+   "q0949, q0072, q0073: 'January 2029' misstates the Jan 20/21, 2029 deadlines"
+  ],
+  "headline": "Before Trump's term ends",
+  "tag": null,
+  "rows": [
+   {
+    "text": "A ban on members of Congress trading stocks becomes law",
+    "id": "q1196",
+    "num": "39",
+    "p": 0.39,
+    "deadline": "2029-01-21",
+    "venues": [
+     "Kalshi"
+    ],
+    "pK": 39.0,
+    "pP": null,
+    "raw": "Will members of Congress be banned from trading stocks? \u2014 Before Jan 21, 2029",
+    "plain": "A ban on members of Congress trading stocks becomes law before January 21, 2029",
+    "fixed": true
+   },
+   {
+    "text": "A top US official or federal agency definitively states alien life or technology exists",
+    "id": "q0949",
+    "num": "23",
+    "p": 0.225,
+    "deadline": "2029-01-20",
+    "venues": [
+     "Kalshi"
+    ],
+    "pK": 22.5,
+    "pP": null,
+    "raw": "Will the U.S. confirm that aliens exist? \u2014 Before Jan 20, 2029",
+    "plain": "A top US official or federal agency definitively states alien life or technology exists before January 20, 2029",
+    "fixed": true
+   },
+   {
+    "text": "The US takes control of any part of Greenland",
+    "id": "q0072",
+    "num": "19",
+    "p": 0.185,
+    "deadline": "2029-01-21",
+    "venues": [
+     "Kalshi"
+    ],
+    "pK": 18.5,
+    "pP": null,
+    "raw": "Will the US take control of any part of Greenland? \u2014 Before January 21, 2029",
+    "plain": "The US takes control of any part of Greenland before January 21, 2029",
+    "fixed": true
+   },
+   {
+    "text": "The US takes control of any part of Canada",
+    "id": "q0073",
+    "num": "11",
+    "p": 0.105,
+    "deadline": "2029-01-21",
+    "venues": [
+     "Kalshi"
+    ],
+    "pK": 10.5,
+    "pP": null,
+    "raw": "Will the US take control of any part of Canada?",
+    "plain": "The US takes control of any part of Canada before January 21, 2029",
+    "fixed": true
+   },
+   {
+    "text": "Trump abolishes the Federal Reserve",
+    "id": "q0089",
+    "num": "5",
+    "p": 0.05,
+    "deadline": "2029-01-20",
+    "venues": [
+     "Kalshi"
+    ],
+    "pK": 5.0,
+    "pP": null,
+    "raw": "Will Trump end the Federal Reserve?",
+    "plain": "Trump abolishes the Federal Reserve before the end of his term",
+    "fixed": false
+   }
+  ],
+  "venues": [
+   "Kalshi"
+  ]
+ },
+ {
+  "cid": "j118",
+  "type": "yardstick",
+  "kicker": "As likely as",
+  "n": 20,
+  "notes": [
+   "q1566: '2027 AFC championship' is the January 2027 game deciding the 2026 season (deadline 2027-04-01); label reads like the 2027 season",
+   "q0060 note: resolves on inauguration for the term beginning 2029, not election night"
+  ],
+  "headline": null,
+  "connector": "is rated about as likely as",
+  "rows": [
+   {
+    "text": "J.D. Vance wins the 2028 presidential election",
+    "id": "q0060",
+    "num": "20",
+    "p": 0.195,
+    "deadline": "2029-11-07",
+    "venues": [
+     "Kalshi"
+    ],
+    "pK": 19.5,
+    "pP": null,
+    "raw": "2028 U.S. Presidential Election winner? \u2014 J.D. Vance",
+    "plain": "J.D. Vance wins the 2028 presidential election",
+    "fixed": false
+   },
+   {
+    "text": "The Kansas City Chiefs win the AFC Championship game played in January 2027",
+    "id": "q1566",
+    "num": "19",
+    "p": 0.19,
+    "deadline": "2027-04-01",
+    "venues": [
+     "Polymarket"
+    ],
+    "pK": null,
+    "pP": 19.0,
+    "raw": "Pro Football: 2027 AFC Champion  \u2014 Kansas City Chiefs",
+    "plain": "The Kansas City Chiefs win the AFC Championship game played in January 2027",
+    "fixed": true
+   }
+  ],
+  "venues": [
+   "Kalshi",
+   "Polymarket"
+  ]
+ },
+ {
+  "cid": "j160",
+  "type": "clock",
+  "kicker": "The clock",
+  "n": 21,
+  "notes": [
+   "MEANING note: rules count the US gaining control of any territory outside its sovereignty, which is broader than a formal acquisition"
+  ],
+  "headline": "The US acquires new territory",
+  "rows": [
+   {
+    "text": "before 2027",
+    "id": "q0043",
+    "num": "6",
+    "p": 0.0585,
+    "deadline": "2027-01-01",
+    "venues": [
+     "Kalshi"
+    ],
+    "pK": 5.9,
+    "pP": null,
+    "raw": "Will the US acquire any new territory? \u2014 Before Jan 2027",
+    "plain": "The US acquires new territory before 2027",
+    "fixed": false
+   },
+   {
+    "text": "before 2028",
+    "id": "q0044",
+    "num": "18",
+    "p": 0.175,
+    "deadline": "2028-01-01",
+    "venues": [
+     "Kalshi"
+    ],
+    "pK": 17.5,
+    "pP": null,
+    "raw": "Will the US acquire any new territory? \u2014 Before Jan 2028",
+    "plain": "The US acquires new territory before 2028",
+    "fixed": false
+   },
+   {
+    "text": "before January 21, 2029",
+    "id": "q0045",
+    "num": "21",
+    "p": 0.205,
+    "deadline": "2029-01-21",
+    "venues": [
+     "Kalshi"
+    ],
+    "pK": 20.5,
+    "pP": null,
+    "raw": "Will the US acquire any new territory? \u2014 Before Jan 21, 2029",
+    "plain": "The United States acquires new territory before January 21, 2029",
+    "fixed": false
+   }
+  ],
+  "venues": [
+   "Kalshi"
+  ]
+ },
+ {
+  "cid": "j137",
+  "type": "board",
+  "kicker": "Same deadline",
+  "n": 22,
+  "notes": [
+   "deadlines shared (Dec 31, 2027 / Jan 1, 2028); sentences faithful",
+   "meaning notes: q0913 resolves when the law is enacted; q1233 resolves on an announced price increase"
+  ],
+  "headline": "By the end of 2027",
+  "tag": null,
+  "rows": [
+   {
+    "text": "Trump is impeached",
+    "id": "q1227",
+    "num": "66",
+    "p": 0.655,
+    "deadline": "2028-01-01",
+    "venues": [
+     "Kalshi"
+    ],
+    "pK": 65.5,
+    "pP": null,
+    "raw": "Will Trump be impeached? \u2014 Before Jan 1, 2028",
+    "plain": "Trump is impeached before 2028",
+    "fixed": false
+   },
+   {
+    "text": "Tesla and SpaceX officially announce a merger",
+    "id": "q1532",
+    "num": "60",
+    "p": 0.595,
+    "deadline": "2027-12-31",
+    "venues": [
+     "Polymarket"
+    ],
+    "pK": null,
+    "pP": 59.5,
+    "raw": "Tesla and SpaceX merger officially announced by...? \u2014 December 31, 2027",
+    "plain": "Tesla and SpaceX officially announce a merger by December 31, 2027",
+    "fixed": false
+   },
+   {
+    "text": "A law making daylight saving time permanent in the US is enacted",
+    "id": "q0913",
+    "num": "25",
+    "p": 0.25,
+    "deadline": "2028-01-01",
+    "venues": [
+     "Kalshi"
+    ],
+    "pK": 25.0,
+    "pP": null,
+    "raw": "Will Daylight Saving Time become permanent? \u2014 Before Jan 1, 2028",
+    "plain": "A law making daylight saving time permanent in the US is enacted before 2028",
+    "fixed": true
+   },
+   {
+    "text": "The US issues a Level 4 \"Do Not Travel\" advisory for Taiwan",
+    "id": "q0012",
+    "num": "18",
+    "p": 0.18,
+    "deadline": "2028-01-01",
+    "venues": [
+     "Kalshi"
+    ],
+    "pK": 18.0,
+    "pP": null,
+    "raw": "Will the US issue a Level 4 travel advisory for Taiwan? \u2014 Before Jan 1, 2028",
+    "plain": "The US issues a Level 4 \"Do Not Travel\" advisory for Taiwan before 2028",
+    "fixed": false
+   },
+   {
+    "text": "Costco raises the price of its hot dog combo",
+    "id": "q1233",
+    "num": "11",
+    "p": 0.11,
+    "deadline": "2028-01-01",
+    "venues": [
+     "Kalshi"
+    ],
+    "pK": 11.0,
+    "pP": null,
+    "raw": "Costco raises hot dog combo price? \u2014 Before 2028",
+    "plain": "Costco raises the price of its hot dog combo before 2028",
+    "fixed": false
+   }
+  ],
+  "venues": [
+   "Kalshi",
+   "Polymarket"
+  ]
+ },
+ {
+  "cid": "j172",
+  "type": "yardstick",
+  "kicker": "As likely as",
+  "n": 23,
+  "notes": [
+   "MEANING note: q1371 counts domestic (US) opening-weekend gross only"
+  ],
+  "headline": null,
+  "connector": "is rated about as likely as",
+  "rows": [
+   {
+    "text": "Republicans win control of the US Senate in the 2026 elections",
+    "id": "q1262",
+    "num": "35",
+    "p": 0.345,
+    "deadline": "2026-11-04",
+    "venues": [
+     "Polymarket"
+    ],
+    "pK": null,
+    "pP": 34.5,
+    "raw": "Which party will win the Senate in 2026? \u2014 Republican Party",
+    "plain": "Republicans win control of the US Senate in the 2026 elections",
+    "fixed": false
+   },
+   {
+    "text": "Avengers: Doomsday has the biggest US opening weekend of 2026",
+    "id": "q1371",
+    "num": "35",
+    "p": 0.35,
+    "deadline": "2027-02-01",
+    "venues": [
+     "Polymarket"
+    ],
+    "pK": null,
+    "pP": 35.0,
+    "raw": "Which movie has biggest opening weekend in 2026? \u2014 Avengers: Doomsday",
+    "plain": "Avengers: Doomsday has the biggest US opening weekend of 2026",
+    "fixed": true
+   }
+  ],
+  "venues": [
+   "Polymarket"
+  ]
+ },
+ {
+  "cid": "j048",
+  "type": "clock",
+  "kicker": "The clock",
+  "n": 24,
+  "notes": [
+   "plain sentences say Trump 'announces' leaving, but the rules resolve only if he actually leaves office (venue title says 'announces departure'; rules govern)",
+   "q0788: 'before January 2029' misstates the Jan 20, 2029 deadline",
+   "rungs worded three different ways; fixes make them one question and carry the death exclusion without naming it",
+   "note: tone-borderline, card title carries '(Excluding death)' about a named person; retitle"
+  ],
+  "headline": "Trump resigns or is removed from office",
+  "rows": [
+   {
+    "text": "before 2027",
+    "id": "q0786",
+    "num": "4",
+    "p": 0.0385,
+    "deadline": "2027-01-01",
+    "venues": [
+     "Kalshi"
+    ],
+    "pK": 3.9,
+    "pP": null,
+    "raw": "Donald Trump announces departure as President? (Excluding death) \u2014 Before 2027",
+    "plain": "Trump resigns or is removed from office before 2027",
+    "fixed": true
+   },
+   {
+    "text": "before 2028",
+    "id": "q0787",
+    "num": "19",
+    "p": 0.185,
+    "deadline": "2028-01-01",
+    "venues": [
+     "Kalshi"
+    ],
+    "pK": 18.5,
+    "pP": null,
+    "raw": "Donald Trump announces departure as President? (Excluding death) \u2014 Before 2028",
+    "plain": "Trump resigns or is removed from office before 2028",
+    "fixed": true
+   },
+   {
+    "text": "before January 20, 2029",
+    "id": "q0788",
+    "num": "25",
+    "p": 0.25,
+    "deadline": "2029-01-20",
+    "venues": [
+     "Kalshi"
+    ],
+    "pK": 25.0,
+    "pP": null,
+    "raw": "Donald Trump announces departure as President? (Excluding death) \u2014 Before January 20, 2029",
+    "plain": "Trump resigns or is removed from office before January 20, 2029",
+    "fixed": true
+   }
+  ],
+  "venues": [
+   "Kalshi"
+  ]
+ },
+ {
+  "cid": "j261",
+  "type": "board",
+  "kicker": "Same deadline",
+  "n": 25,
+  "notes": [
+   "q0005: rules need only a company's official ANNOUNCEMENT of AGI, not actual achievement",
+   "note: q0102 95% for a Fed hike by June 30, 2027 is striking; sentence matches rules, verify source price"
+  ],
+  "headline": "By mid-2027",
+  "tag": null,
+  "rows": [
+   {
+    "text": "The Federal Reserve raises interest rates",
+    "id": "q0102",
+    "num": "95",
+    "p": 0.945,
+    "deadline": "2027-07-01",
+    "venues": [
+     "Kalshi"
+    ],
+    "pK": 94.5,
+    "pP": null,
+    "raw": "Next Fed rate hike? \u2014 Before July 2027",
+    "plain": "The Federal Reserve raises interest rates before July 2027",
+    "fixed": false
+   },
+   {
+    "text": "A company officially announces it has achieved AGI",
+    "id": "q0005",
+    "num": "42",
+    "p": 0.415,
+    "deadline": "2027-07-01",
+    "venues": [
+     "Kalshi"
+    ],
+    "pK": 41.5,
+    "pP": null,
+    "raw": "When will any company achieve AGI? \u2014 Before Jul 1, 2027",
+    "plain": "A company officially announces it has achieved AGI before July 2027",
+    "fixed": true
+   },
+   {
+    "text": "Justice Alito retires from the Supreme Court",
+    "id": "q1192",
+    "num": "29",
+    "p": 0.285,
+    "deadline": "2027-07-01",
+    "venues": [
+     "Kalshi"
+    ],
+    "pK": 28.5,
+    "pP": null,
+    "raw": "When will Justice Alito retire from the Supreme Court? \u2014 Before Jul 1, 2027",
+    "plain": "Justice Alito retires from the Supreme Court before July 1, 2027",
+    "fixed": false
+   },
+   {
+    "text": "Vladimir Putin is out as Russia's president",
+    "id": "q1251",
+    "num": "11",
+    "p": 0.105,
+    "deadline": "2027-06-30",
+    "venues": [
+     "Polymarket"
+    ],
+    "pK": null,
+    "pP": 10.5,
+    "raw": "Putin out as President of Russia by...? \u2014 June 30, 2027",
+    "plain": "Vladimir Putin is out as Russia's president by June 30, 2027",
+    "fixed": false
+   },
+   {
+    "text": "Starlink officially announces an IPO",
+    "id": "q0291",
+    "num": "6",
+    "p": 0.055,
+    "deadline": "2027-06-30",
+    "venues": [
+     "Kalshi"
+    ],
+    "pK": 5.5,
+    "pP": null,
+    "raw": "When will Starlink officially announce an IPO? \u2014 Before Jun 30, 2027",
+    "plain": "Starlink officially announces an IPO before June 30, 2027",
+    "fixed": false
+   }
+  ],
+  "venues": [
+   "Kalshi",
+   "Polymarket"
+  ]
+ },
+ {
+  "cid": "j153",
+  "type": "yardstick",
+  "kicker": "As likely as",
+  "n": 26,
+  "notes": [
+   "sentences faithful; unrelated claims at 66% and 67%"
+  ],
+  "headline": null,
+  "connector": "is rated about as likely as",
+  "rows": [
+   {
+    "text": "Trump is impeached before 2028",
+    "id": "q1227",
+    "num": "66",
+    "p": 0.655,
+    "deadline": "2028-01-01",
+    "venues": [
+     "Kalshi"
+    ],
+    "pK": 65.5,
+    "pP": null,
+    "raw": "Will Trump be impeached? \u2014 Before Jan 1, 2028",
+    "plain": "Trump is impeached before 2028",
+    "fixed": false
+   },
+   {
+    "text": "Christopher Nolan wins the Oscar for Best Director",
+    "id": "q0193",
+    "num": "67",
+    "p": 0.665,
+    "deadline": "2027-12-31",
+    "venues": [
+     "Kalshi"
+    ],
+    "pK": 66.5,
+    "pP": null,
+    "raw": "Oscar Winner: Best Director \u2014 Christopher Nolan",
+    "plain": "Christopher Nolan wins the Oscar for Best Director",
+    "fixed": false
+   }
+  ],
+  "venues": [
+   "Kalshi"
+  ]
+ },
+ {
+  "cid": "j049",
+  "type": "clock",
+  "kicker": "The clock",
+  "n": 27,
+  "notes": [],
+  "headline": "Anthropic announces bankruptcy",
+  "rows": [
+   {
+    "text": "by the end of 2027",
+    "id": "q1996",
+    "num": "10",
+    "p": 0.095,
+    "deadline": "2027-12-31",
+    "venues": [
+     "Polymarket"
+    ],
+    "pK": null,
+    "pP": 9.5,
+    "raw": "Anthropic announces bankruptcy by...? \u2014 December 31, 2027",
+    "plain": "Anthropic announces bankruptcy by the end of 2027",
+    "fixed": false
+   },
+   {
+    "text": "by the end of 2028",
+    "id": "q1997",
+    "num": "19",
+    "p": 0.185,
+    "deadline": "2028-12-31",
+    "venues": [
+     "Polymarket"
+    ],
+    "pK": null,
+    "pP": 18.5,
+    "raw": "Anthropic announces bankruptcy by...? \u2014 December 31, 2028",
+    "plain": "Anthropic announces bankruptcy by the end of 2028",
+    "fixed": false
+   },
+   {
+    "text": "by the end of 2029",
+    "id": "q1998",
+    "num": "22",
+    "p": 0.215,
+    "deadline": "2029-12-31",
+    "venues": [
+     "Polymarket"
+    ],
+    "pK": null,
+    "pP": 21.5,
+    "raw": "Anthropic announces bankruptcy by...? \u2014 December 31, 2029",
+    "plain": "Anthropic announces bankruptcy by the end of 2029",
+    "fixed": false
+   }
+  ],
+  "venues": [
+   "Polymarket"
+  ]
+ },
+ {
+  "cid": "j047",
+  "type": "yardstick",
+  "kicker": "As likely as",
+  "n": 28,
+  "notes": [
+   "q1426: 'blue wave' is defined as Democrats at 218+ House seats and only 49+ Senate seats (no Senate majority needed); plain overstates"
+  ],
+  "headline": null,
+  "connector": "is rated about as likely as",
+  "rows": [
+   {
+    "text": "Democrats win the House and hold at least 49 Senate seats after the 2026 midterms",
+    "id": "q1426",
+    "num": "85",
+    "p": 0.845,
+    "deadline": "2027-01-05",
+    "venues": [
+     "Polymarket"
+    ],
+    "pK": null,
+    "pP": 84.5,
+    "raw": "Blue wave in 2026?",
+    "plain": "Democrats win the House and hold at least 49 Senate seats after the 2026 midterms",
+    "fixed": true
+   },
+   {
+    "text": "Drake is Spotify's top artist in the US in 2026",
+    "id": "q0989",
+    "num": "84",
+    "p": 0.835,
+    "deadline": "2026-12-31",
+    "venues": [
+     "Kalshi",
+     "Polymarket"
+    ],
+    "pK": 83.5,
+    "pP": 83.5,
+    "raw": "Top Artist on Spotify U.S. 2026 \u2014 Drake",
+    "plain": "Drake is Spotify's top artist in the US in 2026",
+    "fixed": false
+   }
+  ],
+  "venues": [
+   "Kalshi",
+   "Polymarket"
+  ]
+ },
+ {
+  "cid": "j080",
+  "type": "clock",
+  "kicker": "The clock",
+  "n": 29,
+  "notes": [],
+  "headline": "Texas enacts a data center moratorium",
+  "rows": [
+   {
+    "text": "by December 31, 2026",
+    "id": "q2027",
+    "num": "5",
+    "p": 0.05,
+    "deadline": "2026-12-31",
+    "venues": [
+     "Polymarket"
+    ],
+    "pK": null,
+    "pP": 5.0,
+    "raw": "Texas enacts data center moratorium by...? \u2014 December 31, 2026",
+    "plain": "Texas enacts a data center moratorium by December 31, 2026",
+    "fixed": false
+   },
+   {
+    "text": "by June 30, 2027",
+    "id": "q2028",
+    "num": "15",
+    "p": 0.145,
+    "deadline": "2027-06-30",
+    "venues": [
+     "Polymarket"
+    ],
+    "pK": null,
+    "pP": 14.5,
+    "raw": "Texas enacts data center moratorium by...? \u2014 June 30, 2027",
+    "plain": "Texas enacts a data center moratorium by June 30, 2027",
+    "fixed": false
+   },
+   {
+    "text": "by the end of 2027",
+    "id": "q2029",
+    "num": "17",
+    "p": 0.165,
+    "deadline": "2027-12-31",
+    "venues": [
+     "Polymarket"
+    ],
+    "pK": null,
+    "pP": 16.5,
+    "raw": "Texas enacts data center moratorium by...? \u2014 December 31, 2027",
+    "plain": "Texas enacts a data center moratorium by the end of 2027",
+    "fixed": false
+   },
+   {
+    "text": "by the end of 2028",
+    "id": "q2030",
+    "num": "27",
+    "p": 0.265,
+    "deadline": "2028-12-31",
+    "venues": [
+     "Polymarket"
+    ],
+    "pK": null,
+    "pP": 26.5,
+    "raw": "Texas enacts data center moratorium by...? \u2014 December 31, 2028",
+    "plain": "Texas enacts a data center moratorium by the end of 2028",
+    "fixed": false
+   }
+  ],
+  "venues": [
+   "Polymarket"
+  ]
+ },
+ {
+  "cid": "j192",
+  "type": "clock",
+  "kicker": "The clock",
+  "n": 30,
+  "notes": [
+   "q1720 gives 'December 31' with no year; deadline is December 31, 2026",
+   "TONE: card subject is the Russia-Ukraine war (ceasefire agreement), though the claim is about a truce, not strikes or casualties",
+   "Rungs are the same question; probabilities rise with the deadline"
+  ],
+  "headline": "Russia and Ukraine agree to a ceasefire",
+  "rows": [
+   {
+    "text": "by October 31, 2026",
+    "id": "q1719",
+    "num": "4",
+    "p": 0.0405,
+    "deadline": "2026-10-31",
+    "venues": [
+     "Polymarket"
+    ],
+    "pK": null,
+    "pP": 4.0,
+    "raw": "Russia x Ukraine ceasefire agreement by...? \u2014 October 31",
+    "plain": "Russia and Ukraine agree to a ceasefire by October 31, 2026",
+    "fixed": false
+   },
+   {
+    "text": "by November 30, 2026",
+    "id": "q1728",
+    "num": "9",
+    "p": 0.085,
+    "deadline": "2026-11-30",
+    "venues": [
+     "Polymarket"
+    ],
+    "pK": null,
+    "pP": 8.5,
+    "raw": "Russia x Ukraine ceasefire agreement by...? \u2014 November 30",
+    "plain": "Russia and Ukraine agree to a ceasefire by November 30, 2026",
+    "fixed": false
+   },
+   {
+    "text": "by December 31, 2026",
+    "id": "q1720",
+    "num": "15",
+    "p": 0.15,
+    "deadline": "2026-12-31",
+    "venues": [
+     "Polymarket"
+    ],
+    "pK": null,
+    "pP": 15.0,
+    "raw": "Russia x Ukraine ceasefire agreement by...? \u2014 December 31",
+    "plain": "Russia and Ukraine agree to a ceasefire by December 31, 2026",
+    "fixed": true
+   },
+   {
+    "text": "by June 30, 2027",
+    "id": "q1722",
+    "num": "50",
+    "p": 0.495,
+    "deadline": "2027-06-30",
+    "venues": [
+     "Polymarket"
+    ],
+    "pK": null,
+    "pP": 49.5,
+    "raw": "Russia x Ukraine ceasefire agreement by...? \u2014 June 30, 2027",
+    "plain": "Russia and Ukraine agree to a ceasefire by June 30, 2027",
+    "fixed": false
+   },
+   {
+    "text": "by October 31, 2027",
+    "id": "q1724",
+    "num": "62",
+    "p": 0.62,
+    "deadline": "2027-10-31",
+    "venues": [
+     "Polymarket"
+    ],
+    "pK": null,
+    "pP": 62.0,
+    "raw": "Russia x Ukraine ceasefire agreement by...? \u2014 October 31, 2027",
+    "plain": "Russia and Ukraine agree to a ceasefire by October 31, 2027",
+    "fixed": false
+   },
+   {
+    "text": "by December 31, 2027",
+    "id": "q1725",
+    "num": "69",
+    "p": 0.69,
+    "deadline": "2027-12-31",
+    "venues": [
+     "Polymarket"
+    ],
+    "pK": null,
+    "pP": 69.0,
+    "raw": "Russia x Ukraine ceasefire agreement by...? \u2014 December 31, 2027",
+    "plain": "Russia and Ukraine agree to a ceasefire by December 31, 2027",
+    "fixed": false
+   }
+  ],
+  "venues": [
+   "Polymarket"
+  ]
+ }
+]

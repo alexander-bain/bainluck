@@ -1,0 +1,99 @@
+slate,card_id,position,card_type,grade,note,graded_at_utc,headline,member_ids,member_probabilities
+v1,c00,1,board,amazing,,2026-10-06T06:16:02.507Z,By the end of 2027,q1223|q1532|q0948|q0147|q0964,0.985|0.595|0.145|0.0955|0.0325
+v1,c01,6,board,fine,,2026-10-06T06:17:37.129Z,By the end of 2026,q1426|q1785|q1531|q0146|q0071,0.845|0.585|0.145|0.075|0.0385
+v1,c02,11,board,amazing,,2026-10-06T06:18:31.599Z,By mid-2027,q1222|q1534|q1192|q1388|q1251,0.975|0.425|0.285|0.195|0.105
+v1,c03,16,board,fine,,2026-10-06T06:19:33.095Z,By the end of 2026,q1426|q0081|q1191|q0146|q1437,0.845|0.17|0.12|0.075|0.032
+v1,c04,21,board,amazing,,2026-10-06T06:20:07.345Z,By 2030,q1236|q1231|q0014|q0015|q0030,0.6545|0.4715|0.405|0.245|0.16
+v1,c05,26,board,amazing,,2026-10-06T06:20:46.379Z,Before Trump's term ends,q1230|q1196|q0045|q0076|q0088,0.795|0.39|0.205|0.165|0.115
+v1,c08,3,clock,amazing,,2026-10-06T06:16:47.199Z,Apple releases the iPhone 18,q0857|q0858|q0859|q0860,0.035|0.045|0.105|0.855
+v1,c09,8,clock,fine,,2026-10-06T06:17:57.246Z,The US reschedules marijuana,q1228|q1229|q1230,0.0795|0.68|0.795
+v1,c10,13,clock,amazing,,2026-10-06T06:18:47.821Z,Trump is impeached,q1225|q1226|q1227,0.0273|0.325|0.655
+v1,c11,18,clock,amazing,,2026-10-06T06:19:45.161Z,Anthropic holds an IPO,q1768|q1767|q1770|q1769|q1771|q1766,0.0005|0.0135|0.115|0.675|0.785|0.815
+v1,c12,23,clock,no,,2026-10-06T06:20:17.655Z,GTA VI is released,q1219|q1220|q1221|q1222|q1223,0.005|0.925|0.935|0.975|0.985
+v1,c13,28,clock,amazing,,2026-10-06T06:20:59.254Z,OpenAI announces it has achieved AGI,q1234|q1235|q1236,0.1145|0.4505|0.6545
+v1,c17,2,yardstick,amazing,,2026-10-06T06:16:11.306Z,,q0449|q0994,0.0875|0.085
+v1,c18,7,yardstick,fine,,2026-10-06T06:17:49.786Z,,q0447|q1439,0.355|0.36
+v1,c19,12,yardstick,amazing,,2026-10-06T06:18:38.473Z,,q1254|q0198,0.1525|0.155
+v1,c20,17,yardstick,fine,,2026-10-06T06:19:42.171Z,,q0105|q0183,0.0555|0.055
+v1,c21,22,yardstick,amazing,,2026-10-06T06:20:13.151Z,,q1251|q0990,0.105|0.1072
+v1,c22,27,yardstick,amazing,,2026-10-06T06:20:55.637Z,,q0072|q1736,0.185|0.1895
+v1,c26,4,reversal,no,,2026-10-06T06:17:16.567Z,,q1532|q0141,0.595|0.205
+v1,c27,9,reversal,fine,,2026-10-06T06:18:14.502Z,,q1231|q0030,0.4715|0.16
+v1,c28,14,reversal,no,,2026-10-06T06:18:55.554Z,,q0438|q0857,0.855|0.035
+v1,c29,19,reversal,fine,,2026-10-06T06:19:54.339Z,,q0101|q1465,0.745|0.17
+v1,c30,24,reversal,no,,2026-10-06T06:20:24.752Z,,q1427|q0868,0.625|0.11
+v1,c31,29,reversal,no,,2026-10-06T06:21:12.021Z,,q1272|q1443,0.39|0.07
+v1,c35,5,dossier,fine,,2026-10-06T06:17:27.579Z,Drake,q0989|q0182|q1963|q0992,0.835|0.555|0.135|0.0355
+v1,c36,10,dossier,fine,,2026-10-06T06:18:22.688Z,Avengers: Doomsday,q0741|q1651|q1371|q1046,0.915|0.515|0.35|0.06
+v1,c38,15,dossier,fine,,2026-10-06T06:19:10.826Z,Spider-Man: Brand New Day,q1368|q1370|q1650|q1862,0.955|0.635|0.485|0.345
+v1,c39,20,dossier,fine,,2026-10-06T06:19:58.179Z,Robert Pattinson,q0488|q1189|q0188,0.575|0.295|0.105
+v1,c42,25,dossier,fine,,2026-10-06T06:20:32.438Z,Chicago Bears,q0514|q0535|q0135|q0423,0.63|0.285|0.245|0.085
+v1,c43,30,dossier,fine,,2026-10-06T06:21:18.957Z,Kansas City Chiefs,q0545|q0542|q0436|q0400,0.625|0.485|0.165|0.0897
+v2,j047,28,yardstick,fine,,2026-10-06T13:23:22.406Z,,q1426|q0989,0.845|0.835
+v2,j048,24,clock,fine,,2026-10-06T13:22:55.070Z,Trump resigns or is removed from office,q0786|q0787|q0788,0.0385|0.185|0.25
+v2,j049,27,clock,fine,,2026-10-06T13:23:16.730Z,Anthropic announces bankruptcy,q1996|q1997|q1998,0.095|0.185|0.215
+v2,j054,14,yardstick,amazing,,2026-10-06T13:21:19.985Z,,q0036|q0391,0.485|0.48
+v2,j056,15,clock,fine,,2026-10-06T13:21:33.265Z,NASA lands astronauts on the Moon,q0963|q0964|q0965,0.0085|0.0325|0.235
+v2,j059,4,board,amazing,,2026-10-06T13:18:53.005Z,By the end of 2026,q0101|q1935|q1159|q1387,0.745|0.39|0.205|0.074
+v2,j060,6,clock,amazing,,2026-10-06T13:19:32.322Z,A Millennium Prize for solving a famous math problem is awarded,q1205|q1206|q1207|q1208,0.025|0.0725|0.2655|0.5935
+v2,j061,5,yardstick,fine,,2026-10-06T13:19:10.552Z,,q1604|q0868,0.11|0.11
+v2,j063,19,board,amazing,,2026-10-06T13:22:15.889Z,Before Trump's term ends,q1196|q0949|q0072|q0073|q0089,0.39|0.225|0.185|0.105|0.05
+v2,j070,13,board,amazing,,2026-10-06T13:21:11.523Z,By mid-2027,q0102|q1534|q1941|q1388|q0291,0.945|0.425|0.285|0.195|0.055
+v2,j080,29,clock,fine,,2026-10-06T13:23:26.926Z,Texas enacts a data center moratorium,q2027|q2028|q2029|q2030,0.05|0.145|0.165|0.265
+v2,j103,3,clock,amazing,,2026-10-06T13:18:33.635Z,Oklahoma enacts a data center moratorium,q2035|q2036|q2037|q2038,0.045|0.115|0.155|0.215
+v2,j106,16,board,fine,,2026-10-06T13:21:49.513Z,By the end of 2026,q1427|q0815|q0869|q0868|q0855,0.625|0.365|0.145|0.11|0.05
+v2,j118,20,yardstick,amazing,,2026-10-06T13:22:30.107Z,,q0060|q1566,0.195|0.19
+v2,j137,22,board,amazing,,2026-10-06T13:22:45.296Z,By the end of 2027,q1227|q1532|q0913|q0012|q1233,0.655|0.595|0.25|0.18|0.11
+v2,j138,17,yardstick,fine,,2026-10-06T13:21:57.071Z,,q1534|q0389,0.425|0.435
+v2,j153,26,yardstick,amazing,,2026-10-06T13:23:12.993Z,,q1227|q0193,0.655|0.665
+v2,j159,2,yardstick,amazing,,2026-10-06T13:18:23.878Z,,q0015|q0135,0.245|0.245
+v2,j160,21,clock,fine,,2026-10-06T13:22:36.299Z,The US acquires new territory,q0043|q0044|q0045,0.0585|0.175|0.205
+v2,j169,1,board,amazing,,2026-10-06T13:18:11.759Z,Before Trump's term ends,q0075|q0098|q0072|q0073,0.415|0.345|0.185|0.105
+v2,j172,23,yardstick,fine,,2026-10-06T13:22:51.373Z,,q1262|q1371,0.345|0.35
+v2,j176,7,board,amazing,,2026-10-06T13:19:38.253Z,By the end of October,q1430|q1947|q0819|q0761,0.875|0.575|0.185|0.0238
+v2,j181,10,board,amazing,,2026-10-06T13:20:19.088Z,By the end of 2027,q1235|q0787|q0948|q1996|q0154,0.4505|0.185|0.145|0.095|0.06
+v2,j185,11,yardstick,fine,,2026-10-06T13:20:24.410Z,,q0440|q1370,0.645|0.635
+v2,j192,30,clock,fine,,2026-10-06T13:23:30.888Z,Russia and Ukraine agree to a ceasefire,q1719|q1728|q1720|q1722|q1724|q1725,0.0405|0.085|0.15|0.495|0.62|0.69
+v2,j237,9,clock,fine,,2026-10-06T13:20:04.718Z,Trump publicly criticizes Kevin Warsh,q0914|q0915|q0916,0.06|0.215|0.305
+v2,j238,12,clock,fine,,2026-10-06T13:20:48.655Z,The US issues a Level 4 'do not travel' advisory for Taiwan,q0011|q0012|q0013|q0014,0.0435|0.18|0.295|0.405
+v2,j261,25,board,amazing,,2026-10-06T13:23:08.496Z,By mid-2027,q0102|q0005|q1192|q1251|q0291,0.945|0.415|0.285|0.105|0.055
+v2,j265,8,yardstick,amazing,,2026-10-06T13:19:58.357Z,,q0057|q0988,0.0995|0.11
+v3,v00,8,h2h,amazing,,2026-10-06T13:40:12.334Z,Anthropic vs OpenAI,t1593|t1590|t0247|t0215,0.215|0.185|0.865|0.095
+v3,v01,4,peer,amazing,,2026-10-06T13:39:31.705Z,"____ announces it has filed or will file for bankruptcy by December 31, 2029",t1596|t1599|t1593|t1590,0.245|0.225|0.215|0.185
+v3,v02,12,peer,amazing,,2026-10-06T13:40:57.730Z,"A statewide ban or pause on new data centers becomes law in ____ by June 30, 2027",t1624|t1620|t1640|t1632|t1636,0.145|0.135|0.125|0.115|0.115
+v3,v03,5,funnel,no,,2026-10-06T13:39:37.181Z,Los Angeles Rams,t0362|t0365|t0287,0.745|0.255|0.12
+v3,v04,13,funnel,no,,2026-10-06T13:41:06.694Z,Minnesota Vikings,t0363|t0375|t1215,0.705|0.365|0.0665
+v3,v05,18,funnel,no,,2026-10-06T13:42:07.789Z,Chicago Bears,t0361|t0373|t0301,0.625|0.285|0.085
+v3,v07,11,deadheat,fine,,2026-10-06T13:40:51.181Z,____ win the 2026 World Series,t0853|t0852,0.2825|0.256
+v3,v08,3,deadheat,fine,,2026-10-06T13:39:07.631Z,____ win the 2027 NBA Finals,t0182|t0184,0.215|0.215
+v3,v09,17,deadheat,amazing,,2026-10-06T13:42:03.133Z,____ win the NFC East division in the 2026 NFL season,t0377|t0376,0.415|0.395
+v3,v10,14,when,fine,,2026-10-06T13:41:15.164Z,A Tesla-SpaceX merger or acquisition is officially announced,t1192|t1194|t1195|t1193,0.145|0.27|0.425|0.565
+v3,v11,19,when,fine,,2026-10-06T13:42:18.335Z,Official representatives of Russia and Ukraine hold a diplomatic meeting,t1546|t1545|t1544,0.19|0.585|0.82
+v3,v12,6,when,amazing,,2026-10-06T13:39:46.409Z,"Jerome Powell announces he is leaving the Federal Reserve Board, or leaves it",t0873|t0874|t0875|t0876,0.1|0.205|0.625|0.795
+v3,v13,20,band,amazing,,2026-10-06T13:42:29.348Z,About 1 in 20,t0057|t0051|t0577|t0687,0.045|0.0385|0.0385|0.0375
+v3,v14,2,band,fine,,2026-10-06T13:38:56.972Z,About 1 in 4,t0033|t0146|t0101|t0579,0.255|0.255|0.245|0.235
+v3,v15,10,band,amazing,,2026-10-06T13:40:43.252Z,About 2 in 3,t0593|t0102|t0756|t0065,0.685|0.675|0.675|0.655
+v3,v17,1,board,fine,,2026-10-06T13:38:45.369Z,By the end of 2026,t1535|t1236|t1563|t0031|t0067,0.395|0.275|0.135|0.073|0.029
+v3,v18,9,board,amazing,,2026-10-06T13:40:35.692Z,By the end of November,t0932|t0605|t0901|t0408|t0686,0.925|0.245|0.17|0.065|0.015
+v3,v21,7,movers,amazing,,2026-10-06T13:39:52.388Z,Biggest moves this week,t1530|t1095|t1563|t1535,0.795|0.62|0.135|0.395
+v3,v22,15,movers,amazing,,2026-10-06T13:41:19.867Z,Biggest moves this week,t1563|t1222|t1365|t0848,0.135|0.313|0.196|0.105
+v3,v28,16,band,amazing,,2026-10-06T13:41:48.434Z,About 1 in 3,t0975|t0081|t0606|t0177,0.345|0.325|0.315|0.315
+v4,x01,6,movers,amazing,,2026-10-06T15:16:35.094Z,Biggest moves this week,t1147|t1528|t0851|t1195,0.099|0.038|0.513|0.425
+v4,x02,8,movers,amazing,,2026-10-06T15:17:49.815Z,Biggest moves this month,t1537|t1315|t1309|t0958,0.6445|0.095|0.275|0.355
+v4,x03,15,movers,amazing,,2026-10-06T15:19:53.198Z,Biggest moves since Monday night,t0285|t0033|t0770|t0939,0.65|0.255|0.045|0.28
+v4,x05,1,movers,amazing,,2026-10-06T14:42:19.510Z,Biggest moves this week,t0851|t1505|t1065,0.513|0.31|0.36
+v4,x06,5,newfav,fine,,2026-10-06T15:16:31.229Z,____ has the biggest three-day US and Canada opening weekend of any 2026 movie,t1064|t1065,0.635|0.36
+v4,x07,12,newfav,fine,,2026-10-06T15:18:12.981Z,US unemployment is under 5% and inflation is ____ at the end of 2026,t1310|t1309,0.66|0.275
+v4,x10,3,swing,amazing,,2026-10-06T15:16:21.713Z,____ win control of the US Senate in the November 2026 midterm elections,t0970|t0971,0.645|0.355
+v4,x11,10,swing,fine,,2026-10-06T15:18:03.314Z,____ is the first of the venue's listed world leaders to permanently leave office before 2027,t1428|t1426,0.196|0.25
+v4,x12,7,trading,fine,,2026-10-06T15:17:47.529Z,,t1195|t1375,0.425|0.185
+v4,x13,14,trading,fine,,2026-10-06T15:19:44.547Z,,t1236|t1473,0.275|0.088
+v4,x14,19,checklist,amazing,,2026-10-06T15:20:26.551Z,____ is announced to headline the February 2027 Super Bowl halftime show,t0285|t0284|t0283|t0282,0.65|0.425|0.225|0.115
+v4,x15,16,checklist,fine,,2026-10-06T15:19:56.349Z,____ in Avengers: Doomsday,t0559|t0558|t0560|t0561,0.945|0.925|0.915|0.84
+v4,x16,2,checklist,fine,,2026-10-06T15:16:14.183Z,____ announces a campaign for the 2028 Republican presidential nomination before 2028,t0124|t0127|t0125|t0126,0.81|0.81|0.65|0.54
+v4,x17,9,checklist,fine,,2026-10-06T15:17:52.264Z,____ is nominated for Best Actor at the 2027 Oscars,t0337|t0336|t0338,0.92|0.855|0.55
+v4,x18,11,band,fine,,2026-10-06T15:18:07.814Z,About 1 in 7,t0028|t1588|t1192|t0689,0.16|0.155|0.145|0.135
+v4,x19,17,band,fine,,2026-10-06T15:20:09.792Z,About 2 in 5,t0046|t0055|t1534|t0846,0.415|0.415|0.395|0.385
+v4,x23,13,movers,amazing,,2026-10-06T15:18:15.731Z,Biggest moves this month,t1044|t0313|t0485,0.042|0.65|0.3375
+v4,x24,18,newfav,amazing,,2026-10-06T15:20:13.857Z,The ____ win the 2026 American League title and advance to the World Series,t0851|t0849,0.513|0.105
+v4,x36,4,band,fine,,2026-10-06T15:16:24.081Z,About 1 in 5,t0042|t1077|t0034|t0052,0.195|0.195|0.185|0.185

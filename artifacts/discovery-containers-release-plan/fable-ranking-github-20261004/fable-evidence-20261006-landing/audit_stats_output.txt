@@ -1,0 +1,86 @@
+A. pages: 21 | rendered and read: 20
+B. description empty: 21 of 21 | hook_description empty: 21 | hook_withheld true: 17
+   image_url is a pexels.com stock photo: 19 | no image_url: 2
+C. pages listing exactly one venue: 21 of 21 | kalshi: 11 polymarket: 10
+   twin pages (same question, two pages):
+     108620 [kalshi] Democratic Party 64.5% caption='Democratic Party up 25.0 pts from opening.'  ||  112902 [polymarket] Democratic Party 64.5% caption='Democratic Party up 24.0 pts from opening.'
+     15203993 [kalshi] Patrick Mahomes 63.5% caption=None  ||  56933330 [polymarket] Patrick Mahomes 66.5% caption='Patrick Mahomes up 35.5 pts from opening.'
+     270 [kalshi] Milwaukee 40.5% caption='Milwaukee up 36.0 pts from opening.'  ||  199050 [polymarket] Milwaukee Brewers 40.0% caption='Milwaukee Brewers down 12.6 pts from opening.'
+D. first-request chart data, one-week view (the first response each page got in this audit):
+        109596 kalshi     state=refused lead_points=132 longest_gap_h=8.2 week_range=26.9 week_net=-25.6 month_range=28.2 month_net=-12.0
+        108620 kalshi     state=refused lead_points=130 longest_gap_h=4.2 week_range=3.0 week_net=+2.0 month_range=17.0 month_net=+17.0
+        112902 polymarket state=cold    lead_points= 45 longest_gap_h=8.0 week_range=5.0 week_net=+2.0 month_range=16.0 month_net=+13.0
+      15203993 kalshi     state=cold    lead_points= 25 longest_gap_h=7.1 week_range=12.2 week_net=-2.0 month_range=36.0 month_net=+29.0
+      56933330 polymarket state=cold    lead_points= 10 longest_gap_h=19.3 week_range=7.5 week_net=+0.5 month_range=26.0 month_net=+16.5
+       2279147 polymarket state=cold    lead_points= 29 longest_gap_h=7.3 week_range=5.0 week_net=+3.5 month_range=21.5 month_net=+20.0
+      63849278 polymarket state=cold    lead_points=  6 longest_gap_h=25.5 week_range=35.0 week_net=+35.0 month_range=35.0 month_net=+35.0
+        199050 polymarket state=cold    lead_points= 34 longest_gap_h=7.3 week_range=16.5 week_net=+14.8 month_range=21.4 month_net=+16.8
+           270 kalshi     state=cold    lead_points= 77 longest_gap_h=4.0 week_range=19.5 week_net=+17.0 month_range=22.5 month_net=+18.0
+       5869749 kalshi     state=cold    lead_points= 25 longest_gap_h=7.8 week_range=7.6 week_net=+2.5 month_range=22.7 month_net=+20.4
+      11415154 polymarket state=cold    lead_points= 29 longest_gap_h=7.3 week_range=8.0 week_net=+8.0 month_range=16.5 month_net=+12.0
+        109946 kalshi     state=refused lead_points=143 longest_gap_h=3.7 week_range=29.5 week_net=+28.0 month_range=56.0 month_net=+15.0
+       8430022 kalshi     state=cold    lead_points= 25 longest_gap_h=7.1 week_range=3.5 week_net=-0.5 month_range=12.5 month_net=-6.0
+      30635376 polymarket state=warm    lead_points=335 longest_gap_h=6.9 week_range=12.0 week_net=+1.0 month_range=23.0 month_net=-7.0
+      52755900 kalshi     state=cold    lead_points= 25 longest_gap_h=7.7 week_range=14.0 week_net=+0.5 month_range=20.0 month_net=+4.5
+        113799 polymarket state=cold    lead_points= 10 longest_gap_h=20.6 week_range=0.0 week_net=+0.0 month_range=0.0 month_net=+0.0
+        112827 kalshi     state=cold    lead_points= 25 longest_gap_h=7.1 week_range=11.0 week_net=-9.0 month_range=11.5 month_net=+1.5
+      25923984 kalshi     state=cold    lead_points= 24 longest_gap_h=7.1 week_range=6.0 week_net=+4.5 month_range=19.0 month_net=-11.0
+      27594646 polymarket state=cold    lead_points= 30 longest_gap_h=8.0 week_range=6.0 week_net=+4.7 month_range=6.0 month_net=+3.7
+        109358 kalshi     state=cold    lead_points= 28 longest_gap_h=7.8 week_range=13.0 week_net=-11.0 month_range=30.4 month_net=-28.8
+      62239632 polymarket state=cold    lead_points= 10 longest_gap_h=19.5 week_range=24.0 week_net=+20.5 month_range=24.0 month_net=+20.0
+   lead points in the week: min 6 median 28 max 335 | pages under 50 points: 16 | under 30: 13 | 100 or more: 4
+    kalshi pages 11 lead points sorted [24, 25, 25, 25, 25, 25, 28, 77, 130, 132, 143]
+    polymarket pages 10 lead points sorted [6, 10, 10, 10, 29, 29, 30, 34, 45, 335]
+   states on first request: {'cold': 17, 'refused': 3, 'warm': 1}
+E. movement that exists in the data: pages whose leader moved 10+ points net over the month: 15 of 21 | 15+: 11
+F. caption direction against the default view (net move of the captioned outcome itself):
+     109596 default 1W net -25.6 but caption: Claude up 21.2 pts from opening.
+     2279147 default 1W net +3.5 but caption: Minnesota Vikings down 11.5 pts from opening.
+     199050 default 1W net +14.8 but caption: Milwaukee Brewers down 12.6 pts from opening.
+     30635376 default 1W net +3.5 but caption: November 30, 2026 down 12.5 pts from opening.
+     52755900 default 1M net +4.5 but caption: Dior down 33.2 pts from opening.
+     25923984 default 1M net -11.0 but caption: Denver, CO up 18.0 pts from opening.
+     109358 default 1M net -28.8 but caption: Hottest up 29.0 pts from opening.
+   pages where caption direction opposes a 3+ point net move in the default view: 7 of 18 captioned pages checked
+G. fill timing test:
+     63448358 polymarket [(0.2, 'cold', 19), (3.4, 'cold', 19), (8.6, 'cold', 19), (19.0, 'cold', 19), (39.5, 'cold', 19)]
+     27988804 polymarket [(0.3, 'cold', 33), (3.5, 'cold', 33), (8.7, 'cold', 33), (19.2, 'cold', 33), (39.6, 'cold', 33)]
+     60084901 polymarket [(0.2, 'cold', 31), (3.4, 'cold', 31), (8.6, 'cold', 31), (19.0, 'cold', 31), (39.5, 'cold', 31)]
+     59693612 kalshi [(0.2, 'cold', 13), (3.5, 'cold', 13), (8.7, 'cold', 13), (19.1, 'cold', 13), (39.5, 'cold', 13)]
+     recheck 63448358 21:33:01 warm built_at 21:30:35 lead_pts 257
+     recheck 27988804 21:33:01 warm built_at 21:31:07 lead_pts 272
+     recheck 60084901 21:33:02 cold built_at  lead_pts 31
+     recheck 59693612 21:33:02 cold built_at  lead_pts 13
+H. headline freshness:
+    outcome rows compared: 20 | within 1 point: 18 | largest gap: {'id': 62239632, 'market': 'Pro Football: 2026-27 Last Unbeaten ', 'outcome': 'San Francisco 49ers', 'shown': 22.0, 'shown_updated_h_ago': 13.6, 'venue_last': 18.5, 'venue_last_at': '10-06T21:20', 'diff': 3.5, 'vh_state': 'warm', 'n_venue_pts': 239}
+I. Taylor Swift wedding dress page: open outcomes 30 sum of probabilities 1.66 Dior 0.665 external id KXSWIFTWEDDING-26DEC31
+   attendee page: outcomes marked winner 9 of 16 ['Este Haim', 'Sabrina Carpenter', 'Danielle Haim', 'Gracie Abrams', 'Patrick Mahomes', 'Jack Antonoff']
+J. chart plot at 1504 px viewport: width 730 of 1393 = 52 % | height for 0-100: 140 px
+K. resolution dates served: Best Actor 2027-12-31 | Senate 2027-02-01 / 2026-11-04
+L. Last Unbeaten Team, Chiefs, venue points 11:28-11:52 UTC Oct 6: [38.5, 39.0, 35.0, 39.0, 35.0, 37.5, 43.0, 37.5, 46.5, 48.5, 47.0]
+G2. first history request in this audit -> time the fuller venue history was built:
+     112902 first request 21:16:15 built 21:18:27 = 132 s | lead points 45 -> 279
+     2279147 first request 21:16:33 built 21:19:08 = 155 s | lead points 29 -> 269
+     63849278 first request 21:16:47 built 21:19:06 = 139 s | lead points 6 -> 246
+     199050 first request 21:16:50 built 21:19:09 = 139 s | lead points 34 -> 273
+     11415154 first request 21:17:25 built 21:19:29 = 124 s | lead points 29 -> 267
+     8430022 first request 21:17:43 built 21:19:47 = 124 s | lead points 25 -> 55
+     52755900 first request 21:17:54 built 21:20:05 = 131 s | lead points 25 -> 227
+     113799 first request 21:17:58 built 21:20:34 = 156 s | lead points 10 -> 10
+     112827 first request 21:18:12 built 21:20:32 = 140 s | lead points 25 -> 101
+     25923984 first request 21:18:17 built 21:20:34 = 137 s | lead points 24 -> 197
+     27594646 first request 21:18:20 built 21:20:44 = 144 s | lead points 30 -> 270
+     109358 first request 21:18:24 built 21:20:49 = 145 s | lead points 28 -> 268
+     62239632 first request 21:18:29 built 21:20:52 = 143 s | lead points 10 -> 250
+   pages cold on first request that later filled: 13 | seconds to fill: min 124 median 139 max 156
+     timing test 63448358 first request 21:28:48 built 21:30:35 = 107 s
+     timing test 27988804 first request 21:29:28 built 21:31:07 = 99 s
+     timing test 60084901 first request 21:30:08 built 21:33:47 = 219 s
+     timing test 59693612 first request 21:30:48 built 21:34:00 = 192 s
+   end state of the 21 pages: {'refused': 7, 'warm': 14}
+   pages still not filled (state refused) and their lead points: [(270, 77), (108620, 130), (109596, 132), (109946, 143), (5869749, 25), (15203993, 25), (56933330, 10)]
+   of those, under 100 lead points for the week: 4
+M. props pages (data only):
+     63849252 MLB Playoffs: Who Will Hit a Home Run? - Rays vs. Yankees | total points in week 6 | description None | hook None
+     64211384 Will there be a run scored in the first inning? — Tampa Bay  | total points in week 14 | description None | hook None
+N. filled pages: lead points before -> after: [(6, 246), (10, 10), (10, 250), (24, 197), (25, 55), (25, 101), (25, 227), (28, 268), (29, 267), (29, 269), (30, 270), (34, 273), (45, 279)]

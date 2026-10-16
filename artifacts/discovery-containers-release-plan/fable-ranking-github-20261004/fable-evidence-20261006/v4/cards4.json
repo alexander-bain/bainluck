@@ -1,0 +1,1323 @@
+[
+ {
+  "cid": "x05",
+  "type": "movers",
+  "kicker": "Movers",
+  "n": 1,
+  "headline": "Biggest moves this week",
+  "tag": "Culture and sport",
+  "notes": [
+   "tag fits all rows; sentences faithful",
+   "minor: t1065 says 'US' where rules say domestic (US and Canada); 'three-day' not visible in the cut-off excerpt"
+  ],
+  "span": "in a week",
+  "conn": null,
+  "rows": [
+   {
+    "text": "The Tampa Bay Rays win the 2026 American League title and advance to the World Series",
+    "prev": 28,
+    "delta": 23,
+    "id": "t0851",
+    "num": "51",
+    "p": 0.513,
+    "deadline": "2028-10-31",
+    "venues": [
+     "Kalshi",
+     "Polymarket"
+    ],
+    "pK": 51.5,
+    "pP": 51.1,
+    "raw": "American League Champion \u2014 Tampa Bay",
+    "plain": "The Tampa Bay Rays win the 2026 American League title and advance to the World Series",
+    "gotcha": ""
+   },
+   {
+    "text": "Euphoria ranks #1 on Google's global Year in Search TV shows list for 2026",
+    "prev": 47,
+    "delta": -16,
+    "id": "t1505",
+    "num": "31",
+    "p": 0.31,
+    "deadline": "2027-04-01",
+    "venues": [
+     "Polymarket"
+    ],
+    "pK": null,
+    "pP": 31.0,
+    "raw": "#1 Searched TV Show on Google 2026? \u2014 Euphoria",
+    "plain": "Euphoria ranks #1 on Google's global Year in Search TV shows list for 2026",
+    "gotcha": "Google's list ranks trending spikes, not total search volume."
+   },
+   {
+    "text": "Avengers: Doomsday has the biggest three-day US and Canada opening weekend of any 2026 movie",
+    "prev": 45,
+    "delta": -9,
+    "id": "t1065",
+    "num": "36",
+    "p": 0.36,
+    "deadline": "2027-02-01",
+    "venues": [
+     "Polymarket"
+    ],
+    "pK": null,
+    "pP": 36.0,
+    "raw": "Which movie has biggest opening weekend in 2026? \u2014 Avengers: Doomsday",
+    "plain": "Avengers: Doomsday has the biggest three-day US and Canada opening weekend of any 2026 movie",
+    "gotcha": ""
+   }
+  ],
+  "venues": [
+   "Kalshi",
+   "Polymarket"
+  ]
+ },
+ {
+  "cid": "x16",
+  "type": "checklist",
+  "kicker": "Checklist",
+  "n": 2,
+  "headline": "____ announces a campaign for the 2028 Republican presidential nomination before 2028",
+  "tag": null,
+  "notes": [
+   "candidacy announcements can all happen; sentences match the rules"
+  ],
+  "span": null,
+  "conn": null,
+  "rows": [
+   {
+    "text": "JD Vance",
+    "id": "t0124",
+    "num": "81",
+    "p": 0.81,
+    "deadline": "2028-01-01",
+    "venues": [
+     "Kalshi"
+    ],
+    "pK": 81.0,
+    "pP": null,
+    "raw": "Who will run for the 2028 Republican presidential nomination? \u2014 J.D. Vance",
+    "plain": "JD Vance announces a campaign for the 2028 Republican presidential nomination before 2028",
+    "gotcha": ""
+   },
+   {
+    "text": "Ted Cruz",
+    "id": "t0127",
+    "num": "81",
+    "p": 0.81,
+    "deadline": "2028-01-01",
+    "venues": [
+     "Kalshi"
+    ],
+    "pK": 81.0,
+    "pP": null,
+    "raw": "Who will run for the 2028 Republican presidential nomination? \u2014 Ted Cruz",
+    "plain": "Ted Cruz announces a campaign for the 2028 Republican presidential nomination before 2028",
+    "gotcha": ""
+   },
+   {
+    "text": "Ron DeSantis",
+    "id": "t0125",
+    "num": "65",
+    "p": 0.65,
+    "deadline": "2028-01-01",
+    "venues": [
+     "Kalshi"
+    ],
+    "pK": 65.0,
+    "pP": null,
+    "raw": "Who will run for the 2028 Republican presidential nomination? \u2014 Ron DeSantis",
+    "plain": "Ron DeSantis announces a campaign for the 2028 Republican presidential nomination before 2028",
+    "gotcha": ""
+   },
+   {
+    "text": "Marco Rubio",
+    "id": "t0126",
+    "num": "54",
+    "p": 0.54,
+    "deadline": "2028-01-01",
+    "venues": [
+     "Kalshi"
+    ],
+    "pK": 54.0,
+    "pP": null,
+    "raw": "Who will run for the 2028 Republican presidential nomination? \u2014 Marco Rubio",
+    "plain": "Marco Rubio announces a campaign for the 2028 Republican presidential nomination before 2028",
+    "gotcha": ""
+   }
+  ],
+  "venues": [
+   "Kalshi"
+  ]
+ },
+ {
+  "cid": "x10",
+  "type": "swing",
+  "kicker": "The swing",
+  "n": 3,
+  "headline": "____ win control of the US Senate in the November 2026 midterm elections",
+  "tag": null,
+  "notes": [
+   "two outcomes of one question; one rose and one fell; sentences faithful"
+  ],
+  "span": "in a month",
+  "conn": null,
+  "rows": [
+   {
+    "text": "Democrats",
+    "prev": 52,
+    "delta": 13,
+    "id": "t0970",
+    "num": "65",
+    "p": 0.645,
+    "deadline": "2026-11-04",
+    "venues": [
+     "Polymarket"
+    ],
+    "pK": null,
+    "pP": 64.5,
+    "raw": "Which party will win the Senate in 2026? \u2014 Democratic Party",
+    "plain": "Democrats win control of the US Senate in the November 2026 midterm elections",
+    "gotcha": "Democrats need 51 seats; a 50-50 split counts as Republican control."
+   },
+   {
+    "text": "Republicans",
+    "prev": 50,
+    "delta": -14,
+    "id": "t0971",
+    "num": "36",
+    "p": 0.355,
+    "deadline": "2026-11-04",
+    "venues": [
+     "Polymarket"
+    ],
+    "pK": null,
+    "pP": 35.5,
+    "raw": "Which party will win the Senate in 2026? \u2014 Republican Party",
+    "plain": "Republicans win control of the US Senate in the November 2026 midterm elections",
+    "gotcha": "Republicans keep control with just 50 seats, thanks to the vice president's tiebreak."
+   }
+  ],
+  "venues": [
+   "Polymarket"
+  ]
+ },
+ {
+  "cid": "x36",
+  "type": "band",
+  "kicker": "Same odds",
+  "n": 4,
+  "headline": "About 1 in 5",
+  "tag": null,
+  "notes": [
+   "Sentences faithful; t0042 correctly uses the inauguration rule",
+   "19-20% fits 'About 1 in 5'; no duplicates; no tone flags"
+  ],
+  "span": null,
+  "conn": null,
+  "rows": [
+   {
+    "text": "J.D. Vance is inaugurated as US president for the term starting in January 2029",
+    "id": "t0042",
+    "num": "20",
+    "p": 0.195,
+    "deadline": "2029-11-07",
+    "venues": [
+     "Kalshi"
+    ],
+    "pK": 19.5,
+    "pP": null,
+    "raw": "2028 U.S. Presidential Election winner? \u2014 J.D. Vance",
+    "plain": "J.D. Vance is inaugurated as US president for the term starting in January 2029",
+    "gotcha": "Pays on the 2029 inauguration, not on election night."
+   },
+   {
+    "text": "The AI industry enters a downturn, meeting at least three set measures, by June 30, 2027",
+    "id": "t1077",
+    "num": "20",
+    "p": 0.195,
+    "deadline": "2027-06-30",
+    "venues": [
+     "Polymarket"
+    ],
+    "pK": null,
+    "pP": 19.5,
+    "raw": "AI bubble burst by...? \u2014 June 30, 2027",
+    "plain": "The AI industry enters a downturn, meeting at least three set measures, by June 30, 2027",
+    "gotcha": "\"Burst\" means three of several specific triggers, including one about Nvidia."
+   },
+   {
+    "text": "Donald Trump resigns as president before his term ends in January 2029",
+    "id": "t0034",
+    "num": "19",
+    "p": 0.185,
+    "deadline": "2029-01-21",
+    "venues": [
+     "Kalshi"
+    ],
+    "pK": 18.5,
+    "pP": null,
+    "raw": "Will Trump resign during his term?",
+    "plain": "Donald Trump resigns as president before his term ends in January 2029",
+    "gotcha": "Only a resignation counts; leaving office any other way does not."
+   },
+   {
+    "text": "The United States acquires any part of Greenland before January 21, 2029",
+    "id": "t0052",
+    "num": "19",
+    "p": 0.185,
+    "deadline": "2029-01-21",
+    "venues": [
+     "Kalshi"
+    ],
+    "pK": 18.5,
+    "pP": null,
+    "raw": "Will the US take control of any part of Greenland? \u2014 Before January 21, 2029",
+    "plain": "The United States acquires any part of Greenland before January 21, 2029",
+    "gotcha": "Any part of Greenland counts, not just the whole island."
+   }
+  ],
+  "venues": [
+   "Kalshi",
+   "Polymarket"
+  ]
+ },
+ {
+  "cid": "x06",
+  "type": "newfav",
+  "kicker": "New favorite",
+  "n": 5,
+  "headline": "____ has the biggest three-day US and Canada opening weekend of any 2026 movie",
+  "tag": null,
+  "notes": [
+   "rival outcomes of one question; leader was behind (45 vs 57) and is now ahead (64 vs 36); headline fits both rows",
+   "minor: 'US' stands for domestic (US and Canada)"
+  ],
+  "span": "in a month",
+  "conn": "has overtaken",
+  "rows": [
+   {
+    "text": "Spider-Man: Brand New Day",
+    "prev": 45,
+    "delta": 19,
+    "id": "t1064",
+    "num": "64",
+    "p": 0.635,
+    "deadline": "2027-02-01",
+    "venues": [
+     "Polymarket"
+    ],
+    "pK": null,
+    "pP": 63.5,
+    "raw": "Which movie has biggest opening weekend in 2026? \u2014 Spider-Man: Brand New Day",
+    "plain": "Spider-Man: Brand New Day has the biggest three-day US and Canada opening weekend of any 2026 movie",
+    "gotcha": ""
+   },
+   {
+    "text": "Avengers: Doomsday",
+    "prev": 57,
+    "delta": -21,
+    "id": "t1065",
+    "num": "36",
+    "p": 0.36,
+    "deadline": "2027-02-01",
+    "venues": [
+     "Polymarket"
+    ],
+    "pK": null,
+    "pP": 36.0,
+    "raw": "Which movie has biggest opening weekend in 2026? \u2014 Avengers: Doomsday",
+    "plain": "Avengers: Doomsday has the biggest three-day US and Canada opening weekend of any 2026 movie",
+    "gotcha": ""
+   }
+  ],
+  "venues": [
+   "Polymarket"
+  ]
+ },
+ {
+  "cid": "x01",
+  "type": "movers",
+  "kicker": "Movers",
+  "n": 6,
+  "headline": "Biggest moves this week",
+  "tag": null,
+  "notes": [
+   "sentences faithful",
+   "flag only: t1147 was 50% a week ago is a 40-point one-week fall with no Fed meeting in the span; kept because the figure is stated as venue-verified",
+   "t1528 is one date bucket of a 'when is the next release' question; its fall is not deadline decay (window has not opened)"
+  ],
+  "span": "in a week",
+  "conn": null,
+  "rows": [
+   {
+    "text": "The top of the Fed's target interest-rate range is 4.5% or higher after its December 2026 meeting",
+    "prev": 50,
+    "delta": -40,
+    "id": "t1147",
+    "num": "10",
+    "p": 0.099,
+    "deadline": "2027-01-01",
+    "venues": [
+     "Polymarket"
+    ],
+    "pK": null,
+    "pP": 9.9,
+    "raw": "What will the Fed rate be at the end of 2026? \u2014 \u2265 4.5%",
+    "plain": "The top of the Fed's target interest-rate range is 4.5% or higher after its December 2026 meeting",
+    "gotcha": "Uses the upper bound of the range, not the midpoint."
+   },
+   {
+    "text": "Google's next Gemini Pro model becomes publicly available between October 12 and October 18, 2026",
+    "prev": 28,
+    "delta": -24,
+    "id": "t1528",
+    "num": "4",
+    "p": 0.038,
+    "deadline": "2026-10-18",
+    "venues": [
+     "Polymarket"
+    ],
+    "pK": null,
+    "pP": 3.8,
+    "raw": "When will the next Google Gemini Pro model be released? \u2014 October 12\u2013October 18",
+    "plain": "Google's next Gemini Pro model becomes publicly available between October 12 and October 18, 2026",
+    "gotcha": "Only a model labeled \"Pro\" counts, and it must land in this exact week."
+   },
+   {
+    "text": "The Tampa Bay Rays win the 2026 American League title and advance to the World Series",
+    "prev": 28,
+    "delta": 23,
+    "id": "t0851",
+    "num": "51",
+    "p": 0.513,
+    "deadline": "2028-10-31",
+    "venues": [
+     "Kalshi",
+     "Polymarket"
+    ],
+    "pK": 51.5,
+    "pP": 51.1,
+    "raw": "American League Champion \u2014 Tampa Bay",
+    "plain": "The Tampa Bay Rays win the 2026 American League title and advance to the World Series",
+    "gotcha": ""
+   },
+   {
+    "text": "A Tesla-SpaceX merger or acquisition is officially announced by June 30, 2027",
+    "prev": 54,
+    "delta": -11,
+    "id": "t1195",
+    "num": "43",
+    "p": 0.425,
+    "deadline": "2027-06-30",
+    "venues": [
+     "Polymarket"
+    ],
+    "pK": null,
+    "pP": 42.5,
+    "raw": "Tesla and SpaceX merger officially announced by...? \u2014 June 30, 2027",
+    "plain": "A Tesla-SpaceX merger or acquisition is officially announced by June 30, 2027",
+    "gotcha": "An announcement counts even if the deal never closes."
+   }
+  ],
+  "venues": [
+   "Kalshi",
+   "Polymarket"
+  ]
+ },
+ {
+  "cid": "x12",
+  "type": "trading",
+  "kicker": "Trading places",
+  "n": 7,
+  "headline": "",
+  "tag": null,
+  "notes": [
+   "unrelated claims; order swapped (31 vs 43 before, 43 vs 19 now); sentences faithful"
+  ],
+  "span": "in a month",
+  "conn": "is now likelier than",
+  "rows": [
+   {
+    "text": "A Tesla-SpaceX merger or acquisition is officially announced by June 30, 2027",
+    "prev": 31,
+    "delta": 12,
+    "id": "t1195",
+    "num": "43",
+    "p": 0.425,
+    "deadline": "2027-06-30",
+    "venues": [
+     "Polymarket"
+    ],
+    "pK": null,
+    "pP": 42.5,
+    "raw": "Tesla and SpaceX merger officially announced by...? \u2014 June 30, 2027",
+    "plain": "A Tesla-SpaceX merger or acquisition is officially announced by June 30, 2027",
+    "gotcha": "An announcement counts even if the deal never closes."
+   },
+   {
+    "text": "Donald Trump and Vladimir Putin do not meet in person by December 31, 2026",
+    "prev": 43,
+    "delta": -24,
+    "id": "t1375",
+    "num": "19",
+    "p": 0.185,
+    "deadline": "2027-01-01",
+    "venues": [
+     "Polymarket"
+    ],
+    "pK": null,
+    "pP": 18.5,
+    "raw": "Where will Trump and Putin meet next in 2026? \u2014 No meeting by December 31",
+    "plain": "Donald Trump and Vladimir Putin do not meet in person by December 31, 2026",
+    "gotcha": "Yes means no meeting happens; phone or video calls don't count."
+   }
+  ],
+  "venues": [
+   "Polymarket"
+  ]
+ },
+ {
+  "cid": "x02",
+  "type": "movers",
+  "kicker": "Movers",
+  "n": 8,
+  "headline": "Biggest moves this month",
+  "tag": "Tech and business",
+  "notes": [
+   "sentences faithful",
+   "tag is a loose fit for t1315 (OPEC) and t1309 (unemployment and inflation), which are economy rather than tech; acceptable as business"
+  ],
+  "span": "in a month",
+  "conn": null,
+  "rows": [
+   {
+    "text": "Anthropic's shares begin trading on a public stock exchange in November 2026",
+    "prev": 34,
+    "delta": 31,
+    "id": "t1537",
+    "num": "65",
+    "p": 0.6445,
+    "deadline": "2026-11-01",
+    "venues": [
+     "Polymarket"
+    ],
+    "pK": null,
+    "pP": 64.5,
+    "raw": "In which month will Anthropic IPO? \u2014 November 2026",
+    "plain": "Anthropic's shares begin trading on a public stock exchange in November 2026",
+    "gotcha": "Must start trading in this exact month; a filing or announcement does not count."
+   },
+   {
+    "text": "Another member country besides the UAE officially announces it is leaving OPEC by the end of 2026",
+    "prev": 39,
+    "delta": -29,
+    "id": "t1315",
+    "num": "10",
+    "p": 0.095,
+    "deadline": "2026-12-31",
+    "venues": [
+     "Polymarket"
+    ],
+    "pK": null,
+    "pP": 9.5,
+    "raw": "Will another country leave OPEC in 2026?",
+    "plain": "Another member country besides the UAE officially announces it is leaving OPEC by the end of 2026",
+    "gotcha": ""
+   },
+   {
+    "text": "US unemployment is under 5% and inflation is under 3.5% at the end of 2026",
+    "prev": 56,
+    "delta": -28,
+    "id": "t1309",
+    "num": "28",
+    "p": 0.275,
+    "deadline": "2027-02-01",
+    "venues": [
+     "Polymarket"
+    ],
+    "pK": null,
+    "pP": 27.5,
+    "raw": "US economic state at the end of 2026? \u2014 Soft Landing (Unemployment <5.0%, Inflation <3.5%)",
+    "plain": "US unemployment is under 5% and inflation is under 3.5% at the end of 2026",
+    "gotcha": "'Soft landing' is only a label for these two official figures."
+   },
+   {
+    "text": "OpenAI announces and launches a new physical consumer device by December 31, 2026",
+    "prev": 14,
+    "delta": 22,
+    "id": "t0958",
+    "num": "36",
+    "p": 0.355,
+    "deadline": "2026-12-31",
+    "venues": [
+     "Polymarket"
+    ],
+    "pK": null,
+    "pP": 35.5,
+    "raw": "Will OpenAI launch a consumer hardware product by...? \u2014 December 31, 2026",
+    "plain": "OpenAI announces and launches a new physical consumer device by December 31, 2026",
+    "gotcha": "It must actually launch for consumers; a preview or announcement alone fails."
+   }
+  ],
+  "venues": [
+   "Polymarket"
+  ]
+ },
+ {
+  "cid": "x17",
+  "type": "checklist",
+  "kicker": "Checklist",
+  "n": 9,
+  "headline": "____ is nominated for Best Actor at the 2027 Oscars",
+  "tag": null,
+  "notes": [
+   "nominations are not mutually exclusive (five slots); 99th Academy Awards is the 2027 ceremony; sentences faithful"
+  ],
+  "span": null,
+  "conn": null,
+  "rows": [
+   {
+    "text": "Matt Damon",
+    "id": "t0337",
+    "num": "92",
+    "p": 0.92,
+    "deadline": "2027-12-31",
+    "venues": [
+     "Kalshi"
+    ],
+    "pK": 92.0,
+    "pP": null,
+    "raw": "Oscar nominees: Best Actor \u2014 Matt Damon",
+    "plain": "Matt Damon is nominated for Best Actor at the 2027 Oscars",
+    "gotcha": ""
+   },
+   {
+    "text": "Andrew Scott",
+    "id": "t0336",
+    "num": "86",
+    "p": 0.855,
+    "deadline": "2027-12-31",
+    "venues": [
+     "Kalshi"
+    ],
+    "pK": 85.5,
+    "pP": null,
+    "raw": "Oscar nominees: Best Actor \u2014 Andrew Scott",
+    "plain": "Andrew Scott is nominated for Best Actor at the 2027 Oscars",
+    "gotcha": ""
+   },
+   {
+    "text": "Robert Pattinson",
+    "id": "t0338",
+    "num": "55",
+    "p": 0.55,
+    "deadline": "2027-12-31",
+    "venues": [
+     "Kalshi"
+    ],
+    "pK": 55.0,
+    "pP": null,
+    "raw": "Oscar nominees: Best Actor \u2014 Robert Pattinson",
+    "plain": "Robert Pattinson is nominated for Best Actor at the 2027 Oscars",
+    "gotcha": ""
+   }
+  ],
+  "venues": [
+   "Kalshi"
+  ]
+ },
+ {
+  "cid": "x11",
+  "type": "swing",
+  "kicker": "The swing",
+  "n": 10,
+  "headline": "____ is the first of the venue's listed world leaders to permanently leave office before 2027",
+  "tag": null,
+  "notes": [
+   "structure valid (one rose, one fell)",
+   "'first listed world leader' reads as 'the leader listed first'; the claim is first to leave among the venue's listed leaders"
+  ],
+  "span": "in a month",
+  "conn": null,
+  "rows": [
+   {
+    "text": "Pedro S\u00e1nchez",
+    "prev": 3,
+    "delta": 17,
+    "id": "t1428",
+    "num": "20",
+    "p": 0.196,
+    "deadline": "2027-01-01",
+    "venues": [
+     "Polymarket"
+    ],
+    "pK": null,
+    "pP": 19.6,
+    "raw": "Next leader out of power before 2027? \u2014 S\u00e1nchez - Spanish PM",
+    "plain": "Pedro S\u00e1nchez is the first of the venue's listed world leaders to permanently leave office before 2027",
+    "gotcha": "He must leave first among the listed leaders; an announced resignation doesn't count."
+   },
+   {
+    "text": "Benjamin Netanyahu",
+    "prev": 40,
+    "delta": -15,
+    "id": "t1426",
+    "num": "25",
+    "p": 0.25,
+    "deadline": "2027-01-01",
+    "venues": [
+     "Polymarket"
+    ],
+    "pK": null,
+    "pP": 25.0,
+    "raw": "Next leader out of power before 2027? \u2014 Netanyahu - Israel PM",
+    "plain": "Benjamin Netanyahu is the first of the venue's listed world leaders to permanently leave office before 2027",
+    "gotcha": "He must leave first among the listed leaders; losing an election alone doesn't count."
+   }
+  ],
+  "venues": [
+   "Polymarket"
+  ]
+ },
+ {
+  "cid": "x18",
+  "type": "band",
+  "kicker": "Same odds",
+  "n": 11,
+  "headline": "About 1 in 7",
+  "tag": null,
+  "notes": [
+   "t0689: rules count a statement by the President, any Cabinet or Joint Chiefs member, or any federal agency; 'the US government' overstates what is required",
+   "band 14-16% is an acceptable fit for 1 in 7"
+  ],
+  "span": null,
+  "conn": null,
+  "rows": [
+   {
+    "text": "Republicans win the presidency, the House and the Senate in the 2028 election",
+    "id": "t0028",
+    "num": "16",
+    "p": 0.16,
+    "deadline": "2029-11-07",
+    "venues": [
+     "Kalshi"
+    ],
+    "pK": 16.0,
+    "pP": null,
+    "raw": "2028: Who will win the Presidency, House, and Senate? \u2014 Republican Sweep",
+    "plain": "Republicans win the presidency, the House and the Senate in the 2028 election",
+    "gotcha": ""
+   },
+   {
+    "text": "OpenAI announces it has filed or will file for bankruptcy by December 31, 2028",
+    "id": "t1588",
+    "num": "16",
+    "p": 0.155,
+    "deadline": "2028-12-31",
+    "venues": [
+     "Polymarket"
+    ],
+    "pK": null,
+    "pP": 15.5,
+    "raw": "OpenAI announces bankruptcy by...? \u2014 December 31, 2028",
+    "plain": "OpenAI announces it has filed or will file for bankruptcy by December 31, 2028",
+    "gotcha": "An official announcement is enough, even before any actual filing."
+   },
+   {
+    "text": "A Tesla-SpaceX merger or acquisition is officially announced by December 31, 2026",
+    "id": "t1192",
+    "num": "15",
+    "p": 0.145,
+    "deadline": "2026-12-31",
+    "venues": [
+     "Polymarket"
+    ],
+    "pK": null,
+    "pP": 14.5,
+    "raw": "Tesla and SpaceX merger officially announced by...? \u2014 December 31, 2026",
+    "plain": "A Tesla-SpaceX merger or acquisition is officially announced by December 31, 2026",
+    "gotcha": "An announcement counts even if the deal never closes."
+   },
+   {
+    "text": "A top US official or federal agency definitively states that alien life or technology exists before 2028",
+    "id": "t0689",
+    "num": "14",
+    "p": 0.135,
+    "deadline": "2028-01-01",
+    "venues": [
+     "Kalshi"
+    ],
+    "pK": 13.5,
+    "pP": null,
+    "raw": "Will the U.S. confirm that aliens exist? \u2014 Before Jan 1, 2028",
+    "plain": "A top US official or federal agency definitively states that alien life or technology exists before 2028",
+    "gotcha": "One definitive statement by the President, a Cabinet member or any agency counts."
+   }
+  ],
+  "venues": [
+   "Kalshi",
+   "Polymarket"
+  ]
+ },
+ {
+  "cid": "x07",
+  "type": "newfav",
+  "kicker": "New favorite",
+  "n": 12,
+  "headline": "US unemployment is under 5% and inflation is ____ at the end of 2026",
+  "tag": null,
+  "notes": [
+   "mutually exclusive outcomes of one question; leader was behind (43 vs 56) and is now ahead (66 vs 28); headline fits both rows"
+  ],
+  "span": "in a month",
+  "conn": "has overtaken",
+  "rows": [
+   {
+    "text": "3.5% or higher",
+    "prev": 43,
+    "delta": 23,
+    "id": "t1310",
+    "num": "66",
+    "p": 0.66,
+    "deadline": "2027-02-01",
+    "venues": [
+     "Polymarket"
+    ],
+    "pK": null,
+    "pP": 66.0,
+    "raw": "US economic state at the end of 2026? \u2014 Overheating (Unemployment <5.0%, Inflation \u22653.5%)",
+    "plain": "US unemployment is under 5% and inflation is 3.5% or higher at the end of 2026",
+    "gotcha": "'Overheating' is only a label for these two official figures."
+   },
+   {
+    "text": "under 3.5%",
+    "prev": 56,
+    "delta": -28,
+    "id": "t1309",
+    "num": "28",
+    "p": 0.275,
+    "deadline": "2027-02-01",
+    "venues": [
+     "Polymarket"
+    ],
+    "pK": null,
+    "pP": 27.5,
+    "raw": "US economic state at the end of 2026? \u2014 Soft Landing (Unemployment <5.0%, Inflation <3.5%)",
+    "plain": "US unemployment is under 5% and inflation is under 3.5% at the end of 2026",
+    "gotcha": "'Soft landing' is only a label for these two official figures."
+   }
+  ],
+  "venues": [
+   "Polymarket"
+  ]
+ },
+ {
+  "cid": "x23",
+  "type": "movers",
+  "kicker": "Movers",
+  "n": 13,
+  "headline": "Biggest moves this month",
+  "tag": "US politics",
+  "notes": [
+   "Tag 'Washington' does not fit t0554: Nevada governor is a state office, not federal",
+   "Drop t0554 (3 remain), or keep all four by retagging the card 'US politics'",
+   "Other sentences faithful; t0554 and t0485 correctly state the party-based rule rather than the candidate name",
+   "t1044 fall of 22 points with three months left is not simply deadline decay; kept"
+  ],
+  "span": "in a month",
+  "conn": null,
+  "rows": [
+   {
+    "text": "The DEA moves marijuana out of Schedule I, its strictest drug category, by December 31, 2026",
+    "prev": 26,
+    "delta": -22,
+    "id": "t1044",
+    "num": "4",
+    "p": 0.042,
+    "deadline": "2027-01-01",
+    "venues": [
+     "Polymarket"
+    ],
+    "pK": null,
+    "pP": 4.2,
+    "raw": "Weed rescheduled by...?",
+    "plain": "The DEA moves marijuana out of Schedule I, its strictest drug category, by December 31, 2026",
+    "gotcha": "Rescheduling is not legalization; any move out of Schedule I counts."
+   },
+   {
+    "text": "Democrats win control of both the House and the Senate in the 2026 midterms",
+    "prev": 49,
+    "delta": 16,
+    "id": "t0313",
+    "num": "65",
+    "p": 0.65,
+    "deadline": "2027-02-01",
+    "venues": [
+     "Kalshi",
+     "Polymarket"
+    ],
+    "pK": 64.5,
+    "pP": 65.5,
+    "raw": "2026 Midterms: Congress Balance of Power? \u2014 Democrats sweep",
+    "plain": "Democrats win control of both the House and the Senate in the 2026 midterms",
+    "gotcha": ""
+   },
+   {
+    "text": "A Democrat is sworn in as US Senator from Kansas for the term starting in 2027",
+    "prev": 19,
+    "delta": 15,
+    "id": "t0485",
+    "num": "34",
+    "p": 0.3375,
+    "deadline": "2027-11-03",
+    "venues": [
+     "Kalshi",
+     "Polymarket"
+    ],
+    "pK": 34.0,
+    "pP": 33.5,
+    "raw": "Kansas Senate winner? \u2014 Adam Hamilton",
+    "plain": "A Democrat is sworn in as US Senator from Kansas for the term starting in 2027",
+    "gotcha": "Counts any Democrat sworn in, not only Adam Hamilton."
+   }
+  ],
+  "venues": [
+   "Kalshi",
+   "Polymarket"
+  ]
+ },
+ {
+  "cid": "x13",
+  "type": "trading",
+  "kicker": "Trading places",
+  "n": 14,
+  "headline": "",
+  "tag": null,
+  "notes": [
+   "unrelated claims; order swapped (18 vs 24 before, 28 vs 9 now); sentences faithful",
+   "minor: 'trending' in t1473 is not in the excerpt but does not change the claim"
+  ],
+  "span": "in a month",
+  "conn": "is now likelier than",
+  "rows": [
+   {
+    "text": "Donald Trump formally declares a national emergency over interference in US elections by December 31, 2026",
+    "prev": 18,
+    "delta": 10,
+    "id": "t1236",
+    "num": "28",
+    "p": 0.275,
+    "deadline": "2027-01-01",
+    "venues": [
+     "Polymarket"
+    ],
+    "pK": null,
+    "pP": 27.5,
+    "raw": "Trump declares election interference national emergency by...?",
+    "plain": "Donald Trump formally declares a national emergency over interference in US elections by December 31, 2026",
+    "gotcha": "Needs a formal National Emergencies Act declaration, not just a speech or threat."
+   },
+   {
+    "text": "Tom Holland tops Google's 2026 global Year in Search list of trending actors",
+    "prev": 24,
+    "delta": -15,
+    "id": "t1473",
+    "num": "9",
+    "p": 0.088,
+    "deadline": "2027-04-01",
+    "venues": [
+     "Polymarket"
+    ],
+    "pK": null,
+    "pP": 8.8,
+    "raw": "#1 Searched Actor on Google 2026? \u2014 Tom Holland",
+    "plain": "Tom Holland tops Google's 2026 global Year in Search list of trending actors",
+    "gotcha": "Ranks biggest search spikes worldwide, not the most-searched actors overall."
+   }
+  ],
+  "venues": [
+   "Polymarket"
+  ]
+ },
+ {
+  "cid": "x03",
+  "type": "movers",
+  "kicker": "Movers",
+  "n": 15,
+  "headline": "Biggest moves since Monday night",
+  "tag": null,
+  "notes": [
+   "sentences faithful; mixed directions fit a neutral headline",
+   "t0770 fall is not explained by deadline alone"
+  ],
+  "span": "since Monday night",
+  "conn": null,
+  "rows": [
+   {
+    "text": "Miley Cyrus is announced to headline the February 2027 Super Bowl halftime show",
+    "prev": 48,
+    "delta": 17,
+    "id": "t0285",
+    "num": "65",
+    "p": 0.65,
+    "deadline": "2027-02-15",
+    "venues": [
+     "Kalshi"
+    ],
+    "pK": 65.0,
+    "pP": null,
+    "raw": "Pro Football Championship Halftime Show: Headliner(s) \u2014 Miley Cyrus",
+    "plain": "Miley Cyrus is announced to headline the February 2027 Super Bowl halftime show",
+    "gotcha": ""
+   },
+   {
+    "text": "The United States gains control of any new territory outside its current sovereignty before January 21, 2029",
+    "prev": 21,
+    "delta": 5,
+    "id": "t0033",
+    "num": "26",
+    "p": 0.255,
+    "deadline": "2029-01-21",
+    "venues": [
+     "Kalshi"
+    ],
+    "pK": 25.5,
+    "pP": null,
+    "raw": "Will the US acquire any new territory? \u2014 Before Jan 21, 2029",
+    "plain": "The United States gains control of any new territory outside its current sovereignty before January 21, 2029",
+    "gotcha": ""
+   },
+   {
+    "text": "Justin Bieber has a number one song on the Billboard Hot 100 in 2026",
+    "prev": 9,
+    "delta": -4,
+    "id": "t0770",
+    "num": "5",
+    "p": 0.045,
+    "deadline": "2026-12-22",
+    "venues": [
+     "Kalshi"
+    ],
+    "pK": 4.5,
+    "pP": null,
+    "raw": "Will Justin Bieber have a #1 hit this year?",
+    "plain": "Justin Bieber has a number one song on the Billboard Hot 100 in 2026",
+    "gotcha": "Featured appearances on another artist's number one song also count."
+   },
+   {
+    "text": "President Trump is impeached by the House before March 1, 2027",
+    "prev": 33,
+    "delta": -5,
+    "id": "t0939",
+    "num": "28",
+    "p": 0.28,
+    "deadline": "2027-03-01",
+    "venues": [
+     "Kalshi"
+    ],
+    "pK": 28.0,
+    "pP": null,
+    "raw": "Will Trump be impeached? \u2014 Before Mar 1, 2027",
+    "plain": "President Trump is impeached by the House before March 1, 2027",
+    "gotcha": "Impeachment is a House vote to charge, not removal from office."
+   }
+  ],
+  "venues": [
+   "Kalshi"
+  ]
+ },
+ {
+  "cid": "x15",
+  "type": "checklist",
+  "kicker": "Checklist",
+  "n": 16,
+  "headline": "____ in Avengers: Doomsday",
+  "tag": null,
+  "notes": [
+   "cast outcomes can all happen; headline plus each row name reads correctly and matches 'performs / is announced'"
+  ],
+  "span": null,
+  "conn": null,
+  "rows": [
+   {
+    "text": "Hugh Jackman appears or is announced as Wolverine",
+    "id": "t0559",
+    "num": "95",
+    "p": 0.945,
+    "deadline": "2028-01-01",
+    "venues": [
+     "Kalshi"
+    ],
+    "pK": 94.5,
+    "pP": null,
+    "raw": "Avengers: Doomsday: Cast \u2014 Hugh Jackman as Wolverine?",
+    "plain": "Hugh Jackman appears or is announced as Wolverine in Avengers: Doomsday",
+    "gotcha": ""
+   },
+   {
+    "text": "Tobey Maguire appears or is announced as Spider-Man",
+    "id": "t0558",
+    "num": "93",
+    "p": 0.925,
+    "deadline": "2028-01-01",
+    "venues": [
+     "Kalshi"
+    ],
+    "pK": 92.5,
+    "pP": null,
+    "raw": "Avengers: Doomsday: Cast \u2014 Tobey Maguire as Spider-Man?",
+    "plain": "Tobey Maguire appears or is announced as Spider-Man in Avengers: Doomsday",
+    "gotcha": ""
+   },
+   {
+    "text": "Ryan Reynolds appears or is announced as Deadpool",
+    "id": "t0560",
+    "num": "92",
+    "p": 0.915,
+    "deadline": "2028-01-01",
+    "venues": [
+     "Kalshi"
+    ],
+    "pK": 91.5,
+    "pP": null,
+    "raw": "Avengers: Doomsday: Cast \u2014 Ryan Reynolds as Deadpool?",
+    "plain": "Ryan Reynolds appears or is announced as Deadpool in Avengers: Doomsday",
+    "gotcha": ""
+   },
+   {
+    "text": "Hailee Steinfeld appears or is announced as Kate Bishop",
+    "id": "t0561",
+    "num": "84",
+    "p": 0.84,
+    "deadline": "2028-01-01",
+    "venues": [
+     "Kalshi"
+    ],
+    "pK": 84.0,
+    "pP": null,
+    "raw": "Avengers: Doomsday: Cast \u2014 Hailee Steinfeld as Kate Bishop?",
+    "plain": "Hailee Steinfeld appears or is announced as Kate Bishop in Avengers: Doomsday",
+    "gotcha": ""
+   }
+  ],
+  "venues": [
+   "Kalshi"
+  ]
+ },
+ {
+  "cid": "x19",
+  "type": "band",
+  "kicker": "Same odds",
+  "n": 17,
+  "headline": "About 2 in 5",
+  "tag": null,
+  "notes": [
+   "band 39-42% fits 2 in 5; sentences faithful",
+   "note: t0055 venue title says 'speak' but the rules say 'meet'; the sentence correctly follows the rules"
+  ],
+  "span": null,
+  "conn": null,
+  "rows": [
+   {
+    "text": "A Republican is inaugurated as US president for the term starting January 20, 2029",
+    "id": "t0046",
+    "num": "42",
+    "p": 0.415,
+    "deadline": "2029-11-07",
+    "venues": [
+     "Kalshi"
+    ],
+    "pK": 41.5,
+    "pP": null,
+    "raw": "2028 Presidential Election winner? (Party) \u2014 Republican party",
+    "plain": "A Republican is inaugurated as US president for the term starting January 20, 2029",
+    "gotcha": "Pays on the 2029 inauguration, not on election night."
+   },
+   {
+    "text": "Zelenskyy and Putin meet before January 20, 2029",
+    "id": "t0055",
+    "num": "42",
+    "p": 0.415,
+    "deadline": "2029-01-20",
+    "venues": [
+     "Kalshi"
+    ],
+    "pK": 41.5,
+    "pP": null,
+    "raw": "Will Zelenskyy and Putin speak? \u2014 Before Jan 20, 2029",
+    "plain": "Zelenskyy and Putin meet before January 20, 2029",
+    "gotcha": "Title says 'speak'; these rules say 'meet' without mentioning phone calls."
+   },
+   {
+    "text": "The US and Canada announce an official agreement to lower US tariffs on Canada by December 31, 2026",
+    "id": "t1534",
+    "num": "40",
+    "p": 0.395,
+    "deadline": "2026-12-31",
+    "venues": [
+     "Polymarket"
+    ],
+    "pK": null,
+    "pP": 39.5,
+    "raw": "US-Canada diplomatic agreement to lower tariffs by...? \u2014 December 31",
+    "plain": "The US and Canada announce an official agreement to lower US tariffs on Canada by December 31, 2026",
+    "gotcha": "Any official deal committing the US to lower any Canada tariff counts."
+   },
+   {
+    "text": "The Los Angeles Dodgers win the 2026 National League title and advance to the World Series",
+    "id": "t0846",
+    "num": "39",
+    "p": 0.385,
+    "deadline": "2028-10-31",
+    "venues": [
+     "Kalshi",
+     "Polymarket"
+    ],
+    "pK": 38.5,
+    "pP": 38.5,
+    "raw": "National League Champion \u2014 Los Angeles D",
+    "plain": "The Los Angeles Dodgers win the 2026 National League title and advance to the World Series",
+    "gotcha": ""
+   }
+  ],
+  "venues": [
+   "Kalshi",
+   "Polymarket"
+  ]
+ },
+ {
+  "cid": "x24",
+  "type": "newfav",
+  "kicker": "New favorite",
+  "n": 18,
+  "headline": "The ____ win the 2026 American League title and advance to the World Series",
+  "tag": null,
+  "notes": [
+   "Rivals for one title; Rays now ahead 51 vs 11 and were behind 21 vs 25",
+   "Headline reads correctly with both row names; sentences faithful",
+   "Note: same two members as swing card x27"
+  ],
+  "span": "in a month",
+  "conn": "has overtaken",
+  "rows": [
+   {
+    "text": "Tampa Bay Rays",
+    "prev": 21,
+    "delta": 30,
+    "id": "t0851",
+    "num": "51",
+    "p": 0.513,
+    "deadline": "2028-10-31",
+    "venues": [
+     "Kalshi",
+     "Polymarket"
+    ],
+    "pK": 51.5,
+    "pP": 51.1,
+    "raw": "American League Champion \u2014 Tampa Bay",
+    "plain": "The Tampa Bay Rays win the 2026 American League title and advance to the World Series",
+    "gotcha": ""
+   },
+   {
+    "text": "New York Yankees",
+    "prev": 25,
+    "delta": -14,
+    "id": "t0849",
+    "num": "11",
+    "p": 0.105,
+    "deadline": "2028-10-31",
+    "venues": [
+     "Kalshi",
+     "Polymarket"
+    ],
+    "pK": 10.5,
+    "pP": 10.5,
+    "raw": "American League Champion \u2014 New York Y",
+    "plain": "The New York Yankees win the 2026 American League title and advance to the World Series",
+    "gotcha": ""
+   }
+  ],
+  "venues": [
+   "Kalshi",
+   "Polymarket"
+  ]
+ },
+ {
+  "cid": "x14",
+  "type": "checklist",
+  "kicker": "Checklist",
+  "n": 19,
+  "headline": "____ is announced to headline the February 2027 Super Bowl halftime show",
+  "tag": null,
+  "notes": [
+   "'Headliner(s)' allows co-headliners and the rows sum above 100%, so not mutually exclusive; headline fits every row"
+  ],
+  "span": null,
+  "conn": null,
+  "rows": [
+   {
+    "text": "Miley Cyrus",
+    "id": "t0285",
+    "num": "65",
+    "p": 0.65,
+    "deadline": "2027-02-15",
+    "venues": [
+     "Kalshi"
+    ],
+    "pK": 65.0,
+    "pP": null,
+    "raw": "Pro Football Championship Halftime Show: Headliner(s) \u2014 Miley Cyrus",
+    "plain": "Miley Cyrus is announced to headline the February 2027 Super Bowl halftime show",
+    "gotcha": ""
+   },
+   {
+    "text": "Jay-Z",
+    "id": "t0284",
+    "num": "43",
+    "p": 0.425,
+    "deadline": "2027-02-15",
+    "venues": [
+     "Kalshi"
+    ],
+    "pK": 42.5,
+    "pP": null,
+    "raw": "Pro Football Championship Halftime Show: Headliner(s) \u2014 JAY-Z",
+    "plain": "Jay-Z is announced to headline the February 2027 Super Bowl halftime show",
+    "gotcha": ""
+   },
+   {
+    "text": "Harry Styles",
+    "id": "t0283",
+    "num": "23",
+    "p": 0.225,
+    "deadline": "2027-02-15",
+    "venues": [
+     "Kalshi"
+    ],
+    "pK": 22.5,
+    "pP": null,
+    "raw": "Pro Football Championship Halftime Show: Headliner(s) \u2014 Harry Styles",
+    "plain": "Harry Styles is announced to headline the February 2027 Super Bowl halftime show",
+    "gotcha": ""
+   },
+   {
+    "text": "Justin Bieber",
+    "id": "t0282",
+    "num": "12",
+    "p": 0.115,
+    "deadline": "2027-02-15",
+    "venues": [
+     "Kalshi"
+    ],
+    "pK": 11.5,
+    "pP": null,
+    "raw": "Pro Football Championship Halftime Show: Headliner(s) \u2014 Justin Bieber",
+    "plain": "Justin Bieber is announced to headline the February 2027 Super Bowl halftime show",
+    "gotcha": ""
+   }
+  ],
+  "venues": [
+   "Kalshi"
+  ]
+ }
+]

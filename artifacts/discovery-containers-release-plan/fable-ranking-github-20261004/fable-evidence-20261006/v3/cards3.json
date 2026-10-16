@@ -1,0 +1,1492 @@
+[
+ {
+  "cid": "v17",
+  "type": "board",
+  "kicker": "Same deadline",
+  "n": 1,
+  "headline": "By the end of 2026",
+  "tag": null,
+  "notes": [
+   "deadlines Dec 31 / before Jan 1 match headline",
+   "sentences faithful",
+   "note: t0067 (buy Greenland) is a subset of t0031 (any new territory) - overlapping, not duplicate"
+  ],
+  "rows": [
+   {
+    "text": "The US and Canada announce an official agreement to lower US tariffs on Canada",
+    "id": "t1535",
+    "num": "40",
+    "p": 0.395,
+    "deadline": "2026-12-31",
+    "venues": [
+     "Polymarket"
+    ],
+    "pK": null,
+    "pP": 39.5,
+    "raw": "US-Canada diplomatic agreement to lower tariffs by...? \u2014 December 31",
+    "plain": "The US and Canada announce an official agreement to lower US tariffs on Canada by December 31, 2026",
+    "gotcha": "Any official deal committing the US to lower any Canada tariff counts."
+   },
+   {
+    "text": "Donald Trump formally declares a national emergency over interference in US elections",
+    "id": "t1236",
+    "num": "28",
+    "p": 0.275,
+    "deadline": "2027-01-01",
+    "venues": [
+     "Polymarket"
+    ],
+    "pK": null,
+    "pP": 27.5,
+    "raw": "Trump declares election interference national emergency by...?",
+    "plain": "Donald Trump formally declares a national emergency over interference in US elections by December 31, 2026",
+    "gotcha": "Needs a formal National Emergencies Act declaration, not just a speech or threat."
+   },
+   {
+    "text": "Drake officially releases a new album",
+    "id": "t1563",
+    "num": "14",
+    "p": 0.135,
+    "deadline": "2026-12-31",
+    "venues": [
+     "Polymarket"
+    ],
+    "pK": null,
+    "pP": 13.5,
+    "raw": "Will Drake release a new album by...? \u2014 December 31",
+    "plain": "Drake officially releases a new album by December 31, 2026",
+    "gotcha": "The album must be out to stream or download, not just announced."
+   },
+   {
+    "text": "The United States gains control of any new territory outside its current sovereignty",
+    "id": "t0031",
+    "num": "7",
+    "p": 0.073,
+    "deadline": "2027-01-01",
+    "venues": [
+     "Kalshi"
+    ],
+    "pK": 7.3,
+    "pP": null,
+    "raw": "Will the US acquire any new territory? \u2014 Before Jan 2027",
+    "plain": "The United States gains control of any new territory outside its current sovereignty before 2027",
+    "gotcha": ""
+   },
+   {
+    "text": "The United States purchases at least part of Greenland from Denmark",
+    "id": "t0067",
+    "num": "3",
+    "p": 0.029,
+    "deadline": "2027-01-01",
+    "venues": [
+     "Kalshi"
+    ],
+    "pK": 2.9,
+    "pP": null,
+    "raw": "Will Trump buy at least part of Greenland? \u2014 Before 2027",
+    "plain": "The United States purchases at least part of Greenland from Denmark before 2027",
+    "gotcha": "Must be a purchase from Denmark; taking control another way does not count."
+   }
+  ],
+  "venues": [
+   "Kalshi",
+   "Polymarket"
+  ]
+ },
+ {
+  "cid": "v14",
+  "type": "band",
+  "kicker": "Same odds",
+  "n": 2,
+  "headline": "About 1 in 4",
+  "tag": null,
+  "notes": [
+   "all sentences faithful; 99th Academy Awards = 2027 Oscars",
+   "note t0579: title says 'announces departure', rules say 'leaves office'; sentence follows rules; mentions death exclusion (mild tone)"
+  ],
+  "rows": [
+   {
+    "text": "The United States gains control of any new territory outside its current sovereignty before January 21, 2029",
+    "id": "t0033",
+    "num": "26",
+    "p": 0.255,
+    "deadline": "2029-01-21",
+    "venues": [
+     "Kalshi"
+    ],
+    "pK": 25.5,
+    "pP": null,
+    "raw": "Will the US acquire any new territory? \u2014 Before Jan 21, 2029",
+    "plain": "The United States gains control of any new territory outside its current sovereignty before January 21, 2029",
+    "gotcha": ""
+   },
+   {
+    "text": "Matt Damon wins Best Actor at the 2027 Oscars",
+    "id": "t0146",
+    "num": "26",
+    "p": 0.255,
+    "deadline": "2027-12-31",
+    "venues": [
+     "Kalshi"
+    ],
+    "pK": 25.5,
+    "pP": null,
+    "raw": "Oscar Winner: Best Actor \u2014 Matt Damon",
+    "plain": "Matt Damon wins Best Actor at the 2027 Oscars",
+    "gotcha": ""
+   },
+   {
+    "text": "The Chicago Bears move, or officially announce a move, to Indiana before the 2028 season opener",
+    "id": "t0101",
+    "num": "25",
+    "p": 0.245,
+    "deadline": "2028-09-07",
+    "venues": [
+     "Kalshi"
+    ],
+    "pK": 24.5,
+    "pP": null,
+    "raw": "Chicago Pro Football Team: Relocation \u2014 Indiana",
+    "plain": "The Chicago Bears move, or officially announce a move, to Indiana before the 2028 season opener",
+    "gotcha": "An announcement alone counts; no actual move is needed."
+   },
+   {
+    "text": "Donald Trump leaves office as president before January 20, 2029, for a reason other than death",
+    "id": "t0579",
+    "num": "24",
+    "p": 0.235,
+    "deadline": "2029-01-20",
+    "venues": [
+     "Kalshi"
+    ],
+    "pK": 23.5,
+    "pP": null,
+    "raw": "Donald Trump announces departure as President? (Excluding death) \u2014 Before January 20, 2029",
+    "plain": "Donald Trump leaves office as president before January 20, 2029, for a reason other than death",
+    "gotcha": "Title says 'announces', but the rules pay on actually leaving office."
+   }
+  ],
+  "venues": [
+   "Kalshi"
+  ]
+ },
+ {
+  "cid": "v08",
+  "type": "deadheat",
+  "kicker": "Dead heat",
+  "n": 3,
+  "headline": "____ win the 2027 NBA Finals",
+  "tag": null,
+  "notes": [
+   "true rivals for one title, cannot both win; sentences faithful"
+  ],
+  "rest": 57,
+  "rows": [
+   {
+    "text": "Oklahoma City Thunder",
+    "id": "t0182",
+    "num": "22",
+    "p": 0.215,
+    "deadline": "2029-07-30",
+    "venues": [
+     "Kalshi"
+    ],
+    "pK": 21.5,
+    "pP": null,
+    "raw": "2027 Pro Basketball Champion \u2014 Oklahoma City",
+    "plain": "The Oklahoma City Thunder win the 2027 NBA Finals",
+    "gotcha": ""
+   },
+   {
+    "text": "San Antonio Spurs",
+    "id": "t0184",
+    "num": "22",
+    "p": 0.215,
+    "deadline": "2029-07-30",
+    "venues": [
+     "Kalshi"
+    ],
+    "pK": 21.5,
+    "pP": null,
+    "raw": "2027 Pro Basketball Champion \u2014 San Antonio",
+    "plain": "The San Antonio Spurs win the 2027 NBA Finals",
+    "gotcha": ""
+   }
+  ],
+  "venues": [
+   "Kalshi"
+  ]
+ },
+ {
+  "cid": "v01",
+  "type": "peer",
+  "kicker": "Same question",
+  "n": 4,
+  "headline": "____ announces it has filed or will file for bankruptcy by December 31, 2029",
+  "tag": null,
+  "notes": [
+   "headline true of all four rows; same deadline and rules; no duplicates"
+  ],
+  "rows": [
+   {
+    "text": "NuScale",
+    "id": "t1596",
+    "num": "25",
+    "p": 0.245,
+    "deadline": "2029-12-31",
+    "venues": [
+     "Polymarket"
+    ],
+    "pK": null,
+    "pP": 24.5,
+    "raw": "NuScale announces bankruptcy by...? \u2014 December 31, 2029",
+    "plain": "NuScale announces it has filed or will file for bankruptcy by December 31, 2029",
+    "gotcha": "An official announcement is enough, even before any actual filing."
+   },
+   {
+    "text": "CoreWeave",
+    "id": "t1599",
+    "num": "23",
+    "p": 0.225,
+    "deadline": "2029-12-31",
+    "venues": [
+     "Polymarket"
+    ],
+    "pK": null,
+    "pP": 22.5,
+    "raw": "CoreWeave announces bankruptcy by...? \u2014 December 31, 2029",
+    "plain": "CoreWeave announces it has filed or will file for bankruptcy by December 31, 2029",
+    "gotcha": "An official announcement is enough, even before any actual filing."
+   },
+   {
+    "text": "Anthropic",
+    "id": "t1593",
+    "num": "22",
+    "p": 0.215,
+    "deadline": "2029-12-31",
+    "venues": [
+     "Polymarket"
+    ],
+    "pK": null,
+    "pP": 21.5,
+    "raw": "Anthropic announces bankruptcy by...? \u2014 December 31, 2029",
+    "plain": "Anthropic announces it has filed or will file for bankruptcy by December 31, 2029",
+    "gotcha": "An official announcement is enough, even before any actual filing."
+   },
+   {
+    "text": "OpenAI",
+    "id": "t1590",
+    "num": "19",
+    "p": 0.185,
+    "deadline": "2029-12-31",
+    "venues": [
+     "Polymarket"
+    ],
+    "pK": null,
+    "pP": 18.5,
+    "raw": "OpenAI announces bankruptcy by...? \u2014 December 31, 2029",
+    "plain": "OpenAI announces it has filed or will file for bankruptcy by December 31, 2029",
+    "gotcha": "An official announcement is enough, even before any actual filing."
+   }
+  ],
+  "venues": [
+   "Polymarket"
+  ]
+ },
+ {
+  "cid": "v03",
+  "type": "funnel",
+  "kicker": "The path",
+  "n": 5,
+  "headline": "Los Angeles Rams",
+  "tag": null,
+  "notes": [
+   "stages nested and non-increasing (75/26/12); sentences faithful",
+   "note: title member carries a 2029 deadline in data, sentence correctly says February 2027"
+  ],
+  "rows": [
+   {
+    "text": "qualify for the NFL playoffs in the 2026-27 season",
+    "cont": true,
+    "id": "t0362",
+    "num": "75",
+    "p": 0.745,
+    "deadline": "2027-01-25",
+    "venues": [
+     "Kalshi"
+    ],
+    "pK": 74.5,
+    "pP": null,
+    "raw": "Pro Football Playoff Qualifiers \u2014 Los Angeles R",
+    "plain": "The Los Angeles Rams qualify for the NFL playoffs in the 2026-27 season",
+    "gotcha": ""
+   },
+   {
+    "text": "win the NFC West division in the 2026 NFL season",
+    "cont": true,
+    "id": "t0365",
+    "num": "26",
+    "p": 0.255,
+    "deadline": "2027-01-25",
+    "venues": [
+     "Kalshi"
+    ],
+    "pK": 25.5,
+    "pP": null,
+    "raw": "NFC West Division Winner \u2014 Los Angeles R",
+    "plain": "The Los Angeles Rams win the NFC West division in the 2026 NFL season",
+    "gotcha": ""
+   },
+   {
+    "text": "win the Super Bowl played in February 2027",
+    "cont": true,
+    "id": "t0287",
+    "num": "12",
+    "p": 0.12,
+    "deadline": "2029-02-13",
+    "venues": [
+     "Kalshi",
+     "Polymarket"
+    ],
+    "pK": 11.5,
+    "pP": 12.5,
+    "raw": "2027 Pro Football Champion \u2014 Los Angeles R",
+    "plain": "The Los Angeles Rams win the Super Bowl played in February 2027",
+    "gotcha": ""
+   }
+  ],
+  "venues": [
+   "Kalshi",
+   "Polymarket"
+  ]
+ },
+ {
+  "cid": "v12",
+  "type": "when",
+  "kicker": "The tipping point",
+  "n": 6,
+  "headline": "Jerome Powell announces he is leaving the Federal Reserve Board, or leaves it",
+  "tag": null,
+  "notes": [
+   "sentences match rules incl. announce-or-leave",
+   "rungs rise 10/21/63/80; first over 50% correctly marked at Jun 1 2027"
+  ],
+  "flip": 2,
+  "callout": "Likelier than not before June 1, 2027",
+  "rows": [
+   {
+    "text": "before December 1, 2026",
+    "id": "t0873",
+    "num": "10",
+    "p": 0.1,
+    "deadline": "2026-12-01",
+    "venues": [
+     "Kalshi"
+    ],
+    "pK": 10.0,
+    "pP": null,
+    "raw": "Jerome Powell departure as Fed Governor announced? \u2014 Before Dec 1, 2026",
+    "plain": "Jerome Powell announces he is leaving the Federal Reserve Board, or leaves it, before December 1, 2026",
+    "gotcha": "This is his seat as a Fed governor, not the chair job."
+   },
+   {
+    "text": "before 2027",
+    "id": "t0874",
+    "num": "21",
+    "p": 0.205,
+    "deadline": "2027-01-01",
+    "venues": [
+     "Kalshi"
+    ],
+    "pK": 20.5,
+    "pP": null,
+    "raw": "Jerome Powell departure as Fed Governor announced? \u2014 Before Jan 1, 2027",
+    "plain": "Jerome Powell announces he is leaving the Federal Reserve Board, or leaves it, before 2027",
+    "gotcha": "This is his seat as a Fed governor, not the chair job."
+   },
+   {
+    "text": "before June 1, 2027",
+    "id": "t0875",
+    "num": "63",
+    "p": 0.625,
+    "deadline": "2027-06-01",
+    "venues": [
+     "Kalshi"
+    ],
+    "pK": 62.5,
+    "pP": null,
+    "raw": "Jerome Powell departure as Fed Governor announced? \u2014 Before Jun 1, 2027",
+    "plain": "Jerome Powell announces he is leaving the Federal Reserve Board, or leaves it, before June 1, 2027",
+    "gotcha": "This is his seat as a Fed governor, not the chair job."
+   },
+   {
+    "text": "before January 31, 2028",
+    "id": "t0876",
+    "num": "80",
+    "p": 0.795,
+    "deadline": "2028-01-31",
+    "venues": [
+     "Kalshi"
+    ],
+    "pK": 79.5,
+    "pP": null,
+    "raw": "Jerome Powell departure as Fed Governor announced? \u2014 Before Jan 31, 2028",
+    "plain": "Jerome Powell announces he is leaving the Federal Reserve Board, or leaves it, before January 31, 2028",
+    "gotcha": "This is his seat as a Fed governor, not the chair job."
+   }
+  ],
+  "venues": [
+   "Kalshi"
+  ]
+ },
+ {
+  "cid": "v21",
+  "type": "movers",
+  "kicker": "Movers",
+  "n": 7,
+  "headline": "Biggest moves this week",
+  "tag": null,
+  "notes": [
+   "sentences faithful; t1530 negative polarity matches 'No release by November 1' outcome",
+   "no duplicates"
+  ],
+  "rows": [
+   {
+    "text": "Google does not release a new Gemini Pro model to the general public by November 1, 2026",
+    "prev": 22,
+    "delta": 58,
+    "id": "t1530",
+    "num": "80",
+    "p": 0.795,
+    "deadline": "2026-11-01",
+    "venues": [
+     "Polymarket"
+    ],
+    "pK": null,
+    "pP": 79.5,
+    "raw": "When will the next Google Gemini Pro model be released? \u2014 No release by November 1",
+    "plain": "Google does not release a new Gemini Pro model to the general public by November 1, 2026",
+    "gotcha": "\"Yes\" means no new Pro model; Flash and other non-Pro models do not count."
+   },
+   {
+    "text": "Apple announces and launches an entirely new product category, not an update, before 2027",
+    "prev": 28,
+    "delta": 34,
+    "id": "t1095",
+    "num": "62",
+    "p": 0.62,
+    "deadline": "2027-01-01",
+    "venues": [
+     "Polymarket"
+    ],
+    "pK": null,
+    "pP": 62.0,
+    "raw": "Will Apple release a new product line before 2027?",
+    "plain": "Apple announces and launches an entirely new product category, not an update, before 2027",
+    "gotcha": "New models of existing products, like another iPhone, don't count."
+   },
+   {
+    "text": "Drake officially releases a new album by December 31, 2026",
+    "prev": 41,
+    "delta": -27,
+    "id": "t1563",
+    "num": "14",
+    "p": 0.135,
+    "deadline": "2026-12-31",
+    "venues": [
+     "Polymarket"
+    ],
+    "pK": null,
+    "pP": 13.5,
+    "raw": "Will Drake release a new album by...? \u2014 December 31",
+    "plain": "Drake officially releases a new album by December 31, 2026",
+    "gotcha": "The album must be out to stream or download, not just announced."
+   },
+   {
+    "text": "The US and Canada announce an official agreement to lower US tariffs on Canada by December 31, 2026",
+    "prev": 61,
+    "delta": -21,
+    "id": "t1535",
+    "num": "40",
+    "p": 0.395,
+    "deadline": "2026-12-31",
+    "venues": [
+     "Polymarket"
+    ],
+    "pK": null,
+    "pP": 39.5,
+    "raw": "US-Canada diplomatic agreement to lower tariffs by...? \u2014 December 31",
+    "plain": "The US and Canada announce an official agreement to lower US tariffs on Canada by December 31, 2026",
+    "gotcha": "Any official deal committing the US to lower any Canada tariff counts."
+   }
+  ],
+  "venues": [
+   "Polymarket"
+  ]
+ },
+ {
+  "cid": "v00",
+  "type": "h2h",
+  "kicker": "Head to head",
+  "n": 8,
+  "headline": "Anthropic vs OpenAI",
+  "tag": null,
+  "notes": [
+   "sentences match venue wording and rules; row labels fit both sides"
+  ],
+  "names": [
+   "Anthropic",
+   "OpenAI"
+  ],
+  "rows": [
+   {
+    "text": "Anthropic announces it has filed or will file for bankruptcy by December 31, 2029",
+    "label": "announces it has filed or will file for bankruptcy by December 31, 2029",
+    "side": 0,
+    "id": "t1593",
+    "num": "22",
+    "p": 0.215,
+    "deadline": "2029-12-31",
+    "venues": [
+     "Polymarket"
+    ],
+    "pK": null,
+    "pP": 21.5,
+    "raw": "Anthropic announces bankruptcy by...? \u2014 December 31, 2029",
+    "plain": "Anthropic announces it has filed or will file for bankruptcy by December 31, 2029",
+    "gotcha": "An official announcement is enough, even before any actual filing."
+   },
+   {
+    "text": "OpenAI announces it has filed or will file for bankruptcy by December 31, 2029",
+    "label": "announces it has filed or will file for bankruptcy by December 31, 2029",
+    "side": 1,
+    "id": "t1590",
+    "num": "19",
+    "p": 0.185,
+    "deadline": "2029-12-31",
+    "venues": [
+     "Polymarket"
+    ],
+    "pK": null,
+    "pP": 18.5,
+    "raw": "OpenAI announces bankruptcy by...? \u2014 December 31, 2029",
+    "plain": "OpenAI announces it has filed or will file for bankruptcy by December 31, 2029",
+    "gotcha": "An official announcement is enough, even before any actual filing."
+   },
+   {
+    "text": "Claude maker Anthropic officially announces an IPO before February 2027",
+    "label": "officially announces an IPO before February 2027",
+    "side": 0,
+    "id": "t0247",
+    "num": "87",
+    "p": 0.865,
+    "deadline": "2027-02-01",
+    "venues": [
+     "Kalshi"
+    ],
+    "pK": 86.5,
+    "pP": null,
+    "raw": "When will Anthropic officially announce an IPO? \u2014 Before Feb 1, 2027",
+    "plain": "Claude maker Anthropic officially announces an IPO before February 2027",
+    "gotcha": "Counts an official announcement; shares need not be trading by then."
+   },
+   {
+    "text": "ChatGPT maker OpenAI officially announces an IPO before February 2027",
+    "label": "officially announces an IPO before February 2027",
+    "side": 1,
+    "id": "t0215",
+    "num": "10",
+    "p": 0.095,
+    "deadline": "2027-02-01",
+    "venues": [
+     "Kalshi"
+    ],
+    "pK": 9.5,
+    "pP": null,
+    "raw": "When will OpenAI officially announce an IPO? \u2014 Before Feb 1, 2027",
+    "plain": "ChatGPT maker OpenAI officially announces an IPO before February 2027",
+    "gotcha": "Counts an official announcement; shares need not be trading by then."
+   }
+  ],
+  "venues": [
+   "Kalshi",
+   "Polymarket"
+  ]
+ },
+ {
+  "cid": "v18",
+  "type": "board",
+  "kicker": "Same deadline",
+  "n": 9,
+  "headline": "By the end of November",
+  "tag": null,
+  "notes": [
+   "all deadlines before Dec 1 2026 = end of November",
+   "sentences faithful"
+  ],
+  "rows": [
+   {
+    "text": "GTA VI is released on PS5, Xbox Series X/S or Windows",
+    "id": "t0932",
+    "num": "93",
+    "p": 0.925,
+    "deadline": "2026-12-01",
+    "venues": [
+     "Kalshi"
+    ],
+    "pK": 92.5,
+    "pP": null,
+    "raw": "Grand Theft Auto VI: Release date \u2014 Before December 2026",
+    "plain": "GTA VI is released on PS5, Xbox Series X/S or Windows by November 30, 2026",
+    "gotcha": ""
+   },
+   {
+    "text": "OpenAI ships a personal AI agent that remembers you and acts across other apps unprompted",
+    "id": "t0605",
+    "num": "25",
+    "p": 0.245,
+    "deadline": "2026-12-01",
+    "venues": [
+     "Kalshi"
+    ],
+    "pK": 24.5,
+    "pP": null,
+    "raw": "When will OpenAI release a personal AI agent? \u2014 Before Dec 1, 2026",
+    "plain": "OpenAI ships a personal AI agent that remembers you and acts across other apps unprompted before December 2026",
+    "gotcha": "The agent must act on its own initiative, not only when asked."
+   },
+   {
+    "text": "Pete Hegseth leaves his job as Secretary of Defense",
+    "id": "t0901",
+    "num": "17",
+    "p": 0.17,
+    "deadline": "2026-12-01",
+    "venues": [
+     "Kalshi"
+    ],
+    "pK": 17.0,
+    "pP": null,
+    "raw": "Pete Hegseth out as Secretary of Defense? \u2014 Before Dec 1, 2026",
+    "plain": "Pete Hegseth leaves his job as Secretary of Defense before December 1, 2026",
+    "gotcha": "He must actually be out by then; announcing a departure isn't enough."
+   },
+   {
+    "text": "Kash Patel leaves his job as FBI Director",
+    "id": "t0408",
+    "num": "7",
+    "p": 0.065,
+    "deadline": "2026-12-01",
+    "venues": [
+     "Kalshi"
+    ],
+    "pK": 6.5,
+    "pP": null,
+    "raw": "Kash Patel out as FBI Director? \u2014 Before Dec 1, 2026",
+    "plain": "Kash Patel leaves his job as FBI Director before December 1, 2026",
+    "gotcha": "Requires actually leaving, not just announcing a future departure."
+   },
+   {
+    "text": "The US government definitively states that alien life or technology exists",
+    "id": "t0686",
+    "num": "2",
+    "p": 0.015,
+    "deadline": "2026-12-01",
+    "venues": [
+     "Kalshi"
+    ],
+    "pK": 1.5,
+    "pP": null,
+    "raw": "Will the U.S. confirm that aliens exist? \u2014 Before Dec 1, 2026",
+    "plain": "The US government definitively states that alien life or technology exists before December 1, 2026",
+    "gotcha": "One definitive statement by the President, a Cabinet member or any agency counts."
+   }
+  ],
+  "venues": [
+   "Kalshi"
+  ]
+ },
+ {
+  "cid": "v15",
+  "type": "band",
+  "kicker": "Same odds",
+  "n": 10,
+  "headline": "About 2 in 3",
+  "tag": null,
+  "notes": [
+   "all sentences faithful",
+   "t0065 'by the House' correctly signals impeachment is not removal",
+   "note t0593: presumes a wedding takes place"
+  ],
+  "rows": [
+   {
+    "text": "Taylor Swift wears a Dior wedding dress at her first wedding ceremony with Travis Kelce",
+    "id": "t0593",
+    "num": "69",
+    "p": 0.685,
+    "deadline": "2026-12-31",
+    "venues": [
+     "Kalshi"
+    ],
+    "pK": 68.5,
+    "pP": null,
+    "raw": "Taylor Swift: Wedding Dress \u2014 Dior",
+    "plain": "Taylor Swift wears a Dior wedding dress at her first wedding ceremony with Travis Kelce",
+    "gotcha": "Only the dress worn at the vow ceremony counts, not later outfits."
+   },
+   {
+    "text": "The Chicago Bears move, or officially announce a move, elsewhere in Illinois before the 2028 season opener",
+    "id": "t0102",
+    "num": "68",
+    "p": 0.675,
+    "deadline": "2028-09-07",
+    "venues": [
+     "Kalshi"
+    ],
+    "pK": 67.5,
+    "pP": null,
+    "raw": "Chicago Pro Football Team: Relocation \u2014 A new location in Illinois",
+    "plain": "The Chicago Bears move, or officially announce a move, elsewhere in Illinois before the 2028 season opener",
+    "gotcha": "An announcement alone counts; no actual move is needed."
+   },
+   {
+    "text": "Grand Theft Auto VI wins Game of the Year at the 2026 Game Awards",
+    "id": "t0756",
+    "num": "68",
+    "p": 0.675,
+    "deadline": "2027-12-31",
+    "venues": [
+     "Kalshi"
+    ],
+    "pK": 67.5,
+    "pP": null,
+    "raw": "The Game Awards: Game of the Year \u2014 Grand Theft Auto VI",
+    "plain": "Grand Theft Auto VI wins Game of the Year at the 2026 Game Awards",
+    "gotcha": "Only the 2026 ceremony counts; GTA VI must release in time to qualify."
+   },
+   {
+    "text": "Trump is impeached by the House before January 20, 2029",
+    "id": "t0065",
+    "num": "66",
+    "p": 0.655,
+    "deadline": "2029-01-20",
+    "venues": [
+     "Kalshi"
+    ],
+    "pK": 65.5,
+    "pP": null,
+    "raw": "Will President Trump be impeached during his term?",
+    "plain": "Trump is impeached by the House before January 20, 2029",
+    "gotcha": "Impeachment is only the House vote; it does not mean removal from office."
+   }
+  ],
+  "venues": [
+   "Kalshi"
+  ]
+ },
+ {
+  "cid": "v07",
+  "type": "deadheat",
+  "kicker": "Dead heat",
+  "n": 11,
+  "headline": "____ win the 2026 World Series",
+  "tag": null,
+  "notes": [
+   "true rivals for one title, cannot both win; sentences faithful",
+   "note: data deadline 2028 is odd but not shown in the sentence"
+  ],
+  "rest": 46,
+  "rows": [
+   {
+    "text": "Los Angeles Dodgers",
+    "id": "t0853",
+    "num": "28",
+    "p": 0.2825,
+    "deadline": "2028-10-31",
+    "venues": [
+     "Kalshi"
+    ],
+    "pK": 28.2,
+    "pP": null,
+    "raw": "Pro Baseball Champion \u2014 Los Angeles D",
+    "plain": "The Los Angeles Dodgers win the 2026 World Series",
+    "gotcha": ""
+   },
+   {
+    "text": "Milwaukee Brewers",
+    "id": "t0852",
+    "num": "26",
+    "p": 0.256,
+    "deadline": "2028-10-31",
+    "venues": [
+     "Kalshi"
+    ],
+    "pK": 25.6,
+    "pP": null,
+    "raw": "Pro Baseball Champion \u2014 Milwaukee",
+    "plain": "The Milwaukee Brewers win the 2026 World Series",
+    "gotcha": ""
+   }
+  ],
+  "venues": [
+   "Kalshi"
+  ]
+ },
+ {
+  "cid": "v02",
+  "type": "peer",
+  "kicker": "Same question",
+  "n": 12,
+  "headline": "A statewide ban or pause on new data centers becomes law in ____ by June 30, 2027",
+  "tag": null,
+  "notes": [
+   "headline true of all five states; 'ban or pause' is a fair reading of statewide moratorium"
+  ],
+  "rows": [
+   {
+    "text": "Texas",
+    "id": "t1624",
+    "num": "15",
+    "p": 0.145,
+    "deadline": "2027-06-30",
+    "venues": [
+     "Polymarket"
+    ],
+    "pK": null,
+    "pP": 14.5,
+    "raw": "Texas enacts data center moratorium by...? \u2014 June 30, 2027",
+    "plain": "A statewide ban or pause on new data centers becomes law in Texas by June 30, 2027",
+    "gotcha": "Must be statewide and legally binding; local bans or proposed bills don't count."
+   },
+   {
+    "text": "Ohio",
+    "id": "t1620",
+    "num": "14",
+    "p": 0.135,
+    "deadline": "2027-06-30",
+    "venues": [
+     "Polymarket"
+    ],
+    "pK": null,
+    "pP": 13.5,
+    "raw": "Ohio enacts data center moratorium by...? \u2014 June 30, 2027",
+    "plain": "A statewide ban or pause on new data centers becomes law in Ohio by June 30, 2027",
+    "gotcha": "Must be statewide and legally binding; local bans or proposed bills don't count."
+   },
+   {
+    "text": "Louisiana",
+    "id": "t1640",
+    "num": "13",
+    "p": 0.125,
+    "deadline": "2027-06-30",
+    "venues": [
+     "Polymarket"
+    ],
+    "pK": null,
+    "pP": 12.5,
+    "raw": "Louisiana enacts data center moratorium by...? \u2014 June 30, 2027",
+    "plain": "A statewide ban or pause on new data centers becomes law in Louisiana by June 30, 2027",
+    "gotcha": "Must be statewide and legally binding; local bans or proposed bills don't count."
+   },
+   {
+    "text": "Oklahoma",
+    "id": "t1632",
+    "num": "12",
+    "p": 0.115,
+    "deadline": "2027-06-30",
+    "venues": [
+     "Polymarket"
+    ],
+    "pK": null,
+    "pP": 11.5,
+    "raw": "Oklahoma enacts data center moratorium by...? \u2014 June 30, 2027",
+    "plain": "A statewide ban or pause on new data centers becomes law in Oklahoma by June 30, 2027",
+    "gotcha": "Must be statewide and legally binding; local bans or proposed bills don't count."
+   },
+   {
+    "text": "Missouri",
+    "id": "t1636",
+    "num": "12",
+    "p": 0.115,
+    "deadline": "2027-06-30",
+    "venues": [
+     "Polymarket"
+    ],
+    "pK": null,
+    "pP": 11.5,
+    "raw": "Missouri enacts data center moratorium by...? \u2014 June 30, 2027",
+    "plain": "A statewide ban or pause on new data centers becomes law in Missouri by June 30, 2027",
+    "gotcha": "Must be statewide and legally binding; local bans or proposed bills don't count."
+   }
+  ],
+  "venues": [
+   "Polymarket"
+  ]
+ },
+ {
+  "cid": "v04",
+  "type": "funnel",
+  "kicker": "The path",
+  "n": 13,
+  "headline": "Minnesota Vikings",
+  "tag": null,
+  "notes": [
+   "stages nested and non-increasing (71/37/7); sentences faithful"
+  ],
+  "rows": [
+   {
+    "text": "qualify for the NFL playoffs in the 2026-27 season",
+    "cont": true,
+    "id": "t0363",
+    "num": "71",
+    "p": 0.705,
+    "deadline": "2027-01-25",
+    "venues": [
+     "Kalshi"
+    ],
+    "pK": 70.5,
+    "pP": null,
+    "raw": "Pro Football Playoff Qualifiers \u2014 Minnesota",
+    "plain": "The Minnesota Vikings qualify for the NFL playoffs in the 2026-27 season",
+    "gotcha": ""
+   },
+   {
+    "text": "win the NFC North division in the 2026 NFL season",
+    "cont": true,
+    "id": "t0375",
+    "num": "37",
+    "p": 0.365,
+    "deadline": "2027-01-25",
+    "venues": [
+     "Kalshi"
+    ],
+    "pK": 36.5,
+    "pP": null,
+    "raw": "NFC North Division Winner \u2014 Minnesota",
+    "plain": "The Minnesota Vikings win the NFC North division in the 2026 NFL season",
+    "gotcha": ""
+   },
+   {
+    "text": "win the NFC championship for the 2026 season and reach the Super Bowl",
+    "cont": true,
+    "id": "t1215",
+    "num": "7",
+    "p": 0.0665,
+    "deadline": "2027-01-25",
+    "venues": [
+     "Polymarket"
+    ],
+    "pK": null,
+    "pP": 6.7,
+    "raw": "Pro Football: 2027 NFC Champion  \u2014 Minnesota Vikings",
+    "plain": "The Minnesota Vikings win the NFC championship for the 2026 season and reach the Super Bowl",
+    "gotcha": ""
+   }
+  ],
+  "venues": [
+   "Kalshi",
+   "Polymarket"
+  ]
+ },
+ {
+  "cid": "v10",
+  "type": "when",
+  "kicker": "The tipping point",
+  "n": 14,
+  "headline": "A Tesla-SpaceX merger or acquisition is officially announced",
+  "tag": null,
+  "notes": [
+   "one question, deadlines increasing, probabilities rising 15/27/43/57; marked rung is the first above 50%",
+   "sentences match rules (merger or acquisition, either direction, announcement)"
+  ],
+  "flip": 3,
+  "callout": "Likelier than not by December 31, 2027",
+  "rows": [
+   {
+    "text": "by December 31, 2026",
+    "id": "t1192",
+    "num": "15",
+    "p": 0.145,
+    "deadline": "2026-12-31",
+    "venues": [
+     "Polymarket"
+    ],
+    "pK": null,
+    "pP": 14.5,
+    "raw": "Tesla and SpaceX merger officially announced by...? \u2014 December 31, 2026",
+    "plain": "A Tesla-SpaceX merger or acquisition is officially announced by December 31, 2026",
+    "gotcha": "An announcement counts even if the deal never closes."
+   },
+   {
+    "text": "by February 28, 2027",
+    "id": "t1194",
+    "num": "27",
+    "p": 0.27,
+    "deadline": "2027-02-28",
+    "venues": [
+     "Polymarket"
+    ],
+    "pK": null,
+    "pP": 27.0,
+    "raw": "Tesla and SpaceX merger officially announced by...? \u2014 February 28, 2027",
+    "plain": "A Tesla-SpaceX merger or acquisition is officially announced by February 28, 2027",
+    "gotcha": "An announcement counts even if the deal never closes."
+   },
+   {
+    "text": "by June 30, 2027",
+    "id": "t1195",
+    "num": "43",
+    "p": 0.425,
+    "deadline": "2027-06-30",
+    "venues": [
+     "Polymarket"
+    ],
+    "pK": null,
+    "pP": 42.5,
+    "raw": "Tesla and SpaceX merger officially announced by...? \u2014 June 30, 2027",
+    "plain": "A Tesla-SpaceX merger or acquisition is officially announced by June 30, 2027",
+    "gotcha": "An announcement counts even if the deal never closes."
+   },
+   {
+    "text": "by December 31, 2027",
+    "id": "t1193",
+    "num": "57",
+    "p": 0.565,
+    "deadline": "2027-12-31",
+    "venues": [
+     "Polymarket"
+    ],
+    "pK": null,
+    "pP": 56.5,
+    "raw": "Tesla and SpaceX merger officially announced by...? \u2014 December 31, 2027",
+    "plain": "A Tesla-SpaceX merger or acquisition is officially announced by December 31, 2027",
+    "gotcha": "An announcement counts even if the deal never closes."
+   }
+  ],
+  "venues": [
+   "Polymarket"
+  ]
+ },
+ {
+  "cid": "v22",
+  "type": "movers",
+  "kicker": "Movers",
+  "n": 15,
+  "headline": "Biggest moves this week",
+  "tag": "Culture and sport",
+  "notes": [
+   "sentences faithful; t1365 negative polarity matches 'No Bond chosen' outcome",
+   "note: t1222 and t0848 are rival outcomes of one question (AL pennant), not duplicates",
+   "note t0848: listed deadline 2028-10-31 looks wrong for a 2026 title; sentence correctly says 2026"
+  ],
+  "rows": [
+   {
+    "text": "Drake officially releases a new album by December 31, 2026",
+    "prev": 41,
+    "delta": -27,
+    "id": "t1563",
+    "num": "14",
+    "p": 0.135,
+    "deadline": "2026-12-31",
+    "venues": [
+     "Polymarket"
+    ],
+    "pK": null,
+    "pP": 13.5,
+    "raw": "Will Drake release a new album by...? \u2014 December 31",
+    "plain": "Drake officially releases a new album by December 31, 2026",
+    "gotcha": "The album must be out to stream or download, not just announced."
+   },
+   {
+    "text": "The Chicago White Sox win the 2026 American League pennant and reach the World Series",
+    "prev": 7,
+    "delta": 24,
+    "id": "t1222",
+    "num": "31",
+    "p": 0.313,
+    "deadline": "2026-12-01",
+    "venues": [
+     "Polymarket"
+    ],
+    "pK": null,
+    "pP": 31.3,
+    "raw": "MLB: 2026 American League Champion \u2014 Chicago White Sox",
+    "plain": "The Chicago White Sox win the 2026 American League pennant and reach the World Series",
+    "gotcha": ""
+   },
+   {
+    "text": "No actor is officially announced as the next James Bond by December 31, 2026",
+    "prev": 32,
+    "delta": -12,
+    "id": "t1365",
+    "num": "20",
+    "p": 0.196,
+    "deadline": "2027-01-01",
+    "venues": [
+     "Polymarket"
+    ],
+    "pK": null,
+    "pP": 19.6,
+    "raw": "Next James Bond actor? \u2014 No Bond chosen",
+    "plain": "No actor is officially announced as the next James Bond by December 31, 2026",
+    "gotcha": "Yes means no announcement this year, not that Bond is cancelled."
+   },
+   {
+    "text": "The New York Yankees win the 2026 American League title and advance to the World Series",
+    "prev": 23,
+    "delta": -12,
+    "id": "t0848",
+    "num": "11",
+    "p": 0.105,
+    "deadline": "2028-10-31",
+    "venues": [
+     "Kalshi",
+     "Polymarket"
+    ],
+    "pK": 10.5,
+    "pP": 10.5,
+    "raw": "American League Champion \u2014 New York Y",
+    "plain": "The New York Yankees win the 2026 American League title and advance to the World Series",
+    "gotcha": ""
+   }
+  ],
+  "venues": [
+   "Kalshi",
+   "Polymarket"
+  ]
+ },
+ {
+  "cid": "v28",
+  "type": "band",
+  "kicker": "Same odds",
+  "n": 16,
+  "headline": "About 1 in 3",
+  "tag": null,
+  "notes": [
+   "all four sentences faithful",
+   "note: t0975 and t0081 both concern 2028 Republicans but are distinct claims, not duplicates"
+  ],
+  "rows": [
+   {
+    "text": "The Republican candidate wins the 2028 US presidential election",
+    "id": "t0975",
+    "num": "35",
+    "p": 0.345,
+    "deadline": "2028-11-08",
+    "venues": [
+     "Polymarket"
+    ],
+    "pK": null,
+    "pP": 34.5,
+    "raw": "Which party wins 2028 US Presidential Election? \u2014 Republican",
+    "plain": "The Republican candidate wins the 2028 US presidential election",
+    "gotcha": ""
+   },
+   {
+    "text": "The 2028 Republican ticket is JD Vance for president and Marco Rubio for vice president",
+    "id": "t0081",
+    "num": "33",
+    "p": 0.325,
+    "deadline": "2028-11-07",
+    "venues": [
+     "Kalshi"
+    ],
+    "pK": 32.5,
+    "pP": null,
+    "raw": "2028 Republican Presidential ticket \u2014 JD Vance and Marco Rubio",
+    "plain": "The 2028 Republican ticket is JD Vance for president and Marco Rubio for vice president",
+    "gotcha": "Both halves must be right, in this order: Vance on top."
+   },
+   {
+    "text": "OpenAI ships a personal AI agent that remembers you and acts across other apps unprompted before 2027",
+    "id": "t0606",
+    "num": "32",
+    "p": 0.315,
+    "deadline": "2027-01-01",
+    "venues": [
+     "Kalshi"
+    ],
+    "pK": 31.5,
+    "pP": null,
+    "raw": "When will OpenAI release a personal AI agent? \u2014 Before Jan 1, 2027",
+    "plain": "OpenAI ships a personal AI agent that remembers you and acts across other apps unprompted before 2027",
+    "gotcha": "The agent must act on its own initiative, not only when asked."
+   },
+   {
+    "text": "Victor Wembanyama wins NBA Most Valuable Player for the 2026-27 season",
+    "id": "t0177",
+    "num": "32",
+    "p": 0.315,
+    "deadline": "2028-06-30",
+    "venues": [
+     "Kalshi"
+    ],
+    "pK": 31.5,
+    "pP": null,
+    "raw": "Pro Basketball MVP Winner \u2014 Victor Wembanyama",
+    "plain": "Victor Wembanyama wins NBA Most Valuable Player for the 2026-27 season",
+    "gotcha": ""
+   }
+  ],
+  "venues": [
+   "Kalshi",
+   "Polymarket"
+  ]
+ },
+ {
+  "cid": "v09",
+  "type": "deadheat",
+  "kicker": "Dead heat",
+  "n": 17,
+  "headline": "____ win the NFC East division in the 2026 NFL season",
+  "tag": null,
+  "notes": [
+   "same division, only one winner; sentences faithful"
+  ],
+  "rest": 19,
+  "rows": [
+   {
+    "text": "Dallas Cowboys",
+    "id": "t0377",
+    "num": "42",
+    "p": 0.415,
+    "deadline": "2027-01-25",
+    "venues": [
+     "Kalshi"
+    ],
+    "pK": 41.5,
+    "pP": null,
+    "raw": "NFC East Division Winner \u2014 Dallas",
+    "plain": "The Dallas Cowboys win the NFC East division in the 2026 NFL season",
+    "gotcha": ""
+   },
+   {
+    "text": "Philadelphia Eagles",
+    "id": "t0376",
+    "num": "40",
+    "p": 0.395,
+    "deadline": "2027-01-25",
+    "venues": [
+     "Kalshi"
+    ],
+    "pK": 39.5,
+    "pP": null,
+    "raw": "NFC East Division Winner \u2014 Philadelphia",
+    "plain": "The Philadelphia Eagles win the NFC East division in the 2026 NFL season",
+    "gotcha": ""
+   }
+  ],
+  "venues": [
+   "Kalshi"
+  ]
+ },
+ {
+  "cid": "v05",
+  "type": "funnel",
+  "kicker": "The path",
+  "n": 18,
+  "headline": "Chicago Bears",
+  "tag": null,
+  "notes": [
+   "stages nested and non-increasing (63/29/9); sentences faithful"
+  ],
+  "rows": [
+   {
+    "text": "qualify for the NFL playoffs in the 2026-27 season",
+    "cont": true,
+    "id": "t0361",
+    "num": "63",
+    "p": 0.625,
+    "deadline": "2027-01-25",
+    "venues": [
+     "Kalshi"
+    ],
+    "pK": 62.5,
+    "pP": null,
+    "raw": "Pro Football Playoff Qualifiers \u2014 Chicago",
+    "plain": "The Chicago Bears qualify for the NFL playoffs in the 2026-27 season",
+    "gotcha": ""
+   },
+   {
+    "text": "win the NFC North division in the 2026 NFL season",
+    "cont": true,
+    "id": "t0373",
+    "num": "29",
+    "p": 0.285,
+    "deadline": "2027-01-25",
+    "venues": [
+     "Kalshi"
+    ],
+    "pK": 28.5,
+    "pP": null,
+    "raw": "NFC North Division Winner \u2014 Chicago",
+    "plain": "The Chicago Bears win the NFC North division in the 2026 NFL season",
+    "gotcha": ""
+   },
+   {
+    "text": "win the NFC title and reach the February 2027 Super Bowl",
+    "cont": true,
+    "id": "t0301",
+    "num": "9",
+    "p": 0.085,
+    "deadline": "2027-02-22",
+    "venues": [
+     "Kalshi"
+    ],
+    "pK": 8.5,
+    "pP": null,
+    "raw": "NFC Championship Winner \u2014 Chicago",
+    "plain": "The Chicago Bears win the NFC title and reach the February 2027 Super Bowl",
+    "gotcha": ""
+   }
+  ],
+  "venues": [
+   "Kalshi"
+  ]
+ },
+ {
+  "cid": "v11",
+  "type": "when",
+  "kicker": "The tipping point",
+  "n": 19,
+  "headline": "Official representatives of Russia and Ukraine hold a diplomatic meeting",
+  "tag": null,
+  "notes": [
+   "one question, deadlines increasing, probabilities rising 19/59/82; marked rung is the first above 50%",
+   "sentences faithful to visible rules; year 2026 inferred from deadlines",
+   "note: rules excerpt cut off, so the exact bar for 'representatives' is unverified; subject is diplomacy, not strikes, so no tone flag"
+  ],
+  "flip": 1,
+  "callout": "Likelier than not by October 31, 2026",
+  "rows": [
+   {
+    "text": "by October 15, 2026",
+    "id": "t1546",
+    "num": "19",
+    "p": 0.19,
+    "deadline": "2026-10-15",
+    "venues": [
+     "Polymarket"
+    ],
+    "pK": null,
+    "pP": 19.0,
+    "raw": "Russia x Ukraine any diplomatic meeting by...? \u2014 October 15",
+    "plain": "Official representatives of Russia and Ukraine hold a diplomatic meeting by October 15, 2026",
+    "gotcha": "Any authorized officials meeting counts; it need not be Putin and Zelenskyy."
+   },
+   {
+    "text": "by October 31, 2026",
+    "id": "t1545",
+    "num": "59",
+    "p": 0.585,
+    "deadline": "2026-10-31",
+    "venues": [
+     "Polymarket"
+    ],
+    "pK": null,
+    "pP": 58.5,
+    "raw": "Russia x Ukraine any diplomatic meeting by...? \u2014 October 31",
+    "plain": "Official representatives of Russia and Ukraine hold a diplomatic meeting by October 31, 2026",
+    "gotcha": "Any authorized officials meeting counts; it need not be Putin and Zelenskyy."
+   },
+   {
+    "text": "by December 31, 2026",
+    "id": "t1544",
+    "num": "82",
+    "p": 0.82,
+    "deadline": "2026-12-31",
+    "venues": [
+     "Polymarket"
+    ],
+    "pK": null,
+    "pP": 82.0,
+    "raw": "Russia x Ukraine any diplomatic meeting by...? \u2014 December 31",
+    "plain": "Official representatives of Russia and Ukraine hold a diplomatic meeting by December 31, 2026",
+    "gotcha": "Any authorized officials meeting counts; it need not be Putin and Zelenskyy."
+   }
+  ],
+  "venues": [
+   "Polymarket"
+  ]
+ },
+ {
+  "cid": "v13",
+  "type": "band",
+  "kicker": "Same odds",
+  "n": 20,
+  "headline": "About 1 in 20",
+  "tag": null,
+  "notes": [
+   "all sentences faithful",
+   "note t0577: venue title says 'announces departure' but rules say 'leaves office'; sentence follows rules",
+   "note t0577: sentence mentions death exclusion (mild tone)",
+   "note t0687: one Cabinet member or agency statement is enough"
+  ],
+  "rows": [
+   {
+    "text": "Any part of Cuba becomes the 51st US state before January 20, 2029",
+    "id": "t0057",
+    "num": "5",
+    "p": 0.045,
+    "deadline": "2029-01-20",
+    "venues": [
+     "Kalshi"
+    ],
+    "pK": 4.5,
+    "pP": null,
+    "raw": "What will be the 51st state in Trump's term? \u2014 Cuba",
+    "plain": "Any part of Cuba becomes the 51st US state before January 20, 2029",
+    "gotcha": "Requires actual statehood, not just US control or talk of annexation."
+   },
+   {
+    "text": "The United States acquires any part of Greenland before 2027",
+    "id": "t0051",
+    "num": "4",
+    "p": 0.0385,
+    "deadline": "2027-01-01",
+    "venues": [
+     "Kalshi"
+    ],
+    "pK": 3.9,
+    "pP": null,
+    "raw": "Will the US take control of any part of Greenland? \u2014 Before 2027",
+    "plain": "The United States acquires any part of Greenland before 2027",
+    "gotcha": "Any part of Greenland counts, not just the whole island."
+   },
+   {
+    "text": "Donald Trump leaves office as president before 2027, for a reason other than death",
+    "id": "t0577",
+    "num": "4",
+    "p": 0.0385,
+    "deadline": "2027-01-01",
+    "venues": [
+     "Kalshi"
+    ],
+    "pK": 3.9,
+    "pP": null,
+    "raw": "Donald Trump announces departure as President? (Excluding death) \u2014 Before 2027",
+    "plain": "Donald Trump leaves office as president before 2027, for a reason other than death",
+    "gotcha": "Title says 'announces', but the rules pay on actually leaving office."
+   },
+   {
+    "text": "The US government definitively states that alien life or technology exists before January 1, 2027",
+    "id": "t0687",
+    "num": "4",
+    "p": 0.0375,
+    "deadline": "2027-01-01",
+    "venues": [
+     "Kalshi",
+     "Polymarket"
+    ],
+    "pK": 4.3,
+    "pP": 3.1,
+    "raw": "Will the U.S. confirm that aliens exist? \u2014 Before Jan 1, 2027",
+    "plain": "The US government definitively states that alien life or technology exists before January 1, 2027",
+    "gotcha": "One definitive statement by the President, a Cabinet member or any agency counts."
+   }
+  ],
+  "venues": [
+   "Kalshi",
+   "Polymarket"
+  ]
+ }
+]

@@ -1,0 +1,90 @@
+[
+ {
+  "id": "canonical",
+  "headline": "NFL division front-runners",
+  "tag": "NFL",
+  "rows": [
+   {
+    "label": "NFC East: Cowboys",
+    "percent": 44
+   },
+   {
+    "label": "NFC West: 49ers",
+    "percent": 41
+   },
+   {
+    "label": "NFC North: Vikings",
+    "percent": 38
+   },
+   {
+    "label": "NFC South: Falcons",
+    "percent": 35
+   }
+  ]
+ },
+ {
+  "id": "three",
+  "headline": "NFL division front-runners",
+  "tag": "NFL",
+  "rows": [
+   {
+    "label": "NFC East: Cowboys",
+    "percent": 44
+   },
+   {
+    "label": "NFC West: 49ers",
+    "percent": 41
+   },
+   {
+    "label": "NFC North: Vikings",
+    "percent": 38
+   }
+  ]
+ },
+ {
+  "id": "long",
+  "headline": "NFL awards: the front-runners for the 2026 season",
+  "tag": "NFL",
+  "rows": [
+   {
+    "label": "Comeback Player of the Year: Patrick Mahomes",
+    "percent": 65
+   },
+   {
+    "label": "Defensive Rookie of the Year: Jacob Rodriguez",
+    "percent": 35
+   },
+   {
+    "label": "Offensive Rookie of the Year: Jeremiyah Love",
+    "percent": 32
+   },
+   {
+    "label": "Defensive Player of the Year: Will Anderson Jr.",
+    "percent": 27
+   }
+  ]
+ },
+ {
+  "id": "extremes",
+  "headline": "NFL division front-runners",
+  "tag": null,
+  "rows": [
+   {
+    "label": "AFC East: Bills",
+    "percent": 97
+   },
+   {
+    "label": "AFC South: Jaguars",
+    "percent": 66
+   },
+   {
+    "label": "NFC South: Falcons",
+    "percent": 35
+   },
+   {
+    "label": "NFC North: Vikings",
+    "percent": 8
+   }
+  ]
+ }
+]

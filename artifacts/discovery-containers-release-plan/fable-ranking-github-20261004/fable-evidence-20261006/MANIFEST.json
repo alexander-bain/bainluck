@@ -1,0 +1,154 @@
+{
+ "grades-all-slates.csv": {
+  "bytes": 11476,
+  "sha256": "74da7327936b2fe6ed28482c05030e28cb7c13fbc2c798ea04d16d1202457e4c"
+ },
+ "v4-movement-endpoints.csv": {
+  "bytes": 3107,
+  "sha256": "be5617b37552630107a7aea65cef5459cdfdd32fc2a0df4d7a2939403cd1dd19"
+ },
+ "v1/cards.json": {
+  "bytes": 59809,
+  "sha256": "e0d750a2d3a0aee633e86afa07777b72d0015c174df0d7750b9ac65de07ebe2f"
+ },
+ "v1/final30.json": {
+  "bytes": 94025,
+  "sha256": "286f1e5c8a49c2f83d5fd38913991bd9c6e570402b7df706a57977c5db004c7c"
+ },
+ "v1/grades-export.json": {
+  "bytes": 3433,
+  "sha256": "e5980ac79a12363d0fd21cd6cc849c412477deb3a7979a660ce51eb47a469dff"
+ },
+ "v1/slate_candidates.json": {
+  "bytes": 140311,
+  "sha256": "7251247f820b1123d15bd3017cb2857fc48ef1ff72288f1369499a5f70c4129b"
+ },
+ "v1/verify_out.json": {
+  "bytes": 25013,
+  "sha256": "4bb372ce639b7aaefec847bdde730f4f69eda75a46d20a5074f9731ef86e2d9f"
+ },
+ "v2/candidates.json": {
+  "bytes": 27227,
+  "sha256": "9c6e332d0861050b72f2248fda5e6a0b84d20d6a29de3469bf59e1cc1e2de55b"
+ },
+ "v2/cards2.json": {
+  "bytes": 51054,
+  "sha256": "a96f9fbfb4aabbd8a2e78dc454ff40870fc62beaac5e04c837f031c33869480c"
+ },
+ "v2/check_out.json": {
+  "bytes": 3772,
+  "sha256": "0b58b6ef0ccaac897f4dcfb9e8c82ed97943c88cb18d017832ef62d0b7dcfc0a"
+ },
+ "v2/final.json": {
+  "bytes": 28407,
+  "sha256": "8938d60ab9d547b5c8886cf4e904b3bf02851894dab0349c7040b914a3c93222"
+ },
+ "v2/fixmap.json": {
+  "bytes": 7630,
+  "sha256": "9e7aefc9e39a77bf210bd3ee43eb02bdbf8a89664e573f6e1b991567fec4e287"
+ },
+ "v2/grades-export.json": {
+  "bytes": 3355,
+  "sha256": "d905d0d7bed4fc8ee9697c0c806fca7a996472aeecf3610eb8c557491c96040f"
+ },
+ "v2/slate2_selected.json": {
+  "bytes": 16594,
+  "sha256": "133f393483d4066d37717805575d814c5aeb3f7466c46290cc6ee598ccfc9003"
+ },
+ "v3/cand_slate3.json": {
+  "bytes": 8025,
+  "sha256": "3b5419745044fc19c8c943d5ca1163576c0db66cd43f69972f909e009b9512d7"
+ },
+ "v3/cands3.json": {
+  "bytes": 7071,
+  "sha256": "f498b4d6f6298b7a3b08d53f1955d047d4449db1295a3d46d8e5b42b7e3e2364"
+ },
+ "v3/cards3.json": {
+  "bytes": 42275,
+  "sha256": "6ba8d5724487edfab1f56dc069f340b9071c488208b76a019b076f1e6994cfcd"
+ },
+ "v3/check_out_0.json": {
+  "bytes": 2607,
+  "sha256": "f1c4bf5f6f662e02f7f2c15289de25b8e44b59165dca98a30789f9e043328cc5"
+ },
+ "v3/check_out_1.json": {
+  "bytes": 2959,
+  "sha256": "7d626e8ec68239046a720d3af9d7b99ae2fc3c380fca6c17a0ced1719a0d0a16"
+ },
+ "v3/check_out_2.json": {
+  "bytes": 2292,
+  "sha256": "58ec1dfbc6628c731d5c4c74e7bd421fff671c464438823c2b1a8281054180d3"
+ },
+ "v3/final3.json": {
+  "bytes": 10251,
+  "sha256": "140270a11074e072999ecb6366b1961beabf970d67a99c8bc849b510ef804e17"
+ },
+ "v3/grades-export.json": {
+  "bytes": 2263,
+  "sha256": "b2c9496d609c21e373a521ccfdb618bb2fe0dac78c25fff7d2e0c16f0d91f49c"
+ },
+ "v3/slatecheck_out.json": {
+  "bytes": 1346,
+  "sha256": "4d71a2448d6cc6612edfdb34d1602d2fc8bf8d1e8d8082bac07219b62c5ebb43"
+ },
+ "v3/table.json": {
+  "bytes": 1753747,
+  "sha256": "8d043e1c810dc6ce88d8af384193dd565d397b577ef7c82cae1d44704308b259"
+ },
+ "v3/venue-pull-k.jsonl.gz": {
+  "bytes": 3607094,
+  "sha256": "0f70af6b5ece8d00986944db4514bbe56e2b6033d417f1b6cc86a449be7347bc"
+ },
+ "v3/venue-pull-p.jsonl.gz": {
+  "bytes": 10461123,
+  "sha256": "8774618b4bd99f8c076b254a309b885925a9464904e6a6239138059ee1c3b020"
+ },
+ "v4/cand_slate4.json": {
+  "bytes": 10680,
+  "sha256": "4d33a9b95d4db5f43fdeab80f48c20b9d536d19db25ae17a7bb91ba7ffb14bda"
+ },
+ "v4/cands4.json": {
+  "bytes": 20513,
+  "sha256": "e9ddafd13d2d6d6db8ff076c738d4fac38fa06b7a1fa186eaf578881bbbad42e"
+ },
+ "v4/cards4.json": {
+  "bytes": 36749,
+  "sha256": "7fb3b0241d7dd47c2a9aa1f1f5478b4d3ecd64473f4892580605255936669fe9"
+ },
+ "v4/check_out_0.json": {
+  "bytes": 5474,
+  "sha256": "640f1713acf57ba2e069ac57a956b637ee601deb0400c65af964c4be045be8aa"
+ },
+ "v4/check_out_1.json": {
+  "bytes": 6644,
+  "sha256": "e07425a629594cc7371699bd1e1079b4764bca2aa112090192479f896a2876d7"
+ },
+ "v4/final4.json": {
+  "bytes": 12245,
+  "sha256": "2402f36e4b163b016ebe60ba65201a3002e2b223edeb89aa998bc0f12ba3b599"
+ },
+ "v4/grades-export.json": {
+  "bytes": 2170,
+  "sha256": "32f80ddb5b0b0f3e69a49c11f9d53a4e85e3293974d91aa862e9e1cc96a23542"
+ },
+ "v4/histall.json": {
+  "bytes": 3614782,
+  "sha256": "deaa38eda921da33b2e441bd60264843a4a1b52b7f1e1455407e22321126ecde"
+ },
+ "v4/slatecheck_out.json": {
+  "bytes": 1821,
+  "sha256": "175c63ace9d222274c042f0980fa6c9b0c85d68a6e4fa7273b2abda494df58fe"
+ },
+ "v4/table.json": {
+  "bytes": 1752584,
+  "sha256": "f88e01e51791febbf8c96227c3b0127f78a773aebeb07c5e796f0d4ca43c3fcc"
+ },
+ "v4/venue-pull-k.jsonl.gz": {
+  "bytes": 3612292,
+  "sha256": "899757af1e79b9e32e2e8d5f53a13603fafa214c63c6123d1d985379d1c4ffec"
+ },
+ "v4/venue-pull-p.jsonl.gz": {
+  "bytes": 10466236,
+  "sha256": "8d5c248e83375bb107e0bc40940993bc38c33d461fc9e62cadfab1894f76cece"
+ }
+}

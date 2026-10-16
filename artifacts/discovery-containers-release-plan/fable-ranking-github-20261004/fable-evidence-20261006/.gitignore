@@ -1,0 +1,3 @@
+# Large immutable venue pulls live in the complete archive documented in ../16-EVIDENCE-ARCHIVE-20261006.md
+/v3/venue-pull-*.jsonl.gz
+/v4/venue-pull-*.jsonl.gz

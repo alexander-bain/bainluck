@@ -1,0 +1,12 @@
+{"contradictions":[
+{"ids":["t0940","t1043"],"why":"Same event (marijuana moved out of Schedule I by end of 2026) from two sources: 8% on K vs 4% on P, a 4-point gap."},
+{"ids":["t1298","t1299"],"why":"Mutually exclusive outcomes of one question (biggest 2026 opening week) each shown at 51%; they sum to 102%, so both cannot be right."}
+],
+"duplicates":[
+{"first":"v07","second":"v24","why":"Two dead heats pairing the same two teams (Dodgers vs Brewers) on the same 2026 MLB postseason run: World Series winner and National League title."},
+{"first":"v21","second":"v32","why":"Two movers cards sharing three claims: t1530, t1095 and t1535."}
+],
+"misleading":[
+{"jid":"v20","why":"t1539 is the chance Anthropic shares START trading IN December 2026 (venue: 'In which month will Anthropic IPO? - December 2026'), but it sits on a 'By the end of November' board at 18%; beside v23/v00 showing an Anthropic IPO announcement at 76-87%, readers will take it as a by-November deadline figure."},
+{"jid":"v20","why":"t1099 shows Gemini 4.0 public by November 30 at 98% while v21/v32 show t1530 'no new Gemini Pro model by November 1' at 80%. Not strictly contradictory (deadlines differ), but together they imply near-certain release inside November 2-30; a reader will likely see them as in conflict, and the 98% deserves a polarity/data check."}
+]}

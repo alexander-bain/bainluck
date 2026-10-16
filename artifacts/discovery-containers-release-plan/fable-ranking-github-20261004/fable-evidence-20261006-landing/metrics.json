@@ -1,0 +1,3777 @@
+[
+ {
+  "id": 109596,
+  "name": "Best AI at the end of 2026?",
+  "description": null,
+  "source": "kalshi",
+  "bookmakers": [
+   "kalshi"
+  ],
+  "market_type": "field",
+  "category": "tech",
+  "status": "open",
+  "n_outcomes": 8,
+  "resolution_date": "2026-12-31T15:00:00+00:00",
+  "created_at": "2026-02-19T01:21:59.844113+00:00",
+  "extra_keys": [
+   "id",
+   "name",
+   "description",
+   "sport",
+   "sport_name",
+   "category",
+   "llm_sport_category",
+   "status",
+   "source",
+   "external_id",
+   "market_type",
+   "mutually_exclusive",
+   "commence_time",
+   "resolution_date",
+   "outcome_count",
+   "lead_outcome_id",
+   "openings_withheld",
+   "prices_withheld",
+   "expired_rungs_dropped",
+   "bookmakers",
+   "category_tags",
+   "created_at",
+   "updated_at",
+   "group_id",
+   "canonical_market_key",
+   "hook_description",
+   "hook_withheld",
+   "image_url",
+   "event_concept_key",
+   "hub_slug",
+   "category_page",
+   "sport_page_key",
+   "container_of_event_id",
+   "representation",
+   "question_identity",
+   "representation_fallback"
+  ],
+  "top": [
+   {
+    "name": "Claude",
+    "p": 0.4835,
+    "open": 0.265,
+    "chg24": null,
+    "is_winner": false,
+    "last_updated": "2026-10-06T21:15:01.105902+00:00",
+    "price_changed_at": "2026-10-06T21:15:01.105902+00:00",
+    "img": {}
+   },
+   {
+    "name": "Gemini",
+    "p": 0.395,
+    "open": 0.415,
+    "chg24": null,
+    "is_winner": false,
+    "last_updated": "2026-10-06T21:15:01.105902+00:00",
+    "price_changed_at": "2026-10-06T21:15:01.105902+00:00",
+    "img": {}
+   },
+   {
+    "name": "ChatGPT",
+    "p": 0.0845,
+    "open": 0.145,
+    "chg24": null,
+    "is_winner": false,
+    "last_updated": "2026-10-06T21:15:01.105902+00:00",
+    "price_changed_at": "2026-10-06T21:15:01.105902+00:00",
+    "img": {}
+   }
+  ],
+  "sum_p": 1.025,
+  "h168": {
+   "lead": "Claude",
+   "n": 132,
+   "total_points": 1056,
+   "coverage_start": "2026-09-29T21:51:58.906515+00:00",
+   "coverage_end": "2026-10-06T21:15:01.106834+00:00",
+   "coverage_hours": 167.38,
+   "actual_hours": 168,
+   "venue_history": true,
+   "round_boundaries": 0,
+   "first": "2026-09-29T21:51",
+   "last": "2026-10-06T21:15",
+   "span_h": 167.4,
+   "vmin": 47.7,
+   "vmax": 74.6,
+   "rng": 26.9,
+   "net": -25.6,
+   "max_step": [
+    21.5,
+    "2026-09-30T20:59",
+    74.6,
+    53.0
+   ],
+   "max_gap_h": [
+    8.2,
+    "2026-10-04T23:52"
+   ],
+   "distinct_vals": 50,
+   "bookmaker_tags": [
+    "consensus"
+   ]
+  },
+  "h720": {
+   "lead": "Claude",
+   "n": 526,
+   "total_points": 4208,
+   "coverage_start": "2026-09-06T23:52:27.394429+00:00",
+   "coverage_end": "2026-10-06T21:15:01.106834+00:00",
+   "coverage_hours": 717.38,
+   "actual_hours": 720,
+   "venue_history": true,
+   "round_boundaries": 0,
+   "first": "2026-09-06T23:52",
+   "last": "2026-10-06T21:15",
+   "span_h": 717.4,
+   "vmin": 47.7,
+   "vmax": 75.9,
+   "rng": 28.2,
+   "net": -12.0,
+   "max_step": [
+    21.5,
+    "2026-09-30T20:59",
+    74.6,
+    53.0
+   ],
+   "max_gap_h": [
+    8.2,
+    "2026-10-04T23:52"
+   ],
+   "distinct_vals": 146,
+   "bookmaker_tags": [
+    "consensus"
+   ]
+  },
+  "h8760": {
+   "lead": "Claude",
+   "n": 3158,
+   "total_points": 20991,
+   "coverage_start": "2026-02-19T01:21:59.716849+00:00",
+   "coverage_end": "2026-10-06T21:15:01.106834+00:00",
+   "coverage_hours": 5515.88,
+   "actual_hours": 8760,
+   "venue_history": true,
+   "round_boundaries": 0,
+   "first": "2026-02-19T01:21",
+   "last": "2026-10-06T21:15",
+   "span_h": 5515.9,
+   "vmin": 26.5,
+   "vmax": 75.9,
+   "rng": 49.4,
+   "net": 21.8,
+   "max_step": [
+    21.5,
+    "2026-09-30T20:59",
+    74.6,
+    53.0
+   ],
+   "max_gap_h": [
+    236.0,
+    "2026-08-19T00:49"
+   ],
+   "distinct_vals": 327,
+   "bookmaker_tags": [
+    "consensus"
+   ]
+  }
+ },
+ {
+  "id": 108620,
+  "name": "Which party will win the U.S. Senate?",
+  "description": null,
+  "source": "kalshi",
+  "bookmakers": [
+   "kalshi"
+  ],
+  "market_type": "duel",
+  "category": "politics",
+  "status": "open",
+  "n_outcomes": 2,
+  "resolution_date": "2027-02-01T15:00:00+00:00",
+  "created_at": "2026-02-19T01:21:59.844113+00:00",
+  "extra_keys": [
+   "id",
+   "name",
+   "description",
+   "sport",
+   "sport_name",
+   "category",
+   "llm_sport_category",
+   "status",
+   "source",
+   "external_id",
+   "market_type",
+   "mutually_exclusive",
+   "commence_time",
+   "resolution_date",
+   "outcome_count",
+   "lead_outcome_id",
+   "openings_withheld",
+   "prices_withheld",
+   "expired_rungs_dropped",
+   "bookmakers",
+   "category_tags",
+   "created_at",
+   "updated_at",
+   "group_id",
+   "canonical_market_key",
+   "hook_description",
+   "hook_withheld",
+   "image_url",
+   "event_concept_key",
+   "hub_slug",
+   "category_page",
+   "sport_page_key",
+   "container_of_event_id",
+   "representation",
+   "question_identity",
+   "representation_fallback"
+  ],
+  "top": [
+   {
+    "name": "Democratic Party",
+    "p": 0.645,
+    "open": 0.395,
+    "chg24": null,
+    "is_winner": false,
+    "last_updated": "2026-10-06T21:15:00.690814+00:00",
+    "price_changed_at": "2026-10-05T08:05:38.901872+00:00",
+    "img": {}
+   },
+   {
+    "name": "Republican Party",
+    "p": 0.365,
+    "open": 0.595,
+    "chg24": null,
+    "is_winner": false,
+    "last_updated": "2026-10-06T21:15:00.690814+00:00",
+    "price_changed_at": "2026-10-06T20:11:42.978631+00:00",
+    "img": {}
+   }
+  ],
+  "sum_p": 1.01,
+  "h168": {
+   "lead": "Democratic Party",
+   "n": 130,
+   "total_points": 260,
+   "coverage_start": "2026-09-29T21:51:58.487310+00:00",
+   "coverage_end": "2026-10-06T21:15:00.692352+00:00",
+   "coverage_hours": 167.38,
+   "actual_hours": 168,
+   "venue_history": true,
+   "round_boundaries": 0,
+   "first": "2026-09-29T21:51",
+   "last": "2026-10-06T21:15",
+   "span_h": 167.4,
+   "vmin": 61.5,
+   "vmax": 64.5,
+   "rng": 3.0,
+   "net": 2.0,
+   "max_step": [
+    1.0,
+    "2026-10-05T08:05",
+    63.5,
+    64.5
+   ],
+   "max_gap_h": [
+    4.2,
+    "2026-10-05T03:51"
+   ],
+   "distinct_vals": 4,
+   "bookmaker_tags": [
+    "consensus"
+   ]
+  },
+  "h720": {
+   "lead": "Democratic Party",
+   "n": 396,
+   "total_points": 792,
+   "coverage_start": "2026-09-06T23:52:27.682684+00:00",
+   "coverage_end": "2026-10-06T21:15:00.692352+00:00",
+   "coverage_hours": 717.38,
+   "actual_hours": 720,
+   "venue_history": true,
+   "round_boundaries": 0,
+   "first": "2026-09-06T23:52",
+   "last": "2026-10-06T21:15",
+   "span_h": 717.4,
+   "vmin": 47.5,
+   "vmax": 64.5,
+   "rng": 17.0,
+   "net": 17.0,
+   "max_step": [
+    2.0,
+    "2026-09-24T12:52",
+    63.5,
+    61.5
+   ],
+   "max_gap_h": [
+    7.1,
+    "2026-09-10T19:51"
+   ],
+   "distinct_vals": 17,
+   "bookmaker_tags": [
+    "consensus"
+   ]
+  },
+  "h8760": {
+   "lead": "Democratic Party",
+   "n": 884,
+   "total_points": 1768,
+   "coverage_start": "2026-02-19T01:21:59.716849+00:00",
+   "coverage_end": "2026-10-06T21:15:00.692352+00:00",
+   "coverage_hours": 5515.88,
+   "actual_hours": 8760,
+   "venue_history": true,
+   "round_boundaries": 0,
+   "first": "2026-02-19T01:21",
+   "last": "2026-10-06T21:15",
+   "span_h": 5515.9,
+   "vmin": 39.5,
+   "vmax": 64.5,
+   "rng": 25.0,
+   "net": 25.0,
+   "max_step": [
+    6.0,
+    "2026-05-07T02:46",
+    48.5,
+    42.5
+   ],
+   "max_gap_h": [
+    874.0,
+    "2026-06-09T08:47"
+   ],
+   "distinct_vals": 48,
+   "bookmaker_tags": [
+    "consensus"
+   ]
+  }
+ },
+ {
+  "id": 112902,
+  "name": "Which party will win the Senate in 2026?",
+  "description": null,
+  "source": "polymarket",
+  "bookmakers": [
+   "polymarket"
+  ],
+  "market_type": "field",
+  "category": "politics",
+  "status": "open",
+  "n_outcomes": 3,
+  "resolution_date": "2026-11-04T04:59:00+00:00",
+  "created_at": "2026-02-19T01:41:04.420888+00:00",
+  "extra_keys": [
+   "id",
+   "name",
+   "description",
+   "sport",
+   "sport_name",
+   "category",
+   "llm_sport_category",
+   "status",
+   "source",
+   "external_id",
+   "market_type",
+   "mutually_exclusive",
+   "commence_time",
+   "resolution_date",
+   "outcome_count",
+   "lead_outcome_id",
+   "openings_withheld",
+   "prices_withheld",
+   "expired_rungs_dropped",
+   "bookmakers",
+   "category_tags",
+   "created_at",
+   "updated_at",
+   "group_id",
+   "canonical_market_key",
+   "hook_description",
+   "hook_withheld",
+   "image_url",
+   "event_concept_key",
+   "hub_slug",
+   "category_page",
+   "sport_page_key",
+   "container_of_event_id",
+   "representation",
+   "question_identity",
+   "representation_fallback"
+  ],
+  "top": [
+   {
+    "name": "Democratic Party",
+    "p": 0.645,
+    "open": 0.405,
+    "chg24": null,
+    "is_winner": false,
+    "last_updated": "2026-10-06T17:51:42.652710+00:00",
+    "price_changed_at": "2026-10-06T10:08:09.875391+00:00",
+    "img": {}
+   },
+   {
+    "name": "Republican Party",
+    "p": 0.355,
+    "open": 0.595,
+    "chg24": null,
+    "is_winner": false,
+    "last_updated": "2026-10-06T17:51:42.652710+00:00",
+    "price_changed_at": "2026-10-06T08:17:38.595639+00:00",
+    "img": {}
+   },
+   {
+    "name": "Other",
+    "p": null,
+    "open": 1.0,
+    "chg24": null,
+    "is_winner": false,
+    "last_updated": "2026-05-12T17:15:00.484580+00:00",
+    "price_changed_at": null,
+    "img": {}
+   }
+  ],
+  "sum_p": 1.0,
+  "h168": {
+   "lead": "Democratic Party",
+   "n": 45,
+   "total_points": 90,
+   "coverage_start": "2026-09-30T00:51:35.739140+00:00",
+   "coverage_end": "2026-10-06T17:51:42.653438+00:00",
+   "coverage_hours": 161.0,
+   "actual_hours": 168,
+   "venue_history": true,
+   "round_boundaries": 0,
+   "first": "2026-09-30T00:51",
+   "last": "2026-10-06T17:51",
+   "span_h": 161.0,
+   "vmin": 62.5,
+   "vmax": 67.5,
+   "rng": 5.0,
+   "net": 2.0,
+   "max_step": [
+    3.0,
+    "2026-10-04T22:50",
+    64.5,
+    67.5
+   ],
+   "max_gap_h": [
+    8.0,
+    "2026-10-04T14:50"
+   ],
+   "distinct_vals": 5,
+   "bookmaker_tags": [
+    "consensus"
+   ]
+  },
+  "h720": {
+   "lead": "Democratic Party",
+   "n": 226,
+   "total_points": 452,
+   "coverage_start": "2026-09-07T03:03:09.207565+00:00",
+   "coverage_end": "2026-10-06T17:51:42.653438+00:00",
+   "coverage_hours": 710.81,
+   "actual_hours": 720,
+   "venue_history": true,
+   "round_boundaries": 0,
+   "first": "2026-09-07T03:03",
+   "last": "2026-10-06T17:51",
+   "span_h": 710.8,
+   "vmin": 51.5,
+   "vmax": 67.5,
+   "rng": 16.0,
+   "net": 13.0,
+   "max_step": [
+    4.0,
+    "2026-09-15T21:50",
+    54.5,
+    58.5
+   ],
+   "max_gap_h": [
+    8.0,
+    "2026-10-04T14:50"
+   ],
+   "distinct_vals": 14,
+   "bookmaker_tags": [
+    "consensus"
+   ]
+  },
+  "h8760": {
+   "lead": "Democratic Party",
+   "n": 3678,
+   "total_points": 10975,
+   "coverage_start": "2026-02-19T01:41:04.341363+00:00",
+   "coverage_end": "2026-10-06T17:51:42.653438+00:00",
+   "coverage_hours": 5512.18,
+   "actual_hours": 8760,
+   "venue_history": true,
+   "round_boundaries": 0,
+   "first": "2026-02-19T01:41",
+   "last": "2026-10-06T17:51",
+   "span_h": 5512.2,
+   "vmin": 39.5,
+   "vmax": 67.5,
+   "rng": 28.0,
+   "net": 24.0,
+   "max_step": [
+    8.0,
+    "2026-09-06T00:51",
+    43.5,
+    51.5
+   ],
+   "max_gap_h": [
+    1111.6,
+    "2026-07-21T17:15"
+   ],
+   "distinct_vals": 43,
+   "bookmaker_tags": [
+    "consensus"
+   ]
+  }
+ },
+ {
+  "id": 15203993,
+  "name": "Comeback Player of the Year Winner?",
+  "description": null,
+  "source": "kalshi",
+  "bookmakers": [
+   "kalshi"
+  ],
+  "market_type": "field",
+  "category": "championship",
+  "status": "open",
+  "n_outcomes": 18,
+  "resolution_date": "2027-03-23T15:00:00+00:00",
+  "created_at": "2026-05-03T08:46:56.729269+00:00",
+  "extra_keys": [
+   "id",
+   "name",
+   "description",
+   "sport",
+   "sport_name",
+   "category",
+   "llm_sport_category",
+   "status",
+   "source",
+   "external_id",
+   "market_type",
+   "mutually_exclusive",
+   "commence_time",
+   "resolution_date",
+   "outcome_count",
+   "lead_outcome_id",
+   "openings_withheld",
+   "prices_withheld",
+   "expired_rungs_dropped",
+   "bookmakers",
+   "category_tags",
+   "created_at",
+   "updated_at",
+   "group_id",
+   "canonical_market_key",
+   "hook_description",
+   "hook_withheld",
+   "image_url",
+   "event_concept_key",
+   "hub_slug",
+   "category_page",
+   "sport_page_key",
+   "container_of_event_id",
+   "representation",
+   "question_identity",
+   "representation_fallback"
+  ],
+  "top": [
+   {
+    "name": "Patrick Mahomes",
+    "p": 0.635,
+    "open": null,
+    "chg24": null,
+    "is_winner": false,
+    "last_updated": "2026-10-06T16:58:45.590526+00:00",
+    "price_changed_at": "2026-10-06T16:58:45.590526+00:00",
+    "img": {}
+   },
+   {
+    "name": "Michael Penix Jr.",
+    "p": 0.12,
+    "open": null,
+    "chg24": null,
+    "is_winner": false,
+    "last_updated": "2026-10-06T16:58:45.590526+00:00",
+    "price_changed_at": "2026-10-06T16:58:45.590526+00:00",
+    "img": {}
+   },
+   {
+    "name": "Kirk Cousins",
+    "p": 0.04,
+    "open": null,
+    "chg24": null,
+    "is_winner": false,
+    "last_updated": "2026-10-06T16:58:45.590526+00:00",
+    "price_changed_at": "2026-10-06T16:58:45.590526+00:00",
+    "img": {}
+   }
+  ],
+  "sum_p": 1.045,
+  "h168": {
+   "lead": "Patrick Mahomes",
+   "n": 25,
+   "total_points": 250,
+   "coverage_start": "2026-09-30T00:53:13.478625+00:00",
+   "coverage_end": "2026-10-06T16:58:45.591799+00:00",
+   "coverage_hours": 160.09,
+   "actual_hours": 168,
+   "venue_history": true,
+   "round_boundaries": 0,
+   "first": "2026-09-30T00:53",
+   "last": "2026-10-06T16:58",
+   "span_h": 160.1,
+   "vmin": 58.3,
+   "vmax": 70.5,
+   "rng": 12.2,
+   "net": -2.0,
+   "max_step": [
+    8.1,
+    "2026-10-04T18:54",
+    66.3,
+    58.3
+   ],
+   "max_gap_h": [
+    7.1,
+    "2026-10-05T01:02"
+   ],
+   "distinct_vals": 16,
+   "bookmaker_tags": [
+    "consensus"
+   ]
+  },
+  "h720": {
+   "lead": "Patrick Mahomes",
+   "n": 110,
+   "total_points": 1093,
+   "coverage_start": "2026-09-07T01:04:50.446142+00:00",
+   "coverage_end": "2026-10-06T16:58:45.591799+00:00",
+   "coverage_hours": 711.9,
+   "actual_hours": 720,
+   "venue_history": true,
+   "round_boundaries": 0,
+   "first": "2026-09-07T01:04",
+   "last": "2026-10-06T16:58",
+   "span_h": 711.9,
+   "vmin": 34.5,
+   "vmax": 70.5,
+   "rng": 36.0,
+   "net": 29.0,
+   "max_step": [
+    10.1,
+    "2026-09-21T07:51",
+    47.9,
+    58.1
+   ],
+   "max_gap_h": [
+    7.5,
+    "2026-09-19T21:51"
+   ],
+   "distinct_vals": 53,
+   "bookmaker_tags": [
+    "consensus"
+   ]
+  },
+  "h8760": {
+   "lead": "Patrick Mahomes",
+   "n": 142,
+   "total_points": 1316,
+   "coverage_start": "2026-05-04T14:47:13.156091+00:00",
+   "coverage_end": "2026-10-06T16:58:45.591799+00:00",
+   "coverage_hours": 3722.19,
+   "actual_hours": 8760,
+   "venue_history": true,
+   "round_boundaries": 0,
+   "first": "2026-05-04T14:47",
+   "last": "2026-10-06T16:58",
+   "span_h": 3722.2,
+   "vmin": 32.9,
+   "vmax": 70.5,
+   "rng": 37.6,
+   "net": -0.5,
+   "max_step": [
+    12.5,
+    "2026-05-24T02:46",
+    47.0,
+    34.5
+   ],
+   "max_gap_h": [
+    874.0,
+    "2026-06-09T08:47"
+   ],
+   "distinct_vals": 67,
+   "bookmaker_tags": [
+    "consensus"
+   ]
+  }
+ },
+ {
+  "id": 56933330,
+  "name": "Pro Football: 2026-27 AP Comeback Player of the Year Winner",
+  "description": null,
+  "source": "polymarket",
+  "bookmakers": [
+   "polymarket"
+  ],
+  "market_type": "field",
+  "category": "championship",
+  "status": "open",
+  "n_outcomes": 6,
+  "resolution_date": "2027-03-01T04:59:00+00:00",
+  "created_at": "2026-07-24T02:15:04.255376+00:00",
+  "extra_keys": [
+   "id",
+   "name",
+   "description",
+   "sport",
+   "sport_name",
+   "category",
+   "llm_sport_category",
+   "status",
+   "source",
+   "external_id",
+   "market_type",
+   "mutually_exclusive",
+   "commence_time",
+   "resolution_date",
+   "outcome_count",
+   "lead_outcome_id",
+   "openings_withheld",
+   "prices_withheld",
+   "expired_rungs_dropped",
+   "bookmakers",
+   "category_tags",
+   "created_at",
+   "updated_at",
+   "group_id",
+   "canonical_market_key",
+   "hook_description",
+   "hook_withheld",
+   "image_url",
+   "event_concept_key",
+   "hub_slug",
+   "category_page",
+   "sport_page_key",
+   "container_of_event_id",
+   "representation",
+   "question_identity",
+   "representation_fallback"
+  ],
+  "top": [
+   {
+    "name": "Patrick Mahomes",
+    "p": 0.665,
+    "open": 0.31,
+    "chg24": null,
+    "is_winner": false,
+    "last_updated": "2026-10-06T17:37:57.370913+00:00",
+    "price_changed_at": "2026-10-05T22:36:31.739980+00:00",
+    "img": {}
+   },
+   {
+    "name": "Tua Tagovailoa",
+    "p": 0.1115,
+    "open": 0.04,
+    "chg24": null,
+    "is_winner": false,
+    "last_updated": "2026-10-05T04:32:18.638377+00:00",
+    "price_changed_at": "2026-10-05T04:32:18.638377+00:00",
+    "img": {}
+   },
+   {
+    "name": "Kyler Murray",
+    "p": 0.068,
+    "open": 0.13,
+    "chg24": null,
+    "is_winner": false,
+    "last_updated": "2026-10-06T17:37:57.370913+00:00",
+    "price_changed_at": "2026-10-06T17:37:57.370913+00:00",
+    "img": {}
+   }
+  ],
+  "sum_p": 0.939,
+  "h168": {
+   "lead": "Patrick Mahomes",
+   "n": 10,
+   "total_points": 56,
+   "coverage_start": "2026-09-30T07:52:51.445771+00:00",
+   "coverage_end": "2026-10-06T17:37:57.318541+00:00",
+   "coverage_hours": 153.75,
+   "actual_hours": 168,
+   "venue_history": true,
+   "round_boundaries": 0,
+   "first": "2026-09-30T07:52",
+   "last": "2026-10-06T17:37",
+   "span_h": 153.8,
+   "vmin": 65.0,
+   "vmax": 72.5,
+   "rng": 7.5,
+   "net": 0.5,
+   "max_step": [
+    4.0,
+    "2026-10-05T22:36",
+    70.5,
+    66.5
+   ],
+   "max_gap_h": [
+    19.3,
+    "2026-10-01T00:38"
+   ],
+   "distinct_vals": 9,
+   "bookmaker_tags": [
+    "consensus"
+   ]
+  },
+  "h720": {
+   "lead": "Patrick Mahomes",
+   "n": 33,
+   "total_points": 194,
+   "coverage_start": "2026-09-18T03:41:46.775538+00:00",
+   "coverage_end": "2026-10-06T17:37:57.318541+00:00",
+   "coverage_hours": 445.94,
+   "actual_hours": 720,
+   "venue_history": true,
+   "round_boundaries": 0,
+   "first": "2026-09-18T03:41",
+   "last": "2026-10-06T17:37",
+   "span_h": 445.9,
+   "vmin": 49.0,
+   "vmax": 75.0,
+   "rng": 26.0,
+   "net": 16.5,
+   "max_step": [
+    20.0,
+    "2026-09-21T09:27",
+    49.0,
+    69.0
+   ],
+   "max_gap_h": [
+    20.0,
+    "2026-09-18T03:41"
+   ],
+   "distinct_vals": 19,
+   "bookmaker_tags": [
+    "consensus"
+   ]
+  },
+  "h8760": {
+   "lead": "Patrick Mahomes",
+   "n": 45,
+   "total_points": 266,
+   "coverage_start": "2026-07-24T02:15:04.205806+00:00",
+   "coverage_end": "2026-10-06T17:37:57.318541+00:00",
+   "coverage_hours": 1791.38,
+   "actual_hours": 8760,
+   "venue_history": true,
+   "round_boundaries": 0,
+   "first": "2026-07-24T02:15",
+   "last": "2026-10-06T17:37",
+   "span_h": 1791.4,
+   "vmin": 24.5,
+   "vmax": 75.0,
+   "rng": 50.5,
+   "net": 17.0,
+   "max_step": [
+    25.0,
+    "2026-09-18T03:41",
+    25.0,
+    50.0
+   ],
+   "max_gap_h": [
+    1333.4,
+    "2026-07-24T14:20"
+   ],
+   "distinct_vals": 23,
+   "bookmaker_tags": [
+    "consensus"
+   ]
+  }
+ },
+ {
+  "id": 2279147,
+  "name": "Pro Football: NFC North Champion",
+  "description": null,
+  "source": "polymarket",
+  "bookmakers": [
+   "polymarket"
+  ],
+  "market_type": "field",
+  "category": "championship",
+  "status": "open",
+  "n_outcomes": 5,
+  "resolution_date": "2027-01-18T04:59:00+00:00",
+  "created_at": "2026-03-03T02:37:39.391651+00:00",
+  "extra_keys": [
+   "id",
+   "name",
+   "description",
+   "sport",
+   "sport_name",
+   "category",
+   "llm_sport_category",
+   "status",
+   "source",
+   "external_id",
+   "market_type",
+   "mutually_exclusive",
+   "commence_time",
+   "resolution_date",
+   "outcome_count",
+   "lead_outcome_id",
+   "openings_withheld",
+   "prices_withheld",
+   "expired_rungs_dropped",
+   "bookmakers",
+   "category_tags",
+   "created_at",
+   "updated_at",
+   "group_id",
+   "canonical_market_key",
+   "hook_description",
+   "hook_withheld",
+   "image_url",
+   "event_concept_key",
+   "hub_slug",
+   "category_page",
+   "sport_page_key",
+   "container_of_event_id",
+   "representation",
+   "question_identity",
+   "representation_fallback"
+  ],
+  "top": [
+   {
+    "name": "Minnesota Vikings",
+    "p": 0.38,
+    "open": 0.495,
+    "chg24": null,
+    "is_winner": false,
+    "last_updated": "2026-10-06T15:30:00.896508+00:00",
+    "price_changed_at": "2026-10-06T10:08:44.827567+00:00",
+    "img": {}
+   },
+   {
+    "name": "Chicago Bears",
+    "p": 0.325,
+    "open": 0.49,
+    "chg24": null,
+    "is_winner": false,
+    "last_updated": "2026-10-06T15:30:00.896508+00:00",
+    "price_changed_at": "2026-10-06T15:30:00.896508+00:00",
+    "img": {}
+   },
+   {
+    "name": "Detroit Lions",
+    "p": 0.255,
+    "open": 0.495,
+    "chg24": null,
+    "is_winner": false,
+    "last_updated": "2026-10-06T15:30:00.896508+00:00",
+    "price_changed_at": "2026-10-06T15:30:00.896508+00:00",
+    "img": {}
+   }
+  ],
+  "sum_p": 1.035,
+  "h168": {
+   "lead": "Minnesota Vikings",
+   "n": 29,
+   "total_points": 116,
+   "coverage_start": "2026-09-30T03:54:28.957722+00:00",
+   "coverage_end": "2026-10-06T15:30:00.755966+00:00",
+   "coverage_hours": 155.59,
+   "actual_hours": 168,
+   "venue_history": true,
+   "round_boundaries": 0,
+   "first": "2026-09-30T03:54",
+   "last": "2026-10-06T15:30",
+   "span_h": 155.6,
+   "vmin": 34.5,
+   "vmax": 39.5,
+   "rng": 5.0,
+   "net": 3.5,
+   "max_step": [
+    4.5,
+    "2026-10-02T06:01",
+    35.0,
+    39.5
+   ],
+   "max_gap_h": [
+    7.3,
+    "2026-10-04T11:34"
+   ],
+   "distinct_vals": 7,
+   "bookmaker_tags": [
+    "consensus"
+   ]
+  },
+  "h720": {
+   "lead": "Minnesota Vikings",
+   "n": 87,
+   "total_points": 348,
+   "coverage_start": "2026-09-18T02:31:14.053697+00:00",
+   "coverage_end": "2026-10-06T15:30:00.755966+00:00",
+   "coverage_hours": 444.98,
+   "actual_hours": 720,
+   "venue_history": true,
+   "round_boundaries": 0,
+   "first": "2026-09-18T02:31",
+   "last": "2026-10-06T15:30",
+   "span_h": 445.0,
+   "vmin": 18.0,
+   "vmax": 39.5,
+   "rng": 21.5,
+   "net": 20.0,
+   "max_step": [
+    12.5,
+    "2026-09-20T19:38",
+    19.0,
+    31.5
+   ],
+   "max_gap_h": [
+    8.0,
+    "2026-09-18T08:50"
+   ],
+   "distinct_vals": 18,
+   "bookmaker_tags": [
+    "consensus"
+   ]
+  },
+  "h8760": {
+   "lead": "Minnesota Vikings",
+   "n": 3022,
+   "total_points": 12328,
+   "coverage_start": "2026-03-03T03:54:40.281544+00:00",
+   "coverage_end": "2026-10-06T15:30:00.755966+00:00",
+   "coverage_hours": 5219.59,
+   "actual_hours": 8760,
+   "venue_history": true,
+   "round_boundaries": 0,
+   "first": "2026-03-03T03:54",
+   "last": "2026-10-06T15:30",
+   "span_h": 5219.6,
+   "vmin": 9.0,
+   "vmax": 39.5,
+   "rng": 30.5,
+   "net": 24.0,
+   "max_step": [
+    12.5,
+    "2026-09-20T19:38",
+    19.0,
+    31.5
+   ],
+   "max_gap_h": [
+    1401.2,
+    "2026-07-21T17:16"
+   ],
+   "distinct_vals": 51,
+   "bookmaker_tags": [
+    "consensus"
+   ]
+  }
+ },
+ {
+  "id": 63849278,
+  "name": "MLB Playoffs: Who Will Win Series? - Rays vs. Yankees",
+  "description": null,
+  "source": "polymarket",
+  "bookmakers": [
+   "polymarket"
+  ],
+  "market_type": "duel",
+  "category": "championship",
+  "status": "open",
+  "n_outcomes": 2,
+  "resolution_date": "2026-10-12T03:59:00+00:00",
+  "created_at": "2026-10-02T20:16:12.596191+00:00",
+  "extra_keys": [
+   "id",
+   "name",
+   "description",
+   "sport",
+   "sport_name",
+   "category",
+   "llm_sport_category",
+   "status",
+   "source",
+   "external_id",
+   "market_type",
+   "mutually_exclusive",
+   "commence_time",
+   "resolution_date",
+   "outcome_count",
+   "lead_outcome_id",
+   "openings_withheld",
+   "prices_withheld",
+   "expired_rungs_dropped",
+   "bookmakers",
+   "category_tags",
+   "created_at",
+   "updated_at",
+   "group_id",
+   "canonical_market_key",
+   "hook_description",
+   "hook_withheld",
+   "image_url",
+   "event_concept_key",
+   "hub_slug",
+   "category_page",
+   "sport_page_key",
+   "container_of_event_id",
+   "representation",
+   "question_identity",
+   "representation_fallback"
+  ],
+  "top": [
+   {
+    "name": "Rays",
+    "p": 0.82,
+    "open": 0.475,
+    "chg24": null,
+    "is_winner": null,
+    "last_updated": "2026-10-06T21:16:42.026192+00:00",
+    "price_changed_at": "2026-10-06T21:16:42.026192+00:00",
+    "img": {}
+   },
+   {
+    "name": "Yankees",
+    "p": 0.18,
+    "open": 0.525,
+    "chg24": null,
+    "is_winner": null,
+    "last_updated": "2026-10-06T21:16:42.026192+00:00",
+    "price_changed_at": "2026-10-06T21:16:42.026192+00:00",
+    "img": {}
+   }
+  ],
+  "sum_p": 1.0,
+  "h168": {
+   "lead": "Rays",
+   "n": 6,
+   "total_points": 12,
+   "coverage_start": "2026-10-03T04:15:44.455582+00:00",
+   "coverage_end": "2026-10-06T09:53:07.520112+00:00",
+   "coverage_hours": 77.62,
+   "actual_hours": 168,
+   "venue_history": true,
+   "round_boundaries": 0,
+   "first": "2026-10-03T04:15",
+   "last": "2026-10-06T09:53",
+   "span_h": 77.6,
+   "vmin": 47.5,
+   "vmax": 82.5,
+   "rng": 35.0,
+   "net": 35.0,
+   "max_step": [
+    17.5,
+    "2026-10-06T09:53",
+    65.0,
+    82.5
+   ],
+   "max_gap_h": [
+    25.5,
+    "2026-10-03T06:17"
+   ],
+   "distinct_vals": 4,
+   "bookmaker_tags": [
+    "consensus"
+   ]
+  },
+  "h720": {
+   "lead": "Rays",
+   "n": 6,
+   "total_points": 12,
+   "coverage_start": "2026-10-03T04:15:44.455582+00:00",
+   "coverage_end": "2026-10-06T09:53:07.520112+00:00",
+   "coverage_hours": 77.62,
+   "actual_hours": 720,
+   "venue_history": true,
+   "round_boundaries": 0,
+   "first": "2026-10-03T04:15",
+   "last": "2026-10-06T09:53",
+   "span_h": 77.6,
+   "vmin": 47.5,
+   "vmax": 82.5,
+   "rng": 35.0,
+   "net": 35.0,
+   "max_step": [
+    17.5,
+    "2026-10-06T09:53",
+    65.0,
+    82.5
+   ],
+   "max_gap_h": [
+    25.5,
+    "2026-10-03T06:17"
+   ],
+   "distinct_vals": 4,
+   "bookmaker_tags": [
+    "consensus"
+   ]
+  },
+  "h8760": {
+   "lead": "Rays",
+   "n": 6,
+   "total_points": 12,
+   "coverage_start": "2026-10-03T04:15:44.455582+00:00",
+   "coverage_end": "2026-10-06T09:53:07.520112+00:00",
+   "coverage_hours": 77.62,
+   "actual_hours": 8760,
+   "venue_history": true,
+   "round_boundaries": 0,
+   "first": "2026-10-03T04:15",
+   "last": "2026-10-06T09:53",
+   "span_h": 77.6,
+   "vmin": 47.5,
+   "vmax": 82.5,
+   "rng": 35.0,
+   "net": 35.0,
+   "max_step": [
+    17.5,
+    "2026-10-06T09:53",
+    65.0,
+    82.5
+   ],
+   "max_gap_h": [
+    25.5,
+    "2026-10-03T06:17"
+   ],
+   "distinct_vals": 4,
+   "bookmaker_tags": [
+    "consensus"
+   ]
+  }
+ },
+ {
+  "id": 199050,
+  "name": "MLB: 2026 National League Champion",
+  "description": null,
+  "source": "polymarket",
+  "bookmakers": [
+   "polymarket"
+  ],
+  "market_type": "field",
+  "category": "championship",
+  "status": "open",
+  "n_outcomes": 16,
+  "resolution_date": "2026-12-01T04:59:00+00:00",
+  "created_at": "2026-02-19T19:18:49.018657+00:00",
+  "extra_keys": [
+   "id",
+   "name",
+   "description",
+   "sport",
+   "sport_name",
+   "category",
+   "llm_sport_category",
+   "status",
+   "source",
+   "external_id",
+   "market_type",
+   "mutually_exclusive",
+   "commence_time",
+   "resolution_date",
+   "outcome_count",
+   "lead_outcome_id",
+   "openings_withheld",
+   "prices_withheld",
+   "expired_rungs_dropped",
+   "bookmakers",
+   "category_tags",
+   "created_at",
+   "updated_at",
+   "group_id",
+   "canonical_market_key",
+   "hook_description",
+   "hook_withheld",
+   "image_url",
+   "event_concept_key",
+   "hub_slug",
+   "category_page",
+   "sport_page_key",
+   "container_of_event_id",
+   "representation",
+   "question_identity",
+   "representation_fallback"
+  ],
+  "top": [
+   {
+    "name": "Milwaukee Brewers",
+    "p": 0.3995,
+    "open": 0.525,
+    "chg24": null,
+    "is_winner": false,
+    "last_updated": "2026-10-06T15:29:50.733131+00:00",
+    "price_changed_at": "2026-10-06T08:17:52.746689+00:00",
+    "img": {}
+   },
+   {
+    "name": "Los Angeles Dodgers",
+    "p": 0.385,
+    "open": 0.515,
+    "chg24": null,
+    "is_winner": false,
+    "last_updated": "2026-10-06T15:29:50.733131+00:00",
+    "price_changed_at": "2026-10-06T08:17:52.746689+00:00",
+    "img": {}
+   },
+   {
+    "name": "Atlanta Braves",
+    "p": 0.175,
+    "open": 0.135,
+    "chg24": null,
+    "is_winner": false,
+    "last_updated": "2026-10-06T15:29:50.733131+00:00",
+    "price_changed_at": "2026-10-05T09:56:08.244223+00:00",
+    "img": {}
+   }
+  ],
+  "sum_p": 1.022,
+  "h168": {
+   "lead": "Milwaukee Brewers",
+   "n": 34,
+   "total_points": 205,
+   "coverage_start": "2026-09-30T03:54:09.906400+00:00",
+   "coverage_end": "2026-10-06T15:29:51.647555+00:00",
+   "coverage_hours": 155.59,
+   "actual_hours": 168,
+   "venue_history": true,
+   "round_boundaries": 1,
+   "first": "2026-09-30T03:54",
+   "last": "2026-10-06T15:29",
+   "span_h": 155.6,
+   "vmin": 24.1,
+   "vmax": 40.6,
+   "rng": 16.5,
+   "net": 14.8,
+   "max_step": [
+    5.7,
+    "2026-10-05T03:31",
+    34.9,
+    40.6
+   ],
+   "max_gap_h": [
+    7.3,
+    "2026-10-04T11:33"
+   ],
+   "distinct_vals": 23,
+   "bookmaker_tags": [
+    "consensus"
+   ]
+  },
+  "h720": {
+   "lead": "Milwaukee Brewers",
+   "n": 131,
+   "total_points": 994,
+   "coverage_start": "2026-09-07T03:03:08.683025+00:00",
+   "coverage_end": "2026-10-06T15:29:51.647555+00:00",
+   "coverage_hours": 708.45,
+   "actual_hours": 720,
+   "venue_history": true,
+   "round_boundaries": 1,
+   "first": "2026-09-07T03:03",
+   "last": "2026-10-06T15:29",
+   "span_h": 708.4,
+   "vmin": 19.1,
+   "vmax": 40.6,
+   "rng": 21.4,
+   "net": 16.8,
+   "max_step": [
+    5.7,
+    "2026-10-05T03:31",
+    34.9,
+    40.6
+   ],
+   "max_gap_h": [
+    8.0,
+    "2026-09-18T08:50"
+   ],
+   "distinct_vals": 58,
+   "bookmaker_tags": [
+    "consensus"
+   ]
+  },
+  "h8760": {
+   "lead": "Milwaukee Brewers",
+   "n": 3426,
+   "total_points": 33962,
+   "coverage_start": "2026-02-19T19:18:48.964053+00:00",
+   "coverage_end": "2026-10-06T15:29:51.647555+00:00",
+   "coverage_hours": 5492.18,
+   "actual_hours": 8760,
+   "venue_history": true,
+   "round_boundaries": 1,
+   "first": "2026-02-19T19:18",
+   "last": "2026-10-06T15:29",
+   "span_h": 5492.2,
+   "vmin": 3.5,
+   "vmax": 52.5,
+   "rng": 49.1,
+   "net": -12.6,
+   "max_step": [
+    36.0,
+    "2026-02-19T22:19",
+    51.0,
+    15.0
+   ],
+   "max_gap_h": [
+    1111.6,
+    "2026-07-21T17:16"
+   ],
+   "distinct_vals": 191,
+   "bookmaker_tags": [
+    "consensus"
+   ]
+  }
+ },
+ {
+  "id": 270,
+  "name": "National League Champion",
+  "description": null,
+  "source": "kalshi",
+  "bookmakers": [
+   "kalshi"
+  ],
+  "market_type": "field",
+  "category": "championship",
+  "status": "open",
+  "n_outcomes": 15,
+  "resolution_date": "2026-11-01T04:00:00+00:00",
+  "created_at": "2026-02-03T19:38:23.771635+00:00",
+  "extra_keys": [
+   "id",
+   "name",
+   "description",
+   "sport",
+   "sport_name",
+   "category",
+   "llm_sport_category",
+   "status",
+   "source",
+   "external_id",
+   "market_type",
+   "mutually_exclusive",
+   "commence_time",
+   "resolution_date",
+   "outcome_count",
+   "lead_outcome_id",
+   "openings_withheld",
+   "prices_withheld",
+   "expired_rungs_dropped",
+   "bookmakers",
+   "category_tags",
+   "created_at",
+   "updated_at",
+   "group_id",
+   "canonical_market_key",
+   "hook_description",
+   "hook_withheld",
+   "image_url",
+   "event_concept_key",
+   "hub_slug",
+   "category_page",
+   "sport_page_key",
+   "container_of_event_id",
+   "representation",
+   "question_identity",
+   "representation_fallback"
+  ],
+  "top": [
+   {
+    "name": "Milwaukee",
+    "p": 0.405,
+    "open": 0.045,
+    "chg24": null,
+    "is_winner": false,
+    "last_updated": "2026-10-06T21:06:40.658137+00:00",
+    "price_changed_at": "2026-10-06T14:57:31.352305+00:00",
+    "img": {}
+   },
+   {
+    "name": "Los Angeles Dodgers",
+    "p": 0.385,
+    "open": 0.465,
+    "chg24": null,
+    "is_winner": false,
+    "last_updated": "2026-10-06T21:06:40.658137+00:00",
+    "price_changed_at": "2026-10-05T04:49:28.016897+00:00",
+    "img": {}
+   },
+   {
+    "name": "Atlanta",
+    "p": 0.185,
+    "open": 0.105,
+    "chg24": null,
+    "is_winner": false,
+    "last_updated": "2026-10-06T21:06:40.658137+00:00",
+    "price_changed_at": "2026-10-06T16:55:57.049389+00:00",
+    "img": {}
+   }
+  ],
+  "sum_p": 1.02,
+  "h168": {
+   "lead": "Milwaukee",
+   "n": 77,
+   "total_points": 770,
+   "coverage_start": "2026-09-29T22:52:23.183322+00:00",
+   "coverage_end": "2026-10-06T21:05:51.677329+00:00",
+   "coverage_hours": 166.22,
+   "actual_hours": 168,
+   "venue_history": true,
+   "round_boundaries": 0,
+   "first": "2026-09-29T22:52",
+   "last": "2026-10-06T21:05",
+   "span_h": 166.2,
+   "vmin": 23.5,
+   "vmax": 43.0,
+   "rng": 19.5,
+   "net": 17.0,
+   "max_step": [
+    14.5,
+    "2026-10-05T00:51",
+    27.0,
+    41.5
+   ],
+   "max_gap_h": [
+    4.0,
+    "2026-10-05T22:53"
+   ],
+   "distinct_vals": 23,
+   "bookmaker_tags": [
+    "consensus"
+   ]
+  },
+  "h720": {
+   "lead": "Milwaukee",
+   "n": 257,
+   "total_points": 2502,
+   "coverage_start": "2026-09-06T22:51:32.036744+00:00",
+   "coverage_end": "2026-10-06T21:05:51.677329+00:00",
+   "coverage_hours": 718.24,
+   "actual_hours": 720,
+   "venue_history": true,
+   "round_boundaries": 0,
+   "first": "2026-09-06T22:51",
+   "last": "2026-10-06T21:05",
+   "span_h": 718.2,
+   "vmin": 20.5,
+   "vmax": 43.0,
+   "rng": 22.5,
+   "net": 18.0,
+   "max_step": [
+    14.5,
+    "2026-10-05T00:51",
+    27.0,
+    41.5
+   ],
+   "max_gap_h": [
+    8.0,
+    "2026-09-28T05:51"
+   ],
+   "distinct_vals": 36,
+   "bookmaker_tags": [
+    "consensus"
+   ]
+  },
+  "h8760": {
+   "lead": "Milwaukee",
+   "n": 1507,
+   "total_points": 15000,
+   "coverage_start": "2026-02-03T19:38:23.698318+00:00",
+   "coverage_end": "2026-10-06T21:05:51.677329+00:00",
+   "coverage_hours": 5881.46,
+   "actual_hours": 8760,
+   "venue_history": true,
+   "round_boundaries": 0,
+   "first": "2026-02-03T19:38",
+   "last": "2026-10-06T21:05",
+   "span_h": 5881.5,
+   "vmin": 3.3,
+   "vmax": 43.0,
+   "rng": 39.7,
+   "net": 36.4,
+   "max_step": [
+    14.5,
+    "2026-10-05T00:51",
+    27.0,
+    41.5
+   ],
+   "max_gap_h": [
+    704.9,
+    "2026-06-09T08:47"
+   ],
+   "distinct_vals": 98,
+   "bookmaker_tags": [
+    "consensus"
+   ]
+  }
+ },
+ {
+  "id": 5869749,
+  "name": "Oscar Winner: Best Actor",
+  "description": null,
+  "source": "kalshi",
+  "bookmakers": [
+   "kalshi"
+  ],
+  "market_type": "field",
+  "category": "entertainment",
+  "status": "open",
+  "n_outcomes": 24,
+  "resolution_date": "2027-12-31T15:00:00+00:00",
+  "created_at": "2026-03-19T17:45:16.813901+00:00",
+  "extra_keys": [
+   "id",
+   "name",
+   "description",
+   "sport",
+   "sport_name",
+   "category",
+   "llm_sport_category",
+   "status",
+   "source",
+   "external_id",
+   "market_type",
+   "mutually_exclusive",
+   "commence_time",
+   "resolution_date",
+   "outcome_count",
+   "lead_outcome_id",
+   "openings_withheld",
+   "prices_withheld",
+   "expired_rungs_dropped",
+   "bookmakers",
+   "category_tags",
+   "created_at",
+   "updated_at",
+   "group_id",
+   "canonical_market_key",
+   "hook_description",
+   "hook_withheld",
+   "image_url",
+   "event_concept_key",
+   "hub_slug",
+   "category_page",
+   "sport_page_key",
+   "container_of_event_id",
+   "representation",
+   "question_identity",
+   "representation_fallback"
+  ],
+  "top": [
+   {
+    "name": "John Malkovich",
+    "p": 0.3615,
+    "open": null,
+    "chg24": null,
+    "is_winner": false,
+    "last_updated": "2026-10-06T20:13:03.075935+00:00",
+    "price_changed_at": "2026-10-06T06:01:20.092946+00:00",
+    "img": {}
+   },
+   {
+    "name": "Matt Damon",
+    "p": 0.2394,
+    "open": null,
+    "chg24": null,
+    "is_winner": false,
+    "last_updated": "2026-10-06T20:13:03.075935+00:00",
+    "price_changed_at": "2026-09-22T11:51:12.896774+00:00",
+    "img": {}
+   },
+   {
+    "name": "Andrew Scott",
+    "p": 0.1455,
+    "open": null,
+    "chg24": null,
+    "is_winner": false,
+    "last_updated": "2026-10-06T20:13:03.075935+00:00",
+    "price_changed_at": "2026-10-06T20:13:03.075935+00:00",
+    "img": {}
+   }
+  ],
+  "sum_p": 1.141,
+  "h168": {
+   "lead": "John Malkovich",
+   "n": 25,
+   "total_points": 250,
+   "coverage_start": "2026-09-30T01:55:55.680282+00:00",
+   "coverage_end": "2026-10-06T20:13:03.077517+00:00",
+   "coverage_hours": 162.29,
+   "actual_hours": 168,
+   "venue_history": true,
+   "round_boundaries": 0,
+   "first": "2026-09-30T01:55",
+   "last": "2026-10-06T20:13",
+   "span_h": 162.3,
+   "vmin": 30.9,
+   "vmax": 38.5,
+   "rng": 7.6,
+   "net": 2.5,
+   "max_step": [
+    3.5,
+    "2026-10-05T16:53",
+    34.0,
+    37.5
+   ],
+   "max_gap_h": [
+    7.8,
+    "2026-09-30T08:09"
+   ],
+   "distinct_vals": 17,
+   "bookmaker_tags": [
+    "consensus"
+   ]
+  },
+  "h720": {
+   "lead": "John Malkovich",
+   "n": 120,
+   "total_points": 1152,
+   "coverage_start": "2026-09-07T01:04:57.876786+00:00",
+   "coverage_end": "2026-10-06T20:13:03.077517+00:00",
+   "coverage_hours": 715.13,
+   "actual_hours": 720,
+   "venue_history": true,
+   "round_boundaries": 0,
+   "first": "2026-09-07T01:04",
+   "last": "2026-10-06T20:13",
+   "span_h": 715.1,
+   "vmin": 15.8,
+   "vmax": 38.5,
+   "rng": 22.7,
+   "net": 20.4,
+   "max_step": [
+    6.8,
+    "2026-09-19T21:51",
+    24.1,
+    30.9
+   ],
+   "max_gap_h": [
+    8.0,
+    "2026-09-28T09:51"
+   ],
+   "distinct_vals": 76,
+   "bookmaker_tags": [
+    "consensus"
+   ]
+  },
+  "h8760": {
+   "lead": "John Malkovich",
+   "n": 457,
+   "total_points": 2492,
+   "coverage_start": "2026-03-19T17:45:16.725686+00:00",
+   "coverage_end": "2026-10-06T20:13:03.077517+00:00",
+   "coverage_hours": 4826.46,
+   "actual_hours": 8760,
+   "venue_history": true,
+   "round_boundaries": 0,
+   "first": "2026-03-19T17:45",
+   "last": "2026-10-06T20:13",
+   "span_h": 4826.5,
+   "vmin": 5.6,
+   "vmax": 38.5,
+   "rng": 32.9,
+   "net": 26.1,
+   "max_step": [
+    16.5,
+    "2026-04-04T08:45",
+    15.5,
+    32.0
+   ],
+   "max_gap_h": [
+    704.0,
+    "2026-06-09T08:47"
+   ],
+   "distinct_vals": 126,
+   "bookmaker_tags": [
+    "consensus"
+   ]
+  }
+ },
+ {
+  "id": 11415154,
+  "name": "Which movie has biggest opening week in 2026?",
+  "description": null,
+  "source": "polymarket",
+  "bookmakers": [
+   "polymarket"
+  ],
+  "market_type": "field",
+  "category": "entertainment",
+  "status": "open",
+  "n_outcomes": 10,
+  "resolution_date": "2027-02-01T04:59:00+00:00",
+  "created_at": "2026-04-17T00:18:56.481144+00:00",
+  "extra_keys": [
+   "id",
+   "name",
+   "description",
+   "sport",
+   "sport_name",
+   "category",
+   "llm_sport_category",
+   "status",
+   "source",
+   "external_id",
+   "market_type",
+   "mutually_exclusive",
+   "commence_time",
+   "resolution_date",
+   "outcome_count",
+   "lead_outcome_id",
+   "openings_withheld",
+   "prices_withheld",
+   "expired_rungs_dropped",
+   "bookmakers",
+   "category_tags",
+   "created_at",
+   "updated_at",
+   "group_id",
+   "canonical_market_key",
+   "hook_description",
+   "hook_withheld",
+   "image_url",
+   "event_concept_key",
+   "hub_slug",
+   "category_page",
+   "sport_page_key",
+   "container_of_event_id",
+   "representation",
+   "question_identity",
+   "representation_fallback"
+  ],
+  "top": [
+   {
+    "name": "Spider-Man: Brand New Day",
+    "p": 0.505,
+    "open": 0.29,
+    "chg24": null,
+    "is_winner": false,
+    "last_updated": "2026-10-06T16:37:32.827009+00:00",
+    "price_changed_at": "2026-10-06T10:08:34.978749+00:00",
+    "img": {}
+   },
+   {
+    "name": "Avengers: Doomsday",
+    "p": 0.505,
+    "open": 0.255,
+    "chg24": null,
+    "is_winner": false,
+    "last_updated": "2026-10-06T16:37:32.827009+00:00",
+    "price_changed_at": "2026-10-06T10:08:34.978749+00:00",
+    "img": {}
+   },
+   {
+    "name": "The Super Mario Galaxy Movie",
+    "p": 0.008,
+    "open": 0.255,
+    "chg24": null,
+    "is_winner": false,
+    "last_updated": "2026-10-06T16:37:32.827009+00:00",
+    "price_changed_at": "2026-10-06T16:37:32.827009+00:00",
+    "img": {}
+   }
+  ],
+  "sum_p": 1.021,
+  "h168": {
+   "lead": "Spider-Man: Brand New Day",
+   "n": 29,
+   "total_points": 146,
+   "coverage_start": "2026-09-30T03:54:19.394015+00:00",
+   "coverage_end": "2026-10-06T16:37:33.771338+00:00",
+   "coverage_hours": 156.72,
+   "actual_hours": 168,
+   "venue_history": true,
+   "round_boundaries": 1,
+   "first": "2026-09-30T03:54",
+   "last": "2026-10-06T16:37",
+   "span_h": 156.7,
+   "vmin": 42.5,
+   "vmax": 50.5,
+   "rng": 8.0,
+   "net": 8.0,
+   "max_step": [
+    4.5,
+    "2026-10-01T22:59",
+    42.5,
+    47.0
+   ],
+   "max_gap_h": [
+    7.3,
+    "2026-10-04T11:34"
+   ],
+   "distinct_vals": 7,
+   "bookmaker_tags": [
+    "consensus"
+   ]
+  },
+  "h720": {
+   "lead": "Spider-Man: Brand New Day",
+   "n": 126,
+   "total_points": 725,
+   "coverage_start": "2026-09-06T22:50:58.544873+00:00",
+   "coverage_end": "2026-10-06T16:37:33.771338+00:00",
+   "coverage_hours": 713.78,
+   "actual_hours": 720,
+   "venue_history": true,
+   "round_boundaries": 1,
+   "first": "2026-09-06T22:50",
+   "last": "2026-10-06T16:37",
+   "span_h": 713.8,
+   "vmin": 34.0,
+   "vmax": 50.5,
+   "rng": 16.5,
+   "net": 12.0,
+   "max_step": [
+    12.0,
+    "2026-09-21T21:50",
+    36.5,
+    48.5
+   ],
+   "max_gap_h": [
+    8.0,
+    "2026-09-18T08:50"
+   ],
+   "distinct_vals": 21,
+   "bookmaker_tags": [
+    "consensus"
+   ]
+  },
+  "h8760": {
+   "lead": "Spider-Man: Brand New Day",
+   "n": 1480,
+   "total_points": 14541,
+   "coverage_start": "2026-04-17T00:18:56.457366+00:00",
+   "coverage_end": "2026-10-06T16:37:33.771338+00:00",
+   "coverage_hours": 4144.31,
+   "actual_hours": 8760,
+   "venue_history": true,
+   "round_boundaries": 0,
+   "first": "2026-04-17T20:18",
+   "last": "2026-10-06T16:37",
+   "span_h": 4124.3,
+   "vmin": 7.0,
+   "vmax": 50.5,
+   "rng": 43.5,
+   "net": 37.5,
+   "max_step": [
+    23.5,
+    "2026-07-05T05:19",
+    8.5,
+    32.0
+   ],
+   "max_gap_h": [
+    1112.6,
+    "2026-07-21T17:16"
+   ],
+   "distinct_vals": 75,
+   "bookmaker_tags": [
+    "consensus"
+   ]
+  }
+ },
+ {
+  "id": 109946,
+  "name": "Fed decision in Oct 2026?",
+  "description": null,
+  "source": "kalshi",
+  "bookmakers": [
+   "kalshi"
+  ],
+  "market_type": "field",
+  "category": "economics",
+  "status": "open",
+  "n_outcomes": 5,
+  "resolution_date": "2026-10-28T17:59:00+00:00",
+  "created_at": "2026-02-19T01:21:59.844113+00:00",
+  "extra_keys": [
+   "id",
+   "name",
+   "description",
+   "sport",
+   "sport_name",
+   "category",
+   "llm_sport_category",
+   "status",
+   "source",
+   "external_id",
+   "market_type",
+   "mutually_exclusive",
+   "commence_time",
+   "resolution_date",
+   "outcome_count",
+   "lead_outcome_id",
+   "openings_withheld",
+   "prices_withheld",
+   "expired_rungs_dropped",
+   "bookmakers",
+   "category_tags",
+   "created_at",
+   "updated_at",
+   "group_id",
+   "canonical_market_key",
+   "hook_description",
+   "hook_withheld",
+   "image_url",
+   "event_concept_key",
+   "hub_slug",
+   "category_page",
+   "sport_page_key",
+   "container_of_event_id",
+   "representation",
+   "question_identity",
+   "representation_fallback"
+  ],
+  "top": [
+   {
+    "name": "Fed maintains rate",
+    "p": 0.835,
+    "open": 0.725,
+    "chg24": null,
+    "is_winner": false,
+    "last_updated": "2026-10-06T21:15:01.354002+00:00",
+    "price_changed_at": "2026-10-06T21:15:01.354002+00:00",
+    "img": {}
+   },
+   {
+    "name": "Hike 25bps",
+    "p": 0.175,
+    "open": 0.025,
+    "chg24": null,
+    "is_winner": false,
+    "last_updated": "2026-10-06T21:15:01.354002+00:00",
+    "price_changed_at": "2026-10-06T15:03:53.142613+00:00",
+    "img": {}
+   },
+   {
+    "name": "Cut >25bps",
+    "p": 0.01,
+    "open": 0.06,
+    "chg24": null,
+    "is_winner": false,
+    "last_updated": "2026-10-06T21:15:01.354002+00:00",
+    "price_changed_at": "2026-09-16T16:50:27.373437+00:00",
+    "img": {}
+   }
+  ],
+  "sum_p": 1.04,
+  "h168": {
+   "lead": "Fed maintains rate",
+   "n": 143,
+   "total_points": 715,
+   "coverage_start": "2026-09-29T21:51:59.169074+00:00",
+   "coverage_end": "2026-10-06T21:15:01.354921+00:00",
+   "coverage_hours": 167.38,
+   "actual_hours": 168,
+   "venue_history": true,
+   "round_boundaries": 0,
+   "first": "2026-09-29T21:51",
+   "last": "2026-10-06T21:15",
+   "span_h": 167.4,
+   "vmin": 54.0,
+   "vmax": 83.5,
+   "rng": 29.5,
+   "net": 28.0,
+   "max_step": [
+    10.5,
+    "2026-09-30T12:59",
+    55.5,
+    66.0
+   ],
+   "max_gap_h": [
+    3.7,
+    "2026-10-01T03:11"
+   ],
+   "distinct_vals": 27,
+   "bookmaker_tags": [
+    "consensus"
+   ]
+  },
+  "h720": {
+   "lead": "Fed maintains rate",
+   "n": 509,
+   "total_points": 2545,
+   "coverage_start": "2026-09-07T01:05:14.138648+00:00",
+   "coverage_end": "2026-10-06T21:15:01.354921+00:00",
+   "coverage_hours": 716.16,
+   "actual_hours": 720,
+   "venue_history": true,
+   "round_boundaries": 0,
+   "first": "2026-09-07T01:05",
+   "last": "2026-10-06T21:15",
+   "span_h": 716.2,
+   "vmin": 27.5,
+   "vmax": 83.5,
+   "rng": 56.0,
+   "net": 15.0,
+   "max_step": [
+    19.0,
+    "2026-09-29T18:53",
+    32.5,
+    51.5
+   ],
+   "max_gap_h": [
+    8.0,
+    "2026-09-13T20:52"
+   ],
+   "distinct_vals": 67,
+   "bookmaker_tags": [
+    "consensus"
+   ]
+  },
+  "h8760": {
+   "lead": "Fed maintains rate",
+   "n": 995,
+   "total_points": 4527,
+   "coverage_start": "2026-02-19T01:21:59.716849+00:00",
+   "coverage_end": "2026-10-06T21:15:01.354921+00:00",
+   "coverage_hours": 5515.88,
+   "actual_hours": 8760,
+   "venue_history": true,
+   "round_boundaries": 0,
+   "first": "2026-02-19T01:21",
+   "last": "2026-10-06T21:15",
+   "span_h": 5515.9,
+   "vmin": 27.5,
+   "vmax": 83.5,
+   "rng": 56.0,
+   "net": 15.1,
+   "max_step": [
+    19.0,
+    "2026-09-29T18:53",
+    32.5,
+    51.5
+   ],
+   "max_gap_h": [
+    876.0,
+    "2026-06-09T08:47"
+   ],
+   "distinct_vals": 143,
+   "bookmaker_tags": [
+    "consensus"
+   ]
+  }
+ },
+ {
+  "id": 8430022,
+  "name": "When will Anthropic officially announce an IPO?",
+  "description": null,
+  "source": "kalshi",
+  "bookmakers": [
+   "kalshi"
+  ],
+  "market_type": "quantity",
+  "category": "other",
+  "status": "open",
+  "n_outcomes": 9,
+  "resolution_date": "2027-04-01T03:59:00+00:00",
+  "created_at": "2026-04-01T20:45:15.518271+00:00",
+  "extra_keys": [
+   "id",
+   "name",
+   "description",
+   "sport",
+   "sport_name",
+   "category",
+   "llm_sport_category",
+   "status",
+   "source",
+   "external_id",
+   "market_type",
+   "mutually_exclusive",
+   "commence_time",
+   "resolution_date",
+   "outcome_count",
+   "lead_outcome_id",
+   "openings_withheld",
+   "prices_withheld",
+   "expired_rungs_dropped",
+   "bookmakers",
+   "category_tags",
+   "created_at",
+   "updated_at",
+   "group_id",
+   "canonical_market_key",
+   "hook_description",
+   "hook_withheld",
+   "image_url",
+   "event_concept_key",
+   "hub_slug",
+   "category_page",
+   "sport_page_key",
+   "container_of_event_id",
+   "representation",
+   "question_identity",
+   "representation_fallback"
+  ],
+  "top": [
+   {
+    "name": "Before Mar 1, 2027",
+    "p": 0.895,
+    "open": 0.665,
+    "chg24": null,
+    "is_winner": false,
+    "last_updated": "2026-10-06T16:58:37.722598+00:00",
+    "price_changed_at": "2026-10-05T21:04:01.633738+00:00",
+    "img": {}
+   },
+   {
+    "name": "Before Apr 1, 2027",
+    "p": 0.895,
+    "open": 0.705,
+    "chg24": null,
+    "is_winner": false,
+    "last_updated": "2026-10-06T16:58:37.722598+00:00",
+    "price_changed_at": "2026-10-06T03:52:29.142915+00:00",
+    "img": {}
+   },
+   {
+    "name": "Before Feb 1, 2027",
+    "p": 0.865,
+    "open": 0.635,
+    "chg24": null,
+    "is_winner": false,
+    "last_updated": "2026-10-06T16:58:37.722598+00:00",
+    "price_changed_at": "2026-10-05T21:04:01.633738+00:00",
+    "img": {}
+   }
+  ],
+  "sum_p": 4.15,
+  "h168": {
+   "lead": "Before Mar 1, 2027",
+   "n": 25,
+   "total_points": 231,
+   "coverage_start": "2026-09-30T00:53:08.508076+00:00",
+   "coverage_end": "2026-10-06T16:58:37.730823+00:00",
+   "coverage_hours": 160.09,
+   "actual_hours": 168,
+   "venue_history": true,
+   "round_boundaries": 0,
+   "first": "2026-09-30T00:53",
+   "last": "2026-10-06T16:58",
+   "span_h": 160.1,
+   "vmin": 88.5,
+   "vmax": 92.0,
+   "rng": 3.5,
+   "net": -0.5,
+   "max_step": [
+    2.0,
+    "2026-10-01T23:02",
+    90.0,
+    92.0
+   ],
+   "max_gap_h": [
+    7.1,
+    "2026-10-05T01:02"
+   ],
+   "distinct_vals": 5,
+   "bookmaker_tags": [
+    "consensus"
+   ]
+  },
+  "h720": {
+   "lead": "Before Mar 1, 2027",
+   "n": 233,
+   "total_points": 2076,
+   "coverage_start": "2026-09-06T23:52:44.453381+00:00",
+   "coverage_end": "2026-10-06T16:58:37.730823+00:00",
+   "coverage_hours": 713.1,
+   "actual_hours": 720,
+   "venue_history": true,
+   "round_boundaries": 0,
+   "first": "2026-09-06T23:52",
+   "last": "2026-10-06T16:58",
+   "span_h": 713.1,
+   "vmin": 84.5,
+   "vmax": 97.0,
+   "rng": 12.5,
+   "net": -6.0,
+   "max_step": [
+    5.5,
+    "2026-09-14T18:51",
+    90.0,
+    84.5
+   ],
+   "max_gap_h": [
+    7.1,
+    "2026-09-26T21:51"
+   ],
+   "distinct_vals": 16,
+   "bookmaker_tags": [
+    "consensus"
+   ]
+  },
+  "h8760": {
+   "lead": "Before Mar 1, 2027",
+   "n": 410,
+   "total_points": 3298,
+   "coverage_start": "2026-04-01T20:45:15.487453+00:00",
+   "coverage_end": "2026-10-06T16:58:37.730823+00:00",
+   "coverage_hours": 4508.22,
+   "actual_hours": 8760,
+   "venue_history": true,
+   "round_boundaries": 0,
+   "first": "2026-04-01T20:45",
+   "last": "2026-10-06T16:58",
+   "span_h": 4508.2,
+   "vmin": 63.0,
+   "vmax": 97.0,
+   "rng": 34.0,
+   "net": 23.0,
+   "max_step": [
+    14.0,
+    "2026-07-15T18:49",
+    94.5,
+    80.5
+   ],
+   "max_gap_h": [
+    874.0,
+    "2026-06-09T08:47"
+   ],
+   "distinct_vals": 38,
+   "bookmaker_tags": [
+    "consensus"
+   ]
+  }
+ },
+ {
+  "id": 30635376,
+  "name": "Anthropic IPO?",
+  "description": null,
+  "source": "polymarket",
+  "bookmakers": [
+   "polymarket"
+  ],
+  "market_type": "field",
+  "category": "economics",
+  "status": "open",
+  "n_outcomes": 6,
+  "resolution_date": "2027-01-01T04:59:00+00:00",
+  "created_at": "2026-06-01T23:23:58.095344+00:00",
+  "extra_keys": [
+   "id",
+   "name",
+   "description",
+   "sport",
+   "sport_name",
+   "category",
+   "llm_sport_category",
+   "status",
+   "source",
+   "external_id",
+   "market_type",
+   "mutually_exclusive",
+   "commence_time",
+   "resolution_date",
+   "outcome_count",
+   "lead_outcome_id",
+   "openings_withheld",
+   "prices_withheld",
+   "expired_rungs_dropped",
+   "bookmakers",
+   "category_tags",
+   "created_at",
+   "updated_at",
+   "group_id",
+   "canonical_market_key",
+   "hook_description",
+   "hook_withheld",
+   "image_url",
+   "event_concept_key",
+   "hub_slug",
+   "category_page",
+   "sport_page_key",
+   "container_of_event_id",
+   "representation",
+   "question_identity",
+   "representation_fallback"
+  ],
+  "top": [
+   {
+    "name": "December 31, 2026",
+    "p": 0.825,
+    "open": 0.875,
+    "chg24": null,
+    "is_winner": false,
+    "last_updated": "2026-10-06T21:13:25.884148+00:00",
+    "price_changed_at": "2026-10-06T20:52:52.374139+00:00",
+    "img": {}
+   },
+   {
+    "name": "December 15, 2026",
+    "p": 0.785,
+    "open": 0.825,
+    "chg24": null,
+    "is_winner": null,
+    "last_updated": "2026-10-06T21:13:25.884148+00:00",
+    "price_changed_at": "2026-10-06T15:24:05.792257+00:00",
+    "img": {}
+   },
+   {
+    "name": "November 30, 2026",
+    "p": 0.67,
+    "open": 0.795,
+    "chg24": null,
+    "is_winner": null,
+    "last_updated": "2026-10-06T21:14:58.529015+00:00",
+    "price_changed_at": "2026-10-06T20:42:04.218211+00:00",
+    "img": {}
+   }
+  ],
+  "sum_p": 2.425,
+  "h168": {
+   "lead": "December 31, 2026",
+   "n": 335,
+   "total_points": 2066,
+   "coverage_start": "2026-09-29T21:51:01.437091+00:00",
+   "coverage_end": "2026-10-06T21:13:25.885130+00:00",
+   "coverage_hours": 167.37,
+   "actual_hours": 168,
+   "venue_history": true,
+   "round_boundaries": 0,
+   "first": "2026-09-29T21:51",
+   "last": "2026-10-06T21:13",
+   "span_h": 167.4,
+   "vmin": 75.5,
+   "vmax": 87.5,
+   "rng": 12.0,
+   "net": 1.0,
+   "max_step": [
+    11.0,
+    "2026-10-01T17:31",
+    76.5,
+    87.5
+   ],
+   "max_gap_h": [
+    6.9,
+    "2026-10-03T14:07"
+   ],
+   "distinct_vals": 20,
+   "bookmaker_tags": [
+    "consensus",
+    "polymarket"
+   ]
+  },
+  "h720": {
+   "lead": "December 31, 2026",
+   "n": 695,
+   "total_points": 4521,
+   "coverage_start": "2026-09-06T22:00:42+00:00",
+   "coverage_end": "2026-10-06T21:13:25.885130+00:00",
+   "coverage_hours": 719.21,
+   "actual_hours": 720,
+   "venue_history": true,
+   "round_boundaries": 1,
+   "first": "2026-09-07T03:03",
+   "last": "2026-10-06T21:13",
+   "span_h": 714.2,
+   "vmin": 68.5,
+   "vmax": 91.5,
+   "rng": 23.0,
+   "net": -7.0,
+   "max_step": [
+    11.0,
+    "2026-10-01T17:31",
+    76.5,
+    87.5
+   ],
+   "max_gap_h": [
+    8.0,
+    "2026-09-28T05:50"
+   ],
+   "distinct_vals": 44,
+   "bookmaker_tags": [
+    "consensus",
+    "polymarket"
+   ]
+  },
+  "h8760": {
+   "lead": "December 31, 2026",
+   "n": 1901,
+   "total_points": 10620,
+   "coverage_start": "2026-06-01T23:23:58.053268+00:00",
+   "coverage_end": "2026-10-06T21:13:25.885130+00:00",
+   "coverage_hours": 3045.82,
+   "actual_hours": 8760,
+   "venue_history": true,
+   "round_boundaries": 0,
+   "first": "2026-06-01T23:23",
+   "last": "2026-10-06T21:13",
+   "span_h": 3045.8,
+   "vmin": 59.5,
+   "vmax": 95.5,
+   "rng": 36.0,
+   "net": -5.0,
+   "max_step": [
+    13.5,
+    "2026-06-13T11:21",
+    89.5,
+    76.0
+   ],
+   "max_gap_h": [
+    112.0,
+    "2026-06-27T00:00"
+   ],
+   "distinct_vals": 68,
+   "bookmaker_tags": [
+    "consensus",
+    "polymarket"
+   ]
+  }
+ },
+ {
+  "id": 52755900,
+  "name": "Taylor Swift: Wedding Dress",
+  "description": null,
+  "source": "kalshi",
+  "bookmakers": [
+   "kalshi"
+  ],
+  "market_type": "field",
+  "category": "entertainment",
+  "status": "open",
+  "n_outcomes": 30,
+  "resolution_date": "2026-12-31T04:59:00+00:00",
+  "created_at": "2026-07-08T16:46:20.830032+00:00",
+  "extra_keys": [
+   "id",
+   "name",
+   "description",
+   "sport",
+   "sport_name",
+   "category",
+   "llm_sport_category",
+   "status",
+   "source",
+   "external_id",
+   "market_type",
+   "mutually_exclusive",
+   "commence_time",
+   "resolution_date",
+   "outcome_count",
+   "lead_outcome_id",
+   "openings_withheld",
+   "prices_withheld",
+   "expired_rungs_dropped",
+   "bookmakers",
+   "category_tags",
+   "created_at",
+   "updated_at",
+   "group_id",
+   "canonical_market_key",
+   "hook_description",
+   "hook_withheld",
+   "image_url",
+   "event_concept_key",
+   "hub_slug",
+   "category_page",
+   "sport_page_key",
+   "container_of_event_id",
+   "representation",
+   "question_identity",
+   "representation_fallback"
+  ],
+  "top": [
+   {
+    "name": "Dior",
+    "p": 0.665,
+    "open": 0.995,
+    "chg24": null,
+    "is_winner": false,
+    "last_updated": "2026-10-06T20:13:18.004128+00:00",
+    "price_changed_at": "2026-10-06T20:13:18.004128+00:00",
+    "img": {}
+   },
+   {
+    "name": "Monse",
+    "p": 0.08,
+    "open": 0.035,
+    "chg24": null,
+    "is_winner": false,
+    "last_updated": "2026-10-06T20:13:18.004128+00:00",
+    "price_changed_at": "2026-10-06T06:01:34.784286+00:00",
+    "img": {}
+   },
+   {
+    "name": "Oscar de la Renta",
+    "p": 0.06,
+    "open": 0.05,
+    "chg24": null,
+    "is_winner": false,
+    "last_updated": "2026-10-06T20:13:18.004128+00:00",
+    "price_changed_at": "2026-10-01T19:11:49.758619+00:00",
+    "img": {}
+   }
+  ],
+  "sum_p": 1.66,
+  "h168": {
+   "lead": "Dior",
+   "n": 25,
+   "total_points": 244,
+   "coverage_start": "2026-09-30T03:56:03.217600+00:00",
+   "coverage_end": "2026-10-06T20:13:18.005678+00:00",
+   "coverage_hours": 160.29,
+   "actual_hours": 168,
+   "venue_history": true,
+   "round_boundaries": 0,
+   "first": "2026-09-30T03:56",
+   "last": "2026-10-06T20:13",
+   "span_h": 160.3,
+   "vmin": 55.5,
+   "vmax": 69.5,
+   "rng": 14.0,
+   "net": 0.5,
+   "max_step": [
+    8.5,
+    "2026-10-05T03:53",
+    61.0,
+    69.5
+   ],
+   "max_gap_h": [
+    7.7,
+    "2026-10-02T08:19"
+   ],
+   "distinct_vals": 17,
+   "bookmaker_tags": [
+    "consensus"
+   ]
+  },
+  "h720": {
+   "lead": "Dior",
+   "n": 112,
+   "total_points": 1093,
+   "coverage_start": "2026-09-07T01:05:01.982687+00:00",
+   "coverage_end": "2026-10-06T20:13:18.005678+00:00",
+   "coverage_hours": 715.14,
+   "actual_hours": 720,
+   "venue_history": true,
+   "round_boundaries": 0,
+   "first": "2026-09-07T01:05",
+   "last": "2026-10-06T20:13",
+   "span_h": 715.1,
+   "vmin": 55.5,
+   "vmax": 75.5,
+   "rng": 20.0,
+   "net": 4.5,
+   "max_step": [
+    8.5,
+    "2026-10-05T03:53",
+    61.0,
+    69.5
+   ],
+   "max_gap_h": [
+    8.0,
+    "2026-09-13T20:52"
+   ],
+   "distinct_vals": 29,
+   "bookmaker_tags": [
+    "consensus"
+   ]
+  },
+  "h8760": {
+   "lead": "Dior",
+   "n": 120,
+   "total_points": 1172,
+   "coverage_start": "2026-07-08T16:46:08.464043+00:00",
+   "coverage_end": "2026-10-06T20:13:18.005678+00:00",
+   "coverage_hours": 2163.45,
+   "actual_hours": 8760,
+   "venue_history": true,
+   "round_boundaries": 0,
+   "first": "2026-07-08T16:46",
+   "last": "2026-10-06T20:13",
+   "span_h": 2163.5,
+   "vmin": 52.0,
+   "vmax": 99.5,
+   "rng": 47.5,
+   "net": -33.0,
+   "max_step": [
+    34.0,
+    "2026-09-06T01:52",
+    97.5,
+    63.5
+   ],
+   "max_gap_h": [
+    435.1,
+    "2026-08-18T22:49"
+   ],
+   "distinct_vals": 35,
+   "bookmaker_tags": [
+    "consensus"
+   ]
+  }
+ },
+ {
+  "id": 113799,
+  "name": "Who will attend Taylor Swift and Travis Kelce's wedding?",
+  "description": null,
+  "source": "polymarket",
+  "bookmakers": [
+   "polymarket"
+  ],
+  "market_type": "field",
+  "category": "championship",
+  "status": "open",
+  "n_outcomes": 16,
+  "resolution_date": "2027-01-01T04:59:00+00:00",
+  "created_at": "2026-02-19T01:41:04.420888+00:00",
+  "extra_keys": [
+   "id",
+   "name",
+   "description",
+   "sport",
+   "sport_name",
+   "category",
+   "llm_sport_category",
+   "status",
+   "source",
+   "external_id",
+   "market_type",
+   "mutually_exclusive",
+   "commence_time",
+   "resolution_date",
+   "outcome_count",
+   "lead_outcome_id",
+   "openings_withheld",
+   "prices_withheld",
+   "expired_rungs_dropped",
+   "bookmakers",
+   "category_tags",
+   "created_at",
+   "updated_at",
+   "group_id",
+   "canonical_market_key",
+   "hook_description",
+   "hook_withheld",
+   "image_url",
+   "event_concept_key",
+   "hub_slug",
+   "category_page",
+   "sport_page_key",
+   "container_of_event_id",
+   "representation",
+   "question_identity",
+   "representation_fallback"
+  ],
+  "top": [
+   {
+    "name": "Este Haim",
+    "p": 1.0,
+    "open": 0.85,
+    "chg24": null,
+    "is_winner": true,
+    "last_updated": "2026-10-06T11:28:20.801803+00:00",
+    "price_changed_at": null,
+    "img": {}
+   },
+   {
+    "name": "Sabrina Carpenter",
+    "p": 1.0,
+    "open": 0.76,
+    "chg24": null,
+    "is_winner": true,
+    "last_updated": "2026-10-06T11:28:20.801803+00:00",
+    "price_changed_at": null,
+    "img": {}
+   },
+   {
+    "name": "Danielle Haim",
+    "p": 1.0,
+    "open": 0.655,
+    "chg24": null,
+    "is_winner": true,
+    "last_updated": "2026-10-06T11:28:20.801803+00:00",
+    "price_changed_at": null,
+    "img": {}
+   }
+  ],
+  "sum_p": 9.124,
+  "h168": {
+   "lead": "Este Haim",
+   "n": 10,
+   "total_points": 119,
+   "coverage_start": "2026-09-30T00:51:39.182198+00:00",
+   "coverage_end": "2026-10-06T11:28:20.778695+00:00",
+   "coverage_hours": 154.61,
+   "actual_hours": 168,
+   "venue_history": true,
+   "round_boundaries": 0,
+   "first": "2026-09-30T03:39",
+   "last": "2026-10-06T11:28",
+   "span_h": 151.8,
+   "vmin": 100.0,
+   "vmax": 100.0,
+   "rng": 0.0,
+   "net": 0.0,
+   "max_step": [
+    0.0,
+    "2026-10-06T11:28",
+    100.0,
+    100.0
+   ],
+   "max_gap_h": [
+    20.6,
+    "2026-10-01T12:29"
+   ],
+   "distinct_vals": 1,
+   "bookmaker_tags": [
+    "consensus"
+   ]
+  },
+  "h720": {
+   "lead": "Este Haim",
+   "n": 36,
+   "total_points": 453,
+   "coverage_start": "2026-09-07T03:03:16.868697+00:00",
+   "coverage_end": "2026-10-06T11:28:20.778695+00:00",
+   "coverage_hours": 704.42,
+   "actual_hours": 720,
+   "venue_history": true,
+   "round_boundaries": 0,
+   "first": "2026-09-08T09:08",
+   "last": "2026-10-06T11:28",
+   "span_h": 674.3,
+   "vmin": 100.0,
+   "vmax": 100.0,
+   "rng": 0.0,
+   "net": 0.0,
+   "max_step": [
+    0.0,
+    "2026-10-06T11:28",
+    100.0,
+    100.0
+   ],
+   "max_gap_h": [
+    231.4,
+    "2026-09-08T09:08"
+   ],
+   "distinct_vals": 1,
+   "bookmaker_tags": [
+    "consensus"
+   ]
+  },
+  "h8760": {
+   "lead": "Este Haim",
+   "n": 3440,
+   "total_points": 32929,
+   "coverage_start": "2026-02-19T01:41:04.341363+00:00",
+   "coverage_end": "2026-10-06T11:28:20.778695+00:00",
+   "coverage_hours": 5505.79,
+   "actual_hours": 8760,
+   "venue_history": true,
+   "round_boundaries": 0,
+   "first": "2026-02-19T01:41",
+   "last": "2026-10-06T11:28",
+   "span_h": 5505.8,
+   "vmin": 43.0,
+   "vmax": 100.0,
+   "rng": 57.0,
+   "net": 15.0,
+   "max_step": [
+    33.0,
+    "2026-05-15T03:15",
+    46.5,
+    79.5
+   ],
+   "max_gap_h": [
+    1167.9,
+    "2026-07-21T17:15"
+   ],
+   "distinct_vals": 188,
+   "bookmaker_tags": [
+    "consensus"
+   ]
+  }
+ },
+ {
+  "id": 112827,
+  "name": "Will marijuana be rescheduled?",
+  "description": null,
+  "source": "kalshi",
+  "bookmakers": [
+   "kalshi"
+  ],
+  "market_type": "quantity",
+  "category": "politics",
+  "status": "open",
+  "n_outcomes": 3,
+  "resolution_date": "2029-01-20T04:59:00+00:00",
+  "created_at": "2026-02-19T01:21:59.844113+00:00",
+  "extra_keys": [
+   "id",
+   "name",
+   "description",
+   "sport",
+   "sport_name",
+   "category",
+   "llm_sport_category",
+   "status",
+   "source",
+   "external_id",
+   "market_type",
+   "mutually_exclusive",
+   "commence_time",
+   "resolution_date",
+   "outcome_count",
+   "lead_outcome_id",
+   "openings_withheld",
+   "prices_withheld",
+   "expired_rungs_dropped",
+   "bookmakers",
+   "category_tags",
+   "created_at",
+   "updated_at",
+   "group_id",
+   "canonical_market_key",
+   "hook_description",
+   "hook_withheld",
+   "image_url",
+   "event_concept_key",
+   "hub_slug",
+   "category_page",
+   "sport_page_key",
+   "container_of_event_id",
+   "representation",
+   "question_identity",
+   "representation_fallback"
+  ],
+  "top": [
+   {
+    "name": "Before Jan 20, 2029",
+    "p": 0.785,
+    "open": 0.885,
+    "chg24": null,
+    "is_winner": false,
+    "last_updated": "2026-10-06T16:58:52.804143+00:00",
+    "price_changed_at": "2026-10-06T10:10:34.894318+00:00",
+    "img": {}
+   },
+   {
+    "name": "Before 2028",
+    "p": 0.68,
+    "open": 0.84,
+    "chg24": null,
+    "is_winner": false,
+    "last_updated": "2026-10-06T16:58:52.804143+00:00",
+    "price_changed_at": "2026-10-06T03:52:42.138868+00:00",
+    "img": {}
+   },
+   {
+    "name": "Before 2027",
+    "p": 0.0795,
+    "open": 0.595,
+    "chg24": null,
+    "is_winner": false,
+    "last_updated": "2026-10-06T16:58:52.804143+00:00",
+    "price_changed_at": "2026-10-06T16:58:52.804143+00:00",
+    "img": {}
+   }
+  ],
+  "sum_p": 1.544,
+  "h168": {
+   "lead": "Before Jan 20, 2029",
+   "n": 25,
+   "total_points": 75,
+   "coverage_start": "2026-09-30T00:53:20.478053+00:00",
+   "coverage_end": "2026-10-06T16:58:52.805152+00:00",
+   "coverage_hours": 160.09,
+   "actual_hours": 168,
+   "venue_history": true,
+   "round_boundaries": 0,
+   "first": "2026-09-30T00:53",
+   "last": "2026-10-06T16:58",
+   "span_h": 160.1,
+   "vmin": 76.5,
+   "vmax": 87.5,
+   "rng": 11.0,
+   "net": -9.0,
+   "max_step": [
+    8.5,
+    "2026-09-30T07:02",
+    87.5,
+    79.0
+   ],
+   "max_gap_h": [
+    7.1,
+    "2026-10-05T01:02"
+   ],
+   "distinct_vals": 10,
+   "bookmaker_tags": [
+    "consensus"
+   ]
+  },
+  "h720": {
+   "lead": "Before Jan 20, 2029",
+   "n": 70,
+   "total_points": 212,
+   "coverage_start": "2026-09-06T23:52:39.459796+00:00",
+   "coverage_end": "2026-10-06T16:58:52.805152+00:00",
+   "coverage_hours": 713.1,
+   "actual_hours": 720,
+   "venue_history": true,
+   "round_boundaries": 0,
+   "first": "2026-09-06T23:52",
+   "last": "2026-10-06T16:58",
+   "span_h": 713.1,
+   "vmin": 76.5,
+   "vmax": 88.0,
+   "rng": 11.5,
+   "net": 1.5,
+   "max_step": [
+    8.5,
+    "2026-09-30T07:02",
+    87.5,
+    79.0
+   ],
+   "max_gap_h": [
+    255.0,
+    "2026-09-12T03:51"
+   ],
+   "distinct_vals": 14,
+   "bookmaker_tags": [
+    "consensus"
+   ]
+  },
+  "h8760": {
+   "lead": "Before Jan 20, 2029",
+   "n": 954,
+   "total_points": 6827,
+   "coverage_start": "2026-02-19T01:21:59.716849+00:00",
+   "coverage_end": "2026-10-06T16:58:52.805152+00:00",
+   "coverage_hours": 5511.61,
+   "actual_hours": 8760,
+   "venue_history": true,
+   "round_boundaries": 0,
+   "first": "2026-02-19T01:21",
+   "last": "2026-10-06T16:58",
+   "span_h": 5511.6,
+   "vmin": 52.5,
+   "vmax": 88.5,
+   "rng": 36.0,
+   "net": -10.0,
+   "max_step": [
+    25.0,
+    "2026-06-17T11:00",
+    77.5,
+    52.5
+   ],
+   "max_gap_h": [
+    430.0,
+    "2026-07-14T22:49"
+   ],
+   "distinct_vals": 36,
+   "bookmaker_tags": [
+    "consensus"
+   ]
+  }
+ },
+ {
+  "id": 25923984,
+  "name": "Where will Waymo operate in 2026?",
+  "description": null,
+  "source": "kalshi",
+  "bookmakers": [
+   "kalshi"
+  ],
+  "market_type": "field",
+  "category": "tech",
+  "status": "open",
+  "n_outcomes": 21,
+  "resolution_date": "2026-12-31T15:00:00+00:00",
+  "created_at": "2026-05-24T02:46:56.734159+00:00",
+  "extra_keys": [
+   "id",
+   "name",
+   "description",
+   "sport",
+   "sport_name",
+   "category",
+   "llm_sport_category",
+   "status",
+   "source",
+   "external_id",
+   "market_type",
+   "mutually_exclusive",
+   "commence_time",
+   "resolution_date",
+   "outcome_count",
+   "lead_outcome_id",
+   "openings_withheld",
+   "prices_withheld",
+   "expired_rungs_dropped",
+   "bookmakers",
+   "category_tags",
+   "created_at",
+   "updated_at",
+   "group_id",
+   "canonical_market_key",
+   "hook_description",
+   "hook_withheld",
+   "image_url",
+   "event_concept_key",
+   "hub_slug",
+   "category_page",
+   "sport_page_key",
+   "container_of_event_id",
+   "representation",
+   "question_identity",
+   "representation_fallback"
+  ],
+  "top": [
+   {
+    "name": "Denver, CO",
+    "p": 0.83,
+    "open": 0.65,
+    "chg24": null,
+    "is_winner": false,
+    "last_updated": "2026-10-06T16:59:14.543048+00:00",
+    "price_changed_at": "2026-10-06T16:59:14.543048+00:00",
+    "img": {}
+   },
+   {
+    "name": "San Diego, CA",
+    "p": 0.81,
+    "open": 0.83,
+    "chg24": null,
+    "is_winner": false,
+    "last_updated": "2026-10-06T16:59:14.543048+00:00",
+    "price_changed_at": "2026-10-06T10:10:56.660547+00:00",
+    "img": {}
+   },
+   {
+    "name": "Tampa, FL",
+    "p": 0.785,
+    "open": 0.72,
+    "chg24": null,
+    "is_winner": false,
+    "last_updated": "2026-10-06T16:59:14.543048+00:00",
+    "price_changed_at": "2026-10-06T03:53:07.792480+00:00",
+    "img": {}
+   }
+  ],
+  "sum_p": 4.31,
+  "h168": {
+   "lead": "Denver, CO",
+   "n": 24,
+   "total_points": 240,
+   "coverage_start": "2026-09-30T07:03:09.408839+00:00",
+   "coverage_end": "2026-10-06T16:59:14.544412+00:00",
+   "coverage_hours": 153.93,
+   "actual_hours": 168,
+   "venue_history": true,
+   "round_boundaries": 0,
+   "first": "2026-09-30T07:03",
+   "last": "2026-10-06T16:59",
+   "span_h": 153.9,
+   "vmin": 77.0,
+   "vmax": 83.0,
+   "rng": 6.0,
+   "net": 4.5,
+   "max_step": [
+    2.0,
+    "2026-09-30T21:01",
+    77.0,
+    79.0
+   ],
+   "max_gap_h": [
+    7.1,
+    "2026-10-05T01:03"
+   ],
+   "distinct_vals": 11,
+   "bookmaker_tags": [
+    "consensus"
+   ]
+  },
+  "h720": {
+   "lead": "Denver, CO",
+   "n": 107,
+   "total_points": 1044,
+   "coverage_start": "2026-09-07T02:11:59.789520+00:00",
+   "coverage_end": "2026-10-06T16:59:14.544412+00:00",
+   "coverage_hours": 710.79,
+   "actual_hours": 720,
+   "venue_history": true,
+   "round_boundaries": 0,
+   "first": "2026-09-07T02:11",
+   "last": "2026-10-06T16:59",
+   "span_h": 710.8,
+   "vmin": 76.0,
+   "vmax": 95.0,
+   "rng": 19.0,
+   "net": -11.0,
+   "max_step": [
+    13.0,
+    "2026-09-08T22:55",
+    95.0,
+    82.0
+   ],
+   "max_gap_h": [
+    13.2,
+    "2026-09-29T17:53"
+   ],
+   "distinct_vals": 28,
+   "bookmaker_tags": [
+    "consensus"
+   ]
+  },
+  "h8760": {
+   "lead": "Denver, CO",
+   "n": 132,
+   "total_points": 1246,
+   "coverage_start": "2026-05-24T02:46:54.295361+00:00",
+   "coverage_end": "2026-10-06T16:59:14.544412+00:00",
+   "coverage_hours": 3254.21,
+   "actual_hours": 8760,
+   "venue_history": true,
+   "round_boundaries": 0,
+   "first": "2026-05-24T02:46",
+   "last": "2026-10-06T16:59",
+   "span_h": 3254.2,
+   "vmin": 60.0,
+   "vmax": 95.5,
+   "rng": 35.5,
+   "net": 18.0,
+   "max_step": [
+    30.5,
+    "2026-07-15T18:49",
+    60.0,
+    90.5
+   ],
+   "max_gap_h": [
+    874.0,
+    "2026-06-09T08:47"
+   ],
+   "distinct_vals": 37,
+   "bookmaker_tags": [
+    "consensus"
+   ]
+  }
+ },
+ {
+  "id": 27594646,
+  "name": "GTA VI released?",
+  "description": null,
+  "source": "polymarket",
+  "bookmakers": [
+   "polymarket"
+  ],
+  "market_type": "field",
+  "category": "entertainment",
+  "status": "open",
+  "n_outcomes": 2,
+  "resolution_date": "2026-12-01T04:59:00+00:00",
+  "created_at": "2026-05-27T03:24:18.664000+00:00",
+  "extra_keys": [
+   "id",
+   "name",
+   "description",
+   "sport",
+   "sport_name",
+   "category",
+   "llm_sport_category",
+   "status",
+   "source",
+   "external_id",
+   "market_type",
+   "mutually_exclusive",
+   "commence_time",
+   "resolution_date",
+   "outcome_count",
+   "lead_outcome_id",
+   "openings_withheld",
+   "prices_withheld",
+   "expired_rungs_dropped",
+   "bookmakers",
+   "category_tags",
+   "created_at",
+   "updated_at",
+   "group_id",
+   "canonical_market_key",
+   "hook_description",
+   "hook_withheld",
+   "image_url",
+   "event_concept_key",
+   "hub_slug",
+   "category_page",
+   "sport_page_key",
+   "container_of_event_id",
+   "representation",
+   "question_identity",
+   "representation_fallback"
+  ],
+  "top": [
+   {
+    "name": "November 30",
+    "p": 0.952,
+    "open": 0.915,
+    "chg24": null,
+    "is_winner": null,
+    "last_updated": "2026-10-06T16:38:02.445913+00:00",
+    "price_changed_at": "2026-10-06T16:38:02.445913+00:00",
+    "img": {}
+   },
+   {
+    "name": "October 31",
+    "p": 0.0065,
+    "open": 0.055,
+    "chg24": null,
+    "is_winner": false,
+    "last_updated": "2026-10-06T21:14:25.731154+00:00",
+    "price_changed_at": "2026-10-06T11:05:53.526038+00:00",
+    "img": {}
+   }
+  ],
+  "sum_p": 0.958,
+  "h168": {
+   "lead": "November 30",
+   "n": 30,
+   "total_points": 67,
+   "coverage_start": "2026-09-29T21:51:12.835686+00:00",
+   "coverage_end": "2026-10-06T16:38:02.314367+00:00",
+   "coverage_hours": 162.78,
+   "actual_hours": 168,
+   "venue_history": true,
+   "round_boundaries": 0,
+   "first": "2026-09-29T21:51",
+   "last": "2026-10-06T16:38",
+   "span_h": 162.8,
+   "vmin": 90.5,
+   "vmax": 96.5,
+   "rng": 5.9,
+   "net": 4.7,
+   "max_step": [
+    2.6,
+    "2026-10-03T19:50",
+    96.5,
+    93.9
+   ],
+   "max_gap_h": [
+    8.0,
+    "2026-10-06T05:00"
+   ],
+   "distinct_vals": 16,
+   "bookmaker_tags": [
+    "consensus"
+   ]
+  },
+  "h720": {
+   "lead": "November 30",
+   "n": 88,
+   "total_points": 241,
+   "coverage_start": "2026-09-18T03:41:22.791844+00:00",
+   "coverage_end": "2026-10-06T16:38:02.314367+00:00",
+   "coverage_hours": 444.94,
+   "actual_hours": 720,
+   "venue_history": true,
+   "round_boundaries": 0,
+   "first": "2026-09-18T03:41",
+   "last": "2026-10-06T16:38",
+   "span_h": 444.9,
+   "vmin": 90.5,
+   "vmax": 96.5,
+   "rng": 5.9,
+   "net": 3.7,
+   "max_step": [
+    3.5,
+    "2026-09-29T14:50",
+    94.5,
+    91.0
+   ],
+   "max_gap_h": [
+    8.0,
+    "2026-10-06T05:00"
+   ],
+   "distinct_vals": 19,
+   "bookmaker_tags": [
+    "consensus"
+   ]
+  },
+  "h8760": {
+   "lead": "November 30",
+   "n": 88,
+   "total_points": 583,
+   "coverage_start": "2026-05-27T03:24:18.623800+00:00",
+   "coverage_end": "2026-10-06T16:38:02.314367+00:00",
+   "coverage_hours": 3181.23,
+   "actual_hours": 8760,
+   "venue_history": true,
+   "round_boundaries": 0,
+   "first": "2026-09-18T03:41",
+   "last": "2026-10-06T16:38",
+   "span_h": 444.9,
+   "vmin": 90.5,
+   "vmax": 96.5,
+   "rng": 5.9,
+   "net": 3.7,
+   "max_step": [
+    3.5,
+    "2026-09-29T14:50",
+    94.5,
+    91.0
+   ],
+   "max_gap_h": [
+    8.0,
+    "2026-10-06T05:00"
+   ],
+   "distinct_vals": 19,
+   "bookmaker_tags": [
+    "consensus"
+   ]
+  }
+ },
+ {
+  "id": 109358,
+  "name": "Will 2026 be the hottest year ever?",
+  "description": null,
+  "source": "kalshi",
+  "bookmakers": [
+   "kalshi"
+  ],
+  "market_type": "unshaped",
+  "category": "weather",
+  "status": "open",
+  "n_outcomes": 1,
+  "resolution_date": "2027-01-01T04:59:00+00:00",
+  "created_at": "2026-02-19T01:21:59.844113+00:00",
+  "extra_keys": [
+   "id",
+   "name",
+   "description",
+   "sport",
+   "sport_name",
+   "category",
+   "llm_sport_category",
+   "status",
+   "source",
+   "external_id",
+   "market_type",
+   "mutually_exclusive",
+   "commence_time",
+   "resolution_date",
+   "outcome_count",
+   "lead_outcome_id",
+   "openings_withheld",
+   "prices_withheld",
+   "expired_rungs_dropped",
+   "bookmakers",
+   "category_tags",
+   "created_at",
+   "updated_at",
+   "group_id",
+   "canonical_market_key",
+   "hook_description",
+   "hook_withheld",
+   "image_url",
+   "event_concept_key",
+   "hub_slug",
+   "category_page",
+   "sport_page_key",
+   "container_of_event_id",
+   "representation",
+   "question_identity",
+   "representation_fallback"
+  ],
+  "top": [
+   {
+    "name": "Hottest",
+    "p": 0.525,
+    "open": 0.235,
+    "chg24": null,
+    "is_winner": false,
+    "last_updated": "2026-10-06T16:59:06.548725+00:00",
+    "price_changed_at": "2026-10-06T16:59:06.548725+00:00",
+    "img": {}
+   }
+  ],
+  "sum_p": 0.525,
+  "h168": {
+   "lead": "Hottest",
+   "n": 28,
+   "total_points": 28,
+   "coverage_start": "2026-09-30T03:56:04.019409+00:00",
+   "coverage_end": "2026-10-06T16:59:06.549863+00:00",
+   "coverage_hours": 157.05,
+   "actual_hours": 168,
+   "venue_history": true,
+   "round_boundaries": 0,
+   "first": "2026-09-30T03:56",
+   "last": "2026-10-06T16:59",
+   "span_h": 157.1,
+   "vmin": 52.5,
+   "vmax": 65.5,
+   "rng": 13.0,
+   "net": -11.0,
+   "max_step": [
+    4.1,
+    "2026-10-06T16:59",
+    56.6,
+    52.5
+   ],
+   "max_gap_h": [
+    7.8,
+    "2026-10-06T09:13"
+   ],
+   "distinct_vals": 24,
+   "bookmaker_tags": [
+    "consensus"
+   ]
+  },
+  "h720": {
+   "lead": "Hottest",
+   "n": 80,
+   "total_points": 80,
+   "coverage_start": "2026-09-07T01:05:06.127262+00:00",
+   "coverage_end": "2026-10-06T16:59:06.549863+00:00",
+   "coverage_hours": 711.9,
+   "actual_hours": 720,
+   "venue_history": true,
+   "round_boundaries": 0,
+   "first": "2026-09-07T01:05",
+   "last": "2026-10-06T16:59",
+   "span_h": 711.9,
+   "vmin": 52.5,
+   "vmax": 82.9,
+   "rng": 30.4,
+   "net": -28.8,
+   "max_step": [
+    6.4,
+    "2026-09-19T10:47",
+    80.7,
+    74.2
+   ],
+   "max_gap_h": [
+    175.9,
+    "2026-09-12T02:51"
+   ],
+   "distinct_vals": 65,
+   "bookmaker_tags": [
+    "consensus"
+   ]
+  },
+  "h8760": {
+   "lead": "Hottest",
+   "n": 567,
+   "total_points": 567,
+   "coverage_start": "2026-02-19T01:21:59.716849+00:00",
+   "coverage_end": "2026-10-06T16:59:06.549863+00:00",
+   "coverage_hours": 5511.62,
+   "actual_hours": 8760,
+   "venue_history": true,
+   "round_boundaries": 0,
+   "first": "2026-02-19T01:21",
+   "last": "2026-10-06T16:59",
+   "span_h": 5511.6,
+   "vmin": 16.5,
+   "vmax": 82.9,
+   "rng": 66.4,
+   "net": 29.0,
+   "max_step": [
+    27.2,
+    "2026-08-18T22:49",
+    39.6,
+    66.8
+   ],
+   "max_gap_h": [
+    874.0,
+    "2026-06-09T08:47"
+   ],
+   "distinct_vals": 152,
+   "bookmaker_tags": [
+    "consensus"
+   ]
+  }
+ },
+ {
+  "id": 62239632,
+  "name": "Pro Football: 2026-27 Last Unbeaten Team",
+  "description": null,
+  "source": "polymarket",
+  "bookmakers": [
+   "polymarket"
+  ],
+  "market_type": "field",
+  "category": "championship",
+  "status": "open",
+  "n_outcomes": 33,
+  "resolution_date": "2027-01-10T23:59:00+00:00",
+  "created_at": "2026-09-24T21:15:26.019380+00:00",
+  "extra_keys": [
+   "id",
+   "name",
+   "description",
+   "sport",
+   "sport_name",
+   "category",
+   "llm_sport_category",
+   "status",
+   "source",
+   "external_id",
+   "market_type",
+   "mutually_exclusive",
+   "commence_time",
+   "resolution_date",
+   "outcome_count",
+   "lead_outcome_id",
+   "openings_withheld",
+   "prices_withheld",
+   "expired_rungs_dropped",
+   "bookmakers",
+   "category_tags",
+   "created_at",
+   "updated_at",
+   "group_id",
+   "canonical_market_key",
+   "hook_description",
+   "hook_withheld",
+   "image_url",
+   "event_concept_key",
+   "hub_slug",
+   "category_page",
+   "sport_page_key",
+   "container_of_event_id",
+   "representation",
+   "question_identity",
+   "representation_fallback"
+  ],
+  "top": [
+   {
+    "name": "Kansas City Chiefs",
+    "p": 0.47,
+    "open": 0.27,
+    "chg24": null,
+    "is_winner": null,
+    "last_updated": "2026-10-06T07:59:38.526786+00:00",
+    "price_changed_at": "2026-10-05T12:31:55.212782+00:00",
+    "img": {}
+   },
+   {
+    "name": "Minnesota Vikings",
+    "p": 0.295,
+    "open": 0.08,
+    "chg24": null,
+    "is_winner": null,
+    "last_updated": "2026-10-06T07:59:38.526786+00:00",
+    "price_changed_at": "2026-10-06T07:59:38.526786+00:00",
+    "img": {}
+   },
+   {
+    "name": "San Francisco 49ers",
+    "p": 0.22,
+    "open": 0.09,
+    "chg24": null,
+    "is_winner": null,
+    "last_updated": "2026-10-06T07:59:38.526786+00:00",
+    "price_changed_at": "2026-10-06T07:59:38.526786+00:00",
+    "img": {}
+   }
+  ],
+  "sum_p": 1.02,
+  "h168": {
+   "lead": "Kansas City Chiefs",
+   "n": 10,
+   "total_points": 56,
+   "coverage_start": "2026-09-30T02:37:28.518778+00:00",
+   "coverage_end": "2026-10-06T07:59:38.459460+00:00",
+   "coverage_hours": 149.37,
+   "actual_hours": 168,
+   "venue_history": true,
+   "round_boundaries": 0,
+   "first": "2026-09-30T02:37",
+   "last": "2026-10-06T07:59",
+   "span_h": 149.4,
+   "vmin": 23.0,
+   "vmax": 47.0,
+   "rng": 24.0,
+   "net": 20.5,
+   "max_step": [
+    16.0,
+    "2026-10-05T12:31",
+    31.0,
+    47.0
+   ],
+   "max_gap_h": [
+    19.5,
+    "2026-10-05T12:31"
+   ],
+   "distinct_vals": 8,
+   "bookmaker_tags": [
+    "consensus"
+   ]
+  },
+  "h720": {
+   "lead": "Kansas City Chiefs",
+   "n": 16,
+   "total_points": 90,
+   "coverage_start": "2026-09-25T00:15:24.893763+00:00",
+   "coverage_end": "2026-10-06T07:59:38.459460+00:00",
+   "coverage_hours": 271.74,
+   "actual_hours": 720,
+   "venue_history": true,
+   "round_boundaries": 0,
+   "first": "2026-09-25T04:15",
+   "last": "2026-10-06T07:59",
+   "span_h": 267.7,
+   "vmin": 23.0,
+   "vmax": 47.0,
+   "rng": 24.0,
+   "net": 20.0,
+   "max_step": [
+    16.0,
+    "2026-10-05T12:31",
+    31.0,
+    47.0
+   ],
+   "max_gap_h": [
+    60.2,
+    "2026-09-25T06:15"
+   ],
+   "distinct_vals": 10,
+   "bookmaker_tags": [
+    "consensus"
+   ]
+  },
+  "h8760": {
+   "lead": "Kansas City Chiefs",
+   "n": 16,
+   "total_points": 90,
+   "coverage_start": "2026-09-25T00:15:24.893763+00:00",
+   "coverage_end": "2026-10-06T07:59:38.459460+00:00",
+   "coverage_hours": 271.74,
+   "actual_hours": 8760,
+   "venue_history": true,
+   "round_boundaries": 0,
+   "first": "2026-09-25T04:15",
+   "last": "2026-10-06T07:59",
+   "span_h": 267.7,
+   "vmin": 23.0,
+   "vmax": 47.0,
+   "rng": 24.0,
+   "net": 20.0,
+   "max_step": [
+    16.0,
+    "2026-10-05T12:31",
+    31.0,
+    47.0
+   ],
+   "max_gap_h": [
+    60.2,
+    "2026-09-25T06:15"
+   ],
+   "distinct_vals": 10,
+   "bookmaker_tags": [
+    "consensus"
+   ]
+  }
+ }
+]

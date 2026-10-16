@@ -1,0 +1,152 @@
+{
+ "cards": [
+  {
+   "id": "canonical",
+   "headline": "NFL division front-runners",
+   "tag": "NFL",
+   "rows": [
+    {
+     "label": "NFC East: Cowboys",
+     "percent": 44
+    },
+    {
+     "label": "NFC West: 49ers",
+     "percent": 41
+    },
+    {
+     "label": "NFC North: Vikings",
+     "percent": 38
+    },
+    {
+     "label": "NFC South: Falcons",
+     "percent": 35
+    }
+   ]
+  },
+  {
+   "id": "three",
+   "headline": "NFL division front-runners",
+   "tag": "NFL",
+   "rows": [
+    {
+     "label": "NFC East: Cowboys",
+     "percent": 44
+    },
+    {
+     "label": "NFC West: 49ers",
+     "percent": 41
+    },
+    {
+     "label": "NFC North: Vikings",
+     "percent": 38
+    }
+   ]
+  },
+  {
+   "id": "long",
+   "headline": "NFL awards: the front-runners for the 2026 season",
+   "tag": "NFL",
+   "rows": [
+    {
+     "label": "Comeback Player of the Year: Patrick Mahomes",
+     "percent": 65
+    },
+    {
+     "label": "Defensive Rookie of the Year: Jacob Rodriguez",
+     "percent": 35
+    },
+    {
+     "label": "Offensive Rookie of the Year: Jeremiyah Love",
+     "percent": 32
+    },
+    {
+     "label": "Defensive Player of the Year: Will Anderson Jr.",
+     "percent": 27
+    }
+   ]
+  },
+  {
+   "id": "extremes",
+   "headline": "NFL division front-runners",
+   "tag": null,
+   "rows": [
+    {
+     "label": "AFC East: Bills",
+     "percent": 97
+    },
+    {
+     "label": "AFC South: Jaguars",
+     "percent": 66
+    },
+    {
+     "label": "NFC South: Falcons",
+     "percent": 35
+    },
+    {
+     "label": "NFC North: Vikings",
+     "percent": 8
+    }
+   ]
+  }
+ ],
+ "footers": {
+  "all_eight": "Bain Luck blend \u00b7 the 4 closest of 8 divisions",
+  "three": "Bain Luck blend \u00b7 3 of 8 divisions",
+  "four_to_seven_proposed": "Bain Luck blend \u00b7 the 4 closest of 6 covered divisions"
+ },
+ "age": {
+  "now": "2026-10-06T21:41:00Z",
+  "old_after_hours": 6,
+  "applies_to": "canonical",
+  "cases": [
+   {
+    "id": "old",
+    "observed_at": [
+     "2026-10-06T13:55:00Z",
+     "2026-10-06T14:10:00Z",
+     "2026-10-06T14:20:00Z",
+     "2026-10-06T14:38:00Z"
+    ],
+    "card_mark": "7h ago",
+    "row_marks": [
+     null,
+     null,
+     null,
+     null
+    ]
+   },
+   {
+    "id": "mixed",
+    "observed_at": [
+     "2026-10-06T21:30:00Z",
+     "2026-10-06T21:31:00Z",
+     "2026-10-05T15:00:00Z",
+     "2026-10-06T21:33:00Z"
+    ],
+    "card_mark": null,
+    "row_marks": [
+     null,
+     null,
+     "yesterday",
+     null
+    ]
+   },
+   {
+    "id": "edge",
+    "observed_at": [
+     "2026-10-06T15:41:00Z",
+     "2026-10-06T21:30:00Z",
+     "2026-10-06T21:30:00Z",
+     "2026-10-06T21:30:00Z"
+    ],
+    "card_mark": null,
+    "row_marks": [
+     null,
+     null,
+     null,
+     null
+    ]
+   }
+  ]
+ }
+}

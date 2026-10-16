@@ -1,0 +1,625 @@
+[
+ {
+  "type": "movers",
+  "ids": [
+   "t0851",
+   "t1505",
+   "t1065"
+  ],
+  "score": 0.0552,
+  "title": "Biggest moves this week",
+  "tag": "Culture and sport",
+  "prev": [
+   28,
+   47,
+   45
+  ],
+  "span": "a week",
+  "field": "w1",
+  "sign": 0,
+  "rank": 10,
+  "vid": "x05",
+  "n": 1,
+  "check": {
+   "vid": "x05",
+   "verdict": "pass",
+   "reasons": [
+    "tag fits all rows; sentences faithful",
+    "minor: t1065 says 'US' where rules say domestic (US and Canada); 'three-day' not visible in the cut-off excerpt"
+   ],
+   "fixes": [],
+   "drop_members": [],
+   "headline_fix": "",
+   "name_fixes": []
+  }
+ },
+ {
+  "type": "checklist",
+  "ids": [
+   "t0124",
+   "t0127",
+   "t0125",
+   "t0126"
+  ],
+  "score": 0.5785,
+  "title": "____ announces a campaign for the 2028 Republican presidential nomination before 2028",
+  "names": [
+   "JD Vance",
+   "Ted Cruz",
+   "Ron DeSantis",
+   "Marco Rubio"
+  ],
+  "rank": 3,
+  "vid": "x16",
+  "n": 2,
+  "check": {
+   "vid": "x16",
+   "verdict": "pass",
+   "reasons": [
+    "candidacy announcements can all happen; sentences match the rules"
+   ],
+   "fixes": [],
+   "drop_members": [],
+   "headline_fix": "",
+   "name_fixes": []
+  }
+ },
+ {
+  "type": "swing",
+  "ids": [
+   "t0970",
+   "t0971"
+  ],
+  "score": 0.225,
+  "title": "____ win control of the US Senate in the November 2026 midterm elections",
+  "names": [
+   "Democrats",
+   "Republicans"
+  ],
+  "prev": [
+   52,
+   50
+  ],
+  "span": "a month",
+  "field": "m1",
+  "rank": 3,
+  "vid": "x10",
+  "n": 3,
+  "check": {
+   "vid": "x10",
+   "verdict": "pass",
+   "reasons": [
+    "two outcomes of one question; one rose and one fell; sentences faithful"
+   ],
+   "fixes": [],
+   "drop_members": [],
+   "headline_fix": "",
+   "name_fixes": []
+  }
+ },
+ {
+  "type": "band",
+  "ids": [
+   "t0042",
+   "t1077",
+   "t0034",
+   "t0052"
+  ],
+  "score": 1.0,
+  "title": "About 1 in 5",
+  "rank": 1,
+  "vid": "x36",
+  "n": 4,
+  "check": {
+   "vid": "x36",
+   "verdict": "pass",
+   "reasons": [
+    "Sentences faithful; t0042 correctly uses the inauguration rule",
+    "19-20% fits 'About 1 in 5'; no duplicates; no tone flags"
+   ],
+   "fixes": [],
+   "drop_members": [],
+   "headline_fix": "",
+   "name_fixes": []
+  }
+ },
+ {
+  "type": "newfav",
+  "ids": [
+   "t1064",
+   "t1065"
+  ],
+  "score": 0.2528,
+  "title": "____ has the biggest US three-day opening weekend of any 2026 movie",
+  "names": [
+   "Spider-Man: Brand New Day",
+   "Avengers: Doomsday"
+  ],
+  "prev": [
+   45,
+   57
+  ],
+  "span": "a month",
+  "field": "m1",
+  "rank": 2,
+  "vid": "x06",
+  "n": 5,
+  "check": {
+   "vid": "x06",
+   "verdict": "pass",
+   "reasons": [
+    "rival outcomes of one question; leader was behind (45 vs 57) and is now ahead (64 vs 36); headline fits both rows",
+    "minor: 'US' stands for domestic (US and Canada)"
+   ],
+   "fixes": [],
+   "drop_members": [],
+   "headline_fix": "",
+   "name_fixes": []
+  }
+ },
+ {
+  "type": "movers",
+  "ids": [
+   "t1147",
+   "t1528",
+   "t0851",
+   "t1195"
+  ],
+  "score": 0.1093,
+  "title": "Biggest moves this week",
+  "tag": null,
+  "prev": [
+   50,
+   28,
+   28,
+   54
+  ],
+  "span": "a week",
+  "field": "w1",
+  "sign": 0,
+  "rank": 2,
+  "vid": "x01",
+  "n": 6,
+  "check": {
+   "vid": "x01",
+   "verdict": "pass",
+   "reasons": [
+    "sentences faithful",
+    "flag only: t1147 was 50% a week ago is a 40-point one-week fall with no Fed meeting in the span; kept because the figure is stated as venue-verified",
+    "t1528 is one date bucket of a 'when is the next release' question; its fall is not deadline decay (window has not opened)"
+   ],
+   "fixes": [],
+   "drop_members": [],
+   "headline_fix": "",
+   "name_fixes": []
+  }
+ },
+ {
+  "type": "trading",
+  "ids": [
+   "t1195",
+   "t1375"
+  ],
+  "score": 0.0792,
+  "title": "",
+  "prev": [
+   31,
+   43
+  ],
+  "span": "a month",
+  "field": "m1",
+  "rank": 3,
+  "vid": "x12",
+  "n": 7,
+  "check": {
+   "vid": "x12",
+   "verdict": "pass",
+   "reasons": [
+    "unrelated claims; order swapped (31 vs 43 before, 43 vs 19 now); sentences faithful"
+   ],
+   "fixes": [],
+   "drop_members": [],
+   "headline_fix": "",
+   "name_fixes": []
+  }
+ },
+ {
+  "type": "movers",
+  "ids": [
+   "t1537",
+   "t1315",
+   "t1309",
+   "t0958"
+  ],
+  "score": 0.1008,
+  "title": "Biggest moves this month",
+  "tag": "Tech and business",
+  "prev": [
+   34,
+   39,
+   56,
+   14
+  ],
+  "span": "a month",
+  "field": "m1",
+  "sign": 0,
+  "rank": 4,
+  "vid": "x02",
+  "n": 8,
+  "check": {
+   "vid": "x02",
+   "verdict": "pass",
+   "reasons": [
+    "sentences faithful",
+    "tag is a loose fit for t1315 (OPEC) and t1309 (unemployment and inflation), which are economy rather than tech; acceptable as business"
+   ],
+   "fixes": [],
+   "drop_members": [],
+   "headline_fix": "",
+   "name_fixes": []
+  }
+ },
+ {
+  "type": "checklist",
+  "ids": [
+   "t0337",
+   "t0336",
+   "t0338"
+  ],
+  "score": 0.4997,
+  "title": "____ is nominated for Best Actor at the 2027 Oscars",
+  "names": [
+   "Matt Damon",
+   "Andrew Scott",
+   "Robert Pattinson"
+  ],
+  "rank": 4,
+  "vid": "x17",
+  "n": 9,
+  "check": {
+   "vid": "x17",
+   "verdict": "pass",
+   "reasons": [
+    "nominations are not mutually exclusive (five slots); 99th Academy Awards is the 2027 ceremony; sentences faithful"
+   ],
+   "fixes": [],
+   "drop_members": [],
+   "headline_fix": "",
+   "name_fixes": []
+  }
+ },
+ {
+  "type": "swing",
+  "ids": [
+   "t1428",
+   "t1426"
+  ],
+  "score": 0.1535,
+  "title": "____ is the first listed world leader to permanently leave office, before 2027",
+  "names": [
+   "Pedro S\u00e1nchez",
+   "Benjamin Netanyahu"
+  ],
+  "prev": [
+   3,
+   40
+  ],
+  "span": "a month",
+  "field": "m1",
+  "rank": 7,
+  "vid": "x11",
+  "n": 10,
+  "check": {
+   "vid": "x11",
+   "verdict": "fix",
+   "reasons": [
+    "structure valid (one rose, one fell)",
+    "'first listed world leader' reads as 'the leader listed first'; the claim is first to leave among the venue's listed leaders"
+   ],
+   "fixes": [
+    {
+     "id": "t1428",
+     "plain": "Pedro S\u00e1nchez is the first of the venue's listed world leaders to permanently leave office before 2027"
+    },
+    {
+     "id": "t1426",
+     "plain": "Benjamin Netanyahu is the first of the venue's listed world leaders to permanently leave office before 2027"
+    }
+   ],
+   "drop_members": [],
+   "headline_fix": "____ is the first of the venue's listed world leaders to permanently leave office before 2027",
+   "name_fixes": []
+  }
+ },
+ {
+  "type": "band",
+  "ids": [
+   "t0028",
+   "t1588",
+   "t1192",
+   "t0689"
+  ],
+  "score": 0.9083,
+  "title": "About 1 in 7",
+  "rank": 2,
+  "vid": "x18",
+  "n": 11,
+  "check": {
+   "vid": "x18",
+   "verdict": "fix",
+   "reasons": [
+    "t0689: rules count a statement by the President, any Cabinet or Joint Chiefs member, or any federal agency; 'the US government' overstates what is required",
+    "band 14-16% is an acceptable fit for 1 in 7"
+   ],
+   "fixes": [
+    {
+     "id": "t0689",
+     "plain": "A top US official or federal agency definitively states that alien life or technology exists before 2028"
+    }
+   ],
+   "drop_members": [],
+   "headline_fix": "",
+   "name_fixes": []
+  }
+ },
+ {
+  "type": "newfav",
+  "ids": [
+   "t1310",
+   "t1309"
+  ],
+  "score": 0.2335,
+  "title": "US unemployment is under 5% and inflation is ____ at the end of 2026",
+  "names": [
+   "3.5% or higher",
+   "under 3.5%"
+  ],
+  "prev": [
+   43,
+   56
+  ],
+  "span": "a month",
+  "field": "m1",
+  "rank": 3,
+  "vid": "x07",
+  "n": 12,
+  "check": {
+   "vid": "x07",
+   "verdict": "pass",
+   "reasons": [
+    "mutually exclusive outcomes of one question; leader was behind (43 vs 56) and is now ahead (66 vs 28); headline fits both rows"
+   ],
+   "fixes": [],
+   "drop_members": [],
+   "headline_fix": "",
+   "name_fixes": []
+  }
+ },
+ {
+  "type": "movers",
+  "ids": [
+   "t1044",
+   "t0313",
+   "t0485"
+  ],
+  "score": 0.0891,
+  "title": "Biggest moves this month",
+  "tag": "Washington",
+  "prev": [
+   26,
+   49,
+   19
+  ],
+  "span": "a month",
+  "field": "m1",
+  "sign": 0,
+  "rank": 6,
+  "vid": "x23",
+  "n": 13,
+  "check": {
+   "vid": "x23",
+   "verdict": "fix",
+   "reasons": [
+    "Tag 'Washington' does not fit t0554: Nevada governor is a state office, not federal",
+    "Drop t0554 (3 remain), or keep all four by retagging the card 'US politics'",
+    "Other sentences faithful; t0554 and t0485 correctly state the party-based rule rather than the candidate name",
+    "t1044 fall of 22 points with three months left is not simply deadline decay; kept"
+   ],
+   "fixes": [],
+   "drop_members": [
+    "t0554"
+   ],
+   "headline_fix": "",
+   "name_fixes": []
+  }
+ },
+ {
+  "type": "trading",
+  "ids": [
+   "t1236",
+   "t1473"
+  ],
+  "score": 0.0533,
+  "title": "",
+  "prev": [
+   18,
+   24
+  ],
+  "span": "a month",
+  "field": "m1",
+  "rank": 12,
+  "vid": "x13",
+  "n": 14,
+  "check": {
+   "vid": "x13",
+   "verdict": "pass",
+   "reasons": [
+    "unrelated claims; order swapped (18 vs 24 before, 28 vs 9 now); sentences faithful",
+    "minor: 'trending' in t1473 is not in the excerpt but does not change the claim"
+   ],
+   "fixes": [],
+   "drop_members": [],
+   "headline_fix": "",
+   "name_fixes": []
+  }
+ },
+ {
+  "type": "movers",
+  "ids": [
+   "t0285",
+   "t0033",
+   "t0770",
+   "t0939"
+  ],
+  "score": 0.0632,
+  "title": "Biggest moves since Monday night",
+  "tag": null,
+  "prev": [
+   48,
+   21,
+   9,
+   33
+  ],
+  "span": "since Monday night",
+  "field": "on",
+  "sign": 0,
+  "rank": 8,
+  "vid": "x03",
+  "n": 15,
+  "check": {
+   "vid": "x03",
+   "verdict": "pass",
+   "reasons": [
+    "sentences faithful; mixed directions fit a neutral headline",
+    "t0770 fall is not explained by deadline alone"
+   ],
+   "fixes": [],
+   "drop_members": [],
+   "headline_fix": "",
+   "name_fixes": []
+  }
+ },
+ {
+  "type": "checklist",
+  "ids": [
+   "t0559",
+   "t0558",
+   "t0560",
+   "t0561"
+  ],
+  "score": 0.6059,
+  "title": "____ in Avengers: Doomsday",
+  "names": [
+   "Hugh Jackman appears or is announced as Wolverine",
+   "Tobey Maguire appears or is announced as Spider-Man",
+   "Ryan Reynolds appears or is announced as Deadpool",
+   "Hailee Steinfeld appears or is announced as Kate Bishop"
+  ],
+  "rank": 2,
+  "vid": "x15",
+  "n": 16,
+  "check": {
+   "vid": "x15",
+   "verdict": "pass",
+   "reasons": [
+    "cast outcomes can all happen; headline plus each row name reads correctly and matches 'performs / is announced'"
+   ],
+   "fixes": [],
+   "drop_members": [],
+   "headline_fix": "",
+   "name_fixes": []
+  }
+ },
+ {
+  "type": "band",
+  "ids": [
+   "t0046",
+   "t0055",
+   "t1534",
+   "t0846"
+  ],
+  "score": 0.7583,
+  "title": "About 2 in 5",
+  "rank": 3,
+  "vid": "x19",
+  "n": 17,
+  "check": {
+   "vid": "x19",
+   "verdict": "pass",
+   "reasons": [
+    "band 39-42% fits 2 in 5; sentences faithful",
+    "note: t0055 venue title says 'speak' but the rules say 'meet'; the sentence correctly follows the rules"
+   ],
+   "fixes": [],
+   "drop_members": [],
+   "headline_fix": "",
+   "name_fixes": []
+  }
+ },
+ {
+  "type": "newfav",
+  "ids": [
+   "t0851",
+   "t0849"
+  ],
+  "score": 0.3386,
+  "title": "The ____ win the 2026 American League title and advance to the World Series",
+  "names": [
+   "Tampa Bay Rays",
+   "New York Yankees"
+  ],
+  "prev": [
+   21,
+   25
+  ],
+  "span": "a month",
+  "field": "m1",
+  "rank": 1,
+  "vid": "x24",
+  "n": 18,
+  "check": {
+   "vid": "x24",
+   "verdict": "pass",
+   "reasons": [
+    "Rivals for one title; Rays now ahead 51 vs 11 and were behind 21 vs 25",
+    "Headline reads correctly with both row names; sentences faithful",
+    "Note: same two members as swing card x27"
+   ],
+   "fixes": [],
+   "drop_members": [],
+   "headline_fix": "",
+   "name_fixes": []
+  }
+ },
+ {
+  "type": "checklist",
+  "ids": [
+   "t0285",
+   "t0284",
+   "t0283",
+   "t0282"
+  ],
+  "score": 1.1123,
+  "title": "____ is announced to headline the February 2027 Super Bowl halftime show",
+  "names": [
+   "Miley Cyrus",
+   "Jay-Z",
+   "Harry Styles",
+   "Justin Bieber"
+  ],
+  "rank": 1,
+  "vid": "x14",
+  "n": 19,
+  "check": {
+   "vid": "x14",
+   "verdict": "pass",
+   "reasons": [
+    "'Headliner(s)' allows co-headliners and the rows sum above 100%, so not mutually exclusive; headline fits every row"
+   ],
+   "fixes": [],
+   "drop_members": [],
+   "headline_fix": "",
+   "name_fixes": []
+  }
+ }
+]

@@ -1,0 +1,13 @@
+canonical light 358 viewer light elements 31 differences 0 []
+canonical light 358 viewer dark elements 31 differences 0 []
+canonical dark 358 viewer light elements 31 differences 0 []
+canonical dark 358 viewer dark elements 31 differences 0 []
+three light 358 viewer light elements 25 differences 0 []
+three light 358 viewer dark elements 25 differences 0 []
+long light 358 viewer light elements 31 differences 0 []
+long light 358 viewer dark elements 31 differences 0 []
+extremes dark 358 viewer light elements 30 differences 0 []
+extremes dark 358 viewer dark elements 30 differences 0 []
+canonical light 340 viewer light elements 31 differences 0 []
+canonical light 340 viewer dark elements 31 differences 0 []
+TOTAL elements compared 358 differences 0

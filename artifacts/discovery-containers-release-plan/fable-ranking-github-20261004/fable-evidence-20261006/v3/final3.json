@@ -1,0 +1,547 @@
+[
+ {
+  "type": "board",
+  "ids": [
+   "t1535",
+   "t1236",
+   "t1563",
+   "t0031",
+   "t0067"
+  ],
+  "score": 0.8033,
+  "title": "By the end of 2026",
+  "rank": 5,
+  "vid": "v17",
+  "n": 1,
+  "check": {
+   "vid": "v17",
+   "verdict": "pass",
+   "reasons": [
+    "deadlines Dec 31 / before Jan 1 match headline",
+    "sentences faithful",
+    "note: t0067 (buy Greenland) is a subset of t0031 (any new territory) - overlapping, not duplicate"
+   ],
+   "fixes": [],
+   "drop_members": [],
+   "headline_fix": ""
+  }
+ },
+ {
+  "type": "band",
+  "ids": [
+   "t0033",
+   "t0146",
+   "t0101",
+   "t0579"
+  ],
+  "score": 0.8167,
+  "title": "About 1 in 4",
+  "rank": 2,
+  "vid": "v14",
+  "n": 2,
+  "check": {
+   "vid": "v14",
+   "verdict": "pass",
+   "reasons": [
+    "all sentences faithful; 99th Academy Awards = 2027 Oscars",
+    "note t0579: title says 'announces departure', rules say 'leaves office'; sentence follows rules; mentions death exclusion (mild tone)"
+   ],
+   "fixes": [],
+   "drop_members": [],
+   "headline_fix": ""
+  }
+ },
+ {
+  "type": "deadheat",
+  "ids": [
+   "t0182",
+   "t0184"
+  ],
+  "score": 0.4644,
+  "title": "____ win the 2027 NBA Finals",
+  "names": [
+   "The Oklahoma City Thunder",
+   "The San Antonio Spurs"
+  ],
+  "rest": 57,
+  "rank": 4,
+  "vid": "v08",
+  "n": 3,
+  "check": {
+   "vid": "v08",
+   "verdict": "pass",
+   "reasons": [
+    "true rivals for one title, cannot both win; sentences faithful"
+   ],
+   "fixes": [],
+   "drop_members": [],
+   "headline_fix": ""
+  }
+ },
+ {
+  "type": "peer",
+  "ids": [
+   "t1596",
+   "t1599",
+   "t1593",
+   "t1590"
+  ],
+  "score": 0.4633,
+  "title": "____ announces it has filed or will file for bankruptcy by December 31, 2029",
+  "names": [
+   "NuScale",
+   "CoreWeave",
+   "Anthropic",
+   "OpenAI"
+  ],
+  "rank": 1,
+  "vid": "v01",
+  "n": 4,
+  "check": {
+   "vid": "v01",
+   "verdict": "pass",
+   "reasons": [
+    "headline true of all four rows; same deadline and rules; no duplicates"
+   ],
+   "fixes": [],
+   "drop_members": [],
+   "headline_fix": ""
+  }
+ },
+ {
+  "type": "funnel",
+  "ids": [
+   "t0362",
+   "t0365",
+   "t0287"
+  ],
+  "score": 0.9338,
+  "title": "Los Angeles Rams",
+  "rank": 1,
+  "vid": "v03",
+  "n": 5,
+  "check": {
+   "vid": "v03",
+   "verdict": "pass",
+   "reasons": [
+    "stages nested and non-increasing (75/26/12); sentences faithful",
+    "note: title member carries a 2029 deadline in data, sentence correctly says February 2027"
+   ],
+   "fixes": [],
+   "drop_members": [],
+   "headline_fix": ""
+  }
+ },
+ {
+  "type": "when",
+  "ids": [
+   "t0873",
+   "t0874",
+   "t0875",
+   "t0876"
+  ],
+  "score": 0.4522,
+  "title": "Jerome Powell departure as Fed Governor announced?",
+  "flip": 2,
+  "rank": 4,
+  "vid": "v12",
+  "n": 6,
+  "check": {
+   "vid": "v12",
+   "verdict": "pass",
+   "reasons": [
+    "sentences match rules incl. announce-or-leave",
+    "rungs rise 10/21/63/80; first over 50% correctly marked at Jun 1 2027"
+   ],
+   "fixes": [],
+   "drop_members": [],
+   "headline_fix": ""
+  }
+ },
+ {
+  "type": "movers",
+  "ids": [
+   "t1530",
+   "t1095",
+   "t1563",
+   "t1535"
+  ],
+  "score": 0.2047,
+  "title": "Biggest moves this week",
+  "tag": null,
+  "prev": [
+   22,
+   28,
+   41,
+   61
+  ],
+  "rank": 1,
+  "vid": "v21",
+  "n": 7,
+  "check": {
+   "vid": "v21",
+   "verdict": "pass",
+   "reasons": [
+    "sentences faithful; t1530 negative polarity matches 'No release by November 1' outcome",
+    "no duplicates"
+   ],
+   "fixes": [],
+   "drop_members": [],
+   "headline_fix": ""
+  }
+ },
+ {
+  "type": "h2h",
+  "ids": [
+   "t1593",
+   "t1590",
+   "t0247",
+   "t0215"
+  ],
+  "score": 0.62,
+  "title": "Anthropic vs OpenAI",
+  "labels": [
+   "announces it has filed or will file for bankruptcy by December 31, 2029",
+   "officially announces an IPO before February 2027"
+  ],
+  "names": [
+   "Anthropic",
+   "OpenAI"
+  ],
+  "rank": 1,
+  "vid": "v00",
+  "n": 8,
+  "check": {
+   "vid": "v00",
+   "verdict": "pass",
+   "reasons": [
+    "sentences match venue wording and rules; row labels fit both sides"
+   ],
+   "fixes": [],
+   "drop_members": [],
+   "headline_fix": ""
+  }
+ },
+ {
+  "type": "board",
+  "ids": [
+   "t0932",
+   "t0605",
+   "t0901",
+   "t0408",
+   "t0686"
+  ],
+  "score": 0.6533,
+  "title": "By the end of November",
+  "rank": 7,
+  "vid": "v18",
+  "n": 9,
+  "check": {
+   "vid": "v18",
+   "verdict": "pass",
+   "reasons": [
+    "all deadlines before Dec 1 2026 = end of November",
+    "sentences faithful"
+   ],
+   "fixes": [],
+   "drop_members": [],
+   "headline_fix": ""
+  }
+ },
+ {
+  "type": "band",
+  "ids": [
+   "t0593",
+   "t0102",
+   "t0756",
+   "t0065"
+  ],
+  "score": 0.7167,
+  "title": "About 2 in 3",
+  "rank": 3,
+  "vid": "v15",
+  "n": 10,
+  "check": {
+   "vid": "v15",
+   "verdict": "pass",
+   "reasons": [
+    "all sentences faithful",
+    "t0065 'by the House' correctly signals impeachment is not removal",
+    "note t0593: presumes a wedding takes place"
+   ],
+   "fixes": [],
+   "drop_members": [],
+   "headline_fix": ""
+  }
+ },
+ {
+  "type": "deadheat",
+  "ids": [
+   "t0853",
+   "t0852"
+  ],
+  "score": 0.5806,
+  "title": "____ win the 2026 World Series",
+  "names": [
+   "The Los Angeles Dodgers",
+   "The Milwaukee Brewers"
+  ],
+  "rest": 46,
+  "rank": 2,
+  "vid": "v07",
+  "n": 11,
+  "check": {
+   "vid": "v07",
+   "verdict": "pass",
+   "reasons": [
+    "true rivals for one title, cannot both win; sentences faithful",
+    "note: data deadline 2028 is odd but not shown in the sentence"
+   ],
+   "fixes": [],
+   "drop_members": [],
+   "headline_fix": ""
+  }
+ },
+ {
+  "type": "peer",
+  "ids": [
+   "t1624",
+   "t1620",
+   "t1640",
+   "t1632",
+   "t1636"
+  ],
+  "score": 0.3667,
+  "title": "A statewide ban or pause on new data centers becomes law in ____ by June 30, 2027",
+  "names": [
+   "Texas",
+   "Ohio",
+   "Louisiana",
+   "Oklahoma",
+   "Missouri"
+  ],
+  "rank": 2,
+  "vid": "v02",
+  "n": 12,
+  "check": {
+   "vid": "v02",
+   "verdict": "pass",
+   "reasons": [
+    "headline true of all five states; 'ban or pause' is a fair reading of statewide moratorium"
+   ],
+   "fixes": [],
+   "drop_members": [],
+   "headline_fix": ""
+  }
+ },
+ {
+  "type": "funnel",
+  "ids": [
+   "t0363",
+   "t0375",
+   "t1215"
+  ],
+  "score": 0.9038,
+  "title": "Minnesota Vikings",
+  "rank": 2,
+  "vid": "v04",
+  "n": 13,
+  "check": {
+   "vid": "v04",
+   "verdict": "pass",
+   "reasons": [
+    "stages nested and non-increasing (71/37/7); sentences faithful"
+   ],
+   "fixes": [],
+   "drop_members": [],
+   "headline_fix": ""
+  }
+ },
+ {
+  "type": "when",
+  "ids": [
+   "t1192",
+   "t1194",
+   "t1195",
+   "t1193"
+  ],
+  "score": 0.8865,
+  "title": "Tesla and SpaceX merger officially announced by...?",
+  "flip": 3,
+  "rank": 2,
+  "vid": "v10",
+  "n": 14,
+  "check": {
+   "vid": "v10",
+   "verdict": "pass",
+   "reasons": [
+    "one question, deadlines increasing, probabilities rising 15/27/43/57; marked rung is the first above 50%",
+    "sentences match rules (merger or acquisition, either direction, announcement)"
+   ],
+   "fixes": [],
+   "drop_members": [],
+   "headline_fix": ""
+  }
+ },
+ {
+  "type": "movers",
+  "ids": [
+   "t1563",
+   "t1222",
+   "t1365",
+   "t0848"
+  ],
+  "score": 0.1021,
+  "title": "Biggest moves this week",
+  "tag": "Culture and sport",
+  "prev": [
+   41,
+   7,
+   32,
+   23
+  ],
+  "rank": 3,
+  "vid": "v22",
+  "n": 15,
+  "check": {
+   "vid": "v22",
+   "verdict": "pass",
+   "reasons": [
+    "sentences faithful; t1365 negative polarity matches 'No Bond chosen' outcome",
+    "note: t1222 and t0848 are rival outcomes of one question (AL pennant), not duplicates",
+    "note t0848: listed deadline 2028-10-31 looks wrong for a 2026 title; sentence correctly says 2026"
+   ],
+   "fixes": [],
+   "drop_members": [],
+   "headline_fix": ""
+  }
+ },
+ {
+  "type": "band",
+  "ids": [
+   "t0975",
+   "t0081",
+   "t0606",
+   "t0177"
+  ],
+  "score": 0.5417,
+  "title": "About 1 in 3",
+  "rank": 5,
+  "vid": "v28",
+  "n": 16,
+  "check": {
+   "vid": "v28",
+   "verdict": "pass",
+   "reasons": [
+    "all four sentences faithful",
+    "note: t0975 and t0081 both concern 2028 Republicans but are distinct claims, not duplicates"
+   ],
+   "fixes": [],
+   "drop_members": [],
+   "headline_fix": ""
+  }
+ },
+ {
+  "type": "deadheat",
+  "ids": [
+   "t0377",
+   "t0376"
+  ],
+  "score": 0.3667,
+  "title": "____ win the NFC East division in the 2026 NFL season",
+  "names": [
+   "The Dallas Cowboys",
+   "The Philadelphia Eagles"
+  ],
+  "rest": 19,
+  "rank": 5,
+  "vid": "v09",
+  "n": 17,
+  "check": {
+   "vid": "v09",
+   "verdict": "pass",
+   "reasons": [
+    "same division, only one winner; sentences faithful"
+   ],
+   "fixes": [],
+   "drop_members": [],
+   "headline_fix": ""
+  }
+ },
+ {
+  "type": "funnel",
+  "ids": [
+   "t0361",
+   "t0373",
+   "t0301"
+  ],
+  "score": 0.8438,
+  "title": "Chicago Bears",
+  "rank": 3,
+  "vid": "v05",
+  "n": 18,
+  "check": {
+   "vid": "v05",
+   "verdict": "pass",
+   "reasons": [
+    "stages nested and non-increasing (63/29/9); sentences faithful"
+   ],
+   "fixes": [],
+   "drop_members": [],
+   "headline_fix": ""
+  }
+ },
+ {
+  "type": "when",
+  "ids": [
+   "t1546",
+   "t1545",
+   "t1544"
+  ],
+  "score": 0.4718,
+  "title": "Russia x Ukraine any diplomatic meeting by...?",
+  "flip": 1,
+  "rank": 3,
+  "vid": "v11",
+  "n": 19,
+  "check": {
+   "vid": "v11",
+   "verdict": "pass",
+   "reasons": [
+    "one question, deadlines increasing, probabilities rising 19/59/82; marked rung is the first above 50%",
+    "sentences faithful to visible rules; year 2026 inferred from deadlines",
+    "note: rules excerpt cut off, so the exact bar for 'representatives' is unverified; subject is diplomacy, not strikes, so no tone flag"
+   ],
+   "fixes": [],
+   "drop_members": [],
+   "headline_fix": ""
+  }
+ },
+ {
+  "type": "band",
+  "ids": [
+   "t0057",
+   "t0051",
+   "t0577",
+   "t0687"
+  ],
+  "score": 1.0,
+  "title": "About 1 in 20",
+  "rank": 1,
+  "vid": "v13",
+  "n": 20,
+  "check": {
+   "vid": "v13",
+   "verdict": "pass",
+   "reasons": [
+    "all sentences faithful",
+    "note t0577: venue title says 'announces departure' but rules say 'leaves office'; sentence follows rules",
+    "note t0577: sentence mentions death exclusion (mild tone)",
+    "note t0687: one Cabinet member or agency statement is enough"
+   ],
+   "fixes": [],
+   "drop_members": [],
+   "headline_fix": ""
+  }
+ }
+]

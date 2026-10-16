@@ -1,0 +1,187 @@
+{
+ "_note": "Text read from the rendered live pages in Chrome on Alex's Mac, desktop window, viewport 1504 CSS px wide, Tue 2026-10-06 between 21:13 and 21:36 UTC (2:13 to 2:36pm PT). Transcribed by Fable from the page-text tool output. default_range is the range button highlighted on load.",
+ "pages": {
+  "109596": {
+   "title": "Best AI at the end of 2026?",
+   "headline": "48% Claude",
+   "caption": "Claude up 21.2 pts from opening.",
+   "gap_note": "Last number 1 hour ago",
+   "default_range": "1W",
+   "resolves_shown": "Dec 31, 2026"
+  },
+  "108620": {
+   "title": "Which party will win the U.S. Senate?",
+   "headline": "64% Democratic Party",
+   "caption": "Democratic Party up 25.0 pts from opening.",
+   "gap_note": "No numbers for 5 hours in this stretch",
+   "default_range": "1W",
+   "resolves_shown": "Feb 1, 2027",
+   "load_note": "no chart section 6 s after navigation; present at 10 s"
+  },
+  "112902": {
+   "title": "Which party will win the Senate in 2026?",
+   "headline": "65% Democratic Party",
+   "caption": "Democratic Party up 24.0 pts from opening.",
+   "gap_note": "No numbers for 3 hours in this stretch",
+   "default_range": "1W",
+   "resolves_shown": "early November 2026 (small text in screenshot; data says 2026-11-04 UTC)"
+  },
+  "15203993": {
+   "title": "Comeback Player of the Year Winner?",
+   "headline": "64% Patrick Mahomes",
+   "caption": null,
+   "gap_note": "Last number 4 hours ago",
+   "default_range": "1M"
+  },
+  "56933330": {
+   "title": "Pro Football: 2026-27 AP Comeback Player of the Year Winner",
+   "headline": "67% Patrick Mahomes",
+   "caption": "Patrick Mahomes up 35.5 pts from opening.",
+   "default_range": "1W"
+  },
+  "2279147": {
+   "title": "Pro Football: NFC North Champion",
+   "headline": "38% Minnesota Vikings",
+   "caption": "Minnesota Vikings down 11.5 pts from opening.",
+   "gap_note": "No numbers for 7 hours in this stretch",
+   "default_range": "1W"
+  },
+  "63849278": {
+   "title": "MLB Playoffs: Who Will Win Series? - Rays vs. Yankees",
+   "headline": "82% Rays",
+   "caption": "Rays up 34.5 pts from opening.",
+   "gap_note": "No numbers for 25 hours in this stretch",
+   "default_range": "1W"
+  },
+  "199050": {
+   "title": "MLB: 2026 National League Champion",
+   "headline": "40% Milwaukee Brewers",
+   "caption": "Milwaukee Brewers down 12.6 pts from opening.",
+   "gap_note": "No numbers for 7 hours in this stretch",
+   "default_range": "1W"
+  },
+  "270": {
+   "title": "National League Champion",
+   "headline": "41% Milwaukee",
+   "caption": "Milwaukee up 36.0 pts from opening.",
+   "default_range": "1W"
+  },
+  "5869749": {
+   "title": "Oscar Winner: Best Actor",
+   "headline": "36% John Malkovich",
+   "caption": null,
+   "default_range": "1M",
+   "resolves_shown": "Dec 31, 2027",
+   "images": "24 px round Wikipedia portraits beside most names; initials for Andrew Scott and Robert Pattinson"
+  },
+  "11415154": {
+   "title": "Which movie has biggest opening week in 2026?",
+   "headline": "51% Spider-Man: Brand New Day",
+   "caption": "Spider-Man: Brand New Day up 21.5 pts from opening.",
+   "gap_note": "No numbers for 7 hours in this stretch",
+   "default_range": "1W",
+   "images": "24 px Wikipedia thumbnails; files requested include Dune_Messiah_(1969)_cover.jpg and Fragment_Odyssee_2245_2.jpg"
+  },
+  "109946": {
+   "title": "Fed decision in Oct 2026?",
+   "headline": "84% Fed maintains rate",
+   "caption": "Fed maintains rate up 11.0 pts from opening.",
+   "gap_note": "No numbers for 4 hours in this stretch",
+   "default_range": "1W"
+  },
+  "30635376": {
+   "title": "Anthropic IPO?",
+   "headline": "67% November 30, 2026",
+   "caption": "November 30, 2026 down 12.5 pts from opening.",
+   "gap_note": "No numbers for 8 hours in this stretch",
+   "default_range": "1W"
+  },
+  "52755900": {
+   "title": "Taylor Swift: Wedding Dress",
+   "headline": "67% Dior",
+   "caption": "Dior down 33.2 pts from opening.",
+   "gap_note": "Last number 1 hour ago",
+   "default_range": "1M",
+   "resolves_shown": "Dec 30, 2026",
+   "other": "Several of these can happen — each is priced on its own, so they don't add up to 100%."
+  },
+  "113799": {
+   "title": "Who will attend Taylor Swift and Travis Kelce's wedding?",
+   "headline": "12% Max Martin",
+   "caption": "Max Martin down 46.6 pts from opening.",
+   "gap_note": "No numbers for 7 hours in this stretch",
+   "default_range": "1W",
+   "other": "All Outcomes 'as of Oct 5'; Este Haim and Sabrina Carpenter shown 100%, 'Won', 'Settled'"
+  },
+  "112827": {
+   "title": "Will marijuana be rescheduled?",
+   "headline": "68% Before 2028",
+   "caption": "Before 2028 down 16.0 pts from opening.",
+   "gap_note": "No numbers for 20 hours in this stretch",
+   "default_range": "1M"
+  },
+  "25923984": {
+   "title": "Where will Waymo operate in 2026?",
+   "headline": "83% Denver, CO",
+   "caption": "Denver, CO up 18.0 pts from opening.",
+   "default_range": "1M",
+   "other": "Several of these can happen — each is priced on its own, so they don't add up to 100%.",
+   "images": "24 px Wikipedia city photos"
+  },
+  "27594646": {
+   "title": "GTA VI released?",
+   "headline": "95% November 30",
+   "caption": "November 30 up 3.7 pts from opening.",
+   "gap_note": "No numbers for 7 hours in this stretch",
+   "default_range": "1W",
+   "load_note": "page body still empty 9 s after navigation on one load; rendered on the next load"
+  },
+  "109358": {
+   "title": "Will 2026 be the hottest year ever?",
+   "headline": "53% Hottest",
+   "caption": "Hottest up 29.0 pts from opening.",
+   "gap_note": "No numbers for 47 hours in this stretch",
+   "default_range": "1M"
+  },
+  "62239632": {
+   "title": "Pro Football: 2026-27 Last Unbeaten Team",
+   "headline": "47% Kansas City Chiefs",
+   "caption": "Kansas City Chiefs up 20.0 pts from opening.",
+   "gap_note": "No numbers for 15 hours in this stretch",
+   "default_range": "1W"
+  }
+ },
+ "chart_geometry": {
+  "page": "109946",
+  "viewport_css_px": 1504,
+  "svg": [
+   1393,
+   200
+  ],
+  "plotted_x": [
+   347,
+   1077
+  ],
+  "plotted_y": [
+   20,
+   160
+  ]
+ },
+ "single_request_check": {
+  "page": "56775565",
+  "observed": "one history request (hours=720) in the 60 s after navigation; no repeat"
+ },
+ "not_inspected": [
+  "8430022 rendered page (data only)",
+  "phone-width web layout",
+  "the iPhone app"
+ ],
+ "discover_web": {
+  "at": "2026-10-06 about 21:35 UTC",
+  "observed": [
+   "MLB World Series Winner card: 'Los Angeles Dodgers lead at 27%, Milwaukee Brewers up 20.3 points since Feb 2'",
+   "NASCAR card: 'Justin Allgaier down 4 points today'",
+   "futures cards show small icon tiles; no photos; img elements on page: 1 (a browser extension icon)"
+  ]
+ }
+}

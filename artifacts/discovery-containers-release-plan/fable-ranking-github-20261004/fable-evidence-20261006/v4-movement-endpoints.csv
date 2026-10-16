@@ -1,0 +1,33 @@
+card_position,card_type,span,claim_id,shown_now_pct,shown_earlier_pct,venues,kalshi_now,polymarket_now,earlier_endpoint_observed,note
+1,movers,in a week,t0851,51,28,K/P,51.5,51.1,no,shown number is the Kalshi/Polymarket average; earlier value = that average minus Polymarket's own change; not an observed quantity
+1,movers,in a week,t1505,31,47,P,,31.0,yes,Polymarket price history
+1,movers,in a week,t1065,36,45,P,,36.0,yes,Polymarket price history
+3,swing,in a month,t0970,65,52,P,,64.5,yes,Polymarket price history
+3,swing,in a month,t0971,36,50,P,,35.5,yes,Polymarket price history
+5,newfav,in a month,t1064,64,45,P,,63.5,yes,Polymarket price history
+5,newfav,in a month,t1065,36,57,P,,36.0,yes,Polymarket price history
+6,movers,in a week,t1147,10,50,P,,9.9,yes,Polymarket price history
+6,movers,in a week,t1528,4,28,P,,3.8,yes,Polymarket price history
+6,movers,in a week,t0851,51,28,K/P,51.5,51.1,no,shown number is the Kalshi/Polymarket average; earlier value = that average minus Polymarket's own change; not an observed quantity
+6,movers,in a week,t1195,43,54,P,,42.5,yes,Polymarket price history
+7,trading,in a month,t1195,43,31,P,,42.5,yes,Polymarket price history
+7,trading,in a month,t1375,19,43,P,,18.5,yes,Polymarket price history
+8,movers,in a month,t1537,65,34,P,,64.5,yes,Polymarket price history
+8,movers,in a month,t1315,10,39,P,,9.5,yes,Polymarket price history
+8,movers,in a month,t1309,28,56,P,,27.5,yes,Polymarket price history
+8,movers,in a month,t0958,36,14,P,,35.5,yes,Polymarket price history
+10,swing,in a month,t1428,20,3,P,,19.6,yes,Polymarket price history
+10,swing,in a month,t1426,25,40,P,,25.0,yes,Polymarket price history
+12,newfav,in a month,t1310,66,43,P,,66.0,yes,Polymarket price history
+12,newfav,in a month,t1309,28,56,P,,27.5,yes,Polymarket price history
+13,movers,in a month,t1044,4,26,P,,4.2,yes,Polymarket price history
+13,movers,in a month,t0313,65,49,K/P,64.5,65.5,no,shown number is the Kalshi/Polymarket average; earlier value = that average minus Polymarket's own change; not an observed quantity
+13,movers,in a month,t0485,34,19,K/P,34.0,33.5,no,shown number is the Kalshi/Polymarket average; earlier value = that average minus Polymarket's own change; not an observed quantity
+14,trading,in a month,t1236,28,18,P,,27.5,yes,Polymarket price history
+14,trading,in a month,t1473,9,24,P,,8.8,yes,Polymarket price history
+15,movers,since Monday night,t0285,65,48,K,65.0,,yes,"two pulls by Fable, same venue"
+15,movers,since Monday night,t0033,26,21,K,25.5,,yes,"two pulls by Fable, same venue"
+15,movers,since Monday night,t0770,5,9,K,4.5,,yes,"two pulls by Fable, same venue"
+15,movers,since Monday night,t0939,28,33,K,28.0,,yes,"two pulls by Fable, same venue"
+18,newfav,in a month,t0851,51,21,K/P,51.5,51.1,no,shown number is the Kalshi/Polymarket average; earlier value = that average minus Polymarket's own change; not an observed quantity
+18,newfav,in a month,t0849,11,25,K/P,10.5,10.5,no,shown number is the Kalshi/Polymarket average; earlier value = that average minus Polymarket's own change; not an observed quantity

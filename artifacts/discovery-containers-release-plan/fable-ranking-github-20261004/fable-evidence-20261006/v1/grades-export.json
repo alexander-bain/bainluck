@@ -1,0 +1,212 @@
+{
+ "c00": {
+  "at": "2026-10-06T06:16:02.507Z",
+  "grade": "amazing",
+  "n": 1,
+  "note": "",
+  "type": "board"
+ },
+ "c01": {
+  "at": "2026-10-06T06:17:37.129Z",
+  "grade": "fine",
+  "n": 6,
+  "note": "",
+  "type": "board"
+ },
+ "c02": {
+  "at": "2026-10-06T06:18:31.599Z",
+  "grade": "amazing",
+  "n": 11,
+  "note": "",
+  "type": "board"
+ },
+ "c03": {
+  "at": "2026-10-06T06:19:33.095Z",
+  "grade": "fine",
+  "n": 16,
+  "note": "",
+  "type": "board"
+ },
+ "c04": {
+  "at": "2026-10-06T06:20:07.345Z",
+  "grade": "amazing",
+  "n": 21,
+  "note": "",
+  "type": "board"
+ },
+ "c05": {
+  "at": "2026-10-06T06:20:46.379Z",
+  "grade": "amazing",
+  "n": 26,
+  "note": "",
+  "type": "board"
+ },
+ "c08": {
+  "at": "2026-10-06T06:16:47.199Z",
+  "grade": "amazing",
+  "n": 3,
+  "note": "",
+  "type": "clock"
+ },
+ "c09": {
+  "at": "2026-10-06T06:17:57.246Z",
+  "grade": "fine",
+  "n": 8,
+  "note": "",
+  "type": "clock"
+ },
+ "c10": {
+  "at": "2026-10-06T06:18:47.821Z",
+  "grade": "amazing",
+  "n": 13,
+  "note": "",
+  "type": "clock"
+ },
+ "c11": {
+  "at": "2026-10-06T06:19:45.161Z",
+  "grade": "amazing",
+  "n": 18,
+  "note": "",
+  "type": "clock"
+ },
+ "c12": {
+  "at": "2026-10-06T06:20:17.655Z",
+  "grade": "no",
+  "n": 23,
+  "note": "",
+  "type": "clock"
+ },
+ "c13": {
+  "at": "2026-10-06T06:20:59.254Z",
+  "grade": "amazing",
+  "n": 28,
+  "note": "",
+  "type": "clock"
+ },
+ "c17": {
+  "at": "2026-10-06T06:16:11.306Z",
+  "grade": "amazing",
+  "n": 2,
+  "note": "",
+  "type": "yardstick"
+ },
+ "c18": {
+  "at": "2026-10-06T06:17:49.786Z",
+  "grade": "fine",
+  "n": 7,
+  "note": "",
+  "type": "yardstick"
+ },
+ "c19": {
+  "at": "2026-10-06T06:18:38.473Z",
+  "grade": "amazing",
+  "n": 12,
+  "note": "",
+  "type": "yardstick"
+ },
+ "c20": {
+  "at": "2026-10-06T06:19:42.171Z",
+  "grade": "fine",
+  "n": 17,
+  "note": "",
+  "type": "yardstick"
+ },
+ "c21": {
+  "at": "2026-10-06T06:20:13.151Z",
+  "grade": "amazing",
+  "n": 22,
+  "note": "",
+  "type": "yardstick"
+ },
+ "c22": {
+  "at": "2026-10-06T06:20:55.637Z",
+  "grade": "amazing",
+  "n": 27,
+  "note": "",
+  "type": "yardstick"
+ },
+ "c26": {
+  "at": "2026-10-06T06:17:16.567Z",
+  "grade": "no",
+  "n": 4,
+  "note": "",
+  "type": "reversal"
+ },
+ "c27": {
+  "at": "2026-10-06T06:18:14.502Z",
+  "grade": "fine",
+  "n": 9,
+  "note": "",
+  "type": "reversal"
+ },
+ "c28": {
+  "at": "2026-10-06T06:18:55.554Z",
+  "grade": "no",
+  "n": 14,
+  "note": "",
+  "type": "reversal"
+ },
+ "c29": {
+  "at": "2026-10-06T06:19:54.339Z",
+  "grade": "fine",
+  "n": 19,
+  "note": "",
+  "type": "reversal"
+ },
+ "c30": {
+  "at": "2026-10-06T06:20:24.752Z",
+  "grade": "no",
+  "n": 24,
+  "note": "",
+  "type": "reversal"
+ },
+ "c31": {
+  "at": "2026-10-06T06:21:12.021Z",
+  "grade": "no",
+  "n": 29,
+  "note": "",
+  "type": "reversal"
+ },
+ "c35": {
+  "at": "2026-10-06T06:17:27.579Z",
+  "grade": "fine",
+  "n": 5,
+  "note": "",
+  "type": "dossier"
+ },
+ "c36": {
+  "at": "2026-10-06T06:18:22.688Z",
+  "grade": "fine",
+  "n": 10,
+  "note": "",
+  "type": "dossier"
+ },
+ "c38": {
+  "at": "2026-10-06T06:19:10.826Z",
+  "grade": "fine",
+  "n": 15,
+  "note": "",
+  "type": "dossier"
+ },
+ "c39": {
+  "at": "2026-10-06T06:19:58.179Z",
+  "grade": "fine",
+  "n": 20,
+  "note": "",
+  "type": "dossier"
+ },
+ "c42": {
+  "at": "2026-10-06T06:20:32.438Z",
+  "grade": "fine",
+  "n": 25,
+  "note": "",
+  "type": "dossier"
+ },
+ "c43": {
+  "at": "2026-10-06T06:21:18.957Z",
+  "grade": "fine",
+  "n": 30,
+  "note": "",
+  "type": "dossier"
+ }
+}
