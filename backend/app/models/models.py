@@ -1130,9 +1130,12 @@ class FuturesOutcome(Base):
         # graded row the pollers re-stamp, and each one costs a heap visit.
         # The predicate repeats A11's own clauses exactly so the planner can
         # prove it. Plain key on purpose: a covering variant only skips the heap
-        # on all-visible pages, and a touch-stamped row is never all-visible
-        # (local rig, artifacts/2408-index-prereq-20261016). Production builds
-        # it by a separately attended `CREATE INDEX CONCURRENTLY` (gotcha #31),
+        # on all-visible pages, and a re-stamp clears its page's all-visible bit
+        # until vacuum sets it again. In the local rig's churn state no page was
+        # all-visible and the covering form saved nothing over the plain key;
+        # that is the tested state, not an invariant
+        # (artifacts/2408-index-prereq-20261016). Production builds it by a
+        # separately attended `CREATE INDEX CONCURRENTLY` (gotcha #31),
         # so no migration creates it; it is declared here so a later
         # `--autogenerate` does not emit a revision that drops it.
         Index(
