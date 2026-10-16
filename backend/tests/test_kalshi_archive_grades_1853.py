@@ -347,10 +347,20 @@ class TestTheRetainedBytes:
 
     def test_the_digest_names_the_plan_not_its_order(self):
         mod = _script()
-        a = kag.ArchiveGrade(1, "T1", False, "finalized", "no")
-        b = kag.ArchiveGrade(2, "T2", False, "finalized", "no")
+        a = mod.ApprovedGrade(1, "T1", False, "finalized", "no", '{"id": 1}')
+        b = mod.ApprovedGrade(2, "T2", False, "finalized", "no", '{"id": 2}')
         assert mod.plan_digest([a, b]) == mod.plan_digest([b, a])
         assert mod.plan_digest([a]) != mod.plan_digest([a, b])
+
+    def test_the_digest_binds_each_legs_approved_version(self):
+        """Root 004: same id, same verdict, a moved row is a different plan; and
+        a grade carrying no approved version cannot be digested or backed up."""
+        mod = _script()
+        a = mod.ApprovedGrade(1, "T1", False, "finalized", "no", '{"id": 1, "current_probability": 0.47}')
+        moved = mod.ApprovedGrade(1, "T1", False, "finalized", "no", '{"id": 1, "current_probability": 0.61}')
+        assert mod.plan_digest([a]) != mod.plan_digest([moved])
+        with pytest.raises(mod.Refused, match="approved version"):
+            mod.plan_digest([kag.ArchiveGrade(1, "T1", False, "finalized", "no")])
 
     def test_writes_refuse_off_the_named_app(self):
         mod = _script()
@@ -364,6 +374,7 @@ class TestTheRetainedBytes:
         """Shape only — the behaviour is the real-PG file's. Apply CASes the WHOLE
         before-image of a frozen row; restore requires the WHOLE after-image."""
         sql = {k: " ".join(v.split()) for k, v in _script().SQL.items()}
+        assert "to_jsonb(fo) = CAST(:approved_before AS jsonb)" in sql["bak_copy"]
         assert "to_jsonb(fo) = b.before_row" in sql["apply_one"]
         assert "b.plan_digest = :digest" in sql["apply_one"]
         assert "AND b.applied AND to_jsonb(fo) = b.after_row" in sql["restore"]

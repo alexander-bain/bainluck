@@ -42,6 +42,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+from typing import NamedTuple, Optional
 
 EVENT_TICKER = "KXUECLSCORE-26JUL30LEVIFK"
 ARCHIVE_PATH = Path(__file__).parent / "data" / "1853-KXUECLSCORE-26JUL30LEVIFK-archive.json"
@@ -54,10 +55,17 @@ BACKUP_TABLE = "backup_1853_archive_grades"
 
 #: THE OWNERSHIP CONTRACT (CERT-4149 + Root's three counterexamples, 2026-10-16).
 #:
+#: * The PLAN binds each leg's approved version (Root 004): its WHOLE row
+#:   (``to_jsonb``) is read with the plan and its hash rides the digest, so a
+#:   leg that moves between the reviewed dry run and the apply changes the
+#:   digest and the reviewed ``--digest`` is refused.
 #: * The approved set is FROZEN at backup: the plan's ids, verdicts and digest,
-#:   and each row's FULL before-image (``to_jsonb`` of the whole row). Apply
-#:   reads that set back and never re-plans, so a row that becomes ungraded
-#:   after the review (Root: control 220314801 retracted) is not written.
+#:   and each row's FULL before-image — backed up only while the row still IS
+#:   its approved version. A writer between planning and backup (Root 004: a
+#:   price 0.47 -> 0.61 on a still-ungraded leg) is named and refused, never
+#:   adopted as a new baseline. Apply reads that set back and never re-plans,
+#:   so a row that becomes ungraded after the review (Root: control 220314801
+#:   retracted) is not written.
 #: * Apply is a compare-and-set on the WHOLE row: it writes only while the row
 #:   still equals its backed-up before-image AND is still ungraded. A price
 #:   that moved after the backup (Root: 0.47 -> 0.61) is skipped, never written
@@ -91,7 +99,30 @@ SQL = {
         FROM futures_outcomes fo
         WHERE fo.id = :outcome_id
           AND fo.resolution_source IS NULL AND fo.is_winner IS NULL
+          -- Root 004: only the version the plan was approved on is frozen.
+          AND to_jsonb(fo) = CAST(:approved_before AS jsonb)
         ON CONFLICT (outcome_id) DO NOTHING
+    """,
+    # Planned legs NOT frozen at their approved version: no backup row for
+    # this digest holding exactly that version, or the row itself is no longer
+    # it. The second arm is what a retry needs — its frozen row already exists,
+    # so presence alone proves nothing about the row as it stands now.
+    "bak_unfrozen": f"""
+        SELECT a.id FROM unnest(CAST(:ids AS bigint[]), CAST(:images AS text[])) AS a(id, image)
+        WHERE NOT EXISTS (
+            SELECT 1 FROM {BACKUP_TABLE} b
+            WHERE b.outcome_id = a.id AND b.plan_digest = :digest
+              AND b.before_row = CAST(a.image AS jsonb))
+           OR NOT EXISTS (
+            SELECT 1 FROM futures_outcomes fo
+            WHERE fo.id = a.id AND to_jsonb(fo) = CAST(a.image AS jsonb))
+        ORDER BY a.id
+    """,
+    # Each planned leg's whole row, read with the plan: the approved version.
+    "approved": """
+        SELECT fo.id, to_jsonb(fo)::text FROM futures_outcomes fo
+        WHERE fo.id = ANY(CAST(:ids AS bigint[]))
+          AND fo.resolution_source IS NULL AND fo.is_winner IS NULL
     """,
     "bak_missing": f"""
         SELECT COUNT(*) FROM unnest(CAST(:ids AS bigint[])) AS t(id)
@@ -160,6 +191,29 @@ class Refused(RuntimeError):
     pass
 
 
+class ApprovedGrade(NamedTuple):
+    """A planned grade bound to the WHOLE row version it was approved on.
+
+    The shared planner's :class:`~app.utils.kalshi_archive_grades.ArchiveGrade`
+    fields, plus ``approved_before`` (``to_jsonb(row)::text``) — the version the
+    digest covers and the backup must still find.
+    """
+
+    outcome_id: int
+    ticker: str
+    is_winner: bool
+    status: Optional[str]
+    result: Optional[str]
+    approved_before: str
+
+
+def _approved_before(g) -> str:
+    before = getattr(g, "approved_before", None)
+    if not before:
+        raise Refused(f"outcome {g.outcome_id} carries no approved version; re-plan")
+    return before
+
+
 def load_archive_legs(path: Path = ARCHIVE_PATH, event_ticker: str = EVENT_TICKER) -> list[dict]:
     """The retained listing, held to the same proof the live primitive demands.
 
@@ -186,10 +240,16 @@ def load_archive_legs(path: Path = ARCHIVE_PATH, event_ticker: str = EVENT_TICKE
     return legs
 
 
+def approved_sha256(g) -> str:
+    return hashlib.sha256(_approved_before(g).encode()).hexdigest()
+
+
 def plan_digest(grades) -> str:
-    """The plan's identity: the archive bytes plus every planned (id, verdict)."""
+    """The plan's identity: the archive bytes plus every planned (id, verdict,
+    approved version) — a leg that moves after review is a different plan."""
     body = ARCHIVE_SHA256 + "|" + ",".join(
-        f"{g.outcome_id}:{int(g.is_winner)}" for g in sorted(grades, key=lambda g: g.outcome_id)
+        f"{g.outcome_id}:{int(g.is_winner)}:{approved_sha256(g)}"
+        for g in sorted(grades, key=lambda g: g.outcome_id)
     )
     return hashlib.sha256(body.encode()).hexdigest()[:16]
 
@@ -209,18 +269,54 @@ async def build_plan(session, legs):
     rows = (await session.execute(
         text(_ARCHIVE_STORED_LEGS_SQL), {"event_ticker": EVENT_TICKER}
     )).all()
-    return plan_archive_grades(legs, stored_legs(rows))
+    grades, refused = plan_archive_grades(legs, stored_legs(rows))
+    # Bind each planned leg to the whole row it was approved on. A leg graded
+    # or removed between the two reads is not the plan's to approve.
+    approved = dict((await session.execute(
+        text(SQL["approved"]), {"ids": [g.outcome_id for g in grades]}
+    )).all())
+    moved = sorted(g.outcome_id for g in grades if g.outcome_id not in approved)
+    if moved:
+        raise Refused(f"legs {moved} changed while the plan was read; re-plan")
+    return [
+        ApprovedGrade(g.outcome_id, g.ticker, g.is_winner, g.status, g.result,
+                      approved[g.outcome_id])
+        for g in grades
+    ], refused
+
+
+async def unfrozen(session, grades, digest) -> list[int]:
+    """Planned legs not frozen under ``digest`` at their approved version."""
+    from sqlalchemy import text
+
+    return [r[0] for r in (await session.execute(
+        text(SQL["bak_unfrozen"]),
+        {"ids": [g.outcome_id for g in grades],
+         "images": [_approved_before(g) for g in grades], "digest": digest},
+    )).all()]
 
 
 async def backup(session, grades, digest) -> int:
-    """Freeze the approved set: ids, verdicts, digest and each FULL before-image."""
+    """Freeze the approved set: ids, verdicts, digest and each FULL before-image
+    — only while each row still IS the version the plan was approved on.
+
+    A leg that changed since the plan (any column) is refused and named: never
+    adopted as a new baseline. The caller rolls back; re-plan and re-review.
+    """
     from sqlalchemy import text
 
     await session.execute(text(SQL["bak_create"]))
     for g in grades:
         await session.execute(
             text(SQL["bak_copy"]),
-            {"outcome_id": g.outcome_id, "planned": g.is_winner, "digest": digest},
+            {"outcome_id": g.outcome_id, "planned": g.is_winner, "digest": digest,
+             "approved_before": _approved_before(g)},
+        )
+    drifted = await unfrozen(session, grades, digest)
+    if drifted:
+        raise Refused(
+            f"legs {drifted} changed since the plan was approved; nothing written "
+            "— re-plan and re-review"
         )
     missing = (await session.execute(
         text(SQL["bak_missing"]),
@@ -319,7 +415,8 @@ async def run(args, env) -> dict:
         "plan_digest": digest,
         "planned": [
             {"outcome_id": g.outcome_id, "ticker": g.ticker, "is_winner": g.is_winner,
-             "venue_status": g.status, "venue_result": g.result}
+             "venue_status": g.status, "venue_result": g.result,
+             "approved_before_sha256": approved_sha256(g)}
             for g in grades
         ],
         "refused": {k: v for k, v in refused.items() if v},
@@ -339,7 +436,11 @@ async def run(args, env) -> dict:
     if args.digest != digest:
         raise Refused(f"--digest {args.digest!r} does not match this plan ({digest})")
     async with get_task_session() as session:
-        missing = await backup(session, grades, digest)
+        try:
+            missing = await backup(session, grades, digest)
+        except Refused:
+            await session.rollback()
+            raise
         if missing:
             await session.rollback()
             raise Refused(f"{missing} planned legs have no backup row; nothing written")
