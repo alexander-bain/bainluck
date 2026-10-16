@@ -219,6 +219,12 @@ extension LiveStreamHandle {
 //
 // Identical to `frontend/lib/liveStreamController.ts`. Any change here is a
 // change there; they are one contract with one server.
+//
+// ONE DELIBERATE DIFFERENCE (#10090): native reopens a HEALTHY rollover after
+// `healthyRolloverDelay` and on its own deadline, not on the 1 s base delay at
+// the next 5 s tick. Web still waits for both. The fast-rollover backoff and
+// every other number below are unchanged and still shared. Native is ahead
+// here the same way it is ahead on #8320 (see note 4 above).
 
 enum LiveStreamTiming {
     /// Transport silence: three missed 20s heartbeats. The stream is dead.
@@ -244,9 +250,28 @@ enum LiveStreamTiming {
     /// A stream that lasted this long was healthy; its rollover is not a failure.
     static let healthyStream: TimeInterval = 60
 
-    /// How often the owner should call `tick()`.
+    /// #10090 — how long a HEALTHY stream's rollover waits before it reopens:
+    /// the transport's own quick retry after a healthy connection drops
+    /// (`LiveEventStreamTransport.defaultFirstRetryDelay`, jittered ×1–2). The
+    /// server rolls every stream at its age ceiling and every stream in a
+    /// process at once when its hub fails; the server replays only the latest
+    /// frame on reopening, so every second here is a second the page shows a
+    /// number it has no socket for. The jitter keeps a hub failure from
+    /// bringing every phone back in the same instant. A FAST rollover keeps
+    /// the 1 s doubling backoff above.
+    static let healthyRolloverDelay: ClosedRange<TimeInterval> = 0.25...0.5
+
+    /// How often the owner should call `tick()`. A scheduled reopen does not
+    /// wait for it (#10090): the controller arms its own deadline, and `tick()`
+    /// only backs it up.
     static let tickInterval: TimeInterval = 5
 }
+
+/// Runs `action` once, `delay` seconds from now; returns its cancel. Injected so
+/// a test fires the deadline on its own clock (gotcha #44).
+typealias LiveStreamSchedule = @MainActor (
+    _ delay: TimeInterval, _ action: @escaping @MainActor () -> Void
+) -> () -> Void
 
 // MARK: - Controller
 
@@ -280,6 +305,14 @@ final class LiveStreamController {
     private var lastResyncGeneration = 0
     private var reopenAt: TimeInterval?
     private var consecutiveFastRollovers = 0
+    private let schedule: LiveStreamSchedule
+    private let healthyRolloverDelay: () -> TimeInterval
+    /// The armed reopen deadline's cancel, and which deadline is current. A
+    /// deadline that fires after `connect()` or `stop()` already ran — a late
+    /// timer, or a tick that got there first — finds its generation retired and
+    /// opens nothing, so one rollover can never open two sockets.
+    private var cancelReopen: (() -> Void)?
+    private var reopenGeneration = 0
 
     /// For assertions and debugging; not part of the render path.
     var state: State {
@@ -297,7 +330,11 @@ final class LiveStreamController {
         onFrame: @escaping @MainActor (LiveStreamFrame) -> Void,
         onDeliveringChange: @escaping @MainActor (Bool) -> Void,
         onResync: @escaping @MainActor () -> Void = {},
-        deliversFoldedQuotes: Bool = false
+        deliversFoldedQuotes: Bool = false,
+        schedule: @escaping LiveStreamSchedule = LiveStreamController.sleepThenRun,
+        healthyRolloverDelay: @escaping () -> TimeInterval = {
+            TimeInterval.random(in: LiveStreamTiming.healthyRolloverDelay)
+        }
     ) {
         self.open = open
         self.now = now
@@ -305,6 +342,20 @@ final class LiveStreamController {
         self.onDeliveringChange = onDeliveringChange
         self.onResync = onResync
         self.deliversFoldedQuotes = deliversFoldedQuotes
+        self.schedule = schedule
+        self.healthyRolloverDelay = healthyRolloverDelay
+    }
+
+    /// The production `schedule`: a main-actor sleep, cancelled with its task.
+    static func sleepThenRun(
+        _ delay: TimeInterval, _ action: @escaping @MainActor () -> Void
+    ) -> () -> Void {
+        let task = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: UInt64(max(0, delay) * 1_000_000_000))
+            guard !Task.isCancelled else { return }
+            action()
+        }
+        return { task.cancel() }
     }
 
     // MARK: Public surface
@@ -316,6 +367,8 @@ final class LiveStreamController {
         guard !stopped else { return }
         let at = now()
 
+        // The armed deadline normally reopens first (#10090); this is its
+        // backstop, and `connect()` retires whichever of the two comes second.
         if let due = reopenAt, at >= due {
             connect()
             return
@@ -370,6 +423,7 @@ final class LiveStreamController {
     func stop() {
         stopped = true
         reopenAt = nil
+        disarmReopen()
         closeHandle()
         setDelivering(false)
     }
@@ -407,17 +461,46 @@ final class LiveStreamController {
         } else {
             consecutiveFastRollovers += 1
         }
-        let exponent = Double(max(0, consecutiveFastRollovers - 1))
-        let delay = min(
-            LiveStreamTiming.reconnectMaxDelay,
-            LiveStreamTiming.reconnectBaseDelay * pow(2, exponent)
-        )
+        // #10090: a healthy stream comes straight back — see
+        // `healthyRolloverDelay`. Only a fast one pays the 1 s doubling backoff.
+        let delay: TimeInterval
+        if consecutiveFastRollovers == 0 {
+            delay = healthyRolloverDelay()
+        } else {
+            let exponent = Double(consecutiveFastRollovers - 1)
+            delay = min(
+                LiveStreamTiming.reconnectMaxDelay,
+                LiveStreamTiming.reconnectBaseDelay * pow(2, exponent)
+            )
+        }
         reopenAt = now() + delay
+        armReopen(after: delay)
+    }
+
+    /// #10090 — reopen AT the deadline, not at the first tick after it. The
+    /// owner ticks every 5 s, so a reopen left to `tick()` waited up to five
+    /// seconds past its own backoff with the page holding a number no socket
+    /// was updating. The backoff is still the floor: this never opens earlier.
+    private func armReopen(after delay: TimeInterval) {
+        disarmReopen()
+        let generation = reopenGeneration
+        cancelReopen = schedule(delay) { [weak self] in
+            guard let self, !self.stopped, self.reopenAt != nil,
+                  self.reopenGeneration == generation else { return }
+            self.connect()
+        }
+    }
+
+    private func disarmReopen() {
+        reopenGeneration += 1
+        cancelReopen?()
+        cancelReopen = nil
     }
 
     private func connect() {
         guard !stopped else { return }
         reopenAt = nil
+        disarmReopen()
 
         let next: LiveStreamHandle
         do {

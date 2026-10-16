@@ -35,6 +35,10 @@ final class StreamDropResume10090Tests: XCTestCase {
         var cutAfter: TimeInterval?
         var fail = false
         var empty = false
+        /// Sends the server's explicit `reconnect` frame this long after the 200
+        /// and ends the body: its age-ceiling (or hub-failure) rollover. Recorded
+        /// in `cuts` like any other end.
+        var reconnectAfter: TimeInterval?
     }
 
     /// Serves scripted connections in order, and a shared publish timeline. Each
@@ -48,12 +52,19 @@ final class StreamDropResume10090Tests: XCTestCase {
         nonisolated(unsafe) private static var t0: TimeInterval = 0
         nonisolated(unsafe) private static var requestAt: [TimeInterval] = []
         nonisolated(unsafe) private static var cutAt: [TimeInterval] = []
+        /// When set, publish times count from the FIRST request instead of from
+        /// `script`, so a connection-relative cut or roll and the publishes
+        /// around it keep their order however late a loaded host connects.
+        nonisolated(unsafe) private static var anchorToFirstRequest = false
+        nonisolated(unsafe) private static var publishOffset: TimeInterval = 0
         private let queue = DispatchQueue(label: "drop-resume-server")
         private var stopped = false
 
-        static func script(_ c: [Conn], publishes p: [(at: TimeInterval, data: String)] = []) {
+        static func script(_ c: [Conn], publishes p: [(at: TimeInterval, data: String)] = [],
+                           anchoredToFirstRequest: Bool = false) {
             lock.lock(); defer { lock.unlock() }
             conns = c; publishes = p; requestAt = []; cutAt = []
+            anchorToFirstRequest = anchoredToFirstRequest; publishOffset = 0
             t0 = ProcessInfo.processInfo.systemUptime
         }
 
@@ -74,9 +85,11 @@ final class StreamDropResume10090Tests: XCTestCase {
             Self.lock.lock()
             let now = ProcessInfo.processInfo.systemUptime - Self.t0
             let conn = Self.conns[min(Self.requestAt.count, Self.conns.count - 1)]
+            if Self.anchorToFirstRequest, Self.requestAt.isEmpty { Self.publishOffset = now }
             Self.requestAt.append(now)
-            let latest = Self.publishes.last { $0.at <= now }
-            let later = Self.publishes.filter { $0.at > now }
+            let shifted = Self.publishes.map { (at: $0.at + Self.publishOffset, data: $0.data) }
+            let latest = shifted.last { $0.at <= now }
+            let later = shifted.filter { $0.at > now }
             Self.lock.unlock()
 
             if conn.fail {
@@ -100,7 +113,7 @@ final class StreamDropResume10090Tests: XCTestCase {
             client?.urlProtocol(self, didLoad: Data(opening.utf8))
 
             let start = DispatchTime.now()
-            let cut = conn.cutAfter.map { now + $0 }
+            let cut = (conn.cutAfter ?? conn.reconnectAfter).map { now + $0 }
             for p in later where cut.map({ p.at < $0 }) ?? true {
                 queue.asyncAfter(deadline: start + (p.at - now)) { [self] in
                     guard !stopped else { return }
@@ -116,6 +129,17 @@ final class StreamDropResume10090Tests: XCTestCase {
                     Self.lock.unlock()
                     // A clean end with no `closed`/`reconnect` frame: what a
                     // release leaves the client (`finished successfully`).
+                    client?.urlProtocolDidFinishLoading(self)
+                }
+            }
+            if let after = conn.reconnectAfter {
+                queue.asyncAfter(deadline: start + after) { [self] in
+                    guard !stopped else { return }
+                    stopped = true
+                    Self.lock.lock()
+                    Self.cutAt.append(ProcessInfo.processInfo.systemUptime - Self.t0)
+                    Self.lock.unlock()
+                    client?.urlProtocol(self, didLoad: Data(Self.frame("reconnect", #"{"reason":"max_age"}"#).utf8))
                     client?.urlProtocolDidFinishLoading(self)
                 }
             }
@@ -526,5 +550,144 @@ final class StreamDropResume10090Tests: XCTestCase {
         XCTAssertEqual(vm.event?.currentOdds?.homeProbability ?? -1, Self.probability(24), accuracy: 1e-9)
         XCTAssertEqual(vm.liveBlend.last?.homeProbability ?? -1, Self.probability(24), accuracy: 1e-9,
                        "the chart edge agrees with the headline")
+    }
+
+    // MARK: - Held page, explicit rollover
+
+    /// The controller's clock, which the page reads through `now`. It runs in
+    /// real time (a frozen clock would never bring the old tick-driven reopen
+    /// due, which would make the comparison unfair), and is moved forward once
+    /// the first stream is up, so that stream reads as having lived past
+    /// `healthyStream` when the server rolls it.
+    private final class PageClock {
+        var offset: TimeInterval = 0
+    }
+
+    /// One held page on the scripted server. Revisions 21 and 22 arrive on the
+    /// first connection, which the server then ROLLS with its `reconnect`
+    /// frame. 23 and 24 are published in the next 0.2 s, with nothing
+    /// connected; 25 and 26 come seconds later. Publish times count from the
+    /// first request, like the roll. Returns the adoptions (basis,
+    /// server time) and chart points.
+    private func rollover(healthy: Bool, leaveRightAfterTheRoll: Bool = false) async throws
+        -> (vm: EventDetailViewModel, adopted: [(basis: String, at: TimeInterval)], charted: [String]) {
+        var adopted: [(basis: String, at: TimeInterval)] = []
+        var charted: [String] = []
+        LiveTimingSeam.observer = { mark in
+            guard mark.eventId == 4242 else { return }  // not the host app's own live streams
+            if mark.name == .modelHeadlineAdopted, mark.basis.hasPrefix("rev:") {
+                adopted.append((mark.basis, Server.now()))
+            }
+            if mark.name == .modelChartAppended, mark.basis.hasPrefix("rev:") { charted.append(mark.basis) }
+        }
+        defer { LiveTimingSeam.observer = nil }
+
+        let roll: TimeInterval = 1.0
+        Server.script(
+            [Conn(reconnectAfter: roll), Conn()],
+            publishes: [(0.3, Self.folded(21)), (0.6, Self.folded(22)),
+                        (roll + 0.1, Self.folded(23)), (roll + 0.2, Self.folded(24)),
+                        (roll + 2.0, Self.folded(25)), (roll + 2.5, Self.folded(26))],
+            anchoredToFirstRequest: true)
+        let s = session()
+        let clock = PageClock()
+        let vm = EventDetailViewModel(
+            eventId: 4242, client: Client(try held()),
+            makeStreamHandle: { id in
+                let t = try LiveEventStreamTransport(eventId: id, baseURL: "https://stub.invalid", session: s)
+                t.connect()
+                return t
+            },
+            now: { Self.base - 595 + clock.offset + Server.now() },
+            sleep: { _ in try? await Task.sleep(nanoseconds: 60_000_000_000) }
+        )
+        await vm.load()
+
+        await waitUntil(roll) { adopted.contains { $0.basis == "rev:4242=21;999=5" } }
+        XCTAssertEqual(adopted.first?.basis, "rev:4242=21;999=5", "the first stream never delivered")
+        if healthy { clock.offset += 120 }
+
+        if leaveRightAfterTheRoll {
+            // The page has taken the roll (it stands delivery down at once) and
+            // its reopen is armed at least 0.25 s out.
+            await waitUntil(roll + 1) { !Server.cuts.isEmpty && !vm.streamDelivering }
+            XCTAssertFalse(vm.streamDelivering, "the page never took the roll")
+            vm.stopRefresh()
+            try? await Task.sleep(nanoseconds: 1_500_000_000)
+            return (vm, adopted, charted)
+        }
+        await waitUntil(roll + LiveStreamTiming.tickInterval + 4) { adopted.last?.basis == "rev:4242=26;999=5" }
+        return (vm, adopted, charted)
+    }
+
+    private func revisions(_ adopted: [(basis: String, at: TimeInterval)]) -> [Int] {
+        adopted.compactMap { Int($0.basis.dropFirst("rev:4242=".count).prefix { $0.isNumber }) }
+    }
+
+    /// The case: the server rolls a healthy held page's stream (its age
+    /// ceiling, or its hub failing). The page asks again within a second, not
+    /// at its 1 s backoff rounded up to the next 5 s tick, and the new
+    /// connection's replay — 24, published while nothing was connected — is
+    /// adopted within a second of the roll. Order, chart and headline hold.
+    func testAHeldPageResumesTheLatestProbabilityWithinASecondOfAnExplicitRollover() async throws {
+        let (vm, adopted, charted) = try await rollover(healthy: true)
+        defer { vm.stopRefresh() }
+
+        let req = Server.requests
+        guard let rollAt = Server.cuts.first, req.count >= 2 else {
+            return XCTFail("expected a roll and a reopen, got \(Server.cuts.count) and \(req.count)")
+        }
+        let revs = revisions(adopted)
+        XCTAssertEqual(revs, revs.sorted(), "an adoption moved backwards: \(revs)")
+        XCTAssertEqual(Set(revs).count, revs.count, "a revision was adopted twice: \(revs)")
+        XCTAssertEqual(Array(revs.prefix(2)), [21, 22], "the first connection delivered both")
+        XCTAssertFalse(revs.contains(23), "23 was published while nothing was connected and is never replayed")
+        XCTAssertEqual(revs.last, 26)
+        XCTAssertEqual(charted, adopted.map(\.basis), "every adopted revision also got its chart point")
+        XCTAssertEqual(req.count, 2, "one rollover opened more than one new connection")
+
+        let resumed = adopted.first { $0.at > rollAt }
+        let lag = (resumed?.at ?? .infinity) - rollAt
+        print(String(format: "ROLLOVER-10090 healthy roll_to_reopen_s=%.3f roll_to_first_adoption_s=%.3f first=%@ revs=%@",
+                     req[1] - rollAt, lag, resumed?.basis ?? "none", revs.map(String.init).joined(separator: ",")))
+        XCTAssertGreaterThanOrEqual(req[1] - rollAt, 0.25 - 0.02, "a healthy roll still waits a jittered moment")
+        XCTAssertLessThan(req[1] - rollAt, 1.0, "the page waited \(req[1] - rollAt)s to ask again after a healthy roll")
+        XCTAssertEqual(resumed?.basis, "rev:4242=24;999=5",
+                       "the reopen's replay should be the latest revision published while disconnected")
+        XCTAssertLessThan(lag, 1.0, "the held page was \(lag)s behind after a healthy roll")
+        XCTAssertEqual(vm.event?.currentOdds?.homeProbability ?? -1, Self.probability(26), accuracy: 1e-9)
+        XCTAssertEqual(vm.liveBlend.last?.homeProbability ?? -1, Self.probability(26), accuracy: 1e-9,
+                       "the chart edge agrees with the headline")
+    }
+
+    /// Control: a stream rolled within `healthyStream` of opening is a server
+    /// in trouble. On the real owner schedule it still waits its whole 1 s
+    /// backoff — the deadline replaces the tick, never the backoff — and then
+    /// resumes forward on the replay.
+    func testAFastRolloverOnAHeldPageStillWaitsItsBackoff() async throws {
+        let (vm, adopted, charted) = try await rollover(healthy: false)
+        defer { vm.stopRefresh() }
+
+        let req = Server.requests
+        guard let rollAt = Server.cuts.first, req.count >= 2 else {
+            return XCTFail("expected a roll and a reopen, got \(Server.cuts.count) and \(req.count)")
+        }
+        let revs = revisions(adopted)
+        print(String(format: "ROLLOVER-10090 fast roll_to_reopen_s=%.3f revs=%@",
+                     req[1] - rollAt, revs.map(String.init).joined(separator: ",")))
+        XCTAssertGreaterThanOrEqual(req[1] - rollAt, 1.0 - 0.02, "a fast roll was reopened inside its backoff")
+        XCTAssertEqual(req.count, 2, "one rollover opened more than one new connection")
+        XCTAssertEqual(revs, revs.sorted(), "an adoption moved backwards: \(revs)")
+        XCTAssertEqual(Set(revs).count, revs.count, "a revision was adopted twice: \(revs)")
+        XCTAssertEqual(revs.last, 26)
+        XCTAssertEqual(charted, adopted.map(\.basis), "every adopted revision also got its chart point")
+    }
+
+    /// Leaving the page between the roll and its reopen: the armed reopen is
+    /// cancelled with the stream, and nothing asks the server again.
+    func testLeavingThePageInsideARolloverWaitOpensNothing() async throws {
+        _ = try await rollover(healthy: true, leaveRightAfterTheRoll: true)
+        XCTAssertEqual(Server.cuts.count, 1, "the server never rolled the stream")
+        XCTAssertEqual(Server.requests.count, 1, "a page the reader left reopened its stream")
     }
 }
