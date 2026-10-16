@@ -2,6 +2,7 @@ import Combine
 import os
 import SwiftUI
 import TipKit
+import UserNotifications
 
 private let logger = Logger(subsystem: "com.bainluck", category: "tips")
 
@@ -31,7 +32,6 @@ private let logger = Logger(subsystem: "com.bainluck", category: "tips")
 
     private static var configured = false
     private static var chartLearnedThisProcess = false
-    private static var firstAsked: Date?
 
     /// Configured on first use rather than at launch so the app entry is not
     /// touched. TipKit is only consulted after this has run.
@@ -51,11 +51,16 @@ private let logger = Logger(subsystem: "com.bainluck", category: "tips")
         }
     }
 
-    static func processAge(now: Date = Date()) -> TimeInterval {
-        if let started = ProcessAge10876.startDate() { return now.timeIntervalSince(started) }
-        let first = firstAsked ?? now
-        firstAsked = first
-        return now.timeIntervalSince(first)
+    /// `ContextualTipEligibility10876.notificationPromptSettled`, read live.
+    static func notificationPromptSettled() async -> Bool {
+        let suppressed = !NotificationManager.shouldRequestPermission()
+        if suppressed {
+            return ContextualTipEligibility10876.notificationPromptSettled(
+                authorizationIsNotDetermined: true, promptSuppressed: true)
+        }
+        let status = await UNUserNotificationCenter.current().notificationSettings().authorizationStatus
+        return ContextualTipEligibility10876.notificationPromptSettled(
+            authorizationIsNotDetermined: status == .notDetermined, promptSuppressed: false)
     }
 
     static func pinLearned() {
@@ -151,8 +156,8 @@ nonisolated struct ExploreChartTip10876: Tip {
 // MARK: - Anchoring
 
 /// Puts `tip` in a popover on the modified control while the control is usable,
-/// the app is in front and past its launch grace, TipKit says the tip should
-/// display, and no other tip holds the screen. `learned` invalidates the tip.
+/// the app is in front with no permission alert still to come, TipKit says the
+/// tip should display, and no other tip holds the screen. `learned` invalidates the tip.
 private struct ContextualTipAnchor10876<T: Tip>: ViewModifier {
     let kind: ContextualTipID10876
     let tip: T
@@ -190,13 +195,13 @@ private struct ContextualTipAnchor10876<T: Tip>: ViewModifier {
                 }
                 ContextualTips10876.configureIfNeeded()
                 queue.arrive(anchor, tip: kind)
-                let wait = ContextualTipEligibility10876.delayBeforeAsking(
-                    processAge: ContextualTips10876.processAge())
-                try? await Task.sleep(for: .seconds(wait))
+                try? await Task.sleep(for: .seconds(ContextualTipEligibility10876.settleDelay))
+                guard !Task.isCancelled else { return }
+                let promptSettled = await ContextualTips10876.notificationPromptSettled()
                 guard !Task.isCancelled else { return }
                 guard ContextualTipEligibility10876.appCanShowTips(
                     sceneIsActive: scenePhase == .active,
-                    processAge: ContextualTips10876.processAge()) else {
+                    notificationPromptSettled: promptSettled) else {
                     queue.decline(anchor)
                     return
                 }
@@ -213,18 +218,26 @@ private struct ContextualTipAnchor10876<T: Tip>: ViewModifier {
     }
 }
 
-/// Donates one pin engagement after `pinDwell` seconds on a detail page.
+/// Donates at most one pin engagement per mounted detail page, after
+/// `pinDwell` seconds of foreground time on it (`PinDwell10876`).
 private struct PinEngagement10876: ViewModifier {
     @Environment(\.scenePhase) private var scenePhase
+    @State private var dwell = PinDwell10876()
 
     func body(content: Content) -> some View {
-        content.task(id: scenePhase == .active) {
-            guard ContextualTips10876.isEnabledOnThisPlatform, scenePhase == .active else { return }
-            try? await Task.sleep(for: .seconds(ContextualTipEligibility10876.pinDwell))
-            guard !Task.isCancelled else { return }
-            ContextualTips10876.configureIfNeeded()
-            await PinTip10876.engaged.donate()
-        }
+        content
+            .task(id: scenePhase == .active) {
+                guard ContextualTips10876.isEnabledOnThisPlatform else { return }
+                dwell.sceneChanged(isActive: scenePhase == .active, now: Date())
+                guard let due = dwell.dueDate else { return }
+                try? await Task.sleep(for: .seconds(max(0, due.timeIntervalSinceNow)))
+                guard !Task.isCancelled, dwell.donateIfDue(now: Date()) else { return }
+                ContextualTips10876.configureIfNeeded()
+                await PinTip10876.engaged.donate()
+            }
+            // Off screen stops the clock (a return starts a fresh 10 s) but
+            // keeps `donated`: a sheet or pushed page and back is one visit.
+            .onDisappear { dwell.sceneChanged(isActive: false, now: Date()) }
     }
 }
 

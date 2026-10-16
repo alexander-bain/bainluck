@@ -97,12 +97,6 @@ nonisolated struct ContextualTipQueue10876: Equatable, Sendable {
 /// #10876 — when each tip's control is actually usable, and when its action is
 /// already known. Pure, so every transition is a unit test rather than a render.
 nonisolated enum ContextualTipEligibility10876 {
-    /// No tip in the first seconds of a cold launch. `NotificationManager` asks
-    /// for notification permission 5 s after the root task starts; a popover
-    /// opened just before that system alert would compete with it. While the
-    /// alert (or any system sheet, such as Sign in with Apple) is up the scene
-    /// is inactive, which `appCanShowTips` refuses separately.
-    static let launchGrace: TimeInterval = 20
     /// A control must stay usable this long before its tip asks to appear, so a
     /// tip never lands on a page that is still loading or being scrolled past.
     static let settleDelay: TimeInterval = 3
@@ -115,22 +109,43 @@ nonisolated enum ContextualTipEligibility10876 {
     /// …spanning at least this long, so there is something to scrub through.
     static let chartMinimumSpan: TimeInterval = 60
 
-    static func appCanShowTips(sceneIsActive: Bool, processAge: TimeInterval) -> Bool {
-        sceneIsActive && processAge >= launchGrace
+    /// No tip while the scene is inactive — a system alert or sheet (the
+    /// notification permission alert, Sign in with Apple) is up — and none
+    /// until the notification permission question has been answered or
+    /// suppressed. `NotificationManager` asks 5 s after the root task's
+    /// `loadPins()` returns, which for a signed-in reader is a server fetch of
+    /// unknown length, so no launch-relative delay can promise to come after
+    /// it. Answering the alert takes the scene inactive and back, which
+    /// re-runs every anchor, so a tip held back here asks again then. If the
+    /// request itself errors the status stays undetermined and tips stay off:
+    /// fails closed.
+    static func appCanShowTips(sceneIsActive: Bool, notificationPromptSettled: Bool) -> Bool {
+        sceneIsActive && notificationPromptSettled
     }
 
-    /// How long an anchor waits before asking: the settle delay, stretched to
-    /// the end of the launch grace on a fresh process.
-    static func delayBeforeAsking(processAge: TimeInterval) -> TimeInterval {
-        max(settleDelay, launchGrace - processAge)
+    /// The permission alert can no longer appear: it was answered (any status
+    /// but `.notDetermined`) or the launch argument suppresses the ask.
+    static func notificationPromptSettled(authorizationIsNotDetermined: Bool, promptSuppressed: Bool) -> Bool {
+        promptSuppressed || !authorizationIsNotDetermined
     }
 
     /// Pinning is only taught where a tap would actually pin: an unpinned
-    /// subject, a free slot, no save in flight, an account store that is not
-    /// mid-restore, and no pin message, alert or sheet already on screen.
+    /// subject, a free slot, no save in flight, a pin store that accepts adds,
+    /// and no pin message, alert or sheet already on screen.
     static func pinUsable(isDetailAnchor: Bool, isPinned: Bool, isSaving: Bool, canPin: Bool,
-                          pinStoreIsLoading: Bool, isShowingPinMessage: Bool) -> Bool {
-        isDetailAnchor && !isPinned && !isSaving && canPin && !pinStoreIsLoading && !isShowingPinMessage
+                          pinLoadState: PinLoadState, isShowingPinMessage: Bool) -> Bool {
+        isDetailAnchor && !isPinned && !isSaving && canPin && pinStoreAcceptsAdds(pinLoadState)
+            && !isShowingPinMessage
+    }
+
+    /// `PinManager.togglePin` refuses every add on a signed-in account whose
+    /// pins are not `.loaded` — still restoring OR failed — with "Refresh your
+    /// saved pins". `.local` (signed out) has no account store to wait for.
+    static func pinStoreAcceptsAdds(_ state: PinLoadState) -> Bool {
+        switch state {
+        case .local, .loaded: return true
+        case .loading, .failed: return false
+        }
     }
 
     /// A reader with anything pinned has already found the control.
@@ -163,6 +178,38 @@ nonisolated enum ContextualTipEligibility10876 {
     }
 }
 
+/// #10876 — one pin engagement per mounted detail page: the first `pinDwell`
+/// seconds of continuous on-screen, foreground time on it. Leaving the
+/// foreground or the screen restarts the clock; once donated, nothing on this
+/// page donates again — the notification alert or a trip to the background must
+/// not turn one visit into the two the pin rule waits for.
+nonisolated struct PinDwell10876: Equatable, Sendable {
+    private(set) var activeSince: Date?
+    private(set) var donated = false
+
+    mutating func sceneChanged(isActive: Bool, now: Date) {
+        if !isActive {
+            activeSince = nil
+        } else if activeSince == nil {
+            activeSince = now
+        }
+    }
+
+    /// When the dwell in progress completes; `nil` once donated or while the
+    /// scene is not active.
+    var dueDate: Date? {
+        guard !donated, let activeSince else { return nil }
+        return activeSince.addingTimeInterval(ContextualTipEligibility10876.pinDwell)
+    }
+
+    /// True at most once per page, when a dwell has completed.
+    mutating func donateIfDue(now: Date) -> Bool {
+        guard let dueDate, now >= dueDate else { return false }
+        donated = true
+        return true
+    }
+}
+
 /// #10876 — the test-only switch, read like `LaunchRig` reads its arguments:
 /// `-contextual_tips_10876 reset` starts this launch as a fresh reader (TipKit's
 /// own datastore only — pins, consent and every other preference are
@@ -180,21 +227,5 @@ nonisolated enum ContextualTipLaunchOption10876: Equatable, Sendable {
         case "hidden": return .hidden
         default: return .normal
         }
-    }
-}
-
-/// #10876 — how long this process has been running, from the kernel's record
-/// of its start, so the launch grace holds no matter when the first anchor
-/// appears. `nil` if the kernel will not say; callers then fall back to the
-/// first time they asked.
-nonisolated enum ProcessAge10876 {
-    static func startDate() -> Date? {
-        var info = kinfo_proc()
-        var size = MemoryLayout<kinfo_proc>.stride
-        var mib: [Int32] = [CTL_KERN, KERN_PROC, KERN_PROC_PID, getpid()]
-        guard sysctl(&mib, u_int(mib.count), &info, &size, nil, 0) == 0, size > 0 else { return nil }
-        let started = info.kp_proc.p_un.__p_starttime
-        guard started.tv_sec > 0 else { return nil }
-        return Date(timeIntervalSince1970: TimeInterval(started.tv_sec) + TimeInterval(started.tv_usec) / 1_000_000)
     }
 }

@@ -72,7 +72,7 @@ struct PinButton: View {
             usable: !compact && ContextualTipEligibility10876.pinUsable(
                 isDetailAnchor: !compact, isPinned: pinned, isSaving: saving,
                 canPin: pinManager.canPin(type: type),
-                pinStoreIsLoading: pinManager.loadState == .loading,
+                pinLoadState: pinManager.loadState,
                 isShowingPinMessage: pinManager.feedback != nil || showManagementAlert || showPinManagement),
             learned: !compact && ContextualTipEligibility10876.pinLearned(savedPinCount: pinManager.savedPins.count))
     }

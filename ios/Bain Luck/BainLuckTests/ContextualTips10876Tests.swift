@@ -126,31 +126,44 @@ final class ContextualTips10876Tests: XCTestCase {
 
     // MARK: - App-level suppression
 
-    func testNoTipBeforeTheLaunchGraceOrWhileTheSceneIsInactive() {
-        let grace = ContextualTipEligibility10876.launchGrace
-        XCTAssertFalse(ContextualTipEligibility10876.appCanShowTips(sceneIsActive: true, processAge: grace - 1),
-                       "a tip could race the notification permission alert")
-        XCTAssertFalse(ContextualTipEligibility10876.appCanShowTips(sceneIsActive: false, processAge: grace + 60),
+    func testNoTipWhileTheSceneIsInactiveOrThePermissionAlertIsStillToCome() {
+        let e = ContextualTipEligibility10876.self
+        XCTAssertTrue(e.appCanShowTips(sceneIsActive: true, notificationPromptSettled: true), "control")
+        XCTAssertFalse(e.appCanShowTips(sceneIsActive: false, notificationPromptSettled: true),
                        "a tip during a system alert or sheet")
-        XCTAssertTrue(ContextualTipEligibility10876.appCanShowTips(sceneIsActive: true, processAge: grace))
-        // The grace must outlast NotificationManager's own 5 s delay.
-        XCTAssertGreaterThan(grace, 5)
+        XCTAssertFalse(e.appCanShowTips(sceneIsActive: true, notificationPromptSettled: false),
+                       "a tip that the permission alert, still to come, could land on")
     }
 
-    func testTheAskDelayStretchesToTheEndOfTheGraceAndNeverDropsBelowTheSettle() {
+    func testThePermissionAlertIsSettledOnceAnsweredOrSuppressed() {
         let e = ContextualTipEligibility10876.self
-        XCTAssertEqual(e.delayBeforeAsking(processAge: 0), e.launchGrace)
-        XCTAssertEqual(e.delayBeforeAsking(processAge: e.launchGrace - 1), e.settleDelay)
-        XCTAssertEqual(e.delayBeforeAsking(processAge: 3_600), e.settleDelay)
+        XCTAssertFalse(e.notificationPromptSettled(authorizationIsNotDetermined: true, promptSuppressed: false),
+                       "undetermined and not suppressed: the alert is still coming")
+        XCTAssertTrue(e.notificationPromptSettled(authorizationIsNotDetermined: false, promptSuppressed: false),
+                      "answered (allowed, denied, provisional)")
+        XCTAssertTrue(e.notificationPromptSettled(authorizationIsNotDetermined: true, promptSuppressed: true),
+                      "the launch argument means it never comes")
+    }
+
+    func testTheAskWaitsOnThePermissionStatusNotOnAClock() throws {
+        let tips = try String(contentsOf: Self.tipsSource, encoding: .utf8)
+        let rules = try String(contentsOf: Self.rulesSource, encoding: .utf8)
+        XCTAssertTrue(tips.contains("notificationSettings().authorizationStatus"))
+        XCTAssertTrue(tips.contains("NotificationManager.shouldRequestPermission()"),
+                      "the suppression launch argument is the manager's own, not a copy")
+        for source in [tips, rules] {
+            XCTAssertFalse(source.contains("launchGrace"), "a launch-relative grace cannot promise to follow loadPins()")
+            XCTAssertFalse(source.contains("kinfo_proc"), "kernel start time includes iOS prewarm")
+        }
     }
 
     // MARK: - Pin
 
     private func pinUsable(isDetailAnchor: Bool = true, isPinned: Bool = false, isSaving: Bool = false,
-                           canPin: Bool = true, loading: Bool = false, message: Bool = false) -> Bool {
+                           canPin: Bool = true, load: PinLoadState = .loaded, message: Bool = false) -> Bool {
         ContextualTipEligibility10876.pinUsable(
             isDetailAnchor: isDetailAnchor, isPinned: isPinned, isSaving: isSaving, canPin: canPin,
-            pinStoreIsLoading: loading, isShowingPinMessage: message)
+            pinLoadState: load, isShowingPinMessage: message)
     }
 
     func testPinIsTaughtOnlyWhereATapWouldPin() {
@@ -159,8 +172,73 @@ final class ContextualTips10876Tests: XCTestCase {
         XCTAssertFalse(pinUsable(isPinned: true), "taught on something already pinned")
         XCTAssertFalse(pinUsable(isSaving: true), "taught while a save is in flight")
         XCTAssertFalse(pinUsable(canPin: false), "taught at the pin limit, where a tap refuses")
-        XCTAssertFalse(pinUsable(loading: true), "taught while the account's pins restore")
         XCTAssertFalse(pinUsable(message: true), "taught over a pin message, alert or sheet")
+    }
+
+    /// `PinManager.togglePin` refuses an add on a signed-in account unless its
+    /// pins are `.loaded`; `.local` is signed out, where adds always go through.
+    func testPinIsTaughtInEveryLoadStateWhereAnAddGoesThroughAndNoOther() {
+        XCTAssertTrue(pinUsable(load: .local), "signed out: a tap pins locally")
+        XCTAssertTrue(pinUsable(load: .loaded), "signed in, pins restored")
+        XCTAssertFalse(pinUsable(load: .loading), "taught while the account's pins restore")
+        XCTAssertFalse(pinUsable(load: .failed),
+                       "taught where the tap answers \"Refresh your saved pins\" (pin load failed)")
+    }
+
+    func testThePinLoadStateGateMirrorsTheAddRefusal() throws {
+        let manager = try String(contentsOf: Self.appDir.appendingPathComponent("Services/PinManager.swift"),
+                                 encoding: .utf8)
+        XCTAssertTrue(manager.contains("binding.userID != nil, loadState != .loaded {"),
+                      "togglePin's add refusal changed; re-derive pinStoreAcceptsAdds")
+    }
+
+    // MARK: - Pin engagement
+
+    private let d0 = Date(timeIntervalSince1970: 1_790_000_000)
+
+    func testOneEngagementAfterTenForegroundSeconds() {
+        var dwell = PinDwell10876()
+        dwell.sceneChanged(isActive: true, now: d0)
+        XCTAssertFalse(dwell.donateIfDue(now: d0.addingTimeInterval(9.9)), "donated before the dwell")
+        XCTAssertTrue(dwell.donateIfDue(now: d0.addingTimeInterval(10)), "control: a full dwell donates")
+    }
+
+    func testLeavingTheForegroundRestartsTheDwell() {
+        var dwell = PinDwell10876()
+        dwell.sceneChanged(isActive: true, now: d0)
+        dwell.sceneChanged(isActive: false, now: d0.addingTimeInterval(7))
+        XCTAssertNil(dwell.dueDate)
+        dwell.sceneChanged(isActive: true, now: d0.addingTimeInterval(8))
+        XCTAssertFalse(dwell.donateIfDue(now: d0.addingTimeInterval(12)), "7 s + 4 s counted as one dwell")
+        XCTAssertTrue(dwell.donateIfDue(now: d0.addingTimeInterval(18)))
+    }
+
+    /// lane1b R3: the permission alert (or a trip to the background) took the
+    /// scene inactive and back, and the old `.task(id:)` donated again.
+    func testInactiveThenActiveThenTenSecondsGivesNoSecondDonation() {
+        var dwell = PinDwell10876()
+        dwell.sceneChanged(isActive: true, now: d0)
+        XCTAssertTrue(dwell.donateIfDue(now: d0.addingTimeInterval(10)))
+        dwell.sceneChanged(isActive: false, now: d0.addingTimeInterval(11))
+        dwell.sceneChanged(isActive: true, now: d0.addingTimeInterval(12))
+        XCTAssertNil(dwell.dueDate, "a second dwell was scheduled on the same page")
+        XCTAssertFalse(dwell.donateIfDue(now: d0.addingTimeInterval(30)), "one visit counted twice")
+    }
+
+    func testARepeatedActiveSignalDoesNotRestartTheDwell() {
+        var dwell = PinDwell10876()
+        dwell.sceneChanged(isActive: true, now: d0)
+        dwell.sceneChanged(isActive: true, now: d0.addingTimeInterval(5))
+        XCTAssertTrue(dwell.donateIfDue(now: d0.addingTimeInterval(10)))
+        XCTAssertFalse(dwell.donateIfDue(now: d0.addingTimeInterval(20)), "donated twice from one dwell")
+    }
+
+    func testTheEngagementModifierKeepsOneDwellPerPage() throws {
+        let tips = try String(contentsOf: Self.tipsSource, encoding: .utf8)
+        XCTAssertTrue(tips.contains("@State private var dwell = PinDwell10876()"))
+        XCTAssertTrue(tips.contains("dwell.donateIfDue(now: Date())"), "the donation no longer passes through the dwell")
+        XCTAssertTrue(tips.contains(".onDisappear { dwell.sceneChanged(isActive: false, now: Date()) }"),
+                      "leaving the page must stop the clock and keep `donated`")
     }
 
     func testAnythingPinnedMeansPinningIsLearned() {
@@ -258,12 +336,6 @@ final class ContextualTips10876Tests: XCTestCase {
                       "UI journeys can have a tip popover eat their taps")
     }
 
-    func testTheProcessAgeComesFromTheKernel() throws {
-        let started = try XCTUnwrap(ProcessAge10876.startDate())
-        XCTAssertLessThanOrEqual(started, Date())
-        XCTAssertGreaterThan(started, Date().addingTimeInterval(-86_400 * 7))
-    }
-
     // MARK: - Copy names the real controls
 
     func testTheTipsNameTheControlsTheyExplain() throws {
@@ -287,4 +359,5 @@ final class ContextualTips10876Tests: XCTestCase {
     }
     private static var appDir: URL { projectDir.appendingPathComponent("Bain Luck") }
     private static var tipsSource: URL { appDir.appendingPathComponent("Tips/ContextualTips10876.swift") }
+    private static var rulesSource: URL { appDir.appendingPathComponent("Tips/ContextualTipRules10876.swift") }
 }
