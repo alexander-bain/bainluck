@@ -41,7 +41,7 @@ import {
   isFuturesRangeKey,
   type FuturesRangeKey,
 } from "@/lib/futuresHistoryRange";
-import { archiveWidenedRange, historyRangeDataAttributes, historyRangeOption } from "@/lib/historyRange";
+import { archiveWidenedRange, historyRangeDataAttributes, historyRangeOption, servedPartialHistory } from "@/lib/historyRange";
 import { renderedOutcomeRowPercents } from "@/lib/renderedPercent";
 import ErrorMessage from "@/components/ErrorMessage";
 import { usePinnedFutures } from "@/hooks";
@@ -1305,6 +1305,7 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
               marketName={market?.name}
               cadenceNoteShown={trendCadenceNote != null}
               seriesOrder={chartSeriesOrder}
+              historyWithheld={servedPartialHistory(historyData)}
             />
           )}
           {/* The clarification: WHY the blend line moved (#871-style). Suppressed

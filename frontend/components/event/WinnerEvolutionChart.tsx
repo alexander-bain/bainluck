@@ -18,7 +18,7 @@
 import { useMemo, useState } from "react";
 import useSWR from "swr";
 import { fetchFuturesHistory } from "@/lib/api";
-import { historyRangeOption } from "@/lib/historyRange";
+import { historyRangeOption, servedPartialHistory } from "@/lib/historyRange";
 import type { FuturesOutcomeHistory } from "@/lib/types";
 import { outcomesByLatestProb } from "@/lib/eventConceptDisplay";
 import { FuturesChart } from "@/components/FuturesChart";
@@ -104,6 +104,7 @@ export default function WinnerEvolutionChart({
           showLegend
           height={280}
           greenTheme={domain === "golf"}
+          historyWithheld={servedPartialHistory(data)}
         />
       )}
     </section>

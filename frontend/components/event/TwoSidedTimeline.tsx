@@ -9,7 +9,7 @@
 import { useState } from "react";
 import useSWR from "swr";
 import { fetchFuturesHistory } from "@/lib/api";
-import { historyRangeOption } from "@/lib/historyRange";
+import { historyRangeOption, servedPartialHistory } from "@/lib/historyRange";
 import { formatProbability } from "@/lib/api";
 import { fieldOrder } from "@/lib/eventConceptDisplay";
 import { renderedDuelPercents } from "@/lib/renderedPercent";
@@ -207,6 +207,7 @@ export default function TwoSidedTimeline({
             showAxes
             showLegend={false}
             height={240}
+            historyWithheld={servedPartialHistory(data)}
           />
         </div>
       )}

@@ -15,7 +15,7 @@
 import { useMemo, useState } from "react";
 import useSWR from "swr";
 import { fetchFuturesHistory } from "@/lib/api";
-import { historyRangeOption } from "@/lib/historyRange";
+import { historyRangeOption, servedPartialHistory } from "@/lib/historyRange";
 import type { FuturesOutcomeHistory } from "@/lib/types";
 import { FuturesChart } from "@/components/FuturesChart";
 import ChartRangeChips from "@/components/event/ChartRangeChips";
@@ -137,6 +137,7 @@ export default function SettledPathChart({
           // resolution, so the sparse-history footnote must never promise further
           // price updates. Settled by construction, not by a runtime check.
           settled
+          historyWithheld={servedPartialHistory(data)}
         />
       )}
     </section>

@@ -6,7 +6,7 @@ import { FuturesChart } from "@/components/FuturesChart";
 import { EvolutionLeaderboard } from "@/components/EvolutionLeaderboard";
 import { fetchFuturesHistory, fetchMultiMarketHistory, fetchFuturesMarket } from "@/lib/api";
 import { fieldIsOneQuestion } from "@/lib/combinedLinePolicy";
-import { historyRangeDataAttributes, historyRangeOption } from "@/lib/historyRange";
+import { historyRangeDataAttributes, historyRangeOption, servedPartialHistory } from "@/lib/historyRange";
 import type { FuturesOutcomeHistory } from "@/lib/types";
 import {
   SERIES_COLORS,
@@ -440,6 +440,7 @@ export function EvolutionView({
           showLegend={false}
           height={isFullscreen ? 600 : 300}
           className="w-full"
+          historyWithheld={servedPartialHistory(historyData)}
         />
       </div>
       <div className="w-full sm:w-[180px] sm:flex-shrink-0 sm:border-l border-t sm:border-t-0 border-surface-border px-3 py-2 sm:overflow-y-auto">

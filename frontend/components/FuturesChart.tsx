@@ -3,6 +3,7 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { FuturesHistoryPoint, FuturesOutcomeHistory } from "@/lib/types";
 import { archiveChartNote, archiveTooltipNote } from "@/lib/archiveHistory";
+import { PARTIAL_HISTORY_CAPTION } from "@/lib/historyRange";
 import { axisTimeFormat, formatAxisTime } from "@/lib/chartAxisTimeLabel";
 import { chartYTicks } from "@/lib/chartCeiling";
 import { canZoomSeries, computeZoomBound, resolveYAxisMax } from "@/lib/chartZoom";
@@ -155,6 +156,10 @@ interface FuturesChartProps {
    *  neither moves when the range changes what the history response holds.
    *  Absent everywhere else, where those callers render as before. */
   seriesOrder?: readonly { id: number; name: string }[];
+  /** #683: the full read left some older history out (`servedPartialHistory`
+   *  in `lib/historyRange.ts`). One caption under the plot; the drawn points
+   *  are unchanged. Absent everywhere a caller did not ask for the full range. */
+  historyWithheld?: boolean;
 }
 
 export function FuturesChart({
@@ -181,6 +186,7 @@ export function FuturesChart({
   marketName,
   cadenceNoteShown = false,
   seriesOrder,
+  historyWithheld = false,
 }: FuturesChartProps) {
   const effectiveShowLegend = showLegend ?? !mini;
   const effectiveShowAxes = showAxes ?? !mini;
@@ -971,6 +977,15 @@ export function FuturesChart({
           data-archive-points={archiveNote.points}
         >
           {archiveNote.text}
+        </p>
+      )}
+      {/* #683 — the server left out archive intervals it could not place
+          against our own captures in time. Without a word the gap reads as a
+          quiet market; with more than one plain sentence it is method prose
+          (notice 34). Counts stay in the payload for probes. */}
+      {!mini && historyWithheld && (
+        <p className="text-xs text-text-muted" data-testid="futures-chart-history-partial">
+          {PARTIAL_HISTORY_CAPTION}
         </p>
       )}
 

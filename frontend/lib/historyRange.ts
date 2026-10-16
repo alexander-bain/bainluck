@@ -37,6 +37,15 @@
  *  - `historyRangeDataAttributes` puts basis, coverage and thinning on the chart
  *    card as `data-*` attributes, so a probe can tell a complete archive from a
  *    partial one without the reader being told about our plumbing.
+ *
+ * ONE READER-FACING EXCEPTION (calibration, 10/16). When the server could not
+ * decide, inside its read budget, whether an archive interval overlaps our own
+ * captures, it now leaves that interval out and says `served_history:
+ * "partial"` instead of silently treating it as covered. A chart with a hole it
+ * does not mention reads as a quiet market, so `servedPartialHistory` turns on
+ * ONE short caption (`PARTIAL_HISTORY_CAPTION`) under the chart. No counts, no
+ * method (notice 34 / D102); every served point is drawn exactly as before.
+ * `complete` or absent ⇒ no caption.
  */
 
 import type { FuturesHistoryRange, FuturesHistoryResponse } from "@/lib/types";
@@ -73,6 +82,20 @@ export function archiveWidenedRange(
   return readHistoryRange(response)?.window_start_basis === "archive_first_interval";
 }
 
+/** The one caption a partial full read earns. Plain words, no counts. */
+export const PARTIAL_HISTORY_CAPTION = "Some older prices aren't shown.";
+
+/**
+ * True only when a full read says it left history out (`served_history:
+ * "partial"`). Absent, `complete`, an unknown word, or a server that did not
+ * answer as full are all false — the caption never fires on a guess.
+ */
+export function servedPartialHistory(
+  response: Pick<FuturesHistoryResponse, "history_range"> | null | undefined,
+): boolean {
+  return readHistoryRange(response)?.served_history === "partial";
+}
+
 /** Probe attributes for the chart card. `{}` when the read was not full. */
 export function historyRangeDataAttributes(
   response: Pick<FuturesHistoryResponse, "history_range"> | null | undefined,
@@ -87,6 +110,8 @@ export function historyRangeDataAttributes(
   attrs["data-archive-coverage"] = block.archive_coverage || "unknown";
   const thinned = Array.isArray(block.thinned_outcomes) ? block.thinned_outcomes.length : 0;
   attrs["data-history-range-thinned"] = String(thinned);
+  // Absent = complete, by the contract (an older server never withholds).
+  attrs["data-history-served"] = servedPartialHistory(response) ? "partial" : "complete";
   return attrs;
 }
 
