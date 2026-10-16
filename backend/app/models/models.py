@@ -1124,6 +1124,30 @@ class FuturesOutcome(Base):
 
     __table_args__ = (
         UniqueConstraint("market_id", "external_id", name="uq_outcome_market_external"),
+        # #2408: the dated-24h movement statement (A11) reads every ungraded,
+        # priced row touched in the last 24 hours. Through the full
+        # `ix_futures_outcomes_last_updated` that range also returns every
+        # graded row the pollers re-stamp, and each one costs a heap visit.
+        # The predicate repeats A11's own clauses exactly so the planner can
+        # prove it. Plain key on purpose: a covering variant only skips the heap
+        # on all-visible pages, and a re-stamp clears its page's all-visible bit
+        # until vacuum sets it again. In the local rig's churn state no page was
+        # all-visible and the covering form saved nothing over the plain key;
+        # that is the tested state, not an invariant
+        # (artifacts/2408-index-prereq-20261016). Production builds it by a
+        # separately attended `CREATE INDEX CONCURRENTLY` (gotcha #31),
+        # so no migration creates it; it is declared here so a later
+        # `--autogenerate` does not emit a revision that drops it.
+        Index(
+            "ix_fo_unresolved_priced_last_updated",
+            "last_updated",
+            postgresql_where=text(
+                "resolution_source IS NULL AND current_probability IS NOT NULL"
+            ),
+            sqlite_where=text(
+                "resolution_source IS NULL AND current_probability IS NOT NULL"
+            ),
+        ),
     )
 
     # Relationships
