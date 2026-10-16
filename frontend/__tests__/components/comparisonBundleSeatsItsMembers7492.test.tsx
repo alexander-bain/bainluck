@@ -178,7 +178,7 @@ describe("#7492 — the comparison bundle seats the comparison", () => {
     // so there is no control: a footer that reveals a row by costing a row is
     // the defect, not a smaller version of it.
     expect(html).not.toContain("Show 1 more");
-    expect(html).not.toMatch(/All \d+ questions/);
+    expect(html).not.toMatch(/All \d+ markets/);
   });
 
   it("🔴 seats exactly the peek when there are more members, in the sibling's words", () => {
@@ -186,7 +186,7 @@ describe("#7492 — the comparison bundle seats the comparison", () => {
 
     expect(seated(html, OVERFLOW)).toBe(BUNDLE_PEEK_COUNT);
     expect(seated(html, OVERFLOW.slice(0, BUNDLE_PEEK_COUNT))).toBe(BUNDLE_PEEK_COUNT);
-    expect(html).toContain(`All ${OVERFLOW.length} questions`);
+    expect(html).toContain(`All ${OVERFLOW.length} markets`);
     // `Show N more` was this card's private grammar; the family has one.
     expect(html).not.toContain("more</button>");
   });
@@ -195,14 +195,14 @@ describe("#7492 — the comparison bundle seats the comparison", () => {
     "🔴 %s: one member past the peek is seated, not hidden behind a footer that costs a row (#9642)",
     (kind) => {
       // At a five-seat peek a four-member group never asked for a tap; the
-      // three-seat peek of design A must not make it start. `All 4 questions`
+      // three-seat peek of design A must not make it start. `All 4 markets`
       // under three rows is `Show 1 more` in new words.
       const ONE_OVER = OVERFLOW.slice(0, BUNDLE_PEEK_COUNT + 1);
       const html = render(ONE_OVER, kind === "theme" ? { kind: "theme", story_key: "ipo" } : {});
 
       expect(html).toContain(SHARED_QUESTION);
       expect(seated(html, ONE_OVER)).toBe(ONE_OVER.length);
-      expect(html).not.toMatch(/All \d+ questions/);
+      expect(html).not.toMatch(/All \d+ markets/);
     },
   );
 
@@ -223,6 +223,6 @@ describe("#7492 — the comparison bundle seats the comparison", () => {
     const html = render(OVERFLOW, { kind: "theme", story_key: "ipo" });
 
     expect(seated(html, OVERFLOW)).toBe(BUNDLE_PEEK_COUNT);
-    expect(html).toContain(`All ${OVERFLOW.length} questions`);
+    expect(html).toContain(`All ${OVERFLOW.length} markets`);
   });
 });
