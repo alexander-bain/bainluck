@@ -53,6 +53,36 @@ final class SearchCollectionConsumerTests: XCTestCase {
         XCTAssertEqual(entries.map { $0.collection.revision }, [4, 2])
     }
 
+    func testSportsEditionLabelsNeverPrintSwiftOptionalOrZeroFallbacks() throws {
+        let cards = try SearchCollectionFixture.cards("search_by_games") + SearchCollectionFixture.cards("browse_mlb")
+        let entries = SearchCollectionRows.entries(in: try SearchCollectionFixture.decode(cards: cards))
+        XCTAssertEqual(entries.count, 2)
+        for entry in entries {
+            let label = try XCTUnwrap(SearchCollectionRows.editionLabel(for: entry))
+            XCTAssertTrue(label.contains("2026"))
+            XCTAssertFalse(label.contains("Optional("))
+            XCTAssertFalse(label.contains("Week 0"))
+        }
+    }
+
+    func testMissingSportsIdentityFailsClosedWithoutErasingHealthySearchSibling() throws {
+        let source = try XCTUnwrap(SearchCollectionFixture.cards("search_by_games").first)
+        let healthy = try XCTUnwrap(SearchCollectionFixture.cards("browse_mlb").first)
+        for field in ["league", "season"] {
+            for explicitNull in [false, true] {
+                var bad = source
+                var edition = try XCTUnwrap(bad["edition"] as? [String: Any])
+                if explicitNull { edition[field] = NSNull() }
+                else { edition.removeValue(forKey: field) }
+                bad["edition"] = edition
+                let response = try SearchCollectionFixture.decode(cards: [bad, healthy])
+                XCTAssertEqual(SearchCollectionRows.entries(in: response).map(\.id), ["mlb-2026-postseason"])
+                let raw = try XCTUnwrap(response.collectionDiscovery?.collections.first)
+                XCTAssertNil(SearchCollectionRows.editionLabel(for: ContainerDiscoveryEntry(collection: raw)))
+            }
+        }
+    }
+
     func testMalformedOptionalFieldOrSiblingDoesNotEraseOrdinaryResults() throws {
         var object = try JSONSerialization.jsonObject(with: Data(SearchProdFixture.usOpenJSON.utf8)) as! [String: Any]
         let old = try SearchCollectionFixture.decodeObject(object)
