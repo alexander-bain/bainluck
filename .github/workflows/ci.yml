@@ -4869,11 +4869,17 @@ jobs:
         # the wrong-number face is visible on base. Plus an anchorless seed
         # where the qualified spelling has no ticker and must stay unbound.
         #
+        # #11148 rides the same step: the unbound `Miami (OH)` row looked its
+        # metadata up with the qualifier stripped (`miami`, a Hurricanes alias),
+        # so the grid served two rows claiming the Hurricanes and the event
+        # page's Season outcomes printed Miami (OH)'s 3%.
+        #
         # Same skip detection as every gate in this job.
         if: matrix.group == 'shared-tail' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_grid_miami_identity_7829_pg.py \
+            tests/integration/test_grid_miami_oh_row_identity_11148_pg.py \
             -v -rs 2>&1 | tee /tmp/miamiidentity7829.txt
           if grep -qiE "[0-9]+ skipped" /tmp/miamiidentity7829.txt; then
             echo "::error::#7829 Miami identity grid gate SKIPPED — the gate did not run"

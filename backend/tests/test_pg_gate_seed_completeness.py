@@ -517,6 +517,10 @@ COVERED = (
     # NOT NULL column added to any of those four tables fails this parse rather
     # than a red deploy.
     "test_grid_miami_identity_7829_pg.py",
+    # #11148. The unbound `Miami (OH)` row on the same grid route. Seeds
+    # `sports`, `teams` (abbreviation + alternate_names are the identity under
+    # test), `futures_markets` and `futures_outcomes` by raw INSERT.
+    "test_grid_miami_oh_row_identity_11148_pg.py",
     # #6975: seeds `sports` with an explicit reserved id (the #6221 sibling's
     # reason — the shared CI database's sequence is behind its explicit-id
     # rows); every other row goes through the ORM so Python-side defaults
