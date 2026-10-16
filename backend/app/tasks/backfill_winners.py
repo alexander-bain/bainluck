@@ -1369,8 +1369,82 @@ async def _repair_openings_from_first_snapshot(
     return stats
 
 
+#: #1853: the stored legs of one Kalshi event, as the archive arm plans them.
+_ARCHIVE_STORED_LEGS_SQL = """
+    SELECT fo.id, fo.external_id, fo.resolution_source, fo.is_winner
+    FROM futures_outcomes fo
+    JOIN futures_markets fm ON fm.id = fo.market_id
+    WHERE fm.source = 'kalshi' AND fm.external_id = :event_ticker
+    ORDER BY fo.id
+"""
+
+async def _grade_from_archive(
+    session, event_ticker: str, legs: list, stats: dict, *, dry_run: bool, expiring: bool
+) -> list[int]:
+    """#1853: grade one event's never-graded legs from its exact archive listing.
+
+    The decision is :func:`app.utils.kalshi_archive_grades.plan_archive_grades`
+    (shared with the attended exact-ID repair). The write is the live arm's own
+    values — verdict, ``api_settlement``, settled price (#5246 / CERT-2637) — on
+    ONE leg at a time, and only while that leg is still exactly as planned: no
+    grade and no source. A leg graded by anyone between the read and the write
+    is left alone and counted, never overwritten. Returns the ids it wrote.
+    """
+    from app.utils.kalshi_archive_grades import (
+        ARCHIVE_GRADE_SOURCE,
+        plan_archive_grades,
+        stored_legs,
+    )
+
+    rows = (await session.execute(
+        text(_ARCHIVE_STORED_LEGS_SQL), {"event_ticker": event_ticker}
+    )).all()
+    grades, refused = plan_archive_grades(legs, stored_legs(rows))
+    for reason, ids in refused.items():
+        if ids:
+            stats["archive_refused"][reason] = stats["archive_refused"].get(reason, 0) + len(ids)
+    written_ids: list[int] = []
+    if dry_run:
+        return written_ids
+    for grade in grades:
+        written = await session.execute(
+            update(FuturesOutcome)
+            .where(
+                FuturesOutcome.id == grade.outcome_id,
+                FuturesOutcome.resolution_source.is_(None),
+                FuturesOutcome.is_winner.is_(None),
+            )
+            .values(
+                is_winner=grade.is_winner,
+                resolution_source=ARCHIVE_GRADE_SOURCE,
+                last_updated=func.now(),
+                **settled_price_values(grade.is_winner),
+                price_changed_at=price_changed_at_value(
+                    FuturesOutcome.current_probability,
+                    FuturesOutcome.price_changed_at,
+                    1.0 if grade.is_winner else 0.0,
+                ),
+            )
+        )
+        if not written.rowcount:
+            stats["archive_refused"]["changed_since_read"] = (
+                stats["archive_refused"].get("changed_since_read", 0) + 1
+            )
+            continue
+        written_ids.append(grade.outcome_id)
+        stats["archive_graded"] += 1
+        stats["winners_set" if grade.is_winner else "losers_set"] += 1
+        if expiring:
+            stats["expiring_graded"] += 1
+    return written_ids
+
+
 async def _backfill_kalshi_winners(
-    limit: int = 2000, dry_run: bool = False, *, fast_lane_only: bool = False
+    limit: int = 2000,
+    dry_run: bool = False,
+    *,
+    fast_lane_only: bool = False,
+    archive_requests: int = 0,
 ):
     """Fetch settled Kalshi events by ticker and set is_winner from settlement data.
 
@@ -1418,6 +1492,11 @@ async def _backfill_kalshi_winners(
         # the markets about to become unprovable were the ones graded.
         "expiring_selected": 0,
         "expiring_graded": 0,
+        # #1853 archive arm — dormant unless `archive_requests` > 0. One counter
+        # per archive read outcome, and the legs it graded.
+        "archive_reads": {},
+        "archive_graded": 0,
+        "archive_refused": {},
         "tail_selected": 0,
         "early_selected": 0,
         "longdated_selected": 0,
@@ -1692,10 +1771,39 @@ async def _backfill_kalshi_winners(
             async with sem:
                 return ticker, await service.get_event(ticker)
 
+        # #1853: the archive arm. DORMANT by default (`archive_requests=0`): a
+        # deploy changes nothing, and turning it on is an explicit caller choice.
+        from app.tasks.kalshi_resolution_sweep import (
+            ArchiveBudget,
+            read_archived_event_legs,
+        )
+
+        archive_budget = ArchiveBudget(requests_left=max(0, int(archive_requests)))
+
         batch_size = 100
         for batch_start in range(0, len(tickers), batch_size):
             batch = tickers[batch_start : batch_start + batch_size]
             results = await asyncio.gather(*[_fetch(t) for t in batch])
+
+            # #1853: an event the live read FOUND but returned legless has moved
+            # its markets to the archive tier; the price-crown fallback below can
+            # grade it only when every leg sits at an extreme, so a 0.47 leg the
+            # venue finalized stays ungraded forever. Read the archive for those
+            # events now — before any session opens, so no transaction idles on
+            # the network — through #2722's exact-event primitive: exhausted,
+            # every leg naming the event, no repeated ticker, or no legs at all.
+            archived: dict[str, list] = {}
+            for event_ticker, event_data in results:
+                if not event_data or event_data.get("markets"):
+                    continue
+                if archive_budget.requests_left <= 0 and archive_budget.tripped is None:
+                    break
+                legs, outcome = await read_archived_event_legs(
+                    service, event_ticker, archive_budget
+                )
+                stats["archive_reads"][outcome] = stats["archive_reads"].get(outcome, 0) + 1
+                if outcome == "read":
+                    archived[event_ticker] = legs
 
             async with get_task_session() as session:
                 for event_ticker, event_data in results:
@@ -1707,6 +1815,16 @@ async def _backfill_kalshi_winners(
 
                     stats["events_found"] += 1
                     nested = event_data.get("markets") or []
+
+                    if not nested and event_ticker in archived:
+                        # Graded from the archive ONLY: no price-crown guess, no
+                        # price withdrawal, no status flip — #2722 owns status.
+                        await _grade_from_archive(
+                            session, event_ticker, archived[event_ticker], stats,
+                            dry_run=dry_run,
+                            expiring=event_ticker in expiring_set,
+                        )
+                        continue
 
                     if not nested:
                         stats.setdefault("no_markets", 0)

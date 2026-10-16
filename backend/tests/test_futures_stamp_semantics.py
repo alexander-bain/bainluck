@@ -669,7 +669,9 @@ PRICE_CHANGE_STAMPERS = {
     # reader's row travels. The raw-SQL graders in this file maintain the same
     # column through `settled_price_set_sql`, which spells the identical
     # predicate in SQL because a `text()` UPDATE cannot take a Core clause.
-    "app/tasks/backfill_winners.py": 1,
+    # #1853: + `_grade_from_archive`, the same grader's archive arm, writing the
+    # live arm's own settled values (dormant unless `archive_requests` > 0).
+    "app/tasks/backfill_winners.py": 2,
     # #2199. Its one price write carries the conditional change-stamp beside the
     # unconditional touch-stamp, so a refreshed-but-unmoved price does not read
     # as a move — `routes/playoffs.py` drops an outcome from the grid on a stale
