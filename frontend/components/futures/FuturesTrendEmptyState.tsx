@@ -20,6 +20,7 @@
 // reload the page to escape a rung their own tap put them on.
 
 import FuturesTrendRangeControls from "@/components/futures/FuturesTrendRangeControls";
+import { PartialHistoryCaption } from "@/components/PartialHistoryCaption";
 import {
   futuresRangeSpanWords,
   type FuturesRangeKey,
@@ -32,6 +33,8 @@ interface FuturesTrendEmptyStateProps {
   actualHours?: number | null;
   /** The market's own open, which sizes the "All" rung. */
   createdAt?: string | null;
+  /** #683: the full read left older prices out (`servedPartialHistory`). */
+  historyWithheld?: boolean;
 }
 
 export default function FuturesTrendEmptyState({
@@ -40,6 +43,7 @@ export default function FuturesTrendEmptyState({
   requestedHours,
   actualHours,
   createdAt,
+  historyWithheld = false,
 }: FuturesTrendEmptyStateProps) {
   // On "all" there is no wider rung to send anyone to, so an empty result here
   // really is an empty market — the original sentence, unchanged.
@@ -65,6 +69,9 @@ export default function FuturesTrendEmptyState({
             <span className="text-xs text-text-muted">Try a longer range.</span>
           </>
         )}
+        {/* #683 — an empty full read that held prices back is not an empty
+            market; the one caption says so without explaining the method. */}
+        {historyWithheld && <PartialHistoryCaption />}
       </div>
       {!marketIsEmpty && (
         <FuturesTrendRangeControls

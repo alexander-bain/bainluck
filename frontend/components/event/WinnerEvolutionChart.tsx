@@ -73,7 +73,10 @@ export default function WinnerEvolutionChart({
   );
 
   // Honest absence: no real path yet → render nothing (never a fabricated chart).
-  if (!isLoading && !hasHistory) return null;
+  // #683: unless a full read says it left older prices out — then the chart's
+  // sparse state says that rather than the section vanishing.
+  const historyWithheld = servedPartialHistory(data);
+  if (!isLoading && !hasHistory && !historyWithheld) return null;
 
   return (
     <section id="evolution" className="bg-surface-card rounded-card shadow-card p-6">

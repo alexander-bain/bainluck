@@ -3,7 +3,7 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { FuturesHistoryPoint, FuturesOutcomeHistory } from "@/lib/types";
 import { archiveChartNote, archiveTooltipNote } from "@/lib/archiveHistory";
-import { PARTIAL_HISTORY_CAPTION } from "@/lib/historyRange";
+import { PartialHistoryCaption } from "@/components/PartialHistoryCaption";
 import { axisTimeFormat, formatAxisTime } from "@/lib/chartAxisTimeLabel";
 import { chartYTicks } from "@/lib/chartCeiling";
 import { canZoomSeries, computeZoomBound, resolveYAxisMax } from "@/lib/chartZoom";
@@ -310,7 +310,11 @@ export function FuturesChart({
     return () => window.removeEventListener("resize", syncEdgeOverflow);
   }, [mini, displayedOutcomes, settled, syncEdgeOverflow]);
 
-  if (displayedOutcomes.length === 0) {
+  // #683: a full read that served nothing to draw and says it held some back
+  // falls through to the too-little-to-draw state below, which says so. A
+  // selection that matches none of the served lines keeps its prompt: that
+  // empty chart is the reader's choice, not the server's.
+  if (displayedOutcomes.length === 0 && !(historyWithheld && historyData.length === 0)) {
     if (mini) return null;
     return (
       <div className="h-48 flex items-center justify-center text-sm text-text-secondary">
@@ -354,6 +358,9 @@ export function FuturesChart({
             {priceCadenceNote(settled, { long: true })}
           </span>
         )}
+        {/* #683 — too few prices left to draw is exactly when the withheld
+            ones matter most; the caption under the plot never got here. */}
+        {historyWithheld && <PartialHistoryCaption />}
       </div>
     );
   }
@@ -983,11 +990,7 @@ export function FuturesChart({
           against our own captures in time. Without a word the gap reads as a
           quiet market; with more than one plain sentence it is method prose
           (notice 34). Counts stay in the payload for probes. */}
-      {!mini && historyWithheld && (
-        <p className="text-xs text-text-muted" data-testid="futures-chart-history-partial">
-          {PARTIAL_HISTORY_CAPTION}
-        </p>
-      )}
+      {!mini && historyWithheld && <PartialHistoryCaption />}
 
       {/* Legend — interactive (toggle) when a handler is supplied, otherwise a
           static key so single-question charts (e.g. the settled Path to

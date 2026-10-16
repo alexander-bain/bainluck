@@ -1354,6 +1354,7 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
           requestedHours={historyHours}
           actualHours={archiveWidenedRange(historyData) ? undefined : historyData?.actual_hours}
           createdAt={market?.created_at}
+          historyWithheld={servedPartialHistory(historyData)}
         />
       )}
 

@@ -146,6 +146,10 @@ export default function TwoSidedTimeline({
   const hasHistory = outcomes.some(
     (o) => o.history.filter((p) => p.probability != null).length >= 2,
   );
+  // #683: the All rung's full read can leave older prices out and too few to
+  // draw; the timeline (and its rung chips, the way back) still shows, and the
+  // chart's sparse state says what was withheld.
+  const historyWithheld = servedPartialHistory(data);
 
   return (
     <section id="head-to-head" className="bg-surface-card rounded-card shadow-card p-6">
@@ -182,7 +186,7 @@ export default function TwoSidedTimeline({
       )}
 
       {/* Shared timeline */}
-      {hasHistory && (
+      {(hasHistory || historyWithheld) && (
         <div className="mt-5">
           <div className="flex justify-end mb-2">
             <div className="flex rounded-full bg-surface-elevated p-0.5">

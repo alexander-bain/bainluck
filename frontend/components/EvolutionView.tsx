@@ -7,6 +7,7 @@ import { EvolutionLeaderboard } from "@/components/EvolutionLeaderboard";
 import { fetchFuturesHistory, fetchMultiMarketHistory, fetchFuturesMarket } from "@/lib/api";
 import { fieldIsOneQuestion } from "@/lib/combinedLinePolicy";
 import { historyRangeDataAttributes, historyRangeOption, servedPartialHistory } from "@/lib/historyRange";
+import { PartialHistoryCaption } from "@/components/PartialHistoryCaption";
 import type { FuturesOutcomeHistory } from "@/lib/types";
 import {
   SERIES_COLORS,
@@ -238,6 +239,8 @@ export function EvolutionView({
       })),
     };
   }, [historyData, checkCurrentPrices, currentMarket, currentError, activeMarketId]);
+  const historyWithheld = servedPartialHistory(historyData);
+  const emptyWithheld = historyWithheld && !!data && !error;
 
   // Derive day-boundary markers for the tournament range: start of each day
   // from tournament start through min(end, now). Uses UTC dates since the API
@@ -405,8 +408,11 @@ export function EvolutionView({
       </div>
     </div>
   ) : (!data || error || data.outcomes.length === 0) ? (
-    <div className="flex-1 min-w-0 px-3 sm:px-4 pt-2 pb-1 flex items-center justify-center" style={{ minHeight: 200 }}>
+    <div className={`flex-1 min-w-0 px-3 sm:px-4 pt-2 pb-1 flex ${emptyWithheld ? "flex-col gap-1.5 " : ""}items-center justify-center`} style={{ minHeight: 200 }}>
       <span className="text-sm text-text-muted">No history data available</span>
+      {/* #683: a full read that served no lines but says it left older prices
+          out — "no history" alone would deny the history the server holds. */}
+      {emptyWithheld && <PartialHistoryCaption />}
     </div>
   ) : (
     <>

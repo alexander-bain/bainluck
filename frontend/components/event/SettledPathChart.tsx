@@ -104,7 +104,10 @@ export default function SettledPathChart({
     return { plotted, selected };
   }, [windowed, championName]);
 
-  if (!isLoading && !hasHistory) return null;
+  // #683: a full read that left older prices out still owes the reader that
+  // sentence when too few remain to draw; the chart's sparse state carries it.
+  const historyWithheld = servedPartialHistory(data);
+  if (!isLoading && !hasHistory && !historyWithheld) return null;
 
   // For a settled event, cap markers at the event end (now-cap doesn't apply).
   const timeMarkers =
