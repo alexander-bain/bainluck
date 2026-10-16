@@ -260,6 +260,48 @@ def _season_variant_pair(a: "_Row", b: "_Row") -> bool:
 _COLLAPSIBLE_STATUSES: frozenset = frozenset({"scheduled", "completed", "closed"})
 
 
+# #11147 — THE VARIANT PASS NEVER HIDES A VENUE PRICE THE SURVIVOR LACKS.
+#
+# The rank below picks a survivor on the score and then the label, and #7700
+# justified the label rung with "measured, it is also the row carrying the
+# prices". That was measured on the NHL preseason. On the NBA preseason it is
+# backwards. Production 2026-10-16 22:5xZ, `/api/events/search?q=celtics`:
+#
+#     15327537  basketball_nba            ESPN + StatPal  kalshi, polymarket
+#     15330945  basketball_nba_preseason  Odds API        betting
+#
+# Pregame, neither row is scored, so the variant won and the search served
+# BOS @ PHI with sportsbooks only. Kalshi and Polymarket were hidden even though
+# we held both prices (Alex's rage shake 177). Every one of the 12 upcoming NBA
+# preseason pairs that day had this shape.
+#
+# The repair does not move the rank. It refuses the drop. If the losing row
+# carries a venue price the survivor does not, this pass leaves BOTH rows on
+# the page. The twin fold the caller runs next (`fold_twin_events`, whose #7915
+# season-variant pass reaches pairs up to 15 minutes apart) then elects one row
+# by `twin_identity_rank` and UNIONS the other's venues onto it, so the card
+# prints Kalshi, Polymarket and the sportsbooks together. Both call sites
+# (`/api/events/search` and the typeahead) run that fold straight after this
+# helper.
+#
+# If the fold declines the pair (the two rows are 15–30 minutes apart, say),
+# the reader sees two cards. That is the safe direction this module has always
+# chosen: a twin left on the page is a cosmetic defect, a hidden price is a
+# truth defect.
+#
+# Venue prices only, on purpose. The ESPN and stat models are blend inputs, not
+# venues. Counting them would hold nearly every completed NHL pair (the parent
+# carries `stat_model`) and quietly swap #7700's preseason label for the parent's
+# on a Final, where no venue price is at stake. The keys are
+# `aggregation.SOURCE_WEIGHTS`' three market sources, a guard asserts that.
+VENUE_PRICE_SOURCES: frozenset = frozenset({"betting", "kalshi", "polymarket"})
+
+
+def _hides_a_venue_price(survivor: "_Row", loser: "_Row") -> bool:
+    """True when dropping `loser` would take a venue price off the page."""
+    return bool(loser.venue_prices - survivor.venue_prices)
+
+
 def _variant_survivor_rank(row: "_Row") -> tuple:
     """Higher wins, and the two members of a variant pair can never tie.
 
@@ -273,7 +315,13 @@ def _variant_survivor_rank(row: "_Row") -> tuple:
     on the parent club), which is a different question from which EVENT row to
     render. Here the variant row is the one whose label is true — a September
     exhibition is not an NHL regular-season game (#7051 is the same complaint
-    from the other side) — and, measured, it is also the row carrying the prices.
+    from the other side) — and, measured on the NHL, it is also the row carrying
+    the prices.
+
+    #11147: on the NBA preseason it is NOT — the parent row holds Kalshi and
+    Polymarket and the variant only the sportsbook line. This rank is therefore
+    only ever allowed to decide a pair whose loser prices nothing the winner
+    lacks; :func:`_hides_a_venue_price` is the gate that makes that true.
     """
     return (1 if row.scored else 0, 1 if is_season_variant(row.sport_key) else 0)
 
@@ -329,7 +377,7 @@ class _Row:
 
     __slots__ = (
         "obj", "id", "home", "away", "commence_time", "scored", "sport_key",
-        "derived_start", "status", "priced", "empty_ghost",
+        "derived_start", "status", "priced", "empty_ghost", "venue_prices",
     )
 
     def __init__(self, obj: Any, sport_key: Any):
@@ -355,7 +403,16 @@ class _Row:
         # #8430. `win_probability_sources` is what a card's number is read
         # from, so "priced" is exactly "the card has something to print". An
         # empty dict (`{}`) is as unpriced as NULL.
-        self.priced = bool(getattr(obj, "win_probability_sources", None))
+        sources = getattr(obj, "win_probability_sources", None)
+        self.priced = bool(sources)
+        # #11147. The venues whose price this row's card would print. The stored
+        # dict also holds bookkeeping keys (`betting_book_count`,
+        # `espn_not_started_at`), so the key alone is never read as a price.
+        self.venue_prices = (
+            frozenset(k for k in VENUE_PRICE_SOURCES if sources.get(k))
+            if isinstance(sources, dict)
+            else frozenset()
+        )
         # Any one score or a `completed_at` is truth the reader would lose, so
         # this is deliberately looser than `scored` (which wants both halves).
         carries_truth = (
@@ -547,6 +604,10 @@ def _season_variant_duplicate_ids(rows: list["_Row"], dropped: set) -> None:
                 if not _season_variant_pair(richer, poorer):
                     continue
                 if not _within_same_fixture_separation(richer, poorer):
+                    continue
+                # #11147: never hide a venue price. Both rows go to the fold,
+                # which unions them; see `VENUE_PRICE_SOURCES`.
+                if _hides_a_venue_price(richer, poorer):
                     continue
                 # No rank comparison here, and that is not an omission. The sort
                 # above puts `richer` first, and the asymmetry gate means the two
