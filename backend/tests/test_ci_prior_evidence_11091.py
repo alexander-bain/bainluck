@@ -677,11 +677,13 @@ def test_push_security_preserves_original_pr_and_scheduled_analysis_behavior():
     for old, new in zip(old_job["steps"], kept):
         new = copy.deepcopy(new)
         if old["name"] == "Checkout":
-            assert new.pop("with") == {
+            checkout_options = new.pop("with")
+            assert checkout_options == {
                 "fetch-depth": "${{ github.event_name == 'push' && '0' || '1' }}"
             }
         if old["name"] == "Perform CodeQL Analysis":
-            assert new.pop("id") == "codeql_analysis"
+            analysis_step_id = new.pop("id")
+            assert analysis_step_id == "codeql_analysis"
         assert new == old
     assert all(
         s["if"] == SECURITY_CONDITION
