@@ -9,6 +9,9 @@ Only the original Actions run can supply the authenticated provenance artifact.
 from __future__ import annotations
 
 import argparse
+import base64
+import hashlib
+import math
 import datetime as dt
 import io
 import json
@@ -18,11 +21,20 @@ import re
 import subprocess
 import time
 import urllib.request
+import urllib.parse
 import zipfile
 
 ROOT = Path(__file__).resolve().parents[2]
 WORKFLOW = ".github/workflows/ci.yml"
 SHA = re.compile(r"[0-9a-f]{40}")
+CODEQL_WORKFLOW = ".github/workflows/codeql.yml"
+CODEQL_ANALYSIS_KEY = CODEQL_WORKFLOW + ":analyze"
+SECURITY_LANGUAGES = ("python", "javascript-typescript")
+SARIF_MAX_BYTES = 8_000_000  # >2x the observed 3.54 MB Python snapshot; SARIF ONLY.
+SECURITY_RECORD_STEP = "Record CodeQL checkout provenance"
+SECURITY_QUALIFY_STEP = "Qualify compose security or record master baseline"
+SECURITY_PUBLISH_STEP = "Publish CodeQL security receipt"
+UUID = re.compile(r"[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}")
 REFUSAL = re.compile(r"high|critical|medium|security vulnerabilit", re.I)
 
 
@@ -99,26 +111,161 @@ class API:
         )
         require(bool(token), "no Actions read token")
         self.prefix = f"https://api.github.com/repos/{repo}/"
+        self.repository_id = None
         self.token = token
         self.deadline = time.monotonic() + 75
         self.opener = urllib.request.build_opener(SafeRedirect())
 
-    def raw(self, path, limit=2_000_000):
+    def bind_repository(self, repository):
+        """Bind numeric pagination aliases to authenticated official run metadata."""
+        require(
+            _positive(repository.get("id"))
+            and isinstance(repository.get("full_name"), str)
+            and repository["full_name"].casefold()
+            == self.prefix.removeprefix("https://api.github.com/repos/")
+            .rstrip("/")
+            .casefold()
+            and self.repository_id in (None, repository["id"]),
+            "foreign repository pagination identity",
+        )
+        self.repository_id = repository["id"]
+
+    def _response(self, path, limit=2_000_000, accept="application/vnd.github+json"):
+        require(
+            not path.startswith(("/", "http:", "https:")), "invalid API relative path"
+        )
         remaining = self.deadline - time.monotonic()
         require(remaining > 0, "evidence decision deadline")
         request = urllib.request.Request(
             self.prefix + path,
             headers={
                 "Authorization": f"Bearer {self.token}",
-                "Accept": "application/vnd.github+json",
+                "Accept": accept,
                 "X-GitHub-Api-Version": "2022-11-28",
             },
         )
         with self.opener.open(request, timeout=min(10, remaining)) as response:
             require(response.status == 200, "non-200 evidence response")
             content = response.read(limit + 1)
+            headers = dict(response.headers.items())
         require(len(content) <= limit, "oversize evidence response")
-        return content
+        return content, headers
+
+    def raw(self, path, limit=2_000_000):
+        return self._response(path, limit)[0]
+
+    def sarif(self, path):
+        """Only this endpoint receives the larger named SARIF byte allowance."""
+        require(
+            re.fullmatch(r"code-scanning/analyses/[1-9][0-9]*", path),
+            "not a SARIF analysis endpoint",
+        )
+        return json.loads(
+            self._response(path, SARIF_MAX_BYTES, "application/sarif+json")[0]
+        )
+
+    def array_pages(self, path, *, older_than=None):
+        """Read a complete authenticated Link chain, or a complete created-time window.
+
+        older_than is an ISO UTC lower watermark, supported ONLY with explicit
+        sort=created&direction=desc. Ties are consumed fully. A page/time/size
+        limit before the older watermark or genuine EOF is an error, never a
+        clean partial history. Other API payload limits remain 2 MB.
+        """
+        initial = urllib.parse.urlsplit(self.prefix + path)
+        filters = urllib.parse.parse_qs(initial.query, strict_parsing=True)
+        require(
+            "page" not in filters and "per_page" not in filters,
+            "caller pagination is unsupported",
+        )
+        filters.update({"per_page": ["100"], "page": ["1"]})
+        if older_than is not None:
+            require(
+                filters.get("sort") == ["created"]
+                and filters.get("direction") == ["desc"],
+                "watermark requires descending created order",
+            )
+            watermark = stamp(older_than)
+        else:
+            watermark = None
+        current = path + ("&" if "?" in path else "?") + "per_page=100&page=1"
+        rows, seen, previous = [], set(), None
+        for page in range(1, 21):
+            content, headers = self._response(current)
+            batch = json.loads(content)
+            require(isinstance(batch, list) and len(batch) <= 100, "invalid array page")
+            crossed = False
+            for row in batch:
+                require(
+                    isinstance(row, dict)
+                    and _positive(row.get("id"))
+                    and row["id"] not in seen,
+                    "duplicate or invalid analysis ID",
+                )
+                seen.add(row["id"])
+                if watermark is not None:
+                    created = stamp(row["created_at"])
+                    require(
+                        previous is None or created <= previous,
+                        "analysis history is not descending",
+                    )
+                    previous = created
+                    crossed |= created < watermark
+            rows.extend(batch)
+            links = [value for key, value in headers.items() if key.lower() == "link"]
+            require(len(links) <= 1, "ambiguous pagination header")
+            relations = {}
+            if links and links[0].strip():
+                for segment in links[0].split(","):
+                    match = re.fullmatch(
+                        r'\s*<([^<>]+)>;\s*rel="(next|prev|first|last)"\s*', segment
+                    )
+                    require(
+                        match is not None, "malformed or unsupported pagination link"
+                    )
+                    url, relation = match.groups()
+                    require(relation not in relations, "ambiguous pagination relation")
+                    target = urllib.parse.urlsplit(url)
+                    query = urllib.parse.parse_qs(target.query, strict_parsing=True)
+                    require(
+                        len(query.get("page", [])) == 1
+                        and query["page"][0].isdigit()
+                        and int(query["page"][0]) >= 1,
+                        "invalid pagination page",
+                    )
+                    expected = {**filters, "page": query["page"]}
+                    canonical_path = (
+                        f"/repositories/{self.repository_id}/code-scanning/analyses"
+                        if self.repository_id is not None
+                        and initial.path.endswith("/code-scanning/analyses")
+                        else None
+                    )
+                    require(
+                        target.scheme == "https"
+                        and target.netloc == initial.netloc
+                        and target.path in (initial.path, canonical_path)
+                        and not target.fragment
+                        and query == expected,
+                        "untrusted or changed pagination link",
+                    )
+                    relations[relation] = url
+            next_links = [relations["next"]] if "next" in relations else []
+            if next_links:
+                query = urllib.parse.parse_qs(
+                    urllib.parse.urlsplit(next_links[0]).query, strict_parsing=True
+                )
+                require(query["page"] == [str(page + 1)], "skipped or looped next page")
+                require(bool(batch), "empty page with a successor")
+            if crossed or not next_links:
+                return rows
+            # GitHub may canonicalize /repos/owner/name to /repositories/ID.
+            # After identity validation, keep requests on our original prefix.
+            current = (
+                initial.path.removeprefix(urllib.parse.urlsplit(self.prefix).path)
+                + "?"
+                + urllib.parse.urlsplit(next_links[0]).query
+            )
+        raise ValueError("analysis window pagination bound exceeded")
 
     def get(self, path):
         return json.loads(self.raw(path))
@@ -205,7 +352,12 @@ def membership(text):
 
 
 def stamp(value):
-    return dt.datetime.fromisoformat(value.replace("Z", "+00:00"))
+    parsed = dt.datetime.fromisoformat(value.replace("Z", "+00:00"))
+    require(
+        parsed.tzinfo is not None and parsed.utcoffset() == dt.timedelta(0),
+        "timestamp must be UTC",
+    )
+    return parsed
 
 
 def expected_steps(kind, value, count, block):
@@ -404,7 +556,6 @@ def decide(api, env, text, tree, before):
     suites = {}
     security_paid = set()
     security_required = {
-        ("CodeQL", 57789),
         ("Analyze (python)", 15368),
         ("Analyze (javascript-typescript)", 15368),
         ("gitleaks secret scan", 15368),
@@ -431,7 +582,9 @@ def decide(api, env, text, tree, before):
             "security/check refusal",
         )
         identity = (check["name"], check["app"]["id"])
-        if suite["head_branch"] == run["head_branch"] and identity in security_required:
+        if suite["head_branch"] == run[
+            "head_branch"
+        ] and identity in security_required | {("CodeQL", 57789)}:
             # A successful older check cannot pay an unpaid/cancelled rerun.
             # Conservatively require every completed required source check to
             # succeed instead of inferring its workflow attempt from ordering.
@@ -440,6 +593,16 @@ def decide(api, env, text, tree, before):
     require(
         security_required <= security_paid,
         "missing complete compose security checks",
+    )
+    validate_security_receipts(
+        api,
+        runs,
+        head,
+        tree,
+        before,
+        repo_id,
+        run["head_branch"],
+        master_created_at=current["created_at"],
     )
     reread = api.get(f"actions/runs/{run['id']}")
     require(
@@ -457,11 +620,849 @@ def decide(api, env, text, tree, before):
     }
 
 
+class NewFinding(ValueError):
+    """A known qualifying new CodeQL result: fail before master push."""
+
+
+class SecurityIncomplete(ValueError):
+    """UNKNOWN with a bounded, token-free recovery for the exact base run."""
+
+    def __init__(self, recovery):
+        super().__init__("baseline security evidence incomplete")
+        self.recovery = recovery
+
+
+def _positive(value):
+    return type(value) is int and value > 0
+
+
+def _security_context(env, language):
+    require(language in SECURITY_LANGUAGES, "unsupported CodeQL language")
+    require(env["GITHUB_EVENT_NAME"] == "push", "security producer is push-only")
+    require(env.get("GITHUB_JOB") == "analyze", "not the official CodeQL job")
+    ref = env["GITHUB_REF"]
+    require(
+        ref == "refs/heads/master" or ref.startswith("refs/heads/integrator/compose-"),
+        "unsupported security push ref",
+    )
+    require(SHA.fullmatch(env["GITHUB_SHA"]) is not None, "invalid security head")
+    repo = env["GITHUB_REPOSITORY"]
+    require(
+        re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", repo),
+        "invalid security repository",
+    )
+    return {
+        "schema": 1,
+        "type": "codeql_security",
+        "repository": repo,
+        "repository_id": int(env["GITHUB_REPOSITORY_ID"]),
+        "head": env["GITHUB_SHA"],
+        "ref": ref,
+        "event": "push",
+        "run_id": int(env["GITHUB_RUN_ID"]),
+        "attempt": int(env["GITHUB_RUN_ATTEMPT"]),
+        "job": "analyze",
+        "role": "baseline" if ref == "refs/heads/master" else "compose",
+        "language": language,
+        "category": "/language:" + language,
+        "analysis_key": CODEQL_ANALYSIS_KEY,
+        "environment": {"language": language},
+    }
+
+
+def security_record(env, language):
+    """Capture push checkout before analysis; env is the normal Actions mapping."""
+    proof = _security_context(env, language)
+    require(env.get("GITHUB_JOB") == "analyze", "not the official CodeQL job")
+    head, tree, base = (
+        git("rev-parse", "HEAD"),
+        git("rev-parse", "HEAD^{tree}"),
+        git("rev-parse", "origin/master"),
+    )
+    require(
+        head == proof["head"] and SHA.fullmatch(tree) and SHA.fullmatch(base),
+        "security checkout mismatch",
+    )
+    if proof["role"] == "compose":
+        subprocess.run(
+            ["git", "-C", str(ROOT), "merge-base", "--is-ancestor", base, head],
+            check=True,
+            timeout=10,
+        )
+    return {**proof, "tree": tree, "base": base}
+
+
+def _validate_codeql_run(run, head, branch, repo_id, *, attempt=None, successful=True):
+    require(
+        run["path"] == CODEQL_WORKFLOW
+        and run["event"] == "push"
+        and run["head_sha"] == head
+        and run["head_branch"] == branch,
+        "wrong official CodeQL run",
+    )
+    require(
+        run["repository"]["id"] == repo_id and run["head_repository"]["id"] == repo_id,
+        "foreign CodeQL run",
+    )
+    require(
+        _positive(run["id"]) and _positive(run["run_attempt"]), "invalid CodeQL attempt"
+    )
+    require(
+        attempt is None or run["run_attempt"] == attempt, "CodeQL latest attempt moved"
+    )
+    if successful:
+        require(
+            run["status"] == "completed" and run["conclusion"] == "success",
+            "CodeQL latest attempt not successful",
+        )
+    else:
+        require(
+            run["status"] == "in_progress"
+            or (run["status"] == "completed" and run["conclusion"] == "success"),
+            "CodeQL producer attempt unpaid",
+        )
+
+
+def _official_jobs(api, run, *, producer=False):
+    jobs = api.pages(f"actions/runs/{run['id']}/jobs?filter=latest", "jobs")
+    require(len(jobs) == len(SECURITY_LANGUAGES), "wrong CodeQL matrix membership")
+    mapped = {}
+    for language in SECURITY_LANGUAGES:
+        selected = [job for job in jobs if job["name"] == f"Analyze ({language})"]
+        require(len(selected) == 1, "missing or duplicate official CodeQL job")
+        job = selected[0]
+        require(
+            job["run_attempt"] == run["run_attempt"]
+            and job["status"] == "completed"
+            and job["conclusion"] == "success",
+            "unpaid official CodeQL job",
+        )
+        required = ["Perform CodeQL Analysis"]
+        if producer:
+            required += [
+                SECURITY_RECORD_STEP,
+                SECURITY_QUALIFY_STEP,
+                SECURITY_PUBLISH_STEP,
+            ]
+        for name in required:
+            steps = [step for step in job["steps"] if step["name"] == name]
+            require(
+                len(steps) == 1
+                and steps[0]["status"] == "completed"
+                and steps[0]["conclusion"] == "success",
+                "unpaid CodeQL producer/analysis step",
+            )
+        analysis = next(
+            step for step in job["steps"] if step["name"] == "Perform CodeQL Analysis"
+        )
+        require(
+            stamp(analysis["started_at"]) <= stamp(analysis["completed_at"]),
+            "invalid analysis step window",
+        )
+        mapped[language] = {"job": job, "step": analysis}
+    return mapped
+
+
+def _producer_analysis_step(api, run, language):
+    """Bind the action's upload to THIS attempt's successful official step.
+
+    The qualification step is still running, so the producer job may be in
+    progress; its analysis step must already be completed/success. Other matrix
+    legs need not have finished. An older attempt's UUID cannot pass this window.
+    """
+    jobs = api.pages(f"actions/runs/{run['id']}/jobs?filter=latest", "jobs")
+    require(
+        len(jobs) == len(SECURITY_LANGUAGES)
+        and {job["name"] for job in jobs}
+        == {f"Analyze ({lang})" for lang in SECURITY_LANGUAGES},
+        "wrong producer matrix membership",
+    )
+    require(
+        all(job["run_attempt"] == run["run_attempt"] for job in jobs),
+        "mixed producer attempts; re-run ALL jobs of this exact CodeQL run",
+    )
+    job = next(job for job in jobs if job["name"] == f"Analyze ({language})")
+    require(
+        job["run_attempt"] == run["run_attempt"]
+        and (
+            job["status"] == "in_progress"
+            or (job["status"] == "completed" and job["conclusion"] == "success")
+        ),
+        "producer job belongs to an unpaid attempt",
+    )
+    steps = [step for step in job["steps"] if step["name"] == "Perform CodeQL Analysis"]
+    require(
+        len(steps) == 1
+        and steps[0]["status"] == "completed"
+        and steps[0]["conclusion"] == "success",
+        "producer analysis step is unpaid",
+    )
+    step = steps[0]
+    require(
+        stamp(step["started_at"]) <= stamp(step["completed_at"]),
+        "invalid producer analysis window",
+    )
+    return step
+
+
+def _analysis_identity(metadata):
+    return {
+        key: metadata[key]
+        for key in (
+            "id",
+            "sarif_id",
+            "ref",
+            "commit_sha",
+            "analysis_key",
+            "category",
+            "environment",
+            "created_at",
+            "tool",
+            "error",
+            "warning",
+            "results_count",
+            "rules_count",
+        )
+    }
+
+
+def _validate_analysis(metadata, head, ref, language, *, sarif_id=None):
+    require(
+        _positive(metadata["id"]) and UUID.fullmatch(metadata["sarif_id"]),
+        "invalid analysis/upload ID",
+    )
+    require(
+        sarif_id is None or metadata["sarif_id"].lower() == sarif_id.lower(),
+        "wrong SARIF upload",
+    )
+    require(
+        metadata["commit_sha"] == head and metadata["ref"] == ref,
+        "wrong analysis revision/ref",
+    )
+    require(
+        metadata["analysis_key"] == CODEQL_ANALYSIS_KEY
+        and metadata["category"] == "/language:" + language
+        and json.loads(metadata["environment"]) == {"language": language},
+        "wrong analysis key/category/environment",
+    )
+    require(
+        metadata["tool"]["name"] == "CodeQL" and bool(metadata["tool"]["version"]),
+        "wrong analysis tool",
+    )
+    require(
+        metadata["error"] == "" and metadata["warning"] == "",
+        "analysis processing incomplete or warned",
+    )
+    require(
+        type(metadata["results_count"]) is int
+        and metadata["results_count"] >= 0
+        and _positive(metadata["rules_count"]),
+        "missing analysis coverage/counts",
+    )
+    stamp(metadata["created_at"])
+
+
+def parse_security_snapshot(sarif, metadata, repository):
+    """Validate GitHub SARIF; return canonical IDs, qualifying IDs and query profile.
+
+    Native github/alertNumber is the identity. Both driver AND extensions map
+    rules. The effective level follows SARIF's result override, rule default,
+    then the specified default warning. No local fingerprints excuse a result.
+    """
+    require(
+        sarif["version"] == "2.1.0" and len(sarif["runs"]) == 1,
+        "unsupported SARIF shape",
+    )
+    run = sarif["runs"][0]
+    vcs = run["versionControlProvenance"]
+    require(
+        len(vcs) == 1
+        and vcs[0]["revisionId"] == metadata["commit_sha"]
+        and vcs[0]["branch"] == metadata["ref"]
+        and vcs[0]["repositoryUri"].rstrip("/") == f"https://github.com/{repository}",
+        "wrong SARIF VCS identity",
+    )
+    driver = run["tool"]["driver"]
+    require(
+        driver["name"] == "CodeQL"
+        and driver.get("semanticVersion", driver.get("version"))
+        == metadata["tool"]["version"],
+        "wrong SARIF tool version",
+    )
+    require(
+        run["automationDetails"]["id"].rstrip("/") == metadata["category"].rstrip("/"),
+        "wrong SARIF automation category",
+    )
+    extensions = run["tool"].get("extensions", [])
+    require(isinstance(extensions, list), "invalid SARIF extensions")
+    rules = {}
+    for component in [driver] + extensions:
+        for rule in component.get("rules", []):
+            require(
+                isinstance(rule.get("id"), str)
+                and rule["id"]
+                and rule["id"] not in rules,
+                "duplicate/unknown rule ID",
+            )
+            rules[rule["id"]] = rule
+    require(len(rules) == metadata["rules_count"], "incomplete SARIF rules")
+    results = run["results"]
+    require(
+        isinstance(results, list) and len(results) == metadata["results_count"],
+        "incomplete SARIF results",
+    )
+    alerts, qualifying = {}, []
+    for result in results:
+        # Official retained uploads use ruleId plus the modern rule reference.
+        # A legacy top-level index is an additional identity claim; never ignore
+        # it, even when it happens to agree with the supported representation.
+        require("ruleIndex" not in result, "unsupported legacy result ruleIndex")
+        identity = result["properties"]["github/alertNumber"]
+        require(
+            _positive(identity) and identity not in alerts,
+            "missing/duplicate native alert ID",
+        )
+        url = result["properties"].get("github/alertUrl")
+        require(
+            url is None
+            or url
+            == f"https://api.github.com/repos/{repository}/code-scanning/alerts/{identity}",
+            "foreign native alert URL",
+        )
+        rule_id = result["ruleId"]
+        require(rule_id in rules, "result references an unknown rule")
+        reference = result.get("rule", {})
+        require(reference.get("id", rule_id) == rule_id, "ambiguous result rule")
+        if "index" in reference:
+            component_ref = reference.get("toolComponent")
+            if component_ref is None:
+                component = driver
+            else:
+                index = component_ref["index"]
+                require(
+                    type(index) is int and 0 <= index < len(extensions),
+                    "invalid extension reference",
+                )
+                component = extensions[index]
+            index = reference["index"]
+            require(
+                type(index) is int
+                and 0 <= index < len(component.get("rules", []))
+                and component["rules"][index]["id"] == rule_id,
+                "inconsistent indexed rule",
+            )
+        rule = rules[rule_id]
+        properties = rule.get("properties", {})
+        tags = properties.get("tags", [])
+        require(
+            isinstance(tags, list) and all(isinstance(tag, str) for tag in tags),
+            "invalid rule tags",
+        )
+        score = properties.get("security-severity")
+        if score is not None:
+            require(type(score) in (str, int, float), "invalid security severity type")
+            score = float(score)
+            require(
+                math.isfinite(score) and 0 <= score <= 10, "invalid security severity"
+            )
+        else:
+            require("security" not in tags, "security rule lacks severity")
+        default = rule.get("defaultConfiguration", {})
+        require(isinstance(default, dict), "invalid default rule configuration")
+        level = result.get("level", default.get("level", "warning"))
+        require(
+            level in ("none", "note", "warning", "error"),
+            "unsupported effective SARIF level",
+        )
+        qualifies = (score is not None and score >= 4) or level == "error"
+        alerts[identity] = {"rule_id": rule_id, "level": level, "qualifying": qualifies}
+        if qualifies:
+            qualifying.append(identity)
+    profile = {
+        "tool": run["tool"],
+        "metadata_tool": metadata["tool"],
+        "configuration": run.get("properties", {}),
+    }
+    return {
+        "alerts": alerts,
+        "qualifying_ids": sorted(qualifying),
+        "profile": profile,
+        "results_count": len(results),
+        "rules_count": len(rules),
+        "sarif_digest": hashlib.sha256(
+            json.dumps(sarif, sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest(),
+    }
+
+
+def compare_security_snapshots(base, candidate):
+    """Return canonical new IDs; a profile/classification change is UNKNOWN."""
+    require(
+        base["profile"] == candidate["profile"],
+        "CodeQL query/tool/severity profile changed",
+    )
+    for identity in base["alerts"].keys() & candidate["alerts"].keys():
+        require(
+            base["alerts"][identity] == candidate["alerts"][identity],
+            "inherited alert classification changed",
+        )
+    new_ids = sorted(candidate["alerts"].keys() - base["alerts"].keys())
+    qualifying = sorted(set(new_ids) & set(candidate["qualifying_ids"]))
+    if qualifying:
+        raise NewFinding(
+            "new qualifying GitHub alert IDs: " + ",".join(str(i) for i in qualifying)
+        )
+    return {"new_alert_ids": new_ids, "new_qualifying_ids": []}
+
+
+def _security_artifact(api, artifacts, run, language):
+    name = f"codeql-security-{run['run_attempt']}-{language}"
+    selected = [artifact for artifact in artifacts if artifact["name"] == name]
+    require(
+        len(selected) == 1 and not selected[0]["expired"],
+        "missing/ambiguous security receipt; rerun the exact CodeQL run with a fresh full attempt",
+    )
+    archive = zipfile.ZipFile(
+        io.BytesIO(api.raw(f"actions/artifacts/{selected[0]['id']}/zip", 1_000_000))
+    )
+    require(
+        archive.namelist() == ["codeql-security.json"]
+        and archive.getinfo("codeql-security.json").file_size <= 64_000,
+        "invalid security receipt archive",
+    )
+    return json.loads(archive.read("codeql-security.json"))
+
+
+def _receipt_identity(
+    receipt, run, repo_id, language, *, role, head, tree=None, base=None
+):
+    require(
+        receipt["schema"] == 1
+        and receipt["type"] == "codeql_security"
+        and receipt["job"] == "analyze"
+        and receipt["role"] == role,
+        "wrong security receipt type/role",
+    )
+    require(
+        receipt["repository_id"] == repo_id
+        and receipt["head"] == head
+        and receipt["event"] == "push"
+        and receipt["ref"] == f"refs/heads/{run['head_branch']}"
+        and receipt["run_id"] == run["id"]
+        and receipt["attempt"] == run["run_attempt"],
+        "security receipt source/run mismatch",
+    )
+    require(
+        SHA.fullmatch(receipt["tree"]) and SHA.fullmatch(receipt["base"]),
+        "invalid security receipt source",
+    )
+    require(tree is None or receipt["tree"] == tree, "security receipt tree mismatch")
+    require(base is None or receipt["base"] == base, "security receipt base mismatch")
+    require(
+        receipt["language"] == language
+        and receipt["category"] == "/language:" + language
+        and receipt["analysis_key"] == CODEQL_ANALYSIS_KEY
+        and receipt["environment"] == {"language": language},
+        "security receipt category mismatch",
+    )
+    require(
+        _positive(receipt["analysis_id"]) and UUID.fullmatch(receipt["sarif_id"]),
+        "invalid receipt analysis/upload",
+    )
+    require(
+        type(receipt["results_count"]) is int
+        and receipt["results_count"] >= 0
+        and _positive(receipt["rules_count"]),
+        "invalid receipt coverage",
+    )
+    if role == "compose":
+        require(
+            receipt["qualified"] is True
+            and receipt["qualification"] == "PASS"
+            and receipt["delta"]["new_qualifying_ids"] == [],
+            "compose security is not qualified",
+        )
+        baseline = receipt["baseline"]
+        require(
+            baseline["head"] == base
+            and _positive(baseline["run_id"])
+            and _positive(baseline["attempt"])
+            and _positive(baseline["analysis_id"])
+            and UUID.fullmatch(baseline["sarif_id"])
+            and baseline["selection"] in ("receipt", "legacy-window"),
+            "invalid qualified baseline identity",
+        )
+    else:
+        require(
+            receipt["qualified"] is False
+            and receipt["qualification"] == "BASELINE"
+            and receipt["baseline"] is None
+            and receipt["delta"] is None,
+            "baseline receipt is not an analysis-only record",
+        )
+
+
+def _base_declares_producer(api, base):
+    content = api.get(f"contents/{CODEQL_WORKFLOW}?ref={base}")
+    require(
+        content["type"] == "file" and content["encoding"] == "base64",
+        "missing exact base workflow",
+    )
+    text = base64.b64decode(
+        re.sub(r"\s+", "", content["content"]), validate=True
+    ).decode()
+    markers = [
+        bool(
+            re.search(
+                r"^      - name: [\"']?" + re.escape(name) + r"[\"']?\s*$", text, re.M
+            )
+        )
+        for name in (SECURITY_RECORD_STEP, SECURITY_QUALIFY_STEP, SECURITY_PUBLISH_STEP)
+    ]
+    require(
+        all(markers) or not any(markers), "partial security producer in base workflow"
+    )
+    require(
+        any(markers) or "--security-" not in text, "unrecognized base security producer"
+    )
+    return all(markers)
+
+
+def select_base_security(api, base, repo_id, language):
+    """Select exact successful master CodeQL attempt and one complete analysis.
+
+    Future bases use authenticated receipts. Only an exact workflow predating
+    the producer may bootstrap through its complete official analysis-step time
+    window. The array paginator must reach an older watermark/EOF, never merely
+    a bounded prefix. Return run/metadata/snapshot/selection for qualification.
+    """
+    require(
+        SHA.fullmatch(base) and language in SECURITY_LANGUAGES,
+        "invalid security baseline",
+    )
+    rows = api.pages(
+        f"actions/runs?head_sha={base}&branch=master&event=push", "workflow_runs"
+    )
+    candidates = [row for row in rows if row.get("path") == CODEQL_WORKFLOW]
+    require(len(candidates) == 1, "missing or ambiguous exact base CodeQL run")
+    row = candidates[0]
+    try:
+        run = api.get(f"actions/runs/{row['id']}")
+        _validate_codeql_run(run, base, "master", repo_id, attempt=row["run_attempt"])
+        if isinstance(api, API):
+            api.bind_repository(run["repository"])
+        declared = _base_declares_producer(api, base)
+        jobs = _official_jobs(api, run, producer=declared)
+        if declared:
+            artifacts = api.pages(f"actions/runs/{run['id']}/artifacts", "artifacts")
+            # Both categories must have receipts; no legacy escape for a failed or
+            # incomplete declared producer. Rerun that exact master CodeQL run.
+            receipts = {
+                lang: _security_artifact(api, artifacts, run, lang)
+                for lang in SECURITY_LANGUAGES
+            }
+            for lang, receipt in receipts.items():
+                _receipt_identity(
+                    receipt, run, repo_id, lang, role="baseline", head=base
+                )
+            receipt = receipts[language]
+            metadata = api.get(f"code-scanning/analyses/{receipt['analysis_id']}")
+            _validate_analysis(
+                metadata,
+                base,
+                "refs/heads/master",
+                language,
+                sarif_id=receipt["sarif_id"],
+            )
+            require(
+                metadata["results_count"] == receipt["results_count"]
+                and metadata["rules_count"] == receipt["rules_count"],
+                "baseline receipt count mismatch",
+            )
+            selection = "receipt"
+        else:
+            earliest = min(item["step"]["started_at"] for item in jobs.values())
+            rows = api.array_pages(
+                "code-scanning/analyses?ref=refs%2Fheads%2Fmaster&tool_name=CodeQL&sort=created&direction=desc",
+                older_than=earliest,
+            )
+            selected = {}
+            for lang, item in jobs.items():
+                step = item["step"]
+                matches = [
+                    meta
+                    for meta in rows
+                    if meta.get("commit_sha") == base
+                    and meta.get("ref") == "refs/heads/master"
+                    and meta.get("category") == "/language:" + lang
+                    and stamp(step["started_at"])
+                    <= stamp(meta["created_at"])
+                    <= stamp(step["completed_at"])
+                ]
+                require(
+                    len(matches) == 1, "ambiguous/incomplete legacy analysis window"
+                )
+                _validate_analysis(matches[0], base, "refs/heads/master", lang)
+                selected[lang] = matches[0]
+            metadata = selected[language]
+            selection = "legacy-window"
+        step = jobs[language]["step"]
+        require(
+            stamp(step["started_at"])
+            <= stamp(metadata["created_at"])
+            <= stamp(step["completed_at"]),
+            "baseline upload outside official latest attempt",
+        )
+        reread = api.get(f"code-scanning/analyses/{metadata['id']}")
+        require(
+            _analysis_identity(reread) == _analysis_identity(metadata),
+            "baseline analysis moved",
+        )
+        repository = run["repository"]["full_name"]
+        snapshot = parse_security_snapshot(
+            api.sarif(f"code-scanning/analyses/{metadata['id']}"), metadata, repository
+        )
+        latest = api.get(f"actions/runs/{run['id']}")
+        _validate_codeql_run(
+            latest, base, "master", repo_id, attempt=run["run_attempt"]
+        )
+        return {
+            "run": run,
+            "metadata": metadata,
+            "snapshot": snapshot,
+            "selection": selection,
+        }
+    except Exception as exc:
+        run_id = row["id"] if _positive(row.get("id")) else "unknown"
+        raise SecurityIncomplete(
+            f"Recovery: if the master baseline producer/receipt is unpaid, re-run the exact master CodeQL run {run_id} with a fresh full attempt. "
+            "Declared producers never use legacy bootstrap. Repair API/identity uncertainty as applicable, then use a fresh full attempt of the exact compose CodeQL run. "
+            "No manual override; a full test run does not clear security uncertainty."
+        ) from exc
+
+
+def qualify_security(api, env, provenance, sarif_id, language):
+    """Produce a baseline or paid compose receipt; errors are UNKNOWN to the CLI."""
+    expected = _security_context(env, language)
+    for key, value in expected.items():
+        require(
+            provenance[key] == value, "security checkout provenance context mismatch"
+        )
+    require(
+        SHA.fullmatch(provenance["tree"]) and SHA.fullmatch(provenance["base"]),
+        "invalid security checkout provenance",
+    )
+    require(UUID.fullmatch(sarif_id), "missing official SARIF upload output")
+    run = api.get(f"actions/runs/{expected['run_id']}")
+    branch = expected["ref"].removeprefix("refs/heads/")
+    _validate_codeql_run(
+        run,
+        expected["head"],
+        branch,
+        expected["repository_id"],
+        attempt=expected["attempt"],
+        successful=False,
+    )
+    if isinstance(api, API):
+        api.bind_repository(run["repository"])
+    upload_step = _producer_analysis_step(api, run, language)
+    rows = api.array_pages(
+        "code-scanning/analyses?sarif_id=" + urllib.parse.quote(sarif_id, safe="")
+    )
+    require(len(rows) == 1, "missing or ambiguous actual SARIF upload")
+    metadata = rows[0]
+    _validate_analysis(
+        metadata, expected["head"], expected["ref"], language, sarif_id=sarif_id
+    )
+    require(
+        stamp(upload_step["started_at"])
+        <= stamp(metadata["created_at"])
+        <= stamp(upload_step["completed_at"]),
+        "SARIF upload is outside the current official analysis attempt",
+    )
+    snapshot = parse_security_snapshot(
+        api.sarif(f"code-scanning/analyses/{metadata['id']}"),
+        metadata,
+        expected["repository"],
+    )
+    receipt = {
+        **provenance,
+        "sarif_id": metadata["sarif_id"],
+        "analysis_id": metadata["id"],
+        "results_count": snapshot["results_count"],
+        "rules_count": snapshot["rules_count"],
+        "sarif_digest": snapshot["sarif_digest"],
+        "qualifying_count": len(snapshot["qualifying_ids"]),
+        "qualified": False,
+        "qualification": "BASELINE",
+        "baseline": None,
+        "delta": None,
+    }
+    if expected["role"] == "compose":
+        base = select_base_security(
+            api, provenance["base"], expected["repository_id"], language
+        )
+        delta = compare_security_snapshots(base["snapshot"], snapshot)
+        receipt.update(
+            {
+                "qualified": True,
+                "qualification": "PASS",
+                "delta": delta,
+                "baseline": {
+                    "head": provenance["base"],
+                    "run_id": base["run"]["id"],
+                    "attempt": base["run"]["run_attempt"],
+                    "analysis_id": base["metadata"]["id"],
+                    "sarif_id": base["metadata"]["sarif_id"],
+                    "selection": base["selection"],
+                },
+            }
+        )
+    reread = api.get(f"code-scanning/analyses/{metadata['id']}")
+    require(
+        _analysis_identity(reread) == _analysis_identity(metadata),
+        "candidate analysis moved",
+    )
+    latest = api.get(f"actions/runs/{run['id']}")
+    _validate_codeql_run(
+        latest,
+        expected["head"],
+        branch,
+        expected["repository_id"],
+        attempt=expected["attempt"],
+        successful=False,
+    )
+    return receipt
+
+
+def validate_security_receipts(
+    api, runs, head, tree, before, repo_id, branch, *, master_created_at=None
+):
+    """Master consumes both qualified receipts from one current CodeQL attempt."""
+    rows = [
+        row
+        for row in runs
+        if row.get("path") == CODEQL_WORKFLOW
+        and row.get("event") == "push"
+        and row.get("head_branch") == branch
+    ]
+    require(len(rows) == 1, "missing or ambiguous compose CodeQL run")
+    row = rows[0]
+    run = api.get(f"actions/runs/{row['id']}")
+    _validate_codeql_run(run, head, branch, repo_id, attempt=row["run_attempt"])
+    if master_created_at is not None:
+        age = (stamp(master_created_at) - stamp(run["updated_at"])).total_seconds()
+        require(
+            0 <= age <= 3 * 3600,
+            "security source not paid within the pre-push evidence window",
+        )
+    _official_jobs(api, run, producer=True)
+    artifacts = api.pages(f"actions/runs/{run['id']}/artifacts", "artifacts")
+    for language in SECURITY_LANGUAGES:
+        receipt = _security_artifact(api, artifacts, run, language)
+        _receipt_identity(
+            receipt,
+            run,
+            repo_id,
+            language,
+            role="compose",
+            head=head,
+            tree=tree,
+            base=before,
+        )
+        require(
+            receipt["repository"] == run["repository"]["full_name"],
+            "foreign security receipt repository",
+        )
+    latest = api.get(f"actions/runs/{run['id']}")
+    _validate_codeql_run(latest, head, branch, repo_id, attempt=run["run_attempt"])
+    require(
+        latest["updated_at"] == run["updated_at"],
+        "CodeQL source updated during decision",
+    )
+
+
+def _security_recovery(env):
+    run_id = env.get("GITHUB_RUN_ID", "unknown")
+    if not str(run_id).isdigit():
+        run_id = "unknown"
+    if env.get("GITHUB_REF") == "refs/heads/master":
+        return f"Recovery: re-run that exact master CodeQL run {run_id} with a fresh full attempt; a declared producer never uses legacy bootstrap."
+    return f"Recovery: use a fresh full attempt of the exact compose CodeQL run {run_id}. No manual override; a full test run does not clear security uncertainty."
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--record", type=Path)
     parser.add_argument("--identity", default="change-scope")
+    parser.add_argument("--security-record", type=Path)
+    parser.add_argument("--security-qualify", type=Path)
+    parser.add_argument("--sarif-id")
+    parser.add_argument("--security-output", type=Path)
+    parser.add_argument("--language")
     args = parser.parse_args()
+    if args.security_record or args.security_qualify:
+        try:
+            if args.security_output:
+                args.security_output.unlink(missing_ok=True)
+            require(
+                not args.record
+                and not (args.security_record and args.security_qualify),
+                "mixed producer modes",
+            )
+            if args.security_record:
+                args.security_record.unlink(missing_ok=True)
+                args.security_record.write_text(
+                    json.dumps(
+                        security_record(os.environ, args.language), sort_keys=True
+                    )
+                    + "\n"
+                )
+            else:
+                require(
+                    args.security_output is not None and args.sarif_id is not None,
+                    "missing security output/upload",
+                )
+                api = API(
+                    os.environ["GITHUB_REPOSITORY"], os.environ.get("GH_TOKEN", "")
+                )
+                receipt = qualify_security(
+                    api,
+                    os.environ,
+                    json.loads(args.security_qualify.read_text()),
+                    args.sarif_id,
+                    args.language,
+                )
+                args.security_output.write_text(
+                    json.dumps(receipt, sort_keys=True) + "\n"
+                )
+                print(
+                    "SECURITY PASS"
+                    if receipt["qualified"]
+                    else "SECURITY BASELINE RECORDED"
+                )
+        except NewFinding as exc:
+            print("SECURITY NEW-FINDING: " + str(exc))
+            print(
+                "Repair the finding on a new exact candidate and pay its full compose CodeQL run before offering; no override or test-run waiver."
+            )
+            raise SystemExit(1)
+        except Exception as exc:
+            print(f"SECURITY EVIDENCE INCOMPLETE ({type(exc).__name__})")
+            if isinstance(exc, SecurityIncomplete):
+                print(exc.recovery)
+            print(_security_recovery(os.environ))
+            print(
+                "Re-run ALL jobs, not only failed jobs. Successful security recovery "
+                "does not grant test reuse: historical failed checks still force "
+                "full master CI on this head. Never re-stamp the same tree to shed "
+                "a failure. If a fresh full attempt is UNKNOWN again, do not land; "
+                "return the printed reason to Root and the owner. Only a normal "
+                "reviewed fix or revert of the producer can resolve persistent "
+                "UNKNOWN; no waiver."
+            )
+            raise SystemExit(1)
+        return
     if args.record:
         args.record.write_text(
             json.dumps(record(os.environ, args.identity), sort_keys=True) + "\n"

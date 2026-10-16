@@ -1,8 +1,9 @@
 name: "CodeQL"
 
 # Static security analysis (issue #840). Results surface in the repo Security
-# tab — this workflow does NOT gate deploys (that stays the `test` +
-# `frontend-build` checks in ci.yml).
+# tab. Compose pushes additionally qualify exact-source security evidence before
+# Integrator may push master; a full test run cannot clear an unknown verdict.
+# Master publishes baseline receipts only. Deployment gates remain in ci.yml.
 on:
   push:
     branches: ["master", "integrator/compose-**"]
@@ -33,6 +34,15 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          # PR/scheduled checkout retains the original depth-one behavior.
+          fetch-depth: ${{ github.event_name == 'push' && '0' || '1' }}
+
+      - name: Record CodeQL checkout provenance
+        if: github.event_name == 'push' && (github.ref == 'refs/heads/master' || startsWith(github.ref, 'refs/heads/integrator/compose-'))
+        env:
+          SECURITY_LANGUAGE: ${{ matrix.language }}
+        run: python3 .github/scripts/ci-prior-evidence.py --security-record codeql-provenance.json --language "$SECURITY_LANGUAGE"
 
       - name: Initialize CodeQL
         uses: github/codeql-action/init@v3
@@ -76,6 +86,29 @@ jobs:
         uses: github/codeql-action/autobuild@v3
 
       - name: Perform CodeQL Analysis
+        id: codeql_analysis
         uses: github/codeql-action/analyze@v3
         with:
           category: "/language:${{ matrix.language }}"
+
+      - name: Qualify compose security or record master baseline
+        if: github.event_name == 'push' && (github.ref == 'refs/heads/master' || startsWith(github.ref, 'refs/heads/integrator/compose-'))
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SECURITY_LANGUAGE: ${{ matrix.language }}
+          SECURITY_SARIF_ID: ${{ steps.codeql_analysis.outputs.sarif-id }}
+        run: >-
+          python3 .github/scripts/ci-prior-evidence.py
+          --security-qualify codeql-provenance.json
+          --sarif-id "$SECURITY_SARIF_ID"
+          --security-output codeql-security.json
+          --language "$SECURITY_LANGUAGE"
+
+      - name: Publish CodeQL security receipt
+        if: github.event_name == 'push' && (github.ref == 'refs/heads/master' || startsWith(github.ref, 'refs/heads/integrator/compose-'))
+        uses: actions/upload-artifact@v4
+        with:
+          name: codeql-security-${{ github.run_attempt }}-${{ matrix.language }}
+          path: codeql-security.json
+          if-no-files-found: error
+          retention-days: 7
