@@ -14,6 +14,7 @@ import inspect
 import json
 import logging
 import random
+import time
 from typing import Any, Callable, Optional
 
 from pydantic_core import from_json
@@ -61,13 +62,26 @@ def _receives_text_bytes(socket) -> bool:
         return False
 
 
+#: #10090 — a buffered burst is drained in bounded batches: the reader yields
+#: once per this many processed frames, or sooner once this much time has
+#: passed since its last yield. A cooperative budget, not a hard bound: one
+#: frame's decode and handler still run to completion.
+COOPERATIVE_BATCH_FRAMES = 32
+COOPERATIVE_BATCH_SECONDS = 0.002
+
+
 async def _cooperative_messages(socket):
     """Let ready stamp/publish work run during an already-buffered burst.
 
     Receiving a cached frame and awaiting an uncontended price handler need
-    not suspend. Yield after every processed message, before consuming the next
-    one, so ready probability writers do not wait behind another frame batch.
+    not suspend. Yield after each bounded batch of processed messages
+    (`COOPERATIVE_BATCH_FRAMES` or `COOPERATIVE_BATCH_SECONDS`, whichever comes
+    first), before consuming the next one, so ready probability writers wait
+    behind at most one batch, while a burst no longer pays a full loop turn
+    per frame. Uses only the public receive APIs (`recv` / async iteration).
     """
+    clock = time.monotonic
+
     # Modern websockets can hand UTF-8 JSON directly to the byte-capable
     # parser instead of decoding every frame to text first. Older clients
     # retain their iterator contract. Decide once, outside the hot loop.
@@ -75,6 +89,7 @@ async def _cooperative_messages(socket):
         receive = socket.recv
         from websockets.exceptions import ConnectionClosedOK
 
+        frames, since = 0, clock()
         while True:
             try:
                 # Yielded unbound (#10090): a name bound here would hold the
@@ -83,15 +98,22 @@ async def _cooperative_messages(socket):
                 yield await receive(decode=False)
             except ConnectionClosedOK:
                 return
-            await asyncio.sleep(0)
+            frames += 1
+            if frames >= COOPERATIVE_BATCH_FRAMES or clock() - since >= COOPERATIVE_BATCH_SECONDS:
+                await asyncio.sleep(0)
+                frames, since = 0, clock()
 
     messages = aiter(socket)
+    frames, since = 0, clock()
     while True:
         try:
             yield await anext(messages)
         except StopAsyncIteration:
             return
-        await asyncio.sleep(0)
+        frames += 1
+        if frames >= COOPERATIVE_BATCH_FRAMES or clock() - since >= COOPERATIVE_BATCH_SECONDS:
+            await asyncio.sleep(0)
+            frames, since = 0, clock()
 
 
 # #837 — THE VENUE ACCEPTS AN OVERSIZED SUBSCRIBE AND SERVES A FRACTION OF IT,
