@@ -2726,6 +2726,25 @@ jobs:
             exit 1
           fi
 
+      - name: "#2316 related-futures name match: one lowercase per row (real Postgres)"
+        # PILLAR: DISCOVER / FORMATTING. SHIP: a game's Bigger Picture panel
+        # stops spending seconds matching outcome names. Step 5 ORed one
+        # `name ILIKE` per roster player (167-210 arms for college football);
+        # on UTF8 each ILIKE lowercases both sides per call, and a 210-arm
+        # production build ran past a 25 s timeout. `lower(name) LIKE ANY`
+        # over database-lowered patterns ran 119-277 ms. The two SQL texts
+        # share no code, so only a server can grade that they select the same
+        # rows under PostgreSQL's case mapping and LIKE escapes. Skip = red.
+        if: matrix.group == 'shared-middle' && needs.change-scope.outputs.reuse != 'true'
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_ilike_any_lowered_once_2316_pg.py \
+            -v -rs 2>&1 | tee /tmp/ilike_any_2316.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/ilike_any_2316.txt; then
+            echo "::error::#2316 one-lowercase equivalence SKIPPED — the gate did not run"
+            exit 1
+          fi
+
       - name: "#6757 a no-result marker cannot protect an unsupported price (real Postgres)"
         # `/futures/2951399` printed thirteen identical 49s on an open market
         # resolving in 2027 because every leg carried `ungradeable_result` — the

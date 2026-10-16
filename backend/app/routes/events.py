@@ -29537,13 +29537,23 @@ async def _build_related_futures(
                                 if k in ("espn_id", "headshot", "name")
                             }
 
-    # Build ILIKE conditions for outcome name matching
-    home_ilike = [FuturesOutcome.name.ilike(f"%{p}%") for p in home_patterns]
-    away_ilike = [FuturesOutcome.name.ilike(f"%{p}%") for p in away_patterns]
-    all_name_conditions = home_ilike + away_ilike
+    # Outcome name matching: the same rows as one `name ILIKE '%p%'` arm per
+    # pattern, but the arms include every roster player, and on a UTF8
+    # database each ILIKE lowercases the row's name again — #2316: a 210-arm
+    # college-football build ran past 25 s, this form 119-277 ms. The
+    # `market_id IN` conjunct below bounds the candidates; with only 2 team
+    # arms (a finished game) the trigram path it gives up measured 284-756 ms
+    # against this form's 97-208 ms. `app/utils/ilike_any.py`.
+    from app.utils.ilike_any import ilike_any_lowered_once
+
+    name_patterns = [f"%{p}%" for p in home_patterns + away_patterns]
 
     # Combine name matching + team_id matching (catches player outcomes from backfill)
-    match_conditions = list(all_name_conditions)
+    match_conditions = (
+        [ilike_any_lowered_once(FuturesOutcome.name, name_patterns)]
+        if name_patterns
+        else []
+    )
     if all_team_ids:
         match_conditions.append(FuturesOutcome.team_id.in_(list(all_team_ids)))
 
