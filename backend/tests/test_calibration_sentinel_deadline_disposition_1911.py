@@ -10,9 +10,13 @@ filing attempt (49032741c5d0) was exactly such a cohort.
 These tests drive the real `_run_calibration_sentinel` with the deadline
 already passed at the FIRST cohort, and pin both directions (gotcha #43):
 
-  * a #1142-shaped cohort (raw over, published under, coverage too low to be
-    `explained_by` anything) is NOT filed — only its disposition suppresses it;
-  * a #1143-shaped cohort (published still over) IS filed, carrying both numbers.
+  * a cohort whose GENUINELY CANONICAL published curve is under threshold (an
+    events cohort: the scan's complement is the curve's whole exclusion set)
+    is NOT filed — only its disposition suppresses it;
+  * the #1142- and #1143-shaped FUTURES cohorts DO file, on their raw number,
+    with the published curve stated UNKNOWN and the scan's limited-mask
+    survivors named as such (#1911 parity, Root 2026-10-15: a mask complement
+    is not what users see, so it may neither suppress nor confirm an alarm).
 
 The control arm runs the same mining rows with no deadline and must file the
 identical set: the deadline may cost evidence, never a verdict.
@@ -29,7 +33,12 @@ import pytest
 import app.services.durable_snapshots as durable_snapshots
 import app.tasks.calibration_sentinel as cs
 import app.utils.durable_state as durable_state
-from app.tasks.calibration_sentinel import DISP_EXCLUSION_WORKING, DISP_REAL_BREAK
+from app.tasks.calibration_sentinel import (
+    DISP_EXCLUSION_WORKING,
+    DISP_PUBLISHED_UNKNOWN,
+    PUBLISHED_BASIS_CANONICAL,
+    PUBLISHED_BASIS_LIMITED_MASK,
+)
 
 
 def _row(category, series, structure, n, winners, pub_n, pub_winners):
@@ -54,6 +63,18 @@ def _row(category, series, structure, n, winners, pub_n, pub_winners):
 _NHL = _row("hockey", "KXNHLGOAL", "binary", n=1000, winners=655, pub_n=770, pub_winners=655)
 # #1143's shape: the survivors are still badly calibrated (60% vs 85%).
 _MLB = _row("baseball", "KXMLBTB", "multi_nonmex", n=2000, winners=1080, pub_n=1800, pub_winners=1080)
+# The canonical arm: an events cohort, same numbers as the #1142 shape, whose
+# excluded rows are the soccer two-way ones — the curve's only events exclusion.
+_SOC = {
+    "provenance": "events", "source": "odds_api", "category": "soccer",
+    "series_family": "events_moneyline", "structure_class": "binary",
+    "bucket": 8, "n": 1000, "winners": 655, "sum_prob": 850.0,
+    "malformed_binary_n": 0, "esports_bundle_n": 0, "mex_norm_n": 0,
+    "void_n": 0, "heuristic_n": 0, "kalshi_prop_threshold_n": 0,
+    "soccer_2way_n": 230, "any_known_n": 230,
+    "pub_n": 770, "pub_winners": 655, "pub_sum_prob": 0.85 * 770,
+    "min_created_at": None,
+}
 
 
 class _Result:
@@ -67,7 +88,11 @@ class _Result:
 class _FakeSession:
     async def execute(self, stmt, params=None):
         sql = str(stmt)
-        return _Result([dict(_NHL), dict(_MLB)] if sql == cs._FUTURES_MINING_SQL else [])
+        if sql == cs._FUTURES_MINING_SQL:
+            return _Result([dict(_NHL), dict(_MLB)])
+        if sql == cs._EVENTS_MINING_SQL:
+            return _Result([dict(_SOC)])
+        return _Result([])
 
     async def rollback(self):
         return None
@@ -130,7 +155,7 @@ def test_the_specimens_flag_so_the_run_is_not_vacuous(past_deadline):
     stats, _, _ = past_deadline
     assert stats["flagged"] >= 2
     flagged_series = {f["dims"].get("series") for f in stats["findings"]}
-    assert {"KXNHLGOAL", "KXMLBTB"} <= flagged_series
+    assert {"KXNHLGOAL", "KXMLBTB", "events_moneyline"} <= flagged_series
 
 
 def test_the_deadline_fired_and_skipped_only_the_evidence_census(past_deadline):
@@ -147,21 +172,34 @@ def test_every_flagged_cohort_carries_a_disposition_past_the_deadline(past_deadl
     assert all(f["disposition"] for f in stats["findings"])
 
 
-def test_the_1142_shape_past_the_deadline_does_not_file(past_deadline):
+def test_a_canonical_published_curve_under_threshold_does_not_file(past_deadline):
     stats, filed, _ = past_deadline
-    assert not [c for c in filed if c["dims"].get("category") == "hockey"]
-    assert not _series(filed, "KXNHLGOAL")
-    (nhl,) = _series(stats["findings"], "KXNHLGOAL")
-    assert nhl["disposition"] == DISP_EXCLUSION_WORKING
+    assert not _series(filed, "events_moneyline")
+    soc = [f for f in stats["findings"] if f["dims"].get("series") == "events_moneyline"]
+    assert soc and all(f["disposition"] == DISP_EXCLUSION_WORKING for f in soc)
+    assert all(f["published_basis"] == PUBLISHED_BASIS_CANONICAL for f in soc)
     # Not explained by coverage: the disposition is the only thing holding it.
-    assert nhl["explained_by"] is None
+    assert all(f["explained_by"] is None for f in soc)
 
 
-def test_the_1143_shape_past_the_deadline_still_files_with_both_numbers(past_deadline):
+def test_the_1142_shape_files_on_raw_with_published_unknown(past_deadline):
+    """The mask complement used to read 'published ~0pp' and suppress this. It
+    is a limited mask, so the raw alarm now stands and says so."""
+    stats, filed, _ = past_deadline
+    (nhl,) = _series(filed, "KXNHLGOAL")
+    assert nhl["disposition"] == DISP_PUBLISHED_UNKNOWN
+    assert nhl["published_basis"] == PUBLISHED_BASIS_LIMITED_MASK
+    assert nhl["published_mce"] is None and nhl["published_n"] is None
+    assert nhl["mask_survivor_n"] == 770 and nhl["mask_survivor_mce"] is not None
+    assert "not measured by this scan" in nhl["disposition_why"]
+
+
+def test_the_1143_shape_files_with_raw_and_its_mask_named(past_deadline):
     _, filed, _ = past_deadline
     (mlb,) = _series(filed, "KXMLBTB")
-    assert mlb["disposition"] == DISP_REAL_BREAK
-    assert mlb["published_mce"] is not None and mlb["published_n"] == 1800
+    assert mlb["disposition"] == DISP_PUBLISHED_UNKNOWN
+    assert mlb["published_mce"] is None
+    assert mlb["mask_survivor_n"] == 1800 and mlb["mask_survivor_mce"] is not None
 
 
 def test_no_cohort_reaches_filing_without_a_disposition(past_deadline):
