@@ -437,6 +437,48 @@ describe("#9483 NBA ladder cards", () => {
     expect(details).not.toContain("Last quote");
   });
 
+  // Lane1's review (19:11Z): the line-level "Pregame chance unavailable" belongs only to a
+  // final where a sibling line has a chance. An all-null final says it once, in the caption;
+  // during play the line says nothing about it.
+  const LINE_UNAVAILABLE = /Pregame chance unavailable(?! for these lines)/;
+
+  it("an all-null final: the caption says unavailable, the selected line does not repeat it", () => {
+    const total = totalLadderCard(nbaInputs(nbaFinal, {}))!;
+    const selected = renderToStaticMarkup(
+      <NFLEventCardDeck cards={[total]} teams={TEAMS} selection={{ total: "o:240505186" }} onSelect={noop} onOpen={noop} openerRef={noop} />,
+    );
+    expect(selected).toContain(">Pregame chance unavailable for these lines<");
+    expect(selected).toContain("HIT");
+    expect(selected).not.toMatch(LINE_UNAVAILABLE);
+  });
+
+  it("during play beside a pinned sibling: an unpinned line says nothing about unavailability", () => {
+    const m = JSON.parse(JSON.stringify(nbaPregame.game_question_matrix));
+    const overs: string[] = [];
+    for (const q of m.questions)
+      for (const o of q.options)
+        if (o.side === "over" && o.published?.value_state === "quoted" && Array.isArray(o.contributor_outcome_ids)) overs.push(o.option_key);
+    expect(overs.length).toBeGreaterThanOrEqual(2);
+    for (const q of m.questions)
+      for (const o of q.options)
+        if (o.option_key === overs[0])
+          o.comparison = { state: "comparable", reason: null, baseline: { probability: 0.44, observed_at: "2026-10-15T23:20:00Z", basis: "pregame_pin" } };
+    const live = totalLadderCard(
+      nbaInputs(
+        { game_question_matrix: m },
+        { status: "live", commenceTime: "2026-10-15T23:30:00Z", homeScore: 20, awayScore: 18, nowMs: Date.parse("2026-10-15T23:40:00Z") },
+      ),
+    )!;
+    expect(live.phase).toBe("during");
+    expect(live.points.find((p) => p.optionKey === overs[0])!.chance).toBe(0.44);
+    const unpinned = live.points.find((p) => p.optionKey !== overs[0] && p.chance === null)!;
+    const selected = renderToStaticMarkup(
+      <NFLEventCardDeck cards={[live]} teams={TEAMS} selection={{ total: unpinned.optionKey }} onSelect={noop} onOpen={noop} openerRef={noop} />,
+    );
+    expect(selected).toContain(unpinned.label);
+    expect(selected).not.toMatch(/Pregame chance unavailable/);
+  });
+
   it("before tip-off: each recent quote is a dot on its own team's side, with the Tie axis", () => {
     const margin = marginLadderCard(
       nbaInputs(nbaPregame, {
