@@ -21,6 +21,8 @@ nonisolated struct FuturesHistoryResponse: Decodable, Sendable {
     /// Measured off the points served (#7077), like the timeline's.
     let coverageHours: Double?
     let observationTimes: Int?
+    /// #683 — the `range=full` block for the lines drawn.
+    @LenientDecode var historyRange: FuturesHistoryRange? = nil
 }
 
 nonisolated struct FuturesHistoryOutcome: Decodable, Sendable {
@@ -32,6 +34,19 @@ nonisolated struct FuturesHistoryOutcome: Decodable, Sendable {
 nonisolated struct FuturesHistoryPoint: Decodable, Sendable {
     let timestamp: String
     let probability: Double?
+    /// #683 — `kalshi_archive` on a recorded interval (at its close); absent on a
+    /// live point. The interval fields ride beside it.
+    @TolerantNumeric var provenance: String? = nil
+    @TolerantNumeric var intervalStart: String? = nil
+    @TolerantNumeric var periodMinutes: Int? = nil
+    @TolerantNumeric var priceBasis: String? = nil
+
+    /// The point's archive mark, or nil for a live point.
+    var archiveMark: TimelineArchiveMark? {
+        guard provenance == EvolutionArchiveProvenance.kalshiArchive else { return nil }
+        return TimelineArchiveMark(provenance: provenance, intervalStart: intervalStart,
+                                   periodMinutes: periodMinutes, priceBasis: priceBasis)
+    }
 }
 
 nonisolated enum VerifiedTitleHistory {
@@ -51,27 +66,34 @@ nonisolated enum VerifiedTitleHistory {
     /// chart keys lines by the names in `outcomes`; a line with no id falls back
     /// to its own name. A row `/history` has no line for draws none — an empty
     /// line is honest, the raw median is the defect. Coverage comes from
-    /// `/history` too, so the axis and the sparse caption describe the points drawn.
+    /// `/history` too, so the axis and the sparse caption describe the points drawn;
+    /// so does the `range=full` block (#683), which describes those same lines.
     static func drawing(_ history: FuturesHistoryResponse,
                         over response: ProbabilityTimelineResponse) -> ProbabilityTimelineResponse {
         let nameById = Dictionary(
             response.outcomes.compactMap { meta in meta.id.map { ($0, meta.name) } },
             uniquingKeysWith: { first, _ in first })
-        var byStamp: [String: (date: Date, outcomes: [String: Double])] = [:]
+        var byStamp: [String: (date: Date, outcomes: [String: Double],
+                               archive: [String: TimelineArchiveMark])] = [:]
         for line in history.outcomes {
             let name = line.outcomeId.flatMap { nameById[$0] } ?? line.name
             for point in line.history {
                 guard let probability = point.probability,
                       let date = point.timestamp.asDate else { continue }
-                byStamp[point.timestamp, default: (date, [:])].outcomes[name] = probability
+                byStamp[point.timestamp, default: (date, [:], [:])].outcomes[name] = probability
+                // #683: an archived point keeps its mark on the line it joins, so
+                // the chart labels it here exactly as it does on the timeline.
+                byStamp[point.timestamp]?.archive[name] = point.archiveMark
             }
         }
         var drawn = response
         drawn.timeline = byStamp
             .sorted { ($0.value.date, $0.key) < ($1.value.date, $1.key) }
-            .map { TimelineEntry(timestamp: $0.key, outcomes: $0.value.outcomes) }
+            .map { TimelineEntry(timestamp: $0.key, outcomes: $0.value.outcomes,
+                                 archive: $0.value.archive.isEmpty ? nil : $0.value.archive) }
         drawn.coverageHours = history.coverageHours
         drawn.observationTimes = history.observationTimes
+        drawn.historyRange = history.historyRange
         return drawn
     }
 }

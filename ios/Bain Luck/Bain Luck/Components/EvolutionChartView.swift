@@ -31,13 +31,17 @@ enum EvolutionTimeRange: String, CaseIterable, Identifiable {
 ///
 /// "Season" is kept for the questions that have one — a league's own competitions,
 /// and any market carrying tournament dates, where `Season` sits beside `Event` and
-/// means the tour around it. Everything else gets `6M`, which is what the chart
-/// actually fetches (4,320 hours) and cannot be wrong about.
+/// means the tour around it. Everything else gets `Max`: the most this chart has.
 ///
-/// 🔴 `6M` RATHER THAN `All`: a 2028 election market has been trading since 2025,
-/// so a chip reading "All" over a six-month fetch would trade one wrong word for
-/// another. The default for an unknown or absent category is therefore the honest
-/// generic, never the specific claim (this is an allowlist whose MISS is safe).
+/// 🔴 `Max` RATHER THAN `All`: a 2028 election market has been trading since 2025,
+/// and "All" claims the question's whole life. The chip used to read `6M`, the
+/// 4,320-hour fetch — until #683 made the widest chip ask for the whole recovered
+/// history (`range=full`), which reaches past six months. Neither `6M` nor `All`
+/// survives that: the server may draw more than six months, and a recovered record
+/// whose import is incomplete is still not proof of the question's open. `Max` is
+/// true over a new server and an old one alike. The default for an unknown or
+/// absent category is therefore the honest generic, never the specific claim (this
+/// is an allowlist whose MISS is safe).
 enum EvolutionRangeVocabulary {
     /// Categories whose markets belong to a season, from
     /// `futures_markets.llm_sport_category` as production actually writes it.
@@ -46,7 +50,7 @@ enum EvolutionRangeVocabulary {
         "cricket", "rugby", "handball", "lacrosse", "softball", "motorsports",
     ]
 
-    static let genericWidestWindow = "6M"
+    static let genericWidestWindow = "Max"
 
     static func seasonWord(sportCategory: String?, hasTournamentDates: Bool) -> String {
         if hasTournamentDates { return EvolutionTimeRange.season.rawValue }
@@ -71,6 +75,8 @@ private struct EvolutionPoint: Identifiable {
     let name: String
     let probability: Double
     let isCombined: Bool
+    /// #683 — set when this value is a recorded interval served at its close.
+    var archive: TimelineArchiveMark? = nil
 }
 
 // MARK: - Crosshair State
@@ -78,6 +84,8 @@ private struct EvolutionPoint: Identifiable {
 private struct CrosshairData: Equatable {
     let date: Date
     let entries: [(name: String, probability: Double, color: Color)]
+    /// #683 — the archive marks of the values read out at `date`.
+    var archiveMarks: [TimelineArchiveMark] = []
 
     static func == (lhs: CrosshairData, rhs: CrosshairData) -> Bool {
         lhs.date == rhs.date && lhs.entries.count == rhs.entries.count
@@ -324,13 +332,23 @@ struct EvolutionChartView: View {
                     windowPoints: chartEntries.count,
                     windowInstants: windowInstants,
                     totalInstants: totalInstants,
-                    windowWord: windowWord
+                    windowWord: windowWord,
+                    historyRange: data?.historyRange
                 ) {
                 case .sparse(let copy):
                     VStack(spacing: 0) {
                         controlBar
                         historyCaptionRow
                         emptyState(copy.note, hint: copy.hint)
+                        if let note = archiveNote {
+                            Text(note)
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(.horizontal)
+                                .padding(.bottom, 6)
+                                .accessibilityIdentifier(Self.archiveNoteIdentifier)
+                        }
                     }
                     .background(Color.cardBackground)
                     .clipShape(RoundedRectangle(cornerRadius: 12))
@@ -342,7 +360,8 @@ struct EvolutionChartView: View {
                         if let note = Self.coverageNote(
                             coverageHours: data?.coverageHours,
                             observationTimes: data?.observationTimes,
-                            requestedHours: requestedHours
+                            requestedHours: requestedHours,
+                            historyRange: data?.historyRange
                         ) ?? Self.heldSteadyNote(
                             series: plottedSeries,
                             windowInstants: windowInstants,
@@ -354,6 +373,15 @@ struct EvolutionChartView: View {
                                 .frame(maxWidth: .infinity, alignment: .leading)
                                 .padding(.horizontal)
                                 .padding(.bottom, 6)
+                        }
+                        if let note = archiveNote {
+                            Text(note)
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(.horizontal)
+                                .padding(.bottom, 6)
+                                .accessibilityIdentifier(Self.archiveNoteIdentifier)
                         }
                         if crosshair != nil {
                             crosshairTooltip
@@ -427,6 +455,8 @@ struct EvolutionChartView: View {
             let fetchHours: Int
             switch selectedRange {
             case .season:
+                // #683: a floor, not the bound — `range=full` below asks the server
+                // for the whole recovered history; an older server serves just this.
                 fetchHours = 4320 // ~6 months
             case .week:
                 fetchHours = hours
@@ -441,14 +471,16 @@ struct EvolutionChartView: View {
             case .today:
                 fetchHours = 24
             }
+            let fullRange = EvolutionFullRange.asksForFullHistory(selectedRange)
             // #10244: a verified detail draws `/history`'s de-vigged lines, asked
             // alongside the timeline so the chart costs no extra round trip.
             async let detailHistory = Self.verifiedHistoryLines(
-                marketId: marketId, hours: fetchHours,
+                marketId: marketId, hours: fetchHours, fullRange: fullRange,
                 when: VerifiedTitleHistory.drawsSourceHistory(
                     detail: expectation?.representation, response: nil))
             let result = try await APIClient.shared.fetchProbabilityTimeline(
-                marketId: marketId, top: 50, hours: fetchHours, representation: representation
+                marketId: marketId, top: 50, hours: fetchHours, representation: representation,
+                fullRange: fullRange
             )
             guard !Task.isCancelled, generation == requestGeneration else { return }
             let withholds: Bool
@@ -465,7 +497,8 @@ struct EvolutionChartView: View {
             if lines == nil, VerifiedTitleHistory.drawsSourceHistory(
                 detail: expectation?.representation, response: result.effectiveRepresentation) {
                 // The response is verified though the detail was not (yet).
-                lines = try await Self.verifiedHistoryLines(marketId: marketId, hours: fetchHours, when: true)
+                lines = try await Self.verifiedHistoryLines(
+                    marketId: marketId, hours: fetchHours, fullRange: fullRange, when: true)
             }
             guard !Task.isCancelled, generation == requestGeneration else { return }
             withholdsCurrent = withholds
@@ -526,10 +559,11 @@ struct EvolutionChartView: View {
     /// #10244 — the verified chart's lines; nil (draw the timeline as served) for
     /// every source-mode chart.
     private static func verifiedHistoryLines(
-        marketId: Int, hours: Int, when verified: Bool
+        marketId: Int, hours: Int, fullRange: Bool, when verified: Bool
     ) async throws -> FuturesHistoryResponse? {
         guard verified else { return nil }
-        return try await APIClient.shared.fetchFuturesHistory(marketId: marketId, hours: hours)
+        return try await APIClient.shared.fetchFuturesHistory(
+            marketId: marketId, hours: hours, fullRange: fullRange)
     }
 
     // MARK: - Computed
@@ -619,18 +653,25 @@ struct EvolutionChartView: View {
 
     /// Time-filtered cutoff date for chart entries.
     private var timeCutoff: Date? {
-        switch selectedRange {
+        Self.timeCutoff(for: selectedRange, tournamentStart: parsedTournamentStart)
+    }
+
+    /// The client-side cutoff per chip. The widest chip has none, so every instant a
+    /// `range=full` read serves — however far before `hours` it lies — is drawn (#683).
+    static func timeCutoff(for range: EvolutionTimeRange, tournamentStart: Date?,
+                           now: Date = Date()) -> Date? {
+        switch range {
         case .season:
             return nil
         case .week:
-            return Calendar.current.date(byAdding: .day, value: -7, to: Date())
+            return Calendar.current.date(byAdding: .day, value: -7, to: now)
         case .tournament:
-            guard let start = parsedTournamentStart else { return nil }
+            guard let start = tournamentStart else { return nil }
             return start.addingTimeInterval(-3600 * 6)
         case .day:
-            return Calendar.current.date(byAdding: .hour, value: -24, to: Date())
+            return Calendar.current.date(byAdding: .hour, value: -24, to: now)
         case .today:
-            return Calendar.current.startOfDay(for: Date())
+            return Calendar.current.startOfDay(for: now)
         }
     }
 
@@ -654,7 +695,8 @@ struct EvolutionChartView: View {
                     date: date,
                     name: name,
                     probability: prob * 100,
-                    isCombined: false
+                    isCombined: false,
+                    archive: entry.archive?[name]
                 ))
                 if effectiveSelected.contains(name) {
                     latestProbs[name] = prob * 100
@@ -713,6 +755,20 @@ struct EvolutionChartView: View {
     }
 
     private var windowWord: String { Self.windowWord(for: selectedRange) }
+
+    /// #683 — the line that says which drawn prices are Kalshi's recorded
+    /// intervals rather than our live readings. Counted over every line the plot
+    /// draws (faint ones included) in the chosen window, so no archived value is
+    /// on screen unlabelled.
+    private var archiveNote: String? {
+        guard let data else { return nil }
+        let drawn = EvolutionArchiveProvenance.drawnMarks(
+            in: data.timeline, names: Set(displayedNames), cutoff: timeCutoff)
+        return EvolutionArchiveProvenance.note(marks: drawn.marks, drawnValues: drawn.values)
+    }
+
+    /// How a UI test finds the archive line.
+    static let archiveNoteIdentifier = "evolution-archive-note"
 
     // MARK: - Axis, Coverage and Observation Marks (#7077)
 
@@ -885,12 +941,22 @@ struct EvolutionChartView: View {
     ///
     /// Count first, span second: at one or two prices the count IS the story, and
     /// "prices only go back 3d" would imply a line where there are two dots.
+    ///
+    /// #683 — the span sentence is withheld when a full read's drawn span begins on
+    /// a recovered venue record whose import is not complete: "prices only go back
+    /// 30d" would then claim the record's edge is the question's open.
+    ///
+    /// #683 — a full read the server served `partial` says so first: older prices
+    /// exist that are not drawn, so neither sentence below would be true.
     static func coverageNote(
-        coverageHours: Double?, observationTimes: Int?, requestedHours: Int
+        coverageHours: Double?, observationTimes: Int?, requestedHours: Int,
+        historyRange: FuturesHistoryRange? = nil
     ) -> String? {
+        if EvolutionFullRange.servedPartially(historyRange) { return EvolutionFullRange.partialNote }
         if let seen = observationTimes, seen > 0, seen <= 3 {
             return seen == 1 ? "Only one price seen so far" : "Only \(seen) prices seen so far"
         }
+        guard !EvolutionFullRange.earliestPointIsUnproven(historyRange) else { return nil }
         guard let covered = coverageHours, covered >= 0, requestedHours > 0 else { return nil }
         guard covered < Double(requestedHours) * 0.5 else { return nil }
         return "Prices only go back \(coverageSpanWord(covered))"
@@ -952,13 +1018,15 @@ struct EvolutionChartView: View {
     }
 
     static func cardBody(
-        windowPoints: Int, windowInstants: Int, totalInstants: Int, windowWord: String
+        windowPoints: Int, windowInstants: Int, totalInstants: Int, windowWord: String,
+        historyRange: FuturesHistoryRange? = nil
     ) -> CardBody {
         guard windowPoints < 2 else { return .plot }
         return .sparse(sparseCopy(
             windowInstants: windowInstants,
             totalInstants: totalInstants,
-            windowWord: windowWord
+            windowWord: windowWord,
+            historyRange: historyRange
         ))
     }
 
@@ -969,8 +1037,16 @@ struct EvolutionChartView: View {
     /// one sentence it replaces could not (gotcha #53 — an empty window and an empty
     /// history had the same words). The hint appears only in the second case, so it
     /// is never an instruction to go looking for something that is not there.
+    ///
+    /// #683 (CERT-4158) — a full read the server served `partial` withheld older
+    /// prices it could not place, so when the window already holds everything the
+    /// response carries, "No price history yet" and "… seen so far" are both untrue:
+    /// the card says the one partial sentence instead, as `coverageNote` does over a
+    /// plot. A window with earlier prices outside it keeps its own sentence and its
+    /// hint — that sentence is about the window, and the widest chip says the rest.
     static func sparseCopy(
-        windowInstants: Int, totalInstants: Int, windowWord: String
+        windowInstants: Int, totalInstants: Int, windowWord: String,
+        historyRange: FuturesHistoryRange? = nil
     ) -> SparseCopy {
         // ONE clamp, not two: `guard seen > 0` below already sends every
         // non-positive total to the honest sentence, so wrapping this in
@@ -982,6 +1058,10 @@ struct EvolutionChartView: View {
         let seen = totalInstants
         let inWindow = max(0, min(windowInstants, seen))
         let earlier = seen - inWindow
+
+        if earlier <= 0, EvolutionFullRange.servedPartially(historyRange) {
+            return SparseCopy(note: EvolutionFullRange.partialNote, hint: nil)
+        }
 
         guard seen > 0 else { return SparseCopy(note: "No price history yet", hint: nil) }
 
@@ -1019,7 +1099,7 @@ struct EvolutionChartView: View {
     /// preposition belongs to the phrase, because `Today` does not take one and
     /// every other window does ("No prices today", "No prices in the last 7 days").
     ///
-    /// Named from the RANGE, never from the chip's own label: `6M` reads fine on a
+    /// Named from the RANGE, never from the chip's own label: `Max` reads fine on a
     /// chip and not in a sentence, and the widest range's cutoff is nil — so when it
     /// is sparse, the window IS everything and the count sentence carries it without
     /// this word at all.
@@ -1296,8 +1376,9 @@ struct EvolutionChartView: View {
         // reader could reach on production 56775596's `24h` — and its response to
         // nothing-to-say was to stop following the finger. See
         // `ChartCrosshairPolicy` for the measurement.
-        let candidates = chartEntries
+        let plotted = chartEntries
             .filter { !$0.isCombined && effectiveSelected.contains($0.name) }
+        let candidates = plotted
             .map { ScrubCandidate(date: $0.date, name: $0.name, probability: $0.probability) }
 
         guard let resolved = ChartCrosshairPolicy.resolve(at: date, among: candidates) else { return }
@@ -1308,7 +1389,12 @@ struct EvolutionChartView: View {
             return (name: point.name, probability: point.probability, color: color)
         }
 
-        crosshair = CrosshairData(date: resolved.date, entries: coloredEntries)
+        let readNames = Set(resolved.entries.map(\.name))
+        let archiveMarks = plotted.compactMap { point in
+            point.date == resolved.date && readNames.contains(point.name) ? point.archive : nil
+        }
+        crosshair = CrosshairData(date: resolved.date, entries: coloredEntries,
+                                  archiveMarks: archiveMarks)
     }
 
     // MARK: - Crosshair Tooltip
@@ -1316,17 +1402,30 @@ struct EvolutionChartView: View {
     private var crosshairTooltip: some View {
         guard let crosshair else { return AnyView(EmptyView()) }
         let dateStr: String
-        if selectedRange == .day || selectedRange == .today {
-            dateStr = crosshair.date.formatted(.dateTime.hour().minute())
+        let style: Date.FormatStyle = (selectedRange == .day || selectedRange == .today)
+            ? .dateTime.hour().minute()
+            : .dateTime.month(.abbreviated).day().hour().minute()
+        // #683: an archived value stands for an interval, so its readout names the
+        // interval (start – close), never the close alone as if it were an instant.
+        if let interval = EvolutionArchiveProvenance.interval(
+            closingAt: crosshair.date, marks: crosshair.archiveMarks) {
+            dateStr = "\(interval.lowerBound.formatted(style)) – "
+                + interval.upperBound.formatted(.dateTime.hour().minute())
         } else {
-            dateStr = crosshair.date.formatted(.dateTime.month(.abbreviated).day().hour().minute())
+            dateStr = crosshair.date.formatted(style)
         }
+        let archiveLine = EvolutionArchiveProvenance.readoutLine(marks: crosshair.archiveMarks)
 
         return AnyView(
             VStack(alignment: .leading, spacing: 4) {
                 Text(dateStr)
                     .font(.caption2)
                     .foregroundStyle(.secondary)
+                if let archiveLine {
+                    Text(archiveLine)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
 
                 ForEach(Array(crosshair.entries.prefix(8).enumerated()), id: \.offset) { _, entry in
                     HStack(spacing: 6) {
@@ -1937,7 +2036,7 @@ struct EvolutionControlBar: View {
     /// So the last arm gives each group its own row AND lets the chips inside a
     /// group wrap. That makes fitting depend on the widest single CHIP rather than
     /// on the widest group, and the chip vocabulary is closed and short —
-    /// `Season`/`6M`, `7d`, `Event`, `24h`, `Today`, `Sum`, `Top 5/10/20` — so there
+    /// `Season`/`Max`, `7d`, `Event`, `24h`, `Today`, `Sum`, `Top 5/10/20` — so there
     /// is no market and no type size at which this arm can overflow. That is what
     /// makes it a terminal arm; `stackedRows` was called one without the property.
     ///

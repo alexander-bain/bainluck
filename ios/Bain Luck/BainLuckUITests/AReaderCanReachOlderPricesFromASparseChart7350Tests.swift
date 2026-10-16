@@ -143,5 +143,5 @@ final class AReaderCanReachOlderPricesFromASparseChart7350Tests: XCTestCase {
 /// constant by `ASparseWindowKeepsItsRangeControls7350Tests`, so the two cannot
 /// drift apart silently.
 enum EvolutionRangeVocabularyProbe {
-    static let genericWidestWindow = "6M"
+    static let genericWidestWindow = "Max"
 }
