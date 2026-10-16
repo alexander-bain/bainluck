@@ -35,11 +35,21 @@ WHAT IS BOUNDED, AND HOW
   :func:`write_bounded_artifact`). Over the cap nothing more is written, the
   overflow is reported, and the exit is non-zero. An artifact is written whole
   or not at all, and never over an existing file.
+* **Console delivery** is inside the same wall: once bound, every write to the
+  real stdout/stderr is written AND flushed under the wall's alarm (work
+  deadline while working, hard deadline for the receipt), so no byte is left
+  in a Python buffer for the interpreter's exit flush. A sink that misses the
+  wall makes the console unavailable for the rest of the run (nothing more is
+  sent to it, the exit is held at 3) and :func:`exit_process` ends the process
+  without the exit flush that would block on that sink again.
 
 WHAT IS NOT BOUNDED HERE (stated, never implied): libpq/asyncpg's internal
 result buffers before a row reaches Python; bytes a native library writes to
 file descriptor 1 or 2 directly; the server side of a statement after the
-client gave up (``statement_timeout`` is what bounds that).
+client gave up (``statement_timeout`` is what bounds that); delivery of console
+bytes the kernel accepted before the wall (the reader of a pipe or terminal
+owns those); and a console write off the main thread (no alarm: checked before
+and after only).
 """
 
 from __future__ import annotations
@@ -139,7 +149,10 @@ class OperationWall:
 
     ``reserve`` is the tail kept for cancelling, closing and writing the
     receipt; work stops at :attr:`work_deadline`, everything stops at
-    :attr:`deadline`.
+    :attr:`deadline`. The receipt artifact is sealed by
+    :attr:`artifact_deadline`, so the reserve's last quarter is always left
+    for delivering the summary to the console: a slow disk cannot take the
+    console's turn, and neither gets time past :attr:`deadline`.
     """
 
     def __init__(
@@ -158,29 +171,32 @@ class OperationWall:
         self.deadline = self.started + seconds
         self.reserve = min(2.0, seconds * 0.1) if reserve is None else float(reserve)
         self.work_deadline = self.deadline - self.reserve
+        self.artifact_deadline = self.deadline - self.reserve / 4
 
-    def remaining(self, *, work: bool = True) -> float:
-        end = self.work_deadline if work else self.deadline
+    def remaining(self, *, work: bool = True, end: Optional[float] = None) -> float:
+        if end is None:
+            end = self.work_deadline if work else self.deadline
         return end - self.monotonic()
 
     def elapsed(self) -> float:
         return self.monotonic() - self.started
 
-    def check(self, phase: str, *, work: bool = True) -> None:
-        if self.remaining(work=work) <= 0:
+    def check(self, phase: str, *, work: bool = True, end: Optional[float] = None) -> None:
+        if self.remaining(work=work, end=end) <= 0:
             raise WallExpired(phase)
 
     @contextmanager
-    def sync_phase(self, phase: str, *, work: bool = True):
+    def sync_phase(self, phase: str, *, work: bool = True, end: Optional[float] = None):
         """Run synchronous work inside the wall; interrupt it when the wall ends.
 
         ``SIGALRM`` raises :class:`WallExpired` between bytecodes, so a Python
         loop is interrupted; one long C call (a single huge ``json.loads``) is
         not, which is why every input it can see is size-capped first. Off the
         main thread (no signals) the wall is checked before and after.
-        Never armed around an ``await``.
+        Never armed around an ``await``. ``end`` (a monotonic instant) ends
+        the phase sooner than the work or hard deadline.
         """
-        self.check(phase, work=work)
+        self.check(phase, work=work, end=end)
         armed = threading.current_thread() is threading.main_thread() and hasattr(
             signal, "setitimer"
         )
@@ -191,14 +207,16 @@ class OperationWall:
                 raise WallExpired(phase)
 
             previous = signal.signal(signal.SIGALRM, _expire)
-            signal.setitimer(signal.ITIMER_REAL, max(self.remaining(work=work), 0.001))
+            signal.setitimer(
+                signal.ITIMER_REAL, max(self.remaining(work=work, end=end), 0.001)
+            )
         try:
             yield
         finally:
             if armed:
                 signal.setitimer(signal.ITIMER_REAL, 0)
                 signal.signal(signal.SIGALRM, previous)
-        self.check(phase, work=work)
+        self.check(phase, work=work, end=end)
 
 
 async def run_within_wall(
@@ -491,10 +509,7 @@ class _CappedStream:
         return self._cap._write(self._real, s)
 
     def flush(self):
-        try:
-            self._real.flush()
-        except Exception:  # noqa: BLE001
-            pass
+        self._cap._deliver(self._real.flush)
 
     def isatty(self):
         return False
@@ -504,13 +519,32 @@ class _CappedStream:
         return getattr(self._real, "encoding", "utf-8")
 
 
+#: Set once any console on this process missed its wall (see :func:`exit_process`).
+_console_lost = False
+#: The installed :class:`ConsoleCap` (``sys.stdout`` is process-wide, so is this).
+_installed: Optional["ConsoleCap"] = None
+
+
+def _alarm_armed() -> bool:
+    return hasattr(signal, "getitimer") and signal.getitimer(signal.ITIMER_REAL)[0] > 0
+
+
 class ConsoleCap:
-    """One shared byte cap over ``sys.stdout`` + ``sys.stderr``.
+    """One shared byte cap over ``sys.stdout`` + ``sys.stderr``, delivered inside the wall.
 
     Installed BEFORE the app is imported, so logging handlers built during
     import hold the capped streams. Past the cap nothing more is written (no
     partial line passes as output); :attr:`overflowed` is set and the CLI exits
     non-zero after :meth:`restore` prints one fixed notice inside the reserve.
+
+    After :meth:`bind`, every write reaches the real stream and is flushed
+    inside the operation's wall: by its work deadline while the operation
+    runs, by its hard deadline once :meth:`receipt` is called. Past the wall
+    no write starts (no fresh allowance). A write or flush the wall interrupts,
+    or one the sink refuses, makes the console :attr:`unavailable` (the
+    reason): bytes the sink had not taken are dropped, nothing more is sent to
+    it, and the CLI holds its exit at 3. The receipt artifact, written before
+    the console, is the record; a lost console never means nothing was written.
     """
 
     def __init__(self, cap: int):
@@ -520,30 +554,137 @@ class ConsoleCap:
         self.used = 0
         self.dropped = 0
         self.overflowed = False
+        self.unavailable: Optional[str] = None
+        self.undelivered = 0
+        self._wall: Optional[OperationWall] = None
+        self._work = True
         self._real_out, self._real_err = sys.stdout, sys.stderr
 
     def install(self) -> "ConsoleCap":
+        global _installed
         sys.stdout = _CappedStream(self, self._real_out)
         sys.stderr = _CappedStream(self, self._real_err)
+        _installed = self
         return self
+
+    def bind(self, wall: OperationWall) -> "ConsoleCap":
+        """Deliver every later write inside ``wall`` (its work deadline, for now)."""
+        self._wall, self._work = wall, True
+        return self
+
+    def receipt(self) -> None:
+        """The receipt's turn: writes may use the wall's reserve, up to its hard deadline."""
+        self._work = False
+
+    def deliver_receipt(self, render: Callable[[], str]) -> bool:
+        """Serialize the receipt and print it, both inside the wall's hard deadline.
+
+        One phase covers ``render`` and the write, so a slow serialisation is
+        cut by the same alarm as a slow sink. False = the console is unavailable.
+        """
+        self.receipt()
+
+        def send():
+            print(render())
+
+        return self._deliver(send) and self.unavailable is None
 
     def _write(self, real, s) -> int:
         data = str(s)
         n = len(data.encode("utf-8", errors="replace"))
+        if self.unavailable is not None:
+            self.undelivered += n
+            return len(data)
         if self.overflowed or self.used + n > self.cap - OVERFLOW_NOTICE_RESERVE:
             self.overflowed = True
             self.dropped += n
             return len(data)
         self.used += n
-        real.write(data)
+
+        def write_through():
+            real.write(data)
+            real.flush()
+
+        if not self._deliver(write_through):
+            self.undelivered += n
         return len(data)
 
+    def _deliver(self, send: Callable[[], Any]) -> bool:
+        """Run one write/flush to the real sink inside the bound wall. False = unavailable."""
+        global _console_lost
+        if self.unavailable is not None:
+            return False
+        wall = self._wall
+        try:
+            if wall is None or _alarm_armed():
+                # Unbound (before the wall exists), or inside an enclosing
+                # phase of the same wall whose alarm already ends sooner.
+                send()
+            else:
+                with wall.sync_phase("console", work=self._work):
+                    send()
+            return True
+        except WallExpired as e:
+            self.unavailable = f"wall_expired:{e.phase}"
+        except Exception as e:  # noqa: BLE001 — a refused sink is an unavailable console
+            self.unavailable = f"sink_error:{type(e).__name__}"
+        _console_lost = True
+        return False
+
     def restore(self) -> None:
+        global _installed
         sys.stdout, sys.stderr = self._real_out, self._real_err
+        if _installed is self:
+            _installed = None
         if self.overflowed:
             notice = f"OUTPUT_CAP_EXCEEDED: cap={self.cap} dropped_bytes={self.dropped}\n"
-            self._real_err.write(notice[: OVERFLOW_NOTICE_RESERVE - 1])
-            self._real_err.flush()
+            real_err = self._real_err
+
+            def send():
+                real_err.write(notice[: OVERFLOW_NOTICE_RESERVE - 1])
+                real_err.flush()
+
+            self._deliver(send)
+
+
+def bind_console(wall: OperationWall) -> None:
+    """Deliver the installed console's later writes inside ``wall`` (see :meth:`ConsoleCap.bind`)."""
+    if _installed is not None:
+        _installed.bind(wall)
+
+
+def deliver_receipt(wall: OperationWall, render: Callable[[], str]) -> bool:
+    """Serialize and print the receipt inside ``wall``'s hard deadline. False = not delivered.
+
+    Through the installed console when there is one (:meth:`ConsoleCap.deliver_receipt`).
+    Without one (a direct call) the same phase bounds a plain flushed print.
+    """
+    if _installed is not None:
+        if _installed._wall is None:
+            _installed.bind(wall)
+        return _installed.deliver_receipt(render)
+    try:
+        with wall.sync_phase("console", work=False):
+            print(render(), flush=True)
+        return True
+    except WallExpired:
+        return False
+
+
+def exit_process(code: int) -> None:
+    """End an attended CLI process with ``code``, never waiting on a lost console.
+
+    A console that missed its wall can still hold undelivered bytes in the
+    real stream's buffer, and the interpreter's exit flush would block on the
+    same sink with no bound. Then, and only then, the process ends with
+    ``os._exit``: the artifact was fsynced before the console was tried, the
+    event loop is closed, and an exit flush of a lost console is owed nothing.
+    Otherwise every byte was already flushed inside the wall and the exit is
+    the ordinary ``sys.exit``.
+    """
+    if _console_lost:
+        os._exit(code)
+    sys.exit(code)
 
 
 class ArtifactOverflow(Exception):

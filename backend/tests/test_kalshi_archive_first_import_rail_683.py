@@ -1225,6 +1225,443 @@ class TestCommitAcknowledgement:
         assert code == 2 and "input_too_large" in capsys.readouterr().err
 
 
+# ── the console is delivered inside the wall ───────────────────────────────
+
+
+@pytest.fixture
+def slow_console(monkeypatch):
+    """Delay only the real sinks' writes that start with ``prefix`` (a stalled pipe or terminal).
+
+    The default prefix is the receipt's opening brace on stdout.
+    """
+    state = {"delay": 0.0, "refuse": None, "prefix": "{"}
+    original_install = bounds.ConsoleCap.install
+
+    class SlowSink:
+        def __init__(self, real):
+            self.real = real
+
+        def write(self, s):
+            if s.startswith(state["prefix"]):
+                if state["refuse"] is not None:
+                    raise state["refuse"]
+                time.sleep(state["delay"])
+            return self.real.write(s)
+
+        def flush(self):
+            return self.real.flush()
+
+        def __getattr__(self, k):
+            return getattr(self.real, k)
+
+    def install(self):
+        self._real_out, self._real_err = SlowSink(self._real_out), SlowSink(self._real_err)
+        return original_install(self)
+
+    monkeypatch.setattr(bounds.ConsoleCap, "install", install)
+    return state
+
+
+def _hanging_apply(tmp_path, deadline):
+    report = asyncio.run(_a_plan())
+    plan = tmp_path / "P.json"
+    plan.write_text(json.dumps(report))
+
+    async def hang():
+        await asyncio.sleep(60)
+
+    argv = [
+        "apply", "--plan", str(plan), "--expected-digest", report["plan_digest"],
+        "--max-outcomes", "1", "--max-points", "26", "--deadline", str(deadline),
+        "--write", "--output", str(tmp_path / "R.json"),
+    ]
+    return argv, _factory(_CommitSession(hang))
+
+
+class TestConsoleInsideTheWall:
+    @pytest.mark.parametrize("deadline,delay", [(0.8, 0.0), (0.8, 0.6), (30.0, 3.0)])
+    def test_the_import_receipt_reaches_the_console_inside_the_wall_or_not_at_all(
+        self, tmp_path, capsys, slow_console, deadline, delay
+    ):
+        """CERT-4175's 683-KEEP-CONSOLE-RECEIPT-WITHIN-THE-OPERATION-WALL, the reviewer's witness.
+
+        The one-outcome / 26-point profile; only the console sink is slow.
+        ``delay`` 0 is the control: the summary is delivered, exit 3 for the
+        uncertain COMMIT. A console slower than the wall (0.8 s and the
+        commissioned 30 s) stops AT the wall: no summary, exit 3, and the
+        artifact written before it keeps the uncertain COMMIT.
+        """
+        slow_console["delay"] = delay
+        argv, factory = _hanging_apply(tmp_path, deadline)
+        t0 = time.monotonic()
+        code = _load_script("kalshi_archive_import.py").main(argv, session_factory=factory)
+        elapsed = time.monotonic() - t0
+        out = capsys.readouterr().out
+        receipt = json.loads((tmp_path / "R.json").read_text())
+        assert code == 3 and elapsed < deadline + 0.15
+        assert receipt["uncertain_commits"][-1]["error"] == "acknowledgement_not_received"
+        assert receipt["readback_owed"]["durability"] == "unknown"
+        if delay:
+            assert out == ""  # nothing half-sent, nothing claimed
+        else:
+            summary = json.loads(out)
+            assert summary["uncertain_commits"] == receipt["uncertain_commits"]
+            assert summary["artifact_bytes"] == (tmp_path / "R.json").stat().st_size
+
+    def test_a_clean_apply_whose_console_is_too_slow_exits_three_not_applied(
+        self, tmp_path, capsys, monkeypatch, slow_console
+    ):
+        async def fake_apply(report, **kw):
+            return {"status": "applied", "import_key": "k", "committed_outcomes": [{"outcome_id": 7}]}
+
+        monkeypatch.setattr(imp, "apply_archive_plan", fake_apply)
+        plan = tmp_path / "P.json"
+        plan.write_text("{}")
+        out = tmp_path / "R.json"
+        argv = [
+            "apply", "--plan", str(plan), "--expected-digest", "d", "--max-outcomes", "1",
+            "--max-points", "1", "--deadline", "0.8", "--output", str(out),
+        ]
+        mod = _load_script("kalshi_archive_import.py")
+        assert mod.main(argv) == 0  # control: the same apply, a console that keeps up
+        assert json.loads(capsys.readouterr().out)["status"] == "applied"
+        out.unlink()
+        slow_console["delay"] = 3.0
+        t0 = time.monotonic()
+        code = mod.main(argv)
+        assert code == 3 and time.monotonic() - t0 < 0.8 + 0.15
+        assert capsys.readouterr().out == ""
+        assert json.loads(out.read_text())["committed_outcomes"] == [{"outcome_id": 7}]
+
+    @pytest.mark.parametrize("delay", [0.0, 3.0])
+    def test_a_line_written_while_working_cannot_hold_the_import_past_the_wall(
+        self, tmp_path, capsys, monkeypatch, slow_console, delay
+    ):
+        """A log line mid-operation is bounded by the work deadline, leaving the reserve."""
+        slow_console.update(delay=delay, prefix="PROGRESS")
+
+        async def fake_apply(report, **kw):
+            print("PROGRESS one outcome", file=sys.stderr)
+            return {"status": "applied", "import_key": "k", "committed_outcomes": [{"outcome_id": 7}]}
+
+        monkeypatch.setattr(imp, "apply_archive_plan", fake_apply)
+        plan = tmp_path / "P.json"
+        plan.write_text("{}")
+        out = tmp_path / "R.json"
+        t0 = time.monotonic()
+        code = _load_script("kalshi_archive_import.py").main(
+            [
+                "apply", "--plan", str(plan), "--expected-digest", "d", "--max-outcomes", "1",
+                "--max-points", "1", "--deadline", "0.8", "--output", str(out),
+            ]
+        )
+        elapsed = time.monotonic() - t0
+        assert out.exists()  # the reserve was left for the artifact
+        if delay:
+            assert code == 3 and elapsed < 0.8 + 0.15
+            assert capsys.readouterr().out == ""  # a lost console is not tried again
+        else:
+            assert code == 0 and json.loads(capsys.readouterr().out)["status"] == "applied"
+
+    @pytest.mark.parametrize("delay", [0.0, 3.0])
+    def test_a_line_written_while_planning_cannot_hold_the_planner_past_the_wall(
+        self, planner_cli, tmp_path, capsys, slow_console, delay
+    ):
+        slow_console.update(delay=delay, prefix="PROGRESS")
+        seen: list = []
+        archive = _archive_handler(seen)
+
+        def handler(request):
+            print("PROGRESS one request", file=sys.stderr)
+            return archive(request)
+
+        out = tmp_path / "P.json"
+        argv = PROFILE[: PROFILE.index("--deadline") + 1] + ["1.0"] + PROFILE[
+            PROFILE.index("--deadline") + 2 :
+        ]
+        t0 = time.monotonic()
+        code, _ = planner_cli(argv + ["--output", str(out)], handler=handler)
+        elapsed = time.monotonic() - t0
+        assert out.exists()
+        if delay:
+            assert code == 3 and elapsed < 1.0 + 0.15
+        else:
+            assert code == 0 and json.loads(capsys.readouterr().out)["artifact"] == str(out)
+
+    def test_a_sink_that_refuses_is_unavailable_never_a_traceback(
+        self, tmp_path, capsys, slow_console
+    ):
+        slow_console["refuse"] = BrokenPipeError("reader went away")
+        argv, factory = _hanging_apply(tmp_path, 0.8)
+        code = _load_script("kalshi_archive_import.py").main(argv, session_factory=factory)
+        out, err = capsys.readouterr()
+        assert code == 3 and out == "" and "Traceback" not in err
+        assert json.loads((tmp_path / "R.json").read_text())["uncertain_commits"]
+
+    @pytest.mark.parametrize("delay", [0.0, 3.0])
+    def test_the_planner_summary_is_delivered_inside_the_wall_too(
+        self, planner_cli, tmp_path, capsys, slow_console, delay
+    ):
+        slow_console["delay"] = delay
+        out = tmp_path / "P.json"
+        argv = PROFILE[: PROFILE.index("--deadline") + 1] + ["1.0"] + PROFILE[
+            PROFILE.index("--deadline") + 2 :
+        ]
+        t0 = time.monotonic()
+        code, _ = planner_cli(argv + ["--output", str(out)])
+        elapsed = time.monotonic() - t0
+        assert json.loads(out.read_text())["terminal"] == "complete"  # sealed first
+        printed = capsys.readouterr().out
+        if delay:
+            assert code == 3 and elapsed < 1.0 + 0.15 and printed == ""
+        else:
+            assert code == 0 and json.loads(printed)["artifact"] == str(out)
+
+    def test_no_console_write_starts_past_the_wall(self):
+        sent = []
+
+        class Sink:
+            def write(self, s):
+                sent.append(s)
+
+            def flush(self):
+                sent.append("<flush>")
+
+        cap = bounds.ConsoleCap(10_000)
+        wall = bounds.OperationWall(0.01, reserve=0.0)
+        cap.bind(wall).receipt()
+        time.sleep(0.03)
+        cap._write(Sink(), "late receipt\n")
+        assert sent == [] and cap.unavailable == "wall_expired:console"
+        assert cap.undelivered == len("late receipt\n")
+
+    def test_every_bound_write_is_flushed_so_nothing_waits_for_the_exit_flush(self):
+        sent = []
+
+        class Sink:
+            def write(self, s):
+                sent.append(s)
+
+            def flush(self):
+                sent.append("<flush>")
+
+        cap = bounds.ConsoleCap(10_000).bind(bounds.OperationWall(30))
+        cap._write(Sink(), "receipt\n")
+        assert sent == ["receipt\n", "<flush>"] and cap.unavailable is None
+
+    def test_a_slow_serialisation_is_cut_by_the_same_alarm_as_a_slow_sink(self, capsys):
+        cap = bounds.ConsoleCap(10_000).install()
+        try:
+            cap.bind(bounds.OperationWall(0.3, reserve=0.1))
+
+            def slow_render():
+                time.sleep(3)
+                return "{}"
+
+            t0 = time.monotonic()
+            delivered = cap.deliver_receipt(slow_render)
+            elapsed = time.monotonic() - t0
+        finally:
+            cap.restore()
+        assert delivered is False and elapsed < 0.3 + 0.15
+        assert cap.unavailable == "wall_expired:console" and capsys.readouterr().out == ""
+
+    def test_a_slow_disk_and_a_stalled_console_still_end_at_the_wall_and_claim_nothing(
+        self, tmp_path, capsys, monkeypatch, slow_console
+    ):
+        """Neither record could be made: exit 3 alone, durability UNKNOWN, never "nothing written"."""
+        real_fsync = bounds.os.fsync
+
+        def slow_fsync(fd):
+            end = time.monotonic() + 3.0
+            while time.monotonic() < end:
+                time.sleep(0.01)
+            return real_fsync(fd)
+
+        monkeypatch.setattr(bounds.os, "fsync", slow_fsync)
+        slow_console["delay"] = 3.0
+        argv, factory = _hanging_apply(tmp_path, 0.8)
+        t0 = time.monotonic()
+        code = _load_script("kalshi_archive_import.py").main(argv, session_factory=factory)
+        assert code == 3 and time.monotonic() - t0 < 0.8 + 0.15
+        assert capsys.readouterr().out == ""
+        assert not (tmp_path / "R.json").exists() and not list(tmp_path.glob(".R.json.*.tmp"))
+
+    def test_a_console_lost_once_is_never_sent_to_again(self):
+        """A stalled sink may hold a cut buffer: neither a later write nor a flush retries it."""
+        sent = []
+
+        class Sink:
+            def __init__(self):
+                self.fail = True
+
+            def write(self, s):
+                if self.fail:
+                    self.fail = False
+                    raise BrokenPipeError("reader went away")
+                sent.append(s)
+
+            def flush(self):
+                sent.append("<flush>")
+
+        cap = bounds.ConsoleCap(10_000).bind(bounds.OperationWall(30))
+        stream = bounds._CappedStream(cap, Sink())
+        stream.write("first\n")
+        assert cap.unavailable == "sink_error:BrokenPipeError"
+        stream.write("second\n")
+        stream.flush()
+        assert sent == [] and cap.undelivered == len("first\nsecond\n")
+
+
+# The real process, its real stdout pipe, its real exit. The pipe is filled
+# before the child starts and never read, so any byte the child sends blocks
+# in the kernel: the backpressure of a stalled ``| tee`` or a frozen terminal.
+# The wall's start is stamped by the child (``time.monotonic`` is system-wide)
+# so the bound excludes interpreter start and imports. Run in a child so a
+# regression is a killed child and a red test, never a hung suite.
+_CONSOLE_PROBE = textwrap.dedent(
+    """
+    import asyncio, runpy, sys
+    from contextlib import asynccontextmanager
+    from types import SimpleNamespace
+
+    backend, stamp, mode = sys.argv[1], sys.argv[2], sys.argv[3]
+    sys.path.insert(0, backend)
+    if mode == "strawman":
+        # The rig's own check: an ordinary block-buffered print of the receipt
+        # into this pipe returns at once and the INTERPRETER'S EXIT FLUSH then
+        # waits on the pipe. This must be killed, or the rig proves nothing.
+        print("{" + "x" * 2048 + "}")
+        sys.exit(3)
+    from app.services import kalshi_archive_apply as imp
+    from app.services import kalshi_archive_bounds as bounds
+
+    class StampedWall(bounds.OperationWall):
+        def __init__(self, *a, **k):
+            super().__init__(*a, **k)
+            with open(stamp, "w") as fh:
+                fh.write(repr(self.started))
+
+    bounds.OperationWall = StampedWall
+
+    class HangingCommit:
+        async def execute(self, clause, params=None):
+            sql = str(clause)
+            if "to_regclass" in sql:
+                return SimpleNamespace(scalar=lambda: True)
+            if "INSERT INTO kalshi_archive_imports" in sql:
+                return SimpleNamespace(scalar_one=lambda: 41)
+            return SimpleNamespace()
+
+        async def commit(self):
+            await asyncio.sleep(3600)
+
+    @asynccontextmanager
+    async def factory():
+        yield HangingCommit()
+
+    real = imp.apply_archive_plan
+    imp.apply_archive_plan = lambda report, **kw: real(report, session_factory=factory, **kw)
+    sys.argv = [backend + "/scripts/kalshi_archive_import.py"] + sys.argv[4:]
+    runpy.run_path(sys.argv[0], run_name="__main__")  # the script's own exit path
+    """
+)
+
+PROBE_DEADLINE_S = 3.0
+
+
+def _full_pipe():
+    import fcntl
+    import os
+
+    r, w = os.pipe()
+    flags = fcntl.fcntl(w, fcntl.F_GETFL)
+    fcntl.fcntl(w, fcntl.F_SETFL, flags | os.O_NONBLOCK)
+    filled = 0
+    for chunk in (4096, 1):
+        while True:
+            try:
+                filled += os.write(w, b"f" * chunk)
+            except BlockingIOError:
+                break
+    fcntl.fcntl(w, fcntl.F_SETFL, flags)
+    return r, w, filled
+
+
+def _console_probe(tmp_path, mode: str, *, stalled: bool) -> dict:
+    import os
+
+    report = asyncio.run(_a_plan())
+    plan = tmp_path / "P.json"
+    plan.write_text(json.dumps(report))
+    stamp, out = tmp_path / "wall.started", tmp_path / "R.json"
+    args = [
+        "apply", "--plan", str(plan), "--expected-digest", report["plan_digest"],
+        "--max-outcomes", "1", "--max-points", "26", "--deadline", str(PROBE_DEADLINE_S),
+        "--write", "--output", str(out),
+    ]
+    cmd = [sys.executable, "-c", _CONSOLE_PROBE, str(BACKEND), str(stamp), mode, *args]
+    if not stalled:
+        done = subprocess.run(cmd, capture_output=True, text=True, timeout=OUTER_LIMIT_S)
+        return {"code": done.returncode, "stdout": done.stdout, "stderr": done.stderr,
+                "receipt": out, "stamp": stamp}
+    r, w, filled = _full_pipe()
+    try:
+        child = subprocess.Popen(cmd, stdout=w, stderr=subprocess.PIPE)
+        os.close(w)
+        try:
+            code = child.wait(timeout=OUTER_LIMIT_S)
+            ended, killed = time.monotonic(), False
+        except subprocess.TimeoutExpired:
+            child.kill()
+            code, ended, killed = child.wait(), time.monotonic(), True
+        stderr = child.stderr.read().decode(errors="replace")
+        child.stderr.close()
+        os.set_blocking(r, False)
+        drained = 0
+        while True:
+            try:
+                chunk = os.read(r, 65536)
+            except BlockingIOError:
+                break
+            if not chunk:
+                break
+            drained += len(chunk)
+    finally:
+        os.close(r)
+    started = float(stamp.read_text()) if stamp.exists() else None
+    return {"code": code, "killed": killed, "stderr": stderr, "receipt": out,
+            "past_wall": None if started is None else ended - started,
+            "console_bytes": drained - filled}
+
+
+class TestConsoleWallInARealProcess:
+    def test_a_stalled_stdout_pipe_ends_the_process_at_the_wall(self, tmp_path):
+        got = _console_probe(tmp_path, "import", stalled=True)
+        assert not got["killed"], f"held past {OUTER_LIMIT_S}s: {got['stderr']}"
+        assert got["code"] == 3, got["stderr"]
+        assert got["past_wall"] < PROBE_DEADLINE_S + 0.5
+        assert got["console_bytes"] == 0  # the stalled console got nothing, not a cut line
+        receipt = json.loads(got["receipt"].read_text())
+        assert receipt["uncertain_commits"][-1]["error"] == "acknowledgement_not_received"
+        assert receipt["readback_owed"]["never"] == [
+            "retry the apply", "restore automatically", "assume zero rows"
+        ]
+        assert "Traceback" not in got["stderr"]
+
+    def test_control_a_drained_pipe_gets_the_whole_receipt_and_the_same_exit(self, tmp_path):
+        got = _console_probe(tmp_path, "import", stalled=False)
+        assert got["code"] == 3, got["stderr"]
+        summary = json.loads(got["stdout"])
+        receipt = json.loads(got["receipt"].read_text())
+        assert summary["uncertain_commits"] == receipt["uncertain_commits"]
+        assert summary["artifact_bytes"] == got["receipt"].stat().st_size
+
+    def test_control_the_pipe_really_holds_an_ordinary_exit_flush(self, tmp_path):
+        got = _console_probe(tmp_path, "strawman", stalled=True)
+        assert got["killed"] and got["console_bytes"] == 0
+
+
 class TestStatic:
     def test_the_write_path_fences_identity_and_the_dry_run_cannot(self):
         assert "FOR SHARE OF fo, fm" in imp.CURRENT_INPUT_LOCK_SQL

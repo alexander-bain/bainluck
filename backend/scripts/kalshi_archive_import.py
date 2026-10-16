@@ -44,9 +44,15 @@ before anything was written; 3 the wall, an output cap, an unacknowledged
 COMMIT, or a bounded shutdown that left work running (``shutdown.clean``
 false) stopped it, so the receipt may describe rows that ARE durable (read
 ``committed_outcomes``, ``commit_in_flight``, ``uncertain_commits`` and
-``readback_owed``). The receipt is written inside the wall; past it the
-artifact is reported unavailable and the summary still prints. No exit code
-is permission to retry or to restore.
+``readback_owed``). The receipt artifact is sealed inside the wall, and the
+console summary is delivered inside it too: past the artifact's turn the
+artifact is reported unavailable and the summary still goes to the console
+in the wall's last slice; a console that cannot take it before the deadline
+(a stalled pipe or terminal) is reported by exit 3 alone, the artifact
+written before it stays the record, and the process ends at the wall instead
+of waiting on that console. Exit 3 with neither a console receipt nor an
+artifact means durability is UNKNOWN: run the read-only readback for the
+import key. No exit code is permission to retry or to restore.
 """
 
 from __future__ import annotations
@@ -135,6 +141,7 @@ def _run(args, session_factory) -> int:
     except ValueError as e:
         print(f"REFUSED: {e}", file=sys.stderr)
         return EXIT_REFUSED
+    bounds.bind_console(wall)
     extra = {} if session_factory is None else {"session_factory": session_factory}
     progress: dict = {"phase": "start"}
     shutdown: dict = {}
@@ -269,28 +276,31 @@ def _incomplete(args, wall, progress: dict, shutdown: dict, why: str) -> int:
 
 
 def _emit(args, wall, result: dict, code: int, *, artifact: bool) -> int:
-    """Write the artifact and serialize the receipt inside the wall's hard deadline.
+    """Write the artifact, then serialize and deliver the receipt, all inside the wall.
 
-    No receipt gets a fresh allowance: when the deadline passes first, the
-    artifact is reported unavailable (``artifact_refused: wall_expired:...``)
-    and only the summary — every key but the per-outcome bodies, so commit
-    identity, durable outcomes and the readback stay — goes to the capped
-    console. A partly written artifact is removed by ``write_bounded_artifact``.
+    No receipt gets a fresh allowance. The artifact is sealed by
+    ``wall.artifact_deadline``; when that passes first, the artifact is
+    reported unavailable (``artifact_refused: wall_expired:...``) and only the
+    summary — every key but the per-outcome bodies, so commit identity,
+    durable outcomes and the readback stay — goes to the capped console. A
+    partly written artifact is removed by ``write_bounded_artifact``.
+    Serializing and delivering the console summary has the rest, to the hard
+    deadline (``bounds.deliver_receipt``): a console that cannot take it in
+    time is unavailable and the exit is 3, whatever the artifact says.
     """
     from app.services import kalshi_archive_bounds as bounds
 
     summary = {k: v for k, v in result.items() if k != "outcomes"}
+    body = summary if artifact else result
     try:
-        with wall.sync_phase("serialize", work=False):
+        with wall.sync_phase("serialize", work=False, end=wall.artifact_deadline):
             if artifact and args.output:
                 summary["artifact_bytes"] = bounds.write_bounded_artifact(
                     args.output, result, args.max_artifact_bytes
                 )
-            text = json.dumps(summary if artifact else result, indent=2, default=str)
     except (bounds.ArtifactOverflow, FileExistsError) as e:
         summary.update(artifact=None, artifact_refused=str(e))
-        text = json.dumps(summary, indent=2, default=str)
-        code = EXIT_INCOMPLETE
+        body, code = summary, EXIT_INCOMPLETE
     except bounds.WallExpired as e:
         summary.pop("artifact_bytes", None)
         if artifact and args.output and os.path.lexists(args.output):
@@ -298,11 +308,13 @@ def _emit(args, wall, result: dict, code: int, *, artifact: bool) -> int:
             summary.update(artifact=args.output, artifact_written_at_wall=True)
         else:
             summary.update(artifact=None, artifact_refused=f"wall_expired:{e.phase}")
-        text = json.dumps(summary, indent=2, default=str)
+        body, code = summary, EXIT_INCOMPLETE
+    if not bounds.deliver_receipt(wall, lambda: json.dumps(body, indent=2, default=str)):
         code = EXIT_INCOMPLETE
-    print(text)
     return code
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    from app.services.kalshi_archive_bounds import exit_process
+
+    exit_process(main())

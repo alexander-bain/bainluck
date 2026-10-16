@@ -31,7 +31,8 @@ again. An outcome planned ``incomplete`` names its ``owed_windows``.
 
 THE ATTENDED BOUNDS (``app.services.kalshi_archive_bounds``). ``--deadline`` is
 INCLUSIVE: the cooldown read, the database read, every GET, cancelling an
-in-flight GET, closing the client and writing the output all happen inside it.
+in-flight GET, closing the client, writing the output and delivering the
+console summary all happen inside it.
 Every response is streamed under ``--max-response-bytes`` and the run under
 ``--max-total-bytes``; console output under ``--max-console-bytes`` and the
 plan file under ``--max-artifact-bytes`` (written whole or not at all, never
@@ -45,8 +46,10 @@ The first attended sample's profile:
         --max-artifact-bytes 262144 --max-console-bytes 262144 --output P
 
 Exit codes: 0 only for ``terminal: complete``; 3 when a budget, the wall or an
-output cap stopped the run (held, resumable, nothing sold as complete), or the
-loop's bounded shutdown left work running (``shutdown.clean`` false); 1 for
+output cap stopped the run (held, resumable, nothing sold as complete), the
+loop's bounded shutdown left work running (``shutdown.clean`` false), or the
+console could not take the summary inside the wall (then the plan file, if
+written, is the record and the process ends at the wall); 1 for
 every other terminal (partial with owed outcomes, rate_limited, cooldown,
 cooldown_unknown, failed); 2 for a refused invocation. None of them is
 permission to retry.
@@ -172,6 +175,7 @@ def _run(args, console, service_factory, session_factory) -> int:
     except ValueError as e:
         print(f"REFUSED: {e}", file=sys.stderr)
         return EXIT_REFUSED
+    console.bind(wall)
     if args.output and os.path.lexists(args.output):
         print(f"REFUSED: --output exists, never overwritten: {args.output}", file=sys.stderr)
         return EXIT_REFUSED
@@ -260,6 +264,13 @@ def _wall_receipt(progress: dict, phase: str, budget) -> dict:
 
 
 def _emit(args, wall, report: dict) -> int:
+    """Seal the artifact, then deliver the summary, both inside the wall.
+
+    The plan file is sealed by ``wall.artifact_deadline``; serializing and
+    delivering the summary has the rest, to the hard deadline
+    (``bounds.deliver_receipt``). Nothing gets a fresh allowance: a late
+    summary is unavailable, never a wait, and the exit is held at 3.
+    """
     from app.services import kalshi_archive_bounds as bounds
 
     code = EXIT_COMPLETE if report.get("terminal") == "complete" else EXIT_OTHER
@@ -270,24 +281,23 @@ def _emit(args, wall, report: dict) -> int:
         None if report.get("continuation") is None else report["continuation"]["digest"]
     )
     try:
-        with wall.sync_phase("serialize", work=False):
+        with wall.sync_phase("serialize", work=False, end=wall.artifact_deadline):
             if args.output:
                 summary["artifact_bytes"] = bounds.write_bounded_artifact(
                     args.output, report, args.max_artifact_bytes
                 )
                 summary["artifact"] = args.output
-            text = json.dumps(summary, indent=2, default=str)
     except bounds.ArtifactOverflow as e:
         # Never truncated into something that looks like a plan.
         summary.update(artifact=None, artifact_refused=str(e), terminal_output="overflow")
-        text = json.dumps(summary, indent=2, default=str)
         code = EXIT_HELD
     except FileExistsError as e:
         summary.update(artifact=None, artifact_refused=f"exists:{e}")
-        text = json.dumps(summary, indent=2, default=str)
         code = EXIT_HELD
     except bounds.WallExpired as e:
-        # Past the wall: no artifact, but the operator still gets the receipt.
+        # Past the artifact's turn: no plan file, but the console's turn is
+        # still inside the wall, so the operator gets the receipt if the
+        # console can take it in time.
         summary.pop("artifact_bytes", None)
         if args.output and os.path.lexists(args.output):
             # Linked whole just before the alarm (it never pre-exists: refused).
@@ -295,11 +305,13 @@ def _emit(args, wall, report: dict) -> int:
         else:
             summary.update(artifact=None, artifact_refused=f"wall_expired:{e.phase}")
         summary["budget_stop"] = summary.get("budget_stop") or "wall"
-        print(json.dumps(summary, indent=2, default=str))
-        return EXIT_HELD
-    print(text)
+        code = EXIT_HELD
+    if not bounds.deliver_receipt(wall, lambda: json.dumps(summary, indent=2, default=str)):
+        code = EXIT_HELD
     return code
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    from app.services.kalshi_archive_bounds import exit_process
+
+    exit_process(main())
