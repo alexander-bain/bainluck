@@ -8,9 +8,12 @@ import Foundation
 /// Compiled into the app (which writes it) and the widget extension (which
 /// reads it), through the app group both declare. What crosses, and only this:
 ///
-///  - `scope`: `"guest"`, or `"account."` + a one-way digest of the account id.
-///    It tells two accounts apart without putting the id itself, a token, or
-///    anything else about the account into the shared container.
+///  - `scope`: `"guest"`, or `"account."` + a digest of the account id. It
+///    tells two accounts apart without writing the id itself, a token, or
+///    anything else about the account into the shared container. Account ids
+///    are numeric and enumerable, so the digest separates accounts; it does not
+///    hide the id from a reader of the container, which only the app and its
+///    widget extension can read.
 ///  - `subjects`: the saved games and markets, by canonical id. No titles, no
 ///    prices: the widget reads those from the public detail endpoints, exactly
 ///    what a signed-out reader of the same page sees.
@@ -32,9 +35,13 @@ nonisolated enum SavedWidgetBridge10875 {
     /// The kind the app reloads when the saved set or the account changes.
     static let widgetKind = "SavedItemWidget10875"
     static let guestScope = "guest"
-    /// `PinManager.maxPinsPerType` games plus as many markets. A decoded
-    /// snapshot holding more is not one this app wrote.
-    static let maxSubjects = 12
+    /// The server's bound (`routes/user.py` `MAX_PINS_PER_TYPE`), not the
+    /// device's add limit: `PinManager.loadFromServer` adopts an account's
+    /// server set as it comes, so a signed-in reader can hold more than
+    /// `PinManager.maxPinsPerType` of one kind. The writer never truncates; a
+    /// decoded snapshot holding more of one kind than this is not one this app
+    /// wrote.
+    static let maxSubjectsPerKind = 25
 
     static func scope(userID: String?) -> String {
         guard let userID, !userID.isEmpty else { return guestScope }
@@ -129,7 +136,8 @@ nonisolated struct SavedWidgetBridgeStore10875 {
               let snapshot = try? JSONDecoder().decode(SavedWidgetSnapshot10875.self, from: data),
               snapshot.version == SavedWidgetSnapshot10875.currentVersion,
               snapshot.scope == SavedWidgetBridge10875.guestScope || snapshot.scope.hasPrefix("account."),
-              snapshot.subjects.count <= SavedWidgetBridge10875.maxSubjects,
+              snapshot.subjects.filter({ $0.kind == .game }).count <= SavedWidgetBridge10875.maxSubjectsPerKind,
+              snapshot.subjects.filter({ $0.kind == .market }).count <= SavedWidgetBridge10875.maxSubjectsPerKind,
               snapshot.subjects.allSatisfy({ $0.id > 0 })
         else { return nil }
         return snapshot

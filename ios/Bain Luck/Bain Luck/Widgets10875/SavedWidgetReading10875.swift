@@ -311,6 +311,11 @@ enum SavedWidgetReadingRules10875 {
     static func market(_ market: SavedWidgetMarketDetail10875, outcomeID: Int?,
                        now: Date = Date()) -> SavedWidgetReading10875 {
         let resolved = market.status == "resolved"
+        // Only `open` is open. Anything else (`withdrawn`, `suspended`,
+        // `closed`) is named in the market page's own word for it, and its
+        // price is never the current one.
+        let isOpen = market.status == "open"
+        let standing = marketStatusText(market.status)
         func reading(_ phase: SavedWidgetReading10875.Phase, status: String, rows: [SavedWidgetReading10875.Row],
                      headline: SavedWidgetReading10875.Row?, caption: String? = nil, observedAt: Date? = nil,
                      flipsAt: Date? = nil, spoken: String) -> SavedWidgetReading10875 {
@@ -323,14 +328,18 @@ enum SavedWidgetReadingRules10875 {
         if let outcomeID {
             chosen = market.outcomes.first { $0.id == outcomeID }
             if chosen == nil {
-                return reading(.unavailable, status: resolved ? "Closed" : "Open", rows: [], headline: nil,
-                               spoken: "That outcome is no longer listed in \(market.name).")
+                // Said on screen, not only to VoiceOver: the reader has to
+                // edit the widget. Nothing is substituted for the choice.
+                let row = SavedWidgetReading10875.Row(label: "Chosen outcome", shortLabel: "Not listed", figure: nil,
+                                                      verdict: "No longer listed", emphasized: false)
+                return reading(.unavailable, status: standing, rows: [row], headline: row,
+                               spoken: "That outcome is no longer listed in \(market.name). Edit the widget to choose another.")
             }
         } else {
             chosen = heroOutcome(market)
         }
         guard let outcome = chosen else {
-            return reading(.unavailable, status: resolved ? "Closed" : "Open", rows: [], headline: nil,
+            return reading(.unavailable, status: standing, rows: [], headline: nil,
                            spoken: "\(market.name): Bain Luck has no outcome to show right now.")
         }
 
@@ -338,13 +347,13 @@ enum SavedWidgetReadingRules10875 {
                                                 marketResolved: resolved) {
             let row = SavedWidgetReading10875.Row(label: outcome.name, shortLabel: outcome.name, figure: nil,
                                                   verdict: verdict.label, emphasized: verdict == .won)
-            return reading(.result, status: resolved ? "Settled" : "Open", rows: [row], headline: row,
+            return reading(.result, status: resolved ? "Settled" : standing, rows: [row], headline: row,
                            spoken: "\(market.name): \(outcome.name) \(verdict == .won ? "won" : "lost").")
         }
         guard let probability = outcome.probability, probability.isFinite else {
             let row = SavedWidgetReading10875.Row(label: outcome.name, shortLabel: outcome.name, figure: nil,
                                                   verdict: nil, emphasized: false)
-            return reading(.unavailable, status: resolved ? "Closed" : "Open", rows: [row], headline: row,
+            return reading(.unavailable, status: standing, rows: [row], headline: row,
                            spoken: "\(market.name): Bain Luck has no price for \(outcome.name) right now.")
         }
 
@@ -354,17 +363,36 @@ enum SavedWidgetReadingRules10875 {
         // The outcome's own clock: a verified answer's oldest included
         // observation, otherwise the row's price stamp.
         let observedAt = SavedWidgetDetailDecoding10875.date(outcome.observedAt ?? outcome.lastUpdated)
-        if !resolved, let observedAt,
+        if isOpen, let observedAt,
            now.timeIntervalSince(observedAt) <= SavedWidgetStaleness10875.futuresStaleAfter {
-            return reading(.current, status: "Open", rows: [row], headline: row, caption: "Current chance",
+            // Within the bound the page draws no age mark, and it makes no
+            // "current" claim either: the widget prints the price's own clock
+            // ("As of 3:42 PM") and no word for it.
+            return reading(.current, status: standing, rows: [row], headline: row, caption: nil,
                            observedAt: observedAt,
                            flipsAt: observedAt.addingTimeInterval(SavedWidgetStaleness10875.futuresStaleAfter),
-                           spoken: "\(market.name): \(outcome.name) \(figure), current chance.")
+                           spoken: "\(market.name): \(outcome.name) \(figure).")
         }
         let when = observedAt == nil ? " No time was recorded for it." : ""
-        return reading(.lastRecorded, status: resolved ? "Closed" : "Open", rows: [row], headline: row,
+        let closedSaid = resolved ? " has closed"
+            : (isOpen || market.status == nil ? "" : " is \(standing.lowercased())")
+        return reading(.lastRecorded, status: standing, rows: [row], headline: row,
                        caption: "Last recorded chance", observedAt: observedAt,
-                       spoken: "\(market.name)\(resolved ? " has closed" : ""): \(outcome.name) \(figure), last recorded chance.\(when)")
+                       spoken: "\(market.name)\(closedSaid): \(outcome.name) \(figure), last recorded chance.\(when)")
+    }
+
+    /// The market's standing in words. `open` reads Open and `resolved`
+    /// Closed; any other status is the market page's own word for it
+    /// (`status.capitalized`), never Open.
+    static func marketStatusText(_ status: String?) -> String {
+        switch status {
+        case "open": return "Open"
+        case "resolved": return "Closed"
+        case let other?:
+            let word = other.trimmingCharacters(in: .whitespacesAndNewlines)
+            return word.isEmpty ? "Status unknown" : word.capitalized
+        case nil: return "Status unknown"
+        }
     }
 
     /// `futuresDetailHeroOutcome`: the served lead leg while it is priced and

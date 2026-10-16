@@ -264,7 +264,10 @@ struct SavedRectangular10875: View {
                 .font(.headline)
                 .lineLimit(1)
                 .widgetAccentable()
-            if let headline = reading.headline {
+            if let headline = reading.headline, reading.phase == .unavailable, let notice = headline.verdict {
+                // The chosen outcome is gone: say that, once, on its own line.
+                Text(notice).font(.body.weight(.semibold)).lineLimit(1)
+            } else if let headline = reading.headline {
                 HStack(spacing: 4) {
                     Text(headline.shortLabel).lineLimit(1)
                     Spacer(minLength: 2)
@@ -308,6 +311,9 @@ struct SavedCircular10875: View {
 
     private var circularValue: String {
         guard let headline = reading.headline else { return reading.phase == .noResult ? "Final" : "—" }
+        // Nothing to show for the choice (its label says why, e.g. "Not
+        // listed"): a dash, never a sentence squeezed into the circle.
+        if reading.phase == .unavailable { return "—" }
         return headline.verdict ?? headline.figure ?? "—"
     }
 }

@@ -63,10 +63,16 @@ final class SavedItemWidget10875Tests: XCTestCase {
         d.set(Data("{\"version\":1,\"scope\":\"user.4821\",\"subjects\":[],\"pinsConfirmed\":true}".utf8),
               forKey: SavedWidgetBridge10875.storageKey)
         XCTAssertNil(store.read(), "a scope this app never mints (a raw id) must be refused")
-        let many = (1...13).map { "{\"kind\":\"game\",\"id\":\($0)}" }.joined(separator: ",")
+        // The bound is the server's 25 per kind (`routes/user.py`), which an
+        // account's server set can reach; the device's add limit is not it.
+        let full = SavedWidgetSnapshot10875(scope: "guest", subjects: (1...25).map(game) + (1...25).map(market),
+                                            pinsConfirmed: true)
+        XCTAssertTrue(store.write(full))
+        XCTAssertEqual(store.read(), full, "a full server set of 25 games and 25 markets was refused by the widget's reader")
+        let many = (1...26).map { "{\"kind\":\"game\",\"id\":\($0)}" }.joined(separator: ",")
         d.set(Data("{\"version\":1,\"scope\":\"guest\",\"subjects\":[\(many)],\"pinsConfirmed\":true}".utf8),
               forKey: SavedWidgetBridge10875.storageKey)
-        XCTAssertNil(store.read(), "more saved items than the pin limits allow is not a snapshot this app wrote")
+        XCTAssertNil(store.read(), "more of one kind than the server keeps is not a snapshot this app wrote")
     }
 
     func testSelectionStatusAgainstTheCurrentSavedSet() {
@@ -142,6 +148,19 @@ final class SavedItemWidget10875Tests: XCTestCase {
 
         pins.bindAccount(PinAccountBinding(userID: nil, authenticated: false))
         XCTAssertEqual(snapshot(pins).scope, "guest", "signing out kept the account's scope")
+    }
+
+    func testAnAccountsServerSetBeyondTheDeviceLimitReachesTheWidgetWhole() async throws {
+        let d = try defaults()
+        let pins = manager(d) { PinsResponse(events: Array(1...7), futures: Array(101...106)) }
+        pins.bindAccount(PinAccountBinding(userID: "4821", authenticated: true))
+        await pins.loadPins()
+        let shared = try defaults()
+        SavedWidgetPublisher10875(store: SavedWidgetBridgeStore10875(defaults: shared), reload: {}).publish(snapshot(pins))
+        let read = try XCTUnwrap(SavedWidgetBridgeStore10875(defaults: shared).read(),
+                                 "the widget's reader refused the app's own snapshot, so every widget reads Open Bain Luck")
+        XCTAssertEqual(read.subjects, (1...7).map(game) + (101...106).map(market),
+                       "saved items were dropped on the way to the widget")
     }
 
     func testALateLoadForThePreviousAccountCannotRepublishIt() async throws {
@@ -269,13 +288,31 @@ final class SavedItemWidget10875Tests: XCTestCase {
         XCTAssertEqual(gone, .gone)
     }
 
-    func testAnAnswerForTheWrongIDIsNotShown() async throws {
+    func testAMarketAnswerForTheWrongIDIsNotShown() async throws {
         let cache = SavedWidgetDetailCache10875(defaults: try defaults())
-        let sel = SavedWidgetSelection10875(scope: "guest", subject: game(15327330), side: nil, outcomeID: nil)
-        let bridge = SavedWidgetSnapshot10875(scope: "guest", subjects: [game(15327330)], pinsConfirmed: true)
-        let wrong = await SavedWidgetTimeline10875.resolve(sel, readBridge: { bridge },
-                                                          fetch: { _ in self.eventJSON(id: 999, observed: self.t0) }, cache: cache)
-        XCTAssertEqual(wrong, .unreachable, "another game's detail was drawn under this widget's choice")
+        let sel = SavedWidgetSelection10875(scope: "guest", subject: market(65391342), side: nil, outcomeID: nil)
+        let bridge = SavedWidgetSnapshot10875(scope: "guest", subjects: [market(65391342)], pinsConfirmed: true)
+        let body = Data("{\"id\": 999, \"name\": \"Other\", \"status\": \"open\", \"outcomes\": []}".utf8)
+        let wrong = await SavedWidgetTimeline10875.resolve(sel, readBridge: { bridge }, fetch: { _ in body }, cache: cache)
+        XCTAssertEqual(wrong, .unreachable,
+                       "another market's detail was drawn under this widget's choice; the market page refuses it too")
+    }
+
+    func testASavedDuplicateGameAdoptsItsCanonicalRowAsTheEventPageDoes() async throws {
+        let d = try defaults()
+        let cache = SavedWidgetDetailCache10875(defaults: d)
+        let sel = SavedWidgetSelection10875(scope: "guest", subject: game(15308290), side: nil, outcomeID: nil)
+        let bridge = SavedWidgetSnapshot10875(scope: "guest", subjects: [game(15308290)], pinsConfirmed: true)
+        let canonical = eventJSON(id: 15312656, observed: t0)
+        let served = await SavedWidgetTimeline10875.resolve(sel, readBridge: { bridge }, fetch: { _ in canonical }, cache: cache)
+        guard case .detail(let payload, offline: false) = served else {
+            return XCTFail("a proven duplicate served as its canonical row was not shown: \(served)")
+        }
+        XCTAssertEqual(payload.id, 15312656)
+        XCTAssertEqual(cache.data(scope: "guest", subject: game(15308290)), canonical,
+                       "the canonical row was not held under the id the reader saved")
+        XCTAssertEqual(sel.subject.url?.absoluteString, "bainluck://events/15308290",
+                       "the tap must open the saved id, which the event page resolves the same way")
     }
 
     func testTwoInstancesKeepTheirOwnChoicesAndRoutes() async throws {
@@ -454,6 +491,45 @@ final class SavedItemWidget10875Tests: XCTestCase {
                        "a vanished outcome was replaced by another one")
     }
 
+    func testAMarketPriceIsNeverCalledCurrentAndPrintsItsOwnClock() throws {
+        let stamp = t0.addingTimeInterval(-(6 * 3600 - 60))
+        let m = try marketDetail(legs: """
+        {"id": 1, "name": "A", "probability": 0.6, "last_updated": "\(iso(stamp))"}
+        """)
+        let r = SavedWidgetReadingRules10875.market(m, outcomeID: 1, now: t0)
+        XCTAssertEqual(r.phase, .current)
+        XCTAssertNil(r.priceCaption, "a market leg was given a word the market page never uses for it")
+        XCTAssertFalse(r.spoken.localizedCaseInsensitiveContains("current"), "VoiceOver called a market price current")
+        XCTAssertEqual(r.observedAt, stamp, "the clock printed must be the price's own")
+        let old = SavedWidgetReadingRules10875.market(m, outcomeID: 1, now: t0.addingTimeInterval(120))
+        XCTAssertEqual(old.priceCaption, "Last recorded chance", "past the bound the price must say it is last recorded")
+    }
+
+    func testOnlyAnOpenMarketReadsOpen() throws {
+        let legs = """
+        {"id": 1, "name": "A", "probability": 0.6, "last_updated": "\(iso(t0))"}
+        """
+        for (status, word) in [("withdrawn", "Withdrawn"), ("suspended", "Suspended"), ("closed", "Closed")] {
+            let r = SavedWidgetReadingRules10875.market(try marketDetail(status: status, legs: legs), outcomeID: 1, now: t0)
+            XCTAssertEqual(r.status, word, "a \(status) market read \(r.status)")
+            XCTAssertEqual(r.phase, .lastRecorded, "a \(status) market's price was treated as live")
+        }
+        XCTAssertEqual(SavedWidgetReadingRules10875.market(try marketDetail(legs: legs), outcomeID: 1, now: t0).status, "Open")
+        XCTAssertEqual(SavedWidgetReadingRules10875.marketStatusText(nil), "Status unknown", "a missing status read as Open")
+    }
+
+    func testAVanishedChosenOutcomeIsSaidOnScreen() throws {
+        let m = try marketDetail(legs: """
+        {"id": 1, "name": "A", "probability": 0.6, "last_updated": "\(iso(t0))"}
+        """)
+        let r = SavedWidgetReadingRules10875.market(m, outcomeID: 99, now: t0)
+        XCTAssertEqual(r.phase, .unavailable)
+        XCTAssertEqual(r.headline?.verdict, "No longer listed", "the small and Lock Screen widgets do not say the outcome is gone")
+        XCTAssertEqual(r.rows.first?.verdict, "No longer listed", "the medium widget does not say the outcome is gone")
+        XCTAssertNil(r.headline?.figure, "a number was substituted for a vanished outcome")
+        XCTAssertFalse(r.rows.contains { $0.label == "A" }, "another outcome replaced the reader's choice")
+    }
+
     func testAMarketResultIsWonOrLostByTheSettlementRule() throws {
         let legs = """
         {"id": 1, "name": "A", "probability": 0.99, "is_winner": true, "resolution_source": "api_settlement"},
@@ -506,6 +582,14 @@ final class SavedItemWidget10875Tests: XCTestCase {
                       "the general widget was dropped")
         XCTAssertTrue(try source("Bain Luck/Bain_LuckApp.swift").contains(".savedItemWidgets10875(pins: pinManager)"),
                       "the app root no longer publishes the saved items to the widget")
+    }
+
+    func testTheWidgetAsksWhatTheDetailPageAsksAndReadsRetiredAsGone() throws {
+        let fetcher = try source("BainLuckWidget/SavedItemWidgetIntent10875.swift")
+        XCTAssertTrue(fetcher.contains("/api/futures/\\(subject.id)?representation=verified_title"),
+                      "a market widget asks for another representation than the market page draws")
+        XCTAssertTrue(fetcher.contains("http.statusCode == 404 || http.statusCode == 410"),
+                      "a retired fixture (410) reads as unreachable instead of no longer listed")
     }
 
     func testBothTargetsDeclareTheOneAppGroup() throws {

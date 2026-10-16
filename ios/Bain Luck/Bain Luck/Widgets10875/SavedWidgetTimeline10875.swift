@@ -150,7 +150,7 @@ enum SavedWidgetTimeline10875 {
         switch fetched {
         case .success(let data):
             guard let payload = try? SavedWidgetDetailPayload10875.decode(data, as: selection.subject.kind),
-                  payload.id == selection.subject.id
+                  answers(selection.subject, with: payload)
             else { return held(selection, cache: cache) }
             cache.store(data, scope: selection.scope, subject: selection.subject)
             return .detail(payload, offline: false)
@@ -158,6 +158,20 @@ enum SavedWidgetTimeline10875 {
             return .gone
         case .failure(.failed):
             return held(selection, cache: cache)
+        }
+    }
+
+    /// Whether a fetched detail is the one the page this widget opens draws.
+    /// A saved game that is a proven duplicate is served AS its canonical row
+    /// (another id), and the event page adopts it with no id check, so the
+    /// widget does too — held under the id the reader saved. The market page
+    /// refuses an answer for another id (`fetched.id == marketId`), so a market
+    /// widget refuses it too.
+    private static func answers(_ subject: SavedWidgetSubject10875,
+                                with payload: SavedWidgetDetailPayload10875) -> Bool {
+        switch subject.kind {
+        case .game: return true
+        case .market: return payload.id == subject.id
         }
     }
 

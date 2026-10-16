@@ -8,7 +8,10 @@ import WidgetKit
 
 // MARK: - Fetching a public detail
 
-/// `GET /api/events/{id}` or `/api/futures/{id}` — public, no credential.
+/// `GET /api/events/{id}` or `/api/futures/{id}?representation=verified_title`
+/// — public, no credential, and the same request the detail page one tap away
+/// makes (`FuturesDetailViewModel`'s default representation), so the widget
+/// and the page print the same number for the same outcome.
 nonisolated enum SavedItemWidgetFetch10875 {
     static let baseURL = "https://api.bainluck.com"
 
@@ -20,11 +23,16 @@ nonisolated enum SavedItemWidgetFetch10875 {
         return URLSession(configuration: config)
     }()
 
-    static func data(for subject: SavedWidgetSubject10875) async throws -> Data {
-        let path = subject.kind == .game ? "events" : "futures"
-        guard let url = URL(string: "\(baseURL)/api/\(path)/\(subject.id)") else {
-            throw SavedWidgetFetchError10875.failed
+    static func url(for subject: SavedWidgetSubject10875) -> URL? {
+        switch subject.kind {
+        case .game: return URL(string: "\(baseURL)/api/events/\(subject.id)")
+        // An ineligible board answers in source mode, as it does for the page.
+        case .market: return URL(string: "\(baseURL)/api/futures/\(subject.id)?representation=verified_title")
         }
+    }
+
+    static func data(for subject: SavedWidgetSubject10875) async throws -> Data {
+        guard let url = url(for: subject) else { throw SavedWidgetFetchError10875.failed }
         let data: Data
         let response: URLResponse
         do {
@@ -33,7 +41,9 @@ nonisolated enum SavedItemWidgetFetch10875 {
             throw SavedWidgetFetchError10875.failed
         }
         guard let http = response as? HTTPURLResponse else { throw SavedWidgetFetchError10875.failed }
-        if http.statusCode == 404 { throw SavedWidgetFetchError10875.notFound }
+        // 410 is a retired fixture (`routes/events.py`): gone, as the app's pin
+        // surfaces read it, not a network failure to retry forever.
+        if http.statusCode == 404 || http.statusCode == 410 { throw SavedWidgetFetchError10875.notFound }
         guard (200...299).contains(http.statusCode) else { throw SavedWidgetFetchError10875.failed }
         return data
     }
