@@ -245,6 +245,8 @@ class _SlowFlush(lbr.LiveBlendRefresher):
     in for the write + stamp a busy flush spends."""
 
     instances: list = []
+    #: Set once OBSERVED periodic flushes have finished (the test's own).
+    observed: asyncio.Event
 
     def __init__(self, *a, **kw):
         super().__init__(*a, **kw)
@@ -255,10 +257,26 @@ class _SlowFlush(lbr.LiveBlendRefresher):
         entered = time.monotonic()
         await asyncio.sleep(WORK)
         self.calls.append((entered, time.monotonic(), flush_started))
+        if sum(c[2] is not None for c in self.calls) >= OBSERVED:
+            _SlowFlush.observed.set()
         return self.stats
 
 
 ARMS = pytest.mark.parametrize("arm", ["kalshi", "polymarket"])
+
+#: The run ends once this many periodic flushes have finished, not on a
+#: wall-clock timer. A fixed 0.7 s run counted whatever fit in it: one
+#: ~0.5 s stall of the runner's loop before the first flush (PR #11083's
+#: backend shard, CI 38837110373, both attempts, on a tree whose only change
+#: from a green parent was two ci.yml lines) left room for ONE, and a
+#: cadence that never flushed at all failed the same way as a busy runner.
+OBSERVED = 3
+#: Ample for OBSERVED flushes of WORK each, plus a stall; reaching it is the
+#: failure "the consumer stopped flushing", reported with what it did see.
+OBSERVE_BOUND_S = 5.0
+#: The run's own recycle timer, set beyond the bound so it never ends the
+#: observation; the test ends the run itself once it has seen enough.
+NO_RECYCLE_S = 60.0
 
 
 class TestTheRealConsumersFlushStartToStart:
@@ -268,13 +286,30 @@ class TestTheRealConsumersFlushStartToStart:
     ):
         module, consumer, slate = _arm(monkeypatch, arm)
         monkeypatch.setattr(_SlowFlush, "instances", [])
+        monkeypatch.setattr(_SlowFlush, "observed", asyncio.Event(), raising=False)
         monkeypatch.setattr(lbr, "LiveBlendRefresher", _SlowFlush)
         monkeypatch.setattr(module, "PRICE_FLUSH_SECONDS", PERIOD)
         _install_quiet_socket(monkeypatch)
-        _timing(monkeypatch, module, refresh=0.7)
+        _timing(monkeypatch, module, refresh=NO_RECYCLE_S)
         _install_session(monkeypatch, slate, lambda n: [])
 
-        await asyncio.wait_for(consumer(), timeout=5)
+        run = asyncio.create_task(consumer())
+        seen = asyncio.create_task(_SlowFlush.observed.wait())
+        try:
+            await asyncio.wait(
+                {run, seen}, timeout=OBSERVE_BOUND_S,
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+        finally:
+            seen.cancel()
+            # Shutdown, as the runner stops it: the consumer's own final drain
+            # runs (the one call with no start), then the cancellation travels.
+            run.cancel()
+            (ended,) = await asyncio.wait_for(
+                asyncio.gather(run, return_exceptions=True), timeout=5,
+            )
+        if isinstance(ended, Exception):
+            raise ended
 
         (refresher,) = _SlowFlush.instances
         # The final drain passes no start; the periodic flushes all do.
