@@ -545,6 +545,26 @@ nonisolated struct TimelineHistoryBasis: Codable, Sendable {
 nonisolated struct TimelineEntry: Decodable, Sendable {
     let timestamp: String
     let outcomes: [String: Double]
+    /// #683 — the values at this instant that are a recorded venue interval, not a
+    /// capture: `{"<outcome name>": {provenance, interval_start, period_minutes,
+    /// price_basis}}`, keyed like `outcomes`. Absent on every live entry. Tolerant,
+    /// so an unreadable block never costs the chart its lines.
+    @TolerantNumeric var archive: [String: TimelineArchiveMark]? = nil
+}
+
+/// #683 — what one archived value says about itself. Every field is tolerant: a
+/// mark that is present but unreadable still marks its value as archived, so the
+/// chart can never pass it off as a live reading.
+nonisolated struct TimelineArchiveMark: Codable, Equatable, Sendable {
+    @TolerantNumeric var provenance: String? = nil
+    @TolerantNumeric var intervalStart: String? = nil
+    @TolerantNumeric var periodMinutes: Int? = nil
+    @TolerantNumeric var priceBasis: String? = nil
+
+    static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.provenance == rhs.provenance && lhs.intervalStart == rhs.intervalStart
+            && lhs.periodMinutes == rhs.periodMinutes && lhs.priceBasis == rhs.priceBasis
+    }
 }
 
 /// Display metadata for an outcome included in a probability timeline.
