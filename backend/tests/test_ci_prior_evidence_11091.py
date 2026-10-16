@@ -513,3 +513,17 @@ def test_all_old_security_successes_plus_all_cancelled_reruns_are_refused():
         api.checks.append(rerun)
     with pytest.raises(ValueError, match="unpaid compose security check"):
         decide(api)
+
+
+@pytest.mark.parametrize("unpaid", ["missing", "skipped"])
+def test_new_datagolf_execution_unit_cannot_borrow_the_shared_tail_green(unpaid):
+    api = fixture()
+    job = next(j for j in api.jobs if j["name"] == "database-integration (shared-tail)")
+    name = "#994 a DataGolf bucket drill-in returns the rows the published chain admits (real Postgres)"
+    step = next(s for s in job["steps"] if s["name"] == name)
+    if unpaid == "missing":
+        job["steps"].remove(step)
+    else:
+        step["conclusion"] = "skipped"
+    with pytest.raises(ValueError, match="unpaid executing step"):
+        decide(api)

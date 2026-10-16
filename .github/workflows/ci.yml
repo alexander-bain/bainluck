@@ -4288,7 +4288,7 @@ jobs:
         # a post-start opening (#5355) and a void (#762) never do, the scoped
         # sample equals the bucket in the UNSCOPED chain for both cohorts, and a
         # group shared with another source is refused.
-        if: matrix.group == 'shared-tail'
+        if: matrix.group == 'shared-tail' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_calibration_examples_datagolf_994_pg.py \
