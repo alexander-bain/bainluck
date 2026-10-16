@@ -1221,14 +1221,30 @@ class TestScripts:
         plan = tmp_path / "p.json"
         plan.write_text(json.dumps({"mode": "dry_run"}))
         mod = _load_script("kalshi_archive_import.py")
-        assert mod.main(["apply", "--plan", str(plan), "--expected-digest", "x"]) == 2
+        assert (
+            mod.main(
+                [
+                    "apply", "--plan", str(plan), "--expected-digest", "x",
+                    "--max-outcomes", "1", "--max-points", "26", "--deadline", "30",
+                ]
+            )
+            == 2
+        )
         assert "REFUSED" in capsys.readouterr().err
 
     def test_import_write_is_opt_in(self):
         mod = _load_script("kalshi_archive_import.py")
-        args = mod._parse(["apply", "--plan", "p", "--expected-digest", "d"])
+        args = mod._parse(
+            [
+                "apply", "--plan", "p", "--expected-digest", "d",
+                "--max-outcomes", "1", "--max-points", "26", "--deadline", "30",
+            ]
+        )
         assert args.write is False
-        assert mod._parse(["restore", "--import-key", "k"]).write is False
+        assert (
+            mod._parse(["restore", "--import-key", "k", "--deadline", "30"]).write
+            is False
+        )
 
     def test_dry_run_refuses_a_continue_from_without_a_carry(self, tmp_path, capsys):
         f = tmp_path / "r.json"

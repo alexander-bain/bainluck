@@ -127,6 +127,28 @@ class KalshiArchiveCandlePayload(BaseModel):
         )
 
     @classmethod
+    def from_text(
+        cls, *, requested_ticker: str, raw_body: str, retrieved_at: str
+    ) -> "KalshiArchiveCandlePayload":
+        """A fresh response's text, hashed and parsed. Shared by every fetch path."""
+        import hashlib
+        import json as _json
+
+        try:
+            data = _json.loads(raw_body)
+        except ValueError:
+            raise KalshiArchiveResponseMalformed(
+                "historical_candlesticks", "body_not_json"
+            ) from None
+        return cls.from_body(
+            data,
+            requested_ticker=requested_ticker,
+            raw_body=raw_body,
+            raw_sha256=hashlib.sha256(raw_body.encode("utf-8")).hexdigest(),
+            retrieved_at=retrieved_at,
+        )
+
+    @classmethod
     def from_raw(
         cls,
         *,
@@ -156,6 +178,71 @@ class KalshiArchiveCandlePayload(BaseModel):
             raw_sha256=raw_sha256,
             retrieved_at=retrieved_at,
         )
+
+
+def parse_historical_cutoff(data: object) -> dict:
+    """A decoded ``/historical/cutoff`` body, or raise malformed. (#683)"""
+    if not isinstance(data, dict):
+        raise KalshiArchiveResponseMalformed(
+            "historical_cutoff", f"body_{type(data).__name__}"
+        )
+    return data
+
+
+def parse_historical_markets(data: object) -> tuple[list[dict], Optional[str]]:
+    """A decoded ``/historical/markets`` page as ``(markets, next_cursor)``. (#683)
+
+    Shared by :meth:`KalshiAPIService.get_historical_markets` and the archive
+    rail's byte-bounded fetch, so both refuse exactly the same shapes.
+    """
+    if not isinstance(data, dict):
+        raise KalshiArchiveResponseMalformed(
+            "historical_markets", f"body_{type(data).__name__}"
+        )
+    markets = data.get("markets")
+    if not isinstance(markets, list):
+        raise KalshiArchiveResponseMalformed(
+            "historical_markets",
+            (
+                "markets_missing"
+                if markets is None
+                else f"markets_{type(markets).__name__}"
+            ),
+        )
+    for row in markets:
+        if not isinstance(row, dict) or not isinstance(row.get("ticker"), str):
+            raise KalshiArchiveResponseMalformed("historical_markets", "market_row")
+    cursor = data.get("cursor")
+    if cursor is not None and not isinstance(cursor, str):
+        raise KalshiArchiveResponseMalformed(
+            "historical_markets", f"cursor_{type(cursor).__name__}"
+        )
+    return markets, (cursor or None)
+
+
+def historical_markets_params(
+    *,
+    event_ticker: Optional[str],
+    series_ticker: Optional[str],
+    limit: int,
+    cursor: Optional[str],
+) -> dict:
+    """Query parameters for one ``/historical/markets`` page (limit clamped 1..200)."""
+    params: dict = {"limit": max(1, min(int(limit), 200))}
+    if event_ticker:
+        params["event_ticker"] = event_ticker
+    if series_ticker:
+        params["series_ticker"] = series_ticker
+    if cursor:
+        params["cursor"] = cursor
+    return params
+
+
+def historical_candles_path(ticker: str) -> str:
+    """The archive candle route for one exact ticker, path-quoted."""
+    from urllib.parse import quote
+
+    return f"/historical/markets/{quote(ticker, safe='')}/candlesticks"
 
 
 class KalshiMarket(BaseModel):
@@ -1696,12 +1783,7 @@ class KalshiAPIService(BaseAPIClient):
         """
         response = await self.client.get(f"{self.BASE_URL}/historical/cutoff")
         response.raise_for_status()
-        data = response.json()
-        if not isinstance(data, dict):
-            raise KalshiArchiveResponseMalformed(
-                "historical_cutoff", f"body_{type(data).__name__}"
-            )
-        return data
+        return parse_historical_cutoff(response.json())
 
     async def get_historical_markets(
         self,
@@ -1720,41 +1802,17 @@ class KalshiAPIService(BaseAPIClient):
         that is not that shape raises :class:`KalshiArchiveResponseMalformed`
         rather than reading as an empty page.
         """
-        params: dict = {"limit": max(1, min(int(limit), 200))}
-        if event_ticker:
-            params["event_ticker"] = event_ticker
-        if series_ticker:
-            params["series_ticker"] = series_ticker
-        if cursor:
-            params["cursor"] = cursor
+        params = historical_markets_params(
+            event_ticker=event_ticker,
+            series_ticker=series_ticker,
+            limit=limit,
+            cursor=cursor,
+        )
         response = await self.client.get(
             f"{self.BASE_URL}/historical/markets", params=params
         )
         response.raise_for_status()
-        data = response.json()
-        if not isinstance(data, dict):
-            raise KalshiArchiveResponseMalformed(
-                "historical_markets", f"body_{type(data).__name__}"
-            )
-        markets = data.get("markets")
-        if not isinstance(markets, list):
-            raise KalshiArchiveResponseMalformed(
-                "historical_markets",
-                (
-                    "markets_missing"
-                    if markets is None
-                    else f"markets_{type(markets).__name__}"
-                ),
-            )
-        for row in markets:
-            if not isinstance(row, dict) or not isinstance(row.get("ticker"), str):
-                raise KalshiArchiveResponseMalformed("historical_markets", "market_row")
-        cursor = data.get("cursor")
-        if cursor is not None and not isinstance(cursor, str):
-            raise KalshiArchiveResponseMalformed(
-                "historical_markets", f"cursor_{type(cursor).__name__}"
-            )
-        return markets, (cursor or None)
+        return parse_historical_markets(response.json())
 
     async def get_historical_market_candlesticks_payload(
         self,
@@ -1776,12 +1834,8 @@ class KalshiAPIService(BaseAPIClient):
         digest, so a stored interval can name the bytes it came from and a later
         run can re-verify carried windows without asking again.
         """
-        import hashlib
-        import json as _json
-        from urllib.parse import quote
-
         response = await self.client.get(
-            f"{self.BASE_URL}/historical/markets/{quote(ticker, safe='')}/candlesticks",
+            f"{self.BASE_URL}{historical_candles_path(ticker)}",
             params={
                 "period_interval": int(period_interval),
                 "start_ts": int(start_ts),
@@ -1789,18 +1843,9 @@ class KalshiAPIService(BaseAPIClient):
             },
         )
         response.raise_for_status()
-        raw_body = response.text
-        try:
-            data = _json.loads(raw_body)
-        except ValueError:
-            raise KalshiArchiveResponseMalformed(
-                "historical_candlesticks", "body_not_json"
-            ) from None
-        return KalshiArchiveCandlePayload.from_body(
-            data,
+        return KalshiArchiveCandlePayload.from_text(
             requested_ticker=ticker,
-            raw_body=raw_body,
-            raw_sha256=hashlib.sha256(raw_body.encode("utf-8")).hexdigest(),
+            raw_body=response.text,
             retrieved_at=datetime.now(timezone.utc).isoformat(),
         )
 

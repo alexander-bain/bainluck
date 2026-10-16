@@ -39,6 +39,18 @@ is waited out once, but only when ``Retry-After`` fits
 cursor held BEFORE the refused outcome. A 429 is never recorded as "no data".
 The deadline is re-checked after every pacing or 429 sleep, before the next GET.
 
+AN ATTENDED RUN (``backend/scripts/kalshi_archive_recovery_dry_run.py``) adds
+the rail's operational bounds (:mod:`app.services.kalshi_archive_bounds`):
+``stop_on_first_429`` sends no further request after any 429, whatever its
+``Retry-After`` (0 included), and refuses to start when the shared cooldown
+cannot be read; ``byte_budget`` streams every response and stops the run once
+one response or the run's total passes its cap; ``hard_deadline_seconds`` makes
+the deadline inclusive of the database read, the cooldown read, cancelling an
+in-flight request and closing the client. Every one of those stops is a held
+stop (``budget_stop`` names it): the cursor stays before the outcome, nothing
+half-read is planned, and the plan is never reported complete. The database
+session carries the archive statement and lock bounds on every connection.
+
 WHAT IS NEVER WRITTEN DOWN AS DONE. A listing the run could not finish (budget,
 429) holds the outcome with its listing cursor in ``held_outcome``; only an
 exhausted listing can say a ticker is absent. A malformed 200 (wrong body, a
@@ -173,13 +185,19 @@ STORED_INSTANTS_SQL = """
 
 
 class _RateLimited(Exception):
-    def __init__(self, wait: float):
-        super().__init__(f"429, cooldown {wait:.1f}s")
+    def __init__(self, wait: Optional[float]):
+        super().__init__(
+            "429, cooldown unknown" if wait is None else f"429, cooldown {wait:.1f}s"
+        )
         self.wait = wait
 
 
 class _BudgetSpent(Exception):
-    pass
+    """The run must stop here, held. ``reason`` names the budget that ended it."""
+
+    def __init__(self, reason: str = "budget"):
+        super().__init__(reason)
+        self.reason = reason
 
 
 class _ListingUnreadable(Exception):
@@ -198,6 +216,11 @@ class _Listing:
     seen_cursors: set = field(default_factory=set)
 
 
+def _is_429(exc: BaseException) -> bool:
+    response = getattr(exc, "response", None)
+    return getattr(response, "status_code", None) == 429
+
+
 def _read_shared_cooldown() -> Optional[float]:
     """Seconds left on the trade rail's shared Kalshi cooldown; ``None`` if unreadable."""
     try:
@@ -212,9 +235,10 @@ def _read_shared_cooldown() -> Optional[float]:
 
 
 def _default_session_factory():
-    from app.tasks.base import get_task_session
+    """Every connection carries the archive statement/lock bounds (and proves it)."""
+    from app.services.kalshi_archive_bounds import archive_session
 
-    return get_task_session()
+    return archive_session()
 
 
 def _default_service_factory():
@@ -251,6 +275,10 @@ async def plan_archive_recovery(
     sleep: Callable[[float], Awaitable[Any]] = asyncio.sleep,
     monotonic: Callable[[], float] = time.monotonic,
     continuation: Optional[dict] = None,
+    stop_on_first_429: bool = False,
+    byte_budget: Any = None,
+    hard_deadline_seconds: Optional[float] = None,
+    progress: Optional[dict] = None,
 ) -> dict:
     """Plan, never write. Returns a JSON-serialisable report (see module doc).
 
@@ -261,6 +289,15 @@ async def plan_archive_recovery(
     their stored response text and never asked again. A carry that fails any
     check leaves the outcome owed with the reason; it is never silently re-read
     from the first window.
+
+    ``stop_on_first_429``, ``byte_budget`` (an
+    :class:`~app.services.kalshi_archive_bounds.ArchiveByteBudget`, applied by
+    wrapping the service in ``BoundedArchiveService``) and
+    ``hard_deadline_seconds`` (the inclusive end, at or after the work
+    ``deadline_seconds``) are the attended-run bounds in the module doc.
+    Omitted, each behaves exactly as before. ``progress`` receives the running
+    report under ``"report"`` so a caller whose outer wall expires can still
+    say what this run had done.
     """
     limit = max(1, min(int(limit), MAX_OUTCOMES))
     max_requests = max(1, min(int(max_requests), MAX_REQUESTS))
@@ -273,7 +310,15 @@ async def plan_archive_recovery(
         else min(float(max_wait_seconds), house_max_wait)
     )
     exact = [int(i) for i in outcome_ids][:limit] if outcome_ids else None
-    deadline = monotonic() + max(float(deadline_seconds), 0.0)
+    started = monotonic()
+    deadline = started + max(float(deadline_seconds), 0.0)
+    # The inclusive end: cancel and close must finish by then. ``None`` keeps
+    # the old unbounded collection of a cancelled request and of ``close()``.
+    hard_deadline = (
+        None
+        if hard_deadline_seconds is None
+        else max(started + float(hard_deadline_seconds), deadline)
+    )
 
     report: dict = {
         "mode": "dry_run",
@@ -301,7 +346,13 @@ async def plan_archive_recovery(
         "archive_store": None,
         "continuation": None,
         "continuation_in": None,
+        "budget_stop": None,
+        "stop_on_first_429": bool(stop_on_first_429),
     }
+    if byte_budget is not None:
+        report["response_bytes"] = byte_budget.as_report()
+    if progress is not None:
+        progress["report"] = report
     if continuation is not None:
         report["continuation_in"] = {
             "outcome_id": (continuation or {}).get("outcome_id")
@@ -312,34 +363,103 @@ async def plan_archive_recovery(
     if exact is None:
         report["selector_limits"] = list(KEYSET_SELECTOR_LIMITS)
 
-    cooldown_left = cooldown_reader()
+    def _bump_progress(phase: str) -> None:
+        if progress is not None:
+            progress["phase"] = phase
+
+    async def _collect_cancelled(task: "asyncio.Future", phase: str) -> None:
+        """Wait for a cancelled task to unwind: unbounded (legacy) or to the hard end."""
+        if hard_deadline is None:
+            await asyncio.gather(task, return_exceptions=True)
+            return
+        done, _ = await asyncio.wait(
+            {task}, timeout=max(hard_deadline - monotonic(), 0.0)
+        )
+        if task not in done:
+            report.setdefault("cancel_unacknowledged", []).append(phase)
+        elif not task.cancelled():
+            task.exception()
+
+    async def _within_deadline(call: Callable[[], Awaitable[Any]], phase: str = "request") -> Any:
+        """Await one step for at most the time left; on expiry cancel it, stop held.
+
+        ``asyncio.wait`` (not ``wait_for``) so only OUR deadline reads as a budget
+        stop. A timeout raised by the call itself stays an ordinary owed error.
+        """
+        task = asyncio.ensure_future(call())
+        done, _ = await asyncio.wait({task}, timeout=max(deadline - monotonic(), 0.0))
+        if task in done:
+            return task.result()
+        task.cancel()
+        # Collect the cancelled step (its outcome is not evidence) without
+        # swallowing a cancellation of the planner itself.
+        await _collect_cancelled(task, phase)
+        raise _BudgetSpent("deadline")
+
+    _bump_progress("cooldown_read")
+    if hard_deadline is None:
+        cooldown_left = cooldown_reader()
+    else:
+        try:
+            cooldown_left = await _within_deadline(
+                lambda: asyncio.to_thread(cooldown_reader), "cooldown_read"
+            )
+        except _BudgetSpent:
+            cooldown_left = None
     report["shared_cooldown_s"] = (
         "unreadable" if cooldown_left is None else round(max(cooldown_left, 0.0), 1)
     )
     if cooldown_left is not None and cooldown_left > 0:
         report["terminal"] = "cooldown"
         return report
+    if cooldown_left is None and stop_on_first_429:
+        # Strict: an unknown shared cooldown is not permission to ask.
+        report["terminal"] = "cooldown_unknown"
+        return report
 
     state = {"sent": 0}
 
-    def _spent() -> bool:
-        return state["sent"] >= max_requests or monotonic() >= deadline
+    def _spent_reason() -> Optional[str]:
+        if state["sent"] >= max_requests:
+            return "requests"
+        if monotonic() >= deadline:
+            return "deadline"
+        return None
 
     async def _get(call: Callable[[], Awaitable[Any]]) -> Any:
+        from app.services.kalshi_archive_bounds import ArchiveBudgetExceeded
+
         for attempt in range(2):
-            if _spent():
-                raise _BudgetSpent()
+            if _spent_reason():
+                raise _BudgetSpent(_spent_reason())
             if state["sent"]:
                 await sleep(pace_seconds)
                 # The pace (and a 429 wait before it) spends wall time: re-check,
                 # so no GET leaves after the run's stated deadline.
-                if _spent():
-                    raise _BudgetSpent()
+                if _spent_reason():
+                    raise _BudgetSpent(_spent_reason())
             state["sent"] += 1
             report["requests_sent"] = state["sent"]
             try:
                 return await _within_deadline(call)
+            except ArchiveBudgetExceeded as e:
+                # A byte cap is a budget stop, never an error that reads as a
+                # 429 (its message may well contain the digits "429").
+                raise _BudgetSpent(e.reason) from e
+            except _BudgetSpent:
+                raise
             except Exception as e:
+                if stop_on_first_429:
+                    if _is_429(e):
+                        try:
+                            wait = rate_limit_wait(e)
+                        except Exception:  # unknown policy: stop, honestly
+                            wait = None
+                        raise _RateLimited(wait) from e
+                    wait = rate_limit_wait(e)
+                    if wait is None:
+                        raise
+                    raise _RateLimited(wait) from e
                 wait = rate_limit_wait(e)
                 if wait is None:
                     raise
@@ -351,32 +471,27 @@ async def plan_archive_recovery(
                 raise _RateLimited(wait) from e
         raise AssertionError("unreachable")
 
-    async def _within_deadline(call: Callable[[], Awaitable[Any]]) -> Any:
-        """Await one GET for at most the time left; on expiry cancel it, stop partial.
-
-        ``asyncio.wait`` (not ``wait_for``) so only OUR deadline reads as a budget
-        stop. A timeout raised by the call itself stays an ordinary owed error.
-        """
-        task = asyncio.ensure_future(call())
-        done, _ = await asyncio.wait({task}, timeout=max(deadline - monotonic(), 0.0))
-        if task in done:
-            return task.result()
-        task.cancel()
-        # Collect the cancelled GET (its outcome is not evidence) without
-        # swallowing a cancellation of the planner itself.
-        await asyncio.gather(task, return_exceptions=True)
-        raise _BudgetSpent()
-
     service = service_factory()
+    if byte_budget is not None:
+        from app.services.kalshi_archive_bounds import BoundedArchiveService
+
+        service = BoundedArchiveService(service, byte_budget)
+
+    def _stop(e: BaseException) -> str:
+        if isinstance(e, _RateLimited):
+            report["stopped_on_cooldown_s"] = (
+                "unknown" if e.wait is None else e.wait
+            )
+            return "rate_limited"
+        report["budget_stop"] = getattr(e, "reason", "budget")
+        return "partial"
+
     try:
+        _bump_progress("cutoff")
         try:
             cutoff_payload = await _get(service.get_historical_cutoff)
         except (_BudgetSpent, _RateLimited) as e:
-            report["terminal"] = (
-                "rate_limited" if isinstance(e, _RateLimited) else "partial"
-            )
-            if isinstance(e, _RateLimited):
-                report["stopped_on_cooldown_s"] = e.wait
+            report["terminal"] = _stop(e)
             return report
         except Exception as e:
             report["errors"].append(f"cutoff: {str(e)[:120]}")
@@ -390,30 +505,46 @@ async def plan_archive_recovery(
             return report
         report["archive_cutoff"] = archive_cutoff.isoformat()
 
-        async with session_factory() as session:
-            await session.execute(text("SET TRANSACTION READ ONLY"))
-            params: dict = {"ticker_like": TICKER_LIKE, "lim": limit}
-            if exact is not None:
-                params["outcome_ids"] = exact
-                sql = CANDIDATE_SQL.replace("{id_clause}", _ID_EXACT)
-            else:
-                params["after_id"] = int(after_id)
-                params["archive_cutoff"] = archive_cutoff
-                sql = CANDIDATE_SQL.replace("{id_clause}", _ID_AFTER)
-            rows = (await session.execute(text(sql), params)).fetchall()
-            stored: dict[int, dict[int, list]] = {}
-            ids = [int(r.outcome_id) for r in rows]
-            present = bool(
-                (await session.execute(text(ARCHIVE_STORE_PRESENT_SQL))).scalar()
-            )
-            report["archive_store"] = "present" if present else "absent"
-            if ids and present:
-                for s in (
-                    await session.execute(text(STORED_INSTANTS_SQL), {"ids": ids})
-                ).fetchall():
-                    stored.setdefault(int(s.outcome_id), {}).setdefault(
-                        int(s.period_minutes), []
-                    ).append(s.interval_end)
+        async def _read_candidates():
+            async with session_factory() as session:
+                await session.execute(text("SET TRANSACTION READ ONLY"))
+                params: dict = {"ticker_like": TICKER_LIKE, "lim": limit}
+                if exact is not None:
+                    params["outcome_ids"] = exact
+                    sql = CANDIDATE_SQL.replace("{id_clause}", _ID_EXACT)
+                else:
+                    params["after_id"] = int(after_id)
+                    params["archive_cutoff"] = archive_cutoff
+                    sql = CANDIDATE_SQL.replace("{id_clause}", _ID_AFTER)
+                rows = (await session.execute(text(sql), params)).fetchall()
+                stored: dict[int, dict[int, list]] = {}
+                ids = [int(r.outcome_id) for r in rows]
+                present = bool(
+                    (await session.execute(text(ARCHIVE_STORE_PRESENT_SQL))).scalar()
+                )
+                if ids and present:
+                    for s in (
+                        await session.execute(text(STORED_INSTANTS_SQL), {"ids": ids})
+                    ).fetchall():
+                        stored.setdefault(int(s.outcome_id), {}).setdefault(
+                            int(s.period_minutes), []
+                        ).append(s.interval_end)
+            return rows, stored, ids, present
+
+        _bump_progress("candidate_read")
+        if hard_deadline is None:
+            rows, stored, ids, present = await _read_candidates()
+        else:
+            # Inclusive deadline: the read is cancelled at the deadline like a
+            # GET, and nothing is planned or advanced from a read that never ended.
+            try:
+                rows, stored, ids, present = await _within_deadline(
+                    _read_candidates, "candidate_read"
+                )
+            except _BudgetSpent as e:
+                report["terminal"] = _stop(e)
+                return report
+        report["archive_store"] = "present" if present else "absent"
         report["candidates"] = len(rows)
         if exact is not None:
             report["ids_not_candidates"] = sorted(set(exact) - set(ids))
@@ -469,6 +600,7 @@ async def plan_archive_recovery(
                         "market"
                     ]
             listing = listings.setdefault(event_ticker, _Listing())
+            _bump_progress(f"outcome:{oid}")
             stage = "listing"
             windows: list = []
             try:
@@ -588,9 +720,7 @@ async def plan_archive_recovery(
             except (_RateLimited, _BudgetSpent) as e:
                 # The cursor stays BEFORE this outcome; it is asked first next run.
                 # Nothing it half-read becomes a plan, an absence or a coverage claim.
-                stopped = "rate_limited" if isinstance(e, _RateLimited) else "partial"
-                if isinstance(e, _RateLimited):
-                    report["stopped_on_cooldown_s"] = e.wait
+                stopped = _stop(e)
                 report["held_outcome"] = _held(
                     oid, ticker, stage, listing, plan, windows
                 )
@@ -611,9 +741,21 @@ async def plan_archive_recovery(
             report["plans"].append(plan)
             last_done = max(last_done, oid)
     finally:
+        _bump_progress("close")
         close = getattr(service, "close", None)
         if close is not None:
-            await close()
+            if hard_deadline is None:
+                await close()
+            else:
+                task = asyncio.ensure_future(close())
+                done, _ = await asyncio.wait(
+                    {task}, timeout=max(hard_deadline - monotonic(), 0.0)
+                )
+                report["client_close"] = "acknowledged" if task in done else "unacknowledged"
+                if task in done and not task.cancelled() and task.exception() is not None:
+                    report["client_close"] = f"failed:{type(task.exception()).__name__}"
+                if task not in done:
+                    task.cancel()
 
     points_all = [p for plan in report["plans"] for p in plan.points]
     totals: dict = {}
@@ -635,6 +777,8 @@ async def plan_archive_recovery(
     if exact is None:
         report["next_after_id"] = last_done
         report["walk_ended"] = stopped is None and len(rows) < limit
+    if byte_budget is not None:
+        report["response_bytes"] = byte_budget.as_report()
     if stopped:
         report["terminal"] = stopped
     elif report["owed_ids"] or report["incomplete_ids"]:

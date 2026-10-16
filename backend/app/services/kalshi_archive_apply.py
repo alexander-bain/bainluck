@@ -22,6 +22,13 @@ WHAT AN APPLY CHECKS BEFORE IT WRITES A ROW
    forecast-cutoff inputs are re-read and fingerprinted
    (:func:`~app.utils.kalshi_archive_history.input_fingerprint`). A different
    fingerprint refuses that outcome (``input_drift``); it is not re-planned here.
+   On a write the re-read takes ``FOR SHARE`` on the outcome, market and event
+   rows inside the outcome's own transaction (bounded by the archive
+   ``lock_timeout``), so those inputs cannot change between the fingerprint
+   check and the commit. What this does NOT do: compare row versions with the
+   plan. A non-fingerprint column may have changed since planning; the
+   fingerprint is a field comparison, not an ``xmin`` fence, and the recorded
+   ``*_xmin`` values are evidence, not a check.
 4. **Forecast admission is re-decided, never inherited.** The cutoff is
    recomputed from the CURRENT event row. A point stays ``forecast`` only when
    the plan said so AND the apply says so. Any disagreement demotes it to
@@ -35,6 +42,18 @@ intervals and the import's running ``inserted_ids`` commit together, and are
 read back immediately after the commit. A failure inside one outcome rolls
 back only that outcome; earlier outcomes stay committed and accounted for
 (gotcha #42). Nothing is rolled back automatically across outcomes.
+
+WHAT A RECEIPT MAY CLAIM. Every acknowledged commit is recorded in
+``committed_outcomes`` the moment it returns, so a later failure (the readback,
+a sibling, the wall) cannot hide rows that are already durable. A commit whose
+acknowledgement never arrived (transport error, cancellation) is
+``uncertain_commits`` / ``commit_in_flight``: it MAY be durable, the run stops,
+and the receipt names the read-only readback that settles it. It is never
+reported as nothing written, never retried, never restored automatically. A
+plan that is not complete history (a stopped or partial planner run, an
+outcome with owed windows, no importable point at all) is never ``applied``:
+it is ``partial`` with ``incomplete_reasons``. The caller's operation wall and
+progress receipt come from :mod:`app.services.kalshi_archive_bounds`.
 
 RESTORE removes exactly the rows one import inserted, and only as they were
 written. The apply reads each inserted interval back INSIDE its inserting
@@ -84,6 +103,34 @@ ARCHIVE_STORE_PRESENT_SQL = (
 
 #: Two probabilities this close are the same observation (NUMERIC(7,6) storage).
 SAME_PROBABILITY = 5e-7
+
+#: Write mode: the same identity, locked for the outcome's own transaction. The
+#: event is locked by a second statement because ``FOR SHARE`` cannot reach the
+#: nullable side of the outer join.
+CURRENT_INPUT_LOCK_SQL = """
+    SELECT fo.id AS outcome_id,
+           fo.external_id AS ticker,
+           fm.external_id AS event_ticker,
+           fo.market_id AS market_id,
+           fm.event_id AS event_id,
+           fo.resolution_source AS resolution_source,
+           fo.xmin::text AS outcome_xmin,
+           fm.xmin::text AS market_xmin
+    FROM futures_outcomes fo
+    JOIN futures_markets fm ON fm.id = fo.market_id
+    WHERE fo.id = :oid AND fm.source = 'kalshi'
+    FOR SHARE OF fo, fm
+"""
+EVENT_LOCK_SQL = """
+    SELECT e.commence_time AS commence_time,
+           e.commence_time_source AS commence_time_source,
+           e.created_at AS created_at,
+           e.completed_at AS completed_at,
+           e.xmin::text AS event_xmin
+    FROM events e
+    WHERE e.id = :eid
+    FOR SHARE
+"""
 
 CURRENT_INPUT_SQL = """
     SELECT fo.id AS outcome_id,
@@ -243,10 +290,86 @@ class PlanRefused(Exception):
         self.reason = reason
 
 
-def _default_session_factory():
-    from app.tasks.base import get_task_session
+class CommitUnacknowledged(Exception):
+    """A COMMIT was sent and its answer never arrived. Its rows MAY be durable."""
 
-    return get_task_session()
+    def __init__(self, what: dict):
+        super().__init__(f"commit_unacknowledged:{what.get('step')}")
+        self.what = what
+
+
+def _default_session_factory():
+    """Every connection carries the archive statement/lock bounds (and proves it)."""
+    from app.services.kalshi_archive_bounds import archive_session
+
+    return archive_session()
+
+
+async def _commit(session: Any, ledger: dict, what: dict) -> None:
+    """Commit, recording what is at stake until the server's answer arrives.
+
+    ``ledger["commit_in_flight"]`` names the step while the COMMIT is out; a
+    cancellation leaves it set, which is exactly what the caller reports. A
+    transport error moves it to ``uncertain_commits`` and raises
+    :class:`CommitUnacknowledged`: the outcome of that COMMIT is unknown.
+    """
+    ledger["commit_in_flight"] = what
+    try:
+        await session.commit()
+    except Exception as e:
+        ledger["commit_in_flight"] = None
+        ledger.setdefault("uncertain_commits", []).append(
+            {**what, "error": f"{type(e).__name__}: {str(e)[:160]}"}
+        )
+        raise CommitUnacknowledged(what) from e
+    ledger["commit_in_flight"] = None
+
+
+def _uncertain(ledger: dict, step: str, outcome_id: Optional[int] = None) -> bool:
+    """Did ``step`` leave an unacknowledged COMMIT? Read from the ledger, not the
+    exception: a session's own rollback on a dead connection can raise something
+    else on top of :class:`CommitUnacknowledged`."""
+    return any(
+        c.get("step") == step
+        and (outcome_id is None or c.get("outcome_id") == outcome_id)
+        for c in ledger.get("uncertain_commits") or ()
+    )
+
+
+def _sync(wall: Any, phase: str):
+    """The wall's synchronous-phase guard, or nothing when no wall was given."""
+    from contextlib import nullcontext
+
+    return nullcontext() if wall is None else wall.sync_phase(phase)
+
+
+def _phase(ledger: dict, phase: str) -> None:
+    ledger["phase"] = phase
+
+
+def plan_completeness(report: dict, plans: list[dict]) -> list[str]:
+    """Why this plan is NOT complete history for what it would import; ``[]`` if it is.
+
+    The importer accepts a subset plan, but a subset is never sold as the
+    whole: a planner run that stopped or owed anything, an imported outcome
+    with owed windows, or a plan with no importable point is reported here.
+    """
+    reasons: list[str] = []
+    if report.get("terminal") != "complete":
+        reasons.append(f"plan_terminal:{report.get('terminal')}")
+    for key in ("owed_ids", "incomplete_ids", "errors"):
+        if report.get(key):
+            reasons.append(f"plan_{key}")
+    if report.get("held_outcome"):
+        reasons.append("plan_held_outcome")
+    if report.get("budget_stop"):
+        reasons.append(f"plan_budget_stop:{report.get('budget_stop')}")
+    for plan in plans:
+        if plan.get("coverage") != "complete" or plan.get("owed_windows"):
+            reasons.append(f"outcome_coverage_incomplete:{plan.get('outcome_id')}")
+    if not plans:
+        reasons.append("plan_has_no_importable_points")
+    return reasons
 
 
 def _points(plan: dict) -> list[PlannedPoint]:
@@ -352,51 +475,100 @@ async def apply_archive_plan(
     write: bool = False,
     session_factory: Callable[[], Any] = _default_session_factory,
     import_key: Optional[str] = None,
+    max_outcomes: Optional[int] = None,
+    max_points: Optional[int] = None,
+    wall: Any = None,
+    progress: Optional[dict] = None,
 ) -> dict:
-    """Dry-run (default) or apply one reviewed plan. See the module doc."""
-    plans = verify_plan_document(report, expected_digest)
+    """Dry-run (default) or apply one reviewed plan. See the module doc.
+
+    ``max_outcomes`` / ``max_points`` refuse a plan larger than the reviewed
+    invocation named. ``wall`` (an
+    :class:`~app.services.kalshi_archive_bounds.OperationWall`) interrupts the
+    synchronous validation; the caller cancels the async work at the wall.
+    ``progress``, when given, IS the receipt: it is filled as the run goes, so
+    a caller whose wall expired still holds every acknowledged commit, the
+    commit in flight, and the phase it stopped in.
+    """
+    result: dict = progress if progress is not None else {}
+    result.update(
+        {
+            "mode": "apply" if write else "dry_run",
+            "phase": "verify_plan",
+            "plan_digest": None,
+            "import_key": None,
+            "import_id": None,
+            "archive_cutoff": None,
+            "outcomes": [],
+            "committed_outcomes": [],
+            "commit_in_flight": None,
+            "uncertain_commits": [],
+            "import_row": None,
+            "inserted": 0,
+            "identical": 0,
+            "conflicts": [],
+            "refused": [],
+            "errors": [],
+            "demoted_to_reader_only": 0,
+            "incomplete_reasons": [],
+            "status": None,
+        }
+    )
+    with _sync(wall, "verify_plan"):
+        plans = verify_plan_document(report, expected_digest)
+        points_total = sum(len(importable(_points(plan))) for plan in plans)
+    if max_outcomes is not None and len(plans) > int(max_outcomes):
+        raise PlanRefused(f"plan_exceeds_max_outcomes:{len(plans)}>{int(max_outcomes)}")
+    if max_points is not None and points_total > int(max_points):
+        raise PlanRefused(f"plan_exceeds_max_points:{points_total}>{int(max_points)}")
     archive_cutoff = parse_instant(report["archive_cutoff"])
+    result["plan_digest"] = report["plan_digest"]
+    result["archive_cutoff"] = archive_cutoff.isoformat()
+    result["planned_outcomes"] = len(plans)
+    result["planned_points"] = points_total
+    result["incomplete_reasons"] = plan_completeness(report, plans)
+    _phase(result, "store_check")
     async with session_factory() as session:
         await session.execute(text("SET TRANSACTION READ ONLY"))
         present = (await session.execute(text(ARCHIVE_STORE_PRESENT_SQL))).scalar()
     if not present:
         raise PlanRefused("archive_store_absent")
     key = import_key or uuid.uuid4().hex
-    result: dict = {
-        "mode": "apply" if write else "dry_run",
-        "plan_digest": report["plan_digest"],
-        "import_key": key if write else None,
-        "import_id": None,
-        "archive_cutoff": archive_cutoff.isoformat(),
-        "outcomes": [],
-        "inserted": 0,
-        "identical": 0,
-        "conflicts": [],
-        "refused": [],
-        "errors": [],
-        "demoted_to_reader_only": 0,
-        "status": None,
-    }
+    result["import_key"] = key if write else None
     import_id: Optional[int] = None
-    if write:
-        async with session_factory() as session:
-            import_id = (
-                await session.execute(
-                    CREATE_IMPORT_SQL,
-                    {
-                        "key": key,
-                        "digest": report["plan_digest"],
-                        "cutoff": archive_cutoff,
-                        "report": json.dumps({"outcomes_planned": len(plans)}),
-                    },
-                )
-            ).scalar_one()
-            await session.commit()
-        result["import_id"] = import_id
-
     stopped: Optional[str] = None
-    for plan in plans:
+    if write:
+        _phase(result, "create_import")
+        # The key is the receipt's handle BEFORE the row exists: if this commit
+        # is never acknowledged, the import row may or may not be there.
+        result["import_row"] = "unknown"
+        try:
+            async with session_factory() as session:
+                import_id = (
+                    await session.execute(
+                        CREATE_IMPORT_SQL,
+                        {
+                            "key": key,
+                            "digest": report["plan_digest"],
+                            "cutoff": archive_cutoff,
+                            "report": json.dumps({"outcomes_planned": len(plans)}),
+                        },
+                    )
+                ).scalar_one()
+                await _commit(
+                    session, result, {"step": "create_import", "import_key": key}
+                )
+        except Exception:
+            if not _uncertain(result, "create_import"):
+                raise  # no COMMIT was sent: nothing exists; the plan is refused whole
+            stopped = "commit_unacknowledged:create_import"
+        if stopped is None:
+            result["import_id"] = import_id
+            result["import_row"] = "applying"
+
+    for plan in plans if stopped is None else ():
         oid = int(plan["outcome_id"])
+        _phase(result, f"outcome:{oid}")
         try:
             outcome = await _apply_outcome(
                 plan,
@@ -404,10 +576,29 @@ async def apply_archive_plan(
                 write=write,
                 import_id=import_id,
                 session_factory=session_factory,
+                ledger=result,
+                wall=wall,
             )
         except Exception as e:  # one outcome never wipes the pass (gotcha #42)
+            if _uncertain(result, "outcome", oid):
+                # Its rows may be durable: stop, never call that "nothing written".
+                stopped = f"commit_unacknowledged:{oid}"
+                break
             logger.warning("archive import: outcome %s failed: %s", oid, str(e)[:200])
-            result["errors"].append({"outcome_id": oid, "error": str(e)[:200]})
+            committed = next(
+                (c for c in result["committed_outcomes"] if c["outcome_id"] == oid),
+                None,
+            )
+            result["errors"].append(
+                {
+                    "outcome_id": oid,
+                    "error": str(e)[:200],
+                    # Acknowledged before the failure ⇒ durable; else no COMMIT
+                    # was sent for it and the server rolled it back.
+                    "committed": committed is not None,
+                    "inserted_ids": committed["inserted_ids"] if committed else [],
+                }
+            )
             continue
         result["outcomes"].append(outcome)
         if outcome.get("refused"):
@@ -423,30 +614,75 @@ async def apply_archive_plan(
             stopped = f"readback_mismatch:{oid}"
             break
 
-    clean = not (result["refused"] or result["errors"] or result["conflicts"] or stopped)
+    clean = not (
+        result["refused"]
+        or result["errors"]
+        or result["conflicts"]
+        or stopped
+        or result["incomplete_reasons"]
+    )
     result["status"] = "applied" if clean else "partial"
     if stopped:
         result["stopped"] = stopped
+    durable = {c["outcome_id"]: c for c in result["committed_outcomes"]}
     result["gained_history_outcome_ids"] = sorted(
-        o["outcome_id"] for o in result["outcomes"] if o.get("inserted")
+        oid for oid, c in durable.items() if c["inserted_ids"]
     )
     result["zero_snapshot_cohort_gained_ids"] = sorted(
-        o["outcome_id"]
-        for o in result["outcomes"]
-        if o.get("inserted") and o.get("live_snapshots_at_plan") == 0
+        oid
+        for oid, c in durable.items()
+        if c["inserted_ids"] and c.get("live_snapshots_at_plan") == 0
     )
-    if write:
-        async with session_factory() as session:
-            await session.execute(
-                FINISH_SQL,
-                {
-                    "status": result["status"],
-                    "report": _summary(result),
-                    "import_id": import_id,
-                },
+    if result["uncertain_commits"]:
+        result["readback_owed"] = _readback_owed(result)
+    if write and import_id is not None and not stopped:
+        _phase(result, "finish")
+        try:
+            async with session_factory() as session:
+                await session.execute(
+                    FINISH_SQL,
+                    {
+                        "status": result["status"],
+                        "report": _summary(result),
+                        "import_id": import_id,
+                    },
+                )
+                await _commit(
+                    session, result, {"step": "finish", "import_id": import_id}
+                )
+        except Exception as e:
+            # The rows are as committed_outcomes says; only the import row's
+            # final status is in doubt (or still 'applying' if no COMMIT left).
+            result["import_row"] = (
+                "unknown" if _uncertain(result, "finish") else "applying"
             )
-            await session.commit()
+            result["finish_error"] = f"{type(e).__name__}: {str(e)[:160]}"
+            result["status"] = "partial"
+            result["readback_owed"] = _readback_owed(result)
+        else:
+            result["import_row"] = result["status"]
+    _phase(result, "done")
     return result
+
+
+def _readback_owed(result: dict) -> dict:
+    """The read-only commands that settle an unacknowledged commit. Never automatic."""
+    key = result.get("import_key")
+    oids = sorted(
+        {int(c["outcome_id"]) for c in result.get("uncertain_commits") or () if c.get("outcome_id")}
+        | {int(c["outcome_id"]) for c in result.get("committed_outcomes") or ()}
+    )
+    return {
+        "durability": "unknown",
+        "import_key": key,
+        "commands": [
+            f"scripts/kalshi_archive_import.py restore --import-key {key} --deadline <s>",
+            "scripts/kalshi_archive_import.py cohort --outcome-ids "
+            + (",".join(str(i) for i in oids) or "<ids>")
+            + " --deadline <s>",
+        ],
+        "never": ["retry the apply", "restore automatically", "assume zero rows"],
+    }
 
 
 def _summary(result: dict) -> dict:
@@ -464,6 +700,7 @@ def _summary(result: dict) -> dict:
             "status",
             "gained_history_outcome_ids",
             "zero_snapshot_cohort_gained_ids",
+            "incomplete_reasons",
         )
     } | ({"stopped": result["stopped"]} if result.get("stopped") else {})
 
@@ -475,7 +712,10 @@ async def _apply_outcome(
     write: bool,
     import_id: Optional[int],
     session_factory: Callable[[], Any],
+    ledger: Optional[dict] = None,
+    wall: Any = None,
 ) -> dict:
+    ledger = {} if ledger is None else ledger
     oid = int(plan["outcome_id"])
     period = int(plan["period_minutes"])
     settled_at = parse_instant(plan["settled_at"])
@@ -492,7 +732,8 @@ async def _apply_outcome(
         "demoted_to_reader_only": 0,
         "refused": None,
     }
-    why = rederivation_refusal(plan, archive_cutoff)
+    with _sync(wall, f"rederive:{oid}"):
+        why = rederivation_refusal(plan, archive_cutoff)
     if why:
         out["refused"] = why
         return out
@@ -503,7 +744,9 @@ async def _apply_outcome(
     async with session_factory() as session:
         if not write:
             await session.execute(text("SET TRANSACTION READ ONLY"))
-        row = (await session.execute(text(CURRENT_INPUT_SQL), {"oid": oid})).first()
+            row = (await session.execute(text(CURRENT_INPUT_SQL), {"oid": oid})).first()
+        else:
+            row = await _locked_input(session, oid)
         if row is None:
             out["refused"] = "outcome_missing"
             return out
@@ -641,7 +884,26 @@ async def _apply_outcome(
                 "evidence": {str(evidence_id): evidence_version},
             },
         )
-        await session.commit()
+        await _commit(
+            session,
+            ledger,
+            {
+                "step": "outcome",
+                "outcome_id": oid,
+                "import_id": import_id,
+                "evidence_id": evidence_id,
+                "inserted_ids": list(inserted),
+            },
+        )
+        # Durable from here, whatever happens next (readback, sibling, wall).
+        ledger.setdefault("committed_outcomes", []).append(
+            {
+                "outcome_id": oid,
+                "evidence_id": evidence_id,
+                "inserted_ids": list(inserted),
+                "live_snapshots_at_plan": out["live_snapshots_at_plan"],
+            }
+        )
 
     out["inserted"] = len(inserted)
     out["inserted_ids"] = inserted
@@ -654,6 +916,40 @@ async def _apply_outcome(
         }
     out["readback"] = "ok" if back == set(inserted) else "mismatch"
     return out
+
+
+async def _locked_input(session: Any, oid: int) -> Optional[SimpleNamespace]:
+    """The outcome's current identity, row-locked ``FOR SHARE`` until this commit.
+
+    Same fields as :data:`CURRENT_INPUT_SQL`, so the fingerprint is computed
+    identically. A writer already holding one of these rows makes this wait at
+    most the archive ``lock_timeout`` and then fail the outcome before any row
+    is written.
+    """
+    head = (await session.execute(text(CURRENT_INPUT_LOCK_SQL), {"oid": oid})).first()
+    if head is None:
+        return None
+    event = None
+    if head.event_id is not None:
+        event = (
+            await session.execute(text(EVENT_LOCK_SQL), {"eid": head.event_id})
+        ).first()
+    return SimpleNamespace(
+        outcome_id=head.outcome_id,
+        ticker=head.ticker,
+        event_ticker=head.event_ticker,
+        market_id=head.market_id,
+        event_id=head.event_id,
+        resolution_source=head.resolution_source,
+        has_event=event is not None,
+        commence_time=getattr(event, "commence_time", None),
+        commence_time_source=getattr(event, "commence_time_source", None),
+        created_at=getattr(event, "created_at", None),
+        completed_at=getattr(event, "completed_at", None),
+        outcome_xmin=head.outcome_xmin,
+        market_xmin=head.market_xmin,
+        event_xmin=getattr(event, "event_xmin", None),
+    )
 
 
 def _conflict(oid: int, planned: PlannedPoint, prior: Any) -> dict:
@@ -757,25 +1053,80 @@ async def restore_archive_import(
     write: bool = False,
     allow_applying: bool = False,
     session_factory: Callable[[], Any] = _default_session_factory,
+    progress: Optional[dict] = None,
 ) -> dict:
-    """Remove exactly one import's own, unchanged rows. Dry-run unless ``write``."""
-    result: dict = {
-        "mode": "restore" if write else "dry_run",
-        "import_key": import_key,
-        "import_id": None,
-        "would_delete": 0,
-        "deleted": 0,
-        "evidence_deleted": 0,
-        "refused": None,
-        "readback_remaining": None,
-    }
+    """Remove exactly one import's own, unchanged rows. Dry-run unless ``write``.
+
+    ``progress``, when given, IS the receipt (see :func:`apply_archive_plan`):
+    a restore whose COMMIT was never acknowledged reports ``commit_in_flight``
+    or ``uncertain_commits`` and ``deleted: "unknown"``, never 0.
+    """
+    result: dict = progress if progress is not None else {}
+    result.update(
+        {
+            "mode": "restore" if write else "dry_run",
+            "phase": "read_import",
+            "import_key": import_key,
+            "import_id": None,
+            "would_delete": 0,
+            "deleted": 0,
+            "evidence_deleted": 0,
+            "refused": None,
+            "readback_remaining": None,
+            "commit_in_flight": None,
+            "uncertain_commits": [],
+        }
+    )
+    try:
+        done = await _restore_body(
+            import_key,
+            write=write,
+            allow_applying=allow_applying,
+            session_factory=session_factory,
+            result=result,
+        )
+    except Exception:
+        if not _uncertain(result, "restore"):
+            raise  # no COMMIT was sent: nothing was deleted
+        result["refused"] = "commit_unacknowledged"
+        result["deleted"] = "unknown"
+        result["readback_owed"] = {
+            "durability": "unknown",
+            "commands": [
+                f"scripts/kalshi_archive_import.py restore --import-key {import_key} --deadline <s>"
+            ],
+            "never": ["retry the restore", "assume nothing was deleted"],
+        }
+        return result
+    if not done:
+        return result
+    import_id = result["import_id"]
+    result["phase"] = "readback"
+    async with session_factory() as session:
+        remaining = (
+            await session.execute(RESTORE_ROWS_SQL, {"import_id": import_id})
+        ).fetchall()
+    result["readback_remaining"] = len(remaining)
+    result["phase"] = "done"
+    return result
+
+
+async def _restore_body(
+    import_key: str,
+    *,
+    write: bool,
+    allow_applying: bool,
+    session_factory: Callable[[], Any],
+    result: dict,
+) -> bool:
+    """The locked check-and-delete. ``True`` when the readback should follow."""
     async with session_factory() as session:
         if not write:
             await session.execute(text("SET TRANSACTION READ ONLY"))
         found = (await session.execute(RESTORE_READ_SQL, {"key": import_key})).first()
         if found is None:
             result["refused"] = "import_unknown"
-            return result
+            return False
         import_id = int(found.id)
         result["import_id"] = import_id
         if write:
@@ -784,10 +1135,10 @@ async def restore_archive_import(
             found = (await session.execute(RESTORE_READ_SQL, {"key": import_key})).first()
         if found.status == "restored":
             result["refused"] = "already_restored"
-            return result
+            return False
         if found.status == "applying" and not allow_applying:
             result["refused"] = "import_still_applying"
-            return result
+            return False
         params = {"import_id": import_id}
         rows = (
             await session.execute(
@@ -803,11 +1154,11 @@ async def restore_archive_import(
         if drift is not None:
             result["refused"] = drift.pop("reason")
             result.update(drift)
-            return result
+            return False
         recorded = sorted(int(r.id) for r in rows)
         result["would_delete"] = len(recorded)
         if not write:
-            return result
+            return False
         deleted = (
             await session.execute(
                 RESTORE_DELETE_SQL, {"import_id": import_id, "ids": recorded}
@@ -816,7 +1167,7 @@ async def restore_archive_import(
         if len(deleted) != len(recorded):
             await session.rollback()
             result["refused"] = "delete_count_mismatch"
-            return result
+            return False
         removed_evidence = (
             await session.execute(
                 RESTORE_EVIDENCE_SQL,
@@ -824,15 +1175,16 @@ async def restore_archive_import(
             )
         ).fetchall()
         await session.execute(RESTORE_MARK_SQL, {"import_id": import_id})
-        await session.commit()
+        result["phase"] = "commit"
+        result["deleted"] = "unknown"
+        await _commit(
+            session,
+            result,
+            {"step": "restore", "import_id": import_id, "would_delete_ids": recorded},
+        )
         result["deleted"] = len(deleted)
         result["evidence_deleted"] = len(removed_evidence)
-    async with session_factory() as session:
-        remaining = (
-            await session.execute(RESTORE_ROWS_SQL, {"import_id": import_id})
-        ).fetchall()
-    result["readback_remaining"] = len(remaining)
-    return result
+    return True
 
 
 COHORT_SQL = text(
