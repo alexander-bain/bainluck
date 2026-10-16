@@ -56,14 +56,47 @@ function extractDeployScript() {
   if (jobEnd === -1) jobEnd = after.length;
   const job = after.slice(0, jobEnd);
 
-  const runIdx = job.findIndex((l) => /^ {8}run: \|\s*$/.test(l));
-  assert.notEqual(
-    runIdx,
-    -1,
-    "the deploy job no longer has a step with a literal `run: |` block. This suite " +
-      "executes that block; if the deploy moved to an action or a checked-in script, " +
-      "point this suite at wherever the guard now lives rather than deleting it.",
+  // Anchor on the NAMED step, not on the first `run: |` in the job.
+  //
+  // The deploy job used to hold exactly one run block, so "the first one" and
+  // "the guard" were the same line. Directive 150 added a `Decide whether
+  // Heroku needs this commit` step ahead of it (frontend-only merges must not
+  // release), and "the first run block" silently became that one instead: this
+  // suite went on executing a script and asserting things about it, while the
+  // script it executed was no longer the guard. Ten tests failed at once, which
+  // is the good outcome — the bad one is a rename that leaves this pointing at
+  // some other step and passing.
+  const stepIdx = job.findIndex((l) =>
+    /^ {6}- name: Deploy to Heroku\b/.test(l),
   );
+  assert.notEqual(
+    stepIdx,
+    -1,
+    "the deploy job no longer has a step named `Deploy to Heroku`. This suite " +
+      "executes that step's `run:` block; if the deploy moved to an action or a " +
+      "checked-in script, point this suite at wherever the guard now lives " +
+      "rather than deleting it.",
+  );
+
+  const runOffset = job
+    .slice(stepIdx + 1)
+    .findIndex((l) => /^ {8}run: \|\s*$/.test(l));
+  assert.notEqual(
+    runOffset,
+    -1,
+    "the `Deploy to Heroku` step no longer has a literal `run: |` block.",
+  );
+  const runIdx = stepIdx + 1 + runOffset;
+
+  // Nothing between the step's `- name:` and its `run:` may open another step;
+  // if it did, we would be reading the next step's body under this step's name.
+  for (const line of job.slice(stepIdx + 1, runIdx)) {
+    assert.ok(
+      !/^ {6}- /.test(line),
+      "another step begins between `Deploy to Heroku` and the `run:` block this " +
+        "suite extracts — the wrong script would be executed.",
+    );
+  }
 
   const body = [];
   for (const line of job.slice(runIdx + 1)) {
