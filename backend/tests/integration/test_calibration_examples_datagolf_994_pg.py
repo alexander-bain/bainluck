@@ -309,6 +309,115 @@ async def test_a_group_shared_with_another_source_is_refused(session):
 
 
 # ---------------------------------------------------------------------------
+# #994 cost: the scoped branch evaluates the chain per frozen roster chunk. The
+# union of the chunks must be EXACTLY the bucket the unscoped chain publishes —
+# including a same-source group (one ``g:`` question over three markets), which
+# a chunk boundary must never cut.
+# ---------------------------------------------------------------------------
+GROUP_MIDS = (994211, 994212, 994213)
+SINGLE_MIDS = (994221, 994222, 994223, 994224)
+CHUNK_BOARD = [
+    # (name, opening, calibration_probability, is_winner)
+    ("in bucket, still", 0.62, 0.62, True),
+    ("in bucket, moved", 0.55, 0.66, False),
+    ("out of bucket", 0.31, 0.31, False),
+]
+
+
+async def _bucket_in_chain(session, mids, *, moved_only: bool) -> dict[int, bool]:
+    from app.tasks.precompute_calibration import _calibration_population_ctes
+
+    moved = "AND d.price_moved = true" if moved_only else ""
+    rows = await session.execute(
+        text(
+            "WITH "
+            + _calibration_population_ctes()
+            + f"""
+            SELECT d.outcome_id, d.is_winner FROM deduped d
+            WHERE d.source = 'datagolf' AND d.market_id = ANY(:mids)
+              AND LEAST(FLOOR(d.adj_opening_probability * 10)::int, 9) = :bucket
+              {moved}
+            """
+        ),
+        {"mids": list(mids), "bucket": BUCKET},
+    )
+    out = {r.outcome_id: bool(r.is_winner) for r in rows.all()}
+    await session.rollback()
+    return out
+
+
+async def _chunked_bucket(session, *, moved_only: bool) -> tuple[dict[int, bool], list]:
+    """The route's own chunk path, unsampled: roster -> chunks -> union."""
+    from app.routes import calibration as cal
+
+    roster = (await session.execute(
+        text(cal._examples_roster_sql()), {"source": "datagolf"}
+    )).all()
+    chunks = cal._examples_roster_chunks(roster)
+    out: dict[int, bool] = {}
+    for chunk in chunks:
+        rows = (await session.execute(
+            cal._examples_chunk_sql(moved_only),
+            cal._examples_chunk_params(chunk, "datagolf", BUCKET),
+        )).all()
+        for r in rows:
+            assert r.outcome_id not in out, "a row was published by two chunks"
+            out[r.outcome_id] = bool(r.is_winner)
+    await session.rollback()
+    return out, chunks
+
+
+@pytest.mark.parametrize("well_traded", [0, 1])
+async def test_the_chunked_bucket_is_the_published_bucket(session, monkeypatch, well_traded):
+    from app.routes import calibration as cal
+
+    mids = (DG_MID,) + GROUP_MIDS + SINGLE_MIDS
+    try:
+        for mid in GROUP_MIDS + SINGLE_MIDS:
+            gid = "datagolf:994grp" if mid in GROUP_MIDS else None
+            await _seed_market(session, mid, source="datagolf", commence=COMMENCE, group_id=gid)
+            for idx, (name, op, cp, win) in enumerate(CHUNK_BOARD):
+                snaps = [("datagolf_model", op, PRE)]
+                if cp != op:
+                    snaps.append(("datagolf_model", cp, LATE_PRE))
+                await _seed_outcome(
+                    session, _oid(mid, idx), mid, f"{name} {mid}", op, cp, win, "leaderboard", snaps
+                )
+        await session.commit()
+        monkeypatch.setattr(cal, "_EXAMPLES_CHUNK_MARKETS", 2)
+
+        expected = await _bucket_in_chain(session, mids, moved_only=bool(well_traded))
+        got, chunks = await _chunked_bucket(session, moved_only=bool(well_traded))
+        got = {oid: won for oid, won in got.items() if oid // 1000 in mids}
+        # Non-vacuity: the group question and lone markets both publish here.
+        assert {oid // 1000 for oid in expected} & set(GROUP_MIDS), expected
+        assert {oid // 1000 for oid in expected} & set(SINGLE_MIDS), expected
+        assert len(chunks) >= 4, "the cap of 2 must force several chunks"
+        holding = [c for c in chunks if {r.market_id for r in c} & set(GROUP_MIDS)]
+        assert len(holding) == 1 and {r.market_id for r in holding[0]} >= set(GROUP_MIDS)
+        assert {r.vm_id for r in holding[0] if r.market_id in GROUP_MIDS} == {"g:datagolf:994grp"}
+        assert got == expected
+
+        # And the served handler draws only from that set.
+        res = await _examples(session, well_traded=well_traded)
+        served = {e["outcome_id"] for e in res["examples"] if e["market_id"] in mids}
+        assert served and served <= set(expected)
+    finally:
+        await session.rollback()
+        for mid in GROUP_MIDS + SINGLE_MIDS:
+            await session.execute(
+                text(
+                    "DELETE FROM futures_odds_snapshots WHERE outcome_id IN "
+                    "(SELECT id FROM futures_outcomes WHERE market_id = :mid)"
+                ),
+                {"mid": mid},
+            )
+            await session.execute(text("DELETE FROM futures_outcomes WHERE market_id = :mid"), {"mid": mid})
+            await session.execute(text("DELETE FROM futures_markets WHERE id = :mid"), {"mid": mid})
+        await session.commit()
+
+
+# ---------------------------------------------------------------------------
 # The request budget and session ownership, on a real server. The closure check
 # is swapped for a statement that sleeps, so the only thing under test is who
 # stops it and whose session it ran on.

@@ -4,6 +4,7 @@ import asyncio
 import hashlib as _hashlib
 import json
 import logging
+import random
 import time
 from datetime import datetime, timezone
 from typing import Any, Optional
@@ -1992,6 +1993,119 @@ _EXAMPLES_SCOPE_CLOSED_SQL = """
 """
 
 
+# #994 cost (v5741 live 503 after 22.4 s): the scoped chain in ONE statement is
+# QUADRATIC in the source's size. The planner estimates the materialised
+# ``ranked_outcomes`` at ~2 rows (the retained production plan says so too), so
+# it nests per-row loops over whole CTE scans — ``mode_prices`` re-aggregates all
+# of ``normalized`` once per candidate row. On a local real-PG rig shaped like
+# DataGolf (150 outcomes/market): 40 markets 0.49 s, 120 markets 4.65 s, 400
+# markets did not finish in 120 s.
+#
+# The rebuild already solved this for the whole population: Stage A reads the
+# virtual-question roster (cheap — nothing past ``virtual_market`` runs), and
+# each chunk replays the SAME chain under ``frozen_vm_roster`` so its rows are
+# exactly the global rows restricted to that chunk. The scoped branch does the
+# same over its own source: read the roster, evaluate the bucket chunk by chunk
+# (a virtual question never split), and draw the random sample from the union.
+# Same chain text, same rows, same uniform sample; the work is linear. Each
+# statement is still armed from the one request budget.
+# 20, not 40: on the same rig at 400 markets a 40-market chunk answered in 4.1-7.5 s
+# and a 20-market chunk in 1.8-3.9 s (the per-chunk work is still quadratic
+# inside the chunk; 20 statements of fixed overhead are cheap beside it).
+_EXAMPLES_CHUNK_MARKETS = 20
+
+
+def _examples_roster_sql() -> str:
+    """The scoped source's virtual-question roster, as the rebuild's Stage A reads it.
+
+    ``group_sizes``/``event_sizes`` count per (id, source), so this source's
+    scoped roster is the global roster restricted to the source.
+    """
+    from app.tasks.precompute_calibration import _calibration_population_ctes
+
+    return (
+        "WITH "
+        + _calibration_population_ctes(
+            market_info_extra=_EXAMPLES_SCOPED_MARKET_INFO_EXTRA
+        )
+        + """
+            SELECT market_id, vm_id, is_grouped
+            FROM virtual_market
+            ORDER BY market_id
+        """
+    )
+
+
+def _examples_roster_chunks(roster) -> list[list]:
+    """Pack roster rows into chunks of about ``_EXAMPLES_CHUNK_MARKETS`` markets.
+
+    A virtual question's markets always share a chunk — ``ROW_NUMBER() OVER
+    (PARTITION BY vm_id)`` picks its representative across all of them — so a
+    question larger than the cap is one chunk of its own, never split.
+    """
+    by_vm: dict[str, list] = {}
+    for row in roster:
+        by_vm.setdefault(row.vm_id, []).append(row)
+    chunks: list[list] = []
+    current: list = []
+    for members in by_vm.values():
+        if current and len(current) + len(members) > _EXAMPLES_CHUNK_MARKETS:
+            chunks.append(current)
+            current = []
+        current.extend(members)
+    if current:
+        chunks.append(current)
+    return chunks
+
+
+def _examples_chunk_sql(wt: bool):
+    """Every bucket member inside one frozen roster chunk — no sampling here.
+
+    The SELECT is the single-statement sample's, minus ``ORDER BY RANDOM()
+    LIMIT``: the sample is drawn once, uniformly, from the union of the chunks.
+    """
+    from app.tasks.precompute_calibration import (
+        VM_ROSTER_MARKET_INFO_EXTRA,
+        _calibration_population_ctes,
+    )
+
+    wt_clause = "AND d.price_moved = true" if wt else ""
+    return text(
+        "WITH "
+        + _calibration_population_ctes(
+            market_info_extra=VM_ROSTER_MARKET_INFO_EXTRA, frozen_vm_roster=True
+        )
+        + f"""
+            SELECT d.market_id AS market_id, d.outcome_id AS outcome_id,
+                fm.name AS market_name, d.outcome_name AS outcome_name,
+                d.adj_opening_probability AS price,
+                d.is_winner AS is_winner,
+                COALESCE(fm.resolution_date, fm.commence_time, fm.updated_at) AS settle_date
+            FROM deduped d
+            JOIN futures_markets fm ON fm.id = d.market_id
+            WHERE d.source = :source
+              AND LEAST(FLOOR(d.adj_opening_probability * 10)::int, 9) = :bucket
+              {wt_clause}
+        """
+    )
+
+
+def _examples_chunk_params(chunk: list, source: str, bucket: int) -> dict:
+    from app.tasks.precompute_calibration import (
+        VM_ROSTER_IS_GROUPED_PARAM,
+        VM_ROSTER_MARKET_IDS_PARAM,
+        VM_ROSTER_VM_IDS_PARAM,
+    )
+
+    return {
+        "source": source,
+        "bucket": bucket,
+        VM_ROSTER_MARKET_IDS_PARAM: [int(r.market_id) for r in chunk],
+        VM_ROSTER_VM_IDS_PARAM: [str(r.vm_id) for r in chunk],
+        VM_ROSTER_IS_GROUPED_PARAM: [bool(r.is_grouped) for r in chunk],
+    }
+
+
 class _ExamplesBudgetSpent(Exception):
     """The shared request budget has too little left to start a statement."""
 
@@ -2133,18 +2247,13 @@ async def calibration_examples(
         from app.utils.db_cancellation import is_query_canceled
 
         scoped = source in _SOURCE_SCOPED_EXAMPLE_SOURCES
-        population = (
-            _calibration_population_ctes(
-                market_info_extra=_EXAMPLES_SCOPED_MARKET_INFO_EXTRA
-            )
-            if scoped
-            else _calibration_population_ctes()
-        )
         # Well-traded cohort for futures = the price actually moved off its open
         # (matches the page's price_moved !== false default) — the canonical flag.
         wt_clause = "AND d.price_moved = true" if wt else ""
-        sql = text(
-            "WITH " + population + f"""
+        # The scoped branch evaluates the same SELECT chunk by chunk
+        # (``_examples_chunk_sql``); only the unscoped sources run it whole.
+        sql = None if scoped else text(
+            "WITH " + _calibration_population_ctes() + f"""
             SELECT d.market_id AS market_id, d.outcome_id AS outcome_id,
                 fm.name AS market_name, d.outcome_name AS outcome_name,
                 d.adj_opening_probability AS price,
@@ -2172,10 +2281,22 @@ async def calibration_examples(
                     )).scalar()
                     if shares_identity is True:
                         return None
-                    # Re-armed: the sample gets what the closure check LEFT, so
-                    # the two statements together never exceed the one wall.
+                    # Re-armed before EVERY statement: each gets what the ones
+                    # before it LEFT, so together they never exceed the one wall.
                     await _arm_remaining_statement_budget(owned, started)
-                    return (await owned.execute(sql, params)).all()
+                    roster = (await owned.execute(
+                        text(_examples_roster_sql()), {"source": source}
+                    )).all()
+                    chunk_sql = _examples_chunk_sql(wt)
+                    members: list = []
+                    for chunk in _examples_roster_chunks(roster):
+                        await _arm_remaining_statement_budget(owned, started)
+                        members.extend((await owned.execute(
+                            chunk_sql, _examples_chunk_params(chunk, source, bucket)
+                        )).all())
+                    # The single statement's ORDER BY RANDOM() LIMIT, drawn once
+                    # over the whole bucket: uniform, without replacement.
+                    return random.sample(members, min(limit, len(members)))
 
             try:
                 rows = await _within_examples_deadline(_scoped_sample, started)

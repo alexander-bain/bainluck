@@ -113,7 +113,16 @@ class _FakeDB:
         self.clock.advance(duration)
         if "shares_identity" in sql:
             return _Result(scalar=self.shares_identity)
-        return _Result(rows=self.rows)
+        if "SELECT market_id, vm_id, is_grouped" in sql:
+            return _Result(rows=self.roster())
+        chunk = set((params or {}).get("vm_roster_market_ids") or ())
+        return _Result(rows=[r for r in self.rows if r.market_id in chunk])
+
+    def roster(self):
+        """One ``m:`` question per market the rows name (market 1 when empty),
+        so every chunk statement runs and returns its own markets' rows."""
+        mids = sorted({r.market_id for r in self.rows}) or [1]
+        return [_Row(market_id=m, vm_id=f"m:{m}", is_grouped=False) for m in mids]
 
 
 class _Untouchable:
@@ -216,13 +225,14 @@ class TestDataGolfIsSampled:
         assert _status(res) == 200
         body = _body(res)
         assert body["note"] is None
-        assert [(e["market_id"], e["outcome_id"], e["result"]) for e in body["examples"]] == [
-            (77001, 77001000, "Yes"),
-            (77002, 77002003, "No"),
-        ]
+        # Random order (the single statement's ORDER BY RANDOM()), so compared as a set.
+        assert sorted(
+            (e["market_id"], e["outcome_id"], e["result"]) for e in body["examples"]
+        ) == [(77001, 77001000, "Yes"), (77002, 77002003, "No")]
         # Readable columns are unchanged for the drill-in.
-        assert body["examples"][0]["market_name"] == "Test Open 77001 - Make the Cut"
-        assert body["examples"][0]["price"] == 0.64
+        first = next(e for e in body["examples"] if e["market_id"] == 77001)
+        assert first["market_name"] == "Test Open 77001 - Make the Cut"
+        assert first["price"] == 0.64
 
     async def test_datagolf_is_no_longer_the_unsupported_fallback(self, clock):
         res = await _call(_FakeDB(clock))
@@ -234,10 +244,18 @@ class TestDataGolfIsSampled:
     async def test_the_sample_reads_the_canonical_chain_scoped_to_datagolf(self, clock):
         db = _FakeDB(clock)
         await _call(db, well_traded=1)
+        from app.tasks import precompute_calibration as pc
+
+        roster_sql, roster_params = db.statements[1]
+        assert cal._EXAMPLES_SCOPED_MARKET_INFO_EXTRA in roster_sql
+        assert roster_params == {"source": "datagolf"}
         sample_sql, params = db.statements[-1]
         assert "FROM deduped d" in sample_sql
         assert "LEAST(FLOOR(d.adj_opening_probability * 10)::int, 9) = :bucket" in sample_sql
-        assert cal._EXAMPLES_SCOPED_MARKET_INFO_EXTRA in sample_sql
+        # A chunk replays the chain on a frozen roster of this source's markets.
+        assert pc.VM_ROSTER_MARKET_INFO_EXTRA in sample_sql
+        assert "frozen_vm_roster AS" in sample_sql
+        assert params[pc.VM_ROSTER_MARKET_IDS_PARAM] == [1]
         # The page's default cohort: the price moved off its open.
         assert "AND d.price_moved = true" in sample_sql
         assert params["source"] == "datagolf"
@@ -247,7 +265,7 @@ class TestDataGolfIsSampled:
         await _call(db, well_traded=0)
         sample_sql, _ = db.statements[-1]
         assert "d.price_moved = true" not in sample_sql
-        assert cal._EXAMPLES_SCOPED_MARKET_INFO_EXTRA in sample_sql
+        assert "frozen_vm_roster AS" in sample_sql
 
     async def test_sampling_names_the_live_basis_and_unverified_membership(self, clock):
         body = _body(await _call(_FakeDB(clock), well_traded=1))
@@ -265,6 +283,62 @@ class TestDataGolfIsSampled:
         n = len(db.statements)
         await _call(db)
         assert len(db.statements) == n
+
+
+class TestRosterChunks:
+    """#994 cost: the scoped chain runs per frozen roster chunk, never whole."""
+
+    @staticmethod
+    def _roster(spec):
+        return [_Row(market_id=m, vm_id=vm, is_grouped=vm.startswith("g:")) for m, vm in spec]
+
+    def test_a_virtual_question_is_never_split_and_the_cap_holds(self, monkeypatch):
+        monkeypatch.setattr(cal, "_EXAMPLES_CHUNK_MARKETS", 3)
+        roster = self._roster([
+            (1, "m:1"), (2, "g:x"), (3, "m:3"), (4, "g:x"), (5, "m:5"), (6, "g:x"),
+            (7, "m:7"), (8, "g:big"), (9, "g:big"), (10, "g:big"), (11, "g:big"),
+        ])
+        chunks = cal._examples_roster_chunks(roster)
+        flat = [r.market_id for c in chunks for r in c]
+        assert sorted(flat) == list(range(1, 12)), "every market exactly once"
+        for vm in ("g:x", "g:big"):
+            holding = [i for i, c in enumerate(chunks) if any(r.vm_id == vm for r in c)]
+            assert len(holding) == 1, f"{vm} was split across chunks {holding}"
+        # Only a question larger than the cap may exceed it, alone.
+        for c in chunks:
+            assert len(c) <= 3 or {r.vm_id for r in c} == {"g:big"}
+
+    def test_an_empty_roster_runs_no_chunk(self):
+        assert cal._examples_roster_chunks([]) == []
+
+    async def test_the_sample_is_drawn_once_from_every_chunk(self, clock, monkeypatch):
+        monkeypatch.setattr(cal, "_EXAMPLES_CHUNK_MARKETS", 1)
+        rows = [_dg_row(m, m * 10, price=0.65, won=m % 2 == 0) for m in (11, 12, 13)]
+        db = _FakeDB(clock, rows=rows)
+        seen = set()
+        for _ in range(40):
+            cal._examples_cache.clear()
+            body = _body(await _call(db, limit=2))
+            ids = [e["outcome_id"] for e in body["examples"]]
+            assert len(ids) == 2 and len(set(ids)) == 2, "without replacement, at the limit"
+            seen.update(ids)
+        # Three chunks, one statement each, every one reachable by the sample.
+        assert seen == {110, 120, 130}
+        chunk_params = [p for _, p in db.statements if p and "vm_roster_market_ids" in p]
+        assert [p["vm_roster_market_ids"] for p in chunk_params[:3]] == [[11], [12], [13]]
+
+    async def test_every_chunk_is_armed_and_a_slow_one_is_a_503(self, clock, monkeypatch):
+        monkeypatch.setattr(cal, "_EXAMPLES_CHUNK_MARKETS", 1)
+        rows = [_dg_row(m, m * 10, price=0.65, won=True) for m in (11, 12, 13)]
+        wall = cal._EXAMPLES_SCOPED_STATEMENT_WALL_S
+        db = _FakeDB(clock, durations=[0.0, 0.0, wall * 0.5, wall * 0.6], rows=rows)
+        start = clock.t
+        res = await _call(db)
+        assert _status(res) == 503
+        assert _body(res)["reason"] == "examples_query_timeout"
+        assert db.armed[:3] == [_wall_ms(), _wall_ms(), _wall_ms()]
+        assert db.armed[3] == _wall_ms() - int(wall * 0.5 * 1000)
+        assert clock.t - start <= wall + 1e-9
 
 
 class TestControlsAreUnchanged:
@@ -311,27 +385,42 @@ class TestOneRequestBudget:
         assert clock.t - start <= cal._EXAMPLES_SCOPED_STATEMENT_WALL_S + 1e-9
 
     async def test_every_statement_is_armed_with_what_is_left(self, clock):
-        db = _FakeDB(clock, durations=[5.0, 3.0], rows=[_dg_row(1, 1000, price=0.65, won=True)])
+        db = _FakeDB(clock, durations=[5.0, 3.0, 2.0], rows=[_dg_row(1, 1000, price=0.65, won=True)])
         res = await _call(db)
         assert _status(res) == 200
-        assert db.armed == [_wall_ms(), _wall_ms() - 5000]
-        # The budgets armed can never sum past the wall's own remaining time.
-        assert db.armed[1] <= db.armed[0] - 5000
+        # Closure check, roster read, one chunk: each armed with what is LEFT.
+        assert db.armed == [_wall_ms(), _wall_ms() - 5000, _wall_ms() - 8000]
 
     async def test_time_spent_before_the_first_statement_counts(self, clock, monkeypatch):
-        """The wall starts at handler entry, not at the first statement."""
+        """The wall starts at handler entry, not at the first statement: a slow
+        session checkout is spent out of the same budget."""
+
+        class SlowCheckout(_OwnedCM):
+            async def __aenter__(self):
+                clock.advance(4.0)
+                return await super().__aenter__()
+
+        monkeypatch.setattr(cal, "_owned_examples_session", lambda db: SlowCheckout(db))
+        db = _FakeDB(clock, durations=[0.0, 0.0, 0.0])
+        await _call(db)
+        assert db.armed[0] == _wall_ms() - 4000
+
+    async def test_time_building_sql_between_statements_counts(self, clock, monkeypatch):
+        """Rendering the chain is spent too: the chunk is armed with what the
+        closure check, the roster read AND the rendering left."""
         from app.tasks import precompute_calibration as pc
 
         orig = pc._calibration_population_ctes
 
         def slow_ctes(*a, **k):
-            clock.advance(4.0)
+            clock.advance(2.0)
             return orig(*a, **k)
 
         monkeypatch.setattr(pc, "_calibration_population_ctes", slow_ctes)
-        db = _FakeDB(clock, durations=[0.0, 0.0])
+        db = _FakeDB(clock, durations=[0.0, 0.0, 0.0])
         await _call(db)
-        assert db.armed[0] == _wall_ms() - 4000
+        # Roster SQL is rendered after its arm; chunk SQL before the chunk's.
+        assert db.armed == [_wall_ms(), _wall_ms(), _wall_ms() - 4000]
 
     async def test_a_spent_budget_never_starts_the_sample(self, clock):
         db = _FakeDB(clock, durations=[cal._EXAMPLES_SCOPED_STATEMENT_WALL_S - 0.05])
@@ -452,7 +541,8 @@ class TestOwnership:
         owned = _FakeDB(clock, rows=[_dg_row(1, 1000, price=0.65, won=True)])
         res = await _call(_Untouchable(owned))
         assert _status(res) == 200
-        assert len(owned.statements) == 2  # closure check + sample, on the OWNED one
+        # Closure check + roster + one chunk, all on the OWNED one.
+        assert len(owned.statements) == 3
         assert (owned.opened, owned.closed) == (1, 1)
 
     async def test_roots_parent_cancel_control_on_the_helper(self, monkeypatch):
