@@ -4,9 +4,25 @@ import json
 import sys
 
 import pytest
+
 from datetime import datetime, timezone, timedelta
 
 from app.utils.pulse import PulseDataPoint
+
+
+@pytest.fixture
+def offline_redis_no_retry_sleep(monkeypatch):
+    """Skip Redis jitter only in explicitly opted-in offline route contracts.
+
+    These tests exercise response contracts with a mocked database and absent
+    Redis, not retry timing. Keep real attempts, callbacks and exceptions. This
+    also removes an async scheduling yield, so cancellation, concurrency,
+    deadline, retry/jitter and real-Redis tests must not request this fixture.
+    Function-scoped monkeypatch restores the production method after each test.
+    """
+    from redis.backoff import EqualJitterBackoff
+
+    monkeypatch.setattr(EqualJitterBackoff, "compute", lambda self, failures: 0.0)
 
 
 # ---------------------------------------------------------------------------

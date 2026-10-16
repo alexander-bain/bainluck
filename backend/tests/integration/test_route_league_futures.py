@@ -11,6 +11,9 @@ from unittest.mock import MagicMock
 
 import pytest
 
+# #11093: offline response contracts; retry/deadline tests remain unpatched.
+pytestmark = pytest.mark.usefixtures("offline_redis_no_retry_sleep")
+
 
 # ---------------------------------------------------------------------------
 # Helpers: mock FuturesMarket / FuturesOutcome for seeded tests

@@ -17,6 +17,9 @@ from unittest.mock import MagicMock
 # accident.
 import pytest
 
+# #11093: offline response contracts; retry/deadline tests remain unpatched.
+pytestmark = pytest.mark.usefixtures("offline_redis_no_retry_sleep")
+
 # UX-P209: `import pytest` was here and unused — zero `pytest.` references in the
 # file. It predates this branch (proved by re-running ruff on the parent's own
 # bytes), and it was invisible because changed-file Ruff only sees a file

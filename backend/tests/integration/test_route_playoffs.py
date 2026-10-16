@@ -15,6 +15,9 @@ import pytest
 from app.config.league_configs import get_all_league_slugs, LEAGUE_CONFIGS
 from app.models import FuturesMarket, FuturesOutcome
 
+# #11093: offline response contracts; retry/deadline tests remain unpatched.
+pytestmark = pytest.mark.usefixtures("offline_redis_no_retry_sleep")
+
 # The grid drops markets naming a season other than the league's current one
 # (`_is_past_season_market` / `_is_future_season_market`, #708), so a fixture
 # that hard-codes a season silently becomes a PAST-season market the year the
@@ -730,14 +733,14 @@ class TestPlayoffLeagueList:
     async def test_major_leagues_present(self, client):
         resp = await client.get("/api/playoffs/")
         body = resp.json()
-        slugs = {l["slug"] for l in body["leagues"]}
+        slugs = {league["slug"] for league in body["leagues"]}
         for slug in MAJOR_SLUGS:
             assert slug in slugs, f"Expected major league '{slug}' in league list"
 
     async def test_league_slugs_are_unique(self, client):
         resp = await client.get("/api/playoffs/")
         body = resp.json()
-        slugs = [l["slug"] for l in body["leagues"]]
+        slugs = [league["slug"] for league in body["leagues"]]
         assert len(slugs) == len(set(slugs)), "Duplicate league slugs in list"
 
 
