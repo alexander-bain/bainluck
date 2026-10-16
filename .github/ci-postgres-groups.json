@@ -276,6 +276,7 @@
     "#1527 a settled soccer fixture's three-winner repair writes only a reviewed exact plan, and the undo round-trips (real Postgres)",
     "#1527 a settled soccer fixture's market leaves open on a reviewed exact plan, and the undo round-trips (real Postgres)",
     "#1527 a repaired settled soccer field survives the real poll and reads as a result (real Postgres)",
-    "#11007 an undecided Polymarket leg stops reading as settled and Lost, and the undo round-trips (real Postgres)"
+    "#11007 an undecided Polymarket leg stops reading as settled and Lost, and the undo round-trips (real Postgres)",
+    "#1911 the sentinel's events published aggregate is the curve's own admission (real Postgres)"
   ]
 }

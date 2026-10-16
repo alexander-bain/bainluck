@@ -254,11 +254,14 @@ PUBLISHED_BASIS_LIMITED_MASK = "limited_mask"
 def published_basis(provenance: str | None) -> str:
     """Whether a cohort's scan complement IS the published population.
 
-    Events: the curve's only events-moneyline exclusion is the soccer two-way
-    one, and the events scan builds its complement from exactly that
-    (``_EVENTS_MINING_SQL``) — a genuine canonical comparison. Futures: the
-    scan's six classes are a strict subset of the canonical gates, so its
-    survivors are a limited mask, not what users see.
+    Events: the events scan builds its published aggregate from the curve's
+    own ``events_sql`` admission — the soccer two-way exclusion AND the
+    two-way branch's decided-game, price-inside-(0, 1) rule (CERT-4150 found
+    the scan had only the first, so ties and terminal prices read as
+    published). Its parity with the curve's SQL is executed, not asserted:
+    ``tests/integration/test_calibration_sentinel_events_parity_1911_pg.py``.
+    Futures: the scan's six classes are a strict subset of the canonical
+    gates, so its survivors are a limited mask, not what users see.
     """
     return (
         PUBLISHED_BASIS_CANONICAL
@@ -683,7 +686,11 @@ sides AS (
            'binary' AS structure_class,
            CASE WHEN home_score > away_score THEN 1 ELSE 0 END AS win,
            home_cp::float AS cp,
-           is_soccer AS soccer_2way
+           is_soccer AS soccer_2way,
+           -- #1911 parity (CERT-4150): the curve's two-way branch admits a side
+           -- only on a decided game priced strictly inside (0, 1). A tie or a
+           -- terminal 1.0/0.0 price is a RAW row here and never a published one.
+           (home_score <> away_score AND home_cp > 0 AND home_cp < 1) AS curve_admits
     FROM ev
     WHERE NOT three_way AND home_cp IS NOT NULL
     UNION ALL
@@ -691,7 +698,8 @@ sides AS (
            'binary' AS structure_class,
            CASE WHEN away_score > home_score THEN 1 ELSE 0 END AS win,
            away_cp::float AS cp,
-           is_soccer AS soccer_2way
+           is_soccer AS soccer_2way,
+           (home_score <> away_score AND away_cp > 0 AND away_cp < 1) AS curve_admits
     FROM ev
     WHERE NOT three_way AND away_cp IS NOT NULL
     UNION ALL
@@ -699,7 +707,9 @@ sides AS (
            'three_way' AS structure_class,
            tw.win,
            tw.cp,
-           FALSE AS soccer_2way
+           FALSE AS soccer_2way,
+           -- The three-way branch's admission IS `three_way` (the curve's own).
+           TRUE AS curve_admits
     FROM ev
     CROSS JOIN LATERAL (VALUES
         (ev.opening_home_probability::float,
@@ -731,13 +741,17 @@ SELECT
     SUM(CASE WHEN soccer_2way THEN 1 ELSE 0 END) AS soccer_2way_n,
     -- soccer_2way is the only shipped exclusion on events, so it IS the union.
     SUM(CASE WHEN soccer_2way THEN 1 ELSE 0 END) AS any_known_n,
-    -- #1911: the published population is the complement of the exclusion.
+    -- #1911: the published population — what the curve's `events_sql` admits.
     -- Emitted explicitly rather than left to a default, so an events cohort
     -- reports a real published MCE instead of a missing number that reads as
-    -- "under threshold".
-    SUM(CASE WHEN soccer_2way THEN 0 ELSE 1 END) AS pub_n,
-    SUM(CASE WHEN soccer_2way THEN 0 ELSE win END) AS pub_winners,
-    SUM(CASE WHEN soccer_2way THEN 0 ELSE cp END) AS pub_sum_prob,
+    -- "under threshold". CERT-4150: the soccer two-way exclusion alone is NOT
+    -- that population (ties and terminal prices were counted as published);
+    -- `curve_admits` carries the curve's remaining admission rules, and
+    -- `test_calibration_sentinel_events_parity_1911_pg.py` runs the curve's own
+    -- SQL beside this one so the two cannot drift apart unseen.
+    SUM(CASE WHEN soccer_2way OR NOT curve_admits THEN 0 ELSE 1 END) AS pub_n,
+    SUM(CASE WHEN soccer_2way OR NOT curve_admits THEN 0 ELSE win END) AS pub_winners,
+    SUM(CASE WHEN soccer_2way OR NOT curve_admits THEN 0 ELSE cp END) AS pub_sum_prob,
     NULL::timestamptz AS min_created_at
 FROM sides
 GROUP BY category, structure_class, bucket
