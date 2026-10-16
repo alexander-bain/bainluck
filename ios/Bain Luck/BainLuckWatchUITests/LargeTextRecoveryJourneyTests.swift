@@ -208,9 +208,16 @@ final class LargeTextRecoveryJourneyTests: XCTestCase {
             let appFrame = app.frame
             let frame = element.frame
             if element.isHittable && appFrame.contains(frame) { return }
-            let earlier = frame.minY < appFrame.minY
-            let start = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.60))
-            let end = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: earlier ? 0.75 : 0.45))
+            // Contained but not hittable in the upper half means under the navigation bar (the
+            // Watch app has no bottom chrome); dragging it up again oscillated until the cap.
+            let earlier = frame.minY < appFrame.minY || (appFrame.contains(frame) && frame.midY < appFrame.midY)
+            // Size each drag to the remaining offset, as revealChange does; a fixed 15% step
+            // spent most of the 3-minute allowance on drags at accessibility5.
+            let distance = earlier ? appFrame.minY - frame.minY : frame.maxY - appFrame.maxY
+            let fraction = min(0.50, max(0.15, distance / appFrame.height))
+            let from: CGFloat = earlier ? 0.35 : 0.75
+            let start = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: from))
+            let end = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: earlier ? from + fraction : from - fraction))
             start.press(forDuration: 0.1, thenDragTo: end, withVelocity: .slow, thenHoldForDuration: 0.4)
         }
         capture(app, "Unreachable largest text control - \(element.identifier)")

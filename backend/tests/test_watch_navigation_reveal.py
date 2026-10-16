@@ -562,6 +562,26 @@ def test_picker_frame_read_normalization_refuses_scope_or_gate_changes(mutation)
         normalize_picker_frame_reads(changes[mutation])
 
 
+LARGE_TEXT_FIXED_STEP = (
+    "            if element.isHittable && appFrame.contains(frame) { return }\n"
+    "            let earlier = frame.minY < appFrame.minY\n"
+    "            let start = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.60))\n"
+    "            let end = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: earlier ? 0.75 : 0.45))\n"
+)
+LARGE_TEXT_DISTANCE_STEP = (
+    "            if element.isHittable && appFrame.contains(frame) { return }\n"
+    "            // Contained but not hittable in the upper half means under the navigation bar (the\n"
+    "            // Watch app has no bottom chrome); dragging it up again oscillated until the cap.\n"
+    "            let earlier = frame.minY < appFrame.minY || (appFrame.contains(frame) && frame.midY < appFrame.midY)\n"
+    "            // Size each drag to the remaining offset, as revealChange does; a fixed 15% step\n"
+    "            // spent most of the 3-minute allowance on drags at accessibility5.\n"
+    "            let distance = earlier ? appFrame.minY - frame.minY : frame.maxY - appFrame.maxY\n"
+    "            let fraction = min(0.50, max(0.15, distance / appFrame.height))\n"
+    "            let from: CGFloat = earlier ? 0.35 : 0.75\n"
+    "            let start = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: from))\n"
+    "            let end = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: earlier ? from + fraction : from - fraction))\n"
+)
+
 # Exact, attempt-local cost changes are undone before all preexisting guards.
 COST_READ_TRANSFORMS = {
     "LargeTextRecoveryJourneyTests.swift": [
@@ -599,6 +619,14 @@ COST_READ_TRANSFORMS = {
         (
             "            if element.isHittable && app.frame.contains(element.frame) { return }\n            let earlier = element.frame.minY < app.frame.minY",
             "            let appFrame = app.frame\n            let frame = element.frame\n            if element.isHittable && appFrame.contains(frame) { return }\n            let earlier = frame.minY < appFrame.minY",
+            1,
+        ),
+        # #10090: the generic reveal drags by the remaining offset (revealChange's clamp),
+        # not a fixed 15% step, and moves a contained-but-unhittable upper element down from
+        # under the navigation bar; the visibility test and the 32-attempt cap are untouched.
+        (
+            LARGE_TEXT_FIXED_STEP,
+            LARGE_TEXT_DISTANCE_STEP,
             1,
         ),
     ],
@@ -658,7 +686,7 @@ COST_ORIGINAL_SHA256 = {
     "WatchDiagnosticsJourneyTests.swift": "2d1319539f2648876a5dd8b1e451c66c64651a0c3ad5c27e914980c1d5f8ec1a",
 }
 COST_PROPOSED_SHA256 = {
-    "LargeTextRecoveryJourneyTests.swift": "3b01a4864451d948c659a8236b85f8548138ca646a259739414a72ff3df7658a",
+    "LargeTextRecoveryJourneyTests.swift": "7082122150c61f86892dd9f6a72582561bba0ac58e2dc1b95b3e2621c5a50106",
     "PickerAliasJourneyTests.swift": "ae6767e2c5563d30604e2f25a574f5ff3c2e20ba22478e8dd6a178161e1d3d1e",
     "WatchDiagnosticsJourneyTests.swift": "21680343a8a45c392958f2b41b6dd2437ba5b5875c13c89c898535314fed9591",
 }
@@ -712,6 +740,43 @@ def test_cost_guard_rejects_original_or_lost_obligations(name, mutation):
     assert altered != raw
     with pytest.raises(AssertionError):
         restore_cost_reads(name, altered)
+
+
+def check_large_text_distance_step(text):
+    generic = helper_block(text, "reveal")
+    assert generic.count(LARGE_TEXT_DISTANCE_STEP) == 1
+    assert LARGE_TEXT_FIXED_STEP not in generic
+    # Unchanged visibility gate and attempt cap: a larger stride cannot admit a partial node.
+    assert "element.isHittable && appFrame.contains(frame)" in generic
+    assert "for _ in 0..<32" in generic
+    assert "withVelocity: .slow, thenHoldForDuration: 0.4" in generic
+
+
+def test_large_text_reveal_moves_by_remaining_offset_within_the_window():
+    check_large_text_distance_step((SWIFT / "LargeTextRecoveryJourneyTests.swift").read_text())
+    # Both endpoints stay inside the window at the clamp's extremes.
+    for earlier, origin in ((True, 0.35), (False, 0.75)):
+        for fraction in (0.15, 0.50):
+            end = origin + fraction if earlier else origin - fraction
+            assert 0 < min(origin, end) < max(origin, end) < 1
+
+
+@pytest.mark.parametrize(
+    "old,new",
+    [
+        (LARGE_TEXT_DISTANCE_STEP, LARGE_TEXT_FIXED_STEP),
+        ("appFrame.contains(frame) { return }", "appFrame.intersects(frame) { return }"),
+        ("min(0.50, max(0.15, distance / appFrame.height))", "0.50"),
+        ("earlier ? 0.35 : 0.75", "earlier ? 0.60 : 0.60"),
+        (" || (appFrame.contains(frame) && frame.midY < appFrame.midY)", ""),
+    ],
+)
+def test_large_text_reveal_rejects_fixed_step_partial_visibility_or_unbounded_drag(old, new):
+    raw = (SWIFT / "LargeTextRecoveryJourneyTests.swift").read_text()
+    assert raw.count(old) == 1
+    with pytest.raises(AssertionError):
+        check_large_text_distance_step(raw.replace(old, new))
+        restore_cost_reads("LargeTextRecoveryJourneyTests.swift", raw.replace(old, new))
 
 
 def test_large_text_frames_are_measured_once_per_attempt():
