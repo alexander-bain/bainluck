@@ -41,9 +41,13 @@ final class IntentRouteHandoff10873: ObservableObject {
         return true
     }
 
-    /// Returns and clears the waiting link.
+    /// Returns and clears the waiting link. With nothing waiting it assigns
+    /// nothing: `@Published` emits on every assignment, nil over nil included,
+    /// and `ContentView` calls this from its `settledPosts` handler — so an
+    /// unconditional clear would re-trigger that handler forever, from the
+    /// first mount, with no Siri use at all.
     func consume() -> URL? {
-        let url = pendingURL
+        guard let url = pendingURL else { return nil }
         pendingURL = nil
         return url
     }

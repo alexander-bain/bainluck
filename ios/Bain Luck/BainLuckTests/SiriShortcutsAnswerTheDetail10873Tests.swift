@@ -400,12 +400,53 @@ final class SiriShortcutsAnswerTheDetail10873Tests: XCTestCase {
         var routed: [URL] = []
         let delivered = expectation(description: "cold link routed")
         let subscription = handoff.settledPosts.sink { _ in
-            if let link = handoff.consume() { routed.append(link) }
-            delivered.fulfill()
+            if let link = handoff.consume() {
+                routed.append(link)
+                delivered.fulfill()
+            }
         }
         defer { subscription.cancel() }
         wait(for: [delivered], timeout: 2)
         XCTAssertEqual(routed, [IntentLinks10873.myStuff])
+    }
+
+    /// Runs `ContentView`'s `.onReceive` handler, in its exact shape, on the main
+    /// run loop and counts how often it fires. A cold link is posted before the
+    /// subscription; a warm one after the subscription has settled.
+    private func runContentViewHandler(
+        cold: URL? = nil, warm: URL? = nil
+    ) -> (calls: Int, routed: [URL]) {
+        let handoff = IntentRouteHandoff10873()
+        if let cold { XCTAssertTrue(handoff.post(cold)) }
+        var calls = 0
+        var routed: [URL] = []
+        let subscription = handoff.settledPosts.sink { _ in
+            calls += 1
+            guard let link = handoff.consume() else { return }
+            routed.append(link)
+        }
+        defer { subscription.cancel() }
+        RunLoop.main.run(until: Date().addingTimeInterval(0.25))
+        if let warm { XCTAssertTrue(handoff.post(warm)) }
+        RunLoop.main.run(until: Date().addingTimeInterval(0.5))
+        return (calls, routed)
+    }
+
+    /// The handler must go quiet. `consume()` on an empty hand-off used to assign
+    /// nil anyway, `@Published` re-emitted it, and the handler ran again — a
+    /// main-queue loop from first mount (~286,000 calls a second, idle).
+    func testContentViewsHandlerSettlesInsteadOfSpinningTheMainQueue() {
+        let idle = runContentViewHandler()
+        XCTAssertLessThanOrEqual(idle.calls, 1, "idle")
+        XCTAssertEqual(idle.routed, [])
+
+        let cold = runContentViewHandler(cold: IntentLinks10873.myStuff)
+        XCTAssertLessThanOrEqual(cold.calls, 3, "cold")
+        XCTAssertEqual(cold.routed, [IntentLinks10873.myStuff])
+
+        let warm = runContentViewHandler(warm: IntentLinks10873.event(id: 15320337)!)
+        XCTAssertLessThanOrEqual(warm.calls, 3, "warm")
+        XCTAssertEqual(warm.routed, [IntentLinks10873.event(id: 15320337)!])
     }
 
     func testEachLinkLandsWhereTheRouterSendsAnyOtherLinkLikeIt() {
