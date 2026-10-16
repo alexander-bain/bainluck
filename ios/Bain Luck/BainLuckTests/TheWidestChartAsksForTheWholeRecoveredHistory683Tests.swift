@@ -238,4 +238,56 @@ final class TheWidestChartAsksForTheWholeRecoveredHistory683Tests: XCTestCase {
                 historyRange: block("archive_first_interval", "incomplete")),
             "Only 2 prices seen so far", "the count sentence is about what is drawn, and stays")
     }
+
+    // MARK: - A partial read says so
+
+    /// calibration's reader rule (PR #11083 @ 616d0c0a6b): when the server withheld
+    /// older archive intervals it could not place against our thinned captures, it
+    /// serves `served_history: "partial"`, and the Full chart adds one plain caption.
+    /// The served payload, decoded by the real client, drives the caption.
+    func testAPartialFullReadSaysSomeOlderPricesArentShown() async throws {
+        let first = "2025-06-01T14:00:00+00:00"
+        Origin.reset(bodies: ["/api/futures/68305/probability-timeline": timeline(
+            marketId: 68305, hours: 4320, first: first, block: """
+            {"requested": "full", "window_start": "\(first)",
+             "window_start_basis": "live_first_capture", "archive_coverage": "complete",
+             "thinned_outcomes": [], "live_thinned": true, "served_history": "partial",
+             "unresolved_withheld": {"archive_intervals": 3, "venue_points": 0}}
+            """)])
+        let payload = try await client().fetchProbabilityTimeline(
+            marketId: 68305, top: 50, hours: 4320, fullRange: true)
+        XCTAssertTrue(EvolutionFullRange.servedPartially(payload.historyRange))
+        XCTAssertEqual(payload.timeline.count, 2, "every served point is still drawn")
+        let note = EvolutionChartView.coverageNote(
+            coverageHours: payload.coverageHours, observationTimes: payload.observationTimes,
+            requestedHours: 4320, historyRange: payload.historyRange)
+        XCTAssertEqual(note, "Some older prices aren't shown")
+        XCTAssertFalse(try XCTUnwrap(note).contains(where: \.isNumber), "no counts on the reader's screen")
+    }
+
+    /// `complete`, absent, an unknown word or a non-full block: no caption, no change.
+    func testOnlyAServedPartialFullReadEarnsTheCaption() {
+        func note(_ range: FuturesHistoryRange?, seen: Int = 200) -> String? {
+            EvolutionChartView.coverageNote(
+                coverageHours: 4600, observationTimes: seen, requestedHours: 4320, historyRange: range)
+        }
+        let partial = "Some older prices aren't shown"
+        XCTAssertEqual(note(FuturesHistoryRange(requested: "full", servedHistory: "partial")), partial)
+        XCTAssertNil(note(FuturesHistoryRange(requested: "full", servedHistory: "complete")))
+        XCTAssertNil(note(FuturesHistoryRange(requested: "full")), "an older server = complete")
+        XCTAssertNil(note(FuturesHistoryRange(requested: "full", servedHistory: "a_future_word")))
+        XCTAssertNil(note(FuturesHistoryRange(requested: "since_start", servedHistory: "partial")),
+                     "only a served full read changes anything")
+        XCTAssertNil(note(nil))
+        XCTAssertEqual(
+            note(FuturesHistoryRange(requested: "full", servedHistory: "partial"), seen: 2), partial,
+            "withheld older prices make 'only 2 prices seen' untrue too")
+        XCTAssertEqual(
+            EvolutionChartView.coverageNote(
+                coverageHours: 720, observationTimes: 200, requestedHours: 4320,
+                historyRange: FuturesHistoryRange(
+                    requested: "full", windowStartBasis: "archive_first_interval",
+                    archiveCoverage: "complete", servedHistory: "partial")),
+            partial, "the span sentence would claim the drawn edge is the record's edge")
+    }
 }

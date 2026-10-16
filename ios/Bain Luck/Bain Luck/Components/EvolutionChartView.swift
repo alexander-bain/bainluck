@@ -907,10 +907,14 @@ struct EvolutionChartView: View {
     /// #683 — the span sentence is withheld when a full read's drawn span begins on
     /// a recovered venue record whose import is not complete: "prices only go back
     /// 30d" would then claim the record's edge is the question's open.
+    ///
+    /// #683 — a full read the server served `partial` says so first: older prices
+    /// exist that are not drawn, so neither sentence below would be true.
     static func coverageNote(
         coverageHours: Double?, observationTimes: Int?, requestedHours: Int,
         historyRange: FuturesHistoryRange? = nil
     ) -> String? {
+        if EvolutionFullRange.servedPartially(historyRange) { return EvolutionFullRange.partialNote }
         if let seen = observationTimes, seen > 0, seen <= 3 {
             return seen == 1 ? "Only one price seen so far" : "Only \(seen) prices seen so far"
         }

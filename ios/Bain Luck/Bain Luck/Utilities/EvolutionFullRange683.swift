@@ -25,6 +25,13 @@ import Foundation
 // complete. When the drawn span begins at a recovered record whose import is not
 // complete, the chart may not say "prices only go back N days" — the venue may hold
 // older prices nobody has imported yet.
+//
+// 🔴 A PARTIAL READ SAYS SO (calibration, PR #11083 @ 616d0c0a6b). When the server
+// thinned our older captures and could not decide, inside its read budget, whether
+// an archive interval overlaps them, it LEAVES THAT INTERVAL OUT and sets
+// `served_history: "partial"`. Every served point is drawn exactly as before; the
+// chart adds one plain caption saying some older prices are not shown — no counts,
+// no method (notice 34). `complete` or absent (an older server) changes nothing.
 
 /// `history_range` on a `range=full` response: metadata only, every key optional.
 /// An unknown `window_start_basis` is kept as its raw word and reads as "starts at
@@ -38,6 +45,7 @@ nonisolated struct FuturesHistoryRange: Codable, Sendable, Equatable {
     @TolerantNumeric var archiveVenueOpen: String? = nil
     @TolerantNumeric var thinnedOutcomes: [Int]? = nil
     @TolerantNumeric var liveThinned: Bool? = nil
+    @TolerantNumeric var servedHistory: String? = nil
 
     static func == (lhs: Self, rhs: Self) -> Bool {
         lhs.requested == rhs.requested && lhs.windowStart == rhs.windowStart
@@ -45,6 +53,7 @@ nonisolated struct FuturesHistoryRange: Codable, Sendable, Equatable {
             && lhs.archiveCoverage == rhs.archiveCoverage
             && lhs.archiveVenueOpen == rhs.archiveVenueOpen
             && lhs.thinnedOutcomes == rhs.thinnedOutcomes && lhs.liveThinned == rhs.liveThinned
+            && lhs.servedHistory == rhs.servedHistory
     }
 }
 
@@ -53,6 +62,10 @@ nonisolated enum EvolutionFullRange {
     static let full = "full"
     /// The import's own word for an outcome whose whole venue history was recovered.
     static let coverageComplete = "complete"
+    /// The server's word for a full read that withheld points it could not place.
+    static let servedPartial = "partial"
+    /// The one caption a partial read earns. Plain, and no count (notice 34).
+    static let partialNote = "Some older prices aren't shown"
     /// Bases at which the drawn span begins on a venue's record rather than on our
     /// own captures or the requested hours.
     static let recoveredRecordBases: Set<String> = ["archive_first_interval", "venue_first_observation"]
@@ -80,5 +93,10 @@ nonisolated enum EvolutionFullRange {
         guard let block = served(block), let basis = block.windowStartBasis,
               recoveredRecordBases.contains(basis) else { return false }
         return block.archiveCoverage != coverageComplete
+    }
+
+    /// True when a served full read withheld older points it could not place.
+    static func servedPartially(_ block: FuturesHistoryRange?) -> Bool {
+        served(block)?.servedHistory == servedPartial
     }
 }
