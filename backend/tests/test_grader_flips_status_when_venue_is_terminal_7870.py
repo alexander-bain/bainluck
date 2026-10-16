@@ -109,6 +109,7 @@ import pytest
 import app.tasks.backfill_winners as bw
 
 from app.utils import kalshi_market_status as kms
+from tests import _kalshi_service_fake as kalshi_service_fake
 
 BACKFILL_SOURCE = (
     Path(__file__).resolve().parents[1] / "app" / "tasks" / "backfill_winners.py"
@@ -280,11 +281,10 @@ async def _drive(
     monkeypatch.setattr(
         "app.tasks.redis_state.get_redis_client", lambda *a, **k: rc
     )
-    monkeypatch.setattr(
-        "app.services.kalshi_api.KalshiAPIService", lambda *a, **k: venue
-    )
+    fake_service = kalshi_service_fake.install(monkeypatch, venue)
 
     stats = await bw._backfill_kalshi_winners(limit=100, dry_run=dry_run)
+    kalshi_service_fake.assert_not_captured(fake_service)
     return stats, session, venue
 
 

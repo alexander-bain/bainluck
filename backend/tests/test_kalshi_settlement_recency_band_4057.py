@@ -56,6 +56,7 @@ from __future__ import annotations
 import pytest
 
 import app.tasks.backfill_winners as bw
+from tests import _kalshi_service_fake as kalshi_service_fake
 
 
 # ---------------------------------------------------------------------------
@@ -237,13 +238,12 @@ async def _drive(
     monkeypatch.setattr(
         "app.tasks.redis_state.get_redis_client", lambda *a, **k: rc
     )
-    monkeypatch.setattr(
-        "app.services.kalshi_api.KalshiAPIService", lambda *a, **k: venue
-    )
+    fake_service = kalshi_service_fake.install(monkeypatch, venue)
 
     stats = await bw._backfill_kalshi_winners(
         limit=limit, fast_lane_only=fast_lane_only
     )
+    kalshi_service_fake.assert_not_captured(fake_service)
     return stats, rc, venue, _fake_select, _fake_longdated
 
 
