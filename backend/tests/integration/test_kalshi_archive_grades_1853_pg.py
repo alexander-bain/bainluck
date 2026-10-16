@@ -274,12 +274,157 @@ async def test_apply_writes_only_its_own_digests_frozen_rows(session):
         {"id": stranger, "m": MARKET_ID},
     )
     await session.commit()
-    from app.utils.kalshi_archive_grades import ArchiveGrade
-
-    # Frozen through the script's own backup, under another plan's digest.
-    other = [ArchiveGrade(stranger, "KXUECLSCORE-26JUL30LEVIFK-ZZZ", False, "finalized", "no")]
+    # Frozen through the script's own backup, under another plan's digest —
+    # bound, like every planned leg, to the version it was approved on.
+    image = (await session.execute(
+        text("SELECT to_jsonb(fo)::text FROM futures_outcomes fo WHERE id=:id"),
+        {"id": stranger})).scalar_one()
+    await session.rollback()
+    other = [mod.ApprovedGrade(stranger, "KXUECLSCORE-26JUL30LEVIFK-ZZZ", False,
+                               "finalized", "no", image)]
     assert await mod.backup(session, other, "another-plan") == 0
     await session.commit()
     out = await _apply(session, mod, legs, digest)
     assert stranger not in out["written_ids"] and len(out["written_ids"]) == 22
     assert (await _legs(session))[stranger] == (None, None, 0.3)
+
+
+# --- Root 004: the PLAN binds each leg's approved version -------------------
+#
+# c6a447's window: build_plan returned the 22, a price writer moved one leg
+# 0.47 -> 0.61 while it stayed NULL/NULL, and backup adopted the 0.61 row as its
+# before-image; apply then wrote over a version nobody reviewed.
+
+PRICE_RACE = min(UNGRADED)
+
+
+async def _move_price(session, oid, price=0.61):
+    await session.execute(
+        text("UPDATE futures_outcomes SET current_probability=:p WHERE id=:id"),
+        {"p": price, "id": oid})
+    await session.commit()
+
+
+async def _backup_rows(session, mod, digest):
+    if not (await session.execute(text(mod.SQL["bak_exists"]))).scalar_one():
+        await session.rollback()
+        return []
+    ids = (await session.execute(
+        text(f"SELECT outcome_id FROM {mod.BACKUP_TABLE} WHERE plan_digest=:d ORDER BY 1"),
+        {"d": digest})).scalars().all()
+    await session.rollback()
+    return list(ids)
+
+
+async def test_a_price_writer_between_plan_and_backup_is_refused_never_adopted(session):
+    """Plan 22; an independent writer moves one leg's price 0.47 -> 0.61 while
+    it is still NULL/NULL; then backup under the reviewed digest. The leg is no
+    longer the version the plan was approved on: backup names it and freezes
+    nothing, and the writer's 0.61 stands ungraded."""
+    mod = _script()
+    legs = mod.load_archive_legs()
+    grades, _ = await mod.build_plan(session, legs)
+    await session.rollback()
+    digest = mod.plan_digest(grades)
+    assert len(grades) == 22 and PRICE_RACE in {g.outcome_id for g in grades}
+    await _move_price(session, PRICE_RACE)
+    with pytest.raises(mod.Refused, match=str(PRICE_RACE)):
+        await mod.backup(session, grades, digest)
+    await session.rollback()
+    assert await _backup_rows(session, mod, digest) == [], "nothing frozen under the old digest"
+    assert (await _legs(session))[PRICE_RACE] == (None, None, 0.61)
+    # And the reviewed --digest is not this row's: a re-plan names another one.
+    regrades, _ = await mod.build_plan(session, legs)
+    await session.rollback()
+    assert mod.plan_digest(regrades) != digest
+
+
+async def test_replanning_a_moved_row_changes_the_approval_digest(session):
+    """Same ids, same verdicts, one price moved: a different approval digest.
+    Re-reviewed at the new digest, the leg is written and its undo puts back
+    the 0.61 it was approved on."""
+    mod = _script()
+    legs = mod.load_archive_legs()
+    grades, _ = await mod.build_plan(session, legs)
+    await session.rollback()
+    digest = mod.plan_digest(grades)
+    await _move_price(session, PRICE_RACE)
+    regrades, _ = await mod.build_plan(session, legs)
+    await session.rollback()
+    redigest = mod.plan_digest(regrades)
+    assert redigest != digest
+    assert [(g.outcome_id, g.is_winner) for g in regrades] == [(g.outcome_id, g.is_winner) for g in grades]
+    assert await mod.backup(session, regrades, redigest) == 0
+    await session.commit()
+    out = await _apply(session, mod, legs, redigest)
+    assert sorted(out["written_ids"]) == sorted(UNGRADED)
+    await _restore(session, mod)
+    assert (await _legs(session))[PRICE_RACE] == (None, None, 0.61)
+
+
+async def test_a_retry_backup_rechecks_the_row_even_when_its_frozen_row_exists(session):
+    """apply -> undo -> re-plan (same digest) -> price writer -> backup. The
+    frozen row already exists under this digest, so presence proves nothing:
+    backup compares the CURRENT row to the approved version and refuses."""
+    mod, legs, grades, _, digest = await _plan_and_backup(session)
+    await _apply(session, mod, legs, digest)
+    assert len((await _restore(session, mod))["restored"]) == 22
+    retry, _ = await mod.build_plan(session, legs)
+    await session.rollback()
+    assert mod.plan_digest(retry) == digest
+    await _move_price(session, PRICE_RACE)
+    with pytest.raises(mod.Refused, match=str(PRICE_RACE)):
+        await mod.backup(session, retry, digest)
+    await session.rollback()
+    assert (await _legs(session))[PRICE_RACE] == (None, None, 0.61)
+
+
+async def test_without_drift_the_cycle_round_trips_every_changed_nullable_field(session):
+    """The positive control: no writer between plan and backup. Every column
+    the apply changes (grade, source, price, odds, price stamp, last_updated)
+    is seeded both NULL and non-NULL; plan/backup/apply/undo returns each leg
+    to EXACTLY its approved version, and a re-plan names the same digest."""
+    ids = sorted(UNGRADED)
+    full, empty = ids[0::2], ids[1::2]
+    await session.execute(
+        text("UPDATE futures_outcomes SET current_probability=0.47, current_american_odds=113, "
+             "price_changed_at='2026-07-30T18:04:05.123456+00', "
+             "last_updated='2026-07-30T19:00:00.5+00' WHERE id = ANY(CAST(:ids AS bigint[]))"),
+        {"ids": full})
+    await session.execute(
+        text("UPDATE futures_outcomes SET current_probability=NULL, current_american_odds=NULL, "
+             "price_changed_at=NULL, last_updated='2026-07-29T00:00:00+00' WHERE id = ANY(CAST(:ids AS bigint[]))"),
+        {"ids": empty})
+    await session.commit()
+    mod = _script()
+    legs = mod.load_archive_legs()
+    grades, _ = await mod.build_plan(session, legs)
+    await session.rollback()
+    digest = mod.plan_digest(grades)
+    approved = {g.outcome_id: g.approved_before for g in grades}
+    assert sorted(approved) == ids
+    assert await mod.backup(session, grades, digest) == 0
+    await session.commit()
+    frozen_as_approved = (await session.execute(
+        text(f"SELECT count(*) FROM {mod.BACKUP_TABLE} b JOIN unnest(CAST(:ids AS bigint[]), "
+             "CAST(:imgs AS text[])) a(id, img) ON a.id = b.outcome_id "
+             "WHERE b.plan_digest = :d AND b.before_row = CAST(a.img AS jsonb)"),
+        {"ids": list(approved), "imgs": list(approved.values()), "d": digest})).scalar_one()
+    await session.rollback()
+    assert frozen_as_approved == 22, "each backup row IS its approved version"
+    out = await _apply(session, mod, legs, digest)
+    assert sorted(out["written_ids"]) == ids
+    changed = await _legs(session)
+    assert all(changed[i][:2] == ("api_settlement", False) for i in ids)
+    undo = await _restore(session, mod)
+    assert sorted(undo["restored"]) == ids
+    same = (await session.execute(
+        text("SELECT a.id FROM unnest(CAST(:ids AS bigint[]), CAST(:imgs AS text[])) a(id, img) "
+             "JOIN futures_outcomes fo ON fo.id = a.id WHERE to_jsonb(fo) = CAST(a.img AS jsonb) "
+             "ORDER BY 1"),
+        {"ids": list(approved), "imgs": list(approved.values())})).scalars().all()
+    await session.rollback()
+    assert list(same) == ids, "every changed nullable field is back to its approved value"
+    regrades, _ = await mod.build_plan(session, legs)
+    await session.rollback()
+    assert mod.plan_digest(regrades) == digest
