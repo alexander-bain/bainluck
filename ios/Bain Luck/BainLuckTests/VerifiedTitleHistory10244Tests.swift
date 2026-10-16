@@ -153,7 +153,10 @@ final class VerifiedTitleHistory10244Tests: XCTestCase {
             .joined(separator: "\n")
         XCTAssertTrue(code.contains("detail: expectation?.representation, response: nil"))
         XCTAssertTrue(code.contains("detail: expectation?.representation, response: result.effectiveRepresentation"))
-        XCTAssertTrue(code.contains("APIClient.shared.fetchFuturesHistory(marketId: marketId, hours: hours)"))
+        XCTAssertTrue(code.contains("""
+            APIClient.shared.fetchFuturesHistory(
+                        marketId: marketId, hours: hours, fullRange: fullRange)
+            """), "#683: the widest chip's /history read carries range=full")
         XCTAssertFalse(code.contains("drawsSourceHistory(detail: representation"),
                        "the REQUEST is verified on every futures page — it must not decide")
         XCTAssertTrue(code.contains("data = lines.map { VerifiedTitleHistory.drawing($0, over: result) } ?? result"))
