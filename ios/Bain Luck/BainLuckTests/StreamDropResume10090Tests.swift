@@ -52,12 +52,19 @@ final class StreamDropResume10090Tests: XCTestCase {
         nonisolated(unsafe) private static var t0: TimeInterval = 0
         nonisolated(unsafe) private static var requestAt: [TimeInterval] = []
         nonisolated(unsafe) private static var cutAt: [TimeInterval] = []
+        /// When set, publish times count from the FIRST request instead of from
+        /// `script`, so a connection-relative cut or roll and the publishes
+        /// around it keep their order however late a loaded host connects.
+        nonisolated(unsafe) private static var anchorToFirstRequest = false
+        nonisolated(unsafe) private static var publishOffset: TimeInterval = 0
         private let queue = DispatchQueue(label: "drop-resume-server")
         private var stopped = false
 
-        static func script(_ c: [Conn], publishes p: [(at: TimeInterval, data: String)] = []) {
+        static func script(_ c: [Conn], publishes p: [(at: TimeInterval, data: String)] = [],
+                           anchoredToFirstRequest: Bool = false) {
             lock.lock(); defer { lock.unlock() }
             conns = c; publishes = p; requestAt = []; cutAt = []
+            anchorToFirstRequest = anchoredToFirstRequest; publishOffset = 0
             t0 = ProcessInfo.processInfo.systemUptime
         }
 
@@ -78,9 +85,11 @@ final class StreamDropResume10090Tests: XCTestCase {
             Self.lock.lock()
             let now = ProcessInfo.processInfo.systemUptime - Self.t0
             let conn = Self.conns[min(Self.requestAt.count, Self.conns.count - 1)]
+            if Self.anchorToFirstRequest, Self.requestAt.isEmpty { Self.publishOffset = now }
             Self.requestAt.append(now)
-            let latest = Self.publishes.last { $0.at <= now }
-            let later = Self.publishes.filter { $0.at > now }
+            let shifted = Self.publishes.map { (at: $0.at + Self.publishOffset, data: $0.data) }
+            let latest = shifted.last { $0.at <= now }
+            let later = shifted.filter { $0.at > now }
             Self.lock.unlock()
 
             if conn.fail {
@@ -557,7 +566,8 @@ final class StreamDropResume10090Tests: XCTestCase {
     /// One held page on the scripted server. Revisions 21 and 22 arrive on the
     /// first connection, which the server then ROLLS with its `reconnect`
     /// frame. 23 and 24 are published in the next 0.2 s, with nothing
-    /// connected; 25 and 26 come seconds later. Returns the adoptions (basis,
+    /// connected; 25 and 26 come seconds later. Publish times count from the
+    /// first request, like the roll. Returns the adoptions (basis,
     /// server time) and chart points.
     private func rollover(healthy: Bool, leaveRightAfterTheRoll: Bool = false) async throws
         -> (vm: EventDetailViewModel, adopted: [(basis: String, at: TimeInterval)], charted: [String]) {
@@ -577,7 +587,8 @@ final class StreamDropResume10090Tests: XCTestCase {
             [Conn(reconnectAfter: roll), Conn()],
             publishes: [(0.3, Self.folded(21)), (0.6, Self.folded(22)),
                         (roll + 0.1, Self.folded(23)), (roll + 0.2, Self.folded(24)),
-                        (roll + 2.0, Self.folded(25)), (roll + 2.5, Self.folded(26))])
+                        (roll + 2.0, Self.folded(25)), (roll + 2.5, Self.folded(26))],
+            anchoredToFirstRequest: true)
         let s = session()
         let clock = PageClock()
         let vm = EventDetailViewModel(
