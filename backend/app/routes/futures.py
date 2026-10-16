@@ -5789,6 +5789,80 @@ def _apply_verified_title_to_detail(detail: dict, verdict) -> None:
         detail["hook_withheld"] = True
 
 
+def _timeline_history_blocks(
+    market, venue, venue_served: list, venue_unknown: list, archive,
+    archive_rows_served: list, top_outcome_ids: set, *,
+    full: bool, window_start: datetime, live_basis: Optional[str], older_live,
+) -> dict:
+    """`/probability-timeline`'s venue/archive/range statement, for BOTH returns.
+
+    #683: the empty return used to leave before these were built, so a Full chart
+    whose every candidate was withheld UNKNOWN answered `timeline: []` with no
+    `history_range` — indistinguishable from a market with no history at all, and
+    the client's absent-means-legacy rule printed no caption. One builder means the
+    empty chart and the drawn one cannot disagree about what was withheld.
+    """
+    # #7351 — ADDITIVE and only on a market whose venue publishes history.
+    # Built before the return rather than inside it so the receipt below and the
+    # `venue_history` key can be the SAME object: a receipt that described a
+    # second `describe()` call would be describing a different read.
+    # #683 rule 5: the charted venue points withheld UNKNOWN, as a scoped refusal.
+    _charted_venue_unknown = [r for r in venue_unknown if r.outcome_id in top_outcome_ids]
+    if _charted_venue_unknown:
+        venue.refusals.append(
+            {**ARCHIVE_OVERLAP_REFUSAL, "points": len(_charted_venue_unknown)}
+        )
+    venue_block = venue.describe(venue_served) if venue.applicable else None
+    if venue_block is not None:
+        # #7807 acceptance, second call site — and the one that carries the
+        # PHONE. `APIClient.swift:929` fetches `/probability-timeline`; nothing
+        # native calls `/history`. Both readers go through the same
+        # `_load_generic_venue_history`, so either can be the FIRST to touch an
+        # evicted bank, and the first one takes the durable tier and rehydrates
+        # Redis for the other. With the receipt wired only into `/history`, a
+        # phone-first fallback wrote nothing and the `/history` read that
+        # followed it said `cache` — so the durable serve that actually happened
+        # left no record, which is the exact lost-evidence race this ship exists
+        # to remove. The surface is named distinctly so a reader of the log can
+        # tell WHICH door fell back.
+        # The LOADED ROW's id, not the route parameter. Same number — the row
+        # was fetched by that parameter — but a different provenance, and the
+        # provenance is the point: a route parameter is a user-provided value on
+        # the path to a log sink (`py/log-injection`, alert 2981, which named
+        # both routes' `market_id` as its sources). `market.id` is a column this
+        # request read back out of Postgres, so no caller-controlled value
+        # reaches the line at all. `_safe_ident` still narrows whatever it is
+        # handed; this removes the reason it would have to.
+        log_durable_venue_serve(
+            venue_block,
+            market_id=market.id,
+            surface="futures_probability_timeline",
+        )
+    return {
+        # #7351 — Says what the venue-history seam contributed to THIS response,
+        # so the coverage can be read for what it is. Shipped clients ignore an
+        # unknown key (`Decodable`).
+        **({"venue_history": venue_block} if venue_block is not None else {}),
+        **(
+            {"archive_history": archive.describe(archive_rows_served)}
+            if archive.state not in ("not_applicable", "absent")
+            else {}
+        ),
+        # #683 — additive, and only when the reader asked for the whole history.
+        **(
+            {"history_range": archive.range_block(
+                window_start, archive_rows_served, top_outcome_ids,
+                live_basis=live_basis or ARCHIVE_BASIS_HOURS,
+                venue_first=min((r.captured_at for r in venue_served), default=None),
+                live_thinned=bool(older_live and older_live.thinned),
+                venue_unresolved=venue_unknown,
+            )}
+            if full
+            else {}
+        ),
+    }
+
+
 async def _finish_verified_timeline(
     db: AsyncSession,
     market: FuturesMarket,
@@ -7629,17 +7703,6 @@ async def get_probability_timeline(
         outcome_ids=all_outcome_ids,
         unresolved=_timeline_unknown,
     )
-    if not snapshots and not venue_rows and not archive_by_outcome:
-        return await _finish_verified_timeline(db, market, {
-            "market_id": market_id,
-            "market_name": market.name,
-            "hours": requested_hours,
-            "actual_hours": actual_hours,
-            "top": top,
-            "timeline": [],
-            "outcomes": [],
-        }, representation)
-
     # Determine bucket size based on market state.
     # If commence_time is set and we're past it, use 15-min buckets.
     # Otherwise use 1-hour buckets. (`now`/`in_play` computed above.)
@@ -7660,6 +7723,26 @@ async def get_probability_timeline(
         reverse=True,
     )
     top_outcome_ids = {o.id for o in sorted_outcomes[:top]}
+    if not snapshots and not venue_rows and not archive_by_outcome:
+        # #683 — nothing to DRAW is not nothing to SAY. When every candidate was
+        # withheld UNKNOWN (rule 7), the empty chart still carries the same
+        # archive/venue/range statement a drawn one does, so a reader can tell
+        # "older history withheld" from "no history". A market with no archive,
+        # no venue seam and no `range=full` adds no key: today's empty shape.
+        return await _finish_verified_timeline(db, market, {
+            "market_id": market_id,
+            "market_name": market.name,
+            "hours": requested_hours,
+            "actual_hours": actual_hours,
+            "top": top,
+            "timeline": [],
+            "outcomes": [],
+            **_timeline_history_blocks(
+                market, venue, [], venue_unknown, archive, [], top_outcome_ids,
+                full=full_range, window_start=window_start,
+                live_basis=_live_basis, older_live=older_live,
+            ),
+        }, representation)
     # #7284: the SERIES KEY is a name, so the label the table prints and the key
     # the line is filed under have to be the same string or the phone cannot join
     # them. Taking both from the board means a repaired rung name (#6479's
@@ -7952,45 +8035,6 @@ async def get_probability_timeline(
             "current_probability": round(field_current, 6),
         })
 
-    # #7351 — ADDITIVE and only on a market whose venue publishes history.
-    # Built before the return rather than inside it so the receipt below and the
-    # `venue_history` key can be the SAME object: a receipt that described a
-    # second `describe()` call would be describing a different read.
-    # #683 rule 5: the charted venue points withheld UNKNOWN, as a scoped refusal.
-    _charted_venue_unknown = [r for r in venue_unknown if r.outcome_id in top_outcome_ids]
-    if _charted_venue_unknown:
-        venue.refusals.append(
-            {**ARCHIVE_OVERLAP_REFUSAL, "points": len(_charted_venue_unknown)}
-        )
-    venue_block = (
-        venue.describe(_venue_rows_served(venue_cells)) if venue.applicable else None
-    )
-    if venue_block is not None:
-        # #7807 acceptance, second call site — and the one that carries the
-        # PHONE. `APIClient.swift:929` fetches `/probability-timeline`; nothing
-        # native calls `/history`. Both readers go through the same
-        # `_load_generic_venue_history`, so either can be the FIRST to touch an
-        # evicted bank, and the first one takes the durable tier and rehydrates
-        # Redis for the other. With the receipt wired only into `/history`, a
-        # phone-first fallback wrote nothing and the `/history` read that
-        # followed it said `cache` — so the durable serve that actually happened
-        # left no record, which is the exact lost-evidence race this ship exists
-        # to remove. The surface is named distinctly so a reader of the log can
-        # tell WHICH door fell back.
-        # The LOADED ROW's id, not the route parameter. Same number — the row
-        # was fetched by that parameter — but a different provenance, and the
-        # provenance is the point: a route parameter is a user-provided value on
-        # the path to a log sink (`py/log-injection`, alert 2981, which named
-        # both routes' `market_id` as its sources). `market.id` is a column this
-        # request read back out of Postgres, so no caller-controlled value
-        # reaches the line at all. `_safe_ident` still narrows whatever it is
-        # handed; this removes the reason it would have to.
-        log_durable_venue_serve(
-            venue_block,
-            market_id=market.id,
-            surface="futures_probability_timeline",
-        )
-
     payload = {
         "market_id": market_id,
         "market_name": market.name,
@@ -8020,29 +8064,12 @@ async def get_probability_timeline(
         "bucket_seconds": bucket_seconds,
         "timeline": timeline,
         "outcomes": outcomes_meta,
-        # #7351 — ADDITIVE and only on a market whose venue publishes history.
-        # Says what the venue-history seam contributed to THIS response, so the
-        # coverage above can be read for what it is. Shipped clients ignore an
-        # unknown key (`Decodable`); nothing above it changed shape.
-        **({"venue_history": venue_block} if venue_block is not None else {}),
-        **(
-            {"archive_history": archive.describe(archive_rows_served)}
-            if archive.state not in ("not_applicable", "absent")
-            else {}
-        ),
-        # #683 — additive, and only when the reader asked for the whole history.
-        **(
-            {"history_range": archive.range_block(
-                window_start, archive_rows_served, top_outcome_ids,
-                live_basis=_live_basis or ARCHIVE_BASIS_HOURS,
-                venue_first=min(
-                    (r.captured_at for r in _venue_rows_served(venue_cells)), default=None
-                ),
-                live_thinned=bool(older_live and older_live.thinned),
-                venue_unresolved=venue_unknown,
-            )}
-            if full_range
-            else {}
+        # #7351 / #683 — the venue, archive and range statements; see the helper.
+        **_timeline_history_blocks(
+            market, venue, _venue_rows_served(venue_cells), venue_unknown,
+            archive, archive_rows_served, top_outcome_ids,
+            full=full_range, window_start=window_start,
+            live_basis=_live_basis, older_live=older_live,
         ),
     }
     # #9387: last, after every history read, and only when opted in.

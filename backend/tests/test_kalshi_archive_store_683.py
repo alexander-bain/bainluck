@@ -1235,3 +1235,49 @@ class TestScripts:
         f.write_text(json.dumps({"continuation": None}))
         mod = _load_script("kalshi_archive_recovery_dry_run.py")
         assert mod.main(["--continue-from", str(f)]) == 2
+
+
+class TestTheEmptyTimelineKeepsItsStatement:
+    """CERT-4144: `/probability-timeline`'s empty return builds the SAME statement.
+
+    The real-route half (sole interval withheld UNKNOWN, default cap) is in the
+    `_pg` file. These are the honest-no-data controls on the shared builder.
+    """
+
+    T0 = datetime(2026, 4, 1, tzinfo=UTC)
+
+    def _blocks(self, archive, *, full_range, venue_unknown=()):
+        from app.routes.futures import _timeline_history_blocks
+
+        venue = SimpleNamespace(applicable=False, refusals=[])
+        return _timeline_history_blocks(
+            SimpleNamespace(id=1), venue, [], list(venue_unknown), archive, [], {1},
+            full=full_range, window_start=self.T0, live_basis=None, older_live=None,
+        )
+
+    def test_a_market_with_no_archive_no_venue_and_no_full_read_adds_no_key(self):
+        assert self._blocks(reader.ArchiveHistory(), full_range=False) == {}
+
+    def test_an_empty_full_chart_with_nothing_withheld_says_complete(self):
+        h = reader.ArchiveHistory()
+        h.state = "empty"
+        out = self._blocks(h, full_range=True)
+        assert out["archive_history"]["points_served"] == 0
+        assert out["history_range"]["served_history"] == "complete", (
+            "genuinely no history is not a withheld history")
+        assert out["history_range"]["unresolved_withheld"] == {
+            "archive_intervals": 0, "venue_points": 0}
+
+    def test_an_empty_full_chart_whose_interval_was_withheld_says_partial(self):
+        h = reader.ArchiveHistory()
+        h.state = "warm"
+        h.unresolved = {(1, self.T0, self.T0 + timedelta(hours=1))}
+        out = self._blocks(h, full_range=True)
+        assert out["history_range"]["served_history"] == "partial"
+        assert out["archive_history"]["withheld_unresolved_overlap"] == 1
+
+    def test_an_uncharted_outcomes_withheld_interval_does_not_make_it_partial(self):
+        h = reader.ArchiveHistory()
+        h.state = "warm"
+        h.unresolved = {(2, self.T0, self.T0 + timedelta(hours=1))}
+        assert self._blocks(h, full_range=True)["history_range"]["served_history"] == "complete"
