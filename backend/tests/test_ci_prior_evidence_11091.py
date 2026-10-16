@@ -1676,14 +1676,11 @@ def test_successful_unknown_recovery_still_takes_full_master_tests_on_historical
 def test_historical_failed_check_refusal_stays_byte_identical():
     source = SCRIPT.read_text()
     assert 'api.pages(f"commits/{head}/check-runs?filter=all", "check_runs")' in source
-    assert (
-        """        require(
+    assert """        require(
             check["conclusion"] != "failure"
             and not REFUSAL.search((check.get("output") or {}).get("title") or ""),
             "security/check refusal",
-        )"""
-        in source
-    )
+        )""" in source
 
 
 def test_rerunning_only_one_language_cannot_pay_current_security_attempt():
@@ -1701,3 +1698,98 @@ def test_rerunning_only_one_language_cannot_pay_current_security_attempt():
     consumer.security_receipts["python"]["attempt"] = 2
     with pytest.raises(ValueError, match="security receipt source/run mismatch"):
         decide(consumer)
+
+
+@pytest.mark.parametrize(
+    "fault,checkpoint,detail",
+    [
+        ("attempt", "run-validation", "attempt=2"),
+        ("job", "producer-job", "conclusion=failure"),
+        ("matrix", "matrix-attempts", "job_attempt=2"),
+        ("step", "analysis-step", "conclusion=cancelled"),
+        ("upload", "upload-count", "upload_count=0"),
+    ],
+)
+def test_qualifier_diagnostics_identify_early_refusal_without_a_receipt(
+    monkeypatch, tmp_path, capsys, fault, checkpoint, detail
+):
+    api = ComposeSecurityAPI()
+    if fault == "attempt":
+        api.current["run_attempt"] = 2
+    elif fault == "job":
+        api.current_jobs[0]["status"] = "completed"
+        api.current_jobs[0]["conclusion"] = "failure"
+    elif fault == "matrix":
+        api.current_jobs[1]["run_attempt"] = 2
+    elif fault == "step":
+        api.current_jobs[0]["steps"][0]["conclusion"] = "cancelled"
+    elif fault == "upload":
+        monkeypatch.setattr(api, "array_pages", lambda *args, **kwargs: [])
+    # Return an offline fake without replacing API's class identity; the real
+    # qualifier and all its existing validations execute through the CLI.
+    monkeypatch.setattr(evidence.API, "__new__", staticmethod(lambda cls, *args: api))
+    for key, value in api.env.items():
+        monkeypatch.setenv(key, value)
+    proof = tmp_path / "provenance.json"
+    proof.write_text(json.dumps(api.proof))
+    output = tmp_path / "codeql-security.json"
+    output.write_text('{"qualified":true}')
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            str(SCRIPT),
+            "--security-qualify",
+            str(proof),
+            "--security-output",
+            str(output),
+            "--sarif-id",
+            api.candidate["sarif_id"],
+            "--language",
+            "python",
+        ],
+    )
+    with pytest.raises(SystemExit) as result:
+        evidence.main()
+    assert result.value.code == 1
+    assert not output.exists()
+    text = capsys.readouterr().out
+    checkpoints = [
+        line for line in text.splitlines() if line.startswith("SECURITY CHECKPOINT")
+    ]
+    assert checkpoints[-1].startswith("SECURITY CHECKPOINT " + checkpoint)
+    assert detail in checkpoints[-1]
+    assert "SECURITY EVIDENCE INCOMPLETE (ValueError)" in text
+    assert "SECURITY PASS" not in text
+
+
+def test_security_diagnostics_never_render_untrusted_field_values(capsys):
+    unsafe = "https://evil.invalid/private?token=SECRET\n::error::INJECT"
+    evidence._security_diagnostic(
+        "producer-job",
+        language=unsafe,
+        job_id=unsafe,
+        job_attempt=True,
+        status=unsafe,
+        conclusion=unsafe,
+        token=unsafe,
+        matrix_count=10**30,
+        attempt=-1,
+        run_id={"body": unsafe},
+    )
+    text = capsys.readouterr().out
+    assert unsafe not in text
+    assert "SECRET" not in text and "INJECT" not in text and "token=" not in text
+    assert text.count("\n") == 1
+    assert "status=untrusted" in text and "job_attempt=untrusted" in text
+
+
+def test_untrusted_run_status_is_sanitized_before_real_qualifier_refusal(capsys):
+    api = ComposeSecurityAPI()
+    api.current["status"] = "https://evil.invalid/TOKEN\nUNSAFE"
+    with pytest.raises(ValueError, match="producer attempt unpaid"):
+        api.qualify()
+    text = capsys.readouterr().out
+    assert "TOKEN" not in text and "UNSAFE" not in text
+    assert "SECURITY CHECKPOINT run-validation" in text
+    assert "status=untrusted" in text

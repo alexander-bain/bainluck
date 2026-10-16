@@ -763,25 +763,134 @@ def _official_jobs(api, run, *, producer=False):
     return mapped
 
 
-def _producer_analysis_step(api, run, language):
+def _security_diagnostic(checkpoint, **fields):
+    """Print only fixed checkpoints and bounded, allowlisted primitive fields.
+
+    Never render an API string, exception, URL, environment or response body.
+    Unrecognized values are represented by a fixed sentinel.
+    """
+    checkpoints = {
+        "context",
+        "provenance",
+        "run-lookup",
+        "run-validation",
+        "repository-binding",
+        "jobs-lookup",
+        "matrix-membership",
+        "matrix-attempts",
+        "producer-job",
+        "analysis-step",
+        "analysis-window",
+        "upload-lookup",
+        "upload-count",
+        "upload-identity",
+        "upload-window",
+        "candidate-snapshot",
+        "baseline",
+        "alert-comparison",
+        "analysis-reread",
+        "run-reread",
+        "run-revalidation",
+        "qualified",
+    }
+    numeric = {
+        "run_id",
+        "attempt",
+        "expected_attempt",
+        "job_id",
+        "job_attempt",
+        "matrix_count",
+        "step_count",
+        "upload_count",
+        "analysis_id",
+    }
+    enums = {
+        "status": {
+            "queued",
+            "waiting",
+            "pending",
+            "requested",
+            "in_progress",
+            "completed",
+        },
+        "conclusion": {
+            "success",
+            "failure",
+            "cancelled",
+            "timed_out",
+            "skipped",
+            "neutral",
+            "action_required",
+            "stale",
+            "startup_failure",
+        },
+        "language": set(SECURITY_LANGUAGES),
+    }
+    label = checkpoint if checkpoint in checkpoints else "untrusted"
+    values = []
+    for key in sorted(fields):
+        value = fields[key]
+        if key in numeric:
+            safe = (
+                str(value)
+                if type(value) is int and 0 <= value <= 10**15
+                else "untrusted"
+            )
+        elif key in enums:
+            safe = (
+                "null"
+                if value is None
+                else (
+                    value if type(value) is str and value in enums[key] else "untrusted"
+                )
+            )
+        else:
+            continue
+        values.append(f"{key}={safe}")
+    print("SECURITY CHECKPOINT " + label + (" " + " ".join(values) if values else ""))
+
+
+def _producer_analysis_step(api, run, language, *, diagnostic=False):
     """Bind the action's upload to THIS attempt's successful official step.
 
     The qualification step is still running, so the producer job may be in
     progress; its analysis step must already be completed/success. Other matrix
     legs need not have finished. An older attempt's UUID cannot pass this window.
     """
+    if diagnostic:
+        _security_diagnostic("jobs-lookup")
     jobs = api.pages(f"actions/runs/{run['id']}/jobs?filter=latest", "jobs")
+    if diagnostic:
+        _security_diagnostic("matrix-membership", matrix_count=len(jobs))
     require(
         len(jobs) == len(SECURITY_LANGUAGES)
         and {job["name"] for job in jobs}
         == {f"Analyze ({lang})" for lang in SECURITY_LANGUAGES},
         "wrong producer matrix membership",
     )
+    if diagnostic:
+        _security_diagnostic("matrix-attempts")
+        for item in jobs:
+            _security_diagnostic(
+                "matrix-attempts",
+                job_id=item.get("id"),
+                job_attempt=item.get("run_attempt"),
+                expected_attempt=run.get("run_attempt"),
+            )
     require(
         all(job["run_attempt"] == run["run_attempt"] for job in jobs),
         "mixed producer attempts; re-run ALL jobs of this exact CodeQL run",
     )
     job = next(job for job in jobs if job["name"] == f"Analyze ({language})")
+    if diagnostic:
+        _security_diagnostic(
+            "producer-job",
+            language=language,
+            job_id=job.get("id"),
+            job_attempt=job.get("run_attempt"),
+            status=job.get("status"),
+            conclusion=job.get("conclusion"),
+        )
     require(
         job["run_attempt"] == run["run_attempt"]
         and (
@@ -791,6 +900,14 @@ def _producer_analysis_step(api, run, language):
         "producer job belongs to an unpaid attempt",
     )
     steps = [step for step in job["steps"] if step["name"] == "Perform CodeQL Analysis"]
+    if diagnostic:
+        _security_diagnostic("analysis-step", step_count=len(steps))
+        if len(steps) == 1:
+            _security_diagnostic(
+                "analysis-step",
+                status=steps[0].get("status"),
+                conclusion=steps[0].get("conclusion"),
+            )
     require(
         len(steps) == 1
         and steps[0]["status"] == "completed"
@@ -798,6 +915,8 @@ def _producer_analysis_step(api, run, language):
         "producer analysis step is unpaid",
     )
     step = steps[0]
+    if diagnostic:
+        _security_diagnostic("analysis-window")
     require(
         stamp(step["started_at"]) <= stamp(step["completed_at"]),
         "invalid producer analysis window",
@@ -1243,7 +1362,9 @@ def select_base_security(api, base, repo_id, language):
 
 def qualify_security(api, env, provenance, sarif_id, language):
     """Produce a baseline or paid compose receipt; errors are UNKNOWN to the CLI."""
+    _security_diagnostic("context", language=language)
     expected = _security_context(env, language)
+    _security_diagnostic("provenance")
     for key, value in expected.items():
         require(
             provenance[key] == value, "security checkout provenance context mismatch"
@@ -1253,7 +1374,18 @@ def qualify_security(api, env, provenance, sarif_id, language):
         "invalid security checkout provenance",
     )
     require(UUID.fullmatch(sarif_id), "missing official SARIF upload output")
+    _security_diagnostic(
+        "run-lookup", run_id=expected["run_id"], expected_attempt=expected["attempt"]
+    )
     run = api.get(f"actions/runs/{expected['run_id']}")
+    _security_diagnostic(
+        "run-validation",
+        run_id=run.get("id"),
+        attempt=run.get("run_attempt"),
+        expected_attempt=expected["attempt"],
+        status=run.get("status"),
+        conclusion=run.get("conclusion"),
+    )
     branch = expected["ref"].removeprefix("refs/heads/")
     _validate_codeql_run(
         run,
@@ -1263,23 +1395,29 @@ def qualify_security(api, env, provenance, sarif_id, language):
         attempt=expected["attempt"],
         successful=False,
     )
+    _security_diagnostic("repository-binding")
     if isinstance(api, API):
         api.bind_repository(run["repository"])
-    upload_step = _producer_analysis_step(api, run, language)
+    upload_step = _producer_analysis_step(api, run, language, diagnostic=True)
+    _security_diagnostic("upload-lookup")
     rows = api.array_pages(
         "code-scanning/analyses?sarif_id=" + urllib.parse.quote(sarif_id, safe="")
     )
+    _security_diagnostic("upload-count", upload_count=len(rows))
     require(len(rows) == 1, "missing or ambiguous actual SARIF upload")
     metadata = rows[0]
+    _security_diagnostic("upload-identity", analysis_id=metadata.get("id"))
     _validate_analysis(
         metadata, expected["head"], expected["ref"], language, sarif_id=sarif_id
     )
+    _security_diagnostic("upload-window")
     require(
         stamp(upload_step["started_at"])
         <= stamp(metadata["created_at"])
         <= stamp(upload_step["completed_at"]),
         "SARIF upload is outside the current official analysis attempt",
     )
+    _security_diagnostic("candidate-snapshot")
     snapshot = parse_security_snapshot(
         api.sarif(f"code-scanning/analyses/{metadata['id']}"),
         metadata,
@@ -1299,9 +1437,11 @@ def qualify_security(api, env, provenance, sarif_id, language):
         "delta": None,
     }
     if expected["role"] == "compose":
+        _security_diagnostic("baseline")
         base = select_base_security(
             api, provenance["base"], expected["repository_id"], language
         )
+        _security_diagnostic("alert-comparison")
         delta = compare_security_snapshots(base["snapshot"], snapshot)
         receipt.update(
             {
@@ -1318,12 +1458,22 @@ def qualify_security(api, env, provenance, sarif_id, language):
                 },
             }
         )
+    _security_diagnostic("analysis-reread")
     reread = api.get(f"code-scanning/analyses/{metadata['id']}")
     require(
         _analysis_identity(reread) == _analysis_identity(metadata),
         "candidate analysis moved",
     )
+    _security_diagnostic("run-reread")
     latest = api.get(f"actions/runs/{run['id']}")
+    _security_diagnostic(
+        "run-revalidation",
+        run_id=latest.get("id"),
+        attempt=latest.get("run_attempt"),
+        expected_attempt=expected["attempt"],
+        status=latest.get("status"),
+        conclusion=latest.get("conclusion"),
+    )
     _validate_codeql_run(
         latest,
         expected["head"],
@@ -1332,6 +1482,7 @@ def qualify_security(api, env, provenance, sarif_id, language):
         attempt=expected["attempt"],
         successful=False,
     )
+    _security_diagnostic("qualified")
     return receipt
 
 
