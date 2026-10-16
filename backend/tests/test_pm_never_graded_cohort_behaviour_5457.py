@@ -38,7 +38,9 @@ import sqlite3
 import pytest
 
 from app.tasks.repair_pm_never_graded import (
+    POPULATION_EXISTS_SQL,
     POPULATION_HAVING_SQL,
+    _CENSUS_GROUPED_SQL,
     _CENSUS_SQL,
 )
 
@@ -204,11 +206,52 @@ def test_the_substring_guard_cannot_see_the_defect_this_file_catches():
     assert "bool_or(fo.is_winner) IS NOT TRUE" in mutant_having
     assert "pass2_loser" not in mutant_having
 
-    mutant_sql = _CENSUS_SQL.replace(POPULATION_HAVING_SQL, mutant_having)
-    assert mutant_sql != _CENSUS_SQL, "the mutant must reach the census SQL"
+    # #1912: the census now states the cohort per market; the HAVING form the
+    # work selection runs lives on as `_CENSUS_GROUPED_SQL`, so that is where
+    # this mutant lands.
+    mutant_sql = _CENSUS_GROUPED_SQL.replace(POPULATION_HAVING_SQL, mutant_having)
+    assert mutant_sql != _CENSUS_GROUPED_SQL, "the mutant must reach the census SQL"
 
     # ...and this file is not: the graded all-losers market is now swept in.
-    assert _census(mutant_sql)["soccer"] > _census(_CENSUS_SQL)["soccer"]
+    assert _census(mutant_sql)["soccer"] > _census(_CENSUS_GROUPED_SQL)["soccer"]
+
+
+def test_the_grouped_and_per_market_census_agree_on_this_fixture():
+    """#1912. `_CENSUS_SQL` (EXISTS / NOT EXISTS) replaced the grouped HAVING
+    form because the grouped one timed out on production. Same fixture, same
+    rows. The exhaustive version of this claim runs on a real Postgres:
+    `tests/integration/test_pm_never_graded_census_equivalence_1912_pg.py`."""
+    assert POPULATION_EXISTS_SQL in _CENSUS_SQL
+    assert POPULATION_HAVING_SQL in _CENSUS_GROUPED_SQL
+    assert _census(_CENSUS_SQL) == _census(_CENSUS_GROUPED_SQL) == {
+        "soccer": 1,
+        "tennis": 1,
+    }
+
+
+@pytest.mark.parametrize(
+    "mutant, swept_in",
+    [
+        # Drop the source half: graded all-losers market 3 is counted.
+        (("\n            AND (fo.is_winner IS TRUE OR fo.resolution_source IS NOT NULL))",
+          "\n            AND (fo.is_winner IS TRUE))"), "soccer"),
+        # Drop the winner half: ungraded-but-crowned market 6 is counted.
+        (("\n            AND (fo.is_winner IS TRUE OR fo.resolution_source IS NOT NULL))",
+          "\n            AND (fo.resolution_source IS NOT NULL))"), "soccer"),
+        # OR written as AND: partially graded market 4 (a sourced leg, no
+        # winner) no longer has an excluding leg and is counted.
+        (("fo.is_winner IS TRUE OR fo.resolution_source IS NOT NULL",
+          "fo.is_winner IS TRUE AND fo.resolution_source IS NOT NULL"), "tennis"),
+    ],
+)
+def test_a_one_clause_slip_in_the_per_market_form_changes_the_count(mutant, swept_in):
+    """The per-market predicate gets the same treatment as the HAVING one: each
+    one-clause slip is visible as a changed count on this fixture."""
+    before, after = mutant
+    assert before in POPULATION_EXISTS_SQL, "the mutation must apply"
+    mutant_sql = _CENSUS_SQL.replace(before, after)
+    assert mutant_sql != _CENSUS_SQL
+    assert _census(mutant_sql)[swept_in] > _census(_CENSUS_SQL)[swept_in]
 
 
 def test_is_winner_alone_cannot_separate_the_classes():
@@ -226,3 +269,22 @@ def test_is_winner_alone_cannot_separate_the_classes():
 
     assert winners[1] == winners[3] == {False}, "is_winner cannot discriminate"
     assert sources[1] != sources[3], "resolution_source is the discriminator"
+
+
+def test_the_census_keeps_its_filters_and_aggregates_no_outcome_rows():
+    """#1912's reason to exist, pinned in the text: the census must not go back
+    to joining and grouping every outcome (it timed out at 20 s on production
+    that way), and its market filters are byte-for-byte the grouped form's."""
+    sql = " ".join(_CENSUS_SQL.split())
+    assert "JOIN futures_outcomes" not in sql
+    assert "bool_or" not in sql and "bool_and" not in sql
+    assert "GROUP BY fm.id" not in sql
+    assert "LIMIT" not in sql.upper(), "the census counts the WHOLE cohort"
+    for clause in (
+        "fm.source = 'polymarket' AND fm.status = 'resolved'",
+        "AND fm.external_id LIKE '0x%'",
+        "COALESCE(fm.llm_sport_category, 'unknown') AS category",
+        "GROUP BY 1 ORDER BY 2 DESC",
+    ):
+        assert clause in sql
+        assert clause in " ".join(_CENSUS_GROUPED_SQL.split())

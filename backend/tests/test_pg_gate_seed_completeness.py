@@ -351,6 +351,10 @@ COVERED = (
     # the server default `false` seed this gate's own cohort by accident, so the
     # gate would find the defect it manufactured.
     "test_repair_pm_ungraded_loss_4788_pg.py",
+    # #1912. Seeds every leg multiset up to three legs by raw INSERT, naming
+    # `is_winner` on each one including NULL — the omitted-column default
+    # `false` is a different leg shape from the one the gate claims to test.
+    "test_pm_never_graded_census_equivalence_1912_pg.py",
     "test_restore_3026_jsonb_roundtrip_pg.py",
     "test_restore_4586_manifest_cas_pg.py",
     "test_soccer_statpal_manifest_restore_pg.py",

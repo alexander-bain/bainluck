@@ -230,7 +230,52 @@ POPULATION_HAVING_SQL = (
     "   AND bool_and(fo.resolution_source IS NULL)"
 )
 
+#: The SAME cohort as ``POPULATION_HAVING_SQL``, stated per market instead of
+#: per joined row — for the census only (#1912). The grouped form aggregates
+#: every outcome of every resolved Polymarket market before it can count one,
+#: and on production it died at the 20 s budget (2026-10-16 03:54Z) with the
+#: plan a whole-outcome scan plus a sort by market id. This form lets each
+#: market be answered by probing the existing ``futures_outcomes.market_id``
+#: index. Clause by clause, for a market with AT LEAST ONE outcome:
+#:
+#: * the inner JOIN drops a market with no outcomes  ⇔ ``EXISTS (any outcome)``
+#: * ``bool_or(is_winner) IS NOT TRUE`` — ``bool_or`` ignores NULLs, so it is
+#:   TRUE exactly when some leg is TRUE  ⇔ ``NOT EXISTS (is_winner IS TRUE)``;
+#:   an all-NULL or NULL/false set stays IN on both sides.
+#: * ``bool_and(resolution_source IS NULL)`` — its argument is never NULL, so it
+#:   is TRUE exactly when every leg is source-less
+#:   ⇔ ``NOT EXISTS (resolution_source IS NOT NULL)``.
+#:
+#: The work selection (``clob_resolve._load_cohort``) and the canary keep the
+#: HAVING form. ``_CENSUS_GROUPED_SQL`` below is the census exactly as it was;
+#: ``tests/integration/test_pm_never_graded_census_equivalence_1912_pg.py``
+#: requires the two to return identical rows on a real Postgres across every
+#: grade/winner/filter shape, and that the census total equals the market ids
+#: the work selection pages through. Edit one predicate without the other and
+#: that gate is red.
+POPULATION_EXISTS_SQL = (
+    "EXISTS (SELECT 1 FROM futures_outcomes fo WHERE fo.market_id = fm.id)\n"
+    "      AND NOT EXISTS (\n"
+    "          SELECT 1 FROM futures_outcomes fo\n"
+    "          WHERE fo.market_id = fm.id\n"
+    "            AND (fo.is_winner IS TRUE OR fo.resolution_source IS NOT NULL))"
+)
+
 _CENSUS_SQL = f"""
+    SELECT COALESCE(fm.llm_sport_category, 'unknown') AS category,
+           count(*) AS markets
+    FROM futures_markets fm
+    WHERE fm.source = 'polymarket' AND fm.status = 'resolved'
+      AND fm.external_id LIKE '0x%'
+      AND {POPULATION_EXISTS_SQL}
+    GROUP BY 1
+    ORDER BY 2 DESC
+"""
+
+#: The census as it was until #1912's timeout: the grouped HAVING form, built
+#: from the very ``POPULATION_HAVING_SQL`` the work selection uses. Never run by
+#: the rail. It is the definition ``_CENSUS_SQL`` is proven equal to.
+_CENSUS_GROUPED_SQL = f"""
     SELECT COALESCE(fm.llm_sport_category, 'unknown') AS category,
            count(*) AS markets
     FROM (

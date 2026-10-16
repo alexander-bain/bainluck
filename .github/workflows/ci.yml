@@ -7475,6 +7475,27 @@ jobs:
             exit 1
           fi
 
+      - name: "#1912 the per-market never-graded census counts exactly what the grouped census did (real Postgres)"
+        # The full census gating the reviewed recovery wave timed out at 20 s on
+        # production; `_CENSUS_SQL` now states the cohort per market (EXISTS /
+        # NOT EXISTS) instead of grouping every outcome. Old SQL, new SQL and a
+        # Python oracle must return identical rows over every leg multiset up to
+        # three legs x every market-filter shape, and the never-graded work
+        # selection must page exactly the ids the census counts.
+        if: matrix.group == 'shared-suffix'
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_pm_never_graded_census_equivalence_1912_pg.py \
+            -v -s -rs 2>&1 | tee /tmp/census_equivalence_1912.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/census_equivalence_1912.txt; then
+            echo "::error::#1912 census equivalence gate SKIPPED — the gate did not run"
+            exit 1
+          fi
+          grep -qE "[^0-9]6 passed[,[:space:]]" /tmp/census_equivalence_1912.txt || {
+            echo "::error::#1912 census equivalence gate did not run all six cases"
+            exit 1
+          }
+
       - name: "#8910 a newer WebSocket stamp survives the two-minute poll (real Postgres)"
         # #8910 / CERT-3585's required guard. The REAL live poll against real
         # Postgres, paused after its compared read, while a second session sends
