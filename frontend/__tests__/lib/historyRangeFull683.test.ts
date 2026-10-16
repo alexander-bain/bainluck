@@ -194,6 +194,8 @@ describe("#683 DECODER — the server's account, read only when it says it serve
       "data-history-range-basis": "archive_first_interval",
       "data-archive-coverage": "incomplete",
       "data-history-range-thinned": "2",
+      // No `served_history` word: an incomplete ARCHIVE is not a withheld read.
+      "data-history-served": "complete",
     });
   });
 

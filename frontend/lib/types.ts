@@ -1336,6 +1336,12 @@ export interface FuturesHistoryRange {
   archive_venue_open?: string | null;
   /** Lines whose read was span-sampled to stay bounded (never tail-cut). */
   thinned_outcomes?: number[] | null;
+  /** "partial" when archive intervals whose overlap with our own captures
+   *  could not be decided inside the read budget were left out. Absent (older
+   *  server) = complete. */
+  served_history?: "complete" | "partial" | string | null;
+  /** Counts of what `partial` left out — logs and tests only, never printed. */
+  unresolved_withheld?: { archive_intervals?: number; venue_points?: number } | null;
 }
 
 export interface FuturesHistoryResponse {
@@ -1367,6 +1373,10 @@ export interface FuturesHistoryResponse {
     points_served: number;
     observed_from?: string | null;
     observed_through?: string | null;
+    /** Intervals left out because their live overlap was undecided. */
+    withheld_unresolved_overlap?: number;
+    /** Machine-keyed refusals (`overlap_admission` / `live_overlap_unresolved`). Never rendered. */
+    refusals?: { scope?: string; reason?: string }[];
   };
 }
 

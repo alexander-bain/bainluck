@@ -18,7 +18,7 @@
 import { useMemo, useState } from "react";
 import useSWR from "swr";
 import { fetchFuturesHistory } from "@/lib/api";
-import { historyRangeOption } from "@/lib/historyRange";
+import { historyRangeOption, servedPartialHistory } from "@/lib/historyRange";
 import type { FuturesOutcomeHistory } from "@/lib/types";
 import { outcomesByLatestProb } from "@/lib/eventConceptDisplay";
 import { FuturesChart } from "@/components/FuturesChart";
@@ -73,7 +73,10 @@ export default function WinnerEvolutionChart({
   );
 
   // Honest absence: no real path yet → render nothing (never a fabricated chart).
-  if (!isLoading && !hasHistory) return null;
+  // #683: unless a full read says it left older prices out — then the chart's
+  // sparse state says that rather than the section vanishing.
+  const historyWithheld = servedPartialHistory(data);
+  if (!isLoading && !hasHistory && !historyWithheld) return null;
 
   return (
     <section id="evolution" className="bg-surface-card rounded-card shadow-card p-6">
@@ -104,6 +107,7 @@ export default function WinnerEvolutionChart({
           showLegend
           height={280}
           greenTheme={domain === "golf"}
+          historyWithheld={servedPartialHistory(data)}
         />
       )}
     </section>

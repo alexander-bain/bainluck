@@ -15,7 +15,7 @@
 import { useMemo, useState } from "react";
 import useSWR from "swr";
 import { fetchFuturesHistory } from "@/lib/api";
-import { historyRangeOption } from "@/lib/historyRange";
+import { historyRangeOption, servedPartialHistory } from "@/lib/historyRange";
 import type { FuturesOutcomeHistory } from "@/lib/types";
 import { FuturesChart } from "@/components/FuturesChart";
 import ChartRangeChips from "@/components/event/ChartRangeChips";
@@ -104,7 +104,10 @@ export default function SettledPathChart({
     return { plotted, selected };
   }, [windowed, championName]);
 
-  if (!isLoading && !hasHistory) return null;
+  // #683: a full read that left older prices out still owes the reader that
+  // sentence when too few remain to draw; the chart's sparse state carries it.
+  const historyWithheld = servedPartialHistory(data);
+  if (!isLoading && !hasHistory && !historyWithheld) return null;
 
   // For a settled event, cap markers at the event end (now-cap doesn't apply).
   const timeMarkers =
@@ -137,6 +140,7 @@ export default function SettledPathChart({
           // resolution, so the sparse-history footnote must never promise further
           // price updates. Settled by construction, not by a runtime check.
           settled
+          historyWithheld={servedPartialHistory(data)}
         />
       )}
     </section>
