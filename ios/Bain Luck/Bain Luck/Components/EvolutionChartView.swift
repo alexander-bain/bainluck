@@ -217,6 +217,10 @@ struct EvolutionChartView: View {
     /// expectation the chart behaves exactly as it always has.
     var representation: FuturesRepresentation = .source
     var expectation: VerifiedTitleChartExpectation? = nil
+    #if DEBUG
+    /// #683 — a local render fixture (tests only; `EvolutionChartFixture683.swift`).
+    var fixture: EvolutionChartFixture? = nil
+    #endif
 
     @State private var data: ProbabilityTimelineResponse?
     /// #9387 — one refetch per detail/range generation, then withhold the
@@ -387,7 +391,13 @@ struct EvolutionChartView: View {
             if data == nil, hasTournamentDates, let start = parsedTournamentStart, start <= Date() {
                 selectedRange = .tournament
             }
+            #if DEBUG
+            if data == nil, let fixture { selectedRange = fixture.range }
+            #endif
             await loadData()
+            #if DEBUG
+            if let at = fixture?.selectAt { selectCrosshair(at: at) }
+            #endif
         }
         .onDisappear { requestGeneration += 1 }
     }
@@ -436,6 +446,16 @@ struct EvolutionChartView: View {
 
     // MARK: - Load Data
 
+    /// The client every read goes through: production's, unless a test fixture
+    /// supplies its own (DEBUG builds only).
+    private var api: APIClient {
+        #if DEBUG
+        return fixture?.client ?? .shared
+        #else
+        return .shared
+        #endif
+    }
+
     private func loadData() async {
         requestGeneration += 1
         let generation = requestGeneration
@@ -465,10 +485,10 @@ struct EvolutionChartView: View {
             // #10244: a verified detail draws `/history`'s de-vigged lines, asked
             // alongside the timeline so the chart costs no extra round trip.
             async let detailHistory = Self.verifiedHistoryLines(
-                marketId: marketId, hours: fetchHours, fullRange: fullRange,
+                client: api, marketId: marketId, hours: fetchHours, fullRange: fullRange,
                 when: VerifiedTitleHistory.drawsSourceHistory(
                     detail: expectation?.representation, response: nil))
-            let result = try await APIClient.shared.fetchProbabilityTimeline(
+            let result = try await api.fetchProbabilityTimeline(
                 marketId: marketId, top: 50, hours: fetchHours, representation: representation,
                 fullRange: fullRange
             )
@@ -488,7 +508,7 @@ struct EvolutionChartView: View {
                 detail: expectation?.representation, response: result.effectiveRepresentation) {
                 // The response is verified though the detail was not (yet).
                 lines = try await Self.verifiedHistoryLines(
-                    marketId: marketId, hours: fetchHours, fullRange: fullRange, when: true)
+                    client: api, marketId: marketId, hours: fetchHours, fullRange: fullRange, when: true)
             }
             guard !Task.isCancelled, generation == requestGeneration else { return }
             withholdsCurrent = withholds
@@ -549,10 +569,10 @@ struct EvolutionChartView: View {
     /// #10244 — the verified chart's lines; nil (draw the timeline as served) for
     /// every source-mode chart.
     private static func verifiedHistoryLines(
-        marketId: Int, hours: Int, fullRange: Bool, when verified: Bool
+        client: APIClient, marketId: Int, hours: Int, fullRange: Bool, when verified: Bool
     ) async throws -> FuturesHistoryResponse? {
         guard verified else { return nil }
-        return try await APIClient.shared.fetchFuturesHistory(
+        return try await client.fetchFuturesHistory(
             marketId: marketId, hours: hours, fullRange: fullRange)
     }
 
@@ -1345,6 +1365,11 @@ struct EvolutionChartView: View {
 
     private func updateCrosshair(at location: CGPoint, proxy: ChartProxy, geometry: GeometryProxy) {
         guard let date: Date = proxy.value(atX: location.x) else { return }
+        selectCrosshair(at: date)
+    }
+
+    /// The readout at an instant: the finger's, or a render fixture's (#683).
+    private func selectCrosshair(at date: Date) {
 
         // ONE population for both the snap and the readout (#7547). Choosing the
         // instant over every displayed line and then reporting only the selected
