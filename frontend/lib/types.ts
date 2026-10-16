@@ -915,6 +915,12 @@ export interface LiveOddsResponse {
 }
 
 // Futures/Outrights types
+/** #698 — `app/utils/settlement_display.py`; `basis` names stored evidence, never a venue conclusion. */
+export interface SettlementDisplay {
+  verdict: "won" | "lost" | "unknown";
+  basis: string;
+}
+
 export interface FuturesOutcome {
   id: number;
   name: string;
@@ -943,6 +949,15 @@ export interface FuturesOutcome {
    * therefore withholds on `=== null` only, and absent keeps prior behaviour.
    */
   resolution_source?: string | null;
+  /**
+   * #698 — what this settled row may SAY about its result, from the server's
+   * read of the STORED row. Resolved Polymarket detail payloads only, and then
+   * on every row. `unknown` means no result is printed at all — not Lost, not
+   * 0% — and the row's finite price is a last recorded one. ABSENT means an
+   * older server; `lib/settledResultDisplay` owns that fallback. Never nulls or
+   * replaces `is_winner` / `resolution_source` on the wire.
+   */
+  settlement_display?: SettlementDisplay | null;
   /**
    * #8842/#8863 — `/api/events/search` only. A card recalled through an OUTCOME
    * name pins that outcome into its LAST row when the probability cut left it

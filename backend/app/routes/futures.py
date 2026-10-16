@@ -20,6 +20,10 @@ from app.models import Event, FuturesMarket, FuturesOutcome, FuturesOddsSnapshot
 from app.services import get_db, OddsAPIService
 from app.utils import movement_pool, probability_to_american
 from app.utils.durable_venue_receipt import log_durable_venue_serve
+from app.utils.settlement_display import (
+    applies_to_market as settlement_display_applies,
+    settlement_display,
+)
 from app.utils.feed_market_quality import (
     FEED_EXCLUSIVE_SUM_MIN,
     FEED_LOCKED_CERTAIN_HIGH,
@@ -9827,6 +9831,7 @@ def _format_market_detail(
         key=lambda o: o.current_probability or 0,
         reverse=True
     )
+    targets_settlement_display = settlement_display_applies(market)
 
     # `is not None`, NOT a truth test, and this is #6081's whole fix (nine served
     # sites in this file carried the falsy form; only the predicate input at
@@ -10059,6 +10064,24 @@ def _format_market_detail(
                 stamp.isoformat()
                 if (stamp := getattr(o, "price_changed_at", None))
                 else None
+            ),
+            # #698 — WHAT THIS SETTLED ROW MAY SAY ABOUT ITS RESULT, read from
+            # the STORED row. `/futures/62134744` stores both legs at 0.500000,
+            # `is_winner=false`, `clob_authoritative`; the two fields above made
+            # every client print `Lost · 0%` on both, a result the stored price
+            # never stated. Additive and read-only, resolved Polymarket only, and
+            # on EVERY row of a targeted payload so a client can tell "unknown"
+            # from "older server". Rules and their limits: `utils/settlement_display`.
+            **(
+                {
+                    "settlement_display": settlement_display(
+                        is_winner=o.is_winner,
+                        resolution_source=o.resolution_source,
+                        stored_probability=o.current_probability,
+                    )
+                }
+                if targets_settlement_display
+                else {}
             ),
         }
         for o in sorted_outcomes
