@@ -42,7 +42,19 @@ THE RULES
    reviewer's CERT-4139 witness: a skipped Polymarket twin capture at the
    archive close), and the timeline's bucket start, which the outcome's own
    capture cell holds.
-5. **Explicit short ranges are untouched.** Nothing here runs without
+5. **Out of budget is UNKNOWN, never a capture.** Admission reads at most
+   ``sum(ADMIT_ROUND_LIMITS)`` rows per window. A window whose budget runs out
+   on rows the support filter refuses has an unread remainder that may hold a
+   supported capture, so it is neither claimed nor cleared: it is answered
+   :class:`Unresolved`, carrying its own window and no instant. Every arm
+   withholds that candidate (an archive interval, a venue point, a seat) fail
+   closed — a possibly supported capture is never painted over — and states
+   it separately from what live actually claimed, so the reader is told its
+   history is partial. CERT-4141 executed the earlier cut, which answered
+   with a synthetic capture at the window's start: it was counted as live
+   ownership, and because archive overlap is inclusive it also erased the
+   PRECEDING interval, which ends at that instant and which nothing touched.
+6. **Explicit short ranges are untouched.** Nothing here runs without
    ``range=full``; every other request issues exactly today's statements.
 """
 
@@ -121,7 +133,14 @@ _ADMIT_SQL = text(
 #: SUPPORTED capture (claimed) or on a short page (no capture there). The first
 #: round asks one row because nearly every window closes on it; a window whose
 #: rows the support filter refuses asks for more, keyset-paged, never re-read.
+#: 72 refused rows close on round three's short page; 73 leave it full, so the
+#: window is UNKNOWN (rule 5).
 ADMIT_ROUND_LIMITS: tuple[int, ...] = (1, 8, 64)
+
+#: :meth:`OlderLive.instant_claims` answers per seat: a skipped capture that
+#: would draw HOLDS it, admission ran out of budget (UNKNOWN), or ``None``.
+SEAT_HELD = "held"
+SEAT_UNKNOWN = "unknown"
 
 #: The route's own support filter (``_drop_unsupported_snapshot_points`` bound
 #: to its outcomes): capture rows in, the rows a chart may draw out.
@@ -141,9 +160,9 @@ class OlderLive:
     before: Optional[datetime] = None
     #: The oldest capture instant (the skeleton keeps it): nothing older exists.
     oldest: Optional[datetime] = None
-    #: Thinned only: windows admission could not close inside its row budget.
-    #: Each holds at least ``sum(ADMIT_ROUND_LIMITS)`` real captures, every one
-    #: refused by the support filter; it yields to live and is counted here.
+    #: Thinned only: admission checks left open by their row budget, summed
+    #: over every call (one window may be asked by more than one arm). A log
+    #: figure, never a reader's: each arm states its own withheld candidates.
     unresolved: int = 0
 
     @property
@@ -156,12 +175,14 @@ class OlderLive:
         windows: Sequence[tuple[int, datetime, datetime]],
         supported: Supported,
     ) -> list[Optional[Any]]:
-        """Per window, a SUPPORTED skipped capture inside it, or ``None``.
+        """Per window, a SUPPORTED skipped capture inside it, :class:`Unresolved`,
+        or ``None``.
 
         Exact: a window is claimed only by a capture of its own outcome whose
         instant lies in ``[lo, hi]`` and which ``supported`` keeps (the routes
         pass their own ``_drop_unsupported_snapshot_points``, the rule their
-        claims already went through). Unthinned reads issue nothing.
+        claims already went through). ``None`` is proven: a short page showed
+        no supported capture there. Unthinned reads issue nothing.
         """
         from app.models.models import FuturesOddsSnapshot
 
@@ -220,8 +241,8 @@ class OlderLive:
                     cursor[i] = (last.captured_at, int(last.id))
                     still.append(i)
             open_ = still
-        # Out of budget: every row read there was a real capture the support
-        # filter refused, and more lie beyond. Live keeps the window; counted.
+        # Out of budget: every row read there was refused, and more lie beyond
+        # unread. Neither claimed nor clear (rule 5).
         if open_:
             self.unresolved += len(open_)
             logger.info(
@@ -229,7 +250,7 @@ class OlderLive:
                 len(open_), sum(ADMIT_ROUND_LIMITS),
             )
         for i in open_:
-            found[i] = _Unresolved(int(windows[i][0]), windows[i][1])
+            found[i] = Unresolved(*windows[i])
         return found
 
     async def archive_claims(
@@ -239,27 +260,35 @@ class OlderLive:
         claims: Iterable[Any],
         outcome_ids: Iterable[int],
         supported: Supported,
-    ) -> list:
-        """``claims`` plus every skipped capture that sits inside an interval.
+    ) -> tuple[list, list[tuple[int, datetime, datetime]]]:
+        """``claims`` plus every skipped capture that sits inside an interval,
+        and the intervals admission left UNKNOWN.
 
         The candidates are the archive's own rows that the drawn ``claims`` do
-        not already overlap and that can hold a skipped instant. The answer is
-        appended as ordinary claims, so the archive's row rule
+        not already overlap and that can hold a skipped instant. A capture found
+        is appended as an ordinary claim, so the archive's row rule
         (``ArchiveHistory.served``) decides overlap exactly as it does unthinned.
+        An unresolved interval is returned by its own ``(outcome, start, end)``
+        for ``served(unresolved=...)`` to withhold — that interval and no other.
         """
         claims = list(claims)
         if not self.thinned:
-            return claims
+            return claims, []
         windows = archive.unclaimed_windows(claims, outcome_ids)
-        return claims + [r for r in await self.admit(db, windows, supported) if r is not None]
+        found = await self.admit(db, windows, supported)
+        return (
+            claims + [r for r in found if r is not None and not isinstance(r, Unresolved)],
+            [r.window for r in found if isinstance(r, Unresolved)],
+        )
 
     async def instant_claims(
         self,
         db: Any,
         windows: Sequence[tuple[int, datetime, datetime]],
         supported: Supported,
-    ) -> list[bool]:
-        """Per window, whether a skipped capture that would DRAW lies in it.
+    ) -> list[Optional[str]]:
+        """Per window, :data:`SEAT_HELD` when a skipped capture that would DRAW
+        lies in it, :data:`SEAT_UNKNOWN` when admission ran out, else ``None``.
 
         For the two seat rules a chart applies after the interval rule: the
         combined chart keeps a merged instant for live when ANY contributing
@@ -271,24 +300,30 @@ class OlderLive:
         def drawn(rows: list) -> list:
             return [r for r in supported(rows) if r.probability is not None]
 
-        return [hit is not None for hit in await self.admit(db, windows, drawn)]
+        return [
+            None if hit is None else SEAT_UNKNOWN if isinstance(hit, Unresolved) else SEAT_HELD
+            for hit in await self.admit(db, windows, drawn)
+        ]
 
     async def withhold_venue(
         self,
         db: Any,
         rows: Iterable[Any],
         supported: Supported,
-    ) -> list:
-        """Drop the venue points a skipped capture of their own outcome claims.
+    ) -> tuple[list, list]:
+        """``(kept, unresolved)``: the venue points no skipped capture of their
+        own outcome claims, and the points admission left UNKNOWN.
 
         A capture claims a venue instant within the radius the venue arm hands
         captures (``generic_market_history.capture_claim_cap_seconds``: the
         venue's own declared grain, halved, never over 30 minutes). Measured from
-        each point, so a point in a gap no capture reached stands.
+        each point, so a point in a gap no capture reached stands. An unresolved
+        point is not drawn, but it is still a real venue observation, so the
+        routes keep it as a claim on the archive interval it sits in.
         """
         rows = list(rows)
         if not self.thinned or not rows:
-            return rows
+            return rows, []
         from app.utils.generic_market_history import capture_claim_cap_seconds
 
         by_outcome: dict[int, list] = defaultdict(list)
@@ -307,15 +342,27 @@ class OlderLive:
             for r in rows
         ]
         hits = await self.admit(db, windows, supported)
-        return [r for r, hit in zip(rows, hits) if hit is None]
+        return (
+            [r for r, hit in zip(rows, hits) if hit is None],
+            [r for r, hit in zip(rows, hits) if isinstance(hit, Unresolved)],
+        )
 
 
 @dataclass(frozen=True)
-class _Unresolved:
-    """A window admission could not close: it claims as a capture at ``lo``."""
+class Unresolved:
+    """A window admission could not close inside its budget (rule 5).
+
+    Deliberately carries no ``captured_at``: it is not a capture, and nothing
+    that reads claims by instant can mistake it for one.
+    """
 
     outcome_id: int
-    captured_at: datetime
+    lo: datetime
+    hi: datetime
+
+    @property
+    def window(self) -> tuple[int, datetime, datetime]:
+        return (int(self.outcome_id), self.lo, self.hi)
 
 
 def hours_since(start: datetime, now: Optional[datetime] = None) -> int:
