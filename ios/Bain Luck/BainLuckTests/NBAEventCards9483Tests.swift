@@ -19,6 +19,8 @@ import XCTest
 /// - read the terminal 0/100 or a settled price as a chance → `testTheFinalDrawsNoChanceAndSaysTheBaselineIsUnavailable`
 /// - grade from the score instead of the producer → `testTheFinalTotalCarriesTheProducersVerdicts`
 /// - refuse a real admitted pin, or admit an undated/unadmitted one → `testOnlyAnAdmittedDatedPinIsDrawnAfterTipOff`
+/// - drop a settled option's own qualified pin (#11125) → `testASettledOptionsOwnPregameReadingIsDrawnBesideItsResult`
+/// - borrow another outcome's pin, a blend's, or a 0/1 → `testAPregameReadingForAnotherOutcomeOrASettlementValueIsRefused`
 /// - lose the signed direction or a team's identity → `testTheMarginIsSignedAndEachTeamKeepsItsOwnSide`
 /// - borrow an option from the other side of its question → `testAnOptionOnTheOtherSideIsRefused`
 /// - let half, untyped or another contract's lines in → `testOnlyTypedFullGameLinesOfTheContractEnter`
@@ -139,6 +141,64 @@ final class NBAEventCards9483Tests: XCTestCase {
         let card = try XCTUnwrap(NBALadderCard9483.total(finalInput(matrix: matrix)))
         XCTAssertEqual(card.caption, "Chance before tip-off of finishing above each line")
         XCTAssertEqual(card.points.first { $0.x == 206.5 }?.detail.baselineObservedAt, stamp)
+    }
+
+    /// The producer's own example options for `pregame_reading` (#11125 at
+    /// 87d1b2f4d8, synthetic: ids echo 15320337 Over 206.5 for shape only).
+    private func producerOption(_ name: String) throws -> QuestionMatrixOption {
+        struct Example: Decodable { let options: [String: QuestionMatrixOption] }
+        let url = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+            .appendingPathComponent("Fixtures/pregame-reading-9483-producer-87d1b2f4d8.SYNTHETIC.json")
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
+        return try XCTUnwrap(try decoder.decode(Example.self, from: Data(contentsOf: url)).options[name])
+    }
+
+    /// The final card's Over 206.5 point with that option served in its place.
+    private func over2065(with option: QuestionMatrixOption) throws -> NBALadderCard9483.Point? {
+        let matrix = try edited(finalBody().gameQuestionMatrix) { q in
+            q.options = q.options.map { $0.optionKey == option.optionKey ? option : $0 }
+        }
+        return try XCTUnwrap(NBALadderCard9483.total(finalInput(matrix: matrix))).points.first { $0.x == 206.5 }
+    }
+
+    func testASettledOptionsOwnPregameReadingIsDrawnBesideItsResult() throws {
+        let qualified = try producerOption("settled_lost_qualified_pin")
+        let point = try XCTUnwrap(try over2065(with: qualified))
+        XCTAssertEqual(point.chance, 0.825, "82.5% pregame, from the option's own stored pin")
+        XCTAssertEqual(point.result, false, "and Lost, separately")
+        XCTAssertEqual(point.detail.baselineObservedAt, "2026-10-02T18:00:00+00:00")
+        XCTAssertNil(point.detail.quoted, "the result is still not a quote")
+        for refused in ["settled_lost_no_pin", "settled_lost_pin_after_start"] {
+            XCTAssertNil(try over2065(with: producerOption(refused))?.chance, refused)
+        }
+    }
+
+    func testAPregameReadingForAnotherOutcomeOrASettlementValueIsRefused() throws {
+        let qualified = try producerOption("settled_lost_qualified_pin")
+        func with(_ reading: QuestionMatrixPregameReading?, contributors: [Int]? = [240505185]) throws -> Double? {
+            var option = qualified
+            option.pregameReading = reading
+            option.contributorOutcomeIds = contributors
+            return try over2065(with: option)?.chance
+        }
+        let good = try XCTUnwrap(qualified.pregameReading)
+        func reading(probability: Double? = 0.825, observedAt: String? = "2026-10-02T18:00:00+00:00",
+                     basis: String? = "pregame_pin", outcome: Int? = 240505185,
+                     state: String = "available") -> QuestionMatrixPregameReading {
+            QuestionMatrixPregameReading(state: state, reason: nil, probability: probability,
+                                         observedAt: observedAt, basis: basis, outcomeId: outcome)
+        }
+        XCTAssertEqual(try with(good), 0.825)
+        XCTAssertNil(try with(reading(outcome: 240505186)), "another outcome's pin is never borrowed")
+        XCTAssertNil(try with(good, contributors: [240505185, 240505186]), "no single venue's pin for a blend")
+        XCTAssertNil(try with(good, contributors: nil))
+        XCTAssertNil(try with(reading(probability: 1)), "an exact 1 is a settlement value")
+        XCTAssertNil(try with(reading(probability: 0)), "an exact 0 is a settlement value")
+        XCTAssertNil(try with(reading(observedAt: nil)), "an undated pin")
+        XCTAssertNil(try with(reading(basis: "opening")))
+        XCTAssertNil(try with(reading(state: "unavailable")))
+        XCTAssertNil(try with(nil), "an older server")
     }
 
     // MARK: - Journey 11: the signed margin

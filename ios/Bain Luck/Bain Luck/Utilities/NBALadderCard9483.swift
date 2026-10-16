@@ -22,10 +22,10 @@ import Foundation
 /// - once play starts: the producer's admitted pregame pin
 ///   (`comparison.state == comparable`, `baseline.basis == pregame_pin`,
 ///   dated), never a live or settled price;
-/// - after the final the producer serves no pin on a settled option
-///   (`not_quoted`), so the card says the pregame chance is unavailable rather
-///   than reading 0/100 or rebuilding it from movement. The richer final story
-///   waits for an admitted settled-baseline field (dependency on #9483).
+/// - after the final the comparison serves no pin on a settled option
+///   (`not_quoted`); the option's own `pregame_reading` (#11125) may carry it.
+///   Without either the card says the pregame chance is unavailable rather
+///   than reading 0/100 or rebuilding it from movement.
 /// Results are the producer's `result.state`, shown only on a finished page.
 nonisolated enum NBAEventCards9483 {
     static let sportKey = "basketball_nba"
@@ -241,12 +241,23 @@ nonisolated struct NBALadderCard9483: Equatable, Identifiable {
         return .before
     }
 
-    /// The producer's admitted pregame pin, or nil.
+    /// The producer's admitted pregame pin, or nil: the quoted comparison's
+    /// baseline, else the option's own `pregame_reading` (#11125), which a
+    /// settled option still carries. The reading must name this option's one
+    /// contributor — a pin for another outcome is never borrowed — and an
+    /// exact 0 or 1 is a settlement value, not a chance.
     private static func pin(_ option: QuestionMatrixOption) -> (probability: Double, at: String)? {
-        guard let comparison = option.comparison, comparison.state == "comparable",
-              let baseline = comparison.baseline, baseline.basis == "pregame_pin",
-              let probability = baseline.probability, probability.isFinite, (0...1).contains(probability),
-              let at = baseline.observedAt, !at.isEmpty else { return nil }
+        if let comparison = option.comparison, comparison.state == "comparable",
+           let baseline = comparison.baseline, baseline.basis == "pregame_pin",
+           let probability = baseline.probability, probability.isFinite, (0...1).contains(probability),
+           let at = baseline.observedAt, !at.isEmpty {
+            return (probability, at)
+        }
+        guard let reading = option.pregameReading, reading.state == "available",
+              reading.basis == "pregame_pin",
+              let outcome = reading.outcomeId, option.contributorOutcomeIds == [outcome],
+              let probability = reading.probability, probability.isFinite, probability > 0, probability < 1,
+              let at = reading.observedAt, !at.isEmpty else { return nil }
         return (probability, at)
     }
 
