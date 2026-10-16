@@ -15,7 +15,7 @@ python-dotenv>=1.2.2
 # import. `[asyncio]` declares greenlet explicitly (2.0 and 2.1 alike), and `<2.1`
 # keeps a minor release with removals from arriving untested. Widen the bound by
 # testing 2.1, not by deleting it (guard: tests/test_requirements_sqlalchemy_asyncio_8454.py).
-sqlalchemy[asyncio]>=2.0.50,<2.1
+sqlalchemy[asyncio]>=2.0.54,<2.1
 asyncpg>=0.31.0
 psycopg2-binary>=2.9.9
 alembic>=1.13.1
