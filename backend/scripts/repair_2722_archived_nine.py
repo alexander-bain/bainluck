@@ -25,9 +25,14 @@ snapshot or metadata.
 
 THE OWNERSHIP CONTRACT (the #1853 lesson, CERT-4149 + Root 2026-10-16):
 
-* backup FREEZES the approved set: ids, the planned values, the plan digest and
-  each row's WHOLE before-image (``to_jsonb``). Apply reads that set back for
-  this digest and never re-plans.
+* the PLAN binds each row's approved version: its WHOLE before-image is read
+  with the plan and its hash rides the digest, so a row that moves between the
+  reviewed dry run and the apply changes the digest and is refused.
+* backup FREEZES the approved set — ids, planned values, digest — and backs a
+  row up only while it still IS that approved before-image (CERT-4152 / Root:
+  a writer between planning and backup is refused and named, never adopted as
+  a new baseline). Apply reads that set back for this digest and never
+  re-plans.
 * apply is a whole-row compare-and-set: it writes only while the row still
   equals its backed-up before-image (the UPDATE's row lock makes compare and
   write one step). A drifted row is skipped and reported, never written over.
@@ -88,8 +93,9 @@ SQL = {
         ORDER BY id
     """,
     "current": """
-        SELECT id, external_id, status, resolution_date, expiration_time, settled_at
-        FROM futures_markets WHERE id = ANY(CAST(:ids AS bigint[])) ORDER BY id
+        SELECT id, external_id, status, resolution_date, expiration_time, settled_at,
+               to_jsonb(fm)::text AS before_row
+        FROM futures_markets fm WHERE id = ANY(CAST(:ids AS bigint[])) ORDER BY id
     """,
     "bak_create": f"""
         CREATE TABLE IF NOT EXISTS {BACKUP_TABLE} (
@@ -110,13 +116,18 @@ SQL = {
         SELECT fm.id, :digest, CAST(:planned AS jsonb), to_jsonb(fm)
         FROM futures_markets fm
         WHERE fm.id = :market_id AND fm.source = 'kalshi' AND fm.external_id = :ticker
+          -- CERT-4152 / Root 003: the row must still be EXACTLY the version the
+          -- plan was approved on. A writer between planning and backup is a
+          -- refusal, never a new baseline adopted in silence.
+          AND to_jsonb(fm) = CAST(:approved_before AS jsonb)
         ON CONFLICT (market_id) DO NOTHING
     """,
     "bak_missing": f"""
-        SELECT COUNT(*) FROM unnest(CAST(:ids AS bigint[])) AS t(id)
+        SELECT t.id FROM unnest(CAST(:ids AS bigint[])) AS t(id)
         WHERE NOT EXISTS (
             SELECT 1 FROM {BACKUP_TABLE} b
             WHERE b.market_id = t.id AND b.plan_digest = :digest)
+        ORDER BY t.id
     """,
     "bak_exists": f"SELECT to_regclass('{BACKUP_TABLE}') IS NOT NULL",
     "competing": f"""
@@ -320,7 +331,14 @@ async def build_plan(session, evidence, *, now: datetime) -> dict:
             and (values["resolution_date"] is None or _iso(cur[3]) == values["resolution_date"])
             and (values["expiration_time"] is None or _iso(cur[4]) == values["expiration_time"])
         )
-        (no_op if unchanged else planned).append({"market_id": market_id, "ticker": ticker, **values})
+        entry = {"market_id": market_id, "ticker": ticker, **values}
+        if unchanged:
+            no_op.append(entry)
+            continue
+        # The version this write is approved on: the whole row, bound into the
+        # digest with the values it will receive.
+        entry["approved_before"] = cur[6]
+        planned.append(entry)
     return {
         "planned": planned,
         "no_op": no_op,
@@ -328,6 +346,11 @@ async def build_plan(session, evidence, *, now: datetime) -> dict:
         "voids_reported_not_written": sorted(set(recorder.voids)),
         "walk_stats": {k: v for k, v in stats.items() if v},
     }
+
+
+def _values(entry: dict) -> dict:
+    """A plan entry without its approved before-image: what the write applies."""
+    return {k: v for k, v in entry.items() if k != "approved_before"}
 
 
 def plan_digest(planned: list[dict]) -> str:
@@ -343,23 +366,27 @@ def refuse_unless_named_app(env) -> None:
         raise Refused(f"HEROKU_APP_NAME={app!r}; writes run only on {REQUIRED_APP}")
 
 
-async def backup(session, planned: list[dict], digest: str) -> int:
+async def backup(session, planned: list[dict], digest: str) -> list[int]:
+    """Freeze the plan: each row is backed up only if it is still EXACTLY its
+    approved before-image. Returns the ids that drifted (empty = all frozen)."""
     from sqlalchemy import text
 
     await session.execute(text(SQL["bak_create"]))
     if (await session.execute(text(SQL["competing"]), {"digest": digest})).scalar_one():
         raise Refused("another plan's applied rows are still held; restore it first")
     for p in planned:
+        before = p.get("approved_before")
+        if not before:
+            raise Refused(f"market {p['market_id']} has no approved before-image")
         await session.execute(
             text(SQL["bak_copy"]),
             {"market_id": p["market_id"], "ticker": p["ticker"], "digest": digest,
-             "planned": json.dumps(p, sort_keys=True)},
+             "planned": json.dumps(_values(p), sort_keys=True), "approved_before": before},
         )
-    missing = (await session.execute(
+    return [r[0] for r in (await session.execute(
         text(SQL["bak_missing"]),
         {"ids": [p["market_id"] for p in planned], "digest": digest},
-    )).scalar_one()
-    return int(missing)
+    )).all()]
 
 
 async def apply(session, digest: str) -> dict:
@@ -421,6 +448,11 @@ async def run(args, env) -> dict:
         plan = await build_plan(session, evidence, now=datetime.now(timezone.utc))
     digest = plan_digest(plan["planned"])
     out.update(plan, plan_digest=digest)
+    # Printed with each approved version as its hash; the digest covers the row.
+    out["planned"] = [
+        {**_values(p), "approved_before_sha256": hashlib.sha256(p["approved_before"].encode()).hexdigest()}
+        for p in plan["planned"]
+    ]
     if plan["stop_not_settled_from_archive"]:
         out["stop"] = (
             "the walk would not settle every reviewed row from its retained archive "
@@ -435,10 +467,13 @@ async def run(args, env) -> dict:
     if args.digest != digest:
         raise Refused(f"--digest {args.digest!r} does not match this plan ({digest})")
     async with get_task_session() as session:
-        missing = await backup(session, plan["planned"], digest)
-        if missing:
+        drifted = await backup(session, plan["planned"], digest)
+        if drifted:
             await session.rollback()
-            raise Refused(f"{missing} planned rows have no backup row; nothing written")
+            raise Refused(
+                f"rows changed since the plan was approved: {drifted}; nothing written "
+                "— re-plan and re-review"
+            )
         await session.commit()
         out["applied"] = await apply(session, digest)
         await session.commit()

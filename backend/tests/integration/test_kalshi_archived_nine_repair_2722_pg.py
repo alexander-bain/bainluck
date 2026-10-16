@@ -117,7 +117,7 @@ async def _plan(s, mod=None, evidence=None):
 
 
 async def _backup_apply(s, mod, plan, digest):
-    assert await mod.backup(s, plan["planned"], digest) == 0
+    assert await mod.backup(s, plan["planned"], digest) == []
     await s.commit()
     out = await mod.apply(s, digest)
     await s.commit()
@@ -162,7 +162,7 @@ async def test_a_second_apply_writes_nothing_and_a_replan_is_all_no_op(session):
 
 async def test_a_row_changed_after_backup_is_skipped_never_written_over(session):
     mod, plan, digest = await _plan(session)
-    assert await mod.backup(session, plan["planned"], digest) == 0
+    assert await mod.backup(session, plan["planned"], digest) == []
     await session.commit()
     drifted = IDS[0]
     await session.execute(
@@ -275,3 +275,75 @@ async def test_tampered_evidence_is_refused(session, tmp_path):
     with pytest.raises(mod.Refused):
         mod.load_evidence(copy)
     assert hashlib.sha256((mod.EVIDENCE_DIR / "manifest.json").read_bytes()).hexdigest() == mod.MANIFEST_SHA256
+
+
+# --- CERT-4152 / Root 003: the plan binds the APPROVED version ---------------
+
+
+async def test_a_writer_between_plan_and_backup_is_refused_never_adopted(session):
+    """Root's race, through the run() sequence: plan returns the nine, a
+    lifecycle writer moves 109776's date, then backup. The row is no longer the
+    version the plan was approved on, so it is named and nothing is frozen for
+    it — and apply, if called anyway, writes nothing over it."""
+    mod, plan, digest = await _plan(session)
+    raced = IDS[0]
+    await session.execute(
+        text("UPDATE futures_markets SET resolution_date='2026-10-15T12:00:00Z', "
+             "updated_at=NOW() WHERE id=:id"), {"id": raced})
+    await session.commit()
+    later = (await _rows(session))[raced]
+    drifted = await mod.backup(session, plan["planned"], digest)
+    await session.commit()
+    assert drifted == [raced]
+    out = await mod.apply(session, digest)
+    await session.commit()
+    assert raced not in out["written_ids"]
+    assert (await _rows(session))[raced] == later, "the later writer's date stands"
+
+
+async def test_without_drift_every_approved_row_is_frozen(session):
+    """The positive control for the race above: the same sequence with no writer."""
+    mod, plan, digest = await _plan(session)
+    assert await mod.backup(session, plan["planned"], digest) == []
+    await session.commit()
+    assert sorted((await mod.apply(session, digest))["written_ids"]) == IDS
+    await session.commit()
+
+
+async def test_the_digest_names_the_approved_versions(session):
+    """A row that moves between the reviewed dry run and the apply run changes
+    the digest, so `--digest` from the dry run is refused by run()."""
+    mod, plan, digest = await _plan(session)
+    await session.execute(
+        text("UPDATE futures_markets SET updated_at = updated_at + interval '1 second' "
+             "WHERE id = :id"), {"id": IDS[3]})
+    await session.commit()
+    _, replan, redigest = await _plan(session, mod)
+    assert redigest != digest
+    assert [p["market_id"] for p in replan["planned"]] == IDS
+
+
+async def test_root_plan_beforeimage_is_frozen_before_backup(session):
+    """Root's witness (root-5f5ca4-replay.py), body verbatim."""
+    mod, plan, digest = await _plan(session)
+    assert len(plan['planned']) == 9
+    raced = IDS[0]
+    # A later lifecycle writer changes the same date this reviewed plan will write,
+    # after plan() has returned and before backup() is called by run().
+    await session.execute(text("UPDATE futures_markets SET resolution_date='2026-10-15T12:00:00Z', updated_at=NOW() WHERE id=:id"), {'id':raced})
+    await session.commit()
+    later = (await _rows(session))[raced]
+    try:
+        missing = await mod.backup(session, plan['planned'], digest)
+        if missing:
+            await session.rollback()
+            return
+        await session.commit()
+        stats = await mod.apply(session, digest)
+        await session.commit()
+    except mod.Refused:
+        await session.rollback()
+        return
+    after = (await _rows(session))[raced]
+    print('ROOT_PLAN_BACKUP_DRIFT', json.dumps({'raced':raced,'approved_plan_digest':digest,'later_date':later['resolution_date'],'after_date':after['resolution_date'],'written':stats['written_ids']}))
+    assert raced not in stats['written_ids'] and after == later, 'repair overwrote a lifecycle writer after review, before backup'
