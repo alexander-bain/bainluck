@@ -234,33 +234,88 @@ async def run_within_wall(
     raise WallExpired(phase)
 
 
-def run_bounded_loop(coro: Awaitable[Any], *, straggler_grace: float = 0.5) -> Any:
-    """``asyncio.run`` without its unbounded wait on tasks that ignore cancel.
+def run_bounded_loop(
+    coro: Awaitable[Any],
+    *,
+    straggler_grace: float = 0.5,
+    close_by: Optional[float] = None,
+    monotonic: Callable[[], float] = time.monotonic,
+    shutdown: Optional[dict] = None,
+) -> Any:
+    """``asyncio.run`` without its unbounded waits on work that ignores cancel.
 
-    ``asyncio.run`` gathers every leftover task with no timeout, so one task
-    that never acknowledged its cancellation would hold the process past its
-    wall. Here stragglers get ``straggler_grace`` seconds and are then left to
-    die with the process.
+    ``asyncio.run`` gathers every leftover task, then awaits every open async
+    generator's cleanup, with no timeout: one task, or one generator
+    ``finally``, that never acknowledges its cancellation holds the process
+    past its wall. Here both share ONE shutdown budget of ``straggler_grace``
+    seconds that also ends at ``close_by`` (a ``monotonic`` instant: the wall's
+    cancel-and-close end), so shutdown never spends the receipt's time.
+    Whatever is still running then is abandoned to die with the process and
+    is COUNTED in ``shutdown`` (the caller's receipt) rather than logged at
+    garbage collection::
+
+        {"clean": bool, "tasks_cancelled": n, "tasks_unacknowledged": n,
+         "asyncgens": "closed" | "unacknowledged" | "not_reached",
+         "abandoned": n, "seconds": s}
+
+    Never ``asyncio.wait_for`` here: on timeout it cancels AND waits for that
+    cancellation to be acknowledged, which is the unbounded wait again.
     """
+    report = {} if shutdown is None else shutdown
     loop = asyncio.new_event_loop()
     try:
         asyncio.set_event_loop(loop)
         return loop.run_until_complete(coro)
     finally:
         try:
-            pending = [t for t in asyncio.all_tasks(loop) if not t.done()]
-            for t in pending:
-                t.cancel()
-            if pending:
-                loop.run_until_complete(asyncio.wait(pending, timeout=straggler_grace))
-            loop.run_until_complete(
-                asyncio.wait_for(loop.shutdown_asyncgens(), timeout=straggler_grace)
-            )
-        except Exception:  # noqa: BLE001 — shutdown is best effort, bounded
-            pass
+            _bounded_shutdown(loop, straggler_grace, close_by, monotonic, report)
         finally:
             asyncio.set_event_loop(None)
             loop.close()
+
+
+def _bounded_shutdown(
+    loop: asyncio.AbstractEventLoop,
+    grace: float,
+    close_by: Optional[float],
+    monotonic: Callable[[], float],
+    report: dict,
+) -> None:
+    started = monotonic()
+    end = started + max(float(grace), 0.0)
+    if close_by is not None:
+        end = min(end, close_by)
+
+    def left() -> float:
+        return max(end - monotonic(), 0.0)
+
+    report.update(
+        clean=False, tasks_cancelled=0, tasks_unacknowledged=0, asyncgens="not_reached"
+    )
+    pending: list = []
+    try:
+        pending = [t for t in asyncio.all_tasks(loop) if not t.done()]
+        for t in pending:
+            t.cancel()
+        report["tasks_cancelled"] = len(pending)
+        if pending:
+            loop.run_until_complete(asyncio.wait(pending, timeout=left()))
+        closing = loop.create_task(loop.shutdown_asyncgens())
+        loop.run_until_complete(asyncio.wait({closing}, timeout=left()))
+        report["asyncgens"] = "closed" if closing.done() else "unacknowledged"
+    except Exception as e:  # noqa: BLE001 — shutdown is best effort, bounded, reported
+        report["error"] = type(e).__name__
+    finally:
+        left_behind = [t for t in asyncio.all_tasks(loop) if not t.done()]
+        for t in left_behind:
+            # Counted in the receipt instead; never a stray line at collection.
+            t._log_destroy_pending = False
+        report["tasks_unacknowledged"] = sum(1 for t in pending if not t.done())
+        report["abandoned"] = len(left_behind)
+        report["clean"] = (
+            not left_behind and report["asyncgens"] == "closed" and "error" not in report
+        )
+        report["seconds"] = round(monotonic() - started, 3)
 
 
 # ── HTTP: count before buffering ───────────────────────────────────────────
@@ -502,7 +557,8 @@ def write_bounded_artifact(path: str, payload: Any, cap: int) -> int:
 
     Refuses (nothing written) when the serialisation exceeds ``cap`` or
     ``path`` already exists: a sealed plan or receipt is never truncated and
-    never overwritten.
+    never overwritten. Interrupted (the wall's alarm), the temporary file is
+    removed and ``path`` either holds the whole artifact or does not exist.
     """
     blob = json.dumps(payload, indent=2, default=str).encode("utf-8")
     if len(blob) > cap:
@@ -511,14 +567,17 @@ def write_bounded_artifact(path: str, payload: Any, cap: int) -> int:
         raise FileExistsError(path)
     directory = os.path.dirname(os.path.abspath(path))
     tmp = os.path.join(directory, f".{os.path.basename(path)}.{os.getpid()}.tmp")
-    with open(tmp, "wb") as fh:
-        fh.write(blob)
-        fh.flush()
-        os.fsync(fh.fileno())
     try:
+        with open(tmp, "wb") as fh:
+            fh.write(blob)
+            fh.flush()
+            os.fsync(fh.fileno())
         os.link(tmp, path)  # atomic, and fails if ``path`` appeared meanwhile
     finally:
-        os.unlink(tmp)
+        try:
+            os.unlink(tmp)
+        except FileNotFoundError:
+            pass
     return len(blob)
 
 

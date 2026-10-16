@@ -28,7 +28,11 @@ from __future__ import annotations
 import asyncio
 import inspect
 import json
+import subprocess
+import sys
+import textwrap
 import time
+from pathlib import Path
 from contextlib import asynccontextmanager
 from types import SimpleNamespace
 
@@ -617,6 +621,129 @@ class TestOperationWall:
                 bounds.OperationWall(bad)
 
 
+# ── the loop's shutdown: real async generators, in a child process ─────────
+
+BACKEND = Path(__file__).resolve().parents[1]
+
+#: Root's 85a probe (artifacts/683-first-import-offline-20261016/
+#: ROOT-85A-BOUNDED-CLEANUP): the operation returns, then a real async
+#: generator's ``finally`` awaits forever and swallows every cancellation. Run
+#: in a child so a regression is a killed child and a red test, never a hung
+#: suite.
+_SHUTDOWN_PROBE = textwrap.dedent(
+    """
+    import asyncio, json, sys, time
+    sys.path.insert(0, sys.argv[1])
+    from app.services import kalshi_archive_bounds as bounds
+
+    mode, grace, close_in = sys.argv[2], float(sys.argv[3]), sys.argv[4]
+    HELD = []
+
+    async def stubborn():
+        try:
+            yield 1
+        finally:
+            while True:
+                try:
+                    await asyncio.sleep(3600)
+                except asyncio.CancelledError:
+                    continue
+
+    async def polite():
+        try:
+            yield 1
+        finally:
+            await asyncio.sleep(0)
+            print("FINALLY_RAN", flush=True)
+
+    async def operation():
+        gen = (polite if mode == "polite" else stubborn)()
+        if mode != "dropped":
+            HELD.append(gen)  # still open at shutdown: shutdown_asyncgens owns it
+        await gen.__anext__()
+        print("OPERATION_COMPLETE_BEFORE_CLOSE", flush=True)
+        return "done"
+
+    report = {}
+    close_by = None if close_in == "none" else time.monotonic() + float(close_in)
+    t0 = time.monotonic()
+    out = bounds.run_bounded_loop(
+        operation(), straggler_grace=grace, close_by=close_by, shutdown=report
+    )
+    print("RESULT " + json.dumps(
+        {"out": out, "seconds": time.monotonic() - t0, "shutdown": report}
+    ), flush=True)
+    """
+)
+
+OUTER_LIMIT_S = 15
+
+
+def _shutdown_probe(mode: str, grace: float, close_in: str = "none") -> tuple:
+    try:
+        done = subprocess.run(
+            [sys.executable, "-c", _SHUTDOWN_PROBE, str(BACKEND), mode, str(grace), close_in],
+            capture_output=True,
+            text=True,
+            timeout=OUTER_LIMIT_S,
+        )
+    except subprocess.TimeoutExpired as e:  # the child is killed by subprocess.run
+        pytest.fail(f"run_bounded_loop held the process past {OUTER_LIMIT_S}s: {e.stdout!r}")
+    assert done.returncode == 0, done.stderr
+    line = [x for x in done.stdout.splitlines() if x.startswith("RESULT ")]
+    assert line, done.stdout + done.stderr
+    return json.loads(line[0][len("RESULT "):]), done.stdout, done.stderr
+
+
+class TestBoundedShutdown:
+    def test_a_generator_cleanup_that_ignores_cancel_is_abandoned_and_counted(self):
+        got, out, err = _shutdown_probe("held", 0.3)
+        assert "OPERATION_COMPLETE_BEFORE_CLOSE" in out and got["out"] == "done"
+        assert got["seconds"] < 0.3 + 1.0
+        sd = got["shutdown"]
+        assert sd["asyncgens"] == "unacknowledged" and sd["clean"] is False
+        assert sd["abandoned"] >= 1
+        # Counted on the receipt, never an uncontrolled line at collection.
+        assert "Task was destroyed but it is pending" not in err
+
+    def test_a_dropped_generator_finalised_as_a_task_is_bounded_too(self):
+        got, _, err = _shutdown_probe("dropped", 0.3)
+        assert got["seconds"] < 0.3 + 1.0
+        sd = got["shutdown"]
+        assert sd["clean"] is False and sd["tasks_unacknowledged"] + sd["abandoned"] >= 1
+        assert "Task was destroyed but it is pending" not in err
+
+    def test_the_shutdown_ends_at_the_walls_close_instant_not_the_grace(self):
+        got, _, _ = _shutdown_probe("held", 30.0, close_in="0")
+        assert got["seconds"] < 2.0 and got["shutdown"]["clean"] is False
+
+    def test_control_a_cleanup_that_finishes_is_awaited_and_clean(self):
+        got, out, err = _shutdown_probe("polite", 0.3)
+        assert "FINALLY_RAN" in out
+        sd = got["shutdown"]
+        assert sd == {**sd, "clean": True, "asyncgens": "closed", "abandoned": 0}
+        assert sd["tasks_unacknowledged"] == 0 and got["seconds"] < 1.0
+        assert "Task was destroyed" not in err
+
+    def test_an_ignored_task_is_counted_unacknowledged(self):
+        async def main():
+            async def stubborn():
+                while True:
+                    try:
+                        await asyncio.sleep(10)
+                    except asyncio.CancelledError:
+                        continue
+
+            asyncio.ensure_future(stubborn())
+            await asyncio.sleep(0)
+            return "done"
+
+        report: dict = {}
+        assert bounds.run_bounded_loop(main(), straggler_grace=0.2, shutdown=report) == "done"
+        assert report["tasks_cancelled"] == 1 and report["tasks_unacknowledged"] == 1
+        assert report["clean"] is False and report["asyncgens"] == "closed"
+
+
 # ── output caps ────────────────────────────────────────────────────────────
 
 
@@ -751,6 +878,31 @@ class TestPlannerCli:
         summary = json.loads(capsys.readouterr().out)
         assert code == 3 and summary["budget_stop"] == "requests" and len(seen) == 2
         assert summary["held_outcome"]["outcome_id"] == 1
+
+    @pytest.mark.parametrize("straggler", [False, True])
+    def test_a_planner_shutdown_that_abandoned_work_holds_the_exit(
+        self, planner_cli, capsys, monkeypatch, straggler
+    ):
+        fast = rec.plan_archive_recovery
+
+        async def stubborn():
+            while True:
+                try:
+                    await asyncio.sleep(10)
+                except asyncio.CancelledError:
+                    continue
+
+        async def with_straggler(**kw):
+            if straggler:
+                asyncio.ensure_future(stubborn())
+            return await fast(**kw)
+
+        monkeypatch.setattr(rec, "plan_archive_recovery", with_straggler)
+        code, _ = planner_cli(PROFILE)
+        summary = json.loads(capsys.readouterr().out)
+        assert summary["terminal"] == "complete"
+        assert summary["shutdown"]["clean"] is (not straggler)
+        assert code == (3 if straggler else 0)
 
     def test_the_outer_wall_receipt_claims_nothing(self, planner_cli, capsys):
         class Frozen(FakeSession):
@@ -917,6 +1069,134 @@ class TestCommitAcknowledgement:
         assert receipt["readback_owed"]["never"] == [
             "retry the apply", "restore automatically", "assume zero rows"
         ]
+
+    @pytest.mark.parametrize("artifact_delay", [0.0, 0.6])
+    def test_import_cli_timeout_receipt_is_written_inside_the_wall(
+        self, tmp_path, capsys, monkeypatch, artifact_delay
+    ):
+        """CERT-4172's 683-KEEP-TIMEOUT-RECEIPT-WITHIN-THE-OPERATION-WALL.
+
+        0.0 is the control: the receipt is written whole inside the wall. 0.6
+        delays only the local artifact write past the wall: the process still
+        ends at the wall, the artifact is reported unavailable, and the
+        console summary keeps the uncertain COMMIT and its readback.
+        """
+        report = asyncio.run(_a_plan())
+        plan = tmp_path / "P.json"
+        plan.write_text(json.dumps(report))
+        out = tmp_path / "R.json"
+        real_fsync = bounds.os.fsync
+
+        def slow_fsync(fd):
+            # Inside the writer, with its temporary file open: a slow disk.
+            end = time.monotonic() + artifact_delay
+            while time.monotonic() < end:
+                time.sleep(0.01)
+            return real_fsync(fd)
+
+        monkeypatch.setattr(bounds.os, "fsync", slow_fsync)
+
+        async def hang():
+            await asyncio.sleep(10)
+
+        mod = _load_script("kalshi_archive_import.py")
+        deadline = 0.8
+        t0 = time.monotonic()
+        code = mod.main(
+            [
+                "apply", "--plan", str(plan), "--expected-digest", report["plan_digest"],
+                "--max-outcomes", "1", "--max-points", "26", "--deadline", str(deadline),
+                "--write", "--output", str(out),
+            ],
+            session_factory=_factory(_CommitSession(hang)),
+        )
+        elapsed = time.monotonic() - t0
+        assert code == 3 and elapsed < deadline + 0.15
+        summary = json.loads(capsys.readouterr().out)
+        assert summary["stopped"] == "wall_expired:create_import"
+        assert summary["uncertain_commits"][-1]["error"] == "acknowledgement_not_received"
+        assert summary["readback_owed"]["never"] == [
+            "retry the apply", "restore automatically", "assume zero rows"
+        ]
+        assert summary["shutdown"]["clean"] is True
+        if artifact_delay:
+            assert not out.exists() and summary["artifact"] is None
+            assert summary["artifact_refused"] == "wall_expired:serialize"
+            assert not list(tmp_path.glob(".R.json.*.tmp"))
+        else:
+            receipt = json.loads(out.read_text())
+            assert receipt["stopped"] == "wall_expired:create_import"
+            assert summary["artifact_bytes"] == out.stat().st_size
+
+    def test_an_artifact_linked_just_before_the_alarm_is_reported_present(
+        self, tmp_path, capsys, monkeypatch
+    ):
+        real = bounds.write_bounded_artifact
+
+        def linked_then_alarm(path, payload, cap):
+            real(path, payload, cap)
+            raise bounds.WallExpired("serialize")
+
+        monkeypatch.setattr(bounds, "write_bounded_artifact", linked_then_alarm)
+
+        async def fake_apply(report, **kw):
+            return {"status": "applied", "import_key": "k", "committed_outcomes": []}
+
+        monkeypatch.setattr(imp, "apply_archive_plan", fake_apply)
+        plan = tmp_path / "P.json"
+        plan.write_text("{}")
+        out = tmp_path / "R.json"
+        code = _load_script("kalshi_archive_import.py").main(
+            [
+                "apply", "--plan", str(plan), "--expected-digest", "d",
+                "--max-outcomes", "1", "--max-points", "1", "--deadline", "30",
+                "--output", str(out),
+            ]
+        )
+        summary = json.loads(capsys.readouterr().out)
+        assert code == 3 and out.exists()
+        assert summary["artifact"] == str(out) and summary["artifact_written_at_wall"] is True
+        assert "artifact_refused" not in summary
+
+    @pytest.mark.parametrize("straggler", [False, True])
+    def test_import_cli_work_the_shutdown_abandoned_never_exits_applied(
+        self, tmp_path, capsys, monkeypatch, straggler
+    ):
+        async def stubborn():
+            while True:
+                try:
+                    await asyncio.sleep(10)
+                except asyncio.CancelledError:
+                    continue
+
+        async def fake_apply(report, **kw):
+            if straggler:
+                asyncio.ensure_future(stubborn())
+                await asyncio.sleep(0)
+            return {
+                "status": "applied",
+                "import_key": "k",
+                "committed_outcomes": [{"outcome_id": 7}],
+            }
+
+        monkeypatch.setattr(imp, "apply_archive_plan", fake_apply)
+        plan = tmp_path / "P.json"
+        plan.write_text("{}")
+        code = _load_script("kalshi_archive_import.py").main(
+            [
+                "apply", "--plan", str(plan), "--expected-digest", "d",
+                "--max-outcomes", "1", "--max-points", "1", "--deadline", "30",
+            ]
+        )
+        summary = json.loads(capsys.readouterr().out)
+        assert summary["status"] == "applied"  # what WAS durable is unchanged
+        if straggler:
+            assert code == 3 and summary["shutdown"]["clean"] is False
+            assert summary["shutdown"]["tasks_unacknowledged"] == 1
+            assert summary["readback_owed"]["durability"] == "unknown"
+        else:
+            assert code == 0 and summary["shutdown"]["clean"] is True
+            assert "readback_owed" not in summary
 
     def test_import_cli_requires_an_explicit_wall_on_every_subcommand(self):
         mod = _load_script("kalshi_archive_import.py")

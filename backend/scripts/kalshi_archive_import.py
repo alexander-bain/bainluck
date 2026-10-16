@@ -40,10 +40,13 @@ existing file). The first attended sample:
 Exit codes: 0 applied (complete history for every imported outcome, nothing
 refused, nothing uncertain); 1 partial (refusals, conflicts, errors, or a plan
 that is not complete history; ``incomplete_reasons`` says which); 2 refused
-before anything was written; 3 the wall, an output cap, or an unacknowledged
-COMMIT stopped it, so the receipt may describe rows that ARE durable (read
+before anything was written; 3 the wall, an output cap, an unacknowledged
+COMMIT, or a bounded shutdown that left work running (``shutdown.clean``
+false) stopped it, so the receipt may describe rows that ARE durable (read
 ``committed_outcomes``, ``commit_in_flight``, ``uncertain_commits`` and
-``readback_owed``). No exit code is permission to retry or to restore.
+``readback_owed``). The receipt is written inside the wall; past it the
+artifact is reported unavailable and the summary still prints. No exit code
+is permission to retry or to restore.
 """
 
 from __future__ import annotations
@@ -134,6 +137,10 @@ def _run(args, session_factory) -> int:
         return EXIT_REFUSED
     extra = {} if session_factory is None else {"session_factory": session_factory}
     progress: dict = {"phase": "start"}
+    shutdown: dict = {}
+    # Half the wall's reserve unwinds the operation (cancel, then the loop's
+    # bounded shutdown); the other half writes the receipt.
+    close_by = wall.deadline - wall.reserve / 2
 
     def run(make):
         return bounds.run_bounded_loop(
@@ -141,8 +148,10 @@ def _run(args, session_factory) -> int:
                 make,
                 wall=wall,
                 progress=progress,
-                cancel_until=wall.deadline - wall.reserve / 2,
-            )
+                cancel_until=close_by,
+            ),
+            close_by=close_by,
+            shutdown=shutdown,
         )
 
     if args.cmd == "apply":
@@ -172,12 +181,15 @@ def _run(args, session_factory) -> int:
             print(f"REFUSED: {e.reason}", file=sys.stderr)
             return EXIT_REFUSED
         except bounds.WallExpired as e:
-            return _incomplete(args, wall, progress, f"wall_expired:{e.phase}")
+            return _incomplete(args, wall, progress, shutdown, f"wall_expired:{e.phase}")
         except Exception as e:  # noqa: BLE001 — the receipt says what was durable
-            return _incomplete(args, wall, progress, f"{type(e).__name__}: {str(e)[:160]}")
+            return _incomplete(
+                args, wall, progress, shutdown, f"{type(e).__name__}: {str(e)[:160]}"
+            )
         code = EXIT_APPLIED if result["status"] == "applied" else EXIT_PARTIAL
         if result.get("uncertain_commits") or result.get("commit_in_flight"):
             code = EXIT_INCOMPLETE
+        code = _with_shutdown(result, shutdown, code)
         return _emit(args, wall, result, code, artifact=True)
 
     try:
@@ -200,22 +212,47 @@ def _run(args, session_factory) -> int:
             result = run(lambda: imp.archive_cohort(ids, **extra))
             code = EXIT_APPLIED
     except bounds.WallExpired as e:
-        return _incomplete(args, wall, progress, f"wall_expired:{e.phase}")
+        return _incomplete(args, wall, progress, shutdown, f"wall_expired:{e.phase}")
     except Exception as e:  # noqa: BLE001
-        return _incomplete(args, wall, progress, f"{type(e).__name__}: {str(e)[:160]}")
+        return _incomplete(
+            args, wall, progress, shutdown, f"{type(e).__name__}: {str(e)[:160]}"
+        )
+    code = _with_shutdown(result, shutdown, code)
     return _emit(args, wall, result, code, artifact=False)
 
 
-def _incomplete(args, wall, progress: dict, why: str) -> int:
+def _with_shutdown(result: dict, shutdown: dict, code: int) -> int:
+    """Put the loop's shutdown on the receipt; work it abandoned never exits 0 or 1.
+
+    The operation's own result already says what was durable. What the bounded
+    shutdown left running (a task or a generator cleanup that ignored its
+    cancellation) is unknown, so the exit is incomplete and, where the receipt
+    names commits, the read-only readback is owed. Nothing is retried.
+    """
+    result["shutdown"] = shutdown
+    if shutdown.get("clean"):
+        return code
+    if (result.get("uncertain_commits") or result.get("committed_outcomes")) and not result.get(
+        "readback_owed"
+    ):
+        from app.services.kalshi_archive_apply import _readback_owed
+
+        result["readback_owed"] = _readback_owed(result)
+    return EXIT_INCOMPLETE
+
+
+def _incomplete(args, wall, progress: dict, shutdown: dict, why: str) -> int:
     """The receipt of an operation that did not finish: what IS known, nothing more.
 
     Acknowledged commits stay listed as durable; a COMMIT still in flight is
-    reported as such, so its rows are neither claimed nor denied.
+    reported as such, so its rows are neither claimed nor denied. The receipt
+    is written inside what is left of the wall, like every other receipt.
     """
     receipt = {k: v for k, v in progress.items() if k != "outcomes"}
     receipt["status"] = "incomplete"
     receipt["stopped"] = why
     receipt["elapsed_s"] = round(wall.elapsed(), 3)
+    receipt["shutdown"] = shutdown
     if progress.get("commit_in_flight"):
         receipt.setdefault("uncertain_commits", [])
         receipt["uncertain_commits"] = list(receipt["uncertain_commits"]) + [
@@ -227,36 +264,42 @@ def _incomplete(args, wall, progress: dict, why: str) -> int:
         receipt["readback_owed"] = _readback_owed(receipt)
     if args.cmd == "apply" and progress.get("import_id") is not None:
         receipt["import_row"] = "applying_or_unknown"
-    _emit(args, wall, receipt, EXIT_INCOMPLETE, artifact=args.cmd == "apply", late=True)
+    _emit(args, wall, receipt, EXIT_INCOMPLETE, artifact=args.cmd == "apply")
     return EXIT_INCOMPLETE
 
 
-def _emit(args, wall, result: dict, code: int, *, artifact: bool, late: bool = False) -> int:
+def _emit(args, wall, result: dict, code: int, *, artifact: bool) -> int:
+    """Write the artifact and serialize the receipt inside the wall's hard deadline.
+
+    No receipt gets a fresh allowance: when the deadline passes first, the
+    artifact is reported unavailable (``artifact_refused: wall_expired:...``)
+    and only the summary — every key but the per-outcome bodies, so commit
+    identity, durable outcomes and the readback stay — goes to the capped
+    console. A partly written artifact is removed by ``write_bounded_artifact``.
+    """
     from app.services import kalshi_archive_bounds as bounds
 
     summary = {k: v for k, v in result.items() if k != "outcomes"}
     try:
-        if late:
-            # Past the wall already: write the receipt without a second alarm.
+        with wall.sync_phase("serialize", work=False):
             if artifact and args.output:
                 summary["artifact_bytes"] = bounds.write_bounded_artifact(
                     args.output, result, args.max_artifact_bytes
                 )
-            text = json.dumps(summary, indent=2, default=str)
-        else:
-            with wall.sync_phase("serialize", work=False):
-                if artifact and args.output:
-                    summary["artifact_bytes"] = bounds.write_bounded_artifact(
-                        args.output, result, args.max_artifact_bytes
-                    )
-                text = json.dumps(summary if artifact else result, indent=2, default=str)
+            text = json.dumps(summary if artifact else result, indent=2, default=str)
     except (bounds.ArtifactOverflow, FileExistsError) as e:
         summary.update(artifact=None, artifact_refused=str(e))
         text = json.dumps(summary, indent=2, default=str)
         code = EXIT_INCOMPLETE
     except bounds.WallExpired as e:
-        print(f"INCOMPLETE: wall expired while writing ({e.phase})", file=sys.stderr)
-        return EXIT_INCOMPLETE
+        summary.pop("artifact_bytes", None)
+        if artifact and args.output and os.path.lexists(args.output):
+            # Linked whole just before the alarm (it never pre-exists: refused).
+            summary.update(artifact=args.output, artifact_written_at_wall=True)
+        else:
+            summary.update(artifact=None, artifact_refused=f"wall_expired:{e.phase}")
+        text = json.dumps(summary, indent=2, default=str)
+        code = EXIT_INCOMPLETE
     print(text)
     return code
 

@@ -45,7 +45,8 @@ The first attended sample's profile:
         --max-artifact-bytes 262144 --max-console-bytes 262144 --output P
 
 Exit codes: 0 only for ``terminal: complete``; 3 when a budget, the wall or an
-output cap stopped the run (held, resumable, nothing sold as complete); 1 for
+output cap stopped the run (held, resumable, nothing sold as complete), or the
+loop's bounded shutdown left work running (``shutdown.clean`` false); 1 for
 every other terminal (partial with owed outcomes, rate_limited, cooldown,
 cooldown_unknown, failed); 2 for a refused invocation. None of them is
 permission to retry.
@@ -195,6 +196,7 @@ def _run(args, console, service_factory, session_factory) -> int:
     # half writes the receipt. Work stops at the wall's work deadline.
     planner_end = wall.deadline - wall.reserve / 2
     progress: dict = {}
+    shutdown: dict = {}
     extra = {}
     if service_factory is not None:
         extra["service_factory"] = service_factory
@@ -220,10 +222,15 @@ def _run(args, console, service_factory, session_factory) -> int:
                 wall=wall,
                 progress=progress,
                 cancel_until=planner_end,
-            )
+            ),
+            close_by=planner_end,
+            shutdown=shutdown,
         )
     except bounds.WallExpired as e:
         report = _wall_receipt(progress, e.phase, budget)
+    # What the loop's bounded shutdown abandoned is on the receipt; work left
+    # running is never a complete run (``_emit`` holds it).
+    report["shutdown"] = shutdown
     return _emit(args, wall, report)
 
 
@@ -256,7 +263,7 @@ def _emit(args, wall, report: dict) -> int:
     from app.services import kalshi_archive_bounds as bounds
 
     code = EXIT_COMPLETE if report.get("terminal") == "complete" else EXIT_OTHER
-    if report.get("budget_stop"):
+    if report.get("budget_stop") or not (report.get("shutdown") or {}).get("clean", True):
         code = EXIT_HELD
     summary = {k: v for k, v in report.items() if k not in ("plans", "continuation")}
     summary["continuation_sealed"] = (
@@ -281,11 +288,13 @@ def _emit(args, wall, report: dict) -> int:
         code = EXIT_HELD
     except bounds.WallExpired as e:
         # Past the wall: no artifact, but the operator still gets the receipt.
-        summary.update(
-            artifact=None,
-            artifact_refused=f"wall_expired:{e.phase}",
-            budget_stop=summary.get("budget_stop") or "wall",
-        )
+        summary.pop("artifact_bytes", None)
+        if args.output and os.path.lexists(args.output):
+            # Linked whole just before the alarm (it never pre-exists: refused).
+            summary.update(artifact=args.output, artifact_written_at_wall=True)
+        else:
+            summary.update(artifact=None, artifact_refused=f"wall_expired:{e.phase}")
+        summary["budget_stop"] = summary.get("budget_stop") or "wall"
         print(json.dumps(summary, indent=2, default=str))
         return EXIT_HELD
     print(text)
