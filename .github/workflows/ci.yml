@@ -4306,7 +4306,7 @@ jobs:
         # undo puts back only rows still holding this apply's whole after-image —
         # never a control, a later writer, or a row whose marker an undo closed.
         # The witnesses file keeps Root's and CERT-4149's counterexamples verbatim.
-        if: matrix.group == 'shared-tail'
+        if: matrix.group == 'shared-tail' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_kalshi_archive_grades_1853_pg.py \
@@ -4343,7 +4343,7 @@ jobs:
         # that walk over the RETAINED venue bytes with its writes recorded, then
         # applies them by whole-row CAS on frozen before-images; the undo touches
         # only rows still holding the apply's whole after-image.
-        if: matrix.group == 'shared-tail'
+        if: matrix.group == 'shared-tail' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_kalshi_archived_nine_repair_2722_pg.py \
@@ -7581,7 +7581,7 @@ jobs:
         # PUBLISHED. Runs the curve's events_sql (extracted by AST) beside the
         # sentinel's events scan over the same typed rows, read-only, and needs
         # the published n, winners and probability sum to agree case by case.
-        if: matrix.group == 'shared-suffix'
+        if: matrix.group == 'shared-suffix' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_calibration_sentinel_events_parity_1911_pg.py \

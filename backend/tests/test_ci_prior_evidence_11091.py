@@ -527,3 +527,35 @@ def test_new_datagolf_execution_unit_cannot_borrow_the_shared_tail_green(unpaid)
         step["conclusion"] = "skipped"
     with pytest.raises(ValueError, match="unpaid executing step"):
         decide(api)
+
+
+@pytest.mark.parametrize(
+    "job_name,unit_name",
+    [
+        (
+            "database-integration (shared-tail)",
+            "#1853 a settled Kalshi event's archived legs are graded by an attended, undoable repair (real Postgres)",
+        ),
+        (
+            "database-integration (shared-tail)",
+            "#2722 the nine archived Kalshi questions settle through an attended, undoable first repair (real Postgres)",
+        ),
+        (
+            "database-integration (shared-suffix)",
+            "#1911 the sentinel's events published aggregate is the curve's own admission (real Postgres)",
+        ),
+    ],
+)
+@pytest.mark.parametrize("unpaid", ["missing", "skipped"])
+def test_new_master_execution_units_require_their_own_complete_proof(
+    job_name, unit_name, unpaid
+):
+    api = fixture()
+    job = next(j for j in api.jobs if j["name"] == job_name)
+    step = next(s for s in job["steps"] if s["name"] == unit_name)
+    if unpaid == "missing":
+        job["steps"].remove(step)
+    else:
+        step["conclusion"] = "skipped"
+    with pytest.raises(ValueError, match="unpaid executing step"):
+        decide(api)
