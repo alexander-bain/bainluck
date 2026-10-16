@@ -7598,7 +7598,7 @@ jobs:
         # Python oracle must return identical rows over every leg multiset up to
         # three legs x every market-filter shape, and the never-graded work
         # selection must page exactly the ids the census counts.
-        if: matrix.group == 'shared-suffix'
+        if: matrix.group == 'shared-suffix' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_pm_never_graded_census_equivalence_1912_pg.py \
