@@ -1,0 +1,148 @@
+{
+  "contract": "10238.v1 + #9483 pregame_reading",
+  "note": "synthetic options built by the producer at source_sha with the route's own decision functions; ids echo /events/15320337 Over 206.5 for shape only \u2014 NOT a production read, NOT proof a production pin exists",
+  "options": {
+    "settled_lost_no_pin": {
+      "comparison": {
+        "baseline": null,
+        "delta_points": null,
+        "latest": null,
+        "reason": "not_quoted",
+        "state": "unavailable"
+      },
+      "contributor_outcome_ids": [
+        240505185
+      ],
+      "label": "Over 206.5",
+      "market_ids": [
+        63856441
+      ],
+      "option_key": "o:240505185",
+      "pregame_reading": {
+        "basis": null,
+        "observed_at": null,
+        "outcome_id": null,
+        "probability": null,
+        "reason": "no_pregame_pin",
+        "state": "unavailable"
+      },
+      "published": {
+        "basis": "result",
+        "observed_at": "2026-10-02T20:00:00+00:00",
+        "source": "kalshi",
+        "value": null,
+        "value_state": "result"
+      },
+      "result": {
+        "evidence_kind": "verdict_is_provable",
+        "state": "lost"
+      },
+      "side": "over",
+      "source_evidence": [
+        {
+          "leg_side": "over",
+          "market_id": 63856441,
+          "observed_at": "2026-10-02T20:00:00+00:00",
+          "outcome_id": 240505185,
+          "raw_probability": 0.0,
+          "source": "kalshi"
+        }
+      ]
+    },
+    "settled_lost_pin_after_start": {
+      "comparison": {
+        "baseline": null,
+        "delta_points": null,
+        "latest": null,
+        "reason": "not_quoted",
+        "state": "unavailable"
+      },
+      "contributor_outcome_ids": [
+        240505185
+      ],
+      "label": "Over 206.5",
+      "market_ids": [
+        63856441
+      ],
+      "option_key": "o:240505185",
+      "pregame_reading": {
+        "basis": null,
+        "observed_at": null,
+        "outcome_id": null,
+        "probability": null,
+        "reason": "baseline_basis_opening_line",
+        "state": "unavailable"
+      },
+      "published": {
+        "basis": "result",
+        "observed_at": "2026-10-02T20:00:00+00:00",
+        "source": "kalshi",
+        "value": null,
+        "value_state": "result"
+      },
+      "result": {
+        "evidence_kind": "verdict_is_provable",
+        "state": "lost"
+      },
+      "side": "over",
+      "source_evidence": [
+        {
+          "leg_side": "over",
+          "market_id": 63856441,
+          "observed_at": "2026-10-02T20:00:00+00:00",
+          "outcome_id": 240505185,
+          "raw_probability": 0.0,
+          "source": "kalshi"
+        }
+      ]
+    },
+    "settled_lost_qualified_pin": {
+      "comparison": {
+        "baseline": null,
+        "delta_points": null,
+        "latest": null,
+        "reason": "not_quoted",
+        "state": "unavailable"
+      },
+      "contributor_outcome_ids": [
+        240505185
+      ],
+      "label": "Over 206.5",
+      "market_ids": [
+        63856441
+      ],
+      "option_key": "o:240505185",
+      "pregame_reading": {
+        "basis": "pregame_pin",
+        "observed_at": "2026-10-02T18:00:00+00:00",
+        "outcome_id": 240505185,
+        "probability": 0.825,
+        "reason": null,
+        "state": "available"
+      },
+      "published": {
+        "basis": "result",
+        "observed_at": "2026-10-02T20:00:00+00:00",
+        "source": "kalshi",
+        "value": null,
+        "value_state": "result"
+      },
+      "result": {
+        "evidence_kind": "verdict_is_provable",
+        "state": "lost"
+      },
+      "side": "over",
+      "source_evidence": [
+        {
+          "leg_side": "over",
+          "market_id": 63856441,
+          "observed_at": "2026-10-02T20:00:00+00:00",
+          "outcome_id": 240505185,
+          "raw_probability": 0.0,
+          "source": "kalshi"
+        }
+      ]
+    }
+  },
+  "source_sha": "87d1b2f4d84fe92ca455c9fa50e05db4e40d1984"
+}

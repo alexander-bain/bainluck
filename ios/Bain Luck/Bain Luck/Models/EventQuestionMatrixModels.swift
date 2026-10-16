@@ -202,6 +202,23 @@ nonisolated struct QuestionMatrixOption: Decodable, Equatable, Identifiable, Sen
     var sourceEvidence: [QuestionMatrixSourceEvidence]? = nil
     var result: QuestionMatrixResult? = nil
     var comparison: QuestionMatrixComparison? = nil
+    /// #9483 — the option's own stored pregame pin, read independently of
+    /// the current quote, so a settled option can still name its pregame
+    /// chance (producer PR #11125). Game options only; absent on older servers
+    /// and unreadable shapes decode to nil.
+    @LenientDecode var pregameReading: QuestionMatrixPregameReading? = nil
+}
+
+/// `pregame_reading`: `available` fills probability, observed_at, basis and
+/// outcome_id; `unavailable` leaves them null and names the first failing
+/// check in `reason`. Never a current quote, a settled 0/1 or an opening line.
+nonisolated struct QuestionMatrixPregameReading: Decodable, Equatable, Sendable {
+    let state: String
+    let reason: String?
+    let probability: Double?
+    let observedAt: String?
+    let basis: String?
+    let outcomeId: Int?
 }
 
 nonisolated struct QuestionMatrixPublished: Decodable, Equatable, Sendable {

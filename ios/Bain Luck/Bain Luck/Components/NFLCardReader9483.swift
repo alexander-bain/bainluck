@@ -41,8 +41,7 @@ enum NFLCardReaderHold9483 {
         return held.map { card in
             guard case .finish(let finish) = card, finish.projectedNow != nil,
                   liveFinish?.projectedNow == nil else { return card.current(at: now) }
-            return .finish(NFLFinishCard9483(phase: finish.phase, pregame: finish.pregame,
-                                             projectedNow: nil, final: finish.final))
+            return .finish(finish.withoutProjectedNow)
         }
     }
 
@@ -69,6 +68,18 @@ enum NFLCardReaderHold9483 {
         let before = old.indices.filter { $0 < start }.reversed()
         for index in after + before where new.contains(old[index]) { return old[index] }
         return new.first
+    }
+
+    /// The served option behind an NBA ladder line, frozen inside the card
+    /// that shows it — so Details read what the held card holds, never the
+    /// live matrix, until Refresh.
+    static func ladderDetail(_ optionKey: String, in cards: [NFLEventCard9483]) -> NBALadderCard9483.Detail? {
+        for card in cards {
+            guard case .ladder(let ladder) = card,
+                  let point = ladder.points.first(where: { $0.optionKey == optionKey }) else { continue }
+            return point.detail
+        }
+        return nil
     }
 
     /// The original rows the cards' lines point at, by row id — what Details
@@ -158,7 +169,14 @@ struct NFLCardReader9483: View {
         .sheet(item: Binding(
             get: { state.detailsRowID.map(IdentifiedRow.init) },
             set: { state.detailsRowID = $0?.id })) { item in
-            NFLRowDetails9483(prop: rows[item.id])
+            // A prop line's original is in the held rows; an NBA ladder
+            // line's original is frozen inside its held card.
+            if rows[item.id] == nil,
+               let detail = NFLCardReaderHold9483.ladderDetail(item.id, in: heldCards.isEmpty ? liveCards : heldCards) {
+                NBAOptionDetails9483(detail: detail)
+            } else {
+                NFLRowDetails9483(prop: rows[item.id])
+            }
         }
     }
 
