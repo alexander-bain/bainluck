@@ -24,7 +24,12 @@ import pytest
 from app.routes.feed import _score_events
 from app.utils.feed_scoring import format_event_data
 from app.utils.personalization import PersonalizationContext
-from app.utils.scheduled_start import SCHEDULE_START_SOURCES, start_is_from_schedule
+from app.utils.proven_duplicates import FoldedBlendView
+from app.utils.scheduled_start import (
+    SCHEDULE_START_SOURCES,
+    loaded_commence_time_source,
+    start_is_from_schedule,
+)
 
 NOW = datetime(2026, 10, 16, 21, 0, 0, tzinfo=timezone.utc)
 
@@ -168,6 +173,72 @@ async def test_an_unloaded_column_serves_false_without_a_lazy_load():
     assert (
         cards[202].get("start_is_from_schedule") is True
     ), "control: the healthy sibling must still serve True (gotcha #42)"
+
+
+async def _price_cards(views):
+    """The `/api/feed/price-cards` door: `feed_prices._event_cards` hands the
+    scorer `FoldedBlendView`s, never bare rows."""
+    with patch(
+        "app.routes.feed._get_championship_probabilities",
+        new=AsyncMock(return_value={}),
+    ):
+        items = await _score_events(
+            _mock_db([]),
+            NOW,
+            None,
+            PersonalizationContext(),
+            price_refresh_events=views,
+        )
+    cards = {i["data"]["id"]: i["data"] for i in items if i["type"] == "event"}
+    assert cards, "no price card was built — the test proves nothing as written"
+    return cards
+
+
+def _view(row):
+    return FoldedBlendView(row, row.win_probability_sources)
+
+
+@pytest.mark.asyncio
+async def test_the_price_refresh_door_serves_the_same_provenance_as_the_feed():
+    """lane1b's B1 on PR #11145: the refresh replaced the card wholesale and the
+    Calendar item vanished from a Discover game after its first price update."""
+    espn, kalshi = _event(301, commence_time_source="espn"), _event(
+        302, commence_time_source="kalshi"
+    )
+    cards = await _price_cards([_view(espn), _view(kalshi)])
+    assert cards[301].get("start_is_from_schedule") is True, (
+        "the price refresh served False for an ESPN-started game — iOS adopts "
+        "that card and the Calendar item disappears"
+    )
+    assert (
+        cards[302].get("start_is_from_schedule") is False
+    ), "control: a Kalshi time behind the same view must still serve False"
+
+
+@pytest.mark.asyncio
+async def test_an_unloaded_column_behind_the_view_serves_false_without_a_lazy_load():
+    row = _event(303, commence_time_source=_UNLOADED)
+    type(row).commence_time_source = PropertyMock(
+        side_effect=AssertionError("the serializer triggered a lazy load")
+    )
+    cards = await _price_cards(
+        [_view(row), _view(_event(304, commence_time_source="espn"))]
+    )
+    assert cards[303].get("start_is_from_schedule") is False
+    assert cards[304].get("start_is_from_schedule") is True
+
+
+def test_the_loaded_read_looks_through_views_and_nothing_else():
+    row = _event(305, commence_time_source="statpal")
+    assert loaded_commence_time_source(row) == "statpal"
+    assert loaded_commence_time_source(_view(row)) == "statpal"
+    assert loaded_commence_time_source(_view(_view(row))) == "statpal"
+    assert (
+        loaded_commence_time_source(_view(_event(306, commence_time_source=None)))
+        is None
+    )
+    assert loaded_commence_time_source(None) is None
+    assert loaded_commence_time_source(object()) is None, "no __dict__ reads as None"
 
 
 @pytest.mark.parametrize("source", sorted(SCHEDULE_START_SOURCES))
