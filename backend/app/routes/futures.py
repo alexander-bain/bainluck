@@ -7353,6 +7353,85 @@ def _capture_lines(capture_rows: list) -> list[list[datetime]]:
     return list(by_line.values())
 
 
+#: What `venue_history.fill_trigger` adds when #11162's per-line rule asked.
+_LEG_ABSENT_BASIS = "fillable_line_absent_beside_dense_sibling"
+
+
+def _leg_absent_beside_dense_sibling(
+    venue: "_GenericVenueHistory", market, capture_rows: list
+) -> bool:
+    """#11162 — is one fillable line missing where its sibling was observed?
+
+    The ROUTE half of `generic_market_history.leg_absent_beside_dense_sibling`,
+    and the one place both chart readers ask it, so `/history` and
+    `/probability-timeline` cannot reach different answers from the same
+    captures. Passed to the planner as a COARSE-class reason, never as thin: it
+    spends coarseness's share of the hour, so an empty chart is never queued
+    behind a merely gapped one, and on a warm bank — which the planner refreshes
+    on its own clock whatever the flags say — it changes nothing at all.
+
+    🔴 AN ANSWERED ATTEMPT IS NOT ASKED AGAIN ON THIS RULE. Once a fill reached
+    the venue for the bank this read holds, a line still absent is what the venue
+    had to say: re-asking on a hole the venue could not fill is the quiet/purged
+    contract asked every three hours for ever. A FAILED attempt (degraded, or a
+    fetch/window error) answered nothing and stays eligible, the same split the
+    settled-empty ceiling draws (`attempt_reached_the_venue`).
+
+    Never raises: a chart is never failed by deciding whether to refill it.
+    """
+    try:
+        from app.tasks.generic_market_history_fill import (
+            _lifetime_hours,
+            attempt_reached_the_venue,
+            fillable_outcomes,
+        )
+        from app.utils.generic_market_history import (
+            declared_hole_grains,
+            leg_absent_beside_dense_sibling,
+        )
+
+        # The same gate `_consider_generic_history_fill` opens with: a market no
+        # venue can fill, or a cache that could not be read, asks nothing.
+        if not venue.applicable or venue.state == "unavailable":
+            return False
+        payload = venue.payload
+        if payload is not None and attempt_reached_the_venue(payload):
+            return False
+        now = datetime.now(timezone.utc)
+        # The SAME plan the fill would run for a market of this age (#11162 F1):
+        # a recent hole is judged at the fine tier's grain, an old one at the
+        # whole-life tier's, never at one grain for both.
+        grains = declared_hole_grains(
+            getattr(market, "source", None), _lifetime_hours(market, now)
+        )
+        if grains is None:
+            return False
+        fillable = fillable_outcomes(market)
+        by_line: dict[int, list[datetime]] = defaultdict(list)
+        for row in capture_rows:
+            stamp = getattr(row, "captured_at", None)
+            # Captures only. A settlement marker is a decoration on a settled
+            # line, not an observation of trading.
+            if stamp is None or getattr(row, "bookmaker", None) == "settlement":
+                continue
+            by_line[row.outcome_id].append(stamp)
+        return leg_absent_beside_dense_sibling(
+            by_line,
+            fillable_lines={o.id for o in fillable},
+            graded_lines={o.id for o in fillable if getattr(o, "is_winner", None) is not None},
+            min_reference=_VENUE_FILL_THIN_CAPTURES,
+            declared_grains=grains,
+            window_end=now,
+        )
+    # (Load bearing for `scan_mutation_residue.py` Pass B: a bare `)` directly
+    # above this handler reproduces `typeahead_outcome_arm_mutations:M2-NO-LIMIT`
+    # verbatim — the same collision noted at `_consider_generic_history_fill`.)
+    except Exception as exc:  # noqa: BLE001 — eligibility never fails a chart
+        logger.warning("generic venue history: leg coverage check failed for %s: %s",
+                       getattr(market, "id", None), str(exc)[:200])
+        return False
+
+
 def _plan_and_dispatch_generic_history_fill(
     market, charted_outcomes: list, payload: Optional[dict], chart_is_thin: bool,
     chart_is_coarse: bool = False,
@@ -7678,13 +7757,17 @@ async def get_probability_timeline(
     _coarse = captures_are_coarse(
         _capture_lines(snapshots), window_hours=actual_hours
     )
+    # #11162 — OR one fillable line is absent where a dense sibling was observed:
+    # both questions above read the chart through its densest part.
+    _leg_absent = _leg_absent_beside_dense_sibling(venue, market, snapshots)
     venue.thin_basis = (
         f"captures_in_requested_window<{_VENUE_FILL_THIN_CAPTURES}"
         + (" or captures_coarser_than_fine_tier" if _coarse else "")
+        + (f" or {_LEG_ABSENT_BASIS}" if _leg_absent else "")
     )
     await _consider_generic_history_fill(
         venue, market, charted_outcomes,
-        chart_is_thin=_thin, chart_is_coarse=_coarse,
+        chart_is_thin=_thin, chart_is_coarse=_coarse or _leg_absent,
     )
 
     # Auto-extend for sparse markets (same logic as /history endpoint). Skipped
@@ -8882,12 +8965,17 @@ async def get_futures_history(
     )
     # #7547 — the same two questions as the timeline route above: too FEW points,
     # or enough points spaced too COARSELY to carry the movement the venue holds.
+    # #11162 — and the same third question, from the same helper, so the two
+    # readers cannot disagree about one market's captures.
+    _leg_absent = _leg_absent_beside_dense_sibling(venue, market, snapshots)
+    if _leg_absent:
+        venue.thin_basis = _LEG_ABSENT_BASIS
     await _consider_generic_history_fill(
         venue, market, charted_outcomes,
         chart_is_thin=len(snapshots) < _EXTEND_TIERS[0][0],
         chart_is_coarse=captures_are_coarse(
             _capture_lines(snapshots), window_hours=actual_hours
-        ),
+        ) or _leg_absent,
     )
 
     # Auto-extend if sparse
