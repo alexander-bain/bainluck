@@ -1,6 +1,7 @@
 import type { ApiError } from './api';
 import type { FuturesMarketDetailResponse, FuturesHistoryResponse } from './types';
 import { effectiveRepresentation } from './verifiedTitleDetail';
+import { FULL_HISTORY_RANGE, servedFullRange, type HistoryRangeRequest } from './historyRange';
 
 // PostgreSQL observation clocks retain microseconds. Date.parse alone truncates
 // distinct observations within the same millisecond into an apparent tie.
@@ -95,6 +96,32 @@ export function createFuturesDetailReconciler(initial: FuturesMarketDetailRespon
       return held;
     },
   };
+}
+
+// #11186: the range each body THIS client requested itself. Private; never
+// written onto the served body, so no wire field is ever fabricated.
+const requestedRanges = new WeakMap<FuturesHistoryResponse, HistoryRangeRequest | null>();
+
+/** Record the range a fresh read asked for; returns the same body. */
+export function stampHistoryRequest(history: FuturesHistoryResponse, range: HistoryRangeRequest | undefined): FuturesHistoryResponse {
+  requestedRanges.set(history, range ?? null);
+  return history;
+}
+
+/** Whether a held or parent body answers THIS request: market, hours AND
+ * requested range. 1M and All share 720 hours on a market younger than 30
+ * days and differ only by `range=full`. Our own stamp decides first; else the
+ * server's `history_range.requested`, which every full answer carries and no
+ * other answer does. Its absence never proves a full parent: such a body is
+ * only ever an hours-window answer (a server that ignores the option serves
+ * exactly that window), so it can parent the hours-only request alone. */
+export function historyAnswersRequest(
+  history: FuturesHistoryResponse | undefined, marketId: number, hours: number, range: HistoryRangeRequest | undefined,
+): history is FuturesHistoryResponse {
+  if (history?.market_id !== marketId || history.hours !== hours) return false;
+  const own = requestedRanges.get(history);
+  if (own !== undefined) return own === (range ?? null);
+  return servedFullRange(history) === (range === FULL_HISTORY_RANGE);
 }
 
 /** Keep an already observed history tail when a delayed read regresses it.

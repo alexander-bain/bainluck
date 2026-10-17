@@ -56,6 +56,7 @@ import type {
 } from "./types";
 import { getDiscoverSessionId } from "./discoverInteractions";
 import { VERIFIED_TITLE, sanitizeVerifiedTitleDetail } from "./verifiedTitleDetail";
+import { stampHistoryRequest } from "./futuresDetailStream";
 import {
   formatProbabilityPercent,
   type ProbabilityFormatOptions,
@@ -1078,10 +1079,19 @@ export async function fetchFuturesHistory(
   if (options?.range) params.set("range", options.range);
   if (options?.fresh) params.set("fresh", "true");
 
-  return apiFetch<FuturesHistoryResponse>(
+  const body = await apiFetch<FuturesHistoryResponse>(
     `/api/futures/${marketId}/history?${params.toString()}`,
     options?.fresh ? { cache: "no-store", maxRetries: 0, signal: options.signal } : undefined
   );
+  // #11186: privately record the range THIS request asked for, so a page body
+  // from a server that sends no `history_range` is still known to answer it
+  // (1M and All share hours on a young market). Only this request's answer is
+  // stamped: same market and hours, and no served block naming another range.
+  const served = body?.history_range;
+  if (body?.market_id === marketId && body.hours === hours && (served == null || served.requested === options?.range)) {
+    stampHistoryRequest(body, options?.range);
+  }
+  return body;
 }
 
 /**
