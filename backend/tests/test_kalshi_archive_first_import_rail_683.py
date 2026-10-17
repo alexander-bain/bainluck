@@ -941,6 +941,30 @@ def _never_called():
     raise AssertionError("no session may open before the plan is admitted")
 
 
+def _reviewed(report, **over):
+    """A sealed input-versions document for every importable outcome of ``report``."""
+    plans = imp.verify_plan_document(report, report["plan_digest"])
+    outcomes = [
+        {
+            "outcome_id": int(p["outcome_id"]), "ticker": p["ticker"],
+            "event_ticker": p["event_ticker"], "market_id": 10, "event_id": 20,
+            "input_fingerprint": p["input_fingerprint"],
+            "outcome_xmin": "101", "market_xmin": "102", "event_xmin": "103",
+            **over,
+        }
+        for p in plans
+    ]
+    return imp.seal_input_versions(report["plan_digest"], outcomes)
+
+
+def _attended_argv(tmp_path, report):
+    """The CLI arguments an attended ``--write`` now requires."""
+    doc = _reviewed(report)
+    path = tmp_path / "V.json"
+    path.write_text(json.dumps(doc))
+    return ["--input-versions", str(path), "--expected-input-digest", doc["digest"]]
+
+
 class TestImportAdmission:
     async def test_a_plan_with_more_outcomes_than_named_is_refused_before_any_session(self):
         report = await _a_plan()
@@ -1002,6 +1026,198 @@ class TestImportAdmission:
         assert info.value.phase == "verify_plan" and progress["phase"] == "verify_plan"
 
 
+class _LockedRowSession:
+    """Answers only the write path's two locking reads; any later statement fails.
+
+    So a refusal that reaches no other statement (and no COMMIT) is proven to
+    come straight after the locks, before any evidence or interval write.
+    """
+
+    def __init__(self, head, event):
+        self.head, self.event, self.seen, self.committed = head, event, [], False
+
+    async def execute(self, clause, params=None):
+        sql = str(clause)
+        self.seen.append(sql)
+        if "FOR SHARE OF fo, fm" in sql:
+            return SimpleNamespace(first=lambda: self.head)
+        if "FROM events e" in sql and "FOR SHARE" in sql:
+            return SimpleNamespace(first=lambda: self.event)
+        raise AssertionError(f"a refused outcome reached {sql[:60]}")
+
+    async def commit(self):
+        self.committed = True
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *exc):
+        return False
+
+
+def _locked(report, **over):
+    """The stored row exactly as reviewed by :func:`_reviewed` (ids 501/900)."""
+    row = _row(1)
+    head = SimpleNamespace(
+        outcome_id=1, ticker=row.ticker, event_ticker=row.event_ticker,
+        market_id=501, event_id=900, resolution_source=None,
+        outcome_xmin="101", market_xmin="102",
+    )
+    event = SimpleNamespace(
+        commence_time=row.commence_time, commence_time_source=row.commence_time_source,
+        created_at=row.created_at, completed_at=None, event_xmin="103",
+    )
+    for k, v in over.items():
+        setattr(event if k in vars(event) else head, k, v)
+    return head, event
+
+
+class TestAttendedInputFence:
+    """The reviewed identity + row-version document, refused loose or drifted."""
+
+    async def test_the_attended_write_without_a_document_is_refused_before_any_session(self):
+        report = await _a_plan()
+        for doc, digest in ((None, None), (_reviewed(report), None), (None, "x")):
+            with pytest.raises(imp.PlanRefused) as info:
+                await imp.apply_archive_plan(
+                    report, expected_digest=report["plan_digest"], write=True,
+                    input_versions=doc, expected_input_digest=digest,
+                    require_input_versions=True, session_factory=_never_called,
+                )
+            assert info.value.reason == "input_versions_missing"
+
+    @pytest.mark.parametrize(
+        "edit,reason",
+        [
+            (lambda d: d.update(kind="other"), "input_versions_malformed"),
+            (lambda d: d.update(extra=1), "input_versions_malformed"),
+            (lambda d: d["outcomes"][0].update(outcome_xmin="1"),
+             "input_versions_digest_mismatch"),
+        ],
+    )
+    async def test_an_unsealed_or_edited_document_is_refused(self, edit, reason):
+        report = await _a_plan()
+        doc = _reviewed(report)
+        digest = doc["digest"]
+        edit(doc)
+        with pytest.raises(imp.PlanRefused) as info:
+            imp.verify_input_versions(
+                doc, digest, imp.verify_plan_document(report, report["plan_digest"]),
+                report["plan_digest"],
+            )
+        assert info.value.reason == reason
+
+    @pytest.mark.parametrize(
+        "over,reason",
+        [
+            ({"outcome_xmin": 101}, "input_versions_malformed:xmin"),
+            ({"market_xmin": ""}, "input_versions_malformed:xmin"),
+            ({"outcome_id": True}, "input_versions_malformed:ids"),
+            ({"input_fingerprint": "A" * 64}, "input_versions_malformed:input_fingerprint"),
+            ({"event_xmin": None}, "input_versions_malformed:event"),
+            ({"event_id": None}, "input_versions_malformed:event_xmin_without_event"),
+            ({"ticker": "KX-OTHER"}, "input_versions_identity_mismatch:1"),
+            ({"input_fingerprint": "0" * 64}, "input_versions_identity_mismatch:1"),
+        ],
+    )
+    async def test_a_sealed_document_that_is_malformed_or_names_another_outcome_is_refused(
+        self, over, reason
+    ):
+        report = await _a_plan()
+        doc = _reviewed(report, **over)
+        with pytest.raises(imp.PlanRefused) as info:
+            imp.verify_input_versions(
+                doc, doc["digest"], imp.verify_plan_document(report, report["plan_digest"]),
+                report["plan_digest"],
+            )
+        assert info.value.reason == reason
+
+    async def test_the_document_names_exactly_the_plans_outcomes_and_its_digest(self):
+        report = await _a_plan()
+        plans = imp.verify_plan_document(report, report["plan_digest"])
+        good = _reviewed(report)
+        assert imp.verify_input_versions(good, good["digest"], plans, report["plan_digest"])
+        extra = imp.seal_input_versions(
+            report["plan_digest"], good["outcomes"] + [dict(good["outcomes"][0], outcome_id=2)]
+        )
+        twice = imp.seal_input_versions(report["plan_digest"], good["outcomes"] * 2)
+        none = imp.seal_input_versions(report["plan_digest"], [])
+        other = imp.seal_input_versions("f" * 64, good["outcomes"])
+        for doc, reason in (
+            (extra, "input_versions_outcomes_mismatch"),
+            (twice, "input_versions_duplicate_outcome"),
+            (none, "input_versions_outcomes_mismatch"),
+            (other, "input_versions_plan_mismatch"),
+        ):
+            with pytest.raises(imp.PlanRefused) as info:
+                imp.verify_input_versions(doc, doc["digest"], plans, report["plan_digest"])
+            assert info.value.reason == reason, reason
+        with pytest.raises(imp.PlanRefused) as info:
+            imp.verify_input_versions(good, "0" * 64, plans, report["plan_digest"])
+        assert info.value.reason == "expected_input_digest_mismatch"
+
+    @pytest.mark.parametrize(
+        "over,reason",
+        [
+            ({}, None),
+            ({"outcome_xmin": "999"}, "input_version_drift:outcome"),
+            ({"market_xmin": "999"}, "input_version_drift:market"),
+            ({"event_xmin": "999"}, "input_version_drift:event"),
+            ({"market_id": 777}, "input_identity_drift"),
+            ({"completed_at": TIPOFF}, "input_drift"),
+        ],
+    )
+    async def test_the_fence_compares_the_locked_row_and_writes_nothing_on_drift(
+        self, over, reason
+    ):
+        report = await _a_plan()
+        doc = _reviewed(report, market_id=501, event_id=900)
+        session = _LockedRowSession(*_locked(report, **over))
+        out = await imp._apply_outcome(
+            report["plans"][0], archive_cutoff=report["archive_cutoff"], write=True,
+            import_id=41, session_factory=lambda: session,
+            expected_input=doc["outcomes"][0],
+        ) if reason else None
+        if reason is None:
+            row = await imp._locked_input(session, 1)
+            assert imp.input_version_refusal(row, doc["outcomes"][0]) is None
+            return
+        assert out["refused"] == reason
+        assert len(session.seen) == 2 and not session.committed
+
+    async def test_a_present_event_that_is_gone_is_refused_and_absent_is_never_a_wildcard(self):
+        report = await _a_plan()
+        expected = _reviewed(report, market_id=501, event_id=900)["outcomes"][0]
+        head, event = _locked(report)
+        gone = await imp._locked_input(_LockedRowSession(head, None), 1)
+        assert imp.input_version_refusal(gone, expected) == "input_event_missing"
+        no_event = dict(expected, event_id=None, event_xmin=None)
+        present = await imp._locked_input(_LockedRowSession(head, event), 1)
+        assert imp.input_version_refusal(present, no_event) == "input_identity_drift"
+
+    def test_the_cli_write_requires_the_document_and_dry_run_does_not(self, tmp_path, capsys):
+        report = asyncio.run(_a_plan())
+        plan = tmp_path / "P.json"
+        plan.write_text(json.dumps(report))
+        mod = _load_script("kalshi_archive_import.py")
+        base = ["apply", "--plan", str(plan), "--expected-digest", report["plan_digest"],
+                "--max-outcomes", "1", "--max-points", "26", "--deadline", "5"]
+
+        def refuse():
+            raise AssertionError("a refused attended write opened a session")
+
+        code = mod.main(base + ["--write"], session_factory=refuse)
+        assert code == 2 and "REFUSED: input_versions_missing" in capsys.readouterr().err
+        doc = _reviewed(report)
+        (tmp_path / "V.json").write_text(json.dumps(doc))
+        code = mod.main(
+            base + ["--input-versions", str(tmp_path / "V.json"),
+                    "--expected-input-digest", "0" * 64, "--write"],
+            session_factory=refuse,
+        )
+        assert code == 2 and "expected_input_digest_mismatch" in capsys.readouterr().err
+
+
 class _CommitSession:
     """Answers the apply's first two steps; COMMIT behaves as ``on_commit`` says."""
 
@@ -1057,7 +1273,7 @@ class TestCommitAcknowledgement:
             [
                 "apply", "--plan", str(plan), "--expected-digest", report["plan_digest"],
                 "--max-outcomes", "1", "--max-points", "26", "--deadline", "0.8",
-                "--write", "--output", str(out),
+                *_attended_argv(tmp_path, report), "--write", "--output", str(out),
             ],
             session_factory=_factory(_CommitSession(hang)),
         )
@@ -1106,7 +1322,7 @@ class TestCommitAcknowledgement:
             [
                 "apply", "--plan", str(plan), "--expected-digest", report["plan_digest"],
                 "--max-outcomes", "1", "--max-points", "26", "--deadline", str(deadline),
-                "--write", "--output", str(out),
+                *_attended_argv(tmp_path, report), "--write", "--output", str(out),
             ],
             session_factory=_factory(_CommitSession(hang)),
         )
@@ -1273,7 +1489,7 @@ def _hanging_apply(tmp_path, deadline):
     argv = [
         "apply", "--plan", str(plan), "--expected-digest", report["plan_digest"],
         "--max-outcomes", "1", "--max-points", "26", "--deadline", str(deadline),
-        "--write", "--output", str(tmp_path / "R.json"),
+        *_attended_argv(tmp_path, report), "--write", "--output", str(tmp_path / "R.json"),
     ]
     return argv, _factory(_CommitSession(hang))
 
@@ -1598,7 +1814,7 @@ def _console_probe(tmp_path, mode: str, *, stalled: bool) -> dict:
     args = [
         "apply", "--plan", str(plan), "--expected-digest", report["plan_digest"],
         "--max-outcomes", "1", "--max-points", "26", "--deadline", str(PROBE_DEADLINE_S),
-        "--write", "--output", str(out),
+        *_attended_argv(tmp_path, report), "--write", "--output", str(out),
     ]
     cmd = [sys.executable, "-c", _CONSOLE_PROBE, str(BACKEND), str(stamp), mode, *args]
     if not stalled:

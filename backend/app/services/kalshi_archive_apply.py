@@ -25,10 +25,22 @@ WHAT AN APPLY CHECKS BEFORE IT WRITES A ROW
    On a write the re-read takes ``FOR SHARE`` on the outcome, market and event
    rows inside the outcome's own transaction (bounded by the archive
    ``lock_timeout``), so those inputs cannot change between the fingerprint
-   check and the commit. What this does NOT do: compare row versions with the
-   plan. A non-fingerprint column may have changed since planning; the
-   fingerprint is a field comparison, not an ``xmin`` fence, and the recorded
-   ``*_xmin`` values are evidence, not a check.
+   check and the commit. The fingerprint alone is a field comparison: a
+   non-fingerprint column may have changed since planning and still pass.
+3a. **The attended path also fences row versions.** The operator's reviewed
+   input-versions document (:func:`seal_input_versions`) names, per outcome,
+   the exact identity, the fingerprint and the ``xmin`` of the outcome, its
+   market and its event (``null`` only when the market has no event). It is
+   sealed, typed by the operator like the plan digest, and bound to the plan
+   digest and to every importable outcome of the plan, so it cannot be paired
+   with another plan. After the ``FOR SHARE`` locks, in the transaction that
+   writes the outcome's evidence and intervals, any identity, fingerprint or
+   version difference refuses that outcome (``input_identity_drift``,
+   ``input_drift``, ``input_version_drift:<row>``, ``input_event_missing``)
+   and nothing of it is written. Drift is never resealed here. The attended
+   CLI write requires this document; without it the run is refused whole.
+   Callers that pass no document keep the fingerprint-only fence
+   (``input_fence: fingerprint_only`` on the receipt).
 4. **Forecast admission is re-decided, never inherited.** The cutoff is
    recomputed from the CURRENT event row. A point stays ``forecast`` only when
    the plan said so AND the apply says so. Any disagreement demotes it to
@@ -376,6 +388,173 @@ def _points(plan: dict) -> list[PlannedPoint]:
     return [PlannedPoint(**p) for p in plan.get("points") or ()]
 
 
+# ── the attended input fence: reviewed identity + row versions ────────────
+
+INPUT_VERSIONS_KIND = "kalshi_archive_input_versions"
+INPUT_VERSIONS_VERSION = 1
+#: One reviewed outcome, exactly these keys. The three ``*_xmin`` are the
+#: ``xmin::text`` row versions as the operator's reviewed read returned them.
+INPUT_VERSION_FIELDS = (
+    "outcome_id",
+    "ticker",
+    "event_ticker",
+    "market_id",
+    "event_id",
+    "input_fingerprint",
+    "outcome_xmin",
+    "market_xmin",
+    "event_xmin",
+)
+_IDENTITY_FIELDS = ("outcome_id", "ticker", "event_ticker", "market_id", "event_id")
+
+
+def input_versions_digest(doc: dict) -> str:
+    """SHA-256 over the document, everything but its own ``digest``."""
+    import hashlib
+
+    blob = json.dumps(
+        {k: v for k, v in doc.items() if k != "digest"},
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    return hashlib.sha256(blob.encode()).hexdigest()
+
+
+def seal_input_versions(plan_digest_value: str, outcomes: list[dict]) -> dict:
+    """The document an operator reviews and types the digest of. Pure, no reads."""
+    doc = {
+        "kind": INPUT_VERSIONS_KIND,
+        "version": INPUT_VERSIONS_VERSION,
+        "plan_digest": plan_digest_value,
+        "outcomes": [{k: o.get(k) for k in INPUT_VERSION_FIELDS} for o in outcomes],
+    }
+    doc["digest"] = input_versions_digest(doc)
+    return doc
+
+
+def _is_id(v: Any) -> bool:
+    return isinstance(v, int) and not isinstance(v, bool) and v > 0
+
+
+def _is_xid(v: Any) -> bool:
+    return isinstance(v, str) and v.isascii() and v.isdigit()
+
+
+def _entry_malformed(entry: Any) -> Optional[str]:
+    if not isinstance(entry, dict) or set(entry) != set(INPUT_VERSION_FIELDS):
+        return "keys"
+    if not _is_id(entry["outcome_id"]) or not _is_id(entry["market_id"]):
+        return "ids"
+    if not (isinstance(entry["ticker"], str) and entry["ticker"]):
+        return "ticker"
+    if not (isinstance(entry["event_ticker"], str) and entry["event_ticker"]):
+        return "event_ticker"
+    fp = entry["input_fingerprint"]
+    if not (
+        isinstance(fp, str) and len(fp) == 64 and all(c in "0123456789abcdef" for c in fp)
+    ):
+        return "input_fingerprint"
+    if not _is_xid(entry["outcome_xmin"]) or not _is_xid(entry["market_xmin"]):
+        return "xmin"
+    # An absent event is stated, never a wildcard: no event id ⇔ no event version.
+    if entry["event_id"] is None:
+        if entry["event_xmin"] is not None:
+            return "event_xmin_without_event"
+    elif not _is_id(entry["event_id"]) or not _is_xid(entry["event_xmin"]):
+        return "event"
+    return None
+
+
+def verify_input_versions(
+    doc: Any, expected_input_digest: Optional[str], plans: list[dict], plan_digest_value: str
+) -> dict[int, dict]:
+    """The reviewed expectation for every importable outcome, once the document is proven.
+
+    Raises :class:`PlanRefused` unless the document is well formed, sealed,
+    typed by the operator, bound to THIS plan's digest, and names exactly the
+    plan's importable outcomes with the plan's own identity and fingerprint.
+    """
+    if doc is None or not expected_input_digest:
+        raise PlanRefused("input_versions_missing")
+    if (
+        not isinstance(doc, dict)
+        or doc.get("kind") != INPUT_VERSIONS_KIND
+        or doc.get("version") != INPUT_VERSIONS_VERSION
+        or set(doc) != {"kind", "version", "plan_digest", "outcomes", "digest"}
+        or not isinstance(doc.get("outcomes"), list)
+    ):
+        raise PlanRefused("input_versions_malformed")
+    recomputed = input_versions_digest(doc)
+    if doc.get("digest") != recomputed:
+        raise PlanRefused("input_versions_digest_mismatch")
+    if expected_input_digest != recomputed:
+        raise PlanRefused("expected_input_digest_mismatch")
+    if doc.get("plan_digest") != plan_digest_value:
+        raise PlanRefused("input_versions_plan_mismatch")
+    expected: dict[int, dict] = {}
+    for entry in doc["outcomes"]:
+        why = _entry_malformed(entry)
+        if why:
+            raise PlanRefused(f"input_versions_malformed:{why}")
+        if entry["outcome_id"] in expected:
+            raise PlanRefused("input_versions_duplicate_outcome")
+        expected[entry["outcome_id"]] = entry
+    planned = [int(plan["outcome_id"]) for plan in plans]
+    if len(set(planned)) != len(planned) or set(planned) != set(expected):
+        raise PlanRefused("input_versions_outcomes_mismatch")
+    for plan in plans:
+        entry = expected[int(plan["outcome_id"])]
+        if (
+            entry["ticker"] != plan.get("ticker")
+            or entry["event_ticker"] != plan.get("event_ticker")
+            or entry["input_fingerprint"] != plan.get("input_fingerprint")
+        ):
+            raise PlanRefused(f"input_versions_identity_mismatch:{entry['outcome_id']}")
+    return expected
+
+
+def _observed_versions(row: Any) -> dict:
+    return {
+        "outcome_id": row.outcome_id,
+        "ticker": row.ticker,
+        "event_ticker": row.event_ticker,
+        "market_id": row.market_id,
+        "event_id": row.event_id,
+        "has_event": bool(row.has_event),
+        "outcome_xmin": row.outcome_xmin,
+        "market_xmin": row.market_xmin,
+        "event_xmin": row.event_xmin,
+    }
+
+
+def input_version_refusal(row: Any, expected: dict) -> Optional[str]:
+    """``None`` when the stored row is exactly the reviewed identity AND versions.
+
+    Identity first (an absent event is part of it: a ``null`` expectation is
+    never a wildcard for a present event, and a reviewed event must still be
+    there), then the fingerprint (the reviewed one, which the document proved
+    equal to the plan's), then the versions: an outcome, market or event row
+    rewritten in ANY column since review has a different ``xmin`` and is
+    refused, whatever its fingerprint says.
+    """
+    if any(getattr(row, k) != expected[k] for k in _IDENTITY_FIELDS):
+        return "input_identity_drift"
+    if expected["event_id"] is None:
+        if row.has_event or row.event_xmin is not None:
+            return "input_identity_drift"
+    elif not row.has_event:
+        return "input_event_missing"
+    if input_fingerprint(row) != expected["input_fingerprint"]:
+        return "input_drift"
+    if row.outcome_xmin != expected["outcome_xmin"]:
+        return "input_version_drift:outcome"
+    if row.market_xmin != expected["market_xmin"]:
+        return "input_version_drift:market"
+    if row.event_xmin != expected["event_xmin"]:
+        return "input_version_drift:event"
+    return None
+
+
 def verify_plan_document(report: Any, expected_digest: str) -> list[dict]:
     """Every outcome plan that has something to import, once the file is proven.
 
@@ -479,6 +658,9 @@ async def apply_archive_plan(
     max_points: Optional[int] = None,
     wall: Any = None,
     progress: Optional[dict] = None,
+    input_versions: Optional[dict] = None,
+    expected_input_digest: Optional[str] = None,
+    require_input_versions: bool = False,
 ) -> dict:
     """Dry-run (default) or apply one reviewed plan. See the module doc.
 
@@ -489,6 +671,11 @@ async def apply_archive_plan(
     ``progress``, when given, IS the receipt: it is filled as the run goes, so
     a caller whose wall expired still holds every acknowledged commit, the
     commit in flight, and the phase it stopped in.
+
+    ``input_versions`` + ``expected_input_digest`` turn on the attended
+    row-version fence (module doc, 3a). ``require_input_versions`` (the
+    attended CLI write) refuses the whole plan when they are absent, so the
+    attended path can never fall back to the fingerprint-only fence.
     """
     result: dict = progress if progress is not None else {}
     result.update(
@@ -512,6 +699,7 @@ async def apply_archive_plan(
             "demoted_to_reader_only": 0,
             "incomplete_reasons": [],
             "status": None,
+            "input_fence": None,
         }
     )
     with _sync(wall, "verify_plan"):
@@ -521,6 +709,16 @@ async def apply_archive_plan(
         raise PlanRefused(f"plan_exceeds_max_outcomes:{len(plans)}>{int(max_outcomes)}")
     if max_points is not None and points_total > int(max_points):
         raise PlanRefused(f"plan_exceeds_max_points:{points_total}>{int(max_points)}")
+    expected_inputs: Optional[dict[int, dict]] = None
+    if require_input_versions or input_versions is not None or expected_input_digest:
+        with _sync(wall, "verify_input_versions"):
+            expected_inputs = verify_input_versions(
+                input_versions, expected_input_digest, plans, report["plan_digest"]
+            )
+        result["input_fence"] = "rowversion"
+        result["input_versions_digest"] = input_versions["digest"]
+    else:
+        result["input_fence"] = "fingerprint_only"
     archive_cutoff = parse_instant(report["archive_cutoff"])
     result["plan_digest"] = report["plan_digest"]
     result["archive_cutoff"] = archive_cutoff.isoformat()
@@ -551,7 +749,15 @@ async def apply_archive_plan(
                             "key": key,
                             "digest": report["plan_digest"],
                             "cutoff": archive_cutoff,
-                            "report": json.dumps({"outcomes_planned": len(plans)}),
+                            "report": json.dumps(
+                                {
+                                    "outcomes_planned": len(plans),
+                                    "input_fence": result["input_fence"],
+                                    "input_versions_digest": result.get(
+                                        "input_versions_digest"
+                                    ),
+                                }
+                            ),
                         },
                     )
                 ).scalar_one()
@@ -578,6 +784,9 @@ async def apply_archive_plan(
                 session_factory=session_factory,
                 ledger=result,
                 wall=wall,
+                expected_input=(
+                    None if expected_inputs is None else expected_inputs[oid]
+                ),
             )
         except Exception as e:  # one outcome never wipes the pass (gotcha #42)
             if _uncertain(result, "outcome", oid):
@@ -701,6 +910,7 @@ def _summary(result: dict) -> dict:
             "gained_history_outcome_ids",
             "zero_snapshot_cohort_gained_ids",
             "incomplete_reasons",
+            "input_fence",
         )
     } | ({"stopped": result["stopped"]} if result.get("stopped") else {})
 
@@ -714,6 +924,7 @@ async def _apply_outcome(
     session_factory: Callable[[], Any],
     ledger: Optional[dict] = None,
     wall: Any = None,
+    expected_input: Optional[dict] = None,
 ) -> dict:
     ledger = {} if ledger is None else ledger
     oid = int(plan["outcome_id"])
@@ -750,7 +961,21 @@ async def _apply_outcome(
         if row is None:
             out["refused"] = "outcome_missing"
             return out
-        if input_fingerprint(row) != plan.get("input_fingerprint"):
+        if expected_input is not None:
+            # Under the locks just taken, in the transaction that would write:
+            # a refusal returns before any evidence or interval exists, and the
+            # rollback releases the locks.
+            why = input_version_refusal(row, expected_input)
+            if why:
+                out["refused"] = why
+                out["input_fence"] = {
+                    "expected": {
+                        k: v for k, v in expected_input.items() if k != "input_fingerprint"
+                    },
+                    "observed": _observed_versions(row),
+                }
+                return out
+        elif input_fingerprint(row) != plan.get("input_fingerprint"):
             out["refused"] = "input_drift"
             return out
         cutoff, cutoff_refusal = forecast_cutoff(_event_of(row), settled_at)
