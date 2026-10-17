@@ -273,6 +273,13 @@ struct SavedRectangular10875: View {
             if let headline = reading.headline, reading.phase == .unavailable, let notice = headline.verdict {
                 // The chosen outcome is gone: say that, once, on its own line.
                 Text(notice).font(.body.weight(.semibold)).lineLimit(1)
+            } else if let verdict = ownLineVerdict {
+                // R1: longer than Won / Lost / Draw, so not squeezed beside
+                // the outcome name; the name moves to the line below.
+                Text(verdict)
+                    .font(.body.weight(.semibold))
+                    .lineLimit(2)
+                    .minimumScaleFactor(0.7)
             } else if let headline = reading.headline {
                 HStack(spacing: 4) {
                     Text(headline.shortLabel).lineLimit(1)
@@ -283,12 +290,19 @@ struct SavedRectangular10875: View {
             } else {
                 Text(reading.phase == .noResult ? "No result recorded" : "No chance to show").lineLimit(1)
             }
-            Text(SavedClock10875.caption(reading, entry: entry) ?? reading.status)
+            Text(footer)
                 .font(.caption2)
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var ownLineVerdict: String? { SavedLockScreenFit10875.rectangleOwnLineVerdict(reading) }
+
+    private var footer: String {
+        let caption = SavedClock10875.caption(reading, entry: entry) ?? reading.status
+        return ownLineVerdict == nil ? caption : SavedLockScreenFit10875.rectangleFooter(reading, caption: caption)
     }
 }
 
@@ -305,7 +319,9 @@ struct SavedCircular10875: View {
                     .font(.system(size: 9, weight: .semibold))
                     .lineLimit(1)
                     .minimumScaleFactor(0.6)
-                Text(circularValue)
+                // R1: a figure or a word of at most 7 letters, never a
+                // truncated sentence ("Result unk…").
+                Text(SavedLockScreenFit10875.ringValue(reading))
                     .font(.system(size: 15, weight: .bold).monospacedDigit())
                     .minimumScaleFactor(0.5)
                     .lineLimit(1)
@@ -313,14 +329,6 @@ struct SavedCircular10875: View {
             }
             .padding(4)
         }
-    }
-
-    private var circularValue: String {
-        guard let headline = reading.headline else { return reading.phase == .noResult ? "Final" : "—" }
-        // Nothing to show for the choice (its label says why, e.g. "Not
-        // listed"): a dash, never a sentence squeezed into the circle.
-        if reading.phase == .unavailable { return "—" }
-        return headline.verdict ?? headline.figure ?? "—"
     }
 }
 #endif

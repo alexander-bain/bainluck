@@ -488,3 +488,51 @@ enum SavedWidgetReadingRules10875 {
         return byID
     }
 }
+
+/// #10875 R1 — how the two Lock Screen families fit the headline's verdict.
+/// Only Won / Lost / Draw fit beside a name; anything longer ("Result
+/// unknown", the venue's own words, a team name) gets a word that fits the
+/// ring and a line of its own in the rectangle, never one truncated line
+/// ("Result unk…"). Keyed on the string, not the phase, so a verdict added
+/// later is covered too. The spoken label keeps the full sentence.
+nonisolated enum SavedLockScreenFit10875 {
+    /// The verdicts that share a line with the outcome name.
+    static let shortVerdicts: Set<String> = ["Won", "Lost", "Draw"]
+    /// The longest word the circular widget's value line holds whole ("Unknown").
+    static let ringLimit = 7
+
+    /// The circular widget's value: a figure, a verdict that fits, or a word
+    /// standing for one that does not.
+    static func ringValue(_ reading: SavedWidgetReading10875) -> String {
+        guard let headline = reading.headline else { return reading.phase == .noResult ? "Final" : "—" }
+        // Nothing to show for the choice (its label says why, e.g. "Not
+        // listed"): a dash, never a sentence squeezed into the circle.
+        if reading.phase == .unavailable { return "—" }
+        guard let verdict = headline.verdict else { return headline.figure ?? "—" }
+        if shortVerdicts.contains(verdict) || verdict.count <= ringLimit { return verdict }
+        // #698: settled, and the result is unknown.
+        if reading.phase == .noResult { return "Unknown" }
+        // The venue's words naming a side: that side's short name ("SEA").
+        if let side = reading.rows.first(where: { $0.label == verdict }), side.shortLabel.count <= ringLimit {
+            return side.shortLabel
+        }
+        return "—"
+    }
+
+    /// The rectangular widget's verdict when it needs its own line; nil when
+    /// it fits beside the outcome name (Won / Lost / Draw) or there is none.
+    static func rectangleOwnLineVerdict(_ reading: SavedWidgetReading10875) -> String? {
+        guard reading.phase != .unavailable,
+              let verdict = reading.headline?.verdict, !shortVerdicts.contains(verdict) else { return nil }
+        return verdict
+    }
+
+    /// The rectangle's last line under an own-line verdict: the outcome name
+    /// it belongs to, then the caption. The name is said once, never
+    /// "Settled · Settled".
+    static func rectangleFooter(_ reading: SavedWidgetReading10875, caption: String) -> String {
+        guard let name = reading.headline?.shortLabel, !name.isEmpty,
+              name != caption, name != reading.status else { return caption }
+        return "\(name) · \(caption)"
+    }
+}
