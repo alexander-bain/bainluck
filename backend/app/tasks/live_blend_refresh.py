@@ -176,9 +176,18 @@ FRESH_STAMP_WORKERS = 3
 ADMITTED_LIVE_RUN = 3
 
 # Includes the point currently writing and reservations before quote COMMIT.
-# At this finite bound a newly due stamp owes no point and does not wait
-# (#11138); its event stays due, and no queued point drops.
+# The writer's ordinary backlog. Past it a newly due stamp does not wait
+# (#11138) and still owes its point at its own observation time, paid when
+# the writer drains without another quote (#11181). No point drops.
 HISTORY_POINT_LIMIT = 64
+# The finite bound beyond the ordinary backlog. Points are owed at most one per
+# event per snapshot interval, so a held writer reaches it only after minutes
+# (a 100-event slate owes 4 a second: ~4 minutes). Only there does a due stamp
+# wait for the owned writer, and refuse before COMMIT if that writer failed,
+# as every due stamp did at 64 before #11138. Waiting there, never dropping:
+# a held writer cannot be met with an unwaiting headline, every observation
+# and finite memory all at once.
+HISTORY_SPILL_LIMIT = 1024
 
 #: #837 receipt — the per-event floor between receipt lines for chains that
 #: cannot qualify as a quiet tail (a busy market's routine deferrals, a held
@@ -1563,6 +1572,7 @@ class LiveBlendRefresher:
         self._history_task: Optional[asyncio.Task] = None
         self._history_count = 0  # committed debt plus pre-COMMIT reservations
         self._history_limit = HISTORY_POINT_LIMIT
+        self._history_spill_limit = HISTORY_SPILL_LIMIT
         self._history_changed = asyncio.Event()
         self._history_reserved: dict[int, float] = {}
         self._history_retry_at: dict[int, float] = {}
@@ -1590,8 +1600,8 @@ class LiveBlendRefresher:
             # #837 tail — stamps that stopped waiting on another transaction's
             # row lock and were re-queued. Not an error: the retry is the path.
             "lock_skipped": 0,
-            # #11138 — due chart points not taken because the committed
-            # backlog was full; the stamp went out and the event stays due.
+            # #11138/#11181 — due chart points owed past the ordinary backlog
+            # without waiting; each is still paid at its own time.
             "history_deferred": 0,
             # #9484 — committed market invalidations (`live:market:{id}`) this
             # consumer's writers published through the same client. Counted
@@ -2781,11 +2791,14 @@ class LiveBlendRefresher:
         """Reserve finite debt space before a transaction can owe a point.
 
         Same-event quotes remain serial under the consumer's existing fence.
-        A queued point is never dropped. At capacity a due stamp still commits
-        and publishes, owing no point: its event stays due, so its next stamp
-        with room owes one (#11138). The headline never waits on chart debt —
-        production v5763 13:01:22Z, Kalshi's writer held 5.364 s at 64 owed,
-        held 15331223's .375 for 5.8 s behind three due stamps.
+        Distinct due observations are never dropped or coalesced. Past the
+        ordinary backlog a due stamp still owes its point and does not wait
+        (#11138): production v5763 13:01:22Z, Kalshi's writer held 5.364 s at
+        64 owed, held 15331223's .375 for 5.8 s behind three due stamps. The
+        point keeps its observation time and the writer pays it without
+        another quote (#11181). Only past the spill bound, wait for the owned
+        writer; if it failed, refuse this stamp before COMMIT and let the
+        existing blend retry retain the price.
         """
         reserved = set()
         committed = False
@@ -2795,10 +2808,20 @@ class LiveBlendRefresher:
                 last = self._history_reserved.get(eid, self._last_snapshot_at.get(eid))
                 if last is not None and now - last < self.snapshot_interval_s:
                     continue
+                while (
+                    self._history_count
+                    >= self._history_limit + self._history_spill_limit
+                ):
+                    self._start_history()
+                    if self._history_task is None or self._history_task.done():
+                        raise RuntimeError(
+                            "committed chart backlog is full; stamp remains owed"
+                        )
+                    self._history_changed.clear()
+                    await self._history_changed.wait()
                 if self._history_count >= self._history_limit:
                     self._start_history()
                     self.stats["history_deferred"] += 1
-                    continue
                 self._history_count += 1
                 reserved.add(eid)
             yield reserved, ready

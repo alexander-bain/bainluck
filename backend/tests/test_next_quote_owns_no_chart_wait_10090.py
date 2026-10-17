@@ -283,12 +283,12 @@ async def test_cancelled_publication_keeps_committed_history(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_full_backlog_publishes_next_stamp_at_once_and_keeps_queued_point(
+async def test_full_backlog_publishes_next_stamp_at_once_and_keeps_every_due_point(
     monkeypatch,
 ):
-    """#11138: at capacity the next due stamp commits and publishes without
-    waiting on the chart writer, owes no point, and stays due; the queued point
-    still lands at its own time and nothing queued drops."""
+    """#11138/#11181: past the ordinary backlog the next due stamp commits and
+    publishes without waiting on the chart writer, and still owes its point at
+    its own observation time; nothing queued drops."""
     r, session, frames, price = _ready_rig(monkeypatch)
     r._history_limit = 1
     entered, release, calls = asyncio.Event(), asyncio.Event(), []
@@ -309,27 +309,158 @@ async def test_full_backlog_publishes_next_stamp_at_once_and_keeps_queued_point(
         "polymarket": {"value": 0.60, "updated_at": "2026-10-11T00:52:55+00:00"}
     }
     await asyncio.wait_for(r.refresh([1], flush_started=1025), 0.25)
-    assert not release.is_set() and r._history_count == 1
+    assert not release.is_set() and r._history_count == 2
     assert len(session.updates) == 2, "the stamp did not wait for chart room"
     assert [f["source_value"] for f in frames] == [0.40, 0.60]
-    assert r.stats["history_deferred"] == 1 and len(r._history) == 1
+    assert r.stats["history_deferred"] == 1 and len(r._history) == 2
     release.set()
     await r.drain_history()
-    assert [c["home_win_probability"] for c in calls] == [0.40]
-    assert r._last_snapshot_at == {1: 1000}
-    # Still due: the next stamp with room owes its point.
+    assert [c["home_win_probability"] for c in calls] == [0.40, 0.60]
+    assert r._last_snapshot_at == {1: 1025}
+    # The next due stamp owes its own point on the ordinary cadence.
     price[0] = 0.70
     session._returned = {
         "polymarket": {"value": 0.70, "updated_at": "2026-10-11T00:53:20+00:00"}
     }
     await r.refresh([1], flush_started=1050)
     await r.drain_history()
-    assert [c["home_win_probability"] for c in calls] == [0.40, 0.70]
+    assert [c["home_win_probability"] for c in calls] == [0.40, 0.60, 0.70]
     assert [c["observed_at"] for c in calls] == [
         "2026-10-11T00:52:30+00:00",
+        "2026-10-11T00:52:55+00:00",
         "2026-10-11T00:53:20+00:00",
     ]
     assert [f["source_value"] for f in frames] == [0.40, 0.60, 0.70]
+    assert not r._history and not r._history_count
+
+
+@pytest.mark.asyncio
+async def test_full_history_retains_final_changed_quote_without_a_future_tick(monkeypatch):
+    """#11181 root countercase (attempt22-history-cap), kept as written: the
+    venue goes quiet after a due quote that arrived past the ordinary backlog.
+    No further input; its point lands at its original time."""
+    r, session, frames, price = _ready_rig(monkeypatch)
+    r._history_limit = 1
+    entered, release, calls = asyncio.Event(), asyncio.Event(), []
+    async def chart(session, **kw):
+        calls.append(kw)
+        entered.set()
+        await release.wait()
+        return object(), True
+    monkeypatch.setattr("app.tasks.snapshots._create_or_update_win_prob_snapshot", chart)
+    await r.refresh([1], flush_started=1000)
+    await asyncio.wait_for(entered.wait(), 1)
+    price[0] = .60
+    session._returned = {"polymarket": {"value": .60, "updated_at": "2026-10-11T00:52:55+00:00"}}
+    try:
+        await asyncio.wait_for(r.refresh([1], flush_started=1025), .25)
+        assert [f["source_value"] for f in frames] == [.40,.60]
+    finally:
+        release.set()
+        await r.drain_history()
+    # No further venue input. Exercise ordinary empty/debt refresh and drain,
+    # not a fabricated new quote or a weakening of the 25s eligibility floor.
+    await r.refresh_pending(flush_started=1050)
+    await r.drain_history()
+    actual = [(c["home_win_probability"], c["observed_at"]) for c in calls]
+    assert actual == [(.40,"2026-10-11T00:52:30+00:00"),(.60,"2026-10-11T00:52:55+00:00")], {
+        "history": actual, "published": [f["source_value"] for f in frames],
+        "pending": list(r.pending_event_ids()), "deferred": r.stats["history_deferred"],
+    }
+
+
+@pytest.mark.asyncio
+async def test_long_held_writer_keeps_every_due_observation_at_its_own_time(
+    monkeypatch,
+):
+    """#11181: through a long hold every due observation is owed, not only the
+    last one, and each headline publishes at once. Growth is the ordinary
+    25-second cadence: a quote inside it owes nothing, as with a free writer."""
+    r, session, frames, price = _ready_rig(monkeypatch)
+    r._history_limit = 1
+    entered, release, calls = asyncio.Event(), asyncio.Event(), []
+
+    async def chart(session, **kw):
+        calls.append(kw)
+        entered.set()
+        await release.wait()
+        return object(), True
+
+    monkeypatch.setattr(
+        "app.tasks.snapshots._create_or_update_win_prob_snapshot", chart
+    )
+    await r.refresh([1], flush_started=1000)
+    await asyncio.wait_for(entered.wait(), 1)
+    quotes = [
+        (1025, 0.60, "2026-10-11T00:52:55+00:00"),
+        (1037, 0.65, "2026-10-11T00:53:07+00:00"),  # inside the cadence
+        (1050, 0.70, "2026-10-11T00:53:20+00:00"),
+        (1075, 0.80, "2026-10-11T00:53:45+00:00"),
+    ]
+    try:
+        for at, value, observed in quotes:
+            price[0] = value
+            session._returned = {
+                "polymarket": {"value": value, "updated_at": observed}
+            }
+            await asyncio.wait_for(r.refresh([1], flush_started=at), 0.25)
+        assert [f["source_value"] for f in frames] == [0.40, 0.60, 0.65, 0.70, 0.80]
+        assert not calls[1:], "the writer is still held"
+        assert r._history_count == len(r._history) == 4
+        assert r.stats["history_deferred"] == 3
+    finally:
+        release.set()
+        await r.drain_history()
+    # The venue goes quiet; an ordinary empty flush and drain only.
+    await r.refresh_pending(flush_started=1100)
+    await r.drain_history()
+    assert [(c["home_win_probability"], c["observed_at"]) for c in calls] == [
+        (0.40, "2026-10-11T00:52:30+00:00"),
+        (0.60, "2026-10-11T00:52:55+00:00"),
+        (0.70, "2026-10-11T00:53:20+00:00"),
+        (0.80, "2026-10-11T00:53:45+00:00"),
+    ]
+    assert not r._history and not r._history_count and not r.pending_event_ids()
+
+
+@pytest.mark.asyncio
+async def test_past_the_spill_bound_distinct_due_points_wait_in_order(monkeypatch):
+    """The finite bound: past ordinary backlog + spill a due stamp waits for
+    the owned writer before its SQL, and no point drops."""
+    r, session, frames, price = _ready_rig(monkeypatch)
+    r._history_limit = 1
+    r._history_spill_limit = 0
+    entered, release, calls = asyncio.Event(), asyncio.Event(), []
+
+    async def chart(session, **kw):
+        calls.append(kw)
+        entered.set()
+        await release.wait()
+        return object(), True
+
+    monkeypatch.setattr(
+        "app.tasks.snapshots._create_or_update_win_prob_snapshot", chart
+    )
+    await r.refresh([1], flush_started=1000)
+    await asyncio.wait_for(entered.wait(), 1)
+    price[0] = 0.60
+    session._returned = {
+        "polymarket": {"value": 0.60, "updated_at": "2026-10-11T00:52:55+00:00"}
+    }
+    second = asyncio.create_task(r.refresh([1], flush_started=1025))
+    for _ in range(10):
+        await asyncio.sleep(0)
+    assert not second.done() and r._history_count == 1
+    assert len(session.updates) == 1, "capacity reserved before new stamp SQL"
+    release.set()
+    await asyncio.wait_for(second, 1)
+    await r.drain_history()
+    assert [c["home_win_probability"] for c in calls] == [0.40, 0.60]
+    assert [c["observed_at"] for c in calls] == [
+        "2026-10-11T00:52:30+00:00",
+        "2026-10-11T00:52:55+00:00",
+    ]
+    assert [f["source_value"] for f in frames] == [0.40, 0.60]
     assert not r._history and not r._history_count
 
 
@@ -423,12 +554,12 @@ async def test_history_and_next_refresh_share_existing_three_session_ceiling(
 
 
 @pytest.mark.asyncio
-async def test_failed_full_history_still_publishes_stamp_then_pays_queued_point(
+async def test_failed_full_history_still_publishes_stamp_then_pays_both_points(
     monkeypatch,
 ):
-    """#11138: a failed chart writer at capacity no longer refuses the next
-    stamp. The failed point keeps its place and original time; it is paid
-    after the hold without a second stamp or frame."""
+    """#11138/#11181: a failed chart writer past the ordinary backlog does not
+    refuse the next due stamp. Both points keep their order and original
+    times; the hold ends and both are paid without a second stamp or frame."""
     from app.tasks import live_blend_refresh as blend
 
     r, session, frames, price = _ready_rig(monkeypatch)
@@ -447,8 +578,8 @@ async def test_failed_full_history_still_publishes_stamp_then_pays_queued_point(
     )
     await r.refresh([1], flush_started=1000)
     await r._history_task
-    # Still inside the history retry hold. A later due observation cannot buy
-    # an unbounded queue or drop the predecessor; it stamps owing no point.
+    # Still inside the history retry hold. The later due observation neither
+    # drops its predecessor nor waits; it owes its own point behind it.
     price[0] = 0.60
     session._returned = {
         "polymarket": {"value": 0.60, "updated_at": "2026-10-11T00:52:55+00:00"}
@@ -456,15 +587,63 @@ async def test_failed_full_history_still_publishes_stamp_then_pays_queued_point(
     clock[0] = 1002
     await r.refresh([1], flush_started=1025)
     assert len(session.updates) == len(frames) == 2
-    assert r._history_count == len(r._history) == 1
+    assert r._history_count == len(r._history) == 2
     assert r.stats["history_deferred"] == 1
     assert not r.pending_event_ids()
     assert not r._last_snapshot_at
     failing[0] = False
     clock[0] = 1030
     await r.drain_history()
-    assert [c["home_win_probability"] for c in calls] == [0.40, 0.40]
-    assert [c["observed_at"] for c in calls] == ["2026-10-11T00:52:30+00:00"] * 2
+    assert [c["home_win_probability"] for c in calls] == [0.40, 0.40, 0.60]
+    assert [c["observed_at"] for c in calls] == [
+        "2026-10-11T00:52:30+00:00",
+        "2026-10-11T00:52:30+00:00",
+        "2026-10-11T00:52:55+00:00",
+    ]
+    assert [f["source_value"] for f in frames] == [0.40, 0.60]
+    assert not r.pending_event_ids() and not r._history_count
+
+
+@pytest.mark.asyncio
+async def test_failed_writer_past_the_spill_bound_defers_stamp_then_quietly_pays_both(
+    monkeypatch,
+):
+    """The finite bound with a failed writer refuses the stamp before COMMIT;
+    the blend retry keeps the price and both points are paid quietly."""
+    from app.tasks import live_blend_refresh as blend
+
+    r, session, frames, price = _ready_rig(monkeypatch)
+    r._history_limit = 1
+    r._history_spill_limit = 0
+    clock, failing, calls = [1000.0], [True], []
+    monkeypatch.setattr(blend, "_mono", lambda: clock[0])
+
+    async def chart(session, **kw):
+        calls.append(kw)
+        if failing[0]:
+            raise RuntimeError("history row unavailable")
+        return object(), True
+
+    monkeypatch.setattr(
+        "app.tasks.snapshots._create_or_update_win_prob_snapshot", chart
+    )
+    await r.refresh([1], flush_started=1000)
+    await r._history_task
+    price[0] = 0.60
+    session._returned = {
+        "polymarket": {"value": 0.60, "updated_at": "2026-10-11T00:52:55+00:00"}
+    }
+    clock[0] = 1002
+    await r.refresh([1], flush_started=1025)
+    assert len(session.updates) == len(frames) == 1
+    assert r._history_count == len(r._history) == 1
+    assert r.pending_event_ids() == frozenset({1})
+    assert not r._last_snapshot_at
+    failing[0] = False
+    clock[0] = 1030
+    await r.refresh_pending(flush_started=1030)
+    await r.drain_history()
+    assert [c["home_win_probability"] for c in calls] == [0.40, 0.40, 0.60]
     assert [f["source_value"] for f in frames] == [0.40, 0.60]
     assert not r.pending_event_ids() and not r._history_count
 
