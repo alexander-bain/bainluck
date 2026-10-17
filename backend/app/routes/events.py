@@ -38,6 +38,10 @@ from app.services.anchor_channel import (
 from app.services.same_instant_refutation import same_instant_refuted_on_page
 from app.utils.agent_origin import ORIGIN_HEADER, ORIGIN_USER
 from app.utils.start_placeholder import start_is_tbd
+from app.utils.scheduled_start import (
+    loaded_commence_time_source,
+    served_start_is_from_schedule,
+)
 # #7369: the one place either search payload may answer "Conference". Module-level
 # and safe — `market_label_normalization` imports only `utils.futures_categorization`,
 # so there is no cycle to defer around; `tests/test_startup.py` is the guard.
@@ -35676,6 +35680,13 @@ def _format_event(
         # and StatPal's start is not a placeholder.
         "start_is_tbd": start_is_tbd(
             getattr(event, "event_tags", None), _served_start, event.status
+        ),
+        # #10880: true only when a sports schedule provider wrote the start
+        # served above. The iPhone event page offers "Add to Calendar" only on
+        # true. A held row's StatPal session start serves false: it is when the
+        # session begins, not this game (`served_start_is_from_schedule`).
+        "start_is_from_schedule": served_start_is_from_schedule(
+            loaded_commence_time_source(event), event.commence_time, _served_start
         ),
         # Emit completed_at so finished-event cards (My Stuff, etc.) have an
         # authoritative game-date fallback instead of showing a stale/future
