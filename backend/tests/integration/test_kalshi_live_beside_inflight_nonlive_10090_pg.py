@@ -970,9 +970,13 @@ async def _owner_joins_mid_helper_phase(ns, record, side, ids):
         await _tick(ns, "home", 0.64, 0.66)
         await _tick(ns, "p1", 0.79, 0.81)
         await _wait_until(lambda: _committed(side, legs["p1"], 0.80), 10)
-        p1_done = time.monotonic()
         await _wait_until(lambda: _committed(side, legs["home"], 0.65), 5)
-    served = _served(record, markets["live"], legs["home"], p1_done, 0.65)
+    # Anchored on p1's own publication, not on when the poll noticed its
+    # commit: the next flush can publish home inside that poll's step.
+    p1_pub = _first(record.publications,
+                    lambda p: p[1] == markets["pregame"] and p[2][legs["p1"]] == 0.80)
+    served = None if p1_pub is None else _served(
+        record, markets["live"], legs["home"], p1_pub[0], 0.65)
     print("EVIDENCE cooperative-stop: home after p1", served and served[0],
           "beside", ns["stats"]["live_beside"])
     return served
