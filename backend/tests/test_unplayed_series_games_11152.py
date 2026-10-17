@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
+import re
 from dataclasses import replace
 from datetime import date, datetime, timezone
 from pathlib import Path
@@ -241,17 +242,21 @@ class _Raw:
 
 
 class _Result:
-    def __init__(self, rows=(), rowcount=0):
-        self._rows, self.rowcount = list(rows), rowcount
+    def __init__(self, rows=(), rowcount=0, scalar=None):
+        self._rows, self.rowcount, self._scalar = list(rows), rowcount, scalar
 
     def all(self):
         return self._rows
 
+    def scalar_one(self):
+        return self._scalar
+
 
 class _FakeSession:
-    def __init__(self, rows, *, read_raises=False, write_silently_noops=False):
+    def __init__(self, rows, *, read_raises=False, write_silently_noops=False, backup_table=True):
         self.rows = {r.id: r for r in rows}
         self.read_raises, self.noop = read_raises, write_silently_noops
+        self.backup_table = backup_table
         self.calls: list[str] = []
         self.banked: dict[int, dict] = {}
 
@@ -264,9 +269,11 @@ class _FakeSession:
                 raise RuntimeError("connection reset")
             assert params["sport_key"] == "baseball_mlb"
             return _Result(list(self.rows.values()))
-        if sql.startswith("CREATE TABLE IF NOT EXISTS bak_11152_"):
-            self.calls.append("create_backup_table")
-            return _Result()
+        if re.search(r"\b(CREATE|ALTER|DROP)\b", sql, re.IGNORECASE):
+            raise AssertionError(f"the sweep ran DDL: {sql[:120]}")
+        if sql == "SELECT to_regclass('bak_11152_unplayed_series_games') IS NOT NULL":
+            self.calls.append("backup_exists")
+            return _Result(scalar=self.backup_table)
         if sql.startswith("INSERT INTO bak_11152_"):
             self.calls.append("bank")
             self.banked[params["eid"]] = params
@@ -321,8 +328,27 @@ class TestTheSweepVerdicts:
         assert session.rows[15330460].status == "voided"
         assert session.rows[15330795].status == "scheduled"
         assert session.banked[15330460]["status"] == "scheduled"
-        assert session.calls.index("bank") < session.calls.index("void") < session.calls.index("read_back")
+        assert (
+            session.calls.index("backup_exists")
+            < session.calls.index("bank")
+            < session.calls.index("void")
+            < session.calls.index("read_back")
+        )
         assert summary["undo"].endswith("restore_11152_unplayed_series_games.py --apply")
+
+    def test_no_backup_table_writes_nothing_and_is_failed(self, monkeypatch):
+        """Notice 47(c): the table is the attended packet's; the sweep never makes it."""
+        summary, session, _ = _run(monkeypatch, backup_table=False)
+        assert (summary["terminal"], summary["refused"]) == ("failed", "no_backup_table")
+        assert (summary["written"], summary["banked"]) == (0, 0)
+        assert "bank" not in session.calls and "void" not in session.calls
+        assert session.rows[15330460].status == "scheduled"
+        assert "apply_15330460.sql" in summary["reason"]
+
+    def test_the_sweep_source_holds_no_ddl(self):
+        source = Path(sweep.__file__).read_text()
+        assert not re.search(r"\b(CREATE|ALTER|DROP)\s+(TABLE|INDEX)\b", source, re.IGNORECASE)
+        assert "to_regclass" in source
 
     def test_a_write_that_does_not_land_is_partial(self, monkeypatch):
         summary, _, _ = _run(monkeypatch, write_silently_noops=True)

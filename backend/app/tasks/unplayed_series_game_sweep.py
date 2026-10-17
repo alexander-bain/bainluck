@@ -21,6 +21,12 @@ D51: the prior status and tags are banked in :data:`BAK_TABLE` first, and
 ``scripts/restore_11152_unplayed_series_games.py --apply`` puts each banked row
 back while it is still the row this sweep voided.
 
+THE SWEEP RUNS NO DDL. :data:`BAK_TABLE` is created only by the attended packet
+(``artifacts/live-11152/apply_15330460.sql``) — notice 47(c): DDL is admitted
+when a person runs it, never by an hourly task after a release. While the table
+is absent the sweep writes nothing and returns ``failed`` with
+``refused: "no_backup_table"``, so the missing setup stays loud.
+
 THE WRITE IS A COMPARE-AND-SET
 ══════════════════════════════
 
@@ -36,8 +42,8 @@ VERDICT CONTRACT
               can decide landed (usually none: clinches are episodic).
 ``partial``   a planned retirement did not land (read back), or a board in the
               window was dark.
-``failed``    the population read raised, every board was dark, or the plan
-              exceeded its ceiling.
+``failed``    the population read raised, every board was dark, the plan
+              exceeded its ceiling, or the backup table does not exist.
 ``no_work``   no candidate rows in the window (no board is read), or a dry run.
 """
 
@@ -59,9 +65,11 @@ from app.utils.unplayed_series_games import (
 
 SPORT_KEY = "baseball_mlb"
 
-#: D51 backup. The attended packet for 15330460 created the same table with the
-#: same columns, so the sweep, that packet and the restore share one undo.
+#: D51 backup. Created by the attended packet for 15330460 and never by this
+#: task; the sweep, that packet and the restore share one undo.
 BAK_TABLE = "bak_11152_unplayed_series_games"
+
+_BAK_EXISTS = f"SELECT to_regclass('{BAK_TABLE}') IS NOT NULL"
 
 #: Wide enough back to reach a clinch several days before a stale row, and ahead
 #: to a "Game 7" a few days out. The rows are read one day wider each side.
@@ -124,22 +132,16 @@ async def fetch_boards(days: list[date], sport_key: str = SPORT_KEY) -> dict:
     return boards
 
 
-async def ensure_backup(session, retirements, current: dict[int, tuple]) -> int:
+async def backup_table_exists(session) -> bool:
+    from sqlalchemy import text
+
+    return bool((await session.execute(text(_BAK_EXISTS))).scalar_one())
+
+
+async def bank_rows(session, retirements, current: dict[int, tuple]) -> int:
     """Bank each row's status and tags; the first banked value wins."""
     from sqlalchemy import text
 
-    await session.execute(
-        text(
-            f"CREATE TABLE IF NOT EXISTS {BAK_TABLE} ("
-            "  event_id bigint PRIMARY KEY,"
-            "  clinching_espn_id text NOT NULL,"
-            "  old_status text NOT NULL,"
-            "  old_tags text NOT NULL,"
-            "  old_xmin text,"
-            "  banked_at timestamptz NOT NULL DEFAULT now())"
-        )
-    )
-    await session.commit()
     banked = 0
     for r in retirements:
         status, tags = current[r.event_id]
@@ -369,8 +371,22 @@ async def run_unplayed_series_game_sweep(
                 "reason": f"dry run — {len(retirements)} retirement(s) withheld",
             }
 
+        if not await backup_table_exists(session):
+            return {
+                **summary,
+                "terminal": "failed",
+                "refused": "no_backup_table",
+                "written": 0,
+                "banked": 0,
+                "reason": (
+                    f"{len(retirements)} retirement(s) withheld: the backup table "
+                    f"{BAK_TABLE} does not exist. This task runs no DDL; the attended "
+                    f"packet (artifacts/live-11152/apply_15330460.sql) creates it."
+                ),
+            }
+
         current = {r.id: (str(r.status), r.tags_text or "[]") for r in raw_rows}
-        banked = await ensure_backup(session, retirements, current)
+        banked = await bank_rows(session, retirements, current)
         observed = observed_state(raw_rows)
         written, failed = await write_retirements(session, retirements, observed)
         ids = [r.event_id for r in retirements]
