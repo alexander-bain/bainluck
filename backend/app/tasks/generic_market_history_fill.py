@@ -826,6 +826,65 @@ class _CandleBook:
         return VenuePoint(ts, probability, book[1], book[2], book[3], book[4])
 
 
+def _paired_binary_leg_ids(
+    outcomes: Sequence[Any], entries: dict[int, dict]
+) -> tuple[int, int] | None:
+    """Return `(oid_a, oid_b)` only for an identity-admitted Polymarket `_yes`/`_no` binary pair."""
+    if len(outcomes) != 2:
+        return None
+    oid_a, oid_b = int(outcomes[0].id), int(outcomes[1].id)
+    if oid_a == oid_b or oid_a not in entries or oid_b not in entries:
+        return None
+    c_a = entries[oid_a].get("contract") or {}
+    c_b = entries[oid_b].get("contract") or {}
+    if c_a.get("venue") != "polymarket" or c_b.get("venue") != "polymarket":
+        return None
+    cond_id = c_a.get("condition_id")
+    if (
+        not isinstance(cond_id, str)
+        or not cond_id.startswith("0x")
+        or c_b.get("condition_id") != cond_id
+    ):
+        return None
+    if not c_a.get("token_id") or not c_b.get("token_id") or c_a.get("token_id") == c_b.get("token_id"):
+        return None
+    if {c_a.get("outcome_external_id"), c_b.get("outcome_external_id")} != {
+        f"{cond_id}_yes",
+        f"{cond_id}_no",
+    }:
+        return None
+    return oid_a, oid_b
+
+
+def _compact_entries(
+    outcomes: Sequence[Any], entries: dict[int, dict], now: datetime
+) -> None:
+    """Compact each outcome by band; for an identity-admitted binary pair, retain shared raw timestamps kept by either leg."""
+    from app.utils.futures_chart_series import compact_by_band
+
+    by_oid_ts: dict[int, dict[datetime, VenuePoint]] = {}
+    kept_by_oid: dict[int, set[datetime]] = {}
+    for oid, entry in entries.items():
+        points: list[VenuePoint] = entry["points"]
+        by_oid_ts[oid] = {p.observed_at: p for p in points}
+        kept = compact_by_band([(p.observed_at, p.probability) for p in points], now)
+        kept_by_oid[oid] = {ts for ts, _p in kept}
+
+    pair = _paired_binary_leg_ids(outcomes, entries)
+    if pair is not None:
+        oid_a, oid_b = pair
+        shared_raw_ts = set(by_oid_ts[oid_a]) & set(by_oid_ts[oid_b])
+        if shared_raw_ts:
+            kept_shared_ts = shared_raw_ts & (kept_by_oid[oid_a] | kept_by_oid[oid_b])
+            kept_by_oid[oid_a] |= kept_shared_ts
+            kept_by_oid[oid_b] |= kept_shared_ts
+
+    for oid, entry in entries.items():
+        ts_map = by_oid_ts[oid]
+        kept_set = kept_by_oid[oid]
+        entry["points"] = [ts_map[ts] for ts in sorted(ts_map) if ts in kept_set]
+
+
 async def build_generic_history(
     session: Any,
     market: Any,
@@ -848,7 +907,7 @@ async def build_generic_history(
         fetch_clob_tier,
         kalshi_field_series,
     )
-    from app.utils.futures_chart_series import clob_calls, compact_by_band, layer_tiers
+    from app.utils.futures_chart_series import clob_calls, layer_tiers
 
     now = now or datetime.now(timezone.utc)
     stats: dict = {"source": market.source, "outcomes_built": 0, "outcomes_empty": 0}
@@ -975,11 +1034,8 @@ async def build_generic_history(
         if len(entry["points"]) > before:
             stats["carried_points"] = stats.get("carried_points", 0) + (len(entry["points"]) - before)
 
+    _compact_entries(outcomes, entries, now)
     for entry in entries.values():
-        points: list[VenuePoint] = entry["points"]
-        by_ts = {p.observed_at: p for p in points}
-        kept = compact_by_band([(p.observed_at, p.probability) for p in points], now)
-        entry["points"] = [by_ts[ts] for ts, _p in kept]
         if entry["points"]:
             stats["outcomes_built"] += 1
         else:
