@@ -424,13 +424,14 @@ async def test_long_held_writer_keeps_every_due_observation_at_its_own_time(
 
 
 @pytest.mark.asyncio
-async def test_past_the_spill_bound_stamp_never_waits_and_names_the_unretained_point(
+async def test_past_the_spill_bound_stamp_never_waits_and_its_point_takes_the_slot(
     monkeypatch, caplog,
 ):
     """The finite bound: past ordinary backlog + spill a due stamp still
-    publishes at once. The observation it would owe is not retained, never
-    silently: counted and logged by event, value and observation time. Its
-    event stays due, so the next stamp with room owes a point."""
+    publishes at once, and the point it owes takes its event's overflow slot
+    (#11181 option A): nothing is lost or named, and the writer pays it at its
+    own time once it drains. (A displaced slot point is named:
+    tests/test_quiet_final_past_spill_11181.py.)"""
     r, session, frames, price = _ready_rig(monkeypatch)
     r._history_limit = 1
     r._history_spill_limit = 0
@@ -455,16 +456,13 @@ async def test_past_the_spill_bound_stamp_never_waits_and_names_the_unretained_p
         await asyncio.wait_for(r.refresh([1], flush_started=1025), 0.25)
     assert [f["source_value"] for f in frames] == [0.40, 0.60]
     assert r._history_count == len(r._history) == 1, "the bound holds"
-    assert r.stats["history_unretained"] == 1
+    assert list(r._history_latest) == [1] and r._history_latest[1][0] == 0.60
+    assert r.stats["history_unretained"] == 0
     assert r.stats["history_deferred"] == 0
-    assert any(
-        "event 1 observation 0.6 at 2026-10-11T00:52:55+00:00 not retained"
-        in rec.getMessage()
-        for rec in caplog.records
-    ), [rec.getMessage() for rec in caplog.records]
+    assert not any("not retained" in rec.getMessage() for rec in caplog.records)
     release.set()
     await r.drain_history()
-    assert [c["home_win_probability"] for c in calls] == [0.40]
+    assert [c["home_win_probability"] for c in calls] == [0.40, 0.60]
     price[0] = 0.70
     session._returned = {
         "polymarket": {"value": 0.70, "updated_at": "2026-10-11T00:53:20+00:00"}
@@ -473,10 +471,11 @@ async def test_past_the_spill_bound_stamp_never_waits_and_names_the_unretained_p
     await r.drain_history()
     assert [(c["home_win_probability"], c["observed_at"]) for c in calls] == [
         (0.40, "2026-10-11T00:52:30+00:00"),
+        (0.60, "2026-10-11T00:52:55+00:00"),
         (0.70, "2026-10-11T00:53:20+00:00"),
     ]
-    assert r.stats["history_unretained"] == 1
-    assert not r._history and not r._history_count
+    assert r.stats["history_unretained"] == 0
+    assert not r._history and not r._history_count and not r._history_latest
 
 
 @pytest.mark.asyncio
@@ -620,12 +619,13 @@ async def test_failed_full_history_still_publishes_stamp_then_pays_both_points(
 
 
 @pytest.mark.asyncio
-async def test_failed_writer_past_the_spill_bound_still_publishes_and_names_the_loss(
+async def test_failed_writer_past_the_spill_bound_still_publishes_and_keeps_the_point(
     monkeypatch,
 ):
     """A failed chart writer at the finite bound no longer refuses the stamp
     (master did, before COMMIT). The queued point is still paid at its time;
-    the one past the bound is counted, and no blend debt is created."""
+    the one past the bound waits in its event's slot and is paid after it, and
+    no blend debt is created."""
     from app.tasks import live_blend_refresh as blend
 
     r, session, frames, price = _ready_rig(monkeypatch)
@@ -653,14 +653,19 @@ async def test_failed_writer_past_the_spill_bound_still_publishes_and_names_the_
     await asyncio.wait_for(r.refresh([1], flush_started=1025), 0.25)
     assert len(session.updates) == len(frames) == 2
     assert r._history_count == len(r._history) == 1
-    assert r.stats["history_unretained"] == 1
+    assert list(r._history_latest) == [1]
+    assert r.stats["history_unretained"] == 0
     assert not r.pending_event_ids()
     failing[0] = False
     clock[0] = 1030
     await r.drain_history()
-    assert [c["observed_at"] for c in calls] == ["2026-10-11T00:52:30+00:00"] * 2
+    assert [c["observed_at"] for c in calls] == [
+        "2026-10-11T00:52:30+00:00", "2026-10-11T00:52:30+00:00",
+        "2026-10-11T00:52:55+00:00",
+    ]
     assert [f["source_value"] for f in frames] == [0.40, 0.60]
     assert not r.pending_event_ids() and not r._history_count
+    assert not r._history_latest
 
 
 @pytest.mark.asyncio

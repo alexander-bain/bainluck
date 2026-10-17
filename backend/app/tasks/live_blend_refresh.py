@@ -182,12 +182,15 @@ ADMITTED_LIVE_RUN = 3
 HISTORY_POINT_LIMIT = 64
 # The finite bound beyond the ordinary backlog. Points are owed at most one per
 # event per snapshot interval, so a held writer reaches it only after minutes
-# (a 100-event slate owes 4 a second: ~4 minutes). A writer held indefinitely
+# (a 100-event slate owes 4 a second: ~4.5 minutes). A writer held indefinitely
 # cannot be met with an unwaiting headline, every observation AND finite
 # memory; the headline is the product, so past this bound the stamp still
-# never waits, and its observation is not retained: counted in
-# `history_unretained` and logged with its event and observation time. Its
-# event stays due, so its next stamp with room owes a point.
+# never waits and its due point takes its event's ONE overflow slot
+# (`_history_latest`, bounded by the number of events). A quiet venue's final
+# point is therefore always paid at its own time once the writer drains
+# (lane1 1552Z countercase). A newer due point on the same event displaces the
+# slot's older one, which is counted in `history_unretained` and logged with
+# its event and observation time. No point already in the FIFO is dropped.
 HISTORY_SPILL_LIMIT = 1024
 
 #: #837 receipt — the per-event floor between receipt lines for chains that
@@ -1576,6 +1579,8 @@ class LiveBlendRefresher:
         self._history_spill_limit = HISTORY_SPILL_LIMIT
         self._history_changed = asyncio.Event()
         self._history_reserved: dict[int, float] = {}
+        # #11181: past the spill bound, each event's newest due point.
+        self._history_latest: dict[int, tuple] = {}
         self._history_retry_at: dict[int, float] = {}
         self._inversion: dict[int, tuple[float, bool]] = {}
         self.stats: dict[str, int] = {
@@ -2801,13 +2806,16 @@ class LiveBlendRefresher:
         64 owed, held 15331223's .375 for 5.8 s behind three due stamps. The
         point keeps its observation time and the writer pays it without
         another quote (#11181). Past the spill bound the stamp still does not
-        wait; the observation it would owe is counted and logged by name once
-        committed (`HISTORY_SPILL_LIMIT`).
+        wait; once committed its point takes the event's overflow slot, and a
+        point it displaces is counted and logged by name (`HISTORY_SPILL_LIMIT`).
         """
         reserved = set()
         unretained = set()
         committed = False
         ready = asyncio.Event()
+        # A slot's point is older than any new one for its event: room goes to
+        # it first, so an event's points never invert.
+        self._promote_latest()
         try:
             for eid in event_ids:
                 last = self._history_reserved.get(eid, self._last_snapshot_at.get(eid))
@@ -2830,19 +2838,36 @@ class LiveBlendRefresher:
                 self._history.append((eid, value, reading, now, ready))
                 self._history_reserved[eid] = now
             committed = True
-            for eid, value, observed_at in unretained_points:
+            for eid, value, reading in unretained_points:
+                displaced = self._history_latest.pop(eid, None)
+                self._history_latest[eid] = (value, reading, now, ready)
+                self._history_reserved[eid] = now
+                if displaced is None:
+                    continue
                 self.stats["history_unretained"] += 1
                 logger.warning(
                     "live_blend_refresh[%s]: chart backlog past its bound "
                     "(%s owed); event %s observation %s at %s not retained",
-                    self.source, self._history_count, eid, value, observed_at,
+                    self.source, self._history_count, eid, displaced[0],
+                    displaced[1].snapshot_observed_at,
                 )
         finally:
             used = {point[0] for point in owed} if committed else set()
             self._history_count -= len(reserved - used)
             self._history_changed.set()
 
+    def _promote_latest(self):
+        """#11181 — overflow slots join the FIFO, oldest slot first, while it
+        has room. Their reservation clocks were set when they were slotted."""
+        bound = self._history_limit + self._history_spill_limit
+        while self._history_latest and self._history_count < bound:
+            eid = next(iter(self._history_latest))
+            value, reading, at, ready = self._history_latest.pop(eid)
+            self._history.append((eid, value, reading, at, ready))
+            self._history_count += 1
+
     def _start_history(self, *, force=False):
+        self._promote_latest()
         if not self._history or (self._history_task and not self._history_task.done()):
             return
         if not force and all(
@@ -2882,6 +2907,7 @@ class LiveBlendRefresher:
                     continue
                 self._history.pop(cursor)
                 self._history_count -= 1
+                self._promote_latest()
                 self._history_retry_at.pop(eid, None)
                 if not any(point[0] == eid for point in self._history):
                     self._history_reserved.pop(eid, None)
@@ -3204,7 +3230,8 @@ class LiveBlendRefresher:
                         # due chart obligation.
                         chart_reading = (
                             _chart_reading(reading, stamped_at)
-                            if event_id in reserved else None
+                            if event_id in reserved or event_id in unretained
+                            else None
                         )
 
                     # Noted only once the stamp scope has succeeded (a stamp
@@ -3222,10 +3249,12 @@ class LiveBlendRefresher:
                     # receipt ties that interval to a chart write.
                     # Most changed quotes arrive before the chart clock is due;
                     # those owe nothing and open no second session.
-                    if chart_reading is not None:
-                        owed_snapshots.append((event_id, value, chart_reading))
+                    if chart_reading is None:
+                        pass
                     elif event_id in unretained:
-                        unretained_points.append((event_id, value, stamped_at))
+                        unretained_points.append((event_id, value, chart_reading))
+                    else:
+                        owed_snapshots.append((event_id, value, chart_reading))
                     if exact_trace is not None:
                         with contextlib.suppress(Exception):
                             if exact_trace.tracks_event(event_id):
@@ -3689,9 +3718,15 @@ def hand_off_pending(refresher) -> int:
         if refresher._history_task is not None and not refresher._history_task.done():
             raise RuntimeError("history owner must join before handing off its debt")
         debt = tuple((eid, value, reading, at) for eid, value, reading, at, _ in refresher._history)
+        # #11181: overflow slots follow the FIFO, each newer than its event's.
+        debt += tuple(
+            (eid, value, reading, at)
+            for eid, (value, reading, at, _) in refresher._history_latest.items()
+        )
         if debt:
             _history_handoff[refresher.source] = debt
             refresher._history.clear()
+            refresher._history_latest.clear()
             refresher._history_count = 0
             refresher._history_reserved.clear()
         else:
