@@ -316,6 +316,10 @@ struct EventDetailView: View {
                             )
                         }
                         PinButton(type: "event", id: eventId)
+                        #if os(iOS)
+                        // #10880 — present only on an eligible upcoming game.
+                        CalendarDetailMenu10880(pageEventId: eventId, event: vm.event)
+                        #endif
                     }
                 }
             }
