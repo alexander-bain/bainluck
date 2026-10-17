@@ -632,3 +632,17 @@ async def test_later_admitted_pair_adopts_latest_values_marks_and_new_withdrawal
     assert r.ns["price_buffer"] == {1: 0.85, 2: 0.15, 940: 0.7}
     assert r.trace.index(("withdraw", [1])) < r.trace.index(("refresh", [10]))
     assert state.commits == [900, 901, 1, 2] and not r.books
+
+
+def test_the_minute_line_emits_repeat_price_lock_timeouts(caplog):
+    # lane1 R3: a counter computed and never emitted is the defect
+    # `_log_stats_line` exists to prevent. A sustained table lock shows as
+    # `errors=1` and then nothing, unless the repeats are on the line.
+    from app.tasks import polymarket_ws as poly_task
+
+    stats = {"price_updates": 0, "trade_updates": 0, "resolutions": 0, "errors": 1,
+             "price_lock_timeouts": 7}
+    blend_stats = {"stamped": 0, "no_reading": 0, "throttled": 0, "errors": 0}
+    with caplog.at_level("INFO", logger=poly_task.logger.name):
+        poly_task._log_stats_line(stats, {}, blend_stats)
+    assert "lock_timeouts=7" in caplog.text

@@ -1791,7 +1791,8 @@ def _log_stats_line(stats: dict, ws_stats: dict, blend: dict) -> None:
         "%d msgs | coverage shards=%d/%d served=%d/%d wire=%d by_shard=%s "
         "| blend stamped=%d no_reading=%d throttled=%d errors=%d lock_skipped=%d "
         "unobserved=%d stale=%d | trades refused below_min=%d outside_wide_book=%d "
-        "| held withdrawn=%d lock_probes_refused=%d fenced=%d stamp_wait_s=%.1f",
+        "| held withdrawn=%d lock_probes_refused=%d fenced=%d stamp_wait_s=%.1f "
+        "lock_timeouts=%d",
         stats["price_updates"], stats["trade_updates"],
         stats["resolutions"], stats["errors"],
         ws_stats.get("messages", 0),
@@ -1820,6 +1821,10 @@ def _log_stats_line(stats: dict, ws_stats: dict, blend: dict) -> None:
         # stamp, and the seconds flushes still spent joining a running refresh.
         stats.get("stamp_fenced", 0),
         stats.get("stamp_wait_s", 0.0),
+        # #10090 (lane1 R3): repeat price-statement lock timeouts on rows
+        # already known-held. Kept out of `errors`, so a sustained table lock
+        # shows here rather than as one error and then silence.
+        stats.get("price_lock_timeouts", 0),
     )
 
 
@@ -2369,6 +2374,9 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
         # #10090: NOWAIT probes of a known-held cohort that its holder still
         # refused. Not `errors`: one per flush while the hold lasts.
         "price_lock_probes_refused": 0,
+        # #10090: a known-held cohort's price statement timed out again (a
+        # table lock, or an unrecognised refusal). Not `errors`, same reason.
+        "price_lock_timeouts": 0,
     }
 
     # Buffered price updates
@@ -2606,8 +2614,8 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
             # Rerank and commit failures keep their error log on every attempt.
             probe_timed_out = probe and price_lock_timed_out
             if probe_refused or probe_timed_out:
-                # #10090 recovery: a refused probe waited for nothing, so it
-                # re-arms no cooldown. Re-arming the two seconds left a pair
+                # #10090 recovery: a refused probe waited for nothing (a timed
+                # out one at most 50 ms), so it re-arms no cooldown. Re-arming the two seconds left a pair
                 # whose holder let go 100 ms later unwritten for 2.2 s on real
                 # PostgreSQL (parent: 0.62 s). The rows stay known-held and due,
                 # so each flush probes them once, NOWAIT, at a round trip's
