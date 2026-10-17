@@ -178,6 +178,13 @@ describe("#8313 stale odds beside an honest opening still speak (lane1b R1)", ()
     ).toBe("Field up 19.4 pts from opening.");
   });
 
+  test("within 1 pt of 50% the complement is not read (lane1b N1)", () => {
+    // -101 = 0.5025: 0.55 pt off 0.497 and 0.05 pt off its complement 0.503.
+    expect(
+      movementExplanation({ name: "Yes", probability: 0.6, opening_probability: 0.497, opening_american_odds: -101 }),
+    ).toBe("Yes up 10.3 pts from opening.");
+  });
+
   test("the specimen's No leg after the #137 flip (0.69 / -223) speaks", () => {
     // The regrade sets the opening to 1 − p and leaves the odds, which then agree.
     expect(

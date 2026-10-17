@@ -1131,8 +1131,9 @@ export function pickCaptionSubject<
  * specimen sits 0.0005 from the complement and 0.38 from its opening.
  *
  * Residuals: a stale odds value that happens to land within the tolerance of
- * 1 − opening is still withheld, and a copied leg whose odds are not this leg's
- * own complement is not caught.
+ * 1 − opening is still withheld (except within 1 pt of 50%, where it is not
+ * read), and a copied leg whose odds are not this leg's own complement is not
+ * caught.
  *
  * Deliberately per leg. Two legs opening at different times, or openings that do
  * not sum to 1 (independent boards), say nothing about either leg and are not read.
@@ -1151,6 +1152,9 @@ function openingIsTheOtherSidesPrice(leader: MovementLeader): boolean {
   // helper because it never shows odds (D1).
   const implied = odds > 0 ? 100 / (odds + 100) : -odds / (-odds + 100);
   return (
+    // Near 50% the two readings overlap and a swap moves the caption < 1 pt;
+    // the #137 flip skips that band for the same reason.
+    Math.abs(1 - 2 * open) > 2 * OPENING_ODDS_ROUNDING_TOLERANCE &&
     Math.abs(implied - open) > OPENING_ODDS_ROUNDING_TOLERANCE &&
     Math.abs(implied - (1 - open)) <= OPENING_ODDS_ROUNDING_TOLERANCE
   );
