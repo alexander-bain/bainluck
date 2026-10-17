@@ -46,10 +46,11 @@ def _recording(monkeypatch, cadence=(PERIOD, 2, None, 4)):
             super().__init__(scope)
             owners.append(self)
 
-        async def phase(self, session, values, *, force_observation=False):
+        async def phase(self, session, values, *, force_observation=False, forced_ids=()):
             writes.append((time.monotonic(), dict(values)))
             async for result in super().phase(
                 session, values, force_observation=force_observation,
+                forced_ids=forced_ids,
             ):
                 yield result
 

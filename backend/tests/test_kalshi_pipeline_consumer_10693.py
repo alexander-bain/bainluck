@@ -77,8 +77,10 @@ FROZEN_LOOP_TARGET = "(outcome_id, (prob, yes_bid, yes_ask))"
 # What #10693 changed is the price loop; that span is asserted here, part 3
 # executes it, and part 2 compares the whole flush's behaviour.
 
+# #10090: `forced_ids` (held legs' landing writes) joined the hand-off.
 FROZEN_HANDOFF = (
-    "contextlib.aclosing(prices.phase(session, phase, force_observation=final_drain))"
+    "contextlib.aclosing(prices.phase(session, phase, "
+    "force_observation=final_drain, forced_ids=held_ids))"
 )
 
 
