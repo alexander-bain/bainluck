@@ -73,7 +73,7 @@ def test_worker_clock_skew_cannot_suppress_a_held_quote_or_poison_a_later_readin
     m = accept(held, wall=wall)
     assert held.hold(snapshot(held, [m])) == {3}
     row = outcome()
-    held.overlay(row)
+    row = held.overlaid(row)
     assert row.current_probability == 0.82
     assert row.last_updated.timestamp() == 101.0
     stored = {"polymarket": {"value": 0.82, "observed_value": 0.82,
@@ -84,7 +84,7 @@ def test_worker_clock_skew_cannot_suppress_a_held_quote_or_poison_a_later_readin
     # the stale reading in the ordinary guard (real SQL: the _pg file).
     restarted = HeldRowQuotes()
     row = outcome()
-    restarted.overlay(row)
+    row = restarted.overlaid(row)
     assert row.current_probability == 0.60
 
 
@@ -96,7 +96,7 @@ def test_a_later_sample_never_re_dates_an_accepted_input():
     assert held.bound_for(m) == 101.0
     held.hold(snapshot(held, [m]))
     row = outcome(0.84, 102.0)  # a newer DB value landed after the input
-    held.overlay(row)
+    row = held.overlaid(row)
     assert (row.current_probability, row.last_updated.timestamp()) == (0.84, 102.0)
 
 
@@ -107,7 +107,7 @@ def test_no_completed_sample_means_no_fast_path_and_a_later_one_cannot_retrofit_
     assert held.bound_for(m) is None
     assert held.hold(snapshot(held, [m])) == set()
     row = outcome()
-    held.overlay(row)
+    row = held.overlaid(row)
     assert row.current_probability == 0.60
 
 
@@ -133,7 +133,7 @@ def test_newer_quote_replaces_the_held_one_and_an_old_snapshot_cannot_come_back(
     new = snapshot(held, [accept(held, seq=2, value=0.84)])
     assert held.hold(new) == {3}
     row = outcome()
-    held.overlay(row)
+    row = held.overlaid(row)
     assert (row.current_probability, row.last_updated.timestamp()) == (0.84, 102.0)
     assert held.hold(new) == set()
 
@@ -144,7 +144,7 @@ def test_a_row_at_or_after_the_bound_is_kept(stamp):
     held._database_bound = 101.0
     held.hold(snapshot(held, [accept(held)]))
     row = outcome(0.84, stamp)
-    held.overlay(row)
+    row = held.overlaid(row)
     assert (row.current_probability, row.last_updated.timestamp()) == (0.84, stamp)
 
 
@@ -154,8 +154,7 @@ def test_an_undated_row_takes_the_held_quote_and_its_basis_is_the_bound():
     held.hold(snapshot(held, [accept(held, oid=1)]))
     undated = SimpleNamespace(id=1, current_probability=0.6, last_updated=None)
     older, other = outcome(oid=1), outcome(oid=2)
-    for r in (undated, older, other):
-        held.overlay(r)
+    undated, older, other = (held.overlaid(r) for r in (undated, older, other))
     assert undated.current_probability == older.current_probability == 0.82
     assert other.current_probability == 0.60
     # The stamp's per-row basis is the bound: a later stamp built from the
@@ -173,7 +172,7 @@ def test_quiet_retries_create_no_new_observation():
         held._database_bound = sample
         assert held.hold(quotes) == set()
         row = outcome()
-        held.overlay(row)
+        row = held.overlaid(row)
         assert row.last_updated.timestamp() == 101.0
 
 
@@ -188,7 +187,7 @@ def test_stored_precision_and_independent_release():
     held.release(iter([3]))
     assert 3 not in held and 4 in held
     row = outcome()
-    held.overlay(row)
+    row = held.overlaid(row)
     assert row.current_probability == 0.60
 
 
@@ -333,9 +332,25 @@ def test_B2_partial_write_then_refused_chunk_reads_one_cohort():
 
 def test_overlay_event_with_no_held_leg_changes_nothing():
     held = HeldRowQuotes()
-    rows = [outcome(0.4, 90.0, oid=1), outcome(0.6, 90.0, oid=2)]
-    held.overlay_event(rows)
-    assert [r.current_probability for r in rows] == [0.4, 0.6]
+    entry = SimpleNamespace(outcomes=[outcome(0.4, 90.0, oid=1), outcome(0.6, 90.0, oid=2)])
+    held.overlay_event([entry])
+    assert [r.current_probability for r in entry.outcomes] == [0.4, 0.6]
+
+
+def test_the_overlay_copies_and_never_mutates_the_read_row():
+    """The read namespaces are not rows to write: the held price arrives on a
+    copy, and the original keeps its stored value and stamp."""
+    held = HeldRowQuotes()
+    held._database_bound = 101.0
+    held.hold(snapshot(held, [accept(held)]))
+    row = outcome()
+    copy = held.overlaid(row)
+    assert copy is not row
+    assert (copy.current_probability, copy.last_updated.timestamp()) == (0.82, 101.0)
+    assert (row.current_probability, row.last_updated.timestamp()) == (0.60, 100.0)
+    assert held.overlaid(outcome(oid=9)) is not None
+    untouched = outcome(oid=9)
+    assert held.overlaid(untouched) is untouched
 
 
 # ── the optional clock read: lifecycle and cost ────────────────────────────

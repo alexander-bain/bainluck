@@ -409,7 +409,6 @@ EXEMPT_WRITERS = {
     "tasks/repair_winner_field.py": "settlement repair — same board, same refusal",
     "routes/playoffs.py": "display-only coercion in a read-only GET — never persisted",
     "utils/settled_price.py": "SQL text only — no session, no commit boundary to wire; settled boards are never renumbered (#6325/#7987)",
-    "tasks/live_blend_refresh.py": "in-memory overlay (#11138 HeldRowQuotes) on the plain namespaces one stamp read builds — never persisted; the price row is written by polymarket_ws's chunk writer, which reranks",
 }
 
 
@@ -720,23 +719,6 @@ def test_the_playoffs_exemption_still_rests_on_a_read_only_session():
         "the reason."
     )
 
-
-
-def test_live_blend_refresh_exemption_still_holds_11138():
-    """`tasks/live_blend_refresh.py` is exempt because its only
-    `current_probability` assignment is `HeldRowQuotes.overlay` on a namespace
-    `_read_groups` builds for one stamp. If it ever persists an outcome price,
-    the reason is false — wire the rerank or re-derive it."""
-    import pathlib
-
-    source = (
-        pathlib.Path(__file__).resolve().parents[1] / "app/tasks/live_blend_refresh.py"
-    ).read_text()
-    assert "tasks/live_blend_refresh.py" in EXEMPT_WRITERS
-    assert "update(FuturesOutcome)" not in source
-    assert "insert(FuturesOutcome)" not in source
-    assert not re.search(r"\.values\([^)]*current_probability\s*=", source, re.S)
-    assert source.count("outcome.current_probability = ") == 1
 
 def test_the_kalshi_price_factory_exemption_executes_nothing():
     """A reusable expression owns no commit boundary; its caller still owes rank."""

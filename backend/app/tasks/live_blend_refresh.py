@@ -1255,24 +1255,40 @@ class HeldRowQuotes:
         stored = _coerce_timestamp(getattr(outcome, "last_updated", None))
         return stored is not None and stored.timestamp() >= held[1]
 
-    def overlay_event(self, outcomes) -> None:
-        """Every held leg of one event, or none: one ambiguous leg defers all."""
-        outcomes = list(outcomes)
-        if any(self._ambiguous(outcome) for outcome in outcomes):
-            return
-        for outcome in outcomes:
-            self.overlay(outcome)
+    def overlay_event(self, entries) -> None:
+        """Every held leg of one event, or none: one ambiguous leg defers all.
 
-    def overlay(self, outcome) -> None:
-        """Replace a stored price only when it is strictly older than the bound."""
+        ``entries`` are one event's `MarketOutcomes`. Each entry's outcome list
+        is replaced by its overlaid copy; no outcome object is mutated.
+        """
+        entries = list(entries)
+        if any(self._ambiguous(o) for entry in entries for o in entry.outcomes):
+            return
+        for entry in entries:
+            entry.outcomes[:] = [self.overlaid(o) for o in entry.outcomes]
+
+    def overlaid(self, outcome):
+        """This outcome as the stamp should read it: a COPY carrying the held
+        quote when the stored row is strictly older than its bound, else the
+        outcome itself.
+
+        A copy and not an assignment, deliberately: the namespaces
+        `_read_groups` builds are read material for one stamp, and nothing
+        here may look like (or become) a write to a `futures_outcomes` row —
+        the price row's only writer is the consumer's chunk UPDATE.
+        """
         from datetime import datetime, timezone
+        from types import SimpleNamespace
 
         held = self._quotes.get(getattr(outcome, "id", None))
         if held is None or self._ambiguous(outcome):
-            return
+            return outcome
         price, bound = held
-        outcome.current_probability = price
-        outcome.last_updated = datetime.fromtimestamp(bound, timezone.utc)
+        return SimpleNamespace(**{
+            **vars(outcome),
+            "current_probability": price,
+            "last_updated": datetime.fromtimestamp(bound, timezone.utc),
+        })
 
 
 class _FreshAdmission:
@@ -2666,7 +2682,7 @@ class LiveBlendRefresher:
                 entry.outcomes.append(outcome)
         if held is not None:
             for _event, group in grouped.values():
-                held.overlay_event([o for entry in group for o in entry.outcomes])
+                held.overlay_event(group)
         return grouped
 
     async def _prepare_groups(self, event_ids: list[int]) -> dict[int, tuple]:
