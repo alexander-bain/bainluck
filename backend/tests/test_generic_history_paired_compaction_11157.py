@@ -47,7 +47,13 @@ from app.tasks.polymarket_token_topup import OUTCOME_TOKEN_METADATA_KEY
 from app.utils import futures_chart_series as series
 from app.utils import generic_market_history as gmh
 
-NOW = datetime(2026, 10, 15, 0, 9, 8, tzinfo=timezone.utc)
+#: The reader windows by the wall clock (`get_futures_history` reads
+#: `datetime.now`), so every instant here is anchored to it — never branched on.
+NOW = datetime.now(timezone.utc).replace(microsecond=0)
+#: When Root replayed the #10955 packet. Its fixed instants below are moved by
+#: exactly this distance, so their spacing (to the microsecond) is unchanged.
+PACKET_NOW = datetime(2026, 10, 15, 0, 9, 8, tzinfo=timezone.utc)
+SHIFT = NOW - PACKET_NOW
 REFUSED_FIELD = "exclusive_field_incomplete_at_venue_instant"
 
 
@@ -226,7 +232,7 @@ ZACHARIA_CAPTURES = [
     ("2026-10-14T22:16:18.325259+00:00", 0.07),
 ]
 YES_ID, NO_ID = 246879005, 246879006
-SYNC_BASE = datetime(2026, 10, 13, 12, 0, 0, tzinfo=timezone.utc)
+SYNC_BASE = datetime(2026, 10, 13, 12, 0, 0, tzinfo=timezone.utc) + SHIFT
 SYNC_MINUTES = 150
 
 
@@ -247,7 +253,7 @@ def _synchronous_pair():
         "tok_no": [(ts, 0.944 if m == 20 else 0.945) for m, ts in enumerate(instants)],
     }
     snapshots = [
-        _snap(oid, datetime.fromisoformat(ts), p if oid == YES_ID else round(1 - p, 4))
+        _snap(oid, datetime.fromisoformat(ts) + SHIFT, p if oid == YES_ID else round(1 - p, 4))
         for ts, p in ZACHARIA_CAPTURES for oid in (YES_ID, NO_ID)
     ]
     return market, raw, snapshots
