@@ -525,7 +525,7 @@ async def test_a_transient_hold_publishes_within_one_second_without_republishing
         cadence = start_cadence(t, stop)
         await wait_for(lambda: published(t, 0.82), timeout=5)
         first = published(t, 0.82)[0]
-        await release
+        await asyncio.wait_for(release, 5)
         t.accept(OUTCOME, 0.84)
         await wait_for(lambda: published(t, 0.84), timeout=5)
         await wait_for(lambda: not t.p.ns["price_buffer"], timeout=5)

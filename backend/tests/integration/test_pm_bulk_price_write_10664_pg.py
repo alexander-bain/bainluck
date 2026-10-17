@@ -625,7 +625,8 @@ async def test_a_first_attempt_waits_only_the_statement_budget_and_the_next_flus
             )
             # Still held: the next flush probes NOWAIT, refused at once.
             rig.price_started.clear()
-            assert await rig.write(dict(rig.buffer)) is None
+            retried = await rig.write(dict(rig.buffer))
+            assert retried is None
             assert rig.price_started.is_set(), "the next flush retries the pair"
             assert rig.stats["price_lock_probes_refused"] == 1
         finally:
