@@ -1132,6 +1132,70 @@ PREPARED_OUTCOME_FIELDS = (
 )
 
 
+class HeldRowQuotes:
+    """#11138 (alternative 3) — a received quote whose price-row write a lock holds.
+
+    The stamp derives a source's value from `futures_outcomes`, so a foreign
+    transaction holding one price row (catalog, rerank, resolution) held the
+    blend with it: local real-PG lab on cdd20661, PM .82 reached the folded
+    hero after 3.69 s while Kalshi, arriving 350 ms later, took 64 ms.
+
+    The consumer records here, per outcome, the price the held write carries
+    and when the socket received it; `_read_groups` reads that price in place
+    of an OLDER stored row. Nothing uncommitted is published: the stamp that
+    carries it commits on the events row as before, with `observed_value` and a
+    per-row `observed_basis` naming the receive time. That committed stamp is
+    the durability point for the live number; the price row is a projection
+    the existing buffer keeps retrying, unchanged.
+
+    Why no older value can come back. A later stamp built from the still-held
+    row has an earlier basis for that row and `observation_admits_clause`
+    refuses it in the UPDATE — after a restart too, when this map is empty.
+    Once the price row lands, its `last_updated` is later than the receive
+    time, so the row wins here and the entry is released.
+
+    Bounded: one entry per buffered outcome, released when its write lands or
+    its book is withdrawn. Pure bookkeeping, nothing awaited.
+    """
+
+    def __init__(self) -> None:
+        self._quotes: dict[int, tuple[float, float]] = {}
+
+    def hold(self, quotes: dict[int, tuple[float, float]]) -> set[int]:
+        """Record ``{outcome_id: (price, recv_wall)}``; returns ids that changed."""
+        changed = set()
+        for oid, (price, seen) in quotes.items():
+            # The price row stores NUMERIC(7, 6): read what it will hold.
+            entry = (round(float(price), 6), float(seen))
+            if self._quotes.get(oid) != entry:
+                self._quotes[oid] = entry
+                changed.add(oid)
+        return changed
+
+    def release(self, outcome_ids: Iterable[int]) -> None:
+        for oid in outcome_ids:
+            self._quotes.pop(oid, None)
+
+    def __contains__(self, outcome_id) -> bool:
+        return outcome_id in self._quotes
+
+    def overlay(self, outcome) -> None:
+        """Replace a stored price only with a quote received AFTER it was stored."""
+        from datetime import datetime, timezone
+
+        from app.utils.aggregation import _coerce_timestamp
+
+        held = self._quotes.get(getattr(outcome, "id", None))
+        if held is None:
+            return
+        price, seen = held
+        stored = _coerce_timestamp(getattr(outcome, "last_updated", None))
+        if stored is not None and stored.timestamp() >= seen:
+            return
+        outcome.current_probability = price
+        outcome.last_updated = datetime.fromtimestamp(seen, timezone.utc)
+
+
 class _FreshAdmission:
     """#10090 — the door a running `refresh` holds open for committed cohorts.
 
@@ -1277,6 +1341,8 @@ class LiveBlendRefresher:
         session_factory=None,
     ) -> None:
         self.source = source
+        #: #11138 — the owning consumer's `HeldRowQuotes`, or None (no overlay).
+        self.held_quotes: Optional[HeldRowQuotes] = None
         #: #2471 — the owning consumer's session factory, so the stamp borrows
         #: the consumer's one engine instead of building a pool per batch.
         #: None ⇒ ``app.tasks.base.get_task_session``, looked up per batch.
@@ -2477,6 +2543,7 @@ class LiveBlendRefresher:
         ).all()
         grouped: dict[int, tuple] = {}
         entries: dict[int, MarketOutcomes] = {}
+        held = self.held_quotes
         for row in rows:
             market_id = row[0]
             entry = entries.get(market_id)
@@ -2514,9 +2581,12 @@ class LiveBlendRefresher:
                 group.append(entry)
             outcome_values = row[len(PREPARED_MARKET_FIELDS) + len(PREPARED_EVENT_FIELDS):]
             if outcome_values[0] is not None:
-                entry.outcomes.append(SimpleNamespace(**dict(zip(
+                outcome = SimpleNamespace(**dict(zip(
                     PREPARED_OUTCOME_FIELDS, outcome_values
-                ))))
+                )))
+                if held is not None:
+                    held.overlay(outcome)
+                entry.outcomes.append(outcome)
         return grouped
 
     async def _prepare_groups(self, event_ids: list[int]) -> dict[int, tuple]:

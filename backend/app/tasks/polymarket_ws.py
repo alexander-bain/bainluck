@@ -1894,7 +1894,7 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
     )
     from app.services.polymarket_ws import PolymarketWebSocket
     from app.tasks.live_blend_refresh import (
-        DEFAULT_MIN_REFRESH_INTERVAL_S, LiveBlendRefresher, TailReceipts,
+        DEFAULT_MIN_REFRESH_INTERVAL_S, HeldRowQuotes, LiveBlendRefresher, TailReceipts,
         adopt_handed_off,
         LOOP_REAP_TIMEOUT_S, event_ids_for_outcomes, hand_off_pending,
         reap_stopped_loops, run_flush_cadence,
@@ -2393,6 +2393,10 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
         "polymarket", min_refresh_interval_s=blend_floor,
         session_factory=get_task_session,  # #2471
     )
+    # #11138: quotes whose price-row write a lock holds; the stamp reads them
+    # in place of the older stored row. Keyed like `price_buffer`, released
+    # when the write lands. Reached through the refresher: no new name.
+    blend_refresher.held_quotes = HeldRowQuotes()
     # #837 receipt — every accepted input is stamped (seq, receive instant) as
     # it is buffered, so a held price can be followed from the socket to the
     # stamp that carried it. `input_marks` is keyed like `price_buffer` (one
@@ -2637,6 +2641,10 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
             for outcome_id, prob in chunk.items():
                 if price_buffer.get(outcome_id) == prob:
                     del price_buffer[outcome_id]
+            # #11138: the row now holds a price at least this new.
+            held_quotes = getattr(blend_refresher, "held_quotes", None)
+            if held_quotes is not None:
+                held_quotes.release(chunk)
         # A zero-return statement still acknowledged the unchanged inputs.
         # Clear only matching buffered values, but never stamp those inputs as
         # a new database observation or rerank their unchanged markets.
@@ -3294,6 +3302,42 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                     )
                     if traced is not None:
                         stage_trace.chunk_end(traced, wrote)
+                    # #11138: None is a price row a lock holds (refused, timed
+                    # out or cooling down). Each event whose speaking legs here
+                    # all carry their received quote is stamped from
+                    # `held_quotes` now rather than after the holder lets go;
+                    # its rows stay buffered and retried exactly as before.
+                    # Only a changed quote is owed again, so a long hold costs
+                    # no stamp per flush.
+                    held_ready: list[int] = []
+                    held_quotes = getattr(blend_refresher, "held_quotes", None)
+                    if wrote is None and not final and held_quotes is not None:
+                        async with buffer_lock:
+                            legs_of: dict[int, list[int]] = {}
+                            for oid in current_chunk:
+                                event_id = headline_event_ids.get(oid)
+                                if event_id is not None:
+                                    legs_of.setdefault(event_id, []).append(oid)
+                            quotes = {}
+                            for oids in legs_of.values():
+                                marks = [batch_marks.get(oid) for oid in oids]
+                                if all(
+                                    getattr(mark, "probability", None) == current_chunk[oid]
+                                    and isinstance(getattr(mark, "recv_wall", None), float)
+                                    and oid not in withdraw_buffer
+                                    for oid, mark in zip(oids, marks)
+                                ):
+                                    quotes.update(
+                                        (oid, (current_chunk[oid], mark.recv_wall))
+                                        for oid, mark in zip(oids, marks)
+                                    )
+                            moved = event_ids_for_outcomes(
+                                headline_event_ids, held_quotes.hold(quotes),
+                            )
+                        held_ready = [
+                            oid for oid in quotes
+                            if headline_event_ids.get(oid) in moved
+                        ]
                     # A wide book can arrive during the earlier write or this
                     # one. It must mature/hold this event before its fresh stamp.
                     async with buffer_lock:
@@ -3326,6 +3370,10 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                         failed_price_events.update(
                             event_ids_for_outcomes(event_id_by_outcome, chunk_ids)
                         )
+                    if held_ready:
+                        # Withdrawals still wait for the row (failed above).
+                        unfinished_price_ids.difference_update(held_ready)
+                        owed.extend(oid for oid in held_ready if oid not in owed)
                     # #10651: finish this event's withdrawals once all of its
                     # planned price writes have completed successfully. An
                     # unrelated later chunk must not delay its coherent blend
@@ -3899,6 +3947,10 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                     return
                 for outcome_id, leg_bid, leg_ask in legs:
                     withdraw_buffer[outcome_id] = (leg_bid, leg_ask)
+                # #11138: a held quote never outlives a book that withdraws it.
+                held_quotes = getattr(blend_refresher, "held_quotes", None)
+                if held_quotes is not None:
+                    held_quotes.release(oid for oid, _bid, _ask in legs)
                 wake_outcomes = getattr(catalog_boundary, "wake_for_outcomes", None)
                 if wake_outcomes is not None:
                     wake_outcomes(
