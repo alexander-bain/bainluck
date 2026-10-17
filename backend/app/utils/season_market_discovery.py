@@ -129,9 +129,11 @@ was cancelled), and the reader tries to take the lease itself. The query, the
 key, the TTLs and what is stored are unchanged. The only thing that changes is
 how many readers run the query at once.
 
-Fails open, like the cache: no Redis, or any lease error, means the reader runs
-the query itself, exactly as before. The wait is bounded by
-`BUILD_LEASE_TTL_SECONDS`, the longest any lease can stand.
+Fails open, like the cache: no Redis, any lease error, or one poll slower than
+`POLL_REDIS_BUDGET_SECONDS`, means the reader runs the query itself, exactly as
+before. The wait is bounded by `BUILD_LEASE_TTL_SECONDS`, the longest any lease
+can stand. A holder that keeps failing slowly is a degraded mode, not a hang:
+each waiter takes over in turn, until its own deadline.
 
 What this does NOT fix: the FIRST reader of each slot still pays the whole
 scan. Only an index on the tier 1-4 rows removes that, and an index is a
@@ -285,8 +287,18 @@ def write(
 #: This is also the most a waiting reader can wait.
 BUILD_LEASE_TTL_SECONDS = 75
 
-#: How often a waiting reader re-reads the slot. One Redis GET per poll.
+#: How often a waiting reader re-reads the slot. Each poll is TWO synchronous
+#: Redis round trips on the event loop (the slot GET and the lease EXISTS), so a
+#: waiter costs 8 sync ops a second for as long as the holder's scan runs.
 PEER_POLL_SECONDS = 0.25
+
+#: The most one poll's round trips may take before the waiter stops waiting.
+#: The poll's calls are synchronous, so a Redis that is slow WITHOUT erroring
+#: (100 ms an op) would block this worker's whole event loop for most of every
+#: second, for the holder's 19-24 s scan. Over this budget the waiter fails open
+#: and runs the query itself, exactly as before #2316. A healthy Redis answers a
+#: poll in a few milliseconds.
+POLL_REDIS_BUDGET_SECONDS = 0.05
 
 
 def build_task_name(sport_key: str, event_is_finished: bool) -> str:
@@ -343,6 +355,7 @@ async def claim_or_await(
             return None, lease
         # A peer is building. Wait for its answer while its lease stands.
         while True:
+            poll_started = clock()
             market_ids = read(sport_key, event_is_finished, rc=client)
             if market_ids is not None:
                 return market_ids, None
@@ -357,6 +370,18 @@ async def claim_or_await(
             try:
                 held = bool(client.exists(lease.key))
             except Exception:
+                return None, None
+            poll_seconds = clock() - poll_started
+            if poll_seconds > POLL_REDIS_BUDGET_SECONDS:
+                # Slow without erroring: polling on would stall every request
+                # on this worker. Stop using Redis and run the query here.
+                logger.warning(
+                    "season-market discovery: one poll for %s took %.3fs "
+                    "(budget %ss) — Redis is slow, running the build here",
+                    sport_key,
+                    poll_seconds,
+                    POLL_REDIS_BUDGET_SECONDS,
+                )
                 return None, None
             if not held:
                 # The holder ended without publishing. Try to take over.

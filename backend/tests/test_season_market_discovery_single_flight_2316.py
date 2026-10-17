@@ -270,6 +270,72 @@ async def test_a_lease_that_vanishes_into_a_sick_redis_fails_open():
     assert await smd.claim_or_await("baseball_mlb", True, rc=rc) == (None, None)
 
 
+def _slow_get_redis(seconds_per_get, now):
+    """A healthy-looking Redis whose GET takes `seconds_per_get` on the
+    injected clock: slow, never raising."""
+    rc = _LeaseRedis()
+    real_get = rc.get
+
+    def _get(k):
+        now[0] += seconds_per_get
+        return real_get(k)
+
+    rc.get = _get
+    return rc
+
+
+@pytest.mark.asyncio
+async def test_a_slow_redis_stops_the_wait_instead_of_stalling_the_loop():
+    """lane1b R1 on #11197: each poll is synchronous, so a Redis that answers
+    in 100 ms without erroring would block the worker's event loop for most of
+    every second of the holder's scan. One slow poll ends the wait: run the
+    query here, sleep never, and leave the peer's lease alone."""
+    now = [1000.0]
+    rc = _slow_get_redis(0.1, now)
+    _hold_lease_as_peer(rc)
+    sleeps = []
+
+    async def _sleep(s):
+        sleeps.append(s)
+        now[0] += s
+
+    ids, lease = await smd.claim_or_await(
+        "baseball_mlb", True, rc=rc, sleep=_sleep, clock=lambda: now[0]
+    )
+    assert (ids, lease) == (None, None)
+    assert sleeps == []
+    assert rc.store[_lease_key()] == b"peer-token"
+
+
+@pytest.mark.asyncio
+async def test_a_fast_redis_keeps_waiting_for_the_peer():
+    """The control for the test above: the same rig with polls well inside the
+    budget keeps waiting and takes the peer's answer, so the budget is not
+    what ends every wait."""
+    now = [1000.0]
+    rc = _slow_get_redis(smd.POLL_REDIS_BUDGET_SECONDS / 5, now)
+    _hold_lease_as_peer(rc)
+    sleeps = []
+
+    async def _sleep(s):
+        sleeps.append(s)
+        now[0] += s
+        if len(sleeps) == 3:
+            rc.setex(smd.cache_key("baseball_mlb", True), 300, "[7, 8]")
+
+    ids, lease = await smd.claim_or_await(
+        "baseball_mlb", True, rc=rc, sleep=_sleep, clock=lambda: now[0]
+    )
+    assert (ids, lease) == ([7, 8], None)
+    assert sleeps == [smd.PEER_POLL_SECONDS] * 3
+
+
+def test_the_poll_budget_is_far_under_the_poll_interval():
+    """Over budget, a waiter's sync Redis time would be a large share of the
+    loop; the budget keeps it under a fifth of each poll interval."""
+    assert 0 < smd.POLL_REDIS_BUDGET_SECONDS <= smd.PEER_POLL_SECONDS / 5
+
+
 def test_release_of_no_lease_is_a_no_op():
     assert smd.release_build(None) is False
 
