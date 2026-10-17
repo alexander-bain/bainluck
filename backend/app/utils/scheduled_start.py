@@ -42,6 +42,26 @@ def start_is_from_schedule(commence_time_source: Optional[str]) -> bool:
     return commence_time_source in SCHEDULE_START_SOURCES
 
 
+def served_start_is_from_schedule(
+    commence_time_source: Optional[str],
+    stored_start: Any,
+    served_start: Any,
+) -> bool:
+    """``start_is_from_schedule`` for a route that may serve another start.
+
+    The event page (``/api/events/{id}``) serves ``served_commence_time``, not
+    the column. While a row is held (#9634) that is StatPal's start for a LATER
+    SESSION: when the session begins, not when this match does. A tennis match
+    can be third on its court, so the session's start is not a start a calendar
+    entry can carry. The column's provenance says nothing about a value the
+    column does not hold, so a substituted start serves False. Only when the
+    route serves the stored start does the stored provenance answer.
+    """
+    if stored_start is None or served_start != stored_start:
+        return False
+    return start_is_from_schedule(commence_time_source)
+
+
 #: How many read-only views may sit in front of the row. Today there is one
 #: (``FoldedBlendView``); the bound only keeps a cycle from looping.
 _MAX_VIEW_DEPTH = 4
