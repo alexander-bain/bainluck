@@ -212,7 +212,7 @@ class _KalshiHeadlineEvents(Mapping[int, int]):
 
 
 #: #10090 — True inside a flush's `serve_live_beside` task. Its awaits run
-#: beside that flush's own non-live transaction, so `_KalshiPriceOwner` keeps
+#: beside that flush's own phase transaction, so `_KalshiPriceOwner` keeps
 #: them out of the flush's sequential waits (`_FlushTimings.waited`).
 _WRITING_BESIDE = contextvars.ContextVar("kalshi_writing_beside", default=False)
 
@@ -1273,7 +1273,9 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
     stats["blend_pending_adopted"] = adopt_handed_off(blend_refresher)
     stats["history_pending_adopted"] = len(getattr(blend_refresher, "_history", ()))
 
-    async def flush_prices(flush_started=None, *, final_drain=False, beside=None):
+    async def flush_prices(
+        flush_started=None, *, final_drain=False, beside=None, beside_stopping=None,
+    ):
         """Write buffered price updates to DB — #10640: game markets first.
 
         Returns False for a non-lock failure (the cadence waits before retrying).
@@ -1292,11 +1294,14 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
         as long as Postgres does: the drain has no next flush to retry in.
 
         ``beside`` (#10090, `serve_live_beside`): this call runs while the
-        flush that made it waits on a non-live transaction. It takes only live
-        games' input, never an outcome, event or market of that flush's
-        unfinished ``(outcomes, events, markets)``, which it is given. With no
+        flush that made it waits on one of its phase transactions, live or
+        not. It takes only live games' input, newest whole event first, never
+        an outcome, event or market of that flush's unfinished
+        ``(outcomes, events, markets)``, which it is given. With no
         such input it stamps only owed debt that includes a live event, those
         events deferred, and it owes no flush budget or timing of its own.
+        ``beside_stopping`` is true once that flush is joining it: no further
+        whole event starts.
         """
         from app.tasks.kalshi_ws import _KalshiHeadlineEvents
 
@@ -1411,6 +1416,17 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
             live_events=live_event_ids,
             pending_events_fenced=True,
         )
+        if beside is not None:
+            # The main writer keeps oldest-first progress. Its helper serves
+            # the newest whole live event first, so a later quote does not
+            # inherit the helper's older buffered tail before the owner joins.
+            phases.sort(
+                key=lambda phase: max(
+                    (getattr(batch_marks.get(oid), "seq", 0) for oid in phase),
+                    default=0,
+                ),
+                reverse=True,
+            )
         # Includes failed/budget-deferred phases until a whole phase commits.
         # Re-resolve through the current map at each launch for late bridges.
         # Beside a flush, that flush's unfinished prices stay unfinished here.
@@ -1437,20 +1453,25 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
         # Preemption permits one non-live phase; the existing budget still
         # applies. Served hot non-live entries yield to the untouched tail.
         nonlive_started = 0
-        # #10090 — LIVE INPUT BESIDE AN IN-FLIGHT NON-LIVE TRANSACTION. The
+        # #10090 — LIVE INPUT BESIDE AN IN-FLIGHT TRANSACTION. The
         # preemption above is decided before a non-live phase opens; a live
         # tick arriving once it runs waited for all of it, then for the next
         # flush (production 2026-10-12 21:25:44Z: one 200-row non-live phase
-        # held its transaction 3.50 s, save 1.50 s + rerank 2.01 s). While a
-        # periodic non-live phase's transaction is open, live winner-leg input
+        # held its transaction 3.50 s, save 1.50 s + rerank 2.01 s). Another
+        # live game's slow phase held it the same way (Root attempt26). While
+        # any periodic phase's transaction is open, other live winner-leg input
         # is written by this same function (``beside``) on its own pooled
         # session and transaction: whole live cohorts, never a row, event or
         # market this flush has not finished, under every rule below. It
         # wakes as the held cadence would: on winner input, when the run's
         # refresh returns, and once a period, so a fenced quote or a floored
-        # live stamp still lands before the non-live commit (Root 2146Z). The
-        # non-live phase is never rolled back or cut for it, and the writer is
-        # joined, never abandoned, before this flush moves past that phase.
+        # live stamp still lands before the phase's commit (Root 2146Z). The
+        # phase is never rolled back or cut for it, and the writer is joined,
+        # never abandoned, before this flush moves past that phase. The join
+        # is cooperative: the writer finishes only its in-flight whole event
+        # and leaves untouched cohorts buffered for the next flush, so the
+        # owner never waits out the writer's whole snapshot (Root attempt26:
+        # a held quote's own lock-timeout join inherited that tail).
         beside_task = None
         beside_stop = False
         beside_failed = False
@@ -1466,7 +1487,9 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
             while not beside_stop:
                 prices.input_wake.clear()
                 # Its own clock: the refresher's per-event floor reads it.
-                if await flush_prices(_mono(), beside=excluded) is False:
+                if await flush_prices(
+                    _mono(), beside=excluded, beside_stopping=lambda: beside_stop,
+                ) is False:
                     return False
                 if beside_stop:
                     break
@@ -1507,7 +1530,7 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
                 if task.exception() is not None:
                     beside_failed = True
                     logger.error(
-                        "Kalshi WS: live write beside a non-live phase raised",
+                        "Kalshi WS: live write beside a phase raised",
                         exc_info=task.exception(),
                     )
                 elif task.result() is False:
@@ -1669,6 +1692,11 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
 
         try:
             for index, phase in enumerate(phases):
+                # The owner has finished its phase and is joining this writer.
+                # Finish only the in-flight whole event; untouched buffered
+                # cohorts belong to a later flush, not to this owner's wait.
+                if beside_stopping is not None and beside_stopping():
+                    break
                 if beside_failed:
                     # A non-lock failure beside the last phase: as any other,
                     # the unpaid tail stays buffered for the retry.
@@ -1757,7 +1785,6 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
                 written_observations: dict = {}
                 if (
                     beside is None and live_event_ids and not final_drain
-                    and not phase_live
                 ):
                     beside_task = asyncio.create_task(serve_live_beside())
                 try:

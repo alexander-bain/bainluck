@@ -5159,8 +5159,10 @@ jobs:
         # starvation, an in-flight event never split, cancellation inside both
         # transactions then the final drain, and Root's three liveness cases:
         # the last quote inside the stamp floor, a quote fenced behind its own
-        # running stamp, a bridged open-contract winner. Reuses the #837
-        # database; same skip detection plus a count.
+        # running stamp, a bridged open-contract winner, and Root attempt26's
+        # helper beside a LIVE phase: start, newest-first, cooperative stop,
+        # each with its strawman. Reuses the #837 database; same skip
+        # detection plus a count.
         if: matrix.group == 'isolated' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
@@ -5170,8 +5172,8 @@ jobs:
             echo "::error::#10090 live-beside gate SKIPPED — the gate did not run"
             exit 1
           fi
-          grep -qE "[^0-9]8 passed[,[:space:]]" /tmp/livebeside10090.txt || {
-            echo "::error::#10090 live-beside gate did not run all eight cases"
+          grep -qE "[^0-9]14 passed[,[:space:]]" /tmp/livebeside10090.txt || {
+            echo "::error::#10090 live-beside gate did not run all fourteen cases"
             exit 1
           }
 
