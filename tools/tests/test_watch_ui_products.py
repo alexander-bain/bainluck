@@ -543,7 +543,10 @@ class MainThreadCheckerRuntimeTests(unittest.TestCase):
                 self.assertEqual(asked, [])
 
     def test_checker_admission_admits_no_neighbour_in_the_same_setting(self):
-        for extra in ("/var/run/unknown/libOther.dylib", "/tmp/libMainThreadChecker.dylib"):
+        for extra in (
+            "/var/run/unknown/libOther.dylib",
+            "/tmp/libMainThreadChecker.dylib",
+        ):
             with self.subTest(extra=extra):
                 self.inject(self.HOSTED + ":" + extra)
                 present, _ = self.runner_files({self.HOSTED, extra})
