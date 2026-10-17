@@ -117,7 +117,10 @@ async def test_installed_handover_leaves_no_source_copy_alive(
     monkeypatch.setenv("POLYMARKET_WS_OPEN_CONTRACT_PRICES", "1")
     monkeypatch.setenv("WS_OPEN_CONTRACT_PRICES", "1")
 
-    stats = await asyncio.wait_for(task._run_polymarket_ws_consumer(stop=stop), 10)
+    # A hang guard only: the run ends on its fifth catalog read. Each sample
+    # walks the whole heap, which in a CI shard's process made the game-slate
+    # arms take 9.9-10.4 s (f68f1ed611, backend-tests (7)) vs ~0.5 s alone.
+    stats = await asyncio.wait_for(task._run_polymarket_ws_consumer(stop=stop), 60)
 
     await until(lambda: True)
     assert rig.catalog_reads >= 4, rig.catalog_reads
