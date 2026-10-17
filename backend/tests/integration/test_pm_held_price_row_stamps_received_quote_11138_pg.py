@@ -49,6 +49,7 @@ from tests.integration.test_live_blend_grouped_commit_8129_pg import (  # noqa: 
     rig,
 )
 from tests.integration.test_pm_stamp_release_wake_10090_pg import (  # noqa: F401
+    PERIOD,
     build,
     consumer,
     start_cadence,
@@ -384,6 +385,14 @@ async def test_G1_a_newer_tick_during_the_real_flush_never_tears_the_held_cohort
         assert await source_value() == .70
         assert t.p.ns["price_buffer"][HOME] == .72
 
+        # The successor flush starts one production cadence after the first,
+        # as the real cadence would: the refresher's per-event floor is that
+        # cadence (`min_refresh_interval_s=PERIOD`), so a back-to-back call
+        # inside it leaves .72 owed to the next flush. Called back to back,
+        # this arm passed only because the first write spent the whole 500 ms
+        # lock budget; a 50 ms price-statement budget (#10090) exposed it, and
+        # the parent fails it identically with a 10 ms gap.
+        await asyncio.sleep(max(0.0, t.flush_starts[0] + PERIOD - time.monotonic()))
         await t.tracked_flush(time.monotonic())
         await t.boundary.join_stamps()
         assert await source_value() == .72
@@ -448,3 +457,102 @@ async def test_the_first_quote_after_a_consumer_start_is_published_while_its_row
             await holder.close()
         await stop_cadence(t, stop, cadence)
     print("EVIDENCE", dict(first_quote_after_start_published_s=round(age, 4)))
+
+
+# ── #10090: Root's attempt19 transient-hold case on the shipped writer ─────
+#
+# Root's local real-PG gate (attempt19-fast-retry-779) failed ONE case of the
+# 50 ms price-statement budget: ambiguous bound, a 150 ms foreign hold, .82
+# published 1000.563 ms after the input (strict < 1 s). Its traced rerun
+# (attempt20) located the phase: the deferred chunk still held .82, so the
+# event owed a stamp the overlay refuses for an ambiguous row; that stamp
+# republished the stored .70 (171→580 ms) while the event fence kept two
+# retries of .82 out. The same case, same holder, same cadence and the same
+# strict bound, now on the SHIPPED writer: an ambiguous quote is not held, so
+# no stored-row stamp runs and .70 is never republished.
+
+
+@pytest.mark.parametrize("retry_s", [0.25, 2.0])
+@pytest.mark.parametrize("bound", ["eligible", "missing", "ambiguous"])
+async def test_a_transient_hold_publishes_within_one_second_without_republishing_the_stored_row(
+    rig, consumer, monkeypatch, retry_s, bound,
+):
+    from sqlalchemy import event as sa_event
+
+    t = await build(rig, consumer, monkeypatch, trace=False, lock_ms=500)
+    t.p.ns["PRICE_FLUSH_SECONDS"] = retry_s
+    if bound == "missing":
+        held = t.r.held_quotes = blend.HeldRowQuotes()  # no completed sample
+        accept = t.accept
+
+        def note(oid, value):
+            mark = accept(oid, value)
+            held.note_input(mark)
+            return mark
+
+        t.accept = note
+    else:
+        await wire_held_quotes(t, consumer)
+    if bound == "ambiguous":
+        # A committed write after the sample: the stored row is at/after
+        # every bound this run freezes until the next completed sample.
+        async with rig.engine.begin() as conn:
+            await conn.execute(text(
+                "UPDATE futures_outcomes SET last_updated = clock_timestamp() WHERE id = :id"
+            ), {"id": OUTCOME})
+    holder, tx = await hold_price_row(rig, OUTCOME)
+    stop = asyncio.Event()
+    cadence = release = None
+    released = []
+    statement_entered = asyncio.Event()
+
+    def observe_statement(conn, cursor, statement, parameters, context, executemany):
+        if "WITH locked AS MATERIALIZED" in statement:
+            statement_entered.set()
+
+    sa_event.listen(consumer.sync_engine, "before_cursor_execute", observe_statement)
+
+    async def release_short_lock():
+        await asyncio.wait_for(statement_entered.wait(), 2)
+        await asyncio.sleep(0.15)
+        await tx.rollback()
+        released.append(time.monotonic())
+
+    try:
+        sent = time.monotonic()
+        t.accept(OUTCOME, 0.82)
+        release = asyncio.create_task(release_short_lock())
+        cadence = start_cadence(t, stop)
+        await wait_for(lambda: published(t, 0.82), timeout=5)
+        first = published(t, 0.82)[0]
+        await asyncio.wait_for(release, 5)
+        t.accept(OUTCOME, 0.84)
+        await wait_for(lambda: published(t, 0.84), timeout=5)
+        await wait_for(lambda: not t.p.ns["price_buffer"], timeout=5)
+        await stop_cadence(t, stop, cadence)
+        cadence = None
+        assert await stored(rig) == (0.84, 0.84)
+        values = [v for _, eid, v, _ in t.pubs if eid == EVENT]
+        print("TRANSIENT_HOLD_EVIDENCE", dict(
+            bound=bound, retry_s=retry_s,
+            first_ms=round(1000 * (first - sent), 3),
+            release_ms=round(1000 * (released[0] - sent), 3),
+            after_release_ms=round(1000 * (first - released[0]), 3),
+            values=values,
+        ))
+        assert values[-1] == 0.84
+        assert all(v == 0.84 for v in values[values.index(0.84):])
+        # The phase attempt20 traced: no stamp of the stored row ran first.
+        assert values[0] == 0.82, values
+        # Root's attempt19 assertion, unchanged.
+        assert first - sent < 1, values
+    finally:
+        sa_event.remove(consumer.sync_engine, "before_cursor_execute", observe_statement)
+        if tx.is_active:
+            await tx.rollback()
+        await holder.close()
+        if release is not None and not release.done():
+            release.cancel()
+            await asyncio.gather(release, return_exceptions=True)
+        if cadence is not None:
+            await stop_cadence(t, stop, cadence)

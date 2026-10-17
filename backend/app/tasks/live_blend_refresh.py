@@ -1173,6 +1173,8 @@ class HeldRowQuotes:
     #: most one timeout per window however many chunks a flush plans.
     SAMPLE_TIMEOUT_S = 0.15
     SAMPLE_BACKOFF_S = 5.0
+    #: #10090 — `stored_at_or_after` waits at most this for a relation lock.
+    AMBIGUITY_READ_LOCK_TIMEOUT_MS = 10
 
     def __init__(self) -> None:
         self._quotes: dict[int, tuple[float, float]] = {}
@@ -1238,6 +1240,60 @@ class HeldRowQuotes:
                 self._quotes[oid] = entry
                 changed.add(oid)
         return changed
+
+    async def stored_at_or_after(self, sessions, quotes) -> set[int] | None:
+        """#10090 — the ids among NEW ``{outcome_id: (price, bound)}`` whose
+        stored row is already at or after its bound: `_ambiguous`, read before
+        the hold instead of inside the stamp.
+
+        Held anyway, such a quote owed its event a stamp the overlay refuses,
+        so it republished the stored row while the event fence kept the price
+        write that carries the quote out (Root attempt20, real PG: the stored
+        .70 stamp ran 171→580 ms, two retries fenced behind it, .82 published
+        at 664 ms; attempt19 1000.563 ms). An unchanged quote is not read
+        again. A row lock never blocks this read; a relation lock gets
+        AMBIGUITY_READ_LOCK_TIMEOUT_MS. None means unknown: the caller holds
+        as before. It shares the sample's backoff window both ways.
+        """
+        from sqlalchemy import select
+
+        from app.models.models import FuturesOutcome
+        from app.utils.aggregation import _coerce_timestamp
+        from app.utils.repair_lock_budget import SET_LOCK_TIMEOUT_SQL, lock_timeout_value
+
+        new = {
+            oid: float(bound)
+            for oid, (price, bound) in quotes.items()
+            if bound is not None
+            and self._quotes.get(oid) != (round(float(price), 6), float(bound))
+        }
+        if not new:
+            return set()
+        if time.monotonic() < self._sample_backoff_until:
+            return None
+        try:
+            async with asyncio.timeout(self.SAMPLE_TIMEOUT_S):
+                async with sessions() as session:
+                    await session.execute(
+                        SET_LOCK_TIMEOUT_SQL,
+                        {"ms": lock_timeout_value(self.AMBIGUITY_READ_LOCK_TIMEOUT_MS)},
+                    )
+                    rows = (await session.execute(
+                        select(FuturesOutcome.id, FuturesOutcome.last_updated)
+                        .where(FuturesOutcome.id.in_(sorted(new)))
+                    )).all()
+        except Exception:
+            # Shares the sample's window: a sick pool still costs one timeout
+            # per window, and later sample attempts back off behind this one.
+            self.sample_failures += 1
+            self._sample_backoff_until = time.monotonic() + self.SAMPLE_BACKOFF_S
+            return None
+        found = set()
+        for oid, last_updated in rows:
+            stored = _coerce_timestamp(last_updated)
+            if stored is not None and stored.timestamp() >= new[oid]:
+                found.add(oid)
+        return found
 
     def release(self, outcome_ids: Iterable[int]) -> None:
         for oid in outcome_ids:
