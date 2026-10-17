@@ -7381,12 +7381,13 @@ def _leg_absent_beside_dense_sibling(
     """
     try:
         from app.tasks.generic_market_history_fill import (
+            _lifetime_hours,
             attempt_reached_the_venue,
             fillable_outcomes,
         )
         from app.utils.generic_market_history import (
+            declared_hole_grains,
             leg_absent_beside_dense_sibling,
-            whole_life_grain_seconds,
         )
 
         # The same gate `_consider_generic_history_fill` opens with: a market no
@@ -7396,8 +7397,14 @@ def _leg_absent_beside_dense_sibling(
         payload = venue.payload
         if payload is not None and attempt_reached_the_venue(payload):
             return False
-        grain = whole_life_grain_seconds(getattr(market, "source", None))
-        if grain is None:
+        now = datetime.now(timezone.utc)
+        # The SAME plan the fill would run for a market of this age (#11162 F1):
+        # a recent hole is judged at the fine tier's grain, an old one at the
+        # whole-life tier's, never at one grain for both.
+        grains = declared_hole_grains(
+            getattr(market, "source", None), _lifetime_hours(market, now)
+        )
+        if grains is None:
             return False
         fillable = fillable_outcomes(market)
         by_line: dict[int, list[datetime]] = defaultdict(list)
@@ -7413,8 +7420,8 @@ def _leg_absent_beside_dense_sibling(
             fillable_lines={o.id for o in fillable},
             graded_lines={o.id for o in fillable if getattr(o, "is_winner", None) is not None},
             min_reference=_VENUE_FILL_THIN_CAPTURES,
-            gap_grain_seconds=grain,
-            window_end=datetime.now(timezone.utc),
+            declared_grains=grains,
+            window_end=now,
         )
     # (Load bearing for `scan_mutation_residue.py` Pass B: a bare `)` directly
     # above this handler reproduces `typeahead_outcome_arm_mutations:M2-NO-LIMIT`

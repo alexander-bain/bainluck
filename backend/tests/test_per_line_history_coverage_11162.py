@@ -47,7 +47,7 @@ import pytest
 from app.routes import futures as futures_route
 from app.tasks import generic_market_history_fill as fill
 from app.utils import generic_market_history as gmh
-from app.utils.futures_chart_series import candle_calls, clob_calls
+from app.utils.futures_chart_series import FINE_TIER_HOURS, candle_calls, clob_calls
 
 _CONDITION = "0x471297a7d5fb8afb24caf8b69b7e98a032a0804ea405c78ba0d7368b3ea1755c"
 _OVER, _UNDER = 143914448, 143914449
@@ -370,6 +370,114 @@ class TestWhatMustStillRefuse:
         assert payload["venue_history"]["fill"] == "requested"
 
 
+# ── #11162 F1 (lane1b review of 5538e89a0a): holes the DECLARED plan can fill ──
+
+def _every(minutes: float, *, start_h: float, end_h: float = 0.0, offset_s: float = 0.0):
+    out, t = [], _NOW - timedelta(hours=start_h) + timedelta(seconds=offset_s)
+    stop = _NOW - timedelta(hours=end_h)
+    while t <= stop:
+        out.append(t)
+        t += timedelta(minutes=minutes)
+    return out
+
+
+def _recent_short_gap():
+    """24h: Over every 2 min (721), Under every 6h (5) — holes the fine tier fills."""
+    over = _every(2, start_h=24)
+    under = [t for t in over if (t - over[0]).total_seconds() % (6 * 3600) == 0]
+    return over, under
+
+
+def _week_eight_hour_holes():
+    """1W: Over every 5 min, Under every 8h — under the 12h/24h whole-life grain."""
+    over = _every(5, start_h=168)
+    under = [t for t in over if (t - over[0]).total_seconds() % (8 * 3600) == 0]
+    return over, under
+
+
+def _month_hourly_tier_holes():
+    """1M, Kalshi: Over hourly; Under every 20h from day 30 to day 7 (inside the
+    declared 31-day HOURLY tier, under the 24h whole-life grain), then every poll."""
+    over = _every(60, start_h=720)
+    under = [
+        t for t in over
+        if t >= _NOW - timedelta(hours=168)
+        or (t - over[0]).total_seconds() % (20 * 3600) == 0
+    ]
+    return over, under
+
+
+async def _read(reader, rows, hours, source):
+    db = _Session(_market(source=source), rows)
+    if reader == "history":
+        return await futures_route.get_futures_history(
+            _MARKET_ID, outcome_id=None, hours=hours, top_n=10, champion=None,
+            db=db, history_range=None,
+        )
+    return await futures_route.get_probability_timeline(
+        market_id=_MARKET_ID, top=10, hours=hours, db=db,
+        representation=futures_route.REPRESENTATION_SOURCE, history_range=None,
+    )
+
+
+_SEAMS = [
+    pytest.param(_recent_short_gap, 24, "polymarket", id="24h-poly-6h-holes"),
+    pytest.param(_recent_short_gap, 24, "kalshi", id="24h-kalshi-6h-holes"),
+    pytest.param(_week_eight_hour_holes, 168, "polymarket", id="1w-poly-8h-holes"),
+    pytest.param(_month_hourly_tier_holes, 720, "kalshi", id="1m-kalshi-20h-holes-in-31d-tier"),
+]
+
+_JITTER_CONTROLS = [
+    pytest.param(lambda: (_every(2, start_h=24), _every(2, start_h=24)), 24, "polymarket",
+                 id="2min-together-24h"),
+    pytest.param(lambda: (_every(2, start_h=24), _every(2, start_h=24, offset_s=1)), 24,
+                 "polymarket", id="2min-offset-1s-24h"),
+    # Two legs of one HOURLY poll written a second apart: with a fine-tier grain
+    # an exact-instant test would read every hour as absent on the 1M band.
+    pytest.param(lambda: (_every(60, start_h=720), _every(60, start_h=720, offset_s=1)), 720,
+                 "kalshi", id="hourly-offset-1s-1m-kalshi"),
+    pytest.param(lambda: (_every(60, start_h=720), _every(60, start_h=720, offset_s=1)), 720,
+                 "polymarket", id="hourly-offset-1s-1m-poly"),
+    # A slow poll's legs two minutes apart — one live-poll interval, still one poll.
+    pytest.param(lambda: (_every(60, start_h=720), _every(60, start_h=720, offset_s=120)), 720,
+                 "kalshi", id="hourly-offset-2min-1m-kalshi"),
+]
+
+
+class TestHolesTheDeclaredPlanCanFill:
+    @pytest.mark.parametrize("shape,hours,source", _SEAMS)
+    def test_the_old_gates_are_blind_to_each_shape(self, shape, hours, source):
+        over, under = shape()
+        assert len(over) + len(under) >= futures_route._VENUE_FILL_THIN_CAPTURES
+        assert gmh.captures_are_coarse([over, under], window_hours=hours) is False
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("reader", ["history", "timeline"])
+    @pytest.mark.parametrize("shape,hours,source", _SEAMS)
+    async def test_each_shape_asks_once_on_both_readers(
+        self, monkeypatch, reader, shape, hours, source
+    ):
+        state = _install(monkeypatch)
+        payload = await _read(reader, _rows(*shape()), hours, source)
+
+        assert payload["venue_history"]["fill"] == "requested", payload["venue_history"]
+        bkey, ckey = _hour_keys(state.redis)
+        assert state.redis.kv[bkey] == 1 and state.redis.kv[ckey] == 1
+        assert len(state.dispatch.calls) == 1
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("reader", ["history", "timeline"])
+    @pytest.mark.parametrize("shape,hours,source", _JITTER_CONTROLS)
+    async def test_legs_of_one_poll_are_never_each_others_absence(
+        self, monkeypatch, reader, shape, hours, source
+    ):
+        state = _install(monkeypatch)
+        payload = await _read(reader, _rows(*shape()), hours, source)
+
+        assert payload["venue_history"]["fill"] == "chart_not_thin", payload["venue_history"]
+        assert state.redis.kv == {} and state.dispatch.calls == []
+
+
 class TestSettlementIsNotCoverage:
     @pytest.mark.asyncio
     @pytest.mark.parametrize("reader", _READERS)
@@ -399,28 +507,41 @@ class TestBothReadersAgree:
 
 # ── The pure rule, and the fences it must keep ──────────────────────────────
 
-_POLY_GRAIN = gmh.whole_life_grain_seconds("polymarket")
-_KALSHI_GRAIN = gmh.whole_life_grain_seconds("kalshi")
+#: The fixture market's age (`_market().created_at`), so these are the SAME
+#: declared calls the route reads for it.
+_LIFETIME_H = _SPAN_H + 24
+_POLY = gmh.declared_hole_grains("polymarket", _LIFETIME_H)
+_KALSHI = gmh.declared_hole_grains("kalshi", _LIFETIME_H)
 
 
-def _absent(lines, *, fillable=(_OVER, _UNDER), graded=(), grain=_POLY_GRAIN):
+def _absent(lines, *, fillable=(_OVER, _UNDER), graded=(), grains=_POLY):
     return gmh.leg_absent_beside_dense_sibling(
         lines, fillable_lines=fillable, graded_lines=graded,
         min_reference=futures_route._VENUE_FILL_THIN_CAPTURES,
-        gap_grain_seconds=grain, window_end=_NOW,
+        declared_grains=grains, window_end=_NOW,
     )
 
 
 class TestTheRule:
-    def test_the_grain_is_read_off_the_fills_own_whole_life_tier(self):
-        assert _KALSHI_GRAIN == candle_calls(0)[-1].period_interval * 60 == 86400
-        assert _POLY_GRAIN == clob_calls(0)[-1].fidelity * 60 == 43200
-        assert gmh.whole_life_grain_seconds("odds_api") is None
-        assert gmh.whole_life_grain_seconds(None) is None
+    def test_the_grains_are_read_off_the_fills_own_declared_plan(self):
+        fine = timedelta(hours=FINE_TIER_HOURS).total_seconds()
+        assert _KALSHI == [
+            (fine, candle_calls(_LIFETIME_H)[0].period_interval * 60.0),
+            (timedelta(days=31).total_seconds(), 3600.0),
+            (None, 86400.0),
+        ]
+        # Polymarket's hourly tier is a NAMED range with no declared lookback:
+        # not counted, so the whole-life 12-hourly grain stands past the fine reach.
+        assert [c.interval for c in clob_calls(_LIFETIME_H)] == ["1d", "1m", "max"]
+        assert _POLY == [(fine, 60.0), (None, 43200.0)]
+        # A market younger than the hourly tier's floor gets no hourly tier.
+        assert gmh.declared_hole_grains("kalshi", 24) == [(fine, 60.0), (None, 86400.0)]
+        assert gmh.declared_hole_grains("odds_api", _LIFETIME_H) is None
+        assert gmh.declared_hole_grains(None, _LIFETIME_H) is None
 
     def test_an_unsupported_source_asks_nothing(self):
         over, under = _dense_sibling_sparse_leg()
-        assert _absent({_OVER: over, _UNDER: under}, grain=None) is False
+        assert _absent({_OVER: over, _UNDER: under}, grains=None) is False
 
     def test_a_line_the_fill_would_not_fetch_is_never_the_absent_one(self):
         over, under = _dense_sibling_sparse_leg()
@@ -458,11 +579,20 @@ class TestTheRule:
         assert _absent({_OVER: over, _UNDER: under}, graded=(_UNDER,)) is False
         assert _absent({_OVER: over, _UNDER: under}) is True
 
-    def test_holes_shorter_than_the_whole_life_grain_are_not_this_rules(self):
-        """Under misses every other 4h poll — never a hole a daily tier can fill."""
-        over = _instants()
-        under = over[::2]
-        assert _absent({_OVER: over, _UNDER: under}, grain=_KALSHI_GRAIN) is False
+    def test_a_hole_is_judged_at_the_grain_the_plan_declares_where_it_sits(self):
+        """#11162 F1. Over hourly for 25 days; Under every 8h until the last 144h,
+        then on every poll.
+
+        Polymarket declares nothing finer than 12-hourly past the fine reach, so
+        an 8h hole there is one no call can put a bucket into. Kalshi declares a
+        31-day HOURLY tier, so the same holes are fillable — the rule must tell
+        the two apart, not read both at one grain.
+        """
+        over = _instants(spacing_h=1)
+        recent = _NOW - timedelta(hours=FINE_TIER_HOURS)
+        under = [t for i, t in enumerate(over) if t >= recent or i % 8 == 0]
+        assert _absent({_OVER: over, _UNDER: under}, grains=_POLY) is False
+        assert _absent({_OVER: over, _UNDER: under}, grains=_KALSHI) is True
 
     def test_a_line_on_every_sibling_poll_is_never_absent_however_slow_the_polls(self):
         """Both lines captured together every 12 hours — a slow board, not a loss.

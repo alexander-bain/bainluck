@@ -776,29 +776,48 @@ def captures_are_coarse(
     return densest >= coarse_at
 
 
-def whole_life_grain_seconds(source: str | None) -> float | None:
-    """The grain of the ONE retrieval tier that reaches a market's whole life.
+def declared_hole_grains(
+    source: str | None, lifetime_hours: float
+) -> list[tuple[float | None, float]] | None:
+    """What the fill's own plan can put into a hole, by how far back it sits.
 
-    Read off the fill's own declared plan — `candle_calls` / `clob_calls`, whose
-    last call is the whole-life tier on both venues (Kalshi daily since listing,
-    Polymarket `interval=max` at 12-hourly) — and not restated here, so a change
-    to the plan moves this with it. None when the source has no venue history,
-    or when the plan's coarsest call no longer declares whole-life reach: an
-    undeclared reach is not evidence of one, and the caller then asks nothing.
+    ``[(reach_seconds or None, grain_seconds), ...]``, read off the SAME calls the
+    fill runs for a market of this age — `candle_calls` / `clob_calls`
+    (`_lifetime_hours`) — and not restated here, so a change to the plan moves
+    this with it. A call counts only where its reach is DECLARED: an explicit
+    lookback (the 144 h fine tier on both venues, Kalshi's 31-day hourly tier),
+    or the plan's whole-life call (Kalshi daily since listing, Polymarket
+    `interval=max` at 12-hourly). Polymarket's hourly tier is a NAMED range
+    (`interval=1m`) with no declared lookback, so it is not counted: an
+    undeclared reach is not evidence of one, and the whole-life grain stands
+    there instead.
+
+    None when the source has no venue history, or when the plan's last call no
+    longer declares whole-life reach — then nothing can be said about an old
+    hole, and the caller asks nothing.
     """
     from app.utils.futures_chart_series import candle_calls, clob_calls
 
     if source == "kalshi":
-        last = candle_calls(0)[-1]
-        if last.lookback is not None:
-            return None
-        return float(last.period_interval) * 60.0
-    if source == "polymarket":
-        last = clob_calls(0)[-1]
-        if last.lookback is not None or last.interval != "max":
-            return None
-        return float(last.fidelity) * 60.0
-    return None
+        calls = candle_calls(lifetime_hours)
+        tiers = [
+            (None if c.lookback is None else c.lookback.total_seconds(),
+             float(c.period_interval) * 60.0)
+            for c in calls
+        ]
+        whole_life = calls[-1].lookback is None
+    elif source == "polymarket":
+        calls = clob_calls(lifetime_hours)
+        tiers = [
+            (c.lookback.total_seconds(), float(c.fidelity) * 60.0)
+            for c in calls if c.lookback is not None
+        ] + [(None, float(c.fidelity) * 60.0) for c in calls if c.interval == "max"]
+        whole_life = calls[-1].interval == "max" and calls[-1].lookback is None
+    else:
+        return None
+    if not whole_life:
+        return None
+    return sorted(tiers, key=lambda tier: tier[1])
 
 
 def leg_absent_beside_dense_sibling(
@@ -807,7 +826,7 @@ def leg_absent_beside_dense_sibling(
     fillable_lines: Iterable[Any],
     graded_lines: Iterable[Any] = (),
     min_reference: int,
-    gap_grain_seconds: float | None,
+    declared_grains: Sequence[tuple[float | None, float]] | None,
     window_end: datetime,
 ) -> bool:
     """Is one fillable line ABSENT for most of the stretch a sibling was observed?
@@ -816,10 +835,11 @@ def leg_absent_beside_dense_sibling(
     part. The thin gate counts POOLED rows, so a sibling with 160 captures clears
     it for a leg with 17. `captures_are_coarse` takes the DENSEST line's median —
     on purpose, so one abandoned outcome cannot make a well-captured market look
-    coarse — and refuses every window the fine tier cannot half cover, so on the
-    long bands a leg that vanished for five weeks is invisible to both. Measured
-    on `futures_markets` 31519211 ("All", 2026-10-12): Under 17 useful captures
-    then a 908-hour hole, Over 162, `venue_history.fill=chart_not_thin`.
+    coarse — and refuses every window the fine tier cannot half cover. So a leg
+    that vanished for five weeks on the long bands, and a leg polled every six
+    hours beside a two-minute sibling on 1D, are both invisible to both.
+    Measured on `futures_markets` 31519211 ("All", 2026-10-12): Under 17 useful
+    captures then a 908-hour hole, Over 162, `venue_history.fill=chart_not_thin`.
 
     WHY A SIBLING IS EVIDENCE AND A GAP ALONE IS NOT. Our pollers write every
     priced outcome of a market on every poll, with no change-only dedup
@@ -843,11 +863,18 @@ def leg_absent_beside_dense_sibling(
         contract that did not exist;
       * for a GRADED line, before its last capture too: a settled leg's tail is
         its settlement, not a loss;
-      * the line's hole around that instant is at least `gap_grain_seconds`
-        long — the grain of the whole-life tier the fill declares
-        (:func:`whole_life_grain_seconds`). A shorter hole is one the fill's
-        coarsest reach cannot put a single bucket into, and the recent short
-        holes the fine tier could fill are `captures_are_coarse`'s question.
+      * the line has no capture within `COARSE_CAPTURE_MULTIPLE` × the fine
+        interval (ten minutes) of it. That is the codebase's one line between
+        "our captures are fine" and not (`captures_are_coarse`,
+        `captures_cover_cell`), and it is what keeps two legs of ONE poll —
+        written a second apart — from reading as each other's absence;
+      * the line's hole around it is at least the grain of the finest declared
+        call that reaches that far back (:func:`declared_hole_grains`) — the
+        fine tier's minute for a recent hole, the whole-life tier's for an old
+        one, never one grain for both (#11162 F1). A hole shorter than the
+        plan's grain where it sits is one the fill cannot put a single bucket
+        into. No separate floor is needed: the ten-minute cover above already
+        makes every counted hole longer than twenty minutes.
 
     Fires when absent instants are at least `COARSE_TRIGGER_MIN_WINDOW_COVERAGE`
     of the sibling's countable instants — the same "most of what is on screen"
@@ -862,8 +889,11 @@ def leg_absent_beside_dense_sibling(
     one observation; the caller hands in captures only — no settlement markers,
     no venue points.
     """
-    if not gap_grain_seconds or gap_grain_seconds <= 0:
+    if not declared_grains:
         return False
+    from app.utils.futures_chart_series import KALSHI_FINE_INTERVAL
+
+    cover = KALSHI_FINE_INTERVAL * 60.0 * COARSE_CAPTURE_MULTIPLE
     fillable = set(fillable_lines)
     graded = set(graded_lines)
     # POSIX seconds, sorted and de-duplicated per line: this runs on a public GET
@@ -878,6 +908,11 @@ def leg_absent_beside_dense_sibling(
         return False
     end = window_end.timestamp()
 
+    def hole_grain(t: float) -> float:
+        age = end - t
+        reaching = [g for reach, g in declared_grains if reach is None or age <= reach]
+        return min(reaching) if reaching else float("inf")
+
     by_size = sorted(lines, key=lambda k: len(lines[k]), reverse=True)
     for key, stamps in lines.items():
         reference = lines[by_size[1] if by_size[0] == key else by_size[0]]
@@ -889,18 +924,21 @@ def leg_absent_beside_dense_sibling(
         else:
             last_bound = end
             edges = stamps + [end] if end > stamps[-1] else stamps
-        own = set(stamps)
         countable = absent = 0
         j = 0
         for t in reference:
             if t <= first or t > last_bound:
                 continue
             countable += 1
-            if t in own:
-                continue
             while j < len(edges) and edges[j] <= t:
                 j += 1
-            if j < len(edges) and edges[j] - edges[j - 1] >= gap_grain_seconds:
+            # `edges[j - 1]` is the line's last capture at/before t (t > first,
+            # so j ≥ 1); `edges[j]` the next one, or the window's end.
+            before = t - edges[j - 1]
+            after = edges[j] - t if j < len(edges) else float("inf")
+            if min(before, after) <= cover:
+                continue
+            if j < len(edges) and edges[j] - edges[j - 1] >= hole_grain(t):
                 absent += 1
         if absent and absent >= COARSE_TRIGGER_MIN_WINDOW_COVERAGE * countable:
             return True
