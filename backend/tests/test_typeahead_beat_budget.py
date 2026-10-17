@@ -1222,9 +1222,11 @@ def test_the_background_queue_carries_105_beats_and_45_are_fall_through():
 
     # #9935: assembled schedule read on05bf6059d0 gives99 explicit /40 implicit.
     # The hourly theme assembler explicitly names background; no new fall-through.
-    assert explicit == 99, f"explicitly-routed background beats moved: {explicit}"
+    # #11152: `unplayed-series-game-sweep` names background; census on the
+    # tree branched from 8c641f6f48 printed explicit 100 implicit 40 total 140.
+    assert explicit == 100, f"explicitly-routed background beats moved: {explicit}"
     assert implicit == 40, f"default-queue fall-through moved: {implicit}"
-    assert explicit + implicit == BACKGROUND_BEAT_COUNT == 139
+    assert explicit + implicit == BACKGROUND_BEAT_COUNT == 140
 
     # ruling 110's two movers are OFF this queue and ON heavy — asserted here
     # too, so a silent revert cannot restore the count without being noticed.
