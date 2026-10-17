@@ -4233,6 +4233,10 @@ async def _refresh_linked_polymarket_books(deadline_s: float | None = None) -> d
         "opening_refused_hindsight": 0,
         "outcomes_created": 0,
         "snapshots_written": 0,
+        # #698: a leg created here whose OWN sub-market is closed keeps its row
+        # and gains no snapshot. Present at zero, so `outcomes_created` minus
+        # `snapshots_written` is always explained by a number, never a guess.
+        "snapshots_refused_closed_leg": 0,
         "display_labels_corrected": 0,
         "deadline_hit": False,
         "errors": [],
@@ -4411,6 +4415,17 @@ async def _refresh_linked_polymarket_books(deadline_s: float | None = None) -> d
                             # first and its row, not ours, is the truth.
                             continue
                         stats["outcomes_created"] += 1
+
+                        # #698 / #10955: a leg first seen after its OWN market
+                        # closed is created (row, current price, book, rank —
+                        # the reader's price still lands) but its frozen book is
+                        # not banked as an observation stamped `now`. The same
+                        # single question the poll's writers ask
+                        # (`leg_snapshot_is_post_close`): nothing is inferred
+                        # from the parent, a date, a price or an absent flag.
+                        if leg_snapshot_is_post_close(od):
+                            stats["snapshots_refused_closed_leg"] += 1
+                            continue
 
                         await session.execute(
                             pg_insert(FuturesOddsSnapshot).values(
