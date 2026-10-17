@@ -5077,6 +5077,8 @@ jobs:
         # #837 tail adds two: a foreign transaction holding one game's row must
         # not freeze the other games' stamps (500ms lock_timeout, retry next
         # flush), plus its control with the timeout off.
+        # #11138 adds two: a stamp queued behind a holder and then a writer is
+        # cut at its budget as a whole statement, plus the lock-only control.
         # Skip detection plus a count, as for #7617.
         if: matrix.group == 'isolated' && needs.change-scope.outputs.reuse != 'true'
         run: |
@@ -5087,8 +5089,8 @@ jobs:
             echo "::error::#837 stamp deadlock gate SKIPPED — the gate did not run"
             exit 1
           fi
-          grep -qE "[^0-9]4 passed[,[:space:]]" /tmp/deadlock837.txt || {
-            echo "::error::#837 stamp gate did not run all four cases"
+          grep -qE "[^0-9]6 passed[,[:space:]]" /tmp/deadlock837.txt || {
+            echo "::error::#837 stamp gate did not run all six cases"
             exit 1
           }
 
