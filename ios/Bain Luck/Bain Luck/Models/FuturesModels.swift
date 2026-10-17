@@ -335,6 +335,10 @@ nonisolated struct FuturesOutcome: Decodable, Identifiable, Sendable {
     @TolerantNumeric var contributingSources: [String]? = nil
     @TolerantNumeric var observedAt: String? = nil
     @TolerantNumeric var aggregationRule: String? = nil
+    /// #698, resolved Polymarket markets only: what this row may say about its
+    /// own result (`{"verdict","basis"}`). Absent on every other market and on
+    /// older servers. Read only through ``SettledResultDisplay698``.
+    @LenientDecode var settlementDisplay: SettlementDisplay698? = nil
 
     private enum CodingKeys: String, CodingKey {
         case id, name, probability, americanOdds, rank
@@ -342,6 +346,7 @@ nonisolated struct FuturesOutcome: Decodable, Identifiable, Sendable {
         case probabilityChange24h = "probabilityChange24H"
         case openingProbability, openingAmericanOdds, isWinner, resolutionSource, lastUpdated
         case contributingSources, observedAt, aggregationRule
+        case settlementDisplay
     }
 }
 
