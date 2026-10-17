@@ -2633,6 +2633,26 @@ def opening_capture_is_hindsight(event, market, resolution_date, now) -> bool:
     return False
 
 
+def submarket_snapshot_is_post_close(market) -> bool:
+    """Whether a sub-market's own snapshot would record a closed book (#698). Pure.
+
+    #698 / #10955, the decomposed sibling of :func:`leg_snapshot_is_post_close`.
+    A multi-market event that is not negRisk decomposes: each child is written
+    as its own `polymarket_sub_market` row with a `_yes`/`_no` pair, and both
+    legs got a `FuturesOddsSnapshot` stamped `now` on every poll. The child's
+    row already turns `resolved` when its own market closes
+    (:func:`submarket_is_open`) and its opening is already refused
+    (:func:`opening_capture_is_hindsight`), but the snapshot kept banking the
+    frozen book as a fresh observation — CERT-4193 recorded it on a
+    non-negRisk mixed field after the parent-field writer was fixed.
+
+    Same single question as the parent-field helper: ``market.closed is
+    True``. Not the parent's flags, not an end date, not an extreme price, not
+    a graded result; an absent or non-True flag keeps writing.
+    """
+    return getattr(market, "closed", None) is True
+
+
 def leg_snapshot_is_post_close(leg) -> bool:
     """Whether a parent-field leg's snapshot would record a closed book (#698). Pure.
 
@@ -2652,7 +2672,7 @@ def leg_snapshot_is_post_close(leg) -> bool:
     before, so an unknown status never removes an observation.
     """
     market = leg.get("market") if isinstance(leg, dict) else None
-    return getattr(market, "closed", None) is True
+    return submarket_snapshot_is_post_close(market)
 
 
 #: Verdicts of `choose_history_opening` (#2027, history rail). Each one is a
@@ -3276,6 +3296,13 @@ async def _process_event_batch(
                         _sub_hindsight = opening_capture_is_hindsight(
                             event, market, sub_resolution_date, now
                         )
+                        # #698 / #10955: the leg's OWN market is closed, so its
+                        # book is frozen and neither side may gain a snapshot
+                        # stamped `now`. Rows, current price and book still
+                        # write. See `submarket_snapshot_is_post_close`.
+                        sub_closed_no_snapshot = submarket_snapshot_is_post_close(
+                            market
+                        )
                         sub_set = {
                             "name": sub_name,
                             "market_tier": sub_tier,
@@ -3447,9 +3474,10 @@ async def _process_event_batch(
                             sub_has_open = False
 
                         # #2027: the settled book is not an opening (ruling
-                        # 103). Current price, book and snapshot still write;
-                        # only the opening stamp is refused, so the row keeps
-                        # its provenance and no existing row is rewritten.
+                        # 103). Current price and book still write; only the
+                        # opening stamp is refused here (the snapshot asks its
+                        # own question, `sub_closed_no_snapshot`), so the row
+                        # keeps its provenance and no existing row is rewritten.
                         if sub_has_open and _sub_hindsight:
                             stats["opening_refused_hindsight"] = (
                                 stats.get("opening_refused_hindsight", 0) + 1
@@ -3592,7 +3620,16 @@ async def _process_event_batch(
                         # date, and calibration reads that window as the forecast
                         # — a hindsight closing line (#2027's class). The row and
                         # its current price are the whole write.
-                        if not sub_settled_zero:
+                        # #698: a leg whose own market is closed likewise.
+                        if (
+                            sub_closed_no_snapshot
+                            and sub_price_ok
+                            and not sub_settled_zero
+                        ):
+                            stats["snapshots_refused_closed_leg"] = (
+                                stats.get("snapshots_refused_closed_leg", 0) + 1
+                            )
+                        if not sub_settled_zero and not sub_closed_no_snapshot:
                             if sub_price_ok:
                                 snap_stmt = pg_insert(FuturesOddsSnapshot).values(
                                     outcome_id=over_outcome_id,
@@ -3769,8 +3806,16 @@ async def _process_event_batch(
                             # so the two can never disagree about one market.
                             # #6793: skipped on a refused pair, exactly as the Over
                             # snapshot above is, and for the same NOT NULL reason.
-                            # #5343: same as the Over snapshot above.
-                            if not sub_settled_zero:
+                            # #5343 / #698: same as the Over snapshot above.
+                            if (
+                                sub_closed_no_snapshot
+                                and sub_price_ok
+                                and not sub_settled_zero
+                            ):
+                                stats["snapshots_refused_closed_leg"] = (
+                                    stats.get("snapshots_refused_closed_leg", 0) + 1
+                                )
+                            if not sub_settled_zero and not sub_closed_no_snapshot:
                                 if sub_price_ok:
                                     under_snap_stmt = pg_insert(FuturesOddsSnapshot).values(
                                         outcome_id=under_outcome_id,
@@ -3791,7 +3836,11 @@ async def _process_event_batch(
                         # task-verdict failure mode of gotcha #53 ("it returned" is
                         # not "it worked"). The outcome rows ARE still written (their
                         # books and names), so that counter is unchanged.
-                        if sub_price_ok and not sub_settled_zero:
+                        if (
+                            sub_price_ok
+                            and not sub_settled_zero
+                            and not sub_closed_no_snapshot
+                        ):
                             stats["snapshots_created"] += 1
                         stats["sub_markets_created"] = stats.get("sub_markets_created", 0) + 1
 
