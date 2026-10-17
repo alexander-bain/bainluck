@@ -243,6 +243,61 @@ final class FuturesStreamingTests: XCTestCase {
     }
 
 
+    /// #10874 — Spotlight and links push the page before the scene is active:
+    /// the first read starts hidden and the page is shown while it is in flight.
+    func testFirstReadStartedHiddenLandsWhenThePageIsShownMidRead() async throws {
+        let client = Client(try detail()), handle = Handle()
+        let vm = FuturesDetailViewModel(marketId: 7, client: client, makeStreamHandle: { _ in handle }, minimumRefreshInterval: 0)
+        defer { vm.setVisible(false) }
+        var waiting: CheckedContinuation<Void, Never>?
+        client.beforeResponse = { await withCheckedContinuation { waiting = $0 } }
+        let first = Task { await vm.load() }
+        await settle { waiting != nil }
+        vm.setVisible(true)
+        client.beforeResponse = nil
+        waiting?.resume()
+        await first.value
+        XCTAssertFalse(vm.loading, "the first read must not leave the page on its spinner")
+        XCTAssertEqual(vm.market?.id, 7)
+        XCTAssertEqual(client.count, 1, "landed by the first read, not rescued by a stream refresh")
+    }
+
+    /// #10874 — with the visibility fence gone from load(), hiding's
+    /// `loadGeneration` bump is the only thing refusing a read that crossed a
+    /// hide. Newer clocks so reconciliation would adopt it; a direct read so a
+    /// cancelled refreshTask cannot mask it.
+    func testDirectReadThatCrossesAHideCannotLand() async throws {
+        let client = Client(try detail()), handle = Handle()
+        let vm = FuturesDetailViewModel(marketId: 7, client: client, makeStreamHandle: { _ in handle }, minimumRefreshInterval: 0)
+        await vm.load()
+        vm.setVisible(true)
+        var waiting: CheckedContinuation<Void, Never>?
+        client.beforeResponse = { await withCheckedContinuation { waiting = $0 } }
+        client.response = try detail(0.34, 0.20, xClock: "2030-01-01T00:00:02Z", yClock: "2030-01-01T00:00:02Z")
+        let read = Task { await vm.load() }
+        await settle { waiting != nil }
+        vm.setVisible(false)
+        client.beforeResponse = nil
+        waiting?.resume()
+        await read.value
+        XCTAssertEqual(vm.market?.outcomes.first?.probability, 0.31, "a response that crossed a hide must not land")
+    }
+
+    func testFirstReadThatCrossesShowThenHideCannotLand() async throws {
+        let client = Client(try detail()), handle = Handle()
+        let vm = FuturesDetailViewModel(marketId: 7, client: client, makeStreamHandle: { _ in handle }, minimumRefreshInterval: 0)
+        var waiting: CheckedContinuation<Void, Never>?
+        client.beforeResponse = { await withCheckedContinuation { waiting = $0 } }
+        let read = Task { await vm.load() }
+        await settle { waiting != nil }
+        vm.setVisible(true)
+        vm.setVisible(false)
+        client.beforeResponse = nil
+        waiting?.resume()
+        await read.value
+        XCTAssertNil(vm.market, "a first read that crossed a hide must not land")
+    }
+
     func testAutomaticRefreshWaitsTwoSecondsAndCoalescesBurst() async throws {
         let client = Client(try detail()), handle = Handle(), pause = Pause()
         var clock: TimeInterval = 100
