@@ -177,7 +177,11 @@ final class EvolutionChartQuietStretchIsAGap11184Tests: XCTestCase {
             .deletingLastPathComponent()
             .deletingLastPathComponent()
             .appendingPathComponent("Bain Luck/Components/EvolutionChartView.swift")
-        let source = try String(contentsOf: url, encoding: .utf8).strippingSwiftComments()
+        // Comment lines dropped, so a pin can only be met by code.
+        let source = try String(contentsOf: url, encoding: .utf8)
+            .split(separator: "\n", omittingEmptySubsequences: false)
+            .filter { !$0.trimmingCharacters(in: .whitespaces).hasPrefix("//") }
+            .joined(separator: "\n")
 
         XCTAssertTrue(source.contains("return Self.splitAtGaps(points)"),
                       "chartEntries must number its points into runs")
