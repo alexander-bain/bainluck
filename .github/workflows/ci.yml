@@ -3105,7 +3105,11 @@ jobs:
         # dormant forecast lateral revalidating at consumption; and the first
         # attended import's operational bounds (archive statement/lock timeouts
         # on every connection across COMMIT and reconnect, the FOR SHARE identity
-        # fence, lost-COMMIT receipts, partial/zero-point plans never "applied").
+        # fence, lost-COMMIT receipts, partial/zero-point plans never "applied");
+        # and the attended input fence (reviewed identity AND outcome/market/event
+        # row versions bound to the plan digest, compared on the locked row in
+        # the writing transaction: a non-fingerprint change with an unchanged
+        # fingerprint is refused, the fingerprint-only control writes it).
         # Drops and creates the full schema, like #6757 above.
         if: matrix.group == 'shared-middle' && needs.change-scope.outputs.reuse != 'true'
         run: |
@@ -3116,8 +3120,8 @@ jobs:
             echo "::error::#683 archive store gate SKIPPED — the gate did not run"
             exit 1
           fi
-          grep -qE "(^|[^0-9])61 passed([,[:space:]]|$)" /tmp/archive683.txt || {
-            echo "::error::#683 archive store gate did not run all sixty-one cases"
+          grep -qE "(^|[^0-9])79 passed([,[:space:]]|$)" /tmp/archive683.txt || {
+            echo "::error::#683 archive store gate did not run all seventy-nine cases"
             exit 1
           }
 

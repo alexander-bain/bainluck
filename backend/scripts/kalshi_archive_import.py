@@ -11,8 +11,10 @@ imports it into the archive store (``app.services.kalshi_archive_apply``).
     # what WOULD be written, nothing is (read-only transaction):
     python3 scripts/kalshi_archive_import.py apply --plan /tmp/683-plan.json \\
         --expected-digest <plan_digest printed by the dry run>
-    # the attended write, same command plus --write:
-    python3 scripts/kalshi_archive_import.py apply --plan ... --expected-digest ... --write
+    # the attended write: same command plus --write and the reviewed input
+    # versions (REQUIRED with --write, see below):
+    python3 scripts/kalshi_archive_import.py apply --plan ... --expected-digest ... \
+        --input-versions /tmp/683-versions.json --expected-input-digest <its digest> --write
     # undo exactly one import's own rows (dry-run first, then --write):
     python3 scripts/kalshi_archive_import.py restore --import-key <key> [--write]
     # cohort accounting for named outcomes (read-only):
@@ -21,7 +23,19 @@ imports it into the archive store (``app.services.kalshi_archive_apply``).
 ``--expected-digest`` is the plan's content address and must be typed, not
 read from the file: the apply refuses when it differs from the digest it
 recomputes from the plan's points. Running ``--write`` against production is an
-attended action under the existing approval gate. Nothing here schedules
+attended action under the existing approval gate.
+
+``--input-versions`` is the operator-reviewed identity and row-version
+document (``kalshi_archive_apply.seal_input_versions``): per importable
+outcome its ids, tickers, fingerprint and the ``xmin`` of the outcome, market
+and event rows as the reviewed read returned them (``event_id`` and
+``event_xmin`` both null only for a market with no event). It is bound to the
+plan digest, and its own digest is typed with ``--expected-input-digest``.
+``--write`` without both is refused (exit 2): the attended write never falls
+back to the fingerprint-only fence. Under the outcome's ``FOR SHARE`` locks,
+in the transaction that would write it, any identity, fingerprint or version
+difference refuses that outcome and writes none of its rows. Drift is not
+resealed; a new review produces a new document. Nothing here schedules
 itself, enables a reader or changes the Accuracy curve.
 
 THE ATTENDED BOUNDS (``app.services.kalshi_archive_bounds``). Every subcommand
@@ -35,7 +49,8 @@ receipt by ``--max-artifact-bytes`` (whole or not at all, never over an
 existing file). The first attended sample:
 
     python3 scripts/kalshi_archive_import.py apply --plan P --expected-digest D \
-        --max-outcomes 1 --max-points 26 --deadline 30 --output R
+        --input-versions V --expected-input-digest VD \
+        --max-outcomes 1 --max-points 26 --deadline 30 --output R   # then --write
 
 Exit codes: 0 applied (complete history for every imported outcome, nothing
 refused, nothing uncertain); 1 partial (refusals, conflicts, errors, or a plan
@@ -84,6 +99,12 @@ def _parse(argv=None) -> argparse.Namespace:
     a = sub.add_parser("apply", help="dry-run (default) or apply one plan")
     a.add_argument("--plan", required=True, help="the dry run's --output JSON")
     a.add_argument("--expected-digest", required=True, help="the plan's digest, typed")
+    a.add_argument(
+        "--input-versions", default="", help="reviewed identity+versions JSON (--write)"
+    )
+    a.add_argument(
+        "--expected-input-digest", default="", help="that document's digest, typed"
+    )
     a.add_argument("--write", action="store_true", help="actually write (attended)")
     a.add_argument("--output", default="", help="write the full result JSON here")
     a.add_argument(
@@ -168,8 +189,13 @@ def _run(args, session_factory) -> int:
         try:
             with wall.sync_phase("plan_load"):
                 report = bounds.read_bounded_json(args.plan, args.max_plan_bytes)
+                versions = (
+                    bounds.read_bounded_json(args.input_versions, args.max_plan_bytes)
+                    if args.input_versions
+                    else None
+                )
         except (bounds.InputTooLarge, bounds.WallExpired, ValueError, OSError) as e:
-            print(f"REFUSED: plan unreadable: {e}", file=sys.stderr)
+            print(f"REFUSED: plan or input versions unreadable: {e}", file=sys.stderr)
             return EXIT_REFUSED
         try:
             result = run(
@@ -181,6 +207,9 @@ def _run(args, session_factory) -> int:
                     max_points=args.max_points,
                     wall=wall,
                     progress=progress,
+                    input_versions=versions,
+                    expected_input_digest=args.expected_input_digest or None,
+                    require_input_versions=args.write,
                     **extra,
                 )
             )
