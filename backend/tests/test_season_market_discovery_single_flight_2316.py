@@ -308,6 +308,37 @@ async def test_a_slow_redis_stops_the_wait_instead_of_stalling_the_loop():
 
 
 @pytest.mark.asyncio
+async def test_a_slow_redis_never_attempts_a_takeover_claim():
+    """lane1b's surviving mutant on #11197: the budget check placed after the
+    `not held` break still passed the test above, because there the peer's
+    lease stands. Here the peer ends without publishing during the slow GET,
+    so EXISTS says nothing is held: a slow poll must still fail open rather
+    than go round and take the lease over through the same slow Redis."""
+    now = [1000.0]
+    rc = _slow_get_redis(0.1, now)
+    _hold_lease_as_peer(rc)
+    slow_get = rc.get
+
+    def _get_then_peer_quits(k):
+        rc.store.pop(_lease_key(), None)
+        return slow_get(k)
+
+    rc.get = _get_then_peer_quits
+    sleeps = []
+
+    async def _sleep(s):
+        sleeps.append(s)
+        now[0] += s
+
+    ids, lease = await smd.claim_or_await(
+        "baseball_mlb", True, rc=rc, sleep=_sleep, clock=lambda: now[0]
+    )
+    assert (ids, lease) == (None, None)
+    assert sleeps == []
+    assert rc.exists(_lease_key()) == 0
+
+
+@pytest.mark.asyncio
 async def test_a_fast_redis_keeps_waiting_for_the_peer():
     """The control for the test above: the same rig with polls well inside the
     budget keeps waiting and takes the peer's answer, so the budget is not
