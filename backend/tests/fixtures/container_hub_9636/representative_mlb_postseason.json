@@ -76,6 +76,7 @@
               "id": 801,
               "sport": "baseball_mlb",
               "sport_name": "MLB",
+              "start_is_from_schedule": false,
               "start_is_tbd": false,
               "started_without_result": false,
               "status": "completed"
@@ -128,6 +129,7 @@
               "id": 802,
               "sport": "baseball_mlb",
               "sport_name": "MLB",
+              "start_is_from_schedule": false,
               "start_is_tbd": false,
               "started_without_result": false,
               "status": "scheduled"

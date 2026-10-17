@@ -75,6 +75,7 @@
               "id": 502,
               "sport": "americanfootball_nfl",
               "sport_name": "NFL",
+              "start_is_from_schedule": false,
               "start_is_tbd": false,
               "started_without_result": false,
               "status": "live"
@@ -129,6 +130,7 @@
               "id": 501,
               "sport": "americanfootball_nfl",
               "sport_name": "NFL",
+              "start_is_from_schedule": false,
               "start_is_tbd": false,
               "started_without_result": false,
               "status": "scheduled"
