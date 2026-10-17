@@ -22,6 +22,7 @@ Measures:
 """
 
 import asyncio
+import gc
 import time
 
 import pytest
@@ -40,6 +41,42 @@ pytestmark = pytest.mark.asyncio
 WAKE_BOUND_S = 0.120
 #: How far past the 250 ms floor a floor-paced publication may land.
 FLOOR_MARGIN_S = 0.100
+
+
+@pytest.fixture(autouse=True)
+def full_collections():
+    """Pay the process's owed full collection BEFORE a case starts its clock,
+    and name any full collection that still lands inside the case.
+
+    These bounds time the real loop. A gen-2 collection is a stop-the-world
+    pause, and when one falls due is decided by everything the process
+    allocated before this file, not by this file. On PR #11154 (CI shard 1, no
+    #10090 file changed) two sibling #10090 files ran right before this one and
+    the first case measured 158 and 163 ms on a path measured at 6-10 ms, its
+    whole run ~150 ms longer than on master's split, where it passed. One
+    collection here resets the generation counts, so the next full collection
+    needs far more new survivors than one of these cases allocates. Collection
+    stays ENABLED: a case still pays whatever its own work owes, and a bound
+    that misses with no full collection in the case is the product, not this.
+    """
+    gc.collect()
+    pauses_ms: list[float] = []
+    started = [0.0]
+
+    def observe(phase, info):
+        if info["generation"] != 2:
+            return
+        if phase == "start":
+            started[0] = time.perf_counter()
+        else:
+            pauses_ms.append(round((time.perf_counter() - started[0]) * 1000, 1))
+
+    gc.callbacks.append(observe)
+    try:
+        yield pauses_ms
+    finally:
+        gc.callbacks.remove(observe)
+
 
 def _buffer_game_cohort(
     p,
@@ -271,7 +308,7 @@ async def run_healthy_peer_after_fenced_flush_case(
 
 
 async def test_healthy_peer_and_fenced_event_after_fully_fenced_flush_250ms_real_loop(
-    monkeypatch,
+    monkeypatch, full_collections,
 ):
     """Prioritized real-loop comparison at 250 ms (`release_ev1_at_s=0.565`):
     - Flush 2 (~0.255s) is 100% fenced on Event 1.
@@ -294,10 +331,14 @@ async def test_healthy_peer_and_fenced_event_after_fully_fenced_flush_250ms_real
     # for ~210ms until ~0.505s.
     assert out["flush_work_after_fenced_flush2"] == 1
     assert out["ev2_published_before_ev1_release"] is True
-    assert out["ev2_latency_from_arrival_s"] < WAKE_BOUND_S
+    assert out["ev2_latency_from_arrival_s"] < WAKE_BOUND_S, (
+        f"full collections in case (ms): {full_collections}", out,
+    )
     # The released event's newer quote rides the release wake, not the next
     # periodic timer (~193 ms after release before this change).
-    assert out["ev1_final_latency_from_release_s"] < WAKE_BOUND_S, out
+    assert out["ev1_final_latency_from_release_s"] < WAKE_BOUND_S, (
+        f"full collections in case (ms): {full_collections}", out,
+    )
 
 
 async def test_healthy_peer_when_fenced_event_releases_inside_peer_budget_window_250ms_real_loop(
@@ -575,3 +616,16 @@ async def test_the_pm_stamp_owner_installs_its_wake_on_the_refresher():
     owner = boundary.stamp_owner(refresher)
     assert refresher.release_wake == owner._on_release
     assert owner.wake is boundary.flush_wake
+
+
+def test_a_case_starts_with_no_full_collection_owed_and_names_one_inside_it(
+    full_collections,
+):
+    """The fixture's two halves: no gen-1 collection has run since its full
+    collection (so none is close to promoting into a full one), and a full
+    collection that does land inside a case is named with its pause."""
+    assert gc.isenabled()
+    assert gc.get_count()[2] == 0
+    assert full_collections == []
+    gc.collect()
+    assert len(full_collections) == 1 and full_collections[0] >= 0
