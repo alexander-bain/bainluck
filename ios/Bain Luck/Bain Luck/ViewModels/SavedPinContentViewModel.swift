@@ -181,10 +181,13 @@ extension FeedFuturesData {
     /// #10011 — the market card for a pin outside the team feed. Leaders are the
     /// highest-priced outcomes; a graded winner leads and is named, so
     /// `FeedLifecycle.futuresIsSettled` treats the card as settled.
+    /// #698: "graded winner" is the hero's own rule — a settled row whose
+    /// result is unknown (a midrange `is_winner true`) is never named.
     nonisolated init(savedPinDetail d: FuturesMarketDetail) {
-        let winner = d.outcomes.first { $0.isWinner == true }
+        let crowned = { (o: FuturesOutcome) in SettledResultDisplay698.heroWearsWinnerBadge(o, in: d) }
+        let winner = d.outcomes.first(where: crowned)
         let ordered = d.outcomes.sorted { a, b in
-            if (a.isWinner == true) != (b.isWinner == true) { return a.isWinner == true }
+            if crowned(a) != crowned(b) { return crowned(a) }
             return (a.probability ?? -1) > (b.probability ?? -1)
         }
         let leaders = ordered.prefix(3).enumerated().map { index, o in

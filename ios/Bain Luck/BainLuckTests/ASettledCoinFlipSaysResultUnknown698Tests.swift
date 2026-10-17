@@ -221,6 +221,21 @@ final class ASettledCoinFlipSaysResultUnknown698Tests: XCTestCase {
         }
     }
 
+    /// Lane1's N1: the My Stuff saved-market card reads the same body and named
+    /// `first is_winner == true` as the winner. It now uses the hero's rule, so
+    /// a midrange `true` is neither named nor sorted first; a real result is.
+    func testTheSavedMarketCardNamesNoPhantomWinner() throws {
+        for mode in [Mode.served, .contract] {
+            let unknown = try market("62134744", mode, edit: [234738381: ["is_winner": true]])
+            let card = FeedFuturesData(savedPinDetail: unknown)
+            XCTAssertNil(card.winner, "\(mode)")
+            XCTAssertNil(card.winnerOpeningProbability, "\(mode)")
+            let terminal = FeedFuturesData(savedPinDetail: try market("13798072", mode))
+            XCTAssertEqual(terminal.winner, "No", "\(mode)")
+            XCTAssertEqual(terminal.topOutcomes?.first?.id, 125653874, "\(mode)")
+        }
+    }
+
     /// An explicit unknown on a row with no price prints no number at all.
     func testAnUnknownRowWithNoPricePrintsNoNumber() throws {
         let m = try market("62134744", .contract, edit: [234738381: ["probability": NSNull()]])

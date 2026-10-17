@@ -35,7 +35,7 @@ import Foundation
 /// every contract it had (#4788, #6082, #10066, #10964).
 ///
 /// Kept free of SwiftUI so the decision is unit-testable.
-enum SettledResultDisplay698 {
+nonisolated enum SettledResultDisplay698 {
     /// The markets whose detail rows the server targets.
     static let targetedSources: Set<String> = ["polymarket"]
 
