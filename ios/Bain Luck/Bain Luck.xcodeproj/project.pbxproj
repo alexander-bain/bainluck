@@ -1014,6 +1014,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_ENTITLEMENTS = "Bain Luck/Bain Luck.entitlements";
+				"CODE_SIGN_ENTITLEMENTS[sdk=macosx*]" = "Bain Luck/Bain Luck-macOS.entitlements";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 10;
 				DEAD_CODE_STRIPPING = YES;
@@ -1061,6 +1062,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_ENTITLEMENTS = "Bain Luck/Bain Luck.entitlements";
+				"CODE_SIGN_ENTITLEMENTS[sdk=macosx*]" = "Bain Luck/Bain Luck-macOS.entitlements";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 10;
 				DEAD_CODE_STRIPPING = YES;
@@ -1150,6 +1152,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				CODE_SIGN_ENTITLEMENTS = "BainLuckWidget/BainLuckWidget.entitlements";
+				"CODE_SIGN_ENTITLEMENTS[sdk=macosx*]" = "BainLuckWidget/BainLuckWidget-macOS.entitlements";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 10;
 				DEVELOPMENT_TEAM = J893F72P4R;
@@ -1185,6 +1188,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				CODE_SIGN_ENTITLEMENTS = "BainLuckWidget/BainLuckWidget.entitlements";
+				"CODE_SIGN_ENTITLEMENTS[sdk=macosx*]" = "BainLuckWidget/BainLuckWidget-macOS.entitlements";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 10;
 				DEVELOPMENT_TEAM = J893F72P4R;
