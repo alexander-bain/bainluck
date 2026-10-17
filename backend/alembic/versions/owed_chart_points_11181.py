@@ -32,13 +32,16 @@ MIGRATION-CLASS (D45 / notice 47b). It merges only when Alex says so, and no
 merge-on-silence default exists. The release that runs it also starts the code
 that writes it, both consumers on worker-ws, and that code needs the table.
 
-ROLLBACK. Roll the code back first, then
+ROLLBACK. Rows drain only while this code runs, so read the count BEFORE
+reverting the code: ``SELECT count(*) FROM owed_chart_points``. If it is not 0,
+wait while the new code pays them. Then roll the code back, and only then
 
     alembic downgrade kalshi_archive_store_683
 
-Downgrading while the new code runs would fail every due stamp. The downgrade
-drops whatever rows remain, and those points are then lost. So check
-``SELECT count(*) FROM owed_chart_points`` is 0 first, or wait for it to be.
+Rows committed after that read and before the revert stay in the table
+unpaid. The old code never reads them, and the downgrade drops them, which
+loses those points. Downgrading while the new code runs would fail every due
+stamp. Leaving the table in place after a code revert is harmless.
 
 Revision ID: owed_chart_points_11181
 Revises: kalshi_archive_store_683

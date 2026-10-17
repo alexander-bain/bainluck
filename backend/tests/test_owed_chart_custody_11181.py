@@ -201,3 +201,32 @@ async def test_a_custody_read_overlapping_a_custody_only_commit_keeps_reading(
     await r.refresh_pending(flush_started=1000)
     await r._history_task
     assert not r._custody_backlog
+
+
+@pytest.mark.asyncio
+async def test_an_owned_point_is_never_skipped_by_the_snapshot_throttle(monkeypatch):
+    """Its custody row is settled in the same savepoint, so a throttle skip
+    there would delete the row and write nothing. The reservation already
+    spaced it; a sibling written moments before must not stop it (lane1 M6)."""
+    from app.tasks.live_blend_refresh import _chart_reading
+    from types import SimpleNamespace
+
+    r, session, frames, price = _ready_rig(monkeypatch)
+    calls = []
+    _recording_chart(monkeypatch, calls)
+    r._last_snapshot_at[1] = 1000.0
+    owned = _chart_reading(
+        SimpleNamespace(
+            home_probability=0.4, away_probability=None, draw_probability=None,
+            yes_probability=0.4, market=SimpleNamespace(id=10, name="game"),
+            outcome=SimpleNamespace(name="home"),
+        ),
+        A,
+    )
+    await r._maybe_snapshot(session, 1, 0.4, owned, 1001.0)
+    assert [(c["home_win_probability"], c["observed_at"]) for c in calls] == [(0.4, A)]
+    assert r._last_snapshot_at == {1: 1001.0}
+    # Unchanged for a reading that is not owned: the cadence still applies.
+    unowned = SimpleNamespace(**{**owned.__dict__, "owned_history": False})
+    await r._maybe_snapshot(session, 1, 0.5, unowned, 1002.0)
+    assert len(calls) == 1
