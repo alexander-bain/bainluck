@@ -3384,6 +3384,30 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                                         (oid, (current_chunk[oid], chunk_bounds[oid]))
                                         for oid in oids
                                     )
+                        # #10090: an event with a leg whose stored row is
+                        # already at or after its bound is not held: its stamp
+                        # could only republish the stored row, and the event
+                        # fence would keep this write out until it returned.
+                        # Like a quote with no bound, its row is retried at the
+                        # next flush and stamped once written. Unknown keeps
+                        # the hold. Read outside the buffer lock.
+                        ambiguous = (
+                            await held_quotes.stored_at_or_after(get_task_session, quotes)
+                            if quotes else set()
+                        )
+                        async with buffer_lock:
+                            for oids in legs_of.values():
+                                if quotes.keys().isdisjoint(oids):
+                                    continue
+                                refused = bool(ambiguous) and not ambiguous.isdisjoint(oids)
+                                if refused:
+                                    # An older held quote must not outlive the newer input.
+                                    held_quotes.release(oids)
+                                # Whole event or none: a withdrawal that arrived
+                                # during the read drops every leg, as above.
+                                if refused or any(oid in withdraw_buffer for oid in oids):
+                                    for oid in oids:
+                                        quotes.pop(oid, None)
                             moved = event_ids_for_outcomes(
                                 headline_event_ids, held_quotes.hold(quotes),
                             )

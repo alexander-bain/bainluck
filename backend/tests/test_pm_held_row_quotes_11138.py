@@ -22,6 +22,7 @@ accepted, so the worker's wall clock may be wrong by a day and nothing moves.
 from __future__ import annotations
 
 import asyncio
+import functools
 from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
@@ -456,3 +457,184 @@ def test_refresher_reads_no_overlay_unless_its_consumer_installs_one():
     # Establish ordering before first receipt, then refresh the lower bound
     # after attempts for future inputs. Never re-date a previously accepted input.
     assert source.count("held_quotes.sample_database_clock(get_task_session)") == 2
+
+
+# ── #10090: a quote the overlay would refuse is not held, so owes no stamp ──
+#
+# Root attempt20 (real PG, fast50, ambiguous bound): the deferred chunk still
+# held .82, so its event owed a stamp the overlay refused. That stamp
+# republished the stored .70 from 171 to 580 ms after the input while the event
+# fence kept two retries of .82 out, and .82 published at 664 ms (attempt19,
+# untraced: 1000.563 ms). A quote with no bound already took the quick path:
+# no hold, no stamp, the row written at the next flush (410 ms in attempt19).
+
+
+class _RowsSession:
+    def __init__(self, rows, *, block=False, fail=False):
+        self.rows = rows
+        self.block = block
+        self.fail = fail
+        self.statements = []
+        self.opened = 0
+        self.exited = False
+
+    async def __aenter__(self):
+        self.opened += 1
+        return self
+
+    async def __aexit__(self, *args):
+        self.exited = True
+
+    async def execute(self, statement, params=None):
+        self.statements.append((statement, params))
+        if self.block:
+            await asyncio.Event().wait()
+        if self.fail:
+            raise RuntimeError("canceling statement due to lock timeout")
+        return self
+
+    def all(self):
+        return self.rows
+
+
+def _stamp(at):
+    return datetime.fromtimestamp(at, timezone.utc)
+
+
+@pytest.mark.parametrize("stamp", [99.0, 99.999999, 100.0, 100.5])
+def test_the_pre_hold_read_refuses_exactly_what_the_overlay_refuses(stamp):
+    from app.utils.repair_lock_budget import SET_LOCK_TIMEOUT_SQL, lock_timeout_value
+
+    reader = HeldRowQuotes()
+    reader._database_bound = 100.0
+    quotes = snapshot(reader, [accept(reader)])
+    session = _RowsSession([(3, _stamp(stamp))])
+    found = asyncio.run(reader.stored_at_or_after(lambda: session, quotes))
+
+    overlay = HeldRowQuotes()
+    overlay._database_bound = 100.0
+    overlay.hold(snapshot(overlay, [accept(overlay)]))
+    assert found == ({3} if overlay._ambiguous(outcome(0.70, stamp)) else set())
+    assert found == ({3} if stamp >= 100.0 else set())
+    # Read only, nothing held, and the relation-lock wait is bounded first.
+    assert 3 not in reader and session.exited
+    assert session.statements[0] == (
+        SET_LOCK_TIMEOUT_SQL,
+        {"ms": lock_timeout_value(HeldRowQuotes.AMBIGUITY_READ_LOCK_TIMEOUT_MS)},
+    )
+
+
+def test_an_undated_row_is_not_ambiguous_and_an_unchanged_quote_is_not_read_again():
+    held = HeldRowQuotes()
+    held._database_bound = 100.0
+    quotes = snapshot(held, [accept(held)])
+    undated = _RowsSession([(3, None)])
+    assert asyncio.run(held.stored_at_or_after(lambda: undated, quotes)) == set()
+    held.hold(quotes)
+    again = _RowsSession([(3, _stamp(200.0))])
+    assert asyncio.run(held.stored_at_or_after(lambda: again, quotes)) == set()
+    assert again.opened == 0
+    assert asyncio.run(held.stored_at_or_after(lambda: again, {})) == set()
+    assert again.opened == 0
+
+
+@pytest.mark.parametrize("failure", ["fail", "block"])
+def test_an_unknown_read_returns_none_and_touches_no_clock_state(failure):
+    held = HeldRowQuotes()
+    held._database_bound = 100.0
+    quotes = snapshot(held, [accept(held)])
+    session = _RowsSession([], **{failure: True})
+    assert asyncio.run(held.stored_at_or_after(lambda: session, quotes)) is None
+    assert session.exited
+    assert held._database_bound == 100.0
+    assert held.sample_failures == 0 and held._sample_backoff_until == 0.0
+
+
+def _deferred_flush(stored_at_or_after, *, prior=None, batch=None):
+    """The SHIPPED `_flush_prices` on #10651's rig: event 10's legs are
+    deferred by a lock (`write_chunk` returns None) while held quotes are on."""
+    from tests.test_polymarket_withdrawal_speed_10651 import rig
+
+    batch = batch or {1: 0.82}
+    r = rig(batch=dict(batch), mapping=dict.fromkeys(batch, 10), books={})
+    held = HeldRowQuotes()
+    held._database_bound = 100.0
+    if prior is not None:
+        held._quotes[1] = prior
+    r.ns["input_marks"] = {}
+    for seq, (oid, value) in enumerate(batch.items(), 1):
+        m = mark(oid=oid, seq=seq, value=value)
+        held.note_input(m)
+        r.ns["input_marks"][oid] = m
+    r.ns["blend_refresher"].held_quotes = held
+    held.stored_at_or_after = functools.partial(stored_at_or_after, r)
+
+    async def deferred(chunk, *, final=False, start_market_publish=None):
+        r.trace.append(("write", list(chunk)))
+        return None
+
+    r.ns["write_chunk"] = deferred
+
+    async def run():
+        await r.ns["flush_prices"](flush_started=100)
+        await r.ns["catalog_boundary"].join_stamps()
+
+    asyncio.run(run())
+    refreshed = [ids for kind, ids in r.trace if kind == "refresh" and 10 in ids]
+    return held, refreshed, r
+
+
+@pytest.mark.parametrize("answer,stamped", [
+    (set(), True),   # the stored row predates the bound: held and stamped (#11138)
+    (None, True),    # unknown: the hold stays, exactly as before
+    ({1}, False),    # at/after the bound: not held, no stamp, row retried
+])
+def test_a_deferred_chunk_holds_and_stamps_only_what_the_overlay_can_carry(answer, stamped):
+    asked = []
+
+    async def stored_at_or_after(_r, sessions, quotes):
+        asked.append(dict(quotes))
+        return answer
+
+    held, refreshed, r = _deferred_flush(stored_at_or_after)
+    assert asked == [{1: (0.82, 100.0)}]
+    assert (1 in held) is stamped
+    assert bool(refreshed) is stamped
+    # Either way the price stays buffered for the ordinary writer's next flush.
+    assert r.ns["price_buffer"] == {1: 0.82}
+    assert ("write", [1]) in r.trace
+
+
+def test_an_ambiguous_newer_input_releases_the_older_held_quote():
+    async def ambiguous(_r, sessions, quotes):
+        return set(quotes)
+
+    held, refreshed, _r = _deferred_flush(ambiguous, prior=(0.80, 90.0))
+    assert 1 not in held and not refreshed
+
+
+def test_a_withdrawal_during_the_read_drops_every_leg_of_its_event():
+    async def withdrawn_meanwhile(r, sessions, quotes):
+        assert set(quotes) == {1, 2}
+        r.ns["withdraw_buffer"][2] = (0.1, 0.9)  # one leg's wide book arrives
+        return set()
+
+    held, refreshed, _r = _deferred_flush(
+        withdrawn_meanwhile, batch={1: 0.82, 2: 0.18},
+    )
+    assert 1 not in held and 2 not in held
+
+
+def test_the_pre_hold_read_runs_outside_the_buffer_lock_and_before_the_hold():
+    source = (BACKEND / "app/tasks/polymarket_ws.py").read_text()
+    assert source.count("held_quotes.stored_at_or_after(get_task_session, quotes)") == 1
+    read = source.index("held_quotes.stored_at_or_after(get_task_session, quotes)")
+    hold = source.index("held_quotes.hold(quotes)")
+    quotes = source.rindex("quotes = {}", 0, read)
+    lock = source.rindex("async with buffer_lock:", 0, read)
+    assert lock < quotes < read < hold
+    # The read is not inside the block that built the quotes.
+    between = source[quotes:read]
+    assert "async with buffer_lock:" not in between
+    relock = source.index("async with buffer_lock:", read)
+    assert relock < hold
