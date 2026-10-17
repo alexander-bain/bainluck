@@ -117,6 +117,13 @@ class _Session:
         self._batches = batches
 
     async def execute(self, stmt):
+        # The optional clock sample is not a catalog batch. Keep the
+        # production startup sample and route this separate query explicitly.
+        from datetime import datetime, timezone
+        from types import SimpleNamespace
+        from sqlalchemy import func, select
+        if str(stmt) == str(select(func.clock_timestamp())):
+            return SimpleNamespace(scalar_one=lambda: datetime.now(timezone.utc))
         if _is_poly_open_contract_read(stmt):
             return _Result([])
         # #9462 review: the #9418 admission watcher rereads the live arm as
