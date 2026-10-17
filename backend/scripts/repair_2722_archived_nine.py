@@ -100,7 +100,7 @@ PLAN_ARCHIVE_PAGES = 50
 STATEMENT_TIMEOUT_MS = 10_000
 LOCK_TIMEOUT_MS = 500
 
-SQL = {
+_SQL_TEMPLATES = {
     "rows": """
         SELECT id, external_id, resolution_date, commence_time, market_tier
         FROM futures_markets
@@ -112,8 +112,8 @@ SQL = {
                to_jsonb(fm)::text AS before_row
         FROM futures_markets fm WHERE id = ANY(CAST(:ids AS bigint[])) ORDER BY id
     """,
-    "bak_create": f"""
-        CREATE TABLE IF NOT EXISTS {BACKUP_TABLE} (
+    "bak_create": """
+        CREATE TABLE IF NOT EXISTS {table} (
             market_id bigint PRIMARY KEY,
             plan_digest text NOT NULL,
             planned jsonb NOT NULL,
@@ -126,8 +126,8 @@ SQL = {
             ownership_lost_at timestamptz
         )
     """,
-    "bak_copy": f"""
-        INSERT INTO {BACKUP_TABLE} (market_id, plan_digest, planned, before_row)
+    "bak_copy": """
+        INSERT INTO {table} (market_id, plan_digest, planned, before_row)
         SELECT fm.id, :digest, CAST(:planned AS jsonb), to_jsonb(fm)
         FROM futures_markets fm
         WHERE fm.id = :market_id AND fm.source = 'kalshi' AND fm.external_id = :ticker
@@ -137,25 +137,25 @@ SQL = {
           AND to_jsonb(fm) = CAST(:approved_before AS jsonb)
         ON CONFLICT (market_id) DO NOTHING
     """,
-    "bak_missing": f"""
+    "bak_missing": """
         SELECT t.id FROM unnest(CAST(:ids AS bigint[])) AS t(id)
         WHERE NOT EXISTS (
-            SELECT 1 FROM {BACKUP_TABLE} b
+            SELECT 1 FROM {table} b
             WHERE b.market_id = t.id AND b.plan_digest = :digest)
         ORDER BY t.id
     """,
-    "bak_exists": f"SELECT to_regclass('{BACKUP_TABLE}') IS NOT NULL",
-    "competing": f"""
-        SELECT COUNT(*) FROM {BACKUP_TABLE}
+    "bak_exists": "SELECT to_regclass('{table}') IS NOT NULL",
+    "competing": """
+        SELECT COUNT(*) FROM {table}
         WHERE applied AND plan_digest <> :digest
     """,
-    "frozen": f"""
-        SELECT market_id, planned FROM {BACKUP_TABLE}
+    "frozen": """
+        SELECT market_id, planned FROM {table}
         WHERE plan_digest = :digest AND NOT applied AND ownership_lost_at IS NULL
         ORDER BY market_id
     """,
     # The walk's UPDATE_SQL values, as one whole-row compare-and-set.
-    "apply_one": f"""
+    "apply_one": """
         UPDATE futures_markets fm
         SET resolution_date = COALESCE(CAST(:resolution_date AS timestamptz), fm.resolution_date),
             expiration_time = COALESCE(CAST(:expiration_time AS timestamptz), fm.expiration_time),
@@ -163,42 +163,57 @@ SQL = {
             settled_at = CASE WHEN :venue_settled
                               THEN COALESCE(fm.settled_at, NOW()) ELSE fm.settled_at END,
             updated_at = NOW()
-        FROM {BACKUP_TABLE} b
+        FROM {table} b
         WHERE fm.id = :market_id
           AND b.market_id = fm.id AND b.plan_digest = :digest
           AND NOT b.applied AND b.ownership_lost_at IS NULL
           AND to_jsonb(fm) = b.before_row
         RETURNING to_jsonb(fm) AS after_row
     """,
-    "mark_applied": f"""
-        UPDATE {BACKUP_TABLE}
+    "mark_applied": """
+        UPDATE {table}
         SET applied = true, applied_at = NOW(), after_row = CAST(:after_row AS jsonb),
             restored_at = NULL
         WHERE market_id = :market_id AND plan_digest = :digest
     """,
-    "restore": f"""
+    "restore": """
         UPDATE futures_markets fm
         SET status = b.before_row->>'status',
             resolution_date = (b.before_row->>'resolution_date')::timestamptz,
             expiration_time = (b.before_row->>'expiration_time')::timestamptz,
             settled_at = (b.before_row->>'settled_at')::timestamptz,
             updated_at = (b.before_row->>'updated_at')::timestamptz
-        FROM {BACKUP_TABLE} b
+        FROM {table} b
         WHERE fm.id = b.market_id AND b.applied AND to_jsonb(fm) = b.after_row
         RETURNING fm.id
     """,
-    "close_restored": f"""
-        UPDATE {BACKUP_TABLE}
+    "close_restored": """
+        UPDATE {table}
         SET applied = false, after_row = NULL, restored_at = NOW()
         WHERE market_id = ANY(CAST(:ids AS bigint[]))
     """,
-    "close_lost": f"""
-        UPDATE {BACKUP_TABLE}
+    "close_lost": """
+        UPDATE {table}
         SET applied = false, ownership_lost_at = NOW()
         WHERE applied
         RETURNING market_id
     """,
 }
+#: The backup channels these statements may run against. Each is its own frozen
+#: cohort in its own script — the nine here; #2644's single Oscars row in
+#: ``repair_2644_oscar_song.py`` — and one channel's restore never reads the
+#: other's table. No caller can name a third, and no CLI takes a table.
+CHANNEL_TABLES = (BACKUP_TABLE, "backup_2644_oscar_song")
+
+
+def channel_sql(table: str) -> dict:
+    """The repair's statements over ONE frozen channel's backup table."""
+    if table not in CHANNEL_TABLES:
+        raise ValueError(f"{table!r} is not a frozen repair channel")
+    return {k: v.replace("{table}", table) for k, v in _SQL_TEMPLATES.items()}
+
+
+SQL = channel_sql(BACKUP_TABLE)
 
 
 class Refused(RuntimeError):
@@ -231,14 +246,17 @@ def _dt(value: Optional[str]) -> Optional[datetime]:
     return datetime.fromisoformat(value) if value else None
 
 
-def load_evidence(directory: Path = EVIDENCE_DIR) -> dict:
+def load_evidence(
+    directory: Path = EVIDENCE_DIR, *, manifest_sha256: str = MANIFEST_SHA256,
+    members: tuple[tuple[int, str], ...] = NINE,
+) -> dict:
     """``ticker -> {"live": bytes, "archive": bytes}``, every hash checked."""
     import httpx
 
     raw = (directory / "manifest.json").read_bytes()
     digest = hashlib.sha256(raw).hexdigest()
-    if digest != MANIFEST_SHA256:
-        raise Refused(f"evidence manifest hashes {digest}, expected {MANIFEST_SHA256}")
+    if digest != manifest_sha256:
+        raise Refused(f"evidence manifest hashes {digest}, expected {manifest_sha256}")
     out: dict = {}
     for entry in json.loads(raw)["responses"]:
         body = (directory / entry["file"]).read_bytes()
@@ -247,7 +265,7 @@ def load_evidence(directory: Path = EVIDENCE_DIR) -> dict:
         url = httpx.URL(entry["url"])
         kind = "archive" if "/historical/" in url.path else "live"
         out.setdefault(url.params["event_ticker"], {})[kind] = body
-    missing = [t for _, t in NINE if set(out.get(t, {})) != {"live", "archive"}]
+    missing = [t for _, t in members if set(out.get(t, {})) != {"live", "archive"}]
     if missing:
         raise Refused(f"no retained live+archive pair for {missing}")
     return out
@@ -313,18 +331,21 @@ class _Recorder:
         return None
 
 
-async def build_plan(session, evidence, *, now: datetime) -> dict:
-    """Run the merged walk over the nine as stored, and record what it would write."""
+async def build_plan(
+    session, evidence, *, now: datetime, members: tuple[tuple[int, str], ...] = NINE
+) -> dict:
+    """Run the merged walk over ``members`` (the nine) as stored, and record what
+    it would write."""
     from sqlalchemy import text
 
     from app.tasks import kalshi_resolution_sweep as sweep
 
-    ids = [i for i, _ in NINE]
+    ids = [i for i, _ in members]
     rows = [tuple(r) for r in (await session.execute(text(SQL["rows"]), {"ids": ids})).all()]
     current = {r[0]: r for r in (await session.execute(text(SQL["current"]), {"ids": ids})).all()}
     await session.rollback()
     found = {r[0]: r[1] for r in rows}
-    wrong = [i for i, t in NINE if found.get(i) != t]
+    wrong = [i for i, t in members if found.get(i) != t]
     if wrong:
         raise Refused(f"rows missing or not their reviewed ticker: {wrong}")
 
@@ -341,7 +362,7 @@ async def build_plan(session, evidence, *, now: datetime) -> dict:
     stats = report.get("stats") or {}
     writes = {int(u["id"]): u for u in recorder.updates}
     planned, no_op, stop = [], [], []
-    for market_id, ticker in NINE:
+    for market_id, ticker in members:
         w = writes.get(market_id)
         if w is None or not w.get("venue_settled"):
             stop.append(market_id)
@@ -380,8 +401,8 @@ def _values(entry: dict) -> dict:
     return {k: v for k, v in entry.items() if k != "approved_before"}
 
 
-def plan_digest(planned: list[dict]) -> str:
-    body = MANIFEST_SHA256 + "|" + json.dumps(
+def plan_digest(planned: list[dict], *, manifest_sha256: str = MANIFEST_SHA256) -> str:
+    body = manifest_sha256 + "|" + json.dumps(
         sorted(planned, key=lambda p: p["market_id"]), sort_keys=True
     )
     return hashlib.sha256(body.encode()).hexdigest()[:16]
@@ -393,39 +414,43 @@ def refuse_unless_named_app(env) -> None:
         raise Refused(f"HEROKU_APP_NAME={app!r}; writes run only on {REQUIRED_APP}")
 
 
-async def backup(session, planned: list[dict], digest: str) -> list[int]:
+async def backup(
+    session, planned: list[dict], digest: str, *, table: str = BACKUP_TABLE
+) -> list[int]:
     """Freeze the plan: each row is backed up only if it is still EXACTLY its
     approved before-image. Returns the ids that drifted (empty = all frozen)."""
     from sqlalchemy import text
 
-    await session.execute(text(SQL["bak_create"]))
-    if (await session.execute(text(SQL["competing"]), {"digest": digest})).scalar_one():
+    sql = channel_sql(table)
+    await session.execute(text(sql["bak_create"]))
+    if (await session.execute(text(sql["competing"]), {"digest": digest})).scalar_one():
         raise Refused("another plan's applied rows are still held; restore it first")
     for p in planned:
         before = p.get("approved_before")
         if not before:
             raise Refused(f"market {p['market_id']} has no approved before-image")
         await session.execute(
-            text(SQL["bak_copy"]),
+            text(sql["bak_copy"]),
             {"market_id": p["market_id"], "ticker": p["ticker"], "digest": digest,
              "planned": json.dumps(_values(p), sort_keys=True), "approved_before": before},
         )
     return [r[0] for r in (await session.execute(
-        text(SQL["bak_missing"]),
+        text(sql["bak_missing"]),
         {"ids": [p["market_id"] for p in planned], "digest": digest},
     )).all()]
 
 
-async def apply(session, digest: str) -> dict:
+async def apply(session, digest: str, *, table: str = BACKUP_TABLE) -> dict:
     """Write the FROZEN plan only — never a re-plan — each row by whole-row CAS."""
     from sqlalchemy import text
 
-    frozen = (await session.execute(text(SQL["frozen"]), {"digest": digest})).all()
+    sql = channel_sql(table)
+    frozen = (await session.execute(text(sql["frozen"]), {"digest": digest})).all()
     written, skipped = [], []
     for market_id, planned in frozen:
         p = planned if isinstance(planned, dict) else json.loads(planned)
         row = (await session.execute(
-            text(SQL["apply_one"]),
+            text(sql["apply_one"]),
             {"market_id": market_id, "digest": digest,
              "resolution_date": _dt(p.get("resolution_date")),
              "expiration_time": _dt(p.get("expiration_time")),
@@ -436,7 +461,7 @@ async def apply(session, digest: str) -> dict:
             continue
         after = row[0] if isinstance(row[0], str) else json.dumps(row[0])
         await session.execute(
-            text(SQL["mark_applied"]),
+            text(sql["mark_applied"]),
             {"after_row": after, "market_id": market_id, "digest": digest},
         )
         written.append(market_id)
@@ -447,15 +472,16 @@ async def restore(session) -> list[int]:
     return (await restore_report(session))["restored"]
 
 
-async def restore_report(session) -> dict:
+async def restore_report(session, *, table: str = BACKUP_TABLE) -> dict:
     from sqlalchemy import text
 
-    if not (await session.execute(text(SQL["bak_exists"]))).scalar_one():
-        raise Refused(f"{BACKUP_TABLE} does not exist; nothing was applied")
-    restored = [r[0] for r in (await session.execute(text(SQL["restore"]))).all()]
+    sql = channel_sql(table)
+    if not (await session.execute(text(sql["bak_exists"]))).scalar_one():
+        raise Refused(f"{table} does not exist; nothing was applied")
+    restored = [r[0] for r in (await session.execute(text(sql["restore"]))).all()]
     if restored:
-        await session.execute(text(SQL["close_restored"]), {"ids": restored})
-    preserved = [r[0] for r in (await session.execute(text(SQL["close_lost"]))).all()]
+        await session.execute(text(sql["close_restored"]), {"ids": restored})
+    preserved = [r[0] for r in (await session.execute(text(sql["close_lost"]))).all()]
     return {"restored": restored, "preserved_changed_since_apply": preserved}
 
 

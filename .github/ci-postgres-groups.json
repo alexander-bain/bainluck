@@ -157,6 +157,7 @@
     "#1853 a settled Kalshi event's archived legs are graded by an attended, undoable repair (real Postgres)",
     "#938 a Kalshi golf round price no stored time places before the round is not scored (real Postgres)",
     "#2722 the nine archived Kalshi questions settle through an attended, undoable first repair (real Postgres)",
+    "#2644 the Oscars Best Original Song row settles through its own exact, undoable channel of the #2722 repair (real Postgres)",
     "#4444 the census caps do not move the numbers (real Postgres)",
     "#4482 a task's query budget survives the pool (real Postgres)",
     "#2471 socket consumer keeps one engine per run (real Postgres)",
