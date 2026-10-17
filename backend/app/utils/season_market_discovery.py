@@ -373,6 +373,4 @@ def release_build(lease, rc=None) -> bool:
     if lease is None:
         return False
     client = rc if rc is not None else _client()
-    if client is None:
-        return False
-    return _single_flight.release(lease, rc=client)
+    return client is not None and _single_flight.release(lease, rc=client)
