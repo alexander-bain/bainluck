@@ -505,6 +505,9 @@ async def _settle_through_reader(connect, closing, *, prepare_mode):
         "price_buffer": buffer,
         "get_task_session": lambda: _Context(),
         "blend_refresher": _Refresher(),
+        # #10090 closure names: the settled-market refusal of the held overlay.
+        "prices": kalshi_task._KalshiPriceOwner(),
+        "market_id_by_outcome": {2: 1},
         "logger": kalshi_task.logger,
         "stats": {"errors": 0, "settlements": 0},
         "_UNCAPTURED": object(),

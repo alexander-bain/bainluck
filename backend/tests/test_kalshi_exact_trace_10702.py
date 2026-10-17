@@ -269,6 +269,8 @@ def handler(trace, mapped=True, non_blend=()):
         admission_wake=asyncio.Event(),
         flush_wake=asyncio.Event(),
         QUOTE_PRIORITY_EVIDENCE_SECONDS=task.QUOTE_PRIORITY_EVIDENCE_SECONDS,
+        # #10090: a refresher with no #11138 overlay installed (no fast path).
+        blend_refresher=SimpleNamespace(),
     )
     exec(compile(ast.Module(body=nodes, type_ignores=[]), task.__file__, "exec"), ns)
     return ns
