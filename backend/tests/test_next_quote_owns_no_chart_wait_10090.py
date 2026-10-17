@@ -424,9 +424,13 @@ async def test_long_held_writer_keeps_every_due_observation_at_its_own_time(
 
 
 @pytest.mark.asyncio
-async def test_past_the_spill_bound_distinct_due_points_wait_in_order(monkeypatch):
-    """The finite bound: past ordinary backlog + spill a due stamp waits for
-    the owned writer before its SQL, and no point drops."""
+async def test_past_the_spill_bound_stamp_never_waits_and_names_the_unretained_point(
+    monkeypatch, caplog,
+):
+    """The finite bound: past ordinary backlog + spill a due stamp still
+    publishes at once. The observation it would owe is not retained, never
+    silently: counted and logged by event, value and observation time. Its
+    event stays due, so the next stamp with room owes a point."""
     r, session, frames, price = _ready_rig(monkeypatch)
     r._history_limit = 1
     r._history_spill_limit = 0
@@ -447,20 +451,31 @@ async def test_past_the_spill_bound_distinct_due_points_wait_in_order(monkeypatc
     session._returned = {
         "polymarket": {"value": 0.60, "updated_at": "2026-10-11T00:52:55+00:00"}
     }
-    second = asyncio.create_task(r.refresh([1], flush_started=1025))
-    for _ in range(10):
-        await asyncio.sleep(0)
-    assert not second.done() and r._history_count == 1
-    assert len(session.updates) == 1, "capacity reserved before new stamp SQL"
-    release.set()
-    await asyncio.wait_for(second, 1)
-    await r.drain_history()
-    assert [c["home_win_probability"] for c in calls] == [0.40, 0.60]
-    assert [c["observed_at"] for c in calls] == [
-        "2026-10-11T00:52:30+00:00",
-        "2026-10-11T00:52:55+00:00",
-    ]
+    with caplog.at_level("WARNING", logger="app.tasks.live_blend_refresh"):
+        await asyncio.wait_for(r.refresh([1], flush_started=1025), 0.25)
     assert [f["source_value"] for f in frames] == [0.40, 0.60]
+    assert r._history_count == len(r._history) == 1, "the bound holds"
+    assert r.stats["history_unretained"] == 1
+    assert r.stats["history_deferred"] == 0
+    assert any(
+        "event 1 observation 0.6 at 2026-10-11T00:52:55+00:00 not retained"
+        in rec.getMessage()
+        for rec in caplog.records
+    ), [rec.getMessage() for rec in caplog.records]
+    release.set()
+    await r.drain_history()
+    assert [c["home_win_probability"] for c in calls] == [0.40]
+    price[0] = 0.70
+    session._returned = {
+        "polymarket": {"value": 0.70, "updated_at": "2026-10-11T00:53:20+00:00"}
+    }
+    await r.refresh([1], flush_started=1050)
+    await r.drain_history()
+    assert [(c["home_win_probability"], c["observed_at"]) for c in calls] == [
+        (0.40, "2026-10-11T00:52:30+00:00"),
+        (0.70, "2026-10-11T00:53:20+00:00"),
+    ]
+    assert r.stats["history_unretained"] == 1
     assert not r._history and not r._history_count
 
 
@@ -605,11 +620,12 @@ async def test_failed_full_history_still_publishes_stamp_then_pays_both_points(
 
 
 @pytest.mark.asyncio
-async def test_failed_writer_past_the_spill_bound_defers_stamp_then_quietly_pays_both(
+async def test_failed_writer_past_the_spill_bound_still_publishes_and_names_the_loss(
     monkeypatch,
 ):
-    """The finite bound with a failed writer refuses the stamp before COMMIT;
-    the blend retry keeps the price and both points are paid quietly."""
+    """A failed chart writer at the finite bound no longer refuses the stamp
+    (master did, before COMMIT). The queued point is still paid at its time;
+    the one past the bound is counted, and no blend debt is created."""
     from app.tasks import live_blend_refresh as blend
 
     r, session, frames, price = _ready_rig(monkeypatch)
@@ -634,18 +650,68 @@ async def test_failed_writer_past_the_spill_bound_defers_stamp_then_quietly_pays
         "polymarket": {"value": 0.60, "updated_at": "2026-10-11T00:52:55+00:00"}
     }
     clock[0] = 1002
-    await r.refresh([1], flush_started=1025)
-    assert len(session.updates) == len(frames) == 1
+    await asyncio.wait_for(r.refresh([1], flush_started=1025), 0.25)
+    assert len(session.updates) == len(frames) == 2
     assert r._history_count == len(r._history) == 1
-    assert r.pending_event_ids() == frozenset({1})
-    assert not r._last_snapshot_at
+    assert r.stats["history_unretained"] == 1
+    assert not r.pending_event_ids()
     failing[0] = False
     clock[0] = 1030
-    await r.refresh_pending(flush_started=1030)
     await r.drain_history()
-    assert [c["home_win_probability"] for c in calls] == [0.40, 0.40, 0.60]
+    assert [c["observed_at"] for c in calls] == ["2026-10-11T00:52:30+00:00"] * 2
     assert [f["source_value"] for f in frames] == [0.40, 0.60]
     assert not r.pending_event_ids() and not r._history_count
+
+
+@pytest.mark.asyncio
+async def test_run_handoff_carries_points_owed_past_the_backlog(monkeypatch):
+    """#11181 T6: a point owed past the ordinary backlog is the same scalar
+    debt as any other, so a run hand-off carries it at its original time."""
+    from app.tasks import live_blend_refresh as blend
+
+    r, session, frames, price = _ready_rig(monkeypatch)
+    r._history_limit = 1
+    clock, failing, calls = [1000.0], [True], []
+    monkeypatch.setattr(blend, "_mono", lambda: clock[0])
+
+    async def chart(session, **kw):
+        calls.append(kw)
+        if failing[0]:
+            raise RuntimeError("retry on next run")
+        return object(), True
+
+    monkeypatch.setattr(
+        "app.tasks.snapshots._create_or_update_win_prob_snapshot", chart
+    )
+    await r.refresh([1], flush_started=1000)
+    await r._history_task
+    price[0] = 0.60
+    session._returned = {
+        "polymarket": {"value": 0.60, "updated_at": "2026-10-11T00:52:55+00:00"}
+    }
+    clock[0] = 1002
+    await r.refresh([1], flush_started=1025)
+    assert r.stats["history_deferred"] == 1 and len(r._history) == 2
+    if r._history_task is not None:
+        await r._history_task
+    assert blend.hand_off_pending(r) == 0, "history is not an owed blend stamp"
+    assert not r._history and r._history_count == 0
+    replacement, _, new_frames, _ = _ready_rig(monkeypatch)
+    monkeypatch.setattr(
+        "app.tasks.snapshots._create_or_update_win_prob_snapshot", chart
+    )
+    failing[0] = False
+    clock[0] = 1030
+    assert blend.adopt_handed_off(replacement) == 0
+    assert replacement._history_count == 2
+    await replacement.refresh_pending(flush_started=1030)
+    await replacement.drain_history()
+    paid = [(c["home_win_probability"], c["observed_at"]) for c in calls[-2:]]
+    assert paid == [
+        (0.40, "2026-10-11T00:52:30+00:00"),
+        (0.60, "2026-10-11T00:52:55+00:00"),
+    ]
+    assert not new_frames and not replacement._history_count
 
 
 @pytest.mark.asyncio
