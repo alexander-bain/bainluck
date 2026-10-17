@@ -1619,7 +1619,8 @@ class LiveBlendRefresher:
         #: Rows may exist that memory does not hold: past its bound, or from a
         #: run or process before this one, so a new refresher starts by reading.
         self._custody_backlog = chart_custody is not None
-        #: Points committed to custody alone; a load that overlaps one cannot
+        #: Points committed to custody alone, or possibly committed (a stamp
+        #: whose COMMIT outcome is unknown); a load that overlaps one cannot
         #: conclude the table is drained.
         self._custody_only_committed = 0
         #: Custody-only points committed by this process, by row id: the
@@ -2938,9 +2939,11 @@ class LiveBlendRefresher:
                 yield reserved, ready
             except BaseException:
                 # A COMMIT whose acknowledgement was lost may still have
-                # stored this transaction's custody rows: the next drain reads.
+                # stored this transaction's custody rows: the next drain reads,
+                # and a load already in flight cannot conclude it saw them.
                 if reserved and self._chart_custody is not None:
                     self._custody_backlog = True
+                    self._custody_only_committed += 1
                 raise
             # The nested session has now exited with a successful COMMIT.
             for eid, value, reading in owed:

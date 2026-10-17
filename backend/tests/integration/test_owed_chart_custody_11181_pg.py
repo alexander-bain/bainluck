@@ -328,6 +328,62 @@ async def test_a_stamp_whose_commit_acknowledgement_is_lost_still_pays_its_point
     assert await _owed(rig) == []
 
 
+@pytest.mark.parametrize("overlap", [False, True], ids=["read-first", "read-overlaps"])
+async def test_a_lost_acknowledgement_during_an_empty_custody_read_still_pays(
+    rig, overlap
+):
+    """CERT-4203: the run's first custody read returns no rows and has not yet
+    finished when a stamp commits its custody row and loses the COMMIT
+    acknowledgement. That read began before the row existed, so it must not
+    conclude the table is drained: the next quiet drain pays the stored point
+    at its own time. `read-first` is the control, the same loss after the read
+    has finished."""
+    await _seed_with_prior_point(rig)
+    lost = []
+
+    def lose_ack(session):
+        if not lost and session.info.get("stamp"):
+            lost.append(True)
+            return True
+        return False
+
+    r, _ = _refresher(rig, factory=_factory(rig, lose_ack=lose_ack))
+    real_record = r._chart_custody.record
+
+    async def record(session, *args):
+        session.info["stamp"] = True
+        return await real_record(session, *args)
+
+    r._chart_custody.record = record
+    read_done, release = asyncio.Event(), asyncio.Event()
+    real_load = r._chart_custody.load
+
+    async def load(*args):
+        rows = await real_load(*args)
+        read_done.set()
+        if overlap:
+            await release.wait()
+        return rows
+
+    r._chart_custody.load = load
+    await r.refresh_pending(flush_started=999)
+    await asyncio.wait_for(read_done.wait(), 1)
+    if not overlap:
+        await r._history_task
+    await r.refresh([1], flush_started=1000)
+    assert lost, "the client saw the stamp fail"
+    async with rig.maker() as session:
+        stored = (await session.get(Event, 1)).win_probability_sources["polymarket"]
+    assert [row.value for row in await _owed(rig)] == [0.7]
+    release.set()
+    await asyncio.wait_for(r._history_task, 1)
+    r._chart_custody.load = real_load
+    await _drain(r)
+    paid = [(v, at, n) for v, at, n in await _points(rig)][1:]
+    assert paid == [(0.7, datetime.fromisoformat(stored["updated_at"]), 1)]
+    assert await _owed(rig) == []
+
+
 async def _custody_settled(r):
     """The run's first custody read finishes before the case begins."""
     await _drain(r)
