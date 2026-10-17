@@ -6992,10 +6992,11 @@ class _GenericVenueHistory:
             "fill": self.fill,
         }
         if self.pair_admission is not None:
-            # #11157 — venue points of an admitted pair that had no partner in
-            # their cell. Its own count: `unsupported_points_withheld` keeps
-            # meaning the support filter, and a reader can tell the two apart.
-            block["paired_points_withheld"] = self.pair_admission.withheld
+            # #11157 — the halves of an admitted pair this response did not draw,
+            # by reason. Their own counts: `unsupported_points_withheld` keeps
+            # meaning the support filter, and a reader can tell all three apart.
+            block["unpaired_points_withheld"] = self.pair_admission.unpaired
+            block["incoherent_pair_points_withheld"] = self.pair_admission.incoherent
         if self.thin_basis:
             # What "thin" MEANT for this response. Stated so the trigger cannot be
             # read back as a claim that every sparse line on this chart was
@@ -7067,88 +7068,123 @@ def _venue_field_squeezable(
 
 
 class _PairAdmission(NamedTuple):
-    """What a cell-by-cell admission of one identity-admitted pair decided."""
+    """What the reader admitted of one identity-admitted, annotated Yes/No pair."""
 
     #: `(outcome_id, the row's OWN instant)` → the pair's knowledge time when the
-    #: halves were sampled at different seconds, or None for an exact shared
+    #: halves were quoted at different seconds, or None for an exact shared
     #: instant (#11160), whose knowledge time is its own.
     admitted: dict
-    #: The pairs as columns, for the reader's unchanged scale contract. Keyed by
-    #: knowledge time because that is the instant both values existed — a key
-    #: for the arithmetic only, never served as an observation time.
+    #: The pairs as columns for the reader's unchanged scale contract, keyed by
+    #: knowledge time (`pair_at`, lane1's I7) — a key for the arithmetic only,
+    #: never served as an observation time.
     columns: dict
-    #: The field's venue rows that had no partner in their cell.
-    withheld: int
+    #: The field's venue rows with no peer beside them in this window.
+    unpaired: int
+    #: Rows of pairs refused by the coherence guard (`PAIR_COHERENCE_EPSILON`).
+    incoherent: int
 
 
-def _tag_venue_pair(rows: list, payload: Optional[dict], outcomes: list) -> Optional[tuple]:
-    """Mark each venue row with its partner leg when the bank's two series are one
-    condition's identity-admitted Yes/No tokens (#11157).
+def _verify_pair_bank(
+    accepted: dict, payload: Optional[dict], outcomes: list
+) -> tuple[Optional[tuple], Optional[str]]:
+    """`(pair, None)` when the bank's pair annotations verify for an identity-
+    admitted Yes/No pair; `(None, None)` when pairing does not apply; `(None,
+    reason)` when an annotation does not verify — the series is then refused.
 
-    The identity is the FILL's own predicate (`_paired_binary_leg_ids`, #11160),
-    asked of the contracts the bank was built from — not a second copy of it. A
-    payload entry that failed `validate_payload` has no rows here, so it can tag
-    nothing; one with the wrong token, condition or leg never pairs at all.
+    IDENTITY IS RE-DERIVED HERE, never trusted from the bank (lane1's I3): the
+    fill's own predicate `_paired_binary_leg_ids`, asked of the contracts the
+    bank was built from, which `validate_payload` has already bound to these
+    outcome rows. Any other market — Kalshi, multi-outcome, wrong token,
+    condition or leg — reads its bank exactly as before: annotations, if a bank
+    somehow carried them, are not consulted.
+
+    AN OLD BANK HAS NO ANNOTATION AND KEEPS TODAY'S RULE, with no inference
+    (lane1's I2 / G9). A bank that HAS them must have them whole: each point's
+    `peer_at` names a point in the other leg at exactly that raw instant, of the
+    same tier, whose own `peer_at` names this one and whose `pair_at` agrees.
+    `parse_points` has already checked what one point can answer alone (pair_at
+    is the later instant, skew within S, not after the build).
     """
     from app.tasks.generic_market_history_fill import _paired_binary_leg_ids
 
+    if not any(p.peer_at is not None for points in accepted.values() for p in points):
+        return None, None
     cached = (payload or {}).get("outcomes") or {}
-    if not isinstance(cached, dict):
-        return None
     entries = {
         int(key): entry
-        for key, entry in cached.items()
-        if str(key).isdigit() and isinstance(entry, dict)
+        for key, entry in (cached.items() if isinstance(cached, dict) else ())
+        if str(key).isdigit() and isinstance(entry, dict) and int(key) in accepted
     }
     pair = _paired_binary_leg_ids(outcomes, entries)
     if pair is None:
-        return None
+        return None, None
+    oid_a, oid_b = pair
+    at = {oid: {p.observed_at: p for p in accepted[oid]} for oid in pair}
+    for oid, other in ((oid_a, oid_b), (oid_b, oid_a)):
+        for point in accepted[oid]:
+            if point.peer_at is None:
+                continue
+            peer = at[other].get(point.peer_at)
+            if (
+                peer is None
+                or peer.peer_at != point.observed_at
+                or peer.pair_at != point.pair_at
+                or peer.tier != point.tier
+            ):
+                return None, "pair_annotation_unverified"
+    return pair, None
+
+
+def _tag_pair_partner(rows: list, pair: Optional[tuple]) -> None:
+    """Give each row of a verified pair its partner leg's id; nothing when `pair` is None."""
+    if pair is None:
+        return
     oid_a, oid_b = pair
     for row in rows:
         if row.outcome_id == oid_a:
             row.pair_partner = oid_b
         elif row.outcome_id == oid_b:
             row.pair_partner = oid_a
-    return pair
 
 
 def _venue_pair_admission(
     market: FuturesMarket, charted_outcomes: list, venue_by_outcome: dict,
     *, field_complete: bool = True,
 ) -> Optional[_PairAdmission]:
-    """#11157 — admit an identity-admitted Yes/No pair CELL BY CELL, or None.
+    """#11157 — admit an identity-admitted, annotated Yes/No pair PAIR BY PAIR, or None.
 
     WHY THE EXACT-INSTANT FIELD RULE CANNOT BE ASKED HERE. `_venue_field_columns`
     requires every charted leg to hold an observation at the SAME instant, so the
     squeeze has a denominator there. Polymarket's CLOB stamps each token at its
-    own second — 65678073: Yes 461, No 459, zero shared instants, 456 shared
-    minutes — so on the venue's real shape that rule refuses every point, and
-    #11160's exact-instant compaction has nothing to keep.
+    own second — 65678073: Yes 461, No 459, zero shared instants — so on the
+    venue's real shape that rule refuses every point.
 
-    WHAT REPLACES IT, FOR THIS SHAPE ONLY. The pair's other half is the one
-    sample the venue gave of the other token in the same declared fine-grain
-    cell (`async_binary_pair.pair_observations` — the rule the fill compacts by).
-    The two values form the column the reader's UNCHANGED scale contract is
-    asked of; nothing is complemented, interpolated or normalised.
+    WHAT REPLACES IT, FOR THIS CLASS ONLY (lane1's I2, I3, I7, I9). The fill
+    paired the raw legs and annotated both halves (`async_binary_pair`);
+    `_verify_pair_bank` checked the annotation whole against the stored bank and
+    re-derived identity. Here each pair whose two halves are BOTH in this
+    window becomes one column, keyed on its knowledge time `pair_at`, and that
+    column is what the reader's UNCHANGED scale contract is asked of. Nothing is
+    complemented, interpolated, carried or normalised.
 
-    WHAT IT DOES NOT CLAIM. Not that the two samples were simultaneous: each half
-    is served at its own instant with its own value, and the later of the two
-    instants is published beside it as the pair's KNOWLEDGE time
-    (`pair_known_at`), never as a quote time.
+    WHAT IT DOES NOT CLAIM. Not that the halves were simultaneous: each is served
+    at its own raw instant with its own value, and `pair_at` is published beside
+    it as `pair_known_at`, never as a quote time (I1, I8).
 
-    PER CELL, NOT PER SERIES, FOR A HALF WITH NO PARTNER — and only for that. A
-    sample alone in its cell has no column to be asked the scale question of; it
-    is withheld and counted (`paired_points_withheld`) rather than drawn raw,
-    the rule `devigged_consensus_by_time` already applies to a capture instant
-    it cannot normalise ("a gap in a line is honest"). The scale contract itself
-    is unchanged and still refuses the series WHOLE if any admitted pair's
-    printed value differs from its raw one.
+    WITHHELD PER POINT AND COUNTED, NEVER A WHOLE-SERIES REFUSAL:
+      * a half whose peer is not in this window (never paired, dropped by the
+        support filter, claimed by a capture) — `unpaired`;
+      * a pair whose values disagree with one complementary book by more than
+        `PAIR_COHERENCE_EPSILON` — a mixed pair across a move — `incoherent`.
+        A refusal guard only; agreement proves neither identity nor a clock.
+    The scale contract itself is unchanged and still refuses WHOLE if an admitted
+    pair's printed value differs from its raw one.
 
-    None — the caller's existing rules decide, unchanged — unless the board is
-    squeezed, has exactly two legs, every venue row is tagged as one pair
-    (`_tag_venue_pair`), and at least one cell pairs.
+    None — the caller's existing rules decide, byte-identical — unless the board
+    is squeezed, has exactly two legs, and every venue row carries the verified
+    partner tag (`_load_generic_venue_history`).
     """
-    from app.utils.async_binary_pair import pair_observations
+    from app.utils.async_binary_pair import PAIR_COHERENCE_EPSILON
 
     if not _venue_field_squeezable(market, charted_outcomes, field_complete=field_complete):
         return None
@@ -7163,26 +7199,29 @@ def _venue_pair_admission(
         for row in all_rows
     ):
         return None
-    leg_a = sorted(venue_by_outcome.get(oid_a) or (), key=lambda r: r.captured_at)
-    leg_b = sorted(venue_by_outcome.get(oid_b) or (), key=lambda r: r.captured_at)
-    pairs = pair_observations(
-        [(r.captured_at, getattr(r, "tier", "")) for r in leg_a],
-        [(r.captured_at, getattr(r, "tier", "")) for r in leg_b],
-    )
-    if not pairs:
-        return None
+    at_b = {row.captured_at: row for row in venue_by_outcome.get(oid_b) or ()}
     admitted: dict = {}
     columns: dict = {}
-    for i, j in pairs:
-        row_a, row_b = leg_a[i], leg_b[j]
-        known = max(row_a.captured_at, row_b.captured_at)
-        if known in columns:
-            return None  # cannot happen for one-to-one pairs; fail closed if it does
-        columns[known] = {oid_a: float(row_a.probability), oid_b: float(row_b.probability)}
-        stamp = None if row_a.captured_at == row_b.captured_at else known
+    incoherent = 0
+    for row_a in venue_by_outcome.get(oid_a) or ():
+        row_b = at_b.get(row_a.peer_at) if row_a.peer_at is not None else None
+        # A half whose peer is not in this window — never annotated, dropped by
+        # the support filter, or claimed by a capture (lane1's I9) — stands
+        # alone and is withheld below. Never a whole-series refusal.
+        if row_b is None or row_b.peer_at != row_a.captured_at:
+            continue
+        if abs(float(row_a.probability) + float(row_b.probability) - 1.0) > PAIR_COHERENCE_EPSILON:
+            incoherent += 2
+            continue
+        columns[row_a.pair_at] = {
+            oid_a: float(row_a.probability), oid_b: float(row_b.probability)
+        }
+        stamp = None if row_a.captured_at == row_b.captured_at else row_a.pair_at
         admitted[(oid_a, row_a.captured_at)] = stamp
         admitted[(oid_b, row_b.captured_at)] = stamp
-    return _PairAdmission(admitted, columns, len(all_rows) - len(admitted))
+    return _PairAdmission(
+        admitted, columns, len(all_rows) - len(admitted) - incoherent, incoherent
+    )
 
 
 def _venue_points_countable_as_density(
@@ -7465,6 +7504,13 @@ async def _load_generic_venue_history(
             return venue
         venue.payload = payload
         accepted, venue.refusals = validate_payload(payload, market, charted_outcomes)
+        # #11157 — a pair annotation is verified against the bank AS STORED,
+        # before the support filter: a half that filter later drops is withheld
+        # beside its peer, not mistaken for a forged one.
+        pair, pair_refusal = _verify_pair_bank(accepted, payload, charted_outcomes)
+        if pair_refusal:
+            venue.refusals.append({"scope": "payload", "reason": pair_refusal})
+            accepted = {}
         for oid, points in accepted.items():
             rows = as_snapshot_rows(oid, market.source, points)
             supported = _drop_unsupported_snapshot_points(
@@ -7473,9 +7519,7 @@ async def _load_generic_venue_history(
             venue.unsupported_dropped += len(rows) - len(supported)
             if supported:
                 venue.rows[oid] = supported
-        _tag_venue_pair(
-            [row for rows in venue.rows.values() for row in rows], payload, charted_outcomes
-        )
+        _tag_pair_partner([r for rows in venue.rows.values() for r in rows], pair)
         if any(r.get("scope") == "payload" for r in venue.refusals):
             venue.state = "refused"
         else:

@@ -856,20 +856,55 @@ def _paired_binary_leg_ids(
     return oid_a, oid_b
 
 
+def _annotate_pairs(outcomes: Sequence[Any], entries: dict[int, dict]) -> tuple[int, int] | None:
+    """Pair an identity-admitted binary's RAW legs afresh and annotate both halves (#11157).
+
+    Runs after layering and the last-good merge, before compaction, so the rule
+    (`async_binary_pair.pair_observations`) sees every raw sample — ambiguity is
+    a property of the raw series. Any annotation carried in from the last-good
+    bank is dropped first and re-derived from the raw clocks, which pairing never
+    moves: a carried half cannot keep a peer this build does not hold.
+    """
+    from dataclasses import replace
+
+    from app.utils.async_binary_pair import pair_observations
+
+    for entry in entries.values():
+        entry["points"] = [
+            replace(p, pair_at=None, peer_at=None) if p.pair_at or p.peer_at else p
+            for p in entry["points"]
+        ]
+    pair = _paired_binary_leg_ids(outcomes, entries)
+    if pair is None:
+        return None
+    oid_a, oid_b = pair
+    leg_a = sorted(entries[oid_a]["points"], key=lambda p: p.observed_at)
+    leg_b = sorted(entries[oid_b]["points"], key=lambda p: p.observed_at)
+    for i, j in pair_observations(
+        [(p.observed_at, p.tier) for p in leg_a], [(p.observed_at, p.tier) for p in leg_b]
+    ):
+        at_a, at_b = leg_a[i].observed_at, leg_b[j].observed_at
+        known = max(at_a, at_b)
+        leg_a[i] = replace(leg_a[i], pair_at=known, peer_at=at_b)
+        leg_b[j] = replace(leg_b[j], pair_at=known, peer_at=at_a)
+    entries[oid_a]["points"], entries[oid_b]["points"] = leg_a, leg_b
+    return pair
+
+
 def _compact_entries(
     outcomes: Sequence[Any], entries: dict[int, dict], now: datetime
 ) -> None:
     """Compact each outcome by band; for an identity-admitted binary pair, keep both halves of every pair either leg kept.
 
-    A pair is `async_binary_pair.pair_observations` — the exact shared instant
-    (#11160) or, on the venue's real shape, one sample of each token in one
-    declared fine-grain cell (#11157). The reader admits a point only beside its
-    partner, so a half compaction drops here is a half the chart cannot draw.
-    Both halves keep their own instants: nothing is restamped or merged.
+    The pairs are `_annotate_pairs`' (#11157): an exact shared instant (#11160)
+    or two raw samples of one tier a few seconds apart. The reader admits a half
+    only beside its peer, so a half compaction drops here is a half the chart
+    cannot draw. Pairs are one-to-one, so each leg gains at most what its partner
+    kept: the bound is still the two legs' combined budget.
     """
-    from app.utils.async_binary_pair import pair_observations
     from app.utils.futures_chart_series import compact_by_band
 
+    pair = _annotate_pairs(outcomes, entries)
     by_oid_ts: dict[int, dict[datetime, VenuePoint]] = {}
     kept_by_oid: dict[int, set[datetime]] = {}
     for oid, entry in entries.items():
@@ -878,23 +913,16 @@ def _compact_entries(
         kept = compact_by_band([(p.observed_at, p.probability) for p in points], now)
         kept_by_oid[oid] = {ts for ts, _p in kept}
 
-    pair = _paired_binary_leg_ids(outcomes, entries)
     if pair is not None:
         oid_a, oid_b = pair
-        legs = {oid: [by_oid_ts[oid][ts] for ts in sorted(by_oid_ts[oid])] for oid in pair}
         kept_a, kept_b = kept_by_oid[oid_a], kept_by_oid[oid_b]
-        # Pairs are one-to-one, so each leg gains at most what its partner kept:
-        # the bound is still the two legs' combined budget.
         retained = [
-            (legs[oid_a][i].observed_at, legs[oid_b][j].observed_at)
-            for i, j in pair_observations(
-                [(p.observed_at, p.tier) for p in legs[oid_a]],
-                [(p.observed_at, p.tier) for p in legs[oid_b]],
-            )
+            (p.observed_at, p.peer_at)
+            for p in by_oid_ts[oid_a].values()
+            if p.peer_at is not None and (p.observed_at in kept_a or p.peer_at in kept_b)
         ]
-        retained = [(ts_a, ts_b) for ts_a, ts_b in retained if ts_a in kept_a or ts_b in kept_b]
-        kept_a.update(ts_a for ts_a, _ts_b in retained)
-        kept_b.update(ts_b for _ts_a, ts_b in retained)
+        kept_a.update(at_a for at_a, _at_b in retained)
+        kept_b.update(at_b for _at_a, at_b in retained)
 
     for oid, entry in entries.items():
         ts_map = by_oid_ts[oid]

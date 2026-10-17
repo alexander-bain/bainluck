@@ -10,19 +10,27 @@ Yes 461 points, No 459, ZERO exact shared instants, 456 shared minutes — Live'
 read, #11157 comment 6229278103), so the reader's exact-instant field rule
 refused every point of the rebuilt v5756 bank.
 
-These guards are written against that SHAPE, not against the synchronous one:
+These guards are written against that SHAPE, not against the synchronous one,
+and carry lane1's early-review guards G1–G11 (artifacts/lane1-11157-grain-
+pair-review-20261017/REVIEW.md §4):
 
-  * tokens of ONE condition, each sampled a few seconds from the other inside
-    the venue's declared one-minute grain, with a step move (13% → 99.95%)
-    whose book events sometimes fall between the two samples of a minute;
-  * every served point is an original observation AT ITS OWN CLOCK — a Yes
-    point is never restamped to the No sample's second or vice versa, the pair's
-    knowledge time is published as its own field, and never as `timestamp`;
-  * grain boundaries, a rapid move inside one grain, missing / older-cell /
-    reused samples, coarse and undeclared grain, and wrong token / condition /
-    deadline each pair NOTHING they should not;
+  * tokens of ONE condition, each sampled a few seconds from the other, with a
+    step move (13% → 99.75%) whose small ticks sometimes fall between the two
+    samples of a minute (G1);
+  * every served point is an original observation AT ITS OWN CLOCK — never
+    restamped to its peer's second; the pair's knowledge time is its own field
+    (`pair_known_at`), never `timestamp` or `observed_through` (G1, I8);
+  * the skew bound S, same tier, one-to-one, missing / reused samples, coarse
+    and undeclared grain, and wrong token / condition / deadline each pair
+    NOTHING they should not (G4–G8);
+  * a mixed pair across a move is withheld and counted, never a whole-series
+    refusal (G3); so is a half whose peer a capture claimed (I9);
+  * two builds through last-good never hold one sample at two instants (G2); an
+    old bank keeps today's refusal and a forged annotation is refused (G9);
   * the C2b withheld-leg board, unsupported-point accounting, the board-level
-    capture comparison and the combined two-leg budget are unchanged.
+    capture comparison, the density gate and the combined two-leg budget (G10,
+    G11, I10); and `/probability-timeline`, which never squeezes, keeps serving
+    each leg at its own raw instants.
 
 No production read: every venue answer here is a fake, every instant is
 anchored to the wall clock the reader windows by.
@@ -163,8 +171,9 @@ def _payload_rows(payload, oid):
 
 
 def _oracle_pairs(yes_rows, no_rows):
-    """The test's OWN statement of what may pair: one sample per leg in one
-    minute cell, at different seconds or the same one. Independent of the code."""
+    """The test's OWN statement of what pairs in this fixture: one sample of each
+    leg in one minute, which the fixture keeps ≤ 15 s apart and ~60 s from every
+    other sample. Independent of the code under test."""
     def cells(rows):
         out: dict[int, list] = {}
         for ts, p in rows:
@@ -220,7 +229,8 @@ def test_an_asynchronous_real_shape_pair_draws_its_move():
 
     # Everything the venue sent that was not served is COUNTED, in its own field.
     kept_total = len(_payload_rows(payload, YES_ID)) + len(_payload_rows(payload, NO_ID))
-    assert vh["paired_points_withheld"] == kept_total - 2 * len(pairs)
+    assert vh["unpaired_points_withheld"] == kept_total - 2 * len(pairs)
+    assert vh["incoherent_pair_points_withheld"] == 0
     paired_ts = {t for y, n in pairs for t in (y[0], n[0])}
     unpaired = [t for oid in (YES_ID, NO_ID) for t, _p in _payload_rows(payload, oid)
                 if t not in paired_ts]
@@ -299,26 +309,32 @@ def _at(minute, second, tier=FINE):
     return (BASE + timedelta(minutes=minute, seconds=second), tier)
 
 
-def test_samples_seconds_apart_inside_one_declared_grain_pair():
+def test_samples_seconds_apart_of_one_tier_pair():
     assert _pairs([_at(0, 23)], [_at(0, 20)]) == [(0, 0)]
-    assert _pairs([_at(0, 0)], [_at(0, 59)]) == [(0, 0)]
 
 
-def test_a_grain_boundary_is_never_crossed_even_a_second_apart():
-    assert _pairs([_at(0, 59)], [_at(1, 0)]) == []
-    assert _pairs([_at(1, 0)], [_at(0, 59)]) == []
+def test_G6_the_bound_is_the_skew_not_the_minute():
+    # 2 s across a minute boundary pairs; 58 s apart never does, nor 58 s inside one.
+    assert _pairs([_at(0, 59)], [_at(1, 1)]) == [(0, 0)]
+    assert _pairs([_at(0, 31)], [_at(1, 29)]) == []
+    assert _pairs([_at(0, 1)], [_at(0, 59)]) == []
+    # Exactly the ceiling pairs; a second past it does not.
+    assert _pairs([_at(0, 10)], [_at(0, 40)]) == [(0, 0)]
+    assert _pairs([_at(0, 10)], [_at(0, 41)]) == []
 
 
-def test_an_older_cells_sample_is_never_borrowed():
-    # No's only sample is 20 s before Yes, in the previous minute: within one
-    # grain of distance, but the venue said it about a different minute.
-    assert _pairs([_at(1, 10)], [_at(0, 50)]) == []
+def test_G5_a_sample_with_two_candidates_pairs_with_neither():
+    # Yes samples 4 s apart: S shrinks to 2 s, and the No at :20 is within it
+    # of both. No sample is ever banked twice.
+    assert _pairs([_at(0, 18), _at(0, 22)], [_at(0, 20)]) == []
+    assert _pairs([_at(0, 20)], [_at(0, 18), _at(0, 22)]) == []
 
 
-def test_a_sample_is_never_reused_for_two_partners():
-    # Two Yes in one minute, one No: nothing in that cell pairs.
-    assert _pairs([_at(0, 10), _at(0, 40)], [_at(0, 20)]) == []
-    assert _pairs([_at(0, 20)], [_at(0, 10), _at(0, 40)]) == []
+def test_a_sample_is_only_ever_in_one_pair():
+    a = [_at(m, 23) for m in range(30)]
+    b = [_at(m, 20) for m in range(30)]
+    pairs = _pairs(a, b)
+    assert len({i for i, _ in pairs}) == len({j for _, j in pairs}) == len(pairs) == 30
 
 
 def test_a_missing_partner_pairs_nothing_and_neighbours_still_pair():
@@ -327,21 +343,22 @@ def test_a_missing_partner_pairs_nothing_and_neighbours_still_pair():
     assert _pairs(a, b) == [(0, 0), (2, 1)]
 
 
-def test_coarse_and_undeclared_grains_pair_only_at_an_exact_shared_instant():
-    hourly = "polymarket_clob_1m_f60"
-    assert _pairs([_at(0, 23, hourly)], [_at(0, 20, hourly)]) == []
+def test_G4_G7_coarse_cross_tier_and_undeclared_grains():
+    hourly, half_day = "polymarket_clob_1m_f60", "polymarket_clob_max_f720"
+    # f720 points eleven hours apart never pair (lane1's P3).
+    assert _pairs([_at(10, 0, half_day)], [_at(11 * 60 + 5, 0, half_day)]) == []
+    # f60 legs beyond S stay unpaired; within S they are one call's two quotes.
+    assert _pairs([_at(0, 0, hourly)], [_at(5, 0, hourly)]) == []
+    assert _pairs([_at(0, 20, hourly)], [_at(0, 17, hourly)]) == [(0, 0)]
+    # A minute sample and an hourly one are never one pair (P6).
+    assert _pairs([_at(0, 23)], [_at(0, 20, hourly)]) == []
+    # An undeclared tier pairs only at an exact shared instant (S = 0).
     for tier in ("", "polymarket_clob"):
         assert _pairs([_at(0, 23, tier)], [_at(0, 20, tier)]) == [], tier
-    # Mixed grains: a fine sample and a coarse one are not one cell's statements.
-    assert _pairs([_at(0, 23)], [_at(0, 20, hourly)]) == []
-    # The #11160 exact rule is unchanged, whatever the label.
-    for tier in (hourly, "", FINE):
         assert _pairs([_at(0, 20, tier)], [_at(0, 20, tier)]) == [(0, 0)], tier
 
 
-def test_an_exact_pair_and_its_cell_mate_do_not_cross_pair():
-    # Yes has an exact partner at :20 and a second sample at :40; No has only
-    # the :20. The extra Yes is not a second partner for anything.
+def test_an_exact_pair_keeps_its_neighbour_out():
     assert _pairs([_at(0, 20), _at(0, 40)], [_at(0, 20)]) == [(0, 0)]
 
 
@@ -363,36 +380,43 @@ def _t(minute, second):
     return BASE + timedelta(minutes=minute, seconds=second)
 
 
-def test_a_rapid_move_inside_one_grain_is_served_at_both_clocks_never_averaged():
-    # Minute 1: Yes sampled at :05 before a jump, No at :55 after it. Each is a
-    # real quote at its own second; neither is restamped, averaged or completed.
-    yes = [(_t(0, 21), 0.13), (_t(1, 5), 0.13), (_t(2, 22), 0.57)]
-    no = [(_t(0, 18), 0.87), (_t(1, 55), 0.43), (_t(2, 19), 0.43)]
+def test_G3_a_mixed_pair_across_a_move_is_withheld_and_counted():
+    # Minute 1: Yes quoted at :20 before a jump, No at :35 after it (lane1's
+    # P1/P2 shapes). Neither stands for the other's scale; the rest are served.
+    yes = [(_t(0, 21), 0.13), (_t(1, 20), 0.13), (_t(2, 22), 0.57), (_t(3, 22), 0.57)]
+    no = [(_t(0, 18), 0.87), (_t(1, 35), 0.43), (_t(2, 19), 0.43), (_t(3, 19), 0.43)]
     _m, _p, res = _one_minute_market(yes, no)
     vh = res["venue_history"]
     assert vh["state"] == "warm", vh.get("refusals")
     assert vh["points_served"] == 6
-    assert vh["paired_points_withheld"] == 0
-    yes_pts = {pt["timestamp"]: pt for pt in _venue_points(res, "Yes")}
-    no_pts = {pt["timestamp"]: pt for pt in _venue_points(res, "No")}
-    assert yes_pts[_t(1, 5).isoformat()]["probability"] == 0.13
-    assert no_pts[_t(1, 55).isoformat()]["probability"] == 0.43
-    # The Yes quote became admissible only once its partner existed — and that
-    # instant is published as knowledge, never as the quote's own time.
-    assert yes_pts[_t(1, 5).isoformat()]["pair_known_at"] == _t(1, 55).isoformat()
-    assert no_pts[_t(1, 55).isoformat()]["pair_known_at"] == _t(1, 55).isoformat()
-    assert {pt["probability"] for pt in yes_pts.values()} == {0.13, 0.57}
+    assert vh["incoherent_pair_points_withheld"] == 2
+    assert vh["unpaired_points_withheld"] == 0
+    served = {pt["timestamp"] for n in ("Yes", "No") for pt in _venue_points(res, n)}
+    assert _t(1, 20).isoformat() not in served and _t(1, 35).isoformat() not in served
+    assert {pt["probability"] for pt in _venue_points(res, "Yes")} == {0.13, 0.57}
 
 
-def test_a_cell_pair_the_squeeze_would_move_still_refuses_the_series_whole():
-    # The reader's scale contract is unchanged and still WHOLE-series: a cell
-    # whose two quotes sum past the squeeze threshold is not withheld quietly.
-    yes = [(_t(0, 21), 0.40), (_t(1, 21), 0.55), (_t(2, 21), 0.40)]
-    no = [(_t(0, 18), 0.60), (_t(1, 18), 0.56), (_t(2, 18), 0.60)]
+def test_G3_a_bigger_move_never_darkens_the_genuine_pairs():
+    # y+n = 1.44 sits in the squeeze band: shipped, one such pair refused the
+    # WHOLE series (P2). Now it is withheld and the genuine pairs stay drawn.
+    yes = [(_t(0, 21), 0.40), (_t(1, 20), 0.57), (_t(2, 22), 0.57)]
+    no = [(_t(0, 18), 0.60), (_t(1, 35), 0.87), (_t(2, 19), 0.43)]
     _m, _p, res = _one_minute_market(yes, no)
     vh = res["venue_history"]
-    assert vh["points_served"] == 0
-    assert "printed_scale_is_not_the_venue_raw_scale" in json.dumps(vh.get("refusals"))
+    assert vh["points_served"] == 4
+    assert vh["incoherent_pair_points_withheld"] == 2
+
+
+def test_an_asynchronous_pair_carries_its_knowledge_time_beside_its_own_clock():
+    yes = [(_t(0, 21), 0.40), (_t(1, 25), 0.41)]
+    no = [(_t(0, 18), 0.60), (_t(1, 19), 0.59)]
+    _m, _p, res = _one_minute_market(yes, no)
+    yes_pts = {pt["timestamp"]: pt for pt in _venue_points(res, "Yes")}
+    no_pts = {pt["timestamp"]: pt for pt in _venue_points(res, "No")}
+    assert set(yes_pts) == {_t(0, 21).isoformat(), _t(1, 25).isoformat()}
+    assert set(no_pts) == {_t(0, 18).isoformat(), _t(1, 19).isoformat()}
+    assert yes_pts[_t(1, 25).isoformat()]["pair_known_at"] == _t(1, 25).isoformat()
+    assert no_pts[_t(1, 19).isoformat()]["pair_known_at"] == _t(1, 25).isoformat()
 
 
 def test_a_genuine_reversal_survives():
@@ -413,7 +437,7 @@ def test_a_pair_that_is_not_one_conditions_yes_and_no_is_still_refused_whole(why
     vh = res["venue_history"]
     assert vh["points_served"] == 0, why
     assert REFUSED_FIELD in json.dumps(vh.get("refusals")), why
-    assert "paired_points_withheld" not in vh, why
+    assert "unpaired_points_withheld" not in vh, why
 
 
 def test_one_token_behind_both_legs_never_enters_pairing():
@@ -427,17 +451,18 @@ def test_one_token_behind_both_legs_never_enters_pairing():
             assert "pair_known_at" not in pt
 
 
-def test_a_bank_with_no_shared_cell_keeps_the_old_refusal():
-    # The legs were observed in different minutes altogether: nothing pairs, and
-    # the reader says what it said before, not "warm with zero points".
+def test_a_bank_with_no_pair_inside_the_bound_keeps_the_old_refusal():
+    # The legs were quoted in different minutes altogether: the fill annotates
+    # nothing, and the reader says what it said before.
     yes = [(_t(m, 21), 0.40) for m in range(4)]
     no = [(_t(m + 10, 18), 0.60) for m in range(4)]
-    _m, _p, res = _one_minute_market(yes, no)
+    _m, payload, res = _one_minute_market(yes, no)
+    assert not any(len(r) > 6 for o in payload["outcomes"].values() for r in o["points"])
     vh = res["venue_history"]
     assert vh["points_served"] == 0
     assert vh["state"] == "refused"
     assert REFUSED_FIELD in json.dumps(vh.get("refusals"))
-    assert "paired_points_withheld" not in vh
+    assert "unpaired_points_withheld" not in vh
 
 
 def test_the_board_level_capture_comparison_still_refuses_whole():
@@ -471,7 +496,7 @@ def test_unsupported_point_accounting_keeps_its_own_meaning(monkeypatch):
     vh = res["venue_history"]
     assert vh["unsupported_points_withheld"] == 1
     # Its widowed partner is a PAIRING withhold, not an unsupported one.
-    assert vh["paired_points_withheld"] == 1
+    assert vh["unpaired_points_withheld"] == 1
     assert vh["points_served"] == 6
 
 
@@ -512,7 +537,7 @@ def test_C2b_an_unsqueezed_pair_with_same_minute_samples_never_enters_pairing():
     vh = res["venue_history"]
     assert vh["state"] == "warm"
     assert vh["points_served"] == 5
-    assert "paired_points_withheld" not in vh
+    assert "unpaired_points_withheld" not in vh
     for name in ("Yes", "No"):
         for pt in _venue_points(res, name):
             assert "pair_known_at" not in pt
@@ -539,10 +564,12 @@ def test_the_density_gate_counts_admitted_points_only():
     market = _async_market()
     payload = _fill(market, _Venue({"tok_yes": _clob(yes), "tok_no": _clob(no)}))
     accepted, _ = gmh.validate_payload(payload, market, market.outcomes)
+    pair, why = futures_route._verify_pair_bank(accepted, payload, market.outcomes)
+    assert pair is not None and why is None
     rows = []
     for oid, pts in accepted.items():
         rows += gmh.as_snapshot_rows(oid, "polymarket", pts)
-    futures_route._tag_venue_pair(rows, payload, market.outcomes)
+    futures_route._tag_pair_partner(rows, pair)
     n = futures_route._venue_points_countable_as_density(
         market, market.outcomes, rows, {YES_ID, NO_ID}, field_complete=True,
     )
@@ -586,3 +613,283 @@ def test_the_fixture_tier_is_the_fine_one_the_rig_banks():
     assert len(tiers) == 1
     assert series.declared_resolution_seconds(tiers.pop()) == 60.0
     assert _instants(payload, YES_ID)
+
+
+# ── G2: two builds through last-good never hold one sample twice ────────────
+
+
+def test_G2_a_second_build_through_last_good_keeps_every_sample_at_one_instant():
+    raw_yes, raw_no = _async_raw()
+    market = _async_market()
+    venue = _Venue({"tok_yes": _clob(raw_yes), "tok_no": _clob(raw_no)})
+    first = _fill(market, venue)
+    second = _fill(market, venue, last_good=first)
+    for oid, raw in ((YES_ID, dict(raw_yes)), (NO_ID, dict(raw_no))):
+        rows = second["outcomes"][str(oid)]["points"]
+        stamps = [datetime.fromisoformat(r[0]) for r in rows]
+        assert len(stamps) == len(set(stamps))
+        assert set(stamps) <= set(raw), "every banked instant is a raw venue instant"
+    # Annotations are re-derived, not carried: the second bank's are the first's.
+    for oid in (YES_ID, NO_ID):
+        ann = lambda p: {r[0]: r[6] for r in p["outcomes"][str(oid)]["points"] if len(r) > 6}  # noqa: E731
+        assert ann(first), "the first build must pair, or this arm cannot bite"
+        assert ann(second) == ann(first)
+
+
+# ── G9: an old bank keeps today's rule; a forged annotation is refused ──────
+
+
+def _bank(market):
+    raw_yes, raw_no = _async_raw()
+    return _fill(market, _Venue({"tok_yes": _clob(raw_yes), "tok_no": _clob(raw_no)}))
+
+
+def test_G9_an_old_bank_without_annotations_keeps_todays_refusal():
+    market = _async_market()
+    payload = _bank(market)
+    for entry in payload["outcomes"].values():
+        entry["points"] = [r[:6] for r in entry["points"]]
+    vh = _read(market, _captures(), payload)["venue_history"]
+    assert vh["points_served"] == 0
+    assert REFUSED_FIELD in json.dumps(vh.get("refusals"))
+    assert "unpaired_points_withheld" not in vh
+
+
+def _later_annotated_half(payload, oid):
+    """A half that is the LATER of its pair, so its `pair_at` is its own instant
+    and forging its peer leaves every single-point check passing."""
+    for row in payload["outcomes"][str(oid)]["points"]:
+        if len(row) > 6 and row[6][0] == row[0] and row[6][1] != row[0]:
+            return row
+    raise AssertionError("no later half")
+
+
+def test_G9_an_annotation_whose_peer_is_not_in_the_other_leg_refuses_the_series():
+    market = _async_market()
+    payload = _bank(market)
+    row = _later_annotated_half(payload, YES_ID)
+    row[6] = [row[6][0], (datetime.fromisoformat(row[6][1]) - timedelta(seconds=1)).isoformat()]
+    vh = _read(market, _captures(), payload)["venue_history"]
+    assert vh["points_served"] == 0
+    assert vh["state"] == "refused"
+    assert "pair_annotation_unverified" in json.dumps(vh.get("refusals"))
+
+
+def test_G9_a_malformed_annotation_refuses_the_series():
+    market = _async_market()
+    payload = _bank(market)
+    _later_annotated_half(payload, YES_ID)[6] = "yes"
+    vh = _read(market, _captures(), payload)["venue_history"]
+    assert vh["points_served"] == 0
+    assert "pair_annotation_malformed" in json.dumps(vh.get("refusals"))
+
+
+def _hand_bank(market, yes_points, no_points, *, tok_no="tok_no"):
+    yes_o = next(o for o in market.outcomes if o.id == YES_ID)
+    no_o = next(o for o in market.outcomes if o.id == NO_ID)
+    entries = {
+        YES_ID: {"contract": gmh.polymarket_contract(yes_o, token_id="tok_yes",
+                                                     resolved_via="outcome_token_metadata"),
+                 "points": yes_points},
+        NO_ID: {"contract": gmh.polymarket_contract(no_o, token_id=tok_no,
+                                                    resolved_via="outcome_token_metadata"),
+                "points": no_points},
+    }
+    return gmh.build_payload(market, entries, now=NOW, stats={}, degraded=False)
+
+
+def test_G9_one_sample_banked_as_the_peer_of_two_refuses_the_series():
+    """Lane1's P4 as a forged bank: Yes :08 and Yes :10 both name No :12, which
+    names :08 back. Every single-point check and every pair_at agrees."""
+    market = _async_market()
+    t08, t10, t12 = _t(0, 8), _t(0, 10), _t(0, 12)
+    payload = _hand_bank(
+        market,
+        [gmh.VenuePoint(t08, 0.40, tier=FINE, pair_at=t12, peer_at=t12),
+         gmh.VenuePoint(t10, 0.40, tier=FINE, pair_at=t12, peer_at=t12)],
+        [gmh.VenuePoint(t12, 0.60, tier=FINE, pair_at=t12, peer_at=t08)],
+    )
+    vh = _read(market, _captures(), payload)["venue_history"]
+    assert vh["points_served"] == 0
+    assert "pair_annotation_unverified" in json.dumps(vh.get("refusals"))
+
+
+def test_G8_annotations_on_a_bank_whose_tokens_are_not_two_are_never_consulted():
+    """Identity is re-derived at read: a bank whose two contracts name ONE token
+    reads as today's bank, annotations and all — refused on the field rule."""
+    market = _async_market()
+    t10, t12 = _t(0, 10), _t(0, 12)
+    payload = _hand_bank(
+        market,
+        [gmh.VenuePoint(t10, 0.40, tier=FINE, pair_at=t12, peer_at=t12)],
+        [gmh.VenuePoint(t12, 0.60, tier=FINE, pair_at=t12, peer_at=t10)],
+        tok_no="tok_yes",
+    )
+    vh = _read(market, _captures(), payload)["venue_history"]
+    assert vh["points_served"] == 0
+    assert REFUSED_FIELD in json.dumps(vh.get("refusals"))
+    assert "unpaired_points_withheld" not in vh
+
+
+def test_a_carried_annotation_the_new_build_cannot_rederive_is_dropped():
+    """Last-good held Yes :10 (hourly call) paired with No :12. This build
+    fetches only No :12, from the fine call: the halves are now different tiers,
+    so the carried Yes :10 loses its annotation instead of naming a peer that no
+    longer names it back — and the bank still verifies."""
+    market = _async_market()
+    hourly = "polymarket_clob_1m_f60"
+    t10, t12 = _t(0, 10), _t(0, 12)
+    last_good = _hand_bank(
+        market,
+        [gmh.VenuePoint(t10, 0.40, tier=hourly, pair_at=t12, peer_at=t12)],
+        [gmh.VenuePoint(t12, 0.60, tier=hourly, pair_at=t12, peer_at=t10)],
+    )
+    payload = _fill(market, _Venue({"tok_yes": [], "tok_no": _clob([(t12, 0.60)])}),
+                    last_good=last_good)
+    yes_rows = payload["outcomes"][str(YES_ID)]["points"]
+    assert [r[0] for r in yes_rows] == [t10.isoformat()]
+    assert len(yes_rows[0]) == 6
+    accepted, _ = gmh.validate_payload(payload, market, market.outcomes)
+    assert futures_route._verify_pair_bank(accepted, payload, market.outcomes)[1] is None
+
+
+def test_a_single_line_read_reports_freshness_from_its_own_quotes():
+    """`?outcome_id=` draws one leg. Its `observed_through` is that leg's latest
+    quote, never the later knowledge time its pair shares with the other leg."""
+    import asyncio
+    from unittest.mock import patch
+
+    from tests.test_generic_history_paired_compaction_11157 import _Redis, _Result, _Session
+
+    yes = [(_t(m, 3), 0.40) for m in range(4)]
+    no = [(_t(m, 21), 0.60) for m in range(4)]
+    market = _async_market()
+    payload = _fill(market, _Venue({"tok_yes": _clob(yes), "tok_no": _clob(no)}))
+    rc = _Redis({gmh.cache_key(market.id): json.dumps(payload)})
+    snaps = _captures()
+    db = _Session(_Result(value=market), _Result(rows=snaps), _Result(rows=snaps))
+    with (
+        patch.object(futures_route, "_request_path_redis", return_value=rc),
+        patch.object(futures_route, "_refuted_midpoint_outcome_ids", return_value=set()),
+    ):
+        res = asyncio.run(futures_route.get_futures_history(
+            market.id, outcome_id=YES_ID, hours=168, top_n=10, champion=None,
+            db=db, history_range=None,
+        ))
+    vh = res["venue_history"]
+    assert vh["points_served"] == 4, vh
+    assert vh["observed_through"] == _t(3, 3).isoformat()
+
+
+@pytest.mark.parametrize("annotation, reason", [
+    ("yes", "pair_annotation_malformed"),
+    (["2026-10-16T00:00:10+00:00"], "pair_annotation_malformed"),
+    (["not a time", "2026-10-16T00:00:12+00:00"], "pair_annotation_malformed"),
+    (["2026-10-16T00:00:10+00:00", "2026-10-16T00:00:12+00:00"],
+     "pair_at_is_not_the_later_raw_instant"),
+    (["2026-10-16T00:00:12+00:00", "2026-10-16T00:00:08+00:00"],
+     "pair_at_is_not_the_later_raw_instant"),
+])
+def test_parse_points_refuses_what_one_annotation_can_answer_alone(annotation, reason):
+    row = ["2026-10-16T00:00:10+00:00", 0.4, None, None, None, FINE, annotation]
+    points, why = gmh.parse_points([row], not_after=None)
+    assert (points, why) == ([], reason)
+
+
+def test_parse_points_refuses_a_skew_past_the_bound_and_a_pair_after_the_build():
+    own = datetime.fromisoformat("2026-10-16T00:00:10+00:00")
+    far = own + timedelta(seconds=31)
+    row = [own.isoformat(), 0.4, None, None, None, FINE, [far.isoformat(), far.isoformat()]]
+    assert gmh.parse_points([row], not_after=None) == ([], "pair_skew_exceeds_bound")
+    # Only an hourly tier's ceiling (30 s) applies to it, not its grain.
+    row[5] = "polymarket_clob_1m_f60"
+    assert gmh.parse_points([row], not_after=None) == ([], "pair_skew_exceeds_bound")
+    # A peer quoted after the build cannot have been known at the build.
+    near = own + timedelta(seconds=5)
+    row = [own.isoformat(), 0.4, None, None, None, FINE, [near.isoformat(), near.isoformat()]]
+    assert gmh.parse_points([row], not_after=own + timedelta(seconds=2)) == (
+        [], "pair_at_after_build"
+    )
+    # And the honest annotation parses, carrying both instants untouched.
+    points, why = gmh.parse_points([row], not_after=own + timedelta(seconds=10))
+    assert why is None and points[0].observed_at == own
+    assert points[0].pair_at == near and points[0].peer_at == near
+
+
+def test_an_unannotated_row_keeps_its_six_columns():
+    point = gmh.VenuePoint(_t(0, 10), 0.4, tier=FINE)
+    assert len(point.as_row()) == 6
+    paired = gmh.VenuePoint(_t(0, 10), 0.4, tier=FINE, pair_at=_t(0, 12), peer_at=_t(0, 12))
+    assert paired.as_row()[6] == [_t(0, 12).isoformat(), _t(0, 12).isoformat()]
+
+
+# ── I9: a capture claiming one half withholds the survivor, never the series ─
+
+
+def test_I9_a_capture_claiming_one_half_withholds_only_that_pair():
+    yes = [(_t(m, 21), 0.40) for m in range(6)]
+    no = [(_t(m, 3), 0.60) for m in range(6)]
+    market = _async_market()
+    payload = _fill(market, _Venue({"tok_yes": _clob(yes), "tok_no": _clob(no)}))
+    # A capture of the Yes leg at minute 2's Yes quote claims that instant.
+    claim = [_snap(YES_ID, _t(2, 21), 0.40), _snap(NO_ID, _t(2, 21), 0.60)]
+    res = _read(market, _captures() + claim, payload)
+    vh = res["venue_history"]
+    assert vh["state"] == "warm", vh.get("refusals")
+    assert REFUSED_FIELD not in json.dumps(vh.get("refusals") or [])
+    served = {pt["timestamp"] for n in ("Yes", "No") for pt in _venue_points(res, n)}
+    assert _t(2, 21).isoformat() not in served
+    # Whatever the claim took, nothing survives without its peer.
+    for m in range(6):
+        assert (_t(m, 21).isoformat() in served) == (_t(m, 3).isoformat() in served), m
+    assert vh["points_served"] + vh["unpaired_points_withheld"] <= 12
+
+
+# ── UX F1: /probability-timeline never squeezes and is ruled out by name ────
+
+
+class _Lenient(SimpleNamespace):
+    """The timeline route formats the market detail too; a missing attribute
+    reads as None there, as an unset column would."""
+
+    def __getattr__(self, name):
+        return None
+
+
+def test_the_timeline_route_serves_each_leg_at_its_own_raw_instants():
+    """`get_probability_timeline` (iOS source mode) prints raw per-leg medians
+    and venue values — no squeeze, so no denominator to pair for. It keeps one
+    entry per raw instant: nothing at a knowledge time a leg was not quoted at,
+    no pair field, and each leg's value is that leg's raw quote there."""
+    import asyncio
+    from unittest.mock import patch
+
+    from tests.test_generic_history_paired_compaction_11157 import _Redis, _Result, _Session
+
+    raw_yes, raw_no = _async_raw()
+    market = _async_market()
+    payload = _fill(market, _Venue({"tok_yes": _clob(raw_yes), "tok_no": _clob(raw_no)}))
+    lenient = _Lenient(**vars(market))
+    rc = _Redis({gmh.cache_key(market.id): json.dumps(payload)})
+    snaps = _captures()
+    db = _Session(_Result(value=lenient), _Result(rows=snaps), _Result(rows=snaps))
+    with (
+        patch.object(futures_route, "_request_path_redis", return_value=rc),
+        patch.object(futures_route, "_refuted_midpoint_outcome_ids", return_value=set()),
+    ):
+        res = asyncio.run(futures_route.get_probability_timeline(
+            market.id, top=10, hours=168, db=db, representation="source",
+        ))
+    raw = {"Yes": {t.isoformat(): p for t, p in raw_yes},
+           "No": {t.isoformat(): p for t, p in raw_no}}
+    venue_instants = set(raw["Yes"]) | set(raw["No"])
+    venue_seen = 0
+    for entry in res["timeline"]:
+        assert "pair_known_at" not in json.dumps(entry)
+        if entry["timestamp"] not in venue_instants:
+            continue  # a capture's hour bucket, ahead of the venue series
+        for name, value in entry["outcomes"].items():
+            assert entry["timestamp"] in raw[name], f"{name} drawn at a time it was not quoted"
+            assert value == pytest.approx(raw[name][entry["timestamp"]], abs=1e-6)
+            venue_seen += 1
+    assert venue_seen == res["venue_history"]["points_served"] > 0

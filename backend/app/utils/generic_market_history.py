@@ -159,9 +159,15 @@ class VenuePoint:
     yes_ask: float | None = None
     last_price: float | None = None
     tier: str = ""
+    #: #11157 — set only on a half of an identity-admitted Yes/No pair, by the
+    #: fill (`async_binary_pair.pair_observations`). `peer_at` is the OTHER
+    #: token's raw instant; `pair_at` is the later of the two — KNOWLEDGE time,
+    #: never an observation time. `observed_at` is never touched by pairing.
+    pair_at: datetime | None = None
+    peer_at: datetime | None = None
 
     def as_row(self) -> list:
-        return [
+        row = [
             self.observed_at.isoformat(),
             round(self.probability, 6),
             self.yes_bid,
@@ -169,6 +175,12 @@ class VenuePoint:
             self.last_price,
             self.tier,
         ]
+        # An optional seventh column, written only on a paired half, so every
+        # unpaired row — and every bank of every other market — keeps its bytes,
+        # and a reader that predates it reads the first six and ignores it.
+        if self.pair_at is not None and self.peer_at is not None:
+            row.append([self.pair_at.isoformat(), self.peer_at.isoformat()])
+        return row
 
 
 @dataclass
@@ -188,11 +200,15 @@ class VenueSnapshotRow:
     yes_ask: float | None = None
     last_price: float | None = None
     tier: str = ""
-    #: #11157 — the OTHER leg's outcome id when this row's series and that one
-    #: are one condition's identity-admitted Yes/No tokens; None otherwise. Set
-    #: by the reader from the bank's own contracts, and travels with the row the
-    #: way `tier` does, so every reader-side question about pairing reads the
-    #: same fact.
+    #: #11157 — the point's verified pair annotation (`VenuePoint`), carried so
+    #: the reader keys a pair's column on its knowledge time and serves each half
+    #: at its own `captured_at`.
+    pair_at: datetime | None = None
+    peer_at: datetime | None = None
+    #: The OTHER leg's outcome id, set by the reader only when the bank's two
+    #: series are one condition's identity-admitted Yes/No tokens AND its pair
+    #: annotations verified (`routes/futures._tag_venue_pair`). None otherwise —
+    #: and then pairing does not exist for this row.
     pair_partner: int | None = None
 
 
@@ -477,6 +493,12 @@ def parse_points(rows: Any, *, not_after: datetime | None) -> tuple[list[VenuePo
         if not_after is not None and stamp > not_after:
             return [], "timestamp_after_build"
         previous = stamp
+        tier = str(row[5]) if len(row) > 5 and row[5] is not None else ""
+        pair_at = peer_at = None
+        if len(row) > 6 and row[6] is not None:
+            pair_at, peer_at, why = _parse_pair_annotation(row[6], stamp, tier, not_after)
+            if why:
+                return [], why
         points.append(
             VenuePoint(
                 observed_at=stamp,
@@ -484,10 +506,34 @@ def parse_points(rows: Any, *, not_after: datetime | None) -> tuple[list[VenuePo
                 yes_bid=_opt_float(row[2]) if len(row) > 2 else None,
                 yes_ask=_opt_float(row[3]) if len(row) > 3 else None,
                 last_price=_opt_float(row[4]) if len(row) > 4 else None,
-                tier=str(row[5]) if len(row) > 5 and row[5] is not None else "",
+                tier=tier,
+                pair_at=pair_at,
+                peer_at=peer_at,
             )
         )
     return points, None
+
+
+def _parse_pair_annotation(
+    raw: Any, own: datetime, tier: str, not_after: datetime | None
+) -> tuple[datetime | None, datetime | None, str | None]:
+    """`(pair_at, peer_at, None)` or `(None, None, reason)` — lane1's I2 checks
+    that one point can answer alone. The peer's PRESENCE in the other leg is a
+    cross-series fact and is checked where both legs are in hand (the reader)."""
+    from app.utils.async_binary_pair import pair_skew_bound_seconds
+
+    if not isinstance(raw, (list, tuple)) or len(raw) != 2:
+        return None, None, "pair_annotation_malformed"
+    pair_at, peer_at = _parse_aware(raw[0]), _parse_aware(raw[1])
+    if pair_at is None or peer_at is None:
+        return None, None, "pair_annotation_malformed"
+    if pair_at != max(own, peer_at):
+        return None, None, "pair_at_is_not_the_later_raw_instant"
+    if abs((own - peer_at).total_seconds()) > pair_skew_bound_seconds(tier):
+        return None, None, "pair_skew_exceeds_bound"
+    if not_after is not None and pair_at > not_after:
+        return None, None, "pair_at_after_build"
+    return pair_at, peer_at, None
 
 
 def validate_payload(
@@ -1021,6 +1067,8 @@ def as_snapshot_rows(
             yes_ask=p.yes_ask,
             last_price=p.last_price,
             tier=p.tier,
+            pair_at=p.pair_at,
+            peer_at=p.peer_at,
         )
         for p in points
     ]
