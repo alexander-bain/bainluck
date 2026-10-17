@@ -50,6 +50,7 @@ MODES (attended; nothing here runs on a schedule, and the beat's
     heroku run:detached -a bainluck-heavy -- python3 scripts/repair_2722_archived_nine.py
     heroku run:detached -a bainluck-heavy -- python3 scripts/repair_2722_archived_nine.py --backup --apply --digest <D>
     heroku run:detached -a bainluck-heavy -- python3 scripts/repair_2722_archived_nine.py --restore
+    heroku run:detached -a bainluck-heavy -- python3 scripts/repair_2722_archived_nine.py --status
 
 Writes refuse unless ``HEROKU_APP_NAME`` is ``bainluck-heavy``; the backup table
 is runtime DDL created only by an attended invocation (notice 47(c)).
@@ -61,6 +62,15 @@ survive every commit and reconnect (a bare ``SET`` would not: the task engine's
 resting bound is 30 minutes and its lock bound is none). A budget that fires is
 a refusal naming the phase and SQLSTATE: that phase's transaction rolls back
 whole, and the run never retries and never restores on its own.
+
+A COMMIT THAT DOES NOT RETURN IS NEITHER (directive 024, CERT-4198's caveat).
+The server can make a commit durable and the acknowledgement still be lost, so
+"nothing was written" is not knowable from the client. Once a backup, apply or
+restore COMMIT has been sent and not acknowledged, the run reports UNKNOWN
+(exit 3, ``"outcome": "UNKNOWN"``) and stops: no retry, no reconnect-write, no
+restore, no cleanup. ``--status`` is the read-only readback: a READ ONLY
+transaction over this channel's table and the exact nine only, no DDL, and a
+missing table is reported as absent, never as an apply verdict.
 """
 
 from __future__ import annotations
@@ -215,9 +225,53 @@ def channel_sql(table: str) -> dict:
 
 SQL = channel_sql(BACKUP_TABLE)
 
+#: The readback (``--status``): the exact nine, each beside this channel's
+#: backup row (if any) and the live row, compared whole against both images.
+#: ``before_row_sha256`` is the plan's ``approved_before_sha256`` for the same
+#: version (jsonb text is canonical), so the backup can be matched to review.
+STATUS_IDS = [i for i, _ in NINE]
+STATUS_SQL = f"""
+    SELECT t.id AS market_id, b.market_id IS NOT NULL AS backed_up, b.plan_digest,
+           b.applied, b.backed_up_at, b.applied_at, b.restored_at, b.ownership_lost_at,
+           encode(sha256(convert_to(b.before_row::text, 'UTF8')), 'hex') AS before_row_sha256,
+           b.market_id IS NOT NULL AND to_jsonb(fm) = b.before_row AS row_is_before_image,
+           b.after_row IS NOT NULL AND to_jsonb(fm) = b.after_row AS row_is_after_image,
+           fm.status, fm.resolution_date, fm.expiration_time, fm.settled_at, fm.updated_at
+    FROM unnest(CAST(:ids AS bigint[])) AS t(id)
+    LEFT JOIN {BACKUP_TABLE} b ON b.market_id = t.id
+    LEFT JOIN futures_markets fm ON fm.id = t.id
+    ORDER BY t.id
+"""
+
 
 class Refused(RuntimeError):
     pass
+
+
+class Unknown(RuntimeError):
+    """A COMMIT whose acknowledgement never came back: it may or may not be durable."""
+
+    def __init__(self, message: str, *, phase: str, digest: Optional[str] = None):
+        super().__init__(message)
+        self.phase = phase
+        self.digest = digest
+
+
+#: What is still certain when each commit fails to return.
+_UNKNOWN_AFTER = {
+    "backup-commit": "the backup's durability is UNKNOWN; futures_markets was not written "
+                     "(the apply had not started)",
+    "apply-commit": "the apply's durability is UNKNOWN; the backup is committed",
+    "restore-commit": "the restore's durability is UNKNOWN",
+}
+
+
+def _unknown(phase: str, exc: BaseException, digest: Optional[str] = None) -> Unknown:
+    return Unknown(
+        f"the {phase} did not return ({type(exc).__name__}); {_UNKNOWN_AFTER[phase]}. "
+        "Not retried, not restored — read it back with --status before any further step",
+        phase=phase, digest=digest,
+    )
 
 
 def _stopped(phase: str, exc, consequence: str) -> Refused:
@@ -485,26 +539,54 @@ async def restore_report(session, *, table: str = BACKUP_TABLE) -> dict:
     return {"restored": restored, "preserved_changed_since_apply": preserved}
 
 
+async def status() -> dict:
+    """Read-only readback of this channel's backup rows for the exact nine."""
+    from sqlalchemy import text
+
+    from app.tasks.base import get_task_session
+
+    async with get_task_session(
+        statement_timeout_ms=STATEMENT_TIMEOUT_MS, lock_timeout_ms=LOCK_TIMEOUT_MS
+    ) as session:
+        await session.execute(text("SET TRANSACTION READ ONLY"))
+        exists = (await session.execute(text(SQL["bak_exists"]))).scalar_one()
+        rows = (await session.execute(
+            text(STATUS_SQL), {"ids": STATUS_IDS})).mappings().all() if exists else []
+        await session.rollback()
+    return {
+        "backup_table": BACKUP_TABLE if exists else "absent",
+        "rows": [{k: _iso(v) if isinstance(v, datetime) else v for k, v in r.items()} for r in rows],
+    }
+
+
 async def run(args, env) -> dict:
     from sqlalchemy.exc import DBAPIError
 
     from app.tasks.base import get_task_session
 
     out: dict = {"manifest_sha256": MANIFEST_SHA256}
+    if args.status:
+        if args.backup or args.apply or args.restore:
+            raise Refused("--status is the read-only readback; it takes no write flag")
+        out.update(await status())
+        return out
     if args.restore:
         refuse_unless_named_app(env)
-        committed = False
+        phase = "restore"
         try:
             async with get_task_session(
                 statement_timeout_ms=STATEMENT_TIMEOUT_MS, lock_timeout_ms=LOCK_TIMEOUT_MS
             ) as session:
                 out.update(await restore_report(session))
+                phase = "restore-commit"
                 await session.commit()
-                committed = True
-        except DBAPIError as exc:
-            if committed:
-                raise  # the restore is durable; never report it as rolled back
-            raise _stopped("restore", exc, "no row was restored and no marker closed") from exc
+                phase = "done"
+        except Exception as exc:
+            if phase == "restore-commit":
+                raise _unknown(phase, exc) from exc
+            if phase == "restore" and isinstance(exc, DBAPIError):
+                raise _stopped("restore", exc, "no row was restored and no marker closed") from exc
+            raise  # "done": the restore is durable; never report it as rolled back
         return out
 
     evidence = load_evidence()
@@ -547,21 +629,25 @@ async def run(args, env) -> dict:
                     f"rows changed since the plan was approved: {drifted}; nothing written "
                     "— re-plan and re-review"
                 )
+            phase = "backup-commit"
             await session.commit()
             phase = "apply"
             out["applied"] = await apply(session, digest)
+            phase = "apply-commit"
             await session.commit()
             phase = "done"
-    except DBAPIError as exc:
-        if phase == "done":
-            raise  # the apply is durable; never report it as rolled back
-        if phase == "backup":
+    except Exception as exc:
+        if phase in _UNKNOWN_AFTER:
+            raise _unknown(phase, exc, digest) from exc
+        if phase == "backup" and isinstance(exc, DBAPIError):
             raise _stopped("backup", exc, "nothing was backed up or written") from exc
-        raise _stopped(
-            "apply", exc,
-            f"no row of futures_markets was written; the backup for plan {digest} "
-            "stays committed and unapplied, so there is nothing to restore",
-        ) from exc
+        if phase == "apply" and isinstance(exc, DBAPIError):
+            raise _stopped(
+                "apply", exc,
+                f"no row of futures_markets was written; the backup for plan {digest} "
+                "stays committed and unapplied, so there is nothing to restore",
+            ) from exc
+        raise  # "done": the apply is durable; never report it as rolled back
     out["undo"] = (
         f"heroku run:detached -a {REQUIRED_APP} -- python3 "
         "scripts/repair_2722_archived_nine.py --restore"
@@ -575,9 +661,19 @@ def main(argv=None) -> int:
     p.add_argument("--apply", action="store_true", help="write the frozen plan")
     p.add_argument("--digest", default="", help="the plan digest printed by a plan run")
     p.add_argument("--restore", action="store_true", help="undo an apply")
+    p.add_argument("--status", action="store_true",
+                   help="read back this channel's backup rows (read-only, no DDL)")
     args = p.parse_args(argv)
     try:
         out = asyncio.run(run(args, os.environ))
+    except Unknown as exc:
+        print(json.dumps({
+            "outcome": "UNKNOWN", "phase": exc.phase, "plan_digest": exc.digest,
+            "unknown": str(exc),
+            "readback": f"heroku run:detached -a {REQUIRED_APP} -- python3 "
+                        "scripts/repair_2722_archived_nine.py --status",
+        }))
+        return 3
     except Refused as exc:
         print(json.dumps({"refused": str(exc)}))
         return 2
