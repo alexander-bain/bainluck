@@ -193,11 +193,6 @@ nonisolated enum ContextualTipEligibility10876 {
     }
 }
 
-/// #10876 — one pin engagement per mounted detail page: the first `pinDwell`
-/// seconds of continuous on-screen, foreground time on it. Leaving the
-/// foreground or the screen restarts the clock; once donated, nothing on this
-/// page donates again — the notification alert or a trip to the background must
-/// not turn one visit into the two the pin rule waits for.
 /// What the pin tip reads from the pin store for one subject.
 nonisolated struct PinTipStoreReading10876: Equatable, Sendable {
     var isPinned: Bool
@@ -214,6 +209,11 @@ nonisolated struct PinTipState10876: Equatable, Sendable {
     static let off = PinTipState10876(usable: false, learned: false)
 }
 
+/// #10876 — one pin engagement per mounted detail page: the first `pinDwell`
+/// seconds of continuous on-screen, foreground time on it. Leaving the
+/// foreground or the screen restarts the clock; once donated, nothing on this
+/// page donates again — the notification alert or a trip to the background must
+/// not turn one visit into the two the pin rule waits for.
 nonisolated struct PinDwell10876: Equatable, Sendable {
     private(set) var activeSince: Date?
     private(set) var donated = false

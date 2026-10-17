@@ -280,6 +280,8 @@ final class ContextualTips10876Tests: XCTestCase {
             XCTAssertEqual(before.filter { String($0) == open }.count, before.filter { String($0) == close }.count,
                            "togglePin sits inside a nested \(open)…\(close), not the action's own body")
         }
+        XCTAssertEqual(before.components(separatedBy: "#if").count, before.components(separatedBy: "#endif").count,
+                       "togglePin sits inside a #if … #endif, so some builds compile the tap out")
         let statementStart = before.reversed().first { $0 != " " && $0 != "\t" }
         XCTAssertTrue(statementStart == nil || statementStart == "\n" || statementStart == ";",
                       "togglePin is not its own statement (an operand of \(String(describing: statementStart)))")
