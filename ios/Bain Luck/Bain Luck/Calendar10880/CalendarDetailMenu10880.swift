@@ -33,8 +33,9 @@ struct CalendarDetailMenu10880: View {
                 // Pin's 44 pt tap target, beside it in the same group.
                 Image(systemName: "ellipsis.circle")
                     .font(.system(size: 14))
-                    // `.plain` drops the toolbar's tint; keep the look it had.
-                    .foregroundStyle(.tint)
+                    // `.plain` drops the toolbar's colour; keep Share's black
+                    // (`.tint` painted it the accent blue, native 5d3931e735).
+                    .foregroundStyle(.primary)
                     .frame(width: 44, height: 44)
                     .contentShape(Rectangle())
             }

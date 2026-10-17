@@ -153,6 +153,14 @@ final class CalendarDetail10880Tests: XCTestCase {
         XCTAssertTrue(menu.contains(".buttonStyle(.plain)"), "the toolbar's style caps the control at 36")
         XCTAssertFalse(menu.contains("height: 36"), "never lower 44 to fit")
     }
+
+    /// Off the toolbar's style the icon takes no toolbar colour; `.tint` drew it
+    /// accent blue beside a black Share (native, 5d3931e735). It stays Share's.
+    func testTheMoreIconKeepsSharesColourOffTheToolbarStyle() throws {
+        let menu = try source("Calendar10880", "CalendarDetailMenu10880.swift")
+        XCTAssertTrue(menu.contains(".foregroundStyle(.primary)"))
+        XCTAssertFalse(menu.contains(".foregroundStyle(.tint)"), "accent blue beside a black Share")
+    }
 }
 
 private extension CalendarEntry10880.Decision {
