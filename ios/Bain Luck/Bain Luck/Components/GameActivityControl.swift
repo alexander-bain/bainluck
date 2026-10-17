@@ -40,6 +40,7 @@ struct GameActivityControl: View {
                             // #10876 — the follow-live tip, only while this
                             // button is shown, enabled and the game is live.
                             .followLiveTip10876(
+                                eventId: snapshot.eventID,
                                 game: "\(snapshot.awayTeam) vs \(snapshot.homeTeam)",
                                 usable: ContextualTipEligibility10876.followLiveUsable(
                                     controlShown: presentation.showsControl,

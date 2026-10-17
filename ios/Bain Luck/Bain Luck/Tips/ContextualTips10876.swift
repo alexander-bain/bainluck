@@ -17,6 +17,8 @@ private let logger = Logger(subsystem: "com.bainluck", category: "tips")
 /// * `ContextualTipEligibility10876` — whether the control is usable right now
 ///   (pure, unit-tested).
 /// * `ContextualTipQueue10876` — one tip on screen, one kind per session.
+/// * `ContextualTipHeroGate10876` — whether the page can take a tip: none
+///   opens while the page's hero is on screen (`heroClearOfTips`).
 ///
 /// iPhone and iPad only for now: the Mac chart selects with the pointer, not a
 /// held touch, and no tip's Mac placement has been seen. On macOS and visionOS
@@ -75,12 +77,16 @@ private let logger = Logger(subsystem: "com.bainluck", category: "tips")
         FollowLiveTip10876(game: "").invalidate(reason: .actionPerformed)
     }
 
-    /// Called at the end of every chart gesture; writes once per process.
+    /// Called at the end of every chart gesture that read a moment; writes
+    /// once per process. Logged, because case v6 (R1) saw a hidden-launch
+    /// scrub leave the chart tip eligible on the next launch and nothing on
+    /// screen can say whether this ran.
     static func chartLearned() {
         guard isEnabledOnThisPlatform, !chartLearnedThisProcess else { return }
         chartLearnedThisProcess = true
         configureIfNeeded()
         ExploreChartTip10876().invalidate(reason: .actionPerformed)
+        logger.notice("chart tip invalidated: a scrub read a moment")
     }
 }
 
@@ -154,24 +160,34 @@ nonisolated struct ExploreChartTip10876: Tip {
 
     func arrive(_ anchor: UUID, tip: ContextualTipID10876) { update { $0.arrive(anchor: anchor, tip: tip) } }
     func request(_ anchor: UUID, tip: ContextualTipID10876) { update { $0.request(anchor: anchor, tip: tip) } }
+    func park(_ anchor: UUID, tip: ContextualTipID10876) { update { $0.park(anchor: anchor, tip: tip) } }
+    func pageCannotShow(_ anchor: UUID, tip: ContextualTipID10876) {
+        update { $0.pageCannotShow(anchor: anchor, tip: tip) }
+    }
     func decline(_ anchor: UUID) { update { $0.decline(anchor: anchor) } }
     func withdraw(_ anchor: UUID) { update { $0.withdraw(anchor: anchor) } }
 
     private func update(_ change: (inout ContextualTipQueue10876) -> Void) {
         var next = state
         change(&next)
-        if next != state { state = next }
+        guard next != state else { return }
+        if next.holder?.anchor != state.holder?.anchor {
+            let granted = next.holder.map { "\($0.tip)" } ?? "none"
+            logger.notice("tip on screen: \(granted, privacy: .public)")
+        }
+        state = next
     }
 }
 
-// MARK: - The hero the pin tip must not cover
+// MARK: - The hero no tip may cover
 
 /// Which detail pages have their hero scrolled wholly out of view, keyed like
-/// the bookmark (`type:id`). The page's hero reports here and the bookmark in
-/// its bar reads it — a toolbar item cannot see the scroll view it sits over.
-/// A page that never reports is never in the set, so its pin tip stays off.
-@MainActor final class PinTipHeroGate10876: ObservableObject {
-    static let shared = PinTipHeroGate10876()
+/// the bookmark (`type:id`). The page's hero reports here; the bookmark in its
+/// bar and the game chart read it — a toolbar item cannot see the scroll view
+/// it sits over, and the chart is a sibling of the hero. A page that never
+/// reports is never in the set, so its tips stay off.
+@MainActor final class ContextualTipHeroGate10876: ObservableObject {
+    static let shared = ContextualTipHeroGate10876()
     @Published private(set) var clear: Set<String> = []
 
     static func key(type: String, id: Int) -> String { "\(type):\(id)" }
@@ -184,20 +200,26 @@ nonisolated struct ExploreChartTip10876: Tip {
     }
 }
 
-/// On the page's hero: reports `heroClearOfPinTip` only when it flips, so a
-/// scroll re-runs no page body (#8651).
-private struct PinTipHeroReporter10876: ViewModifier {
+/// On the page's hero: reports `heroClearOfTips` only when it flips, so a
+/// scroll re-runs no page body (#8651). Measured in the page's own named
+/// scroll space — the coordinate space set on the ScrollView itself, the form
+/// the event page's bar title has used since #8320. R2 measured in the system
+/// `.scrollView` space and the market page never cleared with its hero 1,000 pt
+/// gone (case v6, D2). Each flip is logged, so a run can read the gate.
+private struct ContextualTipHeroReporter10876: ViewModifier {
     let type: String
     let id: Int
+    let scrollSpace: String
 
     func body(content: Content) -> some View {
         content
             .onGeometryChange(for: Bool.self) { proxy in
-                ContextualTipEligibility10876.heroClearOfPinTip(heroBottom: proxy.frame(in: .scrollView).maxY)
+                ContextualTipEligibility10876.heroClearOfTips(heroBottom: proxy.frame(in: .named(scrollSpace)).maxY)
             } action: { isClear in
-                PinTipHeroGate10876.shared.set(type: type, id: id, clear: isClear)
+                logger.notice("hero \(type, privacy: .public):\(id, privacy: .public) clear=\(isClear, privacy: .public)")
+                ContextualTipHeroGate10876.shared.set(type: type, id: id, clear: isClear)
             }
-            .onDisappear { PinTipHeroGate10876.shared.set(type: type, id: id, clear: false) }
+            .onDisappear { ContextualTipHeroGate10876.shared.set(type: type, id: id, clear: false) }
     }
 }
 
@@ -262,12 +284,20 @@ private struct ContextualTipBody10876: View {
 // MARK: - Anchoring
 
 /// Puts `tip` in a popover on the modified control while the control is usable,
-/// the app is in front with no permission alert still to come, TipKit says the
-/// tip should display, and no other tip holds the screen. `learned` invalidates the tip.
+/// the page can take it (`presentable`: its hero is out of view), the app is in
+/// front with no permission alert still to come, TipKit says the tip should
+/// display, and no other tip holds the screen. `learned` invalidates the tip.
+///
+/// A usable control on a page that cannot take its tip yet stays in the queue:
+/// it parks once TipKit says the tip would display, so a lower tip cannot take
+/// the session from it (case v6, D1), and a granted tip parks the moment the
+/// hero comes back. Becoming presentable restarts the settle delay, so a tip
+/// never lands mid-scroll.
 private struct ContextualTipAnchor10876<T: Tip>: ViewModifier {
     let kind: ContextualTipID10876
     let tip: T
     let usable: Bool
+    let presentable: Bool
     let learned: Bool
     let arrowEdge: Edge
     @ObservedObject private var queue = ContextualTipQueueCenter10876.shared
@@ -276,6 +306,11 @@ private struct ContextualTipAnchor10876<T: Tip>: ViewModifier {
 
     private var wantsTip: Bool {
         ContextualTips10876.isEnabledOnThisPlatform && usable && !learned && scenePhase == .active
+    }
+
+    private struct Ask: Equatable {
+        let wantsTip: Bool
+        let presentable: Bool
     }
 
     func body(content: Content) -> some View {
@@ -295,13 +330,17 @@ private struct ContextualTipAnchor10876<T: Tip>: ViewModifier {
                 ContextualTips10876.configureIfNeeded()
                 tip.invalidate(reason: .actionPerformed)
             }
-            .task(id: wantsTip) {
+            .task(id: Ask(wantsTip: wantsTip, presentable: presentable)) {
                 guard wantsTip else {
                     queue.withdraw(anchor)
                     return
                 }
                 ContextualTips10876.configureIfNeeded()
-                queue.arrive(anchor, tip: kind)
+                if presentable {
+                    queue.arrive(anchor, tip: kind)
+                } else {
+                    queue.pageCannotShow(anchor, tip: kind)
+                }
                 try? await Task.sleep(for: .seconds(ContextualTipEligibility10876.settleDelay))
                 guard !Task.isCancelled else { return }
                 let promptSettled = await ContextualTips10876.notificationPromptSettled()
@@ -314,8 +353,10 @@ private struct ContextualTipAnchor10876<T: Tip>: ViewModifier {
                 }
                 for await shouldDisplay in tip.shouldDisplayUpdates {
                     if Task.isCancelled { break }
-                    if shouldDisplay {
+                    if shouldDisplay && presentable {
                         queue.request(anchor, tip: kind)
+                    } else if shouldDisplay {
+                        queue.park(anchor, tip: kind)
                     } else {
                         queue.decline(anchor)
                     }
@@ -365,57 +406,108 @@ extension View {
         }
     }
 
-    /// On a detail page's hero, keyed like that page's bookmark: lets the pin
-    /// tip open only once the hero is out of view (`heroClearOfPinTip`).
+    /// On a detail page's hero, keyed like that page's bookmark: lets the
+    /// page's tips open only once the hero is out of view (`heroClearOfTips`).
+    /// `scrollSpace` names the coordinate space set on the page's ScrollView.
     @ViewBuilder
-    func pinTipHero10876(type: String, id: Int) -> some View {
+    func contextualTipHero10876(type: String, id: Int, scrollSpace: String) -> some View {
         if ContextualTips10876.isEnabledOnThisPlatform {
-            modifier(PinTipHeroReporter10876(type: type, id: id))
+            modifier(ContextualTipHeroReporter10876(type: type, id: id, scrollSpace: scrollSpace))
         } else {
             self
         }
     }
 
-    func followLiveTip10876(game: String, usable: Bool, learned: Bool) -> some View {
-        modifier(ContextualTipAnchor10876(
-            kind: .followLive, tip: FollowLiveTip10876(game: game),
-            usable: usable, learned: learned, arrowEdge: .top))
+    /// Start Live Activity sits under the game chart, so with the hero on
+    /// screen it is low on the page and its popover would flip up onto the
+    /// hero, as the chart tip's did (C-3a). ux's own v7 run on a live game
+    /// (15330832) saw it open 3 s after load with the hero on screen. It waits
+    /// for the event page's hero like the others; `eventId` keys that gate.
+    func followLiveTip10876(eventId: Int, game: String, usable: Bool, learned: Bool) -> some View {
+        modifier(FollowLiveTipAnchor10876(eventId: eventId, game: game, usable: usable, learned: learned))
     }
 
     /// The inline game chart. `touchSurfaceInstalled` is the chart's own
-    /// `chartScrubSurfaces` — no touch surface, nothing to teach.
-    func exploreChartTip10876(touchSurfaceInstalled: Bool, dataPoints: [ChartDataPoint]) -> some View {
-        modifier(ExploreChartTipAnchor10876(touchSurfaceInstalled: touchSurfaceInstalled,
+    /// `chartScrubSurfaces` — no touch surface, nothing to teach. `eventId`
+    /// keys the event page's hero gate; a chart whose id is not the page's
+    /// never clears it, so its tip stays off (fails closed).
+    func exploreChartTip10876(eventId: Int, touchSurfaceInstalled: Bool, dataPoints: [ChartDataPoint]) -> some View {
+        modifier(ExploreChartTipAnchor10876(eventId: eventId, touchSurfaceInstalled: touchSurfaceInstalled,
                                             dataPoints: dataPoints))
     }
 }
 
-/// The detail bookmark's tip. Watches the hero gate, so the tip leaves the
-/// moment the reader scrolls the hero back under it.
+/// The detail bookmark's tip. Watches the hero gate, so the tip waits for the
+/// hero to leave and leaves the moment the reader scrolls the hero back.
 private struct PinTipAnchor10876: ViewModifier {
     @ObservedObject var pinManager: PinManager
     let type: String
     let id: Int
     let localPinUIShowing: Bool
-    @ObservedObject private var heroes = PinTipHeroGate10876.shared
+    @ObservedObject private var heroes = ContextualTipHeroGate10876.shared
 
     func body(content: Content) -> some View {
         let state = ContextualTipEligibility10876.pinTip(
             isDetailAnchor: true, localPinUIShowing: localPinUIShowing,
-            heroClear: heroes.isClear(type: type, id: id),
             read: { pinManager.pinTipReading10876(type: type, id: id) })
         content.modifier(ContextualTipAnchor10876(
             kind: .pin, tip: PinTip10876(),
-            usable: state.usable, learned: state.learned, arrowEdge: .top))
+            usable: state.usable, presentable: heroes.isClear(type: type, id: id),
+            learned: state.learned, arrowEdge: .top))
+    }
+}
+
+/// Whether a control inside the page is at least half on screen in its
+/// scroll view (iOS 18+). Not yet reported reads false, so its tip waits.
+/// iOS 17 has no visibility signal: it reports on screen once it appears and
+/// keeps the hero rule alone. Each flip is logged.
+private struct PageControlOnScreen10876: ViewModifier {
+    let kind: ContextualTipID10876
+    @Binding var onScreen: Bool
+
+    func body(content: Content) -> some View {
+        if #available(iOS 18.0, macOS 15.0, visionOS 2.0, *) {
+            content.onScrollVisibilityChange(threshold: 0.5) { visible in
+                logger.notice("control \(String(describing: kind), privacy: .public) onScreen=\(visible, privacy: .public)")
+                onScreen = visible
+            }
+        } else {
+            content.onAppear { onScreen = true }
+        }
+    }
+}
+
+/// Start Live Activity's tip. Watches the event page's hero gate and needs
+/// the control itself on screen.
+private struct FollowLiveTipAnchor10876: ViewModifier {
+    let eventId: Int
+    let game: String
+    let usable: Bool
+    let learned: Bool
+    @ObservedObject private var heroes = ContextualTipHeroGate10876.shared
+    @State private var onScreen = false
+
+    func body(content: Content) -> some View {
+        content
+            .modifier(PageControlOnScreen10876(kind: .followLive, onScreen: $onScreen))
+            .modifier(ContextualTipAnchor10876(
+                kind: .followLive, tip: FollowLiveTip10876(game: game),
+                usable: usable,
+                presentable: ContextualTipEligibility10876.pageControlPresentable(
+                    heroClear: heroes.isClear(type: "event", id: eventId), controlOnScreen: onScreen),
+                learned: learned, arrowEdge: .top))
     }
 }
 
 /// Reads VoiceOver itself so the chart gains no environment of its own, and
 /// only walks the points when a touch surface could be taught at all.
 private struct ExploreChartTipAnchor10876: ViewModifier {
+    let eventId: Int
     let touchSurfaceInstalled: Bool
     let dataPoints: [ChartDataPoint]
     @Environment(\.accessibilityVoiceOverEnabled) private var voiceOverRunning
+    @ObservedObject private var heroes = ContextualTipHeroGate10876.shared
+    @State private var onScreen = false
 
     private var usable: Bool {
         guard ContextualTips10876.isEnabledOnThisPlatform, touchSurfaceInstalled, !voiceOverRunning else {
@@ -427,11 +519,19 @@ private struct ExploreChartTipAnchor10876: ViewModifier {
             primaryLineDates: dataPoints.filter { $0.source == primary }.map(\.date))
     }
 
-    /// Arrow on top: the popover opens BELOW the chart, so the hero's subject,
-    /// score and probability above it stay uncovered.
+    /// Arrow on top asks for the popover BELOW the chart, but the system
+    /// flips it above when the chart sits low on the screen (case v6, C-3a),
+    /// so it also waits for the event page's hero to leave: by then the chart
+    /// is near the top and there is no hero left to cover. It also needs the
+    /// chart itself on screen (`pageControlPresentable`).
     func body(content: Content) -> some View {
-        content.modifier(ContextualTipAnchor10876(
-            kind: .exploreChart, tip: ExploreChartTip10876(),
-            usable: usable, learned: false, arrowEdge: .top))
+        content
+            .modifier(PageControlOnScreen10876(kind: .exploreChart, onScreen: $onScreen))
+            .modifier(ContextualTipAnchor10876(
+                kind: .exploreChart, tip: ExploreChartTip10876(),
+                usable: usable,
+                presentable: ContextualTipEligibility10876.pageControlPresentable(
+                    heroClear: heroes.isClear(type: "event", id: eventId), controlOnScreen: onScreen),
+                learned: false, arrowEdge: .top))
     }
 }

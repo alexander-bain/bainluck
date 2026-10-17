@@ -124,6 +124,97 @@ final class ContextualTips10876Tests: XCTestCase {
         XCTAssertNil(queue.holder, "a control that left the screen received a tip")
     }
 
+    // MARK: - A tip waiting on its page (case v6, D1)
+
+    /// Native's case v6 (B, test0): R2 withdrew the pin anchor while the hero
+    /// was on screen, the chart tip was granted at load as the session's kind,
+    /// and the pin tip never showed after the hero left.
+    func testATipWaitingOnlyOnTheHeroKeepsTheLowerTipBack() {
+        var queue = ContextualTipQueue10876()
+        let pin = UUID(), chart = UUID()
+        queue.arrive(anchor: pin, tip: .pin)
+        queue.arrive(anchor: chart, tip: .exploreChart)
+        queue.park(anchor: pin, tip: .pin)
+        queue.request(anchor: chart, tip: .exploreChart)
+        XCTAssertNil(queue.holder, "the chart tip took the screen while the pin tip waited only on the hero")
+        XCTAssertNil(queue.sessionTip, "the chart tip took the session while the pin tip waited only on the hero")
+        queue.request(anchor: pin, tip: .pin)
+        XCTAssertTrue(queue.isGranted(anchor: pin), "control: the hero left, the pin tip is granted")
+        XCTAssertEqual(queue.sessionTip, .pin)
+    }
+
+    func testAParkedTipIsNeverOnScreen() {
+        var queue = ContextualTipQueue10876()
+        let pin = UUID()
+        queue.park(anchor: pin, tip: .pin)
+        XCTAssertNil(queue.holder, "a tip opened over the hero it was waiting on")
+        queue.request(anchor: pin, tip: .pin)
+        XCTAssertTrue(queue.isGranted(anchor: pin), "control: requesting after parking is granted")
+    }
+
+    func testAParkedTipThatDeclinesOrLeavesReleasesTheLowerTip() {
+        var queue = ContextualTipQueue10876()
+        let pin = UUID(), chart = UUID()
+        queue.park(anchor: pin, tip: .pin)
+        queue.request(anchor: chart, tip: .exploreChart)
+        XCTAssertNil(queue.holder)
+        queue.decline(anchor: pin)
+        XCTAssertTrue(queue.isGranted(anchor: chart), "a parked tip TipKit stopped wanting kept holding the chart")
+
+        var left = ContextualTipQueue10876()
+        left.park(anchor: pin, tip: .pin)
+        left.request(anchor: chart, tip: .exploreChart)
+        left.withdraw(anchor: pin)
+        XCTAssertTrue(left.isGranted(anchor: chart), "a parked tip whose page left kept holding the chart")
+    }
+
+    /// The reader scrolls the hero back under a tip on screen: it leaves, and
+    /// no other kind takes the screen in its place.
+    func testATipOnScreenParksWhenTheHeroReturnsAndKeepsTheSession() {
+        var queue = ContextualTipQueue10876()
+        let pin = UUID(), chart = UUID()
+        queue.request(anchor: pin, tip: .pin)
+        queue.request(anchor: chart, tip: .exploreChart)
+        queue.park(anchor: pin, tip: .pin)
+        XCTAssertNil(queue.holder, "the pin tip stayed open over the returning hero")
+        XCTAssertEqual(queue.sessionTip, .pin)
+        queue.request(anchor: pin, tip: .pin)
+        XCTAssertTrue(queue.isGranted(anchor: pin), "the hero left again: the same tip returns")
+    }
+
+    /// A requesting tip held back by a higher undecided one, when the hero
+    /// returns, must not be granted over it once the higher one declines.
+    func testAWaitingRequestParksWhenThePageCannotShowIt() {
+        var queue = ContextualTipQueue10876()
+        let live = UUID(), pin = UUID(), chart = UUID()
+        queue.arrive(anchor: live, tip: .followLive)
+        queue.request(anchor: pin, tip: .pin)
+        XCTAssertNil(queue.holder)
+        queue.pageCannotShow(anchor: pin, tip: .pin)
+        queue.decline(anchor: live)
+        XCTAssertNil(queue.holder, "the pin tip was granted over the hero that had just come back")
+        queue.pageCannotShow(anchor: chart, tip: .exploreChart)
+        queue.decline(anchor: chart)
+        queue.request(anchor: pin, tip: .pin)
+        XCTAssertTrue(queue.isGranted(anchor: pin), "control: the hero left again")
+
+        var onScreen = ContextualTipQueue10876()
+        onScreen.request(anchor: pin, tip: .pin)
+        onScreen.pageCannotShow(anchor: pin, tip: .pin)
+        XCTAssertNil(onScreen.holder, "the tip on screen stayed open over the returning hero")
+        onScreen.request(anchor: chart, tip: .exploreChart)
+        XCTAssertNil(onScreen.holder, "another kind took the screen the pin tip left")
+    }
+
+    /// Parking does not outrank a HIGHER tip: follow live still goes first.
+    func testAParkedTipHoldsBackOnlyLowerTips() {
+        var queue = ContextualTipQueue10876()
+        let live = UUID(), pin = UUID()
+        queue.park(anchor: pin, tip: .pin)
+        queue.request(anchor: live, tip: .followLive)
+        XCTAssertTrue(queue.isGranted(anchor: live), "a parked pin tip held back the higher follow-live tip")
+    }
+
     // MARK: - App-level suppression
 
     func testNoTipWhileTheSceneIsInactiveOrThePermissionAlertIsStillToCome() {
@@ -209,22 +300,20 @@ final class ContextualTips10876Tests: XCTestCase {
     private let freeSlot = PinTipStoreReading10876(isPinned: false, isSaving: false, canPin: true,
                                                    loadState: .loaded, hasPinMessage: false, savedPinCount: 0)
 
-    private func pinTip(_ store: PinTipStoreReading10876, localPinUIShowing: Bool = false,
-                        heroClear: Bool = true) -> PinTipState10876 {
-        ContextualTipEligibility10876.pinTip(isDetailAnchor: true, localPinUIShowing: localPinUIShowing,
-                                             heroClear: heroClear) { store }
+    private func pinTip(_ store: PinTipStoreReading10876, localPinUIShowing: Bool = false) -> PinTipState10876 {
+        ContextualTipEligibility10876.pinTip(isDetailAnchor: true, localPinUIShowing: localPinUIShowing) { store }
     }
 
     /// lane1b: list and card bookmarks must not read the pin store at all.
     func testACompactBookmarkNeverReadsThePinStore() throws {
         var reads = 0
-        let compact = ContextualTipEligibility10876.pinTip(isDetailAnchor: false, localPinUIShowing: false, heroClear: true) {
+        let compact = ContextualTipEligibility10876.pinTip(isDetailAnchor: false, localPinUIShowing: false) {
             reads += 1
             return freeSlot
         }
         XCTAssertEqual(compact, .off)
         XCTAssertEqual(reads, 0, "a list or card bookmark read the pin store")
-        let detail = ContextualTipEligibility10876.pinTip(isDetailAnchor: true, localPinUIShowing: false, heroClear: true) {
+        let detail = ContextualTipEligibility10876.pinTip(isDetailAnchor: true, localPinUIShowing: false) {
             reads += 1
             return freeSlot
         }
@@ -260,58 +349,107 @@ final class ContextualTips10876Tests: XCTestCase {
         XCTAssertTrue(pinTip(store).learned, "anything pinned means pinning is learned")
     }
 
-    // MARK: - Pin: the hero it must not cover
-
-    /// Native's combined v3 (B-3b, A-3): the tip opened from the bar over the
-    /// hero's win chance and crests. It now waits for the hero to leave.
-    func testThePinTipWaitsUntilTheHeroIsOutOfView() {
-        XCTAssertTrue(pinTip(freeSlot, heroClear: true).usable, "control: hero out of view, every clause satisfied")
-        XCTAssertFalse(pinTip(freeSlot, heroClear: false).usable,
-                       "the pin tip opened while the hero's win chance was on screen under it")
-        var store = freeSlot
-        store.savedPinCount = 1
-        XCTAssertTrue(pinTip(store, heroClear: false).learned,
-                      "learning does not wait on the hero: a pin invalidates the tip wherever the page is")
-    }
+    // MARK: - The hero no tip may cover
 
     func testTheHeroIsClearOnlyOnceWhollyScrolledOut() {
-        XCTAssertFalse(ContextualTipEligibility10876.heroClearOfPinTip(heroBottom: nil),
-                       "a hero never measured opened the tip")
-        XCTAssertFalse(ContextualTipEligibility10876.heroClearOfPinTip(heroBottom: 420), "hero on screen")
-        XCTAssertFalse(ContextualTipEligibility10876.heroClearOfPinTip(heroBottom: 0.5),
-                       "half a point of hero still showed under the bar")
-        XCTAssertTrue(ContextualTipEligibility10876.heroClearOfPinTip(heroBottom: 0), "control: bottom edge at the top")
-        XCTAssertTrue(ContextualTipEligibility10876.heroClearOfPinTip(heroBottom: -300), "control: scrolled well past")
+        let e = ContextualTipEligibility10876.self
+        XCTAssertFalse(e.heroClearOfTips(heroBottom: nil), "a hero never measured opened a tip")
+        XCTAssertFalse(e.heroClearOfTips(heroBottom: 420), "hero on screen")
+        XCTAssertFalse(e.heroClearOfTips(heroBottom: 0.5), "half a point of hero still showed under the bar")
+        XCTAssertTrue(e.heroClearOfTips(heroBottom: 0), "control: bottom edge at the top")
+        XCTAssertTrue(e.heroClearOfTips(heroBottom: -300), "control: scrolled well past")
     }
 
-    /// The bookmark and the hero must report under ONE key per page, or the
-    /// gate is never clear (tip never shows) or clear for the wrong page.
+    /// v7 testA frame: one swipe took the hero AND the chart off the top.
+    func testATipInsideThePageNeedsTheHeroGoneAndItsOwnControlOnScreen() {
+        let e = ContextualTipEligibility10876.self
+        XCTAssertTrue(e.pageControlPresentable(heroClear: true, controlOnScreen: true), "control")
+        XCTAssertFalse(e.pageControlPresentable(heroClear: false, controlOnScreen: true), "a tip opened over the hero")
+        XCTAssertFalse(e.pageControlPresentable(heroClear: true, controlOnScreen: false),
+                       "a tip opened pointing at a control scrolled off the screen")
+    }
+
+    /// The hero gates whether the page can take the tip, not whether the pin
+    /// control is usable — so a pin tip waiting on the hero parks (D1).
+    func testThePinTipsUsabilityHasNoHeroClause() throws {
+        XCTAssertEqual(pinTip(freeSlot), PinTipState10876(usable: true, learned: false),
+                       "control: a free detail bookmark is usable wherever the page is scrolled")
+        let rules = Self.withoutCommentLines(try String(contentsOf: Self.rulesSource, encoding: .utf8))
+        let pinTipStart = try XCTUnwrap(rules.range(of: "static func pinTip("))
+        let pinTipEnd = try XCTUnwrap(rules.range(of: "static func heroClearOfTips(", range: pinTipStart.upperBound..<rules.endIndex))
+        XCTAssertFalse(rules[pinTipStart.lowerBound..<pinTipEnd.lowerBound].contains("heroClear"),
+                       "the hero came back into the pin control's usability")
+    }
+
+    /// The bookmark, the chart and the hero must use ONE key per page, or the
+    /// gate is never clear (tip never shows) or clear for the wrong page. The
+    /// hero is measured in the ScrollView's own named space (case v6, D2:
+    /// the system `.scrollView` space never cleared on the market page).
     func testBothDetailPagesReportTheirHeroUnderTheBookmarksKey() throws {
         let pages: [(file: String, pin: String, hero: String)] = [
             ("Views/EventDetailView.swift", "PinButton(type: \"event\", id: eventId)",
-             ".pinTipHero10876(type: \"event\", id: eventId)"),
+             ".contextualTipHero10876(type: \"event\", id: eventId, scrollSpace: Self.scrollSpace)"),
             ("Views/FuturesDetailView.swift", "PinButton(type: \"future\", id: marketId)",
-             ".pinTipHero10876(type: \"future\", id: marketId)"),
+             ".contextualTipHero10876(type: \"future\", id: marketId, scrollSpace: Self.scrollSpace)"),
         ]
         for page in pages {
             let code = Self.withoutCommentLines(try String(contentsOf: Self.appDir.appendingPathComponent(page.file),
                                                            encoding: .utf8))
             XCTAssertEqual(code.components(separatedBy: page.pin).count - 1, 1, "\(page.file): the bookmark moved")
             XCTAssertEqual(code.components(separatedBy: page.hero).count - 1, 1,
-                           "\(page.file): the hero no longer reports to the pin tip under the bookmark's key")
+                           "\(page.file): the hero no longer reports to the tips under the bookmark's key")
             let hero = try XCTUnwrap(code.range(of: page.hero))
             let heroSection = try XCTUnwrap(code.range(of: "heroSection(", options: .backwards,
                                                        range: code.startIndex..<hero.lowerBound))
             XCTAssertLessThan(code.distance(from: heroSection.upperBound, to: hero.lowerBound), 900,
                               "\(page.file): the reporter is not on the hero itself")
+            XCTAssertEqual(code.components(separatedBy: ".coordinateSpace(name: Self.scrollSpace)").count - 1, 1,
+                           "\(page.file): the ScrollView no longer carries the space the hero is measured in")
+            let space = try XCTUnwrap(code.range(of: ".coordinateSpace(name: Self.scrollSpace)"))
+            let scroll = try XCTUnwrap(code.range(of: "ScrollView {", options: .backwards,
+                                                  range: code.startIndex..<hero.lowerBound))
+            XCTAssertLessThan(scroll.upperBound, space.lowerBound, "\(page.file): the space is not on the hero's ScrollView")
         }
         let tips = Self.withoutCommentLines(try String(contentsOf: Self.tipsSource, encoding: .utf8))
-        XCTAssertTrue(tips.contains("heroClearOfPinTip(heroBottom: proxy.frame(in: .scrollView).maxY)"),
-                      "the hero is no longer measured against its own scroll view")
-        XCTAssertTrue(tips.contains(".onDisappear { PinTipHeroGate10876.shared.set(type: type, id: id, clear: false) }"),
+        XCTAssertTrue(tips.contains("heroClearOfTips(heroBottom: proxy.frame(in: .named(scrollSpace)).maxY)"),
+                      "the hero is no longer measured in its page's named scroll space")
+        XCTAssertFalse(tips.contains("in: .scrollView)"), "back on the space that never cleared the market page (D2)")
+        XCTAssertTrue(tips.contains(".onDisappear { ContextualTipHeroGate10876.shared.set(type: type, id: id, clear: false) }"),
                       "a page that leaves stays marked clear")
-        XCTAssertTrue(tips.contains("heroClear: heroes.isClear(type: type, id: id),"),
-                      "the bookmark's tip no longer reads the hero gate")
+        XCTAssertTrue(tips.contains("presentable: heroes.isClear(type: type, id: id),"),
+                      "the bookmark's tip no longer waits on the hero gate")
+        XCTAssertEqual(tips.components(separatedBy: "heroClear: heroes.isClear(type: \"event\", id: eventId), controlOnScreen: onScreen),").count - 1, 2,
+                      "the chart's or follow-live's tip no longer waits on the event page's hero and its own control (C-3a: the chart tip covered the hero at AX3)")
+        XCTAssertEqual(tips.components(separatedBy: ".modifier(PageControlOnScreen10876(kind: ").count - 1, 2,
+                      "the chart or Start Live Activity no longer reports whether it is on screen")
+        XCTAssertTrue(tips.contains("@State private var onScreen = false"), "an unreported control reads as on screen")
+        XCTAssertFalse(tips.contains("presentable: true"), "a tip opens whatever the hero is doing")
+        let control = try String(contentsOf: Self.appDir.appendingPathComponent("Components/GameActivityControl.swift"),
+                                 encoding: .utf8)
+        XCTAssertTrue(control.contains(".followLiveTip10876(\n                                eventId: snapshot.eventID,"),
+                      "Start Live Activity no longer keys its tip by its event")
+        let chart = try String(contentsOf: Self.appDir.appendingPathComponent("Components/OddsChartView.swift"),
+                               encoding: .utf8)
+        XCTAssertTrue(chart.contains(".exploreChartTip10876(eventId: eventId, touchSurfaceInstalled: scrubSurfaces,"),
+                      "the chart no longer keys its tip by its event")
+    }
+
+    /// D1's wiring: a usable control whose page cannot take the tip PARKS on
+    /// TipKit's yes rather than requesting or withdrawing; a granted tip parks
+    /// when the hero returns.
+    func testAnAnchorWaitingOnItsPageParksInsteadOfWithdrawing() throws {
+        let tips = Self.withoutCommentLines(try String(contentsOf: Self.tipsSource, encoding: .utf8))
+        XCTAssertTrue(tips.contains(".task(id: Ask(wantsTip: wantsTip, presentable: presentable))"),
+                      "the anchor no longer re-asks when its page becomes able to take the tip")
+        XCTAssertTrue(tips.contains("if shouldDisplay && presentable {"), "a tip requests the screen over its hero")
+        XCTAssertTrue(tips.contains("} else if shouldDisplay {\n                        queue.park(anchor, tip: kind)"),
+                      "a tip TipKit would show, waiting on its hero, no longer parks")
+        XCTAssertTrue(tips.contains("} else {\n                    queue.pageCannotShow(anchor, tip: kind)"),
+                      "a tip on screen stays open when the hero comes back")
+        let wantsTip = try XCTUnwrap(tips.range(of: "private var wantsTip: Bool {"))
+        let wantsEnd = try XCTUnwrap(tips.range(of: "}", range: wantsTip.upperBound..<tips.endIndex))
+        XCTAssertFalse(tips[wantsTip.upperBound..<wantsEnd.lowerBound].contains("presentable"),
+                       "the hero went back into wantsTip, so a waiting tip withdraws again (D1)")
     }
 
     /// Native's combined v3 (C-3b): at AX3 the system style clipped the

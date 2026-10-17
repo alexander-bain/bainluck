@@ -20,15 +20,18 @@ nonisolated enum ContextualTipID10876: Int, CaseIterable, Comparable, Sendable {
 ///
 /// An anchor ARRIVES when its control becomes usable, then — after its settle
 /// delay — either REQUESTS (TipKit says its tip should display) or DECLINES.
-/// The best requester is granted only once no higher-priority anchor on screen
-/// is still undecided, so priority holds even though anchors decide at
-/// slightly different moments. A grant is sticky until its anchor withdraws: a
+/// An anchor whose tip TipKit would display but whose page cannot take it yet
+/// (the hero is still on screen) PARKS instead of requesting. The best
+/// requester is granted only once no higher-priority anchor on screen is still
+/// undecided or parked, so priority holds even though anchors decide at
+/// slightly different moments, and a tip waiting only on the page never hands
+/// the session to a lower one (native's case v6, D1). A grant is sticky until its anchor withdraws: a
 /// higher-priority tip arriving later never yanks one the reader is looking
 /// at. Once a kind has been granted, only that kind may be granted again this
 /// session (it can reappear on its own control; a different tip waits for the
 /// next launch).
 nonisolated struct ContextualTipQueue10876: Equatable, Sendable {
-    nonisolated enum Phase: Equatable, Sendable { case undecided, requesting, declined }
+    nonisolated enum Phase: Equatable, Sendable { case undecided, requesting, parked, declined }
 
     nonisolated struct Entry: Equatable, Sendable {
         let anchor: UUID
@@ -58,6 +61,31 @@ nonisolated struct ContextualTipQueue10876: Equatable, Sendable {
         promote()
     }
 
+    /// TipKit would display the tip, but its page cannot take it yet. A tip on
+    /// screen leaves it at once; the anchor keeps its place and still holds
+    /// lower-priority tips back until it requests, declines or withdraws.
+    mutating func park(anchor: UUID, tip: ContextualTipID10876) {
+        if holder?.anchor == anchor {
+            holder = nil
+        }
+        arrive(anchor: anchor, tip: tip)
+        set(anchor, to: .parked)
+        promote()
+    }
+
+    /// The page can no longer take the tip (the hero came back). A tip on
+    /// screen or already requesting parks at once, before TipKit is asked
+    /// again, so nothing is granted over the hero during the settle delay;
+    /// any other anchor just arrives.
+    mutating func pageCannotShow(anchor: UUID, tip: ContextualTipID10876) {
+        let requesting = entries.contains { $0.anchor == anchor && $0.phase == .requesting }
+        if holder?.anchor == anchor || requesting {
+            park(anchor: anchor, tip: tip)
+        } else {
+            arrive(anchor: anchor, tip: tip)
+        }
+    }
+
     /// TipKit says no (rules unmet, invalidated, rate-limited). The anchor stays
     /// registered but no longer holds lower-priority tips back.
     mutating func decline(anchor: UUID) {
@@ -84,10 +112,11 @@ nonisolated struct ContextualTipQueue10876: Equatable, Sendable {
         guard holder == nil else { return }
         let admissible = entries.filter { $0.phase == .requesting && (sessionTip == nil || $0.tip == sessionTip) }
         guard let best = admissible.min(by: { ($0.tip, $0.order) < ($1.tip, $1.order) }) else { return }
-        let higherUndecided = entries.contains {
-            $0.phase == .undecided && $0.tip < best.tip && (sessionTip == nil || $0.tip == sessionTip)
+        let higherPending = entries.contains {
+            ($0.phase == .undecided || $0.phase == .parked) && $0.tip < best.tip
+                && (sessionTip == nil || $0.tip == sessionTip)
         }
-        guard !higherUndecided else { return }
+        guard !higherPending else { return }
         entries.removeAll { $0.anchor == best.anchor }
         holder = best
         sessionTip = best.tip
@@ -156,29 +185,42 @@ nonisolated enum ContextualTipEligibility10876 {
     /// bookmark reads it once. Decided here so `PinButton` never reads the pin
     /// limit itself (#9495: the button must not pre-judge the limit).
     ///
-    /// `heroClear` is `heroClearOfPinTip` for this page's hero: the bookmark
-    /// sits in the bar, so its popover opens over whatever is just below it.
-    static func pinTip(isDetailAnchor: Bool, localPinUIShowing: Bool, heroClear: Bool,
+    /// The hero is NOT a clause here. It decides whether the page can take the
+    /// tip (`heroClearOfTips`), not whether the control is usable: a pin tip
+    /// waiting only on the hero parks and keeps its priority (case v6, D1).
+    static func pinTip(isDetailAnchor: Bool, localPinUIShowing: Bool,
                        read: () -> PinTipStoreReading10876) -> PinTipState10876 {
         guard isDetailAnchor else { return .off }
         let store = read()
         return PinTipState10876(
-            usable: heroClear
-                && pinUsable(isDetailAnchor: true, isPinned: store.isPinned, isSaving: store.isSaving,
+            usable: pinUsable(isDetailAnchor: true, isPinned: store.isPinned, isSaving: store.isSaving,
                              canPin: store.canPin, pinLoadState: store.loadState,
                              isShowingPinMessage: store.hasPinMessage || localPinUIShowing),
             learned: pinLearned(savedPinCount: store.savedPinCount))
     }
 
-    /// The pin tip opens from the bar straight down over the top of the page.
-    /// Native's combined v3 run (B-3b, A-3) saw it cover the hero's win chance
-    /// and both crests — the subject and probability #10876 says a tip never
-    /// covers. So it waits until the hero has scrolled wholly out of the scroll
-    /// view (`heroBottom` in the `.scrollView` space, ≤ 0), and leaves the
-    /// moment any of the hero comes back. Not measured — `nil` — keeps it off.
-    static func heroClearOfPinTip(heroBottom: CGFloat?) -> Bool {
+    /// No tip opens while any of the page's hero is on screen. The pin tip
+    /// opens from the bar straight down over the top of the page (native's
+    /// combined v3, B-3b and A-3: over the win chance and both crests). The
+    /// chart tip, with the chart low on the screen, flips above it onto the
+    /// hero (case v6, C-3a at AX3: under "Current win chance", over the team
+    /// rows, eating the swipes). Start Live Activity sits under the chart, so
+    /// its tip waits too. So all three wait until the hero has scrolled
+    /// wholly out of its scroll view — `heroBottom` in the scroll view's own
+    /// named space, the one the event page's bar title already measures in
+    /// (#8320), ≤ 0 — and leave the moment any of it comes back. Not measured
+    /// (`nil`) keeps them off.
+    static func heroClearOfTips(heroBottom: CGFloat?) -> Bool {
         guard let heroBottom else { return false }
         return heroBottom <= 0
+    }
+
+    /// A tip anchored IN the page (the chart, Start Live Activity) also needs
+    /// its own control on screen: once the hero is out, one swipe can carry
+    /// the chart off the top too (ux's v7 testA frame), and a popover granted
+    /// then points at nothing. The bookmark is in the bar and always on screen.
+    static func pageControlPresentable(heroClear: Bool, controlOnScreen: Bool) -> Bool {
+        heroClear && controlOnScreen
     }
 
     /// Taught only where Start Live Activity is shown AND tappable on a game

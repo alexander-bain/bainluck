@@ -23,7 +23,7 @@ final class ContextualTipsPinStore10876Tests: XCTestCase {
     }
 
     private func tip(_ manager: PinManager, id: Int) -> PinTipState10876 {
-        ContextualTipEligibility10876.pinTip(isDetailAnchor: true, localPinUIShowing: false, heroClear: true) {
+        ContextualTipEligibility10876.pinTip(isDetailAnchor: true, localPinUIShowing: false) {
             manager.pinTipReading10876(type: "event", id: id)
         }
     }

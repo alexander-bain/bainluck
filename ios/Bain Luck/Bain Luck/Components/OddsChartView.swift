@@ -901,7 +901,7 @@ struct OddsChartView: View {
                     }
                     .frame(height: chartHeight)
                     // #10876 — the explore-the-chart tip, inline chart only.
-                    .exploreChartTip10876(touchSurfaceInstalled: scrubSurfaces, dataPoints: dataPoints)
+                    .exploreChartTip10876(eventId: eventId, touchSurfaceInstalled: scrubSurfaces, dataPoints: dataPoints)
 
                     // UX-P090 — the legend hung off the card's left edge while the
                     // thing it describes started 24pt further in, behind the
