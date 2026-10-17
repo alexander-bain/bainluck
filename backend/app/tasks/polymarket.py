@@ -2633,6 +2633,28 @@ def opening_capture_is_hindsight(event, market, resolution_date, now) -> bool:
     return False
 
 
+def leg_snapshot_is_post_close(leg) -> bool:
+    """Whether a parent-field leg's snapshot would record a closed book (#698). Pure.
+
+    #698 / #10955. The parent-field writer inserts a `FuturesOddsSnapshot`
+    stamped `now` for every leg on every poll. A Polymarket event stays open
+    while its children close one by one, so a child the venue has closed keeps
+    arriving with the last price its book held, and that frozen price was
+    banked hourly as a new observation — Detroit on 199045 gained 26 days of
+    them after its own market closed. The opening stamp beside it already
+    refuses this leg (:func:`opening_capture_is_hindsight`, CERT-3202); the
+    snapshot did not ask.
+
+    Asks ONE thing: the leg's own sub-market says ``closed`` is True. Nothing
+    is inferred — not from the parent's flags, its end date, a tiny or extreme
+    price, a missing quote or a graded result. A leg with no sub-market, or
+    one whose flag is absent or anything but True, keeps writing exactly as
+    before, so an unknown status never removes an observation.
+    """
+    market = leg.get("market") if isinstance(leg, dict) else None
+    return getattr(market, "closed", None) is True
+
+
 #: Verdicts of `choose_history_opening` (#2027, history rail). Each one is a
 #: stats key on `_backfill_polymarket_price_history`, so a run that wrote no
 #: opening says why instead of reading as "nothing to do" (gotcha #53).
@@ -3836,8 +3858,10 @@ async def _process_event_batch(
                     # settled-sports sweep as well as the open poll, so a
                     # settled quote with a last trade behind it passes the
                     # liquidity test — and is still the answer, not a price
-                    # (ruling 103). Current price, book and snapshot still
-                    # write; only the opening stamp is refused.
+                    # (ruling 103). Current price and book still write; the
+                    # opening stamp is refused here, and the snapshot below is
+                    # skipped only when the leg's OWN sub-market is closed
+                    # (#698, `leg_snapshot_is_post_close`).
                     #
                     # CERT-3202: this passed `market=None` and so asked only
                     # whether the PARENT was closed. A Polymarket event stays
@@ -3911,6 +3935,18 @@ async def _process_event_batch(
                     result = await session.execute(outcome_stmt)
                     outcome_id = result.scalar_one()
                     stats["outcomes_updated"] += 1
+
+                    # #698 / #10955: a leg whose own sub-market the venue has
+                    # closed is not quoting any more, so a row stamped `now`
+                    # would record a frozen price as a new observation. The
+                    # outcome row, current price and book above still write;
+                    # only the snapshot is skipped. See
+                    # `leg_snapshot_is_post_close`.
+                    if leg_snapshot_is_post_close(od):
+                        stats["snapshots_refused_closed_leg"] = (
+                            stats.get("snapshots_refused_closed_leg", 0) + 1
+                        )
+                        continue
 
                     # Create snapshot
                     snapshot_stmt = pg_insert(FuturesOddsSnapshot).values(
