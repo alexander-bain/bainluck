@@ -70,17 +70,19 @@ final class FuturesDetailViewModel: ObservableObject {
     func load() async {
         loadGeneration += 1
         let generation = loadGeneration
-        let visibility = visibilityGeneration
+        // #10874 — no visibility fence here: hiding already advances
+        // `loadGeneration`, so it only ever refused a page SHOWN mid-read. A
+        // market opened from outside the app (Spotlight, a link) is pushed
+        // before the scene is active, so its first read always crossed that
+        // and the page sat on its spinner until the stream rescued it.
         loading = market == nil
         do {
             let fetched = try await client.fetchFuturesDetail(id: marketId, representation: representation)
-            guard !Task.isCancelled, generation == loadGeneration,
-                  visibility == visibilityGeneration, fetched.id == marketId else { return }
+            guard !Task.isCancelled, generation == loadGeneration, fetched.id == marketId else { return }
             adopt(fetched)
             error = nil
         } catch {
-            guard !Task.isCancelled, generation == loadGeneration,
-                  visibility == visibilityGeneration else { return }
+            guard !Task.isCancelled, generation == loadGeneration else { return }
             if let seconds = FuturesPriceReadCooldown.seconds(for: error) {
                 retryAt = max(retryAt, now() + seconds)
                 // A refused final invalidation is still owed, even on a healthy wire.

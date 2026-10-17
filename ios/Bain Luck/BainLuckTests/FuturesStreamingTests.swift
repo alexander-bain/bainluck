@@ -243,6 +243,25 @@ final class FuturesStreamingTests: XCTestCase {
     }
 
 
+    /// #10874 — Spotlight and links push the page before the scene is active:
+    /// the first read starts hidden and the page is shown while it is in flight.
+    func testFirstReadStartedHiddenLandsWhenThePageIsShownMidRead() async throws {
+        let client = Client(try detail()), handle = Handle()
+        let vm = FuturesDetailViewModel(marketId: 7, client: client, makeStreamHandle: { _ in handle }, minimumRefreshInterval: 0)
+        defer { vm.setVisible(false) }
+        var waiting: CheckedContinuation<Void, Never>?
+        client.beforeResponse = { await withCheckedContinuation { waiting = $0 } }
+        let first = Task { await vm.load() }
+        await settle { waiting != nil }
+        vm.setVisible(true)
+        client.beforeResponse = nil
+        waiting?.resume()
+        await first.value
+        XCTAssertFalse(vm.loading, "the first read must not leave the page on its spinner")
+        XCTAssertEqual(vm.market?.id, 7)
+        XCTAssertEqual(client.count, 1, "landed by the first read, not rescued by a stream refresh")
+    }
+
     func testAutomaticRefreshWaitsTwoSecondsAndCoalescesBurst() async throws {
         let client = Client(try detail()), handle = Handle(), pause = Pause()
         var clock: TimeInterval = 100
