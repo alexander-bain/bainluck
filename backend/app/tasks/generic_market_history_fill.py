@@ -55,6 +55,7 @@ from datetime import datetime, timezone
 from types import SimpleNamespace
 from typing import Any
 
+from app.utils.async_binary_pair import paired_binary_leg_ids as _paired_binary_leg_ids
 from app.utils.generic_market_history import (
     BANK_MARKER_KEY,
     CACHE_VERSION,
@@ -826,42 +827,62 @@ class _CandleBook:
         return VenuePoint(ts, probability, book[1], book[2], book[3], book[4])
 
 
-def _paired_binary_leg_ids(
-    outcomes: Sequence[Any], entries: dict[int, dict]
-) -> tuple[int, int] | None:
-    """Return `(oid_a, oid_b)` only for an identity-admitted Polymarket `_yes`/`_no` binary pair."""
-    if len(outcomes) != 2:
+def _annotate_pairs(outcomes: Sequence[Any], entries: dict[int, dict]) -> tuple[int, int] | None:
+    """Pair an identity-admitted binary's RAW legs afresh and annotate both halves (#11157).
+
+    Runs after layering and the last-good merge, before compaction, so the rule
+    (`async_binary_pair.pair_observations`) sees every raw sample — ambiguity is
+    a property of the raw series. Any annotation carried in from the last-good
+    bank is dropped first and re-derived from the raw clocks, which pairing never
+    moves: a carried half cannot keep a peer this build does not hold.
+
+    ONE STATED LIMIT (lane1's N2). Carried last-good rows were compacted by the
+    build that banked them, so a carried sample's neighbours may be gone and its
+    local spacing reads wider than the venue's raw spacing was. Re-pairing over
+    them can therefore call a sample unambiguous that the raw series would not
+    have. It stays bounded: S never exceeds `PAIR_SKEW_MAX_SECONDS`, and only one
+    tier pairs with itself.
+    """
+    from dataclasses import replace
+
+    from app.utils.async_binary_pair import pair_observations
+
+    for entry in entries.values():
+        entry["points"] = [
+            replace(p, pair_at=None, peer_at=None) if p.pair_at or p.peer_at else p
+            for p in entry["points"]
+        ]
+    pair = _paired_binary_leg_ids(outcomes, entries)
+    if pair is None:
         return None
-    oid_a, oid_b = int(outcomes[0].id), int(outcomes[1].id)
-    if oid_a == oid_b or oid_a not in entries or oid_b not in entries:
-        return None
-    c_a = entries[oid_a].get("contract") or {}
-    c_b = entries[oid_b].get("contract") or {}
-    if c_a.get("venue") != "polymarket" or c_b.get("venue") != "polymarket":
-        return None
-    cond_id = c_a.get("condition_id")
-    if (
-        not isinstance(cond_id, str)
-        or not cond_id.startswith("0x")
-        or c_b.get("condition_id") != cond_id
+    oid_a, oid_b = pair
+    leg_a = sorted(entries[oid_a]["points"], key=lambda p: p.observed_at)
+    leg_b = sorted(entries[oid_b]["points"], key=lambda p: p.observed_at)
+    for i, j in pair_observations(
+        [(p.observed_at, p.tier) for p in leg_a], [(p.observed_at, p.tier) for p in leg_b]
     ):
-        return None
-    if not c_a.get("token_id") or not c_b.get("token_id") or c_a.get("token_id") == c_b.get("token_id"):
-        return None
-    if {c_a.get("outcome_external_id"), c_b.get("outcome_external_id")} != {
-        f"{cond_id}_yes",
-        f"{cond_id}_no",
-    }:
-        return None
-    return oid_a, oid_b
+        at_a, at_b = leg_a[i].observed_at, leg_b[j].observed_at
+        known = max(at_a, at_b)
+        leg_a[i] = replace(leg_a[i], pair_at=known, peer_at=at_b)
+        leg_b[j] = replace(leg_b[j], pair_at=known, peer_at=at_a)
+    entries[oid_a]["points"], entries[oid_b]["points"] = leg_a, leg_b
+    return pair
 
 
 def _compact_entries(
     outcomes: Sequence[Any], entries: dict[int, dict], now: datetime
 ) -> None:
-    """Compact each outcome by band; for an identity-admitted binary pair, retain shared raw timestamps kept by either leg."""
+    """Compact each outcome by band; for an identity-admitted binary pair, keep both halves of every pair either leg kept.
+
+    The pairs are `_annotate_pairs`' (#11157): an exact shared instant (#11160)
+    or two raw samples of one tier a few seconds apart. The reader admits a half
+    only beside its peer, so a half compaction drops here is a half the chart
+    cannot draw. Pairs are one-to-one, so each leg gains at most what its partner
+    kept: the bound is still the two legs' combined budget.
+    """
     from app.utils.futures_chart_series import compact_by_band
 
+    pair = _annotate_pairs(outcomes, entries)
     by_oid_ts: dict[int, dict[datetime, VenuePoint]] = {}
     kept_by_oid: dict[int, set[datetime]] = {}
     for oid, entry in entries.items():
@@ -870,14 +891,16 @@ def _compact_entries(
         kept = compact_by_band([(p.observed_at, p.probability) for p in points], now)
         kept_by_oid[oid] = {ts for ts, _p in kept}
 
-    pair = _paired_binary_leg_ids(outcomes, entries)
     if pair is not None:
         oid_a, oid_b = pair
-        shared_raw_ts = set(by_oid_ts[oid_a]) & set(by_oid_ts[oid_b])
-        if shared_raw_ts:
-            kept_shared_ts = shared_raw_ts & (kept_by_oid[oid_a] | kept_by_oid[oid_b])
-            kept_by_oid[oid_a] |= kept_shared_ts
-            kept_by_oid[oid_b] |= kept_shared_ts
+        kept_a, kept_b = kept_by_oid[oid_a], kept_by_oid[oid_b]
+        retained = [
+            (p.observed_at, p.peer_at)
+            for p in by_oid_ts[oid_a].values()
+            if p.peer_at is not None and (p.observed_at in kept_a or p.peer_at in kept_b)
+        ]
+        kept_a.update(at_a for at_a, _at_b in retained)
+        kept_b.update(at_b for _at_a, at_b in retained)
 
     for oid, entry in entries.items():
         ts_map = by_oid_ts[oid]
