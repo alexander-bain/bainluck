@@ -311,9 +311,11 @@ def test_a_pair_that_shares_only_some_instants_keeps_each_legs_own_points():
     no = _outcome(602, 9300, "No", f"{cond}_no", 0.70)
     market = _market(9300, "Partly synchronous pair", [yes, no], mutually_exclusive=True,
                      token_map={601: "tok_y", 602: "tok_n"})
-    shared = [SYNC_BASE + timedelta(minutes=m) for m in range(0, 120, 2)]
-    own_yes = [SYNC_BASE + timedelta(minutes=m, seconds=30) for m in range(0, 120, 7)]
-    own_no = [SYNC_BASE + timedelta(minutes=m, seconds=45) for m in range(0, 120, 11)]
+    # Past the 1W band's 90-point budget on each leg, so compaction really
+    # drops points here and the union has something to restore.
+    shared = [SYNC_BASE + timedelta(minutes=m) for m in range(SYNC_MINUTES)]
+    own_yes = [SYNC_BASE + timedelta(minutes=m, seconds=30) for m in range(0, SYNC_MINUTES, 7)]
+    own_no = [SYNC_BASE + timedelta(minutes=m, seconds=45) for m in range(0, SYNC_MINUTES, 11)]
     raw_yes = sorted([(ts, 0.30 + (0.01 if i % 3 == 0 else 0)) for i, ts in enumerate(shared)]
                      + [(ts, 0.33 + i * 0.001) for i, ts in enumerate(own_yes)])
     raw_no = sorted([(ts, 0.70 - (0.01 if i % 5 == 0 else 0)) for i, ts in enumerate(shared)]
@@ -327,7 +329,11 @@ def test_a_pair_that_shares_only_some_instants_keeps_each_legs_own_points():
     own_no_iso = {ts.isoformat() for ts in own_no}
     shared_iso = {ts.isoformat() for ts in shared}
 
-    assert alone_yes & own_yes_iso and alone_no & own_no_iso  # the arm can bite
+    # The arm can bite: compaction drops points on both legs, keeps some of
+    # each leg's own instants, and alone keeps different shared instants.
+    assert len(alone_yes) < len(raw_yes) and len(alone_no) < len(raw_no)
+    assert alone_yes & own_yes_iso and alone_no & own_no_iso
+    assert alone_yes & shared_iso != alone_no & shared_iso
     assert alone_yes <= kept_yes and alone_no <= kept_no
     assert kept_yes & shared_iso == kept_no & shared_iso
     assert kept_yes - shared_iso == alone_yes & own_yes_iso
