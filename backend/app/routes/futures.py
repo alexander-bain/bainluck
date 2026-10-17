@@ -21,6 +21,7 @@ from app.services import get_db, OddsAPIService
 from app.utils import movement_pool, probability_to_american
 from app.utils.durable_venue_receipt import log_durable_venue_serve
 from app.utils.settlement_display import (
+    VERDICT_UNKNOWN as SETTLEMENT_VERDICT_UNKNOWN,
     applies_to_market as settlement_display_applies,
     settlement_display,
 )
@@ -268,6 +269,10 @@ def _apply_settled_winner_freeze(
         named = [o for o in (market.outcomes or []) if _norm_outcome_name(getattr(o, "name", "")) == norm]
         if len(named) == 1:
             champs = [named[0]]
+    # #698 — a champion whose own detail row says "Result unknown" is not
+    # ended at 1.0; see `_detail_withholds_result`. Filtered AFTER selection so
+    # the co-winner contradiction above still counts every stored grade.
+    champs = [c for c in champs if not _detail_withholds_result(market, c)]
     if not champs:
         return  # nothing unambiguously graded to freeze
     # When the caller filtered to a single outcome, do not inject any OTHER
@@ -443,6 +448,8 @@ def _apply_settled_loser_freeze(
     for outcome in market.outcomes or []:
         if not _is_evidenced_loss(outcome):
             continue
+        if _detail_withholds_result(market, outcome):
+            continue  # #698 — see `_detail_withholds_result`
         oid = getattr(outcome, "id", None)
         if outcome_id_filter is not None and oid != outcome_id_filter:
             continue
@@ -487,6 +494,36 @@ def _is_evidenced_loss(outcome) -> bool:
     if getattr(outcome, "is_winner", None) is not False:
         return False
     return getattr(outcome, "resolution_source", None) in CALIBRATION_TRUTH_ELIGIBLE_SOURCES
+
+
+def _detail_withholds_result(market, outcome) -> bool:
+    """Does this row's DETAIL payload say its result is unknown? (#698 chart half)
+
+    `/futures/62134744` (*Marchi vs. Lokoli: Match O/U 21.5*, Polymarket,
+    resolved) stores both legs at 0.500000, `is_winner=false`,
+    `clob_authoritative`. #11150 taught the detail payload to serve
+    `settlement_display = unknown / nonterminal_stored_price` for that, and the
+    page now reads "Result unknown · Last recorded 50%" on both rows — but this
+    route's loser arm still took the sourced `false` as an evidenced loss and
+    appended a 0.0 `settlement` point to BOTH lines, so the chart under that
+    caption drew Over and Under falling to 0% together.
+
+    The chart may not end a line at a result the same page declines to state.
+    So this asks the detail contract itself — same function, same stored inputs
+    (`current_probability`, never a charted point) — rather than a second rule
+    that could drift from it. Scope is the contract's own scope
+    (`applies_to_market`: resolved Polymarket); every other market answers
+    False and both freeze arms behave exactly as before. A withheld line ends
+    on its own last observed point, like any ungraded line.
+    """
+    if not settlement_display_applies(market):
+        return False
+    verdict = settlement_display(
+        is_winner=getattr(outcome, "is_winner", None),
+        resolution_source=getattr(outcome, "resolution_source", None),
+        stored_probability=getattr(outcome, "current_probability", None),
+    )["verdict"]
+    return verdict == SETTLEMENT_VERDICT_UNKNOWN
 
 
 # A settled line must RETURN to its graded value at least this many times before
@@ -9033,6 +9070,21 @@ async def get_futures_history(
     # property of the MARKET, so asking per outcome would answer it 74 times.
     # Read HERE, above the squeeze, because #8296's carry needs the graded set.
     _settled_grades = _settled_graded_values(market)
+    # #698 — the #7935 drop ERASES recorded points on the strength of a grade, so
+    # it may only use a grade the detail page states. A resolved Polymarket row
+    # the detail contract calls "Result unknown" (62134744: 0.5 / false /
+    # clob_authoritative) would otherwise read its sourced `false` as 0.0 and,
+    # on a line that touched 0 three times, prune every nonzero observation
+    # between the touches (Root's witness: [.4,0,.3,0,.6,0,.5,0,.465] served as
+    # [.4,0,0,0,0]). Such a line is drawn as recorded, like any ungraded line.
+    # `_never_carried` keeps the full set on purpose: not carrying a resolved
+    # leg only declines to INVENT presence between its own rows, it never
+    # removes one, so withholding the result is no reason to start carrying.
+    _republication_grades = {
+        _o.id: _settled_grades[_o.id]
+        for _o in market.outcomes
+        if _o.id in _settled_grades and not _detail_withholds_result(market, _o)
+    }
 
     # #8296 — THE COLUMN IS THE FIELD, NOT THE LEGS THAT MOVED. Snapshots are
     # de-duplicated at write time, so an instant's rows are the legs whose price
@@ -9242,7 +9294,7 @@ async def get_futures_history(
         # And `total_data_points` must count what is DRAWN (the reason it is
         # accumulated here at all, per #4992's note above), so a dropped point
         # may not be promised to the sparse flag.
-        _graded_value = _settled_grades.get(oid)
+        _graded_value = _republication_grades.get(oid)
         if _graded_value is not None:
             history = _drop_post_decision_republication(history, _graded_value)
         elim = _detect_elimination(history)
