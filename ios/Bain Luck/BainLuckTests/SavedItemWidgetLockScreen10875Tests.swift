@@ -183,4 +183,34 @@ final class SavedItemWidgetLockScreen10875Tests: XCTestCase {
         XCTAssertTrue(source.contains("SavedLockScreenFit10875.rectangleOwnLineVerdict(reading)"),
                       "the rectangular widget no longer asks whether the verdict needs its own line")
     }
+
+    /// R2 — Native re-walked ae42c81d36 at real size: the venue-settled
+    /// rectangle drew "SBW vs ANH / Akita Northern Happinets… / Settled",
+    /// the verdict one 12.7 pt line. Subject + a two-line verdict + footer is
+    /// four lines in a three-line rectangle, so the verdict lost. The view now
+    /// tries that layout and, when it does not fit, moves the footer onto the
+    /// subject line so the verdict keeps both lines.
+    func testATwoLineVerdictTakesTheFootersLineNotItsOwnSecondLine() throws {
+        let url = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("BainLuckWidget/SavedItemWidget10875.swift")
+        let source = try String(contentsOf: url, encoding: .utf8)
+        guard let start = source.range(of: "struct SavedRectangular10875: View {"),
+              let end = source.range(of: "struct SavedCircular10875: View {", range: start.upperBound..<source.endIndex) else {
+            return XCTFail("the rectangular widget view moved")
+        }
+        let rectangle = String(source[start.upperBound..<end.lowerBound])
+        guard let fits = rectangle.range(of: "ViewThatFits(in: .vertical) {") else {
+            return XCTFail("the own-line verdict is drawn in one layout, which cuts a two-line verdict to one")
+        }
+        let afterFits = String(rectangle[fits.upperBound...])
+        let three = afterFits.range(of: "subjectLine\n                    ownLine(verdict)\n                    footerLine")
+        let folded = afterFits.range(of: "Text(\" · \\(footer)\")")
+        XCTAssertNotNil(three, "the first choice is no longer subject / verdict / footer (\"Result unknown\" fits it)")
+        XCTAssertNotNil(folded, "the fallback no longer carries the footer on the subject line")
+        if let three, let folded {
+            XCTAssertLessThan(three.lowerBound, folded.lowerBound,
+                              "the folded layout is tried first, so a verdict that fits one line loses its footer line")
+        }
+        XCTAssertTrue(rectangle.contains(".lineLimit(2)"), "the own-line verdict can no longer wrap to a second line")
+    }
 }

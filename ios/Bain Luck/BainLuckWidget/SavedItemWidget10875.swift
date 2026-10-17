@@ -265,21 +265,65 @@ struct SavedRectangular10875: View {
     let entry: SavedItemWidgetEntry10875
 
     var body: some View {
+        if let verdict = ownLineVerdict {
+            // R2: the rectangle holds three lines. A verdict that fits one
+            // keeps subject / verdict / footer; one that needs two
+            // ("Akita Northern Happinets wins") takes them, and the footer
+            // rides the subject line instead of cutting the verdict short.
+            ViewThatFits(in: .vertical) {
+                VStack(alignment: .leading, spacing: 1) {
+                    subjectLine
+                    ownLine(verdict)
+                    footerLine
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                VStack(alignment: .leading, spacing: 1) {
+                    HStack(spacing: 0) {
+                        subjectLine
+                        Text(" · \(footer)")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                            .layoutPriority(1)
+                    }
+                    ownLine(verdict)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        } else {
+            stacked
+        }
+    }
+
+    private var subjectLine: some View {
+        Text(reading.shortSubject)
+            .font(.headline)
+            .lineLimit(1)
+            .widgetAccentable()
+    }
+
+    // R1: longer than Won / Lost / Draw, so not squeezed beside the outcome
+    // name; the name moves to the footer.
+    private func ownLine(_ verdict: String) -> some View {
+        Text(verdict)
+            .font(.body.weight(.semibold))
+            .lineLimit(2)
+            .minimumScaleFactor(0.7)
+    }
+
+    private var footerLine: some View {
+        Text(footer)
+            .font(.caption2)
+            .foregroundStyle(.secondary)
+            .lineLimit(1)
+    }
+
+    private var stacked: some View {
         VStack(alignment: .leading, spacing: 1) {
-            Text(reading.shortSubject)
-                .font(.headline)
-                .lineLimit(1)
-                .widgetAccentable()
+            subjectLine
             if let headline = reading.headline, reading.phase == .unavailable, let notice = headline.verdict {
                 // The chosen outcome is gone: say that, once, on its own line.
                 Text(notice).font(.body.weight(.semibold)).lineLimit(1)
-            } else if let verdict = ownLineVerdict {
-                // R1: longer than Won / Lost / Draw, so not squeezed beside
-                // the outcome name; the name moves to the line below.
-                Text(verdict)
-                    .font(.body.weight(.semibold))
-                    .lineLimit(2)
-                    .minimumScaleFactor(0.7)
             } else if let headline = reading.headline {
                 HStack(spacing: 4) {
                     Text(headline.shortLabel).lineLimit(1)
@@ -290,10 +334,7 @@ struct SavedRectangular10875: View {
             } else {
                 Text(reading.phase == .noResult ? "No result recorded" : "No chance to show").lineLimit(1)
             }
-            Text(footer)
-                .font(.caption2)
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
+            footerLine
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
