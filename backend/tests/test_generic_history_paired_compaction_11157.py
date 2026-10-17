@@ -297,6 +297,38 @@ def test_both_legs_keep_everything_each_leg_would_have_kept_alone():
         assert alone <= set(_instants(payload, oid)), oid
 
 
+def test_a_pair_that_shares_only_some_instants_keeps_each_legs_own_points():
+    """Only SHARED instants are unioned. An instant one leg alone observed stays
+    on that leg if its own compaction kept it, and never appears on the other."""
+    cond = "0x" + "9a" * 32
+    yes = _outcome(601, 9300, "Yes", f"{cond}_yes", 0.30)
+    no = _outcome(602, 9300, "No", f"{cond}_no", 0.70)
+    market = _market(9300, "Partly synchronous pair", [yes, no], mutually_exclusive=True,
+                     token_map={601: "tok_y", 602: "tok_n"})
+    shared = [SYNC_BASE + timedelta(minutes=m) for m in range(0, 120, 2)]
+    own_yes = [SYNC_BASE + timedelta(minutes=m, seconds=30) for m in range(0, 120, 7)]
+    own_no = [SYNC_BASE + timedelta(minutes=m, seconds=45) for m in range(0, 120, 11)]
+    raw_yes = sorted([(ts, 0.30 + (0.01 if i % 3 == 0 else 0)) for i, ts in enumerate(shared)]
+                     + [(ts, 0.33 + i * 0.001) for i, ts in enumerate(own_yes)])
+    raw_no = sorted([(ts, 0.70 - (0.01 if i % 5 == 0 else 0)) for i, ts in enumerate(shared)]
+                    + [(ts, 0.66 - i * 0.001) for i, ts in enumerate(own_no)])
+    payload = _fill(market, _Venue({"tok_y": _clob(raw_yes), "tok_n": _clob(raw_no)}))
+
+    kept_yes, kept_no = set(_instants(payload, 601)), set(_instants(payload, 602))
+    alone_yes = {ts.isoformat() for ts, _ in series.compact_by_band(raw_yes, NOW)}
+    alone_no = {ts.isoformat() for ts, _ in series.compact_by_band(raw_no, NOW)}
+    own_yes_iso = {ts.isoformat() for ts in own_yes}
+    own_no_iso = {ts.isoformat() for ts in own_no}
+    shared_iso = {ts.isoformat() for ts in shared}
+
+    assert alone_yes & own_yes_iso and alone_no & own_no_iso  # the arm can bite
+    assert alone_yes <= kept_yes and alone_no <= kept_no
+    assert kept_yes & shared_iso == kept_no & shared_iso
+    assert kept_yes - shared_iso == alone_yes & own_yes_iso
+    assert kept_no - shared_iso == alone_no & own_no_iso
+    assert not kept_yes & own_no_iso and not kept_no & own_yes_iso
+
+
 # ── the five preservation controls (Root's parent == candidate comparisons) ─
 
 
@@ -490,6 +522,9 @@ def test_the_pairing_rule_admits_exactly_one_conditions_two_distinct_tokens():
     refusals = {
         "kalshi venue": broken(venue="kalshi"),
         "other condition": broken(condition_id=OTHER, outcome_external_id=f"{OTHER}_no"),
+        # A contract whose own two fields disagree is refused on the condition
+        # alone, not rescued by the leg id still naming ours.
+        "condition disagrees with its leg id": broken(condition_id=OTHER),
         "same token": broken(token_id="t1"),
         "no token": broken(token_id=None),
         "two Yes legs": broken(outcome_external_id=f"{COND}_yes"),
@@ -502,6 +537,9 @@ def test_the_pairing_rule_admits_exactly_one_conditions_two_distinct_tokens():
                502: _entry("polymarket", "abc", "no", "t2", raw_b)}
     assert fill._paired_binary_leg_ids(_two(), not_hex) is None, "condition is not 0x"
     assert fill._paired_binary_leg_ids(_two(), {501: ok[501]}) is None, "one leg unfetched"
+    # One outcome twice: both contracts are then the same object, so the token
+    # rule refuses it before the id rule can — the id rule is defence in depth
+    # and its removal is an equivalent mutant here, not an untested branch.
     assert fill._paired_binary_leg_ids(_two(501, 501), ok) is None, "one outcome twice"
     three = _two() + [SimpleNamespace(id=503)]
     assert fill._paired_binary_leg_ids(three, ok) is None, "not a binary"
