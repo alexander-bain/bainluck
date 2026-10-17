@@ -835,6 +835,13 @@ def _annotate_pairs(outcomes: Sequence[Any], entries: dict[int, dict]) -> tuple[
     a property of the raw series. Any annotation carried in from the last-good
     bank is dropped first and re-derived from the raw clocks, which pairing never
     moves: a carried half cannot keep a peer this build does not hold.
+
+    ONE STATED LIMIT (lane1's N2). Carried last-good rows were compacted by the
+    build that banked them, so a carried sample's neighbours may be gone and its
+    local spacing reads wider than the venue's raw spacing was. Re-pairing over
+    them can therefore call a sample unambiguous that the raw series would not
+    have. It stays bounded: S never exceeds `PAIR_SKEW_MAX_SECONDS`, and only one
+    tier pairs with itself.
     """
     from dataclasses import replace
 

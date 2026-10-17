@@ -165,6 +165,10 @@ class VenuePoint:
     #: never an observation time. `observed_at` is never touched by pairing.
     pair_at: datetime | None = None
     peer_at: datetime | None = None
+    #: Why a stored annotation on this point was DROPPED at parse, or "". Only
+    #: `/history`'s pair path reads it (and then refuses the series); every
+    #: other reader keeps the point exactly as master did (lane1's R1).
+    pair_dropped: str = ""
 
     def as_row(self) -> list:
         row = [
@@ -495,10 +499,18 @@ def parse_points(rows: Any, *, not_after: datetime | None) -> tuple[list[VenuePo
         previous = stamp
         tier = str(row[5]) if len(row) > 5 and row[5] is not None else ""
         pair_at = peer_at = None
+        pair_dropped = ""
         if len(row) > 6 and row[6] is not None:
-            pair_at, peer_at, why = _parse_pair_annotation(row[6], stamp, tier, not_after)
-            if why:
-                return [], why
+            # 🔴 A BAD ANNOTATION NEVER REFUSES THE LEG (lane1's R1). This parser
+            # is shared: `/probability-timeline` and the fill's last-good read go
+            # through it too, and neither pairs. Refusing here blanked the native
+            # chart and erased carried history whenever S tightened. The point is
+            # kept as master kept it; the annotation is dropped and its reason
+            # recorded for the one reader that does pair.
+            pair_at, peer_at, pair_dropped = _parse_pair_annotation(
+                row[6], stamp, tier, not_after
+            )
+            pair_dropped = pair_dropped or ""
         points.append(
             VenuePoint(
                 observed_at=stamp,
@@ -509,6 +521,7 @@ def parse_points(rows: Any, *, not_after: datetime | None) -> tuple[list[VenuePo
                 tier=tier,
                 pair_at=pair_at,
                 peer_at=peer_at,
+                pair_dropped=pair_dropped,
             )
         )
     return points, None
@@ -519,7 +532,8 @@ def _parse_pair_annotation(
 ) -> tuple[datetime | None, datetime | None, str | None]:
     """`(pair_at, peer_at, None)` or `(None, None, reason)` — lane1's I2 checks
     that one point can answer alone. The peer's PRESENCE in the other leg is a
-    cross-series fact and is checked where both legs are in hand (the reader)."""
+    cross-series fact and is checked where both legs are in hand (the reader).
+    A reason drops the annotation; it never refuses the point or its series."""
     from app.utils.async_binary_pair import pair_skew_bound_seconds
 
     if not isinstance(raw, (list, tuple)) or len(raw) != 2:

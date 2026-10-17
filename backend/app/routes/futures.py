@@ -6948,6 +6948,10 @@ class _GenericVenueHistory:
         #: admitted cell by cell (`_venue_pair_admission`); None everywhere else,
         #: and then nothing about this market's served payload changes.
         self.pair_admission: Optional["_PairAdmission"] = None
+        #: #11157 — why this bank's pair annotations did not verify, for an
+        #: identity-admitted pair. Read by `/history` ALONE, which then refuses
+        #: the series; the loader's rows stay master's for every other reader.
+        self.pair_refusal: Optional[str] = None
 
     def in_window(self, cutoff: datetime, capture_rows: list, outcome_ids) -> list:
         """Venue rows at/after `cutoff` that no capture already speaks for."""
@@ -7089,7 +7093,8 @@ def _verify_pair_bank(
 ) -> tuple[Optional[tuple], Optional[str]]:
     """`(pair, None)` when the bank's pair annotations verify for an identity-
     admitted Yes/No pair; `(None, None)` when pairing does not apply; `(None,
-    reason)` when an annotation does not verify — the series is then refused.
+    reason)` when an annotation does not verify — `/history` then refuses the
+    series; no other reader applies it (lane1's R1).
 
     IDENTITY IS RE-DERIVED HERE, never trusted from the bank (lane1's I3): the
     fill's own predicate (`async_binary_pair.paired_binary_leg_ids`), asked of the contracts the
@@ -7103,11 +7108,15 @@ def _verify_pair_bank(
     `peer_at` names a point in the other leg at exactly that raw instant, of the
     same tier, whose own `peer_at` names this one and whose `pair_at` agrees.
     `parse_points` has already checked what one point can answer alone (pair_at
-    is the later instant, skew within S, not after the build).
+    is the later instant, skew within S, not after the build) and DROPPED any
+    annotation that failed, recording why; one dropped annotation is a refusal.
     """
     from app.utils.async_binary_pair import paired_binary_leg_ids
 
-    if not any(p.peer_at is not None for points in accepted.values() for p in points):
+    if not any(
+        p.peer_at is not None or p.pair_dropped
+        for points in accepted.values() for p in points
+    ):
         return None, None
     cached = (payload or {}).get("outcomes") or {}
     entries = {
@@ -7118,6 +7127,11 @@ def _verify_pair_bank(
     pair = paired_binary_leg_ids(outcomes, entries)
     if pair is None:
         return None, None
+    dropped = next(
+        (p.pair_dropped for oid in pair for p in accepted[oid] if p.pair_dropped), None
+    )
+    if dropped:
+        return None, dropped
     oid_a, oid_b = pair
     at = {oid: {p.observed_at: p for p in accepted[oid]} for oid in pair}
     for oid, other in ((oid_a, oid_b), (oid_b, oid_a)):
@@ -7213,7 +7227,9 @@ def _venue_pair_admission(
         if abs(float(row_a.probability) + float(row_b.probability) - 1.0) > PAIR_COHERENCE_EPSILON:
             incoherent += 2
             continue
-        columns[row_a.pair_at] = {
+        # Keyed per tier too: two tiers may hold pairs sharing a knowledge time,
+        # and each is its own column for the scale question (lane1's N3).
+        columns[(row_a.pair_at, row_a.tier)] = {
             oid_a: float(row_a.probability), oid_b: float(row_b.probability)
         }
         stamp = None if row_a.captured_at == row_b.captured_at else row_a.pair_at
@@ -7506,11 +7522,10 @@ async def _load_generic_venue_history(
         accepted, venue.refusals = validate_payload(payload, market, charted_outcomes)
         # #11157 — a pair annotation is verified against the bank AS STORED,
         # before the support filter: a half that filter later drops is withheld
-        # beside its peer, not mistaken for a forged one.
-        pair, pair_refusal = _verify_pair_bank(accepted, payload, charted_outcomes)
-        if pair_refusal:
-            venue.refusals.append({"scope": "payload", "reason": pair_refusal})
-            accepted = {}
+        # beside its peer, not mistaken for a forged one. A failure is RECORDED,
+        # never applied here: this loader also feeds `/probability-timeline`,
+        # which does not pair and keeps master's points (lane1's R1).
+        pair, venue.pair_refusal = _verify_pair_bank(accepted, payload, charted_outcomes)
         for oid, points in accepted.items():
             rows = as_snapshot_rows(oid, market.source, points)
             supported = _drop_unsupported_snapshot_points(
@@ -9152,7 +9167,8 @@ async def get_futures_history(
     # `_venue_points_countable_as_density`: a series this reader will refuse whole
     # is density nobody draws, and counting it held the gate shut over the exact
     # empty chart #7936's first half was built to fill.
-    venue_density = _venue_points_countable_as_density(
+    # #11157: a pair bank this reader refuses below is no density either.
+    venue_density = 0 if venue.pair_refusal else _venue_points_countable_as_density(
         market, charted_outcomes, field_venue_rows, charted_ids,
         # #7954's flag, the same one the reader's refusal is asked with below.
         field_complete=_field_complete,
@@ -9240,9 +9256,11 @@ async def get_futures_history(
             # THE SAME RULE ON BOTH SIDES OF THE COMPARISON, or the widening is
             # scored against a density the narrow window does not have either.
             # The wider window re-selects, so its refusal verdict is its own.
-            extended_venue_density = _venue_points_countable_as_density(
-                market, charted_outcomes, extended_field_venue_rows, ext_charted_ids,
-                field_complete=_field_complete,
+            extended_venue_density = 0 if venue.pair_refusal else (
+                _venue_points_countable_as_density(
+                    market, charted_outcomes, extended_field_venue_rows, ext_charted_ids,
+                    field_complete=_field_complete,
+                )
             )
             if (len(extended_snapshots) + extended_venue_density) > (
                 len(snapshots) + venue_density
@@ -9433,7 +9451,9 @@ async def get_futures_history(
             venue_by_outcome[oid] = rows
     venue_scale_refusal: Optional[str] = None
     if field_venue_by_outcome:
-        venue_scale_refusal = _venue_scale_refusal(
+        # #11157 — an identity-admitted pair whose annotations did not verify is
+        # refused HERE, on this reader only (lane1's R1).
+        venue_scale_refusal = venue.pair_refusal or _venue_scale_refusal(
             market, charted_outcomes, field_venue_by_outcome, outcome_time_groups, devigged,
             # #7954: the SAME flag the line above was printed with, never a
             # re-derivation — a second predicate here would be free to answer

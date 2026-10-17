@@ -790,30 +790,41 @@ def test_a_single_line_read_reports_freshness_from_its_own_quotes():
     (["2026-10-16T00:00:12+00:00", "2026-10-16T00:00:08+00:00"],
      "pair_at_is_not_the_later_raw_instant"),
 ])
-def test_parse_points_refuses_what_one_annotation_can_answer_alone(annotation, reason):
+def test_parse_points_drops_what_one_annotation_cannot_answer_and_keeps_the_point(
+    annotation, reason
+):
     row = ["2026-10-16T00:00:10+00:00", 0.4, None, None, None, FINE, annotation]
     points, why = gmh.parse_points([row], not_after=None)
-    assert (points, why) == ([], reason)
+    assert why is None, "a bad annotation never refuses the leg (lane1's R1)"
+    (point,) = points
+    assert point.observed_at == datetime.fromisoformat(row[0]) and point.probability == 0.4
+    assert (point.pair_at, point.peer_at, point.pair_dropped) == (None, None, reason)
 
 
-def test_parse_points_refuses_a_skew_past_the_bound_and_a_pair_after_the_build():
+def _dropped(row, not_after=None):
+    points, why = gmh.parse_points([row], not_after=not_after)
+    assert why is None and len(points) == 1
+    assert points[0].pair_at is None and points[0].peer_at is None
+    return points[0].pair_dropped
+
+
+def test_parse_points_drops_a_skew_past_the_bound_and_a_pair_after_the_build():
     own = datetime.fromisoformat("2026-10-16T00:00:10+00:00")
     far = own + timedelta(seconds=31)
     row = [own.isoformat(), 0.4, None, None, None, FINE, [far.isoformat(), far.isoformat()]]
-    assert gmh.parse_points([row], not_after=None) == ([], "pair_skew_exceeds_bound")
+    assert _dropped(row) == "pair_skew_exceeds_bound"
     # Only an hourly tier's ceiling (30 s) applies to it, not its grain.
     row[5] = "polymarket_clob_1m_f60"
-    assert gmh.parse_points([row], not_after=None) == ([], "pair_skew_exceeds_bound")
+    assert _dropped(row) == "pair_skew_exceeds_bound"
     # A peer quoted after the build cannot have been known at the build.
     near = own + timedelta(seconds=5)
     row = [own.isoformat(), 0.4, None, None, None, FINE, [near.isoformat(), near.isoformat()]]
-    assert gmh.parse_points([row], not_after=own + timedelta(seconds=2)) == (
-        [], "pair_at_after_build"
-    )
+    assert _dropped(row, not_after=own + timedelta(seconds=2)) == "pair_at_after_build"
     # And the honest annotation parses, carrying both instants untouched.
     points, why = gmh.parse_points([row], not_after=own + timedelta(seconds=10))
     assert why is None and points[0].observed_at == own
     assert points[0].pair_at == near and points[0].peer_at == near
+    assert points[0].pair_dropped == ""
 
 
 def test_an_unannotated_row_keeps_its_six_columns():
@@ -893,3 +904,126 @@ def test_the_timeline_route_serves_each_leg_at_its_own_raw_instants():
             assert value == pytest.approx(raw[name][entry["timestamp"]], abs=1e-6)
             venue_seen += 1
     assert venue_seen == res["venue_history"]["points_served"] > 0
+
+
+# ── lane1's R1: an annotation failure is /history's refusal, nobody else's ──
+
+
+def _timeline(market, payload):
+    import asyncio
+    from unittest.mock import patch
+
+    from tests.test_generic_history_paired_compaction_11157 import _Redis, _Result, _Session
+
+    rc = _Redis({gmh.cache_key(market.id): json.dumps(payload)})
+    snaps = _captures()
+    db = _Session(_Result(value=_Lenient(**vars(market))), _Result(rows=snaps),
+                  _Result(rows=snaps))
+    with (
+        patch.object(futures_route, "_request_path_redis", return_value=rc),
+        patch.object(futures_route, "_refuted_midpoint_outcome_ids", return_value=set()),
+    ):
+        return asyncio.run(futures_route.get_probability_timeline(
+            market.id, top=10, hours=168, db=db, representation="source",
+        ))
+
+
+def _stripped(payload):
+    out = json.loads(json.dumps(payload))
+    for entry in out["outcomes"].values():
+        entry["points"] = [r[:6] for r in entry["points"]]
+    return out
+
+
+def test_R1_A_a_tightened_bound_never_blanks_the_timeline(monkeypatch):
+    """Built at S = 30 s, read at S = 2 s (Live's E1 is the expected trigger):
+    the native timeline serves what the same bank stripped of annotations
+    serves; `/history` refuses, as G9 requires."""
+    from app.utils import async_binary_pair as abp
+
+    market = _async_market()
+    payload = _bank(market)
+    baseline = _timeline(market, _stripped(payload))["venue_history"]["points_served"]
+    assert baseline > 0
+    monkeypatch.setattr(abp, "PAIR_SKEW_MAX_SECONDS", 2.0)
+    tl = _timeline(market, payload)["venue_history"]
+    assert tl["points_served"] == baseline
+    vh = _read(market, _captures(), payload)["venue_history"]
+    assert vh["points_served"] == 0
+    assert "pair_skew_exceeds_bound" in json.dumps(vh.get("refusals"))
+
+
+def test_R1_B_a_tightened_bound_never_erases_carried_history(monkeypatch):
+    """The same change, then a build the venue answers with nothing: the
+    last-good carry still holds every banked point, as it would stripped."""
+    from app.utils import async_binary_pair as abp
+
+    market = _async_market()
+    first = _bank(market)
+    monkeypatch.setattr(abp, "PAIR_SKEW_MAX_SECONDS", 2.0)
+    silent = _Venue({"tok_yes": [], "tok_no": []})
+    carried = _fill(market, silent, last_good=first)
+    control = _fill(market, silent, last_good=_stripped(first))
+    assert carried["status"] == control["status"] != "empty"
+    for oid in (YES_ID, NO_ID):
+        # Re-compaction may thin a carried series; it must thin it exactly as
+        # it thins the same history with no annotation on it.
+        assert _instants(carried, oid) == _instants(control, oid)
+        assert len(_instants(carried, oid)) > 100
+
+
+def test_R1_C_one_unverified_annotation_never_blanks_the_timeline():
+    market = _async_market()
+    payload = _bank(market)
+    baseline = _timeline(market, _stripped(payload))["venue_history"]["points_served"]
+    row = _later_annotated_half(payload, YES_ID)
+    row[6] = [row[6][0], (datetime.fromisoformat(row[6][1]) - timedelta(seconds=1)).isoformat()]
+    assert _timeline(market, payload)["venue_history"]["points_served"] == baseline > 0
+    vh = _read(market, _captures(), payload)["venue_history"]
+    assert vh["points_served"] == 0
+    assert "pair_annotation_unverified" in json.dumps(vh.get("refusals"))
+
+
+def test_R1_a_refused_pair_bank_is_no_density_for_the_sparse_window_gate():
+    """#7936's rule for this refusal too: a series `/history` refuses is density
+    nobody draws. A synchronous bank (exact pairs, which the old field rule would
+    admit) with one dropped annotation must not hold the window shut."""
+    yes = [(_t(m, 20), 0.40) for m in range(40)]
+    no = [(_t(m, 20), 0.60) for m in range(40)]
+    market = _async_market()
+    payload = _fill(market, _Venue({"tok_yes": _clob(yes), "tok_no": _clob(no)}))
+    old = NOW - timedelta(days=10)
+    recent = _captures()
+    wider = recent + [_snap(YES_ID, old, 0.40), _snap(NO_ID, old, 0.60)]
+
+    def read():
+        import asyncio
+        from unittest.mock import patch
+
+        from tests.test_generic_history_paired_compaction_11157 import (
+            _Redis,
+            _Result,
+            _Session,
+        )
+
+        rc = _Redis({gmh.cache_key(market.id): json.dumps(payload)})
+        # The 7-day read, then the 30-day widening: the fake answers in order.
+        db = _Session(_Result(value=market), _Result(rows=recent), _Result(rows=wider))
+        with (
+            patch.object(futures_route, "_request_path_redis", return_value=rc),
+            patch.object(futures_route, "_refuted_midpoint_outcome_ids", return_value=set()),
+        ):
+            return asyncio.run(futures_route.get_futures_history(
+                market.id, outcome_id=None, hours=168, top_n=10, champion=None,
+                db=db, history_range=None,
+            ))
+
+    honest = read()
+    assert honest["venue_history"]["points_served"] > 20
+    assert honest["actual_hours"] == 168
+
+    next(r for r in payload["outcomes"][str(YES_ID)]["points"] if len(r) > 6)[6] = "yes"
+    refused = read()
+    assert refused["venue_history"]["points_served"] == 0
+    assert "pair_annotation_malformed" in json.dumps(refused["venue_history"].get("refusals"))
+    assert refused["actual_hours"] > 168, "the refused bank held the sparse window shut"
