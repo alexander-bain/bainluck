@@ -212,5 +212,21 @@ final class SavedItemWidgetLockScreen10875Tests: XCTestCase {
                               "the folded layout is tried first, so a verdict that fits one line loses its footer line")
         }
         XCTAssertTrue(rectangle.contains(".lineLimit(2)"), "the own-line verdict can no longer wrap to a second line")
+
+        // R2a — offline, the footer is "Offline · Oct 15, 3:42 PM", about the
+        // rectangle's whole width. The subject must win the folded line, or a
+        // settled game shows its clock and not which game it is.
+        guard let hstack = afterFits.range(of: "HStack(spacing: 0) {"),
+              let close = afterFits.range(of: "\n                    }", range: hstack.upperBound..<afterFits.endIndex) else {
+            return XCTFail("the folded subject line is no longer an HStack")
+        }
+        let foldedLine = String(afterFits[hstack.upperBound..<close.lowerBound])
+        XCTAssertTrue(foldedLine.contains("subjectLine\n                            .layoutPriority(1)"),
+                      "the subject no longer outranks the footer, so an offline footer pushes the game off its line")
+        guard let footerText = foldedLine.range(of: "Text(\" · \\(footer)\")") else {
+            return XCTFail("the folded line no longer carries the footer")
+        }
+        XCTAssertFalse(foldedLine[footerText.upperBound...].contains("layoutPriority"),
+                       "the footer carries a layout priority, so it takes its width before the subject")
     }
 }

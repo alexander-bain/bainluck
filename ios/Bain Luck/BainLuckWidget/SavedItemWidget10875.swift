@@ -279,12 +279,15 @@ struct SavedRectangular10875: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 VStack(alignment: .leading, spacing: 1) {
                     HStack(spacing: 0) {
+                        // R2a: the subject wins the width. Offline, the
+                        // footer is "Offline · Oct 15, 3:42 PM" and would
+                        // otherwise push the game off its own line.
                         subjectLine
+                            .layoutPriority(1)
                         Text(" · \(footer)")
                             .font(.caption2)
                             .foregroundStyle(.secondary)
                             .lineLimit(1)
-                            .layoutPriority(1)
                     }
                     ownLine(verdict)
                 }
