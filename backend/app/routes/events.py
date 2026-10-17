@@ -29289,6 +29289,10 @@ async def _build_related_futures(
     season_market_ids = (
         None if debug else _smd.read(event_sport_key, event_is_finished)
     )
+    # #2316: only a genuine MISS may wait for a peer's build. A slot rejected
+    # by the competition-scope re-check below must rebuild here, because the
+    # wait would re-read and return the same rejected ids.
+    _discovery_missed = season_market_ids is None
     if _competition_scope is not None and season_market_ids:
         # A cache populated before adoption of this rule must not bypass it.
         # Rebuild a contaminated pool so wrong rows cannot consume its cap.
@@ -29299,26 +29303,38 @@ async def _build_related_futures(
         )
         if {row.id for row in _scope_result.all()} != set(season_market_ids):
             season_market_ids = None
-    if season_market_ids is None:
-        _tier_query = await db.execute(
-            select(FuturesMarket.id, FuturesMarket.market_tier)
-            .where(
-                *base_season_filters,
-                FuturesMarket.market_tier.in_([1, 2, 3, 4]),
-            )
-            .order_by(FuturesMarket.market_tier, FuturesMarket.id)
-            .limit(400)
+    # #2316: one builder per slot. On a miss, a reader whose peer is already
+    # running this scan waits for the peer's answer instead of running its own
+    # copy (27 of 87 slow reads on 2026-10-17 overlapped another one). The
+    # rationale and the fail-open rule are in `utils/season_market_discovery.py`.
+    _build_lease = None
+    if season_market_ids is None and _discovery_missed and not debug:
+        season_market_ids, _build_lease = await _smd.claim_or_await(
+            event_sport_key, event_is_finished
         )
-        _tier_rows = _tier_query.all()
-        _tier_counts: dict[int, int] = {}
-        season_market_ids = []
-        for row in _tier_rows:
-            tier = row.market_tier or 4
-            _tier_counts[tier] = _tier_counts.get(tier, 0) + 1
-            if _tier_counts[tier] <= SEASON_TIER_CAP:
-                season_market_ids.append(row.id)
-        if not debug:
-            _smd.write(event_sport_key, event_is_finished, season_market_ids)
+    if season_market_ids is None:
+        try:
+            _tier_query = await db.execute(
+                select(FuturesMarket.id, FuturesMarket.market_tier)
+                .where(
+                    *base_season_filters,
+                    FuturesMarket.market_tier.in_([1, 2, 3, 4]),
+                )
+                .order_by(FuturesMarket.market_tier, FuturesMarket.id)
+                .limit(400)
+            )
+            _tier_rows = _tier_query.all()
+            _tier_counts: dict[int, int] = {}
+            season_market_ids = []
+            for row in _tier_rows:
+                tier = row.market_tier or 4
+                _tier_counts[tier] = _tier_counts.get(tier, 0) + 1
+                if _tier_counts[tier] <= SEASON_TIER_CAP:
+                    season_market_ids.append(row.id)
+            if not debug:
+                _smd.write(event_sport_key, event_is_finished, season_market_ids)
+        finally:
+            _smd.release_build(_build_lease)
 
     # Debug: tier breakdown of season markets
     if debug and season_market_ids:
