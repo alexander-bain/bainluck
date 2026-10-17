@@ -23,6 +23,12 @@ interface FuturesTrendRangeControlsProps {
   actualHours?: number | null;
   /** Appended to the cadence/sparse line the page already shows, if any. */
   cadenceNote?: string | null;
+  /** #7547 — set while the chart on screen is a different rung than `range`
+   *  (`futuresRangeHeldNote`). It replaces the coverage sentence, which would
+   *  otherwise compare this rung's request with the held rung's answer. */
+  heldNote?: string | null;
+  /** Offered beside `heldNote` when the picked rung's request failed. */
+  onRetry?: () => void;
   className?: string;
 }
 
@@ -32,9 +38,11 @@ export default function FuturesTrendRangeControls({
   requestedHours,
   actualHours,
   cadenceNote,
+  heldNote,
+  onRetry,
   className,
 }: FuturesTrendRangeControlsProps) {
-  const coverage = rangeCoverageNote(requestedHours, actualHours);
+  const coverage = heldNote ? null : rangeCoverageNote(requestedHours, actualHours);
 
   return (
     <div className={`flex flex-col gap-1.5 ${className ?? ""}`}>
@@ -46,6 +54,27 @@ export default function FuturesTrendRangeControls({
         // are this page's three.
         onSelect={(key) => onSelect(key as FuturesRangeKey)}
       />
+      {heldNote && (
+        <p
+          role="status"
+          data-testid="futures-trend-range-held"
+          className="text-xs text-text-secondary"
+        >
+          {heldNote}
+          {onRetry && (
+            <>
+              {" "}
+              <button
+                type="button"
+                onClick={onRetry}
+                className="font-medium text-accent-brand underline"
+              >
+                Try again
+              </button>
+            </>
+          )}
+        </p>
+      )}
       {(coverage || cadenceNote) && (
         <p className="text-xs text-text-muted">
           {[coverage, cadenceNote].filter(Boolean).join(" · ")}
