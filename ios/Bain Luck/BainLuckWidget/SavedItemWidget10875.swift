@@ -143,7 +143,13 @@ enum SavedClock10875 {
             return "Last recorded " + (text(reading.observedAt, relativeTo: entry.date) ?? "· time unknown")
         case .openingLine:
             return "Opening line"
-        case .result, .noResult, .unavailable:
+        case .noResult:
+            // #698: a settled row whose result is unknown names its last price
+            // as last recorded, with that price's own clock when it has one.
+            return reading.lastRecordedFigure.map { figure in
+                "Last recorded \(figure)" + (text(reading.observedAt, relativeTo: entry.date).map { " · \($0)" } ?? "")
+            }
+        case .result, .unavailable:
             return nil
         }
     }

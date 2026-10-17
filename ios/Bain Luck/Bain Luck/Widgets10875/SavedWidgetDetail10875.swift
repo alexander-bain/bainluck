@@ -49,6 +49,10 @@ nonisolated struct SavedWidgetMarketDetail10875: Decodable, Equatable, Sendable 
     let id: Int
     let name: String
     let status: String?
+    /// The venue (`polymarket`, `kalshi`, …). Read only to decide whether a
+    /// resolved market without `settlement_display` is a server that predates
+    /// it (#698).
+    let source: String?
     let leadOutcomeId: Int?
     let outcomes: [SavedWidgetMarketOutcome10875]
 
@@ -57,6 +61,7 @@ nonisolated struct SavedWidgetMarketDetail10875: Decodable, Equatable, Sendable 
         id = try c.decode(Int.self, forKey: .id)
         name = try c.decode(String.self, forKey: .name)
         status = try c.decodeIfPresent(String.self, forKey: .status)
+        source = (try? c.decodeIfPresent(String.self, forKey: .source)) ?? nil
         leadOutcomeId = try c.decodeIfPresent(Int.self, forKey: .leadOutcomeId)
         // One malformed leg must not blank the reader's chosen one.
         var legs = try c.nestedUnkeyedContainer(forKey: .outcomes)
@@ -71,16 +76,18 @@ nonisolated struct SavedWidgetMarketDetail10875: Decodable, Equatable, Sendable 
         outcomes = decoded
     }
 
-    init(id: Int, name: String, status: String?, leadOutcomeId: Int?, outcomes: [SavedWidgetMarketOutcome10875]) {
+    init(id: Int, name: String, status: String?, source: String? = nil, leadOutcomeId: Int?,
+         outcomes: [SavedWidgetMarketOutcome10875]) {
         self.id = id
         self.name = name
         self.status = status
+        self.source = source
         self.leadOutcomeId = leadOutcomeId
         self.outcomes = outcomes
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, name, status, leadOutcomeId, outcomes
+        case id, name, status, source, leadOutcomeId, outcomes
     }
 }
 
@@ -93,6 +100,52 @@ nonisolated struct SavedWidgetMarketOutcome10875: Decodable, Equatable, Sendable
     let lastUpdated: String?
     /// A verified answer's oldest included observation, when served.
     let observedAt: String?
+    /// #698, resolved Polymarket markets only: what this row may say about its
+    /// own result. Absent everywhere else and on older servers. Read only
+    /// through `SavedWidgetReadingRules10875.settledResult`.
+    let settlementDisplay: SavedWidgetSettlementDisplay10875?
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(Int.self, forKey: .id)
+        name = try c.decode(String.self, forKey: .name)
+        probability = try c.decodeIfPresent(Double.self, forKey: .probability)
+        isWinner = try c.decodeIfPresent(Bool.self, forKey: .isWinner)
+        resolutionSource = try c.decodeIfPresent(String.self, forKey: .resolutionSource)
+        lastUpdated = try c.decodeIfPresent(String.self, forKey: .lastUpdated)
+        observedAt = try c.decodeIfPresent(String.self, forKey: .observedAt)
+        // A contract of the wrong shape reads as absent, never fails the leg:
+        // a failed leg is skipped, and the reader's choice would then read
+        // "No longer listed".
+        settlementDisplay = (try? c.decodeIfPresent(SavedWidgetSettlementDisplay10875.self, forKey: .settlementDisplay)) ?? nil
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, name, probability, isWinner, resolutionSource, lastUpdated, observedAt, settlementDisplay
+    }
+}
+
+/// `settlement_display` on one `/api/futures/{id}` outcome: `{"verdict",
+/// "basis"}`. Each field is read leniently; a missing or non-string verdict is
+/// unknown, so an unexpected value can never invent a result.
+nonisolated struct SavedWidgetSettlementDisplay10875: Decodable, Equatable, Sendable {
+    let verdict: String?
+    let basis: String?
+
+    init(verdict: String?, basis: String?) {
+        self.verdict = verdict
+        self.basis = basis
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        verdict = (try? c.decodeIfPresent(String.self, forKey: .verdict)) ?? nil
+        basis = (try? c.decodeIfPresent(String.self, forKey: .basis)) ?? nil
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case verdict, basis
+    }
 }
 
 /// Advances past a leg that does not decode.

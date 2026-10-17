@@ -11,7 +11,9 @@ import Foundation
 /// LAST RECORDED is read off the quote's own clock (`EventHeadlinePhase9483`).
 /// A market reads the market page's row value (`FuturesDetailRowValue`: Won /
 /// Lost / price), its integers (`futuresDetailRenderedPercents`) and its hero
-/// leg (`futuresDetailHeroOutcome`).
+/// leg (`futuresDetailHeroOutcome`). On a resolved market the server's
+/// `settlement_display` decides first (#698, `settledResult`): a row whose
+/// stored data does not support a result says "Result unknown", never Lost.
 ///
 /// The rules that need app models are restated here against the widget's own
 /// decode, and `SavedItemWidget10875Tests` holds each restatement to its source
@@ -21,7 +23,8 @@ import Foundation
 ///
 /// What this never does: print a number with no source, call an undated price
 /// current, name a winner the event has not got, replace a result with a price,
-/// or derive the away side as `1 − home` where the sport prices a draw.
+/// derive the away side as `1 − home` where the sport prices a draw, or call a
+/// settled row Lost when its result is unknown.
 nonisolated struct SavedWidgetReading10875: Equatable, Sendable {
     enum Phase: String, Equatable, Sendable {
         /// A dated price that is still current.
@@ -71,6 +74,9 @@ nonisolated struct SavedWidgetReading10875: Equatable, Sendable {
     let becomesLastRecordedAt: Date?
     /// The whole reading as one sentence, for VoiceOver.
     let spoken: String
+    /// #698: a settled row whose result is unknown keeps its last price
+    /// ("50%"), printed only as "Last recorded", never as a value or a result.
+    var lastRecordedFigure: String? = nil
 }
 
 /// Which side of a game the reader chose to follow, if any.
@@ -318,10 +324,10 @@ enum SavedWidgetReadingRules10875 {
         let standing = marketStatusText(market.status)
         func reading(_ phase: SavedWidgetReading10875.Phase, status: String, rows: [SavedWidgetReading10875.Row],
                      headline: SavedWidgetReading10875.Row?, caption: String? = nil, observedAt: Date? = nil,
-                     flipsAt: Date? = nil, spoken: String) -> SavedWidgetReading10875 {
+                     flipsAt: Date? = nil, spoken: String, lastRecorded: String? = nil) -> SavedWidgetReading10875 {
             .init(phase: phase, subject: market.name, shortSubject: market.name, status: status, rows: rows,
                   headline: headline, priceCaption: caption, observedAt: observedAt,
-                  becomesLastRecordedAt: flipsAt, spoken: spoken)
+                  becomesLastRecordedAt: flipsAt, spoken: spoken, lastRecordedFigure: lastRecorded)
         }
 
         let chosen: SavedWidgetMarketOutcome10875?
@@ -343,8 +349,28 @@ enum SavedWidgetReadingRules10875 {
                            spoken: "\(market.name): Bain Luck has no outcome to show right now.")
         }
 
-        if let verdict = OutcomeVerdict.verdict(isWinner: outcome.isWinner, resolutionSource: outcome.resolutionSource,
-                                                marketResolved: resolved) {
+        let verdict: OutcomeVerdict?
+        switch settledResult(outcome, marketSource: market.source, marketStatus: market.status) {
+        case .won?: verdict = .won
+        case .lost?: verdict = .lost
+        case .unknown?:
+            // Settled, result not supported by the row: said as unknown, with
+            // the last price named as last recorded. Never Lost, never a value.
+            let last = outcome.probability.flatMap { $0.isFinite ? $0 : nil }.map {
+                formatProbability($0, renderedPercent: renderedPercents(market.outcomes)[outcome.id])
+            }
+            let row = SavedWidgetReading10875.Row(label: outcome.name, shortLabel: outcome.name, figure: nil,
+                                                  verdict: "Result unknown", emphasized: false)
+            let observedAt = last == nil ? nil : SavedWidgetDetailDecoding10875.date(outcome.observedAt ?? outcome.lastUpdated)
+            let lastSaid = last.map { " Its last recorded chance was \($0)." } ?? ""
+            return reading(.noResult, status: "Settled", rows: [row], headline: row, observedAt: observedAt,
+                           spoken: "\(market.name) has settled. The result for \(outcome.name) is unknown.\(lastSaid)",
+                           lastRecorded: last)
+        case nil:
+            verdict = OutcomeVerdict.verdict(isWinner: outcome.isWinner, resolutionSource: outcome.resolutionSource,
+                                             marketResolved: resolved)
+        }
+        if let verdict {
             let row = SavedWidgetReading10875.Row(label: outcome.name, shortLabel: outcome.name, figure: nil,
                                                   verdict: verdict.label, emphasized: verdict == .won)
             return reading(.result, status: resolved ? "Settled" : standing, rows: [row], headline: row,
@@ -379,6 +405,45 @@ enum SavedWidgetReadingRules10875 {
         return reading(.lastRecorded, status: standing, rows: [row], headline: row,
                        caption: "Last recorded chance", observedAt: observedAt,
                        spoken: "\(market.name)\(closedSaid): \(outcome.name) \(figure), last recorded chance.\(when)")
+    }
+
+    /// #698 — what a resolved market's row may say about its own result, the
+    /// restatement of `backend/app/utils/settlement_display.py` as served, and
+    /// of web's `settledResultDisplay.ts`, on the widget's decode.
+    ///
+    /// A served `settlement_display` is the answer: `won` / `lost` are
+    /// results, any other verdict (or none) is unknown, so a new server word can
+    /// only make the row say less. Absent on a resolved Polymarket market, the
+    /// server predates the field and the same rule runs on the served values,
+    /// conservatively: only an exact 1 + `true` / 0 + `false` with a tier-3
+    /// source is a result. `nil` means "not this rule's market": the
+    /// `OutcomeVerdict` rule applies unchanged (open boards, other venues).
+    nonisolated enum SettledResult: Equatable, Sendable {
+        case won
+        case lost
+        case unknown
+    }
+
+    /// The venues whose resolved detail rows the server targets.
+    static let settlementDisplaySources: Set<String> = ["polymarket"]
+
+    static func settledResult(_ outcome: SavedWidgetMarketOutcome10875, marketSource: String?,
+                              marketStatus: String?) -> SettledResult? {
+        guard marketStatus == "resolved" else { return nil }
+        if let served = outcome.settlementDisplay {
+            switch served.verdict {
+            case "won": return .won
+            case "lost": return .lost
+            default: return .unknown
+            }
+        }
+        guard let marketSource, settlementDisplaySources.contains(marketSource) else { return nil }
+        guard outcome.resolutionSource != OutcomeVerdict.retractedResolutionSource,
+              OutcomeVerdict.isAuthoritative(outcome.resolutionSource),
+              let probability = outcome.probability, probability.isFinite else { return .unknown }
+        if probability == 1, outcome.isWinner == true { return .won }
+        if probability == 0, outcome.isWinner == false { return .lost }
+        return .unknown
     }
 
     /// The market's standing in words. `open` reads Open and `resolved`
