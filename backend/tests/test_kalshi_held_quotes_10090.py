@@ -280,6 +280,39 @@ async def test_a_non_blend_leg_never_joins_the_overlay(monkeypatch):
     assert x.stamped and x.stamped[0][0] == (EVENT,)
 
 
+async def test_only_a_held_legs_landing_write_bypasses_the_repeat_predicate(monkeypatch):
+    """Root attempt30: a held leg's newest quote can equal the stored price, so
+    its landing write is forced (the real-PG gate proves the publication). A
+    leg the overlay never held keeps the repeat predicate in the same phase."""
+    import tests.test_kalshi_game_isolation_10655 as iso
+
+    forced = {}
+    params_of = iso.statement_params
+
+    def recording(stmt, bind=None):
+        params = params_of(stmt, bind)
+        if "kalshi_outcome_id" in params:
+            forced[params["kalshi_outcome_id"]] = params["kalshi_force_observation"]
+        return params
+
+    monkeypatch.setattr(iso, "statement_params", recording)
+    clock = Clock(monkeypatch)
+    x = held_rig(monkeypatch, locked=(1, 2))
+    x.ns["non_blend_outcome_ids"].add(2)
+    # Neither leg is a first observation of this run.
+    x.prices.committed_outcome_ids.update({1, 2})
+    await x.flush(flush_started=clock.t)
+    assert 1 in x.held and 2 not in x.held
+    assert forced == {1: False}, "the refused attempt held nothing yet"
+
+    x.lock_released.set()
+    clock.t = x.prices.lock_retry_until[1]
+    forced.clear()
+    assert await x.flush(flush_started=clock.t) is True
+    assert forced == {1: True, 2: False}
+    assert x.committed == [1, 2] and 1 not in x.held
+
+
 async def test_a_leg_whose_buffer_is_not_its_mark_holds_its_whole_event_out(monkeypatch):
     clock = Clock(monkeypatch)
     x = held_rig(monkeypatch)

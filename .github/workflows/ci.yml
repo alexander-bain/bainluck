@@ -5045,8 +5045,8 @@ jobs:
             echo "::error::#10090 Kalshi held-row gate SKIPPED"
             exit 1
           fi
-          grep -qE "[^0-9]3 passed[,[:space:]]" /tmp/kalshi-held10090.txt || {
-            echo "::error::#10090 Kalshi held-row gate did not run all three cases"
+          grep -qE "[^0-9]4 passed[,[:space:]]" /tmp/kalshi-held10090.txt || {
+            echo "::error::#10090 Kalshi held-row gate did not run all four cases"
             exit 1
           }
 

@@ -27,6 +27,8 @@ DB-clock bound). The holder is a second connection holding
   cannot put the older price back — its stamp is refused in the UPDATE;
 * after release the ordinary write lands the newest price and the overlay
   releases it; the stamped value never regresses;
+* a newest quote that RETURNS to the price the row still stores (.395 → held
+  .375 → .395, Root attempt30) still lands and publishes .395;
 * a KNOWN newer stored row (attempt24's ambiguity) is not overlaid: nothing
   is stamped from the stale row and the write retries at the next flush start;
 * parent (no overlay installed): nothing is stamped while the row is held —
@@ -267,6 +269,48 @@ async def test_a_held_kalshi_row_stamps_the_received_quote_and_a_restart_cannot_
     assert v1 in values and v2 in values
     assert values.index(v2) > values.index(v1)
     assert v0 not in values[values.index(v1):], "no published value regresses"
+    c.close()
+
+
+async def test_a_held_quote_that_returns_to_the_stored_price_still_lands_and_publishes(rig):
+    """Root attempt30 on the exact PR #11190 tree: stored .395, held .375 is
+    stamped, then .395 arrives after the retry deadline. The landing write met
+    the repeat predicate (same price, fresh `last_updated`) and returned no row,
+    so the page kept .375 while the row said .395."""
+    c, v0 = await started(rig)
+    held = c.refresher.held_quotes
+    # Prime: the consumer's own committed write stores .395 NOW, so the
+    # predicate's 30 s liveness arm and first-observation force cannot rescue
+    # the return below.
+    c.accept(HOME, 0.395)
+    assert await c.flush() is True
+    price, primed = await stored(rig)
+    assert price == 0.395 and primed not in (None, v0)
+    assert HOME in c.prices.committed_outcome_ids
+
+    conn, tx = await hold_row(rig, HOME)
+    try:
+        c.accept(HOME, 0.375)
+        assert await c.flush() is True
+        price, v1 = await stored(rig)
+        assert price == 0.395 and v1 != primed, "the held .375 is stamped"
+        assert HOME in held
+    finally:
+        await tx.rollback()
+        await conn.close()
+
+    # Past the deadline the newest input is the price the row already stores.
+    c.prices.lock_retry_until.clear()
+    c.accept(HOME, 0.395)
+    attempts = len(c.attempts)
+    assert await c.flush() is True
+    assert len(c.attempts) == attempts + 1, "the ordinary write ran"
+    price, final = await stored(rig)
+    assert price == 0.395
+    assert final == primed, "the source returns to .395, not the held .375"
+    assert HOME not in held and not c.batch
+    values = [f.get("source_value") for f in c.frames if f.get("event_id") == EVENT]
+    assert values[-1] == primed and values.index(v1) < len(values) - 1
     c.close()
 
 

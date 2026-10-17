@@ -527,8 +527,11 @@ class _KalshiPriceOwner:
         if interrupted is not None:
             raise interrupted
 
-    async def phase(self, session, phase, *, force_observation=False):
+    async def phase(self, session, phase, *, force_observation=False, forced_ids=()):
         """Yield `PriceRunResult`s for one phase. Consume in `aclosing`.
+
+        `forced_ids` are written even when the row already holds the value
+        (#10090: a held quote's landing write, see the caller).
 
         A successful phase is exhausted by its caller. A caller error closes
         this iterator (and the utility's) before the session rolls back.
@@ -545,7 +548,9 @@ class _KalshiPriceOwner:
                     {
                         oid: (
                             *values,
-                            force_observation or oid not in self.committed_outcome_ids,
+                            force_observation
+                            or oid in forced_ids
+                            or oid not in self.committed_outcome_ids,
                         )
                         for oid, values in phase.items()
                     },
@@ -1827,8 +1832,27 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
                         # playoff grid's liveness gate read actively-streaming rows as
                         # days stale — measured 2026-08-30 at up to 23 days on rows
                         # whose price had moved seconds earlier.
+                        #
+                        # #10090 — A HELD LEG'S LANDING WRITE ALWAYS WRITES. The
+                        # stamp already carries its held quote, with a basis later
+                        # than the row's `last_updated`. If the newest input has
+                        # returned to the value the row still stores (.395 →
+                        # held .375 → .395), the repeat predicate declines it,
+                        # nothing is returned, no refresh is owed, and a stamp
+                        # built from the row would be refused anyway. The page
+                        # kept .375 (Root attempt30, exact PR #11190 tree). The
+                        # forced write re-stamps `last_updated` past that basis
+                        # and returns the row. Held legs only: every other row
+                        # keeps the repeat predicate.
+                        held_ids = (
+                            () if held_quotes is None
+                            else {oid for oid in phase if oid in held_quotes}
+                        )
                         async with contextlib.aclosing(
-                            prices.phase(session, phase, force_observation=final_drain)
+                            prices.phase(
+                                session, phase, force_observation=final_drain,
+                                forced_ids=held_ids,
+                            )
                         ) as price_results:
                             async for result in price_results:
                                 # #5411 — a settled row matches the id and fails the
