@@ -164,6 +164,9 @@ struct FuturesDetailView: View {
                     VStack(spacing: 0) {
                         // Hero section (matches Discover card visual quality)
                         heroSection(market)
+                            // #10876 — the pin tip opens over the top of the page,
+                            // so it waits until this hero is out of view.
+                            .pinTipHero10876(type: "future", id: marketId)
 
                         VStack(spacing: 20) {
                             // Hook description (journalist-style blurb)

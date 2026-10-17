@@ -209,20 +209,22 @@ final class ContextualTips10876Tests: XCTestCase {
     private let freeSlot = PinTipStoreReading10876(isPinned: false, isSaving: false, canPin: true,
                                                    loadState: .loaded, hasPinMessage: false, savedPinCount: 0)
 
-    private func pinTip(_ store: PinTipStoreReading10876, localPinUIShowing: Bool = false) -> PinTipState10876 {
-        ContextualTipEligibility10876.pinTip(isDetailAnchor: true, localPinUIShowing: localPinUIShowing) { store }
+    private func pinTip(_ store: PinTipStoreReading10876, localPinUIShowing: Bool = false,
+                        heroClear: Bool = true) -> PinTipState10876 {
+        ContextualTipEligibility10876.pinTip(isDetailAnchor: true, localPinUIShowing: localPinUIShowing,
+                                             heroClear: heroClear) { store }
     }
 
     /// lane1b: list and card bookmarks must not read the pin store at all.
     func testACompactBookmarkNeverReadsThePinStore() throws {
         var reads = 0
-        let compact = ContextualTipEligibility10876.pinTip(isDetailAnchor: false, localPinUIShowing: false) {
+        let compact = ContextualTipEligibility10876.pinTip(isDetailAnchor: false, localPinUIShowing: false, heroClear: true) {
             reads += 1
             return freeSlot
         }
         XCTAssertEqual(compact, .off)
         XCTAssertEqual(reads, 0, "a list or card bookmark read the pin store")
-        let detail = ContextualTipEligibility10876.pinTip(isDetailAnchor: true, localPinUIShowing: false) {
+        let detail = ContextualTipEligibility10876.pinTip(isDetailAnchor: true, localPinUIShowing: false, heroClear: true) {
             reads += 1
             return freeSlot
         }
@@ -258,6 +260,81 @@ final class ContextualTips10876Tests: XCTestCase {
         XCTAssertTrue(pinTip(store).learned, "anything pinned means pinning is learned")
     }
 
+    // MARK: - Pin: the hero it must not cover
+
+    /// Native's combined v3 (B-3b, A-3): the tip opened from the bar over the
+    /// hero's win chance and crests. It now waits for the hero to leave.
+    func testThePinTipWaitsUntilTheHeroIsOutOfView() {
+        XCTAssertTrue(pinTip(freeSlot, heroClear: true).usable, "control: hero out of view, every clause satisfied")
+        XCTAssertFalse(pinTip(freeSlot, heroClear: false).usable,
+                       "the pin tip opened while the hero's win chance was on screen under it")
+        var store = freeSlot
+        store.savedPinCount = 1
+        XCTAssertTrue(pinTip(store, heroClear: false).learned,
+                      "learning does not wait on the hero: a pin invalidates the tip wherever the page is")
+    }
+
+    func testTheHeroIsClearOnlyOnceWhollyScrolledOut() {
+        XCTAssertFalse(ContextualTipEligibility10876.heroClearOfPinTip(heroBottom: nil),
+                       "a hero never measured opened the tip")
+        XCTAssertFalse(ContextualTipEligibility10876.heroClearOfPinTip(heroBottom: 420), "hero on screen")
+        XCTAssertFalse(ContextualTipEligibility10876.heroClearOfPinTip(heroBottom: 0.5),
+                       "half a point of hero still showed under the bar")
+        XCTAssertTrue(ContextualTipEligibility10876.heroClearOfPinTip(heroBottom: 0), "control: bottom edge at the top")
+        XCTAssertTrue(ContextualTipEligibility10876.heroClearOfPinTip(heroBottom: -300), "control: scrolled well past")
+    }
+
+    /// The bookmark and the hero must report under ONE key per page, or the
+    /// gate is never clear (tip never shows) or clear for the wrong page.
+    func testBothDetailPagesReportTheirHeroUnderTheBookmarksKey() throws {
+        let pages: [(file: String, pin: String, hero: String)] = [
+            ("Views/EventDetailView.swift", "PinButton(type: \"event\", id: eventId)",
+             ".pinTipHero10876(type: \"event\", id: eventId)"),
+            ("Views/FuturesDetailView.swift", "PinButton(type: \"future\", id: marketId)",
+             ".pinTipHero10876(type: \"future\", id: marketId)"),
+        ]
+        for page in pages {
+            let code = Self.withoutCommentLines(try String(contentsOf: Self.appDir.appendingPathComponent(page.file),
+                                                           encoding: .utf8))
+            XCTAssertEqual(code.components(separatedBy: page.pin).count - 1, 1, "\(page.file): the bookmark moved")
+            XCTAssertEqual(code.components(separatedBy: page.hero).count - 1, 1,
+                           "\(page.file): the hero no longer reports to the pin tip under the bookmark's key")
+            let hero = try XCTUnwrap(code.range(of: page.hero))
+            let heroSection = try XCTUnwrap(code.range(of: "heroSection(", options: .backwards,
+                                                       range: code.startIndex..<hero.lowerBound))
+            XCTAssertLessThan(code.distance(from: heroSection.upperBound, to: hero.lowerBound), 900,
+                              "\(page.file): the reporter is not on the hero itself")
+        }
+        let tips = Self.withoutCommentLines(try String(contentsOf: Self.tipsSource, encoding: .utf8))
+        XCTAssertTrue(tips.contains("heroClearOfPinTip(heroBottom: proxy.frame(in: .scrollView).maxY)"),
+                      "the hero is no longer measured against its own scroll view")
+        XCTAssertTrue(tips.contains(".onDisappear { PinTipHeroGate10876.shared.set(type: type, id: id, clear: false) }"),
+                      "a page that leaves stays marked clear")
+        XCTAssertTrue(tips.contains("heroClear: heroes.isClear(type: type, id: id),"),
+                      "the bookmark's tip no longer reads the hero gate")
+    }
+
+    /// Native's combined v3 (C-3b): at AX3 the system style clipped the
+    /// message's last line inside its own popover.
+    func testEveryPopoverTipUsesTheStyleThatGivesItsTextFullHeight() throws {
+        let tips = Self.withoutCommentLines(try String(contentsOf: Self.tipsSource, encoding: .utf8))
+        XCTAssertEqual(tips.components(separatedBy: ".popoverTip(").count - 1, 1, "a second popover site appeared")
+        let flat = tips.split(whereSeparator: \.isWhitespace).joined(separator: " ")
+        XCTAssertTrue(flat.contains(
+            "Color.clear.popoverTip(tip, arrowEdge: arrowEdge) .tipViewStyle(ContextualTipStyle10876())"),
+                      "the popover lost the tips' own style")
+        let body = try XCTUnwrap(tips.range(of: "private struct ContextualTipBody10876"))
+        let rest = String(tips[body.lowerBound...])
+        XCTAssertTrue(rest.contains("message.font(.subheadline)"), "the style no longer draws the message")
+        XCTAssertTrue(rest.contains(".fixedSize(horizontal: false, vertical: true)"),
+                      "the tip's text no longer claims its full height")
+        XCTAssertTrue(rest.contains("dynamicTypeSize.isAccessibilitySize"),
+                      "at accessibility sizes the icon no longer leaves the text its width")
+        XCTAssertTrue(rest.contains("configuration.tip.invalidate(reason: .tipClosed)"), "the close button closes nothing")
+        XCTAssertTrue(rest.contains(".frame(width: 44, height: 44)"), "the close target fell under 44 pt")
+        XCTAssertTrue(rest.contains(".accessibilityLabel(\"Close\")"), "VoiceOver lost the close button's name")
+    }
+
     /// #9495 keeps any limit read out of the bookmark; the tip's read lives in
     /// Tips/. This closes the wrappers `canPin(` alone would not catch.
     func testTheBookmarkReadsNoPinLimitEvenThroughAWrapper() throws {
@@ -289,6 +366,14 @@ final class ContextualTips10876Tests: XCTestCase {
                                  "do", "catch", "else", "case", "break", "continue", "fallthrough"]
         let found = Self.identifiers(in: before).filter(flow.contains)
         XCTAssertTrue(found.isEmpty, "control flow before togglePin: \(found)")
+    }
+
+    /// Source without its whole-line comments, for guards that must read a
+    /// string literal (`codeOnly` blanks them).
+    private static func withoutCommentLines(_ source: String) -> String {
+        source.split(separator: "\n", omittingEmptySubsequences: false)
+            .filter { !$0.trimmingCharacters(in: .whitespaces).hasPrefix("//") }
+            .joined(separator: "\n")
     }
 
     /// Source with comments and string-literal contents blanked, so a guard

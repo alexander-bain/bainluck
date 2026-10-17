@@ -164,6 +164,101 @@ nonisolated struct ExploreChartTip10876: Tip {
     }
 }
 
+// MARK: - The hero the pin tip must not cover
+
+/// Which detail pages have their hero scrolled wholly out of view, keyed like
+/// the bookmark (`type:id`). The page's hero reports here and the bookmark in
+/// its bar reads it — a toolbar item cannot see the scroll view it sits over.
+/// A page that never reports is never in the set, so its pin tip stays off.
+@MainActor final class PinTipHeroGate10876: ObservableObject {
+    static let shared = PinTipHeroGate10876()
+    @Published private(set) var clear: Set<String> = []
+
+    static func key(type: String, id: Int) -> String { "\(type):\(id)" }
+
+    func isClear(type: String, id: Int) -> Bool { clear.contains(Self.key(type: type, id: id)) }
+
+    func set(type: String, id: Int, clear isClear: Bool) {
+        let key = Self.key(type: type, id: id)
+        if isClear { clear.insert(key) } else { clear.remove(key) }
+    }
+}
+
+/// On the page's hero: reports `heroClearOfPinTip` only when it flips, so a
+/// scroll re-runs no page body (#8651).
+private struct PinTipHeroReporter10876: ViewModifier {
+    let type: String
+    let id: Int
+
+    func body(content: Content) -> some View {
+        content
+            .onGeometryChange(for: Bool.self) { proxy in
+                ContextualTipEligibility10876.heroClearOfPinTip(heroBottom: proxy.frame(in: .scrollView).maxY)
+            } action: { isClear in
+                PinTipHeroGate10876.shared.set(type: type, id: id, clear: isClear)
+            }
+            .onDisappear { PinTipHeroGate10876.shared.set(type: type, id: id, clear: false) }
+    }
+}
+
+// MARK: - The tips' own style
+
+/// #10876 R2 — at AX3 the system style cut the pin tip's last line off inside
+/// its own popover, over the hero's "Current win chance" (native's combined v3,
+/// C-3b). The same parts as the system style — icon, title, message, close —
+/// with the text given its full height. At accessibility sizes the icon sits
+/// above the text, as the system's did, so the words keep the width.
+struct ContextualTipStyle10876: TipViewStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        ContextualTipBody10876(configuration: configuration)
+    }
+}
+
+private struct ContextualTipBody10876: View {
+    let configuration: TipViewStyle.Configuration
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+
+    var body: some View {
+        let layout = dynamicTypeSize.isAccessibilitySize
+            ? AnyLayout(VStackLayout(alignment: .leading, spacing: 8))
+            : AnyLayout(HStackLayout(alignment: .top, spacing: 12))
+        HStack(alignment: .top, spacing: 4) {
+            layout {
+                if let image = configuration.image {
+                    image
+                        .font(.title2)
+                        .foregroundStyle(.tint)
+                        .accessibilityHidden(true)
+                }
+                VStack(alignment: .leading, spacing: 4) {
+                    if let title = configuration.title {
+                        title.font(.headline)
+                    }
+                    if let message = configuration.message {
+                        message.font(.subheadline).foregroundStyle(.secondary)
+                    }
+                }
+                .fixedSize(horizontal: false, vertical: true)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            Button {
+                configuration.tip.invalidate(reason: .tipClosed)
+            } label: {
+                Image(systemName: "xmark")
+                    .font(.body.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 44, height: 44)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Close")
+            .padding(.top, -10)
+            .padding(.trailing, -10)
+        }
+        .padding(16)
+    }
+}
+
 // MARK: - Anchoring
 
 /// Puts `tip` in a popover on the modified control while the control is usable,
@@ -192,6 +287,7 @@ private struct ContextualTipAnchor10876<T: Tip>: ViewModifier {
             .background {
                 if queue.isGranted(anchor) {
                     Color.clear.popoverTip(tip, arrowEdge: arrowEdge)
+                        .tipViewStyle(ContextualTipStyle10876())
                 }
             }
             .task(id: learned) {
@@ -261,13 +357,20 @@ extension View {
     func pinTip10876(isDetailAnchor: Bool, pinManager: PinManager, type: String, id: Int,
                      localPinUIShowing: Bool) -> some View {
         if isDetailAnchor && ContextualTips10876.isEnabledOnThisPlatform {
-            let state = ContextualTipEligibility10876.pinTip(
-                isDetailAnchor: isDetailAnchor, localPinUIShowing: localPinUIShowing,
-                read: { pinManager.pinTipReading10876(type: type, id: id) })
             modifier(PinEngagement10876())
-                .modifier(ContextualTipAnchor10876(
-                    kind: .pin, tip: PinTip10876(),
-                    usable: state.usable, learned: state.learned, arrowEdge: .top))
+                .modifier(PinTipAnchor10876(pinManager: pinManager, type: type, id: id,
+                                            localPinUIShowing: localPinUIShowing))
+        } else {
+            self
+        }
+    }
+
+    /// On a detail page's hero, keyed like that page's bookmark: lets the pin
+    /// tip open only once the hero is out of view (`heroClearOfPinTip`).
+    @ViewBuilder
+    func pinTipHero10876(type: String, id: Int) -> some View {
+        if ContextualTips10876.isEnabledOnThisPlatform {
+            modifier(PinTipHeroReporter10876(type: type, id: id))
         } else {
             self
         }
@@ -284,6 +387,26 @@ extension View {
     func exploreChartTip10876(touchSurfaceInstalled: Bool, dataPoints: [ChartDataPoint]) -> some View {
         modifier(ExploreChartTipAnchor10876(touchSurfaceInstalled: touchSurfaceInstalled,
                                             dataPoints: dataPoints))
+    }
+}
+
+/// The detail bookmark's tip. Watches the hero gate, so the tip leaves the
+/// moment the reader scrolls the hero back under it.
+private struct PinTipAnchor10876: ViewModifier {
+    @ObservedObject var pinManager: PinManager
+    let type: String
+    let id: Int
+    let localPinUIShowing: Bool
+    @ObservedObject private var heroes = PinTipHeroGate10876.shared
+
+    func body(content: Content) -> some View {
+        let state = ContextualTipEligibility10876.pinTip(
+            isDetailAnchor: true, localPinUIShowing: localPinUIShowing,
+            heroClear: heroes.isClear(type: type, id: id),
+            read: { pinManager.pinTipReading10876(type: type, id: id) })
+        content.modifier(ContextualTipAnchor10876(
+            kind: .pin, tip: PinTip10876(),
+            usable: state.usable, learned: state.learned, arrowEdge: .top))
     }
 }
 

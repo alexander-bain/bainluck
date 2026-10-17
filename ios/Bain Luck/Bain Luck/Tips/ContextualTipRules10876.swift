@@ -155,15 +155,30 @@ nonisolated enum ContextualTipEligibility10876 {
     /// before `read` runs, so it never touches the pin store; a detail
     /// bookmark reads it once. Decided here so `PinButton` never reads the pin
     /// limit itself (#9495: the button must not pre-judge the limit).
-    static func pinTip(isDetailAnchor: Bool, localPinUIShowing: Bool,
+    ///
+    /// `heroClear` is `heroClearOfPinTip` for this page's hero: the bookmark
+    /// sits in the bar, so its popover opens over whatever is just below it.
+    static func pinTip(isDetailAnchor: Bool, localPinUIShowing: Bool, heroClear: Bool,
                        read: () -> PinTipStoreReading10876) -> PinTipState10876 {
         guard isDetailAnchor else { return .off }
         let store = read()
         return PinTipState10876(
-            usable: pinUsable(isDetailAnchor: true, isPinned: store.isPinned, isSaving: store.isSaving,
-                              canPin: store.canPin, pinLoadState: store.loadState,
-                              isShowingPinMessage: store.hasPinMessage || localPinUIShowing),
+            usable: heroClear
+                && pinUsable(isDetailAnchor: true, isPinned: store.isPinned, isSaving: store.isSaving,
+                             canPin: store.canPin, pinLoadState: store.loadState,
+                             isShowingPinMessage: store.hasPinMessage || localPinUIShowing),
             learned: pinLearned(savedPinCount: store.savedPinCount))
+    }
+
+    /// The pin tip opens from the bar straight down over the top of the page.
+    /// Native's combined v3 run (B-3b, A-3) saw it cover the hero's win chance
+    /// and both crests — the subject and probability #10876 says a tip never
+    /// covers. So it waits until the hero has scrolled wholly out of the scroll
+    /// view (`heroBottom` in the `.scrollView` space, ≤ 0), and leaves the
+    /// moment any of the hero comes back. Not measured — `nil` — keeps it off.
+    static func heroClearOfPinTip(heroBottom: CGFloat?) -> Bool {
+        guard let heroBottom else { return false }
+        return heroBottom <= 0
     }
 
     /// Taught only where Start Live Activity is shown AND tappable on a game

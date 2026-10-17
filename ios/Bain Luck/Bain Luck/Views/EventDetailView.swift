@@ -380,6 +380,9 @@ struct EventDetailView: View {
                                     heroBottom: proxy.frame(in: .named(Self.scrollSpace)).maxY,
                                     viewportTop: scrollViewportTop))
                         })
+                        // #10876 — the pin tip opens over the top of the page,
+                        // so it waits until this hero is out of view.
+                        .pinTipHero10876(type: "event", id: eventId)
                     VStack(spacing: 0) {
                         OddsChartView(eventId: event.id, teamColors: teamColors(event),
                                      commenceTime: event.commenceTime, status: event.status,
