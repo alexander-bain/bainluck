@@ -135,7 +135,9 @@ enum SavedClock10875 {
 
     /// The caption line under a price: its phase and clock, or what is missing.
     static func caption(_ reading: SavedWidgetReading10875, entry: SavedItemWidgetEntry10875) -> String? {
-        if entry.isOffline { return "Offline · " + (text(reading.observedAt, relativeTo: entry.date) ?? "last update") }
+        // R3: a reading with no clock (a settled game) says only "Offline",
+        // never a stand-in phrase for a time it does not have.
+        if entry.isOffline { return text(reading.observedAt, relativeTo: entry.date).map { "Offline · \($0)" } ?? "Offline" }
         switch reading.phase {
         case .current:
             return text(reading.observedAt, relativeTo: entry.date).map { "As of \($0)" }

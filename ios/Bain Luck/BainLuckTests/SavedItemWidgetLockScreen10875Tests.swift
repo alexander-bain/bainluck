@@ -229,4 +229,25 @@ final class SavedItemWidgetLockScreen10875Tests: XCTestCase {
         XCTAssertFalse(foldedLine[footerText.upperBound...].contains("layoutPriority"),
                        "the footer carries a layout priority, so it takes its width before the subject")
     }
+
+    /// R3 — Native's offline Lock Screen read on 9be33a5b6a: a settled game
+    /// has no observed clock, so its footer read "Offline · last update" (cut
+    /// to "Offline…"), a caption that names a time it does not have. With no
+    /// clock the caption is just "Offline"; with one it keeps the clock.
+    func testAnOfflineReadingWithNoClockSaysOnlyOffline() throws {
+        let url = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("BainLuckWidget/SavedItemWidget10875.swift")
+        let source = try String(contentsOf: url, encoding: .utf8)
+        guard let start = source.range(of: "static func caption("),
+              let end = source.range(of: "switch reading.phase", range: start.upperBound..<source.endIndex) else {
+            return XCTFail("the caption function moved")
+        }
+        let offlineArm = String(source[start.upperBound..<end.lowerBound])
+        XCTAssertFalse(offlineArm.contains("last update"),
+                       "an offline reading with no clock names a 'last update' it cannot date")
+        XCTAssertTrue(offlineArm.contains("?? \"Offline\""),
+                      "an offline reading with no clock no longer says just \"Offline\"")
+        XCTAssertTrue(offlineArm.contains("\"Offline · \\($0)\""),
+                      "an offline reading with a clock no longer shows that clock")
+    }
 }
