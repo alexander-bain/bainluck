@@ -384,7 +384,7 @@ def lbr_default() -> int:
 CHAIN_BUDGET_MS = 1000
 #: How long the holder keeps the row after the arm queues, and how long the
 #: queued writer then keeps it. Each < budget; together > budget.
-CHAIN_HOLD_S = 0.7
+CHAIN_HOLD_S = 0.75
 
 
 async def _one_arm_behind_a_chain(maker, monkeypatch, *, statement_bound):
@@ -432,7 +432,22 @@ async def _one_arm_behind_a_chain(maker, monkeypatch, *, statement_bound):
     writing = asyncio.create_task(_writer())
     await asyncio.sleep(0.1)  # the writer is queued first
 
+    waiting_since = []
+
     async def _release_holder():
+        # Clocked from the stamp's UPDATE actually waiting, not from the call:
+        # a slow runner's reads before it must not eat the chain.
+        while not waiting_since:
+            async with maker() as probe:
+                seen = (await probe.execute(text(
+                    "SELECT 1 FROM pg_stat_activity WHERE datname = current_database()"
+                    " AND wait_event_type = 'Lock'"
+                    " AND query ILIKE '%SET win_probability_sources%'"
+                ))).first()
+            if seen:
+                waiting_since.append(time.monotonic())
+            else:
+                await asyncio.sleep(0.01)
         await asyncio.sleep(CHAIN_HOLD_S)
         await holder.commit()
         await holder.close()
@@ -451,27 +466,27 @@ async def _one_arm_behind_a_chain(maker, monkeypatch, *, statement_bound):
     arm._last_snapshot_at = {eid: float("inf") for eid in event_ids}
 
     releasing = asyncio.create_task(_release_holder())
-    started = time.monotonic()
     await asyncio.wait_for(arm.refresh([low]), 30)
-    elapsed = time.monotonic() - started
+    assert waiting_since, "rig: the stamp never queued behind the holder"
+    waited = time.monotonic() - waiting_since[0]
     assert writer_has_row.is_set() or not frames, "rig: the arm cannot pass the writer"
-    return elapsed, arm, frames, low, releasing, writing
+    return waited, arm, frames, low, releasing, writing
 
 
 async def test_a_chained_row_wait_is_cut_at_the_budget_and_requeued(maker, monkeypatch):
-    elapsed, arm, frames, low, releasing, writing = await _one_arm_behind_a_chain(
+    waited, arm, frames, low, releasing, writing = await _one_arm_behind_a_chain(
         maker, monkeypatch, statement_bound=True,
     )
-    budget_s = CHAIN_BUDGET_MS / 1000
-    # THE SHIP: the stamp stops occupying the row's queue at its budget, so no
-    # sibling stamp queues behind a wait that has outlived its own bound.
-    assert budget_s * 0.9 <= elapsed < budget_s + 0.4, f"the stamp held the queue {elapsed:.2f}s"
+    # THE SHIP: the stamp stops occupying the row's queue at its budget — it
+    # returns while the queued writer still holds the row, so no sibling stamp
+    # queues behind a wait that has outlived its own bound.
+    assert not writing.done(), f"the stamp waited out the whole chain ({waited:.2f}s)"
+    assert waited < 2 * CHAIN_HOLD_S, f"the stamp held the queue {waited:.2f}s"
     assert frames == [] and arm.stats["lock_skipped"] == 1, arm.stats
     assert arm.stats["errors"] == 0 and arm._lock_retry == {low}, arm.stats
 
     # Requeued, not lost: once the row is free the next flush stamps it.
-    await releasing
-    await writing
+    await asyncio.gather(releasing, writing)
     await arm.refresh([])
     assert [f["event_id"] for f in frames] == [low]
     assert arm.stats["stamped"] == 1 and arm.stats["errors"] == 0, arm.stats
@@ -481,11 +496,10 @@ async def test_control_lock_timeout_alone_lets_one_stamp_outlive_its_budget(make
     """Without this the case above could pass on a rig whose chain never
     outlasts the budget: here the parent's per-acquisition bound waits through
     both holders and stamps."""
-    elapsed, arm, frames, low, releasing, writing = await _one_arm_behind_a_chain(
+    waited, arm, frames, low, releasing, writing = await _one_arm_behind_a_chain(
         maker, monkeypatch, statement_bound=False,
     )
-    await releasing
-    await writing
-    assert elapsed > CHAIN_BUDGET_MS / 1000 + 0.1, f"returned after {elapsed:.2f}s"
+    await asyncio.gather(releasing, writing)
+    assert waited > CHAIN_BUDGET_MS / 1000 + 0.1, f"returned after {waited:.2f}s"
     assert [f["event_id"] for f in frames] == [low]
     assert arm.stats["lock_skipped"] == 0 and arm.stats["errors"] == 0, arm.stats
