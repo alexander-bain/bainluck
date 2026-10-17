@@ -1252,6 +1252,21 @@ class HeldRowQuotes:
                 changed.add(oid)
         return changed
 
+    def _new_bounds(self, quotes) -> dict[int, float]:
+        """``{outcome_id: bound}`` for the quotes not already held as given."""
+        return {
+            oid: float(bound)
+            for oid, (price, bound) in quotes.items()
+            if bound is not None
+            and self._quotes.get(oid) != (round(float(price), 6), float(bound))
+        }
+
+    def has_new_quotes(self, quotes) -> bool:
+        """Whether admission may read (`stored_at_or_after`) or change a held
+        observation. False exactly when that read would be skipped, so the
+        Kalshi cadence (Root attempt32) counts only admission that can work."""
+        return bool(self._new_bounds(quotes))
+
     async def stored_at_or_after(self, sessions, quotes) -> set[int] | None:
         """#10090 — the ids among NEW ``{outcome_id: (price, bound)}`` whose
         stored row is already at or after its bound: `_ambiguous`, read before
@@ -1272,12 +1287,7 @@ class HeldRowQuotes:
         from app.utils.aggregation import _coerce_timestamp
         from app.utils.repair_lock_budget import SET_LOCK_TIMEOUT_SQL, lock_timeout_value
 
-        new = {
-            oid: float(bound)
-            for oid, (price, bound) in quotes.items()
-            if bound is not None
-            and self._quotes.get(oid) != (round(float(price), 6), float(bound))
-        }
+        new = self._new_bounds(quotes)
         if not new:
             return set()
         if time.monotonic() < self._sample_backoff_until:

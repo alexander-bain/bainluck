@@ -1384,11 +1384,17 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
                     else:
                         await stamp
             return True
-        # #10090: a snapshot with prices is actual work, held cohorts included,
-        # so a held game's quotes cannot buy more than one flush per period.
-        # A call beside a flush is that flush's work.
-        if beside is None:
-            prices.flush_work += 1
+        # Only attempted work spends the cadence budget. A cooled or fenced
+        # snapshot with no new held quote is an idle probe: a later input may
+        # wake its unused period. Writes, ambiguity reads and stamp attempts
+        # retain the existing ceiling; beside work belongs to its main flush.
+        work_counted = False
+
+        def count_work():
+            nonlocal work_counted
+            if beside is None and not work_counted:
+                prices.flush_work += 1
+                work_counted = True
         # Q491 repair 2 (CERT-659 BLOCK) — THE BUFFER IS DELIBERATELY *NOT*
         # CLEARED HERE. Draining first and putting the batch back on failure
         # only covers the failures you thought to catch, and two rounds of certs
@@ -1516,6 +1522,7 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
 
         async def stamp_start():
             nonlocal queued_refresh
+            count_work()
             stamping_fresh = set(queued_events)
             unfinished_events = event_ids_for_outcomes(
                 cohort_event_ids, unfinished_price_ids,
@@ -1556,6 +1563,7 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
             )
             if not admitted:
                 return
+            count_work()
             # Joined, fenced and adopted on cancellation with the running task.
             prices.stamping_fresh.update(admitted)
             prices.stamping_events.update(admitted)
@@ -1620,6 +1628,8 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
                     quotes.update({oid: (phase[oid][0], phase_bounds[oid]) for oid in oids})
             # Outside the buffer lock, as Polymarket's: one bounded read, NEW
             # quotes only, so a long hold costs no read per flush.
+            if held_quotes.has_new_quotes(quotes):
+                count_work()
             ambiguous = (
                 await held_quotes.stored_at_or_after(get_task_session, quotes)
                 if quotes else set()
@@ -1751,6 +1761,7 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
                 ):
                     beside_task = asyncio.create_task(serve_live_beside())
                 try:
+                    count_work()
                     async with (
                         prices.waited("db", rows=len(phase), live=phase_live),
                         get_task_session() as session,
