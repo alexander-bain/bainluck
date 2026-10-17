@@ -136,6 +136,17 @@ DEFAULT_SNAPSHOT_MAX_GAP_S = 60.0
 #: `deadlock_timeout` on purpose: a stamp that has stopped waiting cannot be the
 #: party a deadlock is detected on, and cannot be the convoy the sibling arm
 #: queues behind.
+#:
+#: #11138 — and the stamp's UPDATE carries the same number as its
+#: `statement_timeout` (`SET_LOCK_AND_STATEMENT_TIMEOUT_SQL`). `lock_timeout` bounds
+#: each lock ACQUISITION, and a row wait is several: the tuple-lock queue, then
+#: the holder's transaction, then any writer that took the row first. Each
+#: stayed under 500 ms while the statement did not — `pg_stat_statements` max
+#: 15.97 s for this UPDATE since 2026-09-27, and v5763 10:36:27Z: Kalshi's stamp
+#: of PM 15331282 wrote its clock at .419 and committed ~29.2, so the PM stamp
+#: queued behind it gave up at 28.625 and published at 29.258 (1.39 s after the
+#: quote). Local PG 14, holder then queued writer: 0.876 s under `lock_timeout`
+#: alone, cancelled at 0.65 s with the statement bound.
 DEFAULT_STAMP_LOCK_TIMEOUT_MS = 500
 
 # Old stamp retries must not occupy an entire periodic flush while fresh quote
@@ -2912,7 +2923,9 @@ class LiveBlendRefresher:
         from app.utils.live_blend import compute_source_home_probability
         from app.utils.live_push import build_frame
         from app.utils.repair_lock_budget import (
-            SET_LOCK_TIMEOUT_SQL, is_lock_timeout, lock_timeout_value,
+            SET_LOCK_AND_STATEMENT_TIMEOUT_SQL, SET_LOCK_TIMEOUT_SQL,
+            SET_STATEMENT_TIMEOUT_SQL, is_lock_timeout, is_query_canceled,
+            lock_timeout_value,
         )
 
         # live/034 S1 — frames are COLLECTED here and published after the
@@ -2992,14 +3005,27 @@ class LiveBlendRefresher:
             # ordinary waits; a timed-out stamp rolls back only its savepoint.
             lock_budget_set = False
             lock_budget_failed = False
+            # #11138: armed only at the stamp, so the cold orientation reads
+            # keep the lock budget alone. Once armed it stays for the rest of
+            # the transaction (one event in every production refresh).
+            statement_bound_set = False
 
-            async def ensure_lock_budget():
-                nonlocal lock_budget_set, lock_budget_failed
-                if not self.stamp_lock_timeout_ms or lock_budget_set:
+            async def ensure_lock_budget(*, whole_statement=False):
+                nonlocal lock_budget_set, lock_budget_failed, statement_bound_set
+                if not self.stamp_lock_timeout_ms or (
+                    lock_budget_set
+                    and (statement_bound_set or not whole_statement)
+                ):
                     return
+                if not whole_statement:
+                    budget_sql = SET_LOCK_TIMEOUT_SQL
+                elif lock_budget_set:
+                    budget_sql = SET_STATEMENT_TIMEOUT_SQL
+                else:
+                    budget_sql = SET_LOCK_AND_STATEMENT_TIMEOUT_SQL
                 try:
                     await session.execute(
-                        SET_LOCK_TIMEOUT_SQL,
+                        budget_sql,
                         {"ms": lock_timeout_value(self.stamp_lock_timeout_ms)},
                     )
                 except Exception:
@@ -3009,6 +3035,7 @@ class LiveBlendRefresher:
                     lock_budget_failed = True
                     raise
                 lock_budget_set = True
+                statement_bound_set = statement_bound_set or whole_statement
 
             for event_id in sorted(grouped):
                 event, group = grouped[event_id]
@@ -3075,8 +3102,9 @@ class LiveBlendRefresher:
                     admits = observation_admits_clause(self.source, basis)
                     # Known-orientation readings that were refused above need
                     # no SET command. Every actual stamp still installs the
-                    # same budget before its savepoint and row UPDATE.
-                    await ensure_lock_budget()
+                    # same budget before its savepoint and row UPDATE, and
+                    # (#11138) bounds that UPDATE as a whole statement.
+                    await ensure_lock_budget(whole_statement=True)
                     async with self._event_stamp_scope(
                         session, single_event=len(grouped) == 1,
                     ):
@@ -3216,7 +3244,12 @@ class LiveBlendRefresher:
                 except Exception as exc:
                     if lock_budget_failed:
                         raise
-                    if is_lock_timeout(exc):
+                    # #11138: a cancel after the stamp armed its statement
+                    # bound is that bound — the row wait ran past its budget.
+                    statement_bound = (
+                        statement_bound_set and is_query_canceled(exc)
+                    )
+                    if is_lock_timeout(exc) or statement_bound:
                         # Another transaction holds this row. Its price is
                         # already stored; stamp it on the next flush, due at
                         # once, instead of freezing every other event's stamp
@@ -3227,10 +3260,11 @@ class LiveBlendRefresher:
                         self._last_refresh_at.pop(event_id, None)
                         logger.info(
                             "live_blend_refresh[%s]: event %s row locked >%sms, "
-                            "re-queued for the next flush",
+                            "re-queued for the next flush%s",
                             self.source,
                             event_id,
                             self.stamp_lock_timeout_ms,
+                            " (statement bound)" if statement_bound else "",
                         )
                         continue
                     self.stats["errors"] += 1

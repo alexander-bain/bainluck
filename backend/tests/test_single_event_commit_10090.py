@@ -8,7 +8,9 @@ from types import SimpleNamespace
 import pytest
 from sqlalchemy.sql.dml import Update
 
-from app.utils.repair_lock_budget import SET_LOCK_TIMEOUT_SQL
+from app.utils.repair_lock_budget import (
+    SET_LOCK_AND_STATEMENT_TIMEOUT_SQL, SET_LOCK_TIMEOUT_SQL, SET_STATEMENT_TIMEOUT_SQL,
+)
 from tests.test_live_blend_refresh import (
     _LockTimeout, _RecordingSession, _event_and_market, _one_event_refresher,
 )
@@ -50,7 +52,11 @@ def rig(monkeypatch, *, count=3, block=False, failure=None, statuses=None, block
                     if failure == "lock":
                         raise _LockTimeout("canceling statement due to lock timeout")
             else:
-                commands.append("budget" if statement is SET_LOCK_TIMEOUT_SQL else "read")
+                budgets = (
+                    SET_LOCK_TIMEOUT_SQL, SET_LOCK_AND_STATEMENT_TIMEOUT_SQL,
+                    SET_STATEMENT_TIMEOUT_SQL,
+                )
+                commands.append("budget" if statement in budgets else "read")
             return await super().execute(statement, *args, **kwargs)
 
     @asynccontextmanager
