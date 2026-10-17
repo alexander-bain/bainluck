@@ -141,6 +141,18 @@ final class CalendarDetail10880Tests: XCTestCase {
             XCTAssertFalse(menu.contains(loud), "\(loud) in the calendar menu")
         }
     }
+
+    /// The control, not just its label, is 44 high. A frame on a Menu's label
+    /// paints inside the toolbar-sized control (48×36 measured on f62502f156);
+    /// Pin's `.plain` escape is what gives its control the label's size. The
+    /// measured proof is `ATapNearTheMoreEdgeOpensItsMenu10880Tests` (opt-in).
+    func testTheMoreControlTakesPinsPlainStyleSoItIs44High() throws {
+        let menu = try source("Calendar10880", "CalendarDetailMenu10880.swift")
+        XCTAssertTrue(menu.contains(".frame(width: 44, height: 44)"))
+        XCTAssertTrue(menu.contains(".menuStyle(.button)"), "a button-style menu takes a button style")
+        XCTAssertTrue(menu.contains(".buttonStyle(.plain)"), "the toolbar's style caps the control at 36")
+        XCTAssertFalse(menu.contains("height: 36"), "never lower 44 to fit")
+    }
 }
 
 private extension CalendarEntry10880.Decision {

@@ -33,9 +33,18 @@ struct CalendarDetailMenu10880: View {
                 // Pin's 44 pt tap target, beside it in the same group.
                 Image(systemName: "ellipsis.circle")
                     .font(.system(size: 14))
+                    // `.plain` drops the toolbar's tint; keep the look it had.
+                    .foregroundStyle(.tint)
                     .frame(width: 44, height: 44)
                     .contentShape(Rectangle())
             }
+            // The label's frame alone left the control 48×36: the toolbar's own
+            // style sizes a Menu's control, and the label only paints inside it
+            // (native, f62502f156: taps 20 pt above and below centre opened
+            // nothing). Pin escapes that style with `.plain`; a button-style
+            // Menu takes the same, so its control is the label's 44×44.
+            .menuStyle(.button)
+            .buttonStyle(.plain)
             .accessibilityLabel("More")
         }
     }
