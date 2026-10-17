@@ -21,6 +21,7 @@ from app.services import get_db, OddsAPIService
 from app.utils import movement_pool, probability_to_american
 from app.utils.durable_venue_receipt import log_durable_venue_serve
 from app.utils.settlement_display import (
+    VERDICT_UNKNOWN as SETTLEMENT_VERDICT_UNKNOWN,
     applies_to_market as settlement_display_applies,
     settlement_display,
 )
@@ -268,6 +269,10 @@ def _apply_settled_winner_freeze(
         named = [o for o in (market.outcomes or []) if _norm_outcome_name(getattr(o, "name", "")) == norm]
         if len(named) == 1:
             champs = [named[0]]
+    # #698 — a champion whose own detail row says "Result unknown" is not
+    # ended at 1.0; see `_detail_withholds_result`. Filtered AFTER selection so
+    # the co-winner contradiction above still counts every stored grade.
+    champs = [c for c in champs if not _detail_withholds_result(market, c)]
     if not champs:
         return  # nothing unambiguously graded to freeze
     # When the caller filtered to a single outcome, do not inject any OTHER
@@ -443,6 +448,8 @@ def _apply_settled_loser_freeze(
     for outcome in market.outcomes or []:
         if not _is_evidenced_loss(outcome):
             continue
+        if _detail_withholds_result(market, outcome):
+            continue  # #698 — see `_detail_withholds_result`
         oid = getattr(outcome, "id", None)
         if outcome_id_filter is not None and oid != outcome_id_filter:
             continue
@@ -487,6 +494,36 @@ def _is_evidenced_loss(outcome) -> bool:
     if getattr(outcome, "is_winner", None) is not False:
         return False
     return getattr(outcome, "resolution_source", None) in CALIBRATION_TRUTH_ELIGIBLE_SOURCES
+
+
+def _detail_withholds_result(market, outcome) -> bool:
+    """Does this row's DETAIL payload say its result is unknown? (#698 chart half)
+
+    `/futures/62134744` (*Marchi vs. Lokoli: Match O/U 21.5*, Polymarket,
+    resolved) stores both legs at 0.500000, `is_winner=false`,
+    `clob_authoritative`. #11150 taught the detail payload to serve
+    `settlement_display = unknown / nonterminal_stored_price` for that, and the
+    page now reads "Result unknown · Last recorded 50%" on both rows — but this
+    route's loser arm still took the sourced `false` as an evidenced loss and
+    appended a 0.0 `settlement` point to BOTH lines, so the chart under that
+    caption drew Over and Under falling to 0% together.
+
+    The chart may not end a line at a result the same page declines to state.
+    So this asks the detail contract itself — same function, same stored inputs
+    (`current_probability`, never a charted point) — rather than a second rule
+    that could drift from it. Scope is the contract's own scope
+    (`applies_to_market`: resolved Polymarket); every other market answers
+    False and both freeze arms behave exactly as before. A withheld line ends
+    on its own last observed point, like any ungraded line.
+    """
+    if not settlement_display_applies(market):
+        return False
+    verdict = settlement_display(
+        is_winner=getattr(outcome, "is_winner", None),
+        resolution_source=getattr(outcome, "resolution_source", None),
+        stored_probability=getattr(outcome, "current_probability", None),
+    )["verdict"]
+    return verdict == SETTLEMENT_VERDICT_UNKNOWN
 
 
 # A settled line must RETURN to its graded value at least this many times before
