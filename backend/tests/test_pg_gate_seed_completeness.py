@@ -292,6 +292,9 @@ COVERED = (
     # by raw INSERT into a narrow table in a private schema; every NOT NULL
     # column is supplied so the ghost row is real-shaped.
     "test_ghost_label_refuses_a_row_that_changed_9187_pg.py",
+    # #11152 (CERT-4179 11152-PERSIST-REAL-PG-CAS-UNDO-GUARDS). Same narrow
+    # private-schema `events` seed as #9187, every NOT NULL column supplied.
+    "test_unplayed_series_game_sweep_11152_pg.py",
     # #7345. Seeds narrow `events` + `futures_markets` tables by raw INSERT in a
     # private schema; kick-offs are dated from the server's `now()` because the
     # verdict carries `commence_time < :now`.

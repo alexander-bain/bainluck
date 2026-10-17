@@ -39,6 +39,7 @@
     "Tennis twin sweep write/undo contract (real Postgres)",
     "#8308 a merge moves the duplicate-of tag, and the repair round-trips (real Postgres)",
     "#9187 a ghost label never lands on a row that changed between read and write (real Postgres)",
+    "#11152 an unplayed series game is voided only while unchanged, undone only while still voided, and never by a table the sweep made (real Postgres)",
     "#7345 a listing both of whose teams played someone else at that kick-off stops printing (real Postgres)",
     "#8440 a Polymarket game reaches the sportsbook row its names extend (real Postgres)",
     "#9120 a moved MLB game keeps the Kalshi ticker Kalshi kept (real Postgres)",
