@@ -72,6 +72,7 @@ async def rig():
             "futures_outcomes",
             "win_prob_snapshots",
             "odds_snapshots",
+            "owed_chart_points",
         )
     ]
     try:
