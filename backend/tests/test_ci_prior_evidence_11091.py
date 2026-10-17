@@ -649,6 +649,11 @@ SECURITY_CONDITION = (
     "github.event_name == 'push' && (github.ref == 'refs/heads/master' || "
     "startsWith(github.ref, 'refs/heads/integrator/compose-'))"
 )
+READINESS_STEP = "Wait for parent master CodeQL baseline"
+READINESS_CONDITION = (
+    "github.event_name == 'push' && "
+    "startsWith(github.ref, 'refs/heads/integrator/compose-')"
+)
 
 
 def test_push_security_preserves_original_pr_and_scheduled_analysis_behavior():
@@ -672,19 +677,41 @@ def test_push_security_preserves_original_pr_and_scheduled_analysis_behavior():
     )
     for key in ("name", "runs-on", "permissions", "strategy"):
         assert old_job[key] == new_job[key]
-    kept = [s for s in new_job["steps"] if s["name"] not in SECURITY_STEPS]
-    assert len(kept) == len(old_job["steps"])
-    for old, new in zip(old_job["steps"], kept):
-        new = copy.deepcopy(new)
-        if old["name"] == "Checkout":
-            checkout_options = new.pop("with")
-            assert checkout_options == {
-                "fetch-depth": "${{ github.event_name == 'push' && '0' || '1' }}"
-            }
-        if old["name"] == "Perform CodeQL Analysis":
-            analysis_step_id = new.pop("id")
-            assert analysis_step_id == "codeql_analysis"
-        assert new == old
+    def assert_original_steps(steps):
+        kept = [
+            s
+            for s in steps
+            if s["name"] not in SECURITY_STEPS
+            and not (
+                s["name"] == READINESS_STEP
+                and s.get("if") == READINESS_CONDITION
+            )
+        ]
+        assert len(kept) == len(old_job["steps"])
+        for old, new in zip(old_job["steps"], kept):
+            new = copy.deepcopy(new)
+            if old["name"] == "Checkout":
+                checkout_options = new.pop("with")
+                assert checkout_options == {
+                    "fetch-depth": "${{ github.event_name == 'push' && '0' || '1' }}"
+                }
+            if old["name"] == "Perform CodeQL Analysis":
+                analysis_step_id = new.pop("id")
+                assert analysis_step_id == "codeql_analysis"
+            assert new == old
+
+    assert_original_steps(new_job["steps"])
+    # The sole exact compose-only wait is excluded, never an arbitrary fifth
+    # scanner step or a wait that could execute on PR/master/scheduled jobs.
+    extra = copy.deepcopy(new_job["steps"])
+    extra.append({"name": "Unreviewed additional scanner step", "run": "true"})
+    with pytest.raises(AssertionError):
+        assert_original_steps(extra)
+    for changed in ({"name": "Renamed wait"}, {"if": SECURITY_CONDITION}):
+        altered = copy.deepcopy(new_job["steps"])
+        next(s for s in altered if s["name"] == READINESS_STEP).update(changed)
+        with pytest.raises(AssertionError):
+            assert_original_steps(altered)
     assert all(
         s["if"] == SECURITY_CONDITION
         for s in new_job["steps"]
@@ -698,7 +725,10 @@ def test_security_qualification_and_receipt_publish_follow_paid_analysis():
     ]["steps"]
     names = [s["name"] for s in steps]
     assert names.index(SECURITY_STEPS[0]) == names.index("Checkout") + 1
-    assert names.index(SECURITY_STEPS[1]) == names.index("Perform CodeQL Analysis") + 1
+    assert names.count(READINESS_STEP) == 1
+    assert names.index(READINESS_STEP) == names.index("Perform CodeQL Analysis") + 1
+    assert steps[names.index(READINESS_STEP)]["if"] == READINESS_CONDITION
+    assert names.index(SECURITY_STEPS[1]) == names.index(READINESS_STEP) + 1
     assert names.index(SECURITY_STEPS[2]) == names.index(SECURITY_STEPS[1]) + 1
     qualifier = steps[names.index(SECURITY_STEPS[1])]
     assert (
