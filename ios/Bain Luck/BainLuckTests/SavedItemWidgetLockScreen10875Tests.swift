@@ -62,6 +62,7 @@ final class SavedItemWidgetLockScreen10875Tests: XCTestCase {
         let stamp = iso(t0.addingTimeInterval(-60))
         return [
             ("noResult market (Result unknown)", try marchiUnder()),
+            ("venue-settled, served winner", try venueSettled("Toronto Maple Leafs wins")),
             ("venue-settled, team name", try venueSettled("Toronto Maple Leafs")),
             ("venue-settled, long words", try venueSettled("Maple Leafs win in overtime")),
             ("venue-settled, fallback", try venueSettled("")),
@@ -105,9 +106,13 @@ final class SavedItemWidgetLockScreen10875Tests: XCTestCase {
     }
 
     func testTheRingNamesAVenueWinnerByItsShortName() throws {
-        let r = try venueSettled("Toronto Maple Leafs")
+        // The served shape: venue_settlement's WINNER_SENTENCE, "{participant} wins".
+        let r = try venueSettled("Toronto Maple Leafs wins")
         XCTAssertEqual(r.headline?.shortLabel, "Settled")
-        XCTAssertEqual(SavedLockScreenFit10875.ringValue(r), "TOR", "the venue's winner was not shortened to its team")
+        XCTAssertEqual(SavedLockScreenFit10875.ringValue(r), "TOR",
+                       "the served winner sentence was not shortened to its team (mutant: drop the \" wins\" arm)")
+        XCTAssertEqual(SavedLockScreenFit10875.ringValue(try venueSettled("Toronto Maple Leafs")), "TOR",
+                       "the bare team name was not shortened to its team")
         XCTAssertEqual(SavedLockScreenFit10875.ringValue(try venueSettled("")), "—",
                        "the venue fallback sentence was squeezed into the ring")
         XCTAssertEqual(SavedLockScreenFit10875.ringValue(try venueSettled("Maple Leafs win in overtime")), "—")
@@ -136,7 +141,7 @@ final class SavedItemWidgetLockScreen10875Tests: XCTestCase {
                        "\"Result unknown\" shared a line with the outcome name")
         XCTAssertEqual(SavedLockScreenFit10875.rectangleFooter(r, caption: "Last recorded 50% · Sep 24, 2:57 AM"),
                        "Under · Last recorded 50% · Sep 24, 2:57 AM", "the outcome the verdict belongs to was dropped")
-        for words in ["Toronto Maple Leafs", "Maple Leafs win in overtime", "", "1-2"] {
+        for words in ["Toronto Maple Leafs wins", "Toronto Maple Leafs", "Maple Leafs win in overtime", "", "1-2"] {
             let venue = try venueSettled(words)
             XCTAssertNotNil(SavedLockScreenFit10875.rectangleOwnLineVerdict(venue),
                             "the venue's \"\(words)\" shared a line with its label")

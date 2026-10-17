@@ -513,7 +513,10 @@ nonisolated enum SavedLockScreenFit10875 {
         // #698: settled, and the result is unknown.
         if reading.phase == .noResult { return "Unknown" }
         // The venue's words naming a side: that side's short name ("SEA").
-        if let side = reading.rows.first(where: { $0.label == verdict }), side.shortLabel.count <= ringLimit {
+        // The server writes "{participant} wins" (venue_settlement
+        // WINNER_SENTENCE); the bare name is kept too.
+        if let side = reading.rows.first(where: { $0.label == verdict || $0.label + " wins" == verdict }),
+           side.shortLabel.count <= ringLimit {
             return side.shortLabel
         }
         return "—"
