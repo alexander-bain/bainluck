@@ -43,10 +43,15 @@ def _retained_copies():
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("fail_refresh", [False, True])
+@pytest.mark.parametrize("open_only", [False, True])
 async def test_installed_handover_leaves_no_source_copy_alive(
-    monkeypatch, fail_refresh
+    monkeypatch, fail_refresh, open_only
 ):
     rig = CatalogRig()
+    if open_only:
+        # No game assets: the startup admission holds a pre-read, which must
+        # be released too (CatalogRig's default slate never sets one).
+        rig.slate = ([], [], [])
     rig.fail_refresh = fail_refresh
     samples, stop = [], asyncio.Event()
     original_update = service.PolymarketWebSocket.update_asset_ids
