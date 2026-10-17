@@ -4418,6 +4418,22 @@ jobs:
             exit 1
           fi
 
+      - name: "#2644 the Oscars Best Original Song row settles through its own exact, undoable channel of the #2722 repair (real Postgres)"
+        # Row 109548 / KXOSCARSONG-26: the nine-row rail's plan, whole-row CAS and
+        # after-image undo, pointed at its own frozen member, retained evidence,
+        # digest and backup table. Proves the reviewed 006 transition from the
+        # retained bytes, drift refused, legs/prices/history unmoved, each
+        # channel's undo blind to the other's rows, and the budgets on the wire.
+        if: matrix.group == 'shared-tail' && needs.change-scope.outputs.reuse != 'true'
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_kalshi_oscar_song_repair_2644_pg.py \
+            -v -s -rs 2>&1 | tee /tmp/kalshi_oscar_song_2644.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/kalshi_oscar_song_2644.txt; then
+            echo "::error::#2644 Oscars repair gate SKIPPED — the gate did not run"
+            exit 1
+          fi
+
       - name: "#4444 the census caps do not move the numbers (real Postgres)"
         # The two `precompute_backfill_progress` tiles ran an uncapped
         # per-outcome `COUNT(*)` over `futures_odds_snapshots` and became the two
