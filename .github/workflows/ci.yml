@@ -4987,6 +4987,27 @@ jobs:
             exit 1
           }
 
+      - name: "#11181 owed chart points: atomic custody, replay and restart (real Postgres)"
+        if: matrix.group == 'shared-tail' && needs.change-scope.outputs.reuse != 'true'
+        run: |
+          if python -m pytest tests/integration/test_owed_chart_custody_11181_pg.py \
+            -v -rs > /tmp/owed-chart11181.txt 2>&1; then
+            gate_status=0
+          else
+            gate_status=$?
+          fi
+          cat /tmp/owed-chart11181.txt
+          echo "EXIT CODE: $gate_status"
+          test "$gate_status" -eq 0
+          if grep -qiE "[0-9]+ skipped" /tmp/owed-chart11181.txt; then
+            echo "::error::#11181 owed chart custody gate SKIPPED"
+            exit 1
+          fi
+          grep -qE "[^0-9]7 passed[,[:space:]]" /tmp/owed-chart11181.txt || {
+            echo "::error::#11181 owed chart custody gate did not run all seven cases"
+            exit 1
+          }
+
       - name: "#10090 PM release wake with the stage trace off and on (real Postgres)"
         if: matrix.group == 'shared-tail' && needs.change-scope.outputs.reuse != 'true'
         run: |

@@ -178,6 +178,7 @@
     "Live blend concurrent stamp, two socket arms (real Postgres)",
     "#8129 earlier completed blend groups release rows and publish (real Postgres)",
     "#10090 next same-game quote owns no history wait (real Postgres)",
+    "#11181 owed chart points: atomic custody, replay and restart (real Postgres)",
     "#10090 PM release wake with the stage trace off and on (real Postgres)",
     "#11138 a lock-held PM price row publishes the received quote, one cohort per event (real Postgres)",
     "#10090 a lock-held KALSHI price row stamps the received quote; a restart cannot undo it (real Postgres)",

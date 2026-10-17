@@ -1,6 +1,8 @@
 """A genuine second same-game quote pays its stamp while old history waits."""
 
 import asyncio
+import contextlib
+import contextvars
 from types import SimpleNamespace
 import pytest
 from tests.test_live_blend_refresh import (
@@ -87,6 +89,81 @@ async def test_second_changed_quote_commits_and_publishes_before_old_history(
     assert len(histories) == 1
 
 
+_PENDING_CUSTODY = contextvars.ContextVar("pending_custody", default=None)
+
+
+class _MemoryCustody:
+    """`OwedChartCustody`'s interface over a dict, for the unit rig (#11181).
+
+    Each write is applied only when the session context that made it exits
+    without an exception (`_transactional`), so a stamp or chart transaction
+    that fails leaves custody as it was, as Postgres would. The real table's
+    atomic boundary, replay and restart are proven on Postgres in
+    `tests/integration/test_owed_chart_custody_11181_pg.py`. One store per
+    test, shared by every rig the test builds, as one database would be."""
+
+    def __init__(self):
+        self.rows, self._next = {}, 1
+
+    def _later(self, op):
+        pending = _PENDING_CUSTODY.get()
+        assert pending is not None, "custody write outside a session"
+        pending.append(op)
+
+    async def record(self, session, source, event_id, value, reading):
+        from app.tasks.live_blend_refresh import _chart_reading_payload
+
+        custody_id, self._next = self._next, self._next + 1
+        row = (source, event_id, value, _chart_reading_payload(reading))
+        self._later(lambda: self.rows.__setitem__(custody_id, row))
+        return custody_id
+
+    async def settle(self, session, custody_id):
+        if custody_id not in self.rows:
+            return False
+        self._later(lambda: self.rows.pop(custody_id, None))
+        return True
+
+    async def load(self, session, source, held_ids, limit):
+        return [
+            (cid, eid, value, payload)
+            for cid, (src, eid, value, payload) in sorted(self.rows.items())
+            if src == source and cid not in held_ids
+        ][:limit]
+
+    def _transactional(self, factory):
+        @contextlib.asynccontextmanager
+        async def wrapped():
+            pending = []
+            token = _PENDING_CUSTODY.set(pending)
+            try:
+                async with factory() as session:
+                    yield session
+            finally:
+                _PENDING_CUSTODY.reset(token)
+            for op in pending:
+                op()
+
+        wrapped.__wrapped__ = factory
+        return wrapped
+
+
+def _custody(monkeypatch):
+    store = getattr(monkeypatch, "_owed_chart_custody_11181", None)
+    if store is None:
+        store = _MemoryCustody()
+        monkeypatch._owed_chart_custody_11181 = store
+    return store
+
+
+async def _custody_read(r):
+    """A quiet flush before the first quote: the run's first custody read
+    completes, so memory takes points until its bound."""
+    await r.refresh_pending(flush_started=999)
+    await r._history_task
+    assert not r._custody_backlog
+
+
 def _ready_rig(monkeypatch):
     r, log = _HeadlineRig()._rig(monkeypatch, 1)
     session = next(
@@ -94,6 +171,9 @@ def _ready_rig(monkeypatch):
         for cell in r._session_factory.__wrapped__.__closure__
         if hasattr(cell.cell_contents, "_returned")
     )
+    custody = _custody(monkeypatch)
+    r._chart_custody, r._custody_backlog = custody, True
+    r._session_factory = custody._transactional(r._session_factory)
     frames, price = [], [0.40]
     session._returned = {
         "polymarket": {"value": 0.40, "updated_at": "2026-10-11T00:52:30+00:00"}
@@ -226,7 +306,9 @@ async def test_history_commit_failure_retries_quietly_with_original_scalar_point
         calls.append(kw)
         return object(), True
 
-    r._session_factory = factory
+    # Counts this test's own opens: custody starts with no earlier rows.
+    r._session_factory = r._chart_custody._transactional(factory)
+    r._custody_backlog = False
     monkeypatch.setattr(
         "app.tasks.snapshots._create_or_update_win_prob_snapshot", chart
     )
@@ -424,13 +506,13 @@ async def test_long_held_writer_keeps_every_due_observation_at_its_own_time(
 
 
 @pytest.mark.asyncio
-async def test_past_the_spill_bound_stamp_never_waits_and_names_the_unretained_point(
-    monkeypatch, caplog,
+async def test_past_the_memory_bound_stamp_never_waits_and_custody_keeps_the_point(
+    monkeypatch,
 ):
-    """The finite bound: past ordinary backlog + spill a due stamp still
-    publishes at once. The observation it would owe is not retained, never
-    silently: counted and logged by event, value and observation time. Its
-    event stays due, so the next stamp with room owes a point."""
+    """#11181: past ordinary backlog + memory bound a due stamp still publishes
+    at once, and its point is not dropped: it lives in its custody row alone,
+    memory stays at its bound, and the writer pays it at its own observation
+    time once memory has room, without another quote."""
     r, session, frames, price = _ready_rig(monkeypatch)
     r._history_limit = 1
     r._history_spill_limit = 0
@@ -445,38 +527,29 @@ async def test_past_the_spill_bound_stamp_never_waits_and_names_the_unretained_p
     monkeypatch.setattr(
         "app.tasks.snapshots._create_or_update_win_prob_snapshot", chart
     )
+    await _custody_read(r)
     await r.refresh([1], flush_started=1000)
     await asyncio.wait_for(entered.wait(), 1)
     price[0] = 0.60
     session._returned = {
         "polymarket": {"value": 0.60, "updated_at": "2026-10-11T00:52:55+00:00"}
     }
-    with caplog.at_level("WARNING", logger="app.tasks.live_blend_refresh"):
-        await asyncio.wait_for(r.refresh([1], flush_started=1025), 0.25)
+    await asyncio.wait_for(r.refresh([1], flush_started=1025), 0.25)
     assert [f["source_value"] for f in frames] == [0.40, 0.60]
-    assert r._history_count == len(r._history) == 1, "the bound holds"
-    assert r.stats["history_unretained"] == 1
-    assert r.stats["history_deferred"] == 0
-    assert any(
-        "event 1 observation 0.6 at 2026-10-11T00:52:55+00:00 not retained"
-        in rec.getMessage()
-        for rec in caplog.records
-    ), [rec.getMessage() for rec in caplog.records]
+    assert r._history_count == len(r._history) == 1, "the memory bound holds"
+    assert r.stats["history_custody_only"] == 1
+    assert [row[2] for row in r._chart_custody.rows.values()] == [0.40, 0.60]
     release.set()
     await r.drain_history()
-    assert [c["home_win_probability"] for c in calls] == [0.40]
-    price[0] = 0.70
-    session._returned = {
-        "polymarket": {"value": 0.70, "updated_at": "2026-10-11T00:53:20+00:00"}
-    }
-    await r.refresh([1], flush_started=1050)
+    await r.refresh_pending(flush_started=1030)  # venue quiet
     await r.drain_history()
     assert [(c["home_win_probability"], c["observed_at"]) for c in calls] == [
         (0.40, "2026-10-11T00:52:30+00:00"),
-        (0.70, "2026-10-11T00:53:20+00:00"),
+        (0.60, "2026-10-11T00:52:55+00:00"),
     ]
-    assert r.stats["history_unretained"] == 1
     assert not r._history and not r._history_count
+    assert not r._chart_custody.rows, "every custody row settled with its point"
+    assert r._last_snapshot_at == {1: 1025}
 
 
 @pytest.mark.asyncio
@@ -620,12 +693,12 @@ async def test_failed_full_history_still_publishes_stamp_then_pays_both_points(
 
 
 @pytest.mark.asyncio
-async def test_failed_writer_past_the_spill_bound_still_publishes_and_names_the_loss(
+async def test_failed_writer_past_the_memory_bound_still_publishes_and_keeps_both(
     monkeypatch,
 ):
-    """A failed chart writer at the finite bound no longer refuses the stamp
-    (master did, before COMMIT). The queued point is still paid at its time;
-    the one past the bound is counted, and no blend debt is created."""
+    """A failed chart writer at the memory bound does not refuse the stamp
+    (master did, before COMMIT). The queued point retries at its time and the
+    one past the bound is kept in custody; no blend debt is created."""
     from app.tasks import live_blend_refresh as blend
 
     r, session, frames, price = _ready_rig(monkeypatch)
@@ -643,6 +716,7 @@ async def test_failed_writer_past_the_spill_bound_still_publishes_and_names_the_
     monkeypatch.setattr(
         "app.tasks.snapshots._create_or_update_win_prob_snapshot", chart
     )
+    await _custody_read(r)
     await r.refresh([1], flush_started=1000)
     await r._history_task
     price[0] = 0.60
@@ -653,14 +727,20 @@ async def test_failed_writer_past_the_spill_bound_still_publishes_and_names_the_
     await asyncio.wait_for(r.refresh([1], flush_started=1025), 0.25)
     assert len(session.updates) == len(frames) == 2
     assert r._history_count == len(r._history) == 1
-    assert r.stats["history_unretained"] == 1
+    assert r.stats["history_custody_only"] == 1
     assert not r.pending_event_ids()
     failing[0] = False
     clock[0] = 1030
+    await r.refresh_pending(flush_started=1030)
     await r.drain_history()
-    assert [c["observed_at"] for c in calls] == ["2026-10-11T00:52:30+00:00"] * 2
+    assert [c["observed_at"] for c in calls] == [
+        "2026-10-11T00:52:30+00:00",
+        "2026-10-11T00:52:30+00:00",
+        "2026-10-11T00:52:55+00:00",
+    ]
     assert [f["source_value"] for f in frames] == [0.40, 0.60]
     assert not r.pending_event_ids() and not r._history_count
+    assert not r._chart_custody.rows
 
 
 @pytest.mark.asyncio

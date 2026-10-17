@@ -541,6 +541,35 @@ class WinProbSnapshot(Base):
     event: Mapped["Event"] = relationship()
 
 
+class OwedChartPoint(Base):
+    """#11181: one committed live stamp's chart observation, owed until written.
+
+    Inserted in the stamp's own transaction, so a stamp commits only with its
+    owed point; deleted in the same savepoint that writes the point into
+    ``win_prob_snapshots``, so a replay after a crash pays nothing twice. No
+    foreign key and no UPDATE: an insert takes no lock on the event or on any
+    chart row, so it cannot queue behind the chart writer it stands in for.
+    Rows exist only while that writer is behind (``app/tasks/live_blend_refresh.py``).
+    """
+
+    __tablename__ = "owed_chart_points"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    source: Mapped[str] = mapped_column(String(30), nullable=False)
+    event_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    value: Mapped[float] = mapped_column(Float, nullable=False)
+    #: The frozen chart scalars and the stamp's own observation time, verbatim.
+    reading: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    __table_args__ = (
+        # The drain's only read: this source's rows in commit-id order.
+        Index("ix_owed_chart_points_source_id", "source", "id"),
+    )
+
+
 class ProbabilityPublication(Base):
     """#4971: one committed nonvenue publication of an event's source bag.
 

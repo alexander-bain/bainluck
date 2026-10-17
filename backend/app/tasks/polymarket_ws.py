@@ -1908,7 +1908,7 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
     from app.services.polymarket_ws import PolymarketWebSocket
     from app.tasks.live_blend_refresh import (
         DEFAULT_MIN_REFRESH_INTERVAL_S, HeldRowQuotes, LiveBlendRefresher, TailReceipts,
-        adopt_handed_off,
+        OwedChartCustody, adopt_handed_off,
         LOOP_REAP_TIMEOUT_S, event_ids_for_outcomes, hand_off_pending,
         reap_stopped_loops, run_flush_cadence,
     )
@@ -2408,6 +2408,7 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
     blend_refresher = LiveBlendRefresher(
         "polymarket", min_refresh_interval_s=blend_floor,
         session_factory=get_task_session,  # #2471
+        chart_custody=OwedChartCustody(),  # #11181: no owed chart point is lost
     )
     # #11138: quotes whose price-row write a lock holds; the stamp reads them
     # in place of the older stored row. Keyed like `price_buffer`, released
