@@ -283,7 +283,12 @@ async def test_cancelled_publication_keeps_committed_history(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_distinct_due_points_survive_bounded_backpressure_in_order(monkeypatch):
+async def test_full_backlog_publishes_next_stamp_at_once_and_keeps_queued_point(
+    monkeypatch,
+):
+    """#11138: at capacity the next due stamp commits and publishes without
+    waiting on the chart writer, owes no point, and stays due; the queued point
+    still lands at its own time and nothing queued drops."""
     r, session, frames, price = _ready_rig(monkeypatch)
     r._history_limit = 1
     entered, release, calls = asyncio.Event(), asyncio.Event(), []
@@ -303,20 +308,28 @@ async def test_distinct_due_points_survive_bounded_backpressure_in_order(monkeyp
     session._returned = {
         "polymarket": {"value": 0.60, "updated_at": "2026-10-11T00:52:55+00:00"}
     }
-    second = asyncio.create_task(r.refresh([1], flush_started=1025))
-    for _ in range(10):
-        await asyncio.sleep(0)
-    assert not second.done() and r._history_count == 1
-    assert len(session.updates) == 1, "capacity reserved before new stamp SQL"
+    await asyncio.wait_for(r.refresh([1], flush_started=1025), 0.25)
+    assert not release.is_set() and r._history_count == 1
+    assert len(session.updates) == 2, "the stamp did not wait for chart room"
+    assert [f["source_value"] for f in frames] == [0.40, 0.60]
+    assert r.stats["history_deferred"] == 1 and len(r._history) == 1
     release.set()
-    await asyncio.wait_for(second, 1)
     await r.drain_history()
-    assert [c["home_win_probability"] for c in calls] == [0.40, 0.60]
+    assert [c["home_win_probability"] for c in calls] == [0.40]
+    assert r._last_snapshot_at == {1: 1000}
+    # Still due: the next stamp with room owes its point.
+    price[0] = 0.70
+    session._returned = {
+        "polymarket": {"value": 0.70, "updated_at": "2026-10-11T00:53:20+00:00"}
+    }
+    await r.refresh([1], flush_started=1050)
+    await r.drain_history()
+    assert [c["home_win_probability"] for c in calls] == [0.40, 0.70]
     assert [c["observed_at"] for c in calls] == [
         "2026-10-11T00:52:30+00:00",
-        "2026-10-11T00:52:55+00:00",
+        "2026-10-11T00:53:20+00:00",
     ]
-    assert [f["source_value"] for f in frames] == [0.40, 0.60]
+    assert [f["source_value"] for f in frames] == [0.40, 0.60, 0.70]
     assert not r._history and not r._history_count
 
 
@@ -410,9 +423,12 @@ async def test_history_and_next_refresh_share_existing_three_session_ceiling(
 
 
 @pytest.mark.asyncio
-async def test_failed_full_history_defers_stamp_then_quietly_pays_both_points(
+async def test_failed_full_history_still_publishes_stamp_then_pays_queued_point(
     monkeypatch,
 ):
+    """#11138: a failed chart writer at capacity no longer refuses the next
+    stamp. The failed point keeps its place and original time; it is paid
+    after the hold without a second stamp or frame."""
     from app.tasks import live_blend_refresh as blend
 
     r, session, frames, price = _ready_rig(monkeypatch)
@@ -432,22 +448,23 @@ async def test_failed_full_history_defers_stamp_then_quietly_pays_both_points(
     await r.refresh([1], flush_started=1000)
     await r._history_task
     # Still inside the history retry hold. A later due observation cannot buy
-    # an unbounded queue, drop the predecessor, or stamp without debt capacity.
+    # an unbounded queue or drop the predecessor; it stamps owing no point.
     price[0] = 0.60
     session._returned = {
         "polymarket": {"value": 0.60, "updated_at": "2026-10-11T00:52:55+00:00"}
     }
     clock[0] = 1002
     await r.refresh([1], flush_started=1025)
-    assert len(session.updates) == len(frames) == 1
+    assert len(session.updates) == len(frames) == 2
     assert r._history_count == len(r._history) == 1
-    assert r.pending_event_ids() == frozenset({1})
+    assert r.stats["history_deferred"] == 1
+    assert not r.pending_event_ids()
     assert not r._last_snapshot_at
     failing[0] = False
     clock[0] = 1030
-    await r.refresh_pending(flush_started=1030)
     await r.drain_history()
-    assert [c["home_win_probability"] for c in calls] == [0.40, 0.40, 0.60]
+    assert [c["home_win_probability"] for c in calls] == [0.40, 0.40]
+    assert [c["observed_at"] for c in calls] == ["2026-10-11T00:52:30+00:00"] * 2
     assert [f["source_value"] for f in frames] == [0.40, 0.60]
     assert not r.pending_event_ids() and not r._history_count
 
