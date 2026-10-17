@@ -205,11 +205,16 @@ final class FuturesDetailSumsTo100_8097Tests: XCTestCase {
         // non-leader branch one line below spells the same substring, so blanking
         // the leader's `ProbabilityNumber` left the assertion satisfied by its
         // sibling. An anchor that two call sites can satisfy only ever proves that
-        // ONE of them is alive. Two occurrences: the leader's `ProbabilityNumber`
-        // and the non-leader's `formatProbability`.
+        // ONE of them is alive. Three occurrences: the leader's `ProbabilityNumber`,
+        // the non-leader's `formatProbability`, and #698's settled-unknown
+        // "Last recorded N%" line, which prints the same decision.
+        XCTAssertTrue(
+            source.contains("Last recorded \\(formatProbability(lastRecorded, renderedPercent: percent))"),
+            "#698: a settled row's last recorded price must print the market's decision"
+        )
         XCTAssertEqual(
-            source.components(separatedBy: "renderedPercent: percent").count - 1, 2,
-            "both row renderers must carry the decision — the leader's ProbabilityNumber and every other row's formatProbability"
+            source.components(separatedBy: "renderedPercent: percent").count - 1, 3,
+            "every row renderer must carry the decision — the leader's ProbabilityNumber, every other row's formatProbability, and #698's Last recorded line"
         )
 
         // The list must hand each row ITS OWN decision. `list-passes-nil-to-every-row`
