@@ -30,8 +30,11 @@ struct CalendarDetailMenu10880: View {
                     Label("Add to Calendar", systemImage: "calendar.badge.plus")
                 }
             } label: {
+                // Pin's 44 pt tap target, beside it in the same group.
                 Image(systemName: "ellipsis.circle")
                     .font(.system(size: 14))
+                    .frame(width: 44, height: 44)
+                    .contentShape(Rectangle())
             }
             .accessibilityLabel("More")
         }
