@@ -72,6 +72,8 @@ async def rig():
             "futures_outcomes",
             "win_prob_snapshots",
             "odds_snapshots",
+            # #11181: the consumers' refreshers hold chart custody here.
+            "owed_chart_points",
         )
     ]
     try:
