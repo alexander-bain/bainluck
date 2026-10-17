@@ -16,6 +16,8 @@ the REAL service (only the socket and the session are faked):
 """
 
 import asyncio
+from datetime import datetime, timezone
+from types import SimpleNamespace
 import time
 
 import pytest
@@ -87,6 +89,14 @@ def _is_poly_open_contract_read(stmt) -> bool:
     }
 
 
+def _is_clock_sample(stmt) -> bool:
+    """#11138: `HeldRowQuotes.sample_database_clock` is not a slate or reread
+    query; answered on its own so it never shifts the positional routing."""
+    from sqlalchemy import func, select
+
+    return str(stmt) == str(select(func.clock_timestamp()))
+
+
 def _install_session(monkeypatch, slate_batches, reread, *, replay_slate=False):
     """The slate's queries are answered in order; every later query is the
     admission reread, answered by `reread()` (which may raise).
@@ -112,6 +122,8 @@ def _install_session(monkeypatch, slate_batches, reread, *, replay_slate=False):
                 return _Result([])
             if _is_poly_open_contract_read(stmt):
                 return _Result([])
+            if _is_clock_sample(stmt):  # #11138: the held-quote DB-clock sample
+                return SimpleNamespace(scalar_one=lambda: datetime.now(timezone.utc))
             if state["slate"]:
                 answered[str(stmt)] = state["slate"][0]
                 return _Result(state["slate"].pop(0))

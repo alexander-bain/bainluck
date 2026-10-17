@@ -35,6 +35,7 @@ from __future__ import annotations
 
 import asyncio
 import functools
+import itertools
 import time
 from types import SimpleNamespace
 
@@ -88,12 +89,15 @@ async def stored(rig):
     return float(price), sources["polymarket"]["value"]
 
 
-def wire_held_quotes(t):
+async def wire_held_quotes(t, consumer):
     """The consumer's own wiring (`_run_polymarket_ws_consumer`): install the
-    map and note every accepted input with its frozen bound exactly where
-    `_mark_input` does. No sample is taken here: like the consumer, the first
-    completed DB-clock sample follows the first price-chunk attempt (`prime`)."""
+    map, take the first completed DB-clock sample before any input can arrive,
+    and note every accepted input with its frozen bound exactly where
+    `_mark_input` does."""
     held = t.r.held_quotes = blend.HeldRowQuotes()
+    assert await held.sample_database_clock(
+        functools.partial(get_task_session, engine=consumer)
+    )
     accept = t.accept
 
     def accept_and_note(oid, value):
@@ -120,7 +124,7 @@ async def test_a_held_price_row_publishes_the_received_quote_before_release(
     rig, consumer, monkeypatch,
 ):
     t = await build(rig, consumer, monkeypatch, trace=False, lock_ms=500)
-    wire_held_quotes(t)
+    await wire_held_quotes(t, consumer)
     stop = asyncio.Event()
     cadence = start_cadence(t, stop)
     holder = tx = None
@@ -308,3 +312,139 @@ async def test_a_partially_written_three_way_event_commits_the_stored_cohort(rig
     await seed_three_way(rig, {HOME: -10, DRAW: 0, AWAY: -10})
     entry = await stamp_three_way(rig, bound_offset_s=-5)
     assert entry is not None and entry["value"] == 0.45
+
+
+# ── G1 + first quote after a restart: the REAL consumer flush ──────────────
+
+
+async def test_G1_a_newer_tick_during_the_real_flush_never_tears_the_held_cohort(
+    rig, consumer, monkeypatch,
+):
+    """lane1's G1 (Root's real-flush arm, adopted): the ACTUAL `_flush_prices`
+    snapshots .70/.18/.12, a newer HOME .72 arrives while `write_chunk` is
+    suspended, and the real write meets a foreign row lock. The first stamp
+    commits the whole snapshot (.70), the successor commits .72 before the
+    holder lets go, and after release every projection lands .72/.18/.12.
+    Re-reading bounds from the live records after the write fails this at
+    'current batch lost a speaking leg'."""
+    t = await build(rig, consumer, monkeypatch, trace=False, lock_ms=500)
+    await seed_three_way(rig, {HOME: -10, DRAW: -10, AWAY: -10})
+    held = await wire_held_quotes(t, consumer)
+    for name in ("event_id_by_outcome", "market_by_outcome"):
+        t.p.ns[name].update({oid: THREE_WAY_EVENT for oid in (HOME, DRAW, AWAY)})
+    sequence = itertools.count(1)
+
+    def accept(oid, price):
+        mark = blend.InputMark(
+            seq=next(sequence), event_id=THREE_WAY_EVENT, outcome_id=oid,
+            probability=price, kind="price", recv_wall=time.time(),
+            recv_mono=time.monotonic(), venue_ts_ms=None, event_ordinal=1,
+        )
+        t.p.ns["price_buffer"][oid] = price
+        t.p.ns["input_marks"][oid] = mark
+        held.note_input(mark)
+
+    async def source_value():
+        async with rig.engine.connect() as conn:
+            sources = await conn.scalar(text(
+                "SELECT win_probability_sources FROM events WHERE id=:id"
+            ), {"id": THREE_WAY_EVENT})
+        return sources["polymarket"]["value"]
+
+    entered, resume = asyncio.Event(), asyncio.Event()
+    real_write = t.p.ns["write_chunk"]
+    attempts = []
+
+    async def paused_first_write(chunk, **kwargs):
+        attempts.append(dict(chunk))
+        if len(attempts) == 1:
+            entered.set()
+            await resume.wait()
+        return await real_write(chunk, **kwargs)
+
+    t.p.ns["write_chunk"] = paused_first_write
+    holder, tx = await hold_price_row(rig, HOME)
+    running = cadence = None
+    stop = asyncio.Event()
+    try:
+        for oid, price in ((HOME, .70), (DRAW, .18), (AWAY, .12)):
+            accept(oid, price)
+        running = asyncio.create_task(t.tracked_flush(time.monotonic()))
+        await asyncio.wait_for(entered.wait(), 2)
+        accept(HOME, .72)  # the real consumer already snapshotted .70/.18/.12
+        resume.set()
+        await asyncio.wait_for(running, 5)
+        await t.boundary.join_stamps()
+        assert attempts[0] == {HOME: .70, DRAW: .18, AWAY: .12}
+        assert tx.is_active
+        assert {HOME, DRAW, AWAY}.issubset(held._quotes), "current batch lost a speaking leg"
+        assert {oid: held._quotes[oid][0] for oid in (HOME, DRAW, AWAY)} == {
+            HOME: .70, DRAW: .18, AWAY: .12,
+        }
+        assert await source_value() == .70
+        assert t.p.ns["price_buffer"][HOME] == .72
+
+        await t.tracked_flush(time.monotonic())
+        await t.boundary.join_stamps()
+        assert await source_value() == .72
+        assert held._quotes[HOME][0] == .72
+        assert tx.is_active
+
+        await tx.rollback()
+        cadence = start_cadence(t, stop)
+        await wait_for(lambda: all(oid not in held for oid in (HOME, DRAW, AWAY)), timeout=5)
+        await stop_cadence(t, stop, cadence)
+        cadence = None
+        async with rig.engine.connect() as conn:
+            rows = (await conn.execute(text(
+                "SELECT id,current_probability FROM futures_outcomes WHERE id=ANY(:ids)"
+            ), {"ids": [HOME, DRAW, AWAY]})).all()
+        assert {oid: float(value) for oid, value in rows} == {HOME: .72, DRAW: .18, AWAY: .12}
+        assert await source_value() == .72
+        values = [v for _, eid, v, _ in t.pubs if eid == THREE_WAY_EVENT]
+        assert values[:2] == [.70, .72]
+        assert all(v == .72 for v in values[1:])
+        print("G1_EVIDENCE", {"attempts": attempts, "committed_values": values})
+    finally:
+        resume.set()
+        if tx.is_active:
+            await tx.rollback()
+        await holder.close()
+        if running is not None and not running.done():
+            await asyncio.wait_for(running, 5)
+        if cadence is not None:
+            await stop_cadence(t, stop, cadence)
+        await t.boundary.join_stamps()
+        await t.r.drain_history()
+
+
+async def test_the_first_quote_after_a_consumer_start_is_published_while_its_row_is_held(
+    rig, consumer, monkeypatch,
+):
+    """Root's initial-sample review: a fresh consumer's FIRST accepted quote must
+    carry a bound, so it reaches the page while a foreign transaction holds its
+    row. Without the startup sample its bound is None, frozen, and no later
+    sample may re-date it: nothing publishes until the holder lets go."""
+    t = await build(rig, consumer, monkeypatch, trace=False, lock_ms=500)
+    await wire_held_quotes(t, consumer)  # the consumer's startup sample
+    stop = asyncio.Event()
+    cadence = start_cadence(t, stop)
+    holder = tx = None
+    try:
+        holder, tx = await hold_price_row(rig, OUTCOME)
+        sent = time.monotonic()
+        t.accept(OUTCOME, 0.82)  # no earlier write: the startup sample is the bound
+        await wait_for(lambda: published(t, 0.82), timeout=3.0)
+        age = published(t, 0.82)[0] - sent
+        assert tx.is_active
+        price, value = await stored(rig)
+        assert value == 0.82 and price != 0.82
+        await tx.rollback()
+        await wait_for(lambda: OUTCOME not in t.r.held_quotes, timeout=3.0)
+    finally:
+        if tx is not None and tx.is_active:
+            await tx.rollback()
+        if holder is not None:
+            await holder.close()
+        await stop_cadence(t, stop, cadence)
+    print("EVIDENCE", dict(first_quote_after_start_published_s=round(age, 4)))

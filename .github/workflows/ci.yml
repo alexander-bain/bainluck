@@ -5020,8 +5020,8 @@ jobs:
             echo "::error::#11138 held-row gate SKIPPED"
             exit 1
           fi
-          grep -qE "[^0-9]4 passed[,[:space:]]" /tmp/held-row11138.txt || {
-            echo "::error::#11138 held-row gate did not run all four cases"
+          grep -qE "[^0-9]6 passed[,[:space:]]" /tmp/held-row11138.txt || {
+            echo "::error::#11138 held-row gate did not run all six cases"
             exit 1
           }
 

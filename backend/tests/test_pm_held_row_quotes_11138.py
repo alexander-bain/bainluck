@@ -438,6 +438,6 @@ def test_refresher_reads_no_overlay_unless_its_consumer_installs_one():
     assert source.count("blend_refresher.held_quotes = HeldRowQuotes()") == 1
     # Every accepted input is noted with its bound, exactly where it is marked.
     assert source.count("held.note_input(mark)") == 1
-    # Sampled after each non-final game price-chunk attempt, for later inputs
-    # only; never at consumer start (no input can be dated before a sample).
-    assert source.count("held_quotes.sample_database_clock(get_task_session)") == 1
+    # Establish ordering before first receipt, then refresh the lower bound
+    # after attempts for future inputs. Never re-date a previously accepted input.
+    assert source.count("held_quotes.sample_database_clock(get_task_session)") == 2

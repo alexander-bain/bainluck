@@ -15,6 +15,8 @@ the Gamma top-up and the blend's database batch are faked):
 """
 
 import asyncio
+from datetime import datetime, timezone
+from types import SimpleNamespace
 
 import pytest
 import websockets
@@ -78,6 +80,14 @@ def _is_poly_open_contract_read(stmt) -> bool:
     }
 
 
+def _is_clock_sample(stmt) -> bool:
+    """#11138: `HeldRowQuotes.sample_database_clock` is neither slate nor
+    reread; answered on its own so it never shifts the positional routing."""
+    from sqlalchemy import func, select
+
+    return str(stmt) == str(select(func.clock_timestamp()))
+
+
 def _install_session(monkeypatch, slate_batches, reread):
     """Slate queries answered in order; every later query is the reread, whose
     rows are `(event_id, market_id, source_entry)`. `reread(n)` gets the
@@ -90,6 +100,8 @@ def _install_session(monkeypatch, slate_batches, reread):
         async def execute(self, _stmt):
             if _is_poly_open_contract_read(_stmt):
                 return _Result([])
+            if _is_clock_sample(_stmt):  # #11138: the held-quote DB-clock sample
+                return SimpleNamespace(scalar_one=lambda: datetime.now(timezone.utc))
             if state["slate"]:
                 return _Result(state["slate"].pop(0))
             state["reread_calls"] += 1

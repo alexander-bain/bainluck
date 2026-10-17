@@ -2397,6 +2397,7 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
     # in place of the older stored row. Keyed like `price_buffer`, released
     # when the write lands. Reached through the refresher: no new name.
     blend_refresher.held_quotes = HeldRowQuotes()
+    await blend_refresher.held_quotes.sample_database_clock(get_task_session)
     # #837 receipt — every accepted input is stamped (seq, receive instant) as
     # it is buffered, so a held price can be followed from the socket to the
     # stamp that carried it. `input_marks` is keyed like `price_buffer` (one
