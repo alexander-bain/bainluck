@@ -9,7 +9,7 @@ import pytest
 from sqlalchemy import select, update
 
 from app.models.models import Event, FuturesMarket, FuturesOutcome, WinProbSnapshot
-from app.tasks.live_blend_refresh import HISTORY_POINT_LIMIT, LiveBlendRefresher
+from app.tasks.live_blend_refresh import LiveBlendRefresher
 from app.tasks.snapshots import _create_or_update_win_prob_snapshot
 from tests.integration.test_live_blend_grouped_commit_8129_pg import DB_URL, rig, seed
 
@@ -483,8 +483,10 @@ async def test_fresh_kalshi_quote_publishes_while_full_chart_backlog_head_is_hel
             f"Kalshi .375 not published within {DEADLINE_S}s for {late}: the "
             "stamp waited on a full chart backlog whose head row is held"
         )
-        assert kalshi._history_count == kalshi._history_limit, "queue stays bounded"
+        # #11181: past the ordinary backlog each due stamp still owes its
+        # point (none waited, none dropped), within the finite spill bound.
         assert kalshi.stats["history_deferred"] == len(OWING)
+        assert kalshi._history_count <= kalshi._history_limit + len(OWING)
     finally:
         await holder.rollback()
         await holder.close()
@@ -510,12 +512,8 @@ async def test_fresh_kalshi_quote_publishes_while_full_chart_backlog_head_is_hel
         await kalshi.drain_history()
     head = [f for f in frames if f[:2] == ("kalshi", HELD)]
     assert len(head) == 1
-    # A deferred event still owes its point: its next stamp with room charts it.
-    kalshi._history_limit = HISTORY_POINT_LIMIT
-    for eid in OWING:
-        await _quote(rig, eid, 0.40)
-    await kalshi.refresh(list(OWING), flush_started=1004)
-    await kalshi.drain_history()
+    # #11181: each point owed past the backlog was paid by the drain at its own
+    # observed value, with no further quote.
     async with rig.maker() as session:
         points = (
             await session.execute(
@@ -526,5 +524,5 @@ async def test_fresh_kalshi_quote_publishes_while_full_chart_backlog_head_is_hel
         ).all()
     charted = {eid for eid, _ in points}
     assert charted == {HELD, *OWING}, points
-    assert [float(p) for eid, p in points if eid in OWING] == [0.40] * len(OWING)
+    assert [float(p) for eid, p in points if eid in OWING] == [0.375] * len(OWING)
     assert not kalshi._history and not kalshi._history_count
