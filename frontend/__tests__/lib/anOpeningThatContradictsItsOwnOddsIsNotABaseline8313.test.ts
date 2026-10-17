@@ -11,11 +11,13 @@
  *     No   probability 0.885   opening_probability 0.31   opening_american_odds -223
  *     Yes  probability 0.115   opening_probability 0.31   opening_american_odds +223
  *
- * Every writer stores the opening odds as `probability_to_american` of the same
- * price in the same write, so the two fields are one observation in two
- * notations. −223 is 0.69. The No leg's opening probability contradicts its own
- * opening odds, and 0.885 − 0.31 = 57.5 measures from a number this leg never
- * opened at.
+ * −223 is 0.69, the COMPLEMENT of 0.31: the pre-#137 decomposed writer's
+ * side-swap (No's opening probability stored from Yes, No's own odds beside it).
+ * 0.885 − 0.31 = 57.5 measures from a number this leg never opened at.
+ *
+ * The odds are NOT always written with the opening (history backfills, empty-book
+ * repairs and the pollers' per-column coalesce can leave them stale — lane1b's
+ * review R1), so a plain mismatch is not read; only the complement signature is.
  *
  * Three wrong repairs, each asserted absent below:
  *   57.5 — the defect (stored 0.31).
@@ -24,10 +26,11 @@
  *          Yes's first). A first retained point is not proof of the opening.
  * None is a verified opening comparison, so the caption makes none.
  *
- * Controls: the Yes leg on the same payload (0.31 / +223, consistent) and the
+ * Controls: the Yes leg on the same payload (0.31 / +223, consistent), the
  * same-session `/futures/61318328` (legs opened together, caption "Yes up 5.0
- * pts from opening.") still speak; so do the independent-board production
- * fixtures whose openings do not sum to 1.
+ * pts from opening."), the independent-board production fixtures whose openings
+ * do not sum to 1, and stale-odds rows from writers that set the opening alone
+ * all still speak.
  */
 import {
   movementExplanation,
@@ -56,7 +59,7 @@ const YES = 125650216;
 // The reported numbers, in every shape the sentence could take.
 const UNSUPPORTED = [/57\.5/, /19\.5/, /\b5\.0\b/, /\bup 5 /];
 
-describe("#8313 the specimen: No's opening contradicts its own odds", () => {
+describe("#8313 the specimen: No's opening is the other side's price", () => {
   test("the fixture is the payload the shopper saved", () => {
     const no = leg(SPECIMEN, NO);
     expect(no.name).toBe("No");
@@ -143,14 +146,43 @@ describe("#8313 rounding: integer odds are not a contradiction", () => {
     expect(s).toMatch(/from opening|since opening/);
   });
 
-  test("the tolerance edge: 0.4 pt off speaks, 0.6 pt off is withheld", () => {
-    // +150 is exactly 0.40.
+  test("the tolerance edge: 0.4 pt off the complement is withheld, 0.6 pt off speaks", () => {
+    // +150 is exactly 0.40, so the complement edge is an opening near 0.60.
+    const leader = { name: "Field", probability: 0.8 };
     expect(
-      movementExplanation({ ...base, opening_probability: 0.404, opening_american_odds: 150 }),
-    ).toBe("Field up 19.6 pts from opening.");
-    expect(
-      movementExplanation({ ...base, opening_probability: 0.406, opening_american_odds: 150 }),
+      movementExplanation({ ...leader, opening_probability: 0.596, opening_american_odds: 150 }),
     ).toBeNull();
+    expect(
+      movementExplanation({ ...leader, opening_probability: 0.594, opening_american_odds: 150 }),
+    ).toBe("Field up 20.6 pts from opening.");
+  });
+});
+
+describe("#8313 stale odds beside an honest opening still speak (lane1b R1)", () => {
+  test("case A — an empty-book repair kept the discredited 0.50's odds", () => {
+    expect(
+      movementExplanation({ name: "Yes", probability: 0.4, opening_probability: 0.12, opening_american_odds: -100 }),
+    ).toBe("Yes up 28.0 pts from opening.");
+  });
+
+  test("case B — a backfilled opening, odds coalesced later from a 0.45 price", () => {
+    expect(
+      movementExplanation({ name: "Yes", probability: 0.47, opening_probability: 0.2, opening_american_odds: 122 }),
+    ).toBe("Yes up 27.0 pts from opening.");
+  });
+
+  test("a mismatch just past rounding that is not the complement speaks", () => {
+    // +150 = 0.40; 0.406 is 0.6 pt off it and nowhere near 0.60.
+    expect(
+      movementExplanation({ name: "Field", probability: 0.6, opening_probability: 0.406, opening_american_odds: 150 }),
+    ).toBe("Field up 19.4 pts from opening.");
+  });
+
+  test("the specimen's No leg after the #137 flip (0.69 / -223) speaks", () => {
+    // The regrade sets the opening to 1 − p and leaves the odds, which then agree.
+    expect(
+      movementExplanation({ ...leg(SPECIMEN, NO), opening_probability: 0.69 }),
+    ).toBe("No up 19.5 pts from opening.");
   });
 });
 

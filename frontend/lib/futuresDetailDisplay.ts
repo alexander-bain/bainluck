@@ -16,8 +16,8 @@ export interface MovementLeader {
   name?: string | null;
   probability: number | null;
   opening_probability?: number | null;
-  // #8313 — the same opening written as American odds. Read only to check the
-  // probability above against itself; never printed (D1) and never substituted.
+  // #8313 — the opening as American odds. Read only to spot a side-swapped
+  // opening probability; never printed (D1) and never substituted.
   opening_american_odds?: number | null;
   probability_change_24h?: number | null;
 }
@@ -1095,7 +1095,7 @@ export function pickCaptionSubject<
 }
 
 /**
- * #8313 — AN OPENING THAT DISAGREES WITH ITSELF IS NOT A BASELINE.
+ * #8313 — AN OPENING THAT IS THE OTHER SIDE'S PRICE IS NOT A BASELINE.
  *
  * Production `/futures/13795456` ("Iran leadership change by December 31?"),
  * 2026-10-17 05:45Z, chart caption: **"No up 57.5 pts from opening."** The served
@@ -1103,29 +1103,36 @@ export function pickCaptionSubject<
  *
  *     probability 0.885   opening_probability 0.31   opening_american_odds -223
  *
- * and the Yes leg 0.31 / +223. Every opening writer derives the odds as
- * `probability_to_american(p)` of the price it stores as the opening, in the same
- * write (`tasks/polymarket.py`, `tasks/kalshi.py`, `tasks/futures.py`,
- * `routes/admin_providers.py`), and the repair tasks null and restore the pair
- * together, so the two fields are one observation in two notations. (The
- * decomposed Polymarket update coalesces only the probability, which can leave
- * the odds NULL beside it: that is absent odds, below, and unchanged.)
- * −223 is 0.69, not 0.31: the No leg's
- * opening probability is the Yes leg's number (the copied-leg class #8313 names),
- * and 0.885 − 0.31 = 57.5 is a move nobody saw.
+ * and the Yes leg 0.31 / +223. −223 is 0.6905: the No leg's own opening odds sit
+ * on the COMPLEMENT of its opening probability. That is the side-swap the
+ * decomposed Polymarket writer made before #137 (`231e39c301`, 2026-07-08): the
+ * No/Under insert stored the Yes/Over price as `opening_probability` and the
+ * No/Under leg's own price as `opening_american_odds`. The #137 regrade flips such
+ * an opening to 1 − p and leaves the odds alone, so a repaired row agrees with its
+ * odds; this one was left unrepaired. 0.885 − 0.31 = 57.5 is a move nobody saw.
  *
- * So when both are present and valid and they disagree beyond quote rounding, the
- * caption has no opening to measure from and says nothing about one. It does NOT
- * substitute the converted odds (19.5 pts), the leg's complement, or its first
- * retained history point (5 pts): none of those is proven to be this leg's opening.
- * The caption then falls through to the existing 24h branch exactly as a missing
- * opening does.
+ * Not every disagreement is that class. Several writers set the opening
+ * probability without its odds: the open-sparse and pregame history backfills,
+ * the empty-book opening repairs (which keep the discredited value's odds), and
+ * the pollers' per-column `coalesce(opening_american_odds, current)`, which can
+ * stamp odds from a LATER price beside a backfilled opening. Those openings are
+ * honest and their odds are just stale, so a plain mismatch is not read. Only the
+ * complement signature is: the odds say 1 − opening, and not the opening.
+ *
+ * Then the caption has no opening to measure from and says nothing about one. It
+ * does NOT substitute the converted odds (19.5 pts), the leg's complement, or its
+ * first retained history point (5 pts): none of those is proven to be this leg's
+ * opening. The caption falls through to the existing 24h branch exactly as a
+ * missing opening does.
  *
  * Rounding: odds are integers, so the round trip moves an implied probability by
  * at most 50/(|odds|+100)², 0.00125 at ±100. Measured on 69 saved served legs
  * (frontend fixtures + shopper pass-0462), the largest honest gap is 0.00055; the
- * specimen's is 0.38. The tolerance sits at 4× the arithmetic bound and below
- * the caption's own 1-pt resolution.
+ * specimen sits 0.0005 from the complement and 0.38 from its opening.
+ *
+ * Residuals: a stale odds value that happens to land within the tolerance of
+ * 1 − opening is still withheld, and a copied leg whose odds are not this leg's
+ * own complement is not caught.
  *
  * Deliberately per leg. Two legs opening at different times, or openings that do
  * not sum to 1 (independent boards), say nothing about either leg and are not read.
@@ -1134,7 +1141,7 @@ export function pickCaptionSubject<
  */
 const OPENING_ODDS_ROUNDING_TOLERANCE = 0.005;
 
-function openingContradictsItsOwnOdds(leader: MovementLeader): boolean {
+function openingIsTheOtherSidesPrice(leader: MovementLeader): boolean {
   const open = leader.opening_probability;
   const odds = leader.opening_american_odds;
   if (open == null || odds == null) return false;
@@ -1143,7 +1150,10 @@ function openingContradictsItsOwnOdds(leader: MovementLeader): boolean {
   // `utils/odds_math.american_to_probability`, mirrored: the client has no odds
   // helper because it never shows odds (D1).
   const implied = odds > 0 ? 100 / (odds + 100) : -odds / (-odds + 100);
-  return Math.abs(implied - open) > OPENING_ODDS_ROUNDING_TOLERANCE;
+  return (
+    Math.abs(implied - open) > OPENING_ODDS_ROUNDING_TOLERANCE &&
+    Math.abs(implied - (1 - open)) <= OPENING_ODDS_ROUNDING_TOLERANCE
+  );
 }
 
 /**
@@ -1172,7 +1182,7 @@ export function movementExplanation(
   const served = leaderLabel(leader);
   const label = served === null ? served : withoutBoardNamePrefix(served, marketName);
   const cur = leader.probability;
-  const open = openingContradictsItsOwnOdds(leader) ? null : leader.opening_probability;
+  const open = openingIsTheOtherSidesPrice(leader) ? null : leader.opening_probability;
 
   if (cur != null && open != null) {
     const delta = (cur - open) * 100;
