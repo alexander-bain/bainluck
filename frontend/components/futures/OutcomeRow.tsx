@@ -10,7 +10,7 @@ import {
   isNumericLadder,
   flagUrl,
 } from "@/lib/images";
-import { boardOutcomeLabel } from "@/lib/futuresDetailDisplay";
+import { boardOutcomeLabel, readableOpeningProbability } from "@/lib/futuresDetailDisplay";
 import { SHAPE_QUANTITY, type MarketShape } from "@/lib/marketShape";
 import { isAuthoritativeResolution } from "@/lib/resolutionAuthority";
 import { isResultUnknown } from "@/lib/settledResultDisplay";
@@ -443,6 +443,7 @@ export default function OutcomeRow({
   const change = outcome.probability_change_24h;
   const rankChange = outcome.rank_change_24h;
   const printsMove = outcomeRowPrintsMove(outcome, isResolved);
+  const openingShown = readableOpeningProbability(outcome);
   // #4788: the ONE settled-state decision for this row. Every branch below reads
   // it — never `isResolved && outcome.is_winner === X`, which counts a defaulted
   // `false` as a grader's verdict.
@@ -672,13 +673,15 @@ export default function OutcomeRow({
         {/* Opening price. UX-P233 (board item 11): this column was the ONLY one of
             the row's three numbers that named its own baseline, which is exactly why
             the other two read as if they shared it. All three are labelled now. */}
-        {outcome.opening_probability !== null && (
+        {/* #8313: an opening whose own odds name the other side's price is not
+            printed, the same as a missing one (`readableOpeningProbability`). */}
+        {openingShown !== null && (
           <div className="text-xs text-text-secondary text-right shrink-0">
             <div className="text-[10px] uppercase tracking-wide text-text-muted">
               Open
             </div>
             <div data-testid="outcome-open">
-              {formatProbability(outcome.opening_probability, { rendered: renderedOpening })}
+              {formatProbability(openingShown, { rendered: renderedOpening })}
             </div>
           </div>
         )}
