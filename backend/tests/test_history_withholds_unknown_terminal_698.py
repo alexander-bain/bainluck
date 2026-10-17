@@ -238,3 +238,69 @@ class TestTheEndpointServesIt:
         for o in result["outcomes"]:
             assert o["history"][-1]["bookmaker"] == "settlement"
             assert o["history"][-1]["probability"] == 0.0
+
+
+# Root's upstream witness (artifacts/shopper/698-served-20261017/
+# ROOT-UPSTREAM-GRADE-WITNESS.json, AST-extracted from cdd20661): the #7935
+# republication drop read the same sourced `false` as a 0.0 grade and pruned a
+# withheld line that touched 0 three times. Genuine zeros included on purpose —
+# they must be served too.
+_WITNESS = [0.4, 0, 0.3, 0, 0.6, 0, 0.5, 0, 0.465]
+_WITNESS_PRUNED = [0.4, 0, 0, 0, 0]
+
+
+def _witness_snaps(now):
+    # Both legs of the pair, Under = 1 - Over, so the de-vig is the identity
+    # and the served Over line is the recorded one (a lone leg squeezes to 1.0).
+    start = now - timedelta(hours=12 + len(_WITNESS))
+    snaps = []
+    for i, p in enumerate(_WITNESS):
+        ts = start + timedelta(hours=i)
+        snaps.append(_snapshot(1, ts, p))
+        snaps.append(_snapshot(2, ts, round(1 - p, 6)))
+    return snaps
+
+
+def _pair_market(*, source, now, stated=False):
+    if stated:
+        # 13798072 shape: a stated result on both legs (Over Lost 0%, Under WON).
+        over = _outcome(1, "Over", is_winner=False, resolution_source="clob_authoritative", prob=0)
+        under = _outcome(2, "Under", is_winner=True, resolution_source="clob_authoritative", prob=1)
+    else:
+        over, under, _ = _coin_flip()
+    market = _market([over, under], source=source)
+    market.resolution_date = now - timedelta(hours=6)
+    return market
+
+
+def _served_values(result):
+    (line,) = [o for o in result["outcomes"] if o["outcome_id"] == 1]
+    return [pt["probability"] for pt in line["history"] if pt["bookmaker"] != "settlement"]
+
+
+class TestTheRepublicationDropDefersToo:
+    @pytest.mark.asyncio
+    async def test_the_withheld_line_keeps_every_recorded_observation(self):
+        now = datetime.now(timezone.utc)
+        market = _pair_market(source="polymarket", now=now)
+        result = await _serve(market, _witness_snaps(now))
+        assert _served_values(result) == pytest.approx(_WITNESS)
+
+    @pytest.mark.asyncio
+    async def test_the_same_line_off_scope_is_still_pruned(self):
+        # Strawman: the rig reaches the #7935 drop — identical rows on a
+        # Kalshi market (no detail contract) are pruned exactly as the witness
+        # says, so the passing assertion above is the gate, not the fixture.
+        now = datetime.now(timezone.utc)
+        market = _pair_market(source="kalshi", now=now)
+        result = await _serve(market, _witness_snaps(now))
+        assert _served_values(result) == pytest.approx(_WITNESS_PRUNED)
+
+    @pytest.mark.asyncio
+    async def test_a_stated_polymarket_loss_is_still_pruned(self):
+        # Control inside scope: stored 0 / false / sourced is a stated "Lost",
+        # so its republication echo is still dropped.
+        now = datetime.now(timezone.utc)
+        market = _pair_market(source="polymarket", now=now, stated=True)
+        result = await _serve(market, _witness_snaps(now))
+        assert _served_values(result) == pytest.approx(_WITNESS_PRUNED)

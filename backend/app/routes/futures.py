@@ -9070,6 +9070,21 @@ async def get_futures_history(
     # property of the MARKET, so asking per outcome would answer it 74 times.
     # Read HERE, above the squeeze, because #8296's carry needs the graded set.
     _settled_grades = _settled_graded_values(market)
+    # #698 — the #7935 drop ERASES recorded points on the strength of a grade, so
+    # it may only use a grade the detail page states. A resolved Polymarket row
+    # the detail contract calls "Result unknown" (62134744: 0.5 / false /
+    # clob_authoritative) would otherwise read its sourced `false` as 0.0 and,
+    # on a line that touched 0 three times, prune every nonzero observation
+    # between the touches (Root's witness: [.4,0,.3,0,.6,0,.5,0,.465] served as
+    # [.4,0,0,0,0]). Such a line is drawn as recorded, like any ungraded line.
+    # `_never_carried` keeps the full set on purpose: not carrying a resolved
+    # leg only declines to INVENT presence between its own rows, it never
+    # removes one, so withholding the result is no reason to start carrying.
+    _republication_grades = {
+        _o.id: _settled_grades[_o.id]
+        for _o in market.outcomes
+        if _o.id in _settled_grades and not _detail_withholds_result(market, _o)
+    }
 
     # #8296 — THE COLUMN IS THE FIELD, NOT THE LEGS THAT MOVED. Snapshots are
     # de-duplicated at write time, so an instant's rows are the legs whose price
@@ -9279,7 +9294,7 @@ async def get_futures_history(
         # And `total_data_points` must count what is DRAWN (the reason it is
         # accumulated here at all, per #4992's note above), so a dropped point
         # may not be promised to the sparse flag.
-        _graded_value = _settled_grades.get(oid)
+        _graded_value = _republication_grades.get(oid)
         if _graded_value is not None:
             history = _drop_post_decision_republication(history, _graded_value)
         elim = _detect_elimination(history)
