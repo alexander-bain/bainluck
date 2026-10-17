@@ -49,6 +49,7 @@ from tests.integration.test_live_blend_grouped_commit_8129_pg import (  # noqa: 
     rig,
 )
 from tests.integration.test_pm_stamp_release_wake_10090_pg import (  # noqa: F401
+    PERIOD,
     build,
     consumer,
     start_cadence,
@@ -384,6 +385,14 @@ async def test_G1_a_newer_tick_during_the_real_flush_never_tears_the_held_cohort
         assert await source_value() == .70
         assert t.p.ns["price_buffer"][HOME] == .72
 
+        # The successor flush starts one production cadence after the first,
+        # as the real cadence would: the refresher's per-event floor is that
+        # cadence (`min_refresh_interval_s=PERIOD`), so a back-to-back call
+        # inside it leaves .72 owed to the next flush. Called back to back,
+        # this arm passed only because the first write spent the whole 500 ms
+        # lock budget; a 50 ms price-statement budget (#10090) exposed it, and
+        # the parent fails it identically with a 10 ms gap.
+        await asyncio.sleep(max(0.0, t.flush_starts[0] + PERIOD - time.monotonic()))
         await t.tracked_flush(time.monotonic())
         await t.boundary.join_stamps()
         assert await source_value() == .72

@@ -41,6 +41,11 @@ logger = logging.getLogger(__name__)
 # Ordinary chunks retain their whole rollback boundary; the final drain has
 # no later periodic retry and keeps its existing database wait behavior.
 PRICE_CHUNK_LOCK_TIMEOUT_MS = 500
+#: #10090 — the price-row UPDATE alone waits this long for a lock. A refusal
+#: costs no cooldown: the rows stay known-held and the next flush probes them
+#: NOWAIT, so a 150 ms holder no longer holds the chunk for the 500 ms budget
+#: plus a two-second cooldown. Rerank and commit keep the chunk budget above.
+PRICE_STATEMENT_LOCK_TIMEOUT_MS = 50
 
 #: #10090 — after an idle input wakes the price flush, wait this long (fixed,
 #: once) before it snapshots the buffer, so the rest of an already-arriving
@@ -2472,7 +2477,7 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
             getattr(blend_refresher, "receipts", None), "exact_trace", None
         )
         # None means a lock-held whole chunk, not a global cadence failure.
-        # Newer ticks on its rows cannot bypass the existing two-second hold.
+        # Newer ticks cannot bypass a non-price failure's existing cooldown.
         if not final and any(lock_retry_until.get(oid, 0) > _mono() for oid in chunk):
             if stage_trace is not None:
                 stage_trace.write_stage(chunk, "COOLDOWN_SKIP")
@@ -2482,10 +2487,11 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
         # Waiting the full lock budget on it again bought nothing: production's
         # held 2- and 6-row cohorts failed about once a second, each spending
         # 500 ms that every later chunk and the next flush waited out in turn.
-        # Probe it NOWAIT instead. A first refusal keeps the budget, so a brief
-        # holder still costs no retry; the final drain still waits.
+        # Probe it NOWAIT instead. The first price attempt has the short
+        # statement budget; rerank keeps the chunk budget, final drain waits.
         probe = not final and any(oid in lock_retry_until for oid in chunk)
         probe_refused = False
+        price_lock_timed_out = False
         try:
             async with get_task_session() as session:
                 if stage_trace is not None:
@@ -2493,7 +2499,7 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                 if not final:
                     await session.execute(
                         SET_LOCK_TIMEOUT_SQL,
-                        {"ms": lock_timeout_value(PRICE_CHUNK_LOCK_TIMEOUT_MS)},
+                        {"ms": lock_timeout_value(PRICE_STATEMENT_LOCK_TIMEOUT_MS)},
                     )
                 # #10664: the chunk's price writes in ONE statement — the same
                 # set clause, row-lock order and returned-row coverage as the
@@ -2516,10 +2522,18 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                     # refusal delivered 60 ms late re-armed the cooldown and
                     # left the pair unwritten 2.18 s after its holder let go
                     # (Root, real PG). A lock_timeout cancellation (a table
-                    # lock this statement queued on) and any unrecognised
-                    # error keep the cooldown below.
+                    # lock this statement queued on) is separately identified
+                    # for next-cadence retry; other failures keep their cooldown.
                     probe_refused = probe and is_price_row_lock_refusal(exc)
+                    price_lock_timed_out = is_lock_timeout(exc)
                     raise
+                # The shorter budget belongs only to the price-row attempt.
+                # Rerank and other transaction work keep their existing budget.
+                if not final:
+                    await session.execute(
+                        SET_LOCK_TIMEOUT_SQL,
+                        {"ms": lock_timeout_value(PRICE_CHUNK_LOCK_TIMEOUT_MS)},
+                    )
                 written_rows = sorted(result.all(), key=lambda r: r.ord)
                 if stage_trace is not None:
                     stage_trace.write_stage(chunk, "STATEMENT_END")
@@ -2590,8 +2604,8 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                 # cost; the first after the holder lets go writes the pair.
                 # Counted apart from `errors` and not logged per refusal: it
                 # recurs every flush the holder keeps the row. A lock failure
-                # anywhere else (rerank, commit, a timed-out wait) spent real
-                # time and keeps the cooldown and error accounting.
+                # outside the price statement (rerank or commit) keeps
+                # the cooldown and error accounting.
                 stats["price_lock_probes_refused"] = (
                     stats.get("price_lock_probes_refused", 0) + 1
                 )
@@ -2608,7 +2622,11 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                 "Polymarket WS: flush error (%d retained for retry)", len(chunk)
             )
             if not final and is_lock_timeout(exc):
-                until = _mono() + PRICE_FLUSH_SECONDS
+                # A brief price lock must not turn the fast first refusal into
+                # the default two-second cooldown. Known-held rows are probed
+                # NOWAIT on subsequent flushes; other failures keep backoff.
+                retry_delay = 0.0 if price_lock_timed_out else PRICE_FLUSH_SECONDS
+                until = _mono() + retry_delay
                 lock_retry_until.update(dict.fromkeys(chunk, until))
                 lock_retry_events.update(
                     event_ids_for_outcomes(event_id_by_outcome, chunk)

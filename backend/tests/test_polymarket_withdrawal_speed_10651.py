@@ -13,7 +13,8 @@ from types import SimpleNamespace
 from typing import Iterable, Mapping, Optional
 
 from app.tasks.polymarket_ws import (
-    PRICE_CHUNK_LOCK_TIMEOUT_MS, _PMCatalogFlushBoundary, is_price_row_lock_refusal,
+    PRICE_CHUNK_LOCK_TIMEOUT_MS, PRICE_STATEMENT_LOCK_TIMEOUT_MS, _PMCatalogFlushBoundary,
+    is_price_row_lock_refusal,
 )
 from app.utils.repair_lock_budget import SET_LOCK_TIMEOUT_SQL, is_lock_timeout, lock_timeout_value
 
@@ -125,6 +126,7 @@ def rig(
         "lock_retry_events": set(),
         "successful_price_write_at": {},
         "PRICE_CHUNK_LOCK_TIMEOUT_MS": PRICE_CHUNK_LOCK_TIMEOUT_MS,
+        "PRICE_STATEMENT_LOCK_TIMEOUT_MS": PRICE_STATEMENT_LOCK_TIMEOUT_MS,
         "SET_LOCK_TIMEOUT_SQL": SET_LOCK_TIMEOUT_SQL,
         "lock_timeout_value": lock_timeout_value,
         "is_lock_timeout": is_lock_timeout,
