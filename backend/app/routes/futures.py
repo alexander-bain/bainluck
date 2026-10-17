@@ -7198,7 +7198,7 @@ def _venue_pair_admission(
     is squeezed, has exactly two legs, and every venue row carries the verified
     partner tag (`_load_generic_venue_history`).
     """
-    from app.utils.async_binary_pair import PAIR_COHERENCE_EPSILON
+    from app.utils.async_binary_pair import pair_is_incoherent
 
     if not _venue_field_squeezable(market, charted_outcomes, field_complete=field_complete):
         return None
@@ -7224,7 +7224,7 @@ def _venue_pair_admission(
         # alone and is withheld below. Never a whole-series refusal.
         if row_b is None or row_b.peer_at != row_a.captured_at:
             continue
-        if abs(float(row_a.probability) + float(row_b.probability) - 1.0) > PAIR_COHERENCE_EPSILON:
+        if pair_is_incoherent(row_a.probability, row_b.probability):
             incoherent += 2
             continue
         # Keyed per tier too: two tiers may hold pairs sharing a knowledge time,

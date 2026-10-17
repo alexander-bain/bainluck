@@ -30,9 +30,12 @@ each half keeps its own raw instant everywhere (I1). `pair_at` — the later of
 the two raw instants — is KNOWLEDGE time, the first instant both values
 existed, and is never written into an observation field.
 
-S IS PROVISIONAL. Lane1 sets S from the measured per-tier skew distribution
-(evidence E1, Live's). Until E1 lands, the 30 s ceiling is lane1's stated upper
-bound; one specimen's quoted minute (Yes :23, No :20) is a 3 s skew.
+S IS SET (lane1, 2026-10-17 05:55Z, on Live's E1 bodies layered as the fill
+layers them): raising the 30 s ceiling to 120 s pairs 0 more points on all three
+measured markets, and every unpaired point there has no peer at all. Reopen S
+only when the LAYERED input shows same-tier pairs with a peer present but skew
+above 30 s; any new ceiling depends only on the tier label, so the reader can
+verify it, and stays <= G/4.
 """
 
 from __future__ import annotations
@@ -52,6 +55,14 @@ PAIR_SKEW_MAX_SECONDS = 30.0
 #: a complementary book by more than this is withheld and counted. It catches a
 #: mixed pair across a move; it is never evidence of identity or of a clock.
 PAIR_COHERENCE_EPSILON = 0.01
+
+
+def pair_is_incoherent(p_a: float, p_b: float) -> bool:
+    """I7: do two paired raw values disagree with one complementary book by more
+    than `PAIR_COHERENCE_EPSILON`? The gap is rounded to 9 places first so float
+    noise never withholds a whole-cent book: 0.795 + 0.195 is 0.99 exactly at the
+    venue, but 0.010000000000000009 in binary (lane1's N4)."""
+    return round(abs(float(p_a) + float(p_b) - 1.0), 9) > PAIR_COHERENCE_EPSILON
 
 #: `(observed_at, tier_label)` — what the fill holds per point.
 Observation = tuple[datetime, str]

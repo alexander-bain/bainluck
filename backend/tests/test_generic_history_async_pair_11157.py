@@ -358,6 +358,24 @@ def test_G4_G7_coarse_cross_tier_and_undeclared_grains():
         assert _pairs([_at(0, 20, tier)], [_at(0, 20, tier)]) == [(0, 0)], tier
 
 
+def test_G_S1_the_coarse_tiers_ceiling_is_thirty_seconds_not_half_the_grain():
+    # Lane1's G-S1: on f60 and f720, G/2 is 30 min / 6 h, so only the ceiling can
+    # refuse 31 s. Isolated samples, so no local-spacing term applies either.
+    for tier in ("polymarket_clob_1m_f60", "polymarket_clob_max_f720"):
+        assert _pairs([_at(0, 10, tier)], [_at(0, 40, tier)]) == [(0, 0)], tier
+        assert _pairs([_at(0, 10, tier)], [_at(0, 41, tier)]) == [], tier
+
+
+def test_N4_a_whole_cent_book_is_coherent_despite_float_noise():
+    from app.utils.async_binary_pair import pair_is_incoherent
+
+    assert 0.795 + 0.195 - 1.0 != -0.01  # the float noise this guards against
+    assert not pair_is_incoherent(0.795, 0.195)
+    assert not pair_is_incoherent(0.195, 0.805)
+    assert pair_is_incoherent(0.795, 0.194)
+    assert pair_is_incoherent(0.40, 0.87)
+
+
 def test_an_exact_pair_keeps_its_neighbour_out():
     assert _pairs([_at(0, 20), _at(0, 40)], [_at(0, 20)]) == [(0, 0)]
 
@@ -404,6 +422,15 @@ def test_G3_a_bigger_move_never_darkens_the_genuine_pairs():
     _m, _p, res = _one_minute_market(yes, no)
     vh = res["venue_history"]
     assert vh["points_served"] == 4
+    assert vh["incoherent_pair_points_withheld"] == 2
+
+
+def test_N4_a_pair_summing_to_exactly_99_cents_is_served():
+    yes = [(_t(0, 21), 0.795), (_t(1, 20), 0.795)]
+    no = [(_t(0, 18), 0.195), (_t(1, 17), 0.194)]
+    _m, _p, res = _one_minute_market(yes, no)
+    vh = res["venue_history"]
+    assert vh["points_served"] == 2, vh
     assert vh["incoherent_pair_points_withheld"] == 2
 
 
