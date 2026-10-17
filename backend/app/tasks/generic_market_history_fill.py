@@ -859,7 +859,15 @@ def _paired_binary_leg_ids(
 def _compact_entries(
     outcomes: Sequence[Any], entries: dict[int, dict], now: datetime
 ) -> None:
-    """Compact each outcome by band; for an identity-admitted binary pair, retain shared raw timestamps kept by either leg."""
+    """Compact each outcome by band; for an identity-admitted binary pair, keep both halves of every pair either leg kept.
+
+    A pair is `async_binary_pair.pair_observations` — the exact shared instant
+    (#11160) or, on the venue's real shape, one sample of each token in one
+    declared fine-grain cell (#11157). The reader admits a point only beside its
+    partner, so a half compaction drops here is a half the chart cannot draw.
+    Both halves keep their own instants: nothing is restamped or merged.
+    """
+    from app.utils.async_binary_pair import pair_observations
     from app.utils.futures_chart_series import compact_by_band
 
     by_oid_ts: dict[int, dict[datetime, VenuePoint]] = {}
@@ -873,11 +881,20 @@ def _compact_entries(
     pair = _paired_binary_leg_ids(outcomes, entries)
     if pair is not None:
         oid_a, oid_b = pair
-        shared_raw_ts = set(by_oid_ts[oid_a]) & set(by_oid_ts[oid_b])
-        if shared_raw_ts:
-            kept_shared_ts = shared_raw_ts & (kept_by_oid[oid_a] | kept_by_oid[oid_b])
-            kept_by_oid[oid_a] |= kept_shared_ts
-            kept_by_oid[oid_b] |= kept_shared_ts
+        legs = {oid: [by_oid_ts[oid][ts] for ts in sorted(by_oid_ts[oid])] for oid in pair}
+        kept_a, kept_b = kept_by_oid[oid_a], kept_by_oid[oid_b]
+        # Pairs are one-to-one, so each leg gains at most what its partner kept:
+        # the bound is still the two legs' combined budget.
+        retained = [
+            (legs[oid_a][i].observed_at, legs[oid_b][j].observed_at)
+            for i, j in pair_observations(
+                [(p.observed_at, p.tier) for p in legs[oid_a]],
+                [(p.observed_at, p.tier) for p in legs[oid_b]],
+            )
+        ]
+        retained = [(ts_a, ts_b) for ts_a, ts_b in retained if ts_a in kept_a or ts_b in kept_b]
+        kept_a.update(ts_a for ts_a, _ts_b in retained)
+        kept_b.update(ts_b for _ts_a, ts_b in retained)
 
     for oid, entry in entries.items():
         ts_map = by_oid_ts[oid]

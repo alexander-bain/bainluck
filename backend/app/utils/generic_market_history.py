@@ -188,6 +188,12 @@ class VenueSnapshotRow:
     yes_ask: float | None = None
     last_price: float | None = None
     tier: str = ""
+    #: #11157 — the OTHER leg's outcome id when this row's series and that one
+    #: are one condition's identity-admitted Yes/No tokens; None otherwise. Set
+    #: by the reader from the bank's own contracts, and travels with the row the
+    #: way `tier` does, so every reader-side question about pairing reads the
+    #: same fact.
+    pair_partner: int | None = None
 
 
 def _finite_prob(value: Any) -> float | None:
