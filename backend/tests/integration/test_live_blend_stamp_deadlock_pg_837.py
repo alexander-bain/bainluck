@@ -367,3 +367,125 @@ def lbr_default() -> int:
     from app.tasks.live_blend_refresh import DEFAULT_STAMP_LOCK_TIMEOUT_MS
 
     return DEFAULT_STAMP_LOCK_TIMEOUT_MS
+
+
+# ── #11138: the budget bounds the WHOLE stamp statement ─────────────────────
+#
+# v5763 10:36:27Z: Kalshi's stamp of PM 15331282 wrote its clock at .419 and
+# committed ~29.2 (its chart point drew after points stamped 29.25), so the PM
+# stamp queued behind it gave up at 28.625 and published at 29.258. Both carried
+# the 500 ms `lock_timeout`, which bounds each lock ACQUISITION: a stamp that
+# queues behind a holder and then behind the writer that took the row first
+# waits twice, each under budget. Here a foreign holder (FOR UPDATE) releases
+# into a queued writer that then holds the row too; the arm queues behind both.
+
+#: Test-local budget, wide enough that neither single wait below can reach it on
+#: a slow runner, while their sum clearly does.
+CHAIN_BUDGET_MS = 1000
+#: How long the holder keeps the row after the arm queues, and how long the
+#: queued writer then keeps it. Each < budget; together > budget.
+CHAIN_HOLD_S = 0.7
+
+
+async def _one_arm_behind_a_chain(maker, monkeypatch, *, statement_bound):
+    import time
+
+    from sqlalchemy import text
+
+    from app.tasks import live_blend_refresh as lbr
+    from app.utils import live_blend, repair_lock_budget
+
+    event_ids = await _seed(maker)
+    low, _high = event_ids
+    monkeypatch.setattr(
+        live_blend, "compute_source_home_probability",
+        lambda group, home, away: SimpleNamespace(home_probability=0.565, eligibility=None),
+    )
+    if not statement_bound:
+        # The parent's behaviour: the stamp installs its lock budget only.
+        monkeypatch.setattr(
+            repair_lock_budget, "SET_LOCK_AND_STATEMENT_TIMEOUT_SQL",
+            repair_lock_budget.SET_LOCK_TIMEOUT_SQL,
+        )
+
+    @contextlib.asynccontextmanager
+    async def _session(**_kwargs):
+        async with maker() as session:
+            yield session
+            await session.commit()
+
+    monkeypatch.setattr("app.tasks.base.get_task_session", _session)
+
+    holder, writer = maker(), maker()
+    await holder.execute(text("SELECT id FROM events WHERE id = :id FOR UPDATE"), {"id": low})
+    writer_has_row = asyncio.Event()
+
+    async def _writer():
+        await writer.execute(
+            text("UPDATE events SET home_score = 1 WHERE id = :id"), {"id": low},
+        )
+        writer_has_row.set()
+        await asyncio.sleep(CHAIN_HOLD_S)
+        await writer.commit()
+        await writer.close()
+
+    writing = asyncio.create_task(_writer())
+    await asyncio.sleep(0.1)  # the writer is queued first
+
+    async def _release_holder():
+        await asyncio.sleep(CHAIN_HOLD_S)
+        await holder.commit()
+        await holder.close()
+
+    arm = lbr.LiveBlendRefresher("polymarket", stamp_lock_timeout_ms=CHAIN_BUDGET_MS)
+    frames = []
+
+    async def _oriented(session, event_id, home_prob, *, reading=None, before_fallback=None):
+        return home_prob
+
+    async def _publish(batch):
+        frames.extend(batch)
+
+    arm._oriented = _oriented
+    arm._publish = _publish
+    arm._last_snapshot_at = {eid: float("inf") for eid in event_ids}
+
+    releasing = asyncio.create_task(_release_holder())
+    started = time.monotonic()
+    await asyncio.wait_for(arm.refresh([low]), 30)
+    elapsed = time.monotonic() - started
+    assert writer_has_row.is_set() or not frames, "rig: the arm cannot pass the writer"
+    return elapsed, arm, frames, low, releasing, writing
+
+
+async def test_a_chained_row_wait_is_cut_at_the_budget_and_requeued(maker, monkeypatch):
+    elapsed, arm, frames, low, releasing, writing = await _one_arm_behind_a_chain(
+        maker, monkeypatch, statement_bound=True,
+    )
+    budget_s = CHAIN_BUDGET_MS / 1000
+    # THE SHIP: the stamp stops occupying the row's queue at its budget, so no
+    # sibling stamp queues behind a wait that has outlived its own bound.
+    assert budget_s * 0.9 <= elapsed < budget_s + 0.4, f"the stamp held the queue {elapsed:.2f}s"
+    assert frames == [] and arm.stats["lock_skipped"] == 1, arm.stats
+    assert arm.stats["errors"] == 0 and arm._lock_retry == {low}, arm.stats
+
+    # Requeued, not lost: once the row is free the next flush stamps it.
+    await releasing
+    await writing
+    await arm.refresh([])
+    assert [f["event_id"] for f in frames] == [low]
+    assert arm.stats["stamped"] == 1 and arm.stats["errors"] == 0, arm.stats
+
+
+async def test_control_lock_timeout_alone_lets_one_stamp_outlive_its_budget(maker, monkeypatch):
+    """Without this the case above could pass on a rig whose chain never
+    outlasts the budget: here the parent's per-acquisition bound waits through
+    both holders and stamps."""
+    elapsed, arm, frames, low, releasing, writing = await _one_arm_behind_a_chain(
+        maker, monkeypatch, statement_bound=False,
+    )
+    await releasing
+    await writing
+    assert elapsed > CHAIN_BUDGET_MS / 1000 + 0.1, f"returned after {elapsed:.2f}s"
+    assert [f["event_id"] for f in frames] == [low]
+    assert arm.stats["lock_skipped"] == 0 and arm.stats["errors"] == 0, arm.stats
