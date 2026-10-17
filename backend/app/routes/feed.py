@@ -63,6 +63,7 @@ from app.utils.event_completion import EVENT_SUSPENDED, finished_event_end_time
 from app.utils.event_rails import started_live
 from app.utils.lifecycle import served_event_status
 from app.utils.score_observation import score_observation_fields
+from app.utils.scheduled_start import loaded_commence_time_source
 from app.utils.external_curator_freshness import (
     recall_cutoff as _curator_recall_cutoff,
 )
@@ -12009,6 +12010,10 @@ async def _score_events(
                 # #8954 / #8841 — the STORED tags, where the start-placeholder mark
                 # lives; `inline_tags` above are recomputed and never carry it.
                 stored_tags=event.event_tags,
+                # #10880 — where the stored start came from, read only from
+                # loaded state and through the price door's FoldedBlendView
+                # (see `loaded_commence_time_source`).
+                commence_time_source=loaded_commence_time_source(event),
                 prematch_by_source=prematch_by_event.get(event.id),
                 # #4971 / D136 rung 3 — the card carries the one number, resolved
                 # by the same cascade the event page calls. `event` and not a
