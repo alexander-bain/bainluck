@@ -1133,40 +1133,107 @@ PREPARED_OUTCOME_FIELDS = (
 
 
 class HeldRowQuotes:
-    """#11138 (alternative 3) — a received quote whose price-row write a lock holds.
+    """#11138 — a received quote whose price-row write a lock holds.
 
     The stamp derives a source's value from `futures_outcomes`, so a foreign
     transaction holding one price row (catalog, rerank, resolution) held the
     blend with it: local real-PG lab on cdd20661, PM .82 reached the folded
     hero after 3.69 s while Kalshi, arriving 350 ms later, took 64 ms.
 
-    The consumer records here, per outcome, the price the held write carries
-    and when the socket received it; `_read_groups` reads that price in place
-    of an OLDER stored row. Nothing uncommitted is published: the stamp that
-    carries it commits on the events row as before, with `observed_value` and a
-    per-row `observed_basis` naming the receive time. That committed stamp is
-    the durability point for the live number; the price row is a projection
-    the existing buffer keeps retrying, unchanged.
+    ORDERED BY A DATABASE-CLOCK LOWER BOUND, NEVER BY WORKER WALL TIME. A
+    `clock_timestamp()` sample that COMPLETED before an input was accepted is a
+    lower bound for that input in the same clock domain as
+    `futures_outcomes.last_updated` (written by `now()` on the same primary).
+    The bound is frozen when the input is accepted (`note_input`) and carried
+    with the flush's own chunk snapshot (`bound_for`), so a retry, a later
+    sample or a newer tick on the same leg can never re-date it. A stored row
+    at or after its bound is ambiguous: the stored row is kept and the ordinary
+    price writer resolves the debt. No clock-offset estimate, no future stamp.
 
-    Why no older value can come back. A later stamp built from the still-held
-    row has an earlier basis for that row and `observation_admits_clause`
-    refuses it in the UPDATE — after a restart too, when this map is empty.
-    Once the price row lands, its `last_updated` is later than the receive
-    time, so the row wins here and the entry is released.
+    WHOLE EVENT OR NOTHING (lane1 review B1/B2, 2026-10-17). Admission takes
+    one event's legs from ONE chunk snapshot, and the overlay applies to every
+    held leg of an event or to none (`overlay_event`), so a stamp never mixes
+    two venue snapshots: on a three-way market that would print a field no
+    venue ever quoted.
 
-    Bounded: one entry per buffered outcome, released when its write lands or
-    its book is withdrawn. Pure bookkeeping, nothing awaited.
+    Nothing uncommitted is published: the stamp that carries a held quote
+    commits on the events row as before, with `observed_value` and a per-row
+    `observed_basis` naming the bound. That committed stamp is the durability
+    point; the price row is a projection the existing buffer keeps retrying.
+    A later stamp built from the still-held row has an earlier basis and
+    `observation_admits_clause` refuses it in the UPDATE, after a restart too,
+    when this object is empty.
+
+    Bounded: one input record per accepted outcome and one quote per held
+    outcome, released when its write lands or its book is withdrawn.
     """
+
+    #: One optional DB round trip per nonempty game chunk. A sample that times
+    #: out backs every later sample off for this long, so a sick pool costs at
+    #: most one timeout per window however many chunks a flush plans.
+    SAMPLE_TIMEOUT_S = 0.15
+    SAMPLE_BACKOFF_S = 5.0
 
     def __init__(self) -> None:
         self._quotes: dict[int, tuple[float, float]] = {}
+        self._input_bounds: dict[int, tuple[int, float, float | None]] = {}
+        self._database_bound: float | None = None
+        self._sample_backoff_until = 0.0
+        self.sample_failures = 0
+
+    async def sample_database_clock(self, sessions) -> bool:
+        """Bounded read; only inputs accepted AFTER it completes may use it."""
+        import asyncio
+        import time
+
+        from sqlalchemy import func, select
+
+        if time.monotonic() < self._sample_backoff_until:
+            return False
+        try:
+            async with asyncio.timeout(self.SAMPLE_TIMEOUT_S):
+                async with sessions() as session:
+                    value = (await session.execute(select(func.clock_timestamp()))).scalar_one()
+                # Publish the sample only after the session has fully exited.
+                self._database_bound = value.timestamp()
+                return True
+        except Exception:
+            # The ordinary price writer stays available when the optional fast
+            # path cannot establish an order. Cancellation still propagates.
+            self.sample_failures += 1
+            self._sample_backoff_until = time.monotonic() + self.SAMPLE_BACKOFF_S
+            return False
+
+    def note_input(self, mark) -> None:
+        """Freeze the newest completed sample as this input's lower bound."""
+        self._input_bounds[mark.outcome_id] = (
+            mark.seq, round(float(mark.probability), 6), self._database_bound,
+        )
+
+    def bound_for(self, mark) -> float | None:
+        """This exact input's frozen bound, or None (another input, or none yet).
+
+        Read under the consumer's buffer lock in the same block that snapshots
+        the chunk's prices and marks, so the bound travels with the snapshot
+        and a newer tick arriving during the write cannot drop one leg.
+        """
+        if mark is None:
+            return None
+        entry = self._input_bounds.get(getattr(mark, "outcome_id", None))
+        if entry is None or entry[2] is None or entry[0] != getattr(mark, "seq", None):
+            return None
+        if entry[1] != round(float(mark.probability), 6):
+            return None
+        return entry[2]
 
     def hold(self, quotes: dict[int, tuple[float, float]]) -> set[int]:
-        """Record ``{outcome_id: (price, recv_wall)}``; returns ids that changed."""
+        """Record ``{outcome_id: (price, frozen_bound)}``; returns ids that changed."""
         changed = set()
-        for oid, (price, seen) in quotes.items():
+        for oid, (price, bound) in quotes.items():
+            if bound is None:
+                continue  # no completed sample preceded this input: no fast path
             # The price row stores NUMERIC(7, 6): read what it will hold.
-            entry = (round(float(price), 6), float(seen))
+            entry = (round(float(price), 6), float(bound))
             if self._quotes.get(oid) != entry:
                 self._quotes[oid] = entry
                 changed.add(oid)
@@ -1179,21 +1246,33 @@ class HeldRowQuotes:
     def __contains__(self, outcome_id) -> bool:
         return outcome_id in self._quotes
 
-    def overlay(self, outcome) -> None:
-        """Replace a stored price only with a quote received AFTER it was stored."""
-        from datetime import datetime, timezone
-
+    def _ambiguous(self, outcome) -> bool:
         from app.utils.aggregation import _coerce_timestamp
 
         held = self._quotes.get(getattr(outcome, "id", None))
         if held is None:
-            return
-        price, seen = held
+            return False
         stored = _coerce_timestamp(getattr(outcome, "last_updated", None))
-        if stored is not None and stored.timestamp() >= seen:
+        return stored is not None and stored.timestamp() >= held[1]
+
+    def overlay_event(self, outcomes) -> None:
+        """Every held leg of one event, or none: one ambiguous leg defers all."""
+        outcomes = list(outcomes)
+        if any(self._ambiguous(outcome) for outcome in outcomes):
             return
+        for outcome in outcomes:
+            self.overlay(outcome)
+
+    def overlay(self, outcome) -> None:
+        """Replace a stored price only when it is strictly older than the bound."""
+        from datetime import datetime, timezone
+
+        held = self._quotes.get(getattr(outcome, "id", None))
+        if held is None or self._ambiguous(outcome):
+            return
+        price, bound = held
         outcome.current_probability = price
-        outcome.last_updated = datetime.fromtimestamp(seen, timezone.utc)
+        outcome.last_updated = datetime.fromtimestamp(bound, timezone.utc)
 
 
 class _FreshAdmission:
@@ -2584,9 +2663,10 @@ class LiveBlendRefresher:
                 outcome = SimpleNamespace(**dict(zip(
                     PREPARED_OUTCOME_FIELDS, outcome_values
                 )))
-                if held is not None:
-                    held.overlay(outcome)
                 entry.outcomes.append(outcome)
+        if held is not None:
+            for _event, group in grouped.values():
+                held.overlay_event([o for entry in group for o in entry.outcomes])
         return grouped
 
     async def _prepare_groups(self, event_ids: list[int]) -> dict[int, tuple]:

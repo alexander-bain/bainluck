@@ -5004,6 +5004,27 @@ jobs:
             exit 1
           }
 
+      - name: "#11138 a lock-held PM price row publishes the received quote, one cohort per event (real Postgres)"
+        if: matrix.group == 'shared-tail' && needs.change-scope.outputs.reuse != 'true'
+        run: |
+          if python -m pytest tests/integration/test_pm_held_price_row_stamps_received_quote_11138_pg.py \
+            -v -rs > /tmp/held-row11138.txt 2>&1; then
+            gate_status=0
+          else
+            gate_status=$?
+          fi
+          cat /tmp/held-row11138.txt
+          echo "EXIT CODE: $gate_status"
+          test "$gate_status" -eq 0
+          if grep -qiE "[0-9]+ skipped" /tmp/held-row11138.txt; then
+            echo "::error::#11138 held-row gate SKIPPED"
+            exit 1
+          fi
+          grep -qE "[^0-9]4 passed[,[:space:]]" /tmp/held-row11138.txt || {
+            echo "::error::#11138 held-row gate did not run all four cases"
+            exit 1
+          }
+
       - name: "#10702 exact Kalshi trace commit and rollback controls (real Postgres)"
         # Each case owns and drops a random schema in the job's disposable DB.
         if: matrix.group == 'isolated' && needs.change-scope.outputs.reuse != 'true'

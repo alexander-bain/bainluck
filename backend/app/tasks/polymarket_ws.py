@@ -3287,6 +3287,7 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                     # marks together, after any preceding stamp has joined.
                     # Handlers update complementary legs under this same lock;
                     # newly buffered ids still belong to a successor flush.
+                    held_quotes = getattr(blend_refresher, "held_quotes", None)
                     async with buffer_lock:
                         current_chunk = {oid: price_buffer[oid] for oid in chunk_ids}
                         for oid in chunk_ids:
@@ -3294,6 +3295,16 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                                 batch_marks[oid] = input_marks[oid]
                             else:
                                 batch_marks.pop(oid, None)
+                        # #11138: each input's frozen DB bound travels WITH this
+                        # snapshot. A newer tick during the write and sample below moves
+                        # only the live record, never this chunk's (lane1 B1).
+                        chunk_bounds = (
+                            {
+                                oid: held_quotes.bound_for(batch_marks.get(oid))
+                                for oid in chunk_ids
+                            }
+                            if held_quotes is not None else {}
+                        )
                     if traced is not None:
                         stage_trace.chunk_write(traced, current_chunk, batch_marks)
                     wrote = await write_chunk(
@@ -3302,6 +3313,10 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                     )
                     if traced is not None:
                         stage_trace.chunk_end(traced, wrote)
+                    # A completed write has advanced last_updated. Sample
+                    # AFTER it, for FUTURE inputs, never to re-date this batch.
+                    if held_quotes is not None and not final:
+                        await held_quotes.sample_database_clock(get_task_session)
                     # #11138: None is a price row a lock holds (refused, timed
                     # out or cooling down). Each event whose speaking legs here
                     # all carry their received quote is stamped from
@@ -3310,7 +3325,6 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                     # Only a changed quote is owed again, so a long hold costs
                     # no stamp per flush.
                     held_ready: list[int] = []
-                    held_quotes = getattr(blend_refresher, "held_quotes", None)
                     if wrote is None and not final and held_quotes is not None:
                         async with buffer_lock:
                             legs_of: dict[int, list[int]] = {}
@@ -3323,13 +3337,13 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                                 marks = [batch_marks.get(oid) for oid in oids]
                                 if all(
                                     getattr(mark, "probability", None) == current_chunk[oid]
-                                    and isinstance(getattr(mark, "recv_wall", None), float)
+                                    and chunk_bounds.get(oid) is not None
                                     and oid not in withdraw_buffer
                                     for oid, mark in zip(oids, marks)
                                 ):
                                     quotes.update(
-                                        (oid, (current_chunk[oid], mark.recv_wall))
-                                        for oid, mark in zip(oids, marks)
+                                        (oid, (current_chunk[oid], chunk_bounds[oid]))
+                                        for oid in oids
                                     )
                             moved = event_ids_for_outcomes(
                                 headline_event_ids, held_quotes.hold(quotes),
@@ -4045,6 +4059,9 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
             return
         if mark is not None:
             input_marks[outcome_id] = mark
+            held = getattr(blend_refresher, "held_quotes", None)
+            if held is not None:
+                held.note_input(mark)
             stage_trace = getattr(tail_receipts, "exact_trace", None)
             if stage_trace is not None:
                 stage_trace.input_accepted(mark)  # never raises
