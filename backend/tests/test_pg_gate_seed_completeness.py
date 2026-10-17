@@ -123,6 +123,10 @@ COVERED = (
     # #2722. Seeds the nine futures_markets rows by raw INSERT, as production
     # held them: status / resolution_date / updated_at ARE the subject.
     "test_kalshi_archived_nine_repair_2722_pg.py",
+    # #2644. Seeds the Oscars futures_markets row with two legs and their
+    # snapshots, plus the nine, by raw INSERT: status / dates / updated_at ARE
+    # the subject, and every snapshot names `reading_count`.
+    "test_kalshi_oscar_song_repair_2644_pg.py",
     # #1527. Seeds eleven `futures_markets` and their legs by raw INSERT on a
     # hand-built schema to prove the guarded three-winner repair. Its first CI
     # run died here: the throwaway table had no `category` / `external_id`, so
