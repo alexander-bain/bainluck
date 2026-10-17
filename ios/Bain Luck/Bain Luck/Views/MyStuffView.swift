@@ -104,6 +104,8 @@ struct MyStuffView: View {
         // #10011 — pinned content is read from the saved IDs themselves, so it
         // never depends on the team feed, onboarding or sign-in state.
         .task(id: pinManager.savedPins) { await pinContent.load(pinManager.savedPins) }
+        // #10874 — saved pins it described (or found gone) reach Spotlight.
+        .spotlightSavedContent10874(pinContent, pins: pinManager)
         .onChange(of: pinManager.identityGeneration) { _, _ in
             pinContent.reset()
             Task { await pinContent.load(pinManager.savedPins) }
