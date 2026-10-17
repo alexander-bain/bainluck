@@ -151,6 +151,21 @@ nonisolated enum ContextualTipEligibility10876 {
     /// A reader with anything pinned has already found the control.
     static func pinLearned(savedPinCount: Int) -> Bool { savedPinCount > 0 }
 
+    /// The whole pin tip for one bookmark. A list or card bookmark is decided
+    /// before `read` runs, so it never touches the pin store; a detail
+    /// bookmark reads it once. Decided here so `PinButton` never reads the pin
+    /// limit itself (#9495: the button must not pre-judge the limit).
+    static func pinTip(isDetailAnchor: Bool, localPinUIShowing: Bool,
+                       read: () -> PinTipStoreReading10876) -> PinTipState10876 {
+        guard isDetailAnchor else { return .off }
+        let store = read()
+        return PinTipState10876(
+            usable: pinUsable(isDetailAnchor: true, isPinned: store.isPinned, isSaving: store.isSaving,
+                              canPin: store.canPin, pinLoadState: store.loadState,
+                              isShowingPinMessage: store.hasPinMessage || localPinUIShowing),
+            learned: pinLearned(savedPinCount: store.savedPinCount))
+    }
+
     /// Taught only where Start Live Activity is shown AND tappable on a game
     /// that is live now — never for a held, disabled or unsupported control.
     static func followLiveUsable(controlShown: Bool, activitiesEnabled: Bool, gameIsLive: Bool,
@@ -183,6 +198,22 @@ nonisolated enum ContextualTipEligibility10876 {
 /// foreground or the screen restarts the clock; once donated, nothing on this
 /// page donates again — the notification alert or a trip to the background must
 /// not turn one visit into the two the pin rule waits for.
+/// What the pin tip reads from the pin store for one subject.
+nonisolated struct PinTipStoreReading10876: Equatable, Sendable {
+    var isPinned: Bool
+    var isSaving: Bool
+    var canPin: Bool
+    var loadState: PinLoadState
+    var hasPinMessage: Bool
+    var savedPinCount: Int
+}
+
+nonisolated struct PinTipState10876: Equatable, Sendable {
+    var usable: Bool
+    var learned: Bool
+    static let off = PinTipState10876(usable: false, learned: false)
+}
+
 nonisolated struct PinDwell10876: Equatable, Sendable {
     private(set) var activeSince: Date?
     private(set) var donated = false

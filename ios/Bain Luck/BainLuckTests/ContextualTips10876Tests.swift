@@ -195,11 +195,162 @@ final class ContextualTips10876Tests: XCTestCase {
                                  encoding: .utf8)
         XCTAssertTrue(manager.contains("binding.userID != nil, loadState != .loaded {"),
                       "togglePin's add refusal changed; re-derive pinStoreAcceptsAdds")
-        // lane1b H1: the bookmark passes its store's real state, not a constant.
-        let button = try String(contentsOf: Self.appDir.appendingPathComponent("Components/PinButton.swift"),
-                                encoding: .utf8)
-        XCTAssertTrue(button.contains("pinLoadState: pinManager.loadState,"),
-                      "the pin tip no longer sees the pin store's load state")
+        // lane1b H1: the tip reads its store's real state, not a constant.
+        let tips = try String(contentsOf: Self.tipsSource, encoding: .utf8)
+        XCTAssertTrue(tips.contains("canPin: canPin(type: type), loadState: loadState,"),
+                      "the pin tip no longer sees the pin store's limit or load state")
+        XCTAssertTrue(tips.contains("hasPinMessage: feedback != nil, savedPinCount: savedPins.count)"))
+        XCTAssertTrue(tips.contains("isPinned: isPinned(type: type, id: id), isSaving: isSaving(type: type, id: id),"))
+        XCTAssertTrue(tips.contains("read: { pinManager.pinTipReading10876(type: type, id: id) })"))
+    }
+
+    // MARK: - Pin: the bookmark's wiring
+
+    private let freeSlot = PinTipStoreReading10876(isPinned: false, isSaving: false, canPin: true,
+                                                   loadState: .loaded, hasPinMessage: false, savedPinCount: 0)
+
+    private func pinTip(_ store: PinTipStoreReading10876, localPinUIShowing: Bool = false) -> PinTipState10876 {
+        ContextualTipEligibility10876.pinTip(isDetailAnchor: true, localPinUIShowing: localPinUIShowing) { store }
+    }
+
+    /// lane1b: list and card bookmarks must not read the pin store at all.
+    func testACompactBookmarkNeverReadsThePinStore() throws {
+        var reads = 0
+        let compact = ContextualTipEligibility10876.pinTip(isDetailAnchor: false, localPinUIShowing: false) {
+            reads += 1
+            return freeSlot
+        }
+        XCTAssertEqual(compact, .off)
+        XCTAssertEqual(reads, 0, "a list or card bookmark read the pin store")
+        let detail = ContextualTipEligibility10876.pinTip(isDetailAnchor: true, localPinUIShowing: false) {
+            reads += 1
+            return freeSlot
+        }
+        XCTAssertEqual(detail, PinTipState10876(usable: true, learned: false), "control: a free detail bookmark")
+        XCTAssertEqual(reads, 1, "a detail bookmark reads the store once")
+        let button = try String(contentsOf: Self.pinButtonSource, encoding: .utf8)
+        XCTAssertTrue(button.contains(".pinTip10876(isDetailAnchor: !compact, pinManager: pinManager,"),
+                      "the bookmark no longer marks only its full-size form as the detail anchor")
+    }
+
+    func testThePinTipCarriesEveryStoreClauseIntoTheRule() {
+        XCTAssertTrue(pinTip(freeSlot).usable, "control: every clause satisfied")
+        var store = freeSlot
+        store.isPinned = true
+        XCTAssertFalse(pinTip(store).usable, "taught on something already pinned")
+        store = freeSlot
+        store.isSaving = true
+        XCTAssertFalse(pinTip(store).usable, "taught while a save is in flight")
+        store = freeSlot
+        store.canPin = false
+        XCTAssertFalse(pinTip(store).usable, "taught at the pin limit, where a tap refuses")
+        store = freeSlot
+        store.loadState = .failed
+        XCTAssertFalse(pinTip(store).usable, "taught where the tap answers \"Refresh your saved pins\"")
+        store = freeSlot
+        store.hasPinMessage = true
+        XCTAssertFalse(pinTip(store).usable, "taught over a pin message")
+        XCTAssertFalse(pinTip(freeSlot, localPinUIShowing: true).usable,
+                       "taught over the button's own limit alert or Manage pins sheet")
+        XCTAssertFalse(pinTip(freeSlot).learned)
+        store = freeSlot
+        store.savedPinCount = 1
+        XCTAssertTrue(pinTip(store).learned, "anything pinned means pinning is learned")
+    }
+
+    /// #9495 keeps any limit read out of the bookmark; the tip's read lives in
+    /// Tips/. This closes the wrappers `canPin(` alone would not catch.
+    func testTheBookmarkReadsNoPinLimitEvenThroughAWrapper() throws {
+        let button = Self.codeOnly(try String(contentsOf: Self.pinButtonSource, encoding: .utf8))
+        for name in ["canPin", "maxPinsPerType", "pinTipReading10876", "PinTipStoreReading10876", "pinUsable"] {
+            XCTAssertFalse(Self.identifiers(in: button).contains(name), "PinButton reads the pin limit via \(name)")
+        }
+    }
+
+    /// The limit toast exists only if every tap reaches `togglePin`. Parsed,
+    /// not substring-matched: inside the `Button {` … `} label:` action the call
+    /// is a statement of the action's own body, with no branch or exit before it.
+    func testEveryPinTapReachesTogglePinUnconditionally() throws {
+        let code = Self.codeOnly(try String(contentsOf: Self.pinButtonSource, encoding: .utf8))
+        let call = "pinManager.togglePin(type: type, id: id)"
+        let action = try XCTUnwrap(Self.buttonAction(in: code), "no `Button {` … `} label:` action in PinButton")
+        XCTAssertEqual(action.components(separatedBy: call).count, 2, "togglePin must be called exactly once in the action")
+        let before = try XCTUnwrap(action.components(separatedBy: call).first)
+        for (open, close) in [("{", "}"), ("(", ")"), ("[", "]")] {
+            XCTAssertEqual(before.filter { String($0) == open }.count, before.filter { String($0) == close }.count,
+                           "togglePin sits inside a nested \(open)…\(close), not the action's own body")
+        }
+        let statementStart = before.reversed().first { $0 != " " && $0 != "\t" }
+        XCTAssertTrue(statementStart == nil || statementStart == "\n" || statementStart == ";",
+                      "togglePin is not its own statement (an operand of \(String(describing: statementStart)))")
+        let flow: Set<String> = ["if", "guard", "return", "switch", "while", "for", "repeat", "throw", "defer",
+                                 "do", "catch", "else", "case", "break", "continue", "fallthrough"]
+        let found = Self.identifiers(in: before).filter(flow.contains)
+        XCTAssertTrue(found.isEmpty, "control flow before togglePin: \(found)")
+    }
+
+    /// Source with comments and string-literal contents blanked, so a guard
+    /// reads code, not prose.
+    private static func codeOnly(_ source: String) -> String {
+        var out = ""
+        var chars = Array(source)[...]
+        while let c = chars.first {
+            if chars.starts(with: "//") {
+                while let d = chars.first, d != "\n" { chars.removeFirst(); out.append(d == "\t" ? "\t" : " ") }
+            } else if chars.starts(with: "/*") {
+                while !chars.isEmpty, !chars.starts(with: "*/") { out.append(chars.removeFirst() == "\n" ? "\n" : " ") }
+                if !chars.isEmpty { chars.removeFirst(2); out.append("  ") }
+            } else if c == "\"" {
+                out.append(chars.removeFirst())
+                while let d = chars.first, d != "\"", d != "\n" {
+                    chars.removeFirst()
+                    out.append(" ")
+                    if d == "\\", !chars.isEmpty { chars.removeFirst(); out.append(" ") }
+                }
+                if let d = chars.first, d == "\"" { out.append(chars.removeFirst()) }
+            } else {
+                out.append(chars.removeFirst())
+            }
+        }
+        return out
+    }
+
+    /// Word tokens, minus compiler directives (`#if os(iOS)` is not a branch).
+    private static func identifiers(in code: String) -> [String] {
+        var words: [String] = []
+        var current = ""
+        var directive = false
+        for c in code + " " {
+            if c.isLetter || c.isNumber || c == "_" {
+                current.append(c)
+            } else {
+                if !current.isEmpty, !directive { words.append(current) }
+                current = ""
+                directive = c == "#"
+            }
+        }
+        return words
+    }
+
+    /// The body of the first `Button {` closure, if its closing brace is
+    /// followed by `label:`.
+    private static func buttonAction(in code: String) -> String? {
+        guard let start = code.range(of: "Button {") else { return nil }
+        var depth = 0
+        var index = code.index(before: start.upperBound)
+        let bodyStart = start.upperBound
+        while index < code.endIndex {
+            if code[index] == "{" { depth += 1 }
+            if code[index] == "}" {
+                depth -= 1
+                if depth == 0 {
+                    let rest = code[code.index(after: index)...].drop { $0 == " " }
+                    return rest.hasPrefix("label:") ? String(code[bodyStart..<index]) : nil
+                }
+            }
+            index = code.index(after: index)
+        }
+        return nil
     }
 
     // MARK: - Pin engagement
@@ -370,4 +521,5 @@ final class ContextualTips10876Tests: XCTestCase {
     private static var appDir: URL { projectDir.appendingPathComponent("Bain Luck") }
     private static var tipsSource: URL { appDir.appendingPathComponent("Tips/ContextualTips10876.swift") }
     private static var rulesSource: URL { appDir.appendingPathComponent("Tips/ContextualTipRules10876.swift") }
+    private static var pinButtonSource: URL { appDir.appendingPathComponent("Components/PinButton.swift") }
 }

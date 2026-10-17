@@ -84,6 +84,17 @@ private let logger = Logger(subsystem: "com.bainluck", category: "tips")
     }
 }
 
+extension PinManager {
+    /// The pin store as the pin tip reads it. Here, not in `PinButton`: the
+    /// limit is read only to decide the tip, never the tap.
+    func pinTipReading10876(type: String, id: Int) -> PinTipStoreReading10876 {
+        PinTipStoreReading10876(
+            isPinned: isPinned(type: type, id: id), isSaving: isSaving(type: type, id: id),
+            canPin: canPin(type: type), loadState: loadState,
+            hasPinMessage: feedback != nil, savedPinCount: savedPins.count)
+    }
+}
+
 // MARK: - The three tips
 
 /// Pin: the bookmark on an event or market page, after the reader has spent
@@ -243,14 +254,20 @@ private struct PinEngagement10876: ViewModifier {
 
 extension View {
     /// The bookmark on an event or market page. List and card bookmarks pass
-    /// `isDetailAnchor: false` and get neither the tip nor the engagement count.
+    /// `isDetailAnchor: false` and get neither the tip, the engagement count
+    /// nor a read of the pin store. `localPinUIShowing` is the button's own
+    /// limit alert or Manage pins sheet.
     @ViewBuilder
-    func pinTip10876(isDetailAnchor: Bool, usable: Bool, learned: Bool) -> some View {
+    func pinTip10876(isDetailAnchor: Bool, pinManager: PinManager, type: String, id: Int,
+                     localPinUIShowing: Bool) -> some View {
         if isDetailAnchor && ContextualTips10876.isEnabledOnThisPlatform {
+            let state = ContextualTipEligibility10876.pinTip(
+                isDetailAnchor: isDetailAnchor, localPinUIShowing: localPinUIShowing,
+                read: { pinManager.pinTipReading10876(type: type, id: id) })
             modifier(PinEngagement10876())
                 .modifier(ContextualTipAnchor10876(
                     kind: .pin, tip: PinTip10876(),
-                    usable: usable, learned: learned, arrowEdge: .top))
+                    usable: state.usable, learned: state.learned, arrowEdge: .top))
         } else {
             self
         }

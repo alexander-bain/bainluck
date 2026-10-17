@@ -65,15 +65,9 @@ struct PinButton: View {
             showPinManagement = false
         }
         .accessibilityLabel(saving ? "Saving pin" : (pinned ? "Unpin" : "Pin"))
-        // #10876 — the pin tip, on detail-page bookmarks only. `!compact &&`
-        // short-circuits, so list and card bookmarks never read the pin store.
-        .pinTip10876(
-            isDetailAnchor: !compact,
-            usable: !compact && ContextualTipEligibility10876.pinUsable(
-                isDetailAnchor: !compact, isPinned: pinned, isSaving: saving,
-                canPin: pinManager.canPin(type: type),
-                pinLoadState: pinManager.loadState,
-                isShowingPinMessage: pinManager.feedback != nil || showManagementAlert || showPinManagement),
-            learned: !compact && ContextualTipEligibility10876.pinLearned(savedPinCount: pinManager.savedPins.count))
+        // #10876 — the pin tip, on detail-page bookmarks only. Tips/ decides
+        // it, so this button never reads the pin limit (#9495).
+        .pinTip10876(isDetailAnchor: !compact, pinManager: pinManager, type: type, id: id,
+                     localPinUIShowing: showManagementAlert || showPinManagement)
     }
 }
