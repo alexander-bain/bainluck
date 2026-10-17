@@ -9,7 +9,7 @@ from datetime import datetime
 from typing import Any
 
 from app.utils.aggregation import parse_source_entry
-from app.utils.game_state import normalize_live_game_state
+from app.utils.game_state import authority_stoppage_label, normalize_live_game_state
 from app.utils.graded_card import rendered_duel_percents
 from app.utils.prematch_reading import resolve_prematch_reading
 from app.utils.start_placeholder import start_is_tbd
@@ -470,6 +470,16 @@ def format_event_data(
             espn_data["broadcast"] = broadcast_info
         if espn_data:
             data["espn"] = espn_data
+    elif status == "suspended":
+        # #9208 — the rained-out ALCS Game 4 (15330795, stored `Postponed`) led
+        # /sports as "No result reported · last score 0-0": only a live row got
+        # an `espn` block, so the card's `authorityStoppageLabel(espn.period)`
+        # had nothing to read while its own page said Postponed. ESPN's word
+        # only, through the exact allowlist the team page and typeahead use, so
+        # a live period left on a row that went dark never prints as a stoppage.
+        stoppage = authority_stoppage_label(period)
+        if stoppage:
+            data["espn"] = {"period": stoppage}
 
     if current_home_prob is not None:
         # UX-P114: the card prints BOTH of these side by side, and `feed.py` derives
