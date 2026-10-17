@@ -4982,8 +4982,8 @@ jobs:
             echo "::error::#10090 next-quote history gate SKIPPED"
             exit 1
           fi
-          grep -qE "[^0-9]6 passed[,[:space:]]" /tmp/next-quote10090.txt || {
-            echo "::error::#10090 next-quote history gate did not run all six cases"
+          grep -qE "[^0-9]8 passed[,[:space:]]" /tmp/next-quote10090.txt || {
+            echo "::error::#10090 next-quote history gate did not run all eight cases"
             exit 1
           }
 

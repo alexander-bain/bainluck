@@ -176,7 +176,8 @@ FRESH_STAMP_WORKERS = 3
 ADMITTED_LIVE_RUN = 3
 
 # Includes the point currently writing and reservations before quote COMMIT.
-# At this finite bound a newly due stamp waits for debt space; no points drop.
+# At this finite bound a newly due stamp owes no point and does not wait
+# (#11138); its event stays due, and no queued point drops.
 HISTORY_POINT_LIMIT = 64
 
 #: #837 receipt — the per-event floor between receipt lines for chains that
@@ -1589,6 +1590,9 @@ class LiveBlendRefresher:
             # #837 tail — stamps that stopped waiting on another transaction's
             # row lock and were re-queued. Not an error: the retry is the path.
             "lock_skipped": 0,
+            # #11138 — due chart points not taken because the committed
+            # backlog was full; the stamp went out and the event stays due.
+            "history_deferred": 0,
             # #9484 — committed market invalidations (`live:market:{id}`) this
             # consumer's writers published through the same client. Counted
             # for the same reason as `published`: a quiet market and a dead
@@ -2777,9 +2781,11 @@ class LiveBlendRefresher:
         """Reserve finite debt space before a transaction can owe a point.
 
         Same-event quotes remain serial under the consumer's existing fence.
-        At capacity, wait only for the owned writer. If it failed, refuse this
-        stamp before COMMIT and let the existing blend retry retain the price.
-        Distinct due observations are never dropped or coalesced.
+        A queued point is never dropped. At capacity a due stamp still commits
+        and publishes, owing no point: its event stays due, so its next stamp
+        with room owes one (#11138). The headline never waits on chart debt —
+        production v5763 13:01:22Z, Kalshi's writer held 5.364 s at 64 owed,
+        held 15331223's .375 for 5.8 s behind three due stamps.
         """
         reserved = set()
         committed = False
@@ -2789,14 +2795,10 @@ class LiveBlendRefresher:
                 last = self._history_reserved.get(eid, self._last_snapshot_at.get(eid))
                 if last is not None and now - last < self.snapshot_interval_s:
                     continue
-                while self._history_count >= self._history_limit:
+                if self._history_count >= self._history_limit:
                     self._start_history()
-                    if self._history_task is None or self._history_task.done():
-                        raise RuntimeError(
-                            "committed chart backlog is full; stamp remains owed"
-                        )
-                    self._history_changed.clear()
-                    await self._history_changed.wait()
+                    self.stats["history_deferred"] += 1
+                    continue
                 self._history_count += 1
                 reserved.add(eid)
             yield reserved, ready
