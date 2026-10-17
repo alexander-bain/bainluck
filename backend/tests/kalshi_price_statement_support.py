@@ -46,13 +46,19 @@ def frozen_flush_ast():
 
 
 def pipeline_handoff(node):
-    """The flush's `async with aclosing(prices.phase(session, phase))` block."""
+    """The flush's `async with aclosing(prices.phase(session, phase))` block.
+
+    #10090: `forced_ids` names the held legs whose landing write always writes.
+    """
     return next(
         n
         for n in ast.walk(node)
         if isinstance(n, ast.AsyncWith)
         and ast.unparse(n.items[0].context_expr)
-        == "contextlib.aclosing(prices.phase(session, phase, force_observation=final_drain))"
+        == (
+            "contextlib.aclosing(prices.phase(session, phase, "
+            "force_observation=final_drain, forced_ids=held_ids))"
+        )
     )
 
 

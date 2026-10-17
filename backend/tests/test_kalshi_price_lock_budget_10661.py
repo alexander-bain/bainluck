@@ -35,8 +35,11 @@ def with_drain(r, *, attempts=3):
     return r.ns["drain_prices"]
 
 
-def test_the_budget_is_500ms():
-    assert PRICE_PHASE_LOCK_TIMEOUT_MS == 500
+def test_the_budget_is_50ms():
+    # #10090: 500 → 50 once a refused phase's quotes reach the stamp through the
+    # held overlay (Root attempt21: 568.84 → 105.22 ms to headline and chart).
+    # Not lower: 1 ms (attempt23) turned a 20 ms ambiguous lock into 2044 ms.
+    assert PRICE_PHASE_LOCK_TIMEOUT_MS == 50
 
 
 async def test_a_held_first_game_lets_the_later_game_commit_and_refresh():
@@ -77,7 +80,7 @@ async def test_every_periodic_phase_arms_the_budget_first():
     r.release.set()
     assert await bounded(r.flush()) is True
     opened = [i for i, t in enumerate(r.trace) if t[0] == "lock_timeout"]
-    assert [r.trace[i] for i in opened] == [("lock_timeout", "500ms")] * 3
+    assert [r.trace[i] for i in opened] == [("lock_timeout", "50ms")] * 3
     # Armed before the phase's first write, in every transaction.
     for i in opened:
         assert r.trace[i + 1][0] == "write"
@@ -187,7 +190,7 @@ async def test_cancellation_while_a_later_game_writes_keeps_every_unpaid_row():
 
 async def test_the_final_drain_waits_for_the_lock_instead_of_dropping():
     """Live's required correction to the prototype. Three back-to-back attempts
-    at 500 ms each would strand the held game's prices (final_flush_dropped)."""
+    at the periodic budget each would strand the held game's prices (final_flush_dropped)."""
     r = rig(locked={1})
     drain = with_drain(r)
     r.release.set()

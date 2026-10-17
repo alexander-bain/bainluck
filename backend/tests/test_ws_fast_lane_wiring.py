@@ -314,6 +314,23 @@ class TestFlushReachesTheBlend:
                 any(c is f for c in ast.walk(filler)) for f in fills
             ), f"{consumer}: queued_events is filled outside queue_committed"
             committed = _calls_named(flush, "queue_committed")
+            # #10090: the ONE other filler is Kalshi's #11138 overlay. It
+            # queues only quotes `held_quotes.hold` just recorded (a refused
+            # phase's, or the newest snapshot during that write's cooldown):
+            # its stamp reads the held quote, never an unwritten row.
+            held_admits = [
+                fn for fn in ast.walk(flush)
+                if isinstance(fn, ast.AsyncFunctionDef) and fn.name == "admit_held_phase"
+            ]
+            for fn in held_admits:
+                inside = [c for c in committed if any(c is n for n in ast.walk(fn))]
+                text = ast.unparse(fn)
+                assert inside and all(
+                    ast.unparse(c.args[2]) == "held_ready" for c in inside
+                ), consumer
+                assert "held_quotes.hold(quotes)" in text, consumer
+                assert "held_ready = [oid for oid in quotes if cohort_event_ids.get(oid) in moved]" in text, consumer
+                committed = [c for c in committed if c not in inside]
             assert committed and min(c.lineno for c in committed) > write_line, (
                 f"{consumer}: blend refresh must follow the price write"
             )

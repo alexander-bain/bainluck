@@ -5029,6 +5029,27 @@ jobs:
             exit 1
           }
 
+      - name: "#10090 a lock-held KALSHI price row stamps the received quote; a restart cannot undo it (real Postgres)"
+        if: matrix.group == 'shared-tail' && needs.change-scope.outputs.reuse != 'true'
+        run: |
+          if python -m pytest tests/integration/test_kalshi_held_price_row_10090_pg.py \
+            -v -rs > /tmp/kalshi-held10090.txt 2>&1; then
+            gate_status=0
+          else
+            gate_status=$?
+          fi
+          cat /tmp/kalshi-held10090.txt
+          echo "EXIT CODE: $gate_status"
+          test "$gate_status" -eq 0
+          if grep -qiE "[0-9]+ skipped" /tmp/kalshi-held10090.txt; then
+            echo "::error::#10090 Kalshi held-row gate SKIPPED"
+            exit 1
+          fi
+          grep -qE "[^0-9]4 passed[,[:space:]]" /tmp/kalshi-held10090.txt || {
+            echo "::error::#10090 Kalshi held-row gate did not run all four cases"
+            exit 1
+          }
+
       - name: "#10702 exact Kalshi trace commit and rollback controls (real Postgres)"
         # Each case owns and drops a random schema in the job's disposable DB.
         if: matrix.group == 'isolated' && needs.change-scope.outputs.reuse != 'true'
