@@ -845,7 +845,8 @@ struct FuturesDetailView: View {
                             if let change = outcome.probabilityChange24h, abs(change) >= 0.005 {
                                 DeltaBadge(value: change * 100)
                             }
-                            if let opening = outcome.openingProbability, let current = outcome.probability {
+                            // #8313: an opening its own odds give to the other side is not printed.
+                            if let opening = FuturesReadableOpening8313.of(outcome), let current = outcome.probability {
                                 let diff = current - opening
                                 if abs(diff) >= 0.005 {
                                     Text("from \(formatProbability(opening))")
