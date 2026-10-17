@@ -610,8 +610,8 @@ def test_the_fixture_tier_is_the_fine_one_the_rig_banks():
     market = _async_market()
     payload = _fill(market, _Venue({"tok_yes": _clob(raw_yes), "tok_no": _clob(raw_no)}))
     tiers = {r[5] for oid in (YES_ID, NO_ID) for r in payload["outcomes"][str(oid)]["points"]}
-    assert len(tiers) == 1
-    assert series.declared_resolution_seconds(tiers.pop()) == 60.0
+    (tier,) = tiers
+    assert series.declared_resolution_seconds(tier) == 60.0
     assert _instants(payload, YES_ID)
 
 

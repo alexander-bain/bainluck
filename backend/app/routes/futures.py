@@ -7092,7 +7092,7 @@ def _verify_pair_bank(
     reason)` when an annotation does not verify — the series is then refused.
 
     IDENTITY IS RE-DERIVED HERE, never trusted from the bank (lane1's I3): the
-    fill's own predicate `_paired_binary_leg_ids`, asked of the contracts the
+    fill's own predicate (`async_binary_pair.paired_binary_leg_ids`), asked of the contracts the
     bank was built from, which `validate_payload` has already bound to these
     outcome rows. Any other market — Kalshi, multi-outcome, wrong token,
     condition or leg — reads its bank exactly as before: annotations, if a bank
@@ -7105,7 +7105,7 @@ def _verify_pair_bank(
     `parse_points` has already checked what one point can answer alone (pair_at
     is the later instant, skew within S, not after the build).
     """
-    from app.tasks.generic_market_history_fill import _paired_binary_leg_ids
+    from app.utils.async_binary_pair import paired_binary_leg_ids
 
     if not any(p.peer_at is not None for points in accepted.values() for p in points):
         return None, None
@@ -7115,7 +7115,7 @@ def _verify_pair_bank(
         for key, entry in (cached.items() if isinstance(cached, dict) else ())
         if str(key).isdigit() and isinstance(entry, dict) and int(key) in accepted
     }
-    pair = _paired_binary_leg_ids(outcomes, entries)
+    pair = paired_binary_leg_ids(outcomes, entries)
     if pair is None:
         return None, None
     oid_a, oid_b = pair

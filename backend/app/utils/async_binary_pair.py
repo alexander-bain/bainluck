@@ -39,7 +39,7 @@ from __future__ import annotations
 
 from bisect import bisect_left, bisect_right
 from datetime import datetime, timedelta
-from typing import Sequence
+from typing import Any, Sequence
 
 from app.utils.futures_chart_series import declared_resolution_seconds
 
@@ -109,3 +109,39 @@ def pair_observations(
         for i, js in candidates_a.items()
         if len(js) == 1 and candidates_b.get(js[0]) == [i]
     )
+
+
+def paired_binary_leg_ids(
+    outcomes: Sequence[Any], entries: dict[int, dict]
+) -> tuple[int, int] | None:
+    """Return `(oid_a, oid_b)` only for an identity-admitted Polymarket `_yes`/`_no` binary pair.
+
+    #11160's identity rule, moved here from the fill so the fill and the reader
+    import one copy from a module neither depends on: one 0x condition, two
+    distinct tokens, exactly `{c}_yes` / `{c}_no`. `entries` maps outcome id to
+    a dict carrying that outcome's `contract`.
+    """
+    if len(outcomes) != 2:
+        return None
+    oid_a, oid_b = int(outcomes[0].id), int(outcomes[1].id)
+    if oid_a == oid_b or oid_a not in entries or oid_b not in entries:
+        return None
+    c_a = entries[oid_a].get("contract") or {}
+    c_b = entries[oid_b].get("contract") or {}
+    if c_a.get("venue") != "polymarket" or c_b.get("venue") != "polymarket":
+        return None
+    cond_id = c_a.get("condition_id")
+    if (
+        not isinstance(cond_id, str)
+        or not cond_id.startswith("0x")
+        or c_b.get("condition_id") != cond_id
+    ):
+        return None
+    if not c_a.get("token_id") or not c_b.get("token_id") or c_a.get("token_id") == c_b.get("token_id"):
+        return None
+    if {c_a.get("outcome_external_id"), c_b.get("outcome_external_id")} != {
+        f"{cond_id}_yes",
+        f"{cond_id}_no",
+    }:
+        return None
+    return oid_a, oid_b
