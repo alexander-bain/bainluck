@@ -22,6 +22,7 @@ accepted, so the worker's wall clock may be wrong by a day and nothing moves.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import functools
 from datetime import datetime, timezone
 from pathlib import Path
@@ -539,7 +540,9 @@ def test_an_undated_row_is_not_ambiguous_and_an_unchanged_quote_is_not_read_agai
 
 
 @pytest.mark.parametrize("failure", ["fail", "block"])
-def test_an_unknown_read_returns_none_and_touches_no_clock_state(failure):
+def test_an_unknown_read_returns_none_and_backs_off_without_moving_the_bound(failure):
+    import time
+
     held = HeldRowQuotes()
     held._database_bound = 100.0
     quotes = snapshot(held, [accept(held)])
@@ -547,7 +550,52 @@ def test_an_unknown_read_returns_none_and_touches_no_clock_state(failure):
     assert asyncio.run(held.stored_at_or_after(lambda: session, quotes)) is None
     assert session.exited
     assert held._database_bound == 100.0
-    assert held.sample_failures == 0 and held._sample_backoff_until == 0.0
+    # lane1 R4: the read shares the sample's window, so it backs off both.
+    assert held.sample_failures == 1
+    assert held._sample_backoff_until >= time.monotonic() + HeldRowQuotes.SAMPLE_BACKOFF_S - 1
+
+
+def test_a_sick_pool_costs_the_pre_hold_read_one_timeout_per_window():
+    """lane1 R4 (probe sickpool.py on 84ead9a1f1): 8 lock-deferred chunks with
+    a changed quote each, pool checkout never returning, one serial flush:
+    the read paid 0.15 s per chunk (1.216 s) while the sample paid it once."""
+    import time
+
+    held = HeldRowQuotes()
+    held._database_bound = 100.0
+    quotes = snapshot(held, [accept(held)])
+    opened = []
+
+    @contextlib.asynccontextmanager
+    async def hanging():
+        opened.append(1)
+        await asyncio.Event().wait()  # a pool checkout that never returns
+        yield None
+
+    async def flush():
+        started = time.monotonic()
+        answers = [await held.stored_at_or_after(hanging, quotes) for _chunk in range(8)]
+        return answers, time.monotonic() - started
+
+    answers, elapsed = asyncio.run(flush())
+    assert answers == [None] * 8
+    assert len(opened) == 1 and held.sample_failures == 1
+    assert elapsed < 2 * HeldRowQuotes.SAMPLE_TIMEOUT_S
+
+
+def test_a_read_during_an_active_sample_backoff_opens_no_session():
+    import time
+
+    held = HeldRowQuotes()
+    held._database_bound = 100.0
+    quotes = snapshot(held, [accept(held)])
+    held._sample_backoff_until = time.monotonic() + HeldRowQuotes.SAMPLE_BACKOFF_S
+    session = _RowsSession([(3, _stamp(200.0))])
+    assert asyncio.run(held.stored_at_or_after(lambda: session, quotes)) is None
+    assert session.opened == 0 and held.sample_failures == 0
+    held._sample_backoff_until = time.monotonic() - 0.001  # the window elapsed
+    assert asyncio.run(held.stored_at_or_after(lambda: session, quotes)) == {3}
+    assert session.opened == 1
 
 
 def _deferred_flush(stored_at_or_after, *, prior=None, batch=None):

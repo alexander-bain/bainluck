@@ -1253,7 +1253,7 @@ class HeldRowQuotes:
         at 664 ms; attempt19 1000.563 ms). An unchanged quote is not read
         again. A row lock never blocks this read; a relation lock gets
         AMBIGUITY_READ_LOCK_TIMEOUT_MS. None means unknown: the caller holds
-        as before.
+        as before. It shares the sample's backoff window both ways.
         """
         from sqlalchemy import select
 
@@ -1269,6 +1269,8 @@ class HeldRowQuotes:
         }
         if not new:
             return set()
+        if time.monotonic() < self._sample_backoff_until:
+            return None
         try:
             async with asyncio.timeout(self.SAMPLE_TIMEOUT_S):
                 async with sessions() as session:
@@ -1281,6 +1283,10 @@ class HeldRowQuotes:
                         .where(FuturesOutcome.id.in_(sorted(new)))
                     )).all()
         except Exception:
+            # Shares the sample's window: a sick pool still costs one timeout
+            # per window, and later sample attempts back off behind this one.
+            self.sample_failures += 1
+            self._sample_backoff_until = time.monotonic() + self.SAMPLE_BACKOFF_S
             return None
         found = set()
         for oid, last_updated in rows:
