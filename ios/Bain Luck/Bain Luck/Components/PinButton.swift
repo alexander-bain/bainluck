@@ -23,7 +23,10 @@ struct PinButton: View {
             UIImpactFeedbackGenerator(style: .light).impactOccurred()
             #endif
             let previousFeedbackID = pinManager.feedback?.id
+            let wasPinned = pinned
             pinManager.togglePin(type: type, id: id)
+            // #10876 — a pin that took is the action its tip teaches.
+            if !wasPinned, pinned { ContextualTips10876.pinLearned() }
             // A root overlay may sit below a presented detail sheet. Its pin
             // button owns a local limit alert and a sheet above that detail.
             if isPresented, let feedback = pinManager.feedback,
@@ -62,5 +65,9 @@ struct PinButton: View {
             showPinManagement = false
         }
         .accessibilityLabel(saving ? "Saving pin" : (pinned ? "Unpin" : "Pin"))
+        // #10876 — the pin tip, on detail-page bookmarks only. Tips/ decides
+        // it, so this button never reads the pin limit (#9495).
+        .pinTip10876(isDetailAnchor: !compact, pinManager: pinManager, type: type, id: id,
+                     localPinUIShowing: showManagementAlert || showPinManagement)
     }
 }

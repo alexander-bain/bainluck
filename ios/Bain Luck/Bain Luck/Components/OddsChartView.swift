@@ -900,6 +900,8 @@ struct OddsChartView: View {
                                     finished: EventState.isFinished(status)))
                     }
                     .frame(height: chartHeight)
+                    // #10876 — the explore-the-chart tip, inline chart only.
+                    .exploreChartTip10876(eventId: eventId, touchSurfaceInstalled: scrubSurfaces, dataPoints: dataPoints)
 
                     // UX-P090 — the legend hung off the card's left edge while the
                     // thing it describes started 24pt further in, behind the
@@ -2001,6 +2003,8 @@ struct OddsChartView: View {
                     },
                     holdsTheScrollStill: { selection.holdsTheScrollStill },
                     onEnd: {
+                        // #10876 — a scrub that read a moment is the chart tip's action.
+                        if selection.isScrubbing { ContextualTips10876.chartLearned() }
                         selection.end()
                     }
                 )
