@@ -11,6 +11,7 @@ import useSWR, { SWRConfig, unstable_serialize } from 'swr';
 import SWRProvider from '@/components/SWRProvider';
 import { useFuturesDetailStream } from '@/hooks/useFuturesDetailStream';
 import { fetchFuturesMarket, fetchFuturesHistory } from '@/lib/api';
+import { historyAnswersRequest } from '@/lib/futuresDetailStream';
 import { FULL_HISTORY_RANGE, type HistoryRangeRequest } from '@/lib/historyRange';
 import { VERIFIED_TITLE } from '@/lib/verifiedTitleDetail';
 import type { FuturesMarketDetailResponse, FuturesHistoryResponse } from '@/lib/types';
@@ -270,18 +271,54 @@ describe('#11186 requested-range identity at every held-history boundary (actual
     } finally { await t.cleanup(); }
   }, 10000);
 
-  // An untagged body without metadata is a 1M-shaped answer; the All worker
-  // must not adopt it even though its hours match.
-  test('missing metadata: a page-fetched body without history_range is never All\'s parent', async () => {
-    const legacyPage = body({ second: 5, probability: .5, full: true, legacy: true });
+  // A body nobody in this client requested (restored into the cache, never the
+  // answer to one of our reads) carrying no metadata is unowned: hours alone
+  // cannot tell it from a 1M answer, so the All worker must not adopt it.
+  test('unowned: a cached All body without history_range that no request of ours produced is never All\'s parent', async () => {
+    const unowned = body({ second: 5, probability: .5, full: true, legacy: true });
     const fresh = body({ second: 3, probability: .3, other: { second: 4, probability: .4 }, full: true, archive: true });
-    const t = rig(FULL_HISTORY_RANGE, { full: legacyPage });
+    const t = rig(FULL_HISTORY_RANGE, { full: unowned });
     try {
       await t.mount();
-      await t.resolve('page-full', 0, legacyPage);
+      await until(() => t.reads['page-full'].length === 1, 'page revalidation pending (never answers)');
       await t.invalidate();
       await t.resolve('fresh-full', 0, fresh);
       expect(t.shown()).toEqual(fresh);
+    } finally { await t.cleanup(); }
+  }, 10000);
+
+  // CONTROL (#10745 on an old server, historyRange.ts's fallback): neither the
+  // page read nor the fresh read carries `history_range`. The page's own All
+  // request already showed a newer Buffalo observation; an older fresh All read
+  // then finishes. The page body is request-owned through the real
+  // fetchFuturesHistory boundary, so it parents the read and the newer value
+  // stays; the accepted body carries only served metadata, none invented.
+  test.each([
+    ['page settles before the live frame', false],
+    ['page settles while the fresh read is pending', true],
+  ] as const)('legacy server: a newer page-accepted All observation survives an older fresh All read (%s)', async (_kind, pendingFirst) => {
+    const page = body({ second: 5, probability: .5, full: true, legacy: true });
+    // Buffalo is older than the page's; San Francisco is newer: the result is a merge.
+    const fresh = body({ second: 3, probability: .3, other: { second: 4, probability: .4 }, full: true, legacy: true });
+    const merged = { ...fresh, outcomes: [page.outcomes[0], fresh.outcomes[1]] };
+    const t = rig(FULL_HISTORY_RANGE, {});
+    try {
+      await t.mount();
+      if (pendingFirst) {
+        await t.invalidate();
+        await until(() => t.reads['fresh-full'].length === 1 && t.reads['page-full'].length === 1, 'both reads pending');
+        await t.resolve('page-full', 0, page);
+      } else {
+        await t.resolve('page-full', 0, page);
+        expect(t.shown()).toEqual(page);
+        await t.invalidate();
+      }
+      await t.resolve('fresh-full', 0, fresh);
+      expect(t.shown()).toEqual(merged);
+      expect(t.cacheBody(FULL_HISTORY_RANGE)).toEqual(merged);
+      expect(t.shown()!.outcomes[0].history.at(-1)).toEqual(page.outcomes[0].history.at(-1));
+      expect(t.offered.map(offer => offer.range)).toEqual([FULL_HISTORY_RANGE]);
+      expect(t.shown()).not.toHaveProperty('history_range');
     } finally { await t.cleanup(); }
   }, 10000);
 
@@ -304,4 +341,43 @@ describe('#11186 requested-range identity at every held-history boundary (actual
       expect(t.cacheBody(undefined)).toEqual(month);
     } finally { await t.cleanup(); }
   }, 10000);
+});
+
+// The stamp is taken at fetchFuturesHistory's resolved boundary and describes
+// the request that produced the body; a body that answers something else is
+// left unstamped and judged by its own served metadata.
+describe('#11186 request provenance at the fetchFuturesHistory boundary', () => {
+  const previousFetch = global.fetch;
+  afterEach(() => { global.fetch = previousFetch; });
+  const serve = (value: FuturesHistoryResponse) => {
+    global.fetch = jest.fn(async () => ({ ok: true, status: 200, json: async () => value, headers: { get: (): null => null } })) as unknown as typeof fetch;
+  };
+  const id = marketSeed.id;
+
+  test('a legacy answer is owned by the range its own request asked for', async () => {
+    serve(body({ second: 2, probability: .2, full: true, legacy: true }));
+    const all = await fetchFuturesHistory(id, HOURS, undefined, undefined, undefined, { range: FULL_HISTORY_RANGE });
+    expect(all).not.toHaveProperty('history_range');
+    expect(historyAnswersRequest(all, id, HOURS, FULL_HISTORY_RANGE)).toBe(true);
+    expect(historyAnswersRequest(all, id, HOURS, undefined)).toBe(false);
+    serve(body({ second: 2, probability: .2 }));
+    const month = await fetchFuturesHistory(id, HOURS);
+    expect(historyAnswersRequest(month, id, HOURS, undefined)).toBe(true);
+    expect(historyAnswersRequest(month, id, HOURS, FULL_HISTORY_RANGE)).toBe(false);
+  });
+
+  test('a body whose served block names another range is not stamped as this request\'s', async () => {
+    serve(body({ second: 2, probability: .2, full: true, archive: true }));
+    const mislabeled = await fetchFuturesHistory(id, HOURS); // asked 1M, served a full answer
+    expect(historyAnswersRequest(mislabeled, id, HOURS, undefined)).toBe(false);
+    expect(historyAnswersRequest(mislabeled, id, HOURS, FULL_HISTORY_RANGE)).toBe(true);
+  });
+
+  test('a body for another market or window is not stamped', async () => {
+    serve({ ...body({ second: 2, probability: .2, full: true, legacy: true }), hours: 168 });
+    const otherWindow = await fetchFuturesHistory(id, HOURS, undefined, undefined, undefined, { range: FULL_HISTORY_RANGE });
+    // Judged by served metadata alone: a metadata-less 168h body answers only 168h without range.
+    expect(historyAnswersRequest(otherWindow, id, 168, FULL_HISTORY_RANGE)).toBe(false);
+    expect(historyAnswersRequest(otherWindow, id, 168, undefined)).toBe(true);
+  });
 });
