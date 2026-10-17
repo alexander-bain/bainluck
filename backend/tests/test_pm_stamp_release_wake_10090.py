@@ -59,7 +59,7 @@ def full_collections():
     stays ENABLED: a case still pays whatever its own work owes, and a bound
     that misses with no full collection in the case is the product, not this.
     """
-    gc.collect()
+    pass  # DIAG: no pre-case collection
     pauses_ms: list[float] = []
     started = [0.0]
 
