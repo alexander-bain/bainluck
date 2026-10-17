@@ -4688,6 +4688,9 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
             # Loading does not close either client: quotes still reach these
             # same buffers while the database/top-up prepares the next slate.
             await admission_task
+            # #10663: the startup slate/pre-read were copied into the live maps;
+            # bound here they outlived every refresh as a second catalog.
+            game_slate = preread = None
             if not open_asset_to_outcome and not open_asset_mirrors:
                 # No open fleet to retain: preserve the game-only runner's
                 # existing recycle/debt-handoff contract.
@@ -4696,6 +4699,9 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                     stats["recycle_reason"] = "admission"
                     stats["admitted_event_ids"] = sorted(admitted)[:20]
                 break
+            # #10663: drop the previous refresh's source copies before the next
+            # read builds one, so a read never overlaps two catalogs plus the maps.
+            fresh_slate = fresh_open = None
             try:
                 read_started = time.monotonic()
                 fresh_slate = await load_game_slate()
@@ -4728,6 +4734,8 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                     open_read_s=open_read_s,
                 ),
             )
+            # Installed: the live maps own the catalog now.
+            fresh_slate = fresh_open = None
             if game_run_task.done():
                 # Loading/updating can yield while the retained client exits.
                 # Propagate its failure (or end this run) just as the wait above.
