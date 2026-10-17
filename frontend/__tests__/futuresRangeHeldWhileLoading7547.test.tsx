@@ -394,3 +394,37 @@ describe("#7547 an empty range stays on screen while a longer one loads", () => 
     expect(heldLine()).toBeNull();
   });
 });
+
+describe("#7547 the title row holds still while the held line comes and goes", () => {
+  // Shopper's 390px readback of PR #11185 (artifacts/shopper/pass-0470,
+  // r3-0-initial vs r3-b-1W-to-All-pending vs r3-b-1W-to-All-done): with the
+  // chips and their note inside the title row, the note's arrival re-ran that
+  // row's width split against the Over Time / By Stage toggle. The title went
+  // two lines → one and back, and the chart jumped ~30 px on every range tap.
+  function cls(n: El): string {
+    return String(n["class"] ?? n["className"] ?? "");
+  }
+  function titleRow(): El {
+    const card = trendCard()!;
+    const h2 = descendants(card).find((n) => n.tagName === "H2" && /Probability Trend/.test(n.textContent ?? ""))!;
+    let n = h2.parentNode as El | null;
+    while (n && n !== card && !/\bjustify-between\b/.test(cls(n))) n = n.parentNode as El | null;
+    expect(n && n !== card).toBeTruthy();
+    return n!;
+  }
+  function holds(row: El, target: El | undefined): boolean {
+    return target != null && descendants(row).includes(target);
+  }
+
+  it("neither the chips nor the held line nor the coverage line share the title row", async () => {
+    await mountOnWeek();
+    expect(holds(titleRow(), chip("1W"))).toBe(false);
+    await tap("All");
+    const held = byTestId("futures-trend-range-held")[0];
+    expect(held).toBeDefined(); // the held line is on screen in this state …
+    expect(holds(titleRow(), held)).toBe(false); // … but outside the row the toggle sits in
+    expect(holds(titleRow(), chip("All"))).toBe(false);
+    // … and they are still in the trend card, under the title.
+    expect(descendants(trendCard()!).includes(held)).toBe(true);
+  });
+});

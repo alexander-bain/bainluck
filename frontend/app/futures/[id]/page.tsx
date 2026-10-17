@@ -1260,70 +1260,78 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
           data-range-shown={shownHistory.current?.range ?? effectiveRange}
           aria-busy={heldRangeNote != null && heldRangeState === "loading"}
         >
-          <div className="flex items-center justify-between mb-4">
-            <div>
-              <h2 className="text-title-3 font-semibold text-text-primary flex items-center gap-2">
-                <span>📈</span>
-                Probability Trend
-              </h2>
-              {/* #10224 — whose history the lines are. The current number above
-                  may blend venues; this history is one source's and says so. */}
-              {historyLabel && (
-                <p data-testid="futures-trend-history-basis" className="text-[12px] text-text-muted mt-1">
-                  {historyLabel}
-                </p>
-              )}
-              {/* #7545 — the rung the reader is on, and one line reconciling it
-                  with what came back. This replaces two captions that could only
-                  describe a window the reader never chose ("Extended to 30 days
-                  for more data"): the chip now says what was asked for, and
-                  `rangeCoverageNote` says what arrived when they differ. */}
-              <FuturesTrendRangeControls
-                className="mt-2"
-                range={effectiveRange}
-                onSelect={selectRange}
-                requestedHours={historyHours}
-                /* #683: when the drawn span began at an archive interval,
-                   `actual_hours` no longer says what is on screen, so the
-                   sparse-data note would understate it. A full read that began
-                   at `hours` keeps the note: that widening is still real. */
-                actualHours={archiveWidenedRange(historyData) ? undefined : historyData.actual_hours}
-                /* #7547: the held chart names its own rung until the picked one
-                   arrives; a failed request offers the retry, never an empty state. */
-                heldNote={heldRangeNote}
-                onRetry={heldRangeState === "failed" ? () => { void refreshHistory(); } : undefined}
-                /* #8135: `sparse` asks how MUCH history there is; `dormant` asks
-                   whether any of it is recent. The specimen was sparse, open and
-                   four weeks cold, so the old gate returned the live promise over
-                   a chart captioned "Last number 29 days ago". */
-                cadenceNote={trendCadenceNote}
-              />
-            </div>
-            {/* Tab toggle: Over Time / By Stage */}
-            {hasProgression && (
-              <div className="flex bg-white/5 rounded-lg p-0.5 gap-0.5">
-                <button
-                  onClick={() => setTrendView("evolution")}
-                  className={`px-3 py-1 text-xs font-medium rounded-md transition-colors ${
-                    trendView === "evolution"
-                      ? "bg-white/10 text-text-primary"
-                      : "text-text-secondary hover:text-text-primary"
-                  }`}
-                >
-                  Over Time
-                </button>
-                <button
-                  onClick={() => setTrendView("progression")}
-                  className={`px-3 py-1 text-xs font-medium rounded-md transition-colors ${
-                    trendView === "progression"
-                      ? "bg-white/10 text-text-primary"
-                      : "text-text-secondary hover:text-text-primary"
-                  }`}
-                >
-                  By Stage
-                </button>
+          {/* The title row holds only what never changes while the reader is on
+              the page (title, history basis, the Over Time / By Stage toggle).
+              The chips and their notes sit full width beneath it: inside the
+              row, a note appearing or clearing re-ran the row's width split,
+              so the title and toggle rewrapped and the chart jumped ~30 px
+              each way on every range tap (#7547, shopper 390px readback). */}
+          <div className="mb-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <h2 className="text-title-3 font-semibold text-text-primary flex items-center gap-2">
+                  <span>📈</span>
+                  Probability Trend
+                </h2>
+                {/* #10224 — whose history the lines are. The current number above
+                    may blend venues; this history is one source's and says so. */}
+                {historyLabel && (
+                  <p data-testid="futures-trend-history-basis" className="text-[12px] text-text-muted mt-1">
+                    {historyLabel}
+                  </p>
+                )}
               </div>
-            )}
+              {/* Tab toggle: Over Time / By Stage */}
+              {hasProgression && (
+                <div className="flex bg-white/5 rounded-lg p-0.5 gap-0.5">
+                  <button
+                    onClick={() => setTrendView("evolution")}
+                    className={`px-3 py-1 text-xs font-medium rounded-md transition-colors ${
+                      trendView === "evolution"
+                        ? "bg-white/10 text-text-primary"
+                        : "text-text-secondary hover:text-text-primary"
+                    }`}
+                  >
+                    Over Time
+                  </button>
+                  <button
+                    onClick={() => setTrendView("progression")}
+                    className={`px-3 py-1 text-xs font-medium rounded-md transition-colors ${
+                      trendView === "progression"
+                        ? "bg-white/10 text-text-primary"
+                        : "text-text-secondary hover:text-text-primary"
+                    }`}
+                  >
+                    By Stage
+                  </button>
+                </div>
+              )}
+            </div>
+            {/* #7545 — the rung the reader is on, and one line reconciling it
+                with what came back. This replaces two captions that could only
+                describe a window the reader never chose ("Extended to 30 days
+                for more data"): the chip now says what was asked for, and
+                `rangeCoverageNote` says what arrived when they differ. */}
+            <FuturesTrendRangeControls
+              className="mt-2"
+              range={effectiveRange}
+              onSelect={selectRange}
+              requestedHours={historyHours}
+              /* #683: when the drawn span began at an archive interval,
+                 `actual_hours` no longer says what is on screen, so the
+                 sparse-data note would understate it. A full read that began
+                 at `hours` keeps the note: that widening is still real. */
+              actualHours={archiveWidenedRange(historyData) ? undefined : historyData.actual_hours}
+              /* #7547: the held chart names its own rung until the picked one
+                 arrives; a failed request offers the retry, never an empty state. */
+              heldNote={heldRangeNote}
+              onRetry={heldRangeState === "failed" ? () => { void refreshHistory(); } : undefined}
+              /* #8135: `sparse` asks how MUCH history there is; `dormant` asks
+                 whether any of it is recent. The specimen was sparse, open and
+                 four weeks cold, so the old gate returned the live promise over
+                 a chart captioned "Last number 29 days ago". */
+              cadenceNote={trendCadenceNote}
+            />
           </div>
           {trendView === "progression" && hasProgression && progressionData ? (
             <TournamentProgressionTable data={progressionData} />
