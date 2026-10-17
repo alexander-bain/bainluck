@@ -16,6 +16,9 @@ export interface MovementLeader {
   name?: string | null;
   probability: number | null;
   opening_probability?: number | null;
+  // #8313 — the same opening written as American odds. Read only to check the
+  // probability above against itself; never printed (D1) and never substituted.
+  opening_american_odds?: number | null;
   probability_change_24h?: number | null;
 }
 
@@ -1092,6 +1095,58 @@ export function pickCaptionSubject<
 }
 
 /**
+ * #8313 — AN OPENING THAT DISAGREES WITH ITSELF IS NOT A BASELINE.
+ *
+ * Production `/futures/13795456` ("Iran leadership change by December 31?"),
+ * 2026-10-17 05:45Z, chart caption: **"No up 57.5 pts from opening."** The served
+ * No leg read
+ *
+ *     probability 0.885   opening_probability 0.31   opening_american_odds -223
+ *
+ * and the Yes leg 0.31 / +223. Every opening writer derives the odds as
+ * `probability_to_american(p)` of the price it stores as the opening, in the same
+ * write (`tasks/polymarket.py`, `tasks/kalshi.py`, `tasks/futures.py`,
+ * `routes/admin_providers.py`), and the repair tasks null and restore the pair
+ * together, so the two fields are one observation in two notations. (The
+ * decomposed Polymarket update coalesces only the probability, which can leave
+ * the odds NULL beside it: that is absent odds, below, and unchanged.)
+ * −223 is 0.69, not 0.31: the No leg's
+ * opening probability is the Yes leg's number (the copied-leg class #8313 names),
+ * and 0.885 − 0.31 = 57.5 is a move nobody saw.
+ *
+ * So when both are present and valid and they disagree beyond quote rounding, the
+ * caption has no opening to measure from and says nothing about one. It does NOT
+ * substitute the converted odds (19.5 pts), the leg's complement, or its first
+ * retained history point (5 pts): none of those is proven to be this leg's opening.
+ * The caption then falls through to the existing 24h branch exactly as a missing
+ * opening does.
+ *
+ * Rounding: odds are integers, so the round trip moves an implied probability by
+ * at most 50/(|odds|+100)², 0.00125 at ±100. Measured on 69 saved served legs
+ * (frontend fixtures + shopper pass-0462), the largest honest gap is 0.00055; the
+ * specimen's is 0.38. The tolerance sits at 4× the arithmetic bound and below
+ * the caption's own 1-pt resolution.
+ *
+ * Deliberately per leg. Two legs opening at different times, or openings that do
+ * not sum to 1 (independent boards), say nothing about either leg and are not read.
+ * Absent, null, non-finite or impossible odds (|odds| < 100), and an opening outside
+ * (0, 1) where no writer derives odds, keep today's behaviour unchanged.
+ */
+const OPENING_ODDS_ROUNDING_TOLERANCE = 0.005;
+
+function openingContradictsItsOwnOdds(leader: MovementLeader): boolean {
+  const open = leader.opening_probability;
+  const odds = leader.opening_american_odds;
+  if (open == null || odds == null) return false;
+  if (!Number.isFinite(open) || open <= 0 || open >= 1) return false;
+  if (!Number.isFinite(odds) || Math.abs(odds) < 100) return false;
+  // `utils/odds_math.american_to_probability`, mirrored: the client has no odds
+  // helper because it never shows odds (D1).
+  const implied = odds > 0 ? 100 / (odds + 100) : -odds / (-odds + 100);
+  return Math.abs(implied - open) > OPENING_ODDS_ROUNDING_TOLERANCE;
+}
+
+/**
  * The clarification that explains the blend line's movement. Deterministic,
  * blend-only (no per-source detail): prefer opening→current ("up X pts from
  * opening"), fall back to the 24h change, else null (nothing to say). Movements
@@ -1117,7 +1172,7 @@ export function movementExplanation(
   const served = leaderLabel(leader);
   const label = served === null ? served : withoutBoardNamePrefix(served, marketName);
   const cur = leader.probability;
-  const open = leader.opening_probability;
+  const open = openingContradictsItsOwnOdds(leader) ? null : leader.opening_probability;
 
   if (cur != null && open != null) {
     const delta = (cur - open) * 100;
