@@ -375,7 +375,7 @@ def _args(**kw):
     import argparse
 
     return argparse.Namespace(**{"backup": False, "apply": False, "digest": "",
-                                 "restore": False, **kw})
+                                 "restore": False, "status": False, **kw})
 
 
 HEAVY = {"HEROKU_APP_NAME": "bainluck-heavy"}
@@ -413,10 +413,12 @@ async def test_every_session_run_opens_carries_both_budgets_on_the_wire(session,
     plan = await mod.run(_args(), HEAVY)
     out = await mod.run(_args(backup=True, apply=True, digest=plan["plan_digest"]), HEAVY)
     assert sorted(out["applied"]["written_ids"]) == IDS
+    status = await mod.run(_args(status=True), {})
+    assert [r["row_is_after_image"] for r in status["rows"]] == [True] * 9
     restored = await mod.run(_args(restore=True), HEAVY)
     assert sorted(restored["restored"]) == IDS
-    # plan; plan + backup/apply; restore
-    assert len(seen) == 4
+    # plan; plan + backup/apply; status; restore
+    assert len(seen) == 5
     for kwargs, first, again in seen:
         assert kwargs == {"statement_timeout_ms": 10_000, "lock_timeout_ms": 500}
         assert first[0] != again[0], "the second read must be a reconnected backend"
@@ -468,3 +470,258 @@ async def test_a_held_row_lock_stops_the_apply_within_its_budget_and_writes_noth
     again = await mod.run(_args(backup=True, apply=True, digest=digest), HEAVY)
     assert sorted(again["applied"]["written_ids"]) == IDS
     assert again["applied"]["skipped_changed_since_backup"] == []
+
+
+
+# ── directive 024: a COMMIT whose acknowledgement is lost is UNKNOWN ──────────
+#
+# The commit is REAL: Postgres makes it durable, then the acknowledgement is
+# "lost" (the client sees a connection failure). The run must say UNKNOWN —
+# never "nothing was backed up / written / restored" — stop with no retry,
+# reconnect-write, restore or cleanup, and ``--status`` must read back what
+# actually landed.
+
+
+def _lost_ack_after_real_commit(monkeypatch, *, session_no: int, commit_no: int):
+    """Wrap the REAL task session: the ``commit_no``-th commit of the
+    ``session_no``-th session commits on the server, then raises as a lost
+    acknowledgement would (sqlstate 08006, connection failure)."""
+    import contextlib
+
+    from sqlalchemy.exc import OperationalError
+
+    base = _real_db_task_session(monkeypatch)
+    real = base.get_task_session
+    opened = {"n": 0, "lost": 0}
+
+    class _Orig(Exception):
+        sqlstate = "08006"
+
+    @contextlib.asynccontextmanager
+    async def lossy(**kwargs):
+        opened["n"] += 1
+        mine, commits = opened["n"], {"n": 0}
+        async with real(**kwargs) as s:
+            real_commit = s.commit
+
+            async def commit():
+                await real_commit()  # durable on the server
+                commits["n"] += 1
+                if mine == session_no and commits["n"] == commit_no:
+                    opened["lost"] += 1
+                    raise OperationalError("COMMIT", {}, _Orig("connection reset by peer"))
+
+            s.commit = commit
+            yield s
+
+    monkeypatch.setattr(base, "get_task_session", lossy)
+    return opened
+
+
+async def _backup_rows(s, mod) -> list:
+    rows = (await s.execute(text(
+        f"SELECT to_jsonb(b) FROM {mod.BACKUP_TABLE} b ORDER BY market_id"))).scalars().all()
+    await s.rollback()
+    return [r if isinstance(r, dict) else json.loads(r) for r in rows]
+
+
+async def _table_exists(s, name) -> bool:
+    out = (await s.execute(text(f"SELECT to_regclass('{name}') IS NOT NULL"))).scalar_one()
+    await s.rollback()
+    return out
+
+
+async def test_backup_commit_lost_ack_is_unknown_and_status_reads_the_frozen_backup(
+    session, monkeypatch
+):
+    mod = _script()
+    _fixed_clock_plan(monkeypatch, mod)
+    before = await _rows(session)
+    plan = await mod.run(_args(), HEAVY)
+    digest = plan["plan_digest"]
+    approved = {p["market_id"]: p["approved_before_sha256"] for p in plan["planned"]}
+    # session 1 = the plan, session 2 = backup/apply; its FIRST commit is the backup
+    lost = _lost_ack_after_real_commit(monkeypatch, session_no=2, commit_no=1)
+    with pytest.raises(mod.Unknown) as unknown:
+        await mod.run(_args(backup=True, apply=True, digest=digest), HEAVY)
+    assert lost == {"n": 2, "lost": 1}, "no further session: no retry, no reconnect-write"
+    msg = str(unknown.value)
+    assert unknown.value.phase == "backup-commit" and unknown.value.digest == digest
+    assert "UNKNOWN" in msg and "nothing was backed up" not in msg and "rolled back" not in msg
+    assert await _rows(session) == before, "the apply never started"
+    status = await mod.run(_args(status=True), {})
+    assert status["backup_table"] == mod.BACKUP_TABLE
+    assert [r["market_id"] for r in status["rows"]] == IDS
+    for r in status["rows"]:
+        assert r["backed_up"] and r["plan_digest"] == digest and r["applied"] is False
+        assert r["row_is_before_image"] and not r["row_is_after_image"]
+        assert r["before_row_sha256"] == approved[r["market_id"]], "the backup IS the approved version"
+        assert r["status"] == "open"
+    # The attended operator's later decision — not the run's — can resume the same digest.
+    monkeypatch.undo()
+    _real_db_task_session(monkeypatch)
+    _fixed_clock_plan(monkeypatch, mod)
+    again = await mod.run(_args(backup=True, apply=True, digest=digest), HEAVY)
+    assert sorted(again["applied"]["written_ids"]) == IDS
+
+
+async def test_apply_commit_lost_ack_is_unknown_and_status_reads_the_durable_apply(
+    session, monkeypatch
+):
+    mod = _script()
+    _fixed_clock_plan(monkeypatch, mod)
+    before = await _rows(session)
+    digest = (await mod.run(_args(), HEAVY))["plan_digest"]
+    lost = _lost_ack_after_real_commit(monkeypatch, session_no=2, commit_no=2)
+    with pytest.raises(mod.Unknown) as unknown:
+        await mod.run(_args(backup=True, apply=True, digest=digest), HEAVY)
+    assert lost == {"n": 2, "lost": 1}
+    msg = str(unknown.value)
+    assert unknown.value.phase == "apply-commit"
+    assert "nothing to restore" not in msg and "was not written" not in msg
+    after = await _rows(session)
+    assert all(after[i]["status"] == "resolved" for i in IDS), "the commit was durable"
+    held = await _backup_rows(session, mod)
+    status = await mod.run(_args(status=True), {})
+    for r in status["rows"]:
+        assert r["applied"] and r["row_is_after_image"] and not r["row_is_before_image"]
+        assert r["status"] == "resolved" and r["applied_at"]
+    # The readback wrote nothing: neither the nine nor their backup moved.
+    assert await _rows(session) == after and await _backup_rows(session, mod) == held
+    # Complete images: the attended undo still restores every column of every row.
+    monkeypatch.undo()
+    _real_db_task_session(monkeypatch)
+    restored = await mod.run(_args(restore=True), HEAVY)
+    assert sorted(restored["restored"]) == IDS
+    assert await _rows(session) == before
+
+
+async def test_restore_commit_lost_ack_is_unknown_and_status_reads_the_durable_restore(
+    session, monkeypatch
+):
+    mod = _script()
+    _real_db_task_session(monkeypatch)
+    _fixed_clock_plan(monkeypatch, mod)
+    before = await _rows(session)
+    digest = (await mod.run(_args(), HEAVY))["plan_digest"]
+    await mod.run(_args(backup=True, apply=True, digest=digest), HEAVY)
+    lost = _lost_ack_after_real_commit(monkeypatch, session_no=1, commit_no=1)
+    with pytest.raises(mod.Unknown) as unknown:
+        await mod.run(_args(restore=True), HEAVY)
+    assert lost == {"n": 1, "lost": 1}
+    assert unknown.value.phase == "restore-commit"
+    assert "no row was restored" not in str(unknown.value)
+    assert await _rows(session) == before, "the restore was durable"
+    status = await mod.run(_args(status=True), {})
+    for r in status["rows"]:
+        assert r["applied"] is False and r["restored_at"] and r["row_is_before_image"]
+        assert not r["row_is_after_image"] and r["status"] == "open"
+
+
+async def test_status_with_no_backup_table_reports_absence_and_creates_nothing(
+    session, monkeypatch
+):
+    _real_db_task_session(monkeypatch)
+    mod = _script()
+    before = await _rows(session)
+    status = await mod.run(_args(status=True), {})
+    assert status["backup_table"] == "absent" and status["rows"] == []
+    assert "applied" not in status, "absence is not an apply verdict"
+    assert not await _table_exists(session, mod.BACKUP_TABLE), "the readback ran DDL"
+    assert await _rows(session) == before
+
+
+async def test_status_is_read_only_on_the_server(session, monkeypatch):
+    """The readback session is READ ONLY: a write slipped into it is refused by
+    Postgres itself (25006), not by convention."""
+    from sqlalchemy.exc import DBAPIError
+
+    base = _real_db_task_session(monkeypatch)
+    mod = _script()
+    _fixed_clock_plan(monkeypatch, mod)
+    digest = (await mod.run(_args(), HEAVY))["plan_digest"]
+    await mod.run(_args(backup=True, apply=True, digest=digest), HEAVY)
+    import contextlib
+
+    real = base.get_task_session
+
+    @contextlib.asynccontextmanager
+    async def sneaky(**kwargs):
+        async with real(**kwargs) as s:
+            real_execute = s.execute
+
+            async def execute(stmt, *a, **k):
+                result = await real_execute(stmt, *a, **k)
+                if "row_is_after_image" in str(stmt):
+                    await real_execute(text(
+                        "UPDATE futures_markets SET volume = 7 WHERE id = :id"), {"id": IDS[0]})
+                return result
+
+            s.execute = execute
+            yield s
+
+    monkeypatch.setattr(base, "get_task_session", sneaky)
+    with pytest.raises(DBAPIError, match="read-only transaction"):
+        await mod.run(_args(status=True), {})
+    assert float((await _rows(session))[IDS[0]]["volume"]) == 10.0
+
+
+async def test_status_reads_a_later_writer_as_neither_image(session, monkeypatch):
+    _real_db_task_session(monkeypatch)
+    mod = _script()
+    _fixed_clock_plan(monkeypatch, mod)
+    digest = (await mod.run(_args(), HEAVY))["plan_digest"]
+    await mod.run(_args(backup=True, apply=True, digest=digest), HEAVY)
+    later = IDS[1]
+    await session.execute(
+        text("UPDATE futures_markets SET updated_at = NOW() + interval '1 minute' WHERE id = :id"),
+        {"id": later})
+    await session.commit()
+    rows = {r["market_id"]: r for r in (await mod.run(_args(status=True), {}))["rows"]}
+    assert rows[later]["applied"] and not rows[later]["row_is_after_image"]
+    assert not rows[later]["row_is_before_image"]
+    assert all(rows[i]["row_is_after_image"] for i in IDS if i != later)
+    restored = await mod.run(_args(restore=True), HEAVY)
+    assert restored["preserved_changed_since_apply"] == [later]
+
+
+async def test_status_never_reads_the_oscar_channel(session, monkeypatch):
+    """A row held in the OTHER channel's table — even one naming a nine id —
+    is invisible to this readback; only the nine's own table answers."""
+    _real_db_task_session(monkeypatch)
+    mod = _script()
+    oscar = "backup_2644_oscar_song"
+    oscar_sql = mod.channel_sql(oscar)
+    current = json.dumps((await _rows(session))[IDS[0]])
+    try:
+        await session.execute(text(oscar_sql["bak_create"]))
+        await session.execute(text(oscar_sql["bak_copy"]), {
+            "market_id": IDS[0], "ticker": NINE[0][1], "digest": "oscar-digest",
+            "planned": "{}", "approved_before": current})
+        await session.execute(text(f"UPDATE {oscar} SET applied = true"))
+        await session.commit()
+        held = (await session.execute(text(f"SELECT COUNT(*) FROM {oscar} WHERE applied"))).scalar_one()
+        await session.rollback()
+        assert held == 1, "the other channel holds an applied row naming a nine id"
+        assert (await mod.run(_args(status=True), {}))["backup_table"] == "absent"
+        _fixed_clock_plan(monkeypatch, mod)
+        digest = (await mod.run(_args(), HEAVY))["plan_digest"]
+        await mod.run(_args(backup=True, apply=True, digest=digest), HEAVY)
+        rows = (await mod.run(_args(status=True), {}))["rows"]
+        assert [r["market_id"] for r in rows] == IDS
+        assert {r["plan_digest"] for r in rows} == {digest}
+    finally:
+        await session.rollback()
+        await session.execute(text(f"DROP TABLE IF EXISTS {oscar}"))
+        await session.commit()
+
+
+async def test_the_default_run_is_a_plan_with_no_ddl_and_no_write(session, monkeypatch):
+    _real_db_task_session(monkeypatch)
+    mod = _script()
+    _fixed_clock_plan(monkeypatch, mod)
+    before = await _rows(session)
+    out = await mod.run(_args(), HEAVY)
+    assert [p["market_id"] for p in out["planned"]] == IDS and "applied" not in out
+    assert not await _table_exists(session, mod.BACKUP_TABLE), "a plan run created the backup table"
+    assert await _rows(session) == before
