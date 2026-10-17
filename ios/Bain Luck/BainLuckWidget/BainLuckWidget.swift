@@ -105,6 +105,8 @@ struct BainLuckDesktopWidget: Widget {
 struct BainLuckWidgetBundle: WidgetBundle {
     var body: some Widget {
         BainLuckDesktopWidget()
+        // #10875 — one saved game or market per widget, chosen by the reader.
+        SavedItemWidget10875()
         #if os(iOS)
         liveActivityRegistration
         #endif
