@@ -347,7 +347,9 @@ final class AFuturesChartSaysWhatItObserved7077Tests: XCTestCase {
             chart.contains("Self.coverageNote("),
             "the caption must come from the rule, not from a second copy in the body")
         XCTAssertTrue(
-            chart.contains(".symbolSize(showsObservationMarks ? 14 : 0)"),
+            // #11184 widened the condition (a point alone in its gap-split run is
+            // marked too); the sparse-series arm is unchanged.
+            chart.contains(".symbolSize(showsObservationMarks || point.standsAlone ? 14 : 0)"),
             "a sparse series must carry its observations")
     }
 

@@ -77,6 +77,73 @@ private struct EvolutionPoint: Identifiable {
     let isCombined: Bool
     /// #683 — set when this value is a recorded interval served at its close.
     var archive: TimelineArchiveMark? = nil
+    /// #11184 — which unbroken stretch of its own outcome this point belongs to.
+    /// Points in one run are joined solid; the step between runs is a gap.
+    var run = 0
+    /// #11184 — the only point in its run, so no solid segment touches it and it
+    /// gets an observation mark of its own (web `dots`, #6331).
+    var standsAlone = false
+}
+
+/// #11184 — the step between two runs of one outcome: drawn faint and dotted,
+/// because nothing was observed along it.
+private struct EvolutionGapBridge: Identifiable {
+    let id: String
+    let name: String
+    let from: EvolutionPoint
+    let to: EvolutionPoint
+}
+
+// MARK: - Gaps
+
+/// #11184 — where a line may be drawn, and where it would only be guessing.
+///
+/// The web chart's rule, ported with its numbers: `frontend/lib/chartSeriesPath.ts`
+/// breaks each outcome's line wherever two consecutive observations sit further
+/// apart than that outcome's own threshold, `seriesGapThresholdMs` in
+/// `frontend/lib/seriesFreshness.ts` — six of the series' own median gaps, never
+/// under two hours, and no threshold at all under four points. Same constants
+/// here, so both platforms break the same line in the same places.
+///
+/// Measured instance: 13795456 *Iran leadership change by December 31?* on Max
+/// drew No from 59.5% (Apr 9) to 71.5% (Apr 18) as one solid nine-day rise, and
+/// both legs from Aug 10 to Aug 26 as one sixteen-day slope. Nothing was served
+/// in between; only the drawing claimed it.
+///
+/// Per SERIES, never per chart: each outcome is graded against its own clock, so
+/// a leg that is quoted less often is not broken by a busier neighbour's cadence.
+enum EvolutionSeriesGaps {
+    static let minPointsForCadence = 4
+    static let gapCadenceMultiple: Double = 6
+    static let gapFloor: TimeInterval = 2 * 60 * 60
+
+    /// The longest step one series may take and still be drawn solid, or `nil`
+    /// when it has too few points to have a cadence — then nothing is split and
+    /// the line draws exactly as it did before.
+    static func threshold(_ instants: [Date]) -> TimeInterval? {
+        guard instants.count >= minPointsForCadence else { return nil }
+        let sorted = instants.sorted()
+        let gaps = zip(sorted, sorted.dropFirst())
+            .map { $1.timeIntervalSince($0) }
+            .sorted()
+        let mid = gaps.count / 2
+        let median = gaps.count % 2 == 1 ? gaps[mid] : (gaps[mid - 1] + gaps[mid]) / 2
+        return max(gapCadenceMultiple * median, gapFloor)
+    }
+
+    /// One run number per instant, in the order given (the timeline's order). A
+    /// new run starts after every step longer than the series' threshold. No point
+    /// is added, moved or dropped — only numbered.
+    static func runs(_ instants: [Date]) -> [Int] {
+        guard let threshold = threshold(instants) else {
+            return Array(repeating: 0, count: instants.count)
+        }
+        var run = 0
+        return instants.indices.map { i in
+            if i > 0, instants[i].timeIntervalSince(instants[i - 1]) > threshold { run += 1 }
+            return run
+        }
+    }
 }
 
 // MARK: - Crosshair State
@@ -718,7 +785,47 @@ struct EvolutionChartView: View {
                 ))
             }
         }
+        return Self.splitAtGaps(points)
+    }
+
+    /// #11184 — numbers each outcome's points into runs on that outcome's own
+    /// clock. The combined line is left whole, as on web: it is a sum drawn
+    /// dashed already, not an observation.
+    private static func splitAtGaps(_ points: [EvolutionPoint]) -> [EvolutionPoint] {
+        var points = points
+        var bySeries: [String: [Int]] = [:]
+        for (i, point) in points.enumerated() where !point.isCombined {
+            bySeries[point.name, default: []].append(i)
+        }
+        for indices in bySeries.values {
+            let runs = EvolutionSeriesGaps.runs(indices.map { points[$0].date })
+            // Only a series that actually broke has points standing alone; an
+            // unbroken one draws exactly as before (web: `dots` empty).
+            let broke = (runs.last ?? 0) > 0
+            var sizes: [Int: Int] = [:]
+            for run in runs { sizes[run, default: 0] += 1 }
+            for (k, i) in indices.enumerated() {
+                points[i].run = runs[k]
+                points[i].standsAlone = broke && sizes[runs[k]] == 1
+            }
+        }
         return points
+    }
+
+    /// #11184 — one bridge per step between runs, spanning exactly the two real
+    /// observations either side of it.
+    private static func gapBridges(_ entries: [EvolutionPoint]) -> [EvolutionGapBridge] {
+        var last: [String: EvolutionPoint] = [:]
+        var bridges: [EvolutionGapBridge] = []
+        for point in entries where !point.isCombined {
+            if let previous = last[point.name], previous.run != point.run {
+                bridges.append(EvolutionGapBridge(
+                    id: "gap:\(point.name)#\(point.run)",
+                    name: point.name, from: previous, to: point))
+            }
+            last[point.name] = point
+        }
+        return bridges
     }
 
     /// The window's prices per plotted outcome (the selected lines, never the
@@ -1167,8 +1274,26 @@ struct EvolutionChartView: View {
 
     // MARK: - Chart
 
+    /// #11184 — dotted, and deliberately not the `[7, 4]` the combined line
+    /// already uses: nothing here may be confused with a line that is data.
+    static let gapBridgeDash: [CGFloat] = [1, 5]
+
+    private func lineWidth(for name: String, isCombined: Bool) -> CGFloat {
+        if isCombined { return 2.2 }
+        if highlightedName == name { return 2.5 }
+        return effectiveSelected.contains(name) ? 1.8 : 0.8
+    }
+
+    private func lineOpacity(for name: String, isCombined: Bool) -> Double {
+        if isCombined { return highlightedName != nil ? 0.45 : 0.9 }
+        let isSelected = effectiveSelected.contains(name)
+        let isHighlighted = highlightedName == nil || highlightedName == name
+        return isSelected && isHighlighted ? 1 : (isSelected ? 0.2 : 0.1)
+    }
+
     private var chartSection: some View {
         let entries = chartEntries
+        let bridges = Self.gapBridges(entries)
         // #7077 — how many instants this chart has evidence for, counted off the
         // points it is about to draw rather than off `observation_times`, which
         // describes the payload before the range cutoff filtered it.
@@ -1197,32 +1322,50 @@ struct EvolutionChartView: View {
                     .foregroundStyle(.primary.opacity(0.3))
             }
 
-            // Data lines
-            ForEach(entries) { point in
-                let isSelected = point.isCombined || effectiveSelected.contains(point.name)
-                let isHighlighted = highlightedName == nil || highlightedName == point.name
+            // #11184 — the stretches nobody observed. Drawn first so the solid
+            // runs paint over their ends; dotted and at a third of the line's own
+            // opacity (web: `strokeDasharray="1 5"`, `strokeOpacity * 0.3`), so a
+            // bridge is never louder than its line and never reads as data.
+            ForEach(bridges) { bridge in
+                ForEach([bridge.from, bridge.to]) { end in
+                    LineMark(
+                        x: .value("Time", end.date),
+                        y: .value("Probability", end.probability),
+                        series: .value("Series", bridge.id)
+                    )
+                    .foregroundStyle(by: .value("Participant", bridge.name))
+                    .symbolSize(0)
+                    .lineStyle(StrokeStyle(
+                        lineWidth: lineWidth(for: bridge.name, isCombined: false),
+                        lineCap: .round,
+                        dash: Self.gapBridgeDash
+                    ))
+                    .opacity(lineOpacity(for: bridge.name, isCombined: false) * 0.3)
+                }
+            }
 
+            // Data lines — one solid series per RUN (#11184), so the stroke
+            // touches only real observations and never crosses a gap.
+            ForEach(entries) { point in
                 LineMark(
                     x: .value("Time", point.date),
-                    y: .value("Probability", point.probability)
+                    y: .value("Probability", point.probability),
+                    series: .value("Series", "\(point.name)#\(point.run)")
                 )
                 .foregroundStyle(by: .value("Participant", point.name))
                 // #7077 — the dots ARE the observations. `symbolSize(0)` rather
                 // than a branch: a conditional mark inside a ChartContentBuilder
                 // is a second code path for the same series, and this is one
-                // property of one mark.
+                // property of one mark. #11184: a point alone in its run is
+                // always marked, or no segment would show it at all.
                 .symbol(.circle)
-                .symbolSize(showsObservationMarks ? 14 : 0)
+                .symbolSize(showsObservationMarks || point.standsAlone ? 14 : 0)
                 .lineStyle(StrokeStyle(
-                    lineWidth: point.isCombined ? 2.2 :
-                        (highlightedName == point.name ? 2.5 :
-                            (isSelected ? 1.8 : 0.8)),
+                    lineWidth: lineWidth(for: point.name, isCombined: point.isCombined),
                     lineCap: .round,
                     dash: point.isCombined ? [7, 4] : []
                 ))
-                .opacity(point.isCombined
-                    ? (highlightedName != nil ? 0.45 : 0.9)
-                    : (isSelected && isHighlighted ? 1 : (isSelected ? 0.2 : 0.1)))
+                .opacity(lineOpacity(for: point.name, isCombined: point.isCombined))
             }
         }
         .chartForegroundStyleScale(mapping: { (name: String) -> Color in
