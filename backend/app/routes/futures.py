@@ -7843,8 +7843,9 @@ async def get_probability_timeline(
     # compacted per range band at fill time (`compact_by_band`: 150 / 90 / 80 /
     # 80 points per outcome, keeping every move and thinning by SMALLEST move),
     # so the rows in hand are the range-aware selection, and serving them whole
-    # is bounded by the bank — ≤400 per outcome, ≤12 outcomes — exactly as the
-    # web reader is. A second pass here that kept "first, biggest, last" of an
+    # is bounded by the bank — ≤400 per outcome (≤800 per leg of a Polymarket
+    # Yes/No pair, which keeps the instants both legs share, #11157), ≤12
+    # outcomes — exactly as the web reader is. A second pass here that kept "first, biggest, last" of an
     # hour was tried and rejected: it dropped its own specimen's 0.38 trough.
     #
     # THE BUCKET STILL DECIDES ONE THING: whether our own polls already fill the

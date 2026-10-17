@@ -628,7 +628,11 @@ def unclaimed_instants(
     `compact_by_band` before it is stored — measured on the largest production
     bank, `generic-history:108599`, whose busiest leg holds 392 points — so
     admitting minute resolution here cannot flood the serve path: the flood was
-    already spent at bank time, by budget, keeping the biggest moves.
+    already spent at bank time, by budget, keeping the biggest moves. One
+    exception (#11157): a Polymarket `_yes`/`_no` pair also keeps every raw
+    instant both legs share that EITHER leg kept, so a paired leg is bounded by
+    2 × 400 = 800 (measured worst 741), not 400 — the pair as a whole still holds
+    no more than two capped legs' worth, well under a 12-outcome board at cap.
     """
     venue = sorted({ts for ts in venue_times if ts is not None})
     if not venue:
