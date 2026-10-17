@@ -1161,6 +1161,19 @@ function openingIsTheOtherSidesPrice(leader: MovementLeader): boolean {
 }
 
 /**
+ * #8313 — the opening a reader may be shown for this leg: the served
+ * `opening_probability`, or null when its own odds say it is the other side's
+ * price (`openingIsTheOtherSidesPrice` above). The caption, the table's OPEN cell
+ * and the table's opening pair all read the opening through here, so a withheld
+ * opening is withheld everywhere on the page, never compared in one place and
+ * printed in another. Null means the same as a missing opening: nothing to print.
+ */
+export function readableOpeningProbability(leader: MovementLeader): number | null {
+  if (openingIsTheOtherSidesPrice(leader)) return null;
+  return leader.opening_probability ?? null;
+}
+
+/**
  * The clarification that explains the blend line's movement. Deterministic,
  * blend-only (no per-source detail): prefer opening→current ("up X pts from
  * opening"), fall back to the 24h change, else null (nothing to say). Movements
@@ -1186,7 +1199,7 @@ export function movementExplanation(
   const served = leaderLabel(leader);
   const label = served === null ? served : withoutBoardNamePrefix(served, marketName);
   const cur = leader.probability;
-  const open = openingIsTheOtherSidesPrice(leader) ? null : leader.opening_probability;
+  const open = readableOpeningProbability(leader);
 
   if (cur != null && open != null) {
     const delta = (cur - open) * 100;

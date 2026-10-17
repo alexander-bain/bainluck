@@ -446,9 +446,12 @@ describe("the futures detail page (SOURCE SCAN — weaker than a render)", () =>
     // #3358: the columns are the ROW's now. Asserted where the code is, or the
     // positive would read the page and find nothing.
     expect(row).toMatch(/formatProbability\(outcome\.probability,\s*\{\s*rendered\s*\}\)/);
+    // #8313: the OPEN cell prints `openingShown` (`readableOpeningProbability`,
+    // the served opening unless its own odds name the other side's price).
     expect(row).toMatch(
-      /formatProbability\(outcome\.opening_probability,\s*\{\s*rendered:\s*renderedOpening\s*\}\)/,
+      /formatProbability\(openingShown,\s*\{\s*rendered:\s*renderedOpening\s*\}\)/,
     );
+    expect(row).toMatch(/const openingShown = readableOpeningProbability\(outcome\);/);
   });
 
   it("leaves no bare formatProbability on an outcome price", () => {
@@ -460,6 +463,7 @@ describe("the futures detail page (SOURCE SCAN — weaker than a render)", () =>
     for (const code of [row, page]) {
       expect(code).not.toMatch(/formatProbability\(outcome\.probability\)/);
       expect(code).not.toMatch(/formatProbability\(outcome\.opening_probability\)/);
+      expect(code).not.toMatch(/formatProbability\(openingShown\)/);
     }
   });
 

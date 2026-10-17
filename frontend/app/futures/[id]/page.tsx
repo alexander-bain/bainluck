@@ -67,6 +67,7 @@ import {
   asOfLabel,
   gradedWinner,
   movementExplanation as movementExplanationHelper,
+  readableOpeningProbability,
   boardOutcomeLabel,
   chartHistoryForSelection,
   chartSeedsWithLead,
@@ -503,7 +504,8 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
   const renderedById = useMemo(() => {
     const outs = market?.outcomes ?? [];
     const current = renderedOutcomeRowPercents(outs.map((o) => o.probability));
-    const opening = renderedOutcomeRowPercents(outs.map((o) => o.opening_probability));
+    // #8313: a side-swapped opening is withheld from the pair, not paired with its sibling.
+    const opening = renderedOutcomeRowPercents(outs.map((o) => readableOpeningProbability(o)));
     return new Map(
       outs.map((o, i) => [o.id, { current: current[i] ?? null, opening: opening[i] ?? null }]),
     );
