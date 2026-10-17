@@ -151,6 +151,12 @@ final class SavedItemWidgetParity10875Tests: XCTestCase {
             case .none:
                 XCTAssertNil(reading.headline?.figure, "a number appeared for \(outcome.name)")
                 XCTAssertNil(reading.headline?.verdict, "a verdict appeared for \(outcome.name)")
+            default:
+                // Native's #698 consumer adds `.resultUnknown`; this arm keeps the
+                // composed tree compiling and refuses any row value this test was
+                // not written for. The #698 parity lives in
+                // SavedItemWidgetSettledResult10875Tests.
+                XCTFail("row value \(FuturesDetailRowValue.of(outcome, marketStatus: app.status)) for \(outcome.name) is not covered here")
             }
         }
     }
