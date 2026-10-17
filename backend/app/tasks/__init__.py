@@ -6085,6 +6085,33 @@ def mlb_reschedule_ghost_sweep_task(self, apply: bool = True,
 
 
 @celery_app.task(bind=True, soft_time_limit=300, time_limit=360,
+                 name="app.tasks.unplayed_series_game_sweep")
+def unplayed_series_game_sweep_task(self, apply: bool = True,
+                                    lookback: int | None = None,
+                                    lookahead: int | None = None):
+    """#11152 — an unanchored, unscored MLB row for a pair whose playoff series
+    ESPN reports over (final, ``completed: true``, the leader at the wins
+    needed) is retired (``voided``): the Odds API's "if necessary" game stops
+    being listed once the series has ended. D51 backup; undo
+    ``scripts/restore_11152_unplayed_series_games.py --apply``.
+    """
+    from app.tasks.unplayed_series_game_sweep import (
+        DEFAULT_LOOKAHEAD_DAYS,
+        DEFAULT_LOOKBACK_DAYS,
+        run_unplayed_series_game_sweep,
+    )
+
+    return _tracked_run(
+        "unplayed_series_game_sweep",
+        run_unplayed_series_game_sweep(
+            apply=apply,
+            lookback=DEFAULT_LOOKBACK_DAYS if lookback is None else lookback,
+            lookahead=DEFAULT_LOOKAHEAD_DAYS if lookahead is None else lookahead,
+        ),
+    )
+
+
+@celery_app.task(bind=True, soft_time_limit=300, time_limit=360,
                  name="app.tasks.nhl_adjacent_day_ghost_sweep")
 def nhl_adjacent_day_ghost_sweep_task(self, apply: bool = True,
                                       lookback: int | None = None,
@@ -7559,6 +7586,18 @@ celery_app.conf.beat_schedule = {
     "mlb-reschedule-ghost-sweep": {
         "task": "app.tasks.mlb_reschedule_ghost_sweep",
         "schedule": crontab(minute="52"),
+        "kwargs": {"apply": True},
+        "options": {"queue": "background"},
+    },
+    # #11152 — the playoff game left on the schedule after its series ended
+    # (the Odds API's "if necessary" NLCS Game 5, 15330460). HOURLY at :54,
+    # between the MLB ghost pass (:52) and the NHL pass (:56). Reads no ESPN
+    # board when the window holds no unanchored, unscored row. APPLY under D51
+    # (prior status banked). Undo:
+    # `scripts/restore_11152_unplayed_series_games.py --apply`.
+    "unplayed-series-game-sweep": {
+        "task": "app.tasks.unplayed_series_game_sweep",
+        "schedule": crontab(minute="54"),
         "kwargs": {"apply": True},
         "options": {"queue": "background"},
     },

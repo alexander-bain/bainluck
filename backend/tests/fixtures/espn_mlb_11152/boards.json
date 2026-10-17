@@ -1,0 +1,237 @@
+{
+ "_source": "site.api.espn.com baseball/mlb/scoreboard?dates=<d>, fetched 2026-10-16 23:4xZ; trimmed to the fields the #11152 rule reads",
+ "boards": {
+  "20261013": {
+   "events": [
+    {
+     "id": "401908024",
+     "date": "2026-10-14T00:00Z",
+     "status": {
+      "type": {
+       "name": "STATUS_FINAL"
+      }
+     },
+     "season": {
+      "type": 3
+     },
+     "competitions": [
+      {
+       "competitors": [
+        {
+         "homeAway": "home",
+         "team": {
+          "id": "30",
+          "displayName": "Tampa Bay Rays"
+         }
+        },
+        {
+         "homeAway": "away",
+         "team": {
+          "id": "5",
+          "displayName": "Cleveland Guardians"
+         }
+        }
+       ],
+       "notes": [
+        {
+         "type": "event",
+         "headline": "ALCS - Game 2"
+        }
+       ],
+       "series": {
+        "type": "playoff",
+        "title": "Playoff Series",
+        "summary": "Series tied 1-1",
+        "completed": false,
+        "totalCompetitions": 7,
+        "competitors": [
+         {
+          "id": "30",
+          "wins": 1
+         },
+         {
+          "id": "5",
+          "wins": 1
+         }
+        ]
+       }
+      }
+     ]
+    }
+   ]
+  },
+  "20261015": {
+   "events": [
+    {
+     "id": "401908025",
+     "date": "2026-10-15T17:00Z",
+     "status": {
+      "type": {
+       "name": "STATUS_FINAL"
+      }
+     },
+     "season": {
+      "type": 3
+     },
+     "competitions": [
+      {
+       "competitors": [
+        {
+         "homeAway": "home",
+         "team": {
+          "id": "5",
+          "displayName": "Cleveland Guardians"
+         }
+        },
+        {
+         "homeAway": "away",
+         "team": {
+          "id": "30",
+          "displayName": "Tampa Bay Rays"
+         }
+        }
+       ],
+       "notes": [
+        {
+         "type": "event",
+         "headline": "ALCS - Game 3"
+        }
+       ],
+       "series": {
+        "type": "playoff",
+        "title": "Playoff Series",
+        "summary": "CLE leads series 2-1",
+        "completed": false,
+        "totalCompetitions": 7,
+        "competitors": [
+         {
+          "id": "5",
+          "wins": 2
+         },
+         {
+          "id": "30",
+          "wins": 1
+         }
+        ]
+       }
+      }
+     ]
+    },
+    {
+     "id": "401908033",
+     "date": "2026-10-16T00:00Z",
+     "status": {
+      "type": {
+       "name": "STATUS_FINAL"
+      }
+     },
+     "season": {
+      "type": 3
+     },
+     "competitions": [
+      {
+       "competitors": [
+        {
+         "homeAway": "home",
+         "team": {
+          "id": "19",
+          "displayName": "Los Angeles Dodgers"
+         }
+        },
+        {
+         "homeAway": "away",
+         "team": {
+          "id": "8",
+          "displayName": "Milwaukee Brewers"
+         }
+        }
+       ],
+       "notes": [
+        {
+         "type": "event",
+         "headline": "NLCS - Game 4"
+        }
+       ],
+       "series": {
+        "type": "playoff",
+        "title": "Playoff Series",
+        "summary": "MIL wins series 4-0",
+        "completed": true,
+        "totalCompetitions": 7,
+        "competitors": [
+         {
+          "id": "19",
+          "wins": 0
+         },
+         {
+          "id": "8",
+          "wins": 4
+         }
+        ]
+       }
+      }
+     ]
+    }
+   ]
+  },
+  "20261016": {
+   "events": [
+    {
+     "id": "401908026",
+     "date": "2026-10-17T00:00Z",
+     "status": {
+      "type": {
+       "name": "STATUS_DELAYED"
+      }
+     },
+     "season": {
+      "type": 3
+     },
+     "competitions": [
+      {
+       "competitors": [
+        {
+         "homeAway": "home",
+         "team": {
+          "id": "5",
+          "displayName": "Cleveland Guardians"
+         }
+        },
+        {
+         "homeAway": "away",
+         "team": {
+          "id": "30",
+          "displayName": "Tampa Bay Rays"
+         }
+        }
+       ],
+       "notes": [
+        {
+         "type": "event",
+         "headline": "ALCS - Game 4"
+        }
+       ],
+       "series": {
+        "type": "playoff",
+        "title": "Playoff Series",
+        "summary": "CLE leads series 2-1",
+        "completed": false,
+        "totalCompetitions": 7,
+        "competitors": [
+         {
+          "id": "5",
+          "wins": 2
+         },
+         {
+          "id": "30",
+          "wins": 1
+         }
+        ]
+       }
+      }
+     ]
+    }
+   ]
+  }
+ }
+}

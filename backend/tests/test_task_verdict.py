@@ -295,6 +295,9 @@ class TestEnforcementScope:
             "mlb_reschedule_ghost_sweep",
             # #9187: the NHL run of that pass. Same summary, same terminals.
             "nhl_adjacent_day_ghost_sweep",
+            # #11152: the unplayed series game. Terminals:
+            # `app/tasks/unplayed_series_game_sweep.py`.
+            "unplayed_series_game_sweep",
             # #5821 (CERT-3030): the Polymarket-container arm of the same fold.
             # The specimen for this set's other failure mode — not an unenrolled
             # task, but an enrolled-shaped one whose words are not in the

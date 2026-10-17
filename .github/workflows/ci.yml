@@ -1602,6 +1602,21 @@ jobs:
             exit 1
           fi
 
+      - name: "#11152 an unplayed series game is voided only while unchanged, undone only while still voided, and never by a table the sweep made (real Postgres)"
+        # CERT-4179 follow-up 11152-PERSIST-REAL-PG-CAS-UNDO-GUARDS: the sweep's
+        # UPDATE re-asserts status / no ESPN id / scores / start, the undo
+        # re-asserts voided + its tag, and the sweep runs no DDL (notice 47(c)).
+        # SQL only a server runs; named here because a `*_pg.py` nobody adds runs nowhere.
+        if: matrix.group == 'shared' && needs.change-scope.outputs.reuse != 'true'
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_unplayed_series_game_sweep_11152_pg.py \
+            -v -rs 2>&1 | tee /tmp/unplayed11152.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/unplayed11152.txt; then
+            echo "::error::#11152 unplayed-series-game write/undo gate SKIPPED — the gate did not run"
+            exit 1
+          fi
+
       - name: "#7345 a listing both of whose teams played someone else at that kick-off stops printing (real Postgres)"
         # Two LATERAL joins on exact `commence_time` equality with NULL-false
         # team-id `<>` — SQL only a server runs. Same skip detection.
