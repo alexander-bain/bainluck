@@ -57,7 +57,7 @@ EVERYTHING HERE IS PURE. No DB, no HTTP, no Redis, no clock: the I/O half is
 from __future__ import annotations
 
 import math
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
@@ -774,6 +774,137 @@ def captures_are_coarse(
     if densest is None:
         return False
     return densest >= coarse_at
+
+
+def whole_life_grain_seconds(source: str | None) -> float | None:
+    """The grain of the ONE retrieval tier that reaches a market's whole life.
+
+    Read off the fill's own declared plan — `candle_calls` / `clob_calls`, whose
+    last call is the whole-life tier on both venues (Kalshi daily since listing,
+    Polymarket `interval=max` at 12-hourly) — and not restated here, so a change
+    to the plan moves this with it. None when the source has no venue history,
+    or when the plan's coarsest call no longer declares whole-life reach: an
+    undeclared reach is not evidence of one, and the caller then asks nothing.
+    """
+    from app.utils.futures_chart_series import candle_calls, clob_calls
+
+    if source == "kalshi":
+        last = candle_calls(0)[-1]
+        if last.lookback is not None:
+            return None
+        return float(last.period_interval) * 60.0
+    if source == "polymarket":
+        last = clob_calls(0)[-1]
+        if last.lookback is not None or last.interval != "max":
+            return None
+        return float(last.fidelity) * 60.0
+    return None
+
+
+def leg_absent_beside_dense_sibling(
+    capture_times_by_line: Mapping[Any, Sequence[datetime]],
+    *,
+    fillable_lines: Iterable[Any],
+    graded_lines: Iterable[Any] = (),
+    min_reference: int,
+    gap_grain_seconds: float | None,
+    window_end: datetime,
+) -> bool:
+    """Is one fillable line ABSENT for most of the stretch a sibling was observed?
+
+    #11162. The two existing triggers both read the chart through its densest
+    part. The thin gate counts POOLED rows, so a sibling with 160 captures clears
+    it for a leg with 17. `captures_are_coarse` takes the DENSEST line's median —
+    on purpose, so one abandoned outcome cannot make a well-captured market look
+    coarse — and refuses every window the fine tier cannot half cover, so on the
+    long bands a leg that vanished for five weeks is invisible to both. Measured
+    on `futures_markets` 31519211 ("All", 2026-10-12): Under 17 useful captures
+    then a 908-hour hole, Over 162, `venue_history.fill=chart_not_thin`.
+
+    WHY A SIBLING IS EVIDENCE AND A GAP ALONE IS NOT. Our pollers write every
+    priced outcome of a market on every poll, with no change-only dedup
+    (`tasks/kalshi.py`, `tasks/polymarket.py`): a quiet market's legs accrue rows
+    at the same rate as a busy one's. So two legs of one market diverge only when
+    one leg's rows were refused or lost — the sibling's instants prove the market
+    was being observed there. A gap with no sibling behind it is a quiet market,
+    a new one or a dead one, and is never read as missing history here.
+
+    A line counts as absent at a sibling instant only when ALL of:
+
+      * the line is FILLABLE — the fill would fetch it (`fillable_outcomes`);
+      * the line has at least one useful capture in the window. A line with none
+        is not drawn (#7546) and is the missing-side case, which a fill cannot
+        make visible on this reader;
+      * the sibling it is compared with holds at least `min_reference` instants
+        on its own — the caller passes the thin gate's own threshold, so the
+        sibling is exactly the density that hid this line from that gate;
+      * the instant is AFTER the line's first capture. The head before it may
+        predate the contract's listing, and no venue holds history for a
+        contract that did not exist;
+      * for a GRADED line, before its last capture too: a settled leg's tail is
+        its settlement, not a loss;
+      * the line's hole around that instant is at least `gap_grain_seconds`
+        long — the grain of the whole-life tier the fill declares
+        (:func:`whole_life_grain_seconds`). A shorter hole is one the fill's
+        coarsest reach cannot put a single bucket into, and the recent short
+        holes the fine tier could fill are `captures_are_coarse`'s question.
+
+    Fires when absent instants are at least `COARSE_TRIGGER_MIN_WINDOW_COVERAGE`
+    of the sibling's countable instants — the same "most of what is on screen"
+    bar the coarse trigger uses, not a new number.
+
+    🪤 THIS DECIDES WHETHER TO ASK, AND NOTHING ELSE. It does not establish that
+    the venue still holds the history (Kalshi purges at ≥74 days, gotcha #35),
+    and it neither draws, smooths nor complements anything. The answer is the
+    existing bounded planner's, under its claim, budgets and negative cache.
+
+    Instants are de-duplicated per line, so a repeated row at one instant is
+    one observation; the caller hands in captures only — no settlement markers,
+    no venue points.
+    """
+    if not gap_grain_seconds or gap_grain_seconds <= 0:
+        return False
+    fillable = set(fillable_lines)
+    graded = set(graded_lines)
+    # POSIX seconds, sorted and de-duplicated per line: this runs on a public GET
+    # whose bank is cold, so one merge-walk per line and no datetime arithmetic.
+    lines = {
+        key: stamps
+        for key, raw in capture_times_by_line.items()
+        if key in fillable
+        and (stamps := sorted({ts.timestamp() for ts in (raw or ()) if ts is not None}))
+    }
+    if len(lines) < 2:
+        return False
+    end = window_end.timestamp()
+
+    by_size = sorted(lines, key=lambda k: len(lines[k]), reverse=True)
+    for key, stamps in lines.items():
+        reference = lines[by_size[1] if by_size[0] == key else by_size[0]]
+        if len(reference) < min_reference:
+            continue
+        first = stamps[0]
+        if key in graded:
+            last_bound, edges = stamps[-1], stamps
+        else:
+            last_bound = end
+            edges = stamps + [end] if end > stamps[-1] else stamps
+        own = set(stamps)
+        countable = absent = 0
+        j = 0
+        for t in reference:
+            if t <= first or t > last_bound:
+                continue
+            countable += 1
+            if t in own:
+                continue
+            while j < len(edges) and edges[j] <= t:
+                j += 1
+            if j < len(edges) and edges[j] - edges[j - 1] >= gap_grain_seconds:
+                absent += 1
+        if absent and absent >= COARSE_TRIGGER_MIN_WINDOW_COVERAGE * countable:
+            return True
+    return False
 
 
 def captures_cover_cell(
