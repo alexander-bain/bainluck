@@ -202,7 +202,7 @@ extension FeedFuturesData {
             canonicalMarketKey: nil, groupId: nil, groupType: nil, imageUrl: d.imageUrl,
             hookDescription: d.hookDescription, matchedOutcomes: nil, discoverCard: nil,
             confidenceTier: nil, confidenceScore: nil, resolved: nil, winner: winner?.name,
-            winnerOpeningProbability: winner?.openingProbability, storyKey: nil,
+            winnerOpeningProbability: winner.flatMap(FuturesReadableOpening8313.of), storyKey: nil,
             priceObservedAt: nil, cardSumReason: nil
         )
     }
