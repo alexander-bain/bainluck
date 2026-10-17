@@ -41,10 +41,13 @@ logger = logging.getLogger(__name__)
 # Ordinary chunks retain their whole rollback boundary; the final drain has
 # no later periodic retry and keeps its existing database wait behavior.
 PRICE_CHUNK_LOCK_TIMEOUT_MS = 500
-#: #10090 — the price-row UPDATE alone waits this long for a lock. A refusal
-#: costs no cooldown: the rows stay known-held and the next flush probes them
-#: NOWAIT, so a 150 ms holder no longer holds the chunk for the 500 ms budget
-#: plus a two-second cooldown. Rerank and commit keep the chunk budget above.
+#: #10090 — the price-row UPDATE alone waits this long for a lock. Its lock
+#: timeout arms no cooldown: the rows stay known-held and the next flush probes
+#: them NOWAIT. A holder of 50–500 ms therefore costs one failed attempt and a
+#: write at the next flush (the held-quote overlay carries the blend meanwhile;
+#: the row's own price lags until that write), where it used to be waited out
+#: in the same flush. What a held chunk costs the later chunks of its flush
+#: falls from up to 500 ms to 50 ms. Rerank and commit keep the chunk budget.
 PRICE_STATEMENT_LOCK_TIMEOUT_MS = 50
 
 #: #10090 — after an idle input wakes the price flush, wait this long (fixed,
@@ -2595,7 +2598,14 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
             # Bounded by construction: the buffer is keyed by outcome_id over a
             # fixed subscription, so a long outage holds at most one entry per
             # subscribed outcome however many attempts are burned.
-            if probe_refused:
+            # #10090 (lane1 R1): a lock timeout on a probe's price statement
+            # is the same known hold seen again — a table lock it queued on, or
+            # an unrecognised row refusal. With no cooldown it recurs every
+            # flush, once per retried event, so it is counted, not logged: the
+            # episode's first timeout (no probe yet) was the logged error.
+            # Rerank and commit failures keep their error log on every attempt.
+            probe_timed_out = probe and price_lock_timed_out
+            if probe_refused or probe_timed_out:
                 # #10090 recovery: a refused probe waited for nothing, so it
                 # re-arms no cooldown. Re-arming the two seconds left a pair
                 # whose holder let go 100 ms later unwritten for 2.2 s on real
@@ -2606,9 +2616,11 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                 # recurs every flush the holder keeps the row. A lock failure
                 # outside the price statement (rerank or commit) keeps
                 # the cooldown and error accounting.
-                stats["price_lock_probes_refused"] = (
-                    stats.get("price_lock_probes_refused", 0) + 1
+                counter = (
+                    "price_lock_probes_refused" if probe_refused
+                    else "price_lock_timeouts"
                 )
+                stats[counter] = stats.get(counter, 0) + 1
                 lock_retry_until.update(
                     {oid: lock_retry_until.get(oid, 0) for oid in chunk}
                 )
@@ -2622,9 +2634,9 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                 "Polymarket WS: flush error (%d retained for retry)", len(chunk)
             )
             if not final and is_lock_timeout(exc):
-                # A brief price lock must not turn the fast first refusal into
-                # the default two-second cooldown. Known-held rows are probed
-                # NOWAIT on subsequent flushes; other failures keep backoff.
+                # A price-statement lock timeout arms no cooldown: the rows
+                # are probed NOWAIT from the next flush. Rerank and commit
+                # lock timeouts keep the two-second backoff.
                 retry_delay = 0.0 if price_lock_timed_out else PRICE_FLUSH_SECONDS
                 until = _mono() + retry_delay
                 lock_retry_until.update(dict.fromkeys(chunk, until))

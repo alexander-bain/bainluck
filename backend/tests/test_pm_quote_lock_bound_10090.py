@@ -252,23 +252,84 @@ async def test_a_probe_refusal_received_late_still_re_arms_no_cooldown(monkeypat
     'konnte Sperre für Zeile in Relation "futures_outcomes" nicht setzen',
     'could not obtain lock on row in relation "futures_markets"',
 ])
-async def test_a_probe_55p03_that_is_not_the_known_row_refusal_is_an_error_without_cooldown(
+async def test_a_probe_55p03_that_is_not_the_known_row_refusal_is_a_counted_timeout_without_cooldown(
     monkeypatch, message,
 ):
     # Narrowly positive: an unrecognised 55P03 (lock timeout, a localised
-    # server, another relation) is still an error, never a counted refusal.
-    # #10090 fast retry: any 55P03 the price UPDATE raises arms no cooldown
-    # (each retry costs at most the 50 ms statement budget); a table lock the
-    # probe queues on is recovered at the next flush, not two seconds later.
+    # server, another relation) is never a counted refusal. #10090 fast retry:
+    # any 55P03 the price UPDATE raises arms no cooldown (each retry costs at
+    # most the 50 ms statement budget); a table lock the probe queues on is
+    # recovered at the next flush. On a probe the hold is already known, so it
+    # is counted as a repeat timeout, not logged as a fresh error (lane1 R1).
     clock = _FakeTime(monkeypatch, t=1000)
     r, state = writer_rig(clock)
     r.ns["lock_retry_until"].update({1: 0, 2: 0})
     state.refusal_message = message
     assert await r.ns["write_chunk"]({1: 0.6, 2: 0.4}) is None
     assert state.nowait == [True]
-    assert r.ns["lock_retry_until"] == {1: 1000, 2: 1000}
-    assert r.ns["stats"]["errors"] == 1
+    assert r.ns["lock_retry_until"] == {1: 0, 2: 0}
+    assert r.ns["stats"]["price_lock_timeouts"] == 1
+    assert not r.ns["stats"].get("errors")
     assert not r.ns["stats"].get("price_lock_probes_refused")
+    assert ("failure", None) not in r.trace, "a repeat timeout is not logged"
+
+
+async def test_a_sustained_price_lock_logs_one_error_per_hold_and_counts_each_repeat(
+    monkeypatch,
+):
+    # lane1 R1: with no cooldown a held price row is retried every 0.25 s
+    # flush, and a table lock times out every probe. Logged and counted as an
+    # error each time, that was ~20 Sentry events a second per held event
+    # (parent: ~2). The first timeout in a hold episode stays the one logged
+    # error; each repeat is counted in `price_lock_timeouts`. A rerank lock
+    # timeout is not the price statement's and still logs every attempt.
+    clock = _FakeTime(monkeypatch, t=1000)
+    r, state = writer_rig(clock)
+    state.refusal_message = LOCK_TIMEOUT_MESSAGE  # every probe queues on a table lock
+    logged = []
+
+    class RecordingLogger:
+        def __getattr__(self, level):
+            return lambda *args, **kwargs: logged.append(level)
+
+    r.ns["logger"] = RecordingLogger()
+    flushes, cadence = 6, 0.25  # production PM_WS_PRICE_FLUSH_SECONDS
+    for n in range(flushes):
+        clock.t = 1000 + n * cadence
+        assert await r.ns["flush_prices"](flush_started=clock.t) is True
+    held_attempts = [n for n, (_, ids) in zip(state.nowait, state.attempts) if 1 in ids]
+    assert held_attempts == [False] + [True] * (flushes - 1), "retried every flush"
+    assert logged == ["exception"], "one logged error for the whole hold"
+    assert r.ns["stats"]["errors"] == 1 and r.ns["stats"]["requeued"] == 2
+    assert r.ns["stats"]["price_lock_timeouts"] == flushes - 1
+    assert not r.ns["stats"].get("price_lock_probes_refused")
+    assert set(r.ns["lock_retry_until"]) == {1, 2}
+    assert max(r.ns["lock_retry_until"].values()) <= clock.t, "no cooldown armed"
+
+    # The table lock is gone; rerank now times out. Both attempts are probes
+    # of the known-held rows, and each still logs and counts as an error.
+    state.held = False
+    state.rank_error = LockHeld()
+    for _ in range(2):
+        clock.t = max(r.ns["lock_retry_until"].values()) + PRICE_FLUSH_SECONDS
+        assert await r.ns["write_chunk"]({1: 0.9, 2: 0.4}) is None
+        assert state.nowait[-1] is True
+    assert logged == ["exception"] * 3
+    assert r.ns["stats"]["errors"] == 3
+    assert r.ns["stats"]["price_lock_timeouts"] == flushes - 1
+
+    # The write lands and ends the episode; the next hold's first timeout is
+    # a fresh, logged error again.
+    state.rank_error = None
+    clock.t = max(r.ns["lock_retry_until"].values()) + PRICE_FLUSH_SECONDS
+    assert (await r.ns["write_chunk"]({1: 0.9, 2: 0.4})).written_ids == (1, 2)
+    assert not r.ns["lock_retry_until"]
+    state.held = True
+    clock.t += PRICE_FLUSH_SECONDS
+    assert await r.ns["write_chunk"]({1: 0.95, 2: 0.4}) is None
+    assert state.nowait[-1] is False
+    assert logged == ["exception"] * 4
+    assert r.ns["stats"]["errors"] == 4
 
 
 def _wrapped(fields):
