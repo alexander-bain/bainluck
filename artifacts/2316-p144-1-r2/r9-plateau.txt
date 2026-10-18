@@ -1,0 +1,101 @@
+\set ON_ERROR_STOP on
+SET statement_timeout = 0;
+DROP TABLE IF EXISTS fm_p;
+CREATE TABLE fm_p AS SELECT id, hex_id, 0 AS u, repeat('x', 180) AS pad FROM fm_size;
+ALTER TABLE fm_p ADD PRIMARY KEY (id); CREATE INDEX ON fm_p (u);
+CREATE INDEX fm_p_gin ON fm_p USING gin (hex_id gin_trgm_ops);
+VACUUM fm_p;
+SELECT 0 AS round, pg_relation_size('fm_p_gin') AS gin_bytes;
+UPDATE fm_p SET u = u + 1; VACUUM fm_p; SELECT 1 AS round, pg_relation_size('fm_p_gin') AS gin_bytes;
+UPDATE fm_p SET u = u + 1; VACUUM fm_p; SELECT 2 AS round, pg_relation_size('fm_p_gin') AS gin_bytes;
+UPDATE fm_p SET u = u + 1; VACUUM fm_p; SELECT 3 AS round, pg_relation_size('fm_p_gin') AS gin_bytes;
+UPDATE fm_p SET u = u + 1; VACUUM fm_p; SELECT 4 AS round, pg_relation_size('fm_p_gin') AS gin_bytes;
+UPDATE fm_p SET u = u + 1; VACUUM fm_p; SELECT 5 AS round, pg_relation_size('fm_p_gin') AS gin_bytes;
+UPDATE fm_p SET u = u + 1; VACUUM fm_p; SELECT 6 AS round, pg_relation_size('fm_p_gin') AS gin_bytes;
+UPDATE fm_p SET u = u + 1; VACUUM fm_p; SELECT 7 AS round, pg_relation_size('fm_p_gin') AS gin_bytes;
+UPDATE fm_p SET u = u + 1; VACUUM fm_p; SELECT 8 AS round, pg_relation_size('fm_p_gin') AS gin_bytes;
+UPDATE fm_p SET u = u + 1; VACUUM fm_p; SELECT 9 AS round, pg_relation_size('fm_p_gin') AS gin_bytes;
+UPDATE fm_p SET u = u + 1; VACUUM fm_p; SELECT 10 AS round, pg_relation_size('fm_p_gin') AS gin_bytes;
+SET
+psql:/tmp/lat2316-fixture/r2/plateau.sql:3: NOTICE:  table "fm_p" does not exist, skipping
+DROP TABLE
+SELECT 24000
+ALTER TABLE
+CREATE INDEX
+CREATE INDEX
+VACUUM
+ round | gin_bytes 
+-------+-----------
+     0 |   5701632
+(1 row)
+
+UPDATE 24000
+VACUUM
+ round | gin_bytes 
+-------+-----------
+     1 |  15286272
+(1 row)
+
+UPDATE 24000
+VACUUM
+ round | gin_bytes 
+-------+-----------
+     2 |  15802368
+(1 row)
+
+UPDATE 24000
+VACUUM
+ round | gin_bytes 
+-------+-----------
+     3 |  16252928
+(1 row)
+
+UPDATE 24000
+VACUUM
+ round | gin_bytes 
+-------+-----------
+     4 |  16711680
+(1 row)
+
+UPDATE 24000
+VACUUM
+ round | gin_bytes 
+-------+-----------
+     5 |  17154048
+(1 row)
+
+UPDATE 24000
+VACUUM
+ round | gin_bytes 
+-------+-----------
+     6 |  17596416
+(1 row)
+
+UPDATE 24000
+VACUUM
+ round | gin_bytes 
+-------+-----------
+     7 |  18038784
+(1 row)
+
+UPDATE 24000
+VACUUM
+ round | gin_bytes 
+-------+-----------
+     8 |  18489344
+(1 row)
+
+UPDATE 24000
+VACUUM
+ round | gin_bytes 
+-------+-----------
+     9 |  18948096
+(1 row)
+
+UPDATE 24000
+VACUUM
+ round | gin_bytes 
+-------+-----------
+    10 |  19390464
+(1 row)
+

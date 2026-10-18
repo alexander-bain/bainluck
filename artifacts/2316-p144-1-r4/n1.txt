@@ -1,0 +1,22 @@
+=== preset ON_ERROR_STOP on, then include the revision-4 section 4 file
+SET
+SET
+psql:/tmp/lat2316-fixture/r4/section4.sql:10: ERROR:  canceling statement due to lock timeout
+psql:/tmp/lat2316-fixture/r4/section4.sql:11: ERROR:  canceling statement due to lock timeout
+DROP INDEX
+           relname            | indisvalid | indisready 
+------------------------------+------------+------------
+ ix_fm_t14_external_id_trgm   | f          | t
+ ix_fm_t14_llm_sport_category | f          | t
+(2 rows)
+
+DROP INDEX
+DROP INDEX
+psql:/tmp/lat2316-fixture/r4/section4.sql:19: NOTICE:  index "ix_fm_t14_sport_id" does not exist, skipping
+DROP INDEX
+ relname | indisvalid | indisready 
+---------+------------+------------
+(0 rows)
+
+=== reached the end of the included file
+psql EXIT 0 after 147s

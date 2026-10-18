@@ -1,0 +1,71 @@
+\set ON_ERROR_STOP on
+SET statement_timeout = 0;
+DROP TABLE IF EXISTS fm_w_plain, fm_w_gin;
+CREATE TABLE fm_w_plain AS SELECT id, hex_id, 0 AS u, repeat('x', 180) AS pad FROM fm_size;
+CREATE TABLE fm_w_gin AS SELECT * FROM fm_w_plain;
+ALTER TABLE fm_w_plain ADD PRIMARY KEY (id); ALTER TABLE fm_w_gin ADD PRIMARY KEY (id);
+CREATE INDEX ON fm_w_plain (u); CREATE INDEX ON fm_w_gin (u);
+CREATE INDEX ON fm_w_gin USING gin (hex_id gin_trgm_ops) WITH (fastupdate = on, gin_pending_list_limit = 1024);
+VACUUM ANALYZE fm_w_plain; VACUUM ANALYZE fm_w_gin;
+\timing on
+UPDATE fm_w_plain SET u = u + 1;
+UPDATE fm_w_gin SET u = u + 1;
+UPDATE fm_w_plain SET u = u + 1;
+UPDATE fm_w_gin SET u = u + 1;
+UPDATE fm_w_plain SET u = u + 1;
+UPDATE fm_w_gin SET u = u + 1;
+\timing off
+SELECT relname, n_tup_upd, n_tup_hot_upd FROM pg_stat_user_tables WHERE relname LIKE 'fm_w_%';
+SELECT pg_relation_size(indexrelid) AS gin_bytes FROM pg_stat_user_indexes WHERE relname = 'fm_w_gin' AND indexrelname LIKE '%hex%';
+VACUUM fm_w_gin;
+UPDATE fm_w_gin SET u = u + 1;
+VACUUM fm_w_gin;
+UPDATE fm_w_gin SET u = u + 1;
+VACUUM fm_w_gin;
+SELECT pg_relation_size(indexrelid) AS gin_bytes_with_vacuum_between FROM pg_stat_user_indexes WHERE relname = 'fm_w_gin' AND indexrelname LIKE '%hex%';
+SET
+DROP TABLE
+SELECT 24000
+SELECT 24000
+ALTER TABLE
+ALTER TABLE
+CREATE INDEX
+CREATE INDEX
+CREATE INDEX
+VACUUM
+VACUUM
+Timing is on.
+UPDATE 24000
+Time: 124.882 ms
+UPDATE 24000
+Time: 2308.320 ms (00:02.308)
+UPDATE 24000
+Time: 312.935 ms
+UPDATE 24000
+Time: 8186.019 ms (00:08.186)
+UPDATE 24000
+Time: 163.665 ms
+UPDATE 24000
+Time: 7558.652 ms (00:07.559)
+Timing is off.
+  relname   | n_tup_upd | n_tup_hot_upd 
+------------+-----------+---------------
+ fm_w_plain |     72000 |             0
+ fm_w_gin   |     72000 |             0
+(2 rows)
+
+ gin_bytes 
+-----------
+  33521664
+(1 row)
+
+VACUUM
+UPDATE 24000
+VACUUM
+UPDATE 24000
+VACUUM
+ gin_bytes_with_vacuum_between 
+-------------------------------
+                      35356672
+(1 row)
+

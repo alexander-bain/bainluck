@@ -1,0 +1,22 @@
+=== cleanup: section 4 once (ON_ERROR_STOP off)
+SET
+SET
+psql:/tmp/lat2316-fixture/r3/section4.sql:9: NOTICE:  index "ix_fm_t14_external_id_trgm" does not exist, skipping
+DROP INDEX
+DROP INDEX
+DROP INDEX
+ relname | indisvalid | indisready 
+---------+------------+------------
+(0 rows)
+
+psql:/tmp/lat2316-fixture/r3/section4.sql:16: NOTICE:  index "ix_fm_t14_external_id_trgm" does not exist, skipping
+DROP INDEX
+psql:/tmp/lat2316-fixture/r3/section4.sql:17: NOTICE:  index "ix_fm_t14_llm_sport_category" does not exist, skipping
+DROP INDEX
+psql:/tmp/lat2316-fixture/r3/section4.sql:18: NOTICE:  index "ix_fm_t14_sport_id" does not exist, skipping
+DROP INDEX
+ relname | indisvalid | indisready 
+---------+------------+------------
+(0 rows)
+
+psql EXIT 0

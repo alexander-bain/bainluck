@@ -1,0 +1,137 @@
+ track_io_timing 
+-----------------
+ off
+(1 row)
+
+SET
+americanfootball_ncaaf sport_ids=2
+DEALLOCATE ALL
+PREPARE
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      QUERY PLAN                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Limit  (cost=35172.12..35218.79 rows=400 width=8) (actual time=55.347..58.551 rows=400 loops=1)
+   Buffers: shared hit=8547 read=13489
+   ->  Gather Merge  (cost=35172.12..35316.10 rows=1234 width=8) (actual time=55.346..58.534 rows=400 loops=1)
+         Workers Planned: 2
+         Workers Launched: 2
+         Buffers: shared hit=8547 read=13489
+         ->  Sort  (cost=34172.10..34173.64 rows=617 width=8) (actual time=49.970..49.975 rows=258 loops=3)
+               Sort Key: market_tier, id
+               Sort Method: quicksort  Memory: 42kB
+               Buffers: shared hit=8547 read=13489
+               Worker 0:  Sort Method: quicksort  Memory: 39kB
+               Worker 1:  Sort Method: quicksort  Memory: 40kB
+               ->  Parallel Seq Scan on futures_markets  (cost=0.00..34143.50 rows=617 width=8) (actual time=0.912..49.825 rows=333 loops=3)
+                     Filter: ((updated_at >= '2026-07-19 18:27:59.72319-07'::timestamp with time zone) AND (((status)::text = ANY ('{open,resolved,closed}'::text[])) OR (status IS NULL)) AND (market_tier = ANY ('{1,2,3,4}'::integer[])) AND (((external_id)::text ~~ 'americanfootball_ncaaf%'::text) OR ((llm_sport_category)::text = 'football'::text) OR (sport_id = 2) OR ((external_id)::text ~~* 'KXNFL%'::text) OR ((external_id)::text ~~* 'KXNCAAF%'::text)) AND ((((COALESCE(name, ''::character varying))::text !~* '(\ypro football\y|\ynfl\y|\yafc\y|\ynfc\y|\ysuper bowl\y)'::text) AND ((COALESCE(external_id, ''::character varying))::text !~~* 'KXNFL%'::text) AND ((COALESCE(external_id, ''::character varying))::text !~~* 'americanfootball_nfl%'::text)) OR ((COALESCE(name, ''::character varying))::text ~* '(\yncaa\y|\yncaaf\y|\ycollege football\y|\ycfb\y|\yheisman\y|\yacc championship game\y|\ysec championship game\y|\ybig 12 championship game\y|\ybig ten championship game\y|\ymac championship game\y|\ysun belt championship game\y|\yconference usa championship game\y|\ymountain west championship game\y|\ypac-12 championship game\y|\yamerican conference championship game\y)'::text) OR ((COALESCE(external_id, ''::character varying))::text ~~* 'KXNCAAF%'::text) OR ((COALESCE(external_id, ''::character varying))::text ~~* 'americanfootball_ncaaf%'::text)))
+                     Rows Removed by Filter: 199667
+                     Buffers: shared hit=8473 read=13489
+ Planning Time: 0.225 ms
+ Execution Time: 58.574 ms
+(18 rows)
+
+         name          | generic_plans | custom_plans 
+-----------------------+---------------+--------------
+ season_discovery_2316 |             0 |            6
+(1 row)
+
+DEALLOCATE
+psql:gate.sql:40: error: unterminated quoted string
+SET
+baseball_mlb sport_ids=3
+DEALLOCATE ALL
+PREPARE
+                                                                                                                                                                                                                                                                                 QUERY PLAN                                                                                                                                                                                                                                                                                 
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Limit  (cost=32680.05..32726.72 rows=400 width=8) (actual time=32.479..34.581 rows=400 loops=1)
+   Buffers: shared hit=8563 read=13473 written=1
+   ->  Gather Merge  (cost=32680.05..32858.10 rows=1526 width=8) (actual time=32.479..34.569 rows=400 loops=1)
+         Workers Planned: 2
+         Workers Launched: 2
+         Buffers: shared hit=8563 read=13473 written=1
+         ->  Sort  (cost=31680.03..31681.94 rows=763 width=8) (actual time=30.001..30.005 rows=207 loops=3)
+               Sort Key: market_tier, id
+               Sort Method: quicksort  Memory: 42kB
+               Buffers: shared hit=8563 read=13473 written=1
+               Worker 0:  Sort Method: quicksort  Memory: 39kB
+               Worker 1:  Sort Method: quicksort  Memory: 39kB
+               ->  Parallel Seq Scan on futures_markets  (cost=0.00..31643.50 rows=763 width=8) (actual time=0.204..29.944 rows=333 loops=3)
+                     Filter: ((updated_at >= '2026-07-19 18:27:59.725233-07'::timestamp with time zone) AND (((status)::text = ANY ('{open,resolved,closed}'::text[])) OR (status IS NULL)) AND (market_tier = ANY ('{1,2,3,4}'::integer[])) AND (((external_id)::text ~~ 'baseball%'::text) OR ((llm_sport_category)::text = 'baseball'::text) OR (sport_id = 3) OR ((external_id)::text ~~* 'KXMLB%'::text) OR ((external_id)::text ~~* 'KXLEADERMLB%'::text) OR ((external_id)::text ~~* 'KXNEXTTEAMMLB%'::text) OR ((external_id)::text ~~* 'KXCITYMLBEXPAND%'::text)))
+                     Rows Removed by Filter: 199667
+                     Buffers: shared hit=8489 read=13473 written=1
+ Planning Time: 0.113 ms
+ Execution Time: 34.592 ms
+(18 rows)
+
+         name          | generic_plans | custom_plans 
+-----------------------+---------------+--------------
+ season_discovery_2316 |             0 |            6
+(1 row)
+
+DEALLOCATE
+psql:gate.sql:79: error: unterminated quoted string
+SET
+soccer_epl sport_ids=7,14,16
+DEALLOCATE ALL
+PREPARE
+                                                                                                                                                                                                                                      QUERY PLAN                                                                                                                                                                                                                                      
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Limit  (cost=31728.13..31774.80 rows=400 width=8) (actual time=31.927..33.819 rows=400 loops=1)
+   Buffers: shared hit=8659 read=13377
+   ->  Gather Merge  (cost=31728.13..31843.40 rows=988 width=8) (actual time=31.927..33.807 rows=400 loops=1)
+         Workers Planned: 2
+         Workers Launched: 2
+         Buffers: shared hit=8659 read=13377
+         ->  Sort  (cost=30728.10..30729.34 rows=494 width=8) (actual time=29.740..29.743 rows=202 loops=3)
+               Sort Key: market_tier, id
+               Sort Method: quicksort  Memory: 44kB
+               Buffers: shared hit=8659 read=13377
+               Worker 0:  Sort Method: quicksort  Memory: 38kB
+               Worker 1:  Sort Method: quicksort  Memory: 39kB
+               ->  Parallel Seq Scan on futures_markets  (cost=0.00..30706.00 rows=494 width=8) (actual time=0.086..29.698 rows=333 loops=3)
+                     Filter: ((updated_at >= '2026-07-19 18:27:59.726594-07'::timestamp with time zone) AND (((status)::text = ANY ('{open,resolved,closed}'::text[])) OR (status IS NULL)) AND (market_tier = ANY ('{1,2,3,4}'::integer[])) AND (((external_id)::text ~~ 'soccer%'::text) OR ((llm_sport_category)::text = 'soccer'::text) OR (sport_id = ANY ('{7,14,16}'::integer[])) OR ((external_id)::text ~~* 'KXMLS%'::text) OR ((external_id)::text ~~* 'KXSOCCER%'::text)))
+                     Rows Removed by Filter: 199667
+                     Buffers: shared hit=8585 read=13377
+ Planning Time: 0.081 ms
+ Execution Time: 33.830 ms
+(18 rows)
+
+         name          | generic_plans | custom_plans 
+-----------------------+---------------+--------------
+ season_discovery_2316 |             0 |            6
+(1 row)
+
+DEALLOCATE
+psql:gate.sql:118: error: unterminated quoted string
+SET
+basketball_other sport_ids=4,5,13,15
+DEALLOCATE ALL
+PREPARE
+                                                                                                                                                                                                                                                                                                                QUERY PLAN                                                                                                                                                                                                                                                                                                                
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Limit  (cost=33948.06..33994.73 rows=400 width=8) (actual time=29.111..30.774 rows=400 loops=1)
+   Buffers: shared hit=8755 read=13281 written=9
+   ->  Gather Merge  (cost=33948.06..34211.98 rows=2262 width=8) (actual time=29.111..30.761 rows=400 loops=1)
+         Workers Planned: 2
+         Workers Launched: 2
+         Buffers: shared hit=8755 read=13281 written=9
+         ->  Sort  (cost=32948.04..32950.86 rows=1131 width=8) (actual time=26.812..26.817 rows=323 loops=3)
+               Sort Key: market_tier, id
+               Sort Method: quicksort  Memory: 59kB
+               Buffers: shared hit=8755 read=13281 written=9
+               Worker 0:  Sort Method: quicksort  Memory: 55kB
+               Worker 1:  Sort Method: quicksort  Memory: 53kB
+               ->  Parallel Seq Scan on futures_markets  (cost=0.00..32893.50 rows=1131 width=8) (actual time=0.050..26.709 rows=667 loops=3)
+                     Filter: ((updated_at >= '2026-07-19 18:27:59.727839-07'::timestamp with time zone) AND (((status)::text = ANY ('{open,resolved,closed}'::text[])) OR (status IS NULL)) AND (market_tier = ANY ('{1,2,3,4}'::integer[])) AND (((external_id)::text ~~ 'basketball%'::text) OR ((llm_sport_category)::text = 'basketball'::text) OR (sport_id = ANY ('{4,5,13,15}'::integer[])) OR ((external_id)::text ~~* 'KXNBA%'::text) OR ((external_id)::text ~~* 'KXWNBA%'::text) OR ((external_id)::text ~~* 'KXNCAAMB%'::text) OR ((external_id)::text ~~* 'KXNCAAB%'::text) OR ((external_id)::text ~~* 'KXNCAAWB%'::text)))
+                     Rows Removed by Filter: 199333
+                     Buffers: shared hit=8681 read=13281 written=9
+ Planning Time: 0.132 ms
+ Execution Time: 30.785 ms
+(18 rows)
+
+         name          | generic_plans | custom_plans 
+-----------------------+---------------+--------------
+ season_discovery_2316 |             0 |            6
+(1 row)
+
+DEALLOCATE
+psql:gate.sql:157: error: unterminated quoted string

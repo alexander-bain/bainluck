@@ -1,0 +1,434 @@
+=== section 4 (clear, revision 3 block)
+SET
+SET
+psql:/tmp/lat2316-fixture/r3/section4.sql:9: NOTICE:  index "ix_fm_t14_external_id_trgm" does not exist, skipping
+DROP INDEX
+psql:/tmp/lat2316-fixture/r3/section4.sql:10: NOTICE:  index "ix_fm_t14_llm_sport_category" does not exist, skipping
+DROP INDEX
+psql:/tmp/lat2316-fixture/r3/section4.sql:11: NOTICE:  index "ix_fm_t14_sport_id" does not exist, skipping
+DROP INDEX
+ relname | indisvalid | indisready 
+---------+------------+------------
+(0 rows)
+
+psql:/tmp/lat2316-fixture/r3/section4.sql:16: NOTICE:  index "ix_fm_t14_external_id_trgm" does not exist, skipping
+DROP INDEX
+psql:/tmp/lat2316-fixture/r3/section4.sql:17: NOTICE:  index "ix_fm_t14_llm_sport_category" does not exist, skipping
+DROP INDEX
+psql:/tmp/lat2316-fixture/r3/section4.sql:18: NOTICE:  index "ix_fm_t14_sport_id" does not exist, skipping
+DROP INDEX
+ relname | indisvalid | indisready 
+---------+------------+------------
+(0 rows)
+
+=== A1
+SET
+SET
+SET
+            index            |                                                                def                                                                
+-----------------------------+-----------------------------------------------------------------------------------------------------------------------------------
+ futures_markets_pkey        | CREATE UNIQUE INDEX futures_markets_pkey ON public.futures_markets USING btree (id)
+ uq_futures_source_external  | CREATE UNIQUE INDEX uq_futures_source_external ON public.futures_markets USING btree (source, external_id)
+ ix_futures_markets_sport_id | CREATE INDEX ix_futures_markets_sport_id ON public.futures_markets USING btree (sport_id)
+ ix_futures_markets_status   | CREATE INDEX ix_futures_markets_status ON public.futures_markets USING btree (status)
+ ix_fm_open_category         | CREATE INDEX ix_fm_open_category ON public.futures_markets USING btree (llm_sport_category) WHERE ((status)::text = 'open'::text)
+(5 rows)
+
+ pid | age | state | left 
+-----+-----+-------+------
+(0 rows)
+
+ gid | prepared | owner 
+-----+----------+-------
+(0 rows)
+
+ pid | phase | index_relid 
+-----+-------+-------------
+(0 rows)
+
+ relname | indisvalid | indisready 
+---------+------------+------------
+(0 rows)
+
+  rows  |  t14_frac   | est_t14_rows | est_steady_bytes | abort 
+--------+-------------+--------------+------------------+-------
+ 600000 | 0.039866667 |        23920 |         25833600 | f
+(1 row)
+
+ extversion 
+------------
+ 1.6
+(1 row)
+
+ nonhot_writes | secs | writes_per_s | est_t14_writes_per_s | abort 
+---------------+------+--------------+----------------------+-------
+        743965 | 2110 |        352.5 |                 14.1 | t
+(1 row)
+
+=== A2
+CREATE INDEX
+CREATE INDEX
+CREATE INDEX
+           relname            | indisvalid | indisready |  bytes  |  bound  | within 
+------------------------------+------------+------------+---------+---------+--------
+ ix_fm_t14_llm_sport_category | t          | t          |  188416 |  956800 | t
+ ix_fm_t14_sport_id           | t          | t          |  188416 |  956800 | t
+ ix_fm_t14_external_id_trgm   | t          | t          | 1622016 | 7893600 | t
+(3 rows)
+
+=== A3
+ANALYZE
+ track_io_timing 
+-----------------
+ off
+(1 row)
+
+SET
+SET
+americanfootball_ncaaf sport_ids=2
+DEALLOCATE ALL
+PREPARE
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     QUERY PLAN                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Limit  (cost=11743.11..11744.11 rows=400 width=8) (actual time=9.709..9.730 rows=400 loops=1)
+   Buffers: shared hit=1872 read=909
+   ->  Sort  (cost=11743.11..11746.82 rows=1482 width=8) (actual time=9.709..9.717 rows=400 loops=1)
+         Sort Key: market_tier, id
+         Sort Method: top-N heapsort  Memory: 55kB
+         Buffers: shared hit=1872 read=909
+         ->  Bitmap Heap Scan on futures_markets  (cost=293.69..11671.65 rows=1482 width=8) (actual time=0.856..9.585 rows=1000 loops=1)
+               Recheck Cond: ((((external_id)::text ~~ 'americanfootball_ncaaf%'::text) AND (market_tier = ANY ('{1,2,3,4}'::integer[]))) OR (((llm_sport_category)::text = 'football'::text) AND (market_tier = ANY ('{1,2,3,4}'::integer[]))) OR ((sport_id = 2) AND (market_tier = ANY ('{1,2,3,4}'::integer[]))) OR (((external_id)::text ~~* 'KXNFL%'::text) AND (market_tier = ANY ('{1,2,3,4}'::integer[]))) OR (((external_id)::text ~~* 'KXNCAAF%'::text) AND (market_tier = ANY ('{1,2,3,4}'::integer[]))))
+               Filter: ((updated_at >= '2026-07-19 19:01:12.815666-07'::timestamp with time zone) AND (((status)::text = ANY ('{open,resolved,closed}'::text[])) OR (status IS NULL)) AND (market_tier = ANY ('{1,2,3,4}'::integer[])) AND ((((COALESCE(name, ''::character varying))::text !~* '(\ypro football\y|\ynfl\y|\yafc\y|\ynfc\y|\ysuper bowl\y)'::text) AND ((COALESCE(external_id, ''::character varying))::text !~~* 'KXNFL%'::text) AND ((COALESCE(external_id, ''::character varying))::text !~~* 'americanfootball_nfl%'::text)) OR ((COALESCE(name, ''::character varying))::text ~* '(\yncaa\y|\yncaaf\y|\ycollege football\y|\ycfb\y|\yheisman\y|\yacc championship game\y|\ysec championship game\y|\ybig 12 championship game\y|\ybig ten championship game\y|\ymac championship game\y|\ysun belt championship game\y|\yconference usa championship game\y|\ymountain west championship game\y|\ypac-12 championship game\y|\yamerican conference championship game\y)'::text) OR ((COALESCE(external_id, ''::character varying))::text ~~* 'KXNCAAF%'::text) OR ((COALESCE(external_id, ''::character varying))::text ~~* 'americanfootball_ncaaf%'::text)))
+               Rows Removed by Filter: 3000
+               Heap Blocks: exact=2661
+               Buffers: shared hit=1872 read=909
+               ->  BitmapOr  (cost=293.69..293.69 rows=4487 width=0) (actual time=0.703..0.704 rows=0 loops=1)
+                     Buffers: shared hit=120
+                     ->  Bitmap Index Scan on ix_fm_t14_external_id_trgm  (cost=0.00..160.07 rows=232 width=0) (actual time=0.055..0.055 rows=0 loops=1)
+                           Index Cond: ((external_id)::text ~~ 'americanfootball_ncaaf%'::text)
+                           Buffers: shared hit=44
+                     ->  Bitmap Index Scan on ix_fm_t14_llm_sport_category  (cost=0.00..4.29 rows=1 width=0) (actual time=0.004..0.004 rows=0 loops=1)
+                           Index Cond: ((llm_sport_category)::text = 'football'::text)
+                           Buffers: shared hit=2
+                     ->  Bitmap Index Scan on ix_fm_t14_sport_id  (cost=0.00..22.81 rows=1936 width=0) (actual time=0.067..0.067 rows=2000 loops=1)
+                           Index Cond: (sport_id = 2)
+                           Buffers: shared hit=3
+                     ->  Bitmap Index Scan on ix_fm_t14_external_id_trgm  (cost=0.00..44.33 rows=1160 width=0) (actual time=0.302..0.302 rows=2000 loops=1)
+                           Index Cond: ((external_id)::text ~~* 'KXNFL%'::text)
+                           Buffers: shared hit=32
+                     ->  Bitmap Index Scan on ix_fm_t14_external_id_trgm  (cost=0.00..60.33 rows=1160 width=0) (actual time=0.276..0.276 rows=2000 loops=1)
+                           Index Cond: ((external_id)::text ~~* 'KXNCAAF%'::text)
+                           Buffers: shared hit=39
+ Planning:
+   Buffers: shared hit=4
+ Planning Time: 0.143 ms
+ Execution Time: 9.752 ms
+(33 rows)
+
+         name          | generic_plans | custom_plans 
+-----------------------+---------------+--------------
+ season_discovery_2316 |             0 |            6
+(1 row)
+
+DEALLOCATE
+psql:/tmp/lat2316-fixture/r3/gate.sql:45: error: unterminated quoted string
+SET
+SET
+baseball_mlb sport_ids=3
+DEALLOCATE ALL
+PREPARE
+                                                                                                                                                                                                                                                                                                                                                         QUERY PLAN                                                                                                                                                                                                                                                                                                                                                         
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Limit  (cost=13047.71..13048.71 rows=400 width=8) (actual time=3.416..3.434 rows=400 loops=1)
+   Buffers: shared hit=985 read=663
+   ->  Sort  (cost=13047.71..13051.94 rows=1691 width=8) (actual time=3.416..3.423 rows=400 loops=1)
+         Sort Key: market_tier, id
+         Sort Method: top-N heapsort  Memory: 55kB
+         Buffers: shared hit=985 read=663
+         ->  Bitmap Heap Scan on futures_markets  (cost=494.44..12966.17 rows=1691 width=8) (actual time=0.419..3.297 rows=1000 loops=1)
+               Recheck Cond: ((((external_id)::text ~~ 'baseball%'::text) AND (market_tier = ANY ('{1,2,3,4}'::integer[]))) OR (((llm_sport_category)::text = 'baseball'::text) AND (market_tier = ANY ('{1,2,3,4}'::integer[]))) OR ((sport_id = 3) AND (market_tier = ANY ('{1,2,3,4}'::integer[]))) OR (((external_id)::text ~~* 'KXMLB%'::text) AND (market_tier = ANY ('{1,2,3,4}'::integer[]))) OR (((external_id)::text ~~* 'KXLEADERMLB%'::text) AND (market_tier = ANY ('{1,2,3,4}'::integer[]))) OR (((external_id)::text ~~* 'KXNEXTTEAMMLB%'::text) AND (market_tier = ANY ('{1,2,3,4}'::integer[]))) OR (((external_id)::text ~~* 'KXCITYMLBEXPAND%'::text) AND (market_tier = ANY ('{1,2,3,4}'::integer[]))))
+               Filter: ((updated_at >= '2026-07-19 19:01:12.817682-07'::timestamp with time zone) AND (((status)::text = ANY ('{open,resolved,closed}'::text[])) OR (status IS NULL)) AND (market_tier = ANY ('{1,2,3,4}'::integer[])))
+               Rows Removed by Filter: 1000
+               Heap Blocks: exact=1502
+               Buffers: shared hit=985 read=663
+               ->  BitmapOr  (cost=494.44..494.44 rows=5155 width=0) (actual time=0.336..0.336 rows=0 loops=1)
+                     Buffers: shared hit=146
+                     ->  Bitmap Index Scan on ix_fm_t14_external_id_trgm  (cost=0.00..68.13 rows=464 width=0) (actual time=0.188..0.188 rows=2000 loops=1)
+                           Index Cond: ((external_id)::text ~~ 'baseball%'::text)
+                           Buffers: shared hit=25
+                     ->  Bitmap Index Scan on ix_fm_t14_llm_sport_category  (cost=0.00..20.62 rows=1645 width=0) (actual time=0.032..0.032 rows=1737 loops=1)
+                           Index Cond: ((llm_sport_category)::text = 'baseball'::text)
+                           Buffers: shared hit=3
+                     ->  Bitmap Index Scan on ix_fm_t14_sport_id  (cost=0.00..22.39 rows=1880 width=0) (actual time=0.030..0.031 rows=2000 loops=1)
+                           Index Cond: (sport_id = 3)
+                           Buffers: shared hit=4
+                     ->  Bitmap Index Scan on ix_fm_t14_external_id_trgm  (cost=0.00..44.33 rows=1160 width=0) (actual time=0.023..0.023 rows=0 loops=1)
+                           Index Cond: ((external_id)::text ~~* 'KXMLB%'::text)
+                           Buffers: shared hit=16
+                     ->  Bitmap Index Scan on ix_fm_t14_external_id_trgm  (cost=0.00..96.00 rows=2 width=0) (actual time=0.018..0.018 rows=0 loops=1)
+                           Index Cond: ((external_id)::text ~~* 'KXLEADERMLB%'::text)
+                           Buffers: shared hit=28
+                     ->  Bitmap Index Scan on ix_fm_t14_external_id_trgm  (cost=0.00..112.00 rows=2 width=0) (actual time=0.027..0.027 rows=0 loops=1)
+                           Index Cond: ((external_id)::text ~~* 'KXNEXTTEAMMLB%'::text)
+                           Buffers: shared hit=34
+                     ->  Bitmap Index Scan on ix_fm_t14_external_id_trgm  (cost=0.00..128.00 rows=2 width=0) (actual time=0.017..0.017 rows=0 loops=1)
+                           Index Cond: ((external_id)::text ~~* 'KXCITYMLBEXPAND%'::text)
+                           Buffers: shared hit=36
+ Planning:
+   Buffers: shared hit=6
+ Planning Time: 0.154 ms
+ Execution Time: 3.461 ms
+(39 rows)
+
+         name          | generic_plans | custom_plans 
+-----------------------+---------------+--------------
+ season_discovery_2316 |             0 |            6
+(1 row)
+
+DEALLOCATE
+psql:/tmp/lat2316-fixture/r3/gate.sql:89: error: unterminated quoted string
+SET
+SET
+soccer_epl sport_ids=7,14,16
+DEALLOCATE ALL
+PREPARE
+                                                                                                                                                                                                                                                           QUERY PLAN                                                                                                                                                                                                                                                           
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Limit  (cost=9259.88..9260.88 rows=400 width=8) (actual time=4.244..4.261 rows=400 loops=1)
+   Buffers: shared hit=900 read=728
+   ->  Sort  (cost=9259.88..9262.67 rows=1117 width=8) (actual time=4.243..4.250 rows=400 loops=1)
+         Sort Key: market_tier, id
+         Sort Method: top-N heapsort  Memory: 54kB
+         Buffers: shared hit=900 read=728
+         ->  Bitmap Heap Scan on futures_markets  (cost=199.48..9206.02 rows=1117 width=8) (actual time=0.475..4.137 rows=1000 loops=1)
+               Recheck Cond: ((((external_id)::text ~~ 'soccer%'::text) AND (market_tier = ANY ('{1,2,3,4}'::integer[]))) OR (((llm_sport_category)::text = 'soccer'::text) AND (market_tier = ANY ('{1,2,3,4}'::integer[]))) OR ((sport_id = ANY ('{7,14,16}'::integer[])) AND (market_tier = ANY ('{1,2,3,4}'::integer[]))) OR (((external_id)::text ~~* 'KXMLS%'::text) AND (market_tier = ANY ('{1,2,3,4}'::integer[]))) OR (((external_id)::text ~~* 'KXSOCCER%'::text) AND (market_tier = ANY ('{1,2,3,4}'::integer[]))))
+               Filter: ((updated_at >= '2026-07-19 19:01:12.819015-07'::timestamp with time zone) AND (((status)::text = ANY ('{open,resolved,closed}'::text[])) OR (status IS NULL)) AND (market_tier = ANY ('{1,2,3,4}'::integer[])))
+               Rows Removed by Filter: 1000
+               Heap Blocks: exact=1548
+               Buffers: shared hit=900 read=728
+               ->  BitmapOr  (cost=199.48..199.48 rows=3285 width=0) (actual time=0.382..0.383 rows=0 loops=1)
+                     Buffers: shared hit=78 read=2
+                     ->  Bitmap Index Scan on ix_fm_t14_external_id_trgm  (cost=0.00..52.13 rows=464 width=0) (actual time=0.031..0.031 rows=0 loops=1)
+                           Index Cond: ((external_id)::text ~~ 'soccer%'::text)
+                           Buffers: shared hit=17
+                     ->  Bitmap Index Scan on ix_fm_t14_llm_sport_category  (cost=0.00..20.73 rows=1659 width=0) (actual time=0.061..0.061 rows=1737 loops=1)
+                           Index Cond: ((llm_sport_category)::text = 'soccer'::text)
+                           Buffers: shared hit=1 read=2
+                     ->  Bitmap Index Scan on ix_fm_t14_sport_id  (cost=0.00..12.89 rows=1 width=0) (actual time=0.003..0.003 rows=0 loops=1)
+                           Index Cond: (sport_id = ANY ('{7,14,16}'::integer[]))
+                           Buffers: shared hit=6
+                     ->  Bitmap Index Scan on ix_fm_t14_external_id_trgm  (cost=0.00..44.00 rows=2 width=0) (actual time=0.020..0.020 rows=0 loops=1)
+                           Index Cond: ((external_id)::text ~~* 'KXMLS%'::text)
+                           Buffers: shared hit=15
+                     ->  Bitmap Index Scan on ix_fm_t14_external_id_trgm  (cost=0.00..68.33 rows=1160 width=0) (actual time=0.266..0.266 rows=2000 loops=1)
+                           Index Cond: ((external_id)::text ~~* 'KXSOCCER%'::text)
+                           Buffers: shared hit=39
+ Planning:
+   Buffers: shared hit=4
+ Planning Time: 0.147 ms
+ Execution Time: 4.291 ms
+(33 rows)
+
+         name          | generic_plans | custom_plans 
+-----------------------+---------------+--------------
+ season_discovery_2316 |             0 |            6
+(1 row)
+
+DEALLOCATE
+psql:/tmp/lat2316-fixture/r3/gate.sql:133: error: unterminated quoted string
+SET
+SET
+basketball_other sport_ids=4,5,13,15
+DEALLOCATE ALL
+PREPARE
+                                                                                                                                                                                                                                                                                                                                                                                                                 QUERY PLAN                                                                                                                                                                                                                                                                                                                                                                                                                  
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Limit  (cost=17608.49..17609.49 rows=400 width=8) (actual time=10.704..10.722 rows=400 loops=1)
+   Buffers: shared hit=853 read=1942
+   ->  Sort  (cost=17608.49..17615.09 rows=2637 width=8) (actual time=10.703..10.711 rows=400 loops=1)
+         Sort Key: market_tier, id
+         Sort Method: top-N heapsort  Memory: 54kB
+         Buffers: shared hit=853 read=1942
+         ->  Bitmap Heap Scan on futures_markets  (cost=455.19..17481.34 rows=2637 width=8) (actual time=0.973..10.518 rows=2000 loops=1)
+               Recheck Cond: ((((external_id)::text ~~ 'basketball%'::text) AND (market_tier = ANY ('{1,2,3,4}'::integer[]))) OR (((llm_sport_category)::text = 'basketball'::text) AND (market_tier = ANY ('{1,2,3,4}'::integer[]))) OR ((sport_id = ANY ('{4,5,13,15}'::integer[])) AND (market_tier = ANY ('{1,2,3,4}'::integer[]))) OR (((external_id)::text ~~* 'KXNBA%'::text) AND (market_tier = ANY ('{1,2,3,4}'::integer[]))) OR (((external_id)::text ~~* 'KXWNBA%'::text) AND (market_tier = ANY ('{1,2,3,4}'::integer[]))) OR (((external_id)::text ~~* 'KXNCAAMB%'::text) AND (market_tier = ANY ('{1,2,3,4}'::integer[]))) OR (((external_id)::text ~~* 'KXNCAAB%'::text) AND (market_tier = ANY ('{1,2,3,4}'::integer[]))) OR (((external_id)::text ~~* 'KXNCAAWB%'::text) AND (market_tier = ANY ('{1,2,3,4}'::integer[]))))
+               Filter: ((updated_at >= '2026-07-19 19:01:12.820232-07'::timestamp with time zone) AND (((status)::text = ANY ('{open,resolved,closed}'::text[])) OR (status IS NULL)) AND (market_tier = ANY ('{1,2,3,4}'::integer[])))
+               Rows Removed by Filter: 2000
+               Heap Blocks: exact=2614
+               Buffers: shared hit=853 read=1942
+               ->  BitmapOr  (cost=455.19..455.19 rows=8528 width=0) (actual time=0.837..0.838 rows=0 loops=1)
+                     Buffers: shared hit=176 read=5
+                     ->  Bitmap Index Scan on ix_fm_t14_external_id_trgm  (cost=0.00..84.20 rows=696 width=0) (actual time=0.036..0.036 rows=0 loops=1)
+                           Index Cond: ((external_id)::text ~~ 'basketball%'::text)
+                           Buffers: shared hit=26
+                     ->  Bitmap Index Scan on ix_fm_t14_llm_sport_category  (cost=0.00..41.08 rows=3305 width=0) (actual time=0.102..0.102 rows=3475 loops=1)
+                           Index Cond: ((llm_sport_category)::text = 'basketball'::text)
+                           Buffers: shared hit=2 read=3
+                     ->  Bitmap Index Scan on ix_fm_t14_sport_id  (cost=0.00..31.91 rows=1968 width=0) (actual time=0.033..0.033 rows=2000 loops=1)
+                           Index Cond: (sport_id = ANY ('{4,5,13,15}'::integer[]))
+                           Buffers: shared hit=8 read=2
+                     ->  Bitmap Index Scan on ix_fm_t14_external_id_trgm  (cost=0.00..44.33 rows=1160 width=0) (actual time=0.302..0.302 rows=2000 loops=1)
+                           Index Cond: ((external_id)::text ~~* 'KXNBA%'::text)
+                           Buffers: shared hit=31
+                     ->  Bitmap Index Scan on ix_fm_t14_external_id_trgm  (cost=0.00..52.40 rows=1392 width=0) (actual time=0.256..0.256 rows=2000 loops=1)
+                           Index Cond: ((external_id)::text ~~* 'KXWNBA%'::text)
+                           Buffers: shared hit=33
+                     ->  Bitmap Index Scan on ix_fm_t14_external_id_trgm  (cost=0.00..68.00 rows=2 width=0) (actual time=0.041..0.041 rows=0 loops=1)
+                           Index Cond: ((external_id)::text ~~* 'KXNCAAMB%'::text)
+                           Buffers: shared hit=26
+                     ->  Bitmap Index Scan on ix_fm_t14_external_id_trgm  (cost=0.00..60.00 rows=2 width=0) (actual time=0.033..0.033 rows=0 loops=1)
+                           Index Cond: ((external_id)::text ~~* 'KXNCAAB%'::text)
+                           Buffers: shared hit=24
+                     ->  Bitmap Index Scan on ix_fm_t14_external_id_trgm  (cost=0.00..68.00 rows=2 width=0) (actual time=0.032..0.032 rows=0 loops=1)
+                           Index Cond: ((external_id)::text ~~* 'KXNCAAWB%'::text)
+                           Buffers: shared hit=26
+ Planning:
+   Buffers: shared hit=7
+ Planning Time: 0.183 ms
+ Execution Time: 10.754 ms
+(42 rows)
+
+         name          | generic_plans | custom_plans 
+-----------------------+---------------+--------------
+ season_discovery_2316 |             0 |            6
+(1 row)
+
+DEALLOCATE
+psql:/tmp/lat2316-fixture/r3/gate.sql:177: error: unterminated quoted string
+=== R1a
+=== R1a FORCED PARALLEL (workers 4, costs 0)
+SET
+SET
+SET
+SET
+SET
+SET
+SET
+americanfootball_ncaaf sport_ids=2
+DEALLOCATE ALL
+PREPARE
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        QUERY PLAN                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Limit  (cost=11523.43..11529.33 rows=400 width=8) (actual time=13.718..17.257 rows=400 loops=1)
+   Buffers: shared hit=1683 read=1138
+   ->  Gather Merge  (cost=11523.43..11545.24 rows=1480 width=8) (actual time=13.717..17.213 rows=400 loops=1)
+         Workers Planned: 4
+         Workers Launched: 4
+         Buffers: shared hit=1683 read=1138
+         ->  Sort  (cost=11523.38..11524.30 rows=370 width=8) (actual time=6.358..6.362 rows=157 loops=5)
+               Sort Key: market_tier, id
+               Sort Method: quicksort  Memory: 44kB
+               Buffers: shared hit=1683 read=1138
+               Worker 0:  Sort Method: quicksort  Memory: 33kB
+               Worker 1:  Sort Method: quicksort  Memory: 34kB
+               Worker 2:  Sort Method: quicksort  Memory: 29kB
+               Worker 3:  Sort Method: quicksort  Memory: 30kB
+               ->  Parallel Bitmap Heap Scan on futures_markets  (cost=293.69..11507.59 rows=370 width=8) (actual time=1.401..6.270 rows=200 loops=5)
+                     Recheck Cond: ((((external_id)::text ~~ 'americanfootball_ncaaf%'::text) AND (market_tier = ANY ('{1,2,3,4}'::integer[]))) OR (((llm_sport_category)::text = 'football'::text) AND (market_tier = ANY ('{1,2,3,4}'::integer[]))) OR ((sport_id = 2) AND (market_tier = ANY ('{1,2,3,4}'::integer[]))) OR (((external_id)::text ~~* 'KXNFL%'::text) AND (market_tier = ANY ('{1,2,3,4}'::integer[]))) OR (((external_id)::text ~~* 'KXNCAAF%'::text) AND (market_tier = ANY ('{1,2,3,4}'::integer[]))))
+                     Filter: ((updated_at >= '2026-07-19 19:01:12.815666-07'::timestamp with time zone) AND (((status)::text = ANY ('{open,resolved,closed}'::text[])) OR (status IS NULL)) AND (market_tier = ANY ('{1,2,3,4}'::integer[])) AND ((((COALESCE(name, ''::character varying))::text !~* '(\ypro football\y|\ynfl\y|\yafc\y|\ynfc\y|\ysuper bowl\y)'::text) AND ((COALESCE(external_id, ''::character varying))::text !~~* 'KXNFL%'::text) AND ((COALESCE(external_id, ''::character varying))::text !~~* 'americanfootball_nfl%'::text)) OR ((COALESCE(name, ''::character varying))::text ~* '(\yncaa\y|\yncaaf\y|\ycollege football\y|\ycfb\y|\yheisman\y|\yacc championship game\y|\ysec championship game\y|\ybig 12 championship game\y|\ybig ten championship game\y|\ymac championship game\y|\ysun belt championship game\y|\yconference usa championship game\y|\ymountain west championship game\y|\ypac-12 championship game\y|\yamerican conference championship game\y)'::text) OR ((COALESCE(external_id, ''::character varying))::text ~~* 'KXNCAAF%'::text) OR ((COALESCE(external_id, ''::character varying))::text ~~* 'americanfootball_ncaaf%'::text)))
+                     Rows Removed by Filter: 600
+                     Heap Blocks: exact=1355
+                     Buffers: shared hit=1655 read=1138
+                     ->  BitmapOr  (cost=293.69..293.69 rows=4487 width=0) (actual time=1.750..1.751 rows=0 loops=1)
+                           Buffers: shared hit=118 read=2
+                           ->  Bitmap Index Scan on ix_fm_t14_external_id_trgm  (cost=0.00..160.07 rows=232 width=0) (actual time=0.053..0.053 rows=0 loops=1)
+                                 Index Cond: ((external_id)::text ~~ 'americanfootball_ncaaf%'::text)
+                                 Buffers: shared hit=44
+                           ->  Bitmap Index Scan on ix_fm_t14_llm_sport_category  (cost=0.00..4.29 rows=1 width=0) (actual time=0.010..0.010 rows=0 loops=1)
+                                 Index Cond: ((llm_sport_category)::text = 'football'::text)
+                                 Buffers: shared hit=1 read=1
+                           ->  Bitmap Index Scan on ix_fm_t14_sport_id  (cost=0.00..22.81 rows=1936 width=0) (actual time=0.098..0.098 rows=2000 loops=1)
+                                 Index Cond: (sport_id = 2)
+                                 Buffers: shared hit=2 read=1
+                           ->  Bitmap Index Scan on ix_fm_t14_external_id_trgm  (cost=0.00..44.33 rows=1160 width=0) (actual time=0.791..0.791 rows=2000 loops=1)
+                                 Index Cond: ((external_id)::text ~~* 'KXNFL%'::text)
+                                 Buffers: shared hit=32
+                           ->  Bitmap Index Scan on ix_fm_t14_external_id_trgm  (cost=0.00..60.33 rows=1160 width=0) (actual time=0.798..0.798 rows=2000 loops=1)
+                                 Index Cond: ((external_id)::text ~~* 'KXNCAAF%'::text)
+                                 Buffers: shared hit=39
+ Planning:
+   Buffers: shared hit=4
+ Planning Time: 0.327 ms
+ Execution Time: 17.285 ms
+(41 rows)
+
+         name          | generic_plans | custom_plans 
+-----------------------+---------------+--------------
+ season_discovery_2316 |             0 |            6
+(1 row)
+
+DEALLOCATE
+psql:/tmp/lat2316-fixture/r3/r1a-parallel.sql:48: error: unterminated quoted string
+RESET
+RESET
+RESET
+RESET
+=== R1a SERIAL (the gate block as generated)
+SET
+SET
+americanfootball_ncaaf sport_ids=2
+DEALLOCATE ALL
+PREPARE
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     QUERY PLAN                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Limit  (cost=11743.11..11744.11 rows=400 width=8) (actual time=9.372..9.390 rows=400 loops=1)
+   Buffers: shared hit=2781
+   ->  Sort  (cost=11743.11..11746.82 rows=1482 width=8) (actual time=9.372..9.379 rows=400 loops=1)
+         Sort Key: market_tier, id
+         Sort Method: top-N heapsort  Memory: 55kB
+         Buffers: shared hit=2781
+         ->  Bitmap Heap Scan on futures_markets  (cost=293.69..11671.65 rows=1482 width=8) (actual time=1.054..9.191 rows=1000 loops=1)
+               Recheck Cond: ((((external_id)::text ~~ 'americanfootball_ncaaf%'::text) AND (market_tier = ANY ('{1,2,3,4}'::integer[]))) OR (((llm_sport_category)::text = 'football'::text) AND (market_tier = ANY ('{1,2,3,4}'::integer[]))) OR ((sport_id = 2) AND (market_tier = ANY ('{1,2,3,4}'::integer[]))) OR (((external_id)::text ~~* 'KXNFL%'::text) AND (market_tier = ANY ('{1,2,3,4}'::integer[]))) OR (((external_id)::text ~~* 'KXNCAAF%'::text) AND (market_tier = ANY ('{1,2,3,4}'::integer[]))))
+               Filter: ((updated_at >= '2026-07-19 19:01:12.815666-07'::timestamp with time zone) AND (((status)::text = ANY ('{open,resolved,closed}'::text[])) OR (status IS NULL)) AND (market_tier = ANY ('{1,2,3,4}'::integer[])) AND ((((COALESCE(name, ''::character varying))::text !~* '(\ypro football\y|\ynfl\y|\yafc\y|\ynfc\y|\ysuper bowl\y)'::text) AND ((COALESCE(external_id, ''::character varying))::text !~~* 'KXNFL%'::text) AND ((COALESCE(external_id, ''::character varying))::text !~~* 'americanfootball_nfl%'::text)) OR ((COALESCE(name, ''::character varying))::text ~* '(\yncaa\y|\yncaaf\y|\ycollege football\y|\ycfb\y|\yheisman\y|\yacc championship game\y|\ysec championship game\y|\ybig 12 championship game\y|\ybig ten championship game\y|\ymac championship game\y|\ysun belt championship game\y|\yconference usa championship game\y|\ymountain west championship game\y|\ypac-12 championship game\y|\yamerican conference championship game\y)'::text) OR ((COALESCE(external_id, ''::character varying))::text ~~* 'KXNCAAF%'::text) OR ((COALESCE(external_id, ''::character varying))::text ~~* 'americanfootball_ncaaf%'::text)))
+               Rows Removed by Filter: 3000
+               Heap Blocks: exact=2661
+               Buffers: shared hit=2781
+               ->  BitmapOr  (cost=293.69..293.69 rows=4487 width=0) (actual time=0.842..0.842 rows=0 loops=1)
+                     Buffers: shared hit=120
+                     ->  Bitmap Index Scan on ix_fm_t14_external_id_trgm  (cost=0.00..160.07 rows=232 width=0) (actual time=0.045..0.045 rows=0 loops=1)
+                           Index Cond: ((external_id)::text ~~ 'americanfootball_ncaaf%'::text)
+                           Buffers: shared hit=44
+                     ->  Bitmap Index Scan on ix_fm_t14_llm_sport_category  (cost=0.00..4.29 rows=1 width=0) (actual time=0.007..0.007 rows=0 loops=1)
+                           Index Cond: ((llm_sport_category)::text = 'football'::text)
+                           Buffers: shared hit=2
+                     ->  Bitmap Index Scan on ix_fm_t14_sport_id  (cost=0.00..22.81 rows=1936 width=0) (actual time=0.061..0.061 rows=2000 loops=1)
+                           Index Cond: (sport_id = 2)
+                           Buffers: shared hit=3
+                     ->  Bitmap Index Scan on ix_fm_t14_external_id_trgm  (cost=0.00..44.33 rows=1160 width=0) (actual time=0.362..0.362 rows=2000 loops=1)
+                           Index Cond: ((external_id)::text ~~* 'KXNFL%'::text)
+                           Buffers: shared hit=32
+                     ->  Bitmap Index Scan on ix_fm_t14_external_id_trgm  (cost=0.00..60.33 rows=1160 width=0) (actual time=0.365..0.366 rows=2000 loops=1)
+                           Index Cond: ((external_id)::text ~~* 'KXNCAAF%'::text)
+                           Buffers: shared hit=39
+ Planning:
+   Buffers: shared hit=4
+ Planning Time: 0.333 ms
+ Execution Time: 9.425 ms
+(33 rows)
+
+         name          | generic_plans | custom_plans 
+-----------------------+---------------+--------------
+ season_discovery_2316 |             0 |            6
+(1 row)
+
+DEALLOCATE
+psql:/tmp/lat2316-fixture/r3/r1a-parallel.sql:93: error: unterminated quoted string
+=== section 4 (rollback, revision 3 block)
+SET
+SET
+DROP INDEX
+DROP INDEX
+DROP INDEX
+ relname | indisvalid | indisready 
+---------+------------+------------
+(0 rows)
+
+psql:/tmp/lat2316-fixture/r3/section4.sql:16: NOTICE:  index "ix_fm_t14_external_id_trgm" does not exist, skipping
+DROP INDEX
+psql:/tmp/lat2316-fixture/r3/section4.sql:17: NOTICE:  index "ix_fm_t14_llm_sport_category" does not exist, skipping
+DROP INDEX
+psql:/tmp/lat2316-fixture/r3/section4.sql:18: NOTICE:  index "ix_fm_t14_sport_id" does not exist, skipping
+DROP INDEX
+ relname | indisvalid | indisready 
+---------+------------+------------
+(0 rows)
+

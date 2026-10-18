@@ -1,0 +1,3 @@
+dry-run americanfootball_ncaaf finished: captured
+dry-run americanfootball_ncaaf live: captured
+EXIT CODE: 0
