@@ -207,6 +207,7 @@
     "#10661 a held Kalshi game no longer holds the games after it (real Postgres)",
     "#10090 a live quote is written beside a slow non-live transaction (real Postgres)",
     "#10090 a live game's prop publishes while an unrelated future is locked (real Postgres)",
+    "#10090 live-prop isolation qualification: two-leg prop, retries, fairness (real Postgres)",
     "#4079 numeric movement acceptance — provision the disposable database",
     "#4079 the served movement NUMBERS are dated or unavailable (real Postgres)",
     "#7284 chart-route real-session guard — provision the disposable database",
