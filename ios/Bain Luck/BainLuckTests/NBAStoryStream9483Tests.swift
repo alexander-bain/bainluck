@@ -29,6 +29,9 @@ import XCTest
 /// - explain a withdrawn, suspended or undatable quote → `testAWithdrawnOrUndatableQuoteGivesNoLiveReason`
 /// - explain a result without its actual, or against it → `testAFinalSentenceNeedsTheOwnResultAndAMatchingActual`
 /// - leak the private value into either sentence → `testTheSentencesNameOnlyTheirFacts`
+/// - print a percent the card under the sentence does not (half-cent rounding,
+///   or 0% / 100% for a strict pin the card prints as <1% / >99%) → `testTheSentencePrintsTheCardsOwnPercent`
+/// - explain a ladder whose phase is not the stream's → `testALadderInAnotherPhaseGivesNoReason`
 /// - let a producer update move the applied order → `testReceiveReplacesPendingAndOnlyApplyMovesTheOrder`
 /// - let an old event's callback write, or carry it into the next → `testAnotherEventsPlanIsRefusedAndANewEventStartsClean`
 /// - silently replace a held card that left (W1) → `testAHeldActiveCardThatLeavesKeepsItsUnavailableSlot`
@@ -349,6 +352,57 @@ final class NBAStoryStream9483Tests: XCTestCase {
                 }
             }
         }
+    }
+
+    /// R1 (Lane1b): the sentence sits under the card, so it prints the card's
+    /// own `formatProbability` — never a second rounding of the same number.
+    /// Kalshi half-cents are where the two arithmetics disagree, and a strict
+    /// pin near 0 or 1 must not read as a settled 0% / 100%.
+    func testTheSentencePrintsTheCardsOwnPercent() throws {
+        func live(pin: Double, now: Double = 0.45) throws -> Policy.Reason {
+            let cards = [ladder(.total, .during, [over(236.5, key: "o:t", pin: pin, now: now)])]
+            return try XCTUnwrap(Policy.plan(eventID: 7, phase: .during, cards: cards, now: liveNow).reasons["total"],
+                                 "pin \(pin) / now \(now) ranks")
+        }
+        let pinStamp = try XCTUnwrap(SourceAge.preciseStamp(pinAt))
+        let nowStamp = try XCTUnwrap(SourceAge.preciseStamp(liveAt))
+        for (pin, printed) in [(0.565, "56%"), (0.004, "<1%"), (0.996, ">99%")] {
+            let reason = try live(pin: pin)
+            XCTAssertEqual(reason.text, "Over 236.5 points: \(printed) before tip-off · 45% now.")
+            XCTAssertEqual(reason.accessibilityText,
+                           "Over 236.5 points. \(printed) before tip-off, quoted \(pinStamp). 45% now, quoted \(nowStamp).")
+        }
+        XCTAssertEqual(try live(pin: 0.3, now: 0.565).text, "Over 236.5 points: 30% before tip-off · 56% now.")
+        XCTAssertTrue(try live(pin: 0.3, now: 0.565).accessibilityText.contains(" 56% now, quoted "))
+
+        // The card's own formatter for every value the two arithmetics split on
+        // (the rendered_percent half-cents and the clamps), and the strict pin's
+        // admitted extremes, which the ranking test admits but never reads.
+        for value in [0.145, 0.285, 0.565, 0.575, 0.004, 0.007, 0.993, 0.996,
+                      Double.leastNonzeroMagnitude, 1.0.nextDown] {
+            XCTAssertTrue(try live(pin: value).text.hasPrefix("Over 236.5 points: \(formatProbability(value)) before tip-off"),
+                          "pin \(value)")
+            XCTAssertTrue(try live(pin: 0.3, now: value).text.hasSuffix(" · \(formatProbability(value)) now."),
+                          "quote \(value)")
+        }
+        XCTAssertEqual(try live(pin: .leastNonzeroMagnitude).text, "Over 236.5 points: <1% before tip-off · 45% now.")
+        XCTAssertEqual(try live(pin: 1.0.nextDown).text, "Over 236.5 points: >99% before tip-off · 45% now.")
+
+        let final = Policy.plan(eventID: 7, phase: .after,
+                                cards: [ladder(.total, .after, [over(236.5, key: "o:t", pin: 0.004, result: true)], actual: 242)],
+                                now: finalNow)
+        XCTAssertEqual(try XCTUnwrap(final.reasons["total"]).text, "Over 236.5 points: <1% before tip-off; final total 242.")
+    }
+
+    /// N1: a ladder speaks only in the stream's own phase. A `.during` ladder
+    /// with a moved, current quote handed to an `.after` plan says nothing.
+    func testALadderInAnotherPhaseGivesNoReason() {
+        let cards = [ladder(.total, .during, [over(236.5, key: "o:t", pin: 0.3, now: 0.45)])]
+        XCTAssertNotNil(Policy.plan(eventID: 7, phase: .during, cards: cards, now: liveNow).reasons["total"],
+                        "control: the same ladder speaks in its own phase")
+        let mismatched = Policy.plan(eventID: 7, phase: .after, cards: cards, now: liveNow)
+        XCTAssertTrue(mismatched.reasons.isEmpty)
+        XCTAssertEqual(mismatched.orderedIDs, ["total"], "the card stays; it only has no reason")
     }
 
     // MARK: - State

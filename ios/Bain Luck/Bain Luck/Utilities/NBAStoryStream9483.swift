@@ -25,7 +25,8 @@ import Foundation
 ///
 /// Isolation: the values are `nonisolated` (Native's frozen interface), so
 /// `Plan` and `State` compare anywhere. The few members that read the page's
-/// main-actor helpers — `NFLEventCard9483.current(at:)`, `String.asDate` and
+/// main-actor helpers — `NFLEventCard9483.current(at:)`, `String.asDate`, the
+/// card's own `formatProbability` (so a sentence prints the card's number) and
 /// the reader's own `NFLCardReaderHold9483.reconciled`, which W1 requires shelf
 /// and reader to share — are `@MainActor`; every caller is a view or the page's
 /// `ObservableObject`.
@@ -57,7 +58,7 @@ nonisolated enum NBAStoryStreamPolicy9483 {
         /// The visible sentence (C6): "Over 236.5 points: 30% before tip-off ·
         /// 45% now." / "Over 236.5 points: 30% before tip-off; final total 242."
         /// No difference, no private value.
-        var text: String {
+        @MainActor var text: String {
             let before = "\(line) points: \(Self.percent(baseline)) before tip-off"
             switch (phase, current, actualWords) {
             case (.after, _, let actual?): return "\(before); final \(family.rawValue) \(actual)."
@@ -67,7 +68,7 @@ nonisolated enum NBAStoryStreamPolicy9483 {
         }
 
         /// The spoken sentence: the visible facts plus their times.
-        var accessibilityText: String {
+        @MainActor var accessibilityText: String {
             let before = "\(line) points. \(Self.percent(baseline)) before tip-off, quoted "
                 + "\(SourceAge.preciseStamp(baselineObservedAt) ?? "")."
             switch (phase, current, actualWords) {
@@ -78,8 +79,11 @@ nonisolated enum NBAStoryStreamPolicy9483 {
             }
         }
 
-        private static func percent(_ probability: Double) -> String {
-            "\(renderedPercent(probability) ?? 0)%"
+        /// The card's own formatter, with no `renderedPercent:` because the card
+        /// passes none: the sentence prints the number the card under it prints,
+        /// including the `<1%` / `>99%` a strict pin near 0 or 1 reads as.
+        @MainActor private static func percent(_ probability: Double) -> String {
+            formatProbability(probability)
         }
     }
 
