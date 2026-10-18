@@ -277,13 +277,10 @@ struct NBAStoryStreamView9483: View {
 
     // MARK: - Actions
 
-    /// The opened card becomes the active one first, so Back from a reader
-    /// whose card has since left the deck lands on that card's held slot
-    /// (W1 keeps a slot only for the active id).
+    /// Holds, makes the card active (or, before the stream begins, the card
+    /// it begins on), then opens it (`NFLCardDeckState9483.openNBACard`).
     private func open(_ cardID: String, present: Set<String>) {
-        state.holdNBAStream(eventID: page.eventID)
-        state.focusNBAStream(eventID: page.eventID, cardID: cardID, present: present)
-        state.open(cardID)
+        state.openNBACard(eventID: page.eventID, cardID: cardID, present: present)
     }
 
     /// Selects the reason's exact option on the card as it is NOW, then opens
@@ -309,9 +306,12 @@ struct NBAStoryStreamView9483: View {
 
     /// A position the scroll view reports. iOS 18: only while a person is
     /// browsing. iOS 17: any id other than the stream's own last target.
+    /// Before the stream begins it is the card the stream begins on (N4).
     private func manuallyReported(_ reported: String?, present: Set<String>) {
-        guard let reported, let stream = state.nbaStreamState, stream.eventID == page.eventID,
-              reported != stream.activeID else { return }
+        guard let reported else { return }
+        if let stream = state.nbaStreamState {
+            guard stream.eventID == page.eventID, reported != stream.activeID else { return }
+        }
         let manual = page.supportsAutomaticScrollObservation ? browsing : reported != programmaticTarget
         guard manual else { return }
         state.focusNBAStream(eventID: page.eventID, cardID: reported, present: present)

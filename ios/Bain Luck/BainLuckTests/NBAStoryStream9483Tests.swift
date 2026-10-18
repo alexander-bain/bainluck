@@ -46,6 +46,9 @@ import XCTest
 /// - begin on the half-loaded deck (the finish card alone) and park the ladders
 ///   as pending behind Refresh, or begin on another event's markets or without
 ///   the history → `testTheStreamBeginsOnlyOnceThisEventsHistoryAndMarketsHaveArrived`
+/// - before the begin: drop See this line, lose the reader's hold or chosen
+///   card at the begin, or show the reader another order than the shelf (N4)
+///   → `testBeforeTheStreamBeginsTheShelfsActionsWorkAndTheReadersChoiceSurvivesTheBegin`
 @MainActor
 final class NBAStoryStream9483Tests: XCTestCase {
     private typealias Policy = NBAStoryStreamPolicy9483
@@ -648,51 +651,140 @@ final class NBAStoryStream9483Tests: XCTestCase {
         ] as [String: Any]))
     }
 
+    private let pageEvent = 15327183
+
+    /// One input change on 15327183's page, as the view runs it: the plan
+    /// `onChange` (`receiveNBAPlan`) and the inputs `onChange` (`admit`, with
+    /// the page's own `deckReady`), in the order given — the guards run both,
+    /// so neither leans on which of the two SwiftUI calls first.
+    private func deliver(_ cards: [NFLEventCard9483], history: EventHistoryResponse?, markets: GameMarketsResponse?,
+                         to state: NFLCardDeckState9483, receiveFirst: Bool) {
+        let ready = NBAStoryStreamView9483.Page.deckReady(history: history, gameMarkets: markets, eventID: pageEvent)
+        let key = NBAStoryStreamView9483.InputsKey(eventID: pageEvent, phase: .after, cards: cards, ready: ready)
+        let plan = Policy.plan(eventID: pageEvent, phase: .after, cards: cards.map { $0.current(at: finalNow) },
+                               now: finalNow)
+        if receiveFirst { state.receiveNBAPlan(plan) }
+        NBAStoryStreamView9483.admit(key, into: state, now: finalNow)
+        if !receiveFirst { state.receiveNBAPlan(plan) }
+    }
+
     /// 15327183's page as it loads: the history (finish card) arrives before
-    /// the game markets (the ladders). Each delivery runs what the view runs
-    /// on that input — the plan `onChange` (`receiveNBAPlan`) and the inputs
-    /// `onChange` (`admit`, with the page's `deckReady`) — in BOTH orders, so
-    /// the guard does not lean on which of the two SwiftUI calls first.
+    /// the game markets (the ladders).
     func testTheStreamBeginsOnlyOnceThisEventsHistoryAndMarketsHaveArrived() throws {
-        let event = 15327183
         let full = positiveDeck()
-        let history = try history(event: event)
-        let ours = try markets(event: event)
+        let history = try history(event: pageEvent)
+        let ours = try markets(event: pageEvent)
         let another = try markets(event: 15320337)
 
         for receiveFirst in [true, false] {
             let state = NFLCardDeckState9483()
-            func deliver(_ cards: [NFLEventCard9483], history: EventHistoryResponse?,
-                         markets: GameMarketsResponse?) {
-                let ready = NBAStoryStreamView9483.Page.deckReady(history: history, gameMarkets: markets,
-                                                                 eventID: event)
-                let key = NBAStoryStreamView9483.InputsKey(eventID: event, phase: .after, cards: cards, ready: ready)
-                let plan = Policy.plan(eventID: event, phase: .after, cards: cards.map { $0.current(at: finalNow) },
-                                       now: finalNow)
-                if receiveFirst { state.receiveNBAPlan(plan) }
-                NBAStoryStreamView9483.admit(key, into: state, now: finalNow)
-                if !receiveFirst { state.receiveNBAPlan(plan) }
-            }
             let order = receiveFirst ? "receive first" : "admit first"
-
-            deliver([finish], history: history, markets: nil)
+            deliver([finish], history: history, markets: nil, to: state, receiveFirst: receiveFirst)
             XCTAssertNil(state.nbaStreamState, "\(order): the finish card alone begins no stream")
-            deliver(full, history: history, markets: another)
+            deliver(full, history: history, markets: another, to: state, receiveFirst: receiveFirst)
             XCTAssertNil(state.nbaStreamState, "\(order): another event's markets begin no stream")
-            deliver(full, history: nil, markets: ours)
+            deliver(full, history: nil, markets: ours, to: state, receiveFirst: receiveFirst)
             XCTAssertNil(state.nbaStreamState, "\(order): this event's markets without the history begin none")
 
-            deliver(full, history: history, markets: ours)
+            deliver(full, history: history, markets: ours, to: state, receiveFirst: receiveFirst)
             let stream = try XCTUnwrap(state.nbaStreamState, "\(order): both reads in: the stream begins")
             XCTAssertEqual(stream.appliedIDs, ["total", "margin", "finish"],
                            "\(order): the whole ranked deck is applied, no Refresh")
             XCTAssertEqual(stream.pendingIDs, stream.appliedIDs, "\(order): nothing waits as pending")
             XCTAssertEqual(stream.activeID, "total", "\(order): the scoring card leads")
-            XCTAssertFalse(stream.held, "\(order)")
+            XCTAssertFalse(stream.held, "\(order): nobody touched the shelf, so it is free to advance")
             XCTAssertEqual(stream.shelf(present: ["margin", "total", "finish"]),
                            [.card("total"), .card("margin"), .card("finish")], "\(order): the shelf shows all three")
-            XCTAssertEqual(state.appliedNBAOrder(eventID: event, fallback: full).map(\.id),
+            XCTAssertEqual(state.appliedNBAOrder(eventID: pageEvent, fallback: full).map(\.id),
                            ["total", "margin", "finish"], "\(order): and so does the reader")
+            XCTAssertNil(state.nbaBeforeBegin, "\(order): the loading record goes at the begin")
         }
+    }
+
+    /// N4 — the markets arrive first (the ladders, in the builder's order
+    /// margin → total) and the history keeps the stream from beginning. Every
+    /// action the shelf offers there works, the shelf and the reader show one
+    /// order, and what the reader chose survives the begin.
+    func testBeforeTheStreamBeginsTheShelfsActionsWorkAndTheReadersChoiceSurvivesTheBegin() throws {
+        let full = positiveDeck()
+        let ladders = Array(full.prefix(2))
+        XCTAssertEqual(ladders.map(\.id), ["margin", "total"], "the builder's order, not the ranked one")
+        guard case .ladder(let total) = full[1] else { return XCTFail("total ladder") }
+        let history = try history(event: pageEvent)
+        let ours = try markets(event: pageEvent)
+        let shelf = Policy.plan(eventID: pageEvent, phase: .after, cards: ladders.map { $0.current(at: finalNow) },
+                                now: finalNow)
+        let line = try XCTUnwrap(shelf.reasons["total"]?.optionKey)
+        let lineIndex = try XCTUnwrap(total.points.firstIndex { $0.optionKey == line })
+        XCTAssertEqual(lineIndex, total.defaultIndex, "15327183's packet: the card opens on the explained line")
+
+        enum Choice: CaseIterable { case none, held, stepped, browsed, opened, sawLine }
+        for receiveFirst in [true, false] {
+            for choice in Choice.allCases {
+                let state = NFLCardDeckState9483()
+                let label = "\(receiveFirst ? "receive first" : "admit first"), \(choice)"
+                deliver(ladders, history: nil, markets: ours, to: state, receiveFirst: receiveFirst)
+                XCTAssertNil(state.nbaStreamState, "\(label): no history, no stream")
+                XCTAssertEqual(shelf.orderedIDs, ["total", "margin"], "\(label): the shelf ranks the scoring card first")
+                XCTAssertEqual(state.appliedNBAOrder(eventID: pageEvent, fallback: ladders).map(\.id), shelf.orderedIDs,
+                               "\(label): the reader shows the shelf's order")
+
+                switch choice {
+                case .none: break
+                case .held: state.holdNBAStream(eventID: pageEvent)
+                case .stepped: state.move(in: total, by: -1)
+                case .browsed: state.focusNBAStream(eventID: pageEvent, cardID: "margin", present: ["margin", "total"])
+                case .opened:
+                    state.openNBACard(eventID: pageEvent, cardID: "margin", present: ["margin", "total"])
+                    XCTAssertEqual(state.openCardID, "margin", "\(label): Open works")
+                    state.close()
+                case .sawLine:
+                    // The reader first stepped the card to the line below, so
+                    // See this line has somewhere visible to go back to.
+                    state.move(in: total, by: -1)
+                    XCTAssertEqual(state.selectedIndex(in: total), lineIndex - 1, "\(label): the card's own step")
+                    XCTAssertFalse(state.select(optionKey: line, in: total, eventID: 15320337), "\(label): another event")
+                    XCTAssertFalse(state.select(optionKey: "o:gone", in: total, eventID: pageEvent), "\(label): no option")
+                    XCTAssertEqual(state.selectedIndex(in: total), lineIndex - 1, "\(label): refusals write nothing")
+                    XCTAssertTrue(state.select(optionKey: line, in: total, eventID: pageEvent),
+                                  "\(label): See this line selects its line")
+                    state.openNBACard(eventID: pageEvent, cardID: "total", present: ["margin", "total"])
+                    XCTAssertEqual(state.openCardID, "total", "\(label): and opens its card")
+                    state.close()
+                }
+
+                deliver(full, history: history, markets: ours, to: state, receiveFirst: receiveFirst)
+                let stream = try XCTUnwrap(state.nbaStreamState, "\(label): both reads in: the stream begins")
+                XCTAssertEqual(stream.appliedIDs, ["total", "margin", "finish"], "\(label): the whole ranked deck")
+                XCTAssertEqual(stream.pendingIDs, stream.appliedIDs, "\(label): nothing pending")
+                let expected: (active: String, held: Bool) = switch choice {
+                case .none, .stepped: ("total", false)
+                case .held: ("total", true)
+                case .browsed, .opened: ("margin", true)
+                case .sawLine: ("total", true)
+                }
+                XCTAssertEqual(stream.activeID, expected.active, "\(label): the card the reader chose stays active")
+                XCTAssertEqual(stream.held, expected.held, "\(label): and the shelf stays held for them")
+                XCTAssertEqual(state.selectedIndex(in: total), choice == .stepped ? lineIndex - 1 : lineIndex,
+                               "\(label): the line the reader left the card on survives the begin")
+                XCTAssertNil(state.nbaBeforeBegin, "\(label): the loading record goes at the begin")
+            }
+        }
+
+        // A late plan from another event writes nothing once a stream runs,
+        // and a new event discards the loading record.
+        let running = NFLCardDeckState9483()
+        deliver(full, history: history, markets: ours, to: running, receiveFirst: true)
+        running.receiveNBAPlan(Policy.Plan(eventID: 15320337, orderedIDs: ["finish"], reasons: [:]))
+        running.holdNBAStream(eventID: 15320337)
+        running.focusNBAStream(eventID: 15320337, cardID: "finish", present: ["finish"])
+        XCTAssertNil(running.nbaBeforeBegin, "another event's late callbacks write no loading record")
+        XCTAssertEqual(running.nbaStreamState?.held, false, "nor touch this event's stream")
+        let loading = NFLCardDeckState9483()
+        deliver(ladders, history: nil, markets: ours, to: loading, receiveFirst: true)
+        loading.holdNBAStream(eventID: pageEvent)
+        XCTAssertNotNil(loading.nbaBeforeBegin)
+        loading.resetNBAStream()
+        XCTAssertNil(loading.nbaBeforeBegin, "the page's event changed: nothing of the loading record survives")
     }
 }

@@ -64,21 +64,50 @@ final class NFLCardDeckState9483: ObservableObject {
     /// through the guarded methods below, never during a body read.
     @Published private(set) var nbaStreamState: NBAStoryStreamPolicy9483.State?
 
+    /// What the shelf showed, and what the reader did on it, while this
+    /// event's deck was still loading and its stream had not begun (N4).
+    struct NBABeforeBegin: Equatable {
+        let eventID: Int
+        /// The order the shelf shows (the latest plan received); the reader
+        /// shows the same one.
+        var orderedIDs: [String] = []
+        /// The reader held the shelf (browsed, opened a card).
+        var held = false
+        /// The card they browsed to or opened.
+        var chosenID: String?
+    }
+
+    /// Nil once the stream begins or the page's event changes.
+    @Published private(set) var nbaBeforeBegin: NBABeforeBegin?
+
     /// The applied order for the page's reader (W1, W3): the applied ids'
     /// present cards, in applied order. Present cards not yet applied are
-    /// pending and withheld. With no stream for THIS event, its own fallback.
+    /// pending and withheld. Before any stream begins, the shelf's own order
+    /// for this event (N4); otherwise its own fallback.
     func appliedNBAOrder(eventID: Int, fallback cards: [NFLEventCard9483]) -> [NFLEventCard9483] {
-        guard let stream = nbaStreamState, stream.eventID == eventID else { return cards }
         let present = Dictionary(cards.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
-        return stream.appliedIDs.compactMap { present[$0] }
+        if let stream = nbaStreamState, stream.eventID == eventID {
+            return stream.appliedIDs.compactMap { present[$0] }
+        }
+        guard let before = nbaBeforeBegin, before.eventID == eventID, !before.orderedIDs.isEmpty else { return cards }
+        let ordered = before.orderedIDs.compactMap { present[$0] }
+        return ordered + cards.filter { !before.orderedIDs.contains($0.id) }
     }
 
     /// Starts `plan`'s event's stream. The same event keeps its state; any
     /// other starts fresh, without the previous event's ladder selections.
+    /// A hold or a card chosen on this event's shelf before it began carries
+    /// over: the stream begins held, on that card when the plan has it (N4).
     func beginNBAStream(_ plan: NBAStoryStreamPolicy9483.Plan) {
         if let stream = nbaStreamState, stream.eventID == plan.eventID { return }
         if nbaStreamState != nil { clearNBALadderSelections() }
-        nbaStreamState = NBAStoryStreamPolicy9483.State(plan: plan)
+        var stream = NBAStoryStreamPolicy9483.State(plan: plan)
+        if let before = nbaBeforeBegin, before.eventID == plan.eventID {
+            if before.held { stream.hold() }
+            if let chosen = before.chosenID { stream.focus(chosen, present: Set(plan.orderedIDs)) }
+        }
+        nbaBeforeBegin = nil
+        nbaStreamState = stream
     }
 
     /// The page's event changed: the old event's reader/Details close, and
@@ -87,11 +116,18 @@ final class NFLCardDeckState9483: ObservableObject {
         close()
         clearNBALadderSelections()
         nbaStreamState = nil
+        nbaBeforeBegin = nil
     }
 
     /// A producer/clock update for the running stream: pending only (W1).
+    /// Before any stream begins, the order the shelf now shows (N4); with
+    /// another event's stream running, nothing.
     func receiveNBAPlan(_ plan: NBAStoryStreamPolicy9483.Plan) {
-        updateNBAStream(eventID: plan.eventID) { $0.receive(plan) }
+        if nbaStreamState == nil {
+            updateBeforeBegin(eventID: plan.eventID) { $0.orderedIDs = plan.orderedIDs }
+        } else {
+            updateNBAStream(eventID: plan.eventID) { $0.receive(plan) }
+        }
     }
 
     func applyNBAPending(eventID: Int) {
@@ -99,7 +135,11 @@ final class NFLCardDeckState9483: ObservableObject {
     }
 
     func holdNBAStream(eventID: Int) {
-        updateNBAStream(eventID: eventID) { $0.hold() }
+        if nbaStreamState == nil {
+            updateBeforeBegin(eventID: eventID) { $0.held = true }
+        } else {
+            updateNBAStream(eventID: eventID) { $0.hold() }
+        }
     }
 
     func resumeNBAStream(eventID: Int) {
@@ -116,19 +156,43 @@ final class NFLCardDeckState9483: ObservableObject {
         }
     }
 
-    /// Manual browsing landed on a card: it becomes active and the stream holds.
+    /// Manual browsing landed on a card: it becomes active and the stream
+    /// holds. Before the stream begins, a card on the shelf is remembered as
+    /// chosen, and held, for the begin (N4).
     func focusNBAStream(eventID: Int, cardID: String, present: Set<String>) {
-        updateNBAStream(eventID: eventID) { $0.focus(cardID, present: present) }
+        if nbaStreamState == nil {
+            guard present.contains(cardID) else { return }
+            updateBeforeBegin(eventID: eventID) {
+                $0.held = true
+                $0.chosenID = cardID
+            }
+        } else {
+            updateNBAStream(eventID: eventID) { $0.focus(cardID, present: present) }
+        }
     }
 
-    /// "See this line": selects `optionKey` on `card` only when the stream
-    /// is this event's, the card is applied, and the option is on it. A stale
-    /// event or an absent option writes nothing — never a neighbour.
+    /// The reader opens a card from the shelf. It becomes the active one
+    /// first, so Back from a reader whose card has since left the deck lands
+    /// on that card's held slot (W1 keeps a slot only for the active id).
+    func openNBACard(eventID: Int, cardID: String, present: Set<String>) {
+        holdNBAStream(eventID: eventID)
+        focusNBAStream(eventID: eventID, cardID: cardID, present: present)
+        open(cardID)
+    }
+
+    /// "See this line": selects `optionKey` on `card` only when the card is
+    /// applied on this event's stream — or, before it begins, on this event's
+    /// shelf (N4) — and the option is on it. A stale event or an absent
+    /// option writes nothing — never a neighbour.
     @discardableResult
     func select(optionKey: String, in card: NBALadderCard9483, eventID: Int) -> Bool {
-        guard let stream = nbaStreamState, stream.eventID == eventID,
-              stream.appliedIDs.contains(card.id),
-              card.points.contains(where: { $0.optionKey == optionKey }) else { return false }
+        let shown: Bool
+        if let stream = nbaStreamState {
+            shown = stream.eventID == eventID && stream.appliedIDs.contains(card.id)
+        } else {
+            shown = nbaBeforeBegin.map { $0.eventID == eventID && $0.orderedIDs.contains(card.id) } ?? false
+        }
+        guard shown, card.points.contains(where: { $0.optionKey == optionKey }) else { return false }
         selectedRow[card.id] = optionKey
         return true
     }
@@ -137,6 +201,13 @@ final class NFLCardDeckState9483: ObservableObject {
         guard var stream = nbaStreamState, stream.eventID == eventID else { return }
         change(&stream)
         if stream != nbaStreamState { nbaStreamState = stream }
+    }
+
+    /// Another event's record is replaced, never carried.
+    private func updateBeforeBegin(eventID: Int, _ change: (inout NBABeforeBegin) -> Void) {
+        var before = nbaBeforeBegin.flatMap { $0.eventID == eventID ? $0 : nil } ?? NBABeforeBegin(eventID: eventID)
+        change(&before)
+        if before != nbaBeforeBegin { nbaBeforeBegin = before }
     }
 
     /// The ladder families' selections ("total", "margin"); player rows stay.
