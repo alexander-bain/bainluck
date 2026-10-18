@@ -34,6 +34,7 @@ struct EventDetailView: View {
     /// #10863 — the book table past its first `collapsedBookmakerRowLimit` rows.
     @State private var showAllBookmakers = false
     @State private var showProbabilityDetails = false
+    @ScaledMetric(relativeTo: .largeTitle) private var eventHeadlineChanceSize9483: CGFloat = 44
     /// #9483 — the NFL cards' open card and selections, owned by the page so
     /// they survive the deck → full size → deck round trip.
     @StateObject private var nflCards = NFLCardDeckState9483()
@@ -384,6 +385,7 @@ struct EventDetailView: View {
         } else if let event = vm.event {
             ScrollView {
                 VStack(spacing: 12) {
+                    VStack(spacing: usesApprovedHeadlinePresentation9483(event) ? 0 : 12) {
                     heroSection(event)
                         .background(GeometryReader { proxy in
                             Color.clear.preference(
@@ -414,6 +416,7 @@ struct EventDetailView: View {
                                      // #9436 — the hero's own number, for the
                                      // dot on the end of the line.
                                      liveEdge: LiveEdgeReading.current(in: event),
+                                      pairedAwayLabel9483: LivePriceActivity.displayedLabels(in: event).away,
                                      // #10456 — the served winner pair, both
                                      // sides: admission for the balance ink.
                                      servedHomeProbability: event.currentOdds?.homeProbability,
@@ -478,6 +481,8 @@ struct EventDetailView: View {
                     }
                     .background(Color.cardBackground)
                     .clipShape(RoundedRectangle(cornerRadius: 12))
+                    }
+                    .background(usesApprovedHeadlinePresentation9483(event) ? Color.cardBackground : Color.clear)
                     // #10830 — Alex, build 46: Start Live Activity sat between the
                     // hero and the chart and took "too much prime real estate".
                     // It follows the chart now, a small leading control.
@@ -1261,6 +1266,7 @@ struct EventDetailView: View {
         let hasScore = EventDetailView.showsScore(
             status: event.status, away: event.awayScore, home: event.homeScore)
         let carriesContext = EventDetailView.heroCarriesGameContext(status: event.status)
+        let approvedPair = usesApprovedHeadlinePresentation9483(event)
 
         // #3978 (Alex, D93 = A) — ONE decision, applied to both rows of the hero.
         //
@@ -1286,6 +1292,23 @@ struct EventDetailView: View {
             // Stacks with the rest. Left as a row it is the SECOND thing that
             // bleeds: the `FINAL` chip was cut off the left edge while
             // "Sep 5 at 6:40 PM" was cut off the right, in the same frame.
+            if approvedPair {
+                HStack(alignment: .top, spacing: 12) {
+                    if EventState.isFinished(event.status),
+                       let final = nflPairedHeadline(event, hasScore: hasScore),
+                       final.away.won != nil {
+                        let names = nflNames(event)
+                        Text("Final · \(final.away.won == true ? names.away : names.home) won")
+                            .font(.headline)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .accessibilityHidden(true) // the paired row speaks the full result once
+                    } else {
+                        heroStatusBadge(event)
+                    }
+                    Spacer(minLength: 8)
+                    eventHeadlineDetails9483(event)
+                }
+            } else {
             metaLayout {
                 // #6544 — THE TICK IS HERE NOW, and it has to be somewhere.
                 //
@@ -1352,6 +1375,8 @@ struct EventDetailView: View {
                         .font(.caption2)
                         .foregroundStyle(.secondary)
                 }
+            }
+
             }
 
             // #9483 — the recognizable NFL page (design ref #10868 v105/v107):
@@ -2064,15 +2089,19 @@ struct EventDetailView: View {
         let names = TeamShortName.shortPair(
             away: event.awayTeam, home: event.homeTeam, sportKey: event.sport)
         let priced = headline.away.won == nil
-        // Stacked, a bare "vs" would take a whole row to say nothing.
+        // The adopted NFL/NBA path uses two chance columns; score/projection share
+        // the row below. Existing source and state decisions remain unchanged.
+        let adopted = NFLRecognizablePage9483.applies(sportKey: event.sport)
         let centerRow = !stacked || headline.center != .versus
-        return VStack(spacing: 6) {
-            // The two figures share a baseline even when one name shrinks.
-            HStack(alignment: .nflPairedFigure9483, spacing: 8) {
+        let sides = adopted && dynamicTypeSize.isAccessibilitySize
+            ? AnyLayout(VStackLayout(alignment: .leading, spacing: 16))
+            : AnyLayout(HStackLayout(alignment: .nflPairedFigure9483, spacing: 8))
+        return VStack(spacing: adopted ? 12 : 6) {
+            sides {
                 nflPairedSide(event, headline.away, name: names.away, isAway: true,
                               color: colors.away, logo: event.awayTeamData?.logoSmall,
                               opponent: event.homeTeam)
-                if !stacked {
+                if !stacked && !adopted {
                     nflPairedCenter(event, headline, colors: colors, movement: .reserved)
                         .alignmentGuide(.nflPairedFigure9483) { $0[VerticalAlignment.center] }
                 }
@@ -2081,7 +2110,9 @@ struct EventDetailView: View {
                               opponent: event.awayTeam)
             }
             .accessibilityElement(children: .ignore)
-            .accessibilityLabel(headline.accessibilityLabel(awayName: names.away, homeName: names.home))
+            .accessibilityLabel(headline.accessibilityLabel(awayName: names.away, homeName: names.home)
+                .replacingOccurrences(of: ", Opened ", with: ", Pregame opening ")
+                .replacingOccurrences(of: ", Pre-match ", with: ", Pregame "))
             // The live move caption sits under the score, but the row above is
             // ONE VoiceOver element that ignores its children, so the caption
             // inside it was unreachable (native review of ffa5f83d97). It draws
@@ -2089,13 +2120,40 @@ struct EventDetailView: View {
             // column again, its score invisible, aligned on the figures' line
             // exactly as the reserved copy in the row is.
             .overlay(alignment: Alignment(horizontal: .center, vertical: .nflPairedFigure9483)) {
-                if !stacked {
+                if !stacked && !adopted {
                     nflPairedCenter(event, headline, colors: colors, movement: .only)
                         .alignmentGuide(.nflPairedFigure9483) { $0[VerticalAlignment.center] }
                 }
             }
-            if stacked && centerRow { nflPairedCenter(event, headline, colors: colors, movement: .shown) }
-            if priced {
+            if adopted {
+                let resultLayout = dynamicTypeSize.isAccessibilitySize
+                    ? AnyLayout(VStackLayout(alignment: .leading, spacing: 12))
+                    : AnyLayout(HStackLayout(alignment: .top, spacing: 16))
+                resultLayout {
+                    nflPairedCenter(event, headline, colors: colors, movement: .omitted)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    if let projection = projectionText(event, hasScore: hasScore) {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("Projected final").font(.caption).foregroundStyle(.secondary)
+                            Text(projection.replacingOccurrences(of: "Proj. ", with: ""))
+                                .font(.title3.weight(.semibold))
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                }
+                .padding(.top, 10)
+                .overlay(alignment: .top) { Divider() }
+            } else if stacked && centerRow {
+                nflPairedCenter(event, headline, colors: colors, movement: .shown)
+            }
+            if priced && adopted {
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    nflPairedPhase(event)
+                    Spacer(minLength: 0)
+                    if priceStreamingEligible { movementCaptionSlot(event, colors: colors) }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            } else if priced {
                 // The pair's subject and its age, as the hero words it (#9483
                 // F1), on one line with the delivery control where it fits.
                 ViewThatFits(in: .horizontal) {
@@ -2105,11 +2163,61 @@ struct EventDetailView: View {
             }
             // The admitted projection shares the composition (#5697's gate,
             // `projectionText`'s one spelling); Game Info stops repeating it.
-            if let projection = projectionText(event, hasScore: hasScore) {
+            if !adopted, let projection = projectionText(event, hasScore: hasScore) {
                 Text(projection)
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(Color.primary)
             }
+        }
+    }
+
+    private func usesApprovedHeadlinePresentation9483(_ event: EventDetail) -> Bool {
+        NFLRecognizablePage9483.applies(sportKey: event.sport)
+            && nflPairedHeadline(event, hasScore: Self.showsScore(
+                status: event.status, away: event.awayScore, home: event.homeScore)) != nil
+    }
+
+    /// Existing game and probability facts, disclosed from the paired headline.
+    /// No new source, timer, probability or result policy is introduced.
+    private func eventHeadlineDetails9483(_ event: EventDetail) -> some View {
+        let home = event.currentOdds.flatMap { OpeningLineHero.resolve($0, for: event).homeProbability }
+        let confidence = Confidence.fromSources(
+            sourceCount: event.winProbabilitySources?.count,
+            hasMovement: home.flatMap { h in
+                event.openingOdds?.homeProbability.map { abs(h - $0) > 0.001 } } ?? false)?.rawValue
+        return Button { showProbabilityDetails.toggle() } label: {
+            CompactEventPriceStatusView(status: vm.liveUpdateStatus,
+                sequence: vm.priceActivity?.sequence ?? 0,
+                receivedAt: vm.priceActivity?.receivedAt, isDisclosure: true)
+                .frame(minWidth: 44, minHeight: 44)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("About this game and probability updates")
+        .accessibilityHint("Shows game context, connection status and the last update received")
+        .popover(isPresented: $showProbabilityDetails, arrowEdge: .top) {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 12) {
+                    FreshnessRevealView(status: vm.liveUpdateStatus,
+                        lastReceivedAt: vm.priceActivity?.receivedAt, confidenceTier: confidence)
+                    Divider()
+                    Text("Game context").font(.headline)
+                    if let stamp = event.commenceTime, let date = stamp.asDate {
+                        Text("Listed start: \(date, format: .dateTime.month(.abbreviated).day().hour().minute())")
+                    }
+                    if let broadcast = event.espn?.broadcast,
+                       Self.showsBroadcast(status: event.status, commenceTime: event.commenceTime?.asDate) {
+                        Text("Watch: " + broadcast)
+                    }
+                    if let records = recordsText(event) { Text(records) }
+                    if let opening = openedText(event) { Text(opening) }
+                }
+                .padding()
+            }
+            .frame(idealWidth: 300, maxWidth: 300)
+            #if os(iOS)
+            .presentationCompactAdaptation(.popover)
+            #endif
         }
     }
 
@@ -2151,26 +2259,49 @@ struct EventDetailView: View {
         _ event: EventDetail, _ side: NFLPairedHeadline9483.Side, name: String, isAway: Bool,
         color: Color, logo: String?, opponent: String
     ) -> some View {
-        VStack(alignment: isAway ? .leading : .trailing, spacing: 3) {
+        let adopted = NFLRecognizablePage9483.applies(sportKey: event.sport)
+        let finalPair = adopted && side.won != nil
+        let pregame = (finalPair || event.status == "live") ? PrematchReading.resolve(prematch: event.prematchOdds, opening: event.openingOdds) : nil
+        let finalBaseline = pregame.map { reading in
+            formatProbability(isAway ? reading.awayProbability : reading.homeProbability,
+                renderedPercent: reading.percents[isAway ? 0 : 1])
+        }
+        let figure = finalPair ? (finalBaseline ?? "Unavailable") : side.figure
+        let baselineCaption: String?
+        if finalPair {
+            baselineCaption = pregame?.captionWord == "Opened" ? "Pregame · opening" : "Pregame win chance"
+        } else if event.status == "live" {
+            baselineCaption = finalBaseline.map {
+                (pregame?.captionWord == "Opened" ? "Pregame · opening " : "Pregame ") + $0
+            } ?? "Pregame unavailable"
+        } else {
+            baselineCaption = side.pregame
+        }
+        return VStack(alignment: adopted || isAway ? .leading : .trailing, spacing: adopted ? 6 : 3) {
             HStack(spacing: 6) {
-                if !isAway { Spacer(minLength: 0) }
+                if !isAway && !adopted { Spacer(minLength: 0) }
                 TeamLogoView(url: logo, teamName: isAway ? event.awayTeam : event.homeTeam,
                              color: color, size: 24, sportKey: event.sport, opponentName: opponent)
                 // One line, shrunk before it hyphenates ("Sea-hawks" at AX sizes).
                 Text(name)
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(color)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.5)
-                    .allowsTightening(true)
-                if isAway { Spacer(minLength: 0) }
+                    .lineLimit(adopted ? nil : 1)
+                    .minimumScaleFactor(adopted ? 1 : 0.5)
+                    .allowsTightening(!adopted)
+                if isAway || adopted { Spacer(minLength: 0) }
             }
-            Text(side.figure)
-                .acceptedValueChange(heroValue(away: isAway), rising: heroRising(away: isAway), animates: heroMoves)
-                .font(.system(size: sizeClass == .regular ? 40 : 34, weight: .black, design: .rounded).monospacedDigit())
-                .foregroundStyle(side.won == false ? Color.secondary : color)
+            if finalPair {
+                Label(side.figure, systemImage: side.won == true ? "checkmark" : "xmark")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(Color.primary)
+            }
+            Text(figure)
+                .acceptedValueChange(finalPair ? figure : heroValue(away: isAway), rising: heroRising(away: isAway), animates: heroMoves)
+                .font(finalPair && finalBaseline == nil ? .headline : .system(size: adopted ? eventHeadlineChanceSize9483 : (sizeClass == .regular ? 40 : 34), weight: .black, design: .rounded).monospacedDigit())
+                .foregroundStyle(!finalPair && side.won == false ? Color.secondary : color)
                 .lineLimit(1)
-                .minimumScaleFactor(0.6)
+                .minimumScaleFactor(adopted ? 0.75 : 0.6)
                 .livePriceChangeFeedback(sequence: vm.priceActivity?.sequence ?? 0,
                                          valueChanged: vm.priceActivity.map {
                                              isAway ? $0.previousAwayLabel != $0.awayLabel
@@ -2180,20 +2311,20 @@ struct EventDetailView: View {
                 // did not reach the row, and a shrunk name lifted one figure
                 // ~4pt off the other's line at AX-XL (native review).
                 .alignmentGuide(.nflPairedFigure9483) { $0[VerticalAlignment.center] }
-            if let pregame = side.pregame {
+            if let pregame = baselineCaption {
                 // The figure is a fixed size, so its caption may not outgrow it:
                 // at AX5 an unbounded "Pre-match 38%" wrapped to three lines
                 // larger than "55%" (native review). One line, shrunk like the
                 // name, and no larger than AX1.
                 Text(pregame)
-                    .font(.caption2)
+                    .font(adopted ? .caption : .caption2)
                     .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.5)
-                    .dynamicTypeSize(...Self.nflPairedCaptionTypeCeiling)
+                    .lineLimit(adopted ? nil : 1)
+                    .minimumScaleFactor(adopted ? 1 : 0.5)
+                    .dynamicTypeSize(...(adopted ? DynamicTypeSize.accessibility5 : Self.nflPairedCaptionTypeCeiling))
             }
         }
-        .frame(maxWidth: .infinity, alignment: isAway ? .leading : .trailing)
+        .frame(maxWidth: .infinity, alignment: adopted || isAway ? .leading : .trailing)
     }
 
     /// The headline's figures are fixed sizes, so its captions stop growing
@@ -2203,7 +2334,7 @@ struct EventDetailView: View {
     /// Where the centre column's live move caption goes. The default row is one
     /// VoiceOver element, so there the caption is `.reserved` (its room kept,
     /// nothing drawn) and an overlay outside the element draws it `.only`.
-    enum NFLPairedMovement { case shown, reserved, only }
+    enum NFLPairedMovement { case shown, reserved, only, omitted }
 
     /// The score (or "vs") between the chances, with the live move caption
     /// under it — the one slot in the headline that has the room.
@@ -2237,7 +2368,7 @@ struct EventDetailView: View {
             // sits outside that element and VoiceOver read the score twice.
             .accessibilityHidden(true)
             .opacity(movement == .only ? 0 : 1)
-            if headline.away.won == nil && priceStreamingEligible {
+            if headline.away.won == nil && priceStreamingEligible && movement != .omitted {
                 movementCaptionSlot(event, colors: colors)
                     .opacity(movement == .reserved ? 0 : 1)
                     .accessibilityHidden(movement == .reserved)
