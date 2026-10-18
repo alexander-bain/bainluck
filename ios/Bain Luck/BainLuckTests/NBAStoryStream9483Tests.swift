@@ -864,11 +864,12 @@ final class NBAStoryStream9483Tests: XCTestCase {
 
     /// The slot draws its content at `unavailableContentOffset` every frame
     /// (a render-time effect, iOS 17+), so the ship case needs no settle: the
-    /// fx402ax3 specimen above, read mid-scroll. Where no part of the slot is
-    /// on screen, or the viewport is unmeasured, the content is centred in the
-    /// whole slot, as the old `.center` frame did; unmeasured content draws at
-    /// the slot's frame alignment (0).
-    func testTheSlotsDrawnOffsetFollowsTheScrollAndCentresWhenNothingIsOnScreen() {
+    /// fx402ax3 specimen above, read mid-scroll. Once no part of the slot is on
+    /// screen, the content stays at the edge nearer the screen, where it was
+    /// as the slot left (no jump to the centre under the bars); centred in the
+    /// whole slot only while the viewport is unmeasured; unmeasured content
+    /// draws at the slot's frame alignment (0).
+    func testTheSlotsDrawnOffsetFollowsTheScrollAndLeavesWithTheSlotsNearEdge() {
         let viewport = CGRect(x: 0, y: 0, width: 402, height: 675)
         let content: CGFloat = 16 + 129 + 12 + 45.67 + 16
         let offset = { (slot: CGRect, viewport: CGRect?, content: CGFloat) in
@@ -880,12 +881,19 @@ final class NBAStoryStream9483Tests: XCTestCase {
         XCTAssertEqual(offset(scrolled, viewport, content),
                        NBAStoryStreamView9483.unavailableContentTop(slot: scrolled, viewport: viewport, content: content))
         XCTAssertEqual(scrolled.minY + offset(scrolled, viewport, content) + 16 + 116, 400.67, accuracy: 0.5)
-        // Below the screen, or the viewport unmeasured: centred in the slot.
+        // Off screen: below, the top edge; above, the bottom edge. The same
+        // place the last visible sliver gave, so nothing jumps at the edge.
         let below = CGRect(x: 16, y: 700, width: 346, height: 370)
-        XCTAssertEqual(offset(below, viewport, 192), 89)
+        XCTAssertEqual(offset(below, viewport, 192), 0)
+        XCTAssertEqual(offset(CGRect(x: 16, y: 674, width: 346, height: 370), viewport, 192), 0)
+        let above = CGRect(x: 16, y: -400, width: 346, height: 370)
+        XCTAssertEqual(offset(above, viewport, 192), 178)
+        XCTAssertEqual(offset(CGRect(x: 16, y: -369, width: 346, height: 370), viewport, 192), 178)
+        // The viewport unmeasured: centred in the slot, as the old `.center` frame did.
         XCTAssertEqual(offset(CGRect(x: 16, y: -199, width: 346, height: 370), nil, 192), 89)
         // Content taller than the slot never draws above its top.
         XCTAssertEqual(offset(CGRect(x: 16, y: 700, width: 346, height: 150), viewport, 192), 0)
+        XCTAssertEqual(offset(CGRect(x: 16, y: -400, width: 346, height: 150), viewport, 192), 0)
         // Content not yet measured: 0, and the frame centres it.
         XCTAssertEqual(offset(below, viewport, 0), 0)
     }

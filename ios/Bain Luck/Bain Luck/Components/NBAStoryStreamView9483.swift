@@ -406,8 +406,8 @@ struct NBAStoryStreamView9483: View {
 
     /// Where the unavailable slot's content starts, from the slot's top: centred
     /// in the part of the slot between the bar and the tab bar, and never
-    /// outside the slot. Nil (centre in the whole slot) while the slot or the
-    /// viewport is unmeasured, or no part of the slot is on screen.
+    /// outside the slot. Nil while the slot or the viewport is unmeasured, or
+    /// no part of the slot is on screen (`unavailableContentOffset` decides).
     /// `nonisolated`: pure, and called from the slot's render-time effect.
     nonisolated static func unavailableContentTop(slot: CGRect?, viewport: CGRect?, content: CGFloat) -> CGFloat? {
         guard let slot, let viewport, slot.height > 0 else { return nil }
@@ -418,12 +418,16 @@ struct NBAStoryStreamView9483: View {
     }
 
     /// How far the unavailable slot's content is drawn below the slot's top:
-    /// `unavailableContentTop`, or centred in the whole slot when that is nil.
-    /// 0 while the content is unmeasured, when the slot's frame centres it.
+    /// `unavailableContentTop` while part of the slot is on screen. Once no
+    /// part is, the edge nearer the screen, where the content already was, so
+    /// it leaves and comes back with the slot instead of jumping to the centre
+    /// under the bars. Centred in the whole slot while the viewport is
+    /// unmeasured; 0 while the content is, when the slot's frame centres it.
     nonisolated static func unavailableContentOffset(slot: CGRect, viewport: CGRect?, content: CGFloat) -> CGFloat {
         guard content > 0 else { return 0 }
-        return unavailableContentTop(slot: slot, viewport: viewport, content: content)
-            ?? max(0, (slot.height - content) / 2)
+        if let top = unavailableContentTop(slot: slot, viewport: viewport, content: content) { return top }
+        guard let viewport, slot.height > 0 else { return max(0, (slot.height - content) / 2) }
+        return slot.minY >= viewport.maxY ? 0 : max(0, slot.height - content)
     }
 
     // MARK: - Plain storage
