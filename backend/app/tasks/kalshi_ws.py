@@ -24,6 +24,7 @@ from app.utils.kalshi_market_status import is_terminal
 from app.tasks.ws_consumer_sessions import owns_consumer_sessions  # #2471
 from app.utils.market_quote_push import queue_market_change
 from app.utils.market_settlement import settled_values
+from app.utils.heap_trim import release_free_heap  # #11218
 from app.utils.repair_lock_budget import (
     SET_LOCK_TIMEOUT_SQL,
     is_lock_timeout,
@@ -3202,6 +3203,17 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
         return changed
 
     async def refresh_subscription_scope():
+        """``_refresh_subscription_scope``, then the read's freed memory goes back.
+
+        #11218: whatever the verdict, the slate and open-contract reads ran and
+        their working set is garbage once the inner call returns.
+        """
+        try:
+            return await _refresh_subscription_scope()
+        finally:
+            release_free_heap("kalshi")
+
+    async def _refresh_subscription_scope():
         """``"keep"``, ``"applied"`` or ``"rebuild"`` (the old full recycle).
 
         #10090: an unchanged scope keeps everything; a changed one is applied
