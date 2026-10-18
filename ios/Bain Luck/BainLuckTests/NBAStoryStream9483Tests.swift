@@ -806,4 +806,31 @@ final class NBAStoryStream9483Tests: XCTestCase {
         XCTAssertEqual(NBAStoryStreamView9483.unobscured(stage: CGRect(x: 16, y: 420, width: 346, height: 493),
                                                          viewport: viewport), false)
     }
+
+    /// The unavailable slot's message and Refresh (W1) sit in the part of the
+    /// slot on screen. Specimens from fx402c at 402 pt (scrollSpace, viewport
+    /// 0…675); the content band is 192 tall at default text.
+    func testTheUnavailableSlotsContentSitsInThePartOfTheSlotOnScreen() {
+        let viewport = CGRect(x: 0, y: 0, width: 402, height: 675)
+        let place = { (slot: CGRect) in
+            NBAStoryStreamView9483.unavailableContentTop(slot: slot, viewport: viewport, content: 192)
+        }
+        // F7 as returned: Open tapped high, the stream began under the reader,
+        // Back removed the card and the row shrank to 370 (−199…171). Centred
+        // in the whole slot the message sat at screen 65, under the bar.
+        // Centred in the visible 0…171 it would start above the slot's end, so
+        // it is kept inside: 178, the band at −21…171, its middle at 75.
+        XCTAssertEqual(place(CGRect(x: 16, y: -199, width: 346, height: 370)), 178)
+        // F2 as returned (−174…319): centred in the visible 0…319.
+        XCTAssertEqual(place(CGRect(x: 16, y: -174, width: 346, height: 493)), 237.5)
+        // A slot wholly on screen: centred in the slot, as before.
+        XCTAssertEqual(place(CGRect(x: 16, y: 14, width: 346, height: 494)), 151)
+        // Only 175 of it on screen at the bottom: never above the slot's top.
+        XCTAssertEqual(place(CGRect(x: 16, y: 500, width: 346, height: 400)), 0)
+        // Unmeasured, or no part on screen: centre in the whole slot.
+        XCTAssertNil(NBAStoryStreamView9483.unavailableContentTop(
+            slot: CGRect(x: 16, y: -199, width: 346, height: 370), viewport: nil, content: 192))
+        XCTAssertNil(place(CGRect(x: 16, y: 700, width: 346, height: 370)))
+    }
 }
+

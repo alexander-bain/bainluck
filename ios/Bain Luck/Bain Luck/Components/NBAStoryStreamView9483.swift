@@ -199,7 +199,8 @@ struct NBAStoryStreamView9483: View {
                             case .card(let id):
                                 if let card = byID[id] { cell(card, reason: reasons[id], present: present) }
                             case .unavailable:
-                                unavailableSlot
+                                UnavailableSlot9483(coordinateSpace: page.coordinateSpace, signals: signals,
+                                                    refresh: refreshOrder)
                             }
                         }
                         .containerRelativeFrame(.horizontal) { width, _ in slots.count > 1 ? width * 0.86 : width }
@@ -263,27 +264,6 @@ struct NBAStoryStreamView9483: View {
             }
             .accessibilityLabel("Open \(card.title) full size")
         }
-    }
-
-    /// The held active card left the deck (W1): its place stays, with no
-    /// stale numbers and no substitute, until an explicit Refresh. It fills
-    /// the row's height, its message centred, so a reader who had scrolled
-    /// into the card's lower half comes back to the slot, not an empty band.
-    private var unavailableSlot: some View {
-        VStack(spacing: 12) {
-            Text("This game story is no longer available")
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
-                .fixedSize(horizontal: false, vertical: true)
-            Button { refreshOrder() } label: { Self.controlLabel("Refresh cards") }
-        }
-        .frame(maxWidth: .infinity, minHeight: 160)
-        .padding(16)
-        .frame(maxHeight: .infinity)
-        .background(Color.cardBackground, in: RoundedRectangle(cornerRadius: 16))
-        .overlay(RoundedRectangle(cornerRadius: 16).stroke(Color.secondary.opacity(0.15)))
-        .accessibilityElement(children: .combine)
     }
 
     // MARK: - Actions
@@ -424,6 +404,18 @@ struct NBAStoryStreamView9483: View {
         return overlap >= stage.height * visibleShare
     }
 
+    /// Where the unavailable slot's content starts, from the slot's top: centred
+    /// in the part of the slot between the bar and the tab bar, and never
+    /// outside the slot. Nil (centre in the whole slot) while the slot or the
+    /// viewport is unmeasured, or no part of the slot is on screen.
+    static func unavailableContentTop(slot: CGRect?, viewport: CGRect?, content: CGFloat) -> CGFloat? {
+        guard let slot, let viewport, slot.height > 0 else { return nil }
+        let top = max(slot.minY, viewport.minY), bottom = min(slot.maxY, viewport.maxY)
+        guard bottom > top else { return nil }
+        let centred = (top + bottom - content) / 2 - slot.minY
+        return min(max(0, centred), max(0, slot.height - content))
+    }
+
     // MARK: - Plain storage
 
     /// The stage's last frame. A class, so a frame change each scroll frame
@@ -465,5 +457,41 @@ private struct ShelfScrollPhase9483: ViewModifier {
         } else {
             content
         }
+    }
+}
+
+/// The held active card left the deck (W1): its place stays, with no stale
+/// numbers and no substitute, until an explicit Refresh. It fills the row's
+/// height, and its message and Refresh sit in the part of it on screen, so a
+/// reader who comes back with the slot half under the bar still sees them.
+/// Its own view: only the slot re-renders as it moves, never the stream.
+private struct UnavailableSlot9483: View {
+    let coordinateSpace: String
+    @ObservedObject var signals: NBAStoryStreamView9483.Signals
+    let refresh: () -> Void
+    @State private var slot: CGRect?
+    @State private var content: CGFloat = 0
+
+    var body: some View {
+        let top = NBAStoryStreamView9483.unavailableContentTop(
+            slot: slot, viewport: signals.usableViewport, content: content)
+        VStack(spacing: 12) {
+            Text("This game story is no longer available")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
+            Button { refresh() } label: { NBAStoryStreamView9483.controlLabel("Refresh cards") }
+        }
+        .frame(maxWidth: .infinity, minHeight: 160)
+        .padding(16)
+        .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { content = $0 }
+        // An offset, not padding: the slot's own height never follows it.
+        .offset(y: top ?? 0)
+        .frame(maxHeight: .infinity, alignment: top == nil ? .center : .top)
+        .background(Color.cardBackground, in: RoundedRectangle(cornerRadius: 16))
+        .overlay(RoundedRectangle(cornerRadius: 16).stroke(Color.secondary.opacity(0.15)))
+        .onGeometryChange(for: CGRect.self) { $0.frame(in: .named(coordinateSpace)) } action: { slot = $0 }
+        .accessibilityElement(children: .combine)
     }
 }
