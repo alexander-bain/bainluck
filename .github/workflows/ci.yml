@@ -5217,6 +5217,32 @@ jobs:
             exit 1
           }
 
+      - name: "#10090 live-prop isolation qualification: two-leg prop, retries, fairness (real Postgres)"
+        # Root's three bounded qualifications of Argon's mixed-batch review
+        # (2026-10-18), on the same rig and database as the gate above: a
+        # same-game two-leg prop classified from a real Kalshi prop ticker
+        # (prop-only publishes whole and stamps nothing; one locked prop leg
+        # never holds the winner, never tears the market, never becomes a held
+        # headline quote; two strawman sources must fail it), the isolated
+        # phase's existing retry contracts (newest quote after an honest
+        # cooldown; an authoritative settlement is never repriced), and a
+        # healthy future in another phase publishing under continuous live
+        # traffic with bounded locked-phase attempts. Same skip detection,
+        # plus an exact count (10 cases).
+        if: matrix.group == 'isolated' && needs.change-scope.outputs.reuse != 'true'
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_kalshi_live_prop_isolation_qualification_10090_pg.py \
+            -v -rs 2>&1 | tee /tmp/livepropqual10090.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/livepropqual10090.txt; then
+            echo "::error::#10090 live-prop qualification SKIPPED — the gate did not run"
+            exit 1
+          fi
+          grep -qE "[^0-9]10 passed[,[:space:]]" /tmp/livepropqual10090.txt || {
+            echo "::error::#10090 live-prop qualification did not run its 10 cases"
+            exit 1
+          }
+
       - name: "#1927 a negative rank term never excludes, at the route (real Postgres)"
         # The wide half of #1927. Discover judges a live game "exceptional" by
         # reading its personalised `score`, so a stored Nah (×0.4) or eight real
