@@ -200,7 +200,7 @@ d("iOS reads one event-status vocabulary", () => {
       // Three spellings in that row; a fourth anywhere is #3014's label back.
       expect(code.match(/Projected final/g) ?? []).toHaveLength(3);
       expect(code).toMatch(
-        /let figure = Self\.projectionFigure9483\(projection\)[\s\S]{0,700}Text\("Projected final"\)/
+        /if let projection = projectionText\(event, hasScore: hasScore\) \{\s*let figure = Self\.projectionFigure9483\(projection\)[\s\S]{0,700}Text\("Projected final"\)/
       );
       expect(code).toMatch(/static func projectionAccessibilityLabel9483\(figure: String/);
       // ...and the abbreviation the hero still draws is still drawn. Without
