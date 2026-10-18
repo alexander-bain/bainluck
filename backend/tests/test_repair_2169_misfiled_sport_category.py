@@ -1,7 +1,9 @@
 """#2169 — the guards the category backfill has to hold, with no server.
 
-1. **The population is the issue's table, verbatim** — 23 writes, one no-op, no
-   row added by a re-census and none dropped.
+1. **The population is the issue's table, verbatim** — 23 rows plus one no-op,
+   no row added by a re-census and none dropped. 22 are forward writes; the 23rd
+   (59165075, the Lakers' next owner) was wrong, was applied and reversed, and is
+   held in ``REVERSED``: read and reported every run, restorable, never planned.
 2. **The plan's evidence is the deployed classifier**: F3's
    ``categorize_by_rules()`` answers each row's ``after`` for its full live name,
    and still answers ``golf`` for the no-op (which is why it is one).
@@ -16,6 +18,10 @@
 7. **The attended run is bounded**: ``main()`` arms short lock and statement
    budgets on the session, and a budget firing refuses with a rollback, never a
    commit.
+9. **A title-only answer never overrides the provider's league** (§9 below):
+   the forward plan skips a row whose own Kalshi ticker names a sport other than
+   its ``after``, and today's production state plans ZERO writes where the parent
+   operator planned 59165075 basketball → politics again.
 8. **A COMMIT that does not return is UNKNOWN** (exit 3, mode + plan hash + the
    exact writes), never "rolled back, nothing committed": no second COMMIT, retry
    or restore follows it — including the one ``get_task_session``'s normal exit
@@ -82,10 +88,52 @@ ISSUE_TABLE = {
     59165075: ("basketball", "politics"),
 }
 
+# The 23rd row was WRONG (Root, 2026-10-18: ROOT-59165075-SEMANTIC-FAILURE-AND-
+# RESTORE-DECISION.md): "Los Angeles L next governor" is the Lakers' next owner,
+# basketball. The table above stays verbatim as the record; the forward plan is
+# the other 22.
+WRONG_ROW = 59165075
+FORWARD = {i: v for i, v in ISSUE_TABLE.items() if i != WRONG_ROW}
+
+# Each row's provider and provider id, from Root's 24-id readback (2026-10-18,
+# `artifacts/calibration-2169-commit-ack-20261018/ROOT-ONE-ROW-RESTORE-24-READBACK.json`).
+IDENTITY = {
+    31169677: ("polymarket", "552897"),
+    35418786: ("polymarket", "584437"),
+    38277227: ("polymarket", "601916"),
+    58015857: ("kalshi", "KXCOMPANYACTIONANTH-27"),
+    58416367: ("polymarket", "801410"),
+    58728438: ("kalshi", "KXRT-PRA"),
+    59165075: ("kalshi", "KXNBANEXTGOVERNOR-27JAN01LAL"),
+    59170844: ("polymarket", "873111"),
+    59170845: (
+        "polymarket",
+        "0x438d005454ed3a4e62052ced08092b52fcff273f9f41c43d52b743a59ce38835",
+    ),
+    59170847: (
+        "polymarket",
+        "0x821d0ad6eee12561a5c258fe60ad6af7c47548683e608951434face54f850de8",
+    ),
+    59304735: ("polymarket", "880911"),
+    59304736: ("polymarket", "880912"),
+    59304737: ("polymarket", "880909"),
+    59304738: ("polymarket", "880910"),
+    59304739: ("polymarket", "880908"),
+    59304740: ("polymarket", "880907"),
+    59304741: ("polymarket", "880906"),
+    59304742: ("polymarket", "880905"),
+    59374602: ("polymarket", "885562"),
+    59374603: ("polymarket", "885561"),
+    59374604: ("polymarket", "885560"),
+    59374605: ("polymarket", "885559"),
+    59428372: ("polymarket", "889503"),
+    59520510: ("polymarket", "905622"),
+}
+
 # Full live names and stored values, production read 2026-10-13 07:35Z
 # (`artifacts-calibration-2169/live-read-1.json`). 58015857 and 59520510 had
 # already been repaired by the pipeline; everything else held its `before`.
-LIVE_2026_10_13 = {
+_NAMES_2026_10_13 = {
     31169677: ("golf", '"Masters of the Universe" Opening Weekend Box Office'),
     35418786: ("golf", "Most kills on a single map at Masters London 2026?"),
     38277227: ("golf", "Asia Masters 2026 Winner"),
@@ -120,6 +168,8 @@ LIVE_2026_10_13 = {
     59428372: ("baseball", "World Series of Darts: Gerwyn Price vs James Wade"),
     59520510: ("politics", "Thunder Bay, ON Mayoral Election Winner"),
 }
+#: ``(llm_sport_category, name, source, external_id)`` — what ``_read()`` returns.
+LIVE_2026_10_13 = {i: (c, n, *IDENTITY[i]) for i, (c, n) in _NAMES_2026_10_13.items()}
 
 ALREADY_REPAIRED = {58015857, 59520510}
 
@@ -127,14 +177,25 @@ ALREADY_REPAIRED = {58015857, 59520510}
 # ── 1. population ────────────────────────────────────────────────────────────
 
 
-def test_pinned_is_the_issue_table_verbatim(repair):
-    assert repair.PINNED == ISSUE_TABLE
-    assert len(repair.PINNED) == 23
+def test_pinned_and_reversed_are_the_issue_table_verbatim(repair):
+    # Nothing dropped from the record: the 23 rows are all still here, split by
+    # what is now known about them.
+    assert {**repair.PINNED, **repair.REVERSED} == ISSUE_TABLE
+    assert not set(repair.PINNED) & set(repair.REVERSED)
+    assert repair.PINNED == FORWARD and len(repair.PINNED) == 22
+    assert repair.REVERSED == {WRONG_ROW: ("basketball", "politics")}
+
+
+def test_every_run_still_reads_the_same_24_ids(repair):
+    s = FakeSession(LIVE_2026_10_13)
+    _run(repair, s, apply=False)
+    assert set(s.read_ids) == set(ISSUE_TABLE) | {38277227}
+    assert len(s.read_ids) == 24
 
 
 def test_the_no_op_is_read_never_written(repair):
     assert repair.NO_OP == {38277227: "golf"}
-    assert not set(repair.NO_OP) & set(repair.PINNED)
+    assert not set(repair.NO_OP) & (set(repair.PINNED) | set(repair.REVERSED))
 
 
 def test_every_pinned_write_moves_the_value(repair):
@@ -144,10 +205,10 @@ def test_every_pinned_write_moves_the_value(repair):
 # ── 2. the deployed classifier is the evidence ───────────────────────────────
 
 
-@pytest.mark.parametrize("market_id", sorted(ISSUE_TABLE))
+@pytest.mark.parametrize("market_id", sorted(FORWARD))
 def test_fixed_classifier_answers_after_for_the_live_name(market_id):
-    _, name = LIVE_2026_10_13[market_id]
-    assert categorize_by_rules(name) == ISSUE_TABLE[market_id][1]
+    name = LIVE_2026_10_13[market_id][1]
+    assert categorize_by_rules(name) == FORWARD[market_id][1]
 
 
 def test_no_op_stays_unreachable_by_rules():
@@ -157,12 +218,13 @@ def test_no_op_stays_unreachable_by_rules():
 def test_plan_runs_the_real_classifier_on_the_live_read(repair):
     out = repair.plan(LIVE_2026_10_13, categorize_by_rules)
     written = {i for i, _, _ in out["write"]}
-    assert written == set(ISSUE_TABLE) - ALREADY_REPAIRED
-    assert len(out["write"]) == 21
+    assert written == set(FORWARD) - ALREADY_REPAIRED
+    assert len(out["write"]) == 20
     assert {i for i, _ in out["skip"]} == ALREADY_REPAIRED
     assert all("already" in reason for _, reason in out["skip"])
     assert out["no_op"] == {38277227: "golf"}
-    assert all((f, t) == ISSUE_TABLE[i] for i, f, t in out["write"])
+    assert out["reversed"] == {WRONG_ROW: "basketball"}
+    assert all((f, t) == FORWARD[i] for i, f, t in out["write"])
 
 
 # ── 3. per-row compare-and-set ───────────────────────────────────────────────
@@ -170,7 +232,7 @@ def test_plan_runs_the_real_classifier_on_the_live_read(repair):
 
 def test_a_row_another_writer_moved_is_skipped(repair):
     rows = dict(LIVE_2026_10_13)
-    rows[59304735] = ("soccer", rows[59304735][1])
+    rows[59304735] = ("soccer", *rows[59304735][1:])
     out = repair.plan(rows, categorize_by_rules)
     assert 59304735 not in {i for i, _, _ in out["write"]}
     reason = dict(out["skip"])[59304735]
@@ -179,14 +241,18 @@ def test_a_row_another_writer_moved_is_skipped(repair):
 
 def test_a_null_category_is_drift_not_a_write(repair):
     rows = dict(LIVE_2026_10_13)
-    rows[59165075] = (None, rows[59165075][1])
+    rows[58728438] = (None, *rows[58728438][1:])
     out = repair.plan(rows, categorize_by_rules)
-    assert 59165075 not in {i for i, _, _ in out["write"]}
+    assert 58728438 not in {i for i, _, _ in out["write"]}
 
 
 def test_a_row_whose_name_moved_off_the_classifier_answer_is_skipped(repair):
     rows = dict(LIVE_2026_10_13)
-    rows[59304736] = ("baseball", "World Series: Yankees vs Dodgers Game 7")
+    rows[59304736] = (
+        "baseball",
+        "World Series: Yankees vs Dodgers Game 7",
+        *IDENTITY[59304736],
+    )
     out = repair.plan(rows, categorize_by_rules)
     assert 59304736 not in {i for i, _, _ in out["write"]}
     assert "classifier" in dict(out["skip"])[59304736]
@@ -217,8 +283,9 @@ class _Result:
 
 
 class _Row:
-    def __init__(self, id, cat, name):
+    def __init__(self, id, cat, name, source, external_id):
         self.id, self.llm_sport_category, self.name = id, cat, name
+        self.source, self.external_id = source, external_id
 
 
 class FakeSession:
@@ -233,13 +300,28 @@ class FakeSession:
         self.commits = 0
         self.pending: list[tuple] = []
         self.durable_writes: list[tuple] = []
+        self.read_ids: list[int] = []
 
     async def execute(self, stmt, params):
         sql = str(stmt)
         self.calls.append("execute")
         if sql.lstrip().upper().startswith("SELECT"):
+            self.read_ids = list(params["ids"])
             ids = set(params["ids"])
-            got = _Result(_Row(i, c, n) for i, (c, n) in self.live.items() if i in ids)
+            # The fake hands back only the columns the SELECT names, so a column
+            # dropped from `_read()` is a column this fake stops providing.
+            cols = " ".join(sql.split())
+            got = _Result(
+                _Row(
+                    i,
+                    c,
+                    n,
+                    src if " source," in cols or " source " in cols else None,
+                    ext if "external_id" in cols else None,
+                )
+                for i, (c, n, src, ext) in self.live.items()
+                if i in ids
+            )
             self.after_read()
             return got
         assert sql.lstrip().upper().startswith("UPDATE")
@@ -290,7 +372,7 @@ def test_dry_run_writes_nothing(repair):
     out = _run(repair, s, apply=False)
     assert s.updates == [] and not s.committed
     assert out["mode"] == "dry-run" and out["written"] == 0
-    assert len(out["write"]) == 21
+    assert len(out["write"]) == 20
 
 
 def test_apply_with_the_wrong_plan_hash_writes_nothing(repair):
@@ -304,11 +386,12 @@ def test_apply_with_the_dry_run_hash_writes_the_plan_and_only_the_plan(repair):
     h = _run(repair, FakeSession(LIVE_2026_10_13), apply=False)["plan_hash"]
     s = FakeSession(LIVE_2026_10_13)
     out = _run(repair, s, apply=True, expect_plan_hash=h)
-    assert out["written"] == 21 and s.committed
-    assert {u["id"] for u in s.updates} == set(ISSUE_TABLE) - ALREADY_REPAIRED
-    for i, (before, after) in ISSUE_TABLE.items():
+    assert out["written"] == 20 and s.committed
+    assert {u["id"] for u in s.updates} == set(FORWARD) - ALREADY_REPAIRED
+    for i, (before, after) in FORWARD.items():
         assert s.live[i][0] == after
     assert s.live[38277227][0] == "golf"
+    assert s.live[WRONG_ROW][0] == "basketball"
 
 
 def test_a_cas_that_changes_zero_rows_stops_before_commit(repair):
@@ -342,26 +425,26 @@ def test_the_write_moves_the_category_alone(repair):
 
 
 class RenamedAfterRead(FakeSession):
-    """The open Kalshi row is renamed between `_read()` and its UPDATE; its
-    category stays `basketball`, so only the name half of the CAS can see it."""
+    """A Kalshi row is renamed between `_read()` and its UPDATE; its category
+    stays `basketball`, so only the name half of the CAS can see it."""
 
     RENAMED = "Los Angeles Lakers win the 2027 NBA Finals?"
 
     def after_read(self):
-        self.live[59165075][1] = self.RENAMED
+        self.live[58728438][1] = self.RENAMED
 
 
 def test_a_rename_between_read_and_write_refuses_before_commit(repair):
-    assert categorize_by_rules(RenamedAfterRead.RENAMED) != "politics"
+    assert categorize_by_rules(RenamedAfterRead.RENAMED) != "entertainment"
     h = _run(repair, FakeSession(LIVE_2026_10_13), apply=False)["plan_hash"]
     s = RenamedAfterRead(LIVE_2026_10_13)
-    with pytest.raises(repair.Refused, match="59165075"):
+    with pytest.raises(repair.Refused, match="58728438"):
         _run(repair, s, apply=True, expect_plan_hash=h)
     assert not s.committed
-    assert s.live[59165075] == ["basketball", RenamedAfterRead.RENAMED]
+    assert s.live[58728438][:2] == ["basketball", RenamedAfterRead.RENAMED]
     # The UPDATE carried the name the plan read, not the one it found.
-    sent = [u for u in s.updates if u["id"] == 59165075]
-    assert sent and sent[0]["name"] == LIVE_2026_10_13[59165075][1]
+    sent = [u for u in s.updates if u["id"] == 58728438]
+    assert sent and sent[0]["name"] == LIVE_2026_10_13[58728438][1]
 
 
 def test_every_update_binds_the_observed_name(repair):
@@ -369,7 +452,7 @@ def test_every_update_binds_the_observed_name(repair):
     s = FakeSession(LIVE_2026_10_13)
     _run(repair, s, apply=True, expect_plan_hash=h)
     assert {u["id"]: u["name"] for u in s.updates} == {
-        i: LIVE_2026_10_13[i][1] for i in set(ISSUE_TABLE) - ALREADY_REPAIRED
+        i: LIVE_2026_10_13[i][1] for i in set(FORWARD) - ALREADY_REPAIRED
     }
 
 
@@ -380,7 +463,7 @@ def test_a_null_name_is_compared_null_safely(repair):
     assert "name IS NOT DISTINCT FROM :name" in sql
     assert "name = :name" not in sql
     rows = dict(LIVE_2026_10_13)
-    rows[59304735] = ("darts", None)
+    rows[59304735] = ("darts", None, *IDENTITY[59304735])
     s = FakeSession(rows)
     out = _run(repair, s, apply=False, restore_ids=frozenset({59304735}))
     assert out["written"] == 1 and s.updates[0]["name"] is None
@@ -397,7 +480,7 @@ def test_restore_reverts_only_the_named_ids(repair):
     ids = frozenset(i for i, _, _ in applied["write"])
     s.updates.clear()
     out = _run(repair, s, apply=False, restore_ids=ids)
-    assert out["mode"] == "restore" and out["written"] == 21
+    assert out["mode"] == "restore" and out["written"] == 20
     for i in ids:
         assert s.live[i][0] == ISSUE_TABLE[i][0]
     # The pipeline's own repairs survive the undo.
@@ -407,9 +490,29 @@ def test_restore_reverts_only_the_named_ids(repair):
 
 def test_restore_skips_a_row_moved_after_the_apply(repair):
     rows = dict(LIVE_2026_10_13)
-    rows[59304735] = ("tennis", rows[59304735][1])
+    rows[59304735] = ("tennis", *rows[59304735][1:])
     out = repair.plan(rows, categorize_by_rules, restore_ids=frozenset({59304735}))
     assert out["write"] == []
+
+
+def test_the_undo_line_run_3172_printed_still_restores_all_21(repair):
+    # `run.3172` printed this UNDO (its log, 19:12:28Z). Moving 59165075 to
+    # REVERSED must not make that command refuse, nor make it skip the 21st id.
+    printed = (
+        "59304735,59304736,59304737,59304738,59304739,59304740,59304741,59304742,"
+        "59374602,59374603,59374604,59374605,59428372,58416367,35418786,31169677,"
+        "58728438,59170844,59170845,59170847,59165075"
+    )
+    ids = repair.parse_ids(printed)
+    after_apply = {
+        i: ((ISSUE_TABLE[i][1], *rest) if i in ISSUE_TABLE else (c, *rest))
+        for i, (c, *rest) in LIVE_2026_10_13.items()
+    }
+    s = FakeSession(after_apply)
+    out = _run(repair, s, apply=False, restore_ids=ids)
+    assert out["written"] == 21
+    assert {i: s.live[i][0] for i in ids} == {i: ISSUE_TABLE[i][0] for i in ids}
+    assert s.live[58015857][0] == "tech" and s.live[59520510][0] == "politics"
 
 
 def test_restore_refuses_unpinned_or_empty_ids(repair):
@@ -666,7 +769,7 @@ def _after_first_commit(s) -> list[str]:
 #: The wrapper's EXCEPTION exit: cleanup only. Its NORMAL exit is ["commit", ...].
 _CLEANUP = ["rollback", "close", "dispose"]
 
-_PLAN_WRITES = sorted((i, *ISSUE_TABLE[i]) for i in set(ISSUE_TABLE) - ALREADY_REPAIRED)
+_PLAN_WRITES = sorted((i, *FORWARD[i]) for i in set(FORWARD) - ALREADY_REPAIRED)
 
 
 def test_the_rig_is_the_production_wrapper_and_its_normal_exit_commits(
@@ -699,7 +802,7 @@ def test_a_lost_commit_ack_on_apply_is_unknown_not_nothing_committed(
     assert report["outcome"] == "UNKNOWN"
     assert report["mode"] == "apply"
     assert report["plan_hash"] == h
-    assert report["statements_changed"] == 21
+    assert report["statements_changed"] == 20
     assert sorted(tuple(w) for w in report["write"]) == _PLAN_WRITES
     assert "08006" in report["unknown"]
     assert report["readback"].endswith(
@@ -722,15 +825,16 @@ def test_a_lost_commit_ack_is_never_followed_by_a_second_write_commit_or_restore
     # COMMIT from the wrapper's normal exit, no retry, no restore write, and the
     # repair itself issues no rollback dressed up as evidence about the COMMIT.
     assert _after_first_commit(s) == _CLEANUP
-    assert len(s.updates) == 21
+    assert len(s.updates) == 20
     assert sorted(s.durable_writes) == _PLAN_WRITES  # carried once, by the one COMMIT
-    assert all(s.live[i][0] == ISSUE_TABLE[i][1] for i in ISSUE_TABLE)
+    assert all(s.live[i][0] == FORWARD[i][1] for i in FORWARD)
+    assert s.live[WRONG_ROW][0] == "basketball"
 
 
 def test_a_lost_commit_ack_on_restore_is_unknown_too(repair, monkeypatch, capsys):
     rows = {
-        i: ((ISSUE_TABLE[i][1], n) if i in ISSUE_TABLE else (c, n))
-        for i, (c, n) in LIVE_2026_10_13.items()
+        i: ((ISSUE_TABLE[i][1], *rest) if i in ISSUE_TABLE else (c, *rest))
+        for i, (c, *rest) in LIVE_2026_10_13.items()
     }
     ids = "59304735,59165075"
     s = LostCommitAck(rows)
@@ -755,7 +859,7 @@ def test_run_raises_unknown_at_the_commit_boundary_with_the_plan_identity(repair
     assert not isinstance(caught.value, repair.Refused)
     report = caught.value.report
     assert report["outcome"] == "UNKNOWN" and report["mode"] == "apply"
-    assert report["plan_hash"] == h and report["statements_changed"] == 21
+    assert report["plan_hash"] == h and report["statements_changed"] == 20
     assert s.calls[-1] == "commit" and not s.rolled_back
 
 
@@ -789,7 +893,7 @@ def test_a_cleanup_failure_after_unknown_keeps_the_report_and_exit_3(
     assert code == 3
     report = _json_tail(captured.out)
     assert report["outcome"] == "UNKNOWN" and report["mode"] == "apply"
-    assert report["plan_hash"] == h and report["statements_changed"] == 21
+    assert report["plan_hash"] == h and report["statements_changed"] == 20
     assert sorted(tuple(w) for w in report["write"]) == _PLAN_WRITES
     assert "nothing committed" not in captured.out
     assert "OperationalError" in captured.err and "proves nothing" in captured.err
@@ -890,9 +994,160 @@ def test_an_acknowledged_commit_still_reports_the_original_success(
     assert code == 0 and s.committed
     assert "UNKNOWN" not in out
     report = _json_tail(out[: out.index("UNDO:")])
-    assert report["mode"] == "apply" and report["written"] == 21
+    assert report["mode"] == "apply" and report["written"] == 20
     assert report["plan_hash"] == h
     assert "--restore --ids" in out
     # The repair's COMMIT carried the plan; the wrapper's exit COMMIT carried nothing.
     assert sorted(s.durable_writes) == _PLAN_WRITES
     assert s.calls[-4:] == ["commit", "commit", "close", "dispose"]
+
+
+# ── 9. a title-only answer never overrides the provider's league ─────────────
+#
+# 59165075 got onto the table because the 2026-08-24 diff, the plan's gate and
+# the C1 corpus all asked `categorize_by_rules` about the TITLE ALONE, where a
+# bare "governor" answers politics. The Kalshi ingest reads the ticker first and
+# answers basketball; that stored value was right. These arms pin both halves.
+
+LAKERS = LIVE_2026_10_13[WRONG_ROW][1]
+LAKERS_TICKER = IDENTITY[WRONG_ROW][1]
+
+# Production as Root read it after `run.6083` (2026-10-18 19:55:53Z, the 24-id
+# readback): the 20 applied rows hold their `after`, the two pipeline repairs
+# hold theirs, the no-op holds golf — and 59165075 is basketball again.
+LIVE_2026_10_18 = {
+    i: ((FORWARD[i][1], *rest) if i in FORWARD else (c, *rest))
+    for i, (c, *rest) in LIVE_2026_10_13.items()
+}
+
+
+def test_the_title_alone_says_politics_and_the_league_says_basketball():
+    # The mistake, reproduced: title-only rules on the bare word.
+    assert categorize_by_rules(LAKERS) == "politics"
+    # With the league the provider gave, the same rules answer basketball.
+    assert categorize_by_rules(LAKERS, "basketball_nba") == "basketball"
+    # And the Kalshi ingest itself — ticker first — never filed it politics.
+    from app.tasks.kalshi import _categorize_kalshi_market
+
+    assert _categorize_kalshi_market(LAKERS, None, event_ticker=LAKERS_TICKER) == (
+        "basketball"
+    )
+
+
+def test_provider_category_reads_the_ticker_map_and_nothing_else(repair):
+    assert repair.provider_category("kalshi", LAKERS_TICKER) == "basketball"
+    # Kalshi tickers that name no league, and every Polymarket id, name nothing.
+    assert repair.provider_category("kalshi", "KXRT-PRA") is None
+    assert repair.provider_category("kalshi", "KXCOMPANYACTIONANTH-27") is None
+    assert repair.provider_category("polymarket", "880911") is None
+    assert repair.provider_category("kalshi", None) is None
+    # The source matters: the same string under another provider names nothing.
+    assert repair.provider_category("polymarket", LAKERS_TICKER) is None
+
+
+@pytest.mark.parametrize("market_id", sorted(FORWARD))
+def test_no_forward_row_disagrees_with_its_own_provider(repair, market_id):
+    source, external_id = IDENTITY[market_id]
+    league = repair.provider_category(source, external_id)
+    assert league in (None, FORWARD[market_id][1])
+
+
+def test_production_today_plans_zero_writes(repair):
+    # PARENT-RED: the operator before this change, dry-run on this state, plans
+    # 59165075 basketball → politics — the old forward plan re-applying the
+    # mistake to the row the one-row restore just fixed.
+    s = FakeSession(LIVE_2026_10_18)
+    out = _run(repair, s, apply=False)
+    assert out["write"] == []
+    assert out["plan_hash"] == repair.plan_hash([])
+    assert out["reversed"] == {WRONG_ROW: "basketball"}
+    assert {i for i, _ in out["skip"]} == set(FORWARD)
+    assert all("already" in reason for _, reason in out["skip"])
+
+
+def test_an_apply_on_production_today_writes_nothing_to_the_lakers_row(repair):
+    s = FakeSession(LIVE_2026_10_18)
+    out = _run(repair, s, apply=True, expect_plan_hash=repair.plan_hash([]))
+    assert out["written"] == 0 and s.updates == []
+    assert s.live[WRONG_ROW][0] == "basketball"
+
+
+def test_the_provider_gate_skips_the_row_even_if_it_is_pinned_again(
+    repair, monkeypatch
+):
+    # Belt and braces: a future edit that puts the pair back into PINNED still
+    # cannot move it, because its own ticker names basketball.
+    monkeypatch.setattr(repair, "PINNED", {**repair.PINNED, **repair.REVERSED})
+    s = FakeSession(LIVE_2026_10_18)
+    out = _run(repair, s, apply=False)
+    assert out["write"] == []
+    reason = dict(out["skip"])[WRONG_ROW]
+    assert LAKERS_TICKER in reason and "'basketball'" in reason
+
+
+def test_the_provider_gate_needs_the_identity_the_read_returns(repair, monkeypatch):
+    # The gate is only as good as `_read()`: a SELECT that stops naming source or
+    # external_id hands the gate None and the title wins again. FakeSession only
+    # provides the columns the SELECT names, so this arm reddens on that edit.
+    monkeypatch.setattr(repair, "PINNED", {**repair.PINNED, **repair.REVERSED})
+    s = FakeSession(LIVE_2026_10_18)
+    rows = asyncio.run(repair._read(s))
+    assert rows[WRONG_ROW][2:] == ("kalshi", LAKERS_TICKER)
+
+
+# Real governor's races must keep their politics answer: the gate reads the
+# venue's league map, not a city or team list, so a Kalshi politics ticker (which
+# maps to no sport) or a Polymarket id leaves the title as the evidence.
+REAL_GOVERNOR = [
+    (90000001, "Colorado Governor winner?", "kalshi", "KXGOVCO-26"),
+    (90000002, "California Governor winner?", "kalshi", "KXGOVCA-26"),
+    (90000003, "Who will be the next governor of New York?", "polymarket", "912345"),
+    # A Los Angeles race, so "Los Angeles" alone cannot be what decides.
+    (90000004, "Los Angeles Mayoral Election Winner", "polymarket", "912346"),
+]
+
+
+@pytest.mark.parametrize("market_id,name,source,external_id", REAL_GOVERNOR)
+def test_a_real_political_race_is_still_written(
+    repair, monkeypatch, market_id, name, source, external_id
+):
+    assert categorize_by_rules(name) == "politics"
+    assert repair.provider_category(source, external_id) is None
+    monkeypatch.setattr(repair, "PINNED", {market_id: ("basketball", "politics")})
+    out = repair.plan(
+        {market_id: ("basketball", name, source, external_id)}, categorize_by_rules
+    )
+    assert out["write"] == [(market_id, "basketball", "politics")]
+
+
+def test_a_sibling_nba_governor_ticker_is_skipped_too(repair, monkeypatch):
+    # Not a list of one id: any KXNBA… row, any team, is held by its ticker.
+    monkeypatch.setattr(repair, "PINNED", {90000005: ("basketball", "politics")})
+    rows = {
+        90000005: (
+            "basketball",
+            "Boston C next governor before Jan 1, 2027?",
+            "kalshi",
+            "KXNBANEXTGOVERNOR-27JAN01BOS",
+        )
+    }
+    assert categorize_by_rules(rows[90000005][1]) == "politics"
+    out = repair.plan(rows, categorize_by_rules)
+    assert out["write"] == [] and "provider id" in dict(out["skip"])[90000005]
+
+
+def test_the_historical_plan_identities_still_reproduce(repair):
+    # The applied plan (run.3172, 21 written) is the head's 20 forward writes
+    # plus the reversed pair; the one-row restore (run.6083) is the reversed pair
+    # inverted. Both hashes are the ones those runs printed.
+    head = repair.plan(LIVE_2026_10_13, categorize_by_rules)["write"]
+    assert repair.plan_hash(head + [(WRONG_ROW, "basketball", "politics")]) == (
+        "190cf0e461b3a687"
+    )
+    after_apply = dict(LIVE_2026_10_18)
+    after_apply[WRONG_ROW] = ("politics", *LIVE_2026_10_18[WRONG_ROW][1:])
+    undo = repair.plan(
+        after_apply, categorize_by_rules, restore_ids=frozenset({WRONG_ROW})
+    )
+    assert undo["write"] == [(WRONG_ROW, "politics", "basketball")]
+    assert undo["plan_hash"] == "419f15edac6ddbba"
