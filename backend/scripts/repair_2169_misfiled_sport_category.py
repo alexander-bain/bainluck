@@ -95,6 +95,12 @@ no restore. A cancel or interrupt that lands on the COMMIT prints the same repor
 and keeps propagating as itself. The readback is a dry run: every id of an apply
 that landed reads ``already`` its ``after``; one that did not is a write again.
 
+``get_task_session`` COMMITs again on a normal exit, so the run leaves it by the
+exception path instead: the wrapper then rolls back, closes and disposes, which is
+cleanup on a dead connection and evidence of nothing. A failure in that cleanup
+is noted on stderr and changes neither the report, the exit 3, nor the type of a
+cancel or interrupt.
+
 DELIBERATELY NOT TOUCHED
 ------------------------
 
@@ -442,45 +448,77 @@ async def main() -> int:
         f"heroku run:detached -a {os.environ['HEROKU_APP_NAME']} -- "
         "python3 scripts/repair_2169_misfiled_sport_category.py"
     )
-    async with get_task_session(
-        statement_timeout_ms=STATEMENT_TIMEOUT_MS, lock_timeout_ms=LOCK_TIMEOUT_MS
-    ) as session:
-        try:
-            out = await run(
-                session,
-                categorize_by_rules,
-                apply=args.apply,
-                expect_plan_hash=args.expect_plan_hash,
-                restore_ids=restore_ids,
-            )
-        except Unknown as exc:
-            # No rollback here: after an unacknowledged COMMIT it would prove nothing.
-            print(json.dumps(dict(exc.report, readback=readback), indent=2))
-            return 3
-        except Refused as exc:
-            await session.rollback()
-            print(f"REFUSED: {exc}")
-            return 2
-        except DBAPIError as exc:
-            # A budget firing (lock_timeout 55P03, statement_timeout 57014) or any
-            # other server refusal BEFORE the COMMIT was sent (``run`` turns a
-            # failure at the COMMIT into ``Unknown``): the transaction rolls back
-            # whole, so no row of the plan is committed, and the run says so.
-            await session.rollback()
-            code = getattr(exc.orig, "sqlstate", None) or getattr(
-                exc.orig, "pgcode", None
-            )
-            print(
-                f"REFUSED: the database stopped the run ({type(exc.orig).__name__}, "
-                f"sqlstate {code}); rolled back, nothing committed — re-run the dry "
-                "run when production is quieter"
-            )
-            return 2
-        except BaseException as exc:
-            report = getattr(exc, "commit_unknown", None)
-            if report is not None:
-                print(json.dumps(dict(report, readback=readback), indent=2))
+    # After an unacknowledged COMMIT the session must leave ``get_task_session``
+    # ABNORMALLY. A ``return`` inside the ``async with`` is a normal exit, and the
+    # wrapper's normal exit runs ``await session.commit()`` again — a second COMMIT
+    # after the one nobody heard back from. So the UNKNOWN report is printed and
+    # the exception that carried it is re-raised out of the block; the wrapper's
+    # exception path (rollback, close, dispose) is cleanup on a dead connection and
+    # says nothing about the COMMIT. If that cleanup fails too, its failure must not
+    # turn exit 3 into a traceback, nor a cancel into some other exception.
+    unknown: dict | None = None
+    carried: BaseException | None = None
+    try:
+        async with get_task_session(
+            statement_timeout_ms=STATEMENT_TIMEOUT_MS, lock_timeout_ms=LOCK_TIMEOUT_MS
+        ) as session:
+            try:
+                out = await run(
+                    session,
+                    categorize_by_rules,
+                    apply=args.apply,
+                    expect_plan_hash=args.expect_plan_hash,
+                    restore_ids=restore_ids,
+                )
+            except Refused as exc:
+                await session.rollback()
+                print(f"REFUSED: {exc}")
+                return 2
+            except DBAPIError as exc:
+                # A budget firing (lock_timeout 55P03, statement_timeout 57014) or
+                # any other server refusal BEFORE the COMMIT was sent (``run`` turns
+                # a failure at the COMMIT into ``Unknown``): the transaction rolls
+                # back whole, so no row of the plan is committed, and the run says so.
+                await session.rollback()
+                code = getattr(exc.orig, "sqlstate", None) or getattr(
+                    exc.orig, "pgcode", None
+                )
+                print(
+                    f"REFUSED: the database stopped the run ({type(exc.orig).__name__}, "
+                    f"sqlstate {code}); rolled back, nothing committed — re-run the dry "
+                    "run when production is quieter"
+                )
+                return 2
+            except BaseException as exc:
+                # ``Unknown`` (a failure at the COMMIT), or a cancel/interrupt that
+                # landed on it and carries the same report. Anything else is not ours.
+                report = (
+                    exc.report
+                    if isinstance(exc, Unknown)
+                    else getattr(exc, "commit_unknown", None)
+                )
+                if report is not None:
+                    unknown, carried = dict(report, readback=readback), exc
+                    print(json.dumps(unknown, indent=2))
+                raise
+    except BaseException as exc:
+        if unknown is None:
             raise
+        if exc is not carried:
+            print(
+                f"note: the session's cleanup after the UNKNOWN report raised "
+                f"{type(exc).__name__}; it proves nothing about the COMMIT above",
+                file=sys.stderr,
+            )
+        if isinstance(carried, Unknown):
+            if not isinstance(exc, Exception):
+                raise  # an interrupt during the cleanup keeps propagating as itself
+            return 3
+        if exc is carried:
+            raise
+        # A cancel or interrupt on the COMMIT keeps its own type even when the
+        # cleanup raised something else on the way out.
+        raise carried
     print(json.dumps(out, indent=2))
     if out["mode"] == "apply" and out["written"]:
         ids = ",".join(str(i) for i, _, _ in out["write"])

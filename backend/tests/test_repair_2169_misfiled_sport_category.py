@@ -17,9 +17,11 @@
    budgets on the session, and a budget firing refuses with a rollback, never a
    commit.
 8. **A COMMIT that does not return is UNKNOWN** (exit 3, mode + plan hash + the
-   exact writes), never "rolled back, nothing committed": no rollback, retry or
-   restore follows it, a cancel on it keeps its type, and a refusal or cancel
-   BEFORE the COMMIT keeps its definite answer.
+   exact writes), never "rolled back, nothing committed": no second COMMIT, retry
+   or restore follows it — including the one ``get_task_session``'s normal exit
+   would send, so these arms drive the PRODUCTION wrapper with an inert engine and
+   session — a cancel on it keeps its type, a failing cleanup changes neither, and
+   a refusal or cancel BEFORE the COMMIT keeps its definite answer.
 """
 
 from __future__ import annotations
@@ -225,9 +227,16 @@ class FakeSession:
         self.rowcount = rowcount
         self.updates: list[dict] = []
         self.committed = False
+        # What the session saw, in order, and which writes a COMMIT carried — so a
+        # test driving the REAL ``get_task_session`` can see its exit path too.
+        self.calls: list[str] = []
+        self.commits = 0
+        self.pending: list[tuple] = []
+        self.durable_writes: list[tuple] = []
 
     async def execute(self, stmt, params):
         sql = str(stmt)
+        self.calls.append("execute")
         if sql.lstrip().upper().startswith("SELECT"):
             ids = set(params["ids"])
             got = _Result(_Row(i, c, n) for i, (c, n) in self.live.items() if i in ids)
@@ -243,6 +252,7 @@ class FakeSession:
             matches = matches and row[1] == params["name"]
         if self.rowcount == 1 and matches:
             row[0] = params["target"]
+            self.pending.append((params["id"], params["source"], params["target"]))
             return _Result(rowcount=1)
         return _Result(rowcount=0 if self.rowcount == 1 else self.rowcount)
 
@@ -250,10 +260,25 @@ class FakeSession:
         """A concurrent writer's hook: runs between the read and the first UPDATE."""
 
     async def commit(self):
+        self.calls.append("commit")
+        self.commits += 1
         self.committed = True
+        self.durable_writes += self.pending
+        self.pending = []
 
     async def rollback(self):
+        self.calls.append("rollback")
         self.rolled_back = True
+        self.pending = []
+
+    async def close(self):
+        self.calls.append("close")
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *exc):
+        return False
 
 
 def _run(repair, session, **kw):
@@ -511,50 +536,117 @@ def test_a_lock_timeout_refuses_and_rolls_back_without_commit(
 # rollback afterwards cannot undo or disprove a durable commit, so a CLI that
 # prints "rolled back, nothing committed" after it is a false zero-write claim.
 # These fakes mark their state durable FIRST and then lose the acknowledgement.
+#
+# Every ``main()`` arm here runs through the PRODUCTION ``get_task_session``; only
+# the engine and session factory it builds are inert recorders. That wrapper
+# COMMITs again on a NORMAL exit, and a ``return 3`` inside its ``async with`` is
+# a normal exit (Root's hold on ca5ba491 / CERT-4215). A yielding fake context has
+# no such exit, so it cannot see that second COMMIT.
 
 
 class _ConnectionFailure(Exception):
     sqlstate = "08006"
 
 
-class LostCommitAck(FakeSession):
-    """COMMIT becomes durable on the server; its acknowledgement never arrives."""
+def _lost_ack():
+    from sqlalchemy.exc import OperationalError
 
-    def __init__(self, live, raises=None):
+    return OperationalError("COMMIT", {}, _ConnectionFailure("connection lost"))
+
+
+class LostCommitAck(FakeSession):
+    """COMMIT becomes durable on the server; its acknowledgement never arrives.
+
+    ``then`` is what a SECOND commit would do if anything sent one: ``"lost"``
+    (the dead connection refuses again) or ``"ack"`` (it answers). Either way the
+    repair must never send it. ``rollback_raises`` / ``close_raises`` make the
+    wrapper's cleanup fail on the dead connection.
+    """
+
+    def __init__(
+        self, live, raises=None, then="lost", rollback_raises=None, close_raises=None
+    ):
         super().__init__(live)
         self.durable = False
-        self.commits = 0
         self.rolled_back = False
-        self.calls: list[str] = []
         self._raises = raises
-
-    async def execute(self, stmt, params):
-        self.calls.append("execute")
-        return await super().execute(stmt, params)
+        self._then = then
+        self._rollback_raises = rollback_raises
+        self._close_raises = close_raises
 
     async def commit(self):
         self.calls.append("commit")
         self.commits += 1
+        if self.commits > 1 and self._then == "ack":
+            self.committed = True
+            return
         self.durable = True  # the server applied it ...
-        if self._raises is not None:
-            raise self._raises
-        from sqlalchemy.exc import OperationalError
-
+        self.durable_writes += self.pending
+        self.pending = []
         # ... and the connection died before the client heard back.
-        raise OperationalError("COMMIT", {}, _ConnectionFailure("connection lost"))
+        raise self._raises if self._raises is not None else _lost_ack()
 
     async def rollback(self):
+        # A client rollback cannot reach a COMMIT the server already made durable.
         self.calls.append("rollback")
         self.rolled_back = True
+        if self._rollback_raises is not None:
+            raise self._rollback_raises
+
+    async def close(self):
+        self.calls.append("close")
+        if self._close_raises is not None:
+            raise self._close_raises
 
 
-def _main(repair, monkeypatch, session, argv):
+class _InertEngine:
+    def __init__(self, calls, raises=None):
+        self._calls, self._raises = calls, raises
+
+    async def dispose(self):
+        self._calls.append("dispose")
+        if self._raises is not None:
+            raise self._raises
+
+
+def _wire_real_task_session(monkeypatch, session, dispose_raises=None) -> dict:
+    """Keep ``app.tasks.base.get_task_session`` itself; make only what it builds inert.
+
+    Returns the kwargs the wrapper handed its engine factory.
+    """
     import app.tasks.base as base
 
-    monkeypatch.setattr(base, "get_task_session", _fake_task_session(session, []))
+    engine = _InertEngine(session.calls, dispose_raises)
+    seen: dict = {}
+
+    def engine_factory(**kwargs):
+        seen.update(kwargs)
+        return engine
+
+    def session_maker(bound, **kwargs):
+        assert bound is engine
+        return lambda: session
+
+    monkeypatch.setattr(base, "_get_task_engine", engine_factory)
+    monkeypatch.setattr(base, "async_sessionmaker", session_maker)
+    return seen
+
+
+def _main(repair, monkeypatch, session, argv, dispose_raises=None):
+    import app.tasks.base as base
+
+    # The production wrapper, not a test double left behind by another arm.
+    assert base.get_task_session.__module__ == "app.tasks.base"
+    assert base.get_task_session.__wrapped__.__qualname__ == "get_task_session"
+    seen = _wire_real_task_session(monkeypatch, session, dispose_raises)
     monkeypatch.setenv("HEROKU_APP_NAME", "bainluck-heavy")
     monkeypatch.setattr(sys, "argv", ["repair_2169", *argv])
-    return asyncio.run(repair.main())
+    code = asyncio.run(repair.main())
+    assert seen == {
+        "statement_timeout_ms": repair.STATEMENT_TIMEOUT_MS,
+        "lock_timeout_ms": repair.LOCK_TIMEOUT_MS,
+    }
+    return code
 
 
 def _hash(repair):
@@ -567,24 +659,48 @@ def _json_tail(out: str) -> dict:
     return json.loads(out[out.index("{") :])
 
 
-def test_a_lost_commit_ack_on_apply_is_unknown_not_nothing_committed(
+def _after_first_commit(s) -> list[str]:
+    return s.calls[s.calls.index("commit") + 1 :]
+
+
+#: The wrapper's EXCEPTION exit: cleanup only. Its NORMAL exit is ["commit", ...].
+_CLEANUP = ["rollback", "close", "dispose"]
+
+_PLAN_WRITES = sorted((i, *ISSUE_TABLE[i]) for i in set(ISSUE_TABLE) - ALREADY_REPAIRED)
+
+
+def test_the_rig_is_the_production_wrapper_and_its_normal_exit_commits(
     repair, monkeypatch, capsys
 ):
+    # The rig's own control: if the inert wiring dropped the after-yield COMMIT,
+    # every "no second COMMIT" arm below would pass for the wrong reason.
+    s = FakeSession(LIVE_2026_10_13)
+    assert _main(repair, monkeypatch, s, []) == 0
+    assert s.calls == ["execute", "commit", "close", "dispose"]
+    assert s.durable_writes == [] and s.updates == []
+    assert '"mode": "dry-run"' in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("then", ["lost", "ack"])
+def test_a_lost_commit_ack_on_apply_is_unknown_not_nothing_committed(
+    repair, monkeypatch, capsys, then
+):
     h = _hash(repair)
-    s = LostCommitAck(LIVE_2026_10_13)
+    s = LostCommitAck(LIVE_2026_10_13, then=then)
     code = _main(repair, monkeypatch, s, ["--apply", "--expect-plan-hash", h])
-    out = capsys.readouterr().out
+    captured = capsys.readouterr()
+    out = captured.out
     assert s.durable  # the specimen: the writes ARE durable
     assert code == 3  # neither success (0) nor a definite refusal (2)
     assert "nothing committed" not in out and "rolled back" not in out
     assert "REFUSED" not in out and "UNDO" not in out
+    assert "Traceback" not in captured.err
     report = _json_tail(out)
     assert report["outcome"] == "UNKNOWN"
     assert report["mode"] == "apply"
     assert report["plan_hash"] == h
     assert report["statements_changed"] == 21
-    assert {i for i, _, _ in report["write"]} == set(ISSUE_TABLE) - ALREADY_REPAIRED
-    assert all(tuple(w[1:]) == ISSUE_TABLE[w[0]] for w in report["write"])
+    assert sorted(tuple(w) for w in report["write"]) == _PLAN_WRITES
     assert "08006" in report["unknown"]
     assert report["readback"].endswith(
         "python3 scripts/repair_2169_misfiled_sport_category.py"
@@ -593,19 +709,21 @@ def test_a_lost_commit_ack_on_apply_is_unknown_not_nothing_committed(
     assert "written" not in report
 
 
+@pytest.mark.parametrize("then", ["lost", "ack"])
 def test_a_lost_commit_ack_is_never_followed_by_a_second_write_commit_or_restore(
-    repair, monkeypatch, capsys
+    repair, monkeypatch, capsys, then
 ):
     h = _hash(repair)
-    s = LostCommitAck(LIVE_2026_10_13)
+    s = LostCommitAck(LIVE_2026_10_13, then=then)
     _main(repair, monkeypatch, s, ["--apply", "--expect-plan-hash", h])
     capsys.readouterr()
     assert s.commits == 1
-    # Nothing at all runs after the COMMIT: no retry, no restore, and no client
-    # rollback dressed up as evidence about the commit.
-    assert s.calls[-1] == "commit" and s.calls.count("commit") == 1
-    assert not s.rolled_back
+    # After the COMMIT: only the wrapper's exception-path cleanup. No second
+    # COMMIT from the wrapper's normal exit, no retry, no restore write, and the
+    # repair itself issues no rollback dressed up as evidence about the COMMIT.
+    assert _after_first_commit(s) == _CLEANUP
     assert len(s.updates) == 21
+    assert sorted(s.durable_writes) == _PLAN_WRITES  # carried once, by the one COMMIT
     assert all(s.live[i][0] == ISSUE_TABLE[i][1] for i in ISSUE_TABLE)
 
 
@@ -626,7 +744,7 @@ def test_a_lost_commit_ack_on_restore_is_unknown_too(repair, monkeypatch, capsys
         [59165075, "politics", "basketball"],
         [59304735, "darts", "baseball"],
     ]
-    assert s.commits == 1 and not s.rolled_back and s.calls[-1] == "commit"
+    assert s.commits == 1 and _after_first_commit(s) == _CLEANUP
 
 
 def test_run_raises_unknown_at_the_commit_boundary_with_the_plan_identity(repair):
@@ -638,6 +756,44 @@ def test_run_raises_unknown_at_the_commit_boundary_with_the_plan_identity(repair
     report = caught.value.report
     assert report["outcome"] == "UNKNOWN" and report["mode"] == "apply"
     assert report["plan_hash"] == h and report["statements_changed"] == 21
+    assert s.calls[-1] == "commit" and not s.rolled_back
+
+
+def _broken(what: str):
+    from sqlalchemy.exc import OperationalError
+
+    return OperationalError(
+        what, {}, _ConnectionFailure(f"{what} on a dead connection")
+    )
+
+
+@pytest.mark.parametrize("fails", ["rollback", "close", "dispose", "all"])
+def test_a_cleanup_failure_after_unknown_keeps_the_report_and_exit_3(
+    repair, monkeypatch, capsys, fails
+):
+    h = _hash(repair)
+    s = LostCommitAck(
+        LIVE_2026_10_13,
+        rollback_raises=_broken("ROLLBACK") if fails in ("rollback", "all") else None,
+        close_raises=_broken("close") if fails in ("close", "all") else None,
+    )
+    dispose = _broken("dispose") if fails in ("dispose", "all") else None
+    code = _main(
+        repair,
+        monkeypatch,
+        s,
+        ["--apply", "--expect-plan-hash", h],
+        dispose_raises=dispose,
+    )
+    captured = capsys.readouterr()
+    assert code == 3
+    report = _json_tail(captured.out)
+    assert report["outcome"] == "UNKNOWN" and report["mode"] == "apply"
+    assert report["plan_hash"] == h and report["statements_changed"] == 21
+    assert sorted(tuple(w) for w in report["write"]) == _PLAN_WRITES
+    assert "nothing committed" not in captured.out
+    assert "OperationalError" in captured.err and "proves nothing" in captured.err
+    assert s.commits == 1 and "commit" not in _after_first_commit(s)
 
 
 @pytest.mark.parametrize("raised", ["cancelled", "interrupt"])
@@ -653,7 +809,35 @@ def test_an_interrupted_commit_keeps_its_type_and_still_says_unknown(
     assert "nothing committed" not in out and "REFUSED" not in out
     report = _json_tail(out)
     assert report["outcome"] == "UNKNOWN" and report["plan_hash"] == h
-    assert s.commits == 1 and not s.rolled_back
+    # The wrapper's BaseException exit: no rollback, no COMMIT — close and dispose.
+    assert s.commits == 1 and _after_first_commit(s) == ["close", "dispose"]
+
+
+@pytest.mark.parametrize("raised", ["cancelled", "interrupt"])
+def test_a_cleanup_failure_never_replaces_an_interrupted_commit(
+    repair, monkeypatch, capsys, raised
+):
+    exc = asyncio.CancelledError() if raised == "cancelled" else KeyboardInterrupt()
+    h = _hash(repair)
+    s = LostCommitAck(LIVE_2026_10_13, raises=exc, close_raises=_broken("close"))
+    with pytest.raises(type(exc)) as caught:
+        _main(repair, monkeypatch, s, ["--apply", "--expect-plan-hash", h])
+    assert caught.value is exc
+    captured = capsys.readouterr()
+    assert _json_tail(captured.out)["outcome"] == "UNKNOWN"
+    assert "proves nothing" in captured.err
+    assert s.commits == 1
+
+
+def test_an_interrupt_during_the_cleanup_after_unknown_propagates_as_itself(
+    repair, monkeypatch, capsys
+):
+    h = _hash(repair)
+    s = LostCommitAck(LIVE_2026_10_13, rollback_raises=KeyboardInterrupt())
+    with pytest.raises(KeyboardInterrupt):
+        _main(repair, monkeypatch, s, ["--apply", "--expect-plan-hash", h])
+    assert _json_tail(capsys.readouterr().out)["outcome"] == "UNKNOWN"
+    assert s.commits == 1
 
 
 def test_a_cancel_before_the_commit_is_not_reported_unknown(
@@ -669,21 +853,31 @@ def test_a_cancel_before_the_commit_is_not_reported_unknown(
     with pytest.raises(asyncio.CancelledError):
         _main(repair, monkeypatch, s, ["--apply", "--expect-plan-hash", _hash(repair)])
     assert "UNKNOWN" not in capsys.readouterr().out
-    assert not s.committed
+    assert s.commits == 0 and s.durable_writes == []
+    assert s.calls[-2:] == ["close", "dispose"]
 
 
+@pytest.mark.parametrize("refusal", ["lock-timeout", "wrong-plan-hash"])
 def test_a_refusal_before_the_commit_still_says_nothing_committed(
-    repair, monkeypatch, capsys
+    repair, monkeypatch, capsys, refusal
 ):
-    # The control for the arms above: a server refusal BEFORE COMMIT is sent is a
-    # definite rollback, and keeps its exit 2 and its words.
-    s = LockedOnThirdWrite(LIVE_2026_10_13)
-    code = _main(
-        repair, monkeypatch, s, ["--apply", "--expect-plan-hash", _hash(repair)]
-    )
+    # The control for the arms above: a refusal BEFORE COMMIT is sent is a definite
+    # rollback, and keeps its exit 2 and its words. The wrapper's normal exit still
+    # COMMITs afterwards, but after the rollback that COMMIT carries nothing.
+    if refusal == "lock-timeout":
+        s, h, words = (
+            LockedOnThirdWrite(LIVE_2026_10_13),
+            _hash(repair),
+            "nothing committed",
+        )
+    else:
+        s, h, words = FakeSession(LIVE_2026_10_13), "0" * 16, "plan hash is"
+    code = _main(repair, monkeypatch, s, ["--apply", "--expect-plan-hash", h])
     out = capsys.readouterr().out
-    assert code == 2 and "nothing committed" in out and "UNKNOWN" not in out
-    assert s.rolled_back and not s.committed
+    assert code == 2 and out.startswith("REFUSED:") and words in out
+    assert "UNKNOWN" not in out
+    assert s.rolled_back and s.durable_writes == []
+    assert s.calls[-4:] == ["rollback", "commit", "close", "dispose"]
 
 
 def test_an_acknowledged_commit_still_reports_the_original_success(
@@ -699,3 +893,6 @@ def test_an_acknowledged_commit_still_reports_the_original_success(
     assert report["mode"] == "apply" and report["written"] == 21
     assert report["plan_hash"] == h
     assert "--restore --ids" in out
+    # The repair's COMMIT carried the plan; the wrapper's exit COMMIT carried nothing.
+    assert sorted(s.durable_writes) == _PLAN_WRITES
+    assert s.calls[-4:] == ["commit", "commit", "close", "dispose"]
