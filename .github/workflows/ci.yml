@@ -6991,6 +6991,19 @@ jobs:
             echo "::error::#10090 status-release contract did not run all seven cases (four promoted, three resumed)"
             exit 1
           }
+          # CERT-4214's witnesses for the same commit: a genuine settlement
+          # written while the later arms run is kept, and the publication
+          # hooks keep committed frames across the commit and expunge.
+          python -m pytest tests/integration/test_status_promotion_commit_settlement_and_hooks_pg_10090.py \
+            -v -rs 2>&1 | tee /tmp/statussettlehooks10090.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/statussettlehooks10090.txt; then
+            echo "::error::#10090 settlement and hook contract SKIPPED — the gate did not run"
+            exit 1
+          fi
+          grep -qE "[^0-9]2 passed[,[:space:]]" /tmp/statussettlehooks10090.txt || {
+            echo "::error::#10090 settlement and hook contract did not run both cases"
+            exit 1
+          }
 
       - name: "#10022 an open-contract leg the socket sees finalize is graded alone (real Postgres)"
         # A finished CHC–SD series kept pricing scorelines that could no longer
