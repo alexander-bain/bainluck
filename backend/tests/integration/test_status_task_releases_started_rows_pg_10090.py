@@ -2,10 +2,11 @@
 
 ``transition_event_statuses`` used to hold every row its scheduled → live arm
 promoted until the WHOLE pass committed — through the staleness, resume and
-repair arms and their two ``LAST_POST_COMMENCE_SNAPSHOT_SQL`` reads. A blend
-write landing on a game that had just gone live queued behind that lock: in
-production (v5774, event 15331682) the stamp statement was cancelled five times
-at its 500 ms ``lock_timeout`` while a 13 s pass ran. The pass now commits the
+repair arms and their two ``LAST_POST_COMMENCE_SNAPSHOT_SQL`` reads. In v5774,
+five cancelled blend-stamp attempts (500 ms ``lock_timeout``) on event 15331682
+overlapped a 13 s status pass; the lock holder was not recorded. This file
+proves the task CAN hold a promoted row through its later reads — a candidate
+explanation for those waits, not an observation of them. The pass now commits the
 completed promotion before those reads, and drops the rows it loaded, so every
 later arm reads what is in the table rather than what it saw before the commit.
 

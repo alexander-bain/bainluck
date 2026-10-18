@@ -5286,13 +5286,15 @@ async def _transition_event_statuses_impl() -> dict:
         #
         # The arms below run two `LAST_POST_COMMENCE_SNAPSHOT_SQL` history reads
         # and four repair scans, and until this line every row promoted above
-        # stayed locked through all of them. A blend stamp landing on a game
-        # that had just gone live queued behind that lock: v5774, event
-        # 15331682, the stamp statement cancelled five times at its 500 ms
-        # `lock_timeout` while a 13 s pass ran, and the reader's headline held
-        # the old number for the length of the pass. Each decision above is
-        # final once made — every input it reads was read above — so nothing
-        # below can change it.
+        # stayed locked through all of them. In v5774, five cancelled stamp
+        # attempts (500 ms `lock_timeout`) on event 15331682 overlapped a 13 s
+        # status pass; the lock holder was not recorded. The real-Postgres
+        # guard proves this task can retain a promoted row's lock through its
+        # later reads, and that committing here lets a concurrent blend write
+        # finish before them — a candidate explanation for those waits, not an
+        # observed one. Every input a promotion above reads is read above; a
+        # later arm can still move the row (the repairs exist to), but it then
+        # writes a fresh, committed row rather than undoing the promotion.
         #
         # A CHOICE, NOT AN EQUIVALENCE: an arm below failing no longer undoes
         # a promotion that had completed. It used to, and the next pass made
