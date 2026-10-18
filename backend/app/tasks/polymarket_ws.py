@@ -2639,7 +2639,8 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
             probe_timed_out = probe and price_lock_timed_out
             if probe_refused or probe_timed_out:
                 # #10090 recovery: a refused probe waited for nothing (a timed
-                # out one at most 50 ms), so it re-arms no cooldown. Re-arming the two seconds left a pair
+                # out one at most 50 ms), so it re-arms no cooldown unless the
+                # overlay holds the whole chunk (below). Re-arming the two seconds left a pair
                 # whose holder let go 100 ms later unwritten for 2.2 s on real
                 # PostgreSQL (parent: 0.62 s). The rows stay known-held and due,
                 # so each flush probes them once, NOWAIT, at a round trip's
@@ -2653,9 +2654,28 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                     else "price_lock_timeouts"
                 )
                 stats[counter] = stats.get(counter, 0) + 1
-                lock_retry_until.update(
-                    {oid: lock_retry_until.get(oid, 0) for oid in chunk}
+                # #10090 (Root attempt68): the one exception. A refused chunk
+                # whose every leg the #11138 overlay already holds is
+                # re-probed at most every 250 ms, not every 25 ms game flush.
+                # Its readers lose nothing: a cooling chunk still returns None,
+                # so each newer quote is held and stamped as above. Only the
+                # stored row waits, at most 250 ms past the holder's release.
+                # A leg the overlay lacks, an open-catalog leg, a timeout and
+                # the final drain keep the no-cooldown probe (36/36 changes
+                # kept, attempted UPDATEs 8592 -> 5121 in the same replay).
+                held_price_quotes = getattr(blend_refresher, "held_quotes", None)
+                next_probe = (
+                    _mono() + min(PRICE_FLUSH_SECONDS, 0.25)
+                    if probe_refused
+                    and held_price_quotes is not None
+                    and all(oid in held_price_quotes for oid in chunk)
+                    and not any(oid in open_outcome_ids for oid in chunk)
+                    else None
                 )
+                lock_retry_until.update({
+                    oid: next_probe if next_probe is not None else lock_retry_until.get(oid, 0)
+                    for oid in chunk
+                })
                 lock_retry_events.update(
                     event_ids_for_outcomes(event_id_by_outcome, chunk)
                 )
