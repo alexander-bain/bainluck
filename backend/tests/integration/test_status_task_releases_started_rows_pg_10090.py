@@ -253,3 +253,177 @@ async def test_the_control_a_pass_with_nothing_concurrent_promotes_once(seeded):
     row = await _row(maker, event_id)
     assert (row.status, row.home_score, row.away_score) == ("live", None, None)
     assert row.win_probability_sources == {"espn": {"home_win_prob": 0.617}}
+
+
+# --- THE SAME FOR A RESUMED GAME (Root attempt57) ----------------------------
+#
+# The suspended → live arm runs AFTER the promotion commit, so a game it puts
+# back on court was locked again through the retirement scan and the repair
+# scans. The pass now commits that phase too. Seeded the way the #7617 delay
+# contract seeds its ``the_suspended_row``: a game suspended by an earlier pass
+# while the authority kept reporting on it, so this pass resumes it.
+
+
+@pytest.fixture
+async def seeded_suspended(seeded):
+    """``seeded``'s tables plus one suspended NFL game this pass resumes."""
+    from app.models.models import Event, Sport, WinProbSnapshot
+    from app.tasks.config import SPORT_MAX_DURATIONS
+
+    engine, maker, _promoted_id = seeded
+    now = datetime.now(timezone.utc)
+    # Past the sport maximum plus the net's margin, as #7617 sets it, so the
+    # row is one only the venue-word / staleness ladder reaches.
+    start = now - timedelta(hours=SPORT_MAX_DURATIONS["americanfootball"] + 0.7)
+    async with maker() as session:
+        nfl = Sport(key="americanfootball_nfl", name="NFL")
+        session.add(nfl)
+        await session.flush()
+        game = Event(
+            sport_id=nfl.id,
+            home_team_name="Tampa Bay Resumed",
+            away_team_name="Cleveland Resumed",
+            commence_time=start,
+            status="suspended",
+            home_score=19,
+            away_score=23,
+            period="Delayed",
+            game_clock="2:00",
+            espn_id="10090-resumed",
+            win_probability_sources={"espn": {"home_win_prob": 0.617}},
+        )
+        session.add(game)
+        await session.flush()
+        session.add(
+            WinProbSnapshot(
+                event_id=game.id,
+                source="espn",
+                captured_at=start + timedelta(minutes=2),
+                valid_until=now - timedelta(seconds=60),
+                home_win_probability=0.5001,
+                away_win_probability=0.4999,
+                reading_count=109,
+            )
+        )
+        await session.commit()
+        resumed_id = game.id
+    return engine, maker, resumed_id
+
+
+async def _run_pass_at_retirement(maker, action):
+    """Run the real pass; ``action`` runs at the retirement arm's first statement.
+
+    ``unreachable_suspended_floor`` is the retirement arm's first call and is
+    synchronous, so it only marks the entry; the session runs ``action`` at the
+    next statement, after flushing — which that statement would have done
+    itself (autoflush), so a resumed row is locked exactly when it would be.
+    """
+    import contextlib
+    from unittest.mock import patch
+
+    from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+
+    import app.tasks.espn_sync as espn_sync
+
+    entered = {"retirement": False, "fired": False}
+    original_floor = espn_sync.unreachable_suspended_floor
+
+    def _floor():
+        entered["retirement"] = True
+        return original_floor()
+
+    class _TaskSession(AsyncSession):
+        async def execute(self, statement, *args, **kwargs):
+            if entered["retirement"] and not entered["fired"]:
+                entered["fired"] = True
+                await self.flush()
+                await action()
+            return await super().execute(statement, *args, **kwargs)
+
+    task_maker = async_sessionmaker(
+        maker.kw["bind"], class_=_TaskSession, expire_on_commit=False
+    )
+
+    @contextlib.asynccontextmanager
+    async def _session(**_kwargs):
+        async with task_maker() as session:
+            try:
+                yield session
+                await session.commit()
+            except Exception:
+                await session.rollback()
+                raise
+
+    with patch("app.tasks.base.get_task_session", _session), patch.object(
+        espn_sync, "unreachable_suspended_floor", _floor
+    ):
+        stats = await espn_sync._transition_event_statuses_impl()
+    assert entered["fired"], "the retirement arm was never reached"
+    return stats
+
+
+@needs_postgres
+async def test_a_blend_write_reaches_a_resumed_row_during_the_later_arms(
+    seeded_suspended,
+):
+    engine, maker, event_id = seeded_suspended
+    outcome = {}
+
+    async def _blend_write():
+        outcome["write"] = await _concurrent_write(
+            engine,
+            event_id,
+            "win_probability_sources = "
+            "COALESCE(win_probability_sources, '{}'::jsonb) || CAST(:src AS jsonb)",
+        )
+
+    await _run_pass_at_retirement(maker, _blend_write)
+
+    assert outcome["write"] == "written", (
+        "the pass still held the row it resumed while its retirement and repair "
+        "arms ran, so a blend stamp under a 500 ms lock budget was refused"
+    )
+    row = await _row(maker, event_id)
+    assert row.status == "live"
+    assert row.win_probability_sources["kalshi"] == WRITER_SOURCE["kalshi"]
+    assert row.win_probability_sources["espn"] == {"home_win_prob": 0.617}
+
+
+@needs_postgres
+async def test_a_later_arm_reads_a_resumed_row_as_committed(seeded_suspended):
+    engine, maker, event_id = seeded_suspended
+    outcome = {}
+
+    async def _bogus_final():
+        outcome["write"] = await _concurrent_write(
+            engine,
+            event_id,
+            "status = 'completed', home_score = 0, away_score = 0, "
+            "completed_at = NULL, win_probability_sources = "
+            "COALESCE(win_probability_sources, '{}'::jsonb) || CAST(:src AS jsonb)",
+        )
+
+    stats = await _run_pass_at_retirement(maker, _bogus_final)
+
+    assert outcome["write"] == "written"
+    row = await _row(maker, event_id)
+    assert stats["repaired_bogus_completed"] == 1
+    assert (row.status, row.home_score, row.away_score) == ("live", None, None), (
+        "the repair arm counted a repair the table never received: it was handed "
+        "the pre-commit copy of the resumed row, so its writes changed nothing"
+    )
+    assert row.win_probability_sources["kalshi"] == WRITER_SOURCE["kalshi"]
+
+
+@needs_postgres
+async def test_a_later_arm_failing_keeps_the_completed_resumption(seeded_suspended):
+    _engine, maker, event_id = seeded_suspended
+
+    async def _fail():
+        raise RuntimeError("a later arm failed")
+
+    with pytest.raises(RuntimeError, match="a later arm failed"):
+        await _run_pass_at_retirement(maker, _fail)
+
+    row = await _row(maker, event_id)
+    assert row.status == "live"

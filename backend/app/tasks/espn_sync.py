@@ -5772,6 +5772,18 @@ async def _transition_event_statuses_impl() -> dict:
                         event.id, event.home_team_name, event.away_team_name,
                     )
 
+        # #10090: THE SUSPEND/RESUME PHASE COMMITS HERE, as the promotion does
+        # above. A game the arm above returned to `live` otherwise stays locked
+        # through the retirement scan and the four repair scans below, and a
+        # blend write on it waits out its 500 ms `lock_timeout` (Root attempt57,
+        # real Postgres: 503.961 ms cancelled → 4.978 ms). Same choice as the
+        # promotion: an arm below failing no longer undoes a suspension or a
+        # resumption that had completed. `expunge_all` for the same stale-copy
+        # reason; nothing below reads a row loaded above (`event` is rebound
+        # by each arm's own loop, `stats` holds counts).
+        await session.commit()
+        session.expunge_all()
+
         # --- suspended → retired (the door that was never there) ---
         #
         # #5532/#5130. The arm above is the ONLY writer that re-selects a

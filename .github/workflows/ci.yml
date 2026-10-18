@@ -6987,8 +6987,8 @@ jobs:
             echo "::error::#10090 status-release contract SKIPPED — the gate did not run"
             exit 1
           fi
-          grep -qE "[^0-9]4 passed[,[:space:]]" /tmp/statusrelease10090.txt || {
-            echo "::error::#10090 status-release contract did not run all four cases"
+          grep -qE "[^0-9]7 passed[,[:space:]]" /tmp/statusrelease10090.txt || {
+            echo "::error::#10090 status-release contract did not run all seven cases (four promoted, three resumed)"
             exit 1
           }
 
