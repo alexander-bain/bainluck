@@ -1473,6 +1473,18 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
                 ),
                 reverse=True,
             )
+        if not final_drain and live_event_ids and held_quotes is not None:
+            # Preserve whole phases and their intra-class order. Give live
+            # groups not yet offered a short attempt their first chance before
+            # retained normal-budget retries; those retries remain in this flush.
+            def first_attempt_order(phase):
+                if not any(cohort_event_ids.get(oid) in live_event_ids for oid in phase):
+                    return 2
+                return int(
+                    not prices.short_probe_refused.isdisjoint(phase)
+                    or any(oid in prices.ambiguous_retry_since for oid in phase)
+                )
+            phases.sort(key=first_attempt_order)
         # Includes failed/budget-deferred phases until a whole phase commits.
         # Re-resolve through the current map at each launch for late bridges.
         # Beside a flush, that flush's unfinished prices stay unfinished here.
@@ -1681,6 +1693,7 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
             or after a bound: the overlay cannot carry that event, only the
             ordinary write can. An unknown read (None) holds, as Polymarket's.
             """
+            nonlocal queued_refresh
             legs_of = {}
             for oid in phase:
                 event_id = cohort_event_ids.get(oid)
@@ -1716,12 +1729,22 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
                         for oid in oids:
                             quotes.pop(oid, None)
                 moved = event_ids_for_outcomes(cohort_event_ids, held_quotes.hold(quotes))
-            # Only a changed quote is owed a stamp again.
-            held_ready = [oid for oid in quotes if cohort_event_ids.get(oid) in moved]
+            # A held quote can still owe its first stamp after the refresh
+            # floor deferred it. Re-admit that debt even when the quote itself
+            # is unchanged; otherwise the unfinished-price fence keeps it out
+            # until the price-row lock releases. The refresher still owns its
+            # floor and same-event exclusion. Only changed quotes are fresh;
+            # unchanged pending quotes retain the ordinary debt budget.
+            owed_held = moved | set(blend_refresher.pending_event_ids())
+            held_ready = [oid for oid in quotes if cohort_event_ids.get(oid) in owed_held]
             if held_ready:
                 # Its rows stay buffered and retried; its events may stamp now.
                 unfinished_price_ids.difference_update(held_ready)
-                queue_committed(index, phase, held_ready)
+                newly_held = [oid for oid in held_ready if cohort_event_ids.get(oid) in moved]
+                if newly_held:
+                    queue_committed(index, phase, newly_held)
+                else:
+                    queued_refresh = True
                 if prices.stamping is None or prices.stamping.done():
                     await stamp_done()
                     await stamp_start()
