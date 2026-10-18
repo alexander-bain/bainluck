@@ -194,5 +194,60 @@ final class RecognizableNFLPage9483Tests: XCTestCase {
             homeTip: CGPoint(x: 290, y: 60), homeFrom: nil, label: label, plot: plot),
             "never over the line's newest segment")
     }
-}
 
+    // MARK: - #9483 v476 phone fit (design return 20261018: 375x812 NBA final)
+
+    private func pageCode() throws -> String {
+        let here = URL(fileURLWithPath: #filePath)
+        let url = here.deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("Bain Luck/Views/EventDetailView.swift")
+        return try String(contentsOf: url, encoding: .utf8)
+    }
+
+    private func span(_ text: String, from start: String, to end: String) throws -> String {
+        let lo = try XCTUnwrap(text.range(of: start), "moved: \(start)")
+        let hi = try XCTUnwrap(text.range(of: end, range: lo.upperBound..<text.endIndex), "moved: \(end)")
+        return String(text[lo.upperBound..<hi.lowerBound])
+    }
+
+    /// The adopted header's top row is the chip's height: its disclosure keeps
+    /// the whole 44pt target (the button's own frame, unchanged) but overhangs
+    /// the card's top inset and the row gap, each of which holds it exactly.
+    func testTheDisclosureKeepsItsTargetWithoutARowOfItsOwn() throws {
+        let page = try pageCode()
+        let button = try span(page, from: "private func probabilityDetails(confidenceTier: String?) -> some View {",
+                              to: "// MARK: - Chart Header Bar")
+        XCTAssertTrue(button.contains("minHeight: 44"), "control: the 44pt target itself")
+        let hero = try span(page, from: "private func heroSection(", to: "static func heroBackdrop(")
+        XCTAssertTrue(hero.contains("nflPairedDetails(event)\n"))
+        XCTAssertTrue(hero.contains(".padding(.vertical, stacked ? 0 : -Self.adoptedDisclosureOverhang9483)"),
+                      "the disclosure sets the row's height again")
+        XCTAssertTrue(hero.contains("VStack(spacing: approvedPair ? Self.adoptedDisclosureOverhang9483 : 12)"),
+                      "the gap below must hold the overhang")
+        XCTAssertTrue(hero.contains(".padding(.top, approvedPair ? 12 : 0)"))
+        XCTAssertLessThanOrEqual(EventDetailView.adoptedDisclosureOverhang9483, 12,
+                                 "the overhang must stay inside the card's top inset")
+        XCTAssertEqual(44 - 2 * EventDetailView.adoptedDisclosureOverhang9483, 24,
+                       "the row it leaves is the chip's height")
+    }
+
+    /// FINAL (or the pregame chip) and its date share one row at default text,
+    /// stacking from xxLarge as the legacy meta row does; a final's Won/Lost
+    /// rides beside the name only where both fit whole.
+    func testTheChipAndDateShareARowAndTheVerdictRidesBesideTheName() throws {
+        let page = try pageCode()
+        let hero = try span(page, from: "private func heroSection(", to: "static func heroBackdrop(")
+        let adopted = try span(hero, from: "if approvedPair {", to: "} else {")
+        XCTAssertTrue(adopted.contains("metaLayout {"), "the chip and its date are stacked again")
+        XCTAssertFalse(adopted.contains("VStack(alignment: .leading, spacing: 4)"))
+        XCTAssertTrue(hero.contains("let metaLayout = stacked\n            ? AnyLayout(VStackLayout(alignment: .leading, spacing: 4))"),
+                      "control: the shared layout stacks at large text")
+        let side = try span(page, from: "private func nflPairedSide(", to: "static let nflPairedCaptionTypeCeiling")
+        let fits = try span(side, from: "ViewThatFits(in: .horizontal) {", to: "} else {")
+        XCTAssertTrue(fits.contains("teamName.fixedSize()") && fits.contains("verdict.fixedSize()"),
+                      "inline only when name and verdict fit whole")
+        XCTAssertTrue(fits.contains("VStack(alignment: .leading, spacing: 4) { nameRow; verdict }"),
+                      "where they do not, the verdict keeps its own row")
+        XCTAssertEqual(side.components(separatedBy: "Label(side.figure,").count - 1, 1, "one verdict")
+    }
+}

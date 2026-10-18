@@ -101,4 +101,38 @@ final class TheChartIsLiveOnlyWhenTheHeadlineIsCurrent9483Tests: XCTestCase {
         XCTAssertTrue(before.contains("TimelineView(.periodic(from: .now, by: 60)) { tick in"),
                       "with no new price, only the tick can age the edge out")
     }
+
+    // MARK: - A venue-settled verdict is never a current quote
+
+    /// The headline shows a verdict, and no phase label, when the venue has
+    /// settled a started game whose status still says "live"; the chart must
+    /// not pulse that quote as current beside it. The same existing predicate,
+    /// at the same caller, on the same tick.
+    func testThePageDeclinesTheChartsCurrentnessOnAVenueSettledVerdict() throws {
+        let text = try page()
+        let call = try XCTUnwrap(text.range(of: "quoteIsCurrent: EventHeadlinePhase9483.isCurrent("))
+        let close = try XCTUnwrap(text.range(of: "now: tick.date)", range: call.upperBound..<text.endIndex))
+        let rest = text[close.upperBound...]
+        XCTAssertTrue(rest.drop(while: \.isWhitespace).hasPrefix("&& !EventState.showsVenueSettledVerdict("),
+                      "the verdict decline must be ANDed onto the same argument")
+        let end = try XCTUnwrap(rest.range(of: "tick.date),"), "the decline closes the argument on the tick")
+        let verdict = String(rest[..<end.upperBound])
+        XCTAssertTrue(verdict.contains("event.status, venueSettled: event.venueSettled,"))
+        XCTAssertTrue(verdict.contains("commenceTime: event.commenceTime?.asDate, now: tick.date)"),
+                      "the verdict reads the same tick as the currentness it declines")
+        XCTAssertFalse(verdict.contains("venueClosedNoWinner"), "a no-winner close is not this decline")
+    }
+
+    /// The predicate the page ANDs on: started + settled at the venue declines
+    /// even while status says live; a kick-off still ahead stays eligible as a
+    /// fresh pregame quote; false or absent changes nothing.
+    func testTheVerdictDeclinesOnlyAStartedSettledGame() {
+        let started = now.addingTimeInterval(-3_600), ahead = now.addingTimeInterval(3_600)
+        XCTAssertTrue(isCurrent(), "control: a fresh live quote is current before the decline")
+        XCTAssertTrue(EventState.showsVenueSettledVerdict("live", venueSettled: true, commenceTime: started, now: now))
+        XCTAssertFalse(EventState.showsVenueSettledVerdict("scheduled", venueSettled: true, commenceTime: ahead, now: now))
+        XCTAssertTrue(isCurrent(status: "scheduled", commenceIn: 3_600), "and that pregame quote stays current")
+        XCTAssertFalse(EventState.showsVenueSettledVerdict("live", venueSettled: false, commenceTime: started, now: now))
+        XCTAssertFalse(EventState.showsVenueSettledVerdict("live", venueSettled: nil, commenceTime: started, now: now))
+    }
 }

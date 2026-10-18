@@ -422,14 +422,19 @@ struct EventDetailView: View {
                                          // #9483 Argon P1 — the edge, its number and the ring
                                          // are live only while the headline calls this quote
                                          // current, on its own clock: the tick ages them out
-                                         // with no new price.
+                                         // with no new price. A started game the venue has
+                                         // already settled is a verdict, never a live quote,
+                                         // whatever its status still says.
                                          quoteIsCurrent: EventHeadlinePhase9483.isCurrent(
                                              status: event.status, commenceTime: event.commenceTime?.asDate,
                                              isOpeningLine: event.currentOdds.map {
                                                  OpeningLineHero.resolve($0, for: event).isOpeningLine } ?? false,
                                              observedAt: event.heroProbabilityObservedAt?.asDate,
                                              deliveryInterrupted: vm.liveUpdateStatus == .interrupted,
-                                             now: tick.date),
+                                             now: tick.date)
+                                             && !EventState.showsVenueSettledVerdict(
+                                                 event.status, venueSettled: event.venueSettled,
+                                                 commenceTime: event.commenceTime?.asDate, now: tick.date),
                                           pairedAwayLabel9483: LivePriceActivity.displayedLabels(in: event).away,
                                          // #10456 — the served winner pair, both
                                          // sides: admission for the balance ink.
@@ -1306,7 +1311,9 @@ struct EventDetailView: View {
             ? AnyLayout(VStackLayout(alignment: .leading, spacing: 4))
             : AnyLayout(HStackLayout(spacing: 8))
 
-        return VStack(spacing: 12) {
+        // #9483 v476 phone fit — the adopted header's rows sit closer: its
+        // overhanging disclosure fills exactly this gap (see below).
+        return VStack(spacing: approvedPair ? Self.adoptedDisclosureOverhang9483 : 12) {
             // Top meta row: status badge + countdown + broadcast + date
             //
             // Stacks with the rest. Left as a row it is the SECOND thing that
@@ -1314,7 +1321,9 @@ struct EventDetailView: View {
             // "Sep 5 at 6:40 PM" was cut off the right, in the same frame.
             if approvedPair {
                 HStack(alignment: .center, spacing: 12) {
-                    VStack(alignment: .leading, spacing: 4) {
+                    // At default text the chip and its date share one row (the
+                    // date wraps beside it where it must); larger text stacks them.
+                    metaLayout {
                         // #6544 — the hero chip keeps its minute tick here too, and
                         // at a final it is the existing FINAL chip (no second
                         // winner sentence: the sides say Won/Lost).
@@ -1342,6 +1351,11 @@ struct EventDetailView: View {
                     // delivery or confidence claim. Game context stays in Game Info.
                     if nflPairedHeadline(event, hasScore: hasScore)?.away.won == nil {
                         nflPairedDetails(event)
+                            // Its whole 44pt target stays, overhanging the card's
+                            // top inset and the gap below; it no longer makes the
+                            // row a 44pt row of its own. Larger text keeps the
+                            // full height, where the label itself can outgrow it.
+                            .padding(.vertical, stacked ? 0 : -Self.adoptedDisclosureOverhang9483)
                     }
                 }
             } else {
@@ -1922,8 +1936,9 @@ struct EventDetailView: View {
         // #9483 v476 — on the adopted pair the hero is the top of ONE card with
         // the chart (see the page body): no own backdrop or corners, a short
         // bottom inset and one hairline above the chart's title.
-        .padding(approvedPair ? [.horizontal, .top] : .all)
-        .padding(.bottom, approvedPair ? 10 : 0)
+        .padding(approvedPair ? .horizontal : .all)
+        .padding(.top, approvedPair ? 12 : 0)
+        .padding(.bottom, approvedPair ? 8 : 0)
         .overlay(alignment: .bottom) {
             if approvedPair { Divider().padding(.horizontal) }
         }
@@ -2145,7 +2160,7 @@ struct EventDetailView: View {
         let sides = adopted && dynamicTypeSize.isAccessibilitySize
             ? AnyLayout(VStackLayout(alignment: .leading, spacing: 16))
             : AnyLayout(HStackLayout(alignment: .nflPairedFigure9483, spacing: 8))
-        return VStack(spacing: adopted ? 12 : 6) {
+        return VStack(spacing: adopted ? 8 : 6) {
             sides {
                 nflPairedSide(event, headline.away, name: names.away, isAway: true,
                               color: colors.away, logo: event.awayTeamData?.logoSmall,
@@ -2223,7 +2238,7 @@ struct EventDetailView: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                     }
                 }
-                .padding(.top, 10)
+                .padding(.top, 8)
                 .overlay(alignment: .top) { Divider() }
             } else if stacked && centerRow && !adopted {
                 nflPairedCenter(event, headline, colors: colors, movement: .shown)
@@ -2380,24 +2395,39 @@ struct EventDetailView: View {
         let shown = adopted ? adoptedSide9483(event, side, isAway: isAway) : nil
         let figure = shown?.figure ?? side.figure
         let baselineCaption = shown.map { $0.caption } ?? side.pregame
-        return VStack(alignment: adopted || isAway ? .leading : .trailing, spacing: adopted ? 6 : 3) {
-            HStack(spacing: 6) {
-                if !isAway && !adopted { Spacer(minLength: 0) }
-                TeamLogoView(url: logo, teamName: isAway ? event.awayTeam : event.homeTeam,
-                             color: color, size: 24, sportKey: event.sport, opponentName: opponent)
-                // One line, shrunk before it hyphenates ("Sea-hawks" at AX sizes).
-                Text(name)
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(color)
-                    .lineLimit(adopted ? nil : 1)
-                    .minimumScaleFactor(adopted ? 1 : 0.5)
-                    .allowsTightening(!adopted)
-                if isAway || adopted { Spacer(minLength: 0) }
-            }
+        // One line, shrunk before it hyphenates ("Sea-hawks" at AX sizes).
+        let teamName = Text(name)
+            .font(.subheadline.weight(.semibold))
+            .foregroundStyle(color)
+            .lineLimit(adopted ? nil : 1)
+            .minimumScaleFactor(adopted ? 1 : 0.5)
+            .allowsTightening(!adopted)
+        let verdict = Label(side.figure, systemImage: side.won == true ? "checkmark" : "xmark")
+            .font(.subheadline.weight(.semibold))
+            .foregroundStyle(Color.primary)
+        let logoView = TeamLogoView(url: logo, teamName: isAway ? event.awayTeam : event.homeTeam,
+                                    color: color, size: 24, sportKey: event.sport, opponentName: opponent)
+        let nameRow = HStack(spacing: 6) {
+            if !isAway && !adopted { Spacer(minLength: 0) }
+            logoView
+            teamName
+            if isAway || adopted { Spacer(minLength: 0) }
+        }
+        return VStack(alignment: adopted || isAway ? .leading : .trailing, spacing: adopted ? 4 : 3) {
             if finalPair {
-                Label(side.figure, systemImage: side.won == true ? "checkmark" : "xmark")
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(Color.primary)
+                // #9483 v476 phone fit — a final's Won/Lost rides beside the
+                // name where both fit whole, and keeps its own row where not.
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: 6) {
+                        logoView
+                        teamName.fixedSize()
+                        verdict.fixedSize().padding(.leading, 2)
+                        Spacer(minLength: 0)
+                    }
+                    VStack(alignment: .leading, spacing: 4) { nameRow; verdict }
+                }
+            } else {
+                nameRow
             }
             Text(figure)
                 .acceptedValueChange(finalPair ? figure : heroValue(away: isAway), rising: heroRising(away: isAway), animates: heroMoves)
@@ -2433,6 +2463,11 @@ struct EventDetailView: View {
     /// The headline's figures are fixed sizes, so its captions stop growing
     /// here: past AX1 "Score" outgrew "27–24" and "Pre-match 38%" outgrew "55%".
     static let nflPairedCaptionTypeCeiling = DynamicTypeSize.accessibility1
+
+    /// #9483 v476 phone fit — how far the adopted header's 44pt disclosure
+    /// target reaches past its row, above and below. The card's 12pt top inset
+    /// and the header's 10pt row gap hold it, so the row is the chip's height.
+    static let adoptedDisclosureOverhang9483: CGFloat = 10
 
     /// Where the centre column's live move caption goes. The default row is one
     /// VoiceOver element, so there the caption is `.reserved` (its room kept,
