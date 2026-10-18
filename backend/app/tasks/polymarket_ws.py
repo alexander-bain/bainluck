@@ -2530,9 +2530,20 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                 # set clause, row-lock order and returned-row coverage as the
                 # per-row UPDATEs it replaces (`chunk_price_update_stmt`).
                 now = _mono()
+                # #10090: a leg the #11138 overlay holds is forced. Its events
+                # row may carry the held quote, not the stored price, so an
+                # input returning to the stored price is not "unchanged": the
+                # filter took no lock and returned nothing, the held quote was
+                # released and no stamp was owed, leaving the page on the held
+                # value (Root attempt67: 1 of 36 reversals, 24.7 s). Forced, a
+                # still-held row refuses and the overlay holds the new quote; a
+                # landed write returns the row and its event is stamped. Twin
+                # of the Kalshi socket's held-leg `forced_ids` (attempt30).
+                held_price_quotes = getattr(blend_refresher, "held_quotes", None)
                 forced = {
                     oid for oid in chunk
-                    if final or oid not in successful_price_write_at
+                    if final or (held_price_quotes is not None and oid in held_price_quotes)
+                    or oid not in successful_price_write_at
                     or now - successful_price_write_at[oid] >= PM_QUOTE_LIVENESS_SECONDS
                 }
                 try:

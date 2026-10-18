@@ -182,6 +182,7 @@
     "#11181 owed chart points: atomic custody, replay and restart (real Postgres)",
     "#10090 PM release wake with the stage trace off and on (real Postgres)",
     "#11138 a lock-held PM price row publishes the received quote, one cohort per event (real Postgres)",
+    "#10090 a held PM quote returning to its stored price is published, held or just released (real Postgres)",
     "#10090 a lock-held KALSHI price row stamps the received quote; a restart cannot undo it (real Postgres)",
     "#1927 a negative rank term never excludes, at the route (real Postgres)",
     "#1927 swipes rank and never hide a sport, at the route (real Postgres)",
