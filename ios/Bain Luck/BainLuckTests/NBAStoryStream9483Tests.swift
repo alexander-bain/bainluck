@@ -832,5 +832,33 @@ final class NBAStoryStream9483Tests: XCTestCase {
             slot: CGRect(x: 16, y: -199, width: 346, height: 370), viewport: nil, content: 192))
         XCTAssertNil(place(CGRect(x: 16, y: 700, width: 346, height: 370)))
     }
+
+    /// At large text the slot is taller than the screen, so a place decided
+    /// once can go off screen when the reader scrolls. Specimens from fx402ax3
+    /// at 402 pt, AccessibilityXL (scrollSpace, viewport 0…675, bars 116 and
+    /// 791 on screen); the content band is 218.67 tall.
+    func testAtLargeTextASettledScrollPlacesTheSlotsContentOnScreenAgain() throws {
+        let viewport = CGRect(x: 0, y: 0, width: 402, height: 675)
+        let content: CGFloat = 16 + 129 + 12 + 45.67 + 16
+        let place = { (slot: CGRect) in
+            NBAStoryStreamView9483.unavailableContentTop(slot: slot, viewport: viewport, content: content)
+        }
+        // As returned (−676…381): centred in the visible 0…381, the message at
+        // screen 213, readable.
+        let returned = CGRect(x: 16, y: -676, width: 346, height: 1057)
+        let first = try XCTUnwrap(place(returned))
+        XCTAssertEqual(returned.minY + first + 16 + 116, 213.17, accuracy: 0.5)
+        // The reader scrolls up to the row's top (81…1138). The first place
+        // now puts the message at screen 970, below the tab bar: a blank card.
+        let scrolled = CGRect(x: 16, y: 81, width: 346, height: 1057)
+        XCTAssertGreaterThan(scrolled.minY + first + 116, 791, "kept, the content is off screen")
+        // Placed again when the scroll settles: message and Refresh both
+        // inside the bars.
+        let settled = try XCTUnwrap(place(scrolled))
+        let bandTop = scrolled.minY + settled + 116, bandBottom = bandTop + content
+        XCTAssertGreaterThanOrEqual(bandTop + 16, 116)
+        XCTAssertLessThanOrEqual(bandBottom - 16, 791)
+        XCTAssertEqual(bandTop + 16, 400.67, accuracy: 0.5)
+    }
 }
 

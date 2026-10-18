@@ -465,8 +465,9 @@ private struct ShelfScrollPhase9483: ViewModifier {
 /// height, and its message and Refresh sit in the part of it on screen, so a
 /// reader who comes back with the slot half under the bar still sees them.
 /// The place is decided when the slot first shows on screen and again only if
-/// its height, its content's height or the viewport changes, never per scroll
-/// frame: the frames land in plain storage, and only the slot re-renders.
+/// its height, its content's height or the viewport changes, or a page scroll
+/// settles (iOS 18), never per scroll frame: the frames land in plain storage,
+/// and only the slot re-renders.
 private struct UnavailableSlot9483: View {
     let coordinateSpace: String
     @ObservedObject var signals: NBAStoryStreamView9483.Signals
@@ -500,6 +501,11 @@ private struct UnavailableSlot9483: View {
             if top == nil || resized { place() }
         }
         .onChange(of: signals.usableViewport) { _, _ in place() }
+        // Placed once, a tall slot (large text) could leave a reader who then
+        // scrolled up looking at a blank card. When the page comes to rest, the
+        // content moves into what is on screen now: one write per settled
+        // scroll, and none when the place is unchanged.
+        .onChange(of: signals.pageIsScrolling) { _, scrolling in if !scrolling { place() } }
         .accessibilityElement(children: .combine)
     }
 
