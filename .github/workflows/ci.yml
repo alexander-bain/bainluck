@@ -5193,6 +5193,30 @@ jobs:
             exit 1
           }
 
+      - name: "#10090 a live game's prop publishes while an unrelated future is locked (real Postgres)"
+        # Known props stay out of their game's headline cohort, so the planner
+        # packed a live game's prop markets into the same <=200-row phases as
+        # unrelated futures, and one 55P03 rolled the whole phase back
+        # (production v5771 2026-10-17: ~78 s of held total-points lines).
+        # Root's attempt45 countercase: a #10661 holder locks an unrelated
+        # future; the live prop must publish (independent readback) while the
+        # lock is still held, and the release + final drain recovers every
+        # value with no prop-only winner stamp. Reuses the live-beside fixture
+        # and database; same skip detection plus a count.
+        if: matrix.group == 'isolated' && needs.change-scope.outputs.reuse != 'true'
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_kalshi_live_prop_beside_locked_future_10090_pg.py \
+            -v -rs 2>&1 | tee /tmp/liveprop10090.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/liveprop10090.txt; then
+            echo "::error::#10090 live-prop isolation gate SKIPPED — the gate did not run"
+            exit 1
+          fi
+          grep -qE "[^0-9]1 passed[,[:space:]]" /tmp/liveprop10090.txt || {
+            echo "::error::#10090 live-prop isolation gate did not run its case"
+            exit 1
+          }
+
       - name: "#1927 a negative rank term never excludes, at the route (real Postgres)"
         # The wide half of #1927. Discover judges a live game "exceptional" by
         # reading its personalised `score`, so a stored Nah (×0.4) or eight real
