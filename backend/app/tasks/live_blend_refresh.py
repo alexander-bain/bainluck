@@ -72,7 +72,8 @@ from collections import deque
 import logging
 import math
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace as _replace
+from datetime import datetime
 from typing import Awaitable, Callable, Iterable, Optional
 
 logger = logging.getLogger(__name__)
@@ -176,8 +177,17 @@ FRESH_STAMP_WORKERS = 3
 ADMITTED_LIVE_RUN = 3
 
 # Includes the point currently writing and reservations before quote COMMIT.
-# At this finite bound a newly due stamp waits for debt space; no points drop.
+# The writer's ordinary backlog. Past it a newly due stamp does not wait
+# (#11138) and still owes its point at its own observation time, paid when
+# the writer drains without another quote (#11181). No point drops.
 HISTORY_POINT_LIMIT = 64
+# The memory bound beyond the ordinary backlog. Points are owed at most one per
+# event per snapshot interval, so a held writer reaches it only after minutes
+# (a 100-event slate owes 4 a second: ~4 minutes). Past it a point is still
+# owed and the stamp still never waits: the point lives only in its durable
+# `owed_chart_points` row until memory has room to load it (#11181,
+# `OwedChartCustody`).
+HISTORY_SPILL_LIMIT = 1024
 
 #: #837 receipt — the per-event floor between receipt lines for chains that
 #: cannot qualify as a quiet tail (a busy market's routine deferrals, a held
@@ -954,6 +964,8 @@ class _ChartReading:
     outcome: _ChartOutcome
     snapshot_observed_at: object
     owned_history: bool = True
+    #: #11181 — this point's `owed_chart_points` row, settled with the point.
+    custody_id: Optional[int] = None
 
 
 def _chart_reading(reading, observed_at):
@@ -971,6 +983,103 @@ def _chart_reading(reading, observed_at):
         ),
         outcome=_ChartOutcome(name=getattr(outcome, "name", None)),
         snapshot_observed_at=observed_at,
+    )
+
+
+class OwedChartCustody:
+    """#11181 — durable custody of committed chart observations.
+
+    WHY. A committed stamp owes its chart point at its own observation time,
+    and the chart writer can be held for seconds by another transaction's lock
+    on `win_prob_snapshots` (production v5763 13:01:22Z: Kalshi's writer held
+    5.364 s at 64 owed). Memory alone cannot meet an unwaiting headline, every
+    observation and a finite bound at once, and it empties on a restart. So
+    each owed point is also a row in `owed_chart_points`:
+
+    * `record` INSERTs it inside the stamp's own event scope. The stamp commits
+      only with its row and a failed INSERT fails the stamp. The table has no
+      foreign key, so the insert takes no lock on the event or on any chart row.
+    * `settle` DELETEs it first, in the same savepoint that writes the point.
+      A row that is gone was already paid (a commit whose acknowledgement a
+      crash lost, or another process's drain), and nothing is written twice.
+    * `load` reads this source's rows that memory does not hold, oldest commit
+      id first, so the drain recovers what past the memory bound or through a
+      restart lives only here, in each event's own order.
+    """
+
+    async def record(self, session, source: str, event_id: int, value, reading) -> int:
+        from sqlalchemy import insert
+
+        from app.models.models import OwedChartPoint
+
+        return (
+            await session.execute(
+                insert(OwedChartPoint)
+                .values(
+                    source=source,
+                    event_id=event_id,
+                    value=value,
+                    reading=_chart_reading_payload(reading),
+                )
+                .returning(OwedChartPoint.id)
+            )
+        ).scalar_one()
+
+    async def settle(self, session, custody_id: int) -> bool:
+        from sqlalchemy import delete
+
+        from app.models.models import OwedChartPoint
+
+        return (
+            await session.execute(
+                delete(OwedChartPoint)
+                .where(OwedChartPoint.id == custody_id)
+                .returning(OwedChartPoint.id)
+            )
+        ).first() is not None
+
+    async def load(self, session, source: str, held_ids, limit: int) -> list[tuple]:
+        from sqlalchemy import select
+
+        from app.models.models import OwedChartPoint
+
+        query = select(
+            OwedChartPoint.id, OwedChartPoint.event_id,
+            OwedChartPoint.value, OwedChartPoint.reading,
+        ).where(OwedChartPoint.source == source)
+        if held_ids:
+            query = query.where(OwedChartPoint.id.not_in(sorted(held_ids)))
+        rows = await session.execute(query.order_by(OwedChartPoint.id).limit(limit))
+        return [tuple(row) for row in rows.all()]
+
+
+def _chart_reading_payload(reading) -> dict:
+    """The frozen chart scalars as JSON; the observation time stays verbatim."""
+    observed_at = reading.snapshot_observed_at
+    if isinstance(observed_at, datetime):
+        observed_at = observed_at.isoformat()
+    return {
+        "home_probability": reading.home_probability,
+        "away_probability": reading.away_probability,
+        "draw_probability": reading.draw_probability,
+        "yes_probability": reading.yes_probability,
+        "market_name": reading.market.name,
+        "market_id": reading.market.id,
+        "outcome_name": reading.outcome.name,
+        "observed_at": observed_at,
+    }
+
+
+def _chart_reading_from_payload(custody_id: int, payload: dict) -> _ChartReading:
+    return _ChartReading(
+        home_probability=payload.get("home_probability"),
+        away_probability=payload.get("away_probability"),
+        draw_probability=payload.get("draw_probability"),
+        yes_probability=payload.get("yes_probability"),
+        market=_ChartMarket(name=payload.get("market_name"), id=payload.get("market_id")),
+        outcome=_ChartOutcome(name=payload.get("outcome_name")),
+        snapshot_observed_at=payload.get("observed_at"),
+        custody_id=custody_id,
     )
 
 
@@ -1511,8 +1620,24 @@ class LiveBlendRefresher:
         snapshot_max_gap_s: float = DEFAULT_SNAPSHOT_MAX_GAP_S,
         stamp_lock_timeout_ms: Optional[int] = DEFAULT_STAMP_LOCK_TIMEOUT_MS,
         session_factory=None,
+        chart_custody: Optional[OwedChartCustody] = None,
     ) -> None:
         self.source = source
+        #: #11181 — durable custody of owed chart points. Both production
+        #: consumers pass one (guarded); None keeps every owed point in memory.
+        self._chart_custody = chart_custody
+        #: Rows may exist that memory does not hold: past its bound, or from a
+        #: run or process before this one, so a new refresher starts by reading.
+        self._custody_backlog = chart_custody is not None
+        #: Points committed to custody alone, or possibly committed (a stamp
+        #: whose COMMIT outcome is unknown); a load that overlaps one cannot
+        #: conclude the table is drained.
+        self._custody_only_committed = 0
+        #: Custody-only points committed by this process, by row id: the
+        #: publication each still waits on, and (capped at the memory bound)
+        #: its snapshot clock, so a load treats it exactly as memory would.
+        self._custody_ready: dict[int, asyncio.Event] = {}
+        self._custody_clock: dict[int, float] = {}
         #: #11138 — the owning consumer's `HeldRowQuotes`, or None (no overlay).
         self.held_quotes: Optional[HeldRowQuotes] = None
         #: #2471 — the owning consumer's session factory, so the stamp borrows
@@ -1572,6 +1697,7 @@ class LiveBlendRefresher:
         self._history_task: Optional[asyncio.Task] = None
         self._history_count = 0  # committed debt plus pre-COMMIT reservations
         self._history_limit = HISTORY_POINT_LIMIT
+        self._history_spill_limit = HISTORY_SPILL_LIMIT
         self._history_changed = asyncio.Event()
         self._history_reserved: dict[int, float] = {}
         self._history_retry_at: dict[int, float] = {}
@@ -1599,6 +1725,16 @@ class LiveBlendRefresher:
             # #837 tail — stamps that stopped waiting on another transaction's
             # row lock and were re-queued. Not an error: the retry is the path.
             "lock_skipped": 0,
+            # #11138/#11181 — due chart points owed past the ordinary backlog
+            # without waiting; each is still paid at its own time.
+            "history_deferred": 0,
+            # #11181 — due points carried by their custody row alone (past
+            # the memory bound, or behind rows memory does not hold yet) until
+            # a load moves them into memory in their event's order.
+            "history_custody_only": 0,
+            # #11181 — custody rows already settled when their point came up
+            # (a commit whose acknowledgement was lost, or another drain).
+            "history_already_paid": 0,
             # #9484 — committed market invalidations (`live:market:{id}`) this
             # consumer's writers published through the same client. Counted
             # for the same reason as `published`: a quiet market and a dead
@@ -2784,46 +2920,72 @@ class LiveBlendRefresher:
 
     @contextlib.asynccontextmanager
     async def _history_reservations(self, event_ids, now, owed):
-        """Reserve finite debt space before a transaction can owe a point.
+        """Reserve debt space before a transaction can owe a point.
 
         Same-event quotes remain serial under the consumer's existing fence.
-        At capacity, wait only for the owned writer. If it failed, refuse this
-        stamp before COMMIT and let the existing blend retry retain the price.
-        Distinct due observations are never dropped or coalesced.
+        Distinct due observations are never dropped or coalesced. Past the
+        ordinary backlog a due stamp still owes its point and does not wait
+        (#11138): production v5763 13:01:22Z, Kalshi's writer held 5.364 s at
+        64 owed, held 15331223's .375 for 5.8 s behind three due stamps. The
+        point keeps its observation time and the writer pays it without
+        another quote (#11181). Past the memory bound (`HISTORY_SPILL_LIMIT`),
+        or while custody holds rows memory does not, a committed point is
+        carried by its custody row alone and loaded in its event's order.
         """
         reserved = set()
-        committed = False
+        kept = set()
         ready = asyncio.Event()
         try:
             for eid in event_ids:
                 last = self._history_reserved.get(eid, self._last_snapshot_at.get(eid))
                 if last is not None and now - last < self.snapshot_interval_s:
                     continue
-                while self._history_count >= self._history_limit:
+                if self._history_count >= self._history_limit:
                     self._start_history()
-                    if self._history_task is None or self._history_task.done():
-                        raise RuntimeError(
-                            "committed chart backlog is full; stamp remains owed"
-                        )
-                    self._history_changed.clear()
-                    await self._history_changed.wait()
+                    self.stats["history_deferred"] += 1
                 self._history_count += 1
                 reserved.add(eid)
-            yield reserved, ready
+            try:
+                yield reserved, ready
+            except BaseException:
+                # A COMMIT whose acknowledgement was lost may still have
+                # stored this transaction's custody rows: the next drain reads,
+                # and a load already in flight cannot conclude it saw them.
+                if reserved and self._chart_custody is not None:
+                    self._custody_backlog = True
+                    self._custody_only_committed += 1
+                raise
             # The nested session has now exited with a successful COMMIT.
             for eid, value, reading in owed:
-                self._history.append((eid, value, reading, now, ready))
                 self._history_reserved[eid] = now
-            committed = True
+                custody_id = getattr(reading, "custody_id", None)
+                if custody_id is not None and (
+                    self._custody_backlog
+                    or len(self._history)
+                    >= self._history_limit + self._history_spill_limit
+                ):
+                    self._custody_backlog = True
+                    self._custody_only_committed += 1
+                    self._custody_ready[custody_id] = ready
+                    if len(self._custody_clock) < (
+                        self._history_limit + self._history_spill_limit
+                    ):
+                        self._custody_clock[custody_id] = now
+                    self.stats["history_custody_only"] += 1
+                    continue
+                self._history.append((eid, value, reading, now, ready))
+                kept.add(eid)
         finally:
-            used = {point[0] for point in owed} if committed else set()
-            self._history_count -= len(reserved - used)
+            self._history_count -= len(reserved - kept)
             self._history_changed.set()
 
     def _start_history(self, *, force=False):
-        if not self._history or (self._history_task and not self._history_task.done()):
+        if self._history_task and not self._history_task.done():
             return
-        if not force and all(
+        load = not force and self._custody_backlog
+        if not self._history and not load:
+            return
+        if not force and not load and all(
             _mono() < self._history_retry_at.get(point[0], 0.0)
             for point in self._history
         ):
@@ -2837,33 +2999,44 @@ class LiveBlendRefresher:
         failed = set()
         cursor = 0
         try:
-            while cursor < len(self._history):
-                point = self._history[cursor]
-                eid, value, reading, observed_clock, ready = point
-                # A failed event keeps its original FIFO, but cannot strand a
-                # healthy sibling's history behind its own retry hold.
-                if eid in failed or (
-                    not force and _mono() < self._history_retry_at.get(eid, 0.0)
-                ):
-                    cursor += 1
-                    continue
-                await ready.wait()  # publication was attempted after COMMIT
-                if not await self._write_owed_snapshots(
-                    [(eid, value, reading)],
-                    observed_clock,
-                    factory,
-                ):
-                    failed.add(eid)
-                    self._history_retry_at[eid] = _mono() + self.failed_retry_interval_s
-                    cursor += 1
+            while True:
+                while cursor < len(self._history):
+                    point = self._history[cursor]
+                    eid, value, reading, observed_clock, ready = point
+                    # A failed event keeps its original FIFO, but cannot strand a
+                    # healthy sibling's history behind its own retry hold.
+                    if eid in failed or (
+                        not force and _mono() < self._history_retry_at.get(eid, 0.0)
+                    ):
+                        cursor += 1
+                        continue
+                    await ready.wait()  # publication was attempted after COMMIT
+                    if not await self._write_owed_snapshots(
+                        [(eid, value, reading)],
+                        observed_clock,
+                        factory,
+                    ):
+                        failed.add(eid)
+                        self._history_retry_at[eid] = (
+                            _mono() + self.failed_retry_interval_s
+                        )
+                        cursor += 1
+                        self._history_changed.set()
+                        continue
+                    self._history.pop(cursor)
+                    self._history_count -= 1
+                    self._history_retry_at.pop(eid, None)
+                    # A custody row outside memory may still owe this event a
+                    # later point; its reservation clock stays until loaded.
+                    if not self._custody_backlog and not any(
+                        point[0] == eid for point in self._history
+                    ):
+                        self._history_reserved.pop(eid, None)
                     self._history_changed.set()
-                    continue
-                self._history.pop(cursor)
-                self._history_count -= 1
-                self._history_retry_at.pop(eid, None)
-                if not any(point[0] == eid for point in self._history):
-                    self._history_reserved.pop(eid, None)
-                self._history_changed.set()
+                # The final drain of a run reads no custody: its rows are
+                # durable and the next run of the source starts by loading them.
+                if force or not await self._load_custody(factory):
+                    break
         except Exception:
             self.stats["errors"] += 1
             for eid, *_ in self._history:
@@ -2874,6 +3047,48 @@ class LiveBlendRefresher:
             )
         finally:
             self._history_changed.set()
+
+    async def _load_custody(self, factory) -> int:
+        """#11181 — move custody rows memory does not hold into memory.
+
+        Oldest commit id first, at most the room memory has. Same-event points
+        commit serially, so ids keep each event's observation order, and while
+        any row is outside memory every newly committed point also stays there
+        (`_history_reservations`): no later point of an event is ever written
+        ahead of an earlier one. A row another drain already paid is found
+        gone by `settle`, never written twice. Returns how many rows it moved.
+        """
+        if not self._custody_backlog or self._chart_custody is None:
+            return 0
+        room = self._history_limit + self._history_spill_limit - len(self._history)
+        if room <= 0:
+            return 0
+        self._custody_ready = {
+            cid: ready for cid, ready in self._custody_ready.items()
+            if not ready.is_set()
+        }
+        committed_before = self._custody_only_committed
+        held = {
+            reading.custody_id for _, _, reading, _, _ in self._history
+            if getattr(reading, "custody_id", None) is not None
+        }
+        async with self._session_slot(), factory() as session:
+            rows = await self._chart_custody.load(session, self.source, held, room)
+        done = asyncio.Event()
+        done.set()
+        for custody_id, eid, value, payload in rows:
+            ready = self._custody_ready.pop(custody_id, done)
+            # A row from an earlier process carries no clock of this one: the
+            # reservation that admitted it already spaced it on the cadence.
+            self._history.append((
+                eid, value, _chart_reading_from_payload(custody_id, payload),
+                self._custody_clock.pop(custody_id, None), ready,
+            ))
+            self._history_count += 1
+        if len(rows) < room and self._custody_only_committed == committed_before:
+            # Everything committed before this read was visible to it.
+            self._custody_backlog = False
+        return len(rows)
 
     async def drain_history(self):
         """One final attempt, joined through repeated cancellation before close.
@@ -3180,6 +3395,17 @@ class LiveBlendRefresher:
                             _chart_reading(reading, stamped_at)
                             if event_id in reserved else None
                         )
+                        # #11181: the owed point's durable row, in this same
+                        # scope. A stamp commits only with it; an INSERT into a
+                        # table with no foreign key takes no row lock to wait on.
+                        if chart_reading is not None and self._chart_custody is not None:
+                            chart_reading = _replace(
+                                chart_reading,
+                                custody_id=await self._chart_custody.record(
+                                    session, self.source, event_id, value,
+                                    chart_reading,
+                                ),
+                            )
 
                     # Noted only once the stamp scope has succeeded (a stamp
                     # that rolled back must not read as written), and applied only
@@ -3353,6 +3579,14 @@ class LiveBlendRefresher:
                     )
                 for event_id, value, reading in owed:
                     async with session.begin_nested():
+                        # #11181: settle first, in the point's own savepoint: a
+                        # point that fails restores its row, and a row already
+                        # gone was paid once and is not written again.
+                        custody_id = getattr(reading, "custody_id", None)
+                        if custody_id is not None and self._chart_custody is not None:
+                            if not await self._chart_custody.settle(session, custody_id):
+                                self.stats["history_already_paid"] += 1
+                                continue
                         await self._maybe_snapshot(session, event_id, value, reading, now)
                         await session.flush()
             return True
@@ -3544,10 +3778,15 @@ class LiveBlendRefresher:
         the chart is downstream of the number, and a snapshot that cannot be
         written must not cost the blend stamp that already succeeded.
         """
-        last = self._last_snapshot_at.get(event_id)
-        if last is not None and (now - last) < self.snapshot_interval_s:
-            return
-        self._last_snapshot_at[event_id] = now
+        # #11181: an owned point was spaced by the reservation that admitted
+        # it, and its custody row is settled with it, so it is never skipped
+        # here. A point loaded from custody has no clock of this process.
+        owned = getattr(reading, "owned_history", False)
+        if now is not None:
+            last = self._last_snapshot_at.get(event_id)
+            if not owned and last is not None and (now - last) < self.snapshot_interval_s:
+                return
+            self._last_snapshot_at[event_id] = now
 
         try:
             from app.tasks.snapshots import _create_or_update_win_prob_snapshot
@@ -3695,7 +3934,8 @@ def adopt_handed_off(refresher) -> int:
             ready.set()
             refresher._history.append((eid, value, reading, at, ready))
             refresher._history_count += 1
-            refresher._history_reserved[eid] = at
+            if at is not None:  # a point loaded from custody carries no clock
+                refresher._history_reserved[eid] = at
     except AttributeError:
         pass
     try:

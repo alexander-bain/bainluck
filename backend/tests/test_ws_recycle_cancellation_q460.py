@@ -138,6 +138,10 @@ class _Session:
         # query that filters on `is_winner`.
         if "futures_outcomes.is_winner IS NULL" in str(stmt):
             return _Result([])
+        # #11181: a run's first read of its chart custody is not a slate
+        # batch either — answered as "nothing owed from an earlier run".
+        if "owed_chart_points" in str(stmt):
+            return _Result([])
         return _Result(next(self._batches))
 
 

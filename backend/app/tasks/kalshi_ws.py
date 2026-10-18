@@ -965,7 +965,8 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
     from app.tasks.kalshi import _kalshi_yes_probability  # #8753
     from app.tasks.live_blend_refresh import (
         HeldRowQuotes, LiveBlendRefresher, TailReceipts, adopt_handed_off, event_ids_for_outcomes,
-        LOOP_REAP_TIMEOUT_S, hand_off_pending, reap_stopped_loops, run_flush_cadence,
+        LOOP_REAP_TIMEOUT_S, OwedChartCustody, hand_off_pending, reap_stopped_loops,
+        run_flush_cadence,
     )
     from app.tasks import ws_admission, ws_open_contracts
     from app.tasks.ws_admission import (  # #9418
@@ -1297,6 +1298,7 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
     blend_refresher = LiveBlendRefresher(
         "kalshi", session_factory=get_task_session,  # #2471
         min_refresh_interval_s=blend_floor,
+        chart_custody=OwedChartCustody(),  # #11181: no owed chart point is lost
     )
     blend_refresher.held_quotes = HeldRowQuotes()
     await blend_refresher.held_quotes.sample_database_clock(get_task_session)
