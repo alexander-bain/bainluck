@@ -35,6 +35,14 @@ struct NBAStoryStreamView9483: View {
         /// apply one card and withhold the rest as pending behind Refresh.
         /// Until then the shelf shows this event's plan order, manual only.
         let ready: Bool
+
+        /// The page's `ready`: the history the finish card reads has arrived,
+        /// and the game markets the ladders read have arrived for THIS event.
+        /// No history, no markets, or another event's markets: not ready.
+        static func deckReady(history: EventHistoryResponse?, gameMarkets: GameMarketsResponse?,
+                              eventID: Int) -> Bool {
+            history != nil && gameMarkets?.eventId == eventID
+        }
     }
 
     /// The page's observations that change while it scrolls. The page holds
@@ -103,9 +111,7 @@ struct NBAStoryStreamView9483: View {
             latest.eventID = key.eventID
             latest.phase = key.phase
             latest.cards = key.cards
-            guard key.ready else { return }
-            state.beginNBAStream(NBAStoryStreamPolicy9483.plan(
-                eventID: key.eventID, phase: key.phase, cards: key.cards.map { $0.current(at: Date()) }, now: Date()))
+            Self.admit(key, into: state, now: Date())
         }
         .onChange(of: signals.usableViewport) { _, viewport in
             stageVisible = Self.unobscured(stage: stageFrame.value, viewport: viewport)
@@ -115,6 +121,16 @@ struct NBAStoryStreamView9483: View {
         .onChange(of: state.openCardID) { old, new in
             if old != nil, new == nil { focused = state.returnCardID }
         }
+    }
+
+    /// The admission the inputs `onChange` runs. A ready page begins this
+    /// event's stream with the plan its whole deck makes at `now`. A page
+    /// still waiting on a read begins nothing, so the whole deck that follows
+    /// is applied when it arrives, not parked as pending behind Refresh.
+    static func admit(_ key: InputsKey, into state: NFLCardDeckState9483, now: Date) {
+        guard key.ready else { return }
+        state.beginNBAStream(NBAStoryStreamPolicy9483.plan(
+            eventID: key.eventID, phase: key.phase, cards: key.cards.map { $0.current(at: now) }, now: now))
     }
 
     // MARK: - Layout

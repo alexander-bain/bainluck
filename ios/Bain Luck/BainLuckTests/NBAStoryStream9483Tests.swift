@@ -42,6 +42,10 @@ import XCTest
 /// - select a neighbour, another event's or a pending card's line → `testSeeThisLineSelectsOnlyTheExactAppliedOption`
 /// - carry the old event's stream or ladder selection → `testANewEventDiscardsTheOldStreamAndItsLadderSelection`
 /// - show pending cards to the reader, or advance while held → `testTheReaderGetsTheAppliedOrderAndAHeldStreamDoesNotAdvance`
+/// Admission through the page's own seam (native, 4bbd44ecd1; `Page.deckReady` + `admit`):
+/// - begin on the half-loaded deck (the finish card alone) and park the ladders
+///   as pending behind Refresh, or begin on another event's markets or without
+///   the history → `testTheStreamBeginsOnlyOnceThisEventsHistoryAndMarketsHaveArrived`
 @MainActor
 final class NBAStoryStream9483Tests: XCTestCase {
     private typealias Policy = NBAStoryStreamPolicy9483
@@ -622,5 +626,73 @@ final class NBAStoryStream9483Tests: XCTestCase {
                                present: ["margin", "total", "finish"])
         XCTAssertEqual(state.nbaStreamState?.appliedIDs, ["total", "margin", "finish"], "receive → apply")
         XCTAssertEqual(state.nbaStreamState?.activeID, "total", "→ next, from finish wrapping to the first")
+    }
+
+    // MARK: - Admission (native)
+
+    private func decoder() -> JSONDecoder {
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
+        return decoder
+    }
+
+    private func history(event: Int) throws -> EventHistoryResponse {
+        try decoder().decode(EventHistoryResponse.self, from: JSONSerialization.data(withJSONObject: [
+            "event_id": event, "home_team": "New York Knicks", "away_team": "Toronto Raptors", "history": [],
+        ] as [String: Any]))
+    }
+
+    private func markets(event: Int) throws -> GameMarketsResponse {
+        try decoder().decode(GameMarketsResponse.self, from: JSONSerialization.data(withJSONObject: [
+            "event_id": event, "home_team": "New York Knicks", "away_team": "Toronto Raptors", "status": "completed",
+        ] as [String: Any]))
+    }
+
+    /// 15327183's page as it loads: the history (finish card) arrives before
+    /// the game markets (the ladders). Each delivery runs what the view runs
+    /// on that input — the plan `onChange` (`receiveNBAPlan`) and the inputs
+    /// `onChange` (`admit`, with the page's `deckReady`) — in BOTH orders, so
+    /// the guard does not lean on which of the two SwiftUI calls first.
+    func testTheStreamBeginsOnlyOnceThisEventsHistoryAndMarketsHaveArrived() throws {
+        let event = 15327183
+        let full = positiveDeck()
+        let history = try history(event: event)
+        let ours = try markets(event: event)
+        let another = try markets(event: 15320337)
+
+        for receiveFirst in [true, false] {
+            let state = NFLCardDeckState9483()
+            func deliver(_ cards: [NFLEventCard9483], history: EventHistoryResponse?,
+                         markets: GameMarketsResponse?) {
+                let ready = NBAStoryStreamView9483.Page.deckReady(history: history, gameMarkets: markets,
+                                                                 eventID: event)
+                let key = NBAStoryStreamView9483.InputsKey(eventID: event, phase: .after, cards: cards, ready: ready)
+                let plan = Policy.plan(eventID: event, phase: .after, cards: cards.map { $0.current(at: finalNow) },
+                                       now: finalNow)
+                if receiveFirst { state.receiveNBAPlan(plan) }
+                NBAStoryStreamView9483.admit(key, into: state, now: finalNow)
+                if !receiveFirst { state.receiveNBAPlan(plan) }
+            }
+            let order = receiveFirst ? "receive first" : "admit first"
+
+            deliver([finish], history: history, markets: nil)
+            XCTAssertNil(state.nbaStreamState, "\(order): the finish card alone begins no stream")
+            deliver(full, history: history, markets: another)
+            XCTAssertNil(state.nbaStreamState, "\(order): another event's markets begin no stream")
+            deliver(full, history: nil, markets: ours)
+            XCTAssertNil(state.nbaStreamState, "\(order): this event's markets without the history begin none")
+
+            deliver(full, history: history, markets: ours)
+            let stream = try XCTUnwrap(state.nbaStreamState, "\(order): both reads in: the stream begins")
+            XCTAssertEqual(stream.appliedIDs, ["total", "margin", "finish"],
+                           "\(order): the whole ranked deck is applied, no Refresh")
+            XCTAssertEqual(stream.pendingIDs, stream.appliedIDs, "\(order): nothing waits as pending")
+            XCTAssertEqual(stream.activeID, "total", "\(order): the scoring card leads")
+            XCTAssertFalse(stream.held, "\(order)")
+            XCTAssertEqual(stream.shelf(present: ["margin", "total", "finish"]),
+                           [.card("total"), .card("margin"), .card("finish")], "\(order): the shelf shows all three")
+            XCTAssertEqual(state.appliedNBAOrder(eventID: event, fallback: full).map(\.id),
+                           ["total", "margin", "finish"], "\(order): and so does the reader")
+        }
     }
 }
