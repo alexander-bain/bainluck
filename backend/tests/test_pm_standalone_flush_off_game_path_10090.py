@@ -263,8 +263,8 @@ class _Recorded(poly_task._PMCatalogFlushBoundary):
 
     instances: list = []
 
-    def __init__(self):
-        super().__init__()
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
         self.handovers: list = []
         self.active_at_map: list = []
         _Recorded.instances.append(self)

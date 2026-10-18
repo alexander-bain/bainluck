@@ -49,6 +49,14 @@ PRICE_CHUNK_LOCK_TIMEOUT_MS = 500
 #: in the same flush. What a held chunk costs the later chunks of its flush
 #: falls from up to 500 ms to 50 ms. Rerank and commit keep the chunk budget.
 PRICE_STATEMENT_LOCK_TIMEOUT_MS = 50
+#: #10090 (Root attempt71) — a whole GAME chunk on a game flush this fast or
+#: faster tries its price rows for only this long: the next game flush probes
+#: within one period, and the held-quote overlay publishes the newer quote
+#: about 40 ms sooner. Props, standalone/open legs, unknown or mixed chunks and
+#: any slower game cadence keep the 50 ms above: on a 250 ms loop a 1 ms try
+#: turned a 20 ms hold into a 270 ms prop/standalone wait (real PG, 50 ms: 34–49).
+FAST_GAME_PRICE_STATEMENT_LOCK_TIMEOUT_MS = 1
+FAST_GAME_FLUSH_SECONDS = 0.025
 
 #: #10090 — after an idle input wakes the price flush, wait this long (fixed,
 #: once) before it snapshots the buffer, so the rest of an already-arriving
@@ -81,7 +89,14 @@ class _PMCatalogFlushBoundary:
     stamps, the game writer and one side writer.
     """
 
-    def __init__(self):
+    def __init__(self, *, game_period: float | None = None):
+        # #10090: the game chunks' first price-row wait, from the run's own
+        # game cadence (see FAST_GAME_PRICE_STATEMENT_LOCK_TIMEOUT_MS).
+        self.game_price_lock_timeout_ms = (
+            FAST_GAME_PRICE_STATEMENT_LOCK_TIMEOUT_MS
+            if game_period is not None and game_period <= FAST_GAME_FLUSH_SECONDS
+            else PRICE_STATEMENT_LOCK_TIMEOUT_MS
+        )
         self.condition = asyncio.Condition()
         self.active = 0
         self.standalone_active = 0
@@ -2395,7 +2410,7 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
     # Buffered price updates
     price_buffer: dict[int, float] = {}
     buffer_lock = asyncio.Lock()
-    catalog_boundary = _PMCatalogFlushBoundary()
+    catalog_boundary = _PMCatalogFlushBoundary(game_period=game_period)
     lock_retry_until: dict[int, float] = {}
     lock_retry_events: set[int] = set()
     successful_price_write_at: dict[int, float] = {}
@@ -2514,6 +2529,22 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
         # Probe it NOWAIT instead. The first price attempt has the short
         # statement budget; rerank keeps the chunk budget, final drain waits.
         probe = not final and any(oid in lock_retry_until for oid in chunk)
+        # #10090 (Root attempt71): only a whole game chunk — every leg names
+        # its event, none is a prop or an open-catalog leg — takes the game
+        # loop's own first wait; the side loops never write such a chunk.
+        price_lock_timeout_ms = (
+            catalog_boundary.game_price_lock_timeout_ms
+            if chunk and all(
+                event_id_by_outcome.get(oid) is not None
+                and oid not in non_blend_outcome_ids
+                and oid not in open_outcome_ids
+                for oid in chunk
+            ) else PRICE_STATEMENT_LOCK_TIMEOUT_MS
+        )
+        # A hold that outlasts a try this short is ordinary, not news: its
+        # first timeout is counted like a probe's repeat, never logged as a
+        # flush error (one Sentry event per 1–50 ms hold otherwise).
+        short_first_wait = price_lock_timeout_ms < PRICE_STATEMENT_LOCK_TIMEOUT_MS
         probe_refused = False
         price_lock_timed_out = False
         try:
@@ -2523,7 +2554,7 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                 if not final:
                     await session.execute(
                         SET_LOCK_TIMEOUT_SQL,
-                        {"ms": lock_timeout_value(PRICE_STATEMENT_LOCK_TIMEOUT_MS)},
+                        {"ms": lock_timeout_value(price_lock_timeout_ms)},
                     )
                 # #10664: the chunk's price writes in ONE statement — the same
                 # set clause, row-lock order and returned-row coverage as the
@@ -2634,10 +2665,13 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
             # is the same known hold seen again — a table lock it queued on, or
             # an unrecognised row refusal. With no cooldown it recurs every
             # flush, once per retried event, so it is counted, not logged: the
-            # episode's first timeout (no probe yet) was the logged error.
+            # episode's first timeout (no probe yet) was the logged error — on
+            # the 50 ms budget; a fast game chunk's 1 ms first try is counted.
             # Rerank and commit failures keep their error log on every attempt.
-            probe_timed_out = probe and price_lock_timed_out
-            if probe_refused or probe_timed_out:
+            counted_timeout = (
+                (probe or (short_first_wait and not final)) and price_lock_timed_out
+            )
+            if probe_refused or counted_timeout:
                 # #10090 recovery: a refused probe waited for nothing (a timed
                 # out one at most 50 ms), so it re-arms no cooldown unless the
                 # overlay holds the whole chunk (below). Re-arming the two seconds left a pair

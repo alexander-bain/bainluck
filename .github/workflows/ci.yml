@@ -5066,6 +5066,27 @@ jobs:
             exit 1
           }
 
+      - name: "#10090 a brief hold on a PM prop or standalone price never costs a whole retry period (real Postgres)"
+        if: matrix.group == 'shared-tail' && needs.change-scope.outputs.reuse != 'true'
+        run: |
+          if python -m pytest tests/integration/test_pm_nongame_first_wait_10090_pg.py \
+            -v -rs > /tmp/nongame-first-wait10090.txt 2>&1; then
+            gate_status=0
+          else
+            gate_status=$?
+          fi
+          cat /tmp/nongame-first-wait10090.txt
+          echo "EXIT CODE: $gate_status"
+          test "$gate_status" -eq 0
+          if grep -qiE "[0-9]+ skipped" /tmp/nongame-first-wait10090.txt; then
+            echo "::error::#10090 non-game first-wait gate SKIPPED"
+            exit 1
+          fi
+          grep -qE "[^0-9]2 passed[,[:space:]]" /tmp/nongame-first-wait10090.txt || {
+            echo "::error::#10090 non-game first-wait gate did not run both cases"
+            exit 1
+          }
+
       - name: "#10090 a lock-held KALSHI price row stamps the received quote; a restart cannot undo it (real Postgres)"
         if: matrix.group == 'shared-tail' && needs.change-scope.outputs.reuse != 'true'
         run: |
