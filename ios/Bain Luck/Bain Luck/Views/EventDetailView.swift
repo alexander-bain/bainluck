@@ -1293,7 +1293,7 @@ struct EventDetailView: View {
             // bleeds: the `FINAL` chip was cut off the left edge while
             // "Sep 5 at 6:40 PM" was cut off the right, in the same frame.
             if approvedPair {
-                HStack(alignment: .top, spacing: 12) {
+                HStack(alignment: .center, spacing: 12) {
                     if EventState.isFinished(event.status),
                        let final = nflPairedHeadline(event, hasScore: hasScore),
                        final.away.won != nil {
@@ -1301,11 +1301,28 @@ struct EventDetailView: View {
                         Text("Final · \(final.away.won == true ? names.away : names.home) won")
                             .font(.headline)
                             .fixedSize(horizontal: false, vertical: true)
+                            .layoutPriority(1) // the info mark yields, not the result
                             .accessibilityHidden(true) // the paired row speaks the full result once
                     } else {
+                        VStack(alignment: .leading, spacing: 4) {
                         // #6544 — the hero chip keeps its minute tick here too.
                         TimelineView(.periodic(from: .now, by: 60)) { _ in
                             heroStatusBadge(event)
+                        }
+                        // The chip takes its ideal size whatever the disclosure beside
+                        // it measures, and settles as one unit: otherwise the live
+                        // dot's repeatForever pulse also animated the chip's first
+                        // layout and the dot wandered off the chip (v476 render).
+                        .fixedSize()
+                        .geometryGroup()
+                        // Before the game, when and where to watch still lead (the
+                        // same facts and gates as the meta row this replaces).
+                        if carriesContext, let context = adoptedPregameContext9483(event) {
+                            Text(context)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
                         }
                     }
                     Spacer(minLength: 8)
@@ -2130,25 +2147,31 @@ struct EventDetailView: View {
                         .alignmentGuide(.nflPairedFigure9483) { $0[VerticalAlignment.center] }
                 }
             }
-            if adopted {
+            // Before the game the row would hold a lone "vs"; it shows only with a score or projection.
+            if adopted, headline.center != .versus || projectionText(event, hasScore: hasScore) != nil {
                 let resultLayout = dynamicTypeSize.isAccessibilitySize
                     ? AnyLayout(VStackLayout(alignment: .leading, spacing: 12))
-                    : AnyLayout(HStackLayout(alignment: .top, spacing: 16))
+                    : AnyLayout(HStackLayout(alignment: .firstTextBaseline, spacing: 16))
                 resultLayout {
                     nflPairedCenter(event, headline, colors: colors, movement: .omitted)
                         .frame(maxWidth: .infinity, alignment: .leading)
                     if let projection = projectionText(event, hasScore: hasScore) {
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text("Projected").font(.caption).foregroundStyle(.secondary)
+                        // Figure over caption, like the score beside it, on its baseline.
+                        VStack(alignment: .leading, spacing: 2) {
                             Text(projection.replacingOccurrences(of: "Proj. ", with: ""))
-                                .font(.title3.weight(.semibold))
+                                .font(.title3.weight(.semibold).monospacedDigit())
+                            Text("Projected")
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                                .dynamicTypeSize(...Self.nflPairedCaptionTypeCeiling)
                         }
+                        .accessibilityElement(children: .combine)
                         .frame(maxWidth: .infinity, alignment: .leading)
                     }
                 }
                 .padding(.top, 10)
                 .overlay(alignment: .top) { Divider() }
-            } else if stacked && centerRow {
+            } else if stacked && centerRow && !adopted {
                 nflPairedCenter(event, headline, colors: colors, movement: .shown)
             }
             if priced && adopted {
@@ -2174,6 +2197,22 @@ struct EventDetailView: View {
                     .foregroundStyle(Color.primary)
             }
         }
+    }
+
+    /// The pregame meta row's broadcast and start, as one line for the adopted
+    /// header: the same values and gates (`showsBroadcast`, TBD withholding).
+    private func adoptedPregameContext9483(_ event: EventDetail) -> String? {
+        var parts: [String] = []
+        if let broadcast = event.espn?.broadcast,
+           Self.showsBroadcast(status: event.status, commenceTime: event.commenceTime?.asDate) {
+            parts.append(broadcast)
+        }
+        if event.startIsTbd == true {
+            if let tbd = RelativeTimeText.tbdText(for: event.commenceTime, relativeDays: false) { parts.append(tbd) }
+        } else if let date = event.commenceTime?.asDate {
+            parts.append(date.formatted(.dateTime.month(.abbreviated).day().hour().minute()))
+        }
+        return parts.isEmpty ? nil : parts.joined(separator: " · ")
     }
 
     private func usesApprovedHeadlinePresentation9483(_ event: EventDetail) -> Bool {
@@ -2303,7 +2342,8 @@ struct EventDetailView: View {
         _ event: EventDetail, _ headline: NFLPairedHeadline9483, colors: (away: Color, home: Color),
         movement: NFLPairedMovement
     ) -> some View {
-        VStack(spacing: 2) {
+        // The adopted row (`.omitted`) reads left to right, so its caption leads too.
+        VStack(alignment: movement == .omitted ? .leading : .center, spacing: 2) {
             Group {
                 switch headline.center {
                 case .versus:
