@@ -947,3 +947,81 @@ def test_an_interrupt_in_the_cleanup_after_an_acknowledged_commit_keeps_its_type
     out = capsys.readouterr().out
     assert '"written": 2' in out and "--restore --ids 901,902" in out
     assert _durable(s) == AFTER_STATE
+
+
+# CERT-4239's independent extension, made permanent (its fifteen cases, Root
+# directive 015): restore through the same lost-acknowledgement and cleanup paths
+# apply already pins, and the ORIGINAL cancellation object surviving every primary
+# path. Same rig, same coverage limit: synthetic transport and server controls over
+# the production session helper — not real PostgreSQL, not production.
+
+
+@pytest.mark.parametrize("landed", [True, False], ids=["landed", "never-landed"])
+@pytest.mark.parametrize("failing", ["rollback", "close", "dispose"])
+def test_restore_unknown_survives_a_failing_cleanup_in_both_durable_worlds(
+    repair, monkeypatch, capsys, landed, failing
+):
+    s = WireSession(
+        AFTER,
+        [],
+        commit_fails={1: (_lost_ack(), landed)},
+        rollback_raises=_lost_ack() if failing == "rollback" else None,
+        close_raises=_lost_ack() if failing == "close" else None,
+    )
+    dispose = _lost_ack() if failing == "dispose" else None
+    assert _wire_main(repair, monkeypatch, s, "restore", dispose_raises=dispose) == 3
+    captured = capsys.readouterr()
+    report = _report(captured.out)
+    assert report["outcome"] == "UNKNOWN" and report["mode"] == "restore"
+    assert s.commits == 1
+    assert _durable(s) == (BEFORE_STATE if landed else AFTER_STATE)
+    for claim in ("REFUSED", "nothing committed", "UNDO", "--restore"):
+        assert claim not in captured.out
+
+
+@pytest.mark.parametrize("failing", ["exit-commit", "close", "dispose"])
+def test_an_acknowledged_restore_survives_a_later_helper_error(
+    repair, monkeypatch, capsys, failing
+):
+    s = WireSession(
+        AFTER,
+        [],
+        commit_fails={2: (_lost_ack(), False)} if failing == "exit-commit" else None,
+        close_raises=_lost_ack() if failing == "close" else None,
+    )
+    dispose = _lost_ack() if failing == "dispose" else None
+    assert _wire_main(repair, monkeypatch, s, "restore", dispose_raises=dispose) == 0
+    captured = capsys.readouterr()
+    assert _report(captured.out)["written"] == 2
+    assert _durable(s) == BEFORE_STATE
+    assert "UNKNOWN" not in captured.out and "REFUSED" not in captured.out
+    assert "after the restore above had its COMMIT acknowledged" in captured.err
+
+
+@pytest.mark.parametrize("mode", ["apply", "restore"])
+@pytest.mark.parametrize(
+    "path",
+    ["commit-cancel-close-error", "unknown-cleanup-cancel", "refused-cleanup-cancel"],
+)
+def test_the_original_cancel_object_survives_every_primary_path(
+    repair, monkeypatch, capsys, mode, path
+):
+    cancel = asyncio.CancelledError("the original cancel")
+    dispose = None
+    if path == "commit-cancel-close-error":
+        s = WireSession(
+            _START[mode], [], commit_fails={1: (cancel, True)}, close_raises=_lost_ack()
+        )
+    elif path == "unknown-cleanup-cancel":
+        s = WireSession(_START[mode], [], commit_fails={1: (_lost_ack(), False)})
+        dispose = cancel
+    else:
+        s = LockedWire(_START[mode], [], rollback_raises=cancel)
+    with pytest.raises(asyncio.CancelledError) as raised:
+        _wire_main(repair, monkeypatch, s, mode, dispose_raises=dispose)
+    assert raised.value is cancel
+    out = capsys.readouterr().out
+    if path == "refused-cleanup-cancel":
+        assert out.startswith("REFUSED:") and s.commits == 0
+    else:
+        assert _report(out)["outcome"] == "UNKNOWN" and s.commits == 1
