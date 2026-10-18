@@ -809,7 +809,8 @@ final class NBAStoryStream9483Tests: XCTestCase {
 
     /// The unavailable slot's message and Refresh (W1) sit in the part of the
     /// slot on screen. Specimens from fx402c at 402 pt (scrollSpace, viewport
-    /// 0…675); the content band is 192 tall at default text.
+    /// 0…675). The arithmetic holds for any content height; 192 here is the
+    /// slot's minimum, not the measured content (106 at default text).
     func testTheUnavailableSlotsContentSitsInThePartOfTheSlotOnScreen() {
         let viewport = CGRect(x: 0, y: 0, width: 402, height: 675)
         let place = { (slot: CGRect) in
@@ -887,6 +888,27 @@ final class NBAStoryStream9483Tests: XCTestCase {
         XCTAssertEqual(offset(CGRect(x: 16, y: 700, width: 346, height: 150), viewport, 192), 0)
         // Content not yet measured: 0, and the frame centres it.
         XCTAssertEqual(offset(below, viewport, 0), 0)
+    }
+
+    /// ux17def default fling (402 pt, viewport 0…675, bar bottom 116): the slot
+    /// at −395…97 leaves a 97 pt band, screen 116…213. The measured content is
+    /// the padded message and Refresh alone (16 + 18 + 12 + 44 + 16 = 106), so
+    /// both draw inside the band. With the slot's minimum inside the
+    /// measurement (192) the message sat under the bar. Arithmetic only: 106 is
+    /// an input here; the layout measuring it is the default fling's to show.
+    func testAShortBandAtDefaultTextHoldsTheMessageAndRefresh() {
+        let viewport = CGRect(x: 0, y: 0, width: 402, height: 675)
+        let slot = CGRect(x: 16, y: -395, width: 346, height: 492)
+        let offset = NBAStoryStreamView9483.unavailableContentOffset(slot: slot, viewport: viewport, content: 106)
+        XCTAssertEqual(offset, 386)
+        let textTop = slot.minY + offset + 16 + 116
+        XCTAssertEqual(textTop, 123)
+        XCTAssertLessThanOrEqual(textTop + 18 + 12 + 44, 213)
+        // The old measurement: the 192 box clamps to 300 and the stack, centred
+        // in its 160, starts above the bar's bottom.
+        let old = NBAStoryStreamView9483.unavailableContentOffset(slot: slot, viewport: viewport, content: 192)
+        XCTAssertEqual(old, 300)
+        XCTAssertLessThan(slot.minY + old + 16 + (160 - 74) / 2 + 116, 116)
     }
 }
 

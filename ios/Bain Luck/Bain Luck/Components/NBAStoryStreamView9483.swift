@@ -498,12 +498,15 @@ private struct UnavailableSlot9483: View {
                 .fixedSize(horizontal: false, vertical: true)
             Button { refresh() } label: { NBAStoryStreamView9483.controlLabel("Refresh cards") }
         }
-        .frame(maxWidth: .infinity, minHeight: 160)
+        .frame(maxWidth: .infinity)
         .padding(16)
         .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { height in
             if height != contentHeight { contentHeight = height }
         }
-        .frame(maxHeight: .infinity, alignment: content > 0 ? .top : .center)
+        // The slot's minimum (160 + padding) is on this full-height frame, not
+        // inside the measurement, so the measured content is the message and
+        // Refresh alone and a short visible band can still hold them.
+        .frame(minHeight: 192, maxHeight: .infinity, alignment: content > 0 ? .top : .center)
         // The proxy is this frame, the whole slot, as laid out this frame; the
         // offset changes drawing only, so it never feeds back into its input.
         .visualEffect { effect, proxy in
