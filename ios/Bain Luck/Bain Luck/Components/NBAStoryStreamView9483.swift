@@ -166,16 +166,23 @@ struct NBAStoryStreamView9483: View {
     @ViewBuilder
     private func controls(begun: Bool, held: Bool, pendingDiffers: Bool, count: Int) -> some View {
         if begun && motionAvailable && count >= 2 {
-            Button(held ? "Resume cards" : "Pause cards") {
+            Button {
                 if held { resume() } else { state.holdNBAStream(eventID: page.eventID) }
+            } label: {
+                Self.controlLabel(held ? "Resume cards" : "Pause cards")
             }
+        } else if pendingDiffers {
+            Button { refreshOrder() } label: { Self.controlLabel("Refresh cards") }
+        }
+    }
+
+    /// A text control whose 44 pt height is part of its label, so the whole
+    /// height is the tap target (a frame outside the Button only pads it).
+    static func controlLabel(_ title: String) -> some View {
+        Text(title)
             .font(.callout.weight(.semibold))
             .frame(minHeight: 44)
-        } else if pendingDiffers {
-            Button("Refresh cards") { refreshOrder() }
-                .font(.callout.weight(.semibold))
-                .frame(minHeight: 44)
-        }
+            .contentShape(Rectangle())
     }
 
     private func shelf(_ slots: [NBAStoryStreamPolicy9483.Slot], byID: [String: NFLEventCard9483],
@@ -264,9 +271,7 @@ struct NBAStoryStreamView9483: View {
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
                 .fixedSize(horizontal: false, vertical: true)
-            Button("Refresh cards") { refreshOrder() }
-                .font(.callout.weight(.semibold))
-                .frame(minHeight: 44)
+            Button { refreshOrder() } label: { Self.controlLabel("Refresh cards") }
         }
         .frame(maxWidth: .infinity, minHeight: 160)
         .padding(16)
