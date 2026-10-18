@@ -160,12 +160,17 @@ def test_real_handovers_leave_returnable_heap_that_the_consumer_now_returns():
     parent, parent_end = _rig("0")
     candidate, candidate_end = _rig("1")
     mb = 2**20
+
+    def col(rows, key, scale=1):
+        return [None if x[key] is None else round(x[key] / scale, 1) for x in rows]
+
     summary = (
-        f"parent rss/handover MB={[round(x['rss'] / mb, 1) for x in parent]} "
-        f"reclaimable={parent_end['reclaimable'] / mb:.1f}MB | candidate rss/handover "
-        f"MB={[round(x['rss'] / mb, 1) for x in candidate]} released MB="
-        f"{[None if x['released'] is None else round(x['released'] / mb, 1) for x in candidate]} "
-        f"reclaimable={candidate_end['reclaimable'] / mb:.1f}MB"
+        f"parent rss MB={col(parent, 'rss', mb)} lag ms={col(parent, 'max_lag_ms')} "
+        f"end rss={parent_end['rss'] / mb:.1f} reclaimable={parent_end['reclaimable'] / mb:.1f}MB"
+        f" | candidate rss MB={col(candidate, 'rss', mb)} lag ms={col(candidate, 'max_lag_ms')}"
+        f" released MB={col(candidate, 'released', mb)} trim ms={col(candidate, 'trim_ms')}"
+        f" end rss={candidate_end['rss'] / mb:.1f} reclaimable="
+        f"{candidate_end['reclaimable'] / mb:.1f}MB"
     )
     # Stated on a green run too (CI prints the warnings summary): the numbers
     # are the control's result, not only its failure message.
@@ -176,6 +181,11 @@ def test_real_handovers_leave_returnable_heap_that_the_consumer_now_returns():
     assert all(isinstance(x["released"], int) for x in candidate[1:]), summary
     assert parent_end["reclaimable"] > 2 * mb, summary
     assert candidate_end["reclaimable"] < 0.5 * parent_end["reclaimable"], summary
+    # The benefit is resident memory, not only a smaller remainder.
+    assert candidate_end["rss"] < parent_end["rss"], summary
+    # The cost: the trim is synchronous work on the delivery loop. Bounded
+    # loosely here; the per-refresh `took=` line is the production reading.
+    assert max(x["trim_ms"] for x in candidate[1:]) < 250, summary
 
 
 # ---------------------------------------------------- the two consumers ----

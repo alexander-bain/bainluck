@@ -9,8 +9,9 @@ catalog of fake rows in the consumer's own query shapes, with ~1-2% turnover
 per handover, slowed reads, and venue sockets that stream quotes the whole
 time, so the reads' working set is interleaved with live allocations the way
 production's 10-60 s reads are. ``WS_HEAP_TRIM`` decides the arm. One JSON
-line per handover (``rss``, the consumer's own ``released`` when it trimmed),
-then one final line with what a further trim would still return.
+line per handover (``rss``; the consumer's own ``released`` and the trim's
+duration when it trimmed; the worst event-loop lag since the last line), then
+one final line with what a further trim would still return.
 """
 
 import asyncio
@@ -215,10 +216,23 @@ async def main(handovers):
         finished.append(outcome)
         CATALOG.turnover()
 
+    trim_ms, lag = [], [0.0]
+
     def counted_trim(arm):
+        started = time.perf_counter()
         got = real_trim(arm)
+        trim_ms.append((time.perf_counter() - started) * 1000)
         released.append(got)
         return got
+
+    async def loop_lag():
+        # The delivery cost: how late a 5 ms timer fires. A trim is synchronous,
+        # so any pause it adds lands here exactly as it would on a price flush.
+        loop = asyncio.get_running_loop()
+        while True:
+            due = loop.time() + 0.005
+            await asyncio.sleep(0.005)
+            lag[0] = max(lag[0], (loop.time() - due) * 1000)
 
     _install(mp, rig)
     mp.setattr(websockets, "connect", lambda *a, **k: Socket())
@@ -236,6 +250,7 @@ async def main(handovers):
 
     stop = asyncio.Event()
     owner = asyncio.create_task(task._run_polymarket_ws_consumer(stop=stop))
+    lag_task = asyncio.create_task(loop_lag())
     seen = 0
     while seen < handovers:
         await asyncio.sleep(0.02)
@@ -244,8 +259,11 @@ async def main(handovers):
             await asyncio.sleep(0.3)  # both socket owners reconcile
             gc.collect()
             print(json.dumps({"handover": seen, "rss": heap_trim._rss_bytes(),
-                              "released": released[-1] if released else None}),
+                              "released": released[-1] if released else None,
+                              "trim_ms": trim_ms[-1] if trim_ms else None,
+                              "max_lag_ms": lag[0]}),
                   flush=True)
+            lag[0] = 0.0
     # What the allocator still holds that a trim would return, measured while
     # the consumer is still running, exactly as after the last handover.
     gc.collect()
@@ -256,6 +274,7 @@ async def main(handovers):
     print(json.dumps({"final": True, "rss": before,
                       "reclaimable": None if trim is None or before is None
                       else before - heap_trim._rss_bytes()}), flush=True)
+    lag_task.cancel()
     stop.set()
     await asyncio.wait_for(owner, 60)
     mp.undo()
