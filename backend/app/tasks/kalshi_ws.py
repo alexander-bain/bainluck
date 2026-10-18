@@ -801,27 +801,34 @@ def plan_stable_shards(current, scope, per_connection=None, extra=0, busy=()):
     return keep, replace, start, retire
 
 
-def _packed(groups, max_rows, max_groups=None):
+def _packed(groups, max_rows, max_groups=None, key=None):
     """Consecutive whole ``groups`` merged into phases of at most ``max_rows``
-    rows and ``max_groups`` groups."""
-    phases, current, count = [], {}, 0
+    rows and ``max_groups`` groups.
+
+    #10090 — with ``key``, groups with different keys never share a phase;
+    each key fills its own open phase, and phases keep the order they opened
+    in (the first group of each). Without it, every group has one key.
+    """
+    phases, open_phases = [], {}
     for group in groups:
-        if current and (
-            len(current) + len(group) > max_rows
-            or (max_groups is not None and count >= max_groups)
+        slot = open_phases.get(None if key is None else key(group))
+        if slot is not None and (
+            len(phases[slot[0]]) + len(group) > max_rows
+            or (max_groups is not None and slot[1] >= max_groups)
         ):
-            phases.append(current)
-            current, count = {}, 0
-        current.update(group)
-        count += 1
-    if current:
-        phases.append(current)
+            slot = None
+        if slot is None:
+            slot = [len(phases), 0]
+            open_phases[None if key is None else key(group)] = slot
+            phases.append({})
+        phases[slot[0]].update(group)
+        slot[1] += 1
     return phases
 
 
 def linked_first_phases(
     batch, market_id_by_outcome, event_id_by_outcome, pending_events=(),
-    live_events=None, pending_events_fenced=False,
+    live_events=None, pending_events_fenced=False, tail_event_by_outcome=None,
 ):
     """Publish independent games separately, followed by unrelated contracts.
 
@@ -852,6 +859,14 @@ def linked_first_phases(
     time, into phases of at most `NONLIVE_PHASE_MAX_ROWS` rows, in
     batch order — oldest buffered first, so a budget-deferred tail
     (`flush_budget_spent`) is the head of the next flush's non-live work.
+
+    #10090 — ``tail_event_by_outcome`` (the full owner map, known props
+    included) keeps a live game's futures/props markets out of phases holding
+    any other event's or unrelated contracts: one lock timeout rolls back its
+    whole phase (production v5771, 2026-10-17 22:52:49–22:54:07Z: 131 lock
+    timeouts held a live game's total-points lines ~78 s behind futures in
+    the same 200-row phases). They stay non-live tail work: same budget,
+    preemption and stamp cohort, at their batch-order position.
     """
     if not batch or any(market_id_by_outcome.get(oid) is None for oid in batch):
         return [batch]
@@ -898,10 +913,19 @@ def linked_first_phases(
     markets = {}
     for oid, entry in rest.items():
         markets.setdefault(market_id_by_outcome[oid], {})[oid] = entry
+
+    def live_owner(market):
+        if tail_event_by_outcome is None:
+            return None
+        return next((
+            event for event in map(tail_event_by_outcome.get, market)
+            if event is not None and event in live_events
+        ), None)
+
     return (
         live
         + _packed(other, NONLIVE_PHASE_MAX_ROWS, NONLIVE_PHASE_MAX_GAMES)
-        + _packed(markets.values(), NONLIVE_PHASE_MAX_ROWS)
+        + _packed(markets.values(), NONLIVE_PHASE_MAX_ROWS, key=live_owner)
     )
 
 
@@ -1415,6 +1439,7 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
             pending_events=blend_refresher.pending_event_ids(),
             live_events=live_event_ids,
             pending_events_fenced=True,
+            tail_event_by_outcome=event_id_by_outcome,
         )
         if beside is not None:
             # The main writer keeps oldest-first progress. Its helper serves
