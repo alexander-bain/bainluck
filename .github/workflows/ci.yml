@@ -6969,6 +6969,28 @@ jobs:
             exit 1
           }
 
+      - name: "#10090 the status task lets go of a row it has just promoted (real Postgres)"
+        # A blend stamp on a game that had just gone live was cancelled five
+        # times at its 500 ms lock budget while the status pass held the row
+        # through its later history reads (v5774). Whether a second session's
+        # UPDATE is admitted or refused, and whether a later arm reads the row
+        # another session committed, are properties of real row locks and a
+        # real identity map. Reuses the #7617 database: this file drops and
+        # creates its own tables.
+        if: matrix.group == 'isolated' && needs.change-scope.outputs.reuse != 'true'
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_status_task_releases_started_rows_pg_10090.py \
+            -v -rs 2>&1 | tee /tmp/statusrelease10090.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/statusrelease10090.txt; then
+            echo "::error::#10090 status-release contract SKIPPED — the gate did not run"
+            exit 1
+          fi
+          grep -qE "[^0-9]4 passed[,[:space:]]" /tmp/statusrelease10090.txt || {
+            echo "::error::#10090 status-release contract did not run all four cases"
+            exit 1
+          }
+
       - name: "#10022 an open-contract leg the socket sees finalize is graded alone (real Postgres)"
         # A finished CHC–SD series kept pricing scorelines that could no longer
         # happen because the socket left open contracts' results to the REST

@@ -172,6 +172,11 @@ class _EspnSession:
             "R", (), {"scalars": lambda _s: type("S", (), {"all": lambda _x: rows})()}
         )()
 
+    def expunge_all(self):
+        # #10090: the pass drops its loaded rows once the promotion
+        # commits. A fake holds no identity map, so there is none to drop.
+        return None
+
     async def commit(self):
         pass
 
@@ -241,6 +246,11 @@ class _OddsSession:
             (),
             {"scalars": lambda _s: type("S", (), {"all": lambda _x: self._live})()},
         )()
+
+    def expunge_all(self):
+        # #10090: the pass drops its loaded rows once the promotion
+        # commits. A fake holds no identity map, so there is none to drop.
+        return None
 
     async def commit(self):
         pass

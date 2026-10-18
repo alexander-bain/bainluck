@@ -5282,6 +5282,32 @@ async def _transition_event_statuses_impl() -> dict:
                     event.win_probability_sources = _released
                     stats["statpal_released_session_stamped"] += 1
 
+        # #10090: THE PROMOTION COMMITS HERE, NOT AT THE END OF THE PASS.
+        #
+        # The arms below run two `LAST_POST_COMMENCE_SNAPSHOT_SQL` history reads
+        # and four repair scans, and until this line every row promoted above
+        # stayed locked through all of them. A blend stamp landing on a game
+        # that had just gone live queued behind that lock: v5774, event
+        # 15331682, the stamp statement cancelled five times at its 500 ms
+        # `lock_timeout` while a 13 s pass ran, and the reader's headline held
+        # the old number for the length of the pass. Each decision above is
+        # final once made — every input it reads was read above — so nothing
+        # below can change it.
+        #
+        # A CHOICE, NOT AN EQUIVALENCE: an arm below failing no longer undoes
+        # a promotion that had completed. It used to, and the next pass made
+        # the same decision again, so a failure that recurred held every game
+        # in the fleet at `scheduled`.
+        #
+        # `expunge_all` because this session does not expire on commit: an arm
+        # below that selects a row promoted here would otherwise be handed the
+        # copy loaded before the lock was released, not what a writer has
+        # committed since, and a write that matches the stale copy is never
+        # flushed (the #10300 arm reads with `populate_existing` for the same
+        # reason). Nothing below reads `started_events`.
+        await session.commit()
+        session.expunge_all()
+
         # --- live → suspended, ON THE VENUE'S WORD (rung 2 of §R) ---
         #
         # The rung `EVENT-GRAPH-DOCTRINE` §R declared on 2026-09-02 and left
