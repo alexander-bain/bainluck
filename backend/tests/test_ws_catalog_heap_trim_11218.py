@@ -10,8 +10,10 @@ tests that account on the real consumer.
 Guards: (1) the trim itself, which never raises and has a ``WS_HEAP_TRIM=0``
 undo; (2) on glibc, the allocator keeps freed heap until trimmed, and the trim
 returns it (the production allocator: CI's ubuntu runner is the heroku-24
-base); (3) both arms trim once after every refresh, after the read's working
-set is garbage.
+base), on the real consumer under a lab allocator condition that stops free()
+returning the heap top by itself in every arm, with an untrimmed control the
+gate must refuse; (3) both arms trim once after every refresh, after the
+read's working set is garbage.
 """
 
 import asyncio
@@ -138,16 +140,55 @@ def test_glibc_keeps_freed_heap_until_the_trim_returns_it():
     assert abs(got["released"] - (got["freed"] - got["trimmed"])) < 2**21, got
 
 
-def _rig(trim: str, handovers: int = 6) -> tuple[list[dict], dict]:
+RIG = os.path.join(BACKEND, "tests", "_pm_handover_memory_rig_11218.py")
+MB = 2**20
+
+
+def _run_rig(arg: str, env: dict) -> list[dict]:
     run = subprocess.run(
-        [sys.executable, os.path.join(BACKEND, "tests", "_pm_handover_memory_rig_11218.py"),
-         str(handovers)],
-        capture_output=True, text=True, timeout=300, cwd=BACKEND,
-        env={**os.environ, "WS_HEAP_TRIM": trim},
+        [sys.executable, RIG, arg], capture_output=True, text=True, timeout=300,
+        cwd=BACKEND, env={**os.environ, **env},
     )
     assert run.returncode == 0, run.stderr[-3000:]
-    lines = [json.loads(line) for line in run.stdout.splitlines() if line.startswith("{")]
-    return [x for x in lines if "handover" in x], lines[-1]
+    return [json.loads(line) for line in run.stdout.splitlines() if line.startswith("{")]
+
+
+def _rig(trim: str, handovers: int = 6) -> tuple[dict, list[dict], dict]:
+    # Every arm runs under the rig's causal laboratory condition (see the rig):
+    # free() never returns the heap top by itself, in either arm, so an
+    # untrimmed arm's end reading is not lowered by where an automatic return
+    # happened to land. A lab condition, not production configuration.
+    lines = _run_rig(str(handovers), {"WS_HEAP_TRIM": trim, "RIG_11218_LAB_ALLOCATOR": "1"})
+    return lines[0], [x for x in lines if "handover" in x], lines[-1]
+
+
+def _held(lab: dict) -> bool:
+    """mallopt accepted both values, free() returned ~none of the probe, one trim did."""
+    probe = lab["probe"]
+    return (
+        lab["lab"] == {"trim_threshold": 1, "mmap_threshold": 1}
+        and probe["loaded"] > 24 * MB
+        and probe["free_returned"] < 0.1 * probe["loaded"]
+        and probe["trim_returned"] > 0.5 * probe["loaded"]
+    )
+
+
+def _gate(parent_end: dict, arm: list[dict], arm_end: dict) -> list[str]:
+    """The candidate's clauses this arm fails, by name ([] = it passes)."""
+    trimmed = arm[0]["released"] is None and all(isinstance(x["released"], int) for x in arm[1:])
+    failed = []
+    if not trimmed:
+        failed.append("every_refresh_trimmed")
+    if not arm_end["reclaimable"] < 0.5 * parent_end["reclaimable"]:
+        failed.append("below_half")
+    # The benefit is resident memory, not only a smaller remainder.
+    if not arm_end["rss"] < parent_end["rss"]:
+        failed.append("resident_benefit")
+    # The cost: the trim is synchronous work on the delivery loop. Bounded
+    # loosely here; the per-refresh `took=` line is the production reading.
+    if not (trimmed and max(x["trim_ms"] for x in arm[1:]) < 250):
+        failed.append("trim_cost")
+    return failed
 
 
 @pytest.mark.skipif(not GLIBC, reason="malloc_trim and its heap retention are glibc's")
@@ -157,37 +198,51 @@ def test_real_handovers_leave_returnable_heap_that_the_consumer_now_returns():
 
     Parent (``WS_HEAP_TRIM=0``): after the handovers the heap holds freed
     memory that is still resident; one trim returns it. Candidate: the
-    consumer's own per-refresh trims have already returned it.
+    consumer's own per-refresh trims have already returned it. Control: a
+    second untrimmed arm, which the candidate's gate must refuse.
     """
-    parent, parent_end = _rig("0")
-    candidate, candidate_end = _rig("1")
-    mb = 2**20
+    # Why the lab condition: on the default allocator free() hands the heap
+    # top back by itself. That is what lowered one parent end sample (68bddab4).
+    default = _run_rig("probe", {"RIG_11218_LAB_ALLOCATOR": "0"})[0]
+    parent_lab, parent, parent_end = _rig("0")
+    candidate_lab, candidate, candidate_end = _rig("1")
+    control_lab, control, control_end = _rig("0")
 
     def col(rows, key, scale=1):
         return [None if x[key] is None else round(x[key] / scale, 1) for x in rows]
 
+    def probe(lab):
+        return "/".join(f"{lab['probe'][k] / MB:.1f}" for k in
+                        ("loaded", "free_returned", "trim_returned"))
+
     summary = (
-        f"parent rss MB={col(parent, 'rss', mb)} lag ms={col(parent, 'max_lag_ms')} "
-        f"end rss={parent_end['rss'] / mb:.1f} reclaimable={parent_end['reclaimable'] / mb:.1f}MB"
-        f" | candidate rss MB={col(candidate, 'rss', mb)} lag ms={col(candidate, 'max_lag_ms')}"
-        f" released MB={col(candidate, 'released', mb)} trim ms={col(candidate, 'trim_ms')}"
-        f" end rss={candidate_end['rss'] / mb:.1f} reclaimable="
-        f"{candidate_end['reclaimable'] / mb:.1f}MB"
+        f"lab probe MB loaded/free/trim: default={probe(default)} parent={probe(parent_lab)}"
+        f" candidate={probe(candidate_lab)} control={probe(control_lab)}"
+        f" mallopt={parent_lab['lab']}/{candidate_lab['lab']}/{control_lab['lab']}"
+        f" | parent rss MB={col(parent, 'rss', MB)} lag ms={col(parent, 'max_lag_ms')} "
+        f"end rss={parent_end['rss'] / MB:.1f} reclaimable={parent_end['reclaimable'] / MB:.1f}MB"
+        f" | candidate rss MB={col(candidate, 'rss', MB)} lag ms={col(candidate, 'max_lag_ms')}"
+        f" released MB={col(candidate, 'released', MB)} trim ms={col(candidate, 'trim_ms')}"
+        f" end rss={candidate_end['rss'] / MB:.1f} reclaimable="
+        f"{candidate_end['reclaimable'] / MB:.1f}MB"
+        f" | control rss MB={col(control, 'rss', MB)} end rss={control_end['rss'] / MB:.1f}"
+        f" reclaimable={control_end['reclaimable'] / MB:.1f}MB"
     )
     # Stated on a green run too (CI prints the warnings summary): the numbers
     # are the control's result, not only its failure message.
     warnings.warn(f"#11218 glibc handover control: {summary}")
-    assert all(x["released"] is None for x in parent), summary
-    # Every refresh after the startup install trimmed, and said what it gave back.
-    assert candidate[0]["released"] is None, summary
-    assert all(isinstance(x["released"], int) for x in candidate[1:]), summary
-    assert parent_end["reclaimable"] > 2 * mb, summary
-    assert candidate_end["reclaimable"] < 0.5 * parent_end["reclaimable"], summary
-    # The benefit is resident memory, not only a smaller remainder.
-    assert candidate_end["rss"] < parent_end["rss"], summary
-    # The cost: the trim is synchronous work on the delivery loop. Bounded
-    # loosely here; the per-refresh `took=` line is the production reading.
-    assert max(x["trim_ms"] for x in candidate[1:]) < 250, summary
+    # The mechanism is real on this allocator, and the condition removed it in
+    # every arm (a refused or ineffective condition fails here, never skips).
+    assert default["lab"] is None and default["probe"]["loaded"] > 24 * MB, summary
+    assert default["probe"]["free_returned"] > 0.5 * default["probe"]["loaded"], summary
+    assert all(_held(lab) for lab in (parent_lab, candidate_lab, control_lab)), summary
+    assert all(x["released"] is None for x in parent + control), summary
+    assert parent_end["reclaimable"] > 2 * MB, summary
+    assert _gate(parent_end, candidate, candidate_end) == [], summary
+    # Negative control: a consumer that never trims fails the same gate, for
+    # the intended reason.
+    assert {"every_refresh_trimmed", "below_half"} <= set(
+        _gate(parent_end, control, control_end)), summary
 
 
 # ---------------------------------------------------- the two consumers ----
