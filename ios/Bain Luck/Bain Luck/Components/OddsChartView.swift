@@ -1155,12 +1155,10 @@ struct OddsChartView: View {
         // #8320 — no "● Live" here: the hero's inning chip already says the
         // game is on and the toolbar says how the number arrives. A third green
         // dot two inches below them was the "clowny" Alex shook the phone at.
-        if EventState.isFinished(status) {
-            HStack(spacing: 4) {
-                Circle().fill(.secondary).frame(width: 6, height: 6)
-                Text("Final").font(.caption2).fontWeight(.medium).foregroundStyle(.secondary)
-            }
-        }
+        // #9483 v476 phone fit — nor "● Final", for the same reason: the hero's
+        // FINAL chip says it, and the second saying pushed the All / Since Start
+        // picker onto a row of its own, taking the chart's key under the tab bar
+        // on a 375pt phone.
     }
 
     @ViewBuilder

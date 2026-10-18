@@ -1320,10 +1320,15 @@ struct EventDetailView: View {
             // bleeds: the `FINAL` chip was cut off the left edge while
             // "Sep 5 at 6:40 PM" was cut off the right, in the same frame.
             if approvedPair {
+                // A decided final's FINAL chip and its date share one row at
+                // default text; larger text stacks them, and so does every
+                // priced pair, whose chip may draw nothing and whose
+                // disclosure already holds the row's trailing side.
+                let decided = nflPairedHeadline(event, hasScore: hasScore)?.away.won != nil
+                let adoptedMetaLayout = decided && !stacked
+                    ? metaLayout : AnyLayout(VStackLayout(alignment: .leading, spacing: 4))
                 HStack(alignment: .center, spacing: 12) {
-                    // At default text the chip and its date share one row (the
-                    // date wraps beside it where it must); larger text stacks them.
-                    metaLayout {
+                    adoptedMetaLayout {
                         // #6544 — the hero chip keeps its minute tick here too, and
                         // at a final it is the existing FINAL chip (no second
                         // winner sentence: the sides say Won/Lost).
@@ -1349,7 +1354,7 @@ struct EventDetailView: View {
                     // The page's one disclosure (#8320/#9483), on a priced pair only,
                     // as the legacy pair mounts it: a decided final makes no
                     // delivery or confidence claim. Game context stays in Game Info.
-                    if nflPairedHeadline(event, hasScore: hasScore)?.away.won == nil {
+                    if !decided {
                         nflPairedDetails(event)
                             // Its whole 44pt target stays, overhanging the card's
                             // top inset and the gap below; it no longer makes the
@@ -2395,39 +2400,24 @@ struct EventDetailView: View {
         let shown = adopted ? adoptedSide9483(event, side, isAway: isAway) : nil
         let figure = shown?.figure ?? side.figure
         let baselineCaption = shown.map { $0.caption } ?? side.pregame
-        // One line, shrunk before it hyphenates ("Sea-hawks" at AX sizes).
-        let teamName = Text(name)
-            .font(.subheadline.weight(.semibold))
-            .foregroundStyle(color)
-            .lineLimit(adopted ? nil : 1)
-            .minimumScaleFactor(adopted ? 1 : 0.5)
-            .allowsTightening(!adopted)
-        let verdict = Label(side.figure, systemImage: side.won == true ? "checkmark" : "xmark")
-            .font(.subheadline.weight(.semibold))
-            .foregroundStyle(Color.primary)
-        let logoView = TeamLogoView(url: logo, teamName: isAway ? event.awayTeam : event.homeTeam,
-                                    color: color, size: 24, sportKey: event.sport, opponentName: opponent)
-        let nameRow = HStack(spacing: 6) {
-            if !isAway && !adopted { Spacer(minLength: 0) }
-            logoView
-            teamName
-            if isAway || adopted { Spacer(minLength: 0) }
-        }
         return VStack(alignment: adopted || isAway ? .leading : .trailing, spacing: adopted ? 4 : 3) {
+            HStack(spacing: 6) {
+                if !isAway && !adopted { Spacer(minLength: 0) }
+                TeamLogoView(url: logo, teamName: isAway ? event.awayTeam : event.homeTeam,
+                             color: color, size: 24, sportKey: event.sport, opponentName: opponent)
+                // One line, shrunk before it hyphenates ("Sea-hawks" at AX sizes).
+                Text(name)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(color)
+                    .lineLimit(adopted ? nil : 1)
+                    .minimumScaleFactor(adopted ? 1 : 0.5)
+                    .allowsTightening(!adopted)
+                if isAway || adopted { Spacer(minLength: 0) }
+            }
             if finalPair {
-                // #9483 v476 phone fit — a final's Won/Lost rides beside the
-                // name where both fit whole, and keeps its own row where not.
-                ViewThatFits(in: .horizontal) {
-                    HStack(spacing: 6) {
-                        logoView
-                        teamName.fixedSize()
-                        verdict.fixedSize().padding(.leading, 2)
-                        Spacer(minLength: 0)
-                    }
-                    VStack(alignment: .leading, spacing: 4) { nameRow; verdict }
-                }
-            } else {
-                nameRow
+                Label(side.figure, systemImage: side.won == true ? "checkmark" : "xmark")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(Color.primary)
             }
             Text(figure)
                 .acceptedValueChange(finalPair ? figure : heroValue(away: isAway), rising: heroRising(away: isAway), animates: heroMoves)

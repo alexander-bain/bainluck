@@ -231,23 +231,36 @@ final class RecognizableNFLPage9483Tests: XCTestCase {
                        "the row it leaves is the chip's height")
     }
 
-    /// FINAL (or the pregame chip) and its date share one row at default text,
-    /// stacking from xxLarge as the legacy meta row does; a final's Won/Lost
-    /// rides beside the name only where both fit whole.
-    func testTheChipAndDateShareARowAndTheVerdictRidesBesideTheName() throws {
+    /// A decided final's FINAL chip and its date share one row at default
+    /// text, stacking from xxLarge as the legacy meta row does; a priced pair
+    /// (whose chip can be empty) keeps the stacked column it had.
+    func testAFinalsChipAndDateShareARowAtDefaultText() throws {
         let page = try pageCode()
         let hero = try span(page, from: "private func heroSection(", to: "static func heroBackdrop(")
         let adopted = try span(hero, from: "if approvedPair {", to: "} else {")
-        XCTAssertTrue(adopted.contains("metaLayout {"), "the chip and its date are stacked again")
-        XCTAssertFalse(adopted.contains("VStack(alignment: .leading, spacing: 4)"))
+        XCTAssertTrue(adopted.contains("let decided = nflPairedHeadline(event, hasScore: hasScore)?.away.won != nil"))
+        XCTAssertTrue(adopted.contains("let adoptedMetaLayout = decided && !stacked\n"
+                                       + "                    ? metaLayout : AnyLayout(VStackLayout(alignment: .leading, spacing: 4))"),
+                      "the final's chip and date are stacked again, or a priced pair shares the row")
+        XCTAssertTrue(adopted.contains("adoptedMetaLayout {"))
+        XCTAssertTrue(adopted.contains("if !decided {\n                        nflPairedDetails(event)"),
+                      "control: a decided final mounts no disclosure")
         XCTAssertTrue(hero.contains("let metaLayout = stacked\n            ? AnyLayout(VStackLayout(alignment: .leading, spacing: 4))"),
                       "control: the shared layout stacks at large text")
-        let side = try span(page, from: "private func nflPairedSide(", to: "static let nflPairedCaptionTypeCeiling")
-        let fits = try span(side, from: "ViewThatFits(in: .horizontal) {", to: "} else {")
-        XCTAssertTrue(fits.contains("teamName.fixedSize()") && fits.contains("verdict.fixedSize()"),
-                      "inline only when name and verdict fit whole")
-        XCTAssertTrue(fits.contains("VStack(alignment: .leading, spacing: 4) { nameRow; verdict }"),
-                      "where they do not, the verdict keeps its own row")
-        XCTAssertEqual(side.components(separatedBy: "Label(side.figure,").count - 1, 1, "one verdict")
+    }
+
+    /// The chart's heading no longer repeats FINAL beside "Win Probability":
+    /// the hero's chip says it, and the repeat put the range picker on a row of
+    /// its own (the 375pt key under the tab bar).
+    func testTheChartHeadingDoesNotRepeatFinal() throws {
+        let here = URL(fileURLWithPath: #filePath)
+        let url = here.deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("Bain Luck/Components/OddsChartView.swift")
+        let chart = try String(contentsOf: url, encoding: .utf8)
+        let heading = try span(chart, from: "private var chartTitleAndStatus: some View {",
+                               to: "private var chartHeaderTrailingControls: some View {")
+        XCTAssertTrue(heading.contains("Text(\"Win Probability\")"), "control: scanning the heading")
+        XCTAssertFalse(heading.contains("Text(\"Final\")"), "the heading says FINAL a second time")
+        XCTAssertFalse(heading.contains("Text(\"Live\")"), "nor Live (#8320)")
     }
 }
