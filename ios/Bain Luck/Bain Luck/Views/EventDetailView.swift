@@ -1940,7 +1940,10 @@ struct EventDetailView: View {
         return NBAStoryStreamView9483.Page(
             eventID: event.id, phase: phase, compact: true,
             supportsAutomaticScrollObservation: Self.observesPageScrollPhase,
-            coordinateSpace: Self.scrollSpace, signals: nbaStreamSignals)
+            coordinateSpace: Self.scrollSpace, signals: nbaStreamSignals,
+            // The finish card reads the history; the ladders read the game
+            // markets and the finish's pregame pair.
+            ready: vm.history != nil && vm.gameMarkets?.eventId == event.id)
     }
 
     /// The page ScrollView reports its scroll phase only on iOS 18; iOS 17 is

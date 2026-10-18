@@ -30,6 +30,11 @@ struct NBAStoryStreamView9483: View {
         let supportsAutomaticScrollObservation: Bool
         let coordinateSpace: String
         let signals: Signals
+        /// Every read the deck is built from has arrived for this event. The
+        /// stream begins only then: a plan made from a half-loaded deck would
+        /// apply one card and withhold the rest as pending behind Refresh.
+        /// Until then the shelf shows this event's plan order, manual only.
+        let ready: Bool
     }
 
     /// The page's observations that change while it scrolls. The page holds
@@ -93,10 +98,12 @@ struct NBAStoryStreamView9483: View {
                     await freshnessWake(eventID: page.eventID, deadline: plan.nearestExpiry)
                 }
         }
-        .onChange(of: InputsKey(eventID: page.eventID, phase: page.phase, cards: cards), initial: true) { _, key in
+        .onChange(of: InputsKey(eventID: page.eventID, phase: page.phase, cards: cards, ready: page.ready),
+                  initial: true) { _, key in
             latest.eventID = key.eventID
             latest.phase = key.phase
             latest.cards = key.cards
+            guard key.ready else { return }
             state.beginNBAStream(NBAStoryStreamPolicy9483.plan(
                 eventID: key.eventID, phase: key.phase, cards: key.cards.map { $0.current(at: Date()) }, now: Date()))
         }
@@ -131,7 +138,7 @@ struct NBAStoryStreamView9483: View {
                         .foregroundStyle(.secondary)
                 }
             }
-            controls(held: stream?.held ?? false, pendingDiffers: pendingDiffers, count: shown)
+            controls(begun: stream != nil, held: stream?.held ?? false, pendingDiffers: pendingDiffers, count: shown)
             if !slots.isEmpty {
                 shelf(slots, byID: byID, reasons: plan.reasons, present: present)
             }
@@ -141,8 +148,8 @@ struct NBAStoryStreamView9483: View {
     /// Pause/Resume where automatic motion can run; elsewhere, Refresh when a
     /// newer order is waiting. Fewer than two cards: no motion control.
     @ViewBuilder
-    private func controls(held: Bool, pendingDiffers: Bool, count: Int) -> some View {
-        if motionAvailable && count >= 2 {
+    private func controls(begun: Bool, held: Bool, pendingDiffers: Bool, count: Int) -> some View {
+        if begun && motionAvailable && count >= 2 {
             Button(held ? "Resume cards" : "Pause cards") {
                 if held { resume() } else { state.holdNBAStream(eventID: page.eventID) }
             }
@@ -403,6 +410,7 @@ struct NBAStoryStreamView9483: View {
         let eventID: Int
         let phase: NBALadderCard9483.Phase
         let cards: [NFLEventCard9483]
+        let ready: Bool
     }
 }
 
