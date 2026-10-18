@@ -1,0 +1,29 @@
+CREATE INDEX
+=== section 4 start 02:02:40Z (ON_ERROR_STOP off)
+SET
+SET
+psql:/tmp/lat2316-fixture/r3/section4.sql:9: NOTICE:  index "ix_fm_t14_external_id_trgm" does not exist, skipping
+DROP INDEX
+psql:/tmp/lat2316-fixture/r3/section4.sql:10: NOTICE:  index "ix_fm_t14_llm_sport_category" does not exist, skipping
+DROP INDEX
+psql:/tmp/lat2316-fixture/r3/section4.sql:11: ERROR:  canceling statement due to lock timeout
+      relname       | indisvalid | indisready 
+--------------------+------------+------------
+ ix_fm_t14_sport_id | f          | t
+(1 row)
+
+psql:/tmp/lat2316-fixture/r3/section4.sql:16: NOTICE:  index "ix_fm_t14_external_id_trgm" does not exist, skipping
+DROP INDEX
+psql:/tmp/lat2316-fixture/r3/section4.sql:17: NOTICE:  index "ix_fm_t14_llm_sport_category" does not exist, skipping
+DROP INDEX
+psql:/tmp/lat2316-fixture/r3/section4.sql:18: ERROR:  canceling statement due to lock timeout
+      relname       | indisvalid | indisready 
+--------------------+------------+------------
+ ix_fm_t14_sport_id | f          | t
+(1 row)
+
+real 120.36
+user 0.00
+sys 0.01
+psql EXIT 0
+=== section 4 end 02:04:40Z

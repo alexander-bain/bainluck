@@ -17,7 +17,11 @@ captures two statements, and prints them as one psql block:
      `pg_prepared_statements` then prints which kind it chose.
 
 Every block opens with the gate's own `statement_timeout`, so it never inherits
-the build's `statement_timeout = 0`.
+the build's `statement_timeout = 0`, and with `max_parallel_workers_per_gather
+= 0`. Before PostgreSQL 18 a `Parallel Bitmap Heap Scan` prints `Heap Blocks:`
+for the leader's share only (production is 17), so a parallel plan could pass
+the heap-block ceiling while reading more. With no workers the count is
+complete and the time is a serial upper bound.
 
 Why it exists: the attended admission in
 `docs/audits/latency/2316-p144-1-season-discovery-index-runbook.md` §3 must
@@ -77,6 +81,11 @@ GATE_SPORTS = (
     "basketball_other",
 )
 
+# Criteria the block also SETs, in this order, before anything else runs. No
+# workers: a parallel bitmap heap scan prints the leader's heap blocks only
+# before PostgreSQL 18 (lane1b R1a), so the ceiling needs a serial plan.
+GATE_SESSION_SETTINGS = ("statement_timeout", "max_parallel_workers_per_gather")
+
 # The provisional KEEP criteria (runbook section 3, A2 and A3). The runbook
 # prints the same table in its `gate-criteria` block and the guard test holds
 # all three copies equal. The gate runs right after three builds and an
@@ -88,8 +97,10 @@ GATE_SPORTS = (
 # per tier-1-4 row for the trigram index and 21 B for each btree; x1.4 margin.
 GATE_CRITERIA = {
     "statement_timeout": "30s",
+    "max_parallel_workers_per_gather": "0",
     "every_index_valid": "yes",
     "seq_scan_on_futures_markets": "none",
+    "parallel_bitmap_heap_scan": "none",
     "bitmapor_lists_all_three_indexes": "yes",
     "lossy_heap_blocks": "0",
     "max_exact_heap_blocks": "3000",
@@ -102,7 +113,9 @@ GATE_CRITERIA = {
 # The final KEEP (runbook section 6): a cold-path acceptance latency reads
 # after the build, from pg_stat_statements deltas, outside the attended block.
 # Steady-state trigram size: under churn the fixture's hex-id index settled at
-# 640-810 B per row (vacuumed between rewrites) and kept growing slowly.
+# 640-810 B per row (vacuumed between rewrites) and kept growing slowly. The
+# window mean mixes warm and cold calls, so one cold reader check carries its
+# own bound (lane1b R1b): a mostly-warm window cannot average over it.
 ACCEPTANCE_CRITERIA = {
     "window_starts_hours_after_build": "6",
     "window_hours": "24",
@@ -110,7 +123,29 @@ ACCEPTANCE_CRITERIA = {
     "min_finished_shape_calls": "10",
     "max_mean_exec_ms": "2000",
     "max_trgm_bytes_per_t14_row_steady": "1000",
+    "reader_check_reads": "1",
+    "reader_check_taken_by": "latency",
+    "reader_check_inside_window": "yes",
+    "reader_check_max_maxq_ms": "2000",
+    "reader_check_none_in_window": "UNMEASURED",
     "on_failure": "section 4 rollback",
+}
+
+# Every DROP and every re-read in the rollback (runbook section 4) and the A2
+# failure path is bounded and attended: no step repeats on its own, and a
+# leftover is reported, not retried (Root 0123Z/0147Z, lane1b R6').
+ROLLBACK_BOUNDS = {
+    "attended_passes": "1",
+    "build_in_flight_at_start": "HOLD, drop nothing",
+    "max_drop_attempts_per_index": "2",
+    "drop_lock_timeout": "60s",
+    "a2_p1c_reread_max_minutes": "10",
+    "a2_p1c_reread_every_minutes": "1",
+    "a2_build_still_in_flight": "HOLD, drop nothing",
+    "a2_step2_max_repeats": "1",
+    "leftover_after_final_read": "ROLLBACK INCOMPLETE",
+    "rollback_incomplete_operator": "Alex",
+    "next_admission": "latency asks Root for the next attended slot, P1 P1b P1c first",
 }
 
 class _Captured(Exception):
@@ -268,7 +303,7 @@ def psql_block(session: RecordingSession, sport_key: str, finished: bool) -> str
             "-- routes/events.py; regenerate on the day of use, never hand-edit.",
             "-- KEEP criteria (runbook section 3, A3):",
             *criteria_lines("--   "),
-            f"SET statement_timeout = '{GATE_CRITERIA['statement_timeout']}';",
+            *[f"SET {name} = '{GATE_CRITERIA[name]}';" for name in GATE_SESSION_SETTINGS],
             "\\unset sport_ids",
             f"{sports_sql} \\gset",
             "\\if :{?sport_ids}",

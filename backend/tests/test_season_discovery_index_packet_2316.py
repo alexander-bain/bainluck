@@ -22,6 +22,12 @@ the rollback cannot name an index the build did not create, the gate file
 never inherits the build's `statement_timeout = 0` and observes the sixth
 prepared execution, and `models.py` declares the indexes exactly when the
 runbook says they are KEPT.
+
+The narrow re-review of f8354ae264 (R1a, R1b, R6') adds three holds: every
+gate statement runs with no parallel workers (before PostgreSQL 18 a parallel
+bitmap heap scan prints the leader's heap blocks only), the one cold reader
+check has a bound in the acceptance table, and the rollback and the A2 failure
+path are bounded, attended passes with no retry-until instruction.
 """
 
 from __future__ import annotations
@@ -52,8 +58,10 @@ GATE_SPORTS = ("americanfootball_ncaaf", "baseball_mlb", "soccer_epl", "basketba
 # editing the runbook, the generator AND this literal.
 GATE_CRITERIA = {
     "statement_timeout": "30s",
+    "max_parallel_workers_per_gather": "0",
     "every_index_valid": "yes",
     "seq_scan_on_futures_markets": "none",
+    "parallel_bitmap_heap_scan": "none",
     "bitmapor_lists_all_three_indexes": "yes",
     "lossy_heap_blocks": "0",
     "max_exact_heap_blocks": "3000",
@@ -69,7 +77,26 @@ ACCEPTANCE_CRITERIA = {
     "min_finished_shape_calls": "10",
     "max_mean_exec_ms": "2000",
     "max_trgm_bytes_per_t14_row_steady": "1000",
+    "reader_check_reads": "1",
+    "reader_check_taken_by": "latency",
+    "reader_check_inside_window": "yes",
+    "reader_check_max_maxq_ms": "2000",
+    "reader_check_none_in_window": "UNMEASURED",
     "on_failure": "section 4 rollback",
+}
+# R6': the rollback's attempt bounds, the third copy.
+ROLLBACK_BOUNDS = {
+    "attended_passes": "1",
+    "build_in_flight_at_start": "HOLD, drop nothing",
+    "max_drop_attempts_per_index": "2",
+    "drop_lock_timeout": "60s",
+    "a2_p1c_reread_max_minutes": "10",
+    "a2_p1c_reread_every_minutes": "1",
+    "a2_build_still_in_flight": "HOLD, drop nothing",
+    "a2_step2_max_repeats": "1",
+    "leftover_after_final_read": "ROLLBACK INCOMPLETE",
+    "rollback_incomplete_operator": "Alex",
+    "next_admission": "latency asks Root for the next attended slot, P1 P1b P1c first",
 }
 
 TIER_LIST = [1, 2, 3, 4]
@@ -264,6 +291,12 @@ def test_the_gate_block_never_inherits_the_build_timeout_and_reads_the_sixth_exe
     timeout = at("SET statement_timeout = '30s';")
     assert len(timeout) == 1
     assert timeout[0] < at("PREPARE ")[0] < at("EXPLAIN ")[0]
+    # R1a: no workers, so `Heap Blocks:` counts every page on PostgreSQL 17.
+    serial = at("SET max_parallel_workers_per_gather = '0';")
+    assert len(serial) == 1
+    assert serial[0] < at("PREPARE ")[0] < at("EXPLAIN ")[0]
+    assert not [ln for ln in lines if "parallel" in ln.lower() and ln.startswith("SET ")
+                and ln != lines[serial[0]]]
     assert idx["\\unset sport_ids"] < at("SELECT string_agg(")[0]
     assert lines[idx["\\if :{?sport_ids}"] - 1].endswith("\\gset")
     assert idx["\\if :{?sport_ids}"] < at("PREPARE ")[0] < idx["\\else"] < idx["\\endif"]
@@ -282,6 +315,7 @@ def test_the_gate_set_covers_every_arm_shape_the_claim_covers():
     assert tuple(gen.GATE_SPORTS) == GATE_SPORTS
     gate = gen.gate_set()
     assert gate.count("SET statement_timeout = '30s';") == len(GATE_SPORTS)
+    assert gate.count("SET max_parallel_workers_per_gather = '0';") == len(GATE_SPORTS)
     for sport_key in GATE_SPORTS:
         assert f"-- #2316 season-market discovery, {sport_key} / finished shape." in gate
     # The two generic-prefix shapes: every sport id of the family plus a
@@ -309,9 +343,29 @@ def test_the_gate_criteria_are_one_table_in_three_places():
         assert f"--   {key} = {value}" in block
 
 
+def test_the_gate_sets_what_its_criteria_name():
+    """R1a: the two session criteria are SET lines, not prose a reader checks."""
+    gen = _generator()
+    assert tuple(gen.GATE_SESSION_SETTINGS) == (
+        "statement_timeout",
+        "max_parallel_workers_per_gather",
+    )
+    for name in gen.GATE_SESSION_SETTINGS:
+        assert f"SET {name} = '{GATE_CRITERIA[name]}';" in _block()
+
+
 def test_the_final_keep_is_a_cold_path_acceptance_written_down_before_the_build():
     assert _fenced("acceptance-criteria") == ACCEPTANCE_CRITERIA
     assert _generator().ACCEPTANCE_CRITERIA == ACCEPTANCE_CRITERIA
+    # R1b: the cold reader check is bounded by the gate's own budget and has
+    # the same failure action as the mean.
+    assert ACCEPTANCE_CRITERIA["reader_check_max_maxq_ms"] == GATE_CRITERIA["max_execution_ms"]
+
+
+def test_the_rollback_bounds_are_one_table_in_three_places():
+    """R6': loosening an attempt bound in one copy only fails here."""
+    assert _fenced("rollback-bounds") == ROLLBACK_BOUNDS
+    assert _generator().ROLLBACK_BOUNDS == ROLLBACK_BOUNDS
 
 
 def _section(title_start: str) -> str:
@@ -327,25 +381,81 @@ def test_every_name_list_in_the_runbook_is_the_create_set():
     assert set(_runbook_indexes()) == INDEX_NAMES
     assert set(_generator().INDEX_NAMES) == INDEX_NAMES
     lists = re.findall(r"c\.relname IN \(([^)]*)\)", text)
-    # P2, the A2 build read, and the rollback's final read.
-    assert len(lists) == 3
+    # P2, the A2 build read, the rollback's between-attempts read and its final read.
+    assert len(lists) == 4
     for found in lists:
         assert set(re.findall(r"'(\w+)'", found)) == INDEX_NAMES
     assert "LIKE 'ix_fm_t14_" not in text
     rollback = _section("4.")
     drops = re.findall(r"DROP INDEX CONCURRENTLY IF EXISTS (\w+);", rollback)
-    assert sorted(drops) == sorted(INDEX_NAMES)
+    attempts = int(ROLLBACK_BOUNDS["max_drop_attempts_per_index"])
+    assert set(drops) == INDEX_NAMES
+    assert all(drops.count(name) == attempts for name in INDEX_NAMES)
 
 
-def test_the_rollback_checks_for_a_live_build_first_and_proves_the_drop_last():
-    sql = re.search(r"```sql\n(.*?)```", _section("4."), re.S).group(1)
-    statements = [st.strip() for st in sql.split(";") if st.strip()]
-    selects = [i for i, st in enumerate(statements) if "SELECT" in st]
-    drops = [i for i, st in enumerate(statements) if st.startswith("DROP")]
-    assert "pg_stat_progress_create_index" in statements[selects[0]]
-    assert selects[0] < drops[0]
-    assert statements[-1].splitlines()[-1].startswith(" WHERE c.relname IN (")
-    assert drops[-1] < len(statements) - 1
+def _rollback_sql() -> list[str]:
+    return re.search(r"```sql\n(.*?)```", _section("4."), re.S).group(1).splitlines()
+
+
+def test_the_rollback_holds_on_a_live_build_and_proves_the_drop_last():
+    """R6': P1c gates both attempts mechanically; the final read is last."""
+    lines = _rollback_sql()
+    first_drop = next(i for i, ln in enumerate(lines) if ln.startswith("DROP"))
+    last_drop = max(i for i, ln in enumerate(lines) if ln.startswith("DROP"))
+    gset = next(i for i, ln in enumerate(lines) if ln.rstrip().endswith("\\gset"))
+    assert lines.index("\\unset no_build_in_flight") < gset
+    assert "pg_stat_progress_create_index" in " ".join(lines[gset - 1 : gset + 1])
+    assert "AS no_build_in_flight" in lines[gset - 1]
+    assert lines[gset + 1] == "\\if :no_build_in_flight"
+    els, endif = lines.index("\\else"), lines.index("\\endif")
+    assert gset + 1 < first_drop and last_drop < els < endif
+    assert lines[els + 1].startswith("\\echo HOLD")
+    assert not [ln for ln in lines[els:endif] if ln.startswith("DROP")]
+    # The final read follows \endif, so a HOLD records what exists too, and
+    # nothing executes after it.
+    statements_after = [ln for ln in lines[endif + 1 :] if ln and not ln.startswith("--")]
+    assert statements_after[0].startswith("SELECT c.relname, i.indisvalid, i.indisready")
+    assert statements_after[-1].startswith(" WHERE c.relname IN (")
+    assert len(statements_after) == 2
+    attempts = int(ROLLBACK_BOUNDS["max_drop_attempts_per_index"])
+    for n in range(1, attempts + 1):
+        assert sum(ln.startswith(f"-- Attempt {n} of {attempts}") for ln in lines) == 1
+    assert f"SET lock_timeout      = '{ROLLBACK_BOUNDS['drop_lock_timeout']}';" in "\n".join(lines)
+
+
+def _a2_failure_path() -> str:
+    text = RUNBOOK.read_text()
+    start = text.index("**If any CREATE errors")
+    return text[start : text.index("**A3.", start)]
+
+
+UNBOUNDED = re.compile(r"\b(until|repeat\w*|loop\w*|keep (?:re-?)?trying|again and again)\b", re.I)
+
+
+@pytest.mark.parametrize("where", ["section 4", "A2 failure path"])
+def test_no_rollback_step_repeats_without_a_bound(where):
+    """R6': completion is the catalog reading 0 rows, never a retry-until loop."""
+    text = _section("4.") if where == "section 4" else _a2_failure_path()
+    assert UNBOUNDED.findall(text) == [], f"{where} carries an unbounded instruction"
+
+
+def test_the_a2_failure_path_states_its_bounds():
+    text = " ".join(_a2_failure_path().split())
+    assert f"for at most {ROLLBACK_BOUNDS['a2_p1c_reread_max_minutes']} minutes" in text
+    assert "once a minute" in text and ROLLBACK_BOUNDS["a2_p1c_reread_every_minutes"] == "1"
+    assert "**HOLD**. Drop nothing" in text
+    assert "a second time, once" in text and ROLLBACK_BOUNDS["a2_step2_max_repeats"] == "1"
+    assert "run §4 once" in text
+
+
+def test_the_rollback_names_its_end_states_operator_and_next_admission():
+    text = " ".join(_section("4.").split())
+    assert "Final read, 0 rows: `ROLLED BACK`." in text
+    assert "Final read, any row: `ROLLBACK INCOMPLETE`." in text
+    assert "The operator is Alex." in text
+    assert "latency asks Root for the next attended slot" in text
+    assert "starts with P1, P1b and P1c again" in text
+    assert "ON_ERROR_STOP` **off**" in text
 
 
 def test_the_preconditions_cover_what_concurrently_waits_on():
@@ -368,7 +478,11 @@ def test_the_preconditions_cover_what_concurrently_waits_on():
 
 
 def _index_state() -> str:
-    m = re.search(r"^\*\*Index state: (PROPOSED|KEPT|ROLLED BACK)\*\*$", RUNBOOK.read_text(), re.M)
+    m = re.search(
+        r"^\*\*Index state: (PROPOSED|KEPT|ROLLED BACK|ROLLBACK INCOMPLETE)\*\*$",
+        RUNBOOK.read_text(),
+        re.M,
+    )
     assert m, "the runbook has no Index state line"
     return m.group(1)
 

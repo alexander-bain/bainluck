@@ -12,14 +12,21 @@ Owner: latency (#2316). No app code changes. The packet is this runbook, the gen
 
 **Index state: PROPOSED**
 
-(The guard reads that line. `PROPOSED` and `ROLLED BACK` require that `models.py` does NOT declare
-the three indexes; `KEPT` requires that it does. See §6, "After a final KEEP".)
+(The guard reads that line. `PROPOSED`, `ROLLED BACK` and `ROLLBACK INCOMPLETE` require that
+`models.py` does NOT declare the three indexes; `KEPT` requires that it does. See §4 and §6, "After a
+final KEEP".)
 
 Revision 2 (2026-10-17 18:40 PDT) answers lane1b's review of `5d5854e5c1` (R1–R10 + three nits).
 The index set and the no-query-change design are unchanged. What changed: the gate (a size and plan
 gate across four sports, under its own timeout, through a prepared statement), the safety argument
 for CONCURRENTLY, the rollback's verification, the size ceiling, the write cost and the GIN
 pending-list choice, and the final KEEP (now a cold-path acceptance after the build).
+
+Revision 3 (2026-10-17 19:08 PDT) answers lane1b's narrow re-review of `f8354ae264` (R1a, R1b, R6′):
+the gate runs every statement with no parallel workers, so the heap-block count is complete on
+PostgreSQL 17; the one cold reader check has a bound and a failure action; and every step of the
+rollback and the A2 failure path is bounded and attended, with `ROLLBACK INCOMPLETE` as an honest
+end state instead of a retry loop.
 
 ---
 
@@ -230,18 +237,31 @@ SELECT c.relname, i.indisvalid, i.indisready, pg_relation_size(c.oid) AS bytes,
 `IF NOT EXISTS` is left out deliberately. It would silently skip an INVALID leftover, which is
 exactly the case that needs a person to look.
 
-**If any CREATE errors, times out or is interrupted** (including the laptop session dropping):
-1. Re-read P1c until it returns **no row**. A build can outlive the session that started it;
-   never drop an index while its build is still running.
-2. `DROP INDEX CONCURRENTLY <that name>;`
-3. Re-read P2: that name must be gone. If it is still there, repeat step 2.
-4. Re-run P1 and P1b, then retry that one CREATE **once**. If the retry fails, run the full §4
-   rollback and stop. A second failure is an answer to keep, not something to retry.
+**If any CREATE errors, times out or is interrupted** (including the laptop session dropping).
+Every step is bounded by `rollback-bounds` in §4; nothing here runs unattended or on its own.
+1. Read P1c. A build can outlive the session that started it, and an index is never dropped while
+   its build runs. If P1c shows a row, read it once a minute for at most 10 minutes. If the row is
+   still there after 10 minutes: **HOLD**. Drop nothing, copy the P1c and P2 rows into the receipt
+   and stop; the next admission is the one §4 names for `ROLLBACK INCOMPLETE`.
+2. `DROP INDEX CONCURRENTLY <that name>;` (A1's `lock_timeout = '60s'` bounds it).
+3. Read P2: that name must be gone. If it is still there, run step 2 a second time, once. If it is
+   still there after that second attempt, run §4 once and take its end state.
+4. Re-run P1 and P1b, then retry that one CREATE **once**. If the retry fails, run §4 once and
+   stop. A second failure is an answer to keep, not something to retry.
 
 **A3. The gate.** Still under the build session's settings, `ANALYZE futures_markets;`, then
-`\i /tmp/2316-gate.sql` once. The file sets its own `statement_timeout = '30s'` before each
-statement, so nothing in it inherits the build's 0. A timeout, an error or an `ABORT <sport>` line
-is a FAIL.
+`\i /tmp/2316-gate.sql` once. The file sets its own `statement_timeout = '30s'` and
+`max_parallel_workers_per_gather = 0` before each statement, so nothing in it inherits the build's
+0 timeout and nothing runs in parallel. A timeout, an error or an `ABORT <sport>` line is a FAIL.
+
+**Why no parallel workers (R1a).** Production runs PostgreSQL 17.10 and already plans this table in
+parallel (the 2026-08-30 Parallel Seq Scan). Before PostgreSQL 18, a `Parallel Bitmap Heap Scan`
+prints `Heap Blocks: exact=… lossy=…` for the leader's share only; the workers' pages are not
+added in (lane1b's reading of the EXPLAIN code history, reproduced on the PostgreSQL 14 fixture in
+§5). A 6,000-block read could print about 2,000 and pass the 3,000 ceiling, and a non-zero
+`lossy=` could be hidden the same way. With no workers the count is complete, and the execution
+time is a serial upper bound on the parallel one. The setting changes neither the plan cache's
+custom-plan decision nor which indexes the plan uses.
 
 The gate is a **plan and size gate with a cache-independent bound (R1)**. It runs straight after
 three builds that each read the whole heap twice, and an ANALYZE, so its times are warm times:
@@ -256,8 +276,10 @@ generator prints the same table at the top of every block, and the guard test ho
 
 ```text gate-criteria
 statement_timeout = 30s
+max_parallel_workers_per_gather = 0
 every_index_valid = yes
 seq_scan_on_futures_markets = none
+parallel_bitmap_heap_scan = none
 bitmapor_lists_all_three_indexes = yes
 lossy_heap_blocks = 0
 max_exact_heap_blocks = 3000
@@ -268,8 +290,10 @@ max_btree_bytes_per_t14_row_at_build = 40
 ```
 
 Where to read each one: `every_index_valid` and both size lines are A2's read (`indisvalid = t`,
-`within = t` on all three rows). `seq_scan_on_futures_markets`: no `Seq Scan on futures_markets`
-in any plan. `bitmapor_lists_all_three_indexes`: the `BitmapOr` names all three `ix_fm_t14_*`
+`within = t` on all three rows). `statement_timeout` and `max_parallel_workers_per_gather`: the
+two `SET` lines at the top of every block, unedited. `seq_scan_on_futures_markets`: no `Seq Scan on
+futures_markets` in any plan. `parallel_bitmap_heap_scan`: no `Parallel Bitmap Heap Scan` and no
+`Gather` in any plan, so the `Heap Blocks` line counts every page. `bitmapor_lists_all_three_indexes`: the `BitmapOr` names all three `ix_fm_t14_*`
 indexes. `lossy_heap_blocks` and `max_exact_heap_blocks`: the Bitmap Heap Scan's
 `Heap Blocks: exact=N` line (PostgreSQL prints `lossy=` only when it is non-zero, so any `lossy=`
 fails). `max_execution_ms`: `Execution Time`. `generic_plans_after_sixth`: the
@@ -280,28 +304,75 @@ into the receipt, without judging them: `Buffers: shared hit/read` and, if the f
 If any line fails, run §4. A failed gate is an answer to keep, not something to retry. A pass is a
 **provisional** KEEP. The final KEEP is the cold-path acceptance in §6.
 
-## 4. Rollback. Drop, then prove the drop. No code and no deploy
+## 4. Rollback. One attended pass, every attempt bounded, and an honest end state
 
 ```sql
 SET statement_timeout = 0;
-SET lock_timeout      = '60s';
--- First: P1c must return no row (a build can outlive the session that started it).
-SELECT pid, phase, index_relid::regclass FROM pg_stat_progress_create_index
- WHERE relid = 'futures_markets'::regclass;
+SET lock_timeout      = '60s';   -- bounds each DROP attempt
+-- First: P1c. A build can outlive the session that started it. Any row means HOLD: drop nothing.
+\unset no_build_in_flight
+SELECT count(*) = 0 AS no_build_in_flight FROM pg_stat_progress_create_index
+ WHERE relid = 'futures_markets'::regclass \gset
+\if :no_build_in_flight
+-- Attempt 1 of 2.
 DROP INDEX CONCURRENTLY IF EXISTS ix_fm_t14_external_id_trgm;
 DROP INDEX CONCURRENTLY IF EXISTS ix_fm_t14_llm_sport_category;
 DROP INDEX CONCURRENTLY IF EXISTS ix_fm_t14_sport_id;
--- Last: this read MUST return 0 rows. The rollback is not done until it does.
-SELECT c.relname, i.indisvalid FROM pg_class c JOIN pg_index i ON i.indexrelid = c.oid
+-- Between attempts, for the receipt. IF EXISTS makes attempt 2 a no-op for any name already gone.
+SELECT c.relname, i.indisvalid, i.indisready FROM pg_class c JOIN pg_index i ON i.indexrelid = c.oid
+ WHERE c.relname IN ('ix_fm_t14_llm_sport_category', 'ix_fm_t14_sport_id', 'ix_fm_t14_external_id_trgm');
+-- Attempt 2 of 2, the last.
+DROP INDEX CONCURRENTLY IF EXISTS ix_fm_t14_external_id_trgm;
+DROP INDEX CONCURRENTLY IF EXISTS ix_fm_t14_llm_sport_category;
+DROP INDEX CONCURRENTLY IF EXISTS ix_fm_t14_sport_id;
+\else
+\echo HOLD: an index build is in flight on futures_markets. Nothing was dropped.
+SELECT pid, phase, index_relid::regclass FROM pg_stat_progress_create_index
+ WHERE relid = 'futures_markets'::regclass;
+\endif
+-- Final read. 0 rows: ROLLED BACK. Any row: ROLLBACK INCOMPLETE. Nothing runs after it.
+SELECT c.relname, i.indisvalid, i.indisready FROM pg_class c JOIN pg_index i ON i.indexrelid = c.oid
  WHERE c.relname IN ('ix_fm_t14_llm_sport_category', 'ix_fm_t14_sport_id', 'ix_fm_t14_external_id_trgm');
 ```
 
+```text rollback-bounds
+attended_passes = 1
+build_in_flight_at_start = HOLD, drop nothing
+max_drop_attempts_per_index = 2
+drop_lock_timeout = 60s
+a2_p1c_reread_max_minutes = 10
+a2_p1c_reread_every_minutes = 1
+a2_build_still_in_flight = HOLD, drop nothing
+a2_step2_max_repeats = 1
+leftover_after_final_read = ROLLBACK INCOMPLETE
+rollback_incomplete_operator = Alex
+next_admission = latency asks Root for the next attended slot, P1 P1b P1c first
+```
+
+This is one pass, run once by Alex, with psql's default `ON_ERROR_STOP` **off**, so a cancelled
+attempt 1 still reaches attempt 2 and the final read. The generator and the guard test hold the
+same table.
+
+* **The HOLD is mechanical.** If P1c shows a build in flight, psql skips both attempts, prints
+  `HOLD` and the build's row, and the final read records what exists. That is the same end state
+  as a leftover: `ROLLBACK INCOMPLETE`, below.
+* **Each DROP attempt is bounded.** DROP INDEX CONCURRENTLY waits for snapshots and lock holders
+  just as CREATE does, so `lock_timeout = '60s'` cancels it (measured on CREATE in §5, and on DROP
+  in the revision-3 fixture run). The second attempt is the last; there is no third.
+* **Final read, 0 rows: `ROLLED BACK`.** Set the Index state line to `ROLLED BACK`.
+* **Final read, any row: `ROLLBACK INCOMPLETE`.** Copy every row (relname, indisvalid,
+  indisready) into the receipt, set the Index state line to `ROLLBACK INCOMPLETE`, and stop. Do not
+  run anything else. What a leftover costs in the meantime: an INVALID-but-ready index
+  (`indisvalid = f, indisready = t`) still takes every write and the planner ignores it; a valid
+  leftover is used by the planner. Results are identical either way, because no query text changed.
+  The operator is Alex. The next admission: latency asks Root for the next attended slot, which
+  starts with P1, P1b and P1c again and then runs this section once more.
+
 `IF EXISTS` keeps a partial rollback (only one index ever built) from erroring, but it also
 succeeds silently on a misspelt name. That is why the rollback ends with the catalog read, and why
-the guard test holds the DROP set, every catalog-read name list and the CREATE set equal (R6).
-DROP INDEX CONCURRENTLY waits for snapshots just as CREATE does, so `lock_timeout` can cancel it
-too. **Unlike a build retry, a rollback retry is required:** re-run the DROP for every name the
-final read still returns, and read again, until it returns 0 rows.
+the guard test holds the DROP set, every catalog-read name list and the CREATE set equal (R6). Nothing
+in this section or in A2's failure path runs a second time by itself: no watcher, no scheduler,
+no unattended retry.
 
 No query text changes in either direction, so results are identical with any subset of the
 three present. Only speed depends on having all three.
@@ -349,6 +420,28 @@ Revision 2 adds (receipts: `artifacts/2316-p144-1-r2/` in the latency worktree):
   no trigram index 0.26–0.38 s; `fastupdate = on`, 4 MB list 1.6 / 2.2 / 3.1 s; 1 MB 2.3 / 8.2 /
   7.6 s; 256 kB 12.3 / 18.6 / 18.7 s; `fastupdate = off` 23.2 / 38.9 / 55.9 s (`r10-*.txt`).
 
+Revision 3 adds (receipts: `artifacts/2316-p144-1-r3/`):
+
+* **The revised runbook end to end** (`flow.txt`): §4 to clear, A1, A2, the regenerated gate file
+  (every block now `SET max_parallel_workers_per_gather = '0'`), §4 again. Each of the four plans
+  is a serial `Bitmap Heap Scan` with no `Gather`; `generic_plans = 0, custom_plans = 6` in every
+  block; the final §4 read returned 0 rows.
+* **The parallel under-read (R1a), on PostgreSQL 14.** The same college-football statement with
+  workers forced on (four launched, costs 0) printed `Parallel Bitmap Heap Scan … Heap Blocks:
+  exact=1355` against **2,661** for the serial gate block, about half. The parallel node's own
+  `Buffers: shared hit=1655 read=1138` (2,793) does include the workers' pages, close to the serial
+  2,781. So lane1b's reading holds on this version too, and its alternative (judge a parallel node on
+  its buffers) would also have worked. The gate takes the serial plan.
+* **A bounded DROP (R6′)** (`r6-incomplete.txt`). One index built, then a transaction holding
+  `AccessShareLock` on the table for 150 s. §4 ran once: each DROP attempt was cancelled at its
+  60 s `lock_timeout`, the pass ended after **120.4 s**, and the final read returned
+  `ix_fm_t14_sport_id | f | t`. That is `ROLLBACK INCOMPLETE`, with the INVALID-but-ready leftover
+  the end state describes. Nothing ran a third time.
+* **The mechanical HOLD (R6′)** (`r6-hold.txt`). A CONCURRENTLY build sat in `waiting for old
+  snapshots` behind a 45 s REPEATABLE READ reader. §4 printed `HOLD`, the build's row, dropped
+  nothing, and its final read recorded both rows. After the build finished, one more §4 pass read
+  0 rows (`r6-cleanup.txt`).
+
 **These blocks are fixture blocks.** Production's cost depends on how many heap pages hold tier-1–4
 rows of one sport across all history, and nothing on file measures that. §3 A3 answers it inside
 the attended step as a provisional gate, and §6 answers it for real readers.
@@ -361,7 +454,7 @@ the attended step as a provisional gate, and §6 answers it for real readers.
 | custom plans on the asyncpg path, and cold time | §6 acceptance |
 | write rate | P5 (premise), §6 steady-state size |
 | CONCURRENTLY under heavy-app transactions | fails closed (§3, measured), A2 retry |
-| the rollback succeeding | §4's final read |
+| the rollback succeeding | §4's final read: `ROLLED BACK` or `ROLLBACK INCOMPLETE` |
 
 ## 6. What this buys, the final KEEP, and what follows it
 
@@ -382,6 +475,11 @@ window_may_extend_to_hours = 72
 min_finished_shape_calls = 10
 max_mean_exec_ms = 2000
 max_trgm_bytes_per_t14_row_steady = 1000
+reader_check_reads = 1
+reader_check_taken_by = latency
+reader_check_inside_window = yes
+reader_check_max_maxq_ms = 2000
+reader_check_none_in_window = UNMEASURED
 on_failure = section 4 rollback
 ```
 
@@ -390,17 +488,27 @@ on_failure = section 4 rollback
   and containing `updated_at >=`) at the window's start and end. The mean over the window is
   Δ`total_exec_time` / Δ`calls`, summed over those fingerprints, against the 19.2–23.7 s means on
   file. It mixes cold and warm calls exactly as readers get them. A generic plan on the app's
-  connections would show here as a full-scan mean.
+  connections would show here as a full-scan mean. Beside the mean, the receipt copies
+  Δ`shared_blks_read` / Δ`calls` (and Δ`shared_blk_read_time` / Δ`calls` when `track_io_timing`
+  is on), so a window that read almost nothing from disk is visibly a warm one. Those are recorded,
+  not judged.
 * **Too few calls**, or a fingerprint evicted between the two reads (`pg_stat_statements` sits
   near its cap): extend the window, up to 72 h. Still short: the result is UNMEASURED and the
   indexes stay on a provisional KEEP, reported as exactly that, never as a KEEP.
 * **Steady-state size:** at the window's end, `pg_relation_size('ix_fm_t14_external_id_trgm')`
   ≤ 1,000 B × the P3 estimate of tier-1–4 rows.
-* **On failure** (mean or size over its bound): latency asks Root to put the §4 rollback on
-  YOUR-TURN with its exact steps. Alex runs it. #2316 records the failed acceptance as the result.
-* **The reader check** stays latency's as well: one served uncached finished-shape read
-  (`/api/events/{id}/related-futures?debug=1` runs the build uncached), its `x-timing-split` maxq
-  compared against 13,022 ms. #2316 stays open until both are in.
+* **The reader check (R1b).** Because the mean can average one slow cold read away, one cold read
+  carries its own bound. Latency takes it, once, inside the window (at least 6 h after the build):
+  one served finished-shape read of `/api/events/{id}/related-futures?debug=1`. `debug` skips the
+  season-discovery cache in both directions, so the discovery statement runs on that request.
+  Record its `x-timing-split`. **Pass: `maxq` ≤ 2,000 ms** (the gate's own budget; the read on file
+  is 13,022 ms). `maxq` is the slowest statement of that build, so it bounds the discovery
+  statement too. Over 2,000 ms is a failure. If no such read is taken inside the window, the
+  result is UNMEASURED, exactly like too few calls. It is not retried for a better number.
+* **On failure** (mean, size or reader check over its bound): latency asks Root to put the §4
+  rollback on YOUR-TURN with its exact steps. Alex runs it once. #2316 records the failed
+  acceptance as the result. #2316 stays open until the mean, the size and the reader check are all
+  in.
 
 **After a final KEEP (R8). Owner: latency, under #2316, before #2316 closes.** Declare the three
 indexes in `FuturesMarket.__table_args__` in `backend/app/models/models.py`, as
@@ -412,4 +520,5 @@ indexes in `FuturesMarket.__table_args__` in `backend/app/models/models.py`, as
 `--autogenerate` revision drops all three in a release, non-concurrently, and the speedup
 silently reverts. Declaring them **before** the KEEP is just as wrong: autogenerate would emit a
 non-concurrent CREATE in a release (gotcha #31). The guard test enforces both directions from
-the Index state line. After a rollback the line reads `ROLLED BACK`.
+the Index state line. After a rollback the line reads `ROLLED BACK`, or `ROLLBACK INCOMPLETE` when
+§4's final read still returned a row; models never declare the indexes in either.
