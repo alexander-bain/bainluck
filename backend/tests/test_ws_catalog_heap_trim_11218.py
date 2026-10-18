@@ -1,9 +1,11 @@
 """#11218 — worker-ws hands the catalog reads' freed memory back after each refresh.
 
-v5785: worker-ws stepped up ~16-38 MB at each Polymarket catalog handover AND
-each Kalshi scope refresh, flat between them, 811 -> 944.7 MB in 40 minutes.
-A local control holds Python's live memory and pymalloc arenas flat apart from
-~1 MB a handover, so what grows is freed memory the C allocator keeps.
+v5785: worker-ws stepped up 12-38 MB in windows holding a Polymarket catalog
+handover or a Kalshi scope refresh, flat between them, 811 -> 944.7 MB in 40
+minutes (co-timed, not attributed). A local control holds Python's live memory
+and pymalloc arenas flat apart from ~1 MB a handover, which leaves the steps
+consistent with freed memory the C allocator keeps; the glibc control below
+tests that account on the real consumer.
 
 Guards: (1) the trim itself, which never raises and has a ``WS_HEAP_TRIM=0``
 undo; (2) on glibc, the allocator keeps freed heap until trimmed, and the trim

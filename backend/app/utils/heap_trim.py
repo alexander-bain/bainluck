@@ -3,21 +3,28 @@
 worker-ws re-reads both catalogs every ~10 minutes (the Polymarket handover,
 the Kalshi scope refresh). Each read builds a large working set that is freed
 when the refresh ends. On glibc, the part of it bigger than 512 bytes sits in
-the C heap. Freed chunks with live allocations between them stay counted in
-the process's memory until something hands their pages back, and nothing in
-the process ever did. v5785, 10/18: worker-ws stepped up ~16-38 MB at each
-catalog refresh of either arm and stayed flat between them, 811 -> 944.7 MB
-in 40 minutes against the 950 MB line.
+the C heap, and freed chunks with live allocations between them stay resident
+until something hands their pages back; free() itself only returns the top of
+the heap. v5785, 10/18: worker-ws memory stepped up 12-38 MB in windows that
+held a catalog refresh of either arm, stayed flat between them, and fell only
+occasionally (-12 MB once), 811 -> 944.7 MB in 40 minutes against the 950 MB
+line. Co-timed, not attributed: the dyno total also holds the open-receiver
+child, and the windows also held reconnects.
 
 The local control (real Polymarket consumer, production-sized catalog, live
-traffic, 12 handovers) holds Python's own live memory and pymalloc arenas flat
-apart from ~1 MB a handover, so the step is not retained objects. What is left
-is freed memory the allocator keeps. ``malloc_trim(0)`` hands every whole free
-page back, including pages in the middle of the heap. No object moves and no
-map or subscription changes.
+traffic, 12 handovers) holds Python's live memory and pymalloc arenas flat
+apart from ~1 MB a handover. That rules out only the Python retention it
+exercised, not allocations inside C libraries (asyncpg, TLS, websockets), GC
+timing or the child. What it leaves consistent with the steps is freed memory
+the allocator keeps; on glibc CI the real consumer's handovers left 15 MB that
+one trim returned. ``malloc_trim(0)`` hands every whole free page back,
+including pages in the middle of the heap. No object moves and no map or
+subscription changes. The ``released=`` line each refresh logs is the
+production test of this account.
 
-glibc only. Anywhere else (macOS, musl) this does nothing. ``WS_HEAP_TRIM=0``
-turns it off at the next refresh, with no deploy. That is the undo line.
+glibc only. Anywhere else (macOS, musl) this does nothing. Undo:
+``WS_HEAP_TRIM=0``. Read at each refresh, but a config var change releases and
+restarts the dyno, so in production it takes effect from that restart.
 """
 
 import ctypes
