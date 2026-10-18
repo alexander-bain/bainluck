@@ -368,6 +368,7 @@ export function createLiveStreamController(
     setStatus('connecting');
 
     let recoveryGeneration = 0;
+    let transportRecoveryPending = false;
     next.addEventListener('open', () => {
       if (stopped || handle !== next) return;
       // Native retry can reopen this handle against another server worker.
@@ -376,6 +377,13 @@ export function createLiveStreamController(
       lastDataAt = now();
       setDelivering(true);
       setStatus('open');
+      // A failed transport may have missed the final quote beyond replay age.
+      // Reuse the page's jittered paired catch-up; an open is not a new price.
+      // Native and server 'open' events may both fire for one connection.
+      if (transportRecoveryPending) {
+        transportRecoveryPending = false;
+        onRecovery?.(++recoveryNotifications);
+      }
     });
 
     next.addEventListener('resync', (event) => {
@@ -449,6 +457,7 @@ export function createLiveStreamController(
         stop();
         setStatus('unavailable');
       } else {
+        transportRecoveryPending = true;
         setDelivering(false);
         setStatus('retrying');
       }
