@@ -48,6 +48,8 @@ class _Conn:
             return None
         if self.engine.hang:
             await asyncio.sleep(10)
+        if self.engine.during_probe is not None:
+            self.engine.during_probe()
         engine = self.engine
 
         class _Result:
@@ -58,9 +60,10 @@ class _Conn:
 
 
 class _Engine:
-    def __init__(self, rows=(), hang=False):
+    def __init__(self, rows=(), hang=False, during_probe=None):
         self.rows = list(rows)
         self.hang = hang
+        self.during_probe = during_probe
         self.calls = []
         self.disposed = False
 
@@ -247,3 +250,51 @@ async def test_one_sampler_per_process(monkeypatch):
     first = mod.for_process({}, run="a")
     assert mod.for_process({}, run="b") is first
     assert built == ["a"], "a recycled consumer reuses the process's budget"
+
+
+async def test_a_rank_that_ends_during_the_probe_is_attributed_to_nobody(monkeypatch):
+    """Root attempt60: the token check passed, the probe was dispatched, and the
+    rank returned before the snapshot. The writer's backend may already be
+    waiting on its NEXT statement, so a holder row here cannot be pinned on
+    this rank: no holder named, no FIRST_HOLDER stop, budget still spent."""
+    monkeypatch.setattr(mod, "PROBE_DELAY_S", 0.01)
+    box = {}
+    engine = _Engine([HOLDER_ROW], during_probe=lambda: sampler.rank_finished(box["t"], None))
+    sampler, lines, _engine, clock = _sampler(engine=engine)
+    await _warm(sampler)
+
+    box["t"] = token = sampler.rank_started(77, {1: 0.4}, {5})
+    await token.task
+
+    probe = next(line for line in lines if line["kind"] == "PROBE")
+    assert probe["result"] == "STALE_RANK_ENDED"
+    assert probe["holders"] == [] and probe["holders_n"] == 0
+    assert probe["rank_still_running"] is False
+    assert not [line for line in lines if line["kind"] == "STOP"]
+    assert sampler.probes == 1
+    assert sampler.rank_started(78, {1: 0.4}, {5}) is None, "the minute is spent"
+    clock.advance(mod.MIN_PROBE_INTERVAL_S)
+    assert sampler.rank_started(78, {1: 0.4}, {5}) is not None
+
+
+async def test_the_warm_bound_covers_acquiring_the_connection(monkeypatch):
+    monkeypatch.setattr(mod, "WARM_TIMEOUT_S", 0.05)
+
+    class _SlowConnect(_Engine):
+        def connect(self):
+            engine = self
+
+            class _Slow(_Conn):
+                async def __aenter__(self):
+                    await asyncio.sleep(10)
+                    return self
+
+            return _Slow(engine)
+
+    engine = _SlowConnect()
+    sampler, lines, _engine, _clock = _sampler(engine=engine)
+    assert sampler.ready() is False
+    await asyncio.wait_for(sampler.warming, 1)
+    assert [line["kind"] for line in lines][-2:] == ["UNAVAILABLE", "STOP"]
+    assert lines[-2]["error"] == "TimeoutError"
+    assert engine.disposed

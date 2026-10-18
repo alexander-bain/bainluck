@@ -24,7 +24,9 @@ more than `MAX_WINDOW_S` away. One probe in flight per process, at least
 at the probe budget, and dispose the connection. The probe runs on a one-
 connection engine of its own (`statement_timeout` 100 ms, warmed at START,
 never the writer's pool) under a `PROBE_DEADLINE_S` wait. The writer never
-awaits the observer: it flips a flag when its statement returns.
+awaits the observer: it flips a flag when its statement returns. A probe that
+completes after that flag is set is STALE_RANK_ENDED and names nobody: its
+snapshot may be of the writer's next statement (Root attempt60).
 
 What is NOT recorded. No SQL text, no parameters, no prices. An empty or absent
 `application_name` is written as UNKNOWN; it is never filled in from a schedule
@@ -230,6 +232,13 @@ class RankLockHolderSampler:
                 result = "PROBE_TIMEOUT"
             except Exception as exc:
                 result, error = "PROBE_FAILED", type(exc).__name__
+            if token.done:
+                # Root attempt60: the rank returned while the probe was in
+                # flight, so its snapshot may be of the writer's NEXT
+                # statement's wait. Nothing here can tell which, so nothing is
+                # attributed and the sampler does not stop on it. The budget
+                # and the per-minute floor are spent as for any probe.
+                result, rows = "STALE_RANK_ENDED", []
             self._send(
                 "PROBE", result=result, error=error,
                 writer_pid=token.writer_pid, markets=token.markets,
@@ -276,13 +285,20 @@ class RankLockHolderSampler:
             from sqlalchemy import text
 
             engine = self.engine_factory()
-            async with engine.connect() as conn:
-                await asyncio.wait_for(conn.execute(text("SELECT 1")), WARM_TIMEOUT_S)
+
+            async def _first_connection():
+                async with engine.connect() as conn:
+                    await conn.execute(text("SELECT 1"))
+
+            # The bound covers acquiring the connection, not only the SELECT.
+            await asyncio.wait_for(_first_connection(), WARM_TIMEOUT_S)
             if self._active():
                 self.engine, self.engine_loop = engine, loop
                 self._send("WARM")
                 return
         except asyncio.CancelledError:
+            if engine is not None:
+                await asyncio.shield(_dispose(engine))
             raise
         except Exception as exc:
             self._send("UNAVAILABLE", error=type(exc).__name__)
