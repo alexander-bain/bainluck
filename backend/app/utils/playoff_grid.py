@@ -349,6 +349,18 @@ def normalize_column_sums(
                 for t in teams
             ) if p is not None
         )
+        # #11231: a WON cell left that sum but not the expectation. A pennant
+        # column expects two winners; once the NL is decided only the AL pair is
+        # still priced, and it sums to ~1.0 — measured against 2.0 it was scaled
+        # x2 and capped, printing Rays 100% / Guardians 88% for a 57/43 series.
+        # Each settled winner has already claimed one unit of the column.
+        expected -= sum(
+            1 for t in teams
+            if (cell := t["cells"].get(col_key) or {}).get("state") == "won"
+            and cell.get("merged_probability") is None
+        )
+        if expected <= 0:
+            continue
         if col_sum > expected * 2.5:
             logger.warning(
                 "Column %s sum=%.1f%% exceeds 2.5x expected %.0f%% for %s — likely a matching bug",
