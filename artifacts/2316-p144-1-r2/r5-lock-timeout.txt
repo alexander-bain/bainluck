@@ -1,0 +1,26 @@
+BEGIN ISOLATION LEVEL REPEATABLE READ;
+SELECT count(*) FROM sports;
+SELECT pg_sleep(90);
+COMMIT;
+---- build
+SET statement_timeout = 0;
+SET lock_timeout = '60s';
+\timing on
+CREATE INDEX CONCURRENTLY ix_fm_t14_sport_id ON futures_markets (sport_id) WHERE market_tier IN (1, 2, 3, 4);
+\timing off
+SELECT c.relname, i.indisvalid, i.indisready FROM pg_class c JOIN pg_index i ON i.indexrelid = c.oid WHERE c.relname = 'ix_fm_t14_sport_id';
+SET
+SET
+Timing is on.
+psql:build_under_holder.sql:4: ERROR:  canceling statement due to lock timeout
+Time: 60233.030 ms (01:00.233)
+Timing is off.
+      relname       | indisvalid | indisready 
+--------------------+------------+------------
+ ix_fm_t14_sport_id | f          | t
+(1 row)
+
+---- pg_stat_progress_create_index + pg_stat_activity at +10 s
+waiting for old snapshots|1|0|85277
+85301|Lock|virtualxid|CREATE INDEX CONCURRENTLY ix_fm_t14_sport_id ON futures_mark
+---- pg_stat_progress_create_index after the cancel: no row

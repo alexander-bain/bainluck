@@ -6,9 +6,18 @@ This script reads no database and writes nothing. It drives the real
 captures two statements, and prints them as one psql block:
 
   1. the route's own compatible-sports lookup, which psql runs first and stores
-     with `\\gset`, and
-  2. the season-market discovery statement, with literal binds and the sport
-     ids taken from that `\\gset` variable.
+     with `\\gset`. An empty lookup refuses the block (`\\if`) instead of
+     leaving `:sport_ids` unexpanded, and
+  2. the season-market discovery statement as a server-side PREPARE carrying
+     the same `$n` binds the asyncpg dialect sends (only the sport ids are
+     inlined, from that `\\gset` variable). It is planned five times without
+     running, then run once under EXPLAIN (ANALYZE, BUFFERS): the sixth
+     execution is the first one `plan_cache_mode = auto` may switch to a generic
+     plan, and a generic plan cannot prove the partial-index predicate.
+     `pg_prepared_statements` then prints which kind it chose.
+
+Every block opens with the gate's own `statement_timeout`, so it never inherits
+the build's `statement_timeout = 0`.
 
 Why it exists: the attended admission in
 `docs/audits/latency/2316-p144-1-season-discovery-index-runbook.md` §3 must
@@ -16,6 +25,7 @@ EXPLAIN the statement production actually runs, not a hand copy that can drift
 from the route. The predicate is a four-arm OR plus league-scope refusals, and
 both change. Regenerate the block on the day of the build.
 
+    cd backend && python3 scripts/season_discovery_admission_sql.py --gate-set
     cd backend && python3 scripts/season_discovery_admission_sql.py \\
         --sport-key americanfootball_ncaaf --finished
     cd backend && python3 scripts/season_discovery_admission_sql.py --dry-run
@@ -29,6 +39,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import os
+import re
 import sys
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
@@ -41,7 +52,66 @@ sys.path.insert(0, BACKEND)
 # variable, so the printed statement takes production's ids, not this one.
 SENTINEL_SPORT_ID = 987654321
 SPORT_IDS_VAR = ":sport_ids"
+PREPARED_NAME = "season_discovery_2316"
+# Executions before the one EXPLAIN ANALYZE reads. PostgreSQL's plan cache
+# always builds a custom plan for the first five and may switch to a generic
+# plan from the sixth on, so the sixth is the first that can show the switch.
+PLANS_BEFORE_ANALYZE = 5
 
+# The three indexes, in build order. The runbook's CREATE set, its P2 and A2
+# catalog reads and its section-4 DROP set must all name exactly these.
+INDEX_NAMES = (
+    "ix_fm_t14_llm_sport_category",
+    "ix_fm_t14_sport_id",
+    "ix_fm_t14_external_id_trgm",
+)
+
+# The A3 gate runs the finished shape for these sports, one statement each.
+# ncaaf: the 2026-10-17 16 s reader. mlb: the 2026-08-30 Seq Scan specimen.
+# soccer_epl: the generic `soccer%` arm plus every soccer sport id, likely the
+# broadest bitmap. basketball_other: `basketball%` plus five Kalshi roots.
+GATE_SPORTS = (
+    "americanfootball_ncaaf",
+    "baseball_mlb",
+    "soccer_epl",
+    "basketball_other",
+)
+
+# The provisional KEEP criteria (runbook section 3, A2 and A3). The runbook
+# prints the same table in its `gate-criteria` block and the guard test holds
+# all three copies equal. The gate runs right after three builds and an
+# ANALYZE, so its time is a warm time and decides nothing alone: the heap-block
+# ceiling is the cache-independent bound. Cold budget 2,000 ms = 3,000 heap
+# blocks x 0.5 ms per random heap read (1,500 ms) + a full 4 MB GIN pending
+# list, 512 pages x 0.5 ms (256 ms) + index pages. Per-row size ceilings: the
+# fixture's production-shaped Polymarket ids (0x + 64 hex) built at 216-238 B
+# per tier-1-4 row for the trigram index and 21 B for each btree; x1.4 margin.
+GATE_CRITERIA = {
+    "statement_timeout": "30s",
+    "every_index_valid": "yes",
+    "seq_scan_on_futures_markets": "none",
+    "bitmapor_lists_all_three_indexes": "yes",
+    "lossy_heap_blocks": "0",
+    "max_exact_heap_blocks": "3000",
+    "max_execution_ms": "2000",
+    "generic_plans_after_sixth": "0",
+    "max_trgm_bytes_per_t14_row_at_build": "330",
+    "max_btree_bytes_per_t14_row_at_build": "40",
+}
+
+# The final KEEP (runbook section 6): a cold-path acceptance latency reads
+# after the build, from pg_stat_statements deltas, outside the attended block.
+# Steady-state trigram size: under churn the fixture's hex-id index settled at
+# 640-810 B per row (vacuumed between rewrites) and kept growing slowly.
+ACCEPTANCE_CRITERIA = {
+    "window_starts_hours_after_build": "6",
+    "window_hours": "24",
+    "window_may_extend_to_hours": "72",
+    "min_finished_shape_calls": "10",
+    "max_mean_exec_ms": "2000",
+    "max_trgm_bytes_per_t14_row_steady": "1000",
+    "on_failure": "section 4 rollback",
+}
 
 class _Captured(Exception):
     """Stops the build once the discovery statement has been recorded."""
@@ -114,6 +184,8 @@ async def capture(sport_key: str, finished: bool) -> RecordingSession:
         try:
             await events_route._build_related_futures(session.event.id, session, debug=False)
         except _Captured:
+            # Expected: the session raises it right after recording the
+            # discovery statement, so the build stops there on purpose.
             pass
     return session
 
@@ -133,33 +205,115 @@ def literal_sql(stmt) -> str:
     return str(stmt.compile(dialect=dialect, compile_kwargs={"literal_binds": True}))
 
 
+def _pg_literal(value) -> str:
+    """One EXECUTE argument, as psql must type it."""
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, int):
+        return str(value)
+    if isinstance(value, datetime):
+        return f"'{value.isoformat()}'::timestamptz"
+    if isinstance(value, str):
+        # standard_conforming_strings is on, so a backslash is printed as is.
+        return "'" + value.replace("'", "''") + "'"
+    raise SystemExit(2)
+
+
+def prepared_sql(stmt) -> tuple[str, list[str]]:
+    """The statement as asyncpg sends it, with the sport ids inlined.
+
+    Returns the PREPARE body (`$n` binds renumbered after the sport ids are
+    swapped for the psql variable) and the EXECUTE arguments in `$n` order.
+    """
+    from sqlalchemy.dialects.postgresql import asyncpg
+
+    compiled = stmt.compile(
+        dialect=asyncpg.dialect(), compile_kwargs={"render_postcompile": True}
+    )
+    values = [compiled.params[name] for name in compiled.positiontup]
+    sentinel = {i + 1 for i, v in enumerate(values) if v == SENTINEL_SPORT_ID}
+    if len(sentinel) != 1:
+        raise SystemExit(2)
+    renumber, args = {}, []
+    for i, value in enumerate(values, start=1):
+        if i not in sentinel:
+            args.append(_pg_literal(value))
+            renumber[i] = len(args)
+
+    def _swap(m):
+        n = int(m.group(1))
+        # Drop the bind's cast with it: the ids are a list, not one INTEGER.
+        return SPORT_IDS_VAR if n in sentinel else f"${renumber[n]}{m.group(2) or ''}"
+
+    body = re.sub(r"\$(\d+)(::INTEGER)?(?!\d)", _swap, str(compiled))
+    return body, args
+
+
+def criteria_lines(prefix: str = "") -> list[str]:
+    return [f"{prefix}{key} = {value}" for key, value in GATE_CRITERIA.items()]
+
+
 def psql_block(session: RecordingSession, sport_key: str, finished: bool) -> str:
     sports_sql = literal_sql(session.sports_stmt)
-    discovery_sql = literal_sql(session.discovery_stmt)
-    if str(SENTINEL_SPORT_ID) not in discovery_sql:
-        raise SystemExit(2)
-    discovery_sql = discovery_sql.replace(str(SENTINEL_SPORT_ID), SPORT_IDS_VAR)
+    body, args = prepared_sql(session.discovery_stmt)
     sports_sql = sports_sql.replace(
         "SELECT sports.id", "SELECT string_agg(sports.id::text, ',') AS sport_ids", 1
     )
     shape = "finished" if finished else "live"
+    execute = f"EXECUTE {PREPARED_NAME}({', '.join(args)})"
     return "\n".join(
         [
             f"-- #2316 season-market discovery, {sport_key} / {shape} shape.",
             "-- Generated by backend/scripts/season_discovery_admission_sql.py from",
             "-- routes/events.py; regenerate on the day of use, never hand-edit.",
+            "-- KEEP criteria (runbook section 3, A3):",
+            *criteria_lines("--   "),
+            f"SET statement_timeout = '{GATE_CRITERIA['statement_timeout']}';",
+            "\\unset sport_ids",
             f"{sports_sql} \\gset",
-            "\\echo sport_ids=:sport_ids",
-            "EXPLAIN (ANALYZE, BUFFERS)",
-            f"{discovery_sql};",
+            "\\if :{?sport_ids}",
+            f"\\echo {sport_key} sport_ids=:sport_ids",
+            "DEALLOCATE ALL;",
+            f"PREPARE {PREPARED_NAME} AS",
+            f"{body};",
+            "\\o /dev/null",
+            *[f"EXPLAIN {execute};" for _ in range(PLANS_BEFORE_ANALYZE)],
+            "\\o",
+            f"EXPLAIN (ANALYZE, BUFFERS) {execute};",
+            "SELECT name, generic_plans, custom_plans FROM pg_prepared_statements"
+            f" WHERE name = '{PREPARED_NAME}';",
+            f"DEALLOCATE {PREPARED_NAME};",
+            "\\else",
+            f"\\echo ABORT {sport_key}: the sports lookup returned no ids, so this is not the route's statement",
+            "\\endif",
         ]
     )
+
+
+def gate_set() -> str:
+    """The A3 file: the finished shape for every GATE_SPORTS key."""
+    blocks = []
+    for sport_key in GATE_SPORTS:
+        s = asyncio.run(capture(sport_key, True))
+        if s.sports_stmt is None or s.discovery_stmt is None:
+            raise SystemExit(2)
+        blocks.append(psql_block(s, sport_key, True))
+    header = [
+        "-- #2316 A3 gate set. Run with \\i inside the attended session, AFTER the builds.",
+        "SHOW track_io_timing;",
+    ]
+    return "\n\n".join(["\n".join(header), *blocks])
 
 
 def main(argv=None) -> int:
     p = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     p.add_argument("--sport-key", default="americanfootball_ncaaf")
     p.add_argument("--finished", action="store_true", help="the finished-event shape")
+    p.add_argument(
+        "--gate-set",
+        action="store_true",
+        help="print the whole A3 gate file: the finished shape for every gate sport",
+    )
     p.add_argument(
         "--dry-run",
         action="store_true",
@@ -177,6 +331,10 @@ def main(argv=None) -> int:
             )
             if not ok:
                 return 2
+        return 0
+
+    if args.gate_set:
+        print(gate_set())
         return 0
 
     s = asyncio.run(capture(args.sport_key, args.finished))

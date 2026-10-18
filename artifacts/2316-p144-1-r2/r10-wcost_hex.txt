@@ -1,0 +1,51 @@
+\set ON_ERROR_STOP on
+SET statement_timeout = 0;
+DROP TABLE IF EXISTS fm_w_plain, fm_w_gin;
+CREATE TABLE fm_w_plain AS SELECT id, hex_id, 0 AS u, repeat('x', 180) AS pad FROM fm_size;
+CREATE TABLE fm_w_gin AS SELECT * FROM fm_w_plain;
+ALTER TABLE fm_w_plain ADD PRIMARY KEY (id); ALTER TABLE fm_w_gin ADD PRIMARY KEY (id);
+CREATE INDEX ON fm_w_plain (u); CREATE INDEX ON fm_w_gin (u);
+CREATE INDEX ON fm_w_gin USING gin (hex_id gin_trgm_ops) WITH (fastupdate = off);
+VACUUM ANALYZE fm_w_plain; VACUUM ANALYZE fm_w_gin;
+\timing on
+UPDATE fm_w_plain SET u = u + 1;
+UPDATE fm_w_gin SET u = u + 1;
+UPDATE fm_w_plain SET u = u + 1;
+UPDATE fm_w_gin SET u = u + 1;
+UPDATE fm_w_plain SET u = u + 1;
+UPDATE fm_w_gin SET u = u + 1;
+\timing off
+SELECT relname, n_tup_upd, n_tup_hot_upd FROM pg_stat_user_tables WHERE relname LIKE 'fm_w_%';
+SET
+psql:wcost_hex.sql:3: NOTICE:  table "fm_w_plain" does not exist, skipping
+psql:wcost_hex.sql:3: NOTICE:  table "fm_w_gin" does not exist, skipping
+DROP TABLE
+SELECT 24000
+SELECT 24000
+ALTER TABLE
+ALTER TABLE
+CREATE INDEX
+CREATE INDEX
+CREATE INDEX
+VACUUM
+VACUUM
+Timing is on.
+UPDATE 24000
+Time: 302.026 ms
+UPDATE 24000
+Time: 23179.892 ms (00:23.180)
+UPDATE 24000
+Time: 289.188 ms
+UPDATE 24000
+Time: 38930.141 ms (00:38.930)
+UPDATE 24000
+Time: 384.403 ms
+UPDATE 24000
+Time: 55898.289 ms (00:55.898)
+Timing is off.
+  relname   | n_tup_upd | n_tup_hot_upd 
+------------+-----------+---------------
+ fm_w_plain |     72000 |             0
+ fm_w_gin   |     72000 |             0
+(2 rows)
+

@@ -1,0 +1,47 @@
+\set ON_ERROR_STOP on
+DROP TABLE IF EXISTS fm_size;
+CREATE TABLE fm_size AS SELECT id, external_id AS fixture_id,
+  '0x' || md5(id::text) || md5((id * 7 + 1)::text)
+       || (ARRAY['', '_yes', '_no'])[1 + id % 3] AS hex_id,
+  market_tier
+  FROM futures_markets WHERE market_tier IN (1, 2, 3, 4);
+SELECT count(*) AS t14_rows, round(avg(length(fixture_id)), 1) AS fixture_len, round(avg(length(hex_id)), 1) AS hex_len,
+       round(avg(array_length(show_trgm(fixture_id), 1)), 1) AS fixture_trgm, round(avg(array_length(show_trgm(hex_id), 1)), 1) AS hex_trgm
+  FROM fm_size;
+CREATE INDEX fm_size_fixture ON fm_size USING gin (fixture_id gin_trgm_ops) WITH (fastupdate = off);
+CREATE INDEX fm_size_hex ON fm_size USING gin (hex_id gin_trgm_ops) WITH (fastupdate = off);
+SELECT relname, pg_relation_size(oid) AS bytes, round(pg_relation_size(oid)::numeric / (SELECT count(*) FROM fm_size), 1) AS bytes_per_row
+  FROM pg_class WHERE relname IN ('fm_size_fixture', 'fm_size_hex');
+-- incremental (fastupdate off) inserts: the size a churned index grows to, not the bulk-build size
+DROP TABLE IF EXISTS fm_size_inc;
+CREATE TABLE fm_size_inc (hex_id text);
+CREATE INDEX fm_size_inc_hex ON fm_size_inc USING gin (hex_id gin_trgm_ops) WITH (fastupdate = off);
+INSERT INTO fm_size_inc SELECT hex_id FROM fm_size;
+SELECT 'incremental_hex' AS how, pg_relation_size('fm_size_inc_hex') AS bytes,
+       round(pg_relation_size('fm_size_inc_hex')::numeric / (SELECT count(*) FROM fm_size_inc), 1) AS bytes_per_row;
+psql:/tmp/lat2316-fixture/r2/size.sql:2: NOTICE:  table "fm_size" does not exist, skipping
+DROP TABLE
+SELECT 24000
+ t14_rows | fixture_len | hex_len | fixture_trgm | hex_trgm 
+----------+-------------+---------+--------------+----------
+    24000 |        15.1 |    68.3 |         15.8 |     68.9
+(1 row)
+
+CREATE INDEX
+CREATE INDEX
+     relname     |  bytes  | bytes_per_row 
+-----------------+---------+---------------
+ fm_size_fixture |  942080 |          39.3
+ fm_size_hex     | 5185536 |         216.1
+(2 rows)
+
+psql:/tmp/lat2316-fixture/r2/size.sql:16: NOTICE:  table "fm_size_inc" does not exist, skipping
+DROP TABLE
+CREATE TABLE
+CREATE INDEX
+INSERT 0 24000
+       how       |  bytes  | bytes_per_row 
+-----------------+---------+---------------
+ incremental_hex | 4194304 |         174.8
+(1 row)
+
