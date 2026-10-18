@@ -408,12 +408,22 @@ struct NBAStoryStreamView9483: View {
     /// in the part of the slot between the bar and the tab bar, and never
     /// outside the slot. Nil (centre in the whole slot) while the slot or the
     /// viewport is unmeasured, or no part of the slot is on screen.
-    static func unavailableContentTop(slot: CGRect?, viewport: CGRect?, content: CGFloat) -> CGFloat? {
+    /// `nonisolated`: pure, and called from the slot's render-time effect.
+    nonisolated static func unavailableContentTop(slot: CGRect?, viewport: CGRect?, content: CGFloat) -> CGFloat? {
         guard let slot, let viewport, slot.height > 0 else { return nil }
         let top = max(slot.minY, viewport.minY), bottom = min(slot.maxY, viewport.maxY)
         guard bottom > top else { return nil }
         let centred = (top + bottom - content) / 2 - slot.minY
         return min(max(0, centred), max(0, slot.height - content))
+    }
+
+    /// How far the unavailable slot's content is drawn below the slot's top:
+    /// `unavailableContentTop`, or centred in the whole slot when that is nil.
+    /// 0 while the content is unmeasured, when the slot's frame centres it.
+    nonisolated static func unavailableContentOffset(slot: CGRect, viewport: CGRect?, content: CGFloat) -> CGFloat {
+        guard content > 0 else { return 0 }
+        return unavailableContentTop(slot: slot, viewport: viewport, content: content)
+            ?? max(0, (slot.height - content) / 2)
     }
 
     // MARK: - Plain storage
@@ -462,20 +472,24 @@ private struct ShelfScrollPhase9483: ViewModifier {
 
 /// The held active card left the deck (W1): its place stays, with no stale
 /// numbers and no substitute, until an explicit Refresh. It fills the row's
-/// height, and its message and Refresh sit in the part of it on screen, so a
-/// reader who comes back with the slot half under the bar still sees them.
-/// The place is decided when the slot first shows on screen and again only if
-/// its height, its content's height or the viewport changes, or a page scroll
-/// settles (iOS 18), never per scroll frame: the frames land in plain storage,
-/// and only the slot re-renders.
+/// height, and its message and Refresh are drawn in the part of it on screen,
+/// so a reader who comes back with the slot half under the bar, or scrolls a
+/// slot taller than the screen (large text), still sees them. The place
+/// follows the page as it scrolls with no state write per scroll frame and no
+/// scroll-phase signal (iOS 17 has none): a render-time `visualEffect` offset
+/// read from the slot's own frame. Layout never follows it, so the slot's
+/// height and the card behind it stay put; state changes only when the
+/// content's own height does (text size, width).
 private struct UnavailableSlot9483: View {
     let coordinateSpace: String
     @ObservedObject var signals: NBAStoryStreamView9483.Signals
     let refresh: () -> Void
-    @State private var top: CGFloat?
-    @State private var measured = Measured()
+    @State private var contentHeight: CGFloat = 0
 
     var body: some View {
+        // Value copies for the effect's closure, which is @Sendable and runs
+        // off the main actor: no class, no ObservableObject, no self.
+        let space = coordinateSpace, viewport = signals.usableViewport, content = contentHeight
         VStack(spacing: 12) {
             Text("This game story is no longer available")
                 .font(.subheadline)
@@ -487,37 +501,17 @@ private struct UnavailableSlot9483: View {
         .frame(maxWidth: .infinity, minHeight: 160)
         .padding(16)
         .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { height in
-            measured.content = height
-            place()
+            if height != contentHeight { contentHeight = height }
         }
-        // An offset, not padding: the slot's own height never follows it.
-        .offset(y: top ?? 0)
-        .frame(maxHeight: .infinity, alignment: top == nil ? .center : .top)
+        .frame(maxHeight: .infinity, alignment: content > 0 ? .top : .center)
+        // The proxy is this frame, the whole slot, as laid out this frame; the
+        // offset changes drawing only, so it never feeds back into its input.
+        .visualEffect { effect, proxy in
+            effect.offset(y: NBAStoryStreamView9483.unavailableContentOffset(
+                slot: proxy.frame(in: .named(space)), viewport: viewport, content: content))
+        }
         .background(Color.cardBackground, in: RoundedRectangle(cornerRadius: 16))
         .overlay(RoundedRectangle(cornerRadius: 16).stroke(Color.secondary.opacity(0.15)))
-        .onGeometryChange(for: CGRect.self) { $0.frame(in: .named(coordinateSpace)) } action: { frame in
-            let resized = measured.slot?.height != frame.height
-            measured.slot = frame
-            if top == nil || resized { place() }
-        }
-        .onChange(of: signals.usableViewport) { _, _ in place() }
-        // Placed once, a tall slot (large text) could leave a reader who then
-        // scrolled up looking at a blank card. When the page comes to rest, the
-        // content moves into what is on screen now: one write per settled
-        // scroll, and none when the place is unchanged.
-        .onChange(of: signals.pageIsScrolling) { _, scrolling in if !scrolling { place() } }
         .accessibilityElement(children: .combine)
-    }
-
-    private func place() {
-        let placed = NBAStoryStreamView9483.unavailableContentTop(
-            slot: measured.slot, viewport: signals.usableViewport, content: measured.content)
-        if placed != top { top = placed }
-    }
-
-    /// The last frames, kept without re-rendering (a class, like `StageFrame`).
-    final class Measured {
-        var slot: CGRect?
-        var content: CGFloat = 0
     }
 }

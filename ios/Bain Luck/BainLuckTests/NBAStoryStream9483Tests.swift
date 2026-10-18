@@ -860,5 +860,33 @@ final class NBAStoryStream9483Tests: XCTestCase {
         XCTAssertLessThanOrEqual(bandBottom - 16, 791)
         XCTAssertEqual(bandTop + 16, 400.67, accuracy: 0.5)
     }
+
+    /// The slot draws its content at `unavailableContentOffset` every frame
+    /// (a render-time effect, iOS 17+), so the ship case needs no settle: the
+    /// fx402ax3 specimen above, read mid-scroll. Where no part of the slot is
+    /// on screen, or the viewport is unmeasured, the content is centred in the
+    /// whole slot, as the old `.center` frame did; unmeasured content draws at
+    /// the slot's frame alignment (0).
+    func testTheSlotsDrawnOffsetFollowsTheScrollAndCentresWhenNothingIsOnScreen() {
+        let viewport = CGRect(x: 0, y: 0, width: 402, height: 675)
+        let content: CGFloat = 16 + 129 + 12 + 45.67 + 16
+        let offset = { (slot: CGRect, viewport: CGRect?, content: CGFloat) in
+            NBAStoryStreamView9483.unavailableContentOffset(slot: slot, viewport: viewport, content: content)
+        }
+        // On screen: exactly the place, with no settle (81…1138 at AX3), the
+        // message at screen 400.67, inside the bars.
+        let scrolled = CGRect(x: 16, y: 81, width: 346, height: 1057)
+        XCTAssertEqual(offset(scrolled, viewport, content),
+                       NBAStoryStreamView9483.unavailableContentTop(slot: scrolled, viewport: viewport, content: content))
+        XCTAssertEqual(scrolled.minY + offset(scrolled, viewport, content) + 16 + 116, 400.67, accuracy: 0.5)
+        // Below the screen, or the viewport unmeasured: centred in the slot.
+        let below = CGRect(x: 16, y: 700, width: 346, height: 370)
+        XCTAssertEqual(offset(below, viewport, 192), 89)
+        XCTAssertEqual(offset(CGRect(x: 16, y: -199, width: 346, height: 370), nil, 192), 89)
+        // Content taller than the slot never draws above its top.
+        XCTAssertEqual(offset(CGRect(x: 16, y: 700, width: 346, height: 150), viewport, 192), 0)
+        // Content not yet measured: 0, and the frame centres it.
+        XCTAssertEqual(offset(below, viewport, 0), 0)
+    }
 }
 
