@@ -37,6 +37,10 @@ struct EventDetailView: View {
     /// #9483 — the NFL cards' open card and selections, owned by the page so
     /// they survive the deck → full size → deck round trip.
     @StateObject private var nflCards = NFLCardDeckState9483()
+    /// #9483 v445 — the page scroll phase and unobscured viewport the compact
+    /// NBA stream reads. Held, not observed: a scroll phase change re-renders
+    /// the stream, never this page.
+    @State private var nbaStreamSignals = NBAStoryStreamView9483.Signals()
     /// The width of a row in the sources disclosure, reported by the
     /// `GeometryReader` behind the whole panel, so both lists inside it can size
     /// their label column against the room the row actually has rather than a
@@ -352,6 +356,10 @@ struct EventDetailView: View {
                 // again now, rather than whenever the suspended poll gets to it.
                 vm.scenePhaseChanged(to: phase, pageVisible: marketPageVisible)
             }
+            // #9483 v445 C3 — another event on this page: the old event's
+            // reader closes and its stream, reasons and ladder selections go
+            // before the new event's stream begins.
+            .onChange(of: eventId) { _, _ in nflCards.resetNBAStream() }
             .onDisappear {
                 duringPageAnchor.cancel()
                 afterPageAnchor.cancel()
@@ -489,10 +497,12 @@ struct EventDetailView: View {
                     // stays where it is.
                     let nflDeck = nflCardDeck(event, projectedInput: projectedInput)
                     if !nflDeck.isEmpty {
+                        // #9483 v445 — compact NBA: the story stream replaces
+                        // the deck's scroller; elsewhere the deck as before.
                         NFLEventCardDeckView9483(
                             cards: nflDeck, awayName: nflNames(event).away, homeName: nflNames(event).home,
                             awayColor: teamColors(event).away, homeColor: teamColors(event).home,
-                            state: nflCards)
+                            state: nflCards, stream: nbaStreamPage(event, cards: nflDeck))
                     }
                     // #9483 C3 — the venue's winner price is read under the
                     // chart, never between the hero's result and the chart.
@@ -819,9 +829,19 @@ struct EventDetailView: View {
                 Color.clear.preference(
                     key: ScrollViewportTopPreferenceKey.self,
                     value: proxy.safeAreaInsets.top)
+                    // #9483 v445 — and where it is covered again at the
+                    // bottom (the tab bar): the stream's usable viewport.
+                    .preference(key: UsableViewportPreferenceKey.self,
+                                value: Self.usableViewport(size: proxy.size, insets: proxy.safeAreaInsets))
             })
             .onPreferenceChange(NavShowsScorePreferenceKey.self) { navShowsScore = $0 ?? true }
             .onPreferenceChange(ScrollViewportTopPreferenceKey.self) { scrollViewportTop = $0 }
+            .onPreferenceChange(UsableViewportPreferenceKey.self) { viewport in
+                if nbaStreamSignals.usableViewport != viewport { nbaStreamSignals.usableViewport = viewport }
+            }
+            // #9483 v445 — only the PAGE's scroll phase can say the page is
+            // being scrolled; the stream nested in it cannot observe that.
+            .modifier(PageScrollPhase9483(signals: nbaStreamSignals))
             // #10090 — the timing seam's view mark: this update handed the hero
             // and chart the value it names. Not a paint (`LiveTimingSeam`).
             .onChange(of: LiveTimingSeam.presented(event, liveBlend: vm.liveBlend)) { old, new in
@@ -1904,6 +1924,40 @@ struct EventDetailView: View {
         return [NBALadderCard9483.margin(input), NBALadderCard9483.total(input)].compactMap { $0 }
     }
 
+    /// #9483 v445 — the compact NBA story stream is mounted: an NBA page in
+    /// the actual compact horizontal size class (iPhone, compact iPad Split
+    /// View). Regular width keeps the ordinary deck.
+    private func nbaStreamMounted(_ event: EventDetail) -> Bool {
+        NBAEventCards9483.applies(sportKey: event.sport) && sizeClass == .compact
+    }
+
+    /// The stream's page inputs, or nil for the ordinary deck.
+    private func nbaStreamPage(_ event: EventDetail, cards: [NFLEventCard9483]) -> NBAStoryStreamView9483.Page? {
+        guard nbaStreamMounted(event) else { return nil }
+        let phase = cards.lazy.compactMap { card -> NBALadderCard9483.Phase? in
+            if case .ladder(let ladder) = card { return ladder.phase } else { return nil }
+        }.first ?? .before
+        return NBAStoryStreamView9483.Page(
+            eventID: event.id, phase: phase, compact: true,
+            supportsAutomaticScrollObservation: Self.observesPageScrollPhase,
+            coordinateSpace: Self.scrollSpace, signals: nbaStreamSignals)
+    }
+
+    /// The page ScrollView reports its scroll phase only on iOS 18; iOS 17 is
+    /// manual-only.
+    static var observesPageScrollPhase: Bool {
+        if #available(iOS 18, *) { return true }
+        return false
+    }
+
+    /// The page's unobscured rectangle in `scrollSpace`: its bounds less the
+    /// bar above and the tab bar below. Nil when there is nothing left.
+    static func usableViewport(size: CGSize, insets: EdgeInsets) -> CGRect? {
+        let height = size.height - insets.top - insets.bottom
+        guard size.width > 0, height > 0 else { return nil }
+        return CGRect(x: 0, y: insets.top, width: size.width, height: height)
+    }
+
     private var nflReaderPresented: Binding<Bool> {
         Binding(get: { nflCards.openCardID != nil }, set: { if !$0 { nflCards.close() } })
     }
@@ -1934,7 +1988,11 @@ struct EventDetailView: View {
     private func nflReader(_ event: EventDetail) -> some View {
         let projectedInput = projectedPointsInput(event)
         let props = vm.gameMarkets?.playerProps ?? []
-        let cards = nflCardDeck(event, projectedInput: projectedInput)
+        let deck = nflCardDeck(event, projectedInput: projectedInput)
+        // #9483 v445 W1/W3 — under the compact NBA stream the reader follows
+        // the shelf's APPLIED order (pending cards withheld from both); in
+        // regular width both keep the event's fallback order.
+        let cards = nbaStreamMounted(event) ? nflCards.appliedNBAOrder(eventID: event.id, fallback: deck) : deck
         return NFLCardReader9483(
             liveCards: cards,
             liveHeader: nflReaderHeader(event),
@@ -3159,6 +3217,31 @@ private struct NavShowsScorePreferenceKey: PreferenceKey {
 }
 
 /// #8320 — how much of the scroll view the bar covers, in the same space.
+/// #9483 v445 — the page's unobscured rectangle in `scrollSpace`.
+private struct UsableViewportPreferenceKey: PreferenceKey {
+    static let defaultValue: CGRect? = nil
+    static func reduce(value: inout CGRect?, nextValue: () -> CGRect?) {
+        value = nextValue() ?? value
+    }
+}
+
+/// #9483 v445 — iOS 18: the page's scroll phase, for the NBA stream. Only an
+/// idle page can begin a fresh dwell.
+private struct PageScrollPhase9483: ViewModifier {
+    let signals: NBAStoryStreamView9483.Signals
+
+    func body(content: Content) -> some View {
+        if #available(iOS 18, *) {
+            content.onScrollPhaseChange { _, phase in
+                let scrolling = phase != .idle
+                if signals.pageIsScrolling != scrolling { signals.pageIsScrolling = scrolling }
+            }
+        } else {
+            content
+        }
+    }
+}
+
 private struct ScrollViewportTopPreferenceKey: PreferenceKey {
     static let defaultValue: CGFloat = 0
     static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {

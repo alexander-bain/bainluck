@@ -56,6 +56,95 @@ final class NFLCardDeckState9483: ObservableObject {
         guard let current = selectedIndex(in: card), card.points.indices.contains(current + delta) else { return }
         selectedRow[card.id] = card.points[current + delta].optionKey
     }
+
+    // MARK: NBA story stream (v445 + W1–W3)
+
+    /// The compact NBA stream's applied/pending order, active card and hold,
+    /// for ONE event. Nil until that event's stream begins. Written only
+    /// through the guarded methods below, never during a body read.
+    @Published private(set) var nbaStreamState: NBAStoryStreamPolicy9483.State?
+
+    /// The applied order for the page's reader (W1, W3): the applied ids'
+    /// present cards, in applied order. Present cards not yet applied are
+    /// pending and withheld. With no stream for THIS event, its own fallback.
+    func appliedNBAOrder(eventID: Int, fallback cards: [NFLEventCard9483]) -> [NFLEventCard9483] {
+        guard let stream = nbaStreamState, stream.eventID == eventID else { return cards }
+        let present = Dictionary(cards.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        return stream.appliedIDs.compactMap { present[$0] }
+    }
+
+    /// Starts `plan`'s event's stream. The same event keeps its state; any
+    /// other starts fresh, without the previous event's ladder selections.
+    func beginNBAStream(_ plan: NBAStoryStreamPolicy9483.Plan) {
+        if let stream = nbaStreamState, stream.eventID == plan.eventID { return }
+        if nbaStreamState != nil { clearNBALadderSelections() }
+        nbaStreamState = NBAStoryStreamPolicy9483.State(plan: plan)
+    }
+
+    /// The page's event changed: the old event's reader/Details close, and
+    /// its stream and ladder selections are discarded.
+    func resetNBAStream() {
+        close()
+        clearNBALadderSelections()
+        nbaStreamState = nil
+    }
+
+    /// A producer/clock update for the running stream: pending only (W1).
+    func receiveNBAPlan(_ plan: NBAStoryStreamPolicy9483.Plan) {
+        updateNBAStream(eventID: plan.eventID) { $0.receive(plan) }
+    }
+
+    func applyNBAPending(eventID: Int) {
+        updateNBAStream(eventID: eventID) { $0.applyPending() }
+    }
+
+    func holdNBAStream(eventID: Int) {
+        updateNBAStream(eventID: eventID) { $0.hold() }
+    }
+
+    func resumeNBAStream(eventID: Int) {
+        updateNBAStream(eventID: eventID) { $0.resume() }
+    }
+
+    /// The one automatic boundary (W2): receive the plan made at the wake's
+    /// own `now`, apply pending, then move to the next card, wrapping.
+    func advanceNBAStream(_ plan: NBAStoryStreamPolicy9483.Plan, present: Set<String>) {
+        updateNBAStream(eventID: plan.eventID) { stream in
+            guard !stream.held, stream.receive(plan) else { return }
+            stream.applyPending()
+            stream.next(present: present, wrap: true)
+        }
+    }
+
+    /// Manual browsing landed on a card: it becomes active and the stream holds.
+    func focusNBAStream(eventID: Int, cardID: String, present: Set<String>) {
+        updateNBAStream(eventID: eventID) { $0.focus(cardID, present: present) }
+    }
+
+    /// "See this line": selects `optionKey` on `card` only when the stream
+    /// is this event's, the card is applied, and the option is on it. A stale
+    /// event or an absent option writes nothing — never a neighbour.
+    @discardableResult
+    func select(optionKey: String, in card: NBALadderCard9483, eventID: Int) -> Bool {
+        guard let stream = nbaStreamState, stream.eventID == eventID,
+              stream.appliedIDs.contains(card.id),
+              card.points.contains(where: { $0.optionKey == optionKey }) else { return false }
+        selectedRow[card.id] = optionKey
+        return true
+    }
+
+    private func updateNBAStream(eventID: Int, _ change: (inout NBAStoryStreamPolicy9483.State) -> Void) {
+        guard var stream = nbaStreamState, stream.eventID == eventID else { return }
+        change(&stream)
+        if stream != nbaStreamState { nbaStreamState = stream }
+    }
+
+    /// The ladder families' selections ("total", "margin"); player rows stay.
+    private func clearNBALadderSelections() {
+        for family in [NBALadderCard9483.Family.total, .margin] {
+            selectedRow[family.rawValue] = nil
+        }
+    }
 }
 
 // MARK: - Projected finish
@@ -508,9 +597,23 @@ struct NFLEventCardDeckView9483: View {
     let awayColor: Color
     let homeColor: Color
     @ObservedObject var state: NFLCardDeckState9483
+    /// The compact NBA story stream, or nil (the default) for the ordinary
+    /// deck. When set, the stream REPLACES the deck's scroller — one
+    /// horizontal container, never nested.
+    var stream: NBAStoryStreamView9483.Page?
     @AccessibilityFocusState private var focused: String?
 
     var body: some View {
+        if let stream {
+            NBAStoryStreamView9483(cards: cards, awayName: awayName, homeName: homeName,
+                                   awayColor: awayColor, homeColor: homeColor, state: state,
+                                   page: stream, signals: stream.signals)
+        } else {
+            deck
+        }
+    }
+
+    private var deck: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
                 Text("Game stories")
