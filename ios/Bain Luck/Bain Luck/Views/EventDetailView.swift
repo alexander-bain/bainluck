@@ -397,65 +397,78 @@ struct EventDetailView: View {
                                     viewportTop: scrollViewportTop))
                         })
                     VStack(spacing: 0) {
-                        OddsChartView(eventId: event.id, teamColors: teamColors(event),
-                                     commenceTime: event.commenceTime, status: event.status,
-                                     // #6381 — so the empty state stops saying
-                                     // "yet" under a hero that says settled.
-                                     venueSettled: event.venueSettled == true,
-                                     homeTeamName: event.homeTeam,
-                                     awayTeamName: event.awayTeam,
-                                     homeTeamLogo: event.homeTeamData?.logoSmall,
-                                     awayTeamLogo: event.awayTeamData?.logoSmall,
-                                     homeTeamAbbrev: event.homeTeamData?.abbreviation,
-                                     awayTeamAbbrev: event.awayTeamData?.abbreviation,
-                                     sportKey: event.sport,
-                                     // #8320 — the page's one decision, so the
-                                     // fullscreen dot cannot claim a push the
-                                     // toolbar does not.
-                                     refreshStreaming: refreshIndicator == .streaming,
-                                     liveUpdateStatus: vm.liveUpdateStatus,
-                                     priceActivity: vm.priceActivity,
-                                     // #9436 — the hero's own number, for the
-                                     // dot on the end of the line.
-                                     liveEdge: LiveEdgeReading.current(in: event),
-                                      pairedAwayLabel9483: LivePriceActivity.displayedLabels(in: event).away,
-                                     // #10456 — the served winner pair, both
-                                     // sides: admission for the balance ink.
-                                     servedHomeProbability: event.currentOdds?.homeProbability,
-                                     servedAwayProbability: event.currentOdds?.awayProbability,
-                                     forcedDomain: sharedChartDomain,
-                                     legacyDataDomain: legacyChartDataDomain,
-                                     pageAxisPlotWidth: pageAxisPlotWidth,
-                                     selectedRange: $chartRange,
-                                     preloadedHistory: vm.history,
-                                     // #8651 — its live edge, read once per
-                                     // payload rather than on every rebuild.
-                                     preloadedHistoryEdge: vm.historyDigest.map(\.edge),
-                                     // #920 — the pushed blends the hero is
-                                     // already showing, so the chart's right
-                                     // edge reaches the same moment it does.
-                                     liveFrames: vm.liveBlend,
-                                     // #925 — the scrub readout rides INSIDE the
-                                     // chart, above its plot, so the finger on
-                                     // the chart and the text it rewrites are on
-                                     // screen together (it was below the chart,
-                                     // under the tab bar, in Alex's recording).
-                                     readout: (isLive || isFinished) && vm.history?.scoringPlays?.isEmpty == false
-                                        ? GamePlayCardView(
-                                            homeTeam: event.homeTeam,
-                                            awayTeam: event.awayTeam,
-                                            homeTeamColor: teamColors(event).home,
-                                            awayTeamColor: teamColors(event).away,
-                                            homeTeamLogo: event.homeTeamData?.logoSmall,
-                                            awayTeamLogo: event.awayTeamData?.logoSmall,
-                                            lastPoint: lastPlayPoint(event: event))
-                                        : nil,
-                                     // #4974 — the journey only when page, view
-                                     // model, detail and journey agree on a
-                                     // finished game and this appearance is
-                                     // ready; the chart keeps its own guard.
-                                     publicationJourney: Self.chartPublicationJourney(
-                                        vm.publicationJourney, key: publicationTaskKey))
+                        TimelineView(.periodic(from: .now, by: 60)) { tick in
+                            OddsChartView(eventId: event.id, teamColors: teamColors(event),
+                                         commenceTime: event.commenceTime, status: event.status,
+                                         // #6381 — so the empty state stops saying
+                                         // "yet" under a hero that says settled.
+                                         venueSettled: event.venueSettled == true,
+                                         homeTeamName: event.homeTeam,
+                                         awayTeamName: event.awayTeam,
+                                         homeTeamLogo: event.homeTeamData?.logoSmall,
+                                         awayTeamLogo: event.awayTeamData?.logoSmall,
+                                         homeTeamAbbrev: event.homeTeamData?.abbreviation,
+                                         awayTeamAbbrev: event.awayTeamData?.abbreviation,
+                                         sportKey: event.sport,
+                                         // #8320 — the page's one decision, so the
+                                         // fullscreen dot cannot claim a push the
+                                         // toolbar does not.
+                                         refreshStreaming: refreshIndicator == .streaming,
+                                         liveUpdateStatus: vm.liveUpdateStatus,
+                                         priceActivity: vm.priceActivity,
+                                         // #9436 — the hero's own number, for the
+                                         // dot on the end of the line.
+                                         liveEdge: LiveEdgeReading.current(in: event),
+                                         // #9483 Argon P1 — the edge, its number and the ring
+                                         // are live only while the headline calls this quote
+                                         // current, on its own clock: the tick ages them out
+                                         // with no new price.
+                                         quoteIsCurrent: EventHeadlinePhase9483.isCurrent(
+                                             status: event.status, commenceTime: event.commenceTime?.asDate,
+                                             isOpeningLine: event.currentOdds.map {
+                                                 OpeningLineHero.resolve($0, for: event).isOpeningLine } ?? false,
+                                             observedAt: event.heroProbabilityObservedAt?.asDate,
+                                             deliveryInterrupted: vm.liveUpdateStatus == .interrupted,
+                                             now: tick.date),
+                                          pairedAwayLabel9483: LivePriceActivity.displayedLabels(in: event).away,
+                                         // #10456 — the served winner pair, both
+                                         // sides: admission for the balance ink.
+                                         servedHomeProbability: event.currentOdds?.homeProbability,
+                                         servedAwayProbability: event.currentOdds?.awayProbability,
+                                         forcedDomain: sharedChartDomain,
+                                         legacyDataDomain: legacyChartDataDomain,
+                                         pageAxisPlotWidth: pageAxisPlotWidth,
+                                         selectedRange: $chartRange,
+                                         preloadedHistory: vm.history,
+                                         // #8651 — its live edge, read once per
+                                         // payload rather than on every rebuild.
+                                         preloadedHistoryEdge: vm.historyDigest.map(\.edge),
+                                         // #920 — the pushed blends the hero is
+                                         // already showing, so the chart's right
+                                         // edge reaches the same moment it does.
+                                         liveFrames: vm.liveBlend,
+                                         // #925 — the scrub readout rides INSIDE the
+                                         // chart, above its plot, so the finger on
+                                         // the chart and the text it rewrites are on
+                                         // screen together (it was below the chart,
+                                         // under the tab bar, in Alex's recording).
+                                         readout: (isLive || isFinished) && vm.history?.scoringPlays?.isEmpty == false
+                                            ? GamePlayCardView(
+                                                homeTeam: event.homeTeam,
+                                                awayTeam: event.awayTeam,
+                                                homeTeamColor: teamColors(event).home,
+                                                awayTeamColor: teamColors(event).away,
+                                                homeTeamLogo: event.homeTeamData?.logoSmall,
+                                                awayTeamLogo: event.awayTeamData?.logoSmall,
+                                                lastPoint: lastPlayPoint(event: event))
+                                            : nil,
+                                         // #4974 — the journey only when page, view
+                                         // model, detail and journey agree on a
+                                         // finished game and this appearance is
+                                         // ready; the chart keeps its own guard.
+                                         publicationJourney: Self.chartPublicationJourney(
+                                            vm.publicationJourney, key: publicationTaskKey))
+                        }
                         // Bookmaker table (collapsible Sources panel)
                         sourcesToggle(event)
 

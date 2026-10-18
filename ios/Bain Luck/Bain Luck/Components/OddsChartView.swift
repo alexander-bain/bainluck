@@ -389,6 +389,11 @@ struct OddsChartView: View {
     /// #9436 — the hero's current home number, for the dot at the live edge.
     /// Nil off a live page.
     var liveEdge: LiveEdgeReading?
+    /// #9483 Argon P1 — the page's headline currentness
+    /// (`EventHeadlinePhase9483.isCurrent`), resolved on the quote's own clock
+    /// each minute. False withholds every live treatment of the newest price:
+    /// the marked edge and the arrival ring. The recorded line is unchanged.
+    var quoteIsCurrent: Bool = true
     var pairedAwayLabel9483: String? = nil
     /// #10456 — the page's served winner pair (`current_odds`), both sides.
     /// Admission evidence for the balance ink only: a two-outcome question the
@@ -578,6 +583,7 @@ struct OddsChartView: View {
          liveUpdateStatus: LiveUpdateStatus = .hidden,
          priceActivity: LivePriceActivity? = nil,
          liveEdge: LiveEdgeReading? = nil,
+         quoteIsCurrent: Bool = true,
          pairedAwayLabel9483: String? = nil,
          servedHomeProbability: Double? = nil,
          servedAwayProbability: Double? = nil,
@@ -608,6 +614,7 @@ struct OddsChartView: View {
         self.liveUpdateStatus = liveUpdateStatus
         self.priceActivity = priceActivity
         self.liveEdge = liveEdge
+        self.quoteIsCurrent = quoteIsCurrent
         self.pairedAwayLabel9483 = pairedAwayLabel9483
         self.servedHomeProbability = servedHomeProbability
         self.servedAwayProbability = servedAwayProbability
@@ -1970,7 +1977,8 @@ struct OddsChartView: View {
                     // one-shot ring the chart had before #9436, unchanged.
                     LiveChartEndpointFeedback(selection: selection, activity: priceActivity,
                                               probability: latest.probability,
-                                              isLive: EventPriceStreaming.isEligible(status) && liveUpdateStatus != .interrupted,
+                                              isLive: EventPriceStreaming.isEligible(status) && liveUpdateStatus != .interrupted
+                                                && quoteIsCurrent,
                                               color: teamColors?.home ?? .accentColor)
                         .position(x: plotFrame.minX + x, y: plotFrame.minY + y)
                         .allowsHitTesting(false)
@@ -2114,7 +2122,8 @@ struct OddsChartView: View {
 
     /// #9436 — the live edge the overlay draws, or nil to draw the plot whole.
     ///
-    /// Only while the stream is live and uninterrupted, and only on the drawn
+    /// Only while the stream is live and uninterrupted and the headline calls
+    /// the quote current (`quoteIsCurrent`, Argon P1), and only on the drawn
     /// series PROVEN to carry the hero's accepted value (`edgeVertex`: the
     /// blend line, or on a single-venue page the venue line the adopted frame
     /// extended): a dot labelled with the hero's number must sit on the point
@@ -2122,7 +2131,7 @@ struct OddsChartView: View {
     /// the x-domain, as the old endpoint ring required, so the overlay never
     /// draws where the plot would not.
     private func liveEdgeSplit(dataPoints: [ChartDataPoint], domain: ClosedRange<Date>) -> LiveEdgeSplit? {
-        guard let liveEdge, EventPriceStreaming.isEligible(status), liveUpdateStatus != .interrupted,
+        guard let liveEdge, quoteIsCurrent, EventPriceStreaming.isEligible(status), liveUpdateStatus != .interrupted,
               let newest = LiveChartEdgeMarkerPlan.edgeVertex(
                 in: dataPoints, visible: Self.defaultVisibleSources(in: dataPoints),
                 reading: liveEdge, latestFrame: liveFrames.last)
