@@ -202,7 +202,9 @@ async def test_a_quote_after_a_cooled_held_cohorts_deadline_is_written_on_its_wa
     buffered, and each timer probe that skipped it used to count as actual
     work. So a new quote arriving just after the retry deadline waited out the
     rest of that probe's period (the parent: ~197 ms of 250 ms). A probe that
-    attempts nothing now spends no budget; the attempt that failed still did."""
+    attempts nothing now spends no budget; the attempt that failed still did.
+    The live phase's first refusal is its short probe, retried at the next
+    flush start; the cooldown follows its ordinary attempt's refusal."""
     period, cooldown = 1.0, 2.5
     (scope, running, socket_for, opened_sockets,
      flushes, writes, owners) = _recording(monkeypatch, cadence=(period, 2, None, 4))
@@ -213,7 +215,7 @@ async def test_a_quote_after_a_cooled_held_cohorts_deadline_is_written_on_its_wa
 
     async def refused_once(self, session, values, **kwargs):
         attempts.append((time.monotonic(), dict(values)))
-        if len(attempts) == 1:
+        if len(attempts) <= 2:
             raise _LockTimeout("canceling statement due to lock timeout")
         async for result in original_phase(self, session, values, **kwargs):
             yield result
@@ -224,14 +226,18 @@ async def test_a_quote_after_a_cooled_held_cohorts_deadline_is_written_on_its_wa
         game = socket_for({GAME_A})
         await _right_after_a_probe(flushes)
         await game.deliver("ticker", {"market_ticker": GAME_A, "price_dollars": "0.61"})
-        await _until(lambda: attempts, "the refused write")
+        await _until(
+            lambda: len(attempts) == 2
+            and owners[0].lock_retry_until.get(WINNER, 0) > attempts[1][0],
+            "the refused short probe, then its refused ordinary attempt",
+        )
         until = owners[0].lock_retry_until[WINNER]
         work_after_refusal = owners[0].flush_work
         # The deadline falls between two timer phases (one period apart from
         # the refused flush's start), so at least one probe ran while cooled.
         await _until(lambda: blend._mono() > until + 0.05, "the retry deadline")
-        assert len(attempts) == 1 and writes == []
-        assert len(flushes) >= 3  # the refused flush + probes over the cooled cohort
+        assert len(attempts) == 2 and writes == []
+        assert len(flushes) >= 4  # both refused flushes + probes over the cooled cohort
         # Probes that attempted nothing spent nothing.
         assert owners[0].flush_work == work_after_refusal
 

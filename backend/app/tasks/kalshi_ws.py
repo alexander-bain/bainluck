@@ -84,6 +84,17 @@ FINAL_FLUSH_ATTEMPTS = int(os.getenv("WS_FINAL_FLUSH_ATTEMPTS", "3"))
 #: lock that a newer stored row made ambiguous rendered in 2044 ms against 44 ms.
 PRICE_PHASE_LOCK_TIMEOUT_MS = 50
 
+#: #10090 — the first lock attempt of a live phase in a periodic flush that
+#: has the held overlay. A refusal costs no 50 ms wait for the phases after
+#: it; the same phase then gets its ordinary `PRICE_PHASE_LOCK_TIMEOUT_MS`
+#: attempt in this flush (overlay refused as ambiguous) or at the next flush
+#: start (overlay admitted or unknown), never a second short probe. Legs the
+#: overlay cannot carry (a settled market, a leg buffered without its mark)
+#: also wait for that next start. The beside pass never probes: it writes at
+#: the ordinary budget at once, because its own clock is not the main flush's
+#: cadence and a probe refusal there would wait past the next main start.
+SHORT_PROBE_LOCK_TIMEOUT_MS = 1
+
 #: #10090 — how long one periodic flush may keep STARTING phases that hold no
 #: live game. Production 2026-10-08 00:25–00:35Z (run b47fefde): a flush on the
 #: 2 s cadence took 1.5–3.3 min, because it wrote every game that ticked since
@@ -448,6 +459,11 @@ class _KalshiPriceOwner:
         # Cleared when the phase commits: one `PRICE_FLUSH_SECONDS` window of
         # cadence retries per write, then the ordinary backoff.
         self.ambiguous_retry_since: dict[int, float] = {}
+        # #10090: buffered outcomes whose live phase's short first probe
+        # (`SHORT_PROBE_LOCK_TIMEOUT_MS`) was refused. Every later attempt on
+        # them takes the ordinary budget; cleared when the phase commits, so a
+        # write episode has at most one short probe.
+        self.short_probe_refused: set[int] = set()
         # #10090: markets this run saw settle. Their legs never take the held
         # overlay again: the linked settlement writer leaves `last_updated`
         # alone, so no stored row would ever read as newer than the quote.
@@ -1207,6 +1223,10 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
         # because their event's stamp was still queued or running in the run's
         # refresh. Deferred like `budget_deferred`, never dropped.
         "stamp_fenced": 0,
+        # #10090: prices whose live phase's short first probe found a row
+        # lock. Retried at the ordinary budget (`short_probe_refused`); not an
+        # error and not in `requeued`, which count real failed writes.
+        "short_probe_refused": 0,
     }
 
     # -- Buffered price updates --
@@ -1327,7 +1347,7 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
         ``beside_stopping`` is true once that flush is joining it: no further
         whole event starts.
         """
-        from app.tasks.kalshi_ws import _KalshiHeadlineEvents
+        from app.tasks.kalshi_ws import SHORT_PROBE_LOCK_TIMEOUT_MS, _KalshiHeadlineEvents
 
         # Winner/source questions commit together. Known props still write and
         # publish, but cannot hold their event's headline stamp or live priority.
@@ -1351,6 +1371,7 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
                     oid: since for oid, since in prices.ambiguous_retry_since.items()
                     if oid in batch
                 }
+                prices.short_probe_refused.intersection_update(batch)
             else:
                 outcomes, events, markets = beside
                 batch = {
@@ -1803,6 +1824,16 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
                         # returned writes now and is admitted again.
                         stats["stamp_fenced"] += len(phase)
                         continue
+                # The overlay carries a refused probe's quotes to the stamp;
+                # an ambiguity episode, any earlier refusal and the beside
+                # pass (C1: its refusal would skip the next main start) take
+                # the budget.
+                short_live_probe = (
+                    phase_live and not final_drain and held_quotes is not None
+                    and flush_started is not None and beside is None
+                    and not any(oid in prices.ambiguous_retry_since for oid in phase)
+                    and prices.short_probe_refused.isdisjoint(phase)
+                )
                 declined = 0
                 phase_bounds = {}
                 held_ambiguous = False
@@ -1824,7 +1855,10 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
                             async with prices.waited("set_lock"):
                                 await session.execute(
                                     SET_LOCK_TIMEOUT_SQL,
-                                    {"ms": lock_timeout_value(PRICE_PHASE_LOCK_TIMEOUT_MS)},
+                                    {"ms": lock_timeout_value(
+                                        SHORT_PROBE_LOCK_TIMEOUT_MS if short_live_probe
+                                        else PRICE_PHASE_LOCK_TIMEOUT_MS
+                                    )},
                                 )
                         # The admitted whole-question phase keeps its IDs and
                         # ordering, but takes the newest eligible tuple and its
@@ -2018,21 +2052,55 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
                         len(phase) if lock_timed_out
                         else sum(len(p) for p in phases[index:])
                     )
-                    stats["errors"] += 1
-                    stats["requeued"] += unpaid
+                    probe_refused = short_live_probe and lock_timed_out
+                    if probe_refused:
+                        # #10090: the short probe's expected answer under a
+                        # row lock. Not a failed write: the phase is retried at
+                        # the ordinary budget below, and only that retry's
+                        # refusal is an error.
+                        stats["short_probe_refused"] += len(phase)
+                        prices.short_probe_refused.update(phase)
+                    else:
+                        stats["errors"] += 1
+                        stats["requeued"] += unpaid
                     if exact_trace is not None:
                         with contextlib.suppress(Exception):
                             exact_trace.write_failed(
                                 [batch_marks[oid] for oid in phase if oid in batch_marks],
                                 "LOCK_TIMEOUT" if lock_timed_out else "ROLLED_BACK",
                             )
-                    logger.exception(
-                        "Kalshi WS: flush error (%d updates retained for retry)", unpaid
-                    )
+                    if probe_refused:
+                        logger.debug(
+                            "Kalshi WS: short probe refused (%d updates retried "
+                            "at the ordinary lock budget)", unpaid,
+                        )
+                    else:
+                        logger.exception(
+                            "Kalshi WS: flush error (%d updates retained for retry)", unpaid
+                        )
                     if lock_timed_out:
                         if not final_drain and held_quotes is not None:
                             # #10090: the received quotes reach the stamp now.
                             held_ambiguous = await admit_held_phase(index, phase, phase_bounds)
+                            if short_live_probe and held_ambiguous:
+                                # Preserve this episode even if an admitted sibling
+                                # stamp fences the inserted attempt until next flush.
+                                if flush_started is not None:
+                                    since = min(
+                                        prices.ambiguous_retry_since.get(oid, flush_started)
+                                        for oid in phase
+                                    )
+                                    prices.ambiguous_retry_since.update(dict.fromkeys(phase, since))
+                                # Overlay refused: give this same whole phase
+                                # its ordinary 50 ms attempt before moving on.
+                                # Re-enter the original fencing and snapshot
+                                # path; no row is removed on the failed probe.
+                                # Inserting at index + 1 while enumerating
+                                # `phases` is deliberate: the loop reaches it
+                                # next, and `short_probe_refused` makes it the
+                                # ordinary budget, so it cannot re-insert.
+                                phases.insert(index + 1, phase)
+                                continue
                             # For FUTURE inputs, never to re-date this batch.
                             await held_quotes.sample_database_clock(get_task_session)
                         # The transaction rolled back; all its prices remain buffered.
@@ -2058,6 +2126,12 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
                                 prices.ambiguous_retry_since.update(dict.fromkeys(phase, since))
                                 if flush_started - since < PRICE_FLUSH_SECONDS:
                                     until = flush_started + flush_period
+                            elif probe_refused:
+                                # #10090: the overlay carries the quotes to the
+                                # stamp, but the row, its chart point and REST
+                                # readers wait for this write: its ordinary-budget
+                                # attempt is at the next flush start, not 2 s on.
+                                until = flush_started + flush_period
                             prices.lock_retry_until.update(dict.fromkeys(phase, until))
                         continue
                     return False
@@ -2071,6 +2145,7 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
                 for oid in phase:
                     prices.lock_retry_until.pop(oid, None)
                     prices.ambiguous_retry_since.pop(oid, None)
+                    prices.short_probe_refused.discard(oid)
                 unfinished_price_ids.difference_update(phase)
                 registered = queue_committed(index, phase, written_outcome_ids)
 
@@ -2893,7 +2968,7 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
                 "%d msgs | blend stamped=%d no_reading=%d throttled=%d errors=%d "
                 "lock_skipped=%d unobserved=%d stale=%d | %s deferred=%d "
                 "preempted=%d beside=%d fenced=%d live=%d book=%d quotes=%d "
-                "resnapshots=%d quote_priority=%d",
+                "resnapshots=%d quote_priority=%d probe_refused=%d",
                 stats["price_updates"], stats["flushes"],
                 stats["settlements"], stats["errors"],
                 game_messages(),
@@ -2913,6 +2988,7 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
                 sum(c.sock.stats.get("book_resnapshots", 0) for c in game_clients),
                 # #10090: of `live`, the not-live events lifted by their quotes.
                 len(quote_only_event_ids),
+                stats["short_probe_refused"],
             )
             flush_timings.reset()
             _report_liveness(
