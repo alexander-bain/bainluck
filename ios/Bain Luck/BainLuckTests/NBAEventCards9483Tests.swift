@@ -453,7 +453,7 @@ final class NBAEventCards9483Tests: XCTestCase {
 
         let before = try XCTUnwrap(NBALadderCard9483.total(pregameInput()))
         let stale = try XCTUnwrap(before.points.first { $0.chance == nil })
-        XCTAssertEqual(NBALadderCardView9483.readout(before, stale).main, "\(stale.label) · No recent price")
+        XCTAssertEqual(NBALadderCardView9483.readout(before, stale).main, "\(stale.label) · No recent probability update")
         let priced = try XCTUnwrap(before.points.first { $0.chance != nil })
         XCTAssertEqual(NBALadderCardView9483.readout(before, priced).sub, "Pregame chance")
 

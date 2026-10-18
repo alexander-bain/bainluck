@@ -138,7 +138,7 @@ struct NBALadderCardView9483: View {
         if let chance = point.chance {
             main = "\(point.label) · \(formatProbability(chance))"
         } else {
-            main = card.phase == .before ? "\(point.label) · No recent price" : point.label
+            main = card.phase == .before ? "\(point.label) · No recent probability update" : point.label
         }
         var parts: [String] = []
         if let result = point.result {
