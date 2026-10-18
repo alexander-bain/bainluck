@@ -368,9 +368,11 @@ it("independent: server generation reset on browser reconnect of SAME EventSourc
   // Native EventSource retries itself without constructing a new handle.
   stream.readyState=0; stream.emit('error');
   stream.readyState=1; stream.emit('open');
+  // Transport recovery now signals its own debt, separately from Redis loss.
+  expect(epochs).toEqual([1,2]);
   // The new request can land on a new worker with generation reset to 1.
   stream.emit('resync','{"generation":1}');
-  c.stop(); expect(epochs).toEqual([1,2]);
+  c.stop(); expect(epochs).toEqual([1,2,3]);
 });
 
 
@@ -430,3 +432,27 @@ it.each([[-1,100],[0,100],[100000,4999],[NaN,4999],[Infinity,4999]])(
     expect(called).toHaveBeenCalledWith(2); c.cancel();
   },
 );
+
+
+it("transport reopen without a replayed price catches up both held values", async () => {
+  const p=await mount(); const stream=sources.at(-1)!;
+  await act(async()=>{stream.emit('open');});
+  expect(p.freshPairs()).toBe(0);
+  await act(async()=>{stream.readyState=0;stream.emit('error');});
+  await p.advance(45000);
+  await act(async()=>{stream.readyState=1;stream.emit('open');stream.emit('open');});
+  await p.advance(250);expect(p.freshPairs()).toBe(1);
+  p.lastPair().detail.resolve(blend(A,12));p.lastPair().history.resolve(history(A,12,.52));
+  await settle();expect(p.read()).toBe(`${A}|52|blend|52`);
+  await p.advance(5000);expect(p.freshPairs()).toBe(1);await p.unmount();
+});
+
+it("transport reopen and immediate Redis resync coalesce into one paired read", async () => {
+  const p=await mount();const stream=sources.at(-1)!;
+  await act(async()=>{stream.emit('open');stream.readyState=0;stream.emit('error');});
+  await act(async()=>{stream.readyState=1;stream.emit('open');stream.emit('open');stream.emit('resync',JSON.stringify({generation:1}));});
+  await p.advance(250);expect(p.freshPairs()).toBe(1);
+  p.lastPair().detail.resolve(blend(A,12));p.lastPair().history.resolve(history(A,12,.52));
+  await settle();expect(p.read()).toBe(`${A}|52|blend|52`);
+  await p.advance(5000);expect(p.freshPairs()).toBe(1);await p.unmount();
+});
