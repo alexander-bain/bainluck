@@ -199,3 +199,34 @@ async def test_a_refusal_ends_with_its_buffered_price_like_the_ambiguity_episode
     clock.t += PERIOD
     await x.flush(flush_started=clock.t)
     assert [t[1] for t in x.trace if t[0] == 'lock_timeout'] == ['1ms', '1ms']
+
+
+#: A beside pass's exclusion of the running flush's unfinished input: nothing.
+BESIDE_NOTHING_EXCLUDED = (frozenset(), frozenset(), frozenset())
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('answer', [set(), None])
+@pytest.mark.parametrize('offset', [0.05, 0.10, 0.20])
+async def test_a_beside_pass_never_probes_so_a_brief_lock_lands_by_the_next_main_start(
+    monkeypatch, answer, offset,
+):
+    """#11208 C1 (Authority's probe): `serve_live_beside` runs on its own clock
+    `offset` s into a main flush. A probe refusal there would set its retry to
+    beside start + period, past the main flush's next start, so the row and its
+    chart point would wait ~2 periods. The beside pass writes at the ordinary
+    budget at once, as before the probe existed."""
+    clock = Clock(monkeypatch)
+    x = held_rig(monkeypatch, answer=answer)
+
+    def budgets():
+        return [v for k, v in x.trace if k == 'lock_timeout']
+
+    # A brief lock: refuses the 1 ms probe, admits the 50 ms budget.
+    x.lock_released.is_set = lambda: bool(budgets()) and budgets()[-1] != '1ms'
+    main_start = clock.t
+    clock.t = main_start + offset
+    await x.flush(clock.t, beside=BESIDE_NOTHING_EXCLUDED)
+    assert x.committed == [1, 2], (budgets(), dict(x.prices.lock_retry_until))
+    assert budgets() == ['50ms']
+    assert not x.prices.short_probe_refused and not x.prices.lock_retry_until

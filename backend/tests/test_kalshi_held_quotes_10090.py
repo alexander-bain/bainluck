@@ -202,7 +202,10 @@ async def test_a_newer_quote_during_the_cooldown_is_stamped_without_another_upda
 async def test_the_cooldown_admission_waits_for_its_events_running_stamp(monkeypatch):
     clock = Clock(monkeypatch)
     x = held_rig(monkeypatch)
-    await x.flush(flush_started=clock.t)
+    # Past the probe, so the flushes below sit inside the ordinary 2 s backoff
+    # and are cooldown flushes, not the probe's ordinary attempt (#11208 C2).
+    await past_the_short_probe(x, clock)
+    writes = writes_of(x, 1)
     # The event's stamp is still running when the newer quote arrives.
     never = asyncio.Event()
     x.prices.stamping = asyncio.create_task(never.wait())
@@ -220,6 +223,8 @@ async def test_the_cooldown_admission_waits_for_its_events_running_stamp(monkeyp
     clock.t += PERIOD
     await x.flush(flush_started=clock.t)
     assert held_value(x, 1) == 0.65 and x.stamped[-1][1][1][0] == 0.65
+    # Both were cooldown flushes: no write attempt, no new budget.
+    assert writes_of(x, 1) == writes and budgets(x) == ["1ms", "50ms"]
 
 
 @pytest.mark.parametrize("answer,live,fast", [
@@ -356,18 +361,23 @@ async def test_a_mark_changing_during_the_read_is_caught_by_the_next_cooldown_fl
     clock = Clock(monkeypatch)
 
     async def tick_meanwhile(x, quotes):
-        if 1 in quotes and quotes[1][0] == 0.61:
+        if 1 in quotes and quotes[1][0] == 0.65:
             x.tick(1, 0.70)  # arrives while the read is out
         return set()
 
     x = held_rig(monkeypatch, answer=tick_meanwhile)
+    await past_the_short_probe(x, clock)
+    # A newer quote; the cooldown flush's read is out when 0.70 arrives.
+    clock.t += PERIOD
+    x.tick(1, 0.65)
     await x.flush(flush_started=clock.t)
     # The snapshot's own quote is held: a real quote at its own bound.
-    assert held_value(x, 1) == 0.61 and x.batch[1][0] == 0.70
+    assert held_value(x, 1) == 0.65 and x.batch[1][0] == 0.70
     clock.t += PERIOD
     await x.flush(flush_started=clock.t)
     assert held_value(x, 1) == 0.70 and x.stamped[-1][1][1][0] == 0.70
-    # The short probe, then its ordinary attempt at this flush's start.
+    # Both caught inside the ordinary backoff: cooldown flushes, no write
+    # attempt after the probe and its ordinary attempt (#11208 C2).
     assert writes_of(x, 1) == 2 and budgets(x) == ["1ms", "50ms"]
 
 

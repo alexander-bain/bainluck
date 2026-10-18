@@ -84,11 +84,15 @@ FINAL_FLUSH_ATTEMPTS = int(os.getenv("WS_FINAL_FLUSH_ATTEMPTS", "3"))
 #: lock that a newer stored row made ambiguous rendered in 2044 ms against 44 ms.
 PRICE_PHASE_LOCK_TIMEOUT_MS = 50
 
-#: #10090 — the first lock attempt of a live phase whose received quotes the
-#: held overlay can carry. A refusal costs no 50 ms wait for the phases after
+#: #10090 — the first lock attempt of a live phase in a periodic flush that
+#: has the held overlay. A refusal costs no 50 ms wait for the phases after
 #: it; the same phase then gets its ordinary `PRICE_PHASE_LOCK_TIMEOUT_MS`
 #: attempt in this flush (overlay refused as ambiguous) or at the next flush
-#: start (overlay admitted or unknown), never a second short probe.
+#: start (overlay admitted or unknown), never a second short probe. Legs the
+#: overlay cannot carry (a settled market, a leg buffered without its mark)
+#: also wait for that next start. The beside pass never probes: it writes at
+#: the ordinary budget at once, because its own clock is not the main flush's
+#: cadence and a probe refusal there would wait past the next main start.
 SHORT_PROBE_LOCK_TIMEOUT_MS = 1
 
 #: #10090 — how long one periodic flush may keep STARTING phases that hold no
@@ -1796,10 +1800,12 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
                         stats["stamp_fenced"] += len(phase)
                         continue
                 # The overlay carries a refused probe's quotes to the stamp;
-                # an ambiguity episode and any earlier refusal take the budget.
+                # an ambiguity episode, any earlier refusal and the beside
+                # pass (C1: its refusal would skip the next main start) take
+                # the budget.
                 short_live_probe = (
                     phase_live and not final_drain and held_quotes is not None
-                    and flush_started is not None
+                    and flush_started is not None and beside is None
                     and not any(oid in prices.ambiguous_retry_since for oid in phase)
                     and prices.short_probe_refused.isdisjoint(phase)
                 )
