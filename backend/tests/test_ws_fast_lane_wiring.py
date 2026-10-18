@@ -318,6 +318,9 @@ class TestFlushReachesTheBlend:
             # queues only quotes `held_quotes.hold` just recorded (a refused
             # phase's, or the newest snapshot during that write's cooldown):
             # its stamp reads the held quote, never an unwritten row.
+            # PR #11210: an unchanged quote whose event the refresher already
+            # owes also lifts its fence, but only a MOVED quote is queued
+            # fresh; the owed one re-asks the refresh it was already owed.
             held_admits = [
                 fn for fn in ast.walk(flush)
                 if isinstance(fn, ast.AsyncFunctionDef) and fn.name == "admit_held_phase"
@@ -326,10 +329,12 @@ class TestFlushReachesTheBlend:
                 inside = [c for c in committed if any(c is n for n in ast.walk(fn))]
                 text = ast.unparse(fn)
                 assert inside and all(
-                    ast.unparse(c.args[2]) == "held_ready" for c in inside
+                    ast.unparse(c.args[2]) == "newly_held" for c in inside
                 ), consumer
                 assert "held_quotes.hold(quotes)" in text, consumer
-                assert "held_ready = [oid for oid in quotes if cohort_event_ids.get(oid) in moved]" in text, consumer
+                assert "owed_held = moved | set(blend_refresher.pending_event_ids())" in text, consumer
+                assert "held_ready = [oid for oid in quotes if cohort_event_ids.get(oid) in owed_held]" in text, consumer
+                assert "newly_held = [oid for oid in held_ready if cohort_event_ids.get(oid) in moved]" in text, consumer
                 committed = [c for c in committed if c not in inside]
             assert committed and min(c.lineno for c in committed) > write_line, (
                 f"{consumer}: blend refresh must follow the price write"
