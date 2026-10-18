@@ -35,8 +35,7 @@ from app.tasks import polymarket_token_topup as topup  # noqa: E402
 from app.tasks import polymarket_ws as task  # noqa: E402
 from app.tasks import ws_admission  # noqa: E402
 from app.utils import heap_trim  # noqa: E402
-from tests.test_pm_open_cycle_lifetime_10090 import CatalogRig  # noqa: E402
-from tests.test_ws_consumer_session_lifetime_2471 import _install  # noqa: E402
+from tests.test_ws_consumer_session_lifetime_2471 import _install, _Rig  # noqa: E402
 
 SLATE_MARKETS, OPEN_MARKETS, EVENTS = 3_000, 12_000, 120
 READ_DELAY_S, FRAMES_PER_S = 0.05, 40
@@ -126,9 +125,12 @@ def rows_for(stmt):
     return []
 
 
-class Rig(CatalogRig):
+class Rig(_Rig):
+    def __init__(self):
+        super().__init__([])
+
     def get_task_session(self, **kwargs):
-        original = super(CatalogRig, self).get_task_session(**kwargs)
+        original = super().get_task_session(**kwargs)
 
         class Context:
             async def __aenter__(self):

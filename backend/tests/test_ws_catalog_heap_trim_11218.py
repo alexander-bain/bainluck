@@ -272,7 +272,7 @@ async def test_kalshi_trims_after_every_scope_refresh_whatever_its_verdict(monke
     monkeypatch.setattr(task, "kalshi_flush_cadence", lambda: (1000, 2, None, 4))
     monkeypatch.setattr(admission, "ADMISSION_CHECK_SECONDS", 0.01)
     monkeypatch.setattr(admission, "ADMISSION_MIN_RECYCLE_SECONDS", 0)
-    monkeypatch.setattr(service, "_load_rsa_key", lambda: object())
+    monkeypatch.setattr(service, "_load_rsa_key", object)
     monkeypatch.setattr(service, "_sign_ws_request", lambda *_: {})
     monkeypatch.setattr("app.tasks.ws_liveness.report", lambda *_a, **_k: None)
 
