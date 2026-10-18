@@ -327,14 +327,39 @@ class TestFlushReachesTheBlend:
             ]
             for fn in held_admits:
                 inside = [c for c in committed if any(c is n for n in ast.walk(fn))]
-                text = ast.unparse(fn)
-                assert inside and all(
-                    ast.unparse(c.args[2]) == "newly_held" for c in inside
-                ), consumer
-                assert "held_quotes.hold(quotes)" in text, consumer
-                assert "owed_held = moved | set(blend_refresher.pending_event_ids())" in text, consumer
-                assert "held_ready = [oid for oid in quotes if cohort_event_ids.get(oid) in owed_held]" in text, consumer
-                assert "newly_held = [oid for oid in held_ready if cohort_event_ids.get(oid) in moved]" in text, consumer
+                # Changed held quotes are fresh; unchanged held quotes can
+                # only release already-pending ordinary debt. Both must come
+                # from the validated snapshot installed by hold first.
+                assert len(inside) == 1, consumer
+                call = inside[0]
+                assert ast.unparse(call) == "queue_committed(index, phase, newly_held)", consumer
+                assignments = {
+                    ast.unparse(n.targets[0]): n for n in ast.walk(fn)
+                    if isinstance(n, ast.Assign) and len(n.targets) == 1
+                }
+                expected = {
+                    "moved": "event_ids_for_outcomes(cohort_event_ids, held_quotes.hold(quotes))",
+                    "owed_held": "moved | set(blend_refresher.pending_event_ids())",
+                    "held_ready": "[oid for oid in quotes if cohort_event_ids.get(oid) in owed_held]",
+                    "newly_held": "[oid for oid in held_ready if cohort_event_ids.get(oid) in moved]",
+                }
+                previous = 0
+                for name, expression in expected.items():
+                    node = assignments.get(name)
+                    assert node is not None and ast.unparse(node.value) == expression, consumer
+                    assert previous < node.lineno < call.lineno, consumer
+                    previous = node.lineno
+                branches = [n for n in ast.walk(fn) if isinstance(n, ast.If)
+                            and ast.unparse(n.test) == "newly_held"]
+                assert len(branches) == 1, consumer
+                branch = branches[0]
+                assert len(branch.body) == 1 and isinstance(branch.body[0], ast.Expr), consumer
+                assert branch.body[0].value is call, consumer
+                assert [ast.unparse(n) for n in branch.orelse] == ["queued_refresh = True"], consumer
+                ready = [n for n in ast.walk(fn) if isinstance(n, ast.If)
+                         and ast.unparse(n.test) == "held_ready"]
+                assert len(ready) == 1 and branch in ready[0].body, consumer
+                assert ast.unparse(ready[0].body[0]) == "unfinished_price_ids.difference_update(held_ready)", consumer
                 committed = [c for c in committed if c not in inside]
             assert committed and min(c.lineno for c in committed) > write_line, (
                 f"{consumer}: blend refresh must follow the price write"
