@@ -464,17 +464,17 @@ private struct ShelfScrollPhase9483: ViewModifier {
 /// numbers and no substitute, until an explicit Refresh. It fills the row's
 /// height, and its message and Refresh sit in the part of it on screen, so a
 /// reader who comes back with the slot half under the bar still sees them.
-/// Its own view: only the slot re-renders as it moves, never the stream.
+/// The place is decided when the slot first shows on screen and again only if
+/// its height, its content's height or the viewport changes, never per scroll
+/// frame: the frames land in plain storage, and only the slot re-renders.
 private struct UnavailableSlot9483: View {
     let coordinateSpace: String
     @ObservedObject var signals: NBAStoryStreamView9483.Signals
     let refresh: () -> Void
-    @State private var slot: CGRect?
-    @State private var content: CGFloat = 0
+    @State private var top: CGFloat?
+    @State private var measured = Measured()
 
     var body: some View {
-        let top = NBAStoryStreamView9483.unavailableContentTop(
-            slot: slot, viewport: signals.usableViewport, content: content)
         VStack(spacing: 12) {
             Text("This game story is no longer available")
                 .font(.subheadline)
@@ -485,13 +485,33 @@ private struct UnavailableSlot9483: View {
         }
         .frame(maxWidth: .infinity, minHeight: 160)
         .padding(16)
-        .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { content = $0 }
+        .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { height in
+            measured.content = height
+            place()
+        }
         // An offset, not padding: the slot's own height never follows it.
         .offset(y: top ?? 0)
         .frame(maxHeight: .infinity, alignment: top == nil ? .center : .top)
         .background(Color.cardBackground, in: RoundedRectangle(cornerRadius: 16))
         .overlay(RoundedRectangle(cornerRadius: 16).stroke(Color.secondary.opacity(0.15)))
-        .onGeometryChange(for: CGRect.self) { $0.frame(in: .named(coordinateSpace)) } action: { slot = $0 }
+        .onGeometryChange(for: CGRect.self) { $0.frame(in: .named(coordinateSpace)) } action: { frame in
+            let resized = measured.slot?.height != frame.height
+            measured.slot = frame
+            if top == nil || resized { place() }
+        }
+        .onChange(of: signals.usableViewport) { _, _ in place() }
         .accessibilityElement(children: .combine)
+    }
+
+    private func place() {
+        let placed = NBAStoryStreamView9483.unavailableContentTop(
+            slot: measured.slot, viewport: signals.usableViewport, content: measured.content)
+        if placed != top { top = placed }
+    }
+
+    /// The last frames, kept without re-rendering (a class, like `StageFrame`).
+    final class Measured {
+        var slot: CGRect?
+        var content: CGFloat = 0
     }
 }
