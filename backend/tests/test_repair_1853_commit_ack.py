@@ -12,7 +12,8 @@ identity, no affected set, no phase. These arms pin the repair:
 1. **A COMMIT that does not return is UNKNOWN** (exit 3) with the plan digest, the
    planned set, what the phase carried and each phase's state; no undo line, no
    second COMMIT, no retry, no restore — and an earlier ACKNOWLEDGED phase still
-   reads ``committed``.
+   reads ``committed``. That holds whether the COMMIT landed or not, and both
+   print the same receipt (CERT-4237's follow-up): only ``--status`` can tell.
 2. **An acknowledged result survives the wrapper's exit**: a failure there after
    every COMMIT came back keeps the success output, its undo line and exit 0.
 3. **Cancels and interrupts keep their type** and still print the receipt; a
@@ -279,6 +280,71 @@ def test_a_lost_apply_ack_is_unknown_and_nothing_commits_after_it(
     assert r["applied"]["written_ids"] == IDS
     assert "undo" not in r and "--restore" not in captured.out
     assert "Traceback" not in captured.err
+
+
+class _NeverLandedSession(Session):
+    """The other half of UNKNOWN: the configured COMMIT fails BEFORE the server made
+    anything durable — the transaction never landed and the client cannot tell."""
+
+    async def commit(self):
+        if self.commits + 1 not in self._commit_raises:
+            return await super().commit()
+        self.calls.append("commit")
+        self.commits += 1
+        raise self._commit_raises[self.commits]
+
+
+#: phase → (its COMMIT's ordinal in the write session, what is durable before it).
+_PHASE_COMMIT = {"backup": (1, []), "apply": (2, ["backup"]), "restore": (1, [])}
+
+
+def _run_phase(repair, monkeypatch, phase, write: Session) -> int:
+    if phase == "restore":
+        _wire(repair, monkeypatch, [write])
+        return repair.main(["--restore"])
+    return _apply_run(repair, monkeypatch, write)
+
+
+@pytest.mark.parametrize("phase", list(_PHASE_COMMIT))
+def test_a_commit_that_never_landed_is_unknown_too_and_nothing_commits_after_it(
+    repair, monkeypatch, capsys, phase
+):
+    # CERT-4237's follow-up: every arm above loses the ack AFTER the write landed.
+    # The client sees the same failure when it did not land, so the receipt must
+    # be UNKNOWN there as well — never "not_committed", never an undo line.
+    n, before = _PHASE_COMMIT[phase]
+    calls: list[str] = []
+    write = _NeverLandedSession(calls, commit_raises={n: _lost_ack()})
+    assert _run_phase(repair, monkeypatch, phase, write) == 3
+    captured = capsys.readouterr()
+    assert write.durable == before  # the specimen: this phase's writes did NOT land
+    assert write.pending == []  # the wrapper's rollback discarded them
+    assert write.commits == n  # no retry, no wrapper COMMIT behind it
+    assert calls[-3:] == _CLEANUP
+    r = _receipt(captured.out)
+    assert r["outcome"] == "UNKNOWN"
+    assert r["phases"][phase] == "UNKNOWN"
+    assert all(v == "committed" for k, v in r["phases"].items() if k != phase)
+    assert "undo" not in r and "--restore" not in captured.out
+    assert r["readback"] == repair.STATUS_COMMAND
+    assert r["error"].startswith("OperationalError")
+    assert "Traceback" not in captured.err
+
+
+@pytest.mark.parametrize("phase", list(_PHASE_COMMIT))
+def test_landed_and_never_landed_print_the_same_receipt(repair, monkeypatch, capsys, phase):
+    # The client cannot tell the two apart, so neither may the receipt: the only
+    # answer is the read-back. A receipt that differed would be claiming knowledge
+    # it does not have.
+    n, before = _PHASE_COMMIT[phase]
+    receipts, durable = [], []
+    for kind in (Session, _NeverLandedSession):
+        write = kind([], commit_raises={n: _lost_ack()})
+        assert _run_phase(repair, monkeypatch, phase, write) == 3
+        receipts.append(_receipt(capsys.readouterr().out))
+        durable.append(write.durable)
+    assert durable[0] != durable[1] and durable[1] == before  # the two worlds differ
+    assert receipts[0] == receipts[1]
 
 
 def test_a_lost_restore_ack_is_unknown_with_the_restored_set(repair, monkeypatch, capsys):
