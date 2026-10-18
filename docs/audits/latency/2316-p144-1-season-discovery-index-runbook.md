@@ -243,7 +243,8 @@ Every step is bounded by `rollback-bounds` in §4; nothing here runs unattended 
    its build runs. If P1c shows a row, read it once a minute for at most 10 minutes. If the row is
    still there after 10 minutes: **HOLD**. Drop nothing, copy the P1c and P2 rows into the receipt
    and stop; the next admission is the one §4 names for `ROLLBACK INCOMPLETE`.
-2. `DROP INDEX CONCURRENTLY <that name>;` (A1's `lock_timeout = '60s'` bounds it).
+2. `DROP INDEX CONCURRENTLY <that name>;` (A1's `lock_timeout = '60s'` bounds each of its lock
+   requests; §4 says how long a DROP can wait).
 3. Read P2: that name must be gone. If it is still there, run step 2 a second time, once. If it is
    still there after that second attempt, run §4 once and take its end state.
 4. Re-run P1 and P1b, then retry that one CREATE **once**. If the retry fails, run §4 once and
@@ -365,7 +366,7 @@ same table.
 * **Each DROP attempt is bounded.** DROP INDEX CONCURRENTLY waits for snapshots and lock holders
   just as CREATE does, so `lock_timeout = '60s'` cancels it (measured on CREATE in §5, and on DROP
   in the revision-3 fixture run). The second attempt is the last; there is no third.
-  `lock_timeout` bounds each *wait*, and one DROP waits up to three times: for the table lock,
+  `lock_timeout` bounds each lock request, and one DROP waits up to three times: for the table lock,
   after it sets `indisvalid = f`, and after it sets `indisready = f`. `lock_timeout` restarts for
   each transaction a wait is behind: the second and third waits wait, one after another, on every
   transaction that held a table lock when the wait began, so a wait behind k transactions can last

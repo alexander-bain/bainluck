@@ -1,0 +1,6 @@
+KILLED: N3a lane1b: restore 'bounds each *wait*' at line 368
+KILLED: N3a restore 'bounds each *wait*' beside the new clause
+KILLED: N3a drop the clause's subject (bounds each wait, unemphasised)
+KILLED: N3a optional: restore line 246 'bounds it)'
+KILLED: N3a optional: drop the §4 pointer at line 246
+EXIT CODE: 0

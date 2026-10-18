@@ -383,6 +383,9 @@ def test_the_rollback_bounds_are_one_table_in_three_places():
     assert not any("worst" in k for k in ROLLBACK_BOUNDS)
     text = " ".join(_section("4.").split())
     assert "one DROP waits up to three times" in text
+    # lane1b N3a: lock_timeout bounds each lock REQUEST; a wait can outlast it.
+    assert "`lock_timeout` bounds each lock request, and one DROP waits up to three times" in text
+    assert "bounds each *wait*" not in RUNBOOK.read_text()
     assert "`lock_timeout` restarts for each transaction a wait is behind" in text
     assert "a wait behind k transactions can last up to k × 60 s" in text
     assert (
@@ -478,6 +481,8 @@ def test_the_a2_failure_path_states_its_bounds():
     assert "once a minute" in text and ROLLBACK_BOUNDS["a2_p1c_reread_every_minutes"] == "1"
     assert "**HOLD**. Drop nothing" in text
     assert "a second time, once" in text and ROLLBACK_BOUNDS["a2_step2_max_repeats"] == "1"
+    assert "bounds each of its lock requests; §4 says how long a DROP can wait" in text
+    assert "`lock_timeout = '60s'` bounds it)" not in text
     assert "run §4 once" in text
 
 
