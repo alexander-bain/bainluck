@@ -307,8 +307,9 @@ If any line fails, run §4. A failed gate is an answer to keep, not something to
 ## 4. Rollback. One attended pass, every attempt bounded, and an honest end state
 
 ```sql
+\set ON_ERROR_STOP off
 SET statement_timeout = 0;
-SET lock_timeout      = '60s';   -- bounds each DROP attempt
+SET lock_timeout      = '60s';   -- bounds each lock wait of each DROP attempt
 -- First: P1c. A build can outlive the session that started it. Any row means HOLD: drop nothing.
 \unset no_build_in_flight
 SELECT count(*) = 0 AS no_build_in_flight FROM pg_stat_progress_create_index
@@ -340,6 +341,8 @@ attended_passes = 1
 build_in_flight_at_start = HOLD, drop nothing
 max_drop_attempts_per_index = 2
 drop_lock_timeout = 60s
+max_lock_waits_per_drop = 3
+worst_case_pass_minutes = 18
 a2_p1c_reread_max_minutes = 10
 a2_p1c_reread_every_minutes = 1
 a2_build_still_in_flight = HOLD, drop nothing
@@ -349,8 +352,10 @@ rollback_incomplete_operator = Alex
 next_admission = latency asks Root for the next attended slot, P1 P1b P1c first
 ```
 
-This is one pass, run once by Alex, with psql's default `ON_ERROR_STOP` **off**, so a cancelled
-attempt 1 still reaches attempt 2 and the final read. The generator and the guard test hold the
+This is one pass, run once by Alex, with `ON_ERROR_STOP` **off**, so a cancelled
+attempt 1 still reaches attempt 2 and the final read. The block's first line sets it, so a
+`.psqlrc` or an earlier step that turned it on cannot end the pass before the final read, whether
+the block is pasted or run with `\i`. The generator and the guard test hold the
 same table.
 
 * **The HOLD is mechanical.** If P1c shows a build in flight, psql skips both attempts, prints
@@ -359,12 +364,17 @@ same table.
 * **Each DROP attempt is bounded.** DROP INDEX CONCURRENTLY waits for snapshots and lock holders
   just as CREATE does, so `lock_timeout = '60s'` cancels it (measured on CREATE in §5, and on DROP
   in the revision-3 fixture run). The second attempt is the last; there is no third.
+  `lock_timeout` bounds each *wait*, and one DROP waits up to three times: for the table lock,
+  after it sets `indisvalid = f`, and after it sets `indisready = f`. So one attempt on one name can
+  take about 3 × 60 s, and the whole pass at worst about 3 names × 2 attempts × 3 waits × 60 s =
+  18 minutes.
 * **Final read, 0 rows: `ROLLED BACK`.** Set the Index state line to `ROLLED BACK`.
 * **Final read, any row: `ROLLBACK INCOMPLETE`.** Copy every row (relname, indisvalid,
   indisready) into the receipt, set the Index state line to `ROLLBACK INCOMPLETE`, and stop. Do not
   run anything else. What a leftover costs in the meantime: an INVALID-but-ready index
-  (`indisvalid = f, indisready = t`) still takes every write and the planner ignores it; a valid
-  leftover is used by the planner. Results are identical either way, because no query text changed.
+  (`indisvalid = f, indisready = t`, a cancel at the second wait) still takes every write and the
+  planner ignores it; an index cancelled at the third wait (`indisvalid = f, indisready = f`) takes
+  no writes and the planner ignores it; a valid leftover is used by the planner. Results are identical either way, because no query text changed.
   The operator is Alex. The next admission: latency asks Root for the next attended slot, which
   starts with P1, P1b and P1c again and then runs this section once more.
 

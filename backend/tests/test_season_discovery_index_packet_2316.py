@@ -90,6 +90,8 @@ ROLLBACK_BOUNDS = {
     "build_in_flight_at_start": "HOLD, drop nothing",
     "max_drop_attempts_per_index": "2",
     "drop_lock_timeout": "60s",
+    "max_lock_waits_per_drop": "3",
+    "worst_case_pass_minutes": "18",
     "a2_p1c_reread_max_minutes": "10",
     "a2_p1c_reread_every_minutes": "1",
     "a2_build_still_in_flight": "HOLD, drop nothing",
@@ -366,6 +368,19 @@ def test_the_rollback_bounds_are_one_table_in_three_places():
     """R6': loosening an attempt bound in one copy only fails here."""
     assert _fenced("rollback-bounds") == ROLLBACK_BOUNDS
     assert _generator().ROLLBACK_BOUNDS == ROLLBACK_BOUNDS
+    # lane1b N3: lock_timeout bounds each lock wait, and one DROP waits up to
+    # three times, so the pass's worst case is names x attempts x waits x 60 s.
+    assert ROLLBACK_BOUNDS["drop_lock_timeout"] == "60s"
+    worst = (
+        len(INDEX_NAMES)
+        * int(ROLLBACK_BOUNDS["max_drop_attempts_per_index"])
+        * int(ROLLBACK_BOUNDS["max_lock_waits_per_drop"])
+    )
+    assert int(ROLLBACK_BOUNDS["worst_case_pass_minutes"]) == worst
+    text = " ".join(_section("4.").split())
+    assert "one DROP waits up to three times" in text
+    assert f"3 names × 2 attempts × 3 waits × 60 s = {worst} minutes" in text
+    assert "(`indisvalid = f, indisready = f`) takes no writes" in text
 
 
 def _section(title_start: str) -> str:
@@ -400,12 +415,19 @@ def _rollback_sql() -> list[str]:
 def test_the_rollback_holds_on_a_live_build_and_proves_the_drop_last():
     """R6': P1c gates both attempts mechanically; the final read is last."""
     lines = _rollback_sql()
+    # lane1b N1: a .psqlrc or earlier step with ON_ERROR_STOP on would end the
+    # pass at a cancelled attempt 1, before attempt 2 and the final read.
+    assert lines[0] == "\\set ON_ERROR_STOP off"
+    assert lines[1] == "SET statement_timeout = 0;"
     first_drop = next(i for i, ln in enumerate(lines) if ln.startswith("DROP"))
     last_drop = max(i for i, ln in enumerate(lines) if ln.startswith("DROP"))
     gset = next(i for i, ln in enumerate(lines) if ln.rstrip().endswith("\\gset"))
     assert lines.index("\\unset no_build_in_flight") < gset
     assert "pg_stat_progress_create_index" in " ".join(lines[gset - 1 : gset + 1])
-    assert "AS no_build_in_flight" in lines[gset - 1]
+    # lane1b N2: `count(*) >= 0` would disable the mechanical HOLD.
+    assert lines[gset - 1] == (
+        "SELECT count(*) = 0 AS no_build_in_flight FROM pg_stat_progress_create_index"
+    )
     assert lines[gset + 1] == "\\if :no_build_in_flight"
     els, endif = lines.index("\\else"), lines.index("\\endif")
     assert gset + 1 < first_drop and last_drop < els < endif
@@ -456,6 +478,22 @@ def test_the_rollback_names_its_end_states_operator_and_next_admission():
     assert "latency asks Root for the next attended slot" in text
     assert "starts with P1, P1b and P1c again" in text
     assert "ON_ERROR_STOP` **off**" in text
+    assert "The block's first line sets it" in text
+
+
+def test_the_acceptance_prose_states_the_table_s_bounds():
+    """lane1b N2: prose beside a held table cannot drift from it."""
+    text = " ".join(_section("6.").split())
+    maxq = f"{int(ACCEPTANCE_CRITERIA['reader_check_max_maxq_ms']):,}"
+    assert f"**Pass: `maxq` ≤ {maxq} ms**" in text
+    assert f"Over {maxq} ms is a failure." in text
+    assert len(re.findall(r"`maxq` ≤ ([\d,]+) ms", text)) == 1
+    hours = ACCEPTANCE_CRITERIA["window_starts_hours_after_build"]
+    assert f"(at least {hours} h after the build)" in text
+    assert "It is not retried for a better number." in text
+    assert "**On failure** (mean, size or reader check over its bound)" in text
+    where = " ".join(_section("3.").split())
+    assert "no `Parallel Bitmap Heap Scan` and no `Gather` in any plan" in where
 
 
 def test_the_preconditions_cover_what_concurrently_waits_on():

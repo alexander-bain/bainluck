@@ -139,6 +139,8 @@ ROLLBACK_BOUNDS = {
     "build_in_flight_at_start": "HOLD, drop nothing",
     "max_drop_attempts_per_index": "2",
     "drop_lock_timeout": "60s",
+    "max_lock_waits_per_drop": "3",
+    "worst_case_pass_minutes": "18",
     "a2_p1c_reread_max_minutes": "10",
     "a2_p1c_reread_every_minutes": "1",
     "a2_build_still_in_flight": "HOLD, drop nothing",

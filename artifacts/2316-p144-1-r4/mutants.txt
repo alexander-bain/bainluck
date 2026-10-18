@@ -1,0 +1,12 @@
+KILLED: N2 hold >=0
+KILLED: N2 prose maxq 5000
+KILLED: N2 on-failure drops reader
+KILLED: N2 at least 1 h
+KILLED: N2 one more read
+KILLED: N2 no Gather dropped
+KILLED: N2 stmt timeout 1s
+KILLED: N1 drop ON_ERROR_STOP
+KILLED: N1 ON_ERROR_STOP on
+KILLED: N3 worst 6 runbook
+KILLED: N3 waits 1 generator
+KILLED: N3 third-wait cost dropped
