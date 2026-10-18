@@ -36,13 +36,22 @@ from app.tasks.polymarket_ws import (
     FAST_GAME_FLUSH_SECONDS, FAST_GAME_PRICE_STATEMENT_LOCK_TIMEOUT_MS,
     _PMCatalogFlushBoundary, chunk_price_update_stmt,
 )
-from tests.integration.test_live_blend_grouped_commit_8129_pg import rig  # noqa: F401
+from tests.integration.test_live_blend_grouped_commit_8129_pg import (  # noqa: F401
+    DB_URL, rig,
+)
 from tests.integration.test_pm_held_price_row_stamps_received_quote_11138_pg import (
     hold_price_row,
 )
 from tests.integration.test_pm_stamp_release_wake_10090_pg import (  # noqa: F401
     build, consumer,
 )
+
+pytestmark = [
+    pytest.mark.asyncio,
+    pytest.mark.skipif(
+        not DB_URL, reason="requires disposable SEARCH_TEST_DATABASE_URL"
+    ),
+]
 
 
 async def warm_price_statement(consumer):
@@ -60,7 +69,6 @@ async def warm_price_statement(consumer):
             await tx.rollback()
 
 
-@pytest.mark.asyncio
 @pytest.mark.parametrize("kind", ["prop", "standalone"])
 async def test_brief_non_game_lock_does_not_cost_a_whole_retry_period(
     rig, consumer, monkeypatch, kind,  # noqa: F811
