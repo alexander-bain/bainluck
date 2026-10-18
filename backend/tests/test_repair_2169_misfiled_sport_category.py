@@ -13,8 +13,10 @@
    statement that changes other than one row, stops the run before commit.
 5. **The undo only undoes what the apply wrote**: it needs the id list and never
    touches a row the pipeline repaired on its own.
-6. **The write re-states the name the classifier judged**: a rename between the
-   read and the UPDATE changes zero rows and the run refuses before commit.
+6. **The write re-states the name the classifier judged, and the provider
+   identity the provider gate judged**: a rename, or a ``source``-only or
+   ``external_id``-only change, between the read and the UPDATE changes zero
+   rows and the run refuses before commit, with no earlier write committed.
 7. **The attended run is bounded**: ``main()`` arms short lock and statement
    budgets on the session, and a budget firing refuses with a rollback, never a
    commit.
@@ -329,9 +331,14 @@ class FakeSession:
         row = self.live[params["id"]]
         # The fake honours only the predicates the SQL TEXT states, so a clause
         # dropped from `_CAS_SQL` is a clause this fake stops enforcing.
+        flat = " ".join(sql.split())
         matches = row[0] == params["source"]
-        if "name IS NOT DISTINCT FROM :name" in " ".join(sql.split()):
+        if "name IS NOT DISTINCT FROM :name" in flat:
             matches = matches and row[1] == params["name"]
+        if "source IS NOT DISTINCT FROM :provider" in flat:
+            matches = matches and row[2] == params["provider"]
+        if "external_id IS NOT DISTINCT FROM :external_id" in flat:
+            matches = matches and row[3] == params["external_id"]
         if self.rowcount == 1 and matches:
             row[0] = params["target"]
             self.pending.append((params["id"], params["source"], params["target"]))
@@ -413,7 +420,9 @@ def test_the_write_moves_the_category_alone(repair):
     assert "SET llm_sport_category = :target WHERE" in sql
     assert sql.endswith(
         "WHERE id = :id AND llm_sport_category = :source "
-        "AND name IS NOT DISTINCT FROM :name"
+        "AND name IS NOT DISTINCT FROM :name "
+        "AND source IS NOT DISTINCT FROM :provider "
+        "AND external_id IS NOT DISTINCT FROM :external_id"
     )
     set_clause = sql.split(" WHERE ")[0]
     assert set_clause == "UPDATE futures_markets SET llm_sport_category = :target"
@@ -467,6 +476,97 @@ def test_a_null_name_is_compared_null_safely(repair):
     s = FakeSession(rows)
     out = _run(repair, s, apply=False, restore_ids=frozenset({59304735}))
     assert out["written"] == 1 and s.updates[0]["name"] is None
+    assert s.live[59304735][0] == "baseball"
+
+
+# ── 6b. the provider identity the gate judged is the identity the write lands on
+
+
+class IdentityMovedAfterRead(FakeSession):
+    """Root's witness on 47e0fafb53: between `_read()` and its UPDATE, ONE identity
+    column of 58728438 moves while its category (`basketball`) and name stay put, so
+    only the provider half of the CAS can see it. The row is the 17th write, so 16
+    earlier writes are already pending when it refuses."""
+
+    def __init__(self, live, column, value):
+        super().__init__(live)
+        self.column, self.value = column, value
+
+    def after_read(self):
+        self.live[58728438][self.column] = self.value
+
+
+#: A distinct synthetic NBA ticker — a concurrency control, not a claim about the row.
+_SYNTHETIC_NBA_TICKER = "KXNBANEXTGOVERNOR-27JAN01BOS"
+
+
+@pytest.mark.parametrize(
+    "column,value",
+    [(3, _SYNTHETIC_NBA_TICKER), (2, "polymarket")],
+    ids=["external-id-only", "source-only"],
+)
+def test_an_identity_change_between_read_and_write_refuses_before_commit(
+    repair, column, value
+):
+    h = _hash(repair)
+    s = IdentityMovedAfterRead(LIVE_2026_10_13, column, value)
+    with pytest.raises(repair.Refused, match="58728438.*provider identity"):
+        _run(repair, s, apply=True, expect_plan_hash=h)
+    assert not s.committed and s.durable_writes == []
+    # The refusal came AFTER earlier writes were sent; none of them is durable.
+    assert [u["id"] for u in s.updates][-1] == 58728438 and len(s.updates) == 17
+    assert s.live[58728438][0] == "basketball"
+    # The UPDATE carried the identity the plan read, not the one it found.
+    sent = s.updates[-1]
+    assert (sent["provider"], sent["external_id"]) == IDENTITY[58728438]
+
+
+def test_the_external_id_drift_is_the_one_the_provider_gate_would_refuse(repair):
+    # Why the external-id arm matters: a fresh plan over the moved identity refuses
+    # on the provider's league, so a write that landed would be one no plan allows.
+    moved = dict(LIVE_2026_10_13)
+    moved[58728438] = (*moved[58728438][:3], _SYNTHETIC_NBA_TICKER)
+    assert repair.provider_category("kalshi", _SYNTHETIC_NBA_TICKER) == "basketball"
+    out = repair.plan(moved, categorize_by_rules)
+    assert 58728438 not in {i for i, _, _ in out["write"]}
+    assert "names 'basketball'" in dict(out["skip"])[58728438]
+
+
+def test_an_identity_change_through_main_rolls_back_with_nothing_committed(
+    repair, monkeypatch, capsys
+):
+    h = _hash(repair)
+    s = IdentityMovedAfterRead(LIVE_2026_10_13, 3, _SYNTHETIC_NBA_TICKER)
+    code = _main(repair, monkeypatch, s, ["--apply", "--expect-plan-hash", h])
+    out = capsys.readouterr().out
+    assert code == 2 and out.startswith("REFUSED:") and "58728438" in out
+    assert "UNKNOWN" not in out
+    assert s.rolled_back and s.durable_writes == []
+    assert s.calls[-4:] == ["rollback", "commit", "close", "dispose"]
+
+
+def test_every_update_binds_the_observed_provider_identity(repair):
+    s = FakeSession(LIVE_2026_10_13)
+    _run(repair, s, apply=True, expect_plan_hash=_hash(repair))
+    assert {u["id"]: (u["provider"], u["external_id"]) for u in s.updates} == {
+        i: IDENTITY[i] for i in set(FORWARD) - ALREADY_REPAIRED
+    }
+
+
+def test_the_provider_identity_is_compared_null_safely(repair):
+    sql = " ".join(repair._CAS_SQL.split())
+    for clause in (
+        "source IS NOT DISTINCT FROM :provider",
+        "external_id IS NOT DISTINCT FROM :external_id",
+    ):
+        assert clause in sql
+    assert "source = :provider" not in sql and "external_id = :external_id" not in sql
+    rows = dict(LIVE_2026_10_13)
+    rows[59304735] = ("darts", rows[59304735][1], None, None)
+    s = FakeSession(rows)
+    out = _run(repair, s, apply=False, restore_ids=frozenset({59304735}))
+    assert out["written"] == 1
+    assert (s.updates[0]["provider"], s.updates[0]["external_id"]) == (None, None)
     assert s.live[59304735][0] == "baseball"
 
 

@@ -111,8 +111,9 @@ REFUSALS (the whole run stops, nothing is written)
   the reviewer read and not one row more;
 * ``--restore`` without ``--ids``, or with an id that is neither pinned nor reversed;
 * any statement that changes other than exactly one row — including a row whose
-  category OR name moved between the read and its write (the UPDATE re-states
-  both, the name null-safely, so the classifier's evidence still covers the row);
+  category, name, ``source`` OR ``external_id`` moved between the read and its
+  write (the UPDATE re-states all four, the last three null-safely, so both the
+  classifier's evidence and the provider gate's still cover the row);
 * the database stopping a statement: the run carries its own short lock and
   statement budgets, so a contended row refuses in seconds with the whole
   transaction rolled back, never a partial commit and never an unbounded wait.
@@ -256,7 +257,7 @@ REVERSED: dict[int, tuple[str, str]] = {
 
 #: The documented no-op: read and reported, never written.
 NO_OP: dict[int, str] = {
-    38277227: "golf",  # Asia Masters 2026 Winner — snooker, unreachable by title-only rules
+    38277227: "golf",  # Asia Masters 2026 Winner — recorded as snooker, UNVERIFIED; owed to #2163
 }
 
 
@@ -417,20 +418,34 @@ async def _read(
 
 # The WHERE re-states EVERYTHING the plan decided on, so a writer landing between
 # the read and the write makes the statement change 0 rows and the run refuses
-# rather than overwriting it. Two halves:
+# rather than overwriting it. Three parts:
 #
 # * the category — the compare half of the compare-and-set. Plain `=` is enough:
 #   every pinned `before`/`after` is a non-null string, and NULL never equals one.
 # * the observed NAME — the classifier gate in ``plan()`` judged the name it read,
 #   so the write is only covered by that evidence while the name is unchanged. A
 #   rename between ``_read()`` and its UPDATE, with the category still ``before``,
-#   would otherwise land ``after`` on a name nobody classified. Null-safe (`IS NOT DISTINCT FROM`) because ``name`` is the
-#   one compared value that can legitimately be NULL: a NULL name read must match
-#   a NULL name now, and a name set since must not.
+#   would otherwise land ``after`` on a name nobody classified. Null-safe
+#   (`IS NOT DISTINCT FROM`), so a NULL name read must match a NULL name now, and a
+#   name set since must not.
+# * the observed PROVIDER IDENTITY — ``source`` and ``external_id``. The provider
+#   gate in ``plan()`` judged the ticker it read, so the write is only covered by
+#   that verdict while the identity is unchanged. An identity-only change between
+#   ``_read()`` and its UPDATE (``KXRT-PRA`` → a ``KXNBA…`` ticker, category and
+#   name intact) would otherwise land ``after`` on a row whose own provider now
+#   names another league — Root's witness on #2169. Nothing at the database
+#   boundary makes either column immutable (no migration adds a trigger on this
+#   table), so the CAS states them rather than assuming no writer moves them.
+#   Null-safe like the name: the model declares both NOT NULL, but ``plan()`` and
+#   ``provider_category()`` accept None, and a NULL read must match a NULL now.
+#   (``:source`` is the category the row moves FROM; the column ``source`` binds
+#   as ``:provider``.)
 _CAS_SQL = (
     "UPDATE futures_markets SET llm_sport_category = :target "
     "WHERE id = :id AND llm_sport_category = :source "
-    "AND name IS NOT DISTINCT FROM :name"
+    "AND name IS NOT DISTINCT FROM :name "
+    "AND source IS NOT DISTINCT FROM :provider "
+    "AND external_id IS NOT DISTINCT FROM :external_id"
 )
 
 #: The attended run's own budgets, per connection (``get_task_session`` kwargs, so
@@ -479,12 +494,15 @@ async def run(
                     "source": source,
                     "target": target,
                     "name": rows[market_id][1],
+                    "provider": rows[market_id][2],
+                    "external_id": rows[market_id][3],
                 },
             )
             if result.rowcount != 1:
                 raise Refused(
                     f"market {market_id}: expected to change 1 row, changed "
-                    f"{result.rowcount} — its category or name moved since the read"
+                    f"{result.rowcount} — its category, name or provider identity moved "
+                    "since the read"
                 )
             written += 1
         try:
