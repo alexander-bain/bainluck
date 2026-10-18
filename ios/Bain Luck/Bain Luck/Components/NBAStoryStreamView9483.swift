@@ -93,7 +93,7 @@ struct NBAStoryStreamView9483: View {
             let plan = NBAStoryStreamPolicy9483.plan(eventID: page.eventID, phase: page.phase,
                                                     cards: current, now: now)
             content(current, plan: plan)
-                .onChange(of: plan) { _, plan in state.receiveNBAPlan(plan) }
+                .onChange(of: plan, initial: true) { _, plan in state.receiveNBAPlan(plan) }
                 .task(id: ExpiryKey(eventID: page.eventID, deadline: plan.nearestExpiry)) {
                     await freshnessWake(eventID: page.eventID, deadline: plan.nearestExpiry)
                 }
@@ -174,7 +174,7 @@ struct NBAStoryStreamView9483: View {
                         Group {
                             switch slot {
                             case .card(let id):
-                                if let card = byID[id] { cell(card, reason: reasons[id]) }
+                                if let card = byID[id] { cell(card, reason: reasons[id], present: present) }
                             case .unavailable:
                                 unavailableSlot
                             }
@@ -211,7 +211,8 @@ struct NBAStoryStreamView9483: View {
         }
     }
 
-    private func cell(_ card: NFLEventCard9483, reason: NBAStoryStreamPolicy9483.Reason?) -> some View {
+    private func cell(_ card: NFLEventCard9483, reason: NBAStoryStreamPolicy9483.Reason?,
+                      present: Set<String>) -> some View {
         VStack(spacing: 6) {
             NFLEventCardView9483(card: card, awayName: awayName, homeName: homeName,
                                  awayColor: awayColor, homeColor: homeColor, state: state)
@@ -222,14 +223,14 @@ struct NBAStoryStreamView9483: View {
                         .fixedSize(horizontal: false, vertical: true)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .accessibilityLabel(reason.accessibilityText)
-                    Button { seeLine(reason) } label: {
+                    Button { seeLine(reason, present: present) } label: {
                         Text("See this line")
                             .font(.caption.weight(.semibold))
                             .frame(maxWidth: .infinity, minHeight: 44)
                     }
                 }
             }
-            Button { open(card.id) } label: {
+            Button { open(card.id, present: present) } label: {
                 Label("Open full size", systemImage: "arrow.up.left.and.arrow.down.right")
                     .font(.caption.weight(.semibold))
                     .frame(maxWidth: .infinity, minHeight: 44)
@@ -260,19 +261,23 @@ struct NBAStoryStreamView9483: View {
 
     // MARK: - Actions
 
-    private func open(_ cardID: String) {
+    /// The opened card becomes the active one first, so Back from a reader
+    /// whose card has since left the deck lands on that card's held slot
+    /// (W1 keeps a slot only for the active id).
+    private func open(_ cardID: String, present: Set<String>) {
         state.holdNBAStream(eventID: page.eventID)
+        state.focusNBAStream(eventID: page.eventID, cardID: cardID, present: present)
         state.open(cardID)
     }
 
     /// Selects the reason's exact option on the card as it is NOW, then opens
     /// it. A card or option that has gone writes and opens nothing.
-    private func seeLine(_ reason: NBAStoryStreamPolicy9483.Reason) {
+    private func seeLine(_ reason: NBAStoryStreamPolicy9483.Reason, present: Set<String>) {
         guard reason.eventID == page.eventID, latest.eventID == page.eventID,
               let card = latest.cards.first(where: { $0.id == reason.cardID }),
               case .ladder(let ladder) = card,
               state.select(optionKey: reason.optionKey, in: ladder, eventID: reason.eventID) else { return }
-        open(card.id)
+        open(card.id, present: present)
     }
 
     private func resume() {
@@ -340,7 +345,7 @@ struct NBAStoryStreamView9483: View {
     private func advanceAfterDwell(_ token: Eligibility) async {
         guard token.eligible else { return }
         do { try await Task.sleep(for: Self.dwell) } catch { return }
-        guard !Task.isCancelled, latest.eventID == token.eventID,
+        guard !Task.isCancelled, eligibility == token, latest.eventID == token.eventID,
               let stream = state.nbaStreamState, stream.eventID == token.eventID,
               !stream.held, stream.activeID == token.activeID,
               state.openCardID == nil, state.detailsRowID == nil else { return }

@@ -3219,7 +3219,6 @@ private struct NavShowsScorePreferenceKey: PreferenceKey {
     }
 }
 
-/// #8320 — how much of the scroll view the bar covers, in the same space.
 /// #9483 v445 — the page's unobscured rectangle in `scrollSpace`.
 private struct UsableViewportPreferenceKey: PreferenceKey {
     static let defaultValue: CGRect? = nil
@@ -3245,6 +3244,7 @@ private struct PageScrollPhase9483: ViewModifier {
     }
 }
 
+/// #8320 — how much of the scroll view the bar covers, in the same space.
 private struct ScrollViewportTopPreferenceKey: PreferenceKey {
     static let defaultValue: CGFloat = 0
     static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
