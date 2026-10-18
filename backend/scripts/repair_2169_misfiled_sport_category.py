@@ -82,6 +82,19 @@ REFUSALS (the whole run stops, nothing is written)
   statement budgets, so a contended row refuses in seconds with the whole
   transaction rolled back, never a partial commit and never an unbounded wait.
 
+A COMMIT THAT DOES NOT RETURN IS NEITHER (exit 3)
+-------------------------------------------------
+
+The server can make the COMMIT durable and its acknowledgement still be lost
+(SQLSTATE 08006), so once an apply or restore COMMIT has been sent and not
+acknowledged, "nothing was written" is not knowable from the client, and a
+rollback issued afterwards proves nothing about it. The run then prints
+``"outcome": "UNKNOWN"`` with its mode, plan hash and the exact writes the
+transaction carried, and stops: no rollback claim, no retry, no reconnect-write,
+no restore. A cancel or interrupt that lands on the COMMIT prints the same report
+and keeps propagating as itself. The readback is a dry run: every id of an apply
+that landed reads ``already`` its ``after``; one that did not is a write again.
+
 DELIBERATELY NOT TOUCHED
 ------------------------
 
@@ -195,6 +208,32 @@ NO_OP: dict[int, str] = {
 
 class Refused(RuntimeError):
     """The run stops before any write."""
+
+
+class Unknown(RuntimeError):
+    """The COMMIT was sent and never acknowledged: its writes may or may not be durable."""
+
+    def __init__(self, report: dict):
+        super().__init__(report["unknown"])
+        self.report = report
+
+
+def _unknown_report(decided: dict, mode: str, written: int, exc: BaseException) -> dict:
+    orig = getattr(exc, "orig", None)
+    code = getattr(orig, "sqlstate", None) or getattr(orig, "pgcode", None)
+    return {
+        "outcome": "UNKNOWN",
+        "mode": mode,
+        "plan_hash": decided["plan_hash"],
+        "write": decided["write"],
+        "statements_changed": written,
+        "unknown": (
+            f"the {mode} COMMIT was sent and not acknowledged "
+            f"({type(orig or exc).__name__}, sqlstate {code}); these writes may or may "
+            "not be durable. Not retried, not restored — read the pinned rows back "
+            "with the dry run before any further step"
+        ),
+    }
 
 
 def refuse_unless_production(env: dict) -> None:
@@ -327,6 +366,7 @@ async def run(
 ) -> dict:
     rows = await _read(session)
     decided = plan(rows, classify, restore_ids=restore_ids)
+    mode = "restore" if restore_ids is not None else ("apply" if apply else "dry-run")
     if apply and expect_plan_hash != decided["plan_hash"]:
         raise Refused(
             f"plan hash is {decided['plan_hash']}, expected {expect_plan_hash!r} — "
@@ -350,11 +390,17 @@ async def run(
                     f"{result.rowcount} — its category or name moved since the read"
                 )
             written += 1
-        await session.commit()
+        try:
+            await session.commit()
+        except Exception as exc:
+            raise Unknown(_unknown_report(decided, mode, written, exc)) from exc
+        except BaseException as exc:
+            # A cancel or interrupt landing on the COMMIT is just as unknowable. It
+            # keeps its own type and propagates; the report rides it to main().
+            exc.commit_unknown = _unknown_report(decided, mode, written, exc)
+            raise
     return {
-        "mode": (
-            "restore" if restore_ids is not None else ("apply" if apply else "dry-run")
-        ),
+        "mode": mode,
         "write": decided["write"],
         "skip": decided["skip"],
         "no_op": decided["no_op"],
@@ -392,6 +438,10 @@ async def main() -> int:
     from app.tasks.base import get_task_session
     from app.utils.futures_categorization import categorize_by_rules
 
+    readback = (
+        f"heroku run:detached -a {os.environ['HEROKU_APP_NAME']} -- "
+        "python3 scripts/repair_2169_misfiled_sport_category.py"
+    )
     async with get_task_session(
         statement_timeout_ms=STATEMENT_TIMEOUT_MS, lock_timeout_ms=LOCK_TIMEOUT_MS
     ) as session:
@@ -403,14 +453,19 @@ async def main() -> int:
                 expect_plan_hash=args.expect_plan_hash,
                 restore_ids=restore_ids,
             )
+        except Unknown as exc:
+            # No rollback here: after an unacknowledged COMMIT it would prove nothing.
+            print(json.dumps(dict(exc.report, readback=readback), indent=2))
+            return 3
         except Refused as exc:
             await session.rollback()
             print(f"REFUSED: {exc}")
             return 2
         except DBAPIError as exc:
             # A budget firing (lock_timeout 55P03, statement_timeout 57014) or any
-            # other server refusal: the transaction rolls back whole, so no row of
-            # the plan is committed, and the run says so rather than tracebacking.
+            # other server refusal BEFORE the COMMIT was sent (``run`` turns a
+            # failure at the COMMIT into ``Unknown``): the transaction rolls back
+            # whole, so no row of the plan is committed, and the run says so.
             await session.rollback()
             code = getattr(exc.orig, "sqlstate", None) or getattr(
                 exc.orig, "pgcode", None
@@ -421,6 +476,11 @@ async def main() -> int:
                 "run when production is quieter"
             )
             return 2
+        except BaseException as exc:
+            report = getattr(exc, "commit_unknown", None)
+            if report is not None:
+                print(json.dumps(dict(report, readback=readback), indent=2))
+            raise
     print(json.dumps(out, indent=2))
     if out["mode"] == "apply" and out["written"]:
         ids = ",".join(str(i) for i, _, _ in out["write"])

@@ -16,6 +16,10 @@
 7. **The attended run is bounded**: ``main()`` arms short lock and statement
    budgets on the session, and a budget firing refuses with a rollback, never a
    commit.
+8. **A COMMIT that does not return is UNKNOWN** (exit 3, mode + plan hash + the
+   exact writes), never "rolled back, nothing committed": no rollback, retry or
+   restore follows it, a cancel on it keeps its type, and a refusal or cancel
+   BEFORE the COMMIT keeps its definite answer.
 """
 
 from __future__ import annotations
@@ -498,3 +502,200 @@ def test_a_lock_timeout_refuses_and_rolls_back_without_commit(
     assert "UNDO" not in out
     assert len(s.updates) == 3
     assert s.rolled_back and not s.committed
+
+
+# ── 8. a COMMIT that does not return is UNKNOWN, never "nothing committed" ───
+#
+# Root's counterexample (2026-10-18, script blob 3da6215c): the server makes the
+# COMMIT durable and the acknowledgement is lost (SQLSTATE 08006). The client's
+# rollback afterwards cannot undo or disprove a durable commit, so a CLI that
+# prints "rolled back, nothing committed" after it is a false zero-write claim.
+# These fakes mark their state durable FIRST and then lose the acknowledgement.
+
+
+class _ConnectionFailure(Exception):
+    sqlstate = "08006"
+
+
+class LostCommitAck(FakeSession):
+    """COMMIT becomes durable on the server; its acknowledgement never arrives."""
+
+    def __init__(self, live, raises=None):
+        super().__init__(live)
+        self.durable = False
+        self.commits = 0
+        self.rolled_back = False
+        self.calls: list[str] = []
+        self._raises = raises
+
+    async def execute(self, stmt, params):
+        self.calls.append("execute")
+        return await super().execute(stmt, params)
+
+    async def commit(self):
+        self.calls.append("commit")
+        self.commits += 1
+        self.durable = True  # the server applied it ...
+        if self._raises is not None:
+            raise self._raises
+        from sqlalchemy.exc import OperationalError
+
+        # ... and the connection died before the client heard back.
+        raise OperationalError("COMMIT", {}, _ConnectionFailure("connection lost"))
+
+    async def rollback(self):
+        self.calls.append("rollback")
+        self.rolled_back = True
+
+
+def _main(repair, monkeypatch, session, argv):
+    import app.tasks.base as base
+
+    monkeypatch.setattr(base, "get_task_session", _fake_task_session(session, []))
+    monkeypatch.setenv("HEROKU_APP_NAME", "bainluck-heavy")
+    monkeypatch.setattr(sys, "argv", ["repair_2169", *argv])
+    return asyncio.run(repair.main())
+
+
+def _hash(repair):
+    return _run(repair, FakeSession(LIVE_2026_10_13), apply=False)["plan_hash"]
+
+
+def _json_tail(out: str) -> dict:
+    import json
+
+    return json.loads(out[out.index("{") :])
+
+
+def test_a_lost_commit_ack_on_apply_is_unknown_not_nothing_committed(
+    repair, monkeypatch, capsys
+):
+    h = _hash(repair)
+    s = LostCommitAck(LIVE_2026_10_13)
+    code = _main(repair, monkeypatch, s, ["--apply", "--expect-plan-hash", h])
+    out = capsys.readouterr().out
+    assert s.durable  # the specimen: the writes ARE durable
+    assert code == 3  # neither success (0) nor a definite refusal (2)
+    assert "nothing committed" not in out and "rolled back" not in out
+    assert "REFUSED" not in out and "UNDO" not in out
+    report = _json_tail(out)
+    assert report["outcome"] == "UNKNOWN"
+    assert report["mode"] == "apply"
+    assert report["plan_hash"] == h
+    assert report["statements_changed"] == 21
+    assert {i for i, _, _ in report["write"]} == set(ISSUE_TABLE) - ALREADY_REPAIRED
+    assert all(tuple(w[1:]) == ISSUE_TABLE[w[0]] for w in report["write"])
+    assert "08006" in report["unknown"]
+    assert report["readback"].endswith(
+        "python3 scripts/repair_2169_misfiled_sport_category.py"
+    )
+    assert "-a bainluck-heavy" in report["readback"]
+    assert "written" not in report
+
+
+def test_a_lost_commit_ack_is_never_followed_by_a_second_write_commit_or_restore(
+    repair, monkeypatch, capsys
+):
+    h = _hash(repair)
+    s = LostCommitAck(LIVE_2026_10_13)
+    _main(repair, monkeypatch, s, ["--apply", "--expect-plan-hash", h])
+    capsys.readouterr()
+    assert s.commits == 1
+    # Nothing at all runs after the COMMIT: no retry, no restore, and no client
+    # rollback dressed up as evidence about the commit.
+    assert s.calls[-1] == "commit" and s.calls.count("commit") == 1
+    assert not s.rolled_back
+    assert len(s.updates) == 21
+    assert all(s.live[i][0] == ISSUE_TABLE[i][1] for i in ISSUE_TABLE)
+
+
+def test_a_lost_commit_ack_on_restore_is_unknown_too(repair, monkeypatch, capsys):
+    rows = {
+        i: ((ISSUE_TABLE[i][1], n) if i in ISSUE_TABLE else (c, n))
+        for i, (c, n) in LIVE_2026_10_13.items()
+    }
+    ids = "59304735,59165075"
+    s = LostCommitAck(rows)
+    code = _main(repair, monkeypatch, s, ["--restore", "--ids", ids])
+    out = capsys.readouterr().out
+    assert code == 3
+    assert "nothing committed" not in out and "REFUSED" not in out
+    report = _json_tail(out)
+    assert report["outcome"] == "UNKNOWN" and report["mode"] == "restore"
+    assert sorted(report["write"]) == [
+        [59165075, "politics", "basketball"],
+        [59304735, "darts", "baseball"],
+    ]
+    assert s.commits == 1 and not s.rolled_back and s.calls[-1] == "commit"
+
+
+def test_run_raises_unknown_at_the_commit_boundary_with_the_plan_identity(repair):
+    h = _hash(repair)
+    s = LostCommitAck(LIVE_2026_10_13)
+    with pytest.raises(repair.Unknown) as caught:
+        _run(repair, s, apply=True, expect_plan_hash=h)
+    assert not isinstance(caught.value, repair.Refused)
+    report = caught.value.report
+    assert report["outcome"] == "UNKNOWN" and report["mode"] == "apply"
+    assert report["plan_hash"] == h and report["statements_changed"] == 21
+
+
+@pytest.mark.parametrize("raised", ["cancelled", "interrupt"])
+def test_an_interrupted_commit_keeps_its_type_and_still_says_unknown(
+    repair, monkeypatch, capsys, raised
+):
+    exc = asyncio.CancelledError() if raised == "cancelled" else KeyboardInterrupt()
+    h = _hash(repair)
+    s = LostCommitAck(LIVE_2026_10_13, raises=exc)
+    with pytest.raises(type(exc)):
+        _main(repair, monkeypatch, s, ["--apply", "--expect-plan-hash", h])
+    out = capsys.readouterr().out
+    assert "nothing committed" not in out and "REFUSED" not in out
+    report = _json_tail(out)
+    assert report["outcome"] == "UNKNOWN" and report["plan_hash"] == h
+    assert s.commits == 1 and not s.rolled_back
+
+
+def test_a_cancel_before_the_commit_is_not_reported_unknown(
+    repair, monkeypatch, capsys
+):
+    class CancelledMidWrites(FakeSession):
+        async def execute(self, stmt, params):
+            if str(stmt).lstrip().upper().startswith("UPDATE") and self.updates:
+                raise asyncio.CancelledError()
+            return await super().execute(stmt, params)
+
+    s = CancelledMidWrites(LIVE_2026_10_13)
+    with pytest.raises(asyncio.CancelledError):
+        _main(repair, monkeypatch, s, ["--apply", "--expect-plan-hash", _hash(repair)])
+    assert "UNKNOWN" not in capsys.readouterr().out
+    assert not s.committed
+
+
+def test_a_refusal_before_the_commit_still_says_nothing_committed(
+    repair, monkeypatch, capsys
+):
+    # The control for the arms above: a server refusal BEFORE COMMIT is sent is a
+    # definite rollback, and keeps its exit 2 and its words.
+    s = LockedOnThirdWrite(LIVE_2026_10_13)
+    code = _main(
+        repair, monkeypatch, s, ["--apply", "--expect-plan-hash", _hash(repair)]
+    )
+    out = capsys.readouterr().out
+    assert code == 2 and "nothing committed" in out and "UNKNOWN" not in out
+    assert s.rolled_back and not s.committed
+
+
+def test_an_acknowledged_commit_still_reports_the_original_success(
+    repair, monkeypatch, capsys
+):
+    h = _hash(repair)
+    s = FakeSession(LIVE_2026_10_13)
+    code = _main(repair, monkeypatch, s, ["--apply", "--expect-plan-hash", h])
+    out = capsys.readouterr().out
+    assert code == 0 and s.committed
+    assert "UNKNOWN" not in out
+    report = _json_tail(out[: out.index("UNDO:")])
+    assert report["mode"] == "apply" and report["written"] == 21
+    assert report["plan_hash"] == h
+    assert "--restore --ids" in out
