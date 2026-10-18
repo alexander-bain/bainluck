@@ -19,6 +19,9 @@ identity, no affected set, no phase. These arms pin the repair:
    failing cleanup changes neither the receipt, the exit, nor that type.
 4. **A failure BEFORE a COMMIT keeps its definite answer** (``not_committed``),
    and an ordinary one re-raises as the very exception that stopped the phase.
+5. **A refusal survives a failing rollback** (Root, 28da829605): both backup
+   refusals — a changed leg, a missing backup row — keep ``REFUSED``, their exact
+   reason and exit 2 when the rollback after them fails; one rollback, no COMMIT.
 
 Every arm drives the PRODUCTION ``app.tasks.base.get_task_session``; only the
 engine and session factory it builds are inert recorders, so its normal-exit
@@ -125,7 +128,7 @@ def _grades(repair):
 
 
 def _wire(repair, monkeypatch, sessions, dispose_raises=None, apply_raises=None,
-          backup_raises=None):
+          backup_raises=None, backup_missing=0):
     """The production wrapper over inert engines; the SQL bodies as recorders."""
     import app.tasks.base as base
 
@@ -154,7 +157,7 @@ def _wire(repair, monkeypatch, sessions, dispose_raises=None, apply_raises=None,
         if backup_raises is not None:
             raise backup_raises
         session.pending.append("backup")
-        return 0
+        return backup_missing
 
     async def apply(session, legs, digest):
         calls.append("apply")
@@ -482,6 +485,49 @@ def test_a_backup_refusal_commits_nothing(repair, monkeypatch, capsys):
     r = _receipt(capsys.readouterr().out)
     assert r["outcome"] == "REFUSED" and r["phases"] == {"backup": "not_committed"}
     assert write.commits == 0 and write.durable == []
+
+
+#: Both refusals the backup phase can raise, and how each reaches it.
+_BACKUP_REFUSALS = {
+    "changed-leg": ({"backup_raises": "REFUSAL"},
+                    "legs [1000] changed since the plan was approved; nothing written"),
+    "missing-backup-row": ({"backup_missing": 3},
+                           "3 planned legs have no backup row; nothing written"),
+}
+
+
+@pytest.mark.parametrize("rollback", ["healthy", "broken"])
+@pytest.mark.parametrize("branch", list(_BACKUP_REFUSALS))
+def test_a_backup_refusal_keeps_its_reason_and_exit_2_whatever_the_rollback_does(
+    repair, monkeypatch, capsys, branch, rollback
+):
+    # Root's sixth control on 28da829605: the phase rolled back BEFORE it recorded
+    # the refusal, so a rollback failing on a dead connection became the receipt's
+    # failure — NOT_COMMITTED, a RuntimeError traceback, the reason lost.
+    kw, reason = _BACKUP_REFUSALS[branch]
+    if kw.get("backup_raises") == "REFUSAL":
+        kw = {"backup_raises": repair.Refused(reason)}
+    calls: list[str] = []
+    broken = RuntimeError("rollback transport failed")
+    write = Session(calls, rollback_raises=broken if rollback == "broken" else None)
+    assert _apply_run(repair, monkeypatch, write, **kw) == 2
+    captured = capsys.readouterr()
+    r = _receipt(captured.out)
+    assert r["outcome"] == "REFUSED" and r["mode"] == "apply"
+    assert r["refusal"] == reason
+    assert r["error"] == f"Refused: {reason}"
+    assert r["phases"] == {"backup": "not_committed"}
+    assert "undo" not in r and "applied" not in r
+    # It left the session exceptionally: ONE rollback (the wrapper's), no COMMIT.
+    assert _write_calls(write) == ["backup", *_CLEANUP]
+    assert write.commits == 0 and write.durable == []
+    assert "apply" not in _write_calls(write)
+    assert "Traceback" not in captured.err
+    if rollback == "broken":
+        assert ("cleanup raised RuntimeError after the Refused reported above"
+                in captured.err)
+    else:
+        assert captured.err == ""
 
 
 def test_a_refusal_before_any_write_keeps_its_original_shape(repair, monkeypatch, capsys):

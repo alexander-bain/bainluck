@@ -49,7 +49,9 @@ session leaves ``get_task_session`` by its exception path after any failure, so
 the wrapper's normal-exit COMMIT is never sent behind an unacknowledged one; a
 failure in the wrapper's cleanup — after an UNKNOWN, or after every COMMIT was
 acknowledged — is noted on stderr and changes neither the receipt nor its exit;
-an interrupt there still propagates as itself.
+an interrupt there still propagates as itself. A refusal is the same: the phase
+records it before anything rolls back, so a rollback failing on a dead
+connection never replaces the refusal, its reason or its exit 2.
 """
 
 from __future__ import annotations
@@ -414,7 +416,8 @@ async def backup(session, grades, digest) -> int:
     — only while each row still IS the version the plan was approved on.
 
     A leg that changed since the plan (any column) is refused and named: never
-    adopted as a new baseline. The caller rolls back; re-plan and re-review.
+    adopted as a new baseline. The refusal leaves the write session by its
+    exception path, so the session wrapper rolls back; re-plan and re-review.
     """
     from sqlalchemy import text
 
@@ -590,15 +593,13 @@ async def run(args, env, progress: Optional[Progress] = None) -> dict:
     if args.digest != digest:
         raise Refused(f"--digest {args.digest!r} does not match this plan ({digest})")
     progress.mode = "apply"
+    # A refusal leaves the phase BEFORE anything rolls back, so the phase records
+    # it first; the wrapper's rollback then runs outside every phase, and a
+    # failure there is cleanup that can never replace the refusal or its exit 2.
     async with get_task_session() as session:
         with progress.phase("backup"):
-            try:
-                missing = await backup(session, grades, digest)
-            except Refused:
-                await session.rollback()
-                raise
+            missing = await backup(session, grades, digest)
             if missing:
-                await session.rollback()
                 raise Refused(f"{missing} planned legs have no backup row; nothing written")
             await progress.commit(session, "backup")
         with progress.phase("apply"):
