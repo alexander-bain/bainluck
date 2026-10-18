@@ -1940,21 +1940,34 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
     # #10662: opt in only this consumer. Removing the override restores both
     # the legacy shared timer and the existing blend floor. A faster healthy
     # timer must not also shorten the preexisting failed-write retry period.
-    flush_period = PRICE_FLUSH_SECONDS
-    blend_floor = DEFAULT_MIN_REFRESH_INTERVAL_S
-    override = os.getenv("PM_WS_PRICE_FLUSH_SECONDS")
-    if override is not None:
+    def cadence_override(name):
+        value = os.getenv(name)
+        if value is None:
+            return None
         try:
-            flush_period = float(override)
+            seconds = float(value)
         except ValueError as invalid_cadence:
             raise ValueError(
-                "PM_WS_PRICE_FLUSH_SECONDS must be a positive finite number"
+                f"{name} must be a positive finite number"
             ) from invalid_cadence
-        if not math.isfinite(flush_period) or flush_period <= 0:
-            raise ValueError(
-                "PM_WS_PRICE_FLUSH_SECONDS must be a positive finite number"
-            )
+        if not math.isfinite(seconds) or seconds <= 0:
+            raise ValueError(f"{name} must be a positive finite number")
+        return seconds
+
+    flush_period = PRICE_FLUSH_SECONDS
+    blend_floor = DEFAULT_MIN_REFRESH_INTERVAL_S
+    override = cadence_override("PM_WS_PRICE_FLUSH_SECONDS")
+    if override is not None:
+        flush_period = override
         blend_floor = flush_period
+    # #10090: the game flush and its blend floor alone. Linked props stay on
+    # `flush_period` and failed writes keep the legacy retry, so a faster
+    # game cadence adds no prop work. Unset, the game follows `flush_period`.
+    game_period = flush_period
+    game_override = cadence_override("PM_WS_GAME_FLUSH_SECONDS")
+    if game_override is not None:
+        game_period = game_override
+        blend_floor = game_period
 
     # #9484 — every other unsettled Polymarket contract, for PRICES only, on a
     # second client (`app.tasks.polymarket_open_contracts`). Never added to the
@@ -4342,7 +4355,7 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
 
     async def flush_loop():
         await run_flush_cadence(
-            flush_prices, flush_period, stop=loops_stop,
+            flush_prices, game_period, stop=loops_stop,
             failed_retry_interval_s=PRICE_FLUSH_SECONDS,
             wake=catalog_boundary.flush_wake,
             work_count=lambda: catalog_boundary.flush_work,
