@@ -125,4 +125,74 @@ final class RecognizableNFLPage9483Tests: XCTestCase {
         XCTAssertEqual(h.accessibilityLabel(awayName: "Eagles", homeName: "Bears"),
                        "Eagles 14%. Bears 86%. Score Eagles 7, Bears 20")
     }
+
+    // MARK: - #9483 v476 adopted sides and the away endpoint label
+
+    func testTheAdoptedFinalShowsThePregameFigureNamedAsPregameAndSaysTheResult() {
+        let won = NFLPairedHeadline9483.Side(figure: "Won", pregame: "Pre-match 69%", won: true)
+        let served = EventDetailView.adoptedSide9483(won, isAway: false, live: false,
+                                                     pregame: reading(away: 0.31, home: 0.69))
+        XCTAssertEqual(served.figure, "69%")
+        XCTAssertEqual(served.caption, "Pregame win chance")
+        XCTAssertEqual(served.spoken, "won, pregame win chance 69%")
+        XCTAssertFalse(served.figureIsWord)
+        let opened = EventDetailView.adoptedSide9483(won, isAway: false, live: false,
+                                                     pregame: reading(away: 0.31, home: 0.69, served: false))
+        XCTAssertEqual(opened.caption, "Pregame · opening")
+        XCTAssertEqual(opened.spoken, "won, pregame opening win chance 69%")
+        let lost = NFLPairedHeadline9483.Side(figure: "Lost", pregame: nil, won: false)
+        let missing = EventDetailView.adoptedSide9483(lost, isAway: true, live: false, pregame: nil)
+        XCTAssertEqual(missing.figure, "Unavailable", "no baseline is said, never invented")
+        XCTAssertTrue(missing.figureIsWord)
+        XCTAssertEqual(missing.spoken, "lost, pregame win chance unavailable")
+        XCTAssertFalse(served.figure.contains("100"), "a result never becomes 100%")
+    }
+
+    func testTheAdoptedLiveSideKeepsTheCurrentFigureAndNamesItsBaseline() {
+        let side = NFLPairedHeadline9483.Side(figure: "65%", pregame: "Opened 45%", won: nil)
+        let opened = EventDetailView.adoptedSide9483(side, isAway: true, live: true,
+                                                     pregame: reading(away: 0.45, home: 0.55, served: false))
+        XCTAssertEqual(opened.figure, "65%", "the live figure is the hero's own price")
+        XCTAssertEqual(opened.caption, "Pregame · opening 45%")
+        XCTAssertEqual(opened.spoken, "65%, pregame opening 45%")
+        let none = EventDetailView.adoptedSide9483(side, isAway: true, live: true, pregame: nil)
+        XCTAssertEqual(none.caption, "Pregame unavailable")
+        XCTAssertEqual(none.spoken, "65%, pregame unavailable", "the visible gap is spoken too")
+        let before = NFLPairedHeadline9483.Side(figure: "38%", pregame: nil, won: nil)
+        let scheduled = EventDetailView.adoptedSide9483(before, isAway: true, live: false, pregame: nil)
+        XCTAssertNil(scheduled.caption, "before kickoff the price IS the pregame number")
+        XCTAssertEqual(scheduled.spoken, "38%")
+    }
+
+    private let plot = CGSize(width: 300, height: 260)
+
+    func testTheAwayLabelTakesTheSideAwayFromTheHomeNumber() throws {
+        // Home high (y 60), away low (y 200), both at the live edge.
+        let center = try XCTUnwrap(PairedAwayEndpointLabel9483.placement(
+            tip: CGPoint(x: 290, y: 200), from: CGPoint(x: 250, y: 190),
+            homeTip: CGPoint(x: 290, y: 60), homeFrom: CGPoint(x: 250, y: 70),
+            label: CGSize(width: 64, height: 18), plot: plot))
+        XCTAssertGreaterThan(center.y, 200, "below its own vertex, away from the home number")
+        XCTAssertLessThanOrEqual(center.x + 32, plot.width, "inside the plot")
+        XCTAssertFalse(LiveChartEdgeMarkerPlan.covers(center, label: CGSize(width: 64, height: 18),
+                                                      from: CGPoint(x: 250, y: 190), to: CGPoint(x: 290, y: 200)))
+    }
+
+    func testTheAwayLabelIsOmittedNearACrossingOrWhereItWouldHideTheNewestMove() {
+        let label = CGSize(width: 64, height: 18)
+        XCTAssertNil(PairedAwayEndpointLabel9483.placement(
+            tip: CGPoint(x: 290, y: 140), from: nil, homeTip: CGPoint(x: 290, y: 110), homeFrom: nil,
+            label: label, plot: plot), "under 44 pt apart: the keys carry it")
+        // Away at the floor: the outward spot clamps back onto its own vertex.
+        XCTAssertNil(PairedAwayEndpointLabel9483.placement(
+            tip: CGPoint(x: 290, y: 258), from: CGPoint(x: 250, y: 250),
+            homeTip: CGPoint(x: 290, y: 2), homeFrom: nil, label: label, plot: plot),
+            "a label pushed onto its own vertex is not drawn")
+        // A steep newest move that runs through the outward spot.
+        XCTAssertNil(PairedAwayEndpointLabel9483.placement(
+            tip: CGPoint(x: 290, y: 150), from: CGPoint(x: 289, y: 190),
+            homeTip: CGPoint(x: 290, y: 60), homeFrom: nil, label: label, plot: plot),
+            "never over the line's newest segment")
+    }
 }
+

@@ -1700,7 +1700,7 @@ struct OddsChartView: View {
                                 series: .value("Source", "\(source)#away#\(index)")
                             )
                             .foregroundStyle(paired.away)
-                            .lineStyle(pairedStroke9483(stroke, away: true))
+                            .lineStyle(stroke)
                             .interpolationMethod(.linear)
                         }
                         if segment.count == 1, index != split?.continuedRun, let only = awayRun.first {
@@ -1725,7 +1725,7 @@ struct OddsChartView: View {
                             series: .value("Source", "\(source)#away#tail")
                         )
                         .foregroundStyle(paired.away)
-                        .lineStyle(pairedStroke9483(stroke, away: true))
+                        .lineStyle(stroke)
                         .interpolationMethod(.linear)
                     }
                     if tail.count == 1, let only = tail.first {
@@ -1931,32 +1931,20 @@ struct OddsChartView: View {
                         lineStyle: strokeStyleForSource(liveSplit.source, sources: sources),
                         activity: priceActivity, pulseColor: teamColors?.home ?? .accentColor)
                         .accessibilityHidden(true)
-                    // Name the other already-admitted line too, using the
-                    // hero's formatter. Near a crossing keep the named legend
-                    // rather than overlap two endpoint labels.
-                    if let paired, let label = pairedAwayLabel9483, !label.isEmpty,
-                       selection.date == nil,
-                       let away = PairedWinLines9483.awayTail(liveSplit.tail).last,
-                       let x = proxy.position(forX: away.date),
-                       let y = proxy.position(forY: away.probability),
-                       let homeY = proxy.position(forY: liveSplit.tail.to.probability),
-                       x >= 0, x <= plotFrame.width, y >= 0, y <= plotFrame.height,
-                       abs(y - homeY) >= 44 {
-                        let width = min(CGFloat(140), plotFrame.width)
-                        let labelX = min(max(x, width / 2), plotFrame.width - width / 2)
-                        let labelY = min(max(y - 18, CGFloat(12)), max(CGFloat(12), plotFrame.height - 12))
-                        Text("\(awayShort) \(label)")
-                            .font(.caption2.weight(.bold))
-                            .foregroundStyle(paired.away)
-                            .lineLimit(1)
-                            .minimumScaleFactor(0.8)
-                            .padding(.horizontal, 3)
-                            .padding(.vertical, 2)
-                            .frame(width: width)
-                            .background(Color.cardBackground.opacity(0.92), in: RoundedRectangle(cornerRadius: 4))
-                            .position(x: plotFrame.minX + labelX, y: plotFrame.minY + labelY)
-                            .allowsHitTesting(false)
-                            .accessibilityHidden(true)
+                    // #9483 v476 — name the other admitted line too, with the
+                    // hero's own formatter. A child that observes the selection
+                    // (a scrub hides it, as it hides the home number) and draws
+                    // only where it covers neither line's newest move nor the
+                    // home number; otherwise the named keys carry it.
+                    if let paired, let label = pairedAwayLabel9483, !label.isEmpty {
+                        let awayTail = PairedWinLines9483.awayTail(liveSplit.tail)
+                        if let tip = awayTail.last {
+                            PairedAwayEndpointLabel9483(
+                                selection: selection, proxy: proxy, plotFrame: plotFrame,
+                                tip: tip, from: awayTail.count > 1 ? awayTail.first : nil,
+                                homeTail: liveSplit.tail, text: "\(awayShort) \(label)",
+                                color: paired.away)
+                        }
                     }
                 } else if let checkpoints {
                     // #4974 — the line's end is the resting endpoint the readout
@@ -2205,7 +2193,7 @@ struct OddsChartView: View {
 
         return FlowLayout(spacing: 8) {
             if let paired {
-                pairedLegendKey(awayShort, color: paired.away, dashed: NFLRecognizablePage9483.applies(sportKey: sportKey))
+                pairedLegendKey(awayShort, color: paired.away)
                 pairedLegendKey(homeShort, color: paired.home)
             } else {
             ForEach(ordered, id: \.self) { source in
@@ -2235,28 +2223,12 @@ struct OddsChartView: View {
         }
     }
 
-    private func pairedStroke9483(_ stroke: StrokeStyle, away: Bool) -> StrokeStyle {
-        guard away && NFLRecognizablePage9483.applies(sportKey: sportKey) else { return stroke }
-        var result = stroke
-        result.dash = [6, 4]
-        return result
-    }
-
     /// #9483 — one team's key on a paired chart.
-    private func pairedLegendKey(_ name: String, color: Color, dashed: Bool = false) -> some View {
+    private func pairedLegendKey(_ name: String, color: Color) -> some View {
         HStack(spacing: 4) {
-            Group {
-                if dashed {
-                    Path { path in
-                        path.move(to: CGPoint(x: 0, y: 1.5))
-                        path.addLine(to: CGPoint(x: 18, y: 1.5))
-                    }
-                    .stroke(color, style: StrokeStyle(lineWidth: 2, dash: [4, 3]))
-                } else {
-                    RoundedRectangle(cornerRadius: 1).fill(color)
-                }
-            }
-            .frame(width: dashed ? 18 : 14, height: 3)
+            RoundedRectangle(cornerRadius: 1)
+                .fill(color)
+                .frame(width: 14, height: 3)
             Text(name)
                 .font(.caption2.weight(.semibold))
                 .foregroundStyle(color)
