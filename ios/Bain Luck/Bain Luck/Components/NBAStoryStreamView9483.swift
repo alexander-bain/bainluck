@@ -159,7 +159,10 @@ struct NBAStoryStreamView9483: View {
                        reasons: [String: NBAStoryStreamPolicy9483.Reason], present: Set<String>) -> some View {
         ScrollViewReader { proxy in
             ScrollView(.horizontal, showsIndicators: false) {
-                LazyHStack(alignment: .top, spacing: 12) {
+                // Not lazy: at most three cards, and a lazy stack takes its
+                // height from the cards laid out first, clipping a taller
+                // card's controls once the stream advances to it.
+                HStack(alignment: .top, spacing: 12) {
                     ForEach(slots) { slot in
                         Group {
                             switch slot {
@@ -179,7 +182,7 @@ struct NBAStoryStreamView9483: View {
             .scrollTargetBehavior(.viewAligned)
             .scrollPosition(id: Binding(
                 get: { state.nbaStreamState?.eventID == page.eventID ? state.nbaStreamState?.activeID : nil },
-                set: { reported in manuallyReported(reported, present: present) }))
+                set: { reported in manuallyReported(reported, present: present) }), anchor: .leading)
             .modifier(ShelfScrollPhase9483(browsing: $browsing) {
                 state.holdNBAStream(eventID: page.eventID)
             })
