@@ -84,13 +84,16 @@ nonisolated enum SpotlightSavedAnswer10874: Equatable, Sendable {
 /// What is handed to Spotlight for one entry. Plain data, so every rule about
 /// content is a unit test; only the production client turns it into a
 /// `CSSearchableItem`.
+///
+/// No start date: Spotlight prints an item's `startDate` as a clock under the
+/// title ("Sun 10:00 AM", seen on the simulator), and a placeholder start has
+/// an unreal clock. A game's day reaches the reader only through `detail`.
 nonisolated struct SpotlightIndexItem10874: Equatable, Sendable {
     let identifier: String
     let domain: String
     let title: String
     let detail: String
     let keywords: [String]
-    let startDate: Date?
     let expiration: Date
 }
 
@@ -158,7 +161,7 @@ nonisolated enum SpotlightIndexPlan10874 {
             return SpotlightIndexItem10874(
                 identifier: identifier, domain: domain(scope: scope),
                 title: entry.subject.title, detail: detail(entry.subject),
-                keywords: entry.subject.aliases, startDate: entry.subject.date,
+                keywords: entry.subject.aliases,
                 expiration: isSaved ? max(savedUntil, recentUntil) : recentUntil)
         }
     }

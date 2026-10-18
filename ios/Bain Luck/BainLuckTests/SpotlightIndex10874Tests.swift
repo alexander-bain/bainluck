@@ -98,8 +98,30 @@ final class SpotlightIndex10874Tests: XCTestCase {
             guard text.hasPrefix("attributes."), let name = text.dropFirst(11).split(separator: " ").first else { return nil }
             return String(name)
         })
-        XCTAssertEqual(written, ["title", "contentDescription", "keywords", "startDate"],
-                       "the system item gained a field (a rating, imagery, a value) beyond the stable description")
+        XCTAssertEqual(written, ["title", "contentDescription", "keywords"],
+                       "the system item gained a field (a rating, imagery, a value, a start clock) beyond the stable description")
+    }
+
+    /// N1 (#10874): on the simulator Spotlight printed the game's `startDate`
+    /// as "Sun 10:00 AM" under its title. A placeholder start has an unreal
+    /// clock, so the system item carries no date at all; the day stays in the
+    /// description, and nothing the reader sees names a time of day.
+    func testAGameResultShowsItsDayButNoClock() throws {
+        let entries = [SpotlightEntry10874(subject: game(1, start: "2026-10-18T17:00:00Z"), viewedAt: t0)]
+        let item = try XCTUnwrap(SpotlightIndexPlan10874.items(entries, saved: [], scope: "guest", now: t0).first)
+        let day = SpotlightIndexPlan10874.detail(game(1, start: "2026-10-18T17:00:00Z"))
+        XCTAssertEqual(item.detail, day, "the game's day left the description")
+        XCTAssertTrue(day.contains("2026"), "the description no longer names the day: \(day)")
+        for text in [item.title, item.detail] + item.keywords {
+            XCTAssertNil(text.range(of: #"\d{1,2}:\d{2}"#, options: .regularExpression), "a clock was advertised: \(text)")
+            XCTAssertNil(text.range(of: #"\b(AM|PM)\b"#, options: .regularExpression), "a clock was advertised: \(text)")
+        }
+        #if canImport(CoreSpotlight)
+        let attributes = SpotlightSystemIndexClient10874.searchableItem(item).attributeSet
+        XCTAssertNil(attributes.startDate, "Spotlight will print this date as a clock under the title")
+        XCTAssertNil(attributes.endDate)
+        XCTAssertEqual(attributes.contentDescription, day)
+        #endif
     }
 
     // MARK: - Opening a result
@@ -224,8 +246,10 @@ final class SpotlightIndex10874Tests: XCTestCase {
         await index.savedChanged([], pinUserID: nil)?.value
         await index.recordViewed(game(1))?.value
         clock = clock.addingTimeInterval(86_400)
-        await index.recordViewed(game(1, start: "2026-10-19T00:05:00Z"))?.value
-        XCTAssertEqual(client.system[id(game(1))]?.startDate, "2026-10-19T00:05:00Z".asDate, "a rescheduled game kept its old day")
+        await index.recordViewed(game(1, start: "2026-10-21T18:05:00Z"))?.value
+        let rescheduled = SpotlightIndexPlan10874.detail(game(1, start: "2026-10-21T18:05:00Z"))
+        XCTAssertNotEqual(rescheduled, SpotlightIndexPlan10874.detail(game(1)), "fixture: the two days must differ")
+        XCTAssertEqual(client.system[id(game(1))]?.detail, rescheduled, "a rescheduled game kept its old day")
         clock = clock.addingTimeInterval(15 * 86_400)
         await index.refresh()?.value
         XCTAssertTrue(client.system.isEmpty, "an expired recent entry stayed in Spotlight")
@@ -342,7 +366,7 @@ final class SpotlightIndex10874Tests: XCTestCase {
         await first.recordViewed(game(1))?.value
         let client = FakeSpotlightClient()
         client.system[id(game(1))] = SpotlightIndexItem10874(identifier: id(game(1)), domain: root + ".user-A",
-                                                             title: "", detail: "", keywords: [], startDate: nil,
+                                                             title: "", detail: "", keywords: [],
                                                              expiration: t0)
         let second = makeIndex(client, defaults: store)
         await second.bind(userID: "B")?.value

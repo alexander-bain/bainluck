@@ -8,8 +8,8 @@ import UniformTypeIdentifiers
 
 #if canImport(CoreSpotlight)
 /// #10874 — `CSSearchableIndex.default()`, written only with
-/// `SpotlightIndexItem10874`s: a title, a description, keywords, a game's day
-/// and an expiry. No thumbnail, no rating, no price.
+/// `SpotlightIndexItem10874`s: a title, a description (carrying a game's day),
+/// keywords and an expiry. No thumbnail, no rating, no price, no start clock.
 final class SpotlightSystemIndexClient10874: SpotlightIndexClient10874 {
     private let index = CSSearchableIndex.default()
 
@@ -34,7 +34,6 @@ final class SpotlightSystemIndexClient10874: SpotlightIndexClient10874 {
         attributes.title = item.title
         attributes.contentDescription = item.detail.isEmpty ? nil : item.detail
         attributes.keywords = item.keywords
-        attributes.startDate = item.startDate
         let searchable = CSSearchableItem(uniqueIdentifier: item.identifier, domainIdentifier: item.domain,
                                           attributeSet: attributes)
         searchable.expirationDate = item.expiration
