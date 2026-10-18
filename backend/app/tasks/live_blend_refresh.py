@@ -176,8 +176,19 @@ FRESH_STAMP_WORKERS = 3
 ADMITTED_LIVE_RUN = 3
 
 # Includes the point currently writing and reservations before quote COMMIT.
-# At this finite bound a newly due stamp waits for debt space; no points drop.
+# The writer's ordinary backlog. Past it a newly due stamp does not wait
+# (#11138) and still owes its point at its own observation time, paid when
+# the writer drains without another quote (#11181). No point drops.
 HISTORY_POINT_LIMIT = 64
+# The finite bound beyond the ordinary backlog. Points are owed at most one per
+# event per snapshot interval, so a held writer reaches it only after minutes
+# (a 100-event slate owes 4 a second: ~4 minutes). A writer held indefinitely
+# cannot be met with an unwaiting headline, every observation AND finite
+# memory; the headline is the product, so past this bound the stamp still
+# never waits, and its observation is not retained: counted in
+# `history_unretained` and logged with its event and observation time. Its
+# event stays due, so its next stamp with room owes a point.
+HISTORY_SPILL_LIMIT = 1024
 
 #: #837 receipt — the per-event floor between receipt lines for chains that
 #: cannot qualify as a quiet tail (a busy market's routine deferrals, a held
@@ -1572,6 +1583,7 @@ class LiveBlendRefresher:
         self._history_task: Optional[asyncio.Task] = None
         self._history_count = 0  # committed debt plus pre-COMMIT reservations
         self._history_limit = HISTORY_POINT_LIMIT
+        self._history_spill_limit = HISTORY_SPILL_LIMIT
         self._history_changed = asyncio.Event()
         self._history_reserved: dict[int, float] = {}
         self._history_retry_at: dict[int, float] = {}
@@ -1599,6 +1611,12 @@ class LiveBlendRefresher:
             # #837 tail — stamps that stopped waiting on another transaction's
             # row lock and were re-queued. Not an error: the retry is the path.
             "lock_skipped": 0,
+            # #11138/#11181 — due chart points owed past the ordinary backlog
+            # without waiting; each is still paid at its own time.
+            "history_deferred": 0,
+            # #11181 — due observations past the spill bound, not retained;
+            # each is also logged by event and observation time.
+            "history_unretained": 0,
             # #9484 — committed market invalidations (`live:market:{id}`) this
             # consumer's writers published through the same client. Counted
             # for the same reason as `published`: a quiet market and a dead
@@ -2783,15 +2801,21 @@ class LiveBlendRefresher:
         return self._session_slots
 
     @contextlib.asynccontextmanager
-    async def _history_reservations(self, event_ids, now, owed):
+    async def _history_reservations(self, event_ids, now, owed, unretained_points):
         """Reserve finite debt space before a transaction can owe a point.
 
         Same-event quotes remain serial under the consumer's existing fence.
-        At capacity, wait only for the owned writer. If it failed, refuse this
-        stamp before COMMIT and let the existing blend retry retain the price.
-        Distinct due observations are never dropped or coalesced.
+        Distinct due observations are never dropped or coalesced. Past the
+        ordinary backlog a due stamp still owes its point and does not wait
+        (#11138): production v5763 13:01:22Z, Kalshi's writer held 5.364 s at
+        64 owed, held 15331223's .375 for 5.8 s behind three due stamps. The
+        point keeps its observation time and the writer pays it without
+        another quote (#11181). Past the spill bound the stamp still does not
+        wait; the observation it would owe is counted and logged by name once
+        committed (`HISTORY_SPILL_LIMIT`).
         """
         reserved = set()
+        unretained = set()
         committed = False
         ready = asyncio.Event()
         try:
@@ -2799,22 +2823,30 @@ class LiveBlendRefresher:
                 last = self._history_reserved.get(eid, self._last_snapshot_at.get(eid))
                 if last is not None and now - last < self.snapshot_interval_s:
                     continue
-                while self._history_count >= self._history_limit:
+                if self._history_count >= self._history_limit:
                     self._start_history()
-                    if self._history_task is None or self._history_task.done():
-                        raise RuntimeError(
-                            "committed chart backlog is full; stamp remains owed"
-                        )
-                    self._history_changed.clear()
-                    await self._history_changed.wait()
+                    if (
+                        self._history_count
+                        >= self._history_limit + self._history_spill_limit
+                    ):
+                        unretained.add(eid)
+                        continue
+                    self.stats["history_deferred"] += 1
                 self._history_count += 1
                 reserved.add(eid)
-            yield reserved, ready
+            yield reserved, unretained, ready
             # The nested session has now exited with a successful COMMIT.
             for eid, value, reading in owed:
                 self._history.append((eid, value, reading, now, ready))
                 self._history_reserved[eid] = now
             committed = True
+            for eid, value, observed_at in unretained_points:
+                self.stats["history_unretained"] += 1
+                logger.warning(
+                    "live_blend_refresh[%s]: chart backlog past its bound "
+                    "(%s owed); event %s observation %s at %s not retained",
+                    self.source, self._history_count, eid, value, observed_at,
+                )
         finally:
             used = {point[0] for point in owed} if committed else set()
             self._history_count -= len(reserved - used)
@@ -2958,6 +2990,8 @@ class LiveBlendRefresher:
         written: dict[int, float] = {}
         # #10090: the chart points the committed stamps owe, in stamp order.
         owed_snapshots: list[tuple] = []
+        # #11181: committed observations past the spill bound, never silent.
+        unretained_points: list[tuple] = []
 
         # Stamp the throttle for EVERY event we are about to attempt, before any
         # of them can fail to resolve. Stamping per-resolved-event instead would
@@ -2972,10 +3006,12 @@ class LiveBlendRefresher:
         if self._session_factory is not None:
             get_task_session = self._session_factory  # #2471: the consumer's
         async with (
-            self._history_reservations(event_ids, now, owed_snapshots) as reservation,
+            self._history_reservations(
+                event_ids, now, owed_snapshots, unretained_points,
+            ) as reservation,
             self._session_slot(), get_task_session() as session,
         ):
-            reserved, history_ready = reservation
+            reserved, unretained, history_ready = reservation
             self._stage_trace("attempt_session", event_ids)
             if prepared is None:
                 grouped = await self._read_groups(session, event_ids)
@@ -3198,6 +3234,8 @@ class LiveBlendRefresher:
                     # those owe nothing and open no second session.
                     if chart_reading is not None:
                         owed_snapshots.append((event_id, value, chart_reading))
+                    elif event_id in unretained:
+                        unretained_points.append((event_id, value, stamped_at))
                     if exact_trace is not None:
                         with contextlib.suppress(Exception):
                             if exact_trace.tracks_event(event_id):
