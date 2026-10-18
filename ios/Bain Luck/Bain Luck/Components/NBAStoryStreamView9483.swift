@@ -207,6 +207,9 @@ struct NBAStoryStreamView9483: View {
                         .id(slot.id)
                     }
                 }
+                // The row is its tallest card's height, and the unavailable
+                // slot stretches to it (below).
+                .fixedSize(horizontal: false, vertical: true)
                 .scrollTargetLayout()
             }
             .scrollTargetBehavior(.viewAligned)
@@ -263,7 +266,9 @@ struct NBAStoryStreamView9483: View {
     }
 
     /// The held active card left the deck (W1): its place stays, with no
-    /// stale numbers and no substitute, until an explicit Refresh.
+    /// stale numbers and no substitute, until an explicit Refresh. It fills
+    /// the row's height, its message centred, so a reader who had scrolled
+    /// into the card's lower half comes back to the slot, not an empty band.
     private var unavailableSlot: some View {
         VStack(spacing: 12) {
             Text("This game story is no longer available")
@@ -275,6 +280,7 @@ struct NBAStoryStreamView9483: View {
         }
         .frame(maxWidth: .infinity, minHeight: 160)
         .padding(16)
+        .frame(maxHeight: .infinity)
         .background(Color.cardBackground, in: RoundedRectangle(cornerRadius: 16))
         .overlay(RoundedRectangle(cornerRadius: 16).stroke(Color.secondary.opacity(0.15)))
         .accessibilityElement(children: .combine)

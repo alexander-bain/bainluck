@@ -289,16 +289,30 @@ struct NFLFinishCardView9483: View {
             .frame(height: expanded ? 220 : 120)
             .accessibilityHidden(true)
             ForEach([false, true], id: \.self) { isHome in
-                HStack(alignment: .firstTextBaseline) {
-                    Text(isHome ? homeName : awayName)
-                        .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(isHome ? homeColor : awayColor)
-                    Spacer(minLength: 8)
-                    number(isHome ? card.pregame.home : card.pregame.away, label: "pregame projection")
-                    if let later, let laterLabel {
-                        number(isHome ? later.home : later.away, label: laterLabel.lowercased())
-                            .frame(minWidth: 72, alignment: .trailing)
+                // One row when the name and both numbers fit whole; otherwise
+                // (large type, narrow phone) the name takes its own line and
+                // each number sits above its label, so no name or decimal is
+                // ever broken across lines.
+                ViewThatFits(in: .horizontal) {
+                    HStack(alignment: .firstTextBaseline) {
+                        teamName(isHome: isHome)
+                        Spacer(minLength: 8)
+                        number(isHome ? card.pregame.home : card.pregame.away, label: "pregame projection")
+                        if let later, let laterLabel {
+                            number(isHome ? later.home : later.away, label: laterLabel.lowercased())
+                                .frame(minWidth: 72, alignment: .trailing)
+                        }
                     }
+                    VStack(alignment: .leading, spacing: 4) {
+                        teamName(isHome: isHome)
+                        number(isHome ? card.pregame.home : card.pregame.away, label: "pregame projection",
+                               alignment: .leading)
+                        if let later, let laterLabel {
+                            number(isHome ? later.home : later.away, label: laterLabel.lowercased(),
+                                   alignment: .leading)
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
             }
             Text(card.final != nil ? "Points · outline = pregame · cross = final"
@@ -317,10 +331,18 @@ struct NFLFinishCardView9483: View {
         Array(stride(from: domain.lowerBound, through: domain.upperBound, by: card.tickStep))
     }
 
-    private func number(_ value: Double, label: String) -> some View {
-        VStack(alignment: .trailing, spacing: 0) {
+    private func teamName(isHome: Bool) -> some View {
+        Text(isHome ? homeName : awayName)
+            .font(.subheadline.weight(.semibold))
+            .foregroundStyle(isHome ? homeColor : awayColor)
+    }
+
+    private func number(_ value: Double, label: String,
+                        alignment: HorizontalAlignment = .trailing) -> some View {
+        VStack(alignment: alignment, spacing: 0) {
             Text(Self.points(value))
                 .font(.headline.monospacedDigit())
+                .fixedSize()
             Text(label)
                 .font(.caption2)
                 .foregroundStyle(.secondary)
