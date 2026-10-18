@@ -832,7 +832,7 @@ struct EventDetailView: View {
                     // #9483 v445 — and where it is covered again at the
                     // bottom (the tab bar): the stream's usable viewport.
                     .preference(key: UsableViewportPreferenceKey.self,
-                                value: Self.usableViewport(size: proxy.size, insets: proxy.safeAreaInsets))
+                                value: Self.usableViewport(size: proxy.size))
             })
             .onPreferenceChange(NavShowsScorePreferenceKey.self) { navShowsScore = $0 ?? true }
             .onPreferenceChange(ScrollViewportTopPreferenceKey.self) { scrollViewportTop = $0 }
@@ -1955,12 +1955,13 @@ struct EventDetailView: View {
     }
 
     /// The page's unobscured rectangle in `scrollSpace`. The reader behind the
-    /// scroll view is sized INSIDE the safe area — `size` already excludes the
-    /// bar above and the tab bar below — and starts `insets.top` down, the
-    /// bar's cover #8320 reads from the same reader. Nil when it is empty.
-    static func usableViewport(size: CGSize, insets: EdgeInsets) -> CGRect? {
+    /// scroll view IS the scroll view's frame, which sits inside the safe area:
+    /// its top is the bar's bottom and its bottom the tab bar's top, and
+    /// `scrollSpace` starts at its top-left (measured at 402 pt: scrollSpace
+    /// y 0 is screen y 116). So all of it is unobscured. Nil when it is empty.
+    static func usableViewport(size: CGSize) -> CGRect? {
         guard size.width > 0, size.height > 0 else { return nil }
-        return CGRect(x: 0, y: insets.top, width: size.width, height: size.height)
+        return CGRect(origin: .zero, size: size)
     }
 
     private var nflReaderPresented: Binding<Bool> {

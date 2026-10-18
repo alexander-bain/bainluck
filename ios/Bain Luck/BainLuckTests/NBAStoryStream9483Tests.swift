@@ -1,4 +1,3 @@
-import SwiftUI
 import XCTest
 @testable import Bain_Luck
 
@@ -790,17 +789,21 @@ final class NBAStoryStream9483Tests: XCTestCase {
         XCTAssertNil(loading.nbaBeforeBegin, "the page's event changed: nothing of the loading record survives")
     }
 
-    /// The page's usable viewport (file 4), with the reader values measured on
-    /// 15327183 at 402 pt: size 402×675 inside the safe area, bar cover 116,
-    /// tab bar 83. Its bottom is the tab bar's top, 791 — not 116 + 675 − 116 − 83.
-    func testTheUsableViewportIsThePagesSafeAreaRectangle() throws {
-        let insets = EdgeInsets(top: 116, leading: 0, bottom: 83, trailing: 0)
-        let viewport = try XCTUnwrap(EventDetailView.usableViewport(size: CGSize(width: 402, height: 675), insets: insets))
-        XCTAssertEqual(viewport, CGRect(x: 0, y: 116, width: 402, height: 675))
-        XCTAssertNil(EventDetailView.usableViewport(size: CGSize(width: 402, height: 0), insets: insets))
-        // A stage 500 tall whose top 431 are on screen above the tab bar is
-        // visible; counting the bars twice would call it 46% hidden.
-        XCTAssertEqual(NBAStoryStreamView9483.unobscured(stage: CGRect(x: 16, y: 360, width: 346, height: 500),
+    /// The page's usable viewport (file 4) is the scroll view's own frame in
+    /// `scrollSpace`, from its top-left. Measured on 15327183 at 402 pt
+    /// (fx402b): the reader is 402×675, and scrollSpace y 0 is screen y 116,
+    /// the bar's bottom, so the viewport is screen 116…791 (the tab bar's top).
+    func testTheUsableViewportIsTheScrollViewsOwnFrame() throws {
+        let viewport = try XCTUnwrap(EventDetailView.usableViewport(size: CGSize(width: 402, height: 675)))
+        XCTAssertEqual(viewport, CGRect(x: 0, y: 0, width: 402, height: 675))
+        XCTAssertNil(EventDetailView.usableViewport(size: CGSize(width: 402, height: 0)))
+        // F2 as returned (fx402b): stage −174…319. Its lower 319 of 493 (65%)
+        // are on screen between the bar and the tab bar: visible.
+        XCTAssertEqual(NBAStoryStreamView9483.unobscured(stage: CGRect(x: 16, y: -174, width: 346, height: 493),
                                                          viewport: viewport), true)
+        // A stage at 420…913: only 255 of 493 (52%) are above the tab bar; the
+        // rest is behind it or off the screen: not visible.
+        XCTAssertEqual(NBAStoryStreamView9483.unobscured(stage: CGRect(x: 16, y: 420, width: 346, height: 493),
+                                                         viewport: viewport), false)
     }
 }
