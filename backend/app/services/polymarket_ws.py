@@ -14,6 +14,7 @@ import inspect
 import json
 import logging
 import random
+import ssl
 from typing import Any, Callable, Optional
 
 from pydantic_core import from_json
@@ -171,6 +172,31 @@ MAX_MESSAGE_BYTES = 8 * 1024 * 1024
 #: up to MAX_MESSAGE_BYTES plus the one being assembled. A client that runs many
 #: shards (#9484's open-contract arm) passes a smaller number.
 DEFAULT_MAX_QUEUE_MESSAGES = 16
+
+#: #11218 — ONE TLS CONTEXT PER PROCESS, NOT ONE PER SHARD. Left to itself,
+#: `websockets.connect` builds a fresh `ssl.create_default_context()` for every
+#: wss:// dial, and each one loads the system CA bundle into its own store
+#: (~0.7 MiB measured on OpenSSL 3; held for the life of the connection). The
+#: open-contract and game clients hold ~140 shards, so worker-ws paid ~100 MiB
+#: for 140 identical copies, plus a fresh copy on every reconnect. The shared
+#: context is the same `create_default_context()` — certificate and hostname
+#: verification unchanged; each connection still sends its own server name.
+_TLS_CONTEXT: Optional[ssl.SSLContext] = None
+
+
+def _tls_context(url: str) -> Optional[ssl.SSLContext]:
+    """The process's shared TLS context for a wss:// URL; None for ws://.
+
+    `websockets` refuses an `ssl` argument on a ws:// URL, and a local rig
+    points `WS_URL` at one, so the plain scheme keeps passing None.
+    """
+    global _TLS_CONTEXT
+    if not url.startswith("wss://"):
+        return None
+    if _TLS_CONTEXT is None:
+        _TLS_CONTEXT = ssl.create_default_context()
+    return _TLS_CONTEXT
+
 
 # #9484 — RECONNECT SAFEGUARDS, because one client may now hold ~70 connections
 # and every one of them used to reconnect the instant its socket closed. Three
@@ -844,6 +870,7 @@ class PolymarketWebSocket:
                 await permit.acquire()
                 async with websockets.connect(
                     WS_URL,
+                    ssl=_tls_context(WS_URL),
                     ping_interval=None,
                     close_timeout=5,
                     # The initial dump for a full shard is one message over the
