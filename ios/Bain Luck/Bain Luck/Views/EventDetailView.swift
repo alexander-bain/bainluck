@@ -1303,10 +1303,15 @@ struct EventDetailView: View {
                             .fixedSize(horizontal: false, vertical: true)
                             .accessibilityHidden(true) // the paired row speaks the full result once
                     } else {
-                        heroStatusBadge(event)
+                        // #6544 — the hero chip keeps its minute tick here too.
+                        TimelineView(.periodic(from: .now, by: 60)) { _ in
+                            heroStatusBadge(event)
+                        }
                     }
                     Spacer(minLength: 8)
-                    eventHeadlineDetails9483(event)
+                    // The page's one disclosure (#8320/#9483): routine delivery and
+                    // confidence open from here; game context stays in Game Info.
+                    nflPairedDetails(event)
                 }
             } else {
             metaLayout {
@@ -2134,7 +2139,7 @@ struct EventDetailView: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                     if let projection = projectionText(event, hasScore: hasScore) {
                         VStack(alignment: .leading, spacing: 4) {
-                            Text("Projected final").font(.caption).foregroundStyle(.secondary)
+                            Text("Projected").font(.caption).foregroundStyle(.secondary)
                             Text(projection.replacingOccurrences(of: "Proj. ", with: ""))
                                 .font(.title3.weight(.semibold))
                         }
@@ -2175,50 +2180,6 @@ struct EventDetailView: View {
         NFLRecognizablePage9483.applies(sportKey: event.sport)
             && nflPairedHeadline(event, hasScore: Self.showsScore(
                 status: event.status, away: event.awayScore, home: event.homeScore)) != nil
-    }
-
-    /// Existing game and probability facts, disclosed from the paired headline.
-    /// No new source, timer, probability or result policy is introduced.
-    private func eventHeadlineDetails9483(_ event: EventDetail) -> some View {
-        let home = event.currentOdds.flatMap { OpeningLineHero.resolve($0, for: event).homeProbability }
-        let confidence = Confidence.fromSources(
-            sourceCount: event.winProbabilitySources?.count,
-            hasMovement: home.flatMap { h in
-                event.openingOdds?.homeProbability.map { abs(h - $0) > 0.001 } } ?? false)?.rawValue
-        return Button { showProbabilityDetails.toggle() } label: {
-            CompactEventPriceStatusView(status: vm.liveUpdateStatus,
-                sequence: vm.priceActivity?.sequence ?? 0,
-                receivedAt: vm.priceActivity?.receivedAt, isDisclosure: true)
-                .frame(minWidth: 44, minHeight: 44)
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel("About this game and probability updates")
-        .accessibilityHint("Shows game context, connection status and the last update received")
-        .popover(isPresented: $showProbabilityDetails, arrowEdge: .top) {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 12) {
-                    FreshnessRevealView(status: vm.liveUpdateStatus,
-                        lastReceivedAt: vm.priceActivity?.receivedAt, confidenceTier: confidence)
-                    Divider()
-                    Text("Game context").font(.headline)
-                    if let stamp = event.commenceTime, let date = stamp.asDate {
-                        Text("Listed start: \(date, format: .dateTime.month(.abbreviated).day().hour().minute())")
-                    }
-                    if let broadcast = event.espn?.broadcast,
-                       Self.showsBroadcast(status: event.status, commenceTime: event.commenceTime?.asDate) {
-                        Text("Watch: " + broadcast)
-                    }
-                    if let records = recordsText(event) { Text(records) }
-                    if let opening = openedText(event) { Text(opening) }
-                }
-                .padding()
-            }
-            .frame(idealWidth: 300, maxWidth: 300)
-            #if os(iOS)
-            .presentationCompactAdaptation(.popover)
-            #endif
-        }
     }
 
     /// The pair's subject and age (#9483 F1) — ONE mount for both headline
@@ -2970,7 +2931,7 @@ struct EventDetailView: View {
     /// #10863 — the table heading carries the TABLE's count, worded so it
     /// cannot be read as the consensus count on the Sportsbooks row above.
     static func bookmakerTableHeading(rowCount: Int) -> String {
-        "Latest price from each sportsbook (\(rowCount))"
+        "Latest probabilities from each sportsbook (\(rowCount))"
     }
 
     /// #10863 — the label of the control that reveals the rest of the table.
