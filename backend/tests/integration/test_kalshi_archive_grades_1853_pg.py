@@ -428,3 +428,60 @@ async def test_without_drift_the_cycle_round_trips_every_changed_nullable_field(
     regrades, _ = await mod.build_plan(session, legs)
     await session.rollback()
     assert mod.plan_digest(regrades) == digest
+
+
+# --- the read-only status packet: how an UNKNOWN receipt is resolved -------
+#
+# Each phase commits as ONE transaction with its markers, so after a COMMIT
+# whose acknowledgement was lost, ``--status`` answers whether it landed. Here
+# every COMMIT is acknowledged; the status read after it is what an operator
+# would read after the same COMMIT went unacknowledged.
+
+
+async def _status(session, mod):
+    before = await _legs(session)
+    out = await mod.status_report(session)
+    await session.rollback()
+    assert await _legs(session) == before, "status writes nothing"
+    return out
+
+
+async def test_status_before_any_backup_says_no_backup_committed(session):
+    mod = _script()
+    assert await _status(session, mod) == {"backup_table": "absent", "digests": {}}
+    exists = (await session.execute(text(mod.SQL["bak_exists"]))).scalar_one()
+    await session.rollback()
+    assert not exists, "status creates no table"
+
+
+async def test_status_resolves_each_phase_of_the_cycle(session):
+    mod, legs, grades, _, digest = await _plan_and_backup(session)
+    backed = (await _status(session, mod))["digests"][digest]
+    assert (backed["frozen"], backed["applied"], backed["holds_before"]) == (22, 0, 22)
+    assert backed["holds_after"] == 0 and backed["restored"] == 0
+    assert sorted(r["outcome_id"] for r in backed["rows"]) == sorted(UNGRADED)
+
+    await _apply(session, mod, legs, digest)
+    applied = (await _status(session, mod))["digests"][digest]
+    assert (applied["applied"], applied["holds_after"], applied["holds_before"]) == (22, 22, 0)
+    assert all(r["applied_at"] is not None for r in applied["rows"])
+
+    await _restore(session, mod)
+    restored = (await _status(session, mod))["digests"][digest]
+    assert (restored["applied"], restored["restored"], restored["holds_before"]) == (0, 22, 22)
+    assert restored["ownership_lost"] == 0
+
+
+async def test_status_names_a_row_a_later_writer_moved(session):
+    mod, legs, grades, _, digest = await _plan_and_backup(session)
+    await _apply(session, mod, legs, digest)
+    moved = sorted(UNGRADED)[0]
+    await session.execute(
+        text("UPDATE futures_outcomes SET last_updated = NOW() + interval '1 hour' WHERE id = :i"),
+        {"i": moved},
+    )
+    await session.commit()
+    d = (await _status(session, mod))["digests"][digest]
+    assert (d["applied"], d["holds_after"]) == (22, 21)
+    row = next(r for r in d["rows"] if r["outcome_id"] == moved)
+    assert row["applied"] and not row["holds_after"] and row["row_exists"]
