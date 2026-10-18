@@ -1954,12 +1954,13 @@ struct EventDetailView: View {
         return false
     }
 
-    /// The page's unobscured rectangle in `scrollSpace`: its bounds less the
-    /// bar above and the tab bar below. Nil when there is nothing left.
+    /// The page's unobscured rectangle in `scrollSpace`. The reader behind the
+    /// scroll view is sized INSIDE the safe area — `size` already excludes the
+    /// bar above and the tab bar below — and starts `insets.top` down, the
+    /// bar's cover #8320 reads from the same reader. Nil when it is empty.
     static func usableViewport(size: CGSize, insets: EdgeInsets) -> CGRect? {
-        let height = size.height - insets.top - insets.bottom
-        guard size.width > 0, height > 0 else { return nil }
-        return CGRect(x: 0, y: insets.top, width: size.width, height: height)
+        guard size.width > 0, size.height > 0 else { return nil }
+        return CGRect(x: 0, y: insets.top, width: size.width, height: size.height)
     }
 
     private var nflReaderPresented: Binding<Bool> {

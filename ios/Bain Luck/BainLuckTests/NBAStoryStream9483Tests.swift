@@ -1,3 +1,4 @@
+import SwiftUI
 import XCTest
 @testable import Bain_Luck
 
@@ -46,6 +47,7 @@ import XCTest
 /// - begin on the half-loaded deck (the finish card alone) and park the ladders
 ///   as pending behind Refresh, or begin on another event's markets or without
 ///   the history → `testTheStreamBeginsOnlyOnceThisEventsHistoryAndMarketsHaveArrived`
+/// - count the page's bars twice in the stream's viewport → `testTheUsableViewportIsThePagesSafeAreaRectangle`
 /// - before the begin: drop See this line, lose the reader's hold or chosen
 ///   card at the begin, or show the reader another order than the shelf (N4)
 ///   → `testBeforeTheStreamBeginsTheShelfsActionsWorkAndTheReadersChoiceSurvivesTheBegin`
@@ -786,5 +788,19 @@ final class NBAStoryStream9483Tests: XCTestCase {
         XCTAssertNotNil(loading.nbaBeforeBegin)
         loading.resetNBAStream()
         XCTAssertNil(loading.nbaBeforeBegin, "the page's event changed: nothing of the loading record survives")
+    }
+
+    /// The page's usable viewport (file 4), with the reader values measured on
+    /// 15327183 at 402 pt: size 402×675 inside the safe area, bar cover 116,
+    /// tab bar 83. Its bottom is the tab bar's top, 791 — not 116 + 675 − 116 − 83.
+    func testTheUsableViewportIsThePagesSafeAreaRectangle() throws {
+        let insets = EdgeInsets(top: 116, leading: 0, bottom: 83, trailing: 0)
+        let viewport = try XCTUnwrap(EventDetailView.usableViewport(size: CGSize(width: 402, height: 675), insets: insets))
+        XCTAssertEqual(viewport, CGRect(x: 0, y: 116, width: 402, height: 675))
+        XCTAssertNil(EventDetailView.usableViewport(size: CGSize(width: 402, height: 0), insets: insets))
+        // A stage 500 tall whose top 431 are on screen above the tab bar is
+        // visible; counting the bars twice would call it 46% hidden.
+        XCTAssertEqual(NBAStoryStreamView9483.unobscured(stage: CGRect(x: 16, y: 360, width: 346, height: 500),
+                                                         viewport: viewport), true)
     }
 }
