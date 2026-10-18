@@ -1946,6 +1946,7 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
         open_contract_bridge_event_stmt, open_contract_event_bridge,
     )
     from app.tasks.ws_liveness import report as _report_liveness
+    from app.utils.heap_trim import release_free_heap  # #11218
     from app.utils.futures_rank import rerank_market_fields_stmt  # #6598
     # #2471: one engine for this run, a fresh session per operation; the
     # decorator disposes it after the final drain. Same call shape as the
@@ -4815,6 +4816,9 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
             )
             # Installed: the live maps own the catalog now.
             fresh_slate = fresh_open = None
+            # #11218: the reads' freed working set goes back to the OS now,
+            # instead of staying counted until the dyno's memory line.
+            release_free_heap("polymarket")
             if game_run_task.done():
                 # Loading/updating can yield while the retained client exits.
                 # Propagate its failure (or end this run) just as the wait above.
