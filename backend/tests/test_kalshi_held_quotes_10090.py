@@ -131,6 +131,19 @@ def writes_of(x, oid):
     return sum(1 for t in x.trace if t == ("write", oid))
 
 
+def budgets(x):
+    return [v for k, v in x.trace if k == "lock_timeout"]
+
+
+async def past_the_short_probe(x, clock):
+    """#10090 — the first refusal is the short probe; its ordinary attempt is
+    at the next flush start. Run both, so the ordinary backoff is in force."""
+    await x.flush(flush_started=clock.t)
+    clock.t += PERIOD
+    await x.flush(flush_started=clock.t)
+    assert budgets(x) == ["1ms", "50ms"]
+
+
 def held_value(x, oid):
     entry = x.held._quotes.get(oid)
     return None if entry is None else entry[0]
@@ -145,15 +158,17 @@ async def test_a_refused_live_phase_stamps_its_received_quotes_and_the_write_lan
     # The received quotes reached the stamp while the row is held.
     assert x.stamped == [((EVENT,), {1: (0.61, 100.0), 2: (0.39, 100.0)})]
     assert x.reads == [{1: (0.61, 100.0), 2: (0.39, 100.0)}]
-    # Not ambiguous: the ordinary 2 s backoff, no cadence episode.
-    until = clock.t + x.ns["PRICE_FLUSH_SECONDS"]
+    # Not ambiguous, no cadence episode. The refusal was the short probe: the
+    # ordinary attempt is at the next flush start, not after the 2 s backoff.
+    until = clock.t + PERIOD
     assert x.prices.lock_retry_until == {1: until, 2: until}
     assert x.prices.ambiguous_retry_since == {}
-    # The holder lets go; past the backoff the ordinary write lands both rows.
+    # The holder lets go; the ordinary write lands both rows.
     x.lock_released.set()
     clock.t = until
     assert await x.flush(flush_started=clock.t) is True
     assert x.committed == [1, 2] and not x.batch
+    assert budgets(x) == ["1ms", "50ms"]
     assert 1 not in x.held and 2 not in x.held
     assert not x.prices.lock_retry_until
 
@@ -161,14 +176,16 @@ async def test_a_refused_live_phase_stamps_its_received_quotes_and_the_write_lan
 async def test_a_newer_quote_during_the_cooldown_is_stamped_without_another_update(monkeypatch):
     clock = Clock(monkeypatch)
     x = held_rig(monkeypatch)
-    await x.flush(flush_started=clock.t)
+    await past_the_short_probe(x, clock)
     deadline = dict(x.prices.lock_retry_until)
-    assert writes_of(x, 1) == 1 and len(x.stamped) == 1
+    assert deadline == {1: clock.t + x.ns["PRICE_FLUSH_SECONDS"]} | {
+        2: clock.t + x.ns["PRICE_FLUSH_SECONDS"]}
+    assert writes_of(x, 1) == 2 and len(x.stamped) == 1
 
     clock.t += PERIOD
     x.tick(1, 0.65)  # attempt21's .395: a newer Kalshi quote, row still held
     assert await x.flush(flush_started=clock.t) is True
-    assert writes_of(x, 1) == 1, "no UPDATE inside the write's cooldown"
+    assert writes_of(x, 1) == 2, "no UPDATE inside the write's cooldown"
     assert x.prices.lock_retry_until == deadline, "the retry deadline is unchanged"
     assert held_value(x, 1) == 0.65
     assert x.stamped[-1][0] == (EVENT,) and x.stamped[-1][1][1][0] == 0.65
@@ -179,7 +196,7 @@ async def test_a_newer_quote_during_the_cooldown_is_stamped_without_another_upda
     stamps = len(x.stamped)
     await x.flush(flush_started=clock.t)
     assert len(x.stamped) == stamps and x.reads[-1] == {}
-    assert writes_of(x, 1) == 1
+    assert writes_of(x, 1) == 2
 
 
 async def test_the_cooldown_admission_waits_for_its_events_running_stamp(monkeypatch):
@@ -207,7 +224,7 @@ async def test_the_cooldown_admission_waits_for_its_events_running_stamp(monkeyp
 
 @pytest.mark.parametrize("answer,live,fast", [
     ({1}, (EVENT,), True),    # known newer stored row, live game: cadence retry
-    (None, (EVENT,), False),  # unknown read: held as before, 2 s backoff
+    (None, (EVENT,), False),  # unknown read: held as before
     (set(), (EVENT,), False),  # held and stamped: nothing to hurry
     ({1}, (), False),         # known but not live: 2 s backoff
 ])
@@ -216,7 +233,10 @@ def test_only_a_known_ambiguity_on_a_live_phase_retries_on_the_cadence(monkeypat
         clock = Clock(monkeypatch)
         x = held_rig(monkeypatch, answer=answer, live=live)
         await x.flush(flush_started=clock.t)
-        until = clock.t + (PERIOD if fast else x.ns["PRICE_FLUSH_SECONDS"])
+        # A live phase's first refusal is its short probe: the ordinary attempt
+        # follows at the next flush start whatever the overlay said. The
+        # cadence EPISODE (``fast``) is still only a known ambiguity's.
+        until = clock.t + (PERIOD if live else x.ns["PRICE_FLUSH_SECONDS"])
         assert x.prices.lock_retry_until == {1: until, 2: until}
         # A refused event is not held (its stamp could only republish the row).
         assert (1 in x.held) is (answer != {1})
@@ -231,17 +251,27 @@ async def test_a_sustained_ambiguous_hold_gets_one_window_of_cadence_retries(mon
     window = x.ns["PRICE_FLUSH_SECONDS"]
     start = clock.t
     attempts = []
+    writes_per_round = []
     while clock.t < start + 2 * window + 1:
         if not any(u > clock.t for u in x.prices.lock_retry_until.values()):
             attempts.append(clock.t - start)
+        before_writes = writes_of(x, 1)
         await x.flush(flush_started=clock.t)
+        writes_per_round.append(writes_of(x, 1) - before_writes)
         clock.t = round(clock.t + PERIOD, 6)
     fast = [a for a in attempts if a < window]
     assert fast == [i * PERIOD for i in range(int(window / PERIOD))]
     # Past the window: the ordinary backoff, never a 4 Hz stream.
     slow = [a for a in attempts if a >= window]
     assert slow and all(b - a >= window for a, b in zip(slow, slow[1:]))
-    assert writes_of(x, 1) == len(attempts)
+    # One initial 1 ms probe plus its immediate ordinary 50 ms retry.
+    # Every later round retains the original single-attempt/backoff contract.
+    assert writes_per_round[0] == 2
+    assert all(count <= 1 for count in writes_per_round[1:])
+    assert writes_of(x, 1) == len(attempts) + 1
+    assert [value for kind, value in x.trace if kind == "lock_timeout"] == (
+        ["1ms"] + ["50ms"] * len(attempts)
+    )
     assert x.prices.ambiguous_retry_since == {1: start, 2: start}
     assert not x.stamped, "a refused event is never stamped from a stale row"
     # The write lands: the episode ends with it.
@@ -337,7 +367,8 @@ async def test_a_mark_changing_during_the_read_is_caught_by_the_next_cooldown_fl
     clock.t += PERIOD
     await x.flush(flush_started=clock.t)
     assert held_value(x, 1) == 0.70 and x.stamped[-1][1][1][0] == 0.70
-    assert writes_of(x, 1) == 1
+    # The short probe, then its ordinary attempt at this flush's start.
+    assert writes_of(x, 1) == 2 and budgets(x) == ["1ms", "50ms"]
 
 
 async def test_a_settled_market_takes_no_overlay_and_releases_what_it_held(monkeypatch):
@@ -347,7 +378,7 @@ async def test_a_settled_market_takes_no_overlay_and_releases_what_it_held(monke
     x.prices.settled_market_ids.add(MARKET)
     await x.flush(flush_started=clock.t)
     assert not x.held._quotes and not x.stamped and x.reads == []
-    until = clock.t + x.ns["PRICE_FLUSH_SECONDS"]
+    until = clock.t + PERIOD  # the short probe's ordinary attempt
     assert x.prices.lock_retry_until == {1: until, 2: until}
     assert set(x.batch) == {1, 2}, "the ordinary write still carries the price"
 
