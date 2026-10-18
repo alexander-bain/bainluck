@@ -91,7 +91,8 @@ ROLLBACK_BOUNDS = {
     "max_drop_attempts_per_index": "2",
     "drop_lock_timeout": "60s",
     "max_lock_waits_per_drop": "3",
-    "worst_case_pass_minutes": "18",
+    "pass_minutes_if_one_holder_per_wait": "18",
+    "each_further_holder_adds": "60s",
     "a2_p1c_reread_max_minutes": "10",
     "a2_p1c_reread_every_minutes": "1",
     "a2_build_still_in_flight": "HOLD, drop nothing",
@@ -368,18 +369,28 @@ def test_the_rollback_bounds_are_one_table_in_three_places():
     """R6': loosening an attempt bound in one copy only fails here."""
     assert _fenced("rollback-bounds") == ROLLBACK_BOUNDS
     assert _generator().ROLLBACK_BOUNDS == ROLLBACK_BOUNDS
-    # lane1b N3: lock_timeout bounds each lock wait, and one DROP waits up to
-    # three times, so the pass's worst case is names x attempts x waits x 60 s.
+    # lane1b N3: one DROP waits up to three times, and lock_timeout restarts for
+    # each transaction a wait is behind, so names x attempts x waits x 60 s is
+    # the pass with one holder per wait, not a bound on the pass.
     assert ROLLBACK_BOUNDS["drop_lock_timeout"] == "60s"
+    assert ROLLBACK_BOUNDS["each_further_holder_adds"] == "60s"
     worst = (
         len(INDEX_NAMES)
         * int(ROLLBACK_BOUNDS["max_drop_attempts_per_index"])
         * int(ROLLBACK_BOUNDS["max_lock_waits_per_drop"])
     )
-    assert int(ROLLBACK_BOUNDS["worst_case_pass_minutes"]) == worst
+    assert int(ROLLBACK_BOUNDS["pass_minutes_if_one_holder_per_wait"]) == worst
+    assert not any("worst" in k for k in ROLLBACK_BOUNDS)
     text = " ".join(_section("4.").split())
     assert "one DROP waits up to three times" in text
-    assert f"3 names × 2 attempts × 3 waits × 60 s = {worst} minutes" in text
+    assert "`lock_timeout` restarts for each transaction a wait is behind" in text
+    assert "a wait behind k transactions can last up to k × 60 s" in text
+    assert (
+        f"{worst} minutes (3 names × 2 attempts × 3 waits × 60 s) is the pass when "
+        "each wait is behind one transaction. Each further one can add up to 60 s."
+    ) in text
+    assert "its end state is the final read, not a clock" in text
+    assert "at worst" not in text and "worst case" not in text
     assert "(`indisvalid = f, indisready = f`) takes no writes" in text
 
 

@@ -342,7 +342,8 @@ build_in_flight_at_start = HOLD, drop nothing
 max_drop_attempts_per_index = 2
 drop_lock_timeout = 60s
 max_lock_waits_per_drop = 3
-worst_case_pass_minutes = 18
+pass_minutes_if_one_holder_per_wait = 18
+each_further_holder_adds = 60s
 a2_p1c_reread_max_minutes = 10
 a2_p1c_reread_every_minutes = 1
 a2_build_still_in_flight = HOLD, drop nothing
@@ -365,9 +366,14 @@ same table.
   just as CREATE does, so `lock_timeout = '60s'` cancels it (measured on CREATE in §5, and on DROP
   in the revision-3 fixture run). The second attempt is the last; there is no third.
   `lock_timeout` bounds each *wait*, and one DROP waits up to three times: for the table lock,
-  after it sets `indisvalid = f`, and after it sets `indisready = f`. So one attempt on one name can
-  take about 3 × 60 s, and the whole pass at worst about 3 names × 2 attempts × 3 waits × 60 s =
-  18 minutes.
+  after it sets `indisvalid = f`, and after it sets `indisready = f`. `lock_timeout` restarts for
+  each transaction a wait is behind: the second and third waits wait, one after another, on every
+  transaction that held a table lock when the wait began, so a wait behind k transactions can last
+  up to k × 60 s (lane1b's PG 14 probe: a 4 s `lock_timeout` cancelled at 6.67 s after the
+  transaction it first waited on ended at +2.5 s). 18 minutes (3 names × 2 attempts × 3 waits ×
+  60 s) is the pass when each wait is behind one transaction. Each further one can add up to 60 s.
+  The pass still ends, because each wait's list is fixed when the wait begins, and its end state is
+  the final read, not a clock.
 * **Final read, 0 rows: `ROLLED BACK`.** Set the Index state line to `ROLLED BACK`.
 * **Final read, any row: `ROLLBACK INCOMPLETE`.** Copy every row (relname, indisvalid,
   indisready) into the receipt, set the Index state line to `ROLLBACK INCOMPLETE`, and stop. Do not
