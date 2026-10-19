@@ -638,8 +638,11 @@ class TestEndToEnd:
         assert result['combined_output_bytes'] <= cap
         disk = json.loads(big.receipt())
         assert disk['reason'] == 'OUTPUT_EXCEEDED' and 'candidate_evidence' not in disk
-        # One plan past the stream allowance is refused at the stream, mid-read.
-        huge = Rig(tmp_path / 'huge', monkeypatch, {'explain_query3': [{'plan_pad': 515_000}]})
+        # One plan past the stream allowance is refused at the stream, mid-read. The child
+        # parks at query3's rollback: the few KB left unread fit the pipe buffer, so without
+        # it whether candidate C runs before the terminate lands is scheduling, not the tool.
+        huge = Rig(tmp_path / 'huge', monkeypatch, {'explain_query3': [{'plan_pad': 515_000}],
+                                                    'rollback': [{'stall': True}]})
         result = huge.run()
         assert result['verdict'] == 'NO_RESULT' and result['reason'] == 'OUTPUT_EXCEEDED', result
         assert result['received_bytes'] < 515_000 and result['combined_output_bytes'] <= cap
@@ -670,6 +673,238 @@ class TestEndToEnd:
         assert rig.real_seconds <= 15.1
         assert rig.executed() == FULL_SEQUENCE  # the plans ran; the late receipt still grants nothing
         _assert_gone(rig.child_pid())
+
+
+# ─── the owner's own setup and finalization ──────────────────────────────────
+#
+# The worker and child stall tests above never touch the CALLER's process. These
+# fault only the owner (gated on its pid): its selector/pipe release after the
+# success decision used to run in a `finally` after the elapsed stamp, and its
+# setup after fork() used to sit outside every cleanup. Each adverse case has an
+# unchanged positive control through the same seam.
+
+def _owned_forks(monkeypatch):
+    real_fork = os.fork
+    owned = []
+
+    def record_fork():
+        pid = real_fork()
+        if pid > 0:
+            owned.append(pid)
+        return pid
+    monkeypatch.setattr(supervisor.os, 'fork', record_fork)
+    return owned
+
+
+def _assert_reaped(pid):
+    # Reaped by the owner: the pid is no longer our child at all.
+    with pytest.raises(ChildProcessError):
+        os.waitpid(pid, os.WNOHANG)
+
+
+class _FinalRelease:
+    """Wraps the owner's selector; `fault` fires in the owner on its final close or on
+    the pipe close that follows it. 'late' spends 20 s of the one wall there; 'raise'
+    fails after really closing; None is the positive control."""
+
+    def __init__(self, rig, monkeypatch, *, where, fault):
+        self.rig, self.where, self.fault = rig, where, fault
+        self.owner_pid = os.getpid()
+        self.selector_closed = False
+        self.fired = 0
+        factory = supervisor.selectors.DefaultSelector
+        real_close = os.close
+        outer = self
+
+        class Selector:
+            def __init__(self):
+                self.real = factory()
+
+            def __getattr__(self, name):
+                return getattr(self.real, name)
+
+            def close(self):
+                self.real.close()
+                if os.getpid() == outer.owner_pid:
+                    outer.selector_closed = True
+                    if outer.where == 'selector':
+                        outer.fire()
+
+        def close(fd):
+            real_close(fd)
+            if (outer.where == 'pipe' and outer.selector_closed and not outer.fired
+                    and os.getpid() == outer.owner_pid):
+                outer.fire()
+        monkeypatch.setattr(supervisor.selectors, 'DefaultSelector', Selector)
+        monkeypatch.setattr(supervisor.os, 'close', close)
+
+    def fire(self):
+        self.fired += 1
+        if self.fault == 'late':
+            self.rig.clock.write_text(repr(float(self.rig.clock.read_text()) + 20))
+        elif self.fault == 'raise':
+            raise OSError('injected owner release failure')
+
+
+class TestOwnerFinalization:
+    @pytest.mark.parametrize('where', ['selector', 'pipe'])
+    def test_control_the_same_release_seam_unfaulted_still_succeeds(self, tmp_path, monkeypatch, where):
+        rig = Rig(tmp_path, monkeypatch)
+        seam = _FinalRelease(rig, monkeypatch, where=where, fault=None)
+        result = rig.run()
+        assert seam.selector_closed
+        assert result['verdict'] == 'PLAN_ONLY_PENDING_ROOT_REVIEW', result
+        assert result['owner_completed'] is True and 0 < result['elapsed_seconds'] < 15
+        assert set(contract.accept(result, rig.receipt())) == {'query3', 'candidateC'}
+
+    @pytest.mark.parametrize('where', ['selector', 'pipe'])
+    def test_a_late_owner_release_is_no_result_and_its_time_is_counted(self, tmp_path, monkeypatch, where):
+        """Root d072 replay: 20 s spent in the owner's final close used to return
+        PLAN_ONLY_PENDING_ROOT_REVIEW stamped ~0.08 s, and accept() took both plans."""
+        rig = Rig(tmp_path, monkeypatch)
+        seam = _FinalRelease(rig, monkeypatch, where=where, fault='late')
+        began = supervisor._now()
+        result = rig.run()
+        actual = supervisor._now() - began
+        assert seam.fired == 1 and actual > 15
+        assert result['verdict'] == 'NO_RESULT' and result['reason'] == 'OWNER_FINALIZATION_LATE', result
+        assert result['owner_completed'] is False and result['candidate_sha256'] is None
+        assert result['elapsed_seconds'] > 15  # the stamp includes the release, not just the read
+        assert actual - result['elapsed_seconds'] < 1
+        # The worker had finished cleanly: the disk candidate exists and still is not a result.
+        assert json.loads(rig.receipt())['reason'] == 'OWNER_CONFIRMATION_REQUIRED'
+        with pytest.raises(contract.Refused, match='ACCEPT_REFUSED'):
+            contract.accept(result, rig.receipt())
+        _assert_gone(rig.child_pid())
+
+    @pytest.mark.parametrize('where', ['selector', 'pipe'])
+    def test_a_failed_owner_release_is_no_result(self, tmp_path, monkeypatch, where):
+        rig = Rig(tmp_path, monkeypatch)
+        seam = _FinalRelease(rig, monkeypatch, where=where, fault='raise')
+        result = rig.run()
+        assert seam.fired == 1
+        assert result['verdict'] == 'NO_RESULT' and result['reason'] == 'OWNER_CLEANUP_FAILED', result
+        assert result['owner_completed'] is False and result['elapsed_seconds'] < 15
+        with pytest.raises(contract.Refused, match='ACCEPT_REFUSED'):
+            contract.accept(result, rig.receipt())
+
+    def test_control_recording_forks_alone_changes_nothing(self, tmp_path, monkeypatch):
+        rig = Rig(tmp_path, monkeypatch)
+        owned = _owned_forks(monkeypatch)
+        result = rig.run()
+        assert result['verdict'] == 'PLAN_ONLY_PENDING_ROOT_REVIEW', result
+        assert len(owned) == 1
+        _assert_reaped(owned[0])
+
+    @pytest.mark.parametrize('seam,phase', [
+        ('DefaultSelector', 'OWNER_SETUP_FAILED'),   # Root d072 setup replay
+        ('set_blocking', 'OWNER_SETUP_FAILED'),
+        ('read', 'OWNER_READ_FAILED'),
+    ])
+    def test_an_owner_exception_after_fork_reclaims_the_worker_and_returns_no_result(
+            self, tmp_path, monkeypatch, seam, phase):
+        """The worker exists once fork() returns: an owner exception from there on is
+        NO_RESULT, never an escape, and the owned group (worker + stalled child) dies."""
+        rig = Rig(tmp_path, monkeypatch, {'connect': [{'stall': True}]})
+        owned = _owned_forks(monkeypatch)
+        owner_pid = os.getpid()
+        target = supervisor.selectors if seam == 'DefaultSelector' else supervisor.os
+        real = getattr(target, seam)
+
+        def broken(*a, **k):
+            if os.getpid() == owner_pid:
+                raise OSError(f'injected owner {seam} failure')
+            return real(*a, **k)
+        if seam == 'read':
+            # Fail the owner's read only once the child is stalled, so its group is real.
+            def broken(*a, **k):  # noqa: F811
+                if os.getpid() == owner_pid and any(e['event'] == 'stall' for e in rig.events()):
+                    raise OSError('injected owner read failure')
+                return real(*a, **k)
+            real_select = supervisor.selectors.DefaultSelector
+
+            class Ready:
+                def __init__(self):
+                    self.real = real_select()
+
+                def __getattr__(self, name):
+                    return getattr(self.real, name)
+
+                def select(self, timeout=None):
+                    got = self.real.select(timeout)
+                    if os.getpid() == owner_pid and any(e['event'] == 'stall' for e in rig.events()):
+                        return got or [(None, 0)]
+                    return got
+            monkeypatch.setattr(supervisor.selectors, 'DefaultSelector', Ready)
+        monkeypatch.setattr(target, seam, broken)
+        result = rig.run()
+        assert result['verdict'] == 'NO_RESULT' and result['reason'] == phase, result
+        assert result['owner_completed'] is False and result['candidate_sha256'] is None
+        assert result['worker_reaped'] is True and rig.real_seconds < 10
+        assert len(owned) == 1
+        _assert_reaped(owned[0])
+        _assert_gone(rig.child_pid())
+        settled = len(rig.events())
+        time.sleep(.3)
+        assert len(rig.events()) == settled  # nothing owned is still running
+
+    def test_the_first_owner_failure_is_kept_when_cleanup_also_fails(self, tmp_path, monkeypatch):
+        rig = Rig(tmp_path, monkeypatch)
+        owned = _owned_forks(monkeypatch)
+        owner_pid = os.getpid()
+        real_blocking = os.set_blocking
+        real_close = os.close
+
+        def broken_blocking(fd, flag):
+            if os.getpid() == owner_pid:
+                raise OSError('first')
+            return real_blocking(fd, flag)
+        failed_closes = []
+
+        def broken_close(fd):
+            real_close(fd)
+            if os.getpid() == owner_pid and owned:
+                failed_closes.append(fd)
+                raise OSError('second')
+        monkeypatch.setattr(supervisor.os, 'set_blocking', broken_blocking)
+        monkeypatch.setattr(supervisor.os, 'close', broken_close)
+        result = rig.run()
+        assert failed_closes  # the release did fail too
+        assert result['verdict'] == 'NO_RESULT' and result['reason'] == 'OWNER_SETUP_FAILED', result
+        _assert_reaped(owned[0])
+
+    def test_a_refused_pipe_never_forks(self, tmp_path, monkeypatch):
+        rig = Rig(tmp_path, monkeypatch)
+        owned = _owned_forks(monkeypatch)
+
+        def no_pipe():
+            raise OSError('EMFILE')
+        monkeypatch.setattr(supervisor.os, 'pipe', no_pipe)
+        result = rig.run()
+        assert result['verdict'] == 'NO_RESULT' and result['reason'] == 'PIPE_REFUSED'
+        assert result['attempt_consumed'] is False and owned == []
+        assert not rig.log.exists() and not rig.receipts.exists()
+
+    def test_a_refused_fork_closes_both_pipe_ends_and_says_fork(self, tmp_path, monkeypatch):
+        rig = Rig(tmp_path, monkeypatch)
+        real_pipe = os.pipe
+        made = []
+
+        def pipe():
+            made.extend(real_pipe())
+            return tuple(made)
+
+        def no_fork():
+            raise OSError('EAGAIN')
+        monkeypatch.setattr(supervisor.os, 'pipe', pipe)
+        monkeypatch.setattr(supervisor.os, 'fork', no_fork)
+        result = rig.run()
+        assert result['verdict'] == 'NO_RESULT' and result['reason'] == 'FORK_REFUSED'
+        assert result['attempt_consumed'] is False and len(made) == 2
+        for fd in made:
+            with pytest.raises(OSError):
+                os.fstat(fd)
+        assert not rig.log.exists() and not rig.receipts.exists()
 
 
 # ─── entry surface ───────────────────────────────────────────────────────────

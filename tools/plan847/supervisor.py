@@ -182,17 +182,29 @@ def run_attempt(*, credential, admission, owner):
     A returned verdict of PLAN_ONLY_PENDING_ROOT_REVIEW is still not a result by
     itself: read the receipt bytes and pass both to contract.accept(). A disk
     receipt without this timely return is never evidence.
+
+    Every owned resource (worker group, pipe, selector) is released BEFORE success
+    is eligible and before the elapsed stamp is taken, so owner finalization is
+    inside the measured wall. Any exception, failed or late cleanup is NO_RESULT;
+    the first failure is the reason and a later one never replaces it.
     """
     started = _now()
     deadline = started + TOTAL
     stop = deadline - OWNER_MARGIN
-    rd, wr = os.pipe()
+    rd = wr = None
+    refused = 'PIPE_REFUSED'
     try:
+        rd, wr = os.pipe()
+        refused = 'FORK_REFUSED'
         pid = os.fork()
-    except OSError:
-        os.close(rd)
-        os.close(wr)
-        return dict(verdict='NO_RESULT', reason='FORK_REFUSED', owner_completed=True, admission_id=None,
+    except BaseException:
+        for fd in (rd, wr):
+            if fd is not None:
+                try:
+                    os.close(fd)
+                except OSError:
+                    pass
+        return dict(verdict='NO_RESULT', reason=refused, owner_completed=True, admission_id=None,
                     receipt_path=None, candidate_sha256=None, received_bytes=None,
                     combined_output_bytes=None, exit_code=None, attempt_consumed=False,
                     no_retry=True, elapsed_seconds=_now() - started)
@@ -212,17 +224,24 @@ def run_attempt(*, credential, admission, owner):
             code = 125
         finally:
             os._exit(code)
-    os.close(wr)
-    try:
-        os.setpgid(pid, pid)
-    except OSError:
-        pass
-    os.set_blocking(rd, False)
-    selector = selectors.DefaultSelector()
-    selector.register(rd, selectors.EVENT_READ)
-    data = bytearray()
+    # From here the worker exists: every path below runs the owned cleanup.
+    failure = None
+    candidate = None
     status = None
+    selector = None
+    phase = 'OWNER_SETUP_FAILED'
     try:
+        os.close(wr)
+        wr = None
+        try:
+            os.setpgid(pid, pid)
+        except OSError:
+            pass
+        os.set_blocking(rd, False)
+        selector = selectors.DefaultSelector()
+        selector.register(rd, selectors.EVENT_READ)
+        phase = 'OWNER_READ_FAILED'
+        data = bytearray()
         while _now() < stop:
             got, code = os.waitpid(pid, os.WNOHANG)
             if got:
@@ -245,14 +264,35 @@ def run_attempt(*, credential, admission, owner):
                     data.extend(chunk)
             except BlockingIOError:
                 pass
-            result = _owner_result(status, bytes(data))
-            elapsed = _now() - started
-            if result is not None and elapsed <= TOTAL:
-                result['owner_completed'] = True
-                result['elapsed_seconds'] = elapsed
-                result['no_retry'] = True
-                return result
-        # Only the newly owned worker group (worker + its native child).
+            candidate = _owner_result(status, bytes(data))
+        if candidate is None:
+            failure = 'WALL_EXPIRED_OR_UNAVAILABLE'
+    except BaseException:
+        failure = phase
+        candidate = None
+    reaped = status is not None
+    if candidate is None:
+        reaped = _reclaim(pid, reaped, deadline)
+    if not _release(selector, rd, wr) and failure is None:
+        failure = 'OWNER_CLEANUP_FAILED'
+    # The stamp is taken only now, after the last owned release.
+    elapsed = _now() - started
+    if failure is None and elapsed > TOTAL:
+        failure = 'OWNER_FINALIZATION_LATE'
+    if failure is None:
+        candidate['owner_completed'] = True
+        candidate['elapsed_seconds'] = elapsed
+        candidate['no_retry'] = True
+        return candidate
+    return dict(verdict='NO_RESULT', reason=failure, owner_completed=False,
+                admission_id=None, receipt_path=None, candidate_sha256=None, received_bytes=None,
+                combined_output_bytes=None, exit_code=None, attempt_consumed=None,
+                worker_reaped=reaped, no_retry=True, elapsed_seconds=elapsed)
+
+
+def _reclaim(pid, reaped, deadline):
+    """Kill only the newly owned worker group (worker + its native child); reap within the wall."""
+    try:
         try:
             os.killpg(pid, signal.SIGKILL)
         except (ProcessLookupError, PermissionError):
@@ -260,20 +300,31 @@ def run_attempt(*, credential, admission, owner):
                 os.kill(pid, signal.SIGKILL)
             except ProcessLookupError:
                 pass
-        reaped = status is not None
         while not reaped and _now() < deadline - .002:
             got, _code = os.waitpid(pid, os.WNOHANG)
             if got:
-                reaped = True
-                break
+                return True
             time.sleep(.002)
-        return dict(verdict='NO_RESULT', reason='WALL_EXPIRED_OR_UNAVAILABLE', owner_completed=False,
-                    admission_id=None, receipt_path=None, candidate_sha256=None, received_bytes=None,
-                    combined_output_bytes=None, exit_code=None, attempt_consumed=None,
-                    worker_reaped=reaped, no_retry=True, elapsed_seconds=_now() - started)
-    finally:
-        selector.close()
-        os.close(rd)
+    except BaseException:
+        pass
+    return reaped
+
+
+def _release(selector, *fds):
+    """Close every owned descriptor; True only if all of them closed cleanly."""
+    clean = True
+    if selector is not None:
+        try:
+            selector.close()
+        except BaseException:
+            clean = False
+    for fd in fds:
+        if fd is not None:
+            try:
+                os.close(fd)
+            except BaseException:
+                clean = False
+    return clean
 
 
 def _owner_result(status, raw):
