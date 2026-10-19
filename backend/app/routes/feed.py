@@ -11402,6 +11402,8 @@ async def _score_events(
     # Batch fallback: for events where _compute_aggregate_probability() returns
     # None, query the latest win_prob_snapshot per event. This catches
     # Kalshi/Polymarket pregame data that's only in snapshots (not on Event model).
+    # #11254: a source's explicit withdrawal row retires that source's earlier
+    # readings here, so a withdrawn venue's last price is not served as current.
     snapshot_fallbacks: dict[int, float] = {}
     events_needing_fallback = [] if price_refresh_events is not None else [
         e for e in events if _compute_aggregate_probability(e) is None
@@ -11410,14 +11412,10 @@ async def _score_events(
         fallback_ids = [e.id for e in events_needing_fallback]
         from sqlalchemy import text
 
+        from app.utils.feed_snapshot_fallback import SNAPSHOT_FALLBACK_SQL
+
         fb_result = await db.execute(
-            text("""
-                SELECT DISTINCT ON (event_id) event_id, home_win_probability
-                FROM win_prob_snapshots
-                WHERE event_id = ANY(:ids)
-                  AND home_win_probability IS NOT NULL
-                ORDER BY event_id, captured_at DESC
-            """),
+            text(SNAPSHOT_FALLBACK_SQL),
             {"ids": fallback_ids},
         )
         for row in fb_result.all():
