@@ -246,7 +246,8 @@ async def custody_counts(rig):
                 )
             ).all()
         )
-    assert rows.pop(OWNER, 0) == 1, rows
+    owner_rows = rows.pop(OWNER, 0)
+    assert owner_rows == 1, rows
     return rows
 
 
