@@ -1129,6 +1129,8 @@ class PMWithdrawalDebt:
         #: custody id -> debt, mirroring the durable rows this process holds.
         self.owed: dict[int, PMWithdrawal] = {}
         self.loaded = False
+        self._startup_recovery_logged = False
+        self._startup_recovery_rows = [0, 0]
         self._load_running = False
         self._uncertain_commit = False
         self._uncertain_xids: set[str] = set()
@@ -1324,6 +1326,20 @@ class PMWithdrawalDebt:
             # A scan after pg_xact_status reports committed sees that commit.
             # Keep the identity through failures and LIMIT continuation pages.
             self._uncertain_xids.difference_update(resolved)
+        if not self._startup_recovery_logged:
+            publications = sum(
+                source == PM_WITHDRAWAL_DEBT_SOURCE + "_publish"
+                for _, _, _, source in rows
+            )
+            self._startup_recovery_rows[0] += len(rows) - publications
+            self._startup_recovery_rows[1] += publications
+            if self.loaded:
+                logger.info(
+                    "Polymarket WS: startup recovery scan complete "
+                    "polymarket_withdrawal=%d polymarket_withdrawal_publish=%d",
+                    *self._startup_recovery_rows,
+                )
+                self._startup_recovery_logged = True
         return len(rows)
 
     async def record(self, session, rows) -> list[PMWithdrawal]:
