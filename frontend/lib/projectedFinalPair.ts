@@ -151,6 +151,12 @@ export function cardProjectedFinal(
  * `isLive` must be the card's own predicate — `status === "live"` and the start
  * time passed — because that is the one that decides whether the card prints
  * its projection.
+ *
+ * Before kickoff, a sport whose sportsbook spread IS a margin but whose format
+ * this file refuses (hockey's pinned puck line) answers null, not the ladders:
+ * the forecast is withheld, never swapped for another source while the card
+ * one tap back prints nothing. Baseball's run line is not a margin at all, so
+ * it keeps its ladder fallback (#8617).
  */
 export function eventPageProjectedPair(opts: {
   odds: Event["current_odds"] | null | undefined;
@@ -162,6 +168,12 @@ export function eventPageProjectedPair(opts: {
     const sportsbook = sportsbookProjectedPair(opts.odds, opts.sportKey);
     if (sportsbook) {
       return { home_score: sportsbook.home, away_score: sportsbook.away };
+    }
+    if (
+      sportsbookProjectionDrawable(opts.sportKey ?? undefined) &&
+      projectedFinalFormat(opts.sportKey) === null
+    ) {
+      return null;
     }
   }
   return opts.ladderPair ?? null;

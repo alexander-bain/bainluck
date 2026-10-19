@@ -175,6 +175,25 @@ describe("the format rule reaches the headline's sportsbook pair", () => {
     expect(stamp(page(nhl), HERO)).toBeNull();
   });
 
+  // lane1 R1 on 614c4e7b86: the format gate must withhold hockey's forecast
+  // before play, not hand the headline the Kalshi ladders' pair instead.
+  it("hockey before play prints nothing even with BOTH a sportsbook pair and a ladder pair", () => {
+    const nhl = specimen(
+      { sport: "icehockey_nhl", home_team: "Boston Bruins", away_team: "Buffalo Sabres", home_team_data: undefined, away_team_data: undefined } as Partial<Event>,
+      { spread: -1.5, over_under: 5.5, projected_home_score: 3.5, projected_away_score: 2.0 },
+    );
+    // 3.6 / 2.4 rounds to 4 – 2: printable on every other gate, so only R1 withholds it.
+    expect(stamp(page(nhl, { home_score: 3.6, away_score: 2.4 }), HERO)).toBeNull();
+  });
+
+  it("control: baseball before play keeps its ladder pair (the run line is not a margin)", () => {
+    const mlb = specimen(
+      { sport: "baseball_mlb", home_team: "Texas Rangers", away_team: "New York Mets", home_team_data: undefined, away_team_data: undefined } as Partial<Event>,
+      { spread: -1.5, over_under: 8.5, projected_home_score: 5.0, projected_away_score: 3.5 },
+    );
+    expect(stamp(page(mlb, { home_score: 4.6, away_score: 3.2 }), HERO)).toBe("5-3 home-away");
+  });
+
   it("soccer carries its 90-minute basis in the label", () => {
     const epl = specimen(
       { sport: "soccer_epl", home_team: "Arsenal", away_team: "Chelsea", home_team_data: undefined, away_team_data: undefined } as Partial<Event>,
