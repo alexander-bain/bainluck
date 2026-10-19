@@ -76,12 +76,18 @@ C1_MISTAGS = [
 # baseball most of the time. Positive evidence has to WIN here, not just veto.
 # ---------------------------------------------------------------------------
 C1_CONTROLS = [
-    # Row 59165075 ("Los Angeles L next governor") is a census C1 specimen whose
-    # DB value is `basketball`, but `categorize_by_rules` already answers
-    # `politics` for it -- so the bad value came from another writer (the LLM
-    # fallback, or a pre-rules backfill), not from this function. It is a CONTROL
-    # here, and the DB row needs the F2 re-key rather than F3.
-    ("Los Angeles L next governor before Jan 1, 2027?", "politics"),               # 59165075
+    # Row 59165075 ("Los Angeles L next governor") USED to sit here as a politics
+    # control. That was WRONG, and 81 green tests repeated it: it is the Lakers'
+    # next owner (NBA "governor"), its stored `basketball` was right, and it came
+    # from the Kalshi ticker rail, not a stray writer. It now lives in
+    # C1_NEEDS_PROVIDER_CONTEXT below (#2169, Root 2026-10-18).
+
+    # Real governor's races that must stay politics -- the reason the fix for the
+    # row above is provider context, never a city or team-name rule.
+    ("Colorado Governor winner?", "politics"),
+    ("California Governor winner?", "politics"),
+    ("Who will be the next governor of New York?", "politics"),
+    ("Los Angeles Mayoral Election Winner", "politics"),
 
     # Real golf that must stay golf, despite sharing tokens with the mis-tags.
     ("Masters Tournament Winner", "golf"),                                           # 4
@@ -126,7 +132,9 @@ C1_CONTROLS = [
 # ---------------------------------------------------------------------------
 # KNOWN UNREACHABLE — a census specimen that title-only rules cannot fix.
 #
-# 38277227 "Asia Masters 2026 Winner" is snooker. Its title carries no snooker
+# 38277227 "Asia Masters 2026 Winner" was recorded as snooker (2026-08-24; its
+# served roster -- Dplus, KT, NS Challengers, T1 Esports Academy -- does not
+# support that either, an identity lead for #2163). Its title carries no snooker
 # token, so the only signal available is "Masters", and it is character-for-
 # character the same signal that makes "Masters Tournament Winner" correctly
 # golf. No scoring rule can separate them; a rule that demoted a lone ambiguous
@@ -137,8 +145,62 @@ C1_CONTROLS = [
 # level discriminators) or the LLM fallback, not to F3.
 # ---------------------------------------------------------------------------
 C1_UNREACHABLE_BY_RULES = [
-    ("Asia Masters 2026 Winner", "golf"),  # 38277227, snooker
+    ("Asia Masters 2026 Winner", "golf"),  # 38277227, recorded as snooker
 ]
+
+
+# ---------------------------------------------------------------------------
+# NEEDS PROVIDER CONTEXT -- a title that is ambiguous ALONE, whose provider
+# already says which league it belongs to.
+#
+# 59165075 "Los Angeles L next governor before Jan 1, 2027?" is Kalshi's
+# KXNBANEXTGOVERNOR series: the next owner of the Lakers. With no context, the
+# title's one signal is a bare "governor", which answers politics -- and it must:
+# "Who will be the next governor of New York?" says nothing more. No title rule
+# can separate them without a city or team-name heuristic, which would misfile
+# the next real race in that city.
+#
+# The provider's own structure decides: the Kalshi ingest maps the ticker
+# (KXNBA... -> basketball_nba) BEFORE any name rule, and `categorize_by_rules`
+# with that sport key answers basketball. The title-only answer is pinned here as
+# a documented limit, NOT as the market's truth: the #2169 plan took it as truth,
+# moved this row to politics in production, and it had to be reversed. A caller
+# that has a provider id passes it.
+#
+# (title, provider event ticker, sport key it maps to, title-only answer, truth)
+# ---------------------------------------------------------------------------
+C1_NEEDS_PROVIDER_CONTEXT = [
+    ("Los Angeles L next governor before Jan 1, 2027?",
+     "KXNBANEXTGOVERNOR-27JAN01LAL", "basketball_nba", "politics", "basketball"),  # 59165075
+]
+
+
+@pytest.mark.parametrize(
+    "name,ticker,sport_key,title_only,truth", C1_NEEDS_PROVIDER_CONTEXT
+)
+def test_c1_title_only_answer_is_a_documented_limit_not_the_truth(
+    name, ticker, sport_key, title_only, truth
+):
+    """Pins the title-only answer so the limit stays visible. If it ever moves,
+    good -- update the corpus; but it must never move to a city rule."""
+    assert title_only != truth
+    assert categorize_by_rules(name) == title_only
+
+
+@pytest.mark.parametrize(
+    "name,ticker,sport_key,title_only,truth", C1_NEEDS_PROVIDER_CONTEXT
+)
+def test_c1_provider_context_reaches_the_truth(
+    name, ticker, sport_key, title_only, truth
+):
+    """The provider's league beats the bare word, on the rules and on the Kalshi
+    ingest path that actually writes the row."""
+    from app.tasks.kalshi import _categorize_kalshi_market
+    from app.utils.sport_keys import get_sport_key_from_ticker
+
+    assert get_sport_key_from_ticker(ticker) == sport_key
+    assert categorize_by_rules(name, sport_key) == truth
+    assert _categorize_kalshi_market(name, None, event_ticker=ticker) == truth
 
 
 @pytest.mark.parametrize("name,still_returns", C1_UNREACHABLE_BY_RULES)
