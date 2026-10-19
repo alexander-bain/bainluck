@@ -157,6 +157,22 @@ class WatchUIShardTests(unittest.TestCase):
             self.assertEqual(
                 [call[0] for call in calls], ["build-for-testing", "build"]
             )
+            build_for_testing, companion = calls
+            self.assertEqual(build_for_testing.count("-destination"), 1)
+            self.assertEqual(
+                build_for_testing[build_for_testing.index("-destination") + 1],
+                "generic/platform=watchOS Simulator",
+            )
+            self.assertEqual(companion.count("-destination"), 1)
+            self.assertEqual(
+                companion[companion.index("-destination") + 1],
+                "generic/platform=iOS Simulator",
+            )
+            for call in calls:
+                self.assertFalse(
+                    [argument for argument in call if "id=" in argument],
+                    "No producer build may ask Xcode for a concrete simulator",
+                )
             derived = [call[call.index("-derivedDataPath") + 1] for call in calls]
             for call in calls:
                 self.assertEqual(call.count("ARCHS=arm64"), 1)
@@ -165,6 +181,152 @@ class WatchUIShardTests(unittest.TestCase):
         self.assertNotEqual(
             roots[0], roots[1], "New runs must never reuse old products"
         )
+
+    def run_architecture_phase(self, listing_devices=True, simctl_phone=True):
+        harness = (ROOT / "tools/watch-ui-products.sh").read_text()
+        phase = (
+            "PHASE='resolve the architecture"
+            + harness.split("PHASE='resolve the architecture", 1)[1].split(
+                "XCODE_ARGS=(", 1
+            )[0]
+        )
+        phase = "\n".join(
+            line for line in phase.splitlines() if "watch_ui_stage.py" not in line
+        )
+        out = self.root / "products"
+        out.mkdir()
+        fixtures = self.root / "fixtures"
+        fixtures.mkdir()
+        info = {"runtimes": [], "devices": {}}
+        for platform, family, udid in [
+            ("watchOS", "Apple Watch", "owned-watch"),
+            ("iOS", "iPhone", "owned-phone"),
+        ]:
+            info["runtimes"].append(
+                {
+                    "identifier": "runtime-" + platform,
+                    "platform": platform,
+                    "isAvailable": True,
+                    "version": "27.0",
+                    "supportedArchitectures": ["arm64"],
+                    "supportedDeviceTypes": [
+                        {"identifier": "type-" + platform, "productFamily": family}
+                    ],
+                }
+            )
+            info["devices"]["runtime-" + platform] = [
+                {
+                    "udid": udid,
+                    "deviceTypeIdentifier": "type-" + platform,
+                    "isAvailable": True,
+                    "state": "Booted",
+                }
+            ]
+        if not simctl_phone:
+            info["devices"]["runtime-iOS"] = []
+        (fixtures / "simulators.json").write_text(json.dumps(info))
+        (fixtures / "pairs.json").write_text(
+            json.dumps(
+                {
+                    "pairs": {
+                        "pair": {
+                            "watch": {"udid": "owned-watch"},
+                            "phone": {"udid": "owned-phone"},
+                            "state": "(active, connected)",
+                        }
+                    }
+                }
+            )
+        )
+        # The attempt-1 / 39089526172 shape: only the generic placeholder survives.
+        listing = "Available destinations for the scheme:\n"
+        listing += "\t{ platform:watchOS Simulator, id:dvtdevice-generic, name:Any watchOS Simulator Device }\n"
+        listing += "\t{ platform:iOS Simulator, id:dvtdevice-generic, name:Any iOS Simulator Device }\n"
+        if listing_devices:
+            listing += "\t{ platform:watchOS Simulator, arch:arm64, id:owned-watch, OS:27.0, name:Owned }\n"
+            listing += "\t{ platform:iOS Simulator, arch:arm64, id:owned-phone, OS:27.0, name:Owned }\n"
+        (fixtures / "listing.log").write_text(listing)
+        record = self.root / "phase-commands.log"
+        shell = (
+            "set -euo pipefail\n"
+            'xcodebuild() { printf "xcodebuild %s\\n" "$*" >> "$RECORD"; '
+            'cat "$FIXTURES/listing.log"; }\n'
+            'xcrun() { printf "xcrun %s\\n" "$*" >> "$RECORD"; case "$*" in\n'
+            '  "simctl list --json") cat "$FIXTURES/simulators.json" ;;\n'
+            '  "simctl list pairs --json") cat "$FIXTURES/pairs.json" ;;\n'
+            '  "--sdk iphonesimulator --show-sdk-version") echo 27.0 ;;\n'
+            "  *) return 97 ;;\n"
+            "esac; }\n"
+            'python3() { printf "python3 %s\\n" "$*" >> "$RECORD"; '
+            + shlex.quote(sys.executable)
+            + ' "$@"; }\n'
+            + phase
+            + '\nprintf "%s\\n" "$SIM_ARCH" > "$OUT/sim-arch.txt"\n'
+        )
+        environment = dict(
+            os.environ,
+            ROOT=str(ROOT),
+            OUT=str(out),
+            PACKAGES=str(self.root / "packages"),
+            FIXTURES=str(fixtures),
+            RECORD=str(record),
+            TEST_UDID="owned-watch",
+            PHONE_UDID="owned-phone",
+            SDK_VERSION="27.0",
+        )
+        process = subprocess.run(
+            ["bash", "-c", shell], env=environment, capture_output=True, text=True
+        )
+        return process, out, record.read_text().splitlines()
+
+    def test_architecture_comes_from_coresimulator_not_xcode_listings(self):
+        for listing_devices in (True, False):
+            with self.subTest(listing_devices=listing_devices):
+                self.root = Path(tempfile.mkdtemp(dir=self.temp.name))
+                process, out, commands = self.run_architecture_phase(listing_devices)
+                self.assertEqual(process.returncode, 0, process.stderr)
+                self.assertEqual((out / "sim-arch.txt").read_text(), "arm64\n")
+                gate = [c for c in commands if "watch_simulator_architecture.py" in c]
+                self.assertEqual(len(gate), 1)
+                arguments = shlex.split(gate[0])
+                self.assertIn("--prepared-pair", arguments)
+                for flag, value in (
+                    ("--watch-id", "owned-watch"),
+                    ("--phone-id", "owned-phone"),
+                    ("--watch-sdk", "27.0"),
+                    ("--phone-sdk", "27.0"),
+                ):
+                    self.assertEqual(arguments[arguments.index(flag) + 1], value)
+                self.assertNotIn("--watch-destinations", arguments)
+                self.assertNotIn("--phone-destinations", arguments)
+                listings = [c for c in commands if c.startswith("xcodebuild ")]
+                self.assertEqual(len(listings), 2)
+                for log in ("watch-destinations.log", "phone-destinations.log"):
+                    self.assertIn("Any ", (out / log).read_text())
+                self.assertEqual(
+                    json.loads((out / "simulator-architecture.json").read_text())[
+                        "verdict"
+                    ],
+                    "PASS",
+                )
+
+    def test_a_pair_coresimulator_does_not_hold_stops_the_producer(self):
+        process, out, commands = self.run_architecture_phase(simctl_phone=False)
+        self.assertNotEqual(process.returncode, 0)
+        self.assertFalse((out / "sim-arch.txt").exists())
+        receipt = json.loads((out / "simulator-architecture.json").read_text())
+        self.assertEqual(receipt["verdict"], "UNPAID")
+        self.assertIn("missing", receipt["reason"])
+
+    def test_generic_products_still_execute_on_the_exact_new_pair(self):
+        journey = (ROOT / "tools/watch-ui-journey.sh").read_text()
+        execute = journey.split("XCODE_ARGS=(-xctestrun", 1)[1].split("\n", 1)[0]
+        self.assertEqual(
+            execute,
+            ' "$XCTESTRUN" -destination "platform=watchOS Simulator,id=$TEST_UDID"'
+            " -parallel-testing-enabled NO)",
+        )
+        self.assertNotIn("generic/", journey)
 
     def test_mixed_immutable_product_packages_cannot_form_full_gate(self):
         path = self.root / "readings/products-verification.json"
