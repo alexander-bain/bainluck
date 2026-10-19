@@ -120,7 +120,7 @@ final class CompactEventPriceStatusTests: XCTestCase {
     /// The disclosure button's body, from its declaration to the next member.
     private func probabilityDetailsBody() throws -> String {
         let page = try code("Views", "EventDetailView.swift")
-        guard let start = page.range(of: "privatefuncprobabilityDetails(confidenceTier:String?)->someView{") else {
+        guard let start = page.range(of: "privatefuncprobabilityDetails(confidenceTier:String?,statusInDetails:Bool=false)->someView{") else {
             XCTFail("probabilityDetails moved; re-aim this scan"); return ""
         }
         let rest = page[start.upperBound...]
@@ -332,7 +332,10 @@ extension CompactEventPriceStatusTests {
             // instead: the pair's subject. The info control itself is
             // rendered and measured in `HeadlineDisclosure9483Tests`.
             XCTAssertTrue(recognized.contains("Current win chance"), recognized)
-            XCTAssertTrue(recognized.contains("Waiting for update"), recognized)
+            // #11285 — this NFL page takes the adopted headline, whose info
+            // control says every state (waiting included) in its details and
+            // spoken label, never as words beside the probability.
+            XCTAssertFalse(recognized.contains("Waiting for update"), recognized)
             // #10830 — read as the hero's adjacent pair. With Start Live Activity
             // moved under the chart, page-wide OCR reads the pixel-identical hero
             // as "55% - 45" (the crest circle beside it swallows the trailing %).
