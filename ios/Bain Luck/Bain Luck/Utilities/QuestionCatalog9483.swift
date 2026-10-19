@@ -22,6 +22,11 @@ import Foundation
 ///   - after the final, nothing: the graded cards above own results;
 ///   - a closed period row is never priced (#10850).
 ///
+/// ABSENCE (#10877). An outcome that prints no number keeps WHY, from the
+/// input that knew it: the final, a period the server says closed
+/// (`window_closed: true`), a stale live observation, or no known reason. A
+/// missing number alone never reads as a closed period or a result.
+///
 /// One divergence from web: web tests whether a row HAS the `probability`
 /// key; Swift cannot tell an absent key from a null one, so spread/total/period
 /// rows use `probability` when it is a number and otherwise the over-side rule.
@@ -42,12 +47,36 @@ nonisolated enum QuestionCatalog9483 {
         case other = "Other"
     }
 
+    /// #10877 — why an outcome prints no number.
+    nonisolated enum Absence: Equatable, Sendable {
+        /// After the final: the graded cards above own results.
+        case settled
+        /// Served in `closed_period_markets` with `window_closed: true`. Not a
+        /// grade and not a winner — only that the period's window is over.
+        case periodFinished
+        /// During play, last observed longer ago than `SourceAge.liveStaleAfter`.
+        case stale
+        /// No usable number and no known reason.
+        case unavailable
+    }
+
     struct Outcome: Equatable, Sendable {
         let label: String
         let threshold: Double?
         /// The number to print, or nil when this row may not print one.
         let probability: Double?
         let observedAt: String?
+        /// Why `probability` is nil; nil exactly when it prints.
+        let absence: Absence?
+
+        nonisolated init(label: String, threshold: Double?, probability: Double?, observedAt: String?,
+                         absence: Absence = .unavailable) {
+            self.label = label
+            self.threshold = threshold
+            self.probability = probability
+            self.observedAt = observedAt
+            self.absence = probability == nil ? absence : nil
+        }
     }
 
     struct Group: Identifiable, Equatable, Sendable {
@@ -76,6 +105,8 @@ nonisolated enum QuestionCatalog9483 {
         var observedAt: String? = nil
         var inverted: Bool = false
         var marketId: Int? = nil
+        /// A `closed_period_markets` row that says `window_closed: true`.
+        var windowClosed: Bool = false
     }
 
     enum Side: Equatable { case over, under, unreadable }
@@ -110,12 +141,30 @@ nonisolated enum QuestionCatalog9483 {
     }
 
     static func quote(_ row: Row, status: String?, now: Date, closed: Bool = false) -> Double? {
-        if closed || SettledQuote.isSettled(status) { return nil }
+        reading(row, status: status, now: now, closed: closed).probability
+    }
+
+    /// The number to print, or why there is none (#10877). `closed` withholds
+    /// the number; only a row that also says `windowClosed` is a finished period.
+    static func reading(
+        _ row: Row, status: String?, now: Date, closed: Bool = false
+    ) -> (probability: Double?, absence: Absence?) {
+        if SettledQuote.isSettled(status) { return (nil, .settled) }
+        if closed { return (nil, row.windowClosed ? .periodFinished : .unavailable) }
         let live = !SettledQuote.isPregame(status)
-        if live && SourceAge.isStale(row.observedAt, now: now, after: SourceAge.liveStaleAfter) { return nil }
-        if row.pricesOutcome { return finite(row.probability) }
-        if let direct = finite(row.probability) { return direct }
-        return lineSide(row) == .over ? finite(row.overProbability) : nil
+        if live && SourceAge.isStale(row.observedAt, now: now, after: SourceAge.liveStaleAfter) {
+            return (nil, .stale)
+        }
+        let price: Double?
+        if row.pricesOutcome {
+            price = finite(row.probability)
+        } else if let direct = finite(row.probability) {
+            price = direct
+        } else {
+            price = lineSide(row) == .over ? finite(row.overProbability) : nil
+        }
+        if let price { return (price, nil) }
+        return (nil, .unavailable)
     }
 
     static func row(_ o: GameMarketOutcome) -> Row {
@@ -140,7 +189,8 @@ nonisolated enum QuestionCatalog9483 {
         var order: [String] = []
         var groups: [String: Group] = [:]
 
-        func add(_ family: Family, _ row: Row, _ probability: Double?, _ label: String) {
+        func add(_ family: Family, _ row: Row,
+                 _ reading: (probability: Double?, absence: Absence?), _ label: String) {
             let question = row.marketName.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !question.isEmpty else { return }
             // `String(describing:)` keeps nil distinct from every served value.
@@ -155,7 +205,8 @@ nonisolated enum QuestionCatalog9483 {
             }
             groups[key]?.outcomes.append(Outcome(
                 label: label, threshold: finite(row.threshold),
-                probability: probability, observedAt: row.observedAt))
+                probability: reading.probability, observedAt: row.observedAt,
+                absence: reading.absence ?? .unavailable))
         }
 
         func addRows(_ family: Family, _ rows: [Row], closed: Bool = false) {
@@ -170,7 +221,7 @@ nonisolated enum QuestionCatalog9483 {
             for r in rows {
                 if !r.pricesOutcome, lineSide(r) == .under, overLines.contains(lineKey(r)) { continue }
                 let label = r.outcomeName.trimmingCharacters(in: .whitespacesAndNewlines)
-                add(family, r, quote(r, status: status, now: now, closed: closed),
+                add(family, r, reading(r, status: status, now: now, closed: closed),
                     label.isEmpty ? r.marketName : label)
             }
         }
@@ -179,14 +230,18 @@ nonisolated enum QuestionCatalog9483 {
         addRows(.gameLines, (data.spreads ?? []).map(row))
         addRows(.teamScoring, (data.teamTotals ?? []).map(row))
         addRows(.periods, (data.periodMarkets ?? []).map(row))
-        addRows(.periods, (data.closedPeriodMarkets ?? []).map { row($0.row) }, closed: true)
+        addRows(.periods, (data.closedPeriodMarkets ?? []).map { closedRow in
+            var r = row(closedRow.row)
+            r.windowClosed = closedRow.windowClosed == true
+            return r
+        }, closed: true)
         addRows(.playerProps, (data.playerProps ?? []).map(row))
         for matchup in data.matchups ?? [] {
             for outcome in matchup.outcomes {
                 let r = Row(marketName: matchup.marketName, outcomeName: outcome.name,
                             probability: outcome.probability, pricesOutcome: true,
                             source: matchup.source, observedAt: outcome.observedAt)
-                add(.matchups, r, quote(r, status: status, now: now), outcome.name)
+                add(.matchups, r, reading(r, status: status, now: now), outcome.name)
             }
         }
         addRows(.other, (data.other ?? []).map(row))
