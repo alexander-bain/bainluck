@@ -3166,6 +3166,7 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
         ``before_write(books)`` sees the exact snapshot before its transaction.
         """
         from app.tasks.live_blend_refresh import _mono
+        from app.utils.kalshi_empty_book import book_refutes_price
 
         # #10090: committed explicit withdrawals whose source removal is still
         # owed, durable across a restart (`PMWithdrawalDebt`). Reached through
@@ -3212,6 +3213,12 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                 and debt.event_id not in exclude_events
                 and debt.event_id not in held_events
             ]
+            refuted_buffer = {
+                oid: (price_buffer[oid], input_marks.get(oid))
+                for oid, (bid, ask) in books.items()
+                if oid in price_buffer
+                and book_refutes_price(bid, ask, price_buffer[oid])
+            }
         if not books and not debts:
             return []
         if before_write is not None:
@@ -3329,6 +3336,13 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
         async with buffer_lock:
             for oid, book in books.items():
                 if withdraw_buffer.get(oid) == book:
+                    # Retire only the refuted input captured with this book.
+                    # Newer inputs, even at the same price, still own their write.
+                    refuted = refuted_buffer.get(oid)
+                    if (refuted is not None
+                            and price_buffer.get(oid) == refuted[0]
+                            and input_marks.get(oid) is refuted[1]):
+                        price_buffer.pop(oid, None)
                     del withdraw_buffer[oid]
         stats["held_prices_withdrawn"] += len(rows)
         # R-A: a leg whose removal settled on this pass is returned even when
