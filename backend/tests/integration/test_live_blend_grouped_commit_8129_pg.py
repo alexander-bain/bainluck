@@ -41,6 +41,7 @@ from app.models.models import (
 )
 from app.services.database import Base
 from app.tasks.live_blend_refresh import LiveBlendRefresher, TailReceipts
+from tests.test_live_blend_refresh import is_normal_recovery_owner
 
 DB_URL = os.environ.get("SEARCH_TEST_DATABASE_URL")
 pytestmark = [
@@ -152,6 +153,12 @@ def refresher(
 
     @contextlib.asynccontextmanager
     async def factory():
+        if is_normal_recovery_owner(r):
+            # attempt151: the publication-recovery owner, not a stamp.
+            async with rig.maker() as session:
+                yield session
+                await session.commit()
+            return
         async with rig.maker() as session:
             attempt = len(calls) + 1
             calls.append(attempt)
@@ -211,6 +218,8 @@ def refresher(
                 assert event.win_probability_sources_rev == frame["rev"][str(eid)]
                 assert eid in r._last_written_value
                 frames.append(frame)
+        # Acknowledged as Redis does (attempt151): delivered, nothing owed.
+        return {(f["event_id"], f["rev"][str(f["event_id"])]) for f in batch}
 
     r._publish = publish
     return r, frames, calls, resolved, publish

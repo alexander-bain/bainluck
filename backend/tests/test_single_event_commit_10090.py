@@ -12,7 +12,7 @@ from app.utils.repair_lock_budget import (
     SET_LOCK_AND_STATEMENT_TIMEOUT_SQL, SET_LOCK_TIMEOUT_SQL, SET_STATEMENT_TIMEOUT_SQL,
 )
 from tests.test_live_blend_refresh import (
-    is_normal_publication_intent,
+    NormalRecoverySession, is_normal_publication_intent, is_normal_recovery_owner,
     _LockTimeout, _RecordingSession, _event_and_market, _one_event_refresher,
 )
 
@@ -32,6 +32,7 @@ def rig(monkeypatch, *, count=3, block=False, failure=None, statuses=None, block
     r._inversion = dict.fromkeys(range(1, count + 1), (float("inf"), False))
     r._last_snapshot_at = dict.fromkeys(range(1, count + 1), 1000)
     sessions, committed, published, commands = [], [], [], []
+    recovery_sessions = []
     second_stamp, release = asyncio.Event(), asyncio.Event()
 
     class Session(_RecordingSession):
@@ -64,6 +65,12 @@ def rig(monkeypatch, *, count=3, block=False, failure=None, statuses=None, block
 
     @asynccontextmanager
     async def factory():
+        if is_normal_recovery_owner(r):
+            # attempt151: the publication-recovery owner, not a stamp.
+            session = NormalRecoverySession()
+            recovery_sessions.append(session)
+            yield session
+            return
         session = Session()
         sessions.append(session)
         yield session

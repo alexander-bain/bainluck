@@ -533,6 +533,45 @@ def is_normal_publication_intent(statement) -> bool:
     return str(statement.compile().params.get("source", "")).endswith("_price_publish")
 
 
+class NormalRecoverySession:
+    """#10090 attempt151: the publication-recovery owner's own session.
+
+    Every publication starts one recovery opportunity, awaited by nothing: it
+    settles acknowledged intents, then runs a bounded discovery over
+    `owed_chart_points` under `<source>_price_publish`. Rigs that hand out
+    sessions by position or count statements per session give that owner
+    this one instead (an empty intent table) and count it as its own kind,
+    never as a stamp's or a chart point's.
+    """
+
+    def __init__(self):
+        self.statements = []
+
+    async def execute(self, statement, *args, **kwargs):
+        self.statements.append(statement)
+        return _Result()
+
+
+async def _join_run_history(refresher):
+    """Join the run's own chart attempt, then close without a final one.
+
+    `drain_history` forces one final attempt whenever the run's attempt has
+    already finished. attempt151's publication-recovery owner is joined first
+    inside it, which gives a failing in-run attempt time to finish, so a
+    drain would add the shutdown retry to the in-run cost these cases pin.
+    """
+    await refresher._history_task
+    await refresher._close_normal_recovery()
+
+
+def is_normal_recovery_owner(refresher) -> bool:
+    """True inside `refresher`'s publication-recovery task."""
+    import asyncio
+
+    task = getattr(refresher, "_normal_task", None)
+    return task is not None and asyncio.current_task() is task
+
+
 class _RecordingSession:
     """A session whose UPDATE ... RETURNING hands back a chosen dict.
 
@@ -935,6 +974,9 @@ class TestTheHeadlineDoesNotWaitForItsChartPoint:
 
         @asynccontextmanager
         async def factory():
+            if is_normal_recovery_owner(r):
+                yield NormalRecoverySession()
+                return
             if chart_open_fails and any(entry[0] == "frame" for entry in log):
                 raise RuntimeError("no connection for the chart point")
             log.append(("open",))
@@ -992,7 +1034,7 @@ class TestTheHeadlineDoesNotWaitForItsChartPoint:
     ):
         r, log = self._rig(monkeypatch, 1, chart_open_fails=True)
         await r.refresh([1])
-        await r.drain_history()
+        await _join_run_history(r)
 
         assert log == [("open",), ("commit",), ("frame", 1)]
         assert r.stats["stamped"] == 1 and r._last_written_value == {1: 0.9}
@@ -1036,7 +1078,7 @@ class TestTheChartTransactionCarriesItsOwnLockBudget:
 
         @asynccontextmanager
         async def factory():
-            yield next(sessions)
+            yield NormalRecoverySession() if is_normal_recovery_owner(r) else next(sessions)
 
         async def write_point(session, **kw):
             seen.append((
@@ -1105,7 +1147,7 @@ class TestTheChartTransactionCarriesItsOwnLockBudget:
 
         @asynccontextmanager
         async def factory():
-            yield next(sessions)
+            yield NormalRecoverySession() if is_normal_recovery_owner(r) else next(sessions)
 
         async def write_point(session, **kw):
             points.append(kw["event_id"])
@@ -1159,6 +1201,9 @@ class TestSingleEventStampTransaction:
 
         @asynccontextmanager
         async def factory():
+            if is_normal_recovery_owner(r):
+                yield NormalRecoverySession()
+                return
             yield session
             committed.append(True)
 
@@ -1232,6 +1277,9 @@ class TestSingleEventStampTransaction:
 
         @asynccontextmanager
         async def factory():
+            if is_normal_recovery_owner(r):
+                yield NormalRecoverySession()
+                return
             yield session
             committed.append(True)
 
@@ -1251,7 +1299,7 @@ class TestSingleEventStampTransaction:
 
         monkeypatch.setattr(r, "_publish", publish)
         await r.refresh(list(range(1, count + 1)))
-        await r.drain_history()
+        await _join_run_history(r)
         assert r.stats["stamped"] == count
         assert session.rollbacks == 0
         assert session.savepoints == (
@@ -1292,7 +1340,7 @@ def _one_event_refresher(monkeypatch, session, **kwargs):
 
     @asynccontextmanager
     async def _fake_session():
-        yield session
+        yield NormalRecoverySession() if is_normal_recovery_owner(r) else session
 
     monkeypatch.setattr("app.tasks.base.get_task_session", _fake_session)
     monkeypatch.setattr(

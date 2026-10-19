@@ -139,6 +139,13 @@ async def _clear(conn):
     await conn.execute(
         text("DELETE FROM owed_chart_points WHERE event_id = ANY(:ids)"), {"ids": EVENT_IDS}
     )
+    # attempt151: another file's leftover publication intents in this shared
+    # database are a dead owner's, and recovery discovery is per source, not per
+    # event: the arm would republish their controls into the frames pinned here.
+    await conn.execute(text(
+        "DELETE FROM owed_chart_points "
+        "WHERE source IN ('polymarket_price_publish', 'kalshi_price_publish')"
+    ))
     await conn.execute(text("DELETE FROM futures_markets WHERE id = :i"), {"i": MARKET_ID})
     await conn.execute(
         text("DELETE FROM win_prob_snapshots WHERE event_id = ANY(:ids)"), {"ids": EVENT_IDS}
@@ -427,6 +434,8 @@ def _refresher(monkeypatch, engine):
 
     async def _publish(batch):
         frames.extend(batch)
+        # Acknowledged as Redis does (attempt151): delivered, nothing owed.
+        return {(f["event_id"], f["rev"][str(f["event_id"])]) for f in batch}
 
     arm._oriented = _oriented
     arm._publish = _publish

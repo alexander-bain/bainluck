@@ -3722,6 +3722,11 @@ class LiveBlendRefresher:
         from app.tasks.base import get_task_session
         if not acknowledged:
             return
+        if self._session_slots.locked():
+            # Never queue behind a stamp for a slot: the next opportunity
+            # settles these. Checked with no await before the acquisition.
+            self._remember_normal_acks(acknowledged)
+            return
         factory = self._session_factory or get_task_session
         # Settling an older ACK cannot erase a newer committed intent.
         async with asyncio.timeout(.25):
@@ -3736,6 +3741,11 @@ class LiveBlendRefresher:
         self._normal_has_debt = True
         self._normal_epoch += 1
 
+    def _remember_normal_acks(self, acknowledged):
+        for eid, rev in acknowledged:
+            if rev > self._normal_acked.get(eid, -1):
+                self._normal_acked[eid] = rev
+
     async def _publish_prices(self, frames):
         """Publish committed price frames; remember what Redis acknowledged.
 
@@ -3745,6 +3755,11 @@ class LiveBlendRefresher:
         database (and one of the three stamp slots) on every publication.
         The next recovery opportunity settles the remembered revisions; a
         lost process leaves only intents whose recovery is price-free.
+
+        Every publication is also a recovery opportunity, started here and
+        awaited by nothing. A busy timed flush always has a price batch, so
+        it never reaches `refresh_pending`; without this a failed game that
+        went quiet waited for a fully empty flush.
         """
         try:
             acknowledged = await self._publish(frames) or set()
@@ -3753,6 +3768,7 @@ class LiveBlendRefresher:
             if not isinstance(exc, Exception):
                 raise
             logger.exception("live_blend_refresh[%s]: normal publication retained", self.source)
+            self._start_normal_recovery()
             return set()
         # Exactly the revisions `_publish` can acknowledge: an int at the
         # frame's own event key. A revision-less frame owes no intent.
@@ -3763,9 +3779,8 @@ class LiveBlendRefresher:
         }
         if expected - acknowledged:
             self._note_normal_debt()
-        for eid, rev in acknowledged:
-            if rev > self._normal_acked.get(eid, -1):
-                self._normal_acked[eid] = rev
+        self._remember_normal_acks(acknowledged)
+        self._start_normal_recovery()
         return acknowledged
 
     def _start_normal_recovery(self):
@@ -3788,7 +3803,8 @@ class LiveBlendRefresher:
         try:
             # Recovery never queues for a stamp's slot: with all three taken,
             # this opportunity passes and the next one (after the cooldown)
-            # tries again.
+            # tries again. Each of its three acquisitions checks this with no
+            # await between the check and the acquisition.
             if self._session_slots.locked():
                 return
             acked, self._normal_acked = self._normal_acked, {}
@@ -3805,6 +3821,8 @@ class LiveBlendRefresher:
                         "live_blend_refresh[%s]: normal ACK settlement retained",
                         self.source,
                     )
+            if self._session_slots.locked():
+                return
             epoch = self._normal_epoch
             # Freeze a finite sweep: new arrivals cannot indefinitely postpone
             # retrying an older failed event. Both reads use (source, id); bound

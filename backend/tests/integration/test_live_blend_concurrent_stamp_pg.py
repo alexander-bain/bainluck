@@ -79,6 +79,7 @@ import pytest
 from sqlalchemy import select, text, update
 
 from app.tasks.live_blend_refresh import atomic_stamp_expression
+from tests.test_live_blend_refresh import is_normal_recovery_owner
 from app.utils.aggregation import stamp_source_reading
 
 DB_URL = os.environ.get("SEARCH_TEST_DATABASE_URL")
@@ -615,6 +616,12 @@ async def _concurrent_refresh_frames(engine, monkeypatch, *, prelock_control):
 
     @asynccontextmanager
     async def session_factory():
+        if any(is_normal_recovery_owner(arm) for arm in arms.values()):
+            # attempt151: an arm's publication-recovery owner, not a stamp.
+            async with maker() as session:
+                yield session
+                await session.commit()
+            return
         source = asyncio.current_task().get_name()
         async with maker() as session:
             pids[source] = (
@@ -663,6 +670,8 @@ async def _concurrent_refresh_frames(engine, monkeypatch, *, prelock_control):
             frames.extend(batch)
             if _source == "kalshi":
                 sibling_published.set()
+            # Acknowledged as Redis does (attempt151): delivered, nothing owed.
+            return {(f["event_id"], f["rev"][str(f["event_id"])]) for f in batch}
 
         arm._oriented, arm._publish = oriented, publish
         arm._last_snapshot_at = {event_id: 100}  # chart clock not due at 100

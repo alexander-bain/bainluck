@@ -17,7 +17,10 @@ three shared-resource / terminal / primary-budget controls, assertions
 unchanged. The private Redis socket is the shared `real_redis` endpoint (a
 private server when a binary is present, otherwise the job's loopback Redis on
 a dedicated, flushed db), and the terminal interleave now ASSERTS the intent
-it retains after the ambiguous acknowledgement.
+it retains after the ambiguous acknowledgement. Two TIMED controls (one per
+consumer, added on Authority's review of be6d5958e1) drive back-to-back price
+flushes that never reach `refresh_pending`, so a refresher whose only
+recovery trigger sat there cannot pass them.
 
 Fresh-owner cases model lost process state without the final drain: not an
 OS kill, not a browser. Synthetic rows on one machine: order and coherence,
@@ -32,7 +35,7 @@ import contextlib
 import functools
 import json
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
 import pytest
@@ -47,10 +50,12 @@ from tests.integration.test_live_blend_grouped_commit_8129_pg import (  # noqa: 
     rig,
 )
 from tests.integration.test_pm_stamp_release_wake_10090_pg import (  # noqa: F401
+    PERIOD,
     _Pool,
     consumer,
     start_cadence,
     stop_cadence,
+    wait_for,
 )
 from tests.integration.test_pm_withdrawal_debt_10090_pg import (
     WIDE,
@@ -902,3 +907,237 @@ async def test_primary_350ms_ack_is_not_cancelled_by_recovery_budget(
         assert not await owed(rig) and len(calls) == 1
     finally:
         await close(t.r)
+
+
+# ── the timed path (Authority's 151 review of be6d5958e1) ────────────────────
+#
+# Production flushes are TIMED (`flush_started` set) and, at ~4,600 Kalshi
+# updates a minute, back to back with a price batch every time. Such a flush
+# never reaches `refresh_pending` (Kalshi: only `if not batch`; PM: only the
+# quiet branches), so every recovery control above, which flushes untimed and
+# reaches it inline, could not see a refresher whose only trigger was there.
+# Game A's one publication is refused, A goes quiet, game B has new input on
+# every flush. A must get its price-free control and its intent must settle
+# within a bounded number of periods, and B's receive-to-publish time must
+# match a phase on the same rig with recovery stubbed out.
+
+
+async def owed_for(rig, source, event_id):
+    async with rig.engine.connect() as db:
+        return [dict(x._mapping) for x in (await db.execute(text(
+            "SELECT id,reading FROM owed_chart_points "
+            "WHERE source=:source AND event_id=:eid ORDER BY id"
+        ), {"source": source, "eid": event_id})).all()]
+
+
+def count_pending(r):
+    """Record every `refresh_pending` call; the premise is that none occur."""
+    calls = []
+    shipped = r.refresh_pending
+
+    async def recorded(**kwargs):
+        calls.append(time.monotonic())
+        return await shipped(**kwargs)
+
+    r.refresh_pending = recorded
+    return calls
+
+
+def refuse_first_price_of(r, event_id, publish):
+    """`publish` acknowledges what it sends. Once armed, A's next price frame
+    is dropped unsent and unacknowledged; every price-free control is
+    acknowledged (Redis accepted it) and recorded."""
+    armed, refused, controls, sent_at, sent = [], [], [], {}, []
+
+    async def gate(frames):
+        acked, forward = set(), []
+        for f in frames:
+            eid = f["event_id"]
+            if f.get("reconcile_only"):
+                controls.append((eid, f["rev"][str(eid)]))
+                acked |= acknowledge_all([f])
+            elif eid == event_id and armed and not refused:
+                refused.append(f["rev"][str(eid)])
+            else:
+                forward.append(f)
+        if forward:
+            acked |= await publish(forward) or set()
+            now = time.monotonic()
+            for f in forward:
+                sent_at.setdefault((f["event_id"], f.get("source_value")), now)
+                sent.append((f["event_id"], now))
+        return acked
+
+    r._publish = gate
+    return SimpleNamespace(
+        arm=lambda: armed.append(True), refused=refused, controls=controls,
+        sent_at=sent_at, sent=sent,
+    )
+
+
+def median(values):
+    ordered = sorted(values)
+    return ordered[len(ordered) // 2]
+
+
+async def test_busy_timed_pm_flushes_recover_a_quiet_failed_game(
+    rig, consumer, monkeypatch,
+):
+    t = await setup(rig, consumer, monkeypatch)
+    t.r.min_refresh_interval_s = 0
+    gate = refuse_first_price_of(t.r, 1, t.r._publish)
+    pending = count_pending(t.r)
+    values = iter(round(.40 + i / 1000, 3) for i in range(400))
+    recv = {}
+
+    async def busy_flush():
+        # TIMED, as production's cadence calls it, and not joined: a PM
+        # flush leaves its stamp owner running into the next one. B has new
+        # input on EVERY flush.
+        value = next(values)
+        recv[value] = t.accept(2, value).recv_mono
+        started = time.monotonic()
+        assert await t.tracked_flush(started) is True
+        await asyncio.sleep(PERIOD)
+        return started
+
+    def latencies(since):
+        return [
+            at - recv[value] for (eid, value), at in gate.sent_at.items()
+            if eid == 2 and value in recv and recv[value] >= since
+        ]
+
+    try:
+        # Phase 1, the comparison arm: recovery stubbed out, B alone.
+        t.r._start_normal_recovery = lambda: None
+        stubbed_from = time.monotonic()
+        for _ in range(8):
+            await busy_flush()
+        await t.boundary.join_stamps()
+        stubbed = latencies(stubbed_from)
+        del t.r._start_normal_recovery
+
+        # Phase 2: A's single publication is refused, then A goes quiet.
+        live_from = time.monotonic()
+        gate.arm()
+        t.accept(1, .78)
+        busy, recovered = [], None
+        for n in range(8):
+            busy.append(await busy_flush())
+            if recovered is None and any(e == 1 for e, _ in gate.controls) and not (
+                await owed_for(rig, NORMAL_SOURCE, 1)
+            ):
+                recovered = n
+        await t.boundary.join_stamps()
+        live = latencies(live_from)
+
+        assert gate.refused, "rig: A's publication was refused"
+        assert (1, gate.refused[0]) in gate.controls, "A's control names its revision"
+        assert recovered is not None, "A's intent never settled through 8 busy flushes"
+        assert not pending, "premise: a busy timed flush never reaches refresh_pending"
+        written_b = {fs for fs, vals in t.writes if 2 in vals}
+        assert set(busy) <= written_b, "premise: B's batch was never empty"
+        assert len(stubbed) >= 6 and len(live) >= 6, (stubbed, live)
+        assert max(live) < 1, (live, stubbed)
+        assert median(live) - median(stubbed) < .1, (live, stubbed)
+    finally:
+        await t.boundary.join_stamps()
+        await close(t.r)
+        await t.r.drain_history()
+
+
+async def _seed_second_kalshi_game(rig):
+    from app.models.models import Event, FuturesMarket, FuturesOutcome, Sport
+    from sqlalchemy import select
+
+    now = datetime.now(timezone.utc)
+    async with rig.maker() as session:
+        sport_id = await session.scalar(select(Sport.id).where(Sport.key == "baseball_mlb"))
+        session.add(Event(
+            id=2, sport_id=sport_id, home_team_name="New York Mets",
+            away_team_name="Atlanta Braves", commence_time=now - timedelta(minutes=30),
+            status="live", win_probability_sources={}, opening_home_probability=0.5,
+        ))
+        session.add(FuturesMarket(
+            id=2, source="kalshi", external_id="KXMLBGAME-26OCT17ATLNYM",
+            sport_id=sport_id, event_id=2, name="Atlanta vs New York M Winner?",
+            status="open", category="game",
+        ))
+        await session.flush()
+        for oid, name, ticker, prob in (
+            (3, "New York Mets", "KXMLBGAME-26OCT17ATLNYM-NYM", 0.55),
+            (4, "Atlanta Braves", "KXMLBGAME-26OCT17ATLNYM-ATL", 0.45),
+        ):
+            session.add(FuturesOutcome(
+                id=oid, market_id=2, external_id=ticker, name=name,
+                current_probability=prob, rank=1 if oid == 3 else 2,
+                last_updated=now - timedelta(minutes=1),
+            ))
+        await session.commit()
+
+
+async def test_busy_timed_kalshi_flushes_recover_a_quiet_failed_game(rig):
+    from tests.integration import test_kalshi_held_price_row_10090_pg as k
+
+    await k.seed(rig)
+    await _seed_second_kalshi_game(rig)
+    c = k.Consumer(rig, overlay=False)
+    c.ns["market_id_by_outcome"].update({3: 2, 4: 2})
+    c.ns["event_id_by_outcome"].update({3: 2, 4: 2})
+    c.ns["live_event_ids"].add(2)
+    r = c.refresher
+
+    async def acknowledge(frames):
+        c.frames.extend(frames)
+        return acknowledge_all(frames)
+
+    gate = refuse_first_price_of(r, 1, acknowledge)
+    pending = count_pending(r)
+    source = "kalshi_price_publish"
+    values = iter(round(.30 + i / 1000, 3) for i in range(400))
+
+    async def busy_flush(into):
+        # B (outcome 3, home of game 2) has new input on EVERY flush. The
+        # frame carries B's blend, not the raw quote: time the first B frame
+        # this flush published.
+        before = len(gate.sent)
+        c.batch[3] = (next(values), None, None)
+        received = time.monotonic()
+        assert await c.flush() is True
+        published = [at for eid, at in gate.sent[before:] if eid == 2]
+        if published:
+            into.append(published[0] - received)
+        await asyncio.sleep(PERIOD)
+
+    try:
+        await r.refresh([1, 2])
+        assert {e for e, _ in gate.sent_at} == {1, 2}, "rig: both games speak"
+        # Phase 1, the comparison arm: recovery stubbed out, B alone.
+        r._start_normal_recovery = lambda: None
+        stubbed, live = [], []
+        for _ in range(8):
+            await busy_flush(stubbed)
+        del r._start_normal_recovery
+
+        # Phase 2: A's single publication is refused, then A goes quiet.
+        gate.arm()
+        c.accept(1, .375)
+        recovered = None
+        for n in range(8):
+            await busy_flush(live)
+            if recovered is None and any(e == 1 for e, _ in gate.controls) and not (
+                await owed_for(rig, source, 1)
+            ):
+                recovered = n
+
+        assert gate.refused, "rig: A's publication was refused"
+        assert (1, gate.refused[0]) in gate.controls, "A's control names its revision"
+        assert recovered is not None, "A's intent never settled through 8 busy flushes"
+        assert not pending, "premise: a flush with a batch never reaches refresh_pending"
+        assert len(stubbed) >= 6 and len(live) >= 6, (stubbed, live)
+        assert max(live) < 1, (live, stubbed)
+        assert median(live) - median(stubbed) < .1, (live, stubbed)
+    finally:
+        await r._close_normal_recovery()
+        await r.drain_history()
+        c.close()
