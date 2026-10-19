@@ -27,6 +27,7 @@ import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
 import CorrectnessConsoleView from "@/components/admin/CorrectnessConsole";
+import { SENTINELS, SILENCE_MULTIPLIER } from "@/components/admin/SentinelsCard";
 import {
   ADMIN_READS,
   CORRECTNESS_ENDPOINTS,
@@ -40,6 +41,7 @@ import {
   evaluateSourceCoverage,
   evaluateWinnerCoverage,
   foldStates,
+  GRID_SENTINEL_STALE_AFTER_S,
   mceState,
   startCorrectnessReads,
   startUiClock,
@@ -47,6 +49,7 @@ import {
   UI_CLOCK_INTERVAL_MS,
   WINNERS_STALE_AFTER_S,
   type CorrectnessReads,
+  type CorrectnessTile,
   type ReadResult,
 } from "@/lib/correctnessConsole";
 
@@ -118,10 +121,47 @@ function linkRatePayload(over: { kalshi?: unknown[]; polymarket?: unknown[]; ext
   };
 }
 
-function gridsPayload(grids: Record<string, unknown>, generatedAt = minutesAgo(10)) {
-  return { generated_at: generatedAt, scores: {}, avg_score: null, grids };
+// The Grid Sentinel's saved run, in the shape `_run_grid_sentinel` persists
+// (`tasks/grid_sentinel.py`): scorecard.per_league[] carries each league's own
+// verdict and its REAL / EXPLAINED / WATCH counts.
+function league(name: string, over: Record<string, unknown> = {}) {
+  return {
+    league: name,
+    verdict: "green",
+    checks_skipped: [],
+    phase: "regular",
+    real_defects: 0,
+    explained_artifacts: 0,
+    watch: 0,
+    teams: 30,
+    columns: ["make_playoffs", "win_title"],
+    cells_self_checked: 60,
+    ...over,
+  };
 }
-const allGrids100 = { nba: { health_score: 100, findings: [] }, nhl: { health_score: 100, findings: [] }, mlb: { health_score: 100, findings: [] }, golf: { health_score: 100, findings: [] } };
+function sentinelPayload(
+  perLeague: unknown[] = ["mlb", "nba", "nhl"].map((l) => league(l)),
+  over: Record<string, unknown> = {},
+) {
+  const per = perLeague as Record<string, unknown>[];
+  return {
+    mode: "live",
+    leagues: [],
+    filed: [],
+    errors: [],
+    scorecard: {
+      leagues_total: per.length,
+      leagues_red: per.filter((l) => l.verdict === "red").length,
+      leagues_green: per.filter((l) => l.verdict === "green").length,
+      leagues_unverified: per.filter((l) => l.verdict === "green_unverified").length,
+      per_league: per,
+    },
+    duration_seconds: 41.2,
+    generated_at: minutesAgo(60),
+    ...over,
+  };
+}
+const gridRow = (t: CorrectnessTile, label: string) => t.rows.find((r) => r.label === label);
 
 // ── 1. winner coverage ─────────────────────────────────────────────────────
 
@@ -345,26 +385,181 @@ describe("link rate — Tier-1 open game markets, graded from counts", () => {
 
 // ── 6. grid health ─────────────────────────────────────────────────────────
 
-describe("grid health — every grid at 100", () => {
-  it("is green only when all four grids score 100", () => {
-    expect(evaluateGridHealth(ok(gridsPayload(allGrids100)), NOW).state).toBe("green");
+describe("grid health — the Grid Sentinel's verdict, with Golf's gap kept visible", () => {
+  it("three clean Sentinel leagues are NOT an all-clear while Golf has no coverage", () => {
+    const t = evaluateGridHealth(ok(sentinelPayload()), NOW);
+    expect(t.state).toBe("partial");
+    expect(t.rows.map((r) => [r.label, r.state])).toEqual([
+      ["MLB", "green"],
+      ["NBA", "green"],
+      ["NHL", "green"],
+      ["Golf", "unavailable"],
+    ]);
+    expect(gridRow(t, "Golf")).toMatchObject({ value: "no Sentinel coverage" });
+    expect(t.headline).toBe("MLB, NBA, NHL clean per the Grid Sentinel — Golf has no Sentinel coverage, so no all-clear");
+    expect(t.source).toBe("/api/admin/grid-sentinel/last");
+    expect(t.asOf).toBe(minutesAgo(60));
   });
 
-  it("is red at 99", () => {
-    const t = evaluateGridHealth(ok(gridsPayload({ ...allGrids100, mlb: { health_score: 99, findings: [{}, {}] } })), NOW);
+  it("a REAL defect is red, and stays red whatever else the run says", () => {
+    const t = evaluateGridHealth(ok(sentinelPayload([league("mlb", { verdict: "red", real_defects: 2, watch: 7 }), league("nba"), league("nhl")])), NOW);
     expect(t.state).toBe("red");
-    expect(t.rows.find((r) => r.label === "MLB")).toMatchObject({ value: "99/100", note: "2 findings" });
+    expect(gridRow(t, "MLB")).toMatchObject({ state: "red", value: "2 REAL defects" });
+    expect(gridRow(t, "MLB")!.note).toContain("7 watch (blend-hidden, never red)");
+    expect(t.headline).toBe("1 of 3 Sentinel leagues have REAL defects · no Sentinel coverage: Golf");
+    // A red whose count is unreadable is still red: the verdict is the authority.
+    const odd = evaluateGridHealth(ok(sentinelPayload([league("mlb", { verdict: "red", real_defects: "two" }), league("nba"), league("nhl")])), NOW);
+    expect(gridRow(odd, "MLB")).toMatchObject({ state: "red", value: "REAL defects" });
   });
 
-  it("an errored or missing grid blocks the all-clear", () => {
-    const { golf: _g, ...three } = allGrids100;
-    void _g;
-    expect(evaluateGridHealth(ok(gridsPayload({ ...allGrids100, nhl: { status: "error", error: "No JSON" } })), NOW).state).toBe("partial");
-    expect(evaluateGridHealth(ok(gridsPayload(three)), NOW).state).toBe("partial");
+  it("WATCH never creates red, and EXPLAINED keeps its meaning — both counted, neither colours the row", () => {
+    const t = evaluateGridHealth(ok(sentinelPayload([league("mlb", { watch: 12 }), league("nba", { explained_artifacts: 4 }), league("nhl", { watch: 3, explained_artifacts: 1 })])), NOW);
+    expect(t.rows.slice(0, 3).map((r) => r.state)).toEqual(["green", "green", "green"]);
+    expect(gridRow(t, "MLB")!.note).toContain("12 watch (blend-hidden, never red)");
+    expect(gridRow(t, "NBA")!.note).toContain("4 explained (season-window, not filed)");
+    expect(t.related).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ label: "WATCH — blend-hidden source disagreement, never red", value: "15", state: "no_threshold" }),
+        expect.objectContaining({ label: "EXPLAINED — season-window artifacts, not filed", value: "5", state: "no_threshold" }),
+      ]),
+    );
   });
 
-  it("is stale past the cache TTL", () => {
-    expect(evaluateGridHealth(ok(gridsPayload(allGrids100, minutesAgo(90))), NOW).state).toBe("stale");
+  it("a skipped check is unverified — green_unverified, or a green that lists a skipped check", () => {
+    const unverified = evaluateGridHealth(ok(sentinelPayload([league("mlb", { verdict: "green_unverified", checks_skipped: ["freshness"] }), league("nba"), league("nhl")])), NOW);
+    expect(gridRow(unverified, "MLB")).toMatchObject({ state: "partial", value: "green, unverified" });
+    expect(gridRow(unverified, "MLB")!.note).toContain("checks skipped: freshness");
+    expect(unverified.state).toBe("partial");
+    const borrowed = evaluateGridHealth(ok(sentinelPayload([league("mlb", { checks_skipped: ["freshness"] }), league("nba"), league("nhl")])), NOW);
+    expect(gridRow(borrowed, "MLB")!.state).toBe("partial");
+  });
+
+  it("a green is green only when its counts prove it", () => {
+    for (const bad of [{ real_defects: 1 }, { real_defects: undefined }, { watch: "3" }, { explained_artifacts: -1 }, { checks_skipped: "freshness" }]) {
+      const t = evaluateGridHealth(ok(sentinelPayload([league("mlb", bad), league("nba"), league("nhl")])), NOW);
+      expect(gridRow(t, "MLB")!.state).toBe("unavailable");
+    }
+  });
+
+  it.each([["amber"], ["GREEN"], [null], [undefined]])("an unknown verdict (%p) is unverified, never green or red", (verdict) => {
+    const t = evaluateGridHealth(ok(sentinelPayload([league("mlb", { verdict }), league("nba"), league("nhl")])), NOW);
+    expect(gridRow(t, "MLB")!.state).toBe("unavailable");
+    expect(gridRow(t, "MLB")!.note).toContain("unknown verdict");
+  });
+
+  it("a league missing from the run, or reported twice, blocks the all-clear", () => {
+    const missing = evaluateGridHealth(ok(sentinelPayload([league("mlb"), league("nba")], { errors: [{ deadline: "stopped before nhl" }] })), NOW);
+    expect(gridRow(missing, "NHL")).toMatchObject({ state: "unavailable", note: "not in the last Sentinel run" });
+    expect(missing.related).toEqual(expect.arrayContaining([expect.objectContaining({ label: "Errors in the run", value: "1" })]));
+    const twice = evaluateGridHealth(ok(sentinelPayload([league("mlb"), league("mlb", { verdict: "red", real_defects: 1 }), league("nba"), league("nhl")])), NOW);
+    expect(gridRow(twice, "MLB")).toMatchObject({ state: "unavailable", note: "reported more than once in one run" });
+    const empty = evaluateGridHealth(ok(sentinelPayload([])), NOW);
+    expect(empty.state).toBe("unavailable");
+  });
+
+  it("a league the Sentinel starts covering is judged by its verdict, and its gap row goes away", () => {
+    const t = evaluateGridHealth(ok(sentinelPayload(["mlb", "nba", "nhl", "golf"].map((l) => league(l)))), NOW);
+    expect(t.state).toBe("green");
+    expect(gridRow(t, "Golf")).toMatchObject({ state: "green", value: "clean" });
+    expect(t.rows.filter((r) => r.value === "no Sentinel coverage")).toEqual([]);
+  });
+
+  it.each([
+    [{ status: "no_run_cached", key: "bainluck:grid_sentinel:last" }, "no Grid Sentinel run is saved"],
+    [{ status: "unparseable", key: "k", error_class: "JSONDecodeError" }, "does not decode (JSONDecodeError)"],
+    [{ status: "wrong_shape", key: "k", error_class: "list" }, "is not an object"],
+    [{ status: "something_new" }, 'unrecognised rail status "something_new"'],
+    [{ scorecard: { per_league: "x" }, generated_at: minutesAgo(5) }, "no scorecard.per_league[]"],
+    [[], "not an object"],
+  ])("rail answer %p is unverified, with every grid still listed", (body, words) => {
+    const t = evaluateGridHealth(ok(body), NOW);
+    expect(t.state).toBe("unavailable");
+    expect(t.headline).toContain(words);
+    expect(t.rows.map((r) => r.label)).toEqual(["MLB", "NBA", "NHL", "Golf"]);
+    expect(t.rows.every((r) => r.state === "unavailable")).toBe(true);
+  });
+
+  it("a 503 says the evidence store could not be read", () => {
+    const t = evaluateGridHealth({ status: "error", kind: "http", detail: "HTTP 503", ms: 30, httpStatus: 503 }, NOW);
+    expect(t).toMatchObject({ state: "unavailable", headline: "Unavailable — the Sentinel's evidence store could not be read (HTTP 503)" });
+    expect(gridRow(t, "Golf")).toMatchObject({ value: "no Sentinel coverage" });
+  });
+
+  it("the old raw-score payload can turn the tile neither green nor red", () => {
+    const allGrids100 = { nba: { health_score: 100, findings: [] }, nhl: { health_score: 100, findings: [] }, mlb: { health_score: 100, findings: [] }, golf: { health_score: 100, findings: [] } };
+    const raw100 = evaluateGridHealth(ok({ generated_at: minutesAgo(5), scores: {}, avg_score: 100, grids: allGrids100 }), NOW);
+    expect(raw100.state).toBe("unavailable");
+    const raw40 = evaluateGridHealth(ok({ generated_at: minutesAgo(5), grids: { ...allGrids100, mlb: { health_score: 40, findings: [{}] } } }), NOW);
+    expect(raw40.state).toBe("unavailable");
+    // A penalty score riding along on a Sentinel entry is ignored: the verdict decides.
+    const mixed = evaluateGridHealth(
+      ok(sentinelPayload([league("mlb", { verdict: "red", real_defects: 1, health_score: 100 }), league("nba", { health_score: 12 }), league("nhl")])),
+      NOW,
+    );
+    expect(gridRow(mixed, "MLB")!.state).toBe("red");
+    expect(gridRow(mixed, "NBA")!.state).toBe("green");
+    expect(JSON.stringify(mixed)).not.toMatch(/\/100/);
+  });
+
+  it("goes stale on the Sentinels card's own silence rule, judged on the run's stamp", () => {
+    expect(GRID_SENTINEL_STALE_AFTER_S).toBe(SENTINELS.find((x) => x.key === "grid")!.beatIntervalHours * SILENCE_MULTIPLIER * 3600);
+    expect(SENTINELS.find((x) => x.key === "grid")!.endpoint).toBe(CORRECTNESS_ENDPOINTS.gridSentinel);
+    const limitMin = GRID_SENTINEL_STALE_AFTER_S / 60;
+    expect(evaluateGridHealth(ok(sentinelPayload(undefined, { generated_at: minutesAgo(limitMin - 1) })), NOW).state).toBe("partial");
+    const old = evaluateGridHealth(ok(sentinelPayload(undefined, { generated_at: minutesAgo(limitMin + 1) })), NOW);
+    expect(old).toMatchObject({ state: "stale", lastVerdict: "partial", asOf: minutesAgo(limitMin + 1) });
+    expect(old.headline).toMatch(/^Stale — the last run is .* past 36 h\. Last read: /);
+    const oldRed = evaluateGridHealth(
+      ok(sentinelPayload([league("mlb", { verdict: "red", real_defects: 1 }), league("nba"), league("nhl")], { generated_at: minutesAgo(limitMin + 1) })),
+      NOW,
+    );
+    expect(oldRed).toMatchObject({ state: "stale", lastVerdict: "red" });
+  });
+
+  it.each([
+    [undefined, "carries no timestamp"],
+    ["not a date", "does not parse"],
+    [new Date(NOW + 3600_000).toISOString(), "in the future"],
+  ])("a missing or invalid run stamp (%p) is stale, never current", (stamp, words) => {
+    const t = evaluateGridHealth(ok(sentinelPayload(undefined, { generated_at: stamp })), NOW);
+    expect(t.state).toBe("stale");
+    expect(t.headline).toContain(words);
+  });
+
+  it("degraded provenance is stale; a sound durable copy says where it came from", () => {
+    const stamp = minutesAgo(60);
+    const prov = (over: Record<string, unknown>) => ({ source: "durable", generated_at: stamp, complete: true, note: "served from the durable store", ...over });
+    for (const bad of [{ health: "UNKNOWN", contract_errors: ["checksum_mismatch"] }, { complete: false }, { generated_at: minutesAgo(600) }]) {
+      const t = evaluateGridHealth(ok(sentinelPayload(undefined, { provenance: prov(bad) })), NOW);
+      expect(t.state).toBe("stale");
+    }
+    expect(evaluateGridHealth(ok(sentinelPayload(undefined, { provenance: "junk" })), NOW).state).toBe("stale");
+    const good = evaluateGridHealth(ok(sentinelPayload(undefined, { provenance: prov({}), mode: "detect_only" })), NOW);
+    expect(good.state).toBe("partial");
+    expect(good.related).toEqual(
+      expect.arrayContaining([expect.objectContaining({ label: "Evidence served from", value: "durable store (last-known state)", note: "served from the durable store · detect-only run (issues not filed)" })]),
+    );
+  });
+
+  it("ages into stale in a tab left open, with no new request", () => {
+    jest.useFakeTimers();
+    const fetchSpy = jest.fn();
+    const realFetch = global.fetch;
+    global.fetch = fetchSpy as unknown as typeof fetch;
+    try {
+      const read = ok(sentinelPayload());
+      let judged = evaluateGridHealth(read, NOW);
+      expect(judged.state).toBe("partial");
+      const base = jest.now();
+      const stop = startUiClock((t) => (judged = evaluateGridHealth(read, t)), { doc: null, now: () => NOW + (jest.now() - base) });
+      jest.advanceTimersByTime(GRID_SENTINEL_STALE_AFTER_S * 1000 - 3600_000 + 60_000);
+      expect(judged).toMatchObject({ state: "stale", lastVerdict: "partial", asOf: minutesAgo(60) });
+      expect(fetchSpy).not.toHaveBeenCalled();
+      stop();
+    } finally {
+      global.fetch = realFetch;
+      jest.useRealTimers();
+    }
   });
 });
 
@@ -400,7 +595,7 @@ describe("one bounded read per endpoint", () => {
     const ms = startCorrectnessReads(
       (key) => async () => {
         started.push(key);
-        if (key === "grids") throw new Error("network down");
+        if (key === "gridSentinel") throw new Error("network down");
         if (key === "dashboard") await slow;
         return new Response(JSON.stringify({ key }), { status: 200 });
       },
@@ -409,7 +604,7 @@ describe("one bounded read per endpoint", () => {
     await new Promise((r) => setTimeout(r, 5));
     expect(started.sort()).toEqual(Object.keys(CORRECTNESS_ENDPOINTS).sort());
     // Everything but the slow read has already reported, the failure included.
-    expect(settled.sort()).toEqual(["calibration", "grids", "linkRate", "winners"]);
+    expect(settled.sort()).toEqual(["calibration", "gridSentinel", "linkRate", "winners"]);
     releaseSlow();
     expect(typeof (await ms)).toBe("number");
     expect(settled).toContain("dashboard");
@@ -530,25 +725,26 @@ function healthyReads(): CorrectnessReads {
     calibration: ok({ ...freshEnvelope, generated_at: minutesAgo(10), by_category: [category("tennis", 1.3, 5000)] }),
     dashboard: ok(dashboardPayload(TIER1.map((s) => coverageRow(s, 40)))),
     linkRate: ok(linkRatePayload()),
-    grids: ok(gridsPayload(allGrids100)),
+    gridSentinel: ok(sentinelPayload()),
   };
 }
 
 describe("the header verdict", () => {
-  it("is never 'good' while the guess-family tile cannot be read — five green is still a warning", () => {
+  it("is never 'good' while the guess family cannot be read and Golf has no Sentinel coverage", () => {
     const tiles = evaluateAll(healthyReads(), NOW);
-    expect(tiles.filter((t) => t.state === "green").map((t) => t.key)).toEqual(["winner_coverage", "category_mce", "source_coverage", "link_rate", "grid_health"]);
-    expect(summarize(tiles)).toEqual({ status: "warning", summary: "5 of 6 green · 1 unverified" });
+    expect(tiles.filter((t) => t.state === "green").map((t) => t.key)).toEqual(["winner_coverage", "category_mce", "source_coverage", "link_rate"]);
+    expect(tiles.find((t) => t.key === "grid_health")!.state).toBe("partial");
+    expect(summarize(tiles)).toEqual({ status: "warning", summary: "4 of 6 green · 2 unverified" });
   });
 
   it("is critical on any red tile", () => {
-    const reads = { ...healthyReads(), grids: ok(gridsPayload({ ...allGrids100, nba: { health_score: 90 } })) };
+    const reads = { ...healthyReads(), gridSentinel: ok(sentinelPayload([league("mlb"), league("nba", { verdict: "red", real_defects: 1 }), league("nhl")])) };
     expect(summarize(evaluateAll(reads, NOW)).status).toBe("critical");
   });
 
   it("is about the credential when every admin read was refused, even though the public curve answered", () => {
     const refused: ReadResult = { status: "error", kind: "unauthorized", detail: "HTTP 403", ms: 40, httpStatus: 403 };
-    const reads = { ...healthyReads(), winners: refused, dashboard: refused, linkRate: refused, grids: refused };
+    const reads = { ...healthyReads(), winners: refused, dashboard: refused, linkRate: refused, gridSentinel: refused };
     expect(summarize(evaluateAll(reads, NOW)).status).toBe("unauthorized");
   });
 
@@ -569,7 +765,7 @@ describe("what a reader sees", () => {
   const mixed: CorrectnessReads = {
     ...healthyReads(),
     calibration: ok({ ...staleEnvelope, generated_at: "2026-10-13T14:35:40Z", by_category: [category("tennis", 1.33, 162848)] }),
-    grids: { status: "error", kind: "timeout", detail: "no answer within 10000 ms", ms: 10_000 },
+    gridSentinel: { status: "error", kind: "timeout", detail: "no answer within 10000 ms", ms: 10_000 },
   };
   const html = renderToStaticMarkup(
     <CorrectnessConsoleView tiles={evaluateAll(mixed, NOW)} nowMs={NOW} settledMs={10_012} />,
@@ -661,9 +857,16 @@ describe("the page's own contract", () => {
     expect(page).toMatch(/useEffect\(\(\) => startUiClock\(setNowMs\), \[\]\)/);
   });
 
+  it("reads the Grid Sentinel's saved run only — never the raw grid audit, the cockpit, or a Sentinel trigger", () => {
+    expect(CORRECTNESS_ENDPOINTS.gridSentinel).toBe("/api/admin/grid-sentinel/last");
+    for (const p of Object.values(CORRECTNESS_ENDPOINTS)) expect(p).not.toMatch(/audit\/all|cockpit|\/run\b/);
+    expect(page + lib).not.toMatch(/audit\/all|\/cockpit|grid-sentinel\/run|_compute_audit_all_grids/);
+    expect(lib).not.toContain("health_score");
+  });
+
   it("keeps the public calibration read free of the admin credential", () => {
     expect(ADMIN_READS.has("calibration")).toBe(false);
-    expect([...ADMIN_READS].sort()).toEqual(["dashboard", "grids", "linkRate", "winners"]);
+    expect([...ADMIN_READS].sort()).toEqual(["dashboard", "gridSentinel", "linkRate", "winners"]);
   });
 
   it("is reachable from the admin sidebar", () => {

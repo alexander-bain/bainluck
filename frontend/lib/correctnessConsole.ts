@@ -22,7 +22,9 @@
 //                       scorecard.bar.reader_bar_pp = 3.0). Between is amber.
 //   - source coverage   /health §G: Tier-1 source <100% → red
 //   - link rate         /health §D: Tier-1 open game-market link rate target 100%
-//   - grid health       CLAUDE.md "Thresholds for immediate action": <100 → act
+//   - grid health       the Grid Sentinel's own per-league verdict (CLAUDE.md:
+//                       grid accuracy belongs to the Sentinel, RED means REAL).
+//                       A raw audit penalty score is not a verdict and is not read.
 //   - guess family      no existing endpoint reports it (see evaluateGuessFamily)
 // Where no threshold is documented the tile says so rather than colouring.
 
@@ -96,7 +98,7 @@ export interface CorrectnessReads {
   calibration: ReadResult;
   dashboard: ReadResult;
   linkRate: ReadResult;
-  grids: ReadResult;
+  gridSentinel: ReadResult;
 }
 
 /** The five existing endpoints. GET only, no bust/force/inline parameter. */
@@ -105,7 +107,7 @@ export const CORRECTNESS_ENDPOINTS = {
   calibration: "/api/calibration",
   dashboard: "/api/admin/dashboard",
   linkRate: "/api/admin/prediction-markets/link-rate",
-  grids: "/api/admin/audit/all",
+  gridSentinel: "/api/admin/grid-sentinel/last",
 } as const satisfies Record<keyof CorrectnessReads, string>;
 
 /** Which reads need the admin credential. `/api/calibration` is public. */
@@ -113,7 +115,7 @@ export const ADMIN_READS: ReadonlySet<keyof CorrectnessReads> = new Set([
   "winners",
   "dashboard",
   "linkRate",
-  "grids",
+  "gridSentinel",
 ]);
 
 /**
@@ -178,7 +180,7 @@ export const INITIAL_READS: CorrectnessReads = {
   calibration: { status: "loading" },
   dashboard: { status: "loading" },
   linkRate: { status: "loading" },
-  grids: { status: "loading" },
+  gridSentinel: { status: "loading" },
 };
 
 /**
@@ -759,51 +761,230 @@ export function evaluateLinkRate(read: ReadResult, nowMs: number): CorrectnessTi
 
 // ─── 6. Grid health ─────────────────────────────────────────────────────────
 
-/** The grids `_compute_audit_all_grids` audits. */
-export const EXPECTED_GRIDS = ["nba", "nhl", "mlb", "golf"] as const;
-/** Two producer beats (every 30 min) — also the cache TTL, 3600 s. */
-export const GRIDS_STALE_AFTER_S = 3600;
+/** The leagues the Grid Sentinel audits (`tasks/grid_sentinel.py` GRID_LEAGUES). */
+export const SENTINEL_GRID_LEAGUES = ["mlb", "nba", "nhl"] as const;
+/**
+ * Grids this tile has always shown that the Sentinel does NOT audit. Each stays
+ * on the tile as "no Sentinel coverage" — unverified, never green, never
+ * dropped — until a Sentinel run reports a verdict for it.
+ */
+export const UNCOVERED_GRIDS = ["golf"] as const;
+/**
+ * The Sentinels card's silence rule for this same rail (`SentinelsCard.tsx`:
+ * daily 07:25 UTC beat × SILENCE_MULTIPLIER 1.5). Judged on the run's own
+ * `generated_at`, never on when we fetched it.
+ */
+export const GRID_SENTINEL_BEAT_HOURS = 24;
+export const GRID_SENTINEL_SILENCE_MULTIPLIER = 1.5;
+export const GRID_SENTINEL_STALE_AFTER_S = GRID_SENTINEL_BEAT_HOURS * GRID_SENTINEL_SILENCE_MULTIPLIER * 3600;
+/** A run stamp further ahead of this browser's clock than this is not a valid stamp. */
+export const SOURCE_CLOCK_SKEW_S = 300;
 
-/** `/api/admin/audit/all`: `grids.{nba,nhl,mlb,golf}.health_score` out of 100. */
+const GRID_LABEL: Record<string, string> = { mlb: "MLB", nba: "NBA", nhl: "NHL", golf: "Golf" };
+const gridLabel = (g: string) => GRID_LABEL[g] ?? g.toUpperCase();
+
+/** The rail's own fail-honest statuses (`routes/admin.py` `_sentinel_last_payload`). */
+const RAIL_STATUS_HEADLINE: Record<string, string> = {
+  no_run_cached: "Unavailable — no Grid Sentinel run is saved in either store",
+  unparseable: "Unavailable — the saved Sentinel run does not decode",
+  wrong_shape: "Unavailable — the saved Sentinel run is not an object",
+};
+
+/** Coverage rows for when no run can be read: nothing about any grid is known. */
+function gridRowsWithoutEvidence(): CorrectnessRow[] {
+  return [
+    ...SENTINEL_GRID_LEAGUES.map((g) => ({ label: gridLabel(g), value: "—", state: "unavailable" as const, note: "no readable Sentinel run" })),
+    ...UNCOVERED_GRIDS.map(uncoveredRow),
+  ];
+}
+
+function uncoveredRow(g: string): CorrectnessRow {
+  return {
+    label: gridLabel(g),
+    value: "no Sentinel coverage",
+    state: "unavailable",
+    note: `The Grid Sentinel audits ${SENTINEL_GRID_LEAGUES.map(gridLabel).join(", ")} only — no verdict exists for this grid`,
+  };
+}
+
+/**
+ * One `scorecard.per_league[]` entry → a row. The Sentinel's `verdict` is the
+ * authority (`grid_verdict`): `red` only for a REAL defect, `green_unverified`
+ * when a check could not run, `green` otherwise. EXPLAINED (season-window
+ * artifacts) and WATCH (blend-hidden source disagreement) are counted on the
+ * row and never change its colour. A red is red even if its counts are
+ * unreadable; a green is green only when its counts prove it.
+ */
+function sentinelLeagueRow(league: string, e: Record<string, unknown>): CorrectnessRow {
+  const label = gridLabel(league);
+  const verdict = asStr(e.verdict);
+  const real = asCount(e.real_defects);
+  const explained = asCount(e.explained_artifacts);
+  const watch = asCount(e.watch);
+  const skipped = Array.isArray(e.checks_skipped) ? e.checks_skipped.map((c) => String(c)) : null;
+  const phase = asStr(e.phase);
+  const n = (v: number | null) => (v === null ? "?" : fmt(v));
+  const counts = `${n(real)} REAL · ${n(explained)} explained (season-window, not filed) · ${n(watch)} watch (blend-hidden, never red)`;
+  const tail = [skipped && skipped.length > 0 ? `checks skipped: ${skipped.join(", ")}` : null, phase ? `phase: ${phase}` : null]
+    .filter(Boolean)
+    .join(" · ");
+  const note = tail ? `${counts} · ${tail}` : counts;
+  if (verdict === "red") {
+    return { label, value: real ? `${fmt(real)} REAL defect${real === 1 ? "" : "s"}` : "REAL defects", state: "red", note };
+  }
+  if (verdict === "green_unverified") {
+    return { label, value: "green, unverified", state: "partial", note: skipped && skipped.length > 0 ? note : `${note} · a check did not run` };
+  }
+  if (verdict === "green") {
+    if (real === null || explained === null || watch === null || skipped === null) {
+      return { label, value: "—", state: "unavailable", note: `green claimed, but a count is missing · ${note}` };
+    }
+    if (real > 0) {
+      return { label, value: "—", state: "unavailable", note: `green claimed with REAL defects counted — inconsistent · ${note}` };
+    }
+    if (skipped.length > 0) return { label, value: "green, unverified", state: "partial", note };
+    return { label, value: "clean", state: "green", note };
+  }
+  return { label, value: "—", state: "unavailable", note: `unknown verdict "${verdict ?? "missing"}" · ${note}` };
+}
+
+/** The run's own stamp, or why it cannot be used. */
+function sentinelStamp(d: Record<string, unknown>, nowMs: number): { asOf: string | null; problem: string | null } {
+  const raw = d.generated_at;
+  const asOf = asStr(raw);
+  if (asOf === null) return { asOf: null, problem: "the run carries no timestamp" };
+  const t = Date.parse(asOf);
+  if (!Number.isFinite(t)) return { asOf: null, problem: `the run's timestamp does not parse ("${asOf.slice(0, 40)}")` };
+  if (t - nowMs > SOURCE_CLOCK_SKEW_S * 1000) return { asOf, problem: "the run's timestamp is in the future" };
+  return { asOf, problem: null };
+}
+
+/** The additive `provenance` block (`durable_snapshots.read_sentinel_evidence`), when present. */
+function sentinelProvenance(d: Record<string, unknown>, asOf: string | null): { problem: string | null; row: CorrectnessRow | null } {
+  const mode = asStr(d.mode);
+  const modeNote = mode === "detect_only" ? "detect-only run (issues not filed)" : null;
+  if (!("provenance" in d)) {
+    return { problem: null, row: { label: "Evidence served from", value: "cache, no provenance block", state: "no_threshold", note: modeNote ?? undefined } };
+  }
+  const p = d.provenance;
+  if (!isObj(p)) return { problem: "its provenance block is unreadable", row: null };
+  const problems: string[] = [];
+  if (p.health === "UNKNOWN" || (Array.isArray(p.contract_errors) && p.contract_errors.length > 0)) {
+    problems.push("its two evidence stores disagree");
+  }
+  if (p.complete === false) problems.push("its evidence is marked incomplete");
+  const pStamp = asStr(p.generated_at);
+  if (pStamp !== null && asOf !== null && Date.parse(pStamp) !== Date.parse(asOf)) {
+    problems.push("its provenance timestamp disagrees with the run's own");
+  }
+  const source = asStr(p.source);
+  const value = source === "durable" ? "durable store (last-known state)" : source === "volatile" ? "Redis" : source ?? "unknown store";
+  const note = [asStr(p.note), modeNote].filter(Boolean).join(" · ") || undefined;
+  return {
+    problem: problems.length > 0 ? problems.join("; ") : null,
+    row: { label: "Evidence served from", value, state: problems.length > 0 ? "unavailable" : "no_threshold", note },
+  };
+}
+
+/**
+ * `/api/admin/grid-sentinel/last`: the Grid Sentinel's saved run, read as-is.
+ * This rail never computes. The page never triggers the Sentinel, never falls
+ * back to the cockpit or the raw grid audit, and does not warm a cache.
+ *
+ * The tile cannot be green while any grid it shows has no Sentinel coverage.
+ * That gap is visible on purpose; it is not a waiver of the requirement.
+ */
 export function evaluateGridHealth(read: ReadResult, nowMs: number): CorrectnessTile {
   const base = {
     key: "grid_health" as const,
     title: "Championship grid health",
-    method: "Matching-quality audit score per grid, out of 100. Below 100 → red (CLAUDE.md: grid health <100% → investigate). A grid whose audit errored is unverified.",
-    source: CORRECTNESS_ENDPOINTS.grids,
+    method:
+      `Grid Sentinel verdict per league (daily 07:25 UTC). Red only for a REAL defect. EXPLAINED (season-window artifacts) and WATCH (blend-hidden source disagreement) are counted and never red. A skipped check is unverified. The Sentinel covers ${SENTINEL_GRID_LEAGUES.map(gridLabel).join(", ")}; ${UNCOVERED_GRIDS.map(gridLabel).join(", ")} has no Sentinel coverage and stays unverified. Stale ${GRID_SENTINEL_STALE_AFTER_S / 3600} h after the run (1.5× its beat). Not a raw audit penalty score.`,
+    source: CORRECTNESS_ENDPOINTS.gridSentinel,
   };
   const failed = readFailureTile(base, read);
-  if (failed) return failed;
-  if (read.status !== "ok") return wrongShape(base, "no data", 0);
-  const d = read.data;
-  if (!isObj(d) || !isObj(d.grids)) return wrongShape(base, "no grids{}", read.ms);
-  const asOf = asStr(d.generated_at);
-  const rows: CorrectnessRow[] = [];
-  for (const g of EXPECTED_GRIDS) {
-    const grid = d.grids[g];
-    const label = g.toUpperCase();
-    if (!isObj(grid)) {
-      rows.push({ label, value: "—", state: "unavailable", note: "grid not in the audit" });
-      continue;
-    }
-    const score = asNum(grid.health_score);
-    if (score === null || !Number.isInteger(score)) {
-      rows.push({ label, value: "—", state: "unavailable", note: asStr(grid.status) === "error" ? "audit errored" : "no score" });
-      continue;
-    }
-    const findings = Array.isArray(grid.findings) ? grid.findings.length : null;
-    rows.push({
-      label,
-      value: `${score}/100`,
-      state: score >= 100 ? "green" : "red",
-      note: findings === null ? undefined : `${findings} finding${findings === 1 ? "" : "s"}`,
-    });
+  if (failed) {
+    if (failed.state === "loading") return failed;
+    const headline = read.status === "error" && read.httpStatus === 503 ? "Unavailable — the Sentinel's evidence store could not be read (HTTP 503)" : failed.headline;
+    return { ...failed, headline, rows: gridRowsWithoutEvidence() };
   }
+  if (read.status !== "ok") return { ...wrongShape(base, "no data", 0), rows: gridRowsWithoutEvidence() };
+  const d = read.data;
+  if (!isObj(d)) return { ...wrongShape(base, "not an object", read.ms), rows: gridRowsWithoutEvidence() };
+  const sc = isObj(d.scorecard) ? d.scorecard : null;
+  if (!sc) {
+    const status = asStr(d.status);
+    const known = status !== null ? RAIL_STATUS_HEADLINE[status] : undefined;
+    const errClass = asStr(d.error_class);
+    const headline = known
+      ? `${known}${errClass ? ` (${errClass})` : ""}`
+      : status !== null
+        ? `Unavailable — unrecognised rail status "${status.slice(0, 40)}"`
+        : "Unavailable — unexpected response shape (no Sentinel scorecard)";
+    return { ...base, state: "unavailable", headline, rows: gridRowsWithoutEvidence(), asOf: null, readMs: read.ms };
+  }
+  if (!Array.isArray(sc.per_league)) {
+    return { ...wrongShape(base, "no scorecard.per_league[]", read.ms), rows: gridRowsWithoutEvidence() };
+  }
+  const entries = sc.per_league.filter(isObj);
+  const leagueOf = (e: Record<string, unknown>) => (asStr(e.league) ?? "").toLowerCase();
+  const reported = [...new Set(entries.map(leagueOf).filter((l) => l !== ""))];
+  const covered = [...SENTINEL_GRID_LEAGUES, ...reported.filter((l) => !(SENTINEL_GRID_LEAGUES as readonly string[]).includes(l))];
+
+  const rows: CorrectnessRow[] = [];
+  for (const g of covered) {
+    const matches = entries.filter((e) => leagueOf(e) === g);
+    if (matches.length === 0) {
+      rows.push({ label: gridLabel(g), value: "—", state: "unavailable", note: "not in the last Sentinel run" });
+    } else if (matches.length > 1) {
+      rows.push({ label: gridLabel(g), value: "—", state: "unavailable", note: "reported more than once in one run" });
+    } else {
+      rows.push(sentinelLeagueRow(g, matches[0]));
+    }
+  }
+  const gaps = UNCOVERED_GRIDS.filter((g) => !covered.includes(g));
+  for (const g of gaps) rows.push(uncoveredRow(g));
+
+  const sentinelRows = rows.slice(0, covered.length);
+  const red = sentinelRows.filter((r) => r.state === "red").length;
+  const clean = sentinelRows.filter((r) => r.state === "green").length;
+  const gapText = gaps.length > 0 ? ` · no Sentinel coverage: ${gaps.map(gridLabel).join(", ")}` : "";
+  const headline =
+    red > 0
+      ? `${red} of ${covered.length} Sentinel leagues have REAL defects${gapText}`
+      : clean === covered.length && gaps.length > 0
+        ? `${covered.map(gridLabel).join(", ")} clean per the Grid Sentinel — ${gaps.map(gridLabel).join(", ")} has no Sentinel coverage, so no all-clear`
+        : clean === covered.length
+          ? `All ${covered.length} grids clean per the Grid Sentinel`
+          : `${clean} of ${covered.length} Sentinel leagues verified clean${gapText}`;
+
+  const related: CorrectnessRow[] = [];
+  const sum = (k: string) => {
+    const vals = entries.map((e) => asCount(e[k]));
+    return vals.some((v) => v === null) ? null : vals.reduce<number>((a, v) => a + (v ?? 0), 0);
+  };
+  const explainedTotal = sum("explained_artifacts");
+  const watchTotal = sum("watch");
+  related.push({ label: "EXPLAINED — season-window artifacts, not filed", value: explainedTotal === null ? "—" : fmt(explainedTotal), state: explainedTotal === null ? "unavailable" : "no_threshold" });
+  related.push({ label: "WATCH — blend-hidden source disagreement, never red", value: watchTotal === null ? "—" : fmt(watchTotal), state: watchTotal === null ? "unavailable" : "no_threshold" });
+  const errors = Array.isArray(d.errors) ? d.errors : [];
+  if (errors.length > 0) {
+    related.push({ label: "Errors in the run", value: fmt(errors.length), state: "unavailable", note: JSON.stringify(errors[0]).slice(0, 160) });
+  }
+
+  const { asOf, problem: stampProblem } = sentinelStamp(d, nowMs);
+  const prov = sentinelProvenance(d, asOf);
+  if (prov.row) related.push(prov.row);
+
   const state = foldStates(rows.map((r) => r.state));
-  const red = rows.filter((r) => r.state === "red").length;
-  const headline = state === "green" ? `All ${rows.length} grids at 100` : `${red} of ${rows.length} grids below 100`;
-  const age = ageSeconds(asOf, nowMs);
-  return withFreshness({ ...base, state, headline, rows, asOf, readMs: read.ms }, age === null || age > GRIDS_STALE_AFTER_S);
+  const tile: CorrectnessTile = { ...base, state, headline, rows, related, asOf, readMs: read.ms };
+  const age = stampProblem ? null : ageSeconds(asOf, nowMs);
+  const why =
+    stampProblem ??
+    prov.problem ??
+    (age !== null && age > GRID_SENTINEL_STALE_AFTER_S ? `the last run is ${formatAge(age)}, past ${GRID_SENTINEL_STALE_AFTER_S / 3600} h` : null);
+  if (!why) return tile;
+  return { ...withFreshness(tile, true), headline: `Stale — ${why}. Last read: ${headline}` };
 }
 
 // ─── The page as a whole ────────────────────────────────────────────────────
@@ -815,7 +996,7 @@ export function evaluateAll(reads: CorrectnessReads, nowMs: number): Correctness
     evaluateCategoryMce(reads.calibration),
     evaluateSourceCoverage(reads.dashboard, nowMs),
     evaluateLinkRate(reads.linkRate, nowMs),
-    evaluateGridHealth(reads.grids, nowMs),
+    evaluateGridHealth(reads.gridSentinel, nowMs),
   ];
 }
 
@@ -826,8 +1007,9 @@ export interface ConsoleSummary {
 
 /**
  * The page header. `good` needs all six tiles green — which today it cannot be,
- * because the guess-family tile has no endpoint. That is the honest answer to
- * "can we trust our numbers today?" while one of the six cannot be read.
+ * because the guess-family tile has no endpoint and the grid tile has no
+ * Sentinel coverage for Golf. That is the honest answer to "can we trust our
+ * numbers today?" while part of the six cannot be read.
  */
 export function summarize(tiles: CorrectnessTile[]): ConsoleSummary {
   const n = (s: CorrectnessState) => tiles.filter((t) => t.state === s).length;
