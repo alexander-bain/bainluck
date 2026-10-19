@@ -3001,7 +3001,7 @@ jobs:
           if grep -qiE "[0-9]+ skipped" /tmp/pregame11296.txt; then
             echo "::error::#11296 pregame projection SKIPPED"; exit 1
           fi
-          grep -qE "[^0-9]5 passed[,[:space:]]" /tmp/pregame11296.txt || {
+          grep -qE "[^0-9]6 passed[,[:space:]]" /tmp/pregame11296.txt || {
             echo "::error::#11296 pregame projection did not run every case"; exit 1; }
 
       - name: Kalshi cliff-drain bind contract (real Postgres)

@@ -265,3 +265,27 @@ async def test_the_production_index_serves_the_statement_without_a_seq_scan(make
     shown = "\n".join(r[0] for r in rows)
     assert "ix_odds_snapshots_bookmaker_closing" in shown, shown
     assert "Seq Scan on odds_snapshots" not in shown, shown
+
+
+async def test_a_bounded_read_leaves_the_sessions_timeout_as_it_found_it(maker):
+    """#11295's C1 on the feed's read: the SET LOCAL dies with the savepoint."""
+    from sqlalchemy import select as _select
+    from sqlalchemy.orm import selectinload
+
+    from app.models.models import Event
+
+    ids, _ = await _seed(maker)
+    async with maker() as session:
+        await session.execute(text("SET LOCAL statement_timeout = '7s'"))
+        events = (
+            await session.execute(
+                _select(Event).options(selectinload(Event.sport))
+                .where(Event.id == ids["A"])
+            )
+        ).scalars().all()
+        answers = await read_pregame_projections(
+            session, events, lambda e: e.sport.key, timeout_ms=1500
+        )
+        after = (await session.execute(text("SHOW statement_timeout"))).scalar()
+    assert PROJECTION_KEY in answers[ids["A"]]
+    assert after == "7s"

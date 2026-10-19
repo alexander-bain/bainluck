@@ -313,16 +313,20 @@ def test_answers_are_keyed_by_their_own_event_and_cutoff():
 class _FakeDb:
     def __init__(self, rows=(), fail=False):
         self.rows, self.fail, self.executed = list(rows), fail, []
+        self.savepoint_ends: list[str] = []
 
     async def begin_nested(self):
-        return SimpleNamespace(commit=self._noop, rollback=self._noop)
+        return SimpleNamespace(commit=self._commit, rollback=self._rollback)
 
-    async def _noop(self):
-        return None
+    async def _commit(self):
+        self.savepoint_ends.append("commit")
 
-    async def execute(self, statement, params):
+    async def _rollback(self):
+        self.savepoint_ends.append("rollback")
+
+    async def execute(self, statement, params=None):
         self.executed.append((str(statement), params))
-        if self.fail:
+        if self.fail and "statement_timeout" not in str(statement):
             raise RuntimeError("canceling statement due to statement timeout")
         return SimpleNamespace(all=lambda: self.rows)
 
@@ -415,3 +419,45 @@ def test_the_status_the_card_prints_decides_not_the_stored_column():
     # Without a served status the stored column is the fallback.
     binds, _ = pp.plan_pregame_projections([stored_final_served_live], sport_of)
     assert binds["ids"] == [1]
+
+
+def test_a_bounded_read_sets_its_own_timeout_and_rolls_the_savepoint_back():
+    # #11295's C1, applied to the feed's read: SET LOCAL inside the savepoint,
+    # and a ROLLBACK (never a release) so the bound cannot outlive the read.
+    db = _FakeDb([row("draftkings", -5, -3.0, 47.0)])
+    answers = asyncio.run(pp.read_pregame_projections(db, [event()], sport_of, timeout_ms=1200))
+    assert [sql for sql, _ in db.executed] == [
+        "SET LOCAL statement_timeout = '1200ms'", pp.PREGAME_PROJECTION_SQL,
+    ]
+    assert db.savepoint_ends == ["rollback"]
+    assert pp.PROJECTION_KEY in answers[1]
+
+
+def test_no_budget_left_means_no_round_trip_and_read_failed():
+    db = _FakeDb([row("draftkings", -5, -3.0, 47.0)])
+    answers = asyncio.run(pp.read_pregame_projections(
+        db, [event(1), event(2, sport="tennis_atp")], sport_of, timeout_ms=0
+    ))
+    assert db.executed == [] and db.savepoint_ends == []
+    assert answers == {
+        1: {pp.UNAVAILABLE_KEY: pp.REASON_READ_FAILED},
+        2: {pp.UNAVAILABLE_KEY: pp.REASON_FORMAT_UNSUPPORTED},
+    }
+
+
+def test_a_timed_out_read_still_rolls_back_and_answers_read_failed():
+    db = _FakeDb(fail=True)
+    answers = asyncio.run(pp.read_pregame_projections(db, [event()], sport_of, timeout_ms=50))
+    assert db.savepoint_ends == ["rollback"]
+    assert answers == {1: {pp.UNAVAILABLE_KEY: pp.REASON_READ_FAILED}}
+
+
+def test_a_cancellation_propagates_as_itself():
+    class _Cancelled(_FakeDb):
+        async def execute(self, statement, params=None):
+            raise asyncio.CancelledError()
+
+    db = _Cancelled()
+    with pytest.raises(asyncio.CancelledError):
+        asyncio.run(pp.read_pregame_projections(db, [event()], sport_of))
+    assert db.savepoint_ends == ["rollback"]

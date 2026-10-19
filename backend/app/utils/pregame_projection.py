@@ -455,44 +455,64 @@ def answers_from_rows(plan: Mapping[str, Any], rows: Iterable[Any]) -> dict[int,
 
 
 async def read_pregame_projections(
-    db: Any, events: Iterable[Any], sport_key_of, status_of=None
+    db: Any,
+    events: Iterable[Any],
+    sport_key_of,
+    status_of=None,
+    *,
+    timeout_ms: Optional[int] = None,
 ) -> dict[int, dict]:
     """``{event_id: {PROJECTION_KEY: …} | {UNAVAILABLE_KEY: reason}}`` for the settled rows.
 
-    At most one statement, inside a SAVEPOINT so a failure (a statement timeout
-    on a bounded route) cannot poison the caller's transaction. A failed read
-    answers ``read_failed`` for every row it was asked about; nothing raises.
+    At most one statement, inside a SAVEPOINT so a failure (a statement
+    timeout on a bounded route) cannot poison the caller's transaction. A
+    failed read answers ``read_failed`` for every row it was asked about;
+    nothing raises except a cancellation, which propagates as itself.
+
+    ``timeout_ms`` gives the read its own server-side bound, for a caller whose
+    rows are already built and whose stage deadline must not be spent here
+    (`/api/feed`, #11295's C1): ``SET LOCAL statement_timeout`` inside the
+    savepoint. The savepoint is always ROLLED BACK, never released: the read
+    writes nothing, and the rollback reverts the SET LOCAL so the bound cannot
+    leak into a later stage on the same session. ``timeout_ms`` of zero or less
+    means no budget is left: no round trip, and ``read_failed``.
     """
+    import logging
+
     from sqlalchemy import text
 
     plan, answers = plan_pregame_projections(list(events), sport_key_of, status_of)
     if plan is None:
         return answers
+    failed = {event_id: {UNAVAILABLE_KEY: REASON_READ_FAILED} for event_id in plan["ids"]}
+    if timeout_ms is not None and timeout_ms <= 0:
+        answers.update(failed)
+        return answers
     try:
         nested = await db.begin_nested()
         try:
+            if timeout_ms is not None:
+                await db.execute(
+                    text(f"SET LOCAL statement_timeout = '{int(timeout_ms)}ms'")
+                )
             rows = (
                 await db.execute(
                     text(PREGAME_PROJECTION_SQL),
                     {"ids": plan["ids"], "cutoffs": plan["cutoffs"]},
                 )
             ).all()
-        except Exception:
+        finally:
             try:
                 await nested.rollback()
-            except Exception:  # noqa: BLE001 — already on the error path
+            except Exception:  # noqa: BLE001 — the read's own error wins
                 pass
-            raise
-        await nested.commit()
     except Exception:  # noqa: BLE001 — one optional key, never the page
-        import logging
-
         logging.getLogger(__name__).warning(
             "pregame projection read failed for %d event(s)",
             len(plan["ids"]),
             exc_info=True,
         )
-        answers.update({event_id: {UNAVAILABLE_KEY: REASON_READ_FAILED} for event_id in plan["ids"]})
+        answers.update(failed)
         return answers
     answers.update(answers_from_rows(plan, rows))
     return answers
