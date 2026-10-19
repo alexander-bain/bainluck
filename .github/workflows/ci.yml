@@ -1985,6 +1985,22 @@ jobs:
             exit 1
           fi
 
+      - name: "#11254 a withdrawn venue is not a feed card's fallback (real Postgres)"
+        # #11254. The change is one SQL statement (`SNAPSHOT_FALLBACK_SQL`): a
+        # source's explicit withdrawal row retires that source's earlier
+        # readings. JSONB equality, DISTINCT ON and the per-source join only
+        # mean anything on a server. Named here because a `*_pg.py` nobody adds
+        # runs nowhere.
+        if: matrix.group == 'shared-middle' && needs.change-scope.outputs.reuse != 'true'
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_feed_snapshot_fallback_withdrawal_11254_pg.py \
+            -v -rs 2>&1 | tee /tmp/fallback11254.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/fallback11254.txt; then
+            echo "::error::#11254 snapshot fallback gate SKIPPED — the gate did not run"
+            exit 1
+          fi
+
       - name: Provenance enum contract (real Postgres)
         # C-ADHOC-PROV-CORE. The receiver accepted `play` while the migration's
         # enum declared six values without it, and the route specimen STORED it
