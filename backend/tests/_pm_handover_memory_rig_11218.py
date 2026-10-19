@@ -3,6 +3,7 @@
 Run as a script in a fresh interpreter (``test_ws_catalog_heap_trim_11218``):
 
     python3 tests/_pm_handover_memory_rig_11218.py HANDOVERS
+    python3 tests/_pm_handover_memory_rig_11218.py probe
 
 The real ``_run_polymarket_ws_consumer`` (in-process open client) reads a
 catalog of fake rows in the consumer's own query shapes, with ~1-2% turnover
@@ -12,9 +13,24 @@ production's 10-60 s reads are. ``WS_HEAP_TRIM`` decides the arm. One JSON
 line per handover (``rss``; the consumer's own ``released`` and the trim's
 duration when it trimmed; the worst event-loop lag since the last line), then
 one final line with what a further trim would still return.
+
+``RIG_11218_LAB_ALLOCATOR=1`` puts the child under a CAUSAL LABORATORY
+CONDITION, never production configuration: glibc's free() stops handing the
+heap top back on its own (trim threshold at the int ceiling) and the mmap
+threshold is pinned where glibc's own dynamic threshold climbs to (32 MB, its
+64-bit maximum), instead of wherever this run's history left it. Without it,
+an untrimmed arm's end reading drops whenever free() happened to return the
+top just before the one end sample (68bddab4, 10/18: 185.5 -> 181.7 MB on the
+last handover, reclaimable 10.2 MB against 14.5-15.9 on five other runs of the
+same bytes). Under it only the trim can return heap pages, so the parent's end
+reading is what the allocator keeps. It says nothing about how much a
+production worker saves. Every arm prints a first ``lab`` line: what mallopt
+accepted, and a probe of what free() and then one trim returned. ``probe``
+prints that line and exits (with or without the condition).
 """
 
 import asyncio
+import ctypes
 import gc
 import json
 import os
@@ -40,6 +56,53 @@ from tests.test_ws_consumer_session_lifetime_2471 import _install, _Rig  # noqa:
 SLATE_MARKETS, OPEN_MARKETS, EVENTS = 3_000, 12_000, 120
 READ_DELAY_S, FRAMES_PER_S = 0.05, 40
 rng = random.Random(11218)
+
+LAB_ENV = "RIG_11218_LAB_ALLOCATOR"
+M_TRIM_THRESHOLD, M_MMAP_THRESHOLD = -1, -3  # glibc <malloc.h>
+LAB_TRIM_THRESHOLD = 2**31 - 1
+LAB_MMAP_THRESHOLD = 32 * 2**20
+PROBE_MB = 32
+
+
+def apply_lab_allocator():
+    """The laboratory condition, or exit 3: a missing lab is a failure, not a skip."""
+    mallopt = getattr(ctypes.CDLL(None), "mallopt", None)
+    if mallopt is None:
+        sys.exit("lab allocator condition unavailable: no mallopt in this C library")
+    mallopt.argtypes, mallopt.restype = [ctypes.c_int, ctypes.c_int], ctypes.c_int
+    accepted = {"trim_threshold": mallopt(M_TRIM_THRESHOLD, LAB_TRIM_THRESHOLD),
+                "mmap_threshold": mallopt(M_MMAP_THRESHOLD, LAB_MMAP_THRESHOLD)}
+    if accepted != {"trim_threshold": 1, "mmap_threshold": 1}:
+        print(f"lab allocator condition refused: {accepted}", file=sys.stderr)
+        sys.exit(3)
+    return accepted
+
+
+def free_top_probe():
+    """32 MB of 4 kB heap chunks freed, then one trim: what each handed back.
+
+    The behavioural proof the condition holds in this process (mallopt's 1 says
+    only that it accepted the value): under it free() returns ~none of it.
+    """
+    trim = heap_trim._malloc_trim()
+    if trim is None:
+        sys.exit("lab probe unavailable: no malloc_trim in this C library")
+    gc.collect()
+    trim(0)
+    base = heap_trim._rss_bytes()
+    held = [bytearray(4096) for _ in range(PROBE_MB * 256)]
+    loaded = heap_trim._rss_bytes()
+    del held
+    freed = heap_trim._rss_bytes()
+    trim(0)
+    trimmed = heap_trim._rss_bytes()
+    return {"loaded": loaded - base, "free_returned": loaded - freed,
+            "trim_returned": freed - trimmed}
+
+
+def lab_line():
+    accepted = apply_lab_allocator() if os.getenv(LAB_ENV) == "1" else None
+    print(json.dumps({"lab": accepted, "probe": free_top_probe()}), flush=True)
 
 
 class Result:
@@ -193,6 +256,7 @@ class Socket:
 
 
 async def main(handovers):
+    lab_line()
     mp, rig = MonkeyPatch(), Rig()
     rig.writes = Sink()
 
@@ -283,4 +347,7 @@ async def main(handovers):
 
 
 if __name__ == "__main__":
-    asyncio.run(main(int(sys.argv[1])))
+    if sys.argv[1] == "probe":
+        lab_line()
+    else:
+        asyncio.run(main(int(sys.argv[1])))
