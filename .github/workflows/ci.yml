@@ -5124,6 +5124,53 @@ jobs:
             exit 1
           }
 
+      - name: "#10090 a slow removal notification never stalls another game or a healthy price; a recycled worker adopts every owed removal (real Postgres + Redis)"
+        if: matrix.group == 'shared-tail' && needs.change-scope.outputs.reuse != 'true'
+        env:
+          # The job-local redis:7 service (#7351's, port 56379). Logical db 13 is
+          # this gate's alone: the fixture refuses a non-loopback URL or db 0 and
+          # FLUSHES db 13 around each case. #7351 uses 15, its sibling 14.
+          PM_WITHDRAWAL_REDIS_URL: redis://localhost:56379/13
+        run: |
+          if python -m pytest tests/integration/test_pm_withdrawal_peer_publication_and_startup_10090_pg.py \
+            -v -rs > /tmp/withdrawal-peer10090.txt 2>&1; then
+            gate_status=0
+          else
+            gate_status=$?
+          fi
+          cat /tmp/withdrawal-peer10090.txt
+          echo "EXIT CODE: $gate_status"
+          test "$gate_status" -eq 0
+          if grep -qiE "[0-9]+ skipped" /tmp/withdrawal-peer10090.txt; then
+            echo "::error::#10090 peer-publication/startup gate SKIPPED"
+            exit 1
+          fi
+          grep -qE "[^0-9]27 passed[,[:space:]]" /tmp/withdrawal-peer10090.txt || {
+            echo "::error::#10090 peer-publication/startup gate did not run all twenty-seven cases"
+            exit 1
+          }
+
+      - name: "#10090 a tagged-twin page's stream removal floor equals its detail's revision vector; each fold path holds alone; a reversed twin is in neither (real Postgres)"
+        if: matrix.group == 'shared-tail' && needs.change-scope.outputs.reuse != 'true'
+        run: |
+          if python -m pytest tests/integration/test_tagged_twin_stream_detail_removal_floor_10090_pg.py \
+            -v -rs > /tmp/twin-floor10090.txt 2>&1; then
+            gate_status=0
+          else
+            gate_status=$?
+          fi
+          cat /tmp/twin-floor10090.txt
+          echo "EXIT CODE: $gate_status"
+          test "$gate_status" -eq 0
+          if grep -qiE "[0-9]+ skipped" /tmp/twin-floor10090.txt; then
+            echo "::error::#10090 tagged-twin removal-floor gate SKIPPED"
+            exit 1
+          fi
+          grep -qE "[^0-9]7 passed[,[:space:]]" /tmp/twin-floor10090.txt || {
+            echo "::error::#10090 tagged-twin removal-floor gate did not run all seven cases"
+            exit 1
+          }
+
       - name: "#11138 a lock-held PM price row publishes the received quote, one cohort per event (real Postgres)"
         if: matrix.group == 'shared-tail' && needs.change-scope.outputs.reuse != 'true'
         run: |
