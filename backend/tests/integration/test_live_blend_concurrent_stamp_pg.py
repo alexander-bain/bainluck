@@ -132,7 +132,9 @@ async def pg_engine():
     """
     from sqlalchemy.ext.asyncio import create_async_engine
 
-    from app.models.models import Event, FuturesMarket, FuturesOutcome, Sport, Team, Venue
+    from app.models.models import (
+        Event, FuturesMarket, FuturesOutcome, OwedChartPoint, Sport, Team, Venue,
+    )
     from app.services.database import Base
 
     tables = [
@@ -142,6 +144,8 @@ async def pg_engine():
         Event.__table__,
         FuturesMarket.__table__,
         FuturesOutcome.__table__,
+        # #10090 attempt151: a stamp commits its publication intent here.
+        OwedChartPoint.__table__,
     ]
     engine = create_async_engine(DB_URL)
     async with engine.begin() as conn:
@@ -150,6 +154,14 @@ async def pg_engine():
     yield engine
 
     async with engine.begin() as conn:
+        await conn.execute(
+            text(
+                "DELETE FROM owed_chart_points WHERE event_id IN"
+                " (SELECT id FROM events WHERE sport_id IN"
+                " (SELECT id FROM sports WHERE key LIKE :k))"
+            ),
+            {"k": f"{MARKER}%"},
+        )
         for table in ("futures_outcomes", "futures_markets"):
             where = (
                 "market_id IN (SELECT id FROM futures_markets WHERE sport_id IN"

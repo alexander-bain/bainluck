@@ -20,6 +20,7 @@ from app.tasks.live_blend_refresh import (
     TailReceipts,
 )
 from app.utils.kalshi_exact_trace import ExactKalshiTrace
+from tests.test_live_blend_refresh import is_normal_publication_intent
 
 
 OLD = datetime(2026, 10, 8, tzinfo=timezone.utc)
@@ -51,6 +52,7 @@ class Board:
     def __init__(self, source, schedule):
         self.source, self.schedule = source, schedule
         self.reads, self.writes, self.commits = [], {}, []
+        self.intents = 0
         self.release = asyncio.Event()
         self.events, self.markets, self.quotes = {}, {}, {}
         for eid in range(1, SINGLE + 1):
@@ -90,6 +92,10 @@ class Session:
 
     async def execute(self, statement, *args):
         board = self.board
+        if is_normal_publication_intent(statement):
+            # attempt151: the stamp's publication intent, not a source read.
+            board.intents += 1
+            return Result()
         params = statement.compile().params
         if isinstance(statement, Update):
             eid = params["id_1"]

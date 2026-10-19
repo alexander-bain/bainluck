@@ -890,7 +890,15 @@ async def test_primary_350ms_ack_is_not_cancelled_by_recovery_budget(
         await flush(t)
         elapsed = time.monotonic() - started
         assert len(calls) == 1 and calls[0].get("source_value") == .78
-        assert len(t.pubs) == 1 and t.pubs[0][2] == .78 and not await owed(rig)
+        assert len(t.pubs) == 1 and t.pubs[0][2] == .78
         assert elapsed >= .35
+        # The primary ACK is recorded off the publication path; the next
+        # recovery opportunity settles it (live's owner revision), with no
+        # control republished for a delivered price.
+        assert t.r._normal_acked == {1: calls[0]["rev"]["1"]}
+        t.r._normal_retry_at = 0
+        await t.r.refresh_pending()
+        await join(t.r)
+        assert not await owed(rig) and len(calls) == 1
     finally:
         await close(t.r)

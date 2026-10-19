@@ -248,7 +248,13 @@ async def custody_counts(rig):
         )
     owner_rows = rows.pop(OWNER, 0)
     assert owner_rows == 1, rows
-    return rows
+    # Withdrawal rows only: a stamp's price publication intent
+    # (`polymarket_price_publish`, #10090 attempt151) is a different duty,
+    # settled by the refresher's next recovery opportunity.
+    return {
+        source: count for source, count in rows.items()
+        if source.startswith(pm.PM_WITHDRAWAL_DEBT_SOURCE)
+    }
 
 
 async def make(rig):

@@ -519,6 +519,20 @@ class _Result:
         return None if self._scalar is None else (self._scalar, self._rev)
 
 
+def is_normal_publication_intent(statement) -> bool:
+    """#10090 attempt151: the stamp's durable publication intent.
+
+    One INSERT into `owed_chart_points` under `<source>_price_publish`,
+    written in the committed stamp's own transaction after its UPDATE.
+    Statement-classifying rigs count it as its own kind, never as a read.
+    """
+    from sqlalchemy.sql.dml import Insert
+
+    if not isinstance(statement, Insert) or statement.table.name != "owed_chart_points":
+        return False
+    return str(statement.compile().params.get("source", "")).endswith("_price_publish")
+
+
 class _RecordingSession:
     """A session whose UPDATE ... RETURNING hands back a chosen dict.
 

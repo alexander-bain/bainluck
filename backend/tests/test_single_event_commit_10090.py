@@ -12,6 +12,7 @@ from app.utils.repair_lock_budget import (
     SET_LOCK_AND_STATEMENT_TIMEOUT_SQL, SET_LOCK_TIMEOUT_SQL, SET_STATEMENT_TIMEOUT_SQL,
 )
 from tests.test_live_blend_refresh import (
+    is_normal_publication_intent,
     _LockTimeout, _RecordingSession, _event_and_market, _one_event_refresher,
 )
 
@@ -51,6 +52,8 @@ def rig(monkeypatch, *, count=3, block=False, failure=None, statuses=None, block
                 if eid == 2:
                     if failure == "lock":
                         raise _LockTimeout("canceling statement due to lock timeout")
+            elif is_normal_publication_intent(statement):
+                commands.append("intent")
             else:
                 budgets = (
                     SET_LOCK_TIMEOUT_SQL, SET_LOCK_AND_STATEMENT_TIMEOUT_SQL,
@@ -330,6 +333,8 @@ async def test_shared_read_and_per_event_command_tradeoff(monkeypatch, count):
         count if fits else 1 + count - FRESH_STAMP_WORKERS
     )
     assert x.commands.count("budget") == x.commands.count("update") == count
+    # attempt151: each committed stamp also commits one publication intent.
+    assert x.commands.count("intent") == count
     assert len(x.sessions) == (count if fits else count + 1)
     assert not any(s.savepoints or s.rollbacks for s in x.sessions)
     assert x.published == x.committed

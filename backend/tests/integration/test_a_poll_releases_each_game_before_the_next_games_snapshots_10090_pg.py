@@ -121,6 +121,8 @@ async def pg_engine():
             "sports", "teams", "venues", "events", "odds_snapshots",
             "event_provider_anchors", "team_identity_mapping",
             "futures_markets", "futures_outcomes", "win_prob_snapshots",
+            # #10090 attempt151: a stamp commits its publication intent here.
+            "owed_chart_points",
         )
     ]
     engine = create_async_engine(DB_URL)
@@ -134,6 +136,9 @@ async def pg_engine():
 
 
 async def _clear(conn):
+    await conn.execute(
+        text("DELETE FROM owed_chart_points WHERE event_id = ANY(:ids)"), {"ids": EVENT_IDS}
+    )
     await conn.execute(text("DELETE FROM futures_markets WHERE id = :i"), {"i": MARKET_ID})
     await conn.execute(
         text("DELETE FROM win_prob_snapshots WHERE event_id = ANY(:ids)"), {"ids": EVENT_IDS}
