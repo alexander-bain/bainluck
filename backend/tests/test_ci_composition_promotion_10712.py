@@ -82,6 +82,19 @@ STEP_ENV_KEYS = {
         "database-integration",
         "#7548 a ~$45 trade print is not a championship probability",
     ): {"REDIS_URL"},
+    # #10090: Discover's ported real-Redis steps each get a private loopback
+    # database on the job's redis:7 service (db 13 and db 12); no secret.
+    (
+        "database-integration",
+        "#10090 a slow removal notification never stalls another game or a "
+        "healthy price; a recycled worker adopts every owed removal "
+        "(real Postgres + Redis)",
+    ): {"PM_WITHDRAWAL_REDIS_URL"},
+    (
+        "database-integration",
+        "#10090 an open or reopened page always learns the source removals it "
+        "owes, never via an old price (real Postgres + Redis)",
+    ): {"PM_WITHDRAWAL_REDIS_URL"},
     ("search-recall", "Every database integration group passed"): {
         "SCOPE_RESULT",
         "INTEGRATION_RESULT",
