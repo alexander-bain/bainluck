@@ -20,7 +20,8 @@ with only the build replaced:
   a waiter's cancellation leaves the shared build running, and a fresh body
   never lands in the ordinary history cache.
 
-The control proves the rig can see the stampede, so the bound is not vacuous.
+The controls prove the rig can see the stampede, and a build that outlives its
+cancelled request, so neither guard is vacuous.
 """
 import asyncio
 import inspect
@@ -38,6 +39,10 @@ HOURS = 48
 RANGE = "since_start"
 N_READERS = 20
 
+#: Every session a test made, so teardown can ask whether any was used after
+#: its request went — including by a build nobody awaits any more.
+_SESSIONS: list["_Session"] = []
+
 
 class _Session:
     """One request's DB session. ``rev`` is the state a build on it would
@@ -49,13 +54,22 @@ class _Session:
         self.gate = gate
         self.fail = fail
         self.closed = False
+        self.used_after_close = False
         self.builds = 0
+        _SESSIONS.append(self)
+
+
+def _used_after_close():
+    return [s for s in _SESSIONS if s.used_after_close]
 
 
 async def _fake_history(event_id, *, hours, chart_range, response, db, fresh):
     assert fresh is True
     await db.gate.wait()
     if db.closed:
+        # Recorded, not only raised: a build that outlived its cancelled
+        # request runs in a task nobody awaits, so its error is never read.
+        db.used_after_close = True
         raise AssertionError("a build ran on a session whose request had gone")
     db.builds += 1
     # Still in flight when the other readers look: a real build yields on
@@ -84,8 +98,11 @@ def rig(monkeypatch):
     monkeypatch.setattr(events_route, "get_event_odds_history", _fake_history)
     events_route._HISTORY_FRESH_BUILDS.clear()
     ehc._reset_for_tests()
+    _SESSIONS.clear()
     yield
     assert events_route._HISTORY_FRESH_BUILDS == {}, "a finished build left its slot held"
+    assert _used_after_close() == [], "a build ran on a session whose request had gone"
+    _SESSIONS.clear()
     ehc._reset_for_tests()
 
 
@@ -125,6 +142,9 @@ async def _herd(*, leader_fail=None, cancel_leader=False):
     gate.set()
     leader_outcome = (await asyncio.gather(leader, return_exceptions=True))[0]
     results = await asyncio.gather(*readers)
+    # Let any build that outlived its reader reach its session before
+    # `asyncio.run` cancels it at shutdown and hides it.
+    await _settle()
     builds = leader_session.builds + sum(s.builds for s in sessions)
     return leader_outcome, results, builds
 
@@ -170,6 +190,25 @@ def test_a_cancelled_leader_elects_a_new_build_on_a_live_session():
     assert isinstance(leader, asyncio.CancelledError)
     assert builds == 1  # the cancelled leader never finished its build
     assert all(_body(r)["rev"] == 2 for r in results)
+    assert _used_after_close() == []
+
+
+def test_control_a_build_that_outlives_its_cancelled_leader_is_seen(monkeypatch):
+    """The guard above must be able to fail. Shield the leader's build so it
+    keeps running after its request is cancelled — its waiters are still
+    answered correctly and the leader still reads as cancelled, so only the
+    closed session can tell. The rig must see it."""
+    barrier = events_route._coalesced_fresh_build
+
+    async def _shielding(builds, key, asked_at, build, **kw):
+        return await barrier(builds, key, asked_at, lambda: asyncio.shield(build()), **kw)
+
+    monkeypatch.setattr(events_route, "_coalesced_fresh_build", _shielding)
+    leader, results, builds = asyncio.run(_herd(cancel_leader=True))
+    assert isinstance(leader, asyncio.CancelledError)
+    assert all(_body(r)["rev"] == 2 for r in results)
+    assert len(_used_after_close()) == 1
+    _SESSIONS.clear()  # seen; teardown's guard is for the real route
 
 
 def test_a_waiters_cancellation_leaves_the_shared_build_running():
