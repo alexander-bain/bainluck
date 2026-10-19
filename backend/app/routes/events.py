@@ -32162,9 +32162,11 @@ async def get_event_odds_history(
     # Read-error and finished marks for the cache policy in front of this build
     # (`get_event_odds_history_cached`); no-ops when called any other way.
     from app.utils.event_history_cache import (
+        build_is_complete as history_build_is_complete,
         mark_finished as _history_mark_finished,
         mark_partial as _history_mark_partial,
     )
+    from app.utils.history_coverage import served_history_coverage
 
     # Verify event exists
     event_result = await db.execute(
@@ -32311,10 +32313,37 @@ async def get_event_odds_history(
     # chart of the card a reader tapped lives on its absorbed twin when the
     # fold elected the anchored row (FC Dallas 1-0 LAFC: 15318170 over
     # 15314003). Read once; the blend pin below reuses it.
-    from app.utils.serve_fold_absorbed import serve_fold_absorbed_rows
+    from app.utils.serve_fold_absorbed import (
+        serve_fold_absorbed_rows_with_completeness,
+    )
 
-    absorbed = await serve_fold_absorbed_rows(db, event)
+    absorbed, absorbed_complete = await serve_fold_absorbed_rows_with_completeness(
+        db, event
+    )
     series_event_ids = await folded_series_event_ids(db, event_id, absorbed)
+
+    # ── #10090: the revision vector a FRESH build can certify, read HERE ──────
+    #
+    # After the rows are chosen, before any of their history is read: every
+    # series statement below runs on this session after this one, so under READ
+    # COMMITTED it sees every removal this vector counts (the withdrawal vertex
+    # commits with its bag change). Never read at the end and never borrowed
+    # from the pin below, whose vector belongs to the pinned VALUE and stays
+    # null when nothing is pinned. Checked against `series_event_ids` and the
+    # canonical bag this build already holds; any doubt is no claim. Served as
+    # `history_fold_revision` only if the build then finishes whole — see
+    # `app/utils/history_coverage.py`. An ordinary build pays nothing for it.
+    history_coverage = None
+    if fresh:
+        from app.utils.history_coverage import read_coverage_prefix
+
+        history_coverage = await read_coverage_prefix(
+            db,
+            event,
+            absorbed,
+            series_event_ids,
+            membership_complete=absorbed_complete,
+        )
 
     # Get snapshots within time range
     # For completed/closed events, return ALL snapshots (no time window)
@@ -34165,6 +34194,15 @@ async def get_event_odds_history(
         # or no claim, never "revision zero".
         "blend_edge_fold_revision": (
             blend_edge_fold_revision if blend_edge_pinned else None
+        ),
+        # #10090: `{row_id: rev}` this fresh build read every series AFTER, for
+        # exactly the rows it charts — whether or not an edge is pinned. Not a
+        # value, a clock or a pin; null on any ordinary (cacheable) build, any
+        # partial one and any doubt. See `app/utils/history_coverage.py`.
+        "history_fold_revision": served_history_coverage(
+            history_coverage,
+            build_complete=history_build_is_complete(),
+            on_demand_backfill=on_demand_backfill,
         ),
         # #6925: true iff `range=since_start` actually removed points, i.e. iff
         # a second request without it would tell this caller more. False on

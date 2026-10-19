@@ -114,6 +114,22 @@ def _commence_arms(commence: datetime) -> Any:
 async def serve_fold_absorbed_rows(db, event) -> list:
     """Rows `fold_twin_events` drops into ``event``, ascending id; ``[]`` if none.
 
+    See :func:`serve_fold_absorbed_rows_with_completeness`, which this returns
+    the rows of.
+    """
+    rows, _complete = await serve_fold_absorbed_rows_with_completeness(db, event)
+    return rows
+
+
+async def serve_fold_absorbed_rows_with_completeness(db, event) -> tuple[list, bool]:
+    """``(rows, complete)``: the absorbed rows, and whether the fold ran whole.
+
+    ``complete`` is False when the fold raised (the rows are then ``[]``, as
+    they always were) or the candidate read hit `CANDIDATE_CAP`, so a row past
+    the cap could be missing. A caller that CERTIFIES its membership
+    (#10090 `history_fold_revision`) must not certify either; every other
+    caller reads only the rows.
+
     ``event`` must carry `Event.sport` loaded (every event-page route loads it);
     a row whose sport is not in memory cannot be keyed by league and folds
     nothing, which is today's page.
@@ -126,13 +142,13 @@ async def serve_fold_absorbed_rows(db, event) -> list:
     sport_key = loaded_sport_key(event)
     commence = getattr(event, "commence_time", None)
     if not sport_key or commence is None or event.sport_id is None:
-        return []
+        return [], True
     if not event.home_team_name or not event.away_team_name:
-        return []
+        return [], True
 
     sport_ids = await _foldable_sport_ids(db, sport_key)
     if not sport_ids:
-        return []
+        return [], True
     candidates = list(
         (
             await db.execute(
@@ -153,18 +169,21 @@ async def serve_fold_absorbed_rows(db, event) -> list:
         .all()
     )
     if not candidates:
-        return []
+        return [], True
 
     try:
         fold = fold_twin_events([event, *candidates])
     except Exception:  # noqa: BLE001 — gotcha #42; an unfolded page is today's
         logger.exception("serve fold: fold failed for event %s", event.id)
-        return []
+        return [], False
 
     absorbed = {
         loser_id for loser_id, survivor_id in fold.survivor_of.items()
         if survivor_id == event.id
     }
-    return sorted(
-        (row for row in candidates if row.id in absorbed), key=lambda row: row.id
+    return (
+        sorted(
+            (row for row in candidates if row.id in absorbed), key=lambda row: row.id
+        ),
+        len(candidates) < CANDIDATE_CAP,
     )

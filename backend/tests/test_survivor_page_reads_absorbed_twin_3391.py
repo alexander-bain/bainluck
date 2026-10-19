@@ -378,7 +378,11 @@ class TestTheRoutesAreWired:
         from app.routes.events import get_event_odds_history
 
         src = inspect.getsource(get_event_odds_history)
-        assert "absorbed = await serve_fold_absorbed_rows(db, event)" in src
+        # #10090: the same rows, plus whether the fold ran whole.
+        assert (
+            "absorbed, absorbed_complete = await "
+            "serve_fold_absorbed_rows_with_completeness(\n        db, event\n    )"
+        ) in src
         assert "folded_series_event_ids(db, event_id, absorbed)" in src
         # #9051: the route reads the fold with its revision vector.
         assert "folded_probability_sources_with_revision(db, event, absorbed)" in src
