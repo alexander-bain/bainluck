@@ -103,6 +103,9 @@ async def test_folded_stream_deduplicates_generation_and_preserves_quote(monkeyp
         def release(self, sub):
             self.subs.pop(sub.channel, None)
 
+    # #10090: this case asserts chunk position, so it alone also drops
+    # reconcile controls; the module's other arms keep them.
+    install_legacy_view(monkeypatch, drop_reconcile=True)
     hub = Hub()
     monkeypatch.setattr(fanout, "fanout", lambda: hub)
     stream = route._stream(1, Request(), contributor_ids=[1, 2])
