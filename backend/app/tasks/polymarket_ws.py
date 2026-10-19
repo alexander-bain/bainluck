@@ -1008,6 +1008,88 @@ class PMWithdrawal(NamedTuple):
     changed_at: Optional[float] = None
 
 
+class PMWithdrawalMarketPublisher:
+    """One market sender, coalesced pending plain frames, no retained session.
+
+    A withdrawal's market signal must not gate its event-source removal or the
+    next game price. Market signals invalidate REST reads, so the existing
+    per-market union/max/terminal coalescing also applies between flushes.
+    """
+
+    def __init__(self):
+        self.pending: list[dict] = []
+        self.task: Optional[asyncio.Task] = None
+
+    def enqueue(self, session, refresher):
+        from app.utils.market_quote_push import (
+            take_committed_market_changes, coalesce_market_changes,
+        )
+        self.pending = coalesce_market_changes(
+            self.pending + take_committed_market_changes(session),
+        )
+        self.start(refresher)
+
+    def _observe(self, task):
+        if not task.cancelled() and task.exception() is not None:
+            logger.error("Polymarket WS: market publication owner failed", exc_info=task.exception())
+
+    def start(self, refresher):
+        if self.task is not None and self.task.done():
+            task, self.task = self.task, None
+            self._observe(task)
+        if self.task is None and self.pending:
+            self.task = asyncio.create_task(
+                self._send(refresher), name="polymarket-withdrawal-market-publish",
+            )
+
+    async def offer(self, session, refresher, *, background=False):
+        self.enqueue(session, refresher)
+        if not background:
+            await self.join()
+
+    async def _send(self, refresher):
+        from app.utils.market_quote_push import coalesce_market_changes
+
+        while self.pending:
+            changes, self.pending = self.pending, []
+            try:
+                await refresher.publish_market_frames(changes)
+            except BaseException as exc:
+                # A canceled sender still owns its detached committed batch.
+                # Newer pending observations win the ordinary coalescing rule.
+                self.pending = coalesce_market_changes(changes + self.pending)
+                if not isinstance(exc, Exception):
+                    raise
+                logger.exception("Polymarket WS: market publication owner failed")
+                return  # a later flush/final drain can start the retained work
+
+    async def join(self, *, cancel=False):
+        task = self.task
+        if task is None:
+            return
+        interrupted = None
+        if cancel and not task.done():
+            task.cancel()
+        try:
+            while not task.done():
+                try:
+                    await asyncio.wait({task})
+                except asyncio.CancelledError as exc:
+                    if not cancel:
+                        raise  # this waiter does not own the shared sender
+                    interrupted = exc
+            self._observe(task)
+        finally:
+            if task.done() and self.task is task:
+                self.task = None
+        if interrupted is not None:
+            raise interrupted
+
+
+class PMWithdrawalOwnershipDeferred(RuntimeError):
+    """Withdrawal remains owed while this consumer lacks ownership."""
+
+
 class PMWithdrawalDebt:
     """#10090 — durable custody of committed withdrawals until removal settles.
 
@@ -1026,6 +1108,18 @@ class PMWithdrawalDebt:
     * `load` reads the rows memory does not hold, oldest first, when the
       consumer starts. Recovery needs no new book and no catalog membership.
 
+    The exact ``polymarket_withdrawal_owner`` source is a separate, persistent
+    coordination row: event_id/value are 0 and reading holds the owner token.
+    Claiming a replacement updates it under an exclusive row lock; both
+    withdrawal transaction bodies hold its shared lock through commit. It is
+    not owed chart/notification work and is excluded from drain counts by its
+    exact source, never a prefix. Do not delete it as a cleanup operation.
+
+    Startup recovery adopts both withdrawal and notification custody after
+    claiming ownership. Existing recovery stays active through worker changes;
+    completeness across old unguarded writers requires the separate transition
+    boundary and a subsequent guarded startup scan.
+
     Only the RETURNING rows of the withdrawal UPDATE become debt. A stored NULL
     alone never does; `strays` admits one only with a fresh untradeable book and
     a `price_changed_at` after the observation the source carries.
@@ -1035,42 +1129,188 @@ class PMWithdrawalDebt:
         #: custody id -> debt, mirroring the durable rows this process holds.
         self.owed: dict[int, PMWithdrawal] = {}
         self.loaded = False
+        self._load_running = False
+        self._uncertain_commit = False
+        self._uncertain_xids: set[str] = set()
+        self._unknown_outcomes = 0
+        from uuid import uuid4
+        self._owner_token = str(uuid4())
+        self._owner_id = None
+        self._owner_claim_at = 0.0
+        self._owner_warning_sent = False
+        self._recovery_scan_at = 0.0
+        self.publications: dict[int, dict] = {}
+        self._publication_task: Optional[asyncio.Task] = None
+        self._peer_publication_task: Optional[asyncio.Task] = None
+        self._publication_claims: dict[asyncio.Task, dict[int, dict]] = {}
+        self._publication_attempted: set[int] = set()
+        self._publication_retry_at = 0.0
+        self._publication_failures = 0
+        # One debt owner is created per consumer; its only final drain may
+        # cross many chunk boundaries/passes. Each custody row gets one final
+        # attempt, including rows discovered or committed during that drain.
+        self._final_publication_attempted: set[int] = set()
         self._retry_at = 0.0
         #: stray leg -> the `price_changed_at` already judged, so a repeated
         #: wide book on the same stored NULL is not judged again.
         self._judged: dict[int, float] = {}
 
+    async def _claim_owner(self, sessions):
+        """Fence old withdrawal writers before this consumer's first scan."""
+        if self._owner_id is not None:
+            return True
+        if time.monotonic() < self._owner_claim_at:
+            return False
+        self._owner_claim_at = time.monotonic() + 0.25
+        from sqlalchemy import select, insert, update, text
+        from app.models.models import OwedChartPoint
+        owner_source = PM_WITHDRAWAL_DEBT_SOURCE + "_owner"
+        async with sessions() as db:
+            locked = (await db.execute(text(
+                "SELECT pg_try_advisory_xact_lock(hashtextextended(:key, 0))"
+            ), {"key": owner_source})).scalar_one()
+            if not locked:
+                return False
+            row_id = (await db.execute(select(OwedChartPoint.id).where(
+                OwedChartPoint.source == owner_source
+            ).with_for_update(nowait=True))).scalar_one_or_none()
+            if row_id is None:
+                row_id = (await db.execute(insert(OwedChartPoint).values(
+                    event_id=0, source=owner_source, value=0.0,
+                    reading={"owner": self._owner_token},
+                ).returning(OwedChartPoint.id))).scalar_one()
+            else:
+                # FOR SHARE in every old transaction blocks this handoff until
+                # that transaction's commit/rollback is definitive.
+                await db.execute(update(OwedChartPoint).where(
+                    OwedChartPoint.id == row_id,
+                ).values(reading={"owner": self._owner_token}))
+            await db.commit()
+        self._owner_id = row_id  # only after the claim commit is acknowledged
+        return True
+
+    def _defer_owner(self, reason):
+        if not self._owner_warning_sent:
+            logger.warning("Polymarket WS: withdrawal ownership deferred: %s", reason)
+            self._owner_warning_sent = True
+        raise PMWithdrawalOwnershipDeferred(reason)
+
+    async def guard_owner(self, session):
+        from sqlalchemy import select
+        from app.models.models import OwedChartPoint
+        if self._owner_id is None:
+            self._defer_owner("withdrawal ownership not acquired")
+        # Look up the canonical source, not the remembered row id: deletion
+        # followed by another owner's insertion must still fence this token.
+        reading = (await session.execute(select(OwedChartPoint.reading).where(
+            OwedChartPoint.source == PM_WITHDRAWAL_DEBT_SOURCE + "_owner",
+        ).with_for_update(read=True))).scalar_one_or_none()
+        if reading is None:
+            # Only absence allows re-claim. A different token remains fenced.
+            self._owner_id = None
+            self.loaded = False
+            self._retry_at = 0.0
+            self._defer_owner("withdrawal ownership row missing")
+        if not isinstance(reading, dict) or reading.get("owner") != self._owner_token:
+            self._defer_owner("withdrawal ownership superseded")
+
     def legs(self) -> dict[int, int]:
         """Owed leg -> its event."""
         return {debt.id: debt.event_id for debt in self.owed.values()}
 
+    def require_reload(self, *, uncertain=True, xid=None):
+        if not uncertain or xid is None:
+            self.loaded = False
+        if uncertain:
+            if xid is None:
+                # Unknown identity cannot be expired on a wall clock.
+                self._uncertain_commit = True
+            else:
+                self._uncertain_xids.add(str(xid))
+
+    @property
+    def _outcome_pending(self):
+        return self._uncertain_commit or bool(self._uncertain_xids)
+
     async def load(self, sessions) -> int:
         """Move durable rows memory does not hold into memory. Never raises."""
-        if self.loaded or time.monotonic() < self._retry_at:
+        now = time.monotonic()
+        # Urgent commit discovery has its own250ms budget. An older ordinary
+        # load failure must not impose its30s gate on an uncertain outcome.
+        if self._load_running or (not self._outcome_pending and now < self._retry_at):
             return 0
-        from sqlalchemy import select
+        if self._outcome_pending:
+            if now < self._recovery_scan_at:
+                return 0
+            # Claim the next slot before awaiting so all three callers share
+            # one recovery scan budget, including when a query is slow.
+            self._recovery_scan_at = now + 0.25
+        elif self.loaded:
+            return 0
+        from sqlalchemy import select, text
 
         from app.models.models import OwedChartPoint
 
         query = select(
             OwedChartPoint.id, OwedChartPoint.event_id, OwedChartPoint.reading,
-        ).where(OwedChartPoint.source == PM_WITHDRAWAL_DEBT_SOURCE)
-        if self.owed:
-            query = query.where(OwedChartPoint.id.not_in(sorted(self.owed)))
+            OwedChartPoint.source,
+        ).where(OwedChartPoint.source.in_([
+            PM_WITHDRAWAL_DEBT_SOURCE, PM_WITHDRAWAL_DEBT_SOURCE + "_publish",
+        ]))
+        known = set(self.owed) | set(self.publications)
+        if known:
+            query = query.where(OwedChartPoint.id.not_in(sorted(known)))
+        self._load_running = True
+        resolved = set()
         try:
+            if not await self._claim_owner(sessions):
+                return 0
             async with sessions() as session:
+                pending = sorted(self._uncertain_xids)
+                if pending:
+                    try:
+                        # A rejected xid must not abort the READ COMMITTED
+                        # custody scan in this same recovery opportunity.
+                        async with session.begin_nested():
+                            statuses = (await session.execute(text(
+                                "SELECT xid, pg_xact_status(xid::xid8) "
+                                "FROM unnest(CAST(:xids AS text[])) AS xid"
+                            ), {"xids": pending})).all()
+                    except Exception:
+                        statuses = [(xid, None) for xid in pending]
+                    unknown = sum(status not in {"committed", "aborted", "in progress"}
+                                  for _, status in statuses)
+                    if unknown:
+                        if not self._unknown_outcomes:
+                            logger.warning("Polymarket WS: transaction outcome unavailable; retaining recovery")
+                        self._unknown_outcomes += unknown
+                    aborted = {xid for xid, status in statuses if status == "aborted"}
+                    resolved = {xid for xid, status in statuses if status == "committed"}
+                    self._uncertain_xids.difference_update(aborted)
+                    if not self._outcome_pending and self.loaded:
+                        return 0
                 rows = (
                     await session.execute(
                         query.order_by(OwedChartPoint.id)
                         .limit(PM_WITHDRAWAL_DEBT_LOAD_LIMIT)
                     )
                 ).all()
-        except Exception:
+        except Exception as exc:
+            if self._owner_id is None and is_lock_timeout(exc):
+                self._retry_at = time.monotonic() + 0.25
+                return 0  # expected handoff contention; do not log an outage
             # Cancellation still propagates. The rows stay owed in the table.
-            self._retry_at = time.monotonic() + PM_WITHDRAWAL_DEBT_RETRY_S
+            self._retry_at = time.monotonic() + (
+                0.25 if self._outcome_pending or self._owner_id is None else PM_WITHDRAWAL_DEBT_RETRY_S
+            )
             logger.exception("Polymarket WS: withdrawal debt not loaded; retrying")
             return 0
-        for custody_id, event_id, reading in rows:
+        finally:
+            self._load_running = False
+        for custody_id, event_id, reading, source in rows:
+            if source == PM_WITHDRAWAL_DEBT_SOURCE + "_publish":
+                self.publications[custody_id] = reading["frame"]
+                continue
             observed = reading["last_updated"]
             self.owed[custody_id] = PMWithdrawal(
                 int(reading["outcome_id"]),
@@ -1080,6 +1320,10 @@ class PMWithdrawalDebt:
                 custody_id,
             )
         self.loaded = len(rows) < PM_WITHDRAWAL_DEBT_LOAD_LIMIT
+        if self.loaded:
+            # A scan after pg_xact_status reports committed sees that commit.
+            # Keep the identity through failures and LIMIT continuation pages.
+            self._uncertain_xids.difference_update(resolved)
         return len(rows)
 
     async def record(self, session, rows) -> list[PMWithdrawal]:
@@ -1220,6 +1464,179 @@ class PMWithdrawalDebt:
             else:
                 self.owed.pop(debt.custody_id, None)
 
+    async def record_publications(self, session, frames):
+        """Custody commits atomically with source removal and its revision."""
+        from sqlalchemy import insert
+        from app.models.models import OwedChartPoint
+        pending = {}
+        for frame in frames:
+            cid = (await session.execute(insert(OwedChartPoint).values(
+                source=PM_WITHDRAWAL_DEBT_SOURCE + "_publish",
+                event_id=frame["event_id"], value=0.0, reading={"frame": frame},
+            ).returning(OwedChartPoint.id))).scalar_one()
+            pending[cid] = frame
+        return pending
+
+    def _defer_publication(self):
+        # Publication recovery has its own budget: the catalog/debt-load retry
+        # is 30s. First failure retries after one game period; persistent faults
+        # back off to2s without stopping healthy price delivery.
+        self._publication_failures += 1
+        delay = min(2.0, 0.25 * (2 ** min(self._publication_failures - 1, 3)))
+        self._publication_retry_at = time.monotonic() + delay
+
+    def _observe_publication(self, task):
+        """A failed recovery owner must never fail its caller's price loop."""
+        if task not in self._publication_claims:
+            return
+        self._publication_claims.pop(task)
+        if self._publication_task is task:
+            self._publication_task = None
+        if self._peer_publication_task is task:
+            self._peer_publication_task = None
+        if task.cancelled():
+            self._defer_publication()
+            return
+        error = task.exception()
+        if error is not None:
+            self._defer_publication()
+            logger.error("Polymarket WS: publication owner failed; custody retained",
+                         exc_info=error)
+
+    async def join_publications(self, *, cancel=False):
+        """Ordinary joiner cancellation leaves the shared owners running.
+
+        Teardown explicitly cancels and joins them, retaining durable custody.
+        Failed owners are observed, never raised into a healthy caller.
+        """
+        tasks = list(self._publication_claims)
+        if not tasks:
+            return
+        if cancel:
+            for task in tasks:
+                if not task.done() and not task.cancelling():
+                    task.cancel()
+        interrupted = None
+        while any(not task.done() for task in tasks):
+            try:
+                await asyncio.wait(tasks)
+            except asyncio.CancelledError as exc:
+                if not cancel:
+                    raise
+                interrupted = exc
+                for task in tasks:
+                    if not task.done() and not task.cancelling():
+                        task.cancel()
+        for task in tasks:
+            self._observe_publication(task)
+        if interrupted is not None:
+            raise interrupted
+
+    async def publish_pending(self, refresher, sessions, *, background=False, final=False):
+        """Two bounded sends; custody and event claims never overlap."""
+        for task in list(self._publication_claims):
+            if task.done():
+                self._observe_publication(task)
+        if len(self._publication_claims) < 2:
+            claimed_ids = {cid for batch in self._publication_claims.values() for cid in batch}
+            claimed_events = {frame["event_id"] for batch in self._publication_claims.values()
+                              for frame in batch.values()}
+            retry_ready = time.monotonic() >= self._publication_retry_at
+            pending = {cid: frame for cid, frame in self.publications.items()
+                       if cid not in claimed_ids and frame["event_id"] not in claimed_events
+                       and ((cid not in self._final_publication_attempted) if final else
+                            (cid not in self._publication_attempted or retry_ready))}
+            if pending:
+                self._publication_attempted.update(pending)
+                if final:
+                    self._final_publication_attempted.update(pending)
+                task = asyncio.create_task(
+                    self._publish_pending(refresher, sessions, final, pending),
+                    name="polymarket-withdrawal-publication",
+                )
+                self._publication_claims[task] = pending
+                if self._publication_task is None:
+                    self._publication_task = task
+                else:
+                    self._peer_publication_task = task
+        if not background:
+            await self.join_publications()
+
+    async def _publish_pending(self, refresher, sessions, final=False, pending=None):
+        try:
+            await self._publish_pending_once(refresher, sessions, final, pending)
+        except Exception:
+            # SELECT, DELETE, context close and unexpected transport errors
+            # all preserve durable custody. Cancellation remains cancellation.
+            self._defer_publication()
+            logger.exception("Polymarket WS: publication recovery failed; retrying")
+
+    async def _publish_pending_once(self, refresher, sessions, final=False, pending=None):
+        """Retry owed invalidations, retaining exact original revisions.
+
+        The transport makes one bounded attempt. Durable retries may duplicate
+        an acknowledged-but-unsettled frame; they never mint a new revision.
+        """
+        if pending is None:
+            pending = {cid: frame for cid, frame in self.publications.items()
+                       if not final or cid not in self._final_publication_attempted}
+        if not pending:
+            return
+        if final:
+            # Claim before any await, including a failed SELECT or send.
+            # Later final calls may attempt NEW custody, never replay this
+            # failed set while the price drain is trying to finish.
+            self._final_publication_attempted.update(pending)
+        from sqlalchemy import select
+        from app.models.models import Event
+        async with sessions() as session:
+            rows = (await session.execute(select(
+                Event.id, Event.win_probability_sources_rev,
+                Event.status, Event.completed_at,
+            ).where(Event.id.in_({f["event_id"] for f in pending.values()})))).all()
+            current = {eid: (rev, status, completed_at)
+                       for eid, rev, status, completed_at in rows}
+        # Completion can change without changing the source revision.
+        # Never replay a live invalidation for an already terminal event.
+        obsolete = {cid for cid, frame in pending.items()
+                    if current.get(frame["event_id"], (None, None, None))[1:]
+                    != ("live", None)}
+        controls = []
+        for cid, frame in pending.items():
+            if cid in obsolete:
+                continue
+            # A newer sibling price does not prove the reader adopted the
+            # removal or its history. Keep original identity and revision.
+            controls.append({**frame, "reconcile": {
+                "event_id": frame["event_id"],
+                "custody_id": f"pm-withdrawal:{cid}",
+                "removal_rev": dict(frame["rev"]),
+            }, "reconcile_only": current[frame["event_id"]][0]
+                != frame["rev"][str(frame["event_id"]) ]})
+        acknowledged = await _publish_committed_withdrawals(refresher, controls)
+        ids = [cid for cid, frame in pending.items()
+               if cid in obsolete or (frame["event_id"], frame["rev"][str(frame["event_id"])])
+               in (acknowledged or set())]
+        if not ids:
+            self._defer_publication()
+            return
+        from sqlalchemy import delete
+        from app.models.models import OwedChartPoint
+        # Deletion failure/cancellation retains the row for safe replay.
+        async with sessions() as session:
+            await session.execute(delete(OwedChartPoint).where(
+                OwedChartPoint.id.in_(ids),
+                OwedChartPoint.source == PM_WITHDRAWAL_DEBT_SOURCE + "_publish",
+            ))
+        for cid in ids:
+            self.publications.pop(cid, None)
+            self._publication_attempted.discard(cid)
+        if any(cid not in ids for cid in pending):
+            self._defer_publication()
+        elif not self.publications:
+            self._publication_retry_at = 0.0
+            self._publication_failures = 0
+
 
 async def withdraw_attributed_event_sources(session, withdrawn_rows):
     """#10090: remove only a PM source whose speaker was explicitly withdrawn.
@@ -1333,6 +1750,8 @@ async def _publish_committed_withdrawals(refresher, frames):
     import asyncio
 
     for frame in frames:
+        if frame.get('reconcile_only'):
+            continue  # old control cannot invalidate a newer writer cache
         event_id = frame['event_id']
         refresher._last_written_value.pop(event_id, None)
         refresher._last_refresh_at.pop(event_id, None)
@@ -1348,9 +1767,10 @@ async def _publish_committed_withdrawals(refresher, frames):
             if task.cancelled():
                 raise
             interrupted = exc
-    task.result()
+    acknowledged = task.result()
     if interrupted is not None:
         raise interrupted
+    return acknowledged
 
 
 class _PMPriceWriteResult:
@@ -3150,6 +3570,7 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
         props: Optional[bool] = None,
         final: bool = False,
         before_write=None,
+        background_publish=False,
     ) -> Optional[list[int]]:
         """#9934: withdraw the held prices the latest wide books priced out.
 
@@ -3166,14 +3587,27 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
         ``before_write(books)`` sees the exact snapshot before its transaction.
         """
         from app.tasks.live_blend_refresh import _mono
+        from app.tasks.polymarket_ws import (
+            PMWithdrawalMarketPublisher, PMWithdrawalOwnershipDeferred,
+        )
         from app.utils.kalshi_empty_book import book_refutes_price
 
         # #10090: committed explicit withdrawals whose source removal is still
         # owed, durable across a restart (`PMWithdrawalDebt`). Reached through
         # the refresher: no new name.
+        market_owner = getattr(blend_refresher, "withdrawal_market_publisher", None)
+        if market_owner is None:
+            market_owner = PMWithdrawalMarketPublisher()
+            blend_refresher.withdrawal_market_publisher = market_owner
+        if final:
+            market_owner.start(blend_refresher)
+            await market_owner.join()
         withdrawal_debt = getattr(blend_refresher, "withdrawal_debt", None)
         if withdrawal_debt is not None:
             await withdrawal_debt.load(get_task_session)
+            await withdrawal_debt.publish_pending(
+                blend_refresher, get_task_session, background=background_publish, final=final,
+            )
         async with buffer_lock:
             debt_events = withdrawal_debt.legs() if withdrawal_debt is not None else {}
             held_events = (
@@ -3236,6 +3670,10 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
         rows = []
         strays = []
         if books:
+            from sqlalchemy import text
+
+            withdrawal_xid = None
+            withdrawal_commit_started = False
             try:
                 async with get_task_session() as session:
                     if not final:
@@ -3243,6 +3681,11 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                             SET_LOCK_TIMEOUT_SQL,
                             {"ms": lock_timeout_value(PRICE_CHUNK_LOCK_TIMEOUT_MS)},
                         )
+                    if withdrawal_debt is not None:
+                        await withdrawal_debt.guard_owner(session)
+                        withdrawal_xid = (await session.execute(
+                            text("SELECT pg_current_xact_id()::text")
+                        )).scalar_one()
                     rows = await withdraw_book_refuted_prices(session, books)
                     for row in rows:
                         if row.last_updated is None:
@@ -3269,14 +3712,22 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                             and oid not in non_blend_outcome_ids
                             and event_id_by_outcome.get(oid) is not None
                         })
+                    withdrawal_commit_started = True
             except BaseException as exc:
                 # The commit may have landed unacknowledged (a dropped
                 # connection, or cancellation during its await): the next
                 # flush re-reads every durable row memory does not hold.
                 if withdrawal_debt is not None:
-                    withdrawal_debt.loaded = False
+                    withdrawal_debt.require_reload(
+                        uncertain=withdrawal_commit_started and not is_lock_timeout(exc),
+                        xid=withdrawal_xid,
+                    )
                 if not isinstance(exc, Exception):
                     raise
+                if isinstance(exc, PMWithdrawalOwnershipDeferred):
+                    until = _mono() + min(PRICE_FLUSH_SECONDS, 0.25)
+                    withdrawal_retry_until.update(dict.fromkeys(books, until))
+                    return []
                 stats["errors"] += 1
                 logger.exception(
                     "Polymarket WS: withdrawal error (%d retained for retry)", len(books)
@@ -3292,12 +3743,18 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                 withdrawal_debt.adopt(recorded)
                 # A leg whose newer quote arrived meanwhile waits for that write.
                 debts.extend(debt for debt in recorded if debt.id not in price_buffer)
-            await blend_refresher.publish_market_changes(session)
+            await market_owner.offer(
+                session, blend_refresher, background=background_publish,
+            )
         settled = []
         invalidations = []
         if debts or strays:
             from app.tasks.polymarket_ws import withdraw_attributed_event_sources
 
+            from sqlalchemy import text
+
+            removal_xid = None
+            removal_commit_started = False
             try:
                 async with get_task_session() as removal_session:
                     if not final:
@@ -3305,14 +3762,42 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                             SET_LOCK_TIMEOUT_SQL,
                             {"ms": lock_timeout_value(PRICE_CHUNK_LOCK_TIMEOUT_MS)},
                         )
+                    await withdrawal_debt.guard_owner(removal_session)
+                    removal_xid = (await removal_session.execute(
+                        text("SELECT pg_current_xact_id()::text")
+                    )).scalar_one()
                     # The rows settle with the removal, or neither commits.
                     settled = await withdrawal_debt.settle(removal_session, debts + strays)
                     invalidations = await withdraw_attributed_event_sources(
                         removal_session, settled,
                     )
-            except Exception as exc:
+                    pending_publications = await withdrawal_debt.record_publications(
+                        removal_session, invalidations,
+                    )
+                    removal_commit_started = True
+            except BaseException as exc:
+                # Commit/close may have completed without acknowledgement.
+                # Reload the durable publication on the next flush or restart.
+                withdrawal_debt.require_reload(
+                    uncertain=removal_commit_started and not is_lock_timeout(exc),
+                    xid=removal_xid,
+                )
+                if not isinstance(exc, Exception):
+                    raise
+                if isinstance(exc, PMWithdrawalOwnershipDeferred):
+                    until = _mono() + min(PRICE_FLUSH_SECONDS, 0.25)
+                    withdrawal_retry_until.update(
+                        dict.fromkeys({debt.id for debt in debts + strays}, until)
+                    )
+                    return []
                 # The withdrawal is committed and its debt still owed: in
                 # memory, and durably in its row.
+                # A failed acknowledgement can follow a successful commit.
+                # Confirm via custody before paying the full failed-flush backoff.
+                await withdrawal_debt.load(get_task_session)
+                await withdrawal_debt.publish_pending(
+                    blend_refresher, get_task_session, background=background_publish, final=final,
+                )
                 stats["errors"] += 1
                 logger.exception("Polymarket WS: source withdrawal retained for retry")
                 if not final and is_lock_timeout(exc):
@@ -3324,6 +3809,7 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                 return None
             # A resolver/CAS refusal settles too: a valid alternative, a newer
             # quote or a terminal result owns the source now.
+            withdrawal_debt.publications.update(pending_publications)
             withdrawal_debt.settled(debts + strays)
             for debt in debts:
                 withdrawal_retry_until.pop(debt.id, None)
@@ -3332,7 +3818,12 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
         if invalidations:
             from app.tasks.polymarket_ws import _publish_committed_withdrawals
 
-            await _publish_committed_withdrawals(blend_refresher, invalidations)
+            if withdrawal_debt is not None:
+                await withdrawal_debt.publish_pending(
+                    blend_refresher, get_task_session, background=background_publish, final=final,
+                )
+            else:
+                await _publish_committed_withdrawals(blend_refresher, invalidations)
         async with buffer_lock:
             for oid, book in books.items():
                 if withdraw_buffer.get(oid) == book:
@@ -3356,6 +3847,7 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
         lock-held whole chunks retain their own eligibility cooldown. #10090
         ``flush_started`` is this flush's start, for the refresher's floor."""
         import asyncio  # the pipelined stamp below; executed rigs bring no globals
+        from app.tasks.polymarket_ws import PMWithdrawalMarketPublisher
         from app.tasks.live_blend_refresh import _mono
         from app.tasks.polymarket_ws import (
             _PMHeadlineEvents, _pm_lock_isolated_chunks, _pm_pure_bridged_legs,
@@ -3749,26 +4241,27 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
             # chunk's stamp starts only after its own write committed;
             # its market notification may run alongside the event stamp.
             # Withdrawals still follow the stamp before them. The one owner
-            # may outlive an ordinary batch, but never catalog/shutdown/final
-            # handoff boundaries.
-            market_publishing = None
+            # may outlive an ordinary batch or catalog boundary: it retains
+            # plain frames only. Completed final/shutdown joins own its lifetime.
+            market_owner = getattr(blend_refresher, "withdrawal_market_publisher", None)
+            if market_owner is None:
+                market_owner = PMWithdrawalMarketPublisher()
+                blend_refresher.withdrawal_market_publisher = market_owner
 
             def start_market_publish(session):
-                nonlocal market_publishing
-                # The previous sender joins before the next price transaction.
-                # No publication backlog and no database session held open.
-                assert market_publishing is None
-                market_publishing = asyncio.create_task(
-                    blend_refresher.publish_market_changes(session),
-                    name="polymarket-committed-market-publish",
-                )
+                # Detach outer-commit-confirmed frames synchronously. One sender
+                # owns coalesced invalidations without retaining this session.
+                market_owner.enqueue(session, blend_refresher)
 
             async def market_publish_done(*, cancel=False):
-                nonlocal market_publishing
-                if market_publishing is None:
+                if not cancel:
+                    market_owner.start(blend_refresher)
+                    await market_owner.join()
                     return
-                task = market_publishing
-                if cancel and not task.cancelling():
+                task = market_owner.task
+                if task is None:
+                    return
+                if not task.cancelling():
                     task.cancel()
                 interrupted = None
                 while not task.done():
@@ -3778,7 +4271,8 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                         interrupted = exc
                         if not task.cancelling():
                             task.cancel()
-                market_publishing = None
+                if market_owner.task is task:
+                    market_owner.task = None
                 if not task.cancelled() and task.exception() is not None:
                     logger.error(
                         "Polymarket WS: committed market publication failed",
@@ -3795,7 +4289,6 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                         None if stage_trace is None
                         else stage_trace.chunk_begin(index, chunk_ids)
                     )
-                    await market_publish_done()
                     async with buffer_lock:
                         withdraw_cohort_ids.update(withdraw_buffer)
                         speaking_withdrawals = event_ids_for_outcomes(
@@ -4027,6 +4520,7 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                         attempted_withdraw_events.update(mature)
                         early_withdrawn = await flush_withdrawals(
                             only_events=mature, final=final,
+                            background_publish=flush_started is not None and not final,
                             props=None if final else False,
                             before_write=join_stamp_reading,
                         )
@@ -4153,7 +4647,8 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                     if final or flush_started is None:
                         await stamp_done()
                 finally:
-                    await market_publish_done()
+                    if final or flush_started is None:
+                        await market_publish_done()
         # Keep isolation beyond cooldown expiry until every failed price row
         # has committed. A newer quote on a successful row may batch normally.
         lock_retry_events.intersection_update(
@@ -4174,6 +4669,7 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
             standalone=None if final else False,
             props=None if final else False,
             final=final,
+            background_publish=flush_started is not None and not final,
             before_write=join_stamp_reading,
         )
         if withdrawn is None:
@@ -4337,7 +4833,7 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                 if wrote is False:
                     wrote_all = False
         async with catalog_boundary.side_writer:
-            withdrawn = await flush_withdrawals(standalone=True)
+            withdrawn = await flush_withdrawals(standalone=True, background_publish=True)
         if withdrawn is None:
             wrote_all = False
         return wrote_all
@@ -4399,6 +4895,7 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
         async with catalog_boundary.side_writer:
             withdrawn = await flush_withdrawals(
                 standalone=False, props=True, exclude_events=lock_deferred_events,
+                background_publish=True,
             )
         if withdrawn is None:
             wrote_all = False
@@ -4515,8 +5012,18 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
             try:
                 await catalog_boundary.join_stamps()
             finally:
-                if interrupted is not None:
-                    raise interrupted
+                try:
+                    debt = getattr(blend_refresher, "withdrawal_debt", None)
+                    if debt is not None:
+                        await debt.join_publications(cancel=True)
+                finally:
+                    try:
+                        market_owner = getattr(blend_refresher, "withdrawal_market_publisher", None)
+                        if market_owner is not None:
+                            await market_owner.join(cancel=True)
+                    finally:
+                        if interrupted is not None:
+                            raise interrupted
 
     # #9418: one CLOB client for the consumer's resolutions, made on first use
     # and closed with the consumer; and the in-flight resolution tasks, held so

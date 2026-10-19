@@ -544,12 +544,19 @@ class WinProbSnapshot(Base):
 class OwedChartPoint(Base):
     """#11181: one committed live stamp's chart observation, owed until written.
 
-    Inserted in the stamp's own transaction, so a stamp commits only with its
-    owed point; deleted in the same savepoint that writes the point into
-    ``win_prob_snapshots``, so a replay after a crash pays nothing twice. No
-    foreign key and no UPDATE: an insert takes no lock on the event or on any
-    chart row, so it cannot queue behind the chart writer it stands in for.
-    Rows exist only while that writer is behind (``app/tasks/live_blend_refresh.py``).
+    Chart custody is inserted in the stamp's transaction and deleted in the
+    savepoint that writes ``win_prob_snapshots``; replay pays nothing twice.
+    Those rows are never UPDATEd and exist only while the chart writer is
+    behind. No foreign key: insertion takes no lock on an event or chart row.
+
+    Source-scoped PM recovery also stores withdrawal and notification custody
+    under ``polymarket_withdrawal`` and ``polymarket_withdrawal_publish``.
+    The exact ``polymarket_withdrawal_owner`` source is different: one
+    persistent coordination row (event_id/value 0, reading.owner token),
+    updated when ownership is claimed and held FOR SHARE by withdrawal
+    transactions. It is not unpaid work. Drain checks exclude that exact
+    source; never delete it to force a zero count. PMWithdrawalDebt documents
+    the claim, guard and recovery lifecycle.
     """
 
     __tablename__ = "owed_chart_points"
@@ -558,14 +565,14 @@ class OwedChartPoint(Base):
     source: Mapped[str] = mapped_column(String(30), nullable=False)
     event_id: Mapped[int] = mapped_column(Integer, nullable=False)
     value: Mapped[float] = mapped_column(Float, nullable=False)
-    #: The frozen chart scalars and the stamp's own observation time, verbatim.
+    #: Source-specific chart scalars, withdrawal custody, or ownership token.
     reading: Mapped[dict] = mapped_column(JSONB, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
 
     __table_args__ = (
-        # The drain's only read: this source's rows in commit-id order.
+        # Source-scoped custody reads and persistent-owner lookup.
         Index("ix_owed_chart_points_source_id", "source", "id"),
     )
 

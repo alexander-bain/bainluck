@@ -348,10 +348,34 @@ class TestTheRigCanSeeTheRace:
         assert await box[0].ended(within=0.5) == "still running"
         await box[0].stop()
 
-    async def test_mailbox_race_loses_the_cancel_without_the_guard(
+    async def test_inline_mailbox_race_loses_the_cancel_without_the_guard(
+        self, rig, py311_wait_for,
+    ):
+        # Keep the old negative control at the actual Subscription.next seam.
+        # The route now owns this await in a separate task and waits with
+        # asyncio.wait; removing its guard alone no longer recreates inline
+        # CPython3.11 wait_for cancellation loss in the reader task.
+        hub = live_fanout.fanout()
+        sub = await hub.subscribe(event_channel(4711))
+        async def inline_reader():
+            while True:
+                await sub.next(timeout=.05)
+        task = asyncio.create_task(inline_reader())
+        try:
+            await _turns()
+            sub.offer(_live_frame(4711))
+            task.cancel()
+            done, _ = await asyncio.wait({task}, timeout=.5)
+            assert not done, "negative control must reproduce old inline loss"
+        finally:
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+            hub.release(sub)
+
+    async def test_owned_mailbox_releases_reader_even_with_guard_removed(
         self, rig, py311_wait_for, unguarded,
     ):
-        reader = _Reader(4711)
-        await _leave_in_the_mailbox_turn(reader, 4711)
-        assert await reader.ended(within=0.5) == "still running"
-        await reader.stop()
+        reader = _Reader(4712)
+        await _leave_in_the_mailbox_turn(reader, 4712)
+        assert await reader.ended(within=.5) == "cancelled"
+        assert live_fanout.fanout().subscriber_count == 0

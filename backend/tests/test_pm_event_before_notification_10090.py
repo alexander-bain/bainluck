@@ -18,6 +18,9 @@ def committed_rig(*, fail_commit=False, hold_cleanup=False):
     cleaning, cleanup = asyncio.Event(), asyncio.Event()
 
     class Session:
+        def __init__(self):
+            self.info = {}
+
         async def execute(self, statement, params=None):
             if isinstance(statement, tuple) and statement[0] == "prices":
                 return SimpleNamespace(all=lambda: [
@@ -31,10 +34,18 @@ def committed_rig(*, fail_commit=False, hold_cleanup=False):
     @asynccontextmanager
     async def session():
         r.trace.append(("begin", None))
-        yield Session()
+        current = Session()
+        yield current
         if fail_commit:
             raise RuntimeError("commit refused")
         r.trace.append(("commit", None))
+        # Model the existing committed-plain-frame seam only after successful
+        # commit; a failed commit never exposes a detached notification.
+        current.info["market_quote_committed"] = [{
+            "market_id": 10, "source": "polymarket", "outcome_ids": [1, 2],
+            "outcome_observed_at": {"1": "2026-10-19T00:00:00+00:00", "2": "2026-10-19T00:00:00+00:00"},
+            "updated_at": "2026-10-19T00:00:00+00:00", "terminal": False,
+        }]
 
     class Refresher:
         async def publish_market_changes(self, session):
@@ -47,6 +58,10 @@ def committed_rig(*, fail_commit=False, hold_cleanup=False):
                     cleaning.set()
                     await cleanup.wait()
                 r.trace.append(("market_done", None))
+
+        async def publish_market_frames(self, changes):
+            assert changes and changes[0]["outcome_ids"] == [1, 2]
+            await self.publish_market_changes(None)
 
         def pending_event_ids(self):
             return frozenset()
@@ -78,25 +93,31 @@ async def test_event_stamp_does_not_wait_for_its_market_notification():
     try:
         await asyncio.wait_for(publishing.wait(), 1)
         await asyncio.wait_for(refreshed.wait(), 1)
-        assert not task.done(), "the flush still owns and joins publication"
+        assert not task.done(), "the untimed flush joins the shared publication"
         assert ("market_done", None) not in r.trace
         # A genuinely newer input survives while the older notice is pending.
         r.ns["price_buffer"][1] = 0.7
     finally:
         release.set()
         await asyncio.wait_for(task, 1)
+        await r.ns["blend_refresher"].withdrawal_market_publisher.join()
     assert r.ns["price_buffer"] == {1: 0.7}
     assert r.trace.index(("event_ready", 10)) < r.trace.index(("market_done", None))
 
 
 @pytest.mark.asyncio
-async def test_cancelled_flush_joins_publication_even_after_repeat_cancel():
+async def test_explicit_market_shutdown_joins_publication_even_after_repeat_cancel():
     r, publishing, _, refreshed, cleaning, cleanup = committed_rig(hold_cleanup=True)
     task = asyncio.create_task(r.ns["flush_prices"]())
     try:
         await asyncio.wait_for(publishing.wait(), 1)
         await asyncio.wait_for(refreshed.wait(), 1)
-        task.cancel()
+        task.cancel()  # cancel the waiter, not the shared publication owner
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        owner = r.ns["blend_refresher"].withdrawal_market_publisher
+        assert owner.task is not None and not owner.task.cancelling()
+        task = asyncio.create_task(owner.join(cancel=True))
         await asyncio.wait_for(cleaning.wait(), 1)
         task.cancel()
         for _ in range(5):
@@ -107,7 +128,7 @@ async def test_cancelled_flush_joins_publication_even_after_repeat_cancel():
         with pytest.raises(asyncio.CancelledError):
             await asyncio.wait_for(task, 1)
     assert ("market_done", None) in r.trace
-    assert not any(t.get_name() == "polymarket-committed-market-publish"
+    assert not any(t.get_name() == "polymarket-withdrawal-market-publish"
                    for t in asyncio.all_tasks() if not t.done())
 
 

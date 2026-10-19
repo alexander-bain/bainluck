@@ -161,6 +161,16 @@ async def _checkout(pool):
         return await pool.get_connection("PUBLISH")
 
 
+def take_committed_market_changes(session) -> list[dict]:
+    """Detach only outer-commit-confirmed plain frames from the closed session."""
+    return _coalesce(session.info.pop(_READY, []))
+
+
+def coalesce_market_changes(changes) -> list[dict]:
+    """Keep the newest observations and terminal flag for each market/source."""
+    return _coalesce(changes)
+
+
 async def publish_committed_market_changes(session, redis_client) -> int:
     """Drain outer-commit-confirmed changes using a caller-owned Redis client.
 
@@ -168,7 +178,13 @@ async def publish_committed_market_changes(session, redis_client) -> int:
     publication, not delivery proof. Failures are logged and never undo or retry
     a committed database write; clients recover through REST on reconnect.
     """
-    changes = _coalesce(session.info.pop(_READY, []))
+    return await publish_market_changes(
+        take_committed_market_changes(session), redis_client,
+    )
+
+
+async def publish_market_changes(changes: list[dict], redis_client) -> int:
+    """Publish detached committed frames with the unchanged bounded transport."""
     if not changes:
         return 0
     sent = 0
