@@ -65,6 +65,9 @@ actor APIClient {
     private struct CacheEntry {
         let data: Data
         let timestamp: Date
+        /// When the request that filled this entry STARTED (#10090 C1b): fills are
+        /// ordered by start, never by landing. `timestamp` stays the TTL clock.
+        let started: Date
     }
 
     /// What a single GET revealed about the SERVER's cache and its own build cost
@@ -509,8 +512,8 @@ actor APIClient {
         // reconcile pair and landing after it refilled the key with the build
         // from before the withdrawal, and the next poll served it from here.
         // The caller still gets its own body; only the cache keeps the newer one.
-        if let key = cacheKey, (responseCache[key]?.timestamp ?? .distantPast) <= started {
-            responseCache[key] = CacheEntry(data: data, timestamp: Date())
+        if let key = cacheKey, (responseCache[key]?.started ?? .distantPast) <= started {
+            responseCache[key] = CacheEntry(data: data, timestamp: Date(), started: started)
             cleanCacheIfNeeded()
         }
 

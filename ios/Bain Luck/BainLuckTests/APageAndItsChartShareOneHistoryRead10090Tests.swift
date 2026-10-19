@@ -308,6 +308,29 @@ final class APageAndItsChartShareOneHistoryRead10090Tests: XCTestCase {
         XCTAssertEqual(Origin.requests.count, 2, "and serves it without a third request")
     }
 
+    /// The more common overlap (lane1b 1439Z on 9b3893f54a): the earlier-started
+    /// ordinary read lands FIRST and fills the key, then the pair's later-started
+    /// fresh read lands. Ordering a start against the entry's FILL time refused
+    /// the fresh build here and kept the pre-withdrawal body for the next poll.
+    func testAnEarlierStartedReadLandingFirstDoesNotKeepTheEntry() async throws {
+        let api = client()
+        let ordinary = read(api)
+        try await awaitRequests(1)
+        let fresh = Task { try await api.fetchFreshEventHistory(id: 4242, hours: 168) }
+        try await awaitRequests(2)
+        Origin.release(where: { !Self.isFresh($0) }, probability: "41")
+        let older = try await ordinary.value
+        XCTAssertEqual(older.aggregateLine?.last?.homeProbability, 0.41)
+
+        Origin.release(where: Self.isFresh, probability: "62")
+        let newer = try await fresh.value
+        XCTAssertEqual(newer.aggregateLine?.last?.homeProbability, 0.62)
+
+        let next = try await api.fetchEventHistory(id: 4242, hours: 168)
+        XCTAssertEqual(next.aggregateLine?.last?.homeProbability, 0.62, "the later-started build replaces the entry")
+        XCTAssertEqual(Origin.requests.count, 2, "and is served without a third request")
+    }
+
     /// The guard orders by start, not by kind: a read that started later
     /// still replaces the entry, so the cache is never pinned to one body.
     func testALaterStartedReadStillReplacesTheEntry() async throws {
