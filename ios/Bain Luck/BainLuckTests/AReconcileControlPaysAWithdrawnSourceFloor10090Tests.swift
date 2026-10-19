@@ -131,6 +131,8 @@ final class AReconcileControlPaysAWithdrawnSourceFloor10090Tests: XCTestCase {
             var coverage: String?? = .none
             var pin = AReconcileControlPaysAWithdrawnSourceFloor10090Tests.unpinnedFragment
             var historyEventId = 4242
+            /// When set, the history half is exactly this payload.
+            var servedHistory: EventHistoryResponse?
         }
         var page: EventDetail
         var pageHistory: EventHistoryResponse
@@ -196,6 +198,7 @@ final class AReconcileControlPaysAWithdrawnSourceFloor10090Tests: XCTestCase {
             let pair = pairs[min(index, pairs.count - 1)]
             await hold(index)
             if pair.fails { throw Declined() }
+            if let served = pair.servedHistory { return served }
             if case .some(let coverage) = pair.coverage {
                 return try AReconcileControlPaysAWithdrawnSourceFloor10090Tests.coverageHistory(
                     p: pair.p, at: pair.at, coverage: coverage, pin: pair.pin, eventId: pair.historyEventId)
@@ -226,11 +229,11 @@ final class AReconcileControlPaysAWithdrawnSourceFloor10090Tests: XCTestCase {
 
     /// A live one-row blend at revision 10: hero 60, rail Kalshi 50 + Polymarket 82.
     private func opened(
-        page: EventDetail? = nil, pairs: [Client.Pair], holdPairs: Set<Int> = []
+        page: EventDetail? = nil, history: EventHistoryResponse? = nil, pairs: [Client.Pair], holdPairs: Set<Int> = []
     ) async throws -> (Client, Handle, EventDetailViewModel) {
         let client = Client(
             page: try page ?? Self.detail(p: 0.6, revision: #"{"4242":10}"#, sources: Self.both),
-            history: try Self.history(p: 0.6, edge: #"{"4242":10}"#, at: "2026-09-27T17:00:00Z")
+            history: try history ?? Self.history(p: 0.6, edge: #"{"4242":10}"#, at: "2026-09-27T17:00:00Z")
         )
         client.pairs = pairs
         client.holdPairs = holdPairs
@@ -926,6 +929,46 @@ final class AReconcileControlPaysAWithdrawnSourceFloor10090Tests: XCTestCase {
         XCTAssertEqual(vm.historyGeneration, generation, "and offers the chart nothing new")
         XCTAssertNil(vm.history?.winProbHistory?["polymarket"], "the withdrawn series stays gone")
         XCTAssertNil(vm.reconcileOwedSince)
+    }
+
+    /// #10090 §3 (Root 1341Z) — the withdrawn series held the drawn payload's
+    /// latest reading. The complete fresh build after the withdrawal retains
+    /// Kalshi unmoved at 17:00 and has no Polymarket, so its edge is behind
+    /// 17:02. Before this, the chart refused it and every re-ask, the floor
+    /// stayed owed, and the reader kept seeing Polymarket's line. An older
+    /// complete build (Kalshi behind) is still refused and keeps it owed.
+    func testACompleteBuildDroppingTheSeriesThatHeldTheEdgeIsDrawnAndPays() async throws {
+        typealias Shapes = AWithdrawnSeriesStopsHoldingTheChartEdge10090Tests
+        let withdrawnAt = "2026-09-27T17:03:00Z"
+        var older = Self.without11
+        older.at = withdrawnAt
+        older.sources = Self.kalshiOnly(0.5, at: withdrawnAt)
+        older.servedHistory = try Shapes.kalshiAlone(at: "16:59:00")
+        var paying = older
+        paying.servedHistory = try Shapes.kalshiAlone()
+        let (client, handle, vm) = try await opened(history: try Shapes.drawn(), pairs: [older, paying])
+        XCTAssertNotNil(vm.history?.winProbHistory?["polymarket"])
+        XCTAssertTrue(vm.historyIsDrawn)
+        let owedAt = clock
+
+        handle.fire("reconcile", Self.control())
+        try await settle { client.detailReads == 1 && client.historyReads == 1 }
+        try await quiet()
+        XCTAssertFalse(vm.historyIsDrawn, "an older complete build is refused")
+        XCTAssertEqual(vm.reconcileOwedSince, owedAt, "and pays nothing")
+
+        try await elapse(1.5)
+        try await settle { vm.reconcileOwedSince == nil }
+        XCTAssertNil(vm.reconcileOwedSince, "the complete build behind the withdrawn stamp pays")
+        XCTAssertTrue(vm.historyIsDrawn, "because the chart takes it")
+        XCTAssertNil(vm.history?.winProbHistory?["polymarket"])
+        XCTAssertEqual(vm.history?.historyFoldRevision?.revision, FoldRevision(["4242": 11]))
+        XCTAssertLessThan(try XCTUnwrap(vm.historyDigest?.edge),
+                          try XCTUnwrap(EventHistoryFreshness.lastReading(in: try Shapes.drawn())),
+                          "its edge is still behind the drawn one: no point or stamp was made")
+        XCTAssertNil(vm.event?.winProbabilitySources?["polymarket"])
+        XCTAssertEqual(client.detailReads, 2)
+        XCTAssertEqual(reconcileAsks, [1.5])
     }
 
     func testHistoryCoverageIsAnUnpinnedAlternativeThatNeverRescuesAPinnedEdge() throws {

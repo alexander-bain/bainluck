@@ -63,20 +63,23 @@ final class EventDetailViewModel: ObservableObject {
             historyDigest = history.map(EventHistoryDigest.init)
             historyArrivedAt = history == nil ? nil : Date(timeIntervalSince1970: now())
             historyGeneration &+= 1
-            historyIsDrawn = history != nil
-                && EventHistoryFreshness.shouldAdopt(freshEdge: historyDigest?.edge, over: drawnHistoryEdge)
-            if historyIsDrawn { drawnHistoryEdge = .some(historyDigest?.edge) }
+            if let edges = historyDigest?.edges {
+                historyIsDrawn = EventHistoryFreshness.shouldAdopt(edges, over: drawnHistoryEdges)
+                if historyIsDrawn { drawnHistoryEdges = edges }
+            } else {
+                historyIsDrawn = false
+            }
         }
     }
     /// #10090 — bumped on every write to `history`, so the chart is offered
     /// every payload the page takes, not only one whose live edge moved: a
     /// withdrawn source's series can leave a payload at the same edge.
     private(set) var historyGeneration = 0
-    /// #10090 — the live edge of the payload the chart holds, kept by the
-    /// chart's own rule (`OddsChartViewModel.adopt`, `EventHistoryFreshness`):
-    /// an offered payload whose edge is behind it is refused there. Outer
-    /// `nil` = nothing offered yet.
-    private var drawnHistoryEdge: Date??
+    /// #10090 — the edges of the payload the chart holds, kept by the chart's
+    /// own rule (`OddsChartViewModel.adopt`, `EventHistoryFreshness`): an
+    /// offered payload that rule refuses is refused there. `nil` = nothing
+    /// offered yet.
+    private var drawnHistoryEdges: EventHistoryEdges?
     /// #10090 — whether the chart takes the current `history`. A reconcile
     /// floor's history half is paid only by a payload the reader is shown.
     private(set) var historyIsDrawn = false
