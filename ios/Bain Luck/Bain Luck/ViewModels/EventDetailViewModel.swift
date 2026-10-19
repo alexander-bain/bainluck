@@ -131,6 +131,14 @@ final class EventDetailViewModel: ObservableObject {
     /// was already in flight. That pair answers the frame that started it; if
     /// it does not also cover this one, exactly one trailing pair is owed.
     private var trailingProvenanceFrame: LiveStreamFrame?
+    /// #11253 — the newest priceless write (a withdrawn venue) whose full rail
+    /// the page has not yet shown. Held until a pair's SERVED rail at or past
+    /// it is on the page; a newer pushed quote kept over that pair keeps the
+    /// held rail, withdrawn source included. `owedInvalidationRetriedAt` is the
+    /// held revision a trailing pair was already asked against: one per held
+    /// revision, so a repeatedly stale response cannot loop (the poll remains).
+    private var owedInvalidation: FoldRevision?
+    private var owedInvalidationRetriedAt: FoldRevision?
 
     /// #10643 — `frame`, carrying the row-wise highest revision it and `held`
     /// named, so a delayed or other-row arrival never erases a newer
@@ -477,6 +485,11 @@ final class EventDetailViewModel: ObservableObject {
                 fetched = try await client.fetchEvent(id: eventId)
             }
             adopt(fetched)
+            // #11253 — a load that showed the owed rail settles it; one that
+            // did not leaves it to the pair scheduler, never to a new read here.
+            _ = clearOwedInvalidationIfShown(
+                served: LiveEventPriceReconciliation.pairedFoldRevision(in: fetched)
+            )
             // A refusal retires the controller, not this page's eligibility for
             // push forever. Only a successful eligible detail may authorize another
             // attempt, at most once per fallback poll interval. Delivery callbacks
@@ -733,6 +746,37 @@ final class EventDetailViewModel: ObservableObject {
         configureAutoRefresh()
     }
 
+    /// #11253 — whether the owed withdrawal is now on the page, clearing it if
+    /// so. Only when the page holds the response's OWN revision did its rail
+    /// replace the held one; that rail answers the withdrawal when it is not
+    /// older than it (an incomparable fold is the authoritative read). A page
+    /// that left the live blend owes no rail.
+    @MainActor
+    private func clearOwedInvalidationIfShown(served: FoldRevision?) -> Bool {
+        guard let owed = owedInvalidation else { return true }
+        let held = event.flatMap { LiveEventPriceReconciliation.pairedFoldRevision(in: $0) }
+        let shown = held == nil || served.map { served in
+            held.map { FoldRevision.compare($0, served) == .same } == true
+                && FoldRevision.compare(served, owed) != .older
+        } == true
+        if shown {
+            owedInvalidation = nil
+            owedInvalidationRetriedAt = nil
+        }
+        return shown
+    }
+
+    /// One trailing pair per held revision while a withdrawal is owed. The
+    /// same held revision a trailing pair already failed against asks nothing.
+    @MainActor
+    private func owesTrailingRailRead() -> Bool {
+        guard let held = event.flatMap({ LiveEventPriceReconciliation.pairedFoldRevision(in: $0) }),
+              owedInvalidationRetriedAt.map({ FoldRevision.compare(held, $0) != .same }) ?? true
+        else { return false }
+        owedInvalidationRetriedAt = held
+        return true
+    }
+
     /// Detail and history only — the two payloads that carry the blend and its
     /// revision. Not a `load()`: that is six requests and owns `lastLoadedAt`.
     @MainActor
@@ -757,6 +801,7 @@ final class EventDetailViewModel: ObservableObject {
             let recordsActivity = requestedGeneration == nil || (
                 requestedGeneration == deliveryGeneration && streamRefetchGeneration == requestedGeneration
             )
+            let served = LiveEventPriceReconciliation.pairedFoldRevision(in: fetched)
             adopt(fetched, recordsPriceActivity: recordsActivity)
             history = h
             var deliveredPrice = false
@@ -806,6 +851,13 @@ final class EventDetailViewModel: ObservableObject {
                     streamRefetchGeneration = deliveryGeneration
                     revisionRefetchPending = true
                 }
+            }
+            // #11253 — a withdrawal this pair did not put on the page (a newer
+            // pushed quote kept the held rail, or the response predates it)
+            // owes one trailing pair, through the same coalesced scheduler.
+            if !clearOwedInvalidationIfShown(served: served), owesTrailingRailRead() {
+                streamRefetchGeneration = deliveryGeneration
+                revisionRefetchPending = true
             }
             // #10468 — the pair the CURRENT connection asked for put a covered
             // or newer price on the page: that is a delivery, and the only way
@@ -1074,6 +1126,8 @@ final class EventDetailViewModel: ObservableObject {
         pendingResyncGeneration = nil
         provenanceRefetchFrame = nil
         trailingProvenanceFrame = nil
+        owedInvalidation = nil
+        owedInvalidationRetriedAt = nil
         awaitingFoldedResult = false
         streamHasPushedPrice = false
         streamTickTask?.cancel()
@@ -1205,6 +1259,17 @@ final class EventDetailViewModel: ObservableObject {
         } else if let foldOrder {
             priceIsNotNewer = foldOrder != .newer
             if foldOrder == .incomparable {
+                streamRefetchGeneration = deliveryGeneration
+                requestRevisionRefetch()
+            } else if foldOrder == .newer, frame.p == nil, let revision = frame.rev?.revision {
+                // #11253 — a newer write with no price: the row's fold changed
+                // (a venue withdrew) and there is no value to show. It writes
+                // nothing and is not dated onto the held value; the existing
+                // pair replaces hero, rail and chart (web's `p === null` arm).
+                owedInvalidation = owedInvalidation.flatMap {
+                    FoldRevision($0.rows.merging(revision.rows, uniquingKeysWith: max))
+                } ?? revision
+                owedInvalidationRetriedAt = nil
                 streamRefetchGeneration = deliveryGeneration
                 requestRevisionRefetch()
             }
