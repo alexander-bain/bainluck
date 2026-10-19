@@ -343,10 +343,11 @@ final class OddsChartViewModel: ObservableObject {
         } catch {
             loading = false
             logger.error("Failed to load history for event \(self.eventId): \(error)")
-            // #10090 — a fresh page mounts its chart before its own history
-            // read lands, so this read is usually still in flight when the page
-            // hands the chart that payload (`adopt`). Its late failure must not
-            // print "couldn't load" over a chart that already has data.
+            // #10090 — a caller that hands payloads without a counter can
+            // mount the chart before its own read lands, so this read can still
+            // be in flight when the caller hands the chart that payload
+            // (`adopt`). Its late failure must not print "couldn't load" over a
+            // chart that already has data.
             guard history == nil else { return }
             self.error = error.localizedDescription
         }
@@ -419,7 +420,8 @@ struct OddsChartView: View {
     /// (`EventDetailViewModel.historyGeneration`). With it the chart is offered
     /// every payload — a same-edge correction such as a withdrawn source's
     /// series leaving — and `OddsChartViewModel.adopt` still decides. `nil`
-    /// keys the offer on the edge alone, as before.
+    /// keys the offer on the edge alone, as before. With it the chart reads no
+    /// history of its own: the page's payloads are its only writes.
     var preloadedHistoryGeneration: Int?
     /// #925 — the scrubbed moment's readout (clock, score, point time, "as
     /// of", probabilities), drawn between the chart's header and its plot.
@@ -759,7 +761,14 @@ struct OddsChartView: View {
             // #8481 — the Since Start default is the PAGE's initial value now.
             // Re-asserting it here reset the reader's choice on every appear,
             // and wrote a range the score chart below could not see.
-            await vm.load()
+            //
+            // #10090 — a page that hosts the history (it supplies a counter) is
+            // the chart's only source besides `init(preloaded:)`, so the chart
+            // holds exactly what the page offered: its own read, landing after
+            // that offer, overwrote the payload a reconcile floor was paid on.
+            // Until the page's read lands the chart shows its spinner; the page
+            // retries that read on every load and poll.
+            if preloadedHistoryGeneration == nil { await vm.load() }
             // #9185 — the LOOK rig's way into the cover it cannot tap open.
             if LaunchRig.opensChartFullscreen() { isFullscreen = true }
         }

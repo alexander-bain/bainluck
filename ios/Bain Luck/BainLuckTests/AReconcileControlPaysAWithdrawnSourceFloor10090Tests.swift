@@ -142,6 +142,16 @@ final class AReconcileControlPaysAWithdrawnSourceFloor10090Tests: XCTestCase {
         private(set) var inFlight = 0
         private(set) var maxInFlight = 0
         private var waiters: [(Int, CheckedContinuation<Void, Never>)] = []
+        /// When set, the next ordinary (cached) history read waits for
+        /// `releaseOrdinaryHistory()` and then serves this payload.
+        var heldOrdinaryHistory: EventHistoryResponse?
+        private(set) var ordinaryHistoryReads = 0
+        private var ordinaryWaiter: CheckedContinuation<Void, Never>?
+        func releaseOrdinaryHistory() {
+            let waiter = ordinaryWaiter
+            ordinaryWaiter = nil
+            waiter?.resume()
+        }
         init(page: EventDetail, history: EventHistoryResponse) {
             self.page = page
             self.pageHistory = history
@@ -159,7 +169,13 @@ final class AReconcileControlPaysAWithdrawnSourceFloor10090Tests: XCTestCase {
             await withCheckedContinuation { waiters.append((index, $0)) }
         }
         func fetchEvent(id: Int) async throws -> EventDetail { page }
-        func fetchEventHistory(id: Int, hours: Int) async throws -> EventHistoryResponse { pageHistory }
+        func fetchEventHistory(id: Int, hours: Int) async throws -> EventHistoryResponse {
+            ordinaryHistoryReads += 1
+            guard let held = heldOrdinaryHistory else { return pageHistory }
+            heldOrdinaryHistory = nil
+            await withCheckedContinuation { ordinaryWaiter = $0 }
+            return held
+        }
         func fetchFreshEvent(id: Int) async throws -> EventDetail {
             guard armed else { return page }
             let index = detailReads
@@ -872,6 +888,44 @@ final class AReconcileControlPaysAWithdrawnSourceFloor10090Tests: XCTestCase {
         XCTAssertGreaterThan(try XCTUnwrap(vm.historyDigest?.edge), try XCTUnwrap(drawnEdge))
         XCTAssertEqual(client.detailReads, 3)
         XCTAssertEqual(reconcileAsks, [1.5, 3])
+    }
+
+    /// Lane1b C1 on d5c76: an ordinary history read issued before the paying
+    /// pair, landing after it, is refused. It is a build from before the
+    /// withdrawal at the pair's own edge, so the chart would take it, and the
+    /// floor has already paid, so nothing would re-ask.
+    func testAnOrdinaryHistoryReadIssuedBeforeThePayingPairCannotRedrawTheWithdrawnSeries() async throws {
+        let paying = Self.covering(#"{"4242":11}"#)
+        let (client, handle, vm) = try await opened(pairs: [paying])
+        let stale = try Self.decode(EventHistoryResponse.self, """
+        {"event_id":4242,"home_team":"Home","away_team":"Away","status":"live","history":[],
+         "blend_edge_pinned":false,"blend_edge_fold_revision":null,
+         "win_prob_history":{"polymarket":[{"timestamp":"\(Self.removedAt)","home_probability":0.82}]},
+         "aggregate_line":[{"timestamp":"\(paying.at)","home_probability":0.6}]}
+        """)
+        client.heldOrdinaryHistory = stale
+        let issued = client.ordinaryHistoryReads
+        let poll = Task { await vm.load(fresh: false, awaitingOptionalSections: false) }
+        try await settle { client.ordinaryHistoryReads == issued + 1 }
+        XCTAssertEqual(client.ordinaryHistoryReads, issued + 1, "an ordinary read is in flight across the commit")
+
+        handle.fire("reconcile", Self.control())
+        try await settle { vm.reconcileOwedSince == nil }
+        await poll.value
+        try await quiet()
+        XCTAssertNil(vm.reconcileOwedSince, "the covering pair pays")
+        XCTAssertTrue(vm.historyIsDrawn)
+        let paid = try XCTUnwrap(vm.history)
+        let generation = vm.historyGeneration
+        XCTAssertEqual(vm.historyDigest?.edge, EventHistoryFreshness.lastReading(in: stale),
+                       "the stale read sits at the pair's edge, so the chart would take it")
+
+        client.releaseOrdinaryHistory()
+        try await quiet()
+        XCTAssertEqual(vm.history, paid, "the page keeps the pair's history")
+        XCTAssertEqual(vm.historyGeneration, generation, "and offers the chart nothing new")
+        XCTAssertNil(vm.history?.winProbHistory?["polymarket"], "the withdrawn series stays gone")
+        XCTAssertNil(vm.reconcileOwedSince)
     }
 
     func testHistoryCoverageIsAnUnpinnedAlternativeThatNeverRescuesAPinnedEdge() throws {

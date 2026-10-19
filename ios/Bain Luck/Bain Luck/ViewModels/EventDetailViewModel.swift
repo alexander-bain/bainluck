@@ -926,6 +926,11 @@ final class EventDetailViewModel: ObservableObject {
             let served = LiveEventPriceReconciliation.pairedFoldRevision(in: fetched)
             adopt(fetched, recordsPriceActivity: recordsActivity)
             history = h
+            // #10090 — an ordinary history read issued before this pair landed
+            // is refused after it (`applyOptional`). On a live page it is a build
+            // from before the pair, and at the same edge the chart would take it
+            // after the floor was paid, drawing a withdrawn source again.
+            appliedOptionalGeneration[.history] = optionalReadGeneration
             let historyDrawn = historyIsDrawn
             var deliveredPrice = false
             if recordsActivity { pricePairRefreshFailed = false }
