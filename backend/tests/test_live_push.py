@@ -691,9 +691,11 @@ class TestConnectLookupDoesNotPinAConnection:
         chunks = [chunk async for chunk in response.body_iterator]
         assert chunks, "the stream produced nothing, so it proved nothing"
         # Still exactly one, still closed: the stream itself touches no session.
-        # (#10090: the stream's own owned coverage read opens and closes one
-        # session per read, bounded at two per stream; the legacy view stubs that
-        # read, so this counts the connect-time lookup alone.)
+        # (#10090: the stream's own coverage read opens and closes one session
+        # per read — at most two open at once, the initial read and one
+        # recovery read — and a recovery read repeats on every confirmation or
+        # new generation; the legacy view stubs that read, so this counts the
+        # connect-time lookup alone.)
         assert (maker.opened, maker.closed) == (1, 1)
 
     def test_the_handler_takes_no_request_scoped_db_dependency(self):

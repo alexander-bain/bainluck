@@ -186,7 +186,9 @@ def test_books_with_complements(targets, bid, ask, complement_of, expected):
 def _granted_withdrawal_owner(monkeypatch):
     """#10090: the withdrawal transaction now runs under the persistent owner
     fence (claimed at start, FOR SHARE in the body), takes the per-phase lock
-    budget and records its xid. Ownership is covered on real PostgreSQL; here
+    budget and records its xid. The owner fence's refusal and fencing arms
+    are pinned on real PostgreSQL by
+    tests/integration/test_pm_withdrawal_recovery_regression_10090_pg.py; here
     the consumer is the granted owner and the rig's session gives the two new
     statements the answers a real session gives. Every other statement still
     reaches the rig unchanged."""

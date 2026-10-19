@@ -107,8 +107,9 @@ def _stand_in_for_a_granted_withdrawal_owner(monkeypatch):
     """#10090: each Polymarket consumer claims the persistent withdrawal-owner
     row before its first debt scan (advisory lock, NOWAIT row lock, commit).
     This fake answers slate/reread queries by position, so the claim's own
-    statements would shift that routing; the fence itself is covered on real
-    PostgreSQL. Grant the claim the way a committed one ends — the row id is
+    statements would shift that routing; the fence itself is pinned on real
+    PostgreSQL by tests/integration/test_pm_withdrawal_recovery_regression_10090_pg.py.
+    Grant the claim the way a committed one ends — the row id is
     recorded — so the real `load` then reads the owed rows."""
 
     async def claimed(debt, _sessions):
