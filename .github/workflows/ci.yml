@@ -5192,6 +5192,32 @@ jobs:
             exit 1
           }
 
+      - name: "#10090 an open or reopened page always learns the source removals it owes, never via an old price (real Postgres + Redis)"
+        if: matrix.group == 'shared-tail' && needs.change-scope.outputs.reuse != 'true'
+        env:
+          # The job-local redis:7 service (#7351's, port 56379). Logical db 12 is
+          # this gate's alone: the reused fixture refuses a non-loopback URL or db 0
+          # and FLUSHES db 12 around each case. 13 is the peer-publication gate's.
+          PM_WITHDRAWAL_REDIS_URL: redis://localhost:56379/12
+        run: |
+          if python -m pytest tests/integration/test_event_stream_reconcile_route_10090_pg.py \
+            -v -rs > /tmp/reconcile-route10090.txt 2>&1; then
+            gate_status=0
+          else
+            gate_status=$?
+          fi
+          cat /tmp/reconcile-route10090.txt
+          echo "EXIT CODE: $gate_status"
+          test "$gate_status" -eq 0
+          if grep -qiE "[0-9]+ skipped" /tmp/reconcile-route10090.txt; then
+            echo "::error::#10090 reconcile-route gate SKIPPED"
+            exit 1
+          fi
+          grep -qE "[^0-9]11 passed[,[:space:]]" /tmp/reconcile-route10090.txt || {
+            echo "::error::#10090 reconcile-route gate did not run all eleven cases"
+            exit 1
+          }
+
       - name: "#11138 a lock-held PM price row publishes the received quote, one cohort per event (real Postgres)"
         if: matrix.group == 'shared-tail' && needs.change-scope.outputs.reuse != 'true'
         run: |
