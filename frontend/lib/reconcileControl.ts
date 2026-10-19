@@ -6,9 +6,11 @@ import { compareFoldRevision, parseFoldRevision, type FoldRevision } from "./fol
  * current state". It is NOT a price. It names an obligation (`custody_id`) and
  * a row-wise coverage FLOOR (`removal_rev`, the same `{ "<row id>": rev }` space
  * as `blend_fold_revision`): a paired read pays the obligation only when the
- * value it WRITES and a pinned history edge are each at or beyond the floor on
- * every row (`reconcileFloorCoverage`). A missing row never covers, and an
- * unpinned history proves nothing, so it never pays.
+ * value it WRITES is at or beyond the floor on every row, and so is the
+ * history's own proof — a pinned edge's revision, or for an unpinned history
+ * the complete fresh build's `history_fold_revision` (`reconcileFloorCoverage`).
+ * A missing row never covers, and an unpinned history with no such vector
+ * proves nothing, so it never pays.
  *
  *   event: reconcile
  *   data: {"event_id":15332323,"custody_id":"…","removal_rev":{"15332402":1129}}
@@ -174,14 +176,25 @@ export function createWriteJournal<T>(cap = RECONCILE_JOURNAL_CAP): WriteJournal
 /**
  * #10090 D4 — what one paired read proves about one owed floor.
  *
- *   "paid"   — the detail covers the floor and so does a PINNED history edge's
- *              own fold revision (or the detail is terminal: the final owner).
- *   "detail" — the detail covers the floor, but the history makes no revision
- *              claim (`blend_edge_pinned` is not true). The rail may be rebased
+ *   "paid"   — the detail covers the floor and so does the history: a PINNED
+ *              edge's own fold revision, or, when nothing is pinned, the
+ *              `history_fold_revision` of a complete fresh build (or the
+ *              detail is terminal: the final owner).
+ *   "detail" — the detail covers the floor, but the history proves nothing
+ *              about it: unpinned, and its coverage vector is absent, null,
+ *              malformed, below the floor or missing a floor row (a partial,
+ *              cached or failed build serves none). The rail may be rebased
  *              onto the detail; the chart half is unproven, so the floor stays
  *              owed and the page's persistent read asks again.
  *   "none"   — the detail is below the floor, or a pinned history edge is
- *              below it or carries no revision to order.
+ *              below it or carries no revision to order. A pinned edge is a
+ *              claim about NOW, so a coverage vector never vouches past it.
+ *
+ * `history_fold_revision` (#10090, ROOT-HISTORY-CONSUMER-ADMISSION) says only
+ * that every series the build drew was read after each listed row reached its
+ * revision. It is read ordering, not a price, clock, chart point or pin: it is
+ * never adopted, it moves no headline, freshness or edge, and a row absent
+ * from it is not covered.
  *
  * `quotePairCoversTrigger` lets an unpinned history cover trivially, which is
  * right for a price trigger and wrong for a removal: nothing here (no forced
@@ -192,14 +205,20 @@ export type FloorCoverage = "paid" | "detail" | "none";
 
 export function reconcileFloorCoverage(
   detail: { id: number; status?: string | null; blend_fold_revision?: unknown },
-  history: { event_id: number; blend_edge_pinned?: boolean | null; blend_edge_fold_revision?: unknown },
+  history: {
+    event_id: number; blend_edge_pinned?: boolean | null; blend_edge_fold_revision?: unknown;
+    history_fold_revision?: unknown;
+  },
   eventId: number, floor: unknown,
 ): FloorCoverage {
   if (detail.id !== eventId || history.event_id !== eventId || !parseFoldRevision(floor)) return "none";
   if (!isQuoteStreamStatus(detail.status)) return "paid";
   if (!coversQuoteRevision(detail.blend_fold_revision, floor)) return "none";
-  if (history.blend_edge_pinned !== true) return "detail";
-  return coversQuoteRevision(history.blend_edge_fold_revision, floor) ? "paid" : "none";
+  if (history.blend_edge_pinned === true) {
+    return coversQuoteRevision(history.blend_edge_fold_revision, floor) ? "paid" : "none";
+  }
+  // The floor parsed above, so this is never the trivial "no trigger" true.
+  return coversQuoteRevision(history.history_fold_revision, floor) ? "paid" : "detail";
 }
 
 type Versioned = { status?: string | null; blend_fold_revision?: unknown };

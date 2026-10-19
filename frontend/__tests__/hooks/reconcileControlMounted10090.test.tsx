@@ -96,6 +96,7 @@ type Detail = {
 type History = {
   event_id: number; blend_edge_pinned: boolean; blend_edge_observed_at: string | null;
   blend_edge_fold_revision: Record<string, number> | null;
+  history_fold_revision?: unknown;
   aggregate_line: { timestamp: string; home_probability: number }[];
 };
 const live = (rev: number, p: number, rail: Rail, id = E): Detail => ({
@@ -138,7 +139,7 @@ type Net = { details: Req<Detail>[]; histories: Req<History>[] };
 
 const harness: {
   revalidate?: () => unknown; revalidateHistory?: () => unknown; ledger?: ReturnType<typeof createReconcileLedger>;
-  event?: Detail;
+  event?: Detail; fullHistory?: boolean;
 } = {};
 
 function HeldPage({ net, eventId }: { net: Net; eventId: number }) {
@@ -162,7 +163,7 @@ function HeldPage({ net, eventId }: { net: Net; eventId: number }) {
   harness.revalidate = () => refreshEvent();
   harness.event = event;
   heldEventRef.current = event;
-  const fullHistoryRequested = false;
+  const fullHistoryRequested = harness.fullHistory ?? false;
   const { data: servedHistory, mutate: refreshHistory } = useSWR(["history", eventId],
     () => fetchEventHistory(eventId, EVENT_BOOT_HISTORY_HOURS, historyRangeParam(false)));
   harness.revalidateHistory = () => refreshHistory();
@@ -288,6 +289,7 @@ async function mount(boot: Detail = live(10, 0.55, withPm(10)), bootHistory: His
       if (h instanceof Error) pair.history.reject(h); else pair.history.resolve(h);
       await settle();
     },
+    async setFullHistory(full: boolean) { harness.fullHistory = full; await act(async () => { render(); }); await settle(); },
     async navigate(target: number, d: Detail, h: History) {
       eventId = target; await act(async () => { render(); }); await bootRead(target, d, h);
     },
@@ -298,6 +300,7 @@ async function mount(boot: Detail = live(10, 0.55, withPm(10)), bootHistory: His
 
 beforeEach(() => {
   sources.length = 0;
+  harness.fullHistory = undefined;
   globalThis.EventSource = HookSource as unknown as typeof EventSource;
   jest.spyOn(Math, "random").mockReturnValue(150 / 4900); // catch-up jitter = 250 ms
   jest.useFakeTimers();
@@ -930,5 +933,135 @@ describe("#10090 source_snapshot mounted: the rail moves with the price", () => 
     const withSnapshot = await run(snapFrame(11, 0.58, kalshi(11, 0.58)));
     expect(withSnapshot).toEqual(legacy);
     expect(withSnapshot.read).toBe("live|55|kalshi+polymarket|r10,4|c55");
+  });
+});
+
+describe("#10090 history coverage mounted: a complete unpinned chart finishes recovery", () => {
+  const post = (rev: number) => live(rev, 0.6, { kalshi: src(0.6, rev) });
+  // A valid unpinned chart whose right edge is NOT the hero (0.5 vs 0.6): one
+  // remaining source, an old genuine edge. Nothing may be forced onto it.
+  const covered = (rev: number, vector: unknown, id = E): History =>
+    ({ ...unpinned(rev, 0.5, id), history_fold_revision: vector });
+
+  it("an unpinned history whose complete-build vector covers the floor pays it, with no further quote, and the chart keeps its own edge", async () => {
+    const p = await mount();
+    await p.control("owed-1", 11);
+    await p.advance(250);
+    await p.push(13, 0.62);
+    await p.answer(post(12), covered(12, { [E]: 12 }));
+    expect(p.read()).toBe("live|62|kalshi|r13|c50");
+    expect(harness.ledger!.owed()).toBe(false);
+    expect(harness.ledger!.earliestOwedAt()).toBeNull();
+    await p.advance(120_000);
+    expect(p.pairs()).toHaveLength(1);
+    // A replayed control for the paid custody reads nothing.
+    await p.control("owed-1", 11);
+    await p.advance(5_000);
+    expect(p.pairs()).toHaveLength(1);
+    await p.unmount();
+  });
+
+  it("the vector never pays for a detail below the floor: the rail half must qualify too", async () => {
+    const p = await mount();
+    await p.control("owed-1", 11);
+    await p.advance(250);
+    // Not a reconcile pair: it is adopted as an ordinary same-revision read
+    // (its chart is written, as before), and pays nothing.
+    await p.answer(live(10, 0.55, withPm(10)), covered(12, { [E]: 12 }));
+    expect(p.read()).toBe("live|55|kalshi+polymarket|r10|c50");
+    expect(harness.ledger!.owed()).toBe(true);
+    await p.advance(1000);
+    expect(p.pairs()).toHaveLength(2);
+    await p.answer(post(12), covered(12, { [E]: 12 }));
+    expect(p.read()).toBe("live|60|kalshi|r12|c50");
+    expect(harness.ledger!.owed()).toBe(false);
+    await p.unmount();
+  });
+
+  it("null, absent, malformed, partial, old, other-event and failed coverage stay owed; the next correct read completes it without a quote", async () => {
+    const p = await mount();
+    await p.control("owed-1", 11);
+    await p.advance(250);
+    const refused: Array<History | Error> = [
+      covered(12, null),
+      unpinned(12, 0.5),
+      covered(12, { [E]: "12" }),
+      covered(12, [12]),
+      covered(12, { [E]: 12.5 }),
+      covered(12, { [E]: 2 ** 53 }),
+      covered(12, {}),
+      covered(12, { [B]: 12 }),            // the floor's row is missing
+      covered(12, { [E]: 10 }),            // below the floor
+      covered(12, { [E]: 12 }, B),         // another event's history
+      { ...covered(12, { [E]: 12 }), blend_edge_pinned: true, blend_edge_fold_revision: { [E]: 10 } },
+      new Error("history"),
+    ];
+    let waited = 0;
+    for (const h of refused) {
+      const count = p.pairs().length;
+      await p.answer(post(12), h);
+      expect(harness.ledger!.owed()).toBe(true);
+      while (p.pairs().length === count) { await p.advance(500); waited += 500; }
+    }
+    expect(waited).toBeGreaterThan(0);
+    const count = p.pairs().length;
+    await p.answer(post(12), covered(12, { [E]: 13, [B]: 4 }));
+    expect(harness.ledger!.owed()).toBe(false);
+    await p.advance(120_000);
+    expect(p.pairs()).toHaveLength(count);
+    await p.unmount();
+  });
+
+  it("a covering vector for a range the page no longer draws pays nothing; the next read on the new range does", async () => {
+    const p = await mount();
+    await p.control("owed-1", 11);
+    await p.advance(250);
+    await p.setFullHistory(true);
+    await p.answer(post(12), covered(12, { [E]: 12 }));
+    expect(p.read()).toBe("live|55|kalshi+polymarket|r10|c55");
+    expect(harness.ledger!.owed()).toBe(true);
+    await p.advance(1000);
+    expect(p.pairs()).toHaveLength(2);
+    await p.answer(post(12), covered(12, { [E]: 12 }));
+    expect(harness.ledger!.owed()).toBe(false);
+    await p.unmount();
+  });
+
+  it("a covering vector from a pair of an earlier page lifetime pays nothing, even back on the same event", async () => {
+    const p = await mount();
+    await p.control("owed-1", 11);
+    await p.advance(250);
+    const old = { d: p.pending().detail, h: p.pending().history };
+    await p.navigate(B, live(20, 0.4, withPm(20), B), history(20, 0.4, B));
+    await p.navigate(E, live(10, 0.55, withPm(10)), history(10, 0.55));
+    // The server re-sends the unretired control on the new stream.
+    await p.control("owed-1", 11);
+    old.d.resolve(post(12));
+    old.h.resolve(covered(12, { [E]: 12 }));
+    await settle();
+    expect(p.read()).toBe("live|55|kalshi+polymarket|r10|c55");
+    expect(harness.ledger!.owed()).toBe(true);
+    // The new lifetime asks by itself, and its own covering read pays.
+    for (let i = 0; i < 8 && p.pairs().length === 1; i += 1) await p.advance(500);
+    expect(p.pairs()).toHaveLength(2);
+    await p.answer(post(12), covered(12, { [E]: 12 }));
+    expect(harness.ledger!.owed()).toBe(false);
+    await p.unmount();
+  });
+
+  it("a result stored while a covering unpinned read is out still wins", async () => {
+    const p = await mount();
+    await p.control("owed-1", 11);
+    await p.advance(250);
+    harness.revalidate!();
+    await settle();
+    p.net.details.filter((r) => !r.fresh).at(-1)!.d.resolve(final(20));
+    await settle();
+    await p.answer(post(12), covered(12, { [E]: 12 }));
+    expect(p.read()).toBe("completed|100|kalshi|r20|c55");
+    expect(harness.ledger!.owed()).toBe(false);
+    await p.advance(120_000);
+    expect(p.pairs()).toHaveLength(1);
+    await p.unmount();
   });
 });
