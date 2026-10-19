@@ -134,7 +134,10 @@ describe("#3911 the page is wired to the pin", () => {
     // reads the derived `historyData`, so a future edit cannot reintroduce the
     // split by adding one more reader.
     expect(page).toContain("data: servedHistory,");
-    expect(page).toContain("pinChartEdgeToHero(servedHistory, event)");
+    // #10090 attempt149: the pin reads the served history after recovered
+    // source readings are appended; a source-only append is not a pushed blend.
+    expect(page).toContain("const observed = appendAdmittedSourceObservations(servedHistory,");
+    expect(page).toContain("pushed !== observed ? pushed : pinChartEdgeToHero(observed, event)");
     expect(page).not.toContain("data: historyData,");
   });
 });

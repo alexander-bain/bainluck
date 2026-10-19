@@ -39,6 +39,8 @@ import { carryNewerHeldState, fetchEventWithLiveFrame, keepNewerHeldHeadline } f
 import {
   admitChartFrames,
   appendHeroObservation,
+  admitCurrentSourceObservations,
+  appendAdmittedSourceObservations,
   finishedChartFrames,
   mergeLiveChartHistory,
   type AdmittedChartFrames,
@@ -564,7 +566,10 @@ export default function EventPage({ params }: EventPageProps) {
     // render ends eligibility, which clears the ledger before any jitter fires.
     if (!canSubscribeEventQuotes(heldEventRef.current)) return;
     if (!reconcileLedger.owe(control, Date.now())) return;
-    reconcileCatchupRef.current?.recover(++reconcileOrdinalRef.current);
+    reconcileCatchupRef.current?.recover(
+      ++reconcileOrdinalRef.current,
+      control.custodyId.startsWith("normal-price:") ? 250 : undefined,
+    );
   }, [eventId, reconcileLedger]);
 
   const quoteEligible = canSubscribeEventQuotes(event);
@@ -988,18 +993,23 @@ export default function EventPage({ params }: EventPageProps) {
   const historyData = useMemo(
     () => {
       if (admittedChartRef.current?.eventId !== eventId) admittedChartRef.current = null;
-      if (quoteEligible) admittedChartRef.current = admitChartFrames(eventId, chartPoints, event);
+      if (quoteEligible) admittedChartRef.current = admitCurrentSourceObservations(
+        admitChartFrames(eventId, chartPoints, event), admittedChartRef.current, servedHistory, event,
+      );
       const frames = quoteEligible
         ? admittedChartRef.current?.points ?? []
         : finishedChartFrames(admittedChartRef.current, eventId, event, servedHistory);
-      const pushed = mergeLiveChartHistory(servedHistory, frames);
+      const observed = appendAdmittedSourceObservations(servedHistory, admittedChartRef.current, event);
+      const pushed = mergeLiveChartHistory(observed, frames);
       // A push is an observation at its own time, not permission to rewrite
       // the previous poll's endpoint with today's hero value (#920).
-      const joined = pushed !== servedHistory ? pushed : pinChartEdgeToHero(servedHistory, event);
+      const joined = pushed !== observed ? pushed : pinChartEdgeToHero(observed, event);
       // #8749: and so is the blend a detail refresh delivered — when it is
       // newer than the line's edge, the line gets it at its own clock, so the
       // headline never moves alone.
-      return quoteEligible ? appendHeroObservation(joined, event, servedHistory) : joined;
+      return quoteEligible
+        ? appendHeroObservation(joined, event, servedHistory)
+        : joined;
     },
     [servedHistory, event, quoteEligible, chartPoints, eventId],
   );
