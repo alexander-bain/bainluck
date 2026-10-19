@@ -278,3 +278,44 @@ async def test_folded_page_replay_never_receives_a_row_snapshot(monkeypatch):
         assert raw["rev"] == {"1": 11} and "source_snapshot" not in raw
     finally:
         await stream.aclose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("returned_rev,snapshot_rev", [
+    (None, None), (True, None), ("42", None), (42, {"1": 42}),
+])
+async def test_the_real_batch_publishes_the_legacy_frame_when_the_writer_has_no_revision(
+    monkeypatch, returned_rev, snapshot_rev,
+):
+    """Speed's composed check, 2026-10-19: on the writer compatibility path the
+    stamp RETURNS a bag but no revision (the fixture behind
+    `test_the_real_batch_reports_the_lock`). An optional snapshot that read the
+    missing revision as a dict threw there and the frame was never published.
+
+    No exact singleton revision means no snapshot and the unchanged legacy
+    frame: the same keys build_frame always sent, published, counted. The
+    integer arm is the control: the same batch with a real revision carries it.
+    """
+    from tests.test_live_blend_refresh import (
+        _event_and_market, _one_event_refresher, _RecordingSession,
+    )
+
+    event, market = _event_and_market()
+    session = _RecordingSession([(market, event)], [], {
+        "polymarket": {"value": 0.9, "updated_at": STAMP},
+    })
+    session.returned_rev = returned_rev
+    r, published = _one_event_refresher(monkeypatch, session)
+    await r.refresh([1])
+
+    assert r.stats["stamped"] == 1 and r.stats["errors"] == 0
+    (out,) = published
+    legacy = set(frame(rev=None))
+    if snapshot_rev is None:
+        assert set(out) == legacy and out["rev"] is None, out
+        assert r.stats["source_snapshot_omitted"] == 1
+    else:
+        assert set(out) == legacy | {"source_snapshot"}, out
+        assert out["rev"] == out["source_snapshot"]["rev"] == snapshot_rev
+        assert r.stats["source_snapshot_omitted"] == 0
+    assert out["p"] == 0.9 and out["event_id"] == 1
