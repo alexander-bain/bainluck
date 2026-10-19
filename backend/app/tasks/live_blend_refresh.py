@@ -1722,6 +1722,9 @@ class LiveBlendRefresher:
             # like a quiet market (gotcha #53).
             "published": 0,
             "publish_errors": 0,
+            # #10090 — committed frames sent without `source_snapshot`
+            # (no exact singleton revision, or a map that is not strict JSON).
+            "source_snapshot_omitted": 0,
             # #837 tail — stamps that stopped waiting on another transaction's
             # row lock and were re-queued. Not an error: the retry is the path.
             "lock_skipped": 0,
@@ -3146,7 +3149,7 @@ class LiveBlendRefresher:
             oldest_observation_time,
         )
         from app.utils.live_blend import compute_source_home_probability
-        from app.utils.live_push import build_frame
+        from app.utils.live_push import build_frame, build_source_snapshot
         from app.utils.repair_lock_budget import (
             SET_LOCK_AND_STATEMENT_TIMEOUT_SQL, SET_LOCK_TIMEOUT_SQL,
             SET_STATEMENT_TIMEOUT_SQL, is_lock_timeout, is_query_canceled,
@@ -3464,19 +3467,28 @@ class LiveBlendRefresher:
                             event.opening_home_probability
                         ),
                     )
-                    pending.append(
-                        build_frame(
-                            event_id=event_id,
-                            probability=compute_aggregate_probability(
-                                shim, event.status,
-                            ),
-                            source=self.source,
-                            source_value=value,
-                            updated_at=stamped_at,
-                            status=event.status,
-                            rev=new_rev,
-                        )
+                    frame = build_frame(
+                        event_id=event_id,
+                        probability=compute_aggregate_probability(
+                            shim, event.status,
+                        ),
+                        source=self.source,
+                        source_value=value,
+                        updated_at=stamped_at,
+                        status=event.status,
+                        rev=new_rev,
                     )
+                    # #10090: the row's complete public sources, from the same
+                    # RETURNING bag and revision as `p`. No query. Published
+                    # with the frame after COMMIT, or not at all.
+                    snapshot = build_source_snapshot(
+                        event_id, frame["rev"], new_sources,
+                    )
+                    if snapshot is None:
+                        self.stats["source_snapshot_omitted"] += 1
+                    else:
+                        frame["source_snapshot"] = snapshot
+                    pending.append(frame)
                 except Exception as exc:
                     if lock_budget_failed:
                         raise

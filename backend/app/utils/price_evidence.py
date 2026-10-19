@@ -55,6 +55,11 @@ from app.utils.probability_eligibility import contributing_market_ids, from_entr
 
 TRADEABLE_BOOK = "tradeable_book"
 UNPROVEN = "unproven"
+# #10090: the books were not read, so no classification was made. Distinct
+# from UNPROVEN (read and refused). A live frame's `source_snapshot` carries it:
+# that map is built from the stamp's RETURNING bag, never by an extra book
+# read. A reader that needs TRADEABLE_BOOK treats it as not proven.
+NOT_EVALUATED = "not_evaluated"
 
 # (market_id, yes_bid, yes_ask, last_updated) — one stored outcome book.
 BookRow = tuple[int, Optional[float], Optional[float], Optional[datetime]]

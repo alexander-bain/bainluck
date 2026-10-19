@@ -168,6 +168,50 @@ def build_frame(
     }
 
 
+def build_source_snapshot(
+    event_id: int, rev: Any, sources: Any,
+) -> Optional[dict[str, Any]]:
+    """#10090: the row's complete public sources for one frame, or ``None``.
+
+    ``sources`` is the bag the stamp's UPDATE RETURNED, which also computed the
+    frame's ``p``. ``rev`` is the frame's own ``rev``. Both come from one
+    committed write, so the map, the number and the revision match. The map
+    uses the shared public formatter, so it is the detail rail's shape.
+
+    Polymarket's ``price_evidence`` needs a read of stored books, and this
+    snapshot adds no query, so it carries ``NOT_EVALUATED``. A reader that needs
+    ``tradeable_book`` keeps treating it as not proven, as before.
+
+    ``None`` means no snapshot, the legacy frame: a ``rev`` that is not exactly
+    this one row's, a bag that is not a dict, or a map that is not strict JSON.
+    An empty map is real: a complete map with no source in it. This is a ROW
+    map and must never stand for a folded page's sources. Never raises, so the
+    optional field can never cost the frame.
+    """
+    try:
+        key = str(int(event_id))
+        if (not isinstance(rev, dict) or set(rev) != {key}
+                or type(rev[key]) is not int or rev[key] < 0
+                or not isinstance(sources, dict)):
+            return None
+        from app.utils.price_evidence import NOT_EVALUATED
+        from app.utils.probability_source_format import format_probability_sources
+
+        public = format_probability_sources(sources)
+        polymarket = public.get("polymarket")
+        if isinstance(polymarket, dict):
+            polymarket["price_evidence"] = NOT_EVALUATED
+        snapshot = {
+            "event_id": int(event_id),
+            "rev": {key: rev[key]},
+            "win_probability_sources": public,
+        }
+        json.dumps(snapshot, allow_nan=False)
+        return snapshot
+    except Exception:
+        return None
+
+
 async def publish_frame(redis_client, frame: dict[str, Any]) -> bool:
     """Publish one frame. Never raises — returns whether it went out.
 
