@@ -11564,22 +11564,20 @@ async def _score_events(
     # Kalshi/Polymarket pregame data that's only in snapshots (not on Event model).
     # #11254: a source's explicit withdrawal row retires that source's earlier
     # readings here, so a withdrawn venue's last price is not served as current.
+    # #1459: read recent history first, full history only for the ids it left
+    # unanswered; same answer (see `feed_snapshot_fallback`).
     snapshot_fallbacks: dict[int, float] = {}
     events_needing_fallback = [] if price_refresh_events is not None else [
         e for e in events if _compute_aggregate_probability(e) is None
     ]
     if events_needing_fallback:
         fallback_ids = [e.id for e in events_needing_fallback]
-        from sqlalchemy import text
+        from app.utils.feed_snapshot_fallback import read_snapshot_fallbacks
 
-        from app.utils.feed_snapshot_fallback import SNAPSHOT_FALLBACK_SQL
-
-        fb_result = await db.execute(
-            text(SNAPSHOT_FALLBACK_SQL),
-            {"ids": fallback_ids},
-        )
-        for row in fb_result.all():
-            snapshot_fallbacks[row.event_id] = round(float(row.home_win_probability), 6)
+        for event_id, home in (
+            await read_snapshot_fallbacks(db, fallback_ids, now=now)
+        ).items():
+            snapshot_fallbacks[event_id] = round(float(home), 6)
 
     # ── WHAT EACH PREDICTION MARKET SAID BEFORE THE MATCH (ux/1036 Tier A) ──
     #
