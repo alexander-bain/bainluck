@@ -90,6 +90,27 @@ nonisolated enum LiveEventPriceReconciliation {
         return kept
     }
 
+    /// #10090 — whether one authoritative detail + history pair put a
+    /// withdrawn source's `reconcile` floor on the page. Root's paired decision:
+    /// the response must cover each floor row at or past its floor (a missing
+    /// row refuses), and it must be what the page now SHOWS — a newer pushed
+    /// headline kept over it (`keepingNewerHeldHeadline`) or a pushed frame
+    /// preserved over it leaves a revision on the page that is not the
+    /// response's, and a newer sibling quote does not prove its rail or
+    /// history reconciled. A pinned history edge speaks for the history half
+    /// and must cover too; an unpinned one makes no claim. A served finished
+    /// game is the final owner: once the game ends `adopt` takes it whole.
+    static func reconcileFloorShown(
+        _ floor: FoldRevision, served: EventDetail, servedHistory: EventHistoryResponse, page: EventDetail?
+    ) -> Bool {
+        guard let page, page.id == served.id, servedHistory.eventId == served.id else { return false }
+        if EventState.isFinished(served.status) { return true }
+        guard let revision = served.blendFoldRevision?.revision, revision.covers(floor),
+              page.blendFoldRevision?.revision == revision else { return false }
+        if let edge = servedHistory.blendEdgeFoldRevision?.revision, !edge.covers(floor) { return false }
+        return true
+    }
+
     /// #10090 — what a held folded blend does with a frame that speaks for the
     /// server's FULL fold (or promises to). Web's `adoptFoldedQuote`.
     enum FoldedQuoteDecision: Equatable {

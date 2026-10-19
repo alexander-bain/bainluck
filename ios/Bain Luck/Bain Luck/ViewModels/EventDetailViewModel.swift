@@ -140,6 +140,35 @@ final class EventDetailViewModel: ObservableObject {
     private var owedInvalidation: FoldRevision?
     private var owedInvalidationRetriedAt: FoldRevision?
 
+    /// #10090 — a `reconcile` control's owed coverage floor: every row any
+    /// unpaid control named, at the highest revision named for it. Paid only by
+    /// a pair `reconcileFloorShown` accepts; a failed, stale or overtaken pair,
+    /// a rollover and a retry cap pay nothing. Merging keeps it bounded by the
+    /// event's fold rows, and a merge can only tighten it, so no unpaid row is
+    /// ever lost.
+    private var reconcileFloor: FoldRevision?
+    /// When the oldest unpaid control arrived, for accounting. Kept across
+    /// merges; cleared only when the floor is paid or retired.
+    private(set) var reconcileOwedSince: TimeInterval?
+    /// Pairs completed against the current floor without paying it. Picks the
+    /// next `reconcileRetryDelays` step.
+    private var reconcileMisses = 0
+    /// Custody ids behind the unpaid floor (dedup and accounting only — the
+    /// floor alone is coverage), and the recently paid ones with the floor that
+    /// paid them. Both capped: an evicted paid id costs at most one defensive
+    /// re-read when it is delivered again, never an unpaid row.
+    private var reconcileOwedCustody: [String] = []
+    private var reconcileSettled: [(custody: String, floor: FoldRevision)] = []
+    static let reconcileOwedCustodyMemory = 8
+    static let reconcileSettledMemory = 16
+    /// #10090 — the re-ask after a pair left the floor unpaid (stale server,
+    /// newer price kept over it, or a failure the pair retry does not own).
+    /// One task at a time, shared with the #9657 pair retry, through the
+    /// coalescing reader: this is what resumes owed work with no further
+    /// quote, control or tap. Capped at the last step, never given up.
+    static let reconcileRetryDelays: [TimeInterval] = [1.5, 3, 6, 12, 24]
+    var reconcileMemory: (owed: Int, settled: Int) { (reconcileOwedCustody.count, reconcileSettled.count) }
+
     /// #10643 — `frame`, carrying the row-wise highest revision it and `held`
     /// named, so a delayed or other-row arrival never erases a newer
     /// requirement. Any arrival without a revision leaves none: an unprovable
@@ -777,6 +806,65 @@ final class EventDetailViewModel: ObservableObject {
         return true
     }
 
+    // MARK: - #10090 reconcile control
+
+    /// A validated `reconcile` control for this page. Registered whatever the
+    /// held price's order — an older or equal floor after a newer sibling quote
+    /// is still owed, because that quote proves neither its rail nor history.
+    /// It writes nothing the page shows, earns no receipt or delivery, and asks
+    /// only the coalesced pair (no task or timer per control). A finished page
+    /// takes none: no control reopens a final.
+    @MainActor
+    private func receiveReconcile(_ control: LiveStreamReconcile) {
+        guard control.eventId == eventId, let held = event, held.id == eventId,
+              EventPriceStreaming.isEligible(held.status) else { return }
+        // A paid custody delivered again (a reconnect's re-send) asks nothing,
+        // unless it now names rows past the floor that paid it.
+        if reconcileSettled.contains(where: { $0.custody == control.custodyId && $0.floor.covers(control.removalRev) }) {
+            return
+        }
+        reconcileFloor = reconcileFloor.flatMap {
+            FoldRevision($0.rows.merging(control.removalRev.rows, uniquingKeysWith: max))
+        } ?? control.removalRev
+        if reconcileOwedSince == nil { reconcileOwedSince = now() }
+        if !reconcileOwedCustody.contains(control.custodyId) {
+            reconcileOwedCustody.append(control.custodyId)
+            if reconcileOwedCustody.count > Self.reconcileOwedCustodyMemory { reconcileOwedCustody.removeFirst() }
+        }
+        requestRevisionRefetch()
+    }
+
+    /// The floor is on the page. Its custody ids join the bounded paid memory.
+    @MainActor
+    private func settleReconcile() {
+        guard let floor = reconcileFloor else { return }
+        for custody in reconcileOwedCustody {
+            reconcileSettled.removeAll { $0.custody == custody }
+            reconcileSettled.append((custody, floor))
+        }
+        if reconcileSettled.count > Self.reconcileSettledMemory {
+            reconcileSettled.removeFirst(reconcileSettled.count - Self.reconcileSettledMemory)
+        }
+        if let since = reconcileOwedSince {
+            logger.info("Reconcile paid for \(self.eventId) after \(self.now() - since)s, \(self.reconcileMisses) unpaid pairs")
+        }
+        retireReconcile()
+    }
+
+    /// Dropped without payment, with a named owner: the reader left
+    /// (`stopRefresh` — the return's fresh `load()` and the next connection's
+    /// re-delivered custody own it), or the page left the priced states (a
+    /// served final or non-priced status is itself the authoritative read, and
+    /// a pushed final keeps the live cadence until `awaitingServedFinal`'s load
+    /// serves it).
+    @MainActor
+    private func retireReconcile() {
+        reconcileFloor = nil
+        reconcileOwedSince = nil
+        reconcileMisses = 0
+        reconcileOwedCustody.removeAll()
+    }
+
     /// Detail and history only — the two payloads that carry the blend and its
     /// revision. Not a `load()`: that is six requests and owns `lastLoadedAt`.
     @MainActor
@@ -859,6 +947,17 @@ final class EventDetailViewModel: ObservableObject {
                 streamRefetchGeneration = deliveryGeneration
                 revisionRefetchPending = true
             }
+            // #10090 — the reconcile floor is paid only when this pair is what
+            // the page now shows; otherwise it stays owed for the retry below.
+            if let floor = reconcileFloor {
+                if LiveEventPriceReconciliation.reconcileFloorShown(
+                    floor, served: fetched, servedHistory: h, page: event
+                ) {
+                    settleReconcile()
+                } else {
+                    reconcileMisses += 1
+                }
+            }
             // #10468 — the pair the CURRENT connection asked for put a covered
             // or newer price on the page: that is a delivery, and the only way
             // a folded hero (which refuses every raw frame) can renew it. A
@@ -879,6 +978,8 @@ final class EventDetailViewModel: ObservableObject {
                 streamHasPushedPrice = false
                 configureAutoRefresh()
             }
+            // A failure never pays a reconcile floor, whoever owns the retry.
+            if reconcileFloor != nil { reconcileMisses += 1 }
             logger.error("Price-pair read failed for \(self.eventId): \(error)")
         }
         rearmPricePairRetry()
@@ -895,9 +996,31 @@ final class EventDetailViewModel: ObservableObject {
         pricePairRetryTask = nil
         guard pricePairRefreshFailed else {
             pricePairFailures = 0
+            scheduleReconcileRetryIfOwed()
             return
         }
         schedulePricePairRetry()
+    }
+
+    /// #10090 — the unpaid reconcile floor's re-ask, in the pair-retry slot
+    /// (`reconcileRetryDelays`). A failed pair's own retry owns the re-ask
+    /// while it runs; its pair re-checks the floor. Re-armed only by a
+    /// completed pair, so arriving prices cannot keep postponing it.
+    @MainActor
+    private func scheduleReconcileRetryIfOwed() {
+        guard reconcileFloor != nil, reconcileMisses > 0 else { return }
+        let delays = Self.reconcileRetryDelays
+        let delay = delays[min(reconcileMisses, delays.count) - 1]
+        let pause = sleep
+        pricePairRetryTask = Task { @MainActor [weak self] in
+            await pause(delay)
+            guard !Task.isCancelled, let self else { return }
+            guard self.reconcileFloor != nil, EventPriceStreaming.isEligible(self.event?.status) else {
+                self.pricePairRetryTask = nil
+                return
+            }
+            self.requestRevisionRefetch()
+        }
     }
 
     @MainActor
@@ -945,6 +1068,7 @@ final class EventDetailViewModel: ObservableObject {
             startStreamIfNeeded()
         } else {
             stopStream()
+            retireReconcile()
         }
 
         // Decided AFTER the socket work, never before it: `stopStream()` clears
@@ -1031,6 +1155,7 @@ final class EventDetailViewModel: ObservableObject {
         installedPlan = nil
         visit += 1
         stopStream()
+        retireReconcile()
     }
 
     // MARK: - Live push
@@ -1087,6 +1212,7 @@ final class EventDetailViewModel: ObservableObject {
                 // acknowledges only a newer price for this delivery generation.
                 self.requestRevisionRefetch(resyncGeneration: self.deliveryGeneration)
             },
+            onReconcile: { [weak self] control in self?.receiveReconcile(control) },
             deliversFoldedQuotes: true
         )
         stream = controller

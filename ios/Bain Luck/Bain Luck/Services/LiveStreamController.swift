@@ -67,6 +67,65 @@ private nonisolated struct LiveStreamRecovery: Decodable {
     let generation: Int
 }
 
+/// #10090 — the named `reconcile` control: a source was withdrawn from this
+/// event's fold, and a page that has not shown an authoritative paired read at
+/// or past `removalRev` on EVERY one of its rows still owes one. Root's paired
+/// decision (reconciliation-contract-20261019): it is a coverage FLOOR, never a
+/// revision to adopt. It carries no price, source, status, clock or quote, and
+/// nothing here reads one even when a producer sends it — so it never reaches
+/// the price decoder or the replay filter.
+///
+/// `decode` refuses (returns `nil`) anything outside a small bounded envelope:
+/// a control the page cannot read whole proves nothing, and an unbounded one
+/// would let one frame grow the page's owed state without limit.
+nonisolated struct LiveStreamReconcile: Decodable, Sendable, Equatable {
+    static let maxEnvelopeBytes = 4096
+    static let maxCustodyIdBytes = 256
+    static let maxFloorRows = 16
+    /// A row id is a database id: digits only, and short enough to stay one.
+    static let maxRowIdLength = 20
+
+    let eventId: Int
+    /// The server's stable id for the original obligation. Dedup only — it
+    /// never orders anything and never stands in for coverage.
+    let custodyId: String
+    let removalRev: FoldRevision
+
+    init(eventId: Int, custodyId: String, removalRev: FoldRevision) {
+        self.eventId = eventId
+        self.custodyId = custodyId
+        self.removalRev = removalRev
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case eventId, custodyId, removalRev
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        eventId = try c.decode(Int.self, forKey: .eventId)
+        custodyId = try c.decode(String.self, forKey: .custodyId)
+        let rows = try c.decode([String: Int].self, forKey: .removalRev)
+        guard !custodyId.isEmpty, custodyId.utf8.count <= Self.maxCustodyIdBytes,
+              rows.count <= Self.maxFloorRows,
+              rows.keys.allSatisfy({ key in
+                  !key.isEmpty && key.count <= Self.maxRowIdLength && key.allSatisfy { ("0"..."9").contains($0) }
+              }),
+              let floor = FoldRevision(rows) else {
+            throw DecodingError.dataCorrupted(.init(codingPath: decoder.codingPath,
+                                                    debugDescription: "unbounded reconcile control"))
+        }
+        removalRev = floor
+    }
+
+    static func decode(_ raw: String) -> LiveStreamReconcile? {
+        guard raw.utf8.count <= maxEnvelopeBytes, let data = raw.data(using: .utf8) else { return nil }
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
+        return try? decoder.decode(LiveStreamReconcile.self, from: data)
+    }
+}
+
 /// One pushed price. Matches `backend/app/routes/event_stream.py`'s
 /// `probability` event, decoded with the app's `.convertFromSnakeCase` policy.
 nonisolated struct LiveStreamFrame: Decodable, Sendable, Equatable {
@@ -290,6 +349,9 @@ final class LiveStreamController {
     private let onFrame: @MainActor (LiveStreamFrame) -> Void
     private let onDeliveringChange: @MainActor (Bool) -> Void
     private let onResync: @MainActor () -> Void
+    /// #10090 — a validated `reconcile` control. Separate from `onResync` on
+    /// purpose: a resync generation names no rows and no obligation.
+    private let onReconcile: @MainActor (LiveStreamReconcile) -> Void
     /// #10090 — whether the owner reads `folded_probability`. Opt-in, so a
     /// surface that only needs "something moved" (Discover's cards) keeps its
     /// one refresh per raw frame instead of a second for the quote after it.
@@ -330,6 +392,7 @@ final class LiveStreamController {
         onFrame: @escaping @MainActor (LiveStreamFrame) -> Void,
         onDeliveringChange: @escaping @MainActor (Bool) -> Void,
         onResync: @escaping @MainActor () -> Void = {},
+        onReconcile: @escaping @MainActor (LiveStreamReconcile) -> Void = { _ in },
         deliversFoldedQuotes: Bool = false,
         schedule: @escaping LiveStreamSchedule = LiveStreamController.sleepThenRun,
         healthyRolloverDelay: @escaping () -> TimeInterval = {
@@ -341,6 +404,7 @@ final class LiveStreamController {
         self.onFrame = onFrame
         self.onDeliveringChange = onDeliveringChange
         self.onResync = onResync
+        self.onReconcile = onReconcile
         self.deliversFoldedQuotes = deliversFoldedQuotes
         self.schedule = schedule
         self.healthyRolloverDelay = healthyRolloverDelay
@@ -573,6 +637,18 @@ final class LiveStreamController {
                   recovery.generation > self.lastResyncGeneration else { return }
             self.lastResyncGeneration = recovery.generation
             self.onResync()
+        }
+
+        // #10090: a withdrawn source's coverage floor. TRANSPORT clock only,
+        // like a heartbeat: a control is not a price, so it can never renew
+        // the data-silence budget or turn delivery on. No per-connection dedup
+        // here — the owner merges floors, and a re-delivered control after a
+        // reconnect is exactly the one that must still be honoured.
+        next.on("reconcile") { [weak self, weak next] raw in
+            guard let self, let next, !self.stopped, self.handle === next else { return }
+            self.lastMessageAt = self.now()
+            guard let control = LiveStreamReconcile.decode(raw) else { return }
+            self.onReconcile(control)
         }
 
         next.on("heartbeat") { [weak self, weak next] _ in
