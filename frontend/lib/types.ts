@@ -698,6 +698,13 @@ export interface EventHistoryResponse {
    */
   blend_edge_fold_revision?: Record<string, number> | null;
   /**
+   * #10090: `{ "<row id>": rev }` — a COMPLETE fresh build read every series it
+   * draws after each listed row reached that revision. Null on a cached,
+   * partial or doubtful build. Read ordering only, whether or not an edge is
+   * pinned: never a value, clock, chart point or pin. See `lib/reconcileControl.ts`.
+   */
+  history_fold_revision?: Record<string, number> | null;
+  /**
    * #6948: true iff the backend ACTUALLY removed points before kick-off, i.e. iff a second request
    * without `range=since_start` would answer with more. `false` on every payload served without the
    * parameter, and optional because a client may be reading an older payload.

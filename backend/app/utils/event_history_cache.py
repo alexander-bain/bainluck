@@ -83,6 +83,17 @@ def mark_partial() -> None:
         marks.partial = True
 
 
+def build_is_complete() -> bool:
+    """True iff a build's marks are installed and it swallowed no read.
+
+    False when called outside a build: with no marks nobody could have
+    recorded a failure, so completeness is unknown, not proven (#10090
+    `history_fold_revision`).
+    """
+    marks = _marks.get()
+    return marks is not None and not marks.partial
+
+
 def mark_finished(finished) -> None:
     marks = _marks.get()
     if marks is not None:

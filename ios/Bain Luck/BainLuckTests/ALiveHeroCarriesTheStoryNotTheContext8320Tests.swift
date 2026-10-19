@@ -102,6 +102,8 @@ final class ALiveHeroCarriesTheStoryNotTheContext8320Tests: XCTestCase {
             "ifcarriesContext,letrecord=event.homeTeamData?.record",
             "ifcarriesContext,letcaption=SinceOpenCaption.caption(",
             "ifcarriesContext,letprojection=projectionText(event,hasScore:hasScore)",
+            // #9483 v476 — the adopted NFL/NBA header's broadcast + start line.
+            "ifcarriesContext,letcontext=adoptedPregameContext9483(event)",
         ] {
             XCTAssertTrue(hero.contains(gated), "the hero no longer gates: \(gated)")
         }

@@ -5082,6 +5082,27 @@ jobs:
             exit 1
           }
 
+      - name: "#10090 a live price frame's source snapshot comes from its own committed stamp (real Postgres)"
+        if: matrix.group == 'shared-tail' && needs.change-scope.outputs.reuse != 'true'
+        run: |
+          if python -m pytest tests/integration/test_live_blend_source_snapshot_10090_pg.py \
+            -v -rs > /tmp/source-snapshot10090.txt 2>&1; then
+            gate_status=0
+          else
+            gate_status=$?
+          fi
+          cat /tmp/source-snapshot10090.txt
+          echo "EXIT CODE: $gate_status"
+          test "$gate_status" -eq 0
+          if grep -qiE "[0-9]+ skipped" /tmp/source-snapshot10090.txt; then
+            echo "::error::#10090 source-snapshot gate SKIPPED"
+            exit 1
+          fi
+          grep -qE "[^0-9]4 passed[,[:space:]]" /tmp/source-snapshot10090.txt || {
+            echo "::error::#10090 source-snapshot gate did not run all four cases"
+            exit 1
+          }
+
       - name: "#11138 a lock-held PM price row publishes the received quote, one cohort per event (real Postgres)"
         if: matrix.group == 'shared-tail' && needs.change-scope.outputs.reuse != 'true'
         run: |
@@ -8019,6 +8040,39 @@ jobs:
             exit 1
           }
 
+      - name: "#10090 history_fold_revision certifies only what a fresh build read past (real Postgres)"
+        # #10090 producer. 15 = C1 a removal committed before the build is
+        # certified with NO pinned edge (and an ordinary read claims nothing) +
+        # C2 a removal between prefix and series is drawn but not certified +
+        # C3 a removal after the series read is neither + C4 an in-flight
+        # removal is neither until it commits + C5 a twin's removal per row +
+        # C6 a twin tagged after membership: no claim + C7 the canonical bag
+        # moving after its load: no claim + C7b an absorbed fold that raised
+        # or hit its cap: the route makes no claim + C8 a swallowed read: body, no
+        # claim + C9/C9b empty and single-source charts covered + C10 a reader
+        # arriving mid-build gets a build that read its removal + C11 a
+        # cancelled builder's waiter gets its own claim + C12 the lean prefix
+        # vector equals the bag fold's on six real-row cases + C13 the prefix
+        # statement selects no price bag (lean coverage prefix). Mutants: vector read
+        # at the end (C2, C3 red), membership unchecked (C6), canonical bag
+        # unchecked (C7), route ignores fold completeness (C7b), partial ignored (C8), ordinary build claims (C1),
+        # pin vector borrowed (10 red), barrier accepts an older build (C10).
+        # drop_all/create_all, so isolated; named here because a `*_pg.py`
+        # nobody adds runs nowhere.
+        if: matrix.group == 'isolated' && needs.change-scope.outputs.reuse != 'true'
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_history_fold_revision_10090_pg.py \
+            -v -rs 2>&1 | tee /tmp/historycoverage10090.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/historycoverage10090.txt; then
+            echo "::error::#10090 history coverage gate SKIPPED — the gate did not run"
+            exit 1
+          fi
+          grep -qE "[^0-9]15 passed[,[:space:]]" /tmp/historycoverage10090.txt || {
+            echo "::error::#10090 history coverage gate did not run all fifteen cases"
+            exit 1
+          }
+
       - name: "#10542 ActivityKit registration ownership (real Postgres)"
         # Random disposable schema; independent transactions exercise ownership CAS.
         if: matrix.group == 'isolated' && needs.change-scope.outputs.reuse != 'true'
@@ -8103,6 +8157,26 @@ jobs:
           fi
           grep -qE "[^0-9]5 passed([,[:space:]]|$)" /tmp/activitykit-runtime10542.txt || {
             echo "::error::#10542 runtime cursor gate did not execute all five cases"
+            exit 1
+          }
+
+      - name: "#10090 event detail state read window on the database clock (real Postgres)"
+        # Random disposable schema. A committed kickoff makes the next window
+        # strictly later; two open reads overlap (unordered); a long transaction
+        # widens the window but never lies.
+        if: matrix.group == 'isolated' && needs.change-scope.outputs.reuse != 'true'
+        run: |
+          python -m pytest tests/integration/test_event_state_read_window_10090_pg.py -v -rs > /tmp/state-read-window10090.txt 2>&1 || {
+            cat /tmp/state-read-window10090.txt
+            exit 1
+          }
+          cat /tmp/state-read-window10090.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/state-read-window10090.txt; then
+            echo "::error::#10090 state read window gate skipped"
+            exit 1
+          fi
+          grep -qE "[^0-9]3 passed([,[:space:]]|$)" /tmp/state-read-window10090.txt || {
+            echo "::error::#10090 state read window gate did not execute all three cases"
             exit 1
           }
 

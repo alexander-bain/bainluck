@@ -380,12 +380,13 @@ final class TheLiveChartEndCarriesTheHeroNumber9436Tests: XCTestCase {
 
     private func render(_ name: String, frames: [LiveBlendPoint], liveEdge: LiveEdgeReading?,
                         selection: OddsChartSelection? = nil, history: EventHistoryResponse? = nil,
-                        scenePhase: ScenePhase = .active) throws -> (UIImage, String) {
+                        scenePhase: ScenePhase = .active, quoteIsCurrent: Bool = true) throws -> (UIImage, String) {
         let view = OddsChartView(
             eventId: 15302923, commenceTime: Self.commence, status: "live",
             homeTeamName: "Red Sox", awayTeamName: "Yankees",
             homeTeamAbbrev: "BOS", awayTeamAbbrev: "NYY",
             refreshStreaming: true, liveUpdateStatus: .live, liveEdge: liveEdge,
+            quoteIsCurrent: quoteIsCurrent,
             preloadedHistory: try history ?? self.history(), liveFrames: frames, selection: selection)
             .frame(width: 390)
             .environment(\.colorScheme, .light)
@@ -445,6 +446,18 @@ final class TheLiveChartEndCarriesTheHeroNumber9436Tests: XCTestCase {
                                        scenePhase: .background)
         XCTAssertFalse(text.contains("78%"), text)
         XCTAssertNotNil(tipColumn(image), "the line itself is still drawn")
+    }
+
+    /// #9483 Argon P1 — the same matched edge on a quote the headline calls
+    /// "last recorded" (stale, undated, interrupted) keeps its line and draws
+    /// no current number. `testTheLiveEdgeDrawsTheHeroNumberBesideTheDot` is
+    /// the control: identical inputs with a current quote draw "BOS 78%".
+    func testAQuoteThatIsNotCurrentKeepsTheLineAndDrawsNoNumber() throws {
+        let (image, text) = try render("not-current", frames: frames([0.49, 0.55, 0.78]),
+                                       liveEdge: LiveEdgeReading(homeProbability: 0.78, homeLabel: "78%"),
+                                       quoteIsCurrent: false)
+        XCTAssertFalse(text.contains("78%"), text)
+        XCTAssertNotNil(tipColumn(image), "the recorded line itself is still drawn")
     }
 
     // MARK: - Hosted: the dot glides along the drawn segment and settles

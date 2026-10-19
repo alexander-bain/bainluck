@@ -478,6 +478,12 @@ async def _stream(
                         frame = _fold_invalidation(frame, event_id, origin_id)
                         if frame is None:
                             continue
+                    elif (len(subscription.subscriptions) > 1
+                            and "source_snapshot" in frame):
+                        # #10090: one row's sources never stand for a folded
+                        # page. Its complete map comes only in `folded_quote`.
+                        frame = {k: v for k, v in frame.items()
+                                 if k != "source_snapshot"}
                     project = getattr(hub, "project_folded_quote", None)
                     pending_quote = (
                         len(subscription.subscriptions) > 1 and callable(project)

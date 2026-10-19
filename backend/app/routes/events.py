@@ -38,6 +38,7 @@ from app.services.anchor_channel import (
 from app.services.same_instant_refutation import same_instant_refuted_on_page
 from app.utils.agent_origin import ORIGIN_HEADER, ORIGIN_USER
 from app.utils.start_placeholder import start_is_tbd
+from app.utils.feed_snapshot_fallback import WITHDRAWAL_MARKER_KEY
 from app.utils.scheduled_start import (
     loaded_commence_time_source,
     served_start_is_from_schedule,
@@ -18895,6 +18896,87 @@ def _unstarted_entry_ttl(cached_resp: dict, cached_at: float) -> float:
     )
 
 
+#: #10090 — the two payload keys that bracket WHEN this detail read the event
+#: row, on the database's own clock. Present-only and always together.
+STATE_READ_NOT_BEFORE_KEY = "state_read_not_before"
+STATE_READ_NOT_AFTER_KEY = "state_read_not_after"
+
+
+async def event_state_read_window(db: AsyncSession) -> dict:
+    """When this request's transaction read the event row — ``{}`` if unknown.
+
+    A page holds one detail payload and receives others: its own polls (which
+    may be served from `_event_detail_cache`, built seconds earlier) and the
+    fresh paired read a price invalidation asks for. Two of them can carry the
+    SAME `blend_fold_revision` — a kickoff or a touchdown changes no price — so
+    the revision cannot say which one's `status` and score are current, and
+    neither can arrival order (production #10090: a fresh read that began
+    before kick-off landed after a `live 0-0` poll and put the game back to
+    `scheduled`; a `live 7-0` became `0-0` the same way).
+
+    This is the clock that can. Called once, in the same transaction and after
+    every read of the served row (the primary-key load and any duplicate
+    resolution), it returns:
+
+    * ``state_read_not_before`` — ``transaction_timestamp()``: the transaction
+      began no later than any statement in it, and under READ COMMITTED each
+      statement's snapshot is taken at or after its own start;
+    * ``state_read_not_after`` — ``clock_timestamp()``: evaluated while THIS
+      statement runs, after the row's snapshot was taken.
+
+    So the row's state was read inside ``[not_before, not_after]``, both on the
+    database server's one clock — never a dyno's. A reader may call payload B's
+    state newer than payload A's only when B's ``not_before`` is strictly after
+    A's ``not_after``; overlapping windows are unordered and nothing here
+    chooses for them. A cached payload carries the window of the build that
+    made it, which is the point: that build is what it describes.
+
+    What the window covers — events-row columns ONLY: the raw ``status``,
+    ``home_score``/``away_score``, ``completed_at``, ``period``/``game_clock``,
+    ``score_source``/``score_observed_at``, ``box_score_data`` (players and the
+    period line) and the tennis ``linescore``. Two limits a reader must keep:
+
+    * the served ``status`` is ``served_event_status(row status, served
+      commence, dyno now)``; the Kalshi start recovery (which moves only the
+      commence) and the dyno's clock act after the window, and both can only
+      demote ``live`` to ``scheduled`` near commence, never invent a state;
+    * keys read AFTER the window are not covered: the ``venue_*`` settlement
+      keys (``_venue_settlement_served`` adds ``venue_settled``,
+      ``venue_settled_result`` and ``venue_closed_no_winner``; it never touches
+      ``status``), ``live_probability_pinned``, ``hero_*`` and
+      ``prematch_odds``. They travel with the status that gated them; the
+      window does not order them.
+
+    Fails closed to ``{}`` — on any error, an absent row, a value that is not a
+    timezone-aware datetime, or a reversed pair. An absent window is "no
+    claim", never a guessed one.
+    """
+    try:
+        row = (
+            await db.execute(text("SELECT transaction_timestamp(), clock_timestamp()"))
+        ).first()
+    except Exception:
+        # Gotcha #42's bargain: a payload without the clock is served exactly
+        # as before. The window is additive. Honest limit: there is no
+        # savepoint, so a failure of THIS statement that leaves the connection
+        # up also leaves the transaction aborted for the reads below; "never
+        # costs a page" holds when the failure is the connection itself.
+        logger.warning("event detail: state read window unavailable", exc_info=True)
+        return {}
+    if row is None or len(row) != 2:
+        return {}
+    not_before, not_after = row[0], row[1]
+    if not all(
+        isinstance(stamp, datetime) and stamp.utcoffset() is not None
+        for stamp in (not_before, not_after)
+    ) or not_after < not_before:
+        return {}
+    return {
+        STATE_READ_NOT_BEFORE_KEY: not_before.astimezone(timezone.utc).isoformat(),
+        STATE_READ_NOT_AFTER_KEY: not_after.astimezone(timezone.utc).isoformat(),
+    }
+
+
 def _cached_detail_payload(event_id: int, now: float) -> dict | None:
     """The detail payload `get_event` would serve RIGHT NOW, or ``None``.
 
@@ -19664,6 +19746,10 @@ async def get_event(
     event = _served.event
     event_id = _served.event_id
 
+    # #10090: bracket the served row's read NOW — after the duplicate resolution
+    # read it, before anything below can commit. Published with the payload.
+    _state_read_window = await event_state_read_window(db)
+
     # ── lane1/132: a row marked retired stops rendering ──────────────────────
     #
     # `RETIRED_STATUSES` is the whole argument; the short version is that every
@@ -20340,6 +20426,8 @@ async def get_event(
         )
         if _periods is not None:
             response["box_score_data"].update(_periods)
+
+    response.update(_state_read_window)
 
     # Q050: cache under the id the caller ASKED FOR as well as the one we
     # served. `event_id` is rebound above when a duplicate resolves, so caching
@@ -31237,6 +31325,11 @@ _SERVED_GAME_STATE_KEYS = frozenset({
     "time_source",
 })
 
+#: The writer's withdrawal marker. Not in the census above on purpose: it is
+#: served only on a point the route itself classified as a withdrawal, never
+#: passed through by key (#11272).
+_SERVED_WITHDRAWAL_KEY = WITHDRAWAL_MARKER_KEY
+
 
 def _project_served_game_state(win_prob_history: dict) -> None:
     """Narrow every point's `game_state` to the keys a client reads.
@@ -31263,9 +31356,23 @@ def _project_served_game_state(win_prob_history: dict) -> None:
     A non-dict `game_state` is left exactly as it is: the column is JSONB and a
     row may hold a list or a string, no client parses one, and rewriting it here
     would be a second change hiding inside a size fix.
+
+    #11272 — one key outside the census is served, and only on the row that
+    earned it. The writer marks a genuine withdrawal as a NULL point with
+    `live_source_withdrawal: true`; the route decides which points those are when
+    it builds each one from its stored row (`_explicit_source_withdrawal`), and
+    that decision — not the key — is what travels. So the marker reaches the wire
+    as boolean `true` on exactly those points and on no other: an ordinary NULL,
+    a string "true", a `false`, or a synthetic point that merely COPIED the row's
+    dict (the live-edge extension shares it) serves the projection it always did.
+    The internal flag is removed here, on every point, whatever it says.
     """
     for points in (win_prob_history or {}).values():
         for point in points or []:
+            withdrawal = (
+                point.pop("_explicit_source_withdrawal", None) is True
+                and point.get("home_probability") is None
+            )
             state = point.get("game_state")
             if not isinstance(state, dict):
                 continue
@@ -31274,6 +31381,8 @@ def _project_served_game_state(win_prob_history: dict) -> None:
                 for key, value in state.items()
                 if key in _SERVED_GAME_STATE_KEYS
             }
+            if withdrawal:
+                projected[_SERVED_WITHDRAWAL_KEY] = True
             point["game_state"] = projected or None
 
 
@@ -32020,6 +32129,17 @@ def one_row_per_bookmaker_in_bucket(snaps: list) -> list:
     return [snap for _, _, snap in sorted(best.values(), key=lambda kept: kept[1])]
 
 
+#: #10090 R3 — `fresh=true` history reads, coalesced per process by
+#: `_coalesced_fresh_build` (the #9296 barrier) under the route's own cache key,
+#: `ehc.cache_key(event_id, hours, range)`: a fresh read is answered by a build
+#: that STARTED after it asked, and readers who arrive while one runs share the
+#: next — ≤ 2 builds per worker per key, not one per open page. Distinct hours
+#: or ranges never share (#11186's lesson: equal hours is not the same view).
+#: The route reads no principal, so the key needs none. What is shared is the
+#: serialized body and its Cache-Control, never a session or an ORM row.
+_HISTORY_FRESH_BUILDS: dict[tuple, tuple[float, object]] = {}
+
+
 @router.get("/{event_id}/history")
 async def get_event_odds_history_cached(
     event_id: int,
@@ -32074,8 +32194,14 @@ async def get_event_odds_history_cached(
             ehc.write(key, body, cache_control, ehc.lease_for(marks, payload))
         return body, cache_control
 
+    # #10090 R3: coalesced per (event, hours, range) by the #9296 barrier, and
+    # still never published. A fresh history read is the other half of the
+    # recovery pair, so the same broadcast that makes every open page re-read
+    # detail makes every one of them re-read this.
     if fresh:
-        body, cache_control = await _build(publish=False)
+        body, cache_control = await _coalesced_fresh_build(
+            _HISTORY_FRESH_BUILDS, key, time.time(), lambda: _build(publish=False)
+        )
         return _respond(body, cache_control, "bypass")
 
     flight_key = f"event_history:{key[0]}:{key[1]}:{key[2]}"
@@ -32145,9 +32271,11 @@ async def get_event_odds_history(
     # Read-error and finished marks for the cache policy in front of this build
     # (`get_event_odds_history_cached`); no-ops when called any other way.
     from app.utils.event_history_cache import (
+        build_is_complete as history_build_is_complete,
         mark_finished as _history_mark_finished,
         mark_partial as _history_mark_partial,
     )
+    from app.utils.history_coverage import served_history_coverage
 
     # Verify event exists
     event_result = await db.execute(
@@ -32294,10 +32422,37 @@ async def get_event_odds_history(
     # chart of the card a reader tapped lives on its absorbed twin when the
     # fold elected the anchored row (FC Dallas 1-0 LAFC: 15318170 over
     # 15314003). Read once; the blend pin below reuses it.
-    from app.utils.serve_fold_absorbed import serve_fold_absorbed_rows
+    from app.utils.serve_fold_absorbed import (
+        serve_fold_absorbed_rows_with_completeness,
+    )
 
-    absorbed = await serve_fold_absorbed_rows(db, event)
+    absorbed, absorbed_complete = await serve_fold_absorbed_rows_with_completeness(
+        db, event
+    )
     series_event_ids = await folded_series_event_ids(db, event_id, absorbed)
+
+    # ── #10090: the revision vector a FRESH build can certify, read HERE ──────
+    #
+    # After the rows are chosen, before any of their history is read: every
+    # series statement below runs on this session after this one, so under READ
+    # COMMITTED it sees every removal this vector counts (the withdrawal vertex
+    # commits with its bag change). Never read at the end and never borrowed
+    # from the pin below, whose vector belongs to the pinned VALUE and stays
+    # null when nothing is pinned. Checked against `series_event_ids` and the
+    # canonical bag this build already holds; any doubt is no claim. Served as
+    # `history_fold_revision` only if the build then finishes whole — see
+    # `app/utils/history_coverage.py`. An ordinary build pays nothing for it.
+    history_coverage = None
+    if fresh:
+        from app.utils.history_coverage import read_coverage_prefix
+
+        history_coverage = await read_coverage_prefix(
+            db,
+            event,
+            absorbed,
+            series_event_ids,
+            membership_complete=absorbed_complete,
+        )
 
     # Get snapshots within time range
     # For completed/closed events, return ALL snapshots (no time window)
@@ -33571,9 +33726,8 @@ async def get_event_odds_history(
         pass
 
     # The marker is an internal aggregation instruction, not a new wire field.
-    for source_points in win_prob_history.values():
-        for point in source_points:
-            point.pop("_explicit_source_withdrawal", None)
+    # `_project_served_game_state` removes it, after turning a genuine
+    # withdrawal back into the writer's own `game_state` marker (#11272).
 
     # ── UX-P003 / #3714: pin the blend line's right edge to the point-in-time blend ──
     #
@@ -34148,6 +34302,15 @@ async def get_event_odds_history(
         # or no claim, never "revision zero".
         "blend_edge_fold_revision": (
             blend_edge_fold_revision if blend_edge_pinned else None
+        ),
+        # #10090: `{row_id: rev}` this fresh build read every series AFTER, for
+        # exactly the rows it charts — whether or not an edge is pinned. Not a
+        # value, a clock or a pin; null on any ordinary (cacheable) build, any
+        # partial one and any doubt. See `app/utils/history_coverage.py`.
+        "history_fold_revision": served_history_coverage(
+            history_coverage,
+            build_complete=history_build_is_complete(),
+            on_demand_backfill=on_demand_backfill,
         ),
         # #6925: true iff `range=since_start` actually removed points, i.e. iff
         # a second request without it would tell this caller more. False on

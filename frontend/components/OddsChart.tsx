@@ -1648,6 +1648,8 @@ export default function OddsChart({
   // Recharts ReferenceLine (period markers) to match categorical XAxis values.
   const chartData: ChartDataPoint[] = useMemo(() => {
     const dataMap = new Map<string, ChartDataPoint>();
+    // Explicit source withdrawal ends carry; seeded empty minutes do not.
+    const withdrawn = new Map<string, Set<string>>();
 
     const ensurePoint = makeEnsurePoint<ChartDataPoint>(dataMap, () => ({
       homeDelta: null,
@@ -1726,7 +1728,20 @@ export default function OddsChart({
               : null;
 
           const dp = ensurePoint(point.timestamp);
-          dp[dataKey] = delta;
+          if (delta === null && point.game_state?.live_source_withdrawal === true) {
+            // Keep the last real reading in this minute, then lift the pen.
+            // A null vertex must not erase an in-minute price and resurrect
+            // the previous minute through the ordinary gap fill (#11272).
+            const keys = withdrawn.get(dp.timestamp) ?? new Set<string>();
+            keys.add(dataKey);
+            withdrawn.set(dp.timestamp, keys);
+            if (typeof dp[dataKey] !== "number") dp[dataKey] = null;
+          } else if (delta !== null) {
+            dp[dataKey] = delta;
+            withdrawn.get(dp.timestamp)?.delete(dataKey);
+          } else if (!withdrawn.get(dp.timestamp)?.has(dataKey)) {
+            dp[dataKey] = null;
+          }
         }
       }
 
@@ -1859,6 +1874,10 @@ export default function OddsChart({
           if (inCheckpointWindow) continue;
         }
         const val = pt[key];
+        if (withdrawn.get(pt.timestamp)?.has(key)) {
+          lastKnown[key] = null;
+          continue;
+        }
         if (typeof val === "number") {
           lastKnown[key] = val;
         } else if (lastKnown[key] !== null) {

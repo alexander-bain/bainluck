@@ -4,6 +4,8 @@ import { useEffect, useRef, useState } from 'react';
 import { API_URL } from '@/lib/api';
 import { frameFoldOrder } from '@/lib/foldRevision';
 import { rememberLiveChartFrame, type LiveChartFrame } from '@/lib/liveChartHistory';
+import { frameCarriesUnpricedSnapshot } from '@/lib/sourceSnapshot';
+import type { ReconcileControl } from '@/lib/reconcileControl';
 import {
   TICK_INTERVAL_MS,
   createLiveStreamController,
@@ -60,7 +62,7 @@ export function heldFrameAfter(previous: LiveFrame | null, next: LiveFrame): Liv
   // A held frame it would refuse must not keep out the valid one behind it.
   const priced = (f: LiveFrame) =>
     typeof f.p === 'number' && Number.isFinite(f.p) && f.p >= 0 && f.p <= 1 &&
-    f.folded_quote === undefined && !f.folded_quote_pending;
+    f.folded_quote === undefined && !f.folded_quote_pending && !frameCarriesUnpricedSnapshot(f);
   if (!priced(previous) || !priced(next)) return next;
   if ((previous.status ?? null) !== (next.status ?? null)) return next;
   return frameFoldOrder(previous.rev, next.rev) === 'older' ? previous : next;
@@ -105,6 +107,12 @@ export function useLiveEventStream(
    * them here.
    */
   onFrame?: (frame: LiveFrame) => void,
+  /**
+   * #10090: every validated `reconcile` control, synchronously and in arrival
+   * order (not through state, which a batch would collapse). The page checks
+   * the event id and owns the ledger.
+   */
+  onReconcile?: (control: ReconcileControl) => void,
 ): UseLiveEventStreamResult {
   const [frame, setFrame] = useState<LiveFrame | null>(null);
   const [connected, setConnected] = useState(false);
@@ -123,8 +131,10 @@ export function useLiveEventStream(
   // event's controller never delivers to the previous event's callback and an
   // abandoned render never redirects the current one.
   const onFrameRef = useRef(onFrame);
+  const onReconcileRef = useRef(onReconcile);
   useEffect(() => {
     onFrameRef.current = onFrame;
+    onReconcileRef.current = onReconcile;
   });
 
   useEffect(() => {
@@ -179,6 +189,16 @@ export function useLiveEventStream(
         if (mounted.current) {
           recoveryOrdinal.current += 1;
           setRecovery({ eventId, ordinal: recoveryOrdinal.current });
+        }
+      },
+      onReconcile: (control) => {
+        if (!mounted.current) return;
+        try {
+          onReconcileRef.current?.(control);
+        } catch (error) {
+          setTimeout(() => {
+            throw error;
+          });
         }
       },
       onDeliveringChange: (delivering) => {

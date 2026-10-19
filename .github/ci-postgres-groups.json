@@ -183,6 +183,7 @@
     "#11181 owed chart points: atomic custody, replay and restart (real Postgres)",
     "#10090 PM release wake with the stage trace off and on (real Postgres)",
     "#10090 a withdrawn PM price leaves the page through contention, cancellation and restart (real Postgres)",
+    "#10090 a live price frame's source snapshot comes from its own committed stamp (real Postgres)",
     "#11138 a lock-held PM price row publishes the received quote, one cohort per event (real Postgres)",
     "#10090 a held PM quote returning to its stored price is published, held or just released (real Postgres)",
     "#10090 a brief hold on a PM prop or standalone price never costs a whole retry period (real Postgres)",
@@ -250,11 +251,13 @@
     "#837 every benchmark price reaches the number at the default floor (real Postgres)",
     "#9050 source retirement preserves concurrent live prices (real Postgres)",
     "#9051 the fold's revision vector orders two reads of a folded blend (real Postgres)",
+    "#10090 history_fold_revision certifies only what a fresh build read past (real Postgres)",
     "#10542 ActivityKit registration ownership (real Postgres)",
     "#10556 durable ActivityKit reservations (real Postgres)",
     "#10564 abandoned ActivityKit credentials expire (real Postgres)",
     "#10568 canonical ActivityKit observation ordering (real Postgres)",
-    "#10542 serialized ActivityKit runtime cursor (real Postgres)"
+    "#10542 serialized ActivityKit runtime cursor (real Postgres)",
+    "#10090 event detail state read window on the database clock (real Postgres)"
   ],
   "shared-suffix": [
     "#10024 'dodgers world series' reaches the World Series board, not No results (real Postgres)",
