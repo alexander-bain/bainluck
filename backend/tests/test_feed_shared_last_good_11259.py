@@ -18,7 +18,9 @@ edges and the candidate stages faked):
 * a coalesced anonymous waiter does the same; a waiter that is not anonymous
   by identity keeps `waiter_unavailable`;
 * process-local last-good still wins; a copy past its age bound, a live copy
-  past the live ceiling, and a pinned request all keep `unavailable`.
+  past the live ceiling, and a pinned request all keep `unavailable`;
+* a copy that still calls a game `scheduled` after its start is held to the
+  live ceiling, read at the READER's clock: the copy cannot see the kickoff.
 """
 
 import asyncio
@@ -35,6 +37,7 @@ from app.utils.feed_cache import (
     FEED_PAGE_BASE_LAST_GOOD_SUFFIX,
     feed_page_base_last_good_key,
     base_from_last_good,
+    base_has_started_scheduled_game,
     encode_base_last_good,
     feed_page_base_last_good_max_age_s,
 )
@@ -165,6 +168,77 @@ def test_a_live_game_anywhere_in_the_base_bounds_it_at_the_live_ceiling():
         None,
         None,
     )
+
+
+def _iso(epoch: float) -> str:
+    from datetime import datetime, timezone
+
+    return datetime.fromtimestamp(epoch, tz=timezone.utc).isoformat()
+
+
+def _starting(i, start, status="scheduled", kind="event"):
+    return {"type": kind, "data": {"id": i, "status": status, "commence_time": start}}
+
+
+@pytest.mark.parametrize(
+    "start",
+    [
+        _iso(NOW - 60),  # kicked off after the build, before this read
+        _iso(NOW - 600),  # already past its start at the build (status lag)
+        _iso(NOW),  # starts this second
+        _iso(NOW - 60).replace("+00:00", "Z"),
+        _iso(NOW - 60).replace("+00:00", ""),  # naive is read as UTC
+    ],
+    ids=["after-build", "before-build", "at-read", "zulu", "naive"],
+)
+def test_a_scheduled_game_past_its_start_holds_the_copy_to_the_live_ceiling(start):
+    # Position 25: outside page 1, and it still bounds the whole copy.
+    items = [_item(i) for i in range(25)] + [_starting(25, start)]
+    ceiling = FEED_LAST_GOOD_MAX_AGE_LIVE_SECONDS
+    assert base_from_last_good(_base(items, age_s=ceiling - 1), now=NOW)[0]
+    assert base_from_last_good(_base(items, age_s=240), now=NOW) == (None, None)
+
+
+@pytest.mark.parametrize(
+    "card",
+    [
+        _starting(1, _iso(NOW + 1)),  # has not started yet
+        _starting(1, None),
+        _starting(1, "tonight"),
+        _starting(1, 1_000.0),  # not the serialized form
+        _starting(1, _iso(NOW - 60), status="completed"),
+        _starting(1, _iso(NOW - 60), kind="futures"),
+    ],
+    ids=["future", "missing", "unparseable", "number", "completed", "futures"],
+)
+def test_a_card_that_cannot_prove_a_missed_kickoff_keeps_the_ordinary_bound(card):
+    items = [_item(i) for i in range(3)] + [card]
+    assert base_from_last_good(_base(items, age_s=240), now=NOW)[0]
+    assert not base_has_started_scheduled_game(
+        json.loads(wire_decode(_base(items, age_s=240))), now=NOW
+    )
+
+
+def test_a_naive_start_is_utc_whatever_the_process_timezone(monkeypatch):
+    """CI runs in UTC, where reading a naive stamp as local time is invisible.
+    West of UTC, local reading puts a start that passed 60 s ago hours ahead."""
+    monkeypatch.setenv("TZ", "America/Los_Angeles")
+    time.tzset()
+    try:
+        naive = _iso(NOW - 60).replace("+00:00", "")
+        wire = _base([_item(1), _starting(2, naive)], age_s=240)
+        assert base_from_last_good(wire, now=NOW) == (None, None)
+    finally:
+        monkeypatch.undo()
+        time.tzset()
+
+
+def test_the_kickoff_is_judged_at_the_readers_clock_not_the_builds():
+    """The same bytes: served before the game starts, refused after it."""
+    start = NOW + 100
+    wire = _base([_item(1), _starting(2, _iso(start))], age_s=240)
+    assert base_from_last_good(wire, now=start - 1)[0]
+    assert base_from_last_good(wire, now=start) == (None, None)
 
 
 _w = encode_base_last_good
@@ -324,6 +398,39 @@ async def test_a_copy_past_its_bound_keeps_the_truthful_unavailable(
     assert body["cache"]["status"] == "unavailable"
     assert body["cache"]["reason"] == "events_timeout"
     assert body["items"] == []
+
+
+@pytest.mark.parametrize("path", [DISCOVER, SPORTS])
+@pytest.mark.parametrize("kicked_off", [True, False], ids=["kicked-off", "not-yet"])
+async def test_a_copy_whose_game_kicked_off_since_the_build_is_not_served(
+    monkeypatch, rig, path, kicked_off
+):
+    """Four minutes old, inside the 30-minute bound, but one of its games has
+    started since the build and the copy still calls it scheduled. The control
+    is the same copy with the start still ahead: it is served."""
+    start = time.time() + (-60 if kicked_off else 3600)
+    cards = [_upcoming(1), _upcoming(2)]
+    cards[1]["data"] = {**cards[1]["data"], "commence_time": _iso(start)}
+    _, _, redis, key = await _durable_copy_after_a_complete_build(
+        monkeypatch, cards, path=path
+    )
+    assert "commence_time" in json.dumps(json.loads(wire_decode(redis.store[key])))
+    _age_copy(redis, key, 240)
+    _reset_spies(rig)
+    monkeypatch.setattr(rc, "FEED_TOTAL_BUDGET_MS", _SHORT_BUDGET_MS)
+    db = _StageSession(cards, stall=SCORE)
+
+    resp = await _get(monkeypatch, db, redis, path=path, score=_score(db), enrich=_enrich)
+    body = resp.json()
+
+    assert f"{SCORE}_cancelled" in db.log
+    if kicked_off:
+        assert body["cache"]["status"] == "unavailable"
+        assert body["items"] == []
+    else:
+        assert body["cache"]["status"] == "last_good"
+        assert _ids(body) == [1, 2]
+    assert rig.remembered == [] and rig.published == [] and redis.setex_keys == []
 
 
 async def test_an_unseated_pinned_request_admits_no_durable_copy(monkeypatch, rig):
