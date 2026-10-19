@@ -29,6 +29,9 @@ logger = logging.getLogger(__name__)
 PROJECTION_TIMEOUT_S = 1.0
 MAX_PENDING = 8
 MAX_CACHED = 64
+RECOVERY_RETRY_S = 0.25
+RECOVERY_MAX_RETRY_S = 0.5
+RECOVERY_PROBE_S = 0.2
 
 
 async def load_folded_quote(event_id: int, origin_id: int, origin_rev: int):
@@ -82,6 +85,15 @@ async def load_folded_quote(event_id: int, origin_id: int, origin_rev: int):
 
 
 @dataclass
+class _RecoveryRetry:
+    failures: int
+    after: float
+    earliest: float
+    opened_at: float | None = None
+    spent: bool = False
+
+
+@dataclass
 class _Work:
     task: asyncio.Task
     waiters: int = 0
@@ -93,20 +105,59 @@ class FoldedQuoteProjector:
     def __init__(self):
         self._pending = {}
         self._cached = OrderedDict()
+        self._recovery_retry_after = OrderedDict()
         self._slots = asyncio.Semaphore(2)
+        self._first_load_at = None
+        self._last_success_at = None
+        self._last_load_started_at = float("-inf")
 
-    async def _load(self, event_id, origin_id, revision):
+    def _dark(self, now):
+        since = self._last_success_at
+        if since is None:
+            since = self._first_load_at
+        return since is not None and now - since >= RECOVERY_RETRY_S
+
+    async def _load(self, event_id, origin_id, revision, fresh=False):
+        quote = None
+        load_started = asyncio.get_running_loop().time()
         try:
             async with asyncio.timeout(PROJECTION_TIMEOUT_S):
                 async with self._slots:
-                    return await load_folded_quote(event_id, origin_id, revision)
+                    load_started = asyncio.get_running_loop().time()
+                    quote = await load_folded_quote(event_id, origin_id, revision)
         except asyncio.CancelledError:
             raise
         except Exception:
             logger.warning("folded quote unavailable for event %s", event_id, exc_info=True)
-            return None
+        now = asyncio.get_running_loop().time()
+        # Record once per actual load, not once per coalesced reader.
+        if quote is not None:
+            if self._dark(now):
+                for retry in self._recovery_retry_after.values():
+                    if not retry.spent:
+                        retry.after = retry.earliest
+                        retry.opened_at = now
+            self._last_success_at = now
+            self._recovery_retry_after.pop(event_id, None)
+        elif fresh:
+            previous = self._recovery_retry_after.get(event_id)
+            failures = min(4, (previous.failures if previous else 0) + 1)
+            delay = min(RECOVERY_MAX_RETRY_S, RECOVERY_RETRY_S * 2 ** (failures - 1))
+            spent = previous is not None and (previous.spent or (
+                previous.opened_at is not None and load_started >= previous.opened_at))
+            after = now + delay
+            if (previous is not None and previous.opened_at is not None
+                    and not spent and load_started < previous.opened_at):
+                after = previous.after
+            self._recovery_retry_after[event_id] = _RecoveryRetry(
+                failures, after, now + RECOVERY_RETRY_S,
+                previous.opened_at if previous else None, spent)
+            self._recovery_retry_after.move_to_end(event_id)
+            while len(self._recovery_retry_after) > MAX_CACHED:
+                self._recovery_retry_after.popitem(last=False)
+        return quote
 
-    async def project(self, event_id: int, frame: dict):
+    async def project(self, event_id: int, frame: dict, *, fresh: bool = False):
         origin_id, revision = frame.get("event_id"), frame.get("rev")
         if (type(origin_id) is not int or not isinstance(revision, dict)
                 or set(revision) != {str(origin_id)}
@@ -116,9 +167,18 @@ class FoldedQuoteProjector:
         if any(frame.get(field) is not None and not isinstance(frame[field], str)
                for field in ("status", "updated_at")):
             return None
+        now = asyncio.get_running_loop().time()
+        retry = self._recovery_retry_after.get(event_id)
+        if fresh and retry is not None and retry.after > now:
+            # One process-wide probe can detect restoration while all event
+            # backoffs are closed. Healthy traffic prevents this bypass.
+            probe = (not retry.spent and now >= retry.earliest and self._dark(now) and not self._pending
+                     and now - self._last_load_started_at >= RECOVERY_PROBE_S)
+            if not probe:
+                return None
         key = (event_id, origin_id, revision[str(origin_id)],
-               frame.get("status"), frame.get("updated_at"))
-        if key in self._cached:
+               frame.get("status"), frame.get("updated_at"), fresh)
+        if not fresh and key in self._cached:
             self._cached.move_to_end(key)
             return self._cached[key]
         work = self._pending.get(key)
@@ -127,12 +187,15 @@ class FoldedQuoteProjector:
         if work is None:
             if len(self._pending) >= MAX_PENDING:
                 return None
-            work = _Work(asyncio.create_task(self._load(event_id, origin_id, revision[str(origin_id)])))
+            if self._first_load_at is None:
+                self._first_load_at = now
+            self._last_load_started_at = now
+            work = _Work(asyncio.create_task(self._load(event_id, origin_id, revision[str(origin_id)], fresh)))
             self._pending[key] = work
         work.waiters += 1
         try:
             quote = await asyncio.shield(work.task)
-            if quote is not None:
+            if quote is not None and not fresh:
                 self._cached[key] = quote
                 self._cached.move_to_end(key)
                 while len(self._cached) > MAX_CACHED:

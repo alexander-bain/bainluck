@@ -396,6 +396,29 @@ def _withdrawal_reconcile(frame: dict, event_id: int, origin_id: int):
     return {"event_id": event_id, "custody_id": custody, "removal_rev": floor}
 
 
+async def _normal_recovery_quote(hub, event_id, frame, control):
+    """Recover current committed authority; the separate control keeps history owed."""
+    project = getattr(hub, "project_recovery_quote", None)
+    if not callable(project):
+        return None
+    quote = await project(event_id, frame)
+    if not isinstance(quote, dict) or quote.get("event_id") != event_id:
+        return None
+    if quote.get("status") not in QUOTE_STATUSES:
+        return False
+    revision = quote.get("blend_fold_revision")
+    if not isinstance(revision, dict) or any(
+        type(revision.get(eid)) is not int or revision[eid] < floor
+        for eid, floor in control["removal_rev"].items()
+    ):
+        return None
+    return {
+        "event_id": event_id, "p": None, "source": None, "source_value": None,
+        "status": quote["status"], "rev": revision,
+        "folded_quote_pending": False, "folded_quote": quote,
+    }
+
+
 async def _current_reconcile(event_id: int, event_ids: list[int]):
     """One current-state coverage read on connect/confirmation/hub recovery.
 
@@ -437,6 +460,10 @@ async def _stream(
     pending_confirmations = set()
     pending_recovery = False
     next_frame = None
+    recovery_quote = None
+    pending_quote_control = None
+    active_quote_control = None
+    quote_retry_at = 0.0
 
     async def read_recovery(ids, confirmed):
         control = await _current_reconcile(event_id, ids)
@@ -490,6 +517,28 @@ async def _stream(
                 )
                 return
 
+            if recovery_quote is not None and recovery_quote.done():
+                projected = recovery_quote.result()
+                recovery_quote = None
+                if projected is False:
+                    yield sse_encode(json.dumps({"reason": "not_live"}), event="closed")
+                    return
+                if projected is not None:
+                    yield sse_encode(json.dumps(projected), event="folded_probability")
+                else:
+                    if pending_quote_control is None:
+                        pending_quote_control = active_quote_control
+                    quote_retry_at = loop_now + 0.25
+                active_quote_control = None
+            if (recovery_quote is None and pending_quote_control is not None
+                    and loop_now >= quote_retry_at):
+                active_quote_control = pending_quote_control
+                recovery_frame, recovery_control = active_quote_control
+                pending_quote_control = None
+                recovery_quote = asyncio.create_task(_normal_recovery_quote(
+                    hub, event_id, recovery_frame, recovery_control,
+                ))
+
             if initial_coverage is not None and initial_coverage.done():
                 control = initial_coverage.result()  # Failure still closes.
                 initial_coverage = None
@@ -521,14 +570,17 @@ async def _stream(
             # when the market is completely silent, and what keeps this
             # coroutine yielding control back to the loop that is also serving
             # `/api/feed`.
+            quote_wait = (min(FRAME_WAIT_S, max(0.001, quote_retry_at - loop_now))
+                          if pending_quote_control is not None and recovery_quote is None else FRAME_WAIT_S)
             from_replay = bool(replay)
             if from_replay:
                 origin_id, payload = replay.popleft()
-            elif next_frame is None and initial_coverage is None and recovery_coverage is None:
+            elif (next_frame is None and initial_coverage is None
+                  and recovery_coverage is None and recovery_quote is None):
                 # Nothing owned can complete during this wait: keep the
                 # parent's inline read, with no task or wait set per frame.
                 origin_id, payload = await _await_honouring_cancel(
-                    subscription.next(timeout=FRAME_WAIT_S)
+                    subscription.next(timeout=quote_wait)
                 )
             else:
                 # A completed coverage read must wake an otherwise quiet
@@ -536,13 +588,14 @@ async def _stream(
                 # cancelling it could consume and lose a simultaneous frame.
                 if next_frame is None:
                     next_frame = asyncio.create_task(
-                        subscription.next(timeout=FRAME_WAIT_S)
+                        subscription.next(timeout=quote_wait)
                     )
                 waiting = {next_frame}
-                waiting.update(task for task in (initial_coverage, recovery_coverage)
+                waiting.update(task for task in (initial_coverage, recovery_coverage, recovery_quote)
                                if task is not None)
                 done, _ = await _await_honouring_cancel(asyncio.wait(
-                    waiting, return_when=asyncio.FIRST_COMPLETED
+                    waiting, return_when=asyncio.FIRST_COMPLETED,
+                    timeout=quote_wait if pending_quote_control is not None and recovery_quote is None else None
                 ))
                 if next_frame not in done:
                     continue
@@ -579,6 +632,9 @@ async def _stream(
                     if control is not None:
                         yield sse_encode(json.dumps(control), event="reconcile")
                     if frame.get("reconcile_only") is True:
+                        if (control is not None and control["custody_id"] ==
+                                f"normal-price:{origin_id}:{frame['rev'][str(origin_id)]}"):
+                            pending_quote_control = (frame, control)
                         continue
                 if (frame is not None and type(frame.get("event_id")) is int
                         and frame["event_id"] == origin_id and _frame_is_fresh(
@@ -674,7 +730,7 @@ async def _stream(
         # interrupted and cannot raise out of the generator; the hub's reader
         # sends the `UNSUBSCRIBE` on its next pass.
         subscription.release()
-        owned_reads = [task for task in (initial_coverage, recovery_coverage, next_frame) if task is not None]
+        owned_reads = [task for task in (initial_coverage, recovery_coverage, next_frame, recovery_quote) if task is not None]
         for task in owned_reads:
             task.cancel()
         if owned_reads:
