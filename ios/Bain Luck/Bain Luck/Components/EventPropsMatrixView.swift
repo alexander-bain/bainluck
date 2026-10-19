@@ -248,9 +248,9 @@ struct EventPropsMatrixView: View {
 
     private func footer(_ grid: EventPropsMatrixLayout.Grid) -> some View {
         VStack(alignment: .leading, spacing: 2) {
-            Text("\(grid.playerCount) \(grid.playerCount == 1 ? "player" : "players") · \(grid.questionCount) \(grid.questionCount == 1 ? "question" : "questions")")
+            Text("\(grid.playerCount) \(grid.playerCount == 1 ? "player" : "players") · \(grid.questionCount) \(grid.questionCount == 1 ? "prop line" : "prop lines")")
             if grid.showsChange {
-                Text("+/\u{2212} is the change since the pregame price, in points")
+                Text("+/\u{2212} is the change from the saved pregame chance, in percentage points")
             }
         }
         .font(.caption2)

@@ -141,7 +141,7 @@ final class AllMarketsCatalog9483Tests: XCTestCase {
         XCTAssertEqual(groups.count, 2)
         XCTAssertEqual(groups.flatMap { $0.outcomes.map(\.probability) }, [nil, nil])
         XCTAssertNil(AllMarketsCatalogView9483.priceText(groups[0].outcomes[0], status: "final"),
-                     "after the final an unpriced row prints nothing, not 'No recent price'")
+                     "after the final an unpriced row prints nothing, not 'No recent probability update'")
     }
 
     func testAClosedPeriodRowIsListedAndNeverPriced() throws {
@@ -157,8 +157,8 @@ final class AllMarketsCatalog9483Tests: XCTestCase {
 
     func testAnUnpricedOutcomeBeforeTheFinalSaysNoRecentPrice() {
         let outcome = QuestionCatalog9483.Outcome(label: "Under 47.5", threshold: 47.5, probability: nil, observedAt: nil)
-        XCTAssertEqual(AllMarketsCatalogView9483.priceText(outcome, status: "live"), "No recent price")
-        XCTAssertEqual(AllMarketsCatalogView9483.priceText(outcome, status: "scheduled"), "No recent price")
+        XCTAssertEqual(AllMarketsCatalogView9483.priceText(outcome, status: "live"), "No recent probability update")
+        XCTAssertEqual(AllMarketsCatalogView9483.priceText(outcome, status: "scheduled"), "No recent probability update")
         let priced = QuestionCatalog9483.Outcome(label: "Over 47.5", threshold: 47.5, probability: 0.52, observedAt: nil)
         XCTAssertEqual(AllMarketsCatalogView9483.priceText(priced, status: "live"), "52%")
     }
