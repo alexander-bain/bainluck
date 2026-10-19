@@ -43,6 +43,15 @@ import pytest
 from app.tasks import redis_state
 from app.utils import live_fanout
 from app.utils.live_push import build_frame, event_channel
+from tests._event_stream_legacy_view import install_legacy_view
+
+
+@pytest.fixture(autouse=True)
+def _legacy_wire_view(monkeypatch):
+    """#10090: these tests predate the stream's owned coverage read and its
+    reconcile controls; see tests/_event_stream_legacy_view.py."""
+    install_legacy_view(monkeypatch)
+
 
 pytestmark = pytest.mark.asyncio
 
