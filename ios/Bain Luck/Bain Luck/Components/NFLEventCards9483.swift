@@ -424,7 +424,7 @@ struct NFLMilestoneCardView9483: View {
                 .accessibilityLabel("Previous line")
                 if expanded {
                     // Details sheet lives on the full-size reader only; the
-                    // compact card opens through its "Open full size" control.
+                    // compact card opens through its "Explore card" control.
                     Button {
                         if let rung { state.detailsRowID = rung.rowID }
                     } label: {
@@ -684,6 +684,15 @@ struct NFLEventCardView9483: View {
 /// the page scrolls vertically, so a tap on a chart inside a card is never
 /// taken as a request to expand it.
 struct NFLEventCardDeckView9483: View {
+    /// #11285 (Alex, build 65) — the compact card's opener. "Open full size"
+    /// promised a screen-filling view the reader does not draw (it keeps the
+    /// game context and a neighbouring card's edge); the selected design's
+    /// "Explore card" promises what it does. One spelling for the deck and the
+    /// NBA stream; VoiceOver says `openerAccessibilityLabel`.
+    static let openerTitle = "Explore card"
+    static func openerAccessibilityLabel(_ cardTitle: String) -> String { "Open \(cardTitle)" }
+    static let openerIdentifier = "story-card-open"
+
     let cards: [NFLEventCard9483]
     let awayName: String
     let homeName: String
@@ -727,11 +736,12 @@ struct NFLEventCardDeckView9483: View {
                             NFLEventCardView9483(card: card, awayName: awayName, homeName: homeName,
                                                  awayColor: awayColor, homeColor: homeColor, state: state)
                             Button { state.open(card.id) } label: {
-                                Label("Open full size", systemImage: "arrow.up.left.and.arrow.down.right")
+                                Label(Self.openerTitle, systemImage: "arrow.up.left.and.arrow.down.right")
                                     .font(.caption.weight(.semibold))
                                     .frame(maxWidth: .infinity, minHeight: 44)
                             }
-                            .accessibilityLabel("Open \(card.title) full size")
+                            .accessibilityLabel(Self.openerAccessibilityLabel(card.title))
+                            .accessibilityIdentifier(Self.openerIdentifier)
                         }
                         .containerRelativeFrame(.horizontal) { width, _ in cards.count > 1 ? width * 0.86 : width }
                         .accessibilityFocused($focused, equals: card.id)

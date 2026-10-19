@@ -258,11 +258,12 @@ struct NBAStoryStreamView9483: View {
                 }
             }
             Button { open(card.id, present: present) } label: {
-                Label("Open full size", systemImage: "arrow.up.left.and.arrow.down.right")
+                Label(NFLEventCardDeckView9483.openerTitle, systemImage: "arrow.up.left.and.arrow.down.right")
                     .font(.caption.weight(.semibold))
                     .frame(maxWidth: .infinity, minHeight: 44)
             }
-            .accessibilityLabel("Open \(card.title) full size")
+            .accessibilityLabel(NFLEventCardDeckView9483.openerAccessibilityLabel(card.title))
+            .accessibilityIdentifier(NFLEventCardDeckView9483.openerIdentifier)
         }
     }
 

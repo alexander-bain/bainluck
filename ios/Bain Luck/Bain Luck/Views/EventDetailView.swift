@@ -1003,12 +1003,16 @@ struct EventDetailView: View {
     /// Routine delivery/confidence details open through the info control.
     /// Waiting, fallback refresh and interruption stay visible, as does the
     /// finite acknowledgement of an accepted receipt whose percent did not move.
-    private func probabilityDetails(confidenceTier: String?) -> some View {
+    ///
+    /// #11285 — `statusInDetails` (the adopted headline's top-row control):
+    /// every state, waiting included, is said in the details and the label.
+    private func probabilityDetails(confidenceTier: String?, statusInDetails: Bool = false) -> some View {
         Button { showProbabilityDetails.toggle() } label: {
             CompactEventPriceStatusView(status: vm.liveUpdateStatus,
                 sequence: vm.priceActivity?.sequence ?? 0,
                 receivedAt: vm.priceActivity?.receivedAt,
-                isDisclosure: true)
+                isDisclosure: true,
+                statusInDetails: statusInDetails)
             .frame(maxWidth: Self.heroVerdictWidth(at: dynamicTypeSize), minHeight: 44)
             .frame(minWidth: 44)
             .fixedSize(horizontal: false, vertical: true)
@@ -2226,23 +2230,33 @@ struct EventDetailView: View {
                             .frame(maxWidth: .infinity, alignment: .leading)
                     }
                     if let projection = projectionText(event, hasScore: hasScore) {
-                        // Figure over caption in the score's own style, on its baseline.
                         let figure = Self.projectionFigure9483(projection)
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(figure)
-                                .font(.system(size: eventHeadlineScoreSize9483, weight: .bold, design: .rounded).monospacedDigit())
-                                .foregroundStyle(Color.primary)
-                                .fixedSize()
-                            Text("Projected final")
-                                .font(.caption2)
-                                .foregroundStyle(.secondary)
-                                .lineLimit(1)
-                                .minimumScaleFactor(0.5)
-                                .dynamicTypeSize(...Self.nflPairedCaptionTypeCeiling)
+                        let label = Text("Projected final")
+                        if headline.center == .versus {
+                            // #11285 (Alex, build 65) — before the game there is
+                            // no score to compare, so the projection is the row:
+                            // its label leading, both named teams' points
+                            // trailing. A lone figure left its right half empty.
+                            adoptedPregameProjection11285(figure: figure, label: label,
+                                                          names: names, colors: colors)
+                        } else {
+                            // Figure over caption in the score's own style, on its baseline.
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(figure)
+                                    .font(.system(size: eventHeadlineScoreSize9483, weight: .bold, design: .rounded).monospacedDigit())
+                                    .foregroundStyle(Color.primary)
+                                    .fixedSize()
+                                label
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(1)
+                                    .minimumScaleFactor(0.5)
+                                    .dynamicTypeSize(...Self.nflPairedCaptionTypeCeiling)
+                            }
+                            .accessibilityElement(children: .ignore)
+                            .accessibilityLabel(Self.projectionAccessibilityLabel9483(figure: figure, names: names))
+                            .frame(maxWidth: .infinity, alignment: .leading)
                         }
-                        .accessibilityElement(children: .ignore)
-                        .accessibilityLabel(Self.projectionAccessibilityLabel9483(figure: figure, names: names))
-                        .frame(maxWidth: .infinity, alignment: .leading)
                     }
                 }
                 .padding(.top, 8)
@@ -2286,11 +2300,76 @@ struct EventDetailView: View {
     /// Label first, then each side's projected points where the figure is the
     /// plain away–home pair `projectionText` writes; otherwise the figure as shown.
     static func projectionAccessibilityLabel9483(figure: String, names: (away: String, home: String)) -> String {
-        let sides = figure.split(separator: "-", omittingEmptySubsequences: false)
-        if sides.count == 2, let away = Int(sides[0]), let home = Int(sides[1]) {
-            return "Projected final, \(names.away) \(away), \(names.home) \(home)"
+        if let pair = projectedPair11285(figure) {
+            return "Projected final, \(names.away) \(pair.away), \(names.home) \(pair.home)"
         }
         return "Projected final, \(figure)"
+    }
+
+    /// #11285 — the plain away–home pair `projectionFigure9483` prints, split
+    /// for the pregame row; nil for any other figure (a named unit), which
+    /// the row then prints whole.
+    static func projectedPair11285(_ figure: String) -> (away: Int, home: Int)? {
+        let sides = figure.split(separator: "-", omittingEmptySubsequences: false)
+        guard sides.count == 2, let away = Int(sides[0]), let home = Int(sides[1]) else { return nil }
+        return (away, home)
+    }
+
+    /// #11285 — the pregame projection, balanced under the chances: the gated
+    /// label (the caller's one spelling, #5697), then each team's projected
+    /// points in its own half, under its own chance — the halves are the
+    /// chance pair's (`HStackLayout(spacing: 8)`, each leading), so away sits
+    /// under away and the row uses its full width. Accessibility sizes stack
+    /// the pair as the chances are stacked. The points stay below the chances'
+    /// size; names wrap, never shrink. Spoken once, label first.
+    private func adoptedPregameProjection11285(
+        figure: String, label caption: Text,
+        names: (away: String, home: String), colors: (away: Color, home: Color)
+    ) -> some View {
+        let label = caption
+            .font(.subheadline)
+            .foregroundStyle(.secondary)
+        let halves = dynamicTypeSize.isAccessibilitySize
+            ? AnyLayout(VStackLayout(alignment: .leading, spacing: 4))
+            : AnyLayout(HStackLayout(alignment: .firstTextBaseline, spacing: 8))
+        return VStack(alignment: .leading, spacing: 2) {
+            if let pair = Self.projectedPair11285(figure) {
+                label
+                halves {
+                    adoptedProjectedSide11285(names.away, color: colors.away, points: pair.away)
+                    adoptedProjectedSide11285(names.home, color: colors.home, points: pair.home)
+                }
+            } else {
+                // A figure that is not a plain pair (a named unit) prints whole.
+                HStack(alignment: .firstTextBaseline, spacing: 12) {
+                    label
+                    Spacer(minLength: 0)
+                    Text(figure)
+                        .font(.title3.weight(.bold).monospacedDigit())
+                        .foregroundStyle(Color.primary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(Self.projectionAccessibilityLabel9483(figure: figure, names: names))
+        .accessibilityIdentifier("adopted-pregame-projection")
+    }
+
+    /// One team's half of the pregame projection: its name, then its points.
+    private func adoptedProjectedSide11285(_ name: String, color: Color, points: Int) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 6) {
+            Text(name)
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(color)
+                .fixedSize(horizontal: false, vertical: true)
+            Text("\(points)")
+                .font(.title3.weight(.bold).monospacedDigit())
+                .foregroundStyle(Color.primary)
+                .fixedSize()
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     /// One adopted side's figure and baseline, visible and spoken, from the same
@@ -2390,7 +2469,7 @@ struct EventDetailView: View {
             sourceCount: event.winProbabilitySources?.count,
             hasMovement: home.flatMap { h in
                 event.openingOdds?.homeProbability.map { abs(h - $0) > 0.001 } } ?? false
-        )?.rawValue)
+        )?.rawValue, statusInDetails: true)
     }
 
     private func nflPairedSide(
