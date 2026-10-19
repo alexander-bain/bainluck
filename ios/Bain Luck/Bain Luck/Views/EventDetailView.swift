@@ -1003,12 +1003,16 @@ struct EventDetailView: View {
     /// Routine delivery/confidence details open through the info control.
     /// Waiting, fallback refresh and interruption stay visible, as does the
     /// finite acknowledgement of an accepted receipt whose percent did not move.
-    private func probabilityDetails(confidenceTier: String?) -> some View {
+    ///
+    /// #11285 — `statusInDetails` (the adopted headline's top-row control):
+    /// every state, waiting included, is said in the details and the label.
+    private func probabilityDetails(confidenceTier: String?, statusInDetails: Bool = false) -> some View {
         Button { showProbabilityDetails.toggle() } label: {
             CompactEventPriceStatusView(status: vm.liveUpdateStatus,
                 sequence: vm.priceActivity?.sequence ?? 0,
                 receivedAt: vm.priceActivity?.receivedAt,
-                isDisclosure: true)
+                isDisclosure: true,
+                statusInDetails: statusInDetails)
             .frame(maxWidth: Self.heroVerdictWidth(at: dynamicTypeSize), minHeight: 44)
             .frame(minWidth: 44)
             .fixedSize(horizontal: false, vertical: true)
@@ -1988,6 +1992,11 @@ struct EventDetailView: View {
     private func nflCardDeck(
         _ event: EventDetail, projectedInput: ProjectedFinalPointsSeries.Input?
     ) -> [NFLEventCard9483] {
+        // #11284 — a finished MLB game deals its own five story slots from
+        // this event's deliveries; upcoming and live MLB deal none.
+        if MLBFinalPage11284.applies(sportKey: event.sport, status: event.status) {
+            return mlbFinalCards(event).map { .mlb($0) }
+        }
         guard NFLRecognizablePage9483.applies(sportKey: event.sport) else { return [] }
         let finish = NFLFinishCard9483.build(projectedInput)
         return NFLEventCardDeck9483.cards(
@@ -2000,6 +2009,19 @@ struct EventDetailView: View {
                     homeTeam: event.homeTeam, awayTeam: event.awayTeam)
                 : [],
             ladders: nbaLadders(event, finish: finish))
+    }
+
+    /// #11284 — the final MLB stories, from the event, game-markets and
+    /// related-futures deliveries the page already holds, each fenced to
+    /// THIS event inside the builder, and the score the page prints.
+    private func mlbFinalCards(_ event: EventDetail) -> [MLBFinalCard11284] {
+        let hasScore = EventDetailView.showsScore(
+            status: event.status, away: event.awayScore, home: event.homeScore)
+        return MLBFinalDeck11284.cards(MLBFinalDeckInput11284(
+            eventID: event.id, sportKey: event.sport, status: event.status,
+            homeTeam: event.homeTeam, awayTeam: event.awayTeam,
+            homeScore: hasScore ? event.homeScore : nil, awayScore: hasScore ? event.awayScore : nil,
+            gameMarkets: vm.gameMarkets, relatedFutures: vm.relatedFutures))
     }
 
     /// #9483 NBA slice — the winning-margin and scoring ladders, from the
@@ -2125,7 +2147,9 @@ struct EventDetailView: View {
     /// never print different numbers for one price: the venue-settled verdict
     /// and every unadopted arm decline (`NFLPairedHeadline9483`).
     private func nflPairedHeadline(_ event: EventDetail, hasScore: Bool) -> NFLPairedHeadline9483? {
-        guard NFLRecognizablePage9483.applies(sportKey: event.sport) else { return nil }
+        // #11284 — the final MLB page adopts the decided-final arm only: its
+        // status is finished, so the priced arms below are never reached.
+        guard MLBFinalPage11284.adoptsPairedPage(sportKey: event.sport, status: event.status) else { return nil }
         let score = hasScore ? (away: event.awayScore ?? 0, home: event.homeScore ?? 0) : nil
         let pregame = PrematchReading.resolve(prematch: event.prematchOdds, opening: event.openingOdds)
         if isFinished {
@@ -2162,7 +2186,8 @@ struct EventDetailView: View {
         let priced = headline.away.won == nil
         // The adopted NFL/NBA path uses two chance columns; score/projection share
         // the row below. Existing source and state decisions remain unchanged.
-        let adopted = NFLRecognizablePage9483.applies(sportKey: event.sport)
+        // #11284 — the final MLB page is adopted too.
+        let adopted = MLBFinalPage11284.adoptsPairedPage(sportKey: event.sport, status: event.status)
         let centerRow = !stacked || headline.center != .versus
         let sides = adopted && dynamicTypeSize.isAccessibilitySize
             ? AnyLayout(VStackLayout(alignment: .leading, spacing: 16))
@@ -2226,23 +2251,33 @@ struct EventDetailView: View {
                             .frame(maxWidth: .infinity, alignment: .leading)
                     }
                     if let projection = projectionText(event, hasScore: hasScore) {
-                        // Figure over caption in the score's own style, on its baseline.
                         let figure = Self.projectionFigure9483(projection)
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(figure)
-                                .font(.system(size: eventHeadlineScoreSize9483, weight: .bold, design: .rounded).monospacedDigit())
-                                .foregroundStyle(Color.primary)
-                                .fixedSize()
-                            Text("Projected final")
-                                .font(.caption2)
-                                .foregroundStyle(.secondary)
-                                .lineLimit(1)
-                                .minimumScaleFactor(0.5)
-                                .dynamicTypeSize(...Self.nflPairedCaptionTypeCeiling)
+                        let label = Text("Projected final")
+                        if headline.center == .versus {
+                            // #11285 (Alex, build 65) — before the game there is
+                            // no score to compare, so the projection is the row:
+                            // its label leading, both named teams' points
+                            // trailing. A lone figure left its right half empty.
+                            adoptedPregameProjection11285(figure: figure, label: label,
+                                                          names: names, colors: colors)
+                        } else {
+                            // Figure over caption in the score's own style, on its baseline.
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(figure)
+                                    .font(.system(size: eventHeadlineScoreSize9483, weight: .bold, design: .rounded).monospacedDigit())
+                                    .foregroundStyle(Color.primary)
+                                    .fixedSize()
+                                label
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(1)
+                                    .minimumScaleFactor(0.5)
+                                    .dynamicTypeSize(...Self.nflPairedCaptionTypeCeiling)
+                            }
+                            .accessibilityElement(children: .ignore)
+                            .accessibilityLabel(Self.projectionAccessibilityLabel9483(figure: figure, names: names))
+                            .frame(maxWidth: .infinity, alignment: .leading)
                         }
-                        .accessibilityElement(children: .ignore)
-                        .accessibilityLabel(Self.projectionAccessibilityLabel9483(figure: figure, names: names))
-                        .frame(maxWidth: .infinity, alignment: .leading)
                     }
                 }
                 .padding(.top, 8)
@@ -2286,11 +2321,96 @@ struct EventDetailView: View {
     /// Label first, then each side's projected points where the figure is the
     /// plain away–home pair `projectionText` writes; otherwise the figure as shown.
     static func projectionAccessibilityLabel9483(figure: String, names: (away: String, home: String)) -> String {
-        let sides = figure.split(separator: "-", omittingEmptySubsequences: false)
-        if sides.count == 2, let away = Int(sides[0]), let home = Int(sides[1]) {
-            return "Projected final, \(names.away) \(away), \(names.home) \(home)"
+        if let pair = projectedPair11285(figure) {
+            return "Projected final, \(names.away) \(pair.away), \(names.home) \(pair.home)"
         }
         return "Projected final, \(figure)"
+    }
+
+    /// #11285 — the plain away–home pair `projectionFigure9483` prints, split
+    /// for the pregame row; nil for any other figure (a named unit), which
+    /// the row then prints whole.
+    static func projectedPair11285(_ figure: String) -> (away: Int, home: Int)? {
+        let sides = figure.split(separator: "-", omittingEmptySubsequences: false)
+        guard sides.count == 2, let away = Int(sides[0]), let home = Int(sides[1]) else { return nil }
+        return (away, home)
+    }
+
+    /// #11285 — the pregame projection as one compact full-width row under
+    /// the chances (Design's brief, Root 2018Z): the gated label (the caller's
+    /// one spelling, #5697) on the left, "49ers 24 – 21 Commanders" on the
+    /// right, away first as the chances are. Sized to fit one line on a 375pt
+    /// phone at the default text size (~296pt of 311pt for this pair); larger
+    /// text puts the pair, still right-aligned, under its label, then each
+    /// team on its own line — nothing shrinks or truncates. The points stay
+    /// below the chances' size. Spoken once, label first.
+    private func adoptedPregameProjection11285(
+        figure: String, label caption: Text,
+        names: (away: String, home: String), colors: (away: Color, home: Color)
+    ) -> some View {
+        let label = caption
+            .font(.footnote)
+            .foregroundStyle(.secondary)
+        return Group {
+            if let pair = Self.projectedPair11285(figure) {
+                let scoreline = HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    projectedTeam11285(names.away, color: colors.away)
+                    projectedPoints11285(pair.away)
+                    Text("\u{2013}").font(.headline).foregroundStyle(.secondary)
+                    projectedPoints11285(pair.home)
+                    projectedTeam11285(names.home, color: colors.home)
+                }
+                .fixedSize()
+                ViewThatFits(in: .horizontal) {
+                    HStack(alignment: .firstTextBaseline, spacing: 12) {
+                        label.fixedSize()
+                        Spacer(minLength: 0)
+                        scoreline
+                    }
+                    VStack(alignment: .trailing, spacing: 2) {
+                        label.frame(maxWidth: .infinity, alignment: .leading)
+                        scoreline
+                    }
+                    VStack(alignment: .leading, spacing: 2) {
+                        label
+                        HStack(alignment: .firstTextBaseline, spacing: 6) {
+                            projectedTeam11285(names.away, color: colors.away); projectedPoints11285(pair.away)
+                        }
+                        HStack(alignment: .firstTextBaseline, spacing: 6) {
+                            projectedTeam11285(names.home, color: colors.home); projectedPoints11285(pair.home)
+                        }
+                    }
+                }
+            } else {
+                // A figure that is not a plain pair (a named unit) prints whole.
+                HStack(alignment: .firstTextBaseline, spacing: 12) {
+                    label
+                    Spacer(minLength: 0)
+                    Text(figure)
+                        .font(.headline.monospacedDigit())
+                        .foregroundStyle(Color.primary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(Self.projectionAccessibilityLabel9483(figure: figure, names: names))
+        .accessibilityIdentifier("adopted-pregame-projection")
+    }
+
+    private func projectedTeam11285(_ name: String, color: Color) -> some View {
+        Text(name)
+            .font(.footnote.weight(.semibold))
+            .foregroundStyle(color)
+            .fixedSize(horizontal: false, vertical: true)
+    }
+
+    private func projectedPoints11285(_ points: Int) -> some View {
+        Text("\(points)")
+            .font(.headline.monospacedDigit())
+            .foregroundStyle(Color.primary)
+            .fixedSize()
     }
 
     /// One adopted side's figure and baseline, visible and spoken, from the same
@@ -2354,7 +2474,7 @@ struct EventDetailView: View {
     }
 
     private func usesApprovedHeadlinePresentation9483(_ event: EventDetail) -> Bool {
-        NFLRecognizablePage9483.applies(sportKey: event.sport)
+        MLBFinalPage11284.adoptsPairedPage(sportKey: event.sport, status: event.status)
             && nflPairedHeadline(event, hasScore: Self.showsScore(
                 status: event.status, away: event.awayScore, home: event.homeScore)) != nil
     }
@@ -2390,14 +2510,14 @@ struct EventDetailView: View {
             sourceCount: event.winProbabilitySources?.count,
             hasMovement: home.flatMap { h in
                 event.openingOdds?.homeProbability.map { abs(h - $0) > 0.001 } } ?? false
-        )?.rawValue)
+        )?.rawValue, statusInDetails: true)
     }
 
     private func nflPairedSide(
         _ event: EventDetail, _ side: NFLPairedHeadline9483.Side, name: String, isAway: Bool,
         color: Color, logo: String?, opponent: String
     ) -> some View {
-        let adopted = NFLRecognizablePage9483.applies(sportKey: event.sport)
+        let adopted = MLBFinalPage11284.adoptsPairedPage(sportKey: event.sport, status: event.status)
         let finalPair = adopted && side.won != nil
         let shown = adopted ? adoptedSide9483(event, side, isAway: isAway) : nil
         let figure = shown?.figure ?? side.figure

@@ -176,7 +176,7 @@ extension VisibleLivePriceStatusTests {
         }
     }
 
-    func testActualEventPageShowsWaitingBesideProbabilityWithoutOpeningDisclosure() async throws {
+    func testActualNFLEventPageKeepsWaitingInTheDisclosureNotBesideTheProbability() async throws {
         for (name, size) in [("page-390", DynamicTypeSize.large), ("page-390-xxxl", .xxxLarge)] {
             let client = try PageClient(), handle = PageHandle()
             let vm = EventDetailViewModel(eventId: 4242, client: client, makeStreamHandle: { _ in handle })
@@ -196,7 +196,10 @@ extension VisibleLivePriceStatusTests {
             // instead: the pair's subject. The info control itself is
             // rendered and measured in `HeadlineDisclosure9483Tests`.
             XCTAssertTrue(recognized.contains("Current win chance"), recognized)
-            XCTAssertTrue(recognized.contains("Waiting for update"), recognized)
+            // #11285 — this NFL page takes the adopted headline, whose info
+            // control says every state (waiting included) in its details and
+            // spoken label, never as words beside the probability.
+            XCTAssertFalse(recognized.contains("Waiting for update"), recognized)
             // #8320 v24: the receipt row left the hero; the exact time is on tap only.
             XCTAssertNil(recognized.range(of: "No live.*update yet", options: .regularExpression), recognized)
             // #10830 — read as the hero's adjacent pair. With Start Live Activity

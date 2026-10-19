@@ -11,16 +11,23 @@ import Foundation
 /// The NBA page (v328 NBA slice) uses the same deck and reader: its winning
 /// margin and scoring ladders (`NBALadderCard9483`) sit before the projected
 /// finish, and it has no player milestone cards.
+///
+/// The final MLB page (#11284) deals its own five story slots
+/// (`MLBFinalCard11284`) through the same deck and reader. They are one
+/// explicit case, built only by `MLBFinalDeck11284` on a finished MLB game,
+/// so no NFL or NBA family reads them and they read no NFL or NBA family.
 enum NFLEventCard9483: Equatable, Identifiable {
     case finish(NFLFinishCard9483)
     case milestone(NFLMilestoneCard9483)
     case ladder(NBALadderCard9483)
+    case mlb(MLBFinalCard11284)
 
     var id: String {
         switch self {
         case .finish: return "finish"
         case .milestone(let card): return "milestone:\(card.id)"
         case .ladder(let card): return card.id
+        case .mlb(let card): return card.id
         }
     }
 
@@ -29,6 +36,7 @@ enum NFLEventCard9483: Equatable, Identifiable {
         case .finish(let card): return card.kicker
         case .milestone(let card): return "\(card.player) · \(card.stat)"
         case .ladder(let card): return card.title
+        case .mlb(let card): return card.title
         }
     }
 
@@ -39,6 +47,9 @@ enum NFLEventCard9483: Equatable, Identifiable {
         case .finish: return self
         case .milestone(let card): return .milestone(card.current(at: now))
         case .ladder(let card): return .ladder(card.current(at: now))
+        // A finished game's saved chances, finals and results are history:
+        // nothing on these cards is a current quote that can expire.
+        case .mlb: return self
         }
     }
 }
@@ -210,6 +221,19 @@ struct NFLMilestoneCard9483: Equatable, Identifiable {
     let rungs: [Rung]
     /// The stat's final value as the server graded it; nil until then.
     let actual: Double?
+    /// #11285 — the served headshot of THIS ladder's own rows
+    /// (`GameMarketPlayerProp.playerHeadshot`), never a name join; nil when
+    /// none is served or the rows disagree (`headshot(of:)`).
+    var headshot: URL? = nil
+
+    /// The one https headshot a ladder's rows agree on, or nil.
+    static func headshot(of rows: [GameMarketPlayerProp]) -> URL? {
+        let served = Set(rows.compactMap(\.playerHeadshot)
+            .map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty })
+        guard served.count == 1, let url = served.first.flatMap({ URL(string: $0) }),
+              url.scheme == "https" else { return nil }
+        return url
+    }
 
     /// Both bases are named for what they are: before kickoff the current
     /// price is the pregame chance; once play starts the number is the
@@ -241,7 +265,7 @@ struct NFLMilestoneCard9483: Equatable, Identifiable {
                         rowID: rung.rowID, hit: rung.hit)
         }
         return NFLMilestoneCard9483(id: id, player: player, stat: stat, side: side, basis: basis,
-                                    rungs: aged, actual: actual)
+                                    rungs: aged, actual: actual, headshot: headshot)
     }
 
     /// A quote is recent when its observation clock is readable and no older
@@ -313,7 +337,8 @@ struct NFLMilestoneCard9483: Equatable, Identifiable {
                 id: key, player: ladder.player, stat: stat,
                 side: PlayerPropsTeam.side(for: ladder.rows.compactMap(\.playerTeam).first),
                 basis: basis, rungs: rungs,
-                actual: finished ? ladder.rows.compactMap(\.actual).first : nil)
+                actual: finished ? ladder.rows.compactMap(\.actual).first : nil,
+                headshot: headshot(of: ladder.rows))
             guard card.profile != nil else { return nil }
             return (card, PlayerPropsFamily.family(statLabel: stat, isPriced: true))
         }

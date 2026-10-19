@@ -6,7 +6,7 @@ import UIKit
 // MARK: - View
 
 struct FeedView: View {
-    @StateObject private var vm = FeedViewModel()
+    @StateObject private var vm: FeedViewModel
     @State private var path = NavigationPath()
     @State private var selectedCategory: String = "all"
     @State private var hoveredItemId: String?
@@ -24,12 +24,20 @@ struct FeedView: View {
     @Environment(\.openWindow) private var openWindow
     #endif
 
+    /// #11288 — the view model is injectable so a hosted test can draw the real
+    /// loading and empty states from a fake client. The app passes nothing.
+    init(viewModel: @autoclosure @escaping () -> FeedViewModel = FeedViewModel()) {
+        _vm = StateObject(wrappedValue: viewModel())
+    }
+
     var body: some View {
         NavigationStack(path: $path) {
             Group {
-                if vm.loading {
-                    SkeletonFeedView()
-                } else if let error = vm.error, vm.items.isEmpty {
+                let state = tabState
+                switch state {
+                case .loading:
+                    SkeletonFeedView(caption: "Loading games…")
+                case .failed(let error):
                     VStack(spacing: 16) {
                         Spacer()
                         Image(systemName: "wifi.exclamationmark")
@@ -49,8 +57,8 @@ struct FeedView: View {
                         Spacer()
                     }
                     .padding(.horizontal, 40)
-                } else {
-                    feedList
+                case .content, .nothingInCategory, .nothingToShow:
+                    feedList(state)
                 }
             }
             .navigationTitle("🍀 Bain Luck")
@@ -121,8 +129,10 @@ struct FeedView: View {
     /// (#3709).
     @State private var gridWidth: CGFloat = 0
 
-    private var pinnedItems: [FeedItem] {
-        vm.filteredItems(for: selectedCategory).filter { item in
+    private var pinnedItems: [FeedItem] { pinnedItems(for: selectedCategory) }
+
+    private func pinnedItems(for categoryID: String) -> [FeedItem] {
+        vm.filteredItems(for: categoryID).filter { item in
             if item.type == "event", let event = item.event {
                 return pinManager.pinnedEventIDs.contains(event.id)
             } else if item.type == "futures", let futures = item.futures {
@@ -132,12 +142,23 @@ struct FeedView: View {
         }
     }
 
-    private var feedList: some View {
+    /// #11288 — see `FeedViewModel.tabState`.
+    private var tabState: SportsTabState {
+        let pinnedHere = !pinnedItems.isEmpty
+        return vm.tabState(
+            for: selectedCategory,
+            pinnedAnywhere: pinnedHere || !pinnedItems(for: "all").isEmpty,
+            pinnedInCategory: pinnedHere
+        )
+    }
+
+    private func feedList(_ state: SportsTabState) -> some View {
         List {
             // Non-blocking honest state when a refresh failed but prior content is
             // still shown (L2-209 Item 2 / C68): the tab stays usable and retryable
             // rather than silently presenting stale content as freshly loaded.
-            if vm.refreshFailed {
+            // With nothing on screen the empty message below says it instead.
+            if vm.refreshFailed, state != .nothingToShow(refreshFailed: true) {
                 Section {
                     HStack(spacing: 8) {
                         Image(systemName: "arrow.clockwise.circle")
@@ -164,6 +185,47 @@ struct FeedView: View {
                 .listRowInsets(EdgeInsets())
                 .listRowBackground(Color.clear)
                 .listRowSeparator(.hidden)
+            }
+
+            if case .nothingToShow(let refreshFailed) = state {
+                Section {
+                    VStack(spacing: 12) {
+                        Text(refreshFailed ? "Couldn't load games" : "No games to show right now")
+                            .font(.headline)
+                            .multilineTextAlignment(.center)
+                        Button("Retry") {
+                            Task { await vm.startLoad() }
+                        }
+                        .buttonStyle(.borderedProminent)
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 24)
+                    .listRowBackground(Color.clear)
+                }
+            } else if case .nothingInCategory(let stillLoading) = state {
+                Section {
+                    if stillLoading {
+                        HStack(spacing: 8) {
+                            ProgressView()
+                            Text("Loading games…")
+                                .font(.subheadline)
+                                .foregroundStyle(.secondary)
+                        }
+                        .frame(maxWidth: .infinity)
+                        .accessibilityElement(children: .combine)
+                    } else {
+                        VStack(spacing: 12) {
+                            Text("Nothing to show for \(categoryName) right now")
+                                .font(.headline)
+                                .multilineTextAlignment(.center)
+                            Button("Show All") { selectedCategory = "all" }
+                                .buttonStyle(.bordered)
+                        }
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 24)
+                    }
+                }
+                .listRowBackground(Color.clear)
             }
 
             if !pinnedItems.isEmpty {
@@ -205,6 +267,10 @@ struct FeedView: View {
             UIImpactFeedbackGenerator(style: .light).impactOccurred()
             #endif
         }
+    }
+
+    private var categoryName: String {
+        sportCategories.first { $0.id == selectedCategory }?.name ?? "this sport"
     }
 
     /// Emit the on-screen first-render milestone once per render generation (L2-211

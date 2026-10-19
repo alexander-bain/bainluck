@@ -170,8 +170,11 @@ struct NFLCardReader9483: View {
             get: { state.detailsRowID.map(IdentifiedRow.init) },
             set: { state.detailsRowID = $0?.id })) { item in
             // A prop line's original is in the held rows; an NBA ladder
-            // line's original is frozen inside its held card.
-            if rows[item.id] == nil,
+            // line's original is frozen inside its held card, and so is a
+            // final MLB story's (#11284).
+            if let original = MLBFinalDeck11284.original(item.id, in: heldCards.isEmpty ? liveCards : heldCards) {
+                MLBOriginalDetails11284(original: original)
+            } else if rows[item.id] == nil,
                let detail = NFLCardReaderHold9483.ladderDetail(item.id, in: heldCards.isEmpty ? liveCards : heldCards) {
                 NBAOptionDetails9483(detail: detail)
             } else {

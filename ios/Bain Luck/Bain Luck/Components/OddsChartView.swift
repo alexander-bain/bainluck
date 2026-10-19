@@ -2114,9 +2114,12 @@ struct OddsChartView: View {
     /// #9483 — the two team colours when this chart draws the paired NFL lines,
     /// else nil. `admitted` is `balancePlan`'s answer, which exists only for an
     /// admitted binary (`BinaryWinBalanceMount.admission`).
+    /// #11284 — the final MLB page draws the same pair, on this chart's own
+    /// status (`MLBFinalPage11284`), never its date.
     private func pairedLineColors(admitted: BinaryWinBalancePlan?) -> (home: Color, away: Color)? {
         guard admitted != nil, let teamColors,
               PairedWinLines9483.admits(sportKey: sportKey, binaryAdmission: .admittedBinary)
+                || MLBFinalPage11284.applies(sportKey: sportKey, status: status)
         else { return nil }
         return (home: teamColors.home, away: teamColors.away)
     }
@@ -2124,7 +2127,7 @@ struct OddsChartView: View {
     /// #9483 — `pairedLineColors(admitted:)` for a whole point set, read the
     /// way the legend reads it (no checkpoint mount).
     private func pairedLineColors(for dataPoints: [ChartDataPoint]) -> (home: Color, away: Color)? {
-        guard NFLRecognizablePage9483.applies(sportKey: sportKey) else { return nil }
+        guard MLBFinalPage11284.adoptsPairedPage(sportKey: sportKey, status: status) else { return nil }
         let domain = xAxisDomain(for: dataPoints)
         return pairedLineColors(admitted: balancePlan(
             dataPoints: dataPoints,
