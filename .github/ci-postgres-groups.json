@@ -183,6 +183,7 @@
     "#11181 owed chart points: atomic custody, replay and restart (real Postgres)",
     "#10090 PM release wake with the stage trace off and on (real Postgres)",
     "#10090 a withdrawn PM price leaves the page through contention, cancellation and restart (real Postgres)",
+    "#10090 a live price frame's source snapshot comes from its own committed stamp (real Postgres)",
     "#11138 a lock-held PM price row publishes the received quote, one cohort per event (real Postgres)",
     "#10090 a held PM quote returning to its stored price is published, held or just released (real Postgres)",
     "#10090 a brief hold on a PM prop or standalone price never costs a whole retry period (real Postgres)",

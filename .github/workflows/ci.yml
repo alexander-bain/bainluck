@@ -5082,6 +5082,27 @@ jobs:
             exit 1
           }
 
+      - name: "#10090 a live price frame's source snapshot comes from its own committed stamp (real Postgres)"
+        if: matrix.group == 'shared-tail' && needs.change-scope.outputs.reuse != 'true'
+        run: |
+          if python -m pytest tests/integration/test_live_blend_source_snapshot_10090_pg.py \
+            -v -rs > /tmp/source-snapshot10090.txt 2>&1; then
+            gate_status=0
+          else
+            gate_status=$?
+          fi
+          cat /tmp/source-snapshot10090.txt
+          echo "EXIT CODE: $gate_status"
+          test "$gate_status" -eq 0
+          if grep -qiE "[0-9]+ skipped" /tmp/source-snapshot10090.txt; then
+            echo "::error::#10090 source-snapshot gate SKIPPED"
+            exit 1
+          fi
+          grep -qE "[^0-9]4 passed[,[:space:]]" /tmp/source-snapshot10090.txt || {
+            echo "::error::#10090 source-snapshot gate did not run all four cases"
+            exit 1
+          }
+
       - name: "#11138 a lock-held PM price row publishes the received quote, one cohort per event (real Postgres)"
         if: matrix.group == 'shared-tail' && needs.change-scope.outputs.reuse != 'true'
         run: |
