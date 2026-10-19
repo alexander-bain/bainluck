@@ -7337,6 +7337,52 @@ jobs:
             exit 1
           }
 
+      - name: "#11286 odds retention — provision the disposable database"
+        # Its own database for the reason the #7878 step above gives: the file
+        # drops and creates the five tables it touches.
+        if: matrix.group == 'isolated' && needs.change-scope.outputs.reuse != 'true'
+        run: |
+          set -o pipefail
+          python - <<'PY' >> "$GITHUB_ENV"
+          import asyncio, asyncpg
+
+          DB = "bl_odds_retention_11286"
+
+          async def go():
+              c = await asyncpg.connect(
+                  user="postgres", password="postgres", database="postgres",
+                  host="localhost", port=5432)
+              await c.execute(f'DROP DATABASE IF EXISTS {DB}')
+              await c.execute(f'CREATE DATABASE {DB}')
+              await c.close()
+
+          asyncio.run(go())
+          print(
+              "ODDS_RETENTION_DATABASE_URL="
+              f"postgresql+asyncpg://postgres:postgres@localhost:5432/{DB}"
+          )
+          PY
+          echo "provisioned bl_odds_retention_11286"
+
+      - name: "#11286 odds retention keeps a spread/total move under a flat home price (real Postgres)"
+        # The 48h odds collapse merged runs of equal HOME price, so a book's
+        # spread/total/projected-pair move under a flat moneyline was deleted
+        # and the projected-points chart lost it for good. The run boundary is
+        # now the whole observed row. Skip detection plus a count, as for #7878.
+        if: matrix.group == 'isolated' && needs.change-scope.outputs.reuse != 'true'
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_odds_retention_tuple_pg_11286.py \
+            -v -rs 2>&1 | tee /tmp/oddsretention11286.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/oddsretention11286.txt; then
+            echo "::error::#11286 odds retention SKIPPED — the gate did not run"
+            exit 1
+          fi
+          grep -qE "[^0-9]14 passed[,[:space:]]" /tmp/oddsretention11286.txt || {
+            echo "::error::#11286 odds retention did not run all fourteen cases"
+            exit 1
+          }
+
       - name: "#7878 win-prob evidence crosses the history response (real Postgres, real route)"
         # Codex's exact-head review of PR #8438 found the producer's evidence
         # never reached a client: the final `game_state` projection (#6546)

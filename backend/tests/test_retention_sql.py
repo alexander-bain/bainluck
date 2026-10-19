@@ -281,6 +281,47 @@ class TestTableConfig:
         for cfg in _TABLE_CONFIG.values():
             for key in ("table", "partition_col", "sub_partition_col", "value_col"):
                 assert safe_identifier.fullmatch(cfg[key]), (key, cfg[key])
+            for col in cfg.get("run_cols", ()):
+                assert safe_identifier.fullmatch(col), ("run_cols", col)
+
+
+class TestOddsRunBoundary11286:
+    """#11286: an odds run ends when ANY observed value changes.
+
+    The behaviour is proven against real Postgres in
+    `tests/integration/test_odds_retention_tuple_pg_11286.py`; this pins the
+    column set so a value column added to `OddsSnapshot` later cannot be left
+    out of the comparison (and so silently merged away).
+    """
+
+    def test_run_cols_are_every_observed_odds_column(self):
+        from app.models.models import OddsSnapshot
+
+        bookkeeping = {"id", "event_id", "captured_at", "bookmaker", "reading_count", "valid_until"}
+        observed = {c.name for c in OddsSnapshot.__table__.columns} - bookkeeping
+        assert set(_TABLE_CONFIG["odds"]["run_cols"]) == observed
+
+    def test_run_cols_cover_the_write_time_dedup_fields(self):
+        """A row the writer kept because a field differed is never merged on it."""
+        import inspect
+
+        from app.tasks.odds_polling import _snapshots_are_equal
+
+        compared = set(re.findall(r"existing\.(\w+)", inspect.getsource(_snapshots_are_equal)))
+        assert compared and compared <= set(_TABLE_CONFIG["odds"]["run_cols"])
+
+    def test_odds_sql_compares_every_run_col_and_futures_keeps_one(self):
+        cutoff = datetime(2026, 2, 1, 12, 0, 0, tzinfo=timezone.utc)
+        odds = _RecordingSession()
+        asyncio.run(_collapse_partition_sql(odds, _TABLE_CONFIG["odds"], 123, cutoff))
+        for sql, _ in odds.executions[:2]:
+            for col in _TABLE_CONFIG["odds"]["run_cols"]:
+                assert f"{col} IS DISTINCT FROM prev_{col}" in sql, col
+        futures = _RecordingSession()
+        asyncio.run(_collapse_partition_sql(futures, _TABLE_CONFIG["futures"], 123, cutoff))
+        for sql, _ in futures.executions[:2]:
+            assert "probability IS DISTINCT FROM prev_value" in sql
+            assert "prev_id" not in sql
 
 
 class _FakeResult:
