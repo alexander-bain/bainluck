@@ -36,6 +36,12 @@ Honesty rules baked into the grading (parent #1466 gate #5):
 * No coverage threshold is invented and calibration success is not redefined —
   this tool measures and names gaps; the robustness thresholds it applies live in
   an explicit, versioned ``policy`` block.
+* This tool observes no rendered chart. Snapshot density and the
+  ``/api/events/{id}/history`` JSON are *data-readiness* diagnostics
+  (``chart_data_readiness``, ``history_api_checks``), never render proof, so the
+  ``rendered_chart`` dimension of a played event with a row stays ``unknown`` /
+  ``render-unverified`` and such an event can never grade overall ``present``.
+  Actual representative/worst-case render evidence is a separate acceptance input.
 
 CLI::
 
@@ -63,7 +69,9 @@ BACKEND = Path(__file__).resolve().parents[2]
 if str(BACKEND) not in sys.path:
     sys.path.insert(0, str(BACKEND))
 
-SCHEMA_VERSION = "expected-event-ledger/v1"
+# v2 (#1467): rendered_chart is never graded present from snapshot density or
+# history JSON; density moved to the separate ``chart_data_readiness`` diagnostic.
+SCHEMA_VERSION = "expected-event-ledger/v2"
 
 # ESPN sport/league path per Tier-1 league (matches SPORT_LEAGUE_MAP).
 ESPN_PATHS = {
@@ -90,6 +98,13 @@ REQUEST_FAILURE = "request-failure"
 PARSE_FAILURE = "parse-failure"
 UNRESOLVED_IDENTITY = "unresolved-identity"
 EVENT_MISSING = "event-missing"
+RENDER_UNVERIFIED = "render-unverified"
+
+# Chart data-readiness diagnostic (snapshot density). NOT a render observation.
+CHART_DATA_READY = "ready"
+CHART_DATA_SPARSE = "sparse"
+CHART_DATA_MISSING = "missing"
+CHART_DATA_STATES = (CHART_DATA_READY, CHART_DATA_SPARSE, CHART_DATA_MISSING, EVENT_MISSING, NOT_APPLICABLE)
 
 DIMENSIONS = (
     "event_existence",
@@ -251,6 +266,11 @@ def grade_event(expected: dict, bl: Optional[dict], policy: Optional[dict] = Non
     Downstream dimensions are never fabricated: if the event row is missing they
     are ``recoverable-missing`` with attempt ``event-missing`` (recovering the row
     unlocks them), not ``unknown`` and not a silent zero.
+
+    ``rendered_chart`` is never graded ``present`` here: nothing in ``bl`` is a
+    render observation. Snapshot density is reported separately as
+    ``chart_data_readiness``, and ``non_render_state`` grades the other seven
+    dimensions so data-ready rows stay selectable.
     """
     policy = policy or DEFAULT_POLICY
     status = expected.get("status")
@@ -333,16 +353,41 @@ def grade_event(expected: dict, bl: Optional[dict], policy: Optional[dict] = Non
         note=f"{ing} in-game snapshot(s)",
     )
 
-    # 8. Rendered-chart readiness — enough spanning points to draw a usable chart.
-    dims["rendered_chart"] = _downstream(
-        lambda: tot >= policy["chart_min_points"] and pre >= policy["pregame_min_points"] and ing >= policy["ingame_min_points"],
-        tot,
-        na=(did_not_happen or future),
-        sparse_test=lambda: 0 < tot < policy["chart_min_points"],
-        note=f"{tot} total snapshot(s) (aggregate-density proxy; --verify-charts confirms rendered points)",
-    )
+    # 8. Rendered chart — this tool observes no render, so a played event with a
+    # row is UNKNOWN, never PRESENT. Missing-event and not-applicable stay as is.
+    chart_na = did_not_happen or future
+    if not (bl and bl.get("exists")):
+        dims["rendered_chart"] = _downstream(lambda: False, None)
+    elif chart_na:
+        dims["rendered_chart"] = _downstream(lambda: False, None, na=True,
+                                             note="game did not occur / not yet played")
+    else:
+        dims["rendered_chart"] = _dim(
+            UNKNOWN, RENDER_UNVERIFIED, None,
+            "rendered chart not observed: snapshot counts and history API JSON are data "
+            "diagnostics, not render evidence; actual render evidence is a separate acceptance input",
+        )
+
+    # Chart data readiness — the snapshot-density diagnostic formerly (wrongly)
+    # graded as rendered_chart. Same thresholds; not a render observation.
+    if not (bl and bl.get("exists")):
+        readiness = EVENT_MISSING
+    elif chart_na:
+        readiness = NOT_APPLICABLE
+    elif tot >= policy["chart_min_points"] and pre >= policy["pregame_min_points"] and ing >= policy["ingame_min_points"]:
+        readiness = CHART_DATA_READY
+    elif tot > 0:
+        readiness = CHART_DATA_SPARSE
+    else:
+        readiness = CHART_DATA_MISSING
+    chart_data_readiness = {
+        "state": readiness, "total_snaps": tot, "pregame_snaps": pre, "ingame_snaps": ing,
+        "evidence": f"{tot} total / {pre} pregame / {ing} in-game snapshot(s): aggregate density, "
+                    "not a render observation",
+    }
 
     overall = _overall_state([d["state"] for d in dims.values()])
+    non_render = _overall_state([d["state"] for name, d in dims.items() if name != "rendered_chart"])
     return {
         "canonical_event_id": expected["canonical_event_id"],
         "league": expected["league"],
@@ -355,20 +400,25 @@ def grade_event(expected: dict, bl: Optional[dict], policy: Optional[dict] = Non
         "match_method": (bl or {}).get("match_method") if bl else None,
         "dimensions": dims,
         "overall_state": overall,
+        "non_render_state": non_render,
+        "chart_data_readiness": chart_data_readiness,
     }
 
 
 def _overall_state(states: Iterable[str]) -> str:
+    """Worst applicable state. A known gap (recoverable / unavailable) outranks
+    ``unknown``: unknown only means nothing is known missing but not all of it
+    is confirmed present."""
     states = list(states)
     applicable = [s for s in states if s != NOT_APPLICABLE]
     if not applicable:
         return NOT_APPLICABLE
-    if UNKNOWN in applicable:
-        return UNKNOWN
     if RECOVERABLE_MISSING in applicable:
         return RECOVERABLE_MISSING
     if ATTEMPTED_UNAVAILABLE in applicable:
         return ATTEMPTED_UNAVAILABLE
+    if UNKNOWN in applicable:
+        return UNKNOWN
     return PRESENT
 
 
@@ -385,7 +435,8 @@ def summarize(rows: list[dict], slate_attempts: list[dict], policy: Optional[dic
 
     Emits: per league×month per-dimension state counts, overall totals
     (expected · present · recoverable · attempted-unavailable · unknown ·
-    not-applicable · missing-event), named worst-case lists, a separate June
+    not-applicable · missing-event · non-render-present · render-unverified),
+    chart data-readiness counts, named worst-case lists, a separate June
     breakout, and the slate-fetch failure ledger (so ``error`` never reads as a
     shrunken denominator).
     """
@@ -403,8 +454,11 @@ def summarize(rows: list[dict], slate_attempts: list[dict], policy: Optional[dic
         "attempted_unavailable": 0,
         "unknown": 0,
         "not_applicable": 0,   # game did not occur / not yet played
+        "non_render_present": 0,  # every applicable non-render dimension present
+        "render_unverified": 0,   # rendered_chart applies but no render was observed
     }
     dim_totals = _empty_dim_counts()
+    readiness_totals = {s: 0 for s in CHART_DATA_STATES}
     worst: dict[str, list[dict]] = {
         "missing_event": [],
         "missing_final_result": [],
@@ -412,14 +466,15 @@ def summarize(rows: list[dict], slate_attempts: list[dict], policy: Optional[dic
         "missing_calibration_forecast": [],
         "missing_pregame_history": [],
         "missing_ingame_history": [],
-        "not_chart_ready": [],
+        "chart_data_not_ready": [],
     }
 
     for r in rows:
         key = f"{r['league']}:{_month(r['game_date'])}"
         lm = per_league_month.setdefault(
             key, {"league": r["league"], "month": _month(r["game_date"]),
-                  "expected": 0, "overall": {s: 0 for s in DIM_STATES}, "dimensions": _empty_dim_counts()}
+                  "expected": 0, "overall": {s: 0 for s in DIM_STATES}, "dimensions": _empty_dim_counts(),
+                  "non_render_present": 0, "chart_data_readiness": {s: 0 for s in CHART_DATA_STATES}}
         )
         lm["expected"] += 1
         totals["expected"] += 1
@@ -444,6 +499,15 @@ def summarize(rows: list[dict], slate_attempts: list[dict], policy: Optional[dic
         if r["dimensions"]["event_existence"]["state"] != PRESENT:
             totals["missing_event"] += 1
 
+        readiness = r["chart_data_readiness"]["state"]
+        lm["chart_data_readiness"][readiness] += 1
+        readiness_totals[readiness] += 1
+        if r["non_render_state"] == PRESENT:
+            totals["non_render_present"] += 1
+            lm["non_render_present"] += 1
+        if r["dimensions"]["rendered_chart"]["attempt"] == RENDER_UNVERIFIED:
+            totals["render_unverified"] += 1
+
         # Named worst-case capture (only games that were played).
         stub = {"canonical_event_id": r["canonical_event_id"], "matchup": r["matchup"],
                 "game_date": r["game_date"], "league": r["league"], "espn_event_id": r["espn_event_id"]}
@@ -462,8 +526,10 @@ def summarize(rows: list[dict], slate_attempts: list[dict], policy: Optional[dic
                 worst["missing_pregame_history"].append({**stub, "pregame_snaps": r["dimensions"]["pregame_history"]["value"]})
             if _bad("ingame_history"):
                 worst["missing_ingame_history"].append({**stub, "ingame_snaps": r["dimensions"]["ingame_history"]["value"]})
-            if _bad("rendered_chart"):
-                worst["not_chart_ready"].append({**stub, "total_snaps": r["dimensions"]["rendered_chart"]["value"]})
+            if readiness in (CHART_DATA_SPARSE, CHART_DATA_MISSING, EVENT_MISSING):
+                worst["chart_data_not_ready"].append(
+                    {**stub, "chart_data_readiness": readiness,
+                     "total_snaps": r["chart_data_readiness"]["total_snaps"]})
 
     # Worst-case lists: report full count, but only inline the first N named rows.
     worst_summary = {}
@@ -491,6 +557,7 @@ def summarize(rows: list[dict], slate_attempts: list[dict], policy: Optional[dic
         "policy": policy,
         "totals": totals,
         "dimension_totals": dim_totals,
+        "chart_data_readiness_totals": readiness_totals,
         "per_league_month": dict(sorted(per_league_month.items())),
         "june_breakout": june,
         "worst_cases": worst_summary,
@@ -499,6 +566,12 @@ def summarize(rows: list[dict], slate_attempts: list[dict], policy: Optional[dic
             "Expected count is ESPN-authoritative and independent of Bain Luck rows. "
             "Slates whose fetch failed are counted as request/parse failures, NOT as zero — "
             "so a fetch error cannot shrink the denominator."
+        ),
+        "render_evidence_note": (
+            "No rendered chart is observed by this tool: rendered_chart is unknown/render-unverified "
+            "for every played event with a row, so no such event grades overall present. "
+            "chart_data_readiness is snapshot density only. Actual representative/worst-case render "
+            "evidence is a separate acceptance input."
         ),
     }
 
@@ -621,8 +694,9 @@ class DBQueryLedgerBackend:
             by_teams[(d, v["away_norm"], v["home_norm"])] = v
         return {"by_espn": by_espn, "by_teams": by_teams}
 
-    def fetch_chart_points(self, event_id: int) -> dict:
-        """Rendered-chart proof: real win_prob_history point counts from /api/events/{id}/history."""
+    def fetch_history_points(self, event_id: int) -> dict:
+        """Point counts from the /api/events/{id}/history JSON — a data check of the
+        API a chart reads, NOT a render observation."""
         try:
             payload = _http_json(f"{self.api}/api/events/{event_id}/history?hours=720", timeout=30)
         except Exception as exc:  # noqa: BLE001
@@ -631,6 +705,9 @@ class DBQueryLedgerBackend:
         per_source = {src: len(pts or []) for src, pts in wp.items()}
         return {"result": "ok", "win_prob_points": sum(per_source.values()),
                 "per_source": per_source, "odds_points": len(payload.get("history") or [])}
+
+    # Pre-#1467 name, kept for compatibility; it never proved a rendered chart.
+    fetch_chart_points = fetch_history_points
 
 
 # --------------------------------------------------------------------------- #
@@ -666,14 +743,21 @@ def _month_bounds(start: date, end: date) -> list[tuple[str, str]]:
 
 def run_census(start: str, end: str, schedule: Any, backend: Any,
                checkpoint: Optional[str] = None, force: bool = False,
-               policy: Optional[dict] = None, verify_charts: int = 0,
-               log: Callable[[str], None] = lambda m: None) -> dict:
+               policy: Optional[dict] = None, check_history_api: int = 0,
+               log: Callable[[str], None] = lambda m: None,
+               verify_charts: int = 0) -> dict:
     """Enumerate the expected slate, grade every game, and summarize.
 
-    Idempotent + resumable: cached slate fetches and graded rows are reused from
-    the checkpoint unless ``force``. Byte-identical output on a clean rerun.
+    Idempotent + resumable: cached slate fetches are reused from the checkpoint
+    unless ``force``; rows are always regraded (so a legacy checkpoint row can
+    never carry a stale verdict forward). Byte-identical output on a clean rerun.
+
+    ``check_history_api`` (``verify_charts`` is its deprecated alias) reads the
+    history API JSON for N representative + N worst-case events. It is a data
+    check, never a render observation, and never changes a row's grade.
     """
     policy = policy or DEFAULT_POLICY
+    check_history_api = check_history_api or verify_charts
     ck = {"slates": {}, "rows": {}}
     if checkpoint and Path(checkpoint).exists() and not force:
         try:
@@ -682,6 +766,7 @@ def run_census(start: str, end: str, schedule: Any, backend: Any,
             ck = {"slates": {}, "rows": {}}
     ck.setdefault("slates", {})
     ck.setdefault("rows", {})
+    ck["schema_version"] = SCHEMA_VERSION
 
     start_d, end_d = date.fromisoformat(start), date.fromisoformat(end)
 
@@ -733,18 +818,31 @@ def run_census(start: str, end: str, schedule: Any, backend: Any,
 
     census = summarize(rows, slate_attempts, policy)
 
-    # 3) Optional rendered-chart proof for representative + worst-case events.
-    if verify_charts and hasattr(backend, "fetch_chart_points"):
-        present = [r for r in rows if r["played"] and r["overall_state"] == PRESENT and r["bl_event_id"]]
-        worst = [r for r in rows if r["played"] and r["dimensions"]["rendered_chart"]["state"] != PRESENT and r["bl_event_id"]]
-        sample = present[:verify_charts] + worst[:verify_charts]
-        proofs = []
-        for r in sample:
-            proof = backend.fetch_chart_points(r["bl_event_id"])
-            proofs.append({"canonical_event_id": r["canonical_event_id"], "matchup": r["matchup"],
-                           "bl_event_id": r["bl_event_id"], "overall_state": r["overall_state"], **proof})
-            log(f"chart proof {r['matchup']}: {proof.get('win_prob_points', proof.get('result'))}")
-        census["rendered_chart_proofs"] = proofs
+    # 3) Optional history-API data check for representative + worst-case events.
+    # Not a render observation: results never change a row's grade.
+    fetch = getattr(backend, "fetch_history_points", None) or getattr(backend, "fetch_chart_points", None)
+    if check_history_api and fetch:
+        def _ready(r):
+            return r["chart_data_readiness"]["state"]
+        representative = [r for r in rows if r["played"] and r["bl_event_id"]
+                          and r["non_render_state"] == PRESENT and _ready(r) == CHART_DATA_READY]
+        worst = [r for r in rows if r["played"] and r["bl_event_id"]
+                 and _ready(r) in (CHART_DATA_SPARSE, CHART_DATA_MISSING)]
+        sample = ([("representative", r) for r in representative[:check_history_api]]
+                  + [("worst-case", r) for r in worst[:check_history_api]])
+        checks = []
+        for role, r in sample:
+            result = fetch(r["bl_event_id"])
+            checks.append({"canonical_event_id": r["canonical_event_id"], "matchup": r["matchup"],
+                           "bl_event_id": r["bl_event_id"], "sample_role": role,
+                           "overall_state": r["overall_state"], "chart_data_readiness": _ready(r),
+                           **result, "render_observed": False})
+            log(f"history api check ({role}) {r['matchup']}: {result.get('win_prob_points', result.get('result'))}")
+        census["history_api_checks"] = checks
+        census["history_api_check_note"] = (
+            "Point counts from the /api/events/{id}/history JSON: a data check, not a render "
+            "observation. These results do not grade rendered_chart."
+        )
 
     census["window"] = {"start": start, "end": end,
                         "expected_events": len(expected),
@@ -772,7 +870,11 @@ def main(argv: Optional[list[str]] = None) -> int:
     c.add_argument("--checkpoint", default=None)
     c.add_argument("--out", default=None)
     c.add_argument("--force", action="store_true")
-    c.add_argument("--verify-charts", type=int, default=0)
+    c.add_argument("--check-history-api", "--verify-charts", dest="check_history_api", type=int, default=0,
+                   metavar="N",
+                   help="Read /api/events/{id}/history JSON point counts for N representative + N worst-case "
+                        "events. A data check only: it does not observe a rendered chart and never grades "
+                        "rendered_chart. (--verify-charts is a deprecated alias.)")
 
     g = sub.add_parser("grade", help="Grade a JSON export offline (no network)")
     g.add_argument("--input", required=True, help="{'expected':[...], 'bl_index':{...}, 'slate_attempts':[...]}")
@@ -797,7 +899,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     backend = DBQueryLedgerBackend(api, token)
     census = run_census(args.start, args.end, schedule, backend,
                         checkpoint=args.checkpoint, force=args.force,
-                        verify_charts=args.verify_charts,
+                        check_history_api=args.check_history_api,
                         log=lambda m: print(m, file=sys.stderr))
     out = json.dumps(census, indent=2, default=str)
     if args.out:
