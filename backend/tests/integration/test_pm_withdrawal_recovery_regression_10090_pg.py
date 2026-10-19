@@ -152,6 +152,28 @@ def lost_ack_sessions(factory, armed, release, delayed, times, loads, finish):
     return sessions
 
 
+async def signalled_or_raise(task, event, what):
+    """Wait at most 2 s for `event`. A task that ended first re-raises its own
+    error here (a missing interface reads as itself, not as a timeout); a task
+    still running is cancelled and awaited, never abandoned."""
+    waiter = asyncio.ensure_future(event.wait())
+    try:
+        await asyncio.wait(
+            {task, waiter}, timeout=2, return_when=asyncio.FIRST_COMPLETED
+        )
+    finally:
+        waiter.cancel()
+        await asyncio.gather(waiter, return_exceptions=True)
+    if event.is_set():
+        return
+    if task.done():
+        task.result()
+        raise AssertionError(f"{what}: task ended without signalling")
+    task.cancel()
+    await asyncio.gather(task, return_exceptions=True)
+    raise AssertionError(f"{what}: not signalled within 2 s")
+
+
 def record_invalidations(t, notices):
     original_publish = t.r._publish
 
@@ -435,7 +457,7 @@ async def test_uncertain_recovery_has_one_inflight_scan_and_fixed_cadence(
             yield session
 
     first = asyncio.create_task(debt.load(slow))
-    await asyncio.wait_for(started.wait(), 2)  # bounded: a hang is not a result
+    await signalled_or_raise(first, started, "first custody scan")
     others = []
     try:
         # One query lasts longer than the scan period. Concurrent flush callers
@@ -516,8 +538,7 @@ async def test_cancelled_writer_releases_handoff_fence(rig):
             await asyncio.Future()
 
     task = asyncio.create_task(writer())
-    # Bounded: a source without the fence must fail here, not hang the job.
-    await asyncio.wait_for(entered.wait(), 2)
+    await signalled_or_raise(task, entered, "writer inside the fence")
     task.cancel()
     await asyncio.gather(task, return_exceptions=True)
     new = pm.PMWithdrawalDebt()
