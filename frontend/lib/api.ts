@@ -454,8 +454,13 @@ async function claimEventBooted<T>(endpoint: string): Promise<T | null> {
  * flight, issued at HTML parse time. `fetchEventsByIds` calls this in a loop and is unaffected — the
  * claim is keyed on the exact URL, so at most the one booted id can match, and only once.
  */
-export async function fetchEvent(id: number, fresh = false): Promise<EventDetailResponse> {
-  if (fresh) return apiFetch<EventDetailResponse>(`/api/events/${id}?fresh=true`, { cache: "no-store" });
+export async function fetchEvent(
+  id: number, fresh = false,
+  // #10090: a caller that paces its own fresh reads (the event page's owed
+  // reconcile pair) passes 0 so a failure is one request, not three.
+  freshOptions?: { maxRetries?: number },
+): Promise<EventDetailResponse> {
+  if (fresh) return apiFetch<EventDetailResponse>(`/api/events/${id}?fresh=true`, { cache: "no-store", ...freshOptions });
   const endpoint = `/api/events/${id}`;
   const booted = await claimEventBooted<EventDetailResponse>(endpoint);
   if (booted) return booted;
@@ -489,10 +494,12 @@ export async function fetchEventHistory(
    * chart's "All" range) pass nothing.
    */
   range?: "since_start",
-  fresh = false
+  fresh = false,
+  /** #10090: as `fetchEvent` — only a fresh read takes it. */
+  freshOptions?: { maxRetries?: number },
 ): Promise<EventHistoryResponse> {
   const endpoint = `/api/events/${id}/history?hours=${hours}${range ? `&range=${range}` : ""}`;
-  if (fresh) return apiFetch<EventHistoryResponse>(`${endpoint}&fresh=true`, { cache: "no-store" });
+  if (fresh) return apiFetch<EventHistoryResponse>(`${endpoint}&fresh=true`, { cache: "no-store", ...freshOptions });
   // LAT-P219: only the event page's own window (`EVENT_BOOT_HISTORY_HOURS`) is ever parked, so a
   // caller asking for a different `hours` simply finds no matching entry and falls through.
   const booted = await claimEventBooted<EventHistoryResponse>(endpoint);

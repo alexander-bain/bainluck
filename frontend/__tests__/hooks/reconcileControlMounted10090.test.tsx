@@ -35,7 +35,8 @@ import { adoptNewerBlendEdge, edgeInvalidatesHeldBlend, servedBlendEdgeObservati
 import { historyRangeParam } from "../../lib/event/historyRange";
 import { EVENT_BOOT_HISTORY_HOURS } from "../../lib/event/detailBoot";
 import {
-  createReconcileLedger, createWriteJournal, rebaseOnCoveringRead, reconcileFloorCoverage, servedHistoryIsNewer,
+  createReconcileLedger, createWriteJournal, rebaseOnCoveringRead, reconcileFloorCoverage, replayJournaledPoll,
+  servedHistoryIsNewer,
 } from "../../lib/reconcileControl";
 
 const PAGE = fs.readFileSync(path.join(__dirname, "../../app/events/[id]/page.tsx"), "utf8");
@@ -88,7 +89,7 @@ type Detail = {
   id: number; status: string; sport: string; completed_at?: string | null;
   hero_probability: number; hero_probability_away: number | null; hero_probability_source: string;
   hero_probability_observed_at: string | null; blend_fold_revision?: Record<string, number>;
-  win_probability_sources: Rail;
+  win_probability_sources: Rail; home_score?: number | null; away_score?: number | null;
 };
 type History = {
   event_id: number; blend_edge_pinned: boolean; blend_edge_observed_at: string | null;
@@ -127,19 +128,20 @@ class Deferred<T> {
   reject!: (e: Error) => void;
   constructor() { this.promise = new Promise<T>((res, rej) => { this.resolve = res; this.reject = rej; }); }
 }
-type Req<T> = { eventId: number; fresh: boolean; d: Deferred<T>; at: number };
+type Req<T> = { eventId: number; fresh: boolean; d: Deferred<T>; at: number; options?: unknown; done?: boolean };
 type Net = { details: Req<Detail>[]; histories: Req<History>[] };
 
 const harness: {
   revalidate?: () => unknown; revalidateHistory?: () => unknown; ledger?: ReturnType<typeof createReconcileLedger>;
+  event?: Detail;
 } = {};
 
 function HeldPage({ net, eventId }: { net: Net; eventId: number }) {
-  const fetchEvent = (id: number, fresh = false) => {
-    const d = new Deferred<Detail>(); net.details.push({ eventId: id, fresh, d, at: Date.now() }); return d.promise;
+  const fetchEvent = (id: number, fresh = false, options?: unknown) => {
+    const d = new Deferred<Detail>(); net.details.push({ eventId: id, fresh, d, at: Date.now(), options }); return d.promise;
   };
-  const fetchEventHistory = (id: number, _h: number, _r: unknown, fresh = false) => {
-    const d = new Deferred<History>(); net.histories.push({ eventId: id, fresh, d, at: Date.now() }); return d.promise;
+  const fetchEventHistory = (id: number, _h: number, _r: unknown, fresh = false, options?: unknown) => {
+    const d = new Deferred<History>(); net.histories.push({ eventId: id, fresh, d, at: Date.now(), options }); return d.promise;
   };
   const freshNextEventReadRef = useRef(false);
   const latestLiveFrameRef = useRef(null);
@@ -150,9 +152,10 @@ function HeldPage({ net, eventId }: { net: Net; eventId: number }) {
   const [, setLastRefresh] = useState(0);
   const { data: event, mutate: refreshEvent } = useSWR(["event", eventId], FETCHER.runInNewContext({
     fetchEventWithLiveFrame, fetchEvent, eventId, takeFreshRead, freshNextEventReadRef, pairJournalRef,
-    keepNewerHeldHeadline, latestLiveFrameRef, latestBlendEdgeRef, heldEventRef,
+    replayJournaledPoll, keepNewerHeldHeadline, latestLiveFrameRef, latestBlendEdgeRef, heldEventRef,
   }), { onSuccess: ON_SUCCESS.runInNewContext({ storedEventRef, setLastRefresh, Date }) });
   harness.revalidate = () => refreshEvent();
+  harness.event = event;
   heldEventRef.current = event;
   const fullHistoryRequested = false;
   const { data: servedHistory, mutate: refreshHistory } = useSWR(["history", eventId],
@@ -163,6 +166,7 @@ function HeldPage({ net, eventId }: { net: Net; eventId: number }) {
   const quoteTriggerRef = useRef(null);
   const recoveryIntentRef = useRef(0);
   const quoteReadLifetimeRef = useRef(0);
+  const reconcileIntentRef = useRef(false);
   const [reconcileLedger] = useState(createReconcileLedger);
   harness.ledger = reconcileLedger;
   const quoteEventIdRef = useRef(eventId);
@@ -172,7 +176,7 @@ function HeldPage({ net, eventId }: { net: Net; eventId: number }) {
   const refreshEventRef = useRef(refreshEvent);
   refreshEventRef.current = refreshEvent;
   const [foldedRefetch] = useState(() => FACTORY.runInNewContext({
-    createFoldedRefetchScheduler, canSubscribeEventQuotes, FOLDED_FRAME_REFETCH_MS, Date, reconcileLedger,
+    createFoldedRefetchScheduler, canSubscribeEventQuotes, reconcileIntentRef, FOLDED_FRAME_REFETCH_MS, Date, reconcileLedger,
     reconcileRetryDelayMs: RETRY_DELAY.runInNewContext({ LIVE_REFRESH_INTERVAL, Math }),
     quoteTriggerRef, recoveryIntentRef, pairedQuoteReadRef, freshNextEventReadRef, refreshEventRef, heldEventRef,
   }) as ReturnType<typeof createFoldedRefetchScheduler>);
@@ -193,7 +197,7 @@ function HeldPage({ net, eventId }: { net: Net; eventId: number }) {
   useLiveEventStream(eventId, quoteEligible, applyPushedFrame, applyReconcileControl);
   const recoveryRef = useRef(null);
   useEffect(RECOVERY_EFFECT.runInNewContext({
-    quoteEligible, createReconnectCatchup, canSubscribeEventQuotes, heldEventRef, recoveryRef,
+    quoteEligible, createReconnectCatchup, canSubscribeEventQuotes, reconcileIntentRef, heldEventRef, recoveryRef,
     reconcileCatchupRef, reconcileLedger, recoveryIntentRef, quoteReadLifetimeRef, foldedRefetch,
   }), [eventId, quoteEligible, foldedRefetch, reconcileLedger]);
 
@@ -646,6 +650,106 @@ describe("#10090 G1 mounted: an owed reconcile floor on a busy live page", () =>
     expect(p.pairs(E)).toHaveLength(0);
     expect(p.pairs(B)).toHaveLength(0);
     expect(harness.ledger!.owed()).toBe(false);
+    await p.unmount();
+  });
+});
+
+// ── Authority G1 REVISE (0930Z) F1/F2 and Latency COST-REVISE (0931Z) R1/R2 ──
+describe("#10090 G1 repairs mounted: a journaled poll never steps the page back, and an owed floor is paced", () => {
+  const TWIN = 15332402;
+  const scheduled = (rev: number, rail: Rail): Detail =>
+    ({ ...live(rev, 0.55, rail), status: "scheduled", home_score: null, away_score: null });
+
+  it("F1: a cached poll that lands mid-pair cannot put a live 7-0 game back to scheduled", async () => {
+    const p = await mount(scheduled(10, withPm(10)));
+    expect(p.read()).toBe("scheduled|55|kalshi+polymarket|r10|c55");
+    await p.control("owed-1", 11);
+    await p.advance(250);
+    expect(p.pairs()).toHaveLength(1);
+    // The 32 s poll answers from a cache built before kickoff and the removal.
+    harness.revalidate!();
+    await settle();
+    p.net.details.filter((r) => !r.fresh).at(-1)!.d.resolve(scheduled(10, withPm(10)));
+    await settle();
+    await p.answer({ ...live(11, 0.55, { kalshi: src(0.55, 11) }), home_score: 7, away_score: 0 }, history(11, 0.55));
+    expect(p.read()).toBe("live|55|kalshi|r11|c55");
+    expect([harness.event!.home_score, harness.event!.away_score]).toEqual([7, 0]);
+    expect(harness.ledger!.owed()).toBe(false);
+    await p.unmount();
+  });
+
+  it("F2: an incomparable pre-removal poll (a twin joined in between) cannot restore the removed source", async () => {
+    const p = await mount();
+    await p.control("owed-1", 11);
+    await p.advance(250);
+    harness.revalidate!();
+    await settle();
+    p.net.details.filter((r) => !r.fresh).at(-1)!.d.resolve(live(10, 0.55, withPm(10)));
+    await settle();
+    expect(p.read()).toBe("live|55|kalshi+polymarket|r10|c55");
+    await p.answer(
+      { ...live(11, 0.6, { kalshi: src(0.6, 11) }), blend_fold_revision: { [E]: 11, [TWIN]: 3 } },
+      { ...history(11, 0.6), blend_edge_fold_revision: { [E]: 11, [TWIN]: 3 } },
+    );
+    // Ledger first: with the replay rule mutated off, the written-value check
+    // must leave this owed (refused), never paid with the source back.
+    expect(harness.ledger!.owed()).toBe(false);
+    expect(p.read()).toBe("live|60|kalshi|r11,3|c60");
+    await p.unmount();
+  });
+
+  it("Latency R1: an unpayable floor on a folded page, invalidated every second for 60 s, makes ladder pairs only", async () => {
+    const folded = (e: number, p: number, rail: Rail): Detail => ({ ...live(e, p, rail), blend_fold_revision: { [E]: e, [TWIN]: 5 } });
+    const foldedHistory = (e: number, p: number): History => ({ ...history(e, p), blend_edge_fold_revision: { [E]: e, [TWIN]: 5 } });
+    const p = await mount(folded(10, 0.55, withPm(10)), foldedHistory(10, 0.55));
+    const fresh = () => p.net.details.filter((r) => r.fresh);
+    const pairStarts = () => p.net.histories.filter((r) => r.fresh).map((r) => r.at);
+    const drain = async () => {
+      for (const r of p.net.details) if (r.fresh && !r.done) { r.done = true; r.d.resolve(folded(10, 0.55, withPm(10))); }
+      for (const r of p.net.histories) if (r.fresh && !r.done) { r.done = true; r.d.resolve(foldedHistory(10, 0.55)); }
+      await settle();
+    };
+    const t0 = Date.now();
+    // A D3 row the detail vector never carries: "a missing row never covers".
+    await p.emit("reconcile", JSON.stringify({ event_id: E, custody_id: "never", removal_rev: { 999: 1 } }));
+    for (let second = 0; second < 60; second += 1) {
+      await p.push(11 + second, 0.55); // a raw-row frame on a folded hero: an invalidation
+      await drain();
+      await p.advance(1000);
+      await drain();
+    }
+    expect(harness.ledger!.owed()).toBe(true);
+    // The control's jitter (250 ms, held to the 1 s window by the t=0
+    // invalidation's read), then the ladder's 1, 2, 4, 8, 16 s steps; the next
+    // (32 s) falls at 64 s. Not one pair per invalidation.
+    expect(pairStarts().map((at) => at - t0)).toEqual([1000, 2000, 4000, 8000, 16_000, 32_000]);
+    // Every other read the invalidations asked for is the old detail-only one.
+    expect(fresh()).toHaveLength(61);
+    await p.unmount();
+  });
+
+  it("Latency R2: an owed pair's halves are single requests, and a 429's wait holds the next pair", async () => {
+    const p = await mount();
+    await p.control("owed-1", 11);
+    await p.advance(250);
+    expect(p.pairs()).toHaveLength(1);
+    const pairOptions = () => [p.net.details.filter((r) => r.fresh).at(-1)!.options, p.net.histories.filter((r) => r.fresh).at(-1)!.options];
+    expect(pairOptions()).toEqual([{ maxRetries: 0 }, { maxRetries: 0 }]);
+    const throttled = Object.assign(new Error("429"), { retryAfterMs: 20_000 });
+    await p.answer(throttled, history(10, 0.55));
+    await p.advance(19_999);
+    expect(p.pairs()).toHaveLength(1);
+    await p.advance(1);
+    expect(p.pairs()).toHaveLength(2);
+    expect(pairOptions()).toEqual([{ maxRetries: 0 }, { maxRetries: 0 }]);
+    await p.answer(live(12, 0.6, { kalshi: src(0.6, 12) }), history(12, 0.6));
+    expect(p.read()).toBe("live|60|kalshi|r12|c60");
+    expect(harness.ledger!.owed()).toBe(false);
+    // A price-trigger pair keeps the existing apiFetch retries (explicit scope).
+    await p.emit("probability", JSON.stringify({ event_id: E, p: null, source: "kalshi", updated_at: T(13), status: "live", rev: { [E]: 13 } }));
+    await p.advance(1000);
+    expect(p.pairs()).toHaveLength(3);
+    expect(pairOptions()).toEqual([undefined, undefined]);
     await p.unmount();
   });
 });

@@ -117,6 +117,7 @@ function HeldPage({ net, eventId, liveFrame }: { net: Net; eventId: number; live
   const quoteTriggerRef = useRef<LiveFrame | null>(null);
   const recoveryIntentRef = useRef(0);
   const quoteReadLifetimeRef = useRef(0);
+  const reconcileIntentRef = useRef(false);
   const quoteEventIdRef = useRef(eventId);
   if (quoteEventIdRef.current !== eventId) quoteTriggerRef.current = null;
   quoteEventIdRef.current = eventId;
@@ -126,7 +127,7 @@ function HeldPage({ net, eventId, liveFrame }: { net: Net; eventId: number; live
   const [reconcileLedger] = useState(createReconcileLedger);
   const pairJournalRef = useRef(null);
   const [foldedRefetch] = useState(() => FACTORY.runInNewContext({
-    createFoldedRefetchScheduler, canSubscribeEventQuotes, FOLDED_FRAME_REFETCH_MS, Date, reconcileLedger, reconcileRetryDelayMs: () => 1000,
+    createFoldedRefetchScheduler, canSubscribeEventQuotes, reconcileIntentRef, FOLDED_FRAME_REFETCH_MS, Date, reconcileLedger, reconcileRetryDelayMs: () => 1000,
     recoveryIntentRef, quoteReadLifetimeRef, quoteTriggerRef, pairedQuoteReadRef, freshNextEventReadRef, refreshEventRef, heldEventRef,
   }) as ReturnType<typeof createFoldedRefetchScheduler>);
   useEffect(() => () => foldedRefetch.cancel(), [foldedRefetch]);
@@ -215,7 +216,7 @@ afterEach(() => {
 // ─────────────────────────────────────────────────────────────────────────────
 describe("structural pin: the harness carries the page's push-effect quote branch", () => {
   it("app/events/[id]/page.tsx still reads as the lines HeldPage mounts", () => {
-    expect(PAGE).toMatch(/if \(quoteEventIdRef\.current !== eventId\) quoteTriggerRef\.current = null;\s*quoteEventIdRef\.current = eventId;/);
+    expect(PAGE).toMatch(/if \(quoteEventIdRef\.current !== eventId\) quoteTriggerRef\.current = null;\s*if \(quoteEventIdRef\.current !== eventId\) reconcileIntentRef\.current = false;\s*quoteEventIdRef\.current = eventId;/);
     expect(PAGE).toMatch(/if \(held && canSubscribeEventQuotes\(held\) && \(\s*liveFrame\.p === null \|\| held\.hero_probability_source !== "blend" \|\|\s*\(liveFrame\.status && liveFrame\.status !== held\.status\) \|\|\s*\(held\.status !== "live" && frameInvalidatesFoldedBlend\(held, liveFrame\)\)\s*\)\) \{\s*quoteTriggerRef\.current = liveFrame;\s*foldedRefetch\.request\(\);\s*return;\s*\}/);
     expect(PAGE).toMatch(/const quoteHistoryRangeRef = useRef\(fullHistoryRequested\);\s*quoteHistoryRangeRef\.current = fullHistoryRequested;/);
     expect(PAGE).toMatch(/useEffect\(\(\) => \(\) => foldedRefetch\.cancel\(\), \[foldedRefetch\]\);/);

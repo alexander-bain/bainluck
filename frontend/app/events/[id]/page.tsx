@@ -30,6 +30,7 @@ import {
   createWriteJournal,
   rebaseOnCoveringRead,
   reconcileFloorCoverage,
+  replayJournaledPoll,
   servedHistoryIsNewer,
   type ReconcileControl,
   type WriteJournal,
@@ -348,7 +349,9 @@ export default function EventPage({ params }: EventPageProps) {
     ["event", eventId],
     () => fetchEventWithLiveFrame(
       () => fetchEvent(eventId, takeFreshRead(freshNextEventReadRef)).then((polled) => {
-        pairJournalRef.current?.record((held) => keepNewerHeldHeadline(polled, held));
+        // #10090: replayed onto a pair's fresher read only when final or
+        // strictly newer — never a step back in game state or source rail.
+        pairJournalRef.current?.record((onto) => replayJournaledPoll(polled, onto));
         return polled;
       }),
       () => latestLiveFrameRef.current,
@@ -384,17 +387,25 @@ export default function EventPage({ params }: EventPageProps) {
   const quoteReadLifetimeRef = useRef(0);
   // #10090: the reconcile floors this page still owes. Bounded; see the ledger.
   const [reconcileLedger] = useState(createReconcileLedger);
+  // #10090: a control's jitter asked for the owed pair (the ladder asks through
+  // the scheduler). An owed floor alone never turns an invalidation into a pair.
+  const reconcileIntentRef = useRef(false);
   const quoteEventIdRef = useRef(eventId);
   // Another event's obligations are that page's; this one's own load reads it.
   if (quoteEventIdRef.current !== eventId) reconcileLedger.clear();
   if (quoteEventIdRef.current !== eventId) recoveryIntentRef.current = 0;
   if (quoteEventIdRef.current !== eventId) quoteTriggerRef.current = null;
+  if (quoteEventIdRef.current !== eventId) reconcileIntentRef.current = false;
   quoteEventIdRef.current = eventId;
   const refreshEventRef = useRef(refreshEvent);
   refreshEventRef.current = refreshEvent;
   const [foldedRefetch] = useState(() => createFoldedRefetchScheduler(
-    () => {
-      if ((quoteTriggerRef.current || recoveryIntentRef.current || reconcileLedger.owed()) && pairedQuoteReadRef.current) return pairedQuoteReadRef.current();
+    (read) => {
+      // #10090: an owed floor makes a pair only when its own jitter or ladder
+      // asks; an ordinary invalidation while owed keeps its detail read.
+      const reconcile = reconcileIntentRef.current || (read.backoff && reconcileLedger.owed());
+      reconcileIntentRef.current = false;
+      if ((quoteTriggerRef.current || recoveryIntentRef.current || reconcile) && pairedQuoteReadRef.current) return pairedQuoteReadRef.current();
       freshNextEventReadRef.current = true;
       return refreshEventRef.current();
     }, FOLDED_FRAME_REFETCH_MS, Date.now,
@@ -501,7 +512,7 @@ export default function EventPage({ params }: EventPageProps) {
       return;
     }
     if (frameInvalidatesFoldedBlend(heldEventRef.current, liveFrame)) {
-      foldedRefetch.request();
+      foldedRefetch.request({ keepBackoff: true });
       return;
     }
     // #9294: contributor notifications invalidate the fold without carrying
@@ -566,7 +577,9 @@ export default function EventPage({ params }: EventPageProps) {
     // #10090: the same jittered spread for a reconcile control, its own timer
     // (one per page, not per notification), onto the same single-flight pair.
     const reconcile = createReconnectCatchup(() => {
-      if (canSubscribeEventQuotes(heldEventRef.current)) foldedRefetch.request();
+      if (!canSubscribeEventQuotes(heldEventRef.current)) return;
+      reconcileIntentRef.current = true;
+      foldedRefetch.request();
     });
     reconcileCatchupRef.current = reconcile;
     return () => {
@@ -579,6 +592,7 @@ export default function EventPage({ params }: EventPageProps) {
       // the new event its own load, and a return re-reads, with the server
       // re-sending an unretired control on the new stream's open.
       reconcileLedger.clear();
+      reconcileIntentRef.current = false;
       recoveryIntentRef.current = 0;
       quoteReadLifetimeRef.current += 1;
       foldedRefetch.cancel();
@@ -992,13 +1006,17 @@ export default function EventPage({ params }: EventPageProps) {
     const readingLifetime = quoteReadLifetimeRef.current;
     const journal = createWriteJournal<EventDetailResponse>();
     pairJournalRef.current = journal;
+    // #10090: a pair read for an owed floor alone is paced by the scheduler's
+    // ladder (which honors a 429's wait), so each half is one request. A
+    // price-trigger or recovery pair keeps its existing retries.
+    const freshOptions = trigger || recovery ? undefined : { maxRetries: 0 };
     let detail: EventDetailResponse;
     let history: Awaited<ReturnType<typeof fetchEventHistory>>;
     try {
       [detail, history] = await Promise.all([
-        fetchEvent(readingEventId, true),
+        fetchEvent(readingEventId, true, freshOptions),
         fetchEventHistory(readingEventId, EVENT_BOOT_HISTORY_HOURS,
-          historyRangeParam(fullHistoryRequested), true),
+          historyRangeParam(fullHistoryRequested), true, freshOptions),
       ]);
     } finally {
       if (pairJournalRef.current === journal) pairJournalRef.current = null;
@@ -1022,13 +1040,18 @@ export default function EventPage({ params }: EventPageProps) {
     // revision claim, so the chart half stays owed and the persistent read
     // asks again (D4). Any other pair keeps history-covers-detail and
     // refuse-if-older.
-    const coverage = (floor: unknown) => reconcileFloorCoverage(detail, history, readingEventId, floor);
-    const reconciling = reconcileLedger.floors().some((floor) => coverage(floor) !== "none");
+    const covering = reconcileLedger.floors()
+      .filter((floor) => reconcileFloorCoverage(detail, history, readingEventId, floor) !== "none");
+    const reconciling = covering.length > 0;
     if (!reconciling && !quotePairCoversTrigger(detail, history, readingEventId, detail.blend_fold_revision)) return;
     const adopted = reconciling
       ? rebaseOnCoveringRead(detail, journal, heldEventRef.current)
       : keepNewerHeldHeadline(detail, heldEventRef.current) === detail ? detail : null;
     if (!adopted) return;
+    // Paid on what is WRITTEN, not on the detail before the replay: a replay
+    // that took the value back below a floor the detail covered is refused.
+    const written = (floor: unknown) => reconcileFloorCoverage(adopted, history, readingEventId, floor);
+    if (covering.some((floor) => written(floor) === "none")) return;
     await Promise.all([
       reconciling && servedHistoryIsNewer(latestBlendEdgeRef.current, history)
         ? undefined : refreshHistoryRef.current(history, { revalidate: false }),
@@ -1036,7 +1059,7 @@ export default function EventPage({ params }: EventPageProps) {
     ]);
     if (quoteTriggerRef.current === trigger) quoteTriggerRef.current = null;
     if (recoveryIntentRef.current === recovery) recoveryIntentRef.current = 0;
-    if (quoteReadLifetimeRef.current === readingLifetime) reconcileLedger.settle((floor) => coverage(floor) === "paid");
+    if (quoteReadLifetimeRef.current === readingLifetime) reconcileLedger.settle((floor) => written(floor) === "paid");
     setLastRefresh(Date.now());
   };
 
@@ -1076,7 +1099,7 @@ export default function EventPage({ params }: EventPageProps) {
     // joined or left) is refused; only a fresh detail read can settle it, so ask
     // for one and write nothing this tick (same swr hazard as the push effect).
     if (edgeInvalidatesHeldBlend(heldEventRef.current, edge)) {
-      foldedRefetch.request();
+      foldedRefetch.request({ keepBackoff: true });
       return;
     }
     pairJournalRef.current?.record((prev) => adoptNewerBlendEdge(prev, edge));

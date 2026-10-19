@@ -88,6 +88,7 @@ function setup(detailRevisions: Array<() => Promise<number>>) {
     createWriteJournal, rebaseOnCoveringRead, reconcileFloorCoverage, servedHistoryIsNewer, latestBlendEdgeRef: { current: null },
     pairJournalRef: { current: null },
     recoveryIntentRef: { current: 0 }, quoteReadLifetimeRef: { current: 0 },
+    reconcileIntentRef: { current: false },
     eventId: EVENT_ID, fullHistoryRequested: false,
     quoteEventIdRef: { current: EVENT_ID }, quoteHistoryRangeRef: { current: false },
     freshNextEventReadRef: { current: false },

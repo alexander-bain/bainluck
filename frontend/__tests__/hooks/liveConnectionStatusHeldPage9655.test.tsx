@@ -178,7 +178,7 @@ function HeldPage({ net, eventId }: { net: Net; eventId: number }) {
       return;
     }
     if (frameInvalidatesFoldedBlend(heldEventRef.current, liveFrame)) {
-      foldedRefetch.request();
+      foldedRefetch.request({ keepBackoff: true });
       return;
     }
     if (liveFrame.p === null || liveFrame.p === undefined) return;
@@ -304,9 +304,9 @@ afterEach(() => {
 describe("structural pin: the harness carries the page's own wiring", () => {
   it("app/events/[id]/page.tsx still reads as the lines HeldPage mounts", () => {
     // The fetcher, with the held-event getter a REST read reconciles against.
-    expect(PAGE).toMatch(/fetchEventWithLiveFrame\(\s*\(\) => fetchEvent\(eventId, takeFreshRead\(freshNextEventReadRef\)\)\.then\(\(polled\) => \{\s*pairJournalRef\.current\?\.record\(\(held\) => keepNewerHeldHeadline\(polled, held\)\);\s*return polled;\s*\}\),\s*\(\) => latestLiveFrameRef\.current,\s*\(\) => latestBlendEdgeRef\.current,\s*\(\) => heldEventRef\.current,/);
+    expect(PAGE).toMatch(/fetchEventWithLiveFrame\(\s*\(\) => fetchEvent\(eventId, takeFreshRead\(freshNextEventReadRef\)\)\.then\(\(polled\) => \{\s*(?:\/\/[^\n]*\n\s*)*pairJournalRef\.current\?\.record\(\(onto\) => replayJournaledPoll\(polled, onto\)\);\s*return polled;\s*\}\),\s*\(\) => latestLiveFrameRef\.current,\s*\(\) => latestBlendEdgeRef\.current,\s*\(\) => heldEventRef\.current,/);
     // The scheduler and its two branches.
-    expect(PAGE).toMatch(/createFoldedRefetchScheduler\(\s*\(\) => \{\s*if \(\(quoteTriggerRef\.current \|\| recoveryIntentRef\.current \|\| reconcileLedger\.owed\(\)\) && pairedQuoteReadRef\.current\) return pairedQuoteReadRef\.current\(\);\s*freshNextEventReadRef\.current = true;\s*return refreshEventRef\.current\(\);\s*\}, FOLDED_FRAME_REFETCH_MS,/);
+    expect(PAGE).toMatch(/createFoldedRefetchScheduler\(\s*\(read\) => \{\s*(?:\/\/[^\n]*\n\s*)*const reconcile = reconcileIntentRef\.current \|\| \(read\.backoff && reconcileLedger\.owed\(\)\);\s*reconcileIntentRef\.current = false;\s*if \(\(quoteTriggerRef\.current \|\| recoveryIntentRef\.current \|\| reconcile\) && pairedQuoteReadRef\.current\) return pairedQuoteReadRef\.current\(\);\s*freshNextEventReadRef\.current = true;\s*return refreshEventRef\.current\(\);\s*\}, FOLDED_FRAME_REFETCH_MS,/);
     // The hook, its status, and the fallback for a stream that reports only `connected`.
     expect(PAGE).toMatch(/status: reportedStreamStatus,\s*recoveryGeneration,\s*\} = useLiveEventStream\(eventId, quoteEligible, applyPushedFrame, applyReconcileControl\);/);
     expect(PAGE).toMatch(/const streamStatus = reportedStreamStatus \?\? \(streamConnected \? "open" : "idle"\);/);

@@ -164,7 +164,7 @@ function HeldEvent(props: { net: Net; liveFrame: LiveFrame | null; servedHistory
   const applyPushedFrame = useCallback((liveFrame: LiveFrame) => {
     if (liveFrame.event_id !== eventId) return;
     if (frameInvalidatesFoldedBlend(heldEventRef.current, liveFrame)) {
-      foldedRefetch.request();
+      foldedRefetch.request({ keepBackoff: true });
       return;
     }
     // #9294: contributor notifications invalidate the fold without carrying
@@ -188,7 +188,7 @@ function HeldEvent(props: { net: Net; liveFrame: LiveFrame | null; servedHistory
     latestBlendEdgeRef.current = edge;
     if (!edge) return;
     if (edgeInvalidatesHeldBlend(heldEventRef.current, edge)) {
-      foldedRefetch.request();
+      foldedRefetch.request({ keepBackoff: true });
       return;
     }
     refreshEvent((prev) => adoptNewerBlendEdge(prev, edge), { revalidate: false });
@@ -265,20 +265,20 @@ afterEach(() => {
 describe("structural pin: the harness carries the page's own wiring", () => {
   it("app/events/[id]/page.tsx still reads as the lines HeldEvent mounts", () => {
     // The fetcher, with the held-event getter the poll reconciles against.
-    expect(PAGE).toMatch(/fetchEventWithLiveFrame\(\s*\(\) => fetchEvent\(eventId, takeFreshRead\(freshNextEventReadRef\)\)\.then\(\(polled\) => \{\s*pairJournalRef\.current\?\.record\(\(held\) => keepNewerHeldHeadline\(polled, held\)\);\s*return polled;\s*\}\),\s*\(\) => latestLiveFrameRef\.current,\s*\(\) => latestBlendEdgeRef\.current,\s*\(\) => heldEventRef\.current,/);
+    expect(PAGE).toMatch(/fetchEventWithLiveFrame\(\s*\(\) => fetchEvent\(eventId, takeFreshRead\(freshNextEventReadRef\)\)\.then\(\(polled\) => \{\s*(?:\/\/[^\n]*\n\s*)*pairJournalRef\.current\?\.record\(\(onto\) => replayJournaledPoll\(polled, onto\)\);\s*return polled;\s*\}\),\s*\(\) => latestLiveFrameRef\.current,\s*\(\) => latestBlendEdgeRef\.current,\s*\(\) => heldEventRef\.current,/);
     expect(PAGE).toMatch(/refreshInterval: eventPollInterval/);
     // The scheduler, built once, torn down with the page.
-    expect(PAGE).toMatch(/createFoldedRefetchScheduler\(\s*\(\) => \{\s*if \(\(quoteTriggerRef\.current \|\| recoveryIntentRef\.current \|\| reconcileLedger\.owed\(\)\) && pairedQuoteReadRef\.current\) return pairedQuoteReadRef\.current\(\);\s*freshNextEventReadRef\.current = true;\s*return refreshEventRef\.current\(\);\s*\}, FOLDED_FRAME_REFETCH_MS,/);
+    expect(PAGE).toMatch(/createFoldedRefetchScheduler\(\s*\(read\) => \{\s*(?:\/\/[^\n]*\n\s*)*const reconcile = reconcileIntentRef\.current \|\| \(read\.backoff && reconcileLedger\.owed\(\)\);\s*reconcileIntentRef\.current = false;\s*if \(\(quoteTriggerRef\.current \|\| recoveryIntentRef\.current \|\| reconcile\) && pairedQuoteReadRef\.current\) return pairedQuoteReadRef\.current\(\);\s*freshNextEventReadRef\.current = true;\s*return refreshEventRef\.current\(\);\s*\}, FOLDED_FRAME_REFETCH_MS,/);
     expect(PAGE).toMatch(/useEffect\(\(\) => \(\) => foldedRefetch\.cancel\(\), \[foldedRefetch\]\)/);
     // The push effect: a refused frame requests a refetch and writes NOTHING.
-    expect(PAGE).toMatch(/if \(frameInvalidatesFoldedBlend\(heldEventRef\.current, liveFrame\)\) \{\s*foldedRefetch\.request\(\);\s*return;\s*\}/);
+    expect(PAGE).toMatch(/if \(frameInvalidatesFoldedBlend\(heldEventRef\.current, liveFrame\)\) \{\s*foldedRefetch\.request\(\{ keepBackoff: true \}\);\s*return;\s*\}/);
     expect(PAGE).toMatch(/\(prev\) => applyLiveFrame\(prev, frame\),/);
     expect(PAGE).toMatch(/\}, \[refreshEvent, eventId, foldedRefetch\]\);\s*(?:\/\/[^\n]*\n\s*)*const reconcileCatchupRef[^]*?\}, \[eventId, reconcileLedger\]\);\s*const quoteEligible = canSubscribeEventQuotes\(event\);/);
     expect(PAGE).toMatch(/\} = useLiveEventStream\(eventId, quoteEligible, applyPushedFrame, applyReconcileControl\);/);
     expect(PAGE.indexOf("frameInvalidatesFoldedBlend(heldEventRef.current, liveFrame)"))
       .toBeLessThan(PAGE.indexOf("if (liveFrame.p === null"));
     // The history effect: an incomparable edge requests a refetch and writes NOTHING.
-    expect(PAGE).toMatch(/if \(edgeInvalidatesHeldBlend\(heldEventRef\.current, edge\)\) \{\s*foldedRefetch\.request\(\);\s*return;\s*\}/);
+    expect(PAGE).toMatch(/if \(edgeInvalidatesHeldBlend\(heldEventRef\.current, edge\)\) \{\s*foldedRefetch\.request\(\{ keepBackoff: true \}\);\s*return;\s*\}/);
     expect(PAGE).toMatch(/refreshEvent\(\(prev\) => adoptNewerBlendEdge\(prev, edge\), \{ revalidate: false \}\);/);
     // Exactly one place applies a frame, and it is guarded: the 95bcc174 shape
     // (`void refreshEvent();` beside the frame write) is gone.

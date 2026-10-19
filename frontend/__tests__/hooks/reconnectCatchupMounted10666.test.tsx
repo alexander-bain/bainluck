@@ -137,6 +137,7 @@ function HeldPage({ net, eventId, candidate, enabled }: { net: Net; eventId: num
   const quoteTriggerRef = useRef<LiveFrame | null>(null);
   const recoveryIntentRef = useRef(0);
   const quoteReadLifetimeRef = useRef(0);
+  const reconcileIntentRef = useRef(false);
   const quoteEventIdRef = useRef(eventId);
   if (quoteEventIdRef.current !== eventId) { quoteTriggerRef.current = null; recoveryIntentRef.current = 0; }
   quoteEventIdRef.current = eventId;
@@ -146,14 +147,14 @@ function HeldPage({ net, eventId, candidate, enabled }: { net: Net; eventId: num
   const [reconcileLedger] = useState(createReconcileLedger);
   const pairJournalRef = useRef(null);
   const [foldedRefetch] = useState(() => FACTORY.runInNewContext({
-    createFoldedRefetchScheduler, canSubscribeEventQuotes, FOLDED_FRAME_REFETCH_MS, Date, reconcileLedger, reconcileRetryDelayMs: () => 1000,
+    createFoldedRefetchScheduler, canSubscribeEventQuotes, reconcileIntentRef, FOLDED_FRAME_REFETCH_MS, Date, reconcileLedger, reconcileRetryDelayMs: () => 1000,
     quoteTriggerRef, recoveryIntentRef, quoteReadLifetimeRef, pairedQuoteReadRef, freshNextEventReadRef, refreshEventRef, heldEventRef,
   }) as ReturnType<typeof createFoldedRefetchScheduler>);
   useEffect(() => () => foldedRefetch.cancel(), [foldedRefetch]);
   const recoveryRef = useRef<ReturnType<typeof createReconnectCatchup> | null>(null);
   const reconcileCatchupRef = useRef<ReturnType<typeof createReconnectCatchup> | null>(null);
   useEffect(RECOVERY_EFFECT.runInNewContext({
-    quoteEligible, createReconnectCatchup, canSubscribeEventQuotes, heldEventRef,
+    quoteEligible, createReconnectCatchup, canSubscribeEventQuotes, reconcileIntentRef, heldEventRef,
     recoveryIntentRef, quoteReadLifetimeRef, recoveryRef, foldedRefetch, reconcileCatchupRef, reconcileLedger,
   }), [eventId, quoteEligible, foldedRefetch]);
   useEffect(NOTIFY_EFFECT.runInNewContext({quoteEligible, recoveryGeneration, recoveryRef}),

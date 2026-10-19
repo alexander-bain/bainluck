@@ -438,11 +438,11 @@ describe('the page: a refuse-and-refetch branch writes nothing in the same tick'
   const page = readFileSync('app/events/[id]/page.tsx', 'utf8');
 
   test('the push effect returns right after requesting the refetch', () => {
-    expect(page).toMatch(/if \(frameInvalidatesFoldedBlend\(heldEventRef\.current, liveFrame\)\) \{\s*foldedRefetch\.request\(\);\s*return;\s*\}/);
+    expect(page).toMatch(/if \(frameInvalidatesFoldedBlend\(heldEventRef\.current, liveFrame\)\) \{\s*foldedRefetch\.request\(\{ keepBackoff: true \}\);\s*return;\s*\}/);
   });
 
   test('the history effect returns right after requesting the refetch', () => {
-    expect(page).toMatch(/if \(edgeInvalidatesHeldBlend\(heldEventRef\.current, edge\)\) \{\s*foldedRefetch\.request\(\);\s*return;\s*\}/);
+    expect(page).toMatch(/if \(edgeInvalidatesHeldBlend\(heldEventRef\.current, edge\)\) \{\s*foldedRefetch\.request\(\{ keepBackoff: true \}\);\s*return;\s*\}/);
   });
 
   test('the poll fetcher reconciles against the held headline', () => {

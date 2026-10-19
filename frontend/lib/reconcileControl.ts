@@ -5,10 +5,10 @@ import { compareFoldRevision, parseFoldRevision, type FoldRevision } from "./fol
  * #10090 — the `reconcile` control: "a source left this event's fold; read the
  * current state". It is NOT a price. It names an obligation (`custody_id`) and
  * a row-wise coverage FLOOR (`removal_rev`, the same `{ "<row id>": rev }` space
- * as `blend_fold_revision`): a paired read pays the obligation only when its
- * detail AND a pinned history edge are each at or beyond the floor on every
- * row (`reconcileFloorCoverage`). A missing row never covers, and an unpinned
- * history proves nothing, so it never pays.
+ * as `blend_fold_revision`): a paired read pays the obligation only when the
+ * value it WRITES and a pinned history edge are each at or beyond the floor on
+ * every row (`reconcileFloorCoverage`). A missing row never covers, and an
+ * unpinned history proves nothing, so it never pays.
  *
  *   event: reconcile
  *   data: {"event_id":15332323,"custody_id":"…","removal_rev":{"15332402":1129}}
@@ -143,7 +143,7 @@ export function createReconcileLedger(): ReconcileLedger {
  * contains everything committed before the read began, so replaying these, in
  * arrival order, onto that detail is the page's state as if the detail had
  * landed first. Each replay is the original ordered adopter (`applyLiveFrame`,
- * `adoptFoldedQuote`, `adoptNewerBlendEdge`, the poll's `keepNewerHeldHeadline`),
+ * `adoptFoldedQuote`, `adoptNewerBlendEdge`; the poll's is `replayJournaledPoll`),
  * so a write the detail already contains is refused by its own revision rule.
  * Bounded: past the cap the journal is spoiled and cannot rebase anything.
  */
@@ -203,6 +203,25 @@ export function reconcileFloorCoverage(
 }
 
 type Versioned = { status?: string | null; blend_fold_revision?: unknown };
+
+/**
+ * #10090 — the poll a pair journaled, replayed onto the value it lands on: the
+ * poll whole when it is a result (the final owner) or its fold revision is
+ * strictly NEWER than that value's, otherwise nothing. The live poll's own
+ * adopter (`keepNewerHeldHeadline`) is not a replay rule: for an older poll it
+ * keeps only the headline and takes score, status and clock from the poll, and
+ * for an incomparable one it returns the poll whole — so replayed after a
+ * fresher read it put the game back a step, or the removed source back on the
+ * rail. A same, older, incomparable or unversioned poll stays in the cache it
+ * already wrote; the next poll re-reads it.
+ */
+export function replayJournaledPoll<T extends Versioned>(polled: T, onto: T): T | undefined {
+  if (!isQuoteStreamStatus(polled.status)) return polled;
+  const polledRevision = parseFoldRevision(polled.blend_fold_revision);
+  const ontoRevision = parseFoldRevision(onto.blend_fold_revision);
+  return polledRevision && ontoRevision && compareFoldRevision(polledRevision, ontoRevision) === "newer"
+    ? polled : undefined;
+}
 
 /**
  * The covering read with the in-flight writes replayed onto it, or `null` when
