@@ -524,6 +524,12 @@ async def _stream(
             from_replay = bool(replay)
             if from_replay:
                 origin_id, payload = replay.popleft()
+            elif next_frame is None and initial_coverage is None and recovery_coverage is None:
+                # Nothing owned can complete during this wait: keep the
+                # parent's inline read, with no task or wait set per frame.
+                origin_id, payload = await _await_honouring_cancel(
+                    subscription.next(timeout=FRAME_WAIT_S)
+                )
             else:
                 # A completed coverage read must wake an otherwise quiet
                 # stream. Keep the mailbox owner when a read wins the race:
