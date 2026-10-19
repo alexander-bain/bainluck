@@ -41,6 +41,7 @@ from app.utils.feed_editions import (
     edition_manifest_cache_key,
     edition_policy_fingerprint,
 )
+from app.utils.principal_independent_cache import wire_decode
 
 feed_module = import_module("app.routes.feed")
 
@@ -869,6 +870,11 @@ async def test_a_coalesced_page_is_served_when_the_waiters_clock_agrees(
     assert feed_module._OPENING_LEADER_DECK_KEY not in wait_body
     assert feed_module._OPENING_LEADER_DECK_KEY not in lead_body
     for raw in fake.store.values():
+        # #11259: the base's durable copy is stored zlib-compressed; read it
+        # in its decoded form, or the private key could hide inside it.
+        if isinstance(raw, (bytes, bytearray)):
+            raw = wire_decode(raw)
+            assert raw is not None
         assert feed_module._OPENING_LEADER_DECK_KEY not in raw
 
 

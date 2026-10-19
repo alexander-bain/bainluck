@@ -758,6 +758,29 @@ def _setex_ttls_not_derived_from_live_helper(source: str) -> list[str]:
                     el.id for el in target.elts if isinstance(el, ast.Name)
                 )
 
+    # #11259: the page base's durable copy takes its TTL from
+    # `feed_page_base_last_good_max_age_s(live=...)`, which returns the live
+    # ceiling itself for a live deck (`test_the_durable_copy_ttl_helper_never_
+    # outlives_the_live_ceiling` is its proof obligation). Recognized ONLY when
+    # `live=` is passed something other than a constant: `live=False` would be
+    # an unconditional 30-minute TTL, and is refused like any other.
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Assign):
+            continue
+        call = node.value
+        if not (
+            isinstance(call, ast.Call)
+            and isinstance(call.func, ast.Name)
+            and call.func.id == _LIVE_CONDITIONAL_TTL_HELPER
+        ):
+            continue
+        live = next((kw.value for kw in call.keywords if kw.arg == "live"), None)
+        if live is None or isinstance(live, ast.Constant):
+            continue
+        for target in node.targets:
+            if isinstance(target, ast.Name):
+                live_derived.add(target.id)
+
     # Propagate through closure-captured defaults: `def _pub(_fresh_ttl=_fresh)`.
     for node in ast.walk(tree):
         if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
@@ -833,6 +856,31 @@ def _setex_ttls_not_derived_from_live_helper(source: str) -> list[str]:
 #: made the manifest carry payloads would fail there rather than quietly inherit
 #: a licence written for something else.
 _PAYLOAD_FREE_WRITER_TTLS = frozenset({"EDITION_LEASE_SECONDS"})
+
+#: #11259. A TTL helper that takes the deck's liveness and returns the live
+#: ceiling for a live deck. Not an exemption from the rule above — the rule
+#: holding is exactly what the proof below asserts.
+_LIVE_CONDITIONAL_TTL_HELPER = "feed_page_base_last_good_max_age_s"
+
+
+def test_the_durable_copy_ttl_helper_never_outlives_the_live_ceiling():
+    """The proof obligation that licenses ``_LIVE_CONDITIONAL_TTL_HELPER``."""
+    from app.utils.feed_cache import feed_page_base_last_good_max_age_s
+
+    assert feed_page_base_last_good_max_age_s(live=True) <= (
+        FEED_LAST_GOOD_MAX_AGE_LIVE_SECONDS
+    )
+
+
+def test_the_live_conditional_helper_is_refused_with_a_constant_liveness():
+    """``live=False`` spelled as a constant is an unconditional TTL."""
+    mutant = _clean_get_feed_source() + (
+        "\n"
+        "    _ttl_x = feed_page_base_last_good_max_age_s(live=False)\n"
+        "    async def _publish_x(_client=None, _key='k', _json='{}', _t=_ttl_x):\n"
+        "        await _client.setex(_key, _t, _json)\n"
+    )
+    assert _setex_ttls_not_derived_from_live_helper(mutant) == ["_t"]
 
 
 def test_every_setex_writer_derives_its_ttl_from_the_live_helper():
