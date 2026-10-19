@@ -32020,6 +32020,17 @@ def one_row_per_bookmaker_in_bucket(snaps: list) -> list:
     return [snap for _, _, snap in sorted(best.values(), key=lambda kept: kept[1])]
 
 
+#: #10090 R3 — `fresh=true` history reads, coalesced per process by
+#: `_coalesced_fresh_build` (the #9296 barrier) under the route's own cache key,
+#: `ehc.cache_key(event_id, hours, range)`: a fresh read is answered by a build
+#: that STARTED after it asked, and readers who arrive while one runs share the
+#: next — ≤ 2 builds per worker per key, not one per open page. Distinct hours
+#: or ranges never share (#11186's lesson: equal hours is not the same view).
+#: The route reads no principal, so the key needs none. What is shared is the
+#: serialized body and its Cache-Control, never a session or an ORM row.
+_HISTORY_FRESH_BUILDS: dict[tuple, tuple[float, object]] = {}
+
+
 @router.get("/{event_id}/history")
 async def get_event_odds_history_cached(
     event_id: int,
@@ -32074,8 +32085,14 @@ async def get_event_odds_history_cached(
             ehc.write(key, body, cache_control, ehc.lease_for(marks, payload))
         return body, cache_control
 
+    # #10090 R3: coalesced per (event, hours, range) by the #9296 barrier, and
+    # still never published. A fresh history read is the other half of the
+    # recovery pair, so the same broadcast that makes every open page re-read
+    # detail makes every one of them re-read this.
     if fresh:
-        body, cache_control = await _build(publish=False)
+        body, cache_control = await _coalesced_fresh_build(
+            _HISTORY_FRESH_BUILDS, key, time.time(), lambda: _build(publish=False)
+        )
         return _respond(body, cache_control, "bypass")
 
     flight_key = f"event_history:{key[0]}:{key[1]}:{key[2]}"
