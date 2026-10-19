@@ -406,6 +406,13 @@ async def test_the_real_newer_overlay_interleaving_writes_then_removes(
     try:
         t.accept(OUTCOME, 0.65)
         await flush(t)
+        # Precondition, named so a recurrence says what it is: #11138 orders a
+        # held quote only after a DB-clock sample that completed within its
+        # bound. A sample that timed out (a contended database) leaves the
+        # quote unordered and nothing to overlay; that is not this property.
+        assert held.sample_failures == 0, (
+            f"precondition: {held.sample_failures} DB-clock sample(s) timed out"
+        )
         await wait_for(lambda: any(v == 0.65 for _, e, v, _ in t.pubs if e == EVENT))
         overlay = await state(rig)
         assert overlay.price == 0.6 and overlay.source["value"] == 0.65
