@@ -86,6 +86,7 @@ function HeldPage({ throwOn }: { throwOn?: (f: LiveFrame) => boolean }) {
     heldEventRef: { current: undefined as Held | undefined },
     quoteTriggerRef: { current: null as LiveFrame | null },
     latestLiveFrameRef: { current: null as LiveFrame | null },
+    pairJournalRef: { current: null }, // #10090 G1: no paired read in flight here
     requests: 0,
     applied: [] as LiveFrame[],
   }));

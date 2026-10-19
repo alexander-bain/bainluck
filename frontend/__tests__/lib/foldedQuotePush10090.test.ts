@@ -55,6 +55,7 @@ function harness() {
   const context: Record<string, unknown> = {
     eventId: ID, heldEventRef: { current: cache }, foldedRefetch: { request: reads },
     quoteTriggerRef: { current: null }, latestLiveFrameRef: { current: null },
+    pairJournalRef: { current: null }, // #10090 G1: no paired read in flight here
     refreshEvent: mutations, setLastRefresh: jest.fn(), Date,
     adoptFoldedQuote, applyLiveFrame, frameInvalidatesFoldedBlend, canSubscribeEventQuotes, heldFrameAfter,
   };

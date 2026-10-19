@@ -30,6 +30,7 @@ import { canSubscribeEventQuotes, quotePairCoversTrigger } from "@/lib/eventQuot
 import { keepNewerHeldHeadline } from "@/lib/reconcileEventPoll";
 import { historyRangeParam } from "@/lib/event/historyRange";
 import { EVENT_BOOT_HISTORY_HOURS } from "@/lib/event/detailBoot";
+import { createReconcileLedger, createWriteJournal, rebaseOnCoveringRead, reconcileFloorCoverage, servedHistoryIsNewer } from "@/lib/reconcileControl";
 
 const PAGE_PATH = path.join(__dirname, "../../app/events/[id]/page.tsx");
 const PAGE = fs.readFileSync(PAGE_PATH, "utf8");
@@ -82,7 +83,12 @@ function setup(detailRevisions: Array<() => Promise<number>>) {
     keepNewerHeldHeadline, historyRangeParam, EVENT_BOOT_HISTORY_HOURS, FOLDED_FRAME_REFETCH_MS,
     pairedQuoteReadRef, quoteTriggerRef, heldEventRef,
     storedEventRef: { current: undefined }, // #10090 G2: no poll result stored here
+    // #10090 G1: no reconcile control is owed in these cases.
+    reconcileLedger: createReconcileLedger(), reconcileRetryDelayMs: () => 1000,
+    createWriteJournal, rebaseOnCoveringRead, reconcileFloorCoverage, servedHistoryIsNewer, latestBlendEdgeRef: { current: null },
+    pairJournalRef: { current: null },
     recoveryIntentRef: { current: 0 }, quoteReadLifetimeRef: { current: 0 },
+    reconcileIntentRef: { current: false },
     eventId: EVENT_ID, fullHistoryRequested: false,
     quoteEventIdRef: { current: EVENT_ID }, quoteHistoryRangeRef: { current: false },
     freshNextEventReadRef: { current: false },
@@ -130,7 +136,7 @@ afterEach(() => {
 describe("#10646 the page's scheduler opts the quote pair into one bounded retry", () => {
   it("the factory passes the page clock and an unresolved-quote predicate", () => {
     const code = EXPR.factory.replace(/\/\/[^\n]*/g, "");
-    expect(code).toMatch(/\}, FOLDED_FRAME_REFETCH_MS, Date\.now,\s*\(\) => \(quoteTriggerRef\.current !== null \|\| recoveryIntentRef\.current !== 0\) && canSubscribeEventQuotes\(heldEventRef\.current\),\s*\)$/);
+    expect(code).toMatch(/\}, FOLDED_FRAME_REFETCH_MS, Date\.now,\s*\(\) => \(quoteTriggerRef\.current !== null \|\| recoveryIntentRef\.current !== 0\) && canSubscribeEventQuotes\(heldEventRef\.current\),\s*\{ owed: \(\) => reconcileLedger\.owed\(\) && canSubscribeEventQuotes\(heldEventRef\.current\), delayMs: reconcileRetryDelayMs \},\s*\)$/);
     expect(FOLDED_FRAME_REFETCH_MS).toBe(1000);
   });
 });

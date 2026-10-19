@@ -114,6 +114,7 @@ function BootPage({ net, fetcherSeesEdge, folds }: { net: Net; fetcherSeesEdge: 
   const scope: Record<string, unknown> = {
     event, servedHistory, refreshEvent, foldedRefetch, latestBlendEdgeRef, heldEventRef,
     servedBlendEdgeObservation, edgeInvalidatesHeldBlend, adoptNewerBlendEdge,
+    pairJournalRef: { current: null }, // #10090 G1: no paired read in flight here
   };
   if (HOLDS_HEADLINE) scope.holdsHeadline = HOLDS_HEADLINE.runInNewContext(scope);
   // eslint-disable-next-line react-hooks/exhaustive-deps

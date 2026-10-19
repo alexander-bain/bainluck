@@ -21,6 +21,7 @@ import { frameInvalidatesFoldedBlend } from "../../lib/eventLivePush";
 import { keepNewerHeldHeadline } from "../../lib/reconcileEventPoll";
 import { historyRangeParam } from "../../lib/event/historyRange";
 import { EVENT_BOOT_HISTORY_HOURS } from "../../lib/event/detailBoot";
+import { createReconcileLedger, createWriteJournal, rebaseOnCoveringRead, reconcileFloorCoverage, servedHistoryIsNewer } from "../../lib/reconcileControl";
 
 const PAGE = fs.readFileSync(path.join(__dirname, "../../app/events/[id]/page.tsx"), "utf8");
 const FOLDED_FRAME_REFETCH_MS = Number(PAGE.match(/const FOLDED_FRAME_REFETCH_MS = (\d+)/)![1]);
@@ -136,20 +137,25 @@ function HeldPage({ net, eventId, candidate, enabled }: { net: Net; eventId: num
   const quoteTriggerRef = useRef<LiveFrame | null>(null);
   const recoveryIntentRef = useRef(0);
   const quoteReadLifetimeRef = useRef(0);
+  const reconcileIntentRef = useRef(false);
   const quoteEventIdRef = useRef(eventId);
   if (quoteEventIdRef.current !== eventId) { quoteTriggerRef.current = null; recoveryIntentRef.current = 0; }
   quoteEventIdRef.current = eventId;
   const refreshEventRef = useRef(refreshEvent);
   refreshEventRef.current = refreshEvent;
+  // #10090 G1: the page's reconcile ledger and in-flight write journal.
+  const [reconcileLedger] = useState(createReconcileLedger);
+  const pairJournalRef = useRef(null);
   const [foldedRefetch] = useState(() => FACTORY.runInNewContext({
-    createFoldedRefetchScheduler, canSubscribeEventQuotes, FOLDED_FRAME_REFETCH_MS, Date,
+    createFoldedRefetchScheduler, canSubscribeEventQuotes, reconcileIntentRef, FOLDED_FRAME_REFETCH_MS, Date, reconcileLedger, reconcileRetryDelayMs: () => 1000,
     quoteTriggerRef, recoveryIntentRef, quoteReadLifetimeRef, pairedQuoteReadRef, freshNextEventReadRef, refreshEventRef, heldEventRef,
   }) as ReturnType<typeof createFoldedRefetchScheduler>);
   useEffect(() => () => foldedRefetch.cancel(), [foldedRefetch]);
   const recoveryRef = useRef<ReturnType<typeof createReconnectCatchup> | null>(null);
+  const reconcileCatchupRef = useRef<ReturnType<typeof createReconnectCatchup> | null>(null);
   useEffect(RECOVERY_EFFECT.runInNewContext({
-    quoteEligible, createReconnectCatchup, canSubscribeEventQuotes, heldEventRef,
-    recoveryIntentRef, quoteReadLifetimeRef, recoveryRef, foldedRefetch,
+    quoteEligible, createReconnectCatchup, canSubscribeEventQuotes, reconcileIntentRef, heldEventRef,
+    recoveryIntentRef, quoteReadLifetimeRef, recoveryRef, foldedRefetch, reconcileCatchupRef, reconcileLedger,
   }), [eventId, quoteEligible, foldedRefetch]);
   useEffect(NOTIFY_EFFECT.runInNewContext({quoteEligible, recoveryGeneration, recoveryRef}),
     [recoveryGeneration, quoteEligible, eventId]);
@@ -174,6 +180,7 @@ function HeldPage({ net, eventId, candidate, enabled }: { net: Net; eventId: num
   const refreshHistoryRef = useRef(refreshHistory);
   refreshHistoryRef.current = refreshHistory;
   pairedQuoteReadRef.current = PAIR.runInNewContext({
+    createWriteJournal, rebaseOnCoveringRead, reconcileFloorCoverage, servedHistoryIsNewer, latestBlendEdgeRef: { current: null }, pairJournalRef, reconcileLedger,
     eventId, fullHistoryRequested, fetchEvent, fetchEventHistory, EVENT_BOOT_HISTORY_HOURS, historyRangeParam,
     quotePairCoversTrigger, keepNewerHeldHeadline, setLastRefresh, Date, storedEventRef,
     canSubscribeEventQuotes: harness.terminalCheck ?? canSubscribeEventQuotes,
