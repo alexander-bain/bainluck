@@ -394,7 +394,7 @@ PREGAME_PROJECTION_SQL = """
 
 
 def plan_pregame_projections(
-    events: Iterable[Any], sport_key_of
+    events: Iterable[Any], sport_key_of, status_of=None
 ) -> tuple[Optional[dict], dict[int, dict]]:
     """Decide every settled row's question in one pass: ``(binds, answers)``.
 
@@ -402,13 +402,20 @@ def plan_pregame_projections(
     (``{UNAVAILABLE_KEY: reason}``); ``binds`` covers the rest, or is ``None``
     when nothing needs reading. Unsettled rows are absent from both: they are
     not asked. ``sport_key_of(event)`` must not emit IO.
+
+    ``status_of(event)`` is the status the CARD PRINTS, when the caller has
+    one. Routes pass it so "settled" means what the reader sees: #11295's
+    current-pair attach keys on the same served status, so a card can carry
+    at most one of the two pairs (Discover's clearance condition 1). The
+    stored column is the fallback.
     """
     ids: list[int] = []
     cutoffs: list[datetime] = []
     formats: dict[int, tuple[str, str]] = {}
     answers: dict[int, dict] = {}
     for event in events:
-        if _loaded(event, "status") not in SETTLED_STATUSES:
+        status = status_of(event) if status_of is not None else _loaded(event, "status")
+        if status not in SETTLED_STATUSES:
             continue
         event_id = _loaded(event, "id")
         if event_id is None:
@@ -448,7 +455,7 @@ def answers_from_rows(plan: Mapping[str, Any], rows: Iterable[Any]) -> dict[int,
 
 
 async def read_pregame_projections(
-    db: Any, events: Iterable[Any], sport_key_of
+    db: Any, events: Iterable[Any], sport_key_of, status_of=None
 ) -> dict[int, dict]:
     """``{event_id: {PROJECTION_KEY: …} | {UNAVAILABLE_KEY: reason}}`` for the settled rows.
 
@@ -458,7 +465,7 @@ async def read_pregame_projections(
     """
     from sqlalchemy import text
 
-    plan, answers = plan_pregame_projections(list(events), sport_key_of)
+    plan, answers = plan_pregame_projections(list(events), sport_key_of, status_of)
     if plan is None:
         return answers
     try:

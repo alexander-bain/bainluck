@@ -398,3 +398,20 @@ def test_the_kind_names_the_scheduled_boundary_and_never_a_stronger_claim():
     assert projection["kind"] == pp.KIND_LAST_BEFORE_SCHEDULED_START
     assert projection["boundary"] == "scheduled_start"
     assert "captured_at" not in projection  # a range, never one stamp for the whole
+
+
+def test_the_status_the_card_prints_decides_not_the_stored_column():
+    # Discover's clearance condition 1: #11295 keys its current pair on the
+    # SERVED status, so this keys on the same one and a card carries at most one.
+    stored_final_served_live = event(1, status="completed")
+    stored_live_served_final = event(2, status="live")
+    served = {1: "live", 2: "completed"}
+    binds, answers = pp.plan_pregame_projections(
+        [stored_final_served_live, stored_live_served_final],
+        sport_of,
+        status_of=lambda e: served[e.id],
+    )
+    assert binds["ids"] == [2] and answers == {}
+    # Without a served status the stored column is the fallback.
+    binds, _ = pp.plan_pregame_projections([stored_final_served_live], sport_of)
+    assert binds["ids"] == [1]
