@@ -8158,6 +8158,26 @@ jobs:
             exit 1
           }
 
+      - name: "#10090 event detail state read window on the database clock (real Postgres)"
+        # Random disposable schema. A committed kickoff makes the next window
+        # strictly later; two open reads overlap (unordered); a long transaction
+        # widens the window but never lies.
+        if: matrix.group == 'isolated' && needs.change-scope.outputs.reuse != 'true'
+        run: |
+          python -m pytest tests/integration/test_event_state_read_window_10090_pg.py -v -rs > /tmp/state-read-window10090.txt 2>&1 || {
+            cat /tmp/state-read-window10090.txt
+            exit 1
+          }
+          cat /tmp/state-read-window10090.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/state-read-window10090.txt; then
+            echo "::error::#10090 state read window gate skipped"
+            exit 1
+          fi
+          grep -qE "[^0-9]3 passed([,[:space:]]|$)" /tmp/state-read-window10090.txt || {
+            echo "::error::#10090 state read window gate did not execute all three cases"
+            exit 1
+          }
+
   # The existing required context stays non-matrix. A failed, cancelled or
   # unexpectedly skipped worker must never satisfy branch protection as green.
   # Frontend-only candidates retain the original intentional job-level skip.

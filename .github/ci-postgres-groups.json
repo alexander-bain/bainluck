@@ -256,7 +256,8 @@
     "#10556 durable ActivityKit reservations (real Postgres)",
     "#10564 abandoned ActivityKit credentials expire (real Postgres)",
     "#10568 canonical ActivityKit observation ordering (real Postgres)",
-    "#10542 serialized ActivityKit runtime cursor (real Postgres)"
+    "#10542 serialized ActivityKit runtime cursor (real Postgres)",
+    "#10090 event detail state read window on the database clock (real Postgres)"
   ],
   "shared-suffix": [
     "#10024 'dodgers world series' reaches the World Series board, not No results (real Postgres)",

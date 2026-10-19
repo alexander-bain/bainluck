@@ -18895,6 +18895,87 @@ def _unstarted_entry_ttl(cached_resp: dict, cached_at: float) -> float:
     )
 
 
+#: #10090 — the two payload keys that bracket WHEN this detail read the event
+#: row, on the database's own clock. Present-only and always together.
+STATE_READ_NOT_BEFORE_KEY = "state_read_not_before"
+STATE_READ_NOT_AFTER_KEY = "state_read_not_after"
+
+
+async def event_state_read_window(db: AsyncSession) -> dict:
+    """When this request's transaction read the event row — ``{}`` if unknown.
+
+    A page holds one detail payload and receives others: its own polls (which
+    may be served from `_event_detail_cache`, built seconds earlier) and the
+    fresh paired read a price invalidation asks for. Two of them can carry the
+    SAME `blend_fold_revision` — a kickoff or a touchdown changes no price — so
+    the revision cannot say which one's `status` and score are current, and
+    neither can arrival order (production #10090: a fresh read that began
+    before kick-off landed after a `live 0-0` poll and put the game back to
+    `scheduled`; a `live 7-0` became `0-0` the same way).
+
+    This is the clock that can. Called once, in the same transaction and after
+    every read of the served row (the primary-key load and any duplicate
+    resolution), it returns:
+
+    * ``state_read_not_before`` — ``transaction_timestamp()``: the transaction
+      began no later than any statement in it, and under READ COMMITTED each
+      statement's snapshot is taken at or after its own start;
+    * ``state_read_not_after`` — ``clock_timestamp()``: evaluated while THIS
+      statement runs, after the row's snapshot was taken.
+
+    So the row's state was read inside ``[not_before, not_after]``, both on the
+    database server's one clock — never a dyno's. A reader may call payload B's
+    state newer than payload A's only when B's ``not_before`` is strictly after
+    A's ``not_after``; overlapping windows are unordered and nothing here
+    chooses for them. A cached payload carries the window of the build that
+    made it, which is the point: that build is what it describes.
+
+    What the window covers — events-row columns ONLY: the raw ``status``,
+    ``home_score``/``away_score``, ``completed_at``, ``period``/``game_clock``,
+    ``score_source``/``score_observed_at``, ``box_score_data`` (players and the
+    period line) and the tennis ``linescore``. Two limits a reader must keep:
+
+    * the served ``status`` is ``served_event_status(row status, served
+      commence, dyno now)``; the Kalshi start recovery (which moves only the
+      commence) and the dyno's clock act after the window, and both can only
+      demote ``live`` to ``scheduled`` near commence, never invent a state;
+    * keys read AFTER the window are not covered: the ``venue_*`` settlement
+      keys (``_venue_settlement_served`` adds ``venue_settled``,
+      ``venue_settled_result`` and ``venue_closed_no_winner``; it never touches
+      ``status``), ``live_probability_pinned``, ``hero_*`` and
+      ``prematch_odds``. They travel with the status that gated them; the
+      window does not order them.
+
+    Fails closed to ``{}`` — on any error, an absent row, a value that is not a
+    timezone-aware datetime, or a reversed pair. An absent window is "no
+    claim", never a guessed one.
+    """
+    try:
+        row = (
+            await db.execute(text("SELECT transaction_timestamp(), clock_timestamp()"))
+        ).first()
+    except Exception:
+        # Gotcha #42's bargain: a payload without the clock is served exactly
+        # as before. The window is additive. Honest limit: there is no
+        # savepoint, so a failure of THIS statement that leaves the connection
+        # up also leaves the transaction aborted for the reads below; "never
+        # costs a page" holds when the failure is the connection itself.
+        logger.warning("event detail: state read window unavailable", exc_info=True)
+        return {}
+    if row is None or len(row) != 2:
+        return {}
+    not_before, not_after = row[0], row[1]
+    if not all(
+        isinstance(stamp, datetime) and stamp.utcoffset() is not None
+        for stamp in (not_before, not_after)
+    ) or not_after < not_before:
+        return {}
+    return {
+        STATE_READ_NOT_BEFORE_KEY: not_before.astimezone(timezone.utc).isoformat(),
+        STATE_READ_NOT_AFTER_KEY: not_after.astimezone(timezone.utc).isoformat(),
+    }
+
+
 def _cached_detail_payload(event_id: int, now: float) -> dict | None:
     """The detail payload `get_event` would serve RIGHT NOW, or ``None``.
 
@@ -19664,6 +19745,10 @@ async def get_event(
     event = _served.event
     event_id = _served.event_id
 
+    # #10090: bracket the served row's read NOW — after the duplicate resolution
+    # read it, before anything below can commit. Published with the payload.
+    _state_read_window = await event_state_read_window(db)
+
     # ── lane1/132: a row marked retired stops rendering ──────────────────────
     #
     # `RETIRED_STATUSES` is the whole argument; the short version is that every
@@ -20340,6 +20425,8 @@ async def get_event(
         )
         if _periods is not None:
             response["box_score_data"].update(_periods)
+
+    response.update(_state_read_window)
 
     # Q050: cache under the id the caller ASKED FOR as well as the one we
     # served. `event_id` is rebound above when a duplicate resolves, so caching
