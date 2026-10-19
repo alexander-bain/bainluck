@@ -20,6 +20,7 @@ import time
 import unicodedata
 import weakref
 from collections import Counter
+from collections.abc import Callable
 from datetime import date, datetime, timedelta, timezone
 from functools import lru_cache
 from typing import Any, Optional, Union
@@ -5411,6 +5412,9 @@ async def get_feed(
                             sports_mode=(mode or "").lower() == "sports",
                             # #1480: reuse the reader-independent game readings.
                             share_inputs=True,
+                            # #11295: the optional pair read is bounded inside
+                            # what is left of this budget.
+                            projection_budget_s=_feed_budget_remaining_s,
                         )
                     feed_items.extend(event_items)
                 except Exception as e:
@@ -11315,6 +11319,7 @@ async def _score_events(
     price_refresh_events: list | None = None,
     sports_mode: bool = False,
     share_inputs: bool = False,
+    projection_budget_s: Callable[[], float] | None = None,
 ) -> list[dict]:
     """Score and format events for the feed.
 
@@ -12390,26 +12395,44 @@ async def _score_events(
 
     # #11295 — the sportsbooks' projected final, read once for the cards built
     # above (see `card_projected_pair`). After the loop, so only cards that were
-    # admitted are read.
-    await _attach_card_projected_pairs(db, scored_items, events)
+    # admitted are read. `projection_budget_s` is the request budget still left
+    # (the events stage passes it), so the optional read is bounded inside it.
+    await _attach_card_projected_pairs(
+        db,
+        scored_items,
+        events,
+        remaining_s=projection_budget_s() if projection_budget_s else None,
+    )
 
     return scored_items
 
 
 async def _attach_card_projected_pairs(
-    db: AsyncSession, items: list[dict], events: list
+    db: AsyncSession,
+    items: list[dict],
+    events: list,
+    *,
+    remaining_s: float | None = None,
 ) -> None:
     """Add the detail page's projected pair to each scheduled/live game card.
 
     One statement for the whole build, inside a SAVEPOINT: the pair is an
     addition to a card, so a failed read costs the cards their pair and nothing
     else (gotcha #42). Without the savepoint, a failed statement would abort the
-    transaction and every later stage on this session with it. A cancellation
-    (the events-stage deadline) is not caught and propagates as itself.
+    transaction and every later stage on this session with it.
+
+    The read carries its own server-side bound, strictly inside ``remaining_s``
+    (the request budget left; None = the cap alone). The cards are already
+    scored when this runs, so running out must cost the pair and never the
+    events stage: an expired events deadline serves last-good or nothing
+    (#10534, #11259). A statement that times out is an ordinary failure and is
+    caught below; it never touches the events deadline. A cancellation from
+    outside is not caught and propagates as itself.
     """
     from app.utils.card_projected_pair import (
         attach_card_projected_pair,
-        read_card_projected_pairs,
+        card_projection_read_timeout_ms,
+        read_card_projected_pairs_bounded,
     )
 
     by_id = {e.id: e for e in events}
@@ -12433,8 +12456,9 @@ async def _attach_card_projected_pairs(
     if not cards:
         return
     try:
-        async with db.begin_nested():
-            pairs = await read_card_projected_pairs(db, cards)
+        pairs = await read_card_projected_pairs_bounded(
+            db, cards, timeout_ms=card_projection_read_timeout_ms(remaining_s)
+        )
     except Exception:  # noqa: BLE001 — see the docstring
         logger.exception("Feed: projected-pair read failed; cards keep no pair")
         return

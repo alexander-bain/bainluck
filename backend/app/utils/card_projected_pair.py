@@ -26,9 +26,19 @@ What a card may carry is narrower than what detail serves, on purpose:
   pregame pair under a live game. A card withholds it: every row the pair came
   from must have been confirmed at or after `commence_time` — the filter's own
   test, not a new cutoff.
-* **A real pair.** Both halves present, finite and not below zero, and the sport's
-  spread must be a margin (`sportsbook_spread_is_a_margin`, the writer's own
-  gate). Never one half, never a complement, never 0–0.
+* **A real pair.** Both halves present, finite and not below zero. Never one
+  half, never a complement.
+* **A sport whose pair is a final score.** American football, basketball and
+  soccer only — UX's table in `frontend/lib/projectedFinalPair.ts`. The writer's
+  `sportsbook_spread_is_a_margin` is wider (everything but baseball and fights)
+  and is NOT the gate here: a puck line is pinned at ±1.5 (NHL 15333056 and
+  15332424 both "4 – 3" whatever the price; AHL 15327140 "0.0 – 1.5") and a
+  tennis pair is games under a sets scoreboard (15326853 "11.2 – 11.3" over
+  0 – 2). The shared gate stays as it is; the writer and the web read it.
+
+The read is optional, so it carries its own server-side bound
+(`read_card_projected_pairs_bounded`): a slow read costs the cards their pair,
+never the events stage that already scored them.
 
 The pair travels with `projection_captured_at`, which is detail's
 `current_odds.captured_at` (the newest row the consensus read). It has its own name
@@ -44,12 +54,10 @@ from collections import defaultdict
 from datetime import datetime
 from typing import Any, Iterable, Optional
 
+from sqlalchemy import text
+
 from app.utils.odds_filtering import _effective_time, filter_stale_bookmaker_snapshots
-from app.utils.odds_math import (
-    aggregate_bookmaker_odds,
-    detect_reversed_bookmakers,
-    sportsbook_spread_is_a_margin,
-)
+from app.utils.odds_math import aggregate_bookmaker_odds, detect_reversed_bookmakers
 
 logger = logging.getLogger(__name__)
 
@@ -63,18 +71,48 @@ CARD_PROJECTION_KEYS = (
     "projection_captured_at",
 )
 
+#: Sport-key prefixes whose sportsbook pair is a final score in the scoreboard's
+#: unit. UX's exact table (`frontend/lib/projectedFinalPair.ts`
+#: `PROJECTED_FINAL_FORMATS`); everything else, undeclared keys included, is no.
+CARD_PROJECTION_SPORT_PREFIXES = ("americanfootball_", "basketball_", "soccer_")
+
+#: The pair read's own server-side bound (`statement_timeout`). A ceiling, not a
+#: target: no plan or timing exists at hundreds of ids, and a read that hits it
+#: serves the cards with no pair.
+CARD_PROJECTION_READ_CAP_MS = 1500
+#: Kept back from the request budget that remains, so the statement's cancel and
+#: the savepoint rollback finish before the events-stage deadline would fire.
+CARD_PROJECTION_DEADLINE_MARGIN_MS = 500
+#: Below this, the read is not started at all.
+CARD_PROJECTION_MIN_READ_MS = 50
+
 
 def card_projection_wanted(
     served_status: Optional[str], sport_key: Optional[str]
 ) -> bool:
     """True when a card in this state and sport could carry a pair at all.
 
-    Decides which ids are read, so a finished game or a run-line sport costs
-    nothing.
+    Decides which ids are read, so a finished game or a sport whose pair is not
+    a final score costs nothing.
     """
-    return served_status in CARD_PROJECTION_STATUSES and sportsbook_spread_is_a_margin(
-        sport_key
+    return (
+        served_status in CARD_PROJECTION_STATUSES
+        and isinstance(sport_key, str)
+        and sport_key.startswith(CARD_PROJECTION_SPORT_PREFIXES)
     )
+
+
+def card_projection_read_timeout_ms(remaining_s: Optional[float]) -> int:
+    """The pair read's `statement_timeout` in whole ms, or 0 for "do not read".
+
+    ``remaining_s`` is the request budget left (None when the caller has no
+    request budget, e.g. the price refresh): the bound is the cap, or what is
+    left less the margin when that is smaller.
+    """
+    bound = CARD_PROJECTION_READ_CAP_MS
+    if remaining_s is not None:
+        bound = min(bound, int(remaining_s * 1000) - CARD_PROJECTION_DEADLINE_MARGIN_MS)
+    return bound if bound >= CARD_PROJECTION_MIN_READ_MS else 0
 
 
 def _score(value: Any) -> Optional[float]:
@@ -194,4 +232,31 @@ async def read_card_projected_pairs(db: Any, cards: Iterable[dict]) -> dict[int,
             continue
         if pair is not None:
             pairs[event_id] = pair
+    return pairs
+
+
+async def read_card_projected_pairs_bounded(
+    db: Any, cards: list[dict], *, timeout_ms: int
+) -> dict[int, dict]:
+    """`read_card_projected_pairs` under its own server-side bound.
+
+    SAVEPOINT → ``SET LOCAL statement_timeout`` → the read → ROLLBACK TO
+    SAVEPOINT. The read writes nothing, and rolling the savepoint back (never
+    releasing it) reverts the SET LOCAL, so the bound cannot leak into a later
+    stage on the same session. A statement that runs out raises
+    ``QueryCanceledError`` out of the savepoint; the caller's catch turns it into
+    "no pair". Bounding the wait from asyncio instead would cancel the statement
+    mid-flight on the request session and bound the wait, not the session.
+
+    No wanted card, or ``timeout_ms`` below the floor, means no round trip at all.
+    """
+    if timeout_ms < CARD_PROJECTION_MIN_READ_MS or not any(
+        card_projection_wanted(c.get("served_status"), c.get("sport_key"))
+        for c in cards
+    ):
+        return {}
+    async with db.begin_nested() as savepoint:
+        await db.execute(text(f"SET LOCAL statement_timeout = '{int(timeout_ms)}ms'"))
+        pairs = await read_card_projected_pairs(db, cards)
+        await savepoint.rollback()
     return pairs

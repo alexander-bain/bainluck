@@ -128,11 +128,54 @@ def test_a_terminal_or_unknown_state_carries_no_pair(served):
 
 
 @pytest.mark.parametrize(
-    "sport", ["baseball_mlb", "mma_mixed_martial_arts", "boxing_boxing"]
+    "sport",
+    [
+        "baseball_mlb",
+        "mma_mixed_martial_arts",
+        "boxing_boxing",
+        # C2 (lane1b on c3fe360688): the writer's margin gate says yes to these,
+        # but the pair is no final score. Puck line pinned at ±1.5 (NHL
+        # 15333056 / 15332424 "4 – 3" whatever the price; AHL 15327140
+        # "0.0 – 1.5"); tennis is games under a sets scoreboard (15326853).
+        "icehockey_nhl",
+        "icehockey_ahl",
+        "tennis_atp_shanghai",
+        # undeclared: no measured fixture says its pair is a scoreline
+        "cricket_ipl",
+        "rugbyleague_nrl",
+        "aussierules_afl",
+        "",
+        None,
+    ],
 )
-def test_a_sport_whose_spread_is_not_a_margin_carries_no_pair(sport):
+def test_a_sport_whose_pair_is_not_a_final_score_carries_no_pair(sport):
     assert _pair(_board(), sport=sport) is None
     assert not cpp.card_projection_wanted("scheduled", sport)
+    assert not cpp.card_projection_wanted("live", sport)
+
+
+@pytest.mark.parametrize(
+    "sport",
+    ["americanfootball_nfl", "americanfootball_ncaaf", "basketball_nba", "soccer_epl"],
+)
+def test_football_basketball_and_soccer_are_admitted(sport):
+    assert cpp.card_projection_wanted("scheduled", sport)
+    assert _pair(_board(), sport=sport) is not None
+
+
+def test_the_card_admits_less_than_the_writers_margin_gate():
+    """UX's table, not `sportsbook_spread_is_a_margin` (which the writer and the
+    web still read, and which says yes to hockey and tennis)."""
+    from app.utils.odds_math import sportsbook_spread_is_a_margin
+
+    assert cpp.CARD_PROJECTION_SPORT_PREFIXES == (
+        "americanfootball_",
+        "basketball_",
+        "soccer_",
+    )
+    for sport in ("icehockey_nhl", "tennis_atp_shanghai", "cricket_ipl"):
+        assert sportsbook_spread_is_a_margin(sport)  # the control
+        assert not cpp.card_projection_wanted("scheduled", sport)
 
 
 def test_no_book_with_a_spread_and_total_means_no_pair_never_zero_zero():
@@ -300,6 +343,21 @@ def test_one_statement_for_many_cards_and_refused_cards_are_not_read(monkeypatch
             "commence_time": _KICKOFF,
             "sport_key": "baseball_mlb",
         },
+        *[
+            {
+                "id": event_id,
+                "stored_status": "scheduled",
+                "served_status": "scheduled",
+                "commence_time": _KICKOFF,
+                "sport_key": sport,
+            }
+            for event_id, sport in (
+                (15333056, "icehockey_nhl"),
+                (15327140, "icehockey_ahl"),
+                (15326853, "tennis_atp_shanghai"),
+                (9, "cricket_ipl"),
+            )
+        ],
     ]
     pairs = asyncio.run(cpp.read_card_projected_pairs(db, cards))
     assert len(db.statements) == 1
@@ -327,32 +385,79 @@ def test_no_wanted_card_means_no_statement():
 
 
 class _Nested:
+    """A savepoint: `async with` + an explicit `rollback()`; never released here."""
+
     def __init__(self, db):
         self.db = db
+        self.done = False
 
     async def __aenter__(self):
         self.db.savepoints += 1
+        self.db.log.append("SAVEPOINT")
+        return self
+
+    async def rollback(self):
+        self.done = True
+        self.db.rolled_back += 1
+        self.db.log.append("ROLLBACK TO SAVEPOINT")
+        await self.db.round_trip()
 
     async def __aexit__(self, exc_type, exc, tb):
+        if self.done:
+            return False
         if exc_type is not None:
-            self.db.rolled_back += 1
+            await self.rollback()
+        else:
+            self.db.log.append("RELEASE SAVEPOINT")
         return False
 
 
 class _FeedDB(_DB):
-    def __init__(self, rows, fail=None):
+    """The request session, modelling the server's `statement_timeout`.
+
+    Every round trip costs ``rtt`` seconds; the read takes ``read_s`` and, past
+    the SET LOCAL bound, is cancelled BY THE SERVER at the bound.
+    """
+
+    def __init__(self, rows, fail=None, *, read_s=0.0, rtt=0.0):
         super().__init__(rows)
         self.fail = fail
+        self.read_s, self.rtt = read_s, rtt
         self.savepoints = 0
         self.rolled_back = 0
+        self.settings: list[str] = []
+        self.log: list[str] = []
+        self.timeout_ms: int | None = None
 
     def begin_nested(self):
         return _Nested(self)
 
+    async def round_trip(self):
+        if self.rtt:
+            await asyncio.sleep(self.rtt)
+
     async def execute(self, stmt):
+        sql = str(stmt)
+        if sql.startswith("SET LOCAL statement_timeout"):
+            self.settings.append(sql)
+            self.log.append(sql)
+            self.timeout_ms = int(sql.split("'")[1].removesuffix("ms"))
+            await self.round_trip()
+            return _Result([])
         if self.fail is not None:
             raise self.fail
+        self.log.append("READ")
+        if self.read_s:
+            bound = None if self.timeout_ms is None else self.timeout_ms / 1000
+            if bound is not None and self.read_s > bound:
+                await asyncio.sleep(bound)
+                raise _QueryCanceled("canceling statement due to statement timeout")
+            await asyncio.sleep(self.read_s)
         return await super().execute(stmt)
+
+
+class _QueryCanceled(Exception):
+    """Stands in for asyncpg's QueryCanceledError (SQLSTATE 57014)."""
 
 
 def _feed_item(event_id, status="scheduled", sport="americanfootball_nfl", odds=True):
@@ -382,6 +487,13 @@ def test_feed_cards_gain_the_pair_in_one_savepointed_read():
         )
     )
     assert db.savepoints == 1 and len(db.statements) == 1
+    # No request budget passed: the cap alone. Rolled back, never released.
+    assert db.log == [
+        "SAVEPOINT",
+        f"SET LOCAL statement_timeout = '{cpp.CARD_PROJECTION_READ_CAP_MS}ms'",
+        "READ",
+        "ROLLBACK TO SAVEPOINT",
+    ]
     odds = items[0]["data"]["current_odds"]
     assert (odds["projected_home_score"], odds["projected_away_score"]) == (29.7, 22.3)
     assert odds["home_probability"] == 0.7
@@ -419,9 +531,160 @@ def test_score_events_calls_the_attach_after_its_loop():
 
     src = inspect.getsource(feed._score_events)
     loop_end = src.index("scored_items.append(item)")
-    attach = src.index("await _attach_card_projected_pairs(db, scored_items, events)")
+    attach = src.index("await _attach_card_projected_pairs(")
     assert attach > loop_end
+    assert (
+        "remaining_s=projection_budget_s() if projection_budget_s else None"
+        in src[attach:]
+    )
     assert src.rstrip().endswith("return scored_items")
+
+
+def test_the_events_stage_hands_the_attach_its_remaining_budget():
+    """The one `_score_events` call under `_events_deadline` passes the live
+    budget function, so the bound is read at attach time, not at stage start."""
+    import inspect
+
+    from app.routes import feed
+
+    src = inspect.getsource(feed)
+    stage = src.index("async with _events_deadline:")
+    call_end = src.index("feed_items.extend(event_items)", stage)
+    assert "projection_budget_s=_feed_budget_remaining_s," in src[stage:call_end]
+
+
+# ── C1: the optional read is bounded inside the events budget ──────────────
+
+
+@pytest.mark.parametrize(
+    ("remaining_s", "expected"),
+    [
+        (None, cpp.CARD_PROJECTION_READ_CAP_MS),
+        (20.0, cpp.CARD_PROJECTION_READ_CAP_MS),
+        (1.2, 1200 - cpp.CARD_PROJECTION_DEADLINE_MARGIN_MS),
+        (0.6255, 125),
+        ((cpp.CARD_PROJECTION_DEADLINE_MARGIN_MS + 49) / 1000, 0),
+        (0.0, 0),
+    ],
+)
+def test_the_read_bound_is_the_cap_or_what_is_left_less_the_margin(
+    remaining_s, expected
+):
+    got = cpp.card_projection_read_timeout_ms(remaining_s)
+    assert got == expected and isinstance(got, int)
+
+
+def test_no_wanted_card_or_no_time_left_means_no_round_trip():
+    db = _FeedDB(_board())
+    hockey = {
+        "id": 15333056,
+        "stored_status": "scheduled",
+        "served_status": "scheduled",
+        "commence_time": _KICKOFF,
+        "sport_key": "icehockey_nhl",
+    }
+    assert (
+        asyncio.run(cpp.read_card_projected_pairs_bounded(db, [hockey], timeout_ms=900))
+        == {}
+    )
+    nfl = {**hockey, "id": 14780563, "sport_key": "americanfootball_nfl"}
+    assert (
+        asyncio.run(cpp.read_card_projected_pairs_bounded(db, [nfl], timeout_ms=0))
+        == {}
+    )
+    assert db.log == []
+
+
+def _run_on_virtual_clock(make_coro):
+    """Run on a loop whose clock jumps to the next timer (no wall-clock sleeps)."""
+    import selectors
+
+    class _Jumping:
+        def __init__(self, selector, loop):
+            self._selector, self._loop = selector, loop
+
+        def select(self, timeout=None):
+            if timeout is not None and timeout > 0:
+                self._loop.virtual_now += timeout
+                timeout = 0
+            return self._selector.select(timeout)
+
+        def __getattr__(self, name):
+            return getattr(self._selector, name)
+
+    class _Loop(asyncio.SelectorEventLoop):
+        def __init__(self):
+            super().__init__(selectors.DefaultSelector())
+            self.virtual_now = 0.0
+            self._selector = _Jumping(self._selector, self)
+
+        def time(self):
+            return self.virtual_now
+
+    loop = _Loop()
+    try:
+        return loop.run_until_complete(make_coro(loop))
+    finally:
+        loop.close()
+
+
+def _attach_under_the_events_deadline(db, *, budget_s):
+    """The events stage's shape: `asyncio.timeout(remaining)` around the build,
+    with the remaining budget read live when the attach runs."""
+    from app.routes.feed import _attach_card_projected_pairs
+
+    items = [_feed_item(14780563)]
+
+    async def _stage(loop):
+        ends_at = loop.time() + budget_s
+        deadline = asyncio.timeout(budget_s)
+        async with deadline:
+            await _attach_card_projected_pairs(
+                db,
+                items,
+                [_event(14780563)],
+                remaining_s=max(0.0, ends_at - loop.time()),
+            )
+        return deadline.expired(), loop.time()
+
+    expired, finished_at = _run_on_virtual_clock(_stage)
+    return items, expired, finished_at
+
+
+def test_a_read_outlasting_its_bound_keeps_the_cards_and_the_events_stage_whole():
+    """lane1b's C1. 1.2 s of budget left; the read would take 30 s. The server's
+    bound (700 ms) cancels it, the savepoint takes the failure, and the stage
+    finishes inside its deadline with the card and no pair.
+
+    Mutants this bites: the SET LOCAL removed (the read runs 30 s → the events
+    deadline expires); the bound set to the whole remaining budget, or the cap
+    alone (the cancel lands at or past the deadline → expired)."""
+    db = _FeedDB(_board(), read_s=30.0, rtt=0.05)
+    items, expired, finished_at = _attach_under_the_events_deadline(db, budget_s=1.2)
+    assert expired is False
+    assert db.settings == ["SET LOCAL statement_timeout = '700ms'"]
+    assert db.log[-2:] == ["READ", "ROLLBACK TO SAVEPOINT"]
+    assert finished_at < 1.2
+    assert items[0]["data"]["current_odds"] == {
+        "home_probability": 0.7,
+        "away_probability": 0.3,
+    }
+
+
+def test_a_read_inside_its_bound_still_carries_the_pair_under_the_deadline():
+    """The control for the test above: same deadline, a read that fits."""
+    db = _FeedDB(_board(), read_s=0.3, rtt=0.05)
+    items, expired, _ = _attach_under_the_events_deadline(db, budget_s=1.2)
+    assert expired is False
+    odds = items[0]["data"]["current_odds"]
+    assert (odds["projected_home_score"], odds["projected_away_score"]) == (29.7, 22.3)
+
+
+def test_with_less_than_the_margin_left_the_read_is_not_started():
+    db = _FeedDB(_board(), read_s=0.3, rtt=0.05)
+    items, expired, _ = _attach_under_the_events_deadline(db, budget_s=0.5)
+    assert expired is False and db.log == []
+    assert "projected_home_score" not in items[0]["data"]["current_odds"]
 
 
 def test_league_upcoming_cards_gain_the_pair_matched_by_id():

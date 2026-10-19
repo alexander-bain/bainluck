@@ -17,6 +17,12 @@ The seed has to be able to tell the right answer from the plausible wrong ones:
 `test_the_seed_can_tell_the_wrong_answers_apart` asserts each of those changes the
 answer, so a green run here is not vacuous.
 
+The feed read carries its own server-side bound (lane1b's C1 on c3fe360688):
+SAVEPOINT → ``SET LOCAL statement_timeout`` → read → ROLLBACK TO SAVEPOINT. On
+real Postgres this file proves the session's own ``statement_timeout`` is the
+same after the read as before it, and that a read outlasting the bound is
+cancelled by the SERVER and leaves the session usable.
+
 Opt-in on ``SEARCH_TEST_DATABASE_URL`` like its neighbours, and named by a step
 in the ``database-integration`` CI job (a ``*_pg.py`` nobody names runs nowhere).
 """
@@ -29,7 +35,8 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 from httpx import ASGITransport, AsyncClient
-from sqlalchemy import delete, select
+from sqlalchemy import delete, select, text
+from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 
 from app.models.models import Event, OddsSnapshot, Sport
@@ -231,7 +238,10 @@ async def test_feed_and_league_cards_carry_the_detail_pages_pair(
                 "current_odds": {"home_probability": 0.71, "away_probability": 0.29},
             },
         }
-        await feed._attach_card_projected_pairs(s, [item], events)
+        before = (await s.execute(text("SHOW statement_timeout"))).scalar_one()
+        await feed._attach_card_projected_pairs(s, [item], events, remaining_s=20.0)
+        # Rolled back, never released: the bound does not outlive the read.
+        assert (await s.execute(text("SHOW statement_timeout"))).scalar_one() == before
         brief = {
             "id": GAME,
             "status": "scheduled",
@@ -306,3 +316,65 @@ async def test_the_seed_can_tell_the_wrong_answers_apart(pg_engine):
     for r in sorted(honest, key=lambda r: r.captured_at, reverse=True):
         oldest[r.bookmaker] = r
     assert pair(oldest.values()) != right
+
+
+async def test_a_read_outlasting_its_bound_is_cancelled_by_the_server_and_cards_stay(
+    pg_engine, monkeypatch
+):
+    """C1: the bound is Postgres's, not asyncio's, and running out costs the pair.
+
+    The read is swapped for a 5 s sleep on the same session; the bound is the
+    floor (`remaining_s` leaves 100 ms after the margin). The server cancels the
+    statement, the savepoint takes the failure, and the card keeps its
+    probabilities with no pair — in well under the sleep.
+    """
+    from app.routes import feed
+    from app.utils import card_projected_pair as cpp
+
+    await _seed(pg_engine)
+    slept: list[str] = []
+
+    async def _slow_read(db, cards):
+        slept.append((await db.execute(text("SHOW statement_timeout"))).scalar_one())
+        await db.execute(text("SELECT pg_sleep(5)"))
+        return {}
+
+    monkeypatch.setattr(cpp, "read_card_projected_pairs", _slow_read)
+
+    async with AsyncSession(pg_engine, expire_on_commit=False) as s:
+        events = (
+            (await s.execute(select(Event).where(Event.id == GAME))).scalars().all()
+        )
+        before = (await s.execute(text("SHOW statement_timeout"))).scalar_one()
+
+        # The helper itself: the server's cancel (SQLSTATE 57014, query_canceled).
+        with pytest.raises(DBAPIError) as caught:
+            await cpp.read_card_projected_pairs_bounded(s, [_cards()], timeout_ms=100)
+        assert caught.value.orig.pgcode == "57014"
+        assert slept == ["100ms"]
+
+        # Through the feed attach: no exception, no pair, probabilities intact.
+        item = {
+            "type": "event",
+            "data": {
+                "id": GAME,
+                "status": "scheduled",
+                "sport": _SPORT_KEY,
+                "current_odds": {"home_probability": 0.71, "away_probability": 0.29},
+            },
+        }
+        remaining = (cpp.CARD_PROJECTION_DEADLINE_MARGIN_MS + 100) / 1000
+        started = datetime.now(timezone.utc)
+        await feed._attach_card_projected_pairs(
+            s, [item], events, remaining_s=remaining
+        )
+        took = (datetime.now(timezone.utc) - started).total_seconds()
+        assert slept == ["100ms", "100ms"]
+        assert took < 3.0
+        assert item["data"]["current_odds"] == {
+            "home_probability": 0.71,
+            "away_probability": 0.29,
+        }
+        # The session is usable and its own timeout is untouched.
+        assert (await s.execute(text("SELECT 1"))).scalar_one() == 1
+        assert (await s.execute(text("SHOW statement_timeout"))).scalar_one() == before
