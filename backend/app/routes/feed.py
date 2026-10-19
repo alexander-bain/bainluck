@@ -229,11 +229,15 @@ from app.utils.feed_cache import (
     FEED_RESPONSE_STALE_TTL_SECONDS,
     FEED_EDITION_FIELD,
     FEED_PAGE_BASE_BUILT_AT_FIELD,
+    base_from_last_good,
     build_feed_cache_metadata,
+    encode_base_last_good,
     feed_edition_token,
     feed_page_base_built_at,
     feed_page_base_cache_key,
     feed_page_base_enabled,
+    feed_page_base_last_good_key,
+    feed_page_base_last_good_max_age_s,
     feed_response_cache_key,
     feed_response_cache_ttl,
     feed_response_cache_ttls,
@@ -4054,6 +4058,119 @@ async def get_feed(
             )
         return lg
 
+    def _identity_anonymous_base_key():
+        """#11259: the page base key for a waiter that is anonymous by IDENTITY.
+
+        A waiter returns before the personalization context is loaded, so it
+        cannot ask the base's own question (``ctx == PersonalizationContext()``).
+        A request with no user and no session always loads exactly that empty
+        context (LAT-P113), so for it the answer is already known. Any other
+        waiter gets ``None`` and keeps its existing terminal. Same exclusion as
+        the base read below; ``test_feed_shared_last_good_11259.py`` pins that a
+        waiter and its leader name the same key.
+        """
+        if (
+            _cache_shape is None
+            or my_teams_only
+            or feed_user is not None
+            or feed_session_id
+            or not feed_page_base_enabled()
+        ):
+            return None
+        return feed_page_base_cache_key(
+            **{k: v for k, v in _cache_shape.items() if k not in ("offset", "edition")}
+        )
+
+    async def _serve_shared_last_good(base_key, reason, *, singleflight, **finalize):
+        """#11259: the base's durable copy, served as THIS page, or ``None``.
+
+        Read only by a terminal that would otherwise serve ``unavailable`` —
+        never as a read tier — after process-local last-good came up empty.
+        The copy is the base's own body, so it is rendered exactly as the
+        page-base read tier renders a base: sliced, or — for a SEATED request —
+        composed at THIS request's clock first. #5105 refuses an offset page
+        because a page cannot prove its opening still holds; a full deck
+        composed now can, which is why the base tier may serve seated readers
+        and so may this. ``None`` (the caller keeps its existing terminal) for:
+        a request that is not the anonymous build, the warmer (it must
+        genuinely build, LAT-P001), an unseated pinned request, a deck the
+        composer will not vouch for, any Redis failure, and any copy
+        ``base_from_last_good`` refuses. No DB work: the session may be the one
+        a deadline cancelled. Not remembered process-locally either: that store
+        has no age bound for a page without a live game, and this copy's must
+        hold.
+        """
+        if (
+            not base_key
+            or _shared_redis is None
+            or _prewarm_rebuild
+            or (_edition_request and not _opening_seating)
+        ):
+            return None
+        _read_at = time.perf_counter()
+        try:
+            raw = await _rc.bounded_redis_call(
+                lambda: _shared_redis.get(feed_page_base_last_good_key(base_key))
+            )
+        except Exception:
+            return None
+        if not getattr(raw, "is_ok", False):
+            return None
+        _now = time.time()
+        base, origin = base_from_last_good(raw.value, now=_now)
+        if base is None:
+            return None
+        if _opening_seating:
+            _lg_opening = compose_opening_edition(
+                base["items"],
+                await _read_edition_manifest() if _edition_request else None,
+                requested_token=_edition_request,
+                requested_policy=_edition_policy,
+                now=_request_now,
+            )
+            if not _lg_opening.usable:
+                return None
+            page = render_feed_page_from_base(
+                {**base, "items": _lg_opening.items, "total": len(_lg_opening.items)},
+                limit=limit,
+                offset=offset,
+            )
+            if page is None:
+                return None
+            _apply_opening_envelope(
+                page, _lg_opening, requested=bool(_edition_request)
+            )
+        else:
+            page = render_feed_page_from_base(base, limit=limit, offset=offset)
+            if page is None:
+                return None
+        _record_feed_timing(_timings, _started_at, _read_at, "cache_shared_last_good")
+        _fresh_ttl, _stale_ttl = _live_ttls(
+            page, oldest_artifact_age_s=max(0.0, _now - origin)
+        )
+        page["cache"] = build_feed_cache_metadata(
+            "last_good",
+            ttl_seconds=_fresh_ttl,
+            stale_ttl_seconds=_stale_ttl,
+            reason=reason,
+            live=payload_contains_live_event(page),
+            built_at=origin,
+        )
+        _finalize_feed_response(
+            response,
+            cache_status="last_good",
+            singleflight=singleflight,
+            timings=_timings,
+            started_at=_started_at,
+            counts=_feed_obs_counts(
+                page.get("items"),
+                total=page.get("total", 0),
+                returned=len(page.get("items") or []),
+            ),
+            **finalize,
+        )
+        return page
+
     def _opening_refusal(reason, *, singleflight="none"):
         """#5105: the seated route's truthful availability refusal.
 
@@ -4529,6 +4646,16 @@ async def get_feed(
                     ),
                 )
                 return out
+            # #11259: no process-local last-good — this dyno may have just
+            # started — so the anonymous base's durable copy comes before an
+            # empty page. Same bounds and label; still no build of its own.
+            _shared_lg = await _serve_shared_last_good(
+                _identity_anonymous_base_key(),
+                "leader_unavailable",
+                singleflight="waiter_last_good",
+            )
+            if _shared_lg is not None:
+                return _shared_lg
             # No last-good and no budget left: truthful, empty degraded response
             # below the router cutoff. A waiter never becomes a second build owner.
             _previous_at = _record_feed_timing(
@@ -5134,7 +5261,7 @@ async def get_feed(
             if session_cancelled:
                 await _release_cancelled_review_session(db, stage=reason)
 
-        def _serve_incomplete_build(reason: str) -> dict:
+        async def _serve_incomplete_build(reason: str, *, durable: bool = True) -> dict:
             # This is the input-age ceiling's terminal (below) with one
             # difference — the prior payload is bounded by the ordinary live
             # ceiling only, as every other last-good tier is, because nothing
@@ -5190,6 +5317,21 @@ async def get_feed(
                     shared_tiers=_shared_tiers,
                 )
                 return _prior_out
+            # #11259: this process holds nothing (a release wipes every dyno's
+            # store), so the anonymous base's durable copy before an empty page.
+            # `durable=False` is the one caller whose build FINISHED but whose
+            # deck cannot be seated: that is a content outcome, not a missed
+            # budget, and keeps its existing refusal.
+            _shared_lg = await _serve_shared_last_good(
+                _page_base_key if durable else None,
+                reason,
+                singleflight="none",
+                golf_provenance=_golf_provenance,
+                shared_reuse=_shared_reuse,
+                shared_tiers=_shared_tiers,
+            )
+            if _shared_lg is not None:
+                return _shared_lg
             _finalize_feed_response(
                 response,
                 cache_status="unavailable",
@@ -5283,7 +5425,7 @@ async def get_feed(
             )
         _previous_at = _record_feed_timing(_timings, _started_at, _previous_at, "events")
         if _event_stage_incomplete is not None:
-            return _serve_incomplete_build(_event_stage_incomplete)
+            return await _serve_incomplete_build(_event_stage_incomplete)
 
         # === ENRICH EVENTS WITH TEAM DATA, inside the same budget (#10534) ===
         # Not cosmetic: `_filter_discover_event_noise` drops live games with no
@@ -5319,7 +5461,7 @@ async def get_feed(
                 _previous_at = _record_feed_timing(
                     _timings, _started_at, _previous_at, "team_enrichment"
                 )
-                return _serve_incomplete_build(_event_stage_incomplete)
+                return await _serve_incomplete_build(_event_stage_incomplete)
         # #6567 — and immediately after it, because the records the caption
         # prints are what that pass just attached.
         apply_pregame_record_caption(feed_items)
@@ -5439,7 +5581,7 @@ async def get_feed(
             )
         _previous_at = _record_feed_timing(_timings, _started_at, _previous_at, "golf")
         if _golf_stage_incomplete is not None:
-            return _serve_incomplete_build(_golf_stage_incomplete)
+            return await _serve_incomplete_build(_golf_stage_incomplete)
 
         # === SCORE EVENT CONCEPTS (UFC cards, …) ===  #999 B3 / L2-84
         # Additive candidate plumbing — UFC cards surface on the sports tab/feed as
@@ -5640,7 +5782,7 @@ async def get_feed(
             )
         _previous_at = _record_feed_timing(_timings, _started_at, _previous_at, "concepts")
         if _concept_stage_incomplete is not None:
-            return _serve_incomplete_build(_concept_stage_incomplete)
+            return await _serve_incomplete_build(_concept_stage_incomplete)
 
         # === SCORE FUTURES ===
         # Queue 271 (#1459): futures scoring is the slow, DB-bound stage that hangs a
@@ -5871,7 +6013,7 @@ async def get_feed(
 
         if _review_incomplete is not None:
             # The unreviewed build goes nowhere: see `_serve_incomplete_build`.
-            return _serve_incomplete_build(_review_incomplete)
+            return await _serve_incomplete_build(_review_incomplete)
 
         # === QUALITY FLOOR: drop all-0% cards (#240 Item 4) ===
         # A card whose every outcome reads 0% is never interesting (stale/settled
@@ -6057,7 +6199,9 @@ async def get_feed(
                 await _release_incomplete_build(
                     "opening_unsupported", session_cancelled=False
                 )
-                return _serve_incomplete_build("opening_unsupported")
+                return await _serve_incomplete_build(
+                    "opening_unsupported", durable=False
+                )
             _served_items = _opening.items
             _continuation_start = _opening.continuation_start
             _edition_status = _opening.edition_status if _edition_request else None
@@ -6685,6 +6829,13 @@ async def get_feed(
                     _page_base_json = _json_module.dumps(
                         _page_base_body, default=str
                     )
+                    # #11259: the durable copy the incomplete-build terminals
+                    # fall back to. Kept no longer than it may be served at —
+                    # the bound is on content age, and the origin is never
+                    # younger than this publish.
+                    _base_last_good_ttl = feed_page_base_last_good_max_age_s(
+                        live=payload_contains_live_event(_page_base_body)
+                    )
 
                     async def _publish_feed_page_base(
                         _client=_shared_redis,
@@ -6692,6 +6843,7 @@ async def get_feed(
                         _key=_page_base_key,
                         _fresh_ttl=_base_fresh_ttl,
                         _stale_ttl=_base_stale_ttl,
+                        _last_good_ttl=_base_last_good_ttl,
                     ):
                         await _rc.bounded_redis_call(
                             lambda: _client.setex(_key, _fresh_ttl, _json)
@@ -6699,6 +6851,14 @@ async def get_feed(
                         await _rc.bounded_redis_call(
                             lambda: _client.setex(
                                 f"{_key}:stale", _stale_ttl, _json
+                            )
+                        )
+                        _last_good_wire = encode_base_last_good(_json)
+                        await _rc.bounded_redis_call(
+                            lambda: _client.setex(
+                                feed_page_base_last_good_key(_key),
+                                _last_good_ttl,
+                                _last_good_wire,
                             )
                         )
 
