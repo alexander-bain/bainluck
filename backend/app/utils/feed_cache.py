@@ -619,6 +619,53 @@ def encode_base_last_good(base_json: str) -> bytes:
     return wire_encode(base_json)
 
 
+def _feed_start_epoch(raw: Any) -> Optional[float]:
+    """A card's ``commence_time`` as epoch seconds, or ``None``.
+
+    ISO-8601 as the feed serializes it; a trailing ``Z`` and a naive stamp are
+    read as UTC. Anything else is ``None``.
+    """
+    from datetime import datetime, timezone
+
+    if not isinstance(raw, str) or not raw:
+        return None
+    try:
+        start = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if start.tzinfo is None:
+        start = start.replace(tzinfo=timezone.utc)
+    return start.timestamp()
+
+
+def base_has_started_scheduled_game(base: Any, *, now: float) -> bool:
+    """#11259: whether a stored base calls a game ``scheduled`` after its start.
+
+    The copy was true when it was built. A game that has since kicked off still
+    reads ``scheduled`` in it, with its pre-game prices, so the card is wrong
+    from its start onward. Only cards whose start parses are counted: like
+    ``payload_contains_live_event``, this only ever SHORTENS a bound, so an
+    unparseable start keeps the ordinary one. Pure — ``now`` is the reader's.
+    """
+    if not isinstance(base, dict):
+        return False
+    items = base.get("items")
+    if not isinstance(items, list):
+        return False
+    for item in items:
+        if not isinstance(item, dict) or item.get("type") != "event":
+            continue
+        data = item.get("data")
+        if not isinstance(data, dict):
+            continue
+        if str(data.get("status") or "").strip().lower() != "scheduled":
+            continue
+        start = _feed_start_epoch(data.get("commence_time"))
+        if start is not None and start <= now:
+            return True
+    return False
+
+
 def base_from_last_good(
     raw: Any, *, now: float
 ) -> tuple[Optional[dict], Optional[float]]:
@@ -637,7 +684,10 @@ def base_from_last_good(
       served under a bound;
     * content older than ``feed_page_base_last_good_max_age_s``. Liveness is
       read off the WHOLE base, the same conservative direction the publish
-      takes: a live game at position 60 bounds page 1 too.
+      takes: a live game at position 60 bounds page 1 too. A game the copy
+      still calls ``scheduled`` whose start is at or before ``now`` counts as
+      live (``base_has_started_scheduled_game``): the copy cannot see the
+      kickoff, so it is held to the live ceiling rather than 30 minutes.
     """
     from app.utils.principal_independent_cache import wire_decode
 
@@ -657,7 +707,10 @@ def base_from_last_good(
     origin = feed_page_base_built_at(base)
     if origin is None:
         return None, None
-    max_age = feed_page_base_last_good_max_age_s(live=payload_contains_live_event(base))
+    max_age = feed_page_base_last_good_max_age_s(
+        live=payload_contains_live_event(base)
+        or base_has_started_scheduled_game(base, now=now)
+    )
     if now - origin > max_age:
         return None, None
     return base, origin
