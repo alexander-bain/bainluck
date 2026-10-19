@@ -11,16 +11,23 @@ import Foundation
 /// The NBA page (v328 NBA slice) uses the same deck and reader: its winning
 /// margin and scoring ladders (`NBALadderCard9483`) sit before the projected
 /// finish, and it has no player milestone cards.
+///
+/// The final MLB page (#11284) deals its own five story slots
+/// (`MLBFinalCard11284`) through the same deck and reader. They are one
+/// explicit case, built only by `MLBFinalDeck11284` on a finished MLB game,
+/// so no NFL or NBA family reads them and they read no NFL or NBA family.
 enum NFLEventCard9483: Equatable, Identifiable {
     case finish(NFLFinishCard9483)
     case milestone(NFLMilestoneCard9483)
     case ladder(NBALadderCard9483)
+    case mlb(MLBFinalCard11284)
 
     var id: String {
         switch self {
         case .finish: return "finish"
         case .milestone(let card): return "milestone:\(card.id)"
         case .ladder(let card): return card.id
+        case .mlb(let card): return card.id
         }
     }
 
@@ -29,6 +36,7 @@ enum NFLEventCard9483: Equatable, Identifiable {
         case .finish(let card): return card.kicker
         case .milestone(let card): return "\(card.player) · \(card.stat)"
         case .ladder(let card): return card.title
+        case .mlb(let card): return card.title
         }
     }
 
@@ -39,6 +47,9 @@ enum NFLEventCard9483: Equatable, Identifiable {
         case .finish: return self
         case .milestone(let card): return .milestone(card.current(at: now))
         case .ladder(let card): return .ladder(card.current(at: now))
+        // A finished game's saved chances, finals and results are history:
+        // nothing on these cards is a current quote that can expire.
+        case .mlb: return self
         }
     }
 }

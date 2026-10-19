@@ -1988,6 +1988,11 @@ struct EventDetailView: View {
     private func nflCardDeck(
         _ event: EventDetail, projectedInput: ProjectedFinalPointsSeries.Input?
     ) -> [NFLEventCard9483] {
+        // #11284 — a finished MLB game deals its own five story slots from
+        // this event's deliveries; upcoming and live MLB deal none.
+        if MLBFinalPage11284.applies(sportKey: event.sport, status: event.status) {
+            return mlbFinalCards(event).map { .mlb($0) }
+        }
         guard NFLRecognizablePage9483.applies(sportKey: event.sport) else { return [] }
         let finish = NFLFinishCard9483.build(projectedInput)
         return NFLEventCardDeck9483.cards(
@@ -2000,6 +2005,19 @@ struct EventDetailView: View {
                     homeTeam: event.homeTeam, awayTeam: event.awayTeam)
                 : [],
             ladders: nbaLadders(event, finish: finish))
+    }
+
+    /// #11284 — the final MLB stories, from the event, game-markets and
+    /// related-futures deliveries the page already holds, each fenced to
+    /// THIS event inside the builder, and the score the page prints.
+    private func mlbFinalCards(_ event: EventDetail) -> [MLBFinalCard11284] {
+        let hasScore = EventDetailView.showsScore(
+            status: event.status, away: event.awayScore, home: event.homeScore)
+        return MLBFinalDeck11284.cards(MLBFinalDeckInput11284(
+            eventID: event.id, sportKey: event.sport, status: event.status,
+            homeTeam: event.homeTeam, awayTeam: event.awayTeam,
+            homeScore: hasScore ? event.homeScore : nil, awayScore: hasScore ? event.awayScore : nil,
+            gameMarkets: vm.gameMarkets, relatedFutures: vm.relatedFutures))
     }
 
     /// #9483 NBA slice — the winning-margin and scoring ladders, from the
@@ -2125,7 +2143,9 @@ struct EventDetailView: View {
     /// never print different numbers for one price: the venue-settled verdict
     /// and every unadopted arm decline (`NFLPairedHeadline9483`).
     private func nflPairedHeadline(_ event: EventDetail, hasScore: Bool) -> NFLPairedHeadline9483? {
-        guard NFLRecognizablePage9483.applies(sportKey: event.sport) else { return nil }
+        // #11284 — the final MLB page adopts the decided-final arm only: its
+        // status is finished, so the priced arms below are never reached.
+        guard MLBFinalPage11284.adoptsPairedPage(sportKey: event.sport, status: event.status) else { return nil }
         let score = hasScore ? (away: event.awayScore ?? 0, home: event.homeScore ?? 0) : nil
         let pregame = PrematchReading.resolve(prematch: event.prematchOdds, opening: event.openingOdds)
         if isFinished {
@@ -2162,7 +2182,8 @@ struct EventDetailView: View {
         let priced = headline.away.won == nil
         // The adopted NFL/NBA path uses two chance columns; score/projection share
         // the row below. Existing source and state decisions remain unchanged.
-        let adopted = NFLRecognizablePage9483.applies(sportKey: event.sport)
+        // #11284 — the final MLB page is adopted too.
+        let adopted = MLBFinalPage11284.adoptsPairedPage(sportKey: event.sport, status: event.status)
         let centerRow = !stacked || headline.center != .versus
         let sides = adopted && dynamicTypeSize.isAccessibilitySize
             ? AnyLayout(VStackLayout(alignment: .leading, spacing: 16))
@@ -2354,7 +2375,7 @@ struct EventDetailView: View {
     }
 
     private func usesApprovedHeadlinePresentation9483(_ event: EventDetail) -> Bool {
-        NFLRecognizablePage9483.applies(sportKey: event.sport)
+        MLBFinalPage11284.adoptsPairedPage(sportKey: event.sport, status: event.status)
             && nflPairedHeadline(event, hasScore: Self.showsScore(
                 status: event.status, away: event.awayScore, home: event.homeScore)) != nil
     }
@@ -2397,7 +2418,7 @@ struct EventDetailView: View {
         _ event: EventDetail, _ side: NFLPairedHeadline9483.Side, name: String, isAway: Bool,
         color: Color, logo: String?, opponent: String
     ) -> some View {
-        let adopted = NFLRecognizablePage9483.applies(sportKey: event.sport)
+        let adopted = MLBFinalPage11284.adoptsPairedPage(sportKey: event.sport, status: event.status)
         let finalPair = adopted && side.won != nil
         let shown = adopted ? adoptedSide9483(event, side, isAway: isAway) : nil
         let figure = shown?.figure ?? side.figure

@@ -57,6 +57,19 @@ final class NFLCardDeckState9483: ObservableObject {
         selectedRow[card.id] = card.points[current + delta].optionKey
     }
 
+    // MARK: Final MLB stories (#11284)
+
+    /// The key a final MLB card has selected in one of its slots — a target
+    /// row, a run line's option, a series question or option — by the card's
+    /// own `selectionSlot`, which names its event. Nil means the card's
+    /// default; a key the card no longer carries selects nothing, never a
+    /// neighbour (the card resolves it, v110's rule).
+    func mlbSelection(_ slot: String) -> String? { selectedRow[slot] }
+
+    func selectMLB(_ key: String, slot: String) {
+        if selectedRow[slot] != key { selectedRow[slot] = key }
+    }
+
     // MARK: NBA story stream (v445 + W1–W3)
 
     /// The compact NBA stream's applied/pending order, active card and hold,
@@ -669,6 +682,9 @@ struct NFLEventCardView9483: View {
                     state: state, expanded: expanded)
             case .ladder(let ladder):
                 NBALadderCardView9483(card: ladder, awayColor: awayColor, homeColor: homeColor,
+                                      state: state, expanded: expanded)
+            case .mlb(let mlb):
+                MLBFinalCardView11284(card: mlb, awayColor: awayColor, homeColor: homeColor,
                                       state: state, expanded: expanded)
             }
         }
