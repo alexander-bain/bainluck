@@ -55,7 +55,7 @@ struct EventPropsMatrixView: View {
                 if !grid.unplaced.isEmpty { unplacedList(grid) }
                 footer(grid)
             } else {
-                Text("No questions for this stat right now")
+                Text("No prop lines for this stat right now")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -208,7 +208,7 @@ struct EventPropsMatrixView: View {
             }
             .buttonStyle(.plain)
             .accessibilityLabel(EventPropsMatrixLayout.accessibilityLabel(row, stat: stat))
-            .accessibilityHint("Shows this question and its sources")
+            .accessibilityHint("Shows this prop line and its sources")
             .accessibilityFocused($accessibilityFocus, equals: .question(.init(row)))
         } else {
             // Not offered for this player: an empty slot, not a dash — a dash
@@ -248,9 +248,9 @@ struct EventPropsMatrixView: View {
 
     private func footer(_ grid: EventPropsMatrixLayout.Grid) -> some View {
         VStack(alignment: .leading, spacing: 2) {
-            Text("\(grid.playerCount) \(grid.playerCount == 1 ? "player" : "players") · \(grid.questionCount) \(grid.questionCount == 1 ? "question" : "questions")")
+            Text("\(grid.playerCount) \(grid.playerCount == 1 ? "player" : "players") · \(grid.questionCount) \(grid.questionCount == 1 ? "prop line" : "prop lines")")
             if grid.showsChange {
-                Text("+/\u{2212} is the change since the pregame price, in points")
+                Text("+/\u{2212} is the change from the saved pregame chance, in percentage points")
             }
         }
         .font(.caption2)

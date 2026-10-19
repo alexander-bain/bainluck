@@ -279,7 +279,7 @@ nonisolated struct QuestionMatrixComparison: Decodable, Equatable, Sendable {
 
     /// Rider R5's caption — the only words a delta may carry. Never "since
     /// kickoff" or "since start".
-    static let caption = "since the saved pregame price"
+    static let caption = "since the saved pregame chance"
 
     /// The delta a reader may be shown, and the latest price it sits beside
     /// (R5: only beside `latest`, never beside the published value). Nil

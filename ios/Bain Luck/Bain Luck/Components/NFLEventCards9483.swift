@@ -411,7 +411,7 @@ struct NFLMilestoneCardView9483: View {
             if card.profile == nil {
                 // Every price on the card has stopped being observed: the
                 // lines stay, the shape does not.
-                Text("No recent prices")
+                Text("No recent probability updates")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, minHeight: expanded ? 120 : 60)
@@ -466,7 +466,7 @@ struct NFLMilestoneCardView9483: View {
     /// What a line with no number says, by basis: a quote that stopped being
     /// observed, or a line the server served no pregame mark for.
     private var noChance: String {
-        card.basis == .pregamePrice ? "No recent price" : "No pregame chance"
+        card.basis == .pregamePrice ? "No recent probability update" : "No pregame chance"
     }
 
     private func verdict(_ rung: NFLMilestoneCard9483.Rung) -> String {

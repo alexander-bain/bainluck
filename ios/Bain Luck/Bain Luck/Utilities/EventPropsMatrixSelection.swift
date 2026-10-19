@@ -185,7 +185,8 @@ enum EventPropsMatrixLayout {
         } else if row.current.isActualOnly, let hit = row.result?.hit {
             parts.append(hit ? "result: hit" : "result: missed")
         } else {
-            parts.append("no current price")
+            // #10877: the typed state names no reason, so none is claimed.
+            parts.append("current probability unavailable")
         }
         return parts.joined(separator: ", ")
     }

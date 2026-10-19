@@ -117,7 +117,7 @@ final class EventPropsMatrixFocusReturn10236Tests: XCTestCase {
             block["rows"] = all
         }
         XCTAssertNil(try row(unavailable, judge2).current.quotedProbability)
-        XCTAssertEqual(focus(open, selection, unavailable), .question(open), "its own cell reads 'no current price'")
+        XCTAssertEqual(focus(open, selection, unavailable), .question(open), "its own cell reads 'current probability unavailable'")
     }
 
     func testARemovedQuestionFocusesTheHeaderNotASibling() throws {
