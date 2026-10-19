@@ -389,6 +389,12 @@ struct OddsChartView: View {
     /// #9436 — the hero's current home number, for the dot at the live edge.
     /// Nil off a live page.
     var liveEdge: LiveEdgeReading?
+    /// #9483 Argon P1 — the page's headline currentness
+    /// (`EventHeadlinePhase9483.isCurrent`), resolved on the quote's own clock
+    /// each minute. False withholds every live treatment of the newest price:
+    /// the marked edge and the arrival ring. The recorded line is unchanged.
+    var quoteIsCurrent: Bool = true
+    var pairedAwayLabel9483: String? = nil
     /// #10456 — the page's served winner pair (`current_odds`), both sides.
     /// Admission evidence for the balance ink only: a two-outcome question the
     /// page publishes. Never derived here, never `1 − home`.
@@ -577,6 +583,8 @@ struct OddsChartView: View {
          liveUpdateStatus: LiveUpdateStatus = .hidden,
          priceActivity: LivePriceActivity? = nil,
          liveEdge: LiveEdgeReading? = nil,
+         quoteIsCurrent: Bool = true,
+         pairedAwayLabel9483: String? = nil,
          servedHomeProbability: Double? = nil,
          servedAwayProbability: Double? = nil,
          forcedDomain: ClosedRange<Date>? = nil,
@@ -606,6 +614,8 @@ struct OddsChartView: View {
         self.liveUpdateStatus = liveUpdateStatus
         self.priceActivity = priceActivity
         self.liveEdge = liveEdge
+        self.quoteIsCurrent = quoteIsCurrent
+        self.pairedAwayLabel9483 = pairedAwayLabel9483
         self.servedHomeProbability = servedHomeProbability
         self.servedAwayProbability = servedAwayProbability
         self.forcedDomain = forcedDomain
@@ -1145,12 +1155,10 @@ struct OddsChartView: View {
         // #8320 — no "● Live" here: the hero's inning chip already says the
         // game is on and the toolbar says how the number arrives. A third green
         // dot two inches below them was the "clowny" Alex shook the phone at.
-        if EventState.isFinished(status) {
-            HStack(spacing: 4) {
-                Circle().fill(.secondary).frame(width: 6, height: 6)
-                Text("Final").font(.caption2).fontWeight(.medium).foregroundStyle(.secondary)
-            }
-        }
+        // #9483 v476 phone fit — nor "● Final", for the same reason: the hero's
+        // FINAL chip says it, and the second saying pushed the All / Since Start
+        // picker onto a row of its own, taking the chart's key under the tab bar
+        // on a 375pt phone.
     }
 
     @ViewBuilder
@@ -1928,6 +1936,21 @@ struct OddsChartView: View {
                         lineStyle: strokeStyleForSource(liveSplit.source, sources: sources),
                         activity: priceActivity, pulseColor: teamColors?.home ?? .accentColor)
                         .accessibilityHidden(true)
+                    // #9483 v476 — name the other admitted line too, with the
+                    // hero's own formatter. A child that observes the selection
+                    // (a scrub hides it, as it hides the home number) and draws
+                    // only where it covers neither line's newest move nor the
+                    // home number; otherwise the named keys carry it.
+                    if let paired, let label = pairedAwayLabel9483, !label.isEmpty {
+                        let awayTail = PairedWinLines9483.awayTail(liveSplit.tail)
+                        if let tip = awayTail.last {
+                            PairedAwayEndpointLabel9483(
+                                selection: selection, proxy: proxy, plotFrame: plotFrame,
+                                tip: tip, from: awayTail.count > 1 ? awayTail.first : nil,
+                                homeTail: liveSplit.tail, text: "\(awayShort) \(label)",
+                                color: paired.away)
+                        }
+                    }
                 } else if let checkpoints {
                     // #4974 — the line's end is the resting endpoint the readout
                     // names: a drawn checkpoint at its own time and value, or the
@@ -1952,7 +1975,8 @@ struct OddsChartView: View {
                     // one-shot ring the chart had before #9436, unchanged.
                     LiveChartEndpointFeedback(selection: selection, activity: priceActivity,
                                               probability: latest.probability,
-                                              isLive: EventPriceStreaming.isEligible(status) && liveUpdateStatus != .interrupted,
+                                              isLive: EventPriceStreaming.isEligible(status) && liveUpdateStatus != .interrupted
+                                                && quoteIsCurrent,
                                               color: teamColors?.home ?? .accentColor)
                         .position(x: plotFrame.minX + x, y: plotFrame.minY + y)
                         .allowsHitTesting(false)
@@ -2096,7 +2120,8 @@ struct OddsChartView: View {
 
     /// #9436 — the live edge the overlay draws, or nil to draw the plot whole.
     ///
-    /// Only while the stream is live and uninterrupted, and only on the drawn
+    /// Only while the stream is live and uninterrupted and the headline calls
+    /// the quote current (`quoteIsCurrent`, Argon P1), and only on the drawn
     /// series PROVEN to carry the hero's accepted value (`edgeVertex`: the
     /// blend line, or on a single-venue page the venue line the adopted frame
     /// extended): a dot labelled with the hero's number must sit on the point
@@ -2104,7 +2129,7 @@ struct OddsChartView: View {
     /// the x-domain, as the old endpoint ring required, so the overlay never
     /// draws where the plot would not.
     private func liveEdgeSplit(dataPoints: [ChartDataPoint], domain: ClosedRange<Date>) -> LiveEdgeSplit? {
-        guard let liveEdge, EventPriceStreaming.isEligible(status), liveUpdateStatus != .interrupted,
+        guard let liveEdge, quoteIsCurrent, EventPriceStreaming.isEligible(status), liveUpdateStatus != .interrupted,
               let newest = LiveChartEdgeMarkerPlan.edgeVertex(
                 in: dataPoints, visible: Self.defaultVisibleSources(in: dataPoints),
                 reading: liveEdge, latestFrame: liveFrames.last)

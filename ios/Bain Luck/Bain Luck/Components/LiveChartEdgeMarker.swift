@@ -487,3 +487,86 @@ private struct LiveEdgeTipLayer: View, Animatable {
         .accessibilityHidden(true)
     }
 }
+
+// MARK: - #9483 v476 the paired away number
+
+/// #9483 v476 — the away line's current number at its newest vertex, beside the
+/// home number `LiveChartEdgeMarker` draws. Observes only the selection, so a
+/// scrub hides it without rebuilding the plot (#8651), exactly as the home
+/// number hides. It takes the side of its vertex away from the home vertex and
+/// draws nothing when that spot would cover either line's newest segment, its
+/// own vertex, or the home number; the named keys and the headline remain.
+struct PairedAwayEndpointLabel9483: View {
+    @ObservedObject var selection: OddsChartSelection
+    let proxy: ChartProxy
+    let plotFrame: CGRect
+    let tip: PairedWinVertex9483
+    let from: PairedWinVertex9483?
+    let homeTail: LiveEdgeTail
+    let text: String
+    let color: Color
+    @Environment(\.scenePhase) private var scenePhase
+    @State private var labelSize = CGSize(width: 64, height: 20)
+
+    private func local(_ date: Date, _ probability: Double) -> CGPoint? {
+        guard let x = proxy.position(forX: date), let y = proxy.position(forY: probability) else { return nil }
+        return CGPoint(x: x, y: y)
+    }
+
+    var body: some View {
+        ZStack(alignment: .topLeading) {
+            Color.clear
+            if selection.date == nil, scenePhase == .active,
+               let tipPoint = local(tip.date, tip.probability),
+               let homeTip = local(homeTail.to.date, homeTail.to.probability),
+               let center = Self.placement(
+                   tip: tipPoint, from: from.flatMap { local($0.date, $0.probability) },
+                   homeTip: homeTip,
+                   homeFrom: homeTail.from.flatMap { local($0.date, $0.probability) },
+                   label: labelSize, plot: plotFrame.size) {
+                Text(text)
+                    .font(.system(size: 13, weight: .heavy, design: .rounded).monospacedDigit())
+                    .dynamicTypeSize(...DynamicTypeSize.xxLarge)
+                    .foregroundStyle(color)
+                    .lineLimit(1)
+                    .fixedSize()
+                    .padding(.horizontal, 3)
+                    .background(Color.systemBackground.opacity(0.85),
+                                in: RoundedRectangle(cornerRadius: 4, style: .continuous))
+                    .onGeometryChange(for: CGSize.self) { $0.size } action: { size in
+                        if size != .zero, size != labelSize { labelSize = size }
+                    }
+                    .position(x: plotFrame.minX + center.x, y: plotFrame.minY + center.y)
+            }
+        }
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
+    }
+
+    /// The label's centre in plot-local points, or nil where no truthful spot
+    /// exists. The home number's box is estimated at this label's size (same
+    /// font, same "ABC 00%" shape) and placed by the marker's own rule.
+    static func placement(tip: CGPoint, from: CGPoint?, homeTip: CGPoint, homeFrom: CGPoint?,
+                          label: CGSize, plot: CGSize) -> CGPoint? {
+        guard tip.x >= 0, tip.x <= plot.width, tip.y >= 0, tip.y <= plot.height,
+              abs(tip.y - homeTip.y) >= 44 else { return nil }
+        let radius = LiveChartEdgeMarkerPlan.dotDiameter / 2
+        let gap = LiveChartEdgeMarkerPlan.labelGap
+        let outward: CGFloat = tip.y > homeTip.y ? 1 : -1
+        let raw = CGPoint(x: tip.x + radius - label.width / 2,
+                          y: tip.y + outward * (radius + gap + label.height / 2))
+        let center = CGPoint(
+            x: min(max(raw.x, label.width / 2), max(plot.width - label.width / 2, label.width / 2)),
+            y: min(max(raw.y, label.height / 2), max(plot.height - label.height / 2, label.height / 2)))
+        let box = CGRect(x: center.x - label.width / 2, y: center.y - label.height / 2,
+                         width: label.width, height: label.height)
+        if box.insetBy(dx: -radius, dy: -radius).contains(tip) { return nil }
+        if let from, LiveChartEdgeMarkerPlan.covers(center, label: label, from: from, to: tip) { return nil }
+        if let homeFrom, LiveChartEdgeMarkerPlan.covers(center, label: label, from: homeFrom, to: homeTip) { return nil }
+        let homeCenter = LiveChartEdgeMarkerPlan.labelCenter(tip: homeTip, from: homeFrom, label: label, plot: plot)
+        let homeBox = CGRect(x: homeCenter.x - label.width / 2, y: homeCenter.y - label.height / 2,
+                             width: label.width, height: label.height)
+        if box.insetBy(dx: -2, dy: -2).intersects(homeBox) { return nil }
+        return center
+    }
+}
