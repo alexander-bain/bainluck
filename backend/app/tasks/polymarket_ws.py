@@ -2811,7 +2811,13 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                     await session.execute(open_contract_markets_stmt())
                 ).all()
                 outcome_rows = []
-                for stmt in open_contract_outcome_stmts(r[0] for r in market_rows):
+                # These markets already belong to the game arm. The mapper
+                # skips them before pairing; keep their market rows for counts,
+                # but do not read legs that cannot enter the open admission.
+                excluded = set(excluded_market_ids)
+                for stmt in open_contract_outcome_stmts(
+                    r[0] for r in market_rows if r[0] not in excluded
+                ):
                     outcome_rows.extend((await session.execute(stmt)).all())
             admission = open_contract_asset_map(
                 market_rows, outcome_rows, taken_assets, excluded_market_ids,
