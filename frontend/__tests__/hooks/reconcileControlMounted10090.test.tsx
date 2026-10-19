@@ -16,7 +16,7 @@
  * / chart edge instead of the components.
  */
 import "../helpers/minimalDom";
-import React, { act, useCallback, useEffect, useRef, useState } from "react";
+import React, { act, useCallback, useEffect, useRef, useState, useMemo } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import fs from "fs";
 import path from "path";
@@ -40,6 +40,9 @@ import {
   createReconcileLedger, createWriteJournal, rebaseOnCoveringRead, reconcileFloorCoverage, replayJournaledPoll,
   servedHistoryIsNewer,
 } from "../../lib/reconcileControl";
+
+import * as chart from "../../lib/liveChartHistory";
+import * as pin from "../../lib/chartEdgePin";
 
 const PAGE = fs.readFileSync(path.join(__dirname, "../../app/events/[id]/page.tsx"), "utf8");
 const FOLDED_FRAME_REFETCH_MS = Number(PAGE.match(/const FOLDED_FRAME_REFETCH_MS = (\d+)/)![1]);
@@ -79,6 +82,8 @@ const RECOVERY_EFFECT = firstArgOf("useEffect", "createReconnectCatchup");
 const PAIR = pageScript((n, tree) => (ts.isBinaryExpression(n) &&
   n.left.getText(tree) === "pairedQuoteReadRef.current" && ts.isArrowFunction(n.right))
   ? n.right.getText(tree) : undefined);
+const HISTORY_MEMO = firstArgOf("useMemo", "admitCurrentSourceObservations");
+const HISTORY_DEPS = pageScript((n, tree) => ts.isVariableDeclaration(n) && n.name.getText(tree) === "historyData" && n.initializer && ts.isCallExpression(n.initializer) ? n.initializer.arguments[1].getText(tree) : undefined);
 const EDGE_EFFECT = firstArgOf("useEffect", "servedBlendEdgeObservation(servedHistory)");
 
 // ── fixtures ────────────────────────────────────────────────────────────────
@@ -139,7 +144,7 @@ type Net = { details: Req<Detail>[]; histories: Req<History>[] };
 
 const harness: {
   revalidate?: () => unknown; revalidateHistory?: () => unknown; ledger?: ReturnType<typeof createReconcileLedger>;
-  event?: Detail; fullHistory?: boolean;
+  event?: Detail; fullHistory?: boolean; renderedHistory?: any;
 } = {};
 
 function HeldPage({ net, eventId }: { net: Net; eventId: number }) {
@@ -201,7 +206,11 @@ function HeldPage({ net, eventId }: { net: Net; eventId: number }) {
     reconcileCatchupRef, reconcileOrdinalRef,
   }), [eventId, reconcileLedger]);
   const quoteEligible = canSubscribeEventQuotes(event);
-  useLiveEventStream(eventId, quoteEligible, applyPushedFrame, applyReconcileControl);
+  const { chartPoints } = useLiveEventStream(eventId, quoteEligible, applyPushedFrame, applyReconcileControl);
+  const [sourceObservationVersion, setSourceObservationVersion] = useState(0);
+  const admittedChartRef = useRef<chart.AdmittedChartFrames | null>(null);
+  const renderedHistory = useMemo(HISTORY_MEMO.runInNewContext({ ...chart, ...pin, eventId, event, servedHistory, quoteEligible, chartPoints, admittedChartRef }), HISTORY_DEPS.runInNewContext({servedHistory, event, quoteEligible, chartPoints, eventId, sourceObservationVersion}));
+  harness.renderedHistory = renderedHistory;
   const recoveryRef = useRef(null);
   useEffect(RECOVERY_EFFECT.runInNewContext({
     quoteEligible, createReconnectCatchup, canSubscribeEventQuotes, reconcileIntentRef, heldEventRef, recoveryRef,
@@ -213,6 +222,7 @@ function HeldPage({ net, eventId }: { net: Net; eventId: number }) {
   const refreshHistoryRef = useRef(refreshHistory);
   refreshHistoryRef.current = refreshHistory;
   pairedQuoteReadRef.current = PAIR.runInNewContext({
+    ...chart, admittedChartRef, setSourceObservationVersion,
     eventId, fullHistoryRequested, fetchEvent, fetchEventHistory, EVENT_BOOT_HISTORY_HOURS, historyRangeParam,
     createWriteJournal, rebaseOnCoveringRead, reconcileFloorCoverage, servedHistoryIsNewer, latestBlendEdgeRef, pairJournalRef, reconcileLedger, storedEventRef,
     quotePairCoversTrigger, keepNewerHeldHeadline, carryNewerHeldState, canSubscribeEventQuotes, setLastRefresh, Date,
@@ -1141,5 +1151,116 @@ describe("#10090 state window mounted: a same-revision read never puts the game 
     expect(harness.event!).toMatchObject({ state_read_not_before: at(30) });
     expect(harness.ledger!.owed()).toBe(false);
     await p.unmount();
+  });
+});
+
+
+// Attempt155 uses the page's actual historyData memo, not aggregate_line alone.
+const blend155 = (pm: number) => (0.617 * 1.5 + pm * 0.8) / 2.3;
+const detail155 = (rev: number, pm: number) => live(rev, blend155(pm), {espn: src(0.617, 10), polymarket: src(pm, rev)});
+const history155 = (rev: number): History => ({ ...unpinned(10, blend155(0.66)), history_fold_revision: { [E]: rev },
+  win_prob_history: { polymarket: [{ timestamp: T(10), home_probability: 0.66, away_probability: 0.34 }] },
+} as History);
+const has155 = (rev: number, pm: number) => harness.renderedHistory?.win_prob_history?.polymarket?.some((p: any) => p.timestamp === T(rev) && p.home_probability === pm);
+function receipt155(name: string, p: Awaited<ReturnType<typeof mount>>) {
+  if (!process.env.ATTEMPT155_RECEIPTS) return;
+  fs.mkdirSync(process.env.ATTEMPT155_RECEIPTS, {recursive: true});
+  fs.writeFileSync(path.join(process.env.ATTEMPT155_RECEIPTS, name + ".json"), JSON.stringify({ at: Date.now(), event: harness.event, renderedHistory: harness.renderedHistory, owed: harness.ledger?.owed(), pairs: p.pairs().length }, null, 2));
+}
+describe("Attempt155 recovered source read through the mounted page memo", () => {
+  it("stale first pair retains debt, covering pair banks final source during silence", async () => {
+    const p = await mount(detail155(10, 0.66), history155(10));
+    try {
+      await p.control(`normal-price:${E}:11`, 11);
+      await p.advance(250);
+      await p.answer(detail155(10, 0.66), history155(10));
+      expect(harness.ledger!.owed()).toBe(true);
+      await p.advance(1000);
+      expect(p.pairs()).toHaveLength(2);
+      await p.answer(detail155(11, 0.78), history155(11));
+      receipt155("stale-first-adopted", p);
+      await p.advance(35000);
+      receipt155("stale-first-silence", p);
+      expect(harness.event?.blend_fold_revision).toEqual({[E]:11});
+      expect(harness.event?.hero_probability).toBeCloseTo(blend155(0.78), 6);
+      expect(has155(11, 0.78)).toBe(true);
+      expect(harness.ledger!.owed()).toBe(false);
+      expect(p.pairs()).toHaveLength(2);
+    } finally { await p.unmount(); }
+  });
+  it("newer push preserves latest headline AND the received earlier source excursion", async () => {
+    const p = await mount(detail155(10, 0.66), history155(10));
+    try {
+      await p.control(`normal-price:${E}:11`, 11);
+      await p.advance(250);
+      await p.advance(50);
+      await p.emit("probability", JSON.stringify({...JSON.parse(frame(12, blend155(0.66), "polymarket")), source_value: 0.66}));
+      await p.advance(100);
+      await p.answer(detail155(11, 0.78), history155(11));
+      receipt155("overtaken-adopted", p);
+      await p.advance(35000);
+      receipt155("overtaken-silence", p);
+      expect(harness.event?.blend_fold_revision).toEqual({[E]:12});
+      expect(harness.event?.hero_probability).toBeCloseTo(blend155(0.66), 6);
+      expect(has155(12, 0.66)).toBe(true);
+      expect(harness.ledger!.owed()).toBe(false);
+      expect(p.pairs()).toHaveLength(1);
+      expect(has155(11, 0.78)).toBe(true);
+    } finally { await p.unmount(); }
+  });
+});
+
+// Independent review155: newer served history must remain the bank's source authority,
+// and a recovered reading must reach the memo when SWR keeps both identities.
+describe("Attempt155 independent review controls", () => {
+  it("review155 older pair must not erase a newer served-source excursion",async()=>{
+    const base={...history(10,.66),history_fold_revision:{[E]:10},win_prob_history:{polymarket:[{timestamp:T(0),home_probability:.5}]}};
+    const p=await mount(live(10,.66,{polymarket:src(.66,10)}),base);
+    try {
+      await p.control(`normal-price:${E}:11`,11); await p.advance(250);
+      const newer={...history(12,.55),history_fold_revision:{[E]:12},win_prob_history:{polymarket:[{timestamp:T(0),home_probability:.5}],kalshi:[{timestamp:T(0),home_probability:.5}]}};
+      for(const [rev,value] of [[12,.55],[13,.6]]){
+        harness.revalidate!(); await settle();
+        p.net.details.filter(r=>!r.fresh).at(-1)!.d.resolve(live(rev,value,{polymarket:src(.66,10),kalshi:src(value,rev)})); await settle();
+        if(rev===12){
+          harness.revalidateHistory!(); await settle();
+          p.net.histories.filter(r=>!r.fresh).at(-1)!.d.resolve(newer); await settle();
+        }
+      }
+      const has=()=>harness.renderedHistory?.win_prob_history?.kalshi?.some((q:any)=>q.timestamp===T(12)&&q.home_probability===.55);
+      expect(has()).toBe(true);
+      await p.answer(live(11,.78,{polymarket:src(.78,11)}),{...history(11,.78),history_fold_revision:{[E]:11},win_prob_history:{polymarket:[{timestamp:T(0),home_probability:.5}]}} as History);
+      expect(harness.event?.blend_fold_revision).toEqual({[E]:13});
+      expect(harness.renderedHistory?.history_fold_revision).toEqual({[E]:12});
+      harness.revalidate!(); await settle();
+      p.net.details.filter(r=>!r.fresh).at(-1)!.d.resolve(live(14,.61,{polymarket:src(.66,10),kalshi:src(.61,14)})); await settle();
+      expect(has()).toBe(true);
+    }finally{await p.unmount();}
+  });
+  it("review155 recovered reading triggers actual memo when adopted pair is otherwise unchanged",async()=>{
+    const base={...history(10,.66),history_fold_revision:{[E]:10},win_prob_history:{polymarket:[{timestamp:T(0),home_probability:.5}]}};
+    const p=await mount(live(10,.66,{polymarket:src(.66,10)}),base);
+    try {
+      await p.control(`normal-price:${E}:11`,11); await p.advance(250);
+      const newer={...history(12,.55),history_fold_revision:{[E]:12},win_prob_history:{polymarket:[{timestamp:T(0),home_probability:.5}],kalshi:[{timestamp:T(0),home_probability:.5}]}};
+      for(const [rev,value] of [[12,.55],[13,.6]]){
+        harness.revalidate!(); await settle();
+        p.net.details.filter(r=>!r.fresh).at(-1)!.d.resolve(live(rev,value,{polymarket:src(.66,12),kalshi:src(value,rev)})); await settle();
+        if(rev===12){
+          harness.revalidateHistory!(); await settle();
+          p.net.histories.filter(r=>!r.fresh).at(-1)!.d.resolve(newer); await settle();
+        }
+      }
+      const has=()=>harness.renderedHistory?.win_prob_history?.kalshi?.some((q:any)=>q.timestamp===T(12)&&q.home_probability===.55);
+      expect(has()).toBe(true);
+      await p.answer(live(11,.78,{polymarket:src(.78,11)}),{...history(11,.78),history_fold_revision:{[E]:11},win_prob_history:{polymarket:[{timestamp:T(0),home_probability:.5}]}} as History);
+      expect(harness.event?.blend_fold_revision).toEqual({[E]:13});
+      expect(harness.renderedHistory?.history_fold_revision).toEqual({[E]:12});
+      await p.advance(35000);
+      expect(harness.renderedHistory?.win_prob_history?.polymarket?.some((q:any)=>q.timestamp===T(11)&&q.home_probability===.78)).toBe(true);
+      harness.revalidate!(); await settle();
+      p.net.details.filter(r=>!r.fresh).at(-1)!.d.resolve(live(14,.61,{polymarket:src(.66,12),kalshi:src(.61,14)})); await settle();
+      expect(has()).toBe(true);
+    }finally{await p.unmount();}
   });
 });

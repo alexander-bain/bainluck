@@ -173,3 +173,48 @@ describe("#10090 attempt149 recovered source continuity (actual page memo)", () 
     expect(out.aggregate_line?.at(-1)?.home_probability).toBe(0.63);
   });
 });
+
+// Attempt155: admission happens at the accepted pair boundary before replay
+// replaces an older source value. Retain the existing bank's newer observations.
+describe("Attempt155 recovered pair source admission", () => {
+  const bank = () => chart.admitCurrentSourceObservations(
+    chart.admitChartFrames(1, [], { ...detail(4, 0.66, 2), win_probability_sources: { polymarket: { updated_at: at(2) } } }), null, served() as never, detail(4, 0.66, 2));
+  it("retains both revisions without adding a blend frame or moving the current endpoint", () => {
+    const original = bank();
+    const next = chart.admitRecoveredSourceObservations(original, served() as never, detail(3, 0.78, 1), detail(4, 0.66, 2));
+    expect(next?.sourcePoints?.map(p => [p.timestamp,p.source_probability])).toEqual([[at(1),0.78],[at(2),0.66]]);
+    expect(next?.points).toBe(original.points);
+    expect(next?.foldRevision).toEqual({1:4});
+  });
+  it.each(["terminal", "navigation", "fold", "regressed", "unknown"])('refuses %s adoption without changing the bank', kind => {
+    const original = bank();
+    const adopted = detail(4, 0.66, 2);
+    if (kind === "terminal") { adopted.status = "completed"; adopted.completed_at = at(2); }
+    if (kind === "navigation") adopted.id = 2;
+    if (kind === "fold") adopted.blend_fold_revision = {1:4,2:4};
+    if (kind === "regressed") adopted.blend_fold_revision = {1:2};
+    if (kind === "unknown") adopted.blend_fold_revision = {};
+    expect(chart.admitRecoveredSourceObservations(original, served() as never, detail(3, 0.78, 1), adopted)).toBe(original);
+  });
+  it("a newer authoritative history reading still defeats the recovered source at the same clock", () => {
+    const h = served();
+    const next = chart.admitRecoveredSourceObservations(bank(), h as never, detail(3, 0.78, 1), detail(4, 0.66, 2));
+    h.win_prob_history.polymarket.push({timestamp:at(1),home_probability:0.75});
+    h.history_fold_revision = {1:4};
+    const rendered = chart.appendAdmittedSourceObservations(h as never, next, detail(4,0.66,2)) as unknown as History;
+    expect(has(rendered,0.75,1)).toBe(true);
+    expect(has(rendered,0.78,1)).toBe(false);
+  });
+  it("repeated recoveries remain within the existing 720-observation limit", () => {
+    let current = bank();
+    for (let n=5; n<740; n++) {
+      const adopted = { ...detail(n+1,0.66,n+1), win_probability_sources: { polymarket: { value: 0.66, updated_at: at(n+1) } } };
+      current = chart.admitRecoveredSourceObservations(current, served() as never, detail(n,0.78,n), adopted)!;
+      // As on the page, the next memo admits the adopted current reading
+      // against the retained served history; the pair adds only recovered ones.
+      current = chart.admitCurrentSourceObservations(chart.admitChartFrames(1,[],adopted), current, served() as never, adopted);
+    }
+    expect(current.sourcePoints?.length).toBe(720);
+    expect(current.sourcePoints?.at(-1)?.timestamp).toBe(at(740));
+  });
+});
