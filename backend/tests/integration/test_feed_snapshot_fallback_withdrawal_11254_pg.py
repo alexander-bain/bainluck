@@ -12,10 +12,16 @@ This file EXECUTES ``SNAPSHOT_FALLBACK_SQL`` over rows built for each case.
 statement on the same rows and shows the seed can tell them apart, so a green
 run here is not vacuous.
 
+``test_the_statement_reads_the_snapshots_table_once`` holds the follow-through:
+the first fix read the same rows twice (a joined, grouped pass to find the
+withdrawals), which doubled the buffers the fallback touches on production.
+Its control is that first statement, kept below, which plans two scans.
+
 Opt-in on ``SEARCH_TEST_DATABASE_URL`` like its neighbours, and named by a step
 in the ``database-integration`` CI job (a ``*_pg.py`` nobody names runs nowhere).
 """
 
+import json
 import os
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
@@ -49,6 +55,27 @@ _OLD_SQL = """
     WHERE event_id = ANY(:ids)
       AND home_win_probability IS NOT NULL
     ORDER BY event_id, captured_at DESC
+"""
+
+#: The first #11254 statement: right answers, two reads of the same rows. Kept
+#: only as the control for the one-scan test.
+_TWO_PASS_SQL = """
+    WITH retired AS (
+        SELECT event_id, source, max(captured_at) AS withdrawn_at
+        FROM win_prob_snapshots
+        WHERE event_id = ANY(:ids)
+          AND home_win_probability IS NULL
+          AND game_state -> 'live_source_withdrawal' = CAST('true' AS jsonb)
+        GROUP BY event_id, source
+    )
+    SELECT DISTINCT ON (s.event_id) s.event_id, s.home_win_probability
+    FROM win_prob_snapshots s
+    LEFT JOIN retired r
+      ON r.event_id = s.event_id AND r.source = s.source
+    WHERE s.event_id = ANY(:ids)
+      AND s.home_win_probability IS NOT NULL
+      AND (r.withdrawn_at IS NULL OR s.captured_at > r.withdrawn_at)
+    ORDER BY s.event_id, s.captured_at DESC
 """
 
 _WITHDRAWN = {"live_source_withdrawal": True}
@@ -112,6 +139,17 @@ _CASES = {
     "marker_with_a_price_is_not_a_withdrawal": (
         [("polymarket", -10, 0.82, None), ("polymarket", 0, 0.55, _WITHDRAWN)],
         Decimal("0.5500"),
+    ),
+    # A reading stamped at the withdrawal's own instant is retired with it
+    # ("after", not "at or after", brings a venue back); another venue's older
+    # reading still stands.
+    "reading_at_the_withdrawal_instant": (
+        [
+            ("kalshi", -30, 0.40, None),
+            ("polymarket", 0, 0.55, None),
+            ("polymarket", 0, None, _WITHDRAWN),
+        ],
+        Decimal("0.4000"),
     ),
     # One venue's withdrawal never retires another venue's newer reading.
     "withdrawal_is_per_source": (
@@ -201,6 +239,7 @@ async def test_the_seed_reproduces_the_defect_under_the_old_statement(seeded_db)
     assert old["single_source_withdrawn"] == Decimal("0.8200")
     assert old["withdrawn_twice"] == Decimal("0.6100")
     assert old["other_source_survives"] == Decimal("0.8200")
+    assert old["reading_at_the_withdrawal_instant"] == Decimal("0.5500")
     # Everything the fix must leave alone reads the same under both statements.
     new = await _fallbacks(session, SNAPSHOT_FALLBACK_SQL, ids)
     unchanged = {
@@ -211,3 +250,34 @@ async def test_the_seed_reproduces_the_defect_under_the_old_statement(seeded_db)
         "marker_with_a_price_is_not_a_withdrawal",
     }
     assert {n: old[n] for n in unchanged} == {n: new[n] for n in unchanged}
+
+
+def _scans_of(plan_node, relation="win_prob_snapshots"):
+    own = 1 if plan_node.get("Relation Name") == relation else 0
+    return own + sum(_scans_of(child, relation) for child in plan_node.get("Plans", []))
+
+
+async def _plan(session, sql, ids):
+    rows = (
+        await session.execute(text("EXPLAIN (FORMAT JSON) " + sql), {"ids": list(ids.values())})
+    ).all()
+    raw = rows[0][0]
+    return (json.loads(raw) if isinstance(raw, str) else raw)[0]["Plan"]
+
+
+async def test_the_statement_reads_the_snapshots_table_once(seeded_db):
+    """The withdrawal check rides the same read as the fallback itself. Counted
+    on the plan, so it holds whichever scan type the planner picks."""
+    session, ids = seeded_db
+    assert _scans_of(await _plan(session, SNAPSHOT_FALLBACK_SQL, ids)) == 1
+
+
+async def test_the_two_pass_control_plans_two_scans_and_answers_the_same(seeded_db):
+    """The control. The first #11254 statement must count as two scans here, or
+    the test above could not tell them apart; and the rewrite must return what
+    it returned on every case."""
+    session, ids = seeded_db
+    assert _scans_of(await _plan(session, _TWO_PASS_SQL, ids)) == 2
+    assert await _fallbacks(session, _TWO_PASS_SQL, ids) == await _fallbacks(
+        session, SNAPSHOT_FALLBACK_SQL, ids
+    )

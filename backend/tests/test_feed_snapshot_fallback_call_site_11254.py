@@ -47,3 +47,14 @@ def test_the_statement_reads_the_marker_as_json_true():
 
     assert "-> 'live_source_withdrawal' = CAST('true' AS jsonb)" in SNAPSHOT_FALLBACK_SQL
     assert "home_win_probability IS NULL" in SNAPSHOT_FALLBACK_SQL
+
+
+def test_the_statement_names_the_snapshots_table_once():
+    """Server-free half of the one-scan guard: the first fix read
+    ``win_prob_snapshots`` twice (a joined pass to find withdrawals) and doubled
+    the fallback's buffers on production. The plan-level check is in the
+    real-Postgres gate."""
+    from app.utils.feed_snapshot_fallback import SNAPSHOT_FALLBACK_SQL
+
+    assert SNAPSHOT_FALLBACK_SQL.count("win_prob_snapshots") == 1
+    assert "JOIN" not in SNAPSHOT_FALLBACK_SQL.upper()
