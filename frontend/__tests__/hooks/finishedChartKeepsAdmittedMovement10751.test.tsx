@@ -38,6 +38,7 @@ import useSWR, { SWRConfig } from "swr";
 
 import { useLiveEventStream, type LiveFrame } from "../../hooks/useLiveEventStream";
 import { applyLiveFrame } from "../../lib/eventLivePush";
+import { frameCarriesUnpricedSnapshot } from "../../lib/sourceSnapshot";
 import { canSubscribeEventQuotes } from "../../lib/eventQuoteStream";
 import { pinChartEdgeToHero } from "../../lib/chartEdgePin";
 import {
@@ -172,7 +173,7 @@ function ChartPage({ net, eventId }: { net: Net; eventId: number }) {
   // ── the push callback's final branch, as the page writes it ────────────────
   const applyPushedFrame = useCallback((liveFrame: LiveFrame) => {
     if (liveFrame.event_id !== eventId) return;
-    if (liveFrame.p === null || liveFrame.p === undefined) return;
+    if (liveFrame.p === null || liveFrame.p === undefined || frameCarriesUnpricedSnapshot(liveFrame)) return;
     const frame = { ...liveFrame, p: liveFrame.p };
     refreshEvent((prev) => applyLiveFrame(prev, frame), { revalidate: false });
   }, [refreshEvent, eventId]);
@@ -291,9 +292,9 @@ describe("structural pin: the harness carries the page's own composition", () =>
   it("app/events/[id]/page.tsx still reads as the lines ChartPage mounts", () => {
     expect(PAGE).toContain("const quoteEligible = canSubscribeEventQuotes(event);");
     expect(PAGE).toMatch(/chartPoints,\s*status: reportedStreamStatus,\s*recoveryGeneration,\s*\} = useLiveEventStream\(eventId, quoteEligible, applyPushedFrame, applyReconcileControl\);/);
-    expect(PAGE).toMatch(/if \(liveFrame\.p === null \|\| liveFrame\.p === undefined\) return;\s*(?:\/\/[^\n]*\n\s*)*latestLiveFrameRef\.current = heldFrameAfter\(latestLiveFrameRef\.current, liveFrame\);\s*const frame = \{ \.\.\.liveFrame, p: liveFrame\.p \};\s*pairJournalRef\.current\?\.record\(\(prev\) => applyLiveFrame\(prev, frame\)\);\s*refreshEvent\(/);
-    expect(PAGE.match(/\(prev\) => applyLiveFrame\(prev, frame\),/g)).toHaveLength(1);
-    expect(PAGE).toMatch(/\(prev\) => applyLiveFrame\(prev, frame\),[^]{0,300}\{ revalidate: false \}/);
+    expect(PAGE).toMatch(/if \(liveFrame\.p === null \|\| liveFrame\.p === undefined \|\| frameCarriesUnpricedSnapshot\(liveFrame\)\) return;\s*(?:\/\/[^\n]*\n\s*)*latestLiveFrameRef\.current = heldFrameAfter\(latestLiveFrameRef\.current, liveFrame\);\s*const frame = \{ \.\.\.liveFrame, p: liveFrame\.p \};\s*pairJournalRef\.current\?\.record\(\(prev\) => applyLiveFrame\(prev, frame\)\);\s*refreshEvent\(/);
+    expect(PAGE.match(/const \{ next, snapshotRail \} = applyLiveFrameRail\(prev, frame\);/g)).toHaveLength(1);
+    expect(PAGE).toMatch(/applyLiveFrameRail\(prev, frame\);[^]{0,600}\{ revalidate: false \}/);
     expect(PAGE).toContain('["history", eventId, fullHistoryRequested]');
     expect(PAGE).toMatch(/keepPreviousData: true,\s*\}\s*\);/);
     // The composition, line for line, in order.

@@ -3,6 +3,7 @@ import { isFinishedStatus } from "./eventState";
 import { compareFoldRevision, frameFoldOrder, parseFoldRevision } from "./foldRevision";
 import { PINNABLE_HERO_SOURCE } from "./chartEdgePin";
 import type { LiveStreamFrame } from "./liveStreamController";
+import { frameCarriesUnpricedSnapshot } from "./sourceSnapshot";
 import type { OddsHistoryPoint, WinProbHistoryPoint } from "./types";
 
 // One hour at the nominal five-second publication cadence. This is a bound on
@@ -39,7 +40,10 @@ export function rememberLiveChartFrame(
 ): LiveChartFrame[] {
   if (frame.event_id !== eventId || !isQuoteStreamStatus(frame.status) ||
       typeof frame.p !== "number" || !Number.isFinite(frame.p) ||
-      frame.p < 0 || frame.p > 1 || !Number.isFinite(Date.parse(frame.updated_at))) {
+      frame.p < 0 || frame.p > 1 || !Number.isFinite(Date.parse(frame.updated_at)) ||
+      // #10090: a valid snapshot with no real source marks `p` as a fallback,
+      // not a blend observation.
+      frameCarriesUnpricedSnapshot(frame)) {
     return points;
   }
   const instant = Date.parse(frame.updated_at);
