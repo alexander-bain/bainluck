@@ -17,7 +17,7 @@ import math
 import os
 import time
 from collections.abc import Collection, Iterable, Iterator, Mapping
-from typing import Any, Optional
+from typing import Any, NamedTuple, Optional
 from datetime import datetime, timezone
 
 from app.tasks.kalshi_ws import (
@@ -984,11 +984,251 @@ async def withdraw_book_refuted_prices(session, books: dict) -> list:
     return withdrawn
 
 
-async def withdraw_attributed_event_sources(session, withdrawn_rows):
-    """Local experiment: invalidate only an explicitly withdrawn PM speaker.
+#: #10090 — `owed_chart_points.source` for a committed explicit Polymarket
+#: withdrawal whose source removal is still owed. Distinct from 'polymarket':
+#: each chart drain reads only its own source exactly (`OwedChartCustody.load`),
+#: so neither drain nor any chart reader ever sees one of these rows.
+PM_WITHDRAWAL_DEBT_SOURCE = "polymarket_withdrawal"
+#: Rows memory takes per load. A fuller table is read again on the next flush.
+PM_WITHDRAWAL_DEBT_LOAD_LIMIT = 1024
+#: A failed load is tried again at most this often.
+PM_WITHDRAWAL_DEBT_RETRY_S = 30.0
 
-    Call inside the price-withdrawal transaction; return frames for AFTER
-    COMMIT. Ordinary missing readings do not call this path.
+
+class PMWithdrawal(NamedTuple):
+    """One leg whose explicit withdrawal still owes its source removal."""
+
+    id: int  #: the `futures_outcomes` leg
+    market_id: int
+    last_updated: Optional[datetime]  #: the observation the withdrawal cleared
+    event_id: int
+    #: Its `owed_chart_points` row; None for a book-qualified stray (`strays`).
+    custody_id: Optional[int]
+    #: Stray only: the row's `price_changed_at`, which must follow the basis.
+    changed_at: Optional[float] = None
+
+
+class PMWithdrawalDebt:
+    """#10090 — durable custody of committed withdrawals until removal settles.
+
+    WHY. The price withdrawal commits on its own, so it never waits on the
+    event row (attempt85), and the source removal follows in a second
+    transaction. Held only in memory, that removal was lost when the process
+    died between the two, when cancellation cut off a commit's acknowledgement,
+    or when the final drain's removal failed. So each withdrawn leg on a live
+    event is also a row in `owed_chart_points` under its own source:
+
+    * `record` INSERTs it in the price-withdrawal transaction, so the withdrawal
+      commits only with its row. No foreign key: the insert locks no event.
+    * `settle` DELETEs it first in the removal transaction, so removal and
+      settlement commit together or not at all, and a row another process
+      already settled is never attributed again.
+    * `load` reads the rows memory does not hold, oldest first, when the
+      consumer starts. Recovery needs no new book and no catalog membership.
+
+    Only the RETURNING rows of the withdrawal UPDATE become debt. A stored NULL
+    alone never does; `strays` admits one only with a fresh untradeable book and
+    a `price_changed_at` after the observation the source carries.
+    """
+
+    def __init__(self):
+        #: custody id -> debt, mirroring the durable rows this process holds.
+        self.owed: dict[int, PMWithdrawal] = {}
+        self.loaded = False
+        self._retry_at = 0.0
+        #: stray leg -> the `price_changed_at` already judged, so a repeated
+        #: wide book on the same stored NULL is not judged again.
+        self._judged: dict[int, float] = {}
+
+    def legs(self) -> dict[int, int]:
+        """Owed leg -> its event."""
+        return {debt.id: debt.event_id for debt in self.owed.values()}
+
+    async def load(self, sessions) -> int:
+        """Move durable rows memory does not hold into memory. Never raises."""
+        if self.loaded or time.monotonic() < self._retry_at:
+            return 0
+        from sqlalchemy import select
+
+        from app.models.models import OwedChartPoint
+
+        query = select(
+            OwedChartPoint.id, OwedChartPoint.event_id, OwedChartPoint.reading,
+        ).where(OwedChartPoint.source == PM_WITHDRAWAL_DEBT_SOURCE)
+        if self.owed:
+            query = query.where(OwedChartPoint.id.not_in(sorted(self.owed)))
+        try:
+            async with sessions() as session:
+                rows = (
+                    await session.execute(
+                        query.order_by(OwedChartPoint.id)
+                        .limit(PM_WITHDRAWAL_DEBT_LOAD_LIMIT)
+                    )
+                ).all()
+        except Exception:
+            # Cancellation still propagates. The rows stay owed in the table.
+            self._retry_at = time.monotonic() + PM_WITHDRAWAL_DEBT_RETRY_S
+            logger.exception("Polymarket WS: withdrawal debt not loaded; retrying")
+            return 0
+        for custody_id, event_id, reading in rows:
+            observed = reading["last_updated"]
+            self.owed[custody_id] = PMWithdrawal(
+                int(reading["outcome_id"]),
+                int(reading["market_id"]),
+                None if observed is None else datetime.fromisoformat(observed),
+                event_id,
+                custody_id,
+            )
+        self.loaded = len(rows) < PM_WITHDRAWAL_DEBT_LOAD_LIMIT
+        return len(rows)
+
+    async def record(self, session, rows) -> list[PMWithdrawal]:
+        """INSERT each withdrawn leg of a live event, in the withdrawal's transaction.
+
+        The caller adopts the returned debt only after that transaction commits.
+        A leg with no observation stamp is never attributable, so owes nothing.
+        """
+        stamped = [row for row in rows if row.last_updated is not None]
+        if not stamped:
+            return []
+        from sqlalchemy import insert, select
+
+        from app.models.models import Event, FuturesMarket, OwedChartPoint
+
+        event_of = dict(
+            (
+                await session.execute(
+                    select(FuturesMarket.id, FuturesMarket.event_id)
+                    .join(Event, Event.id == FuturesMarket.event_id)
+                    .where(
+                        FuturesMarket.id.in_(sorted({row.market_id for row in stamped})),
+                        FuturesMarket.source == 'polymarket',
+                        Event.status == 'live',
+                        Event.completed_at.is_(None),
+                    )
+                )
+            ).all()
+        )
+        debts = []
+        for row in stamped:
+            event_id = event_of.get(row.market_id)
+            if event_id is None:
+                continue
+            custody_id = (
+                await session.execute(
+                    insert(OwedChartPoint)
+                    .values(
+                        source=PM_WITHDRAWAL_DEBT_SOURCE,
+                        event_id=event_id,
+                        # A withdrawal owes no chart value; the column is NOT NULL.
+                        value=0.0,
+                        reading={
+                            "outcome_id": row.id,
+                            "market_id": row.market_id,
+                            "last_updated": row.last_updated.isoformat(),
+                        },
+                    )
+                    .returning(OwedChartPoint.id)
+                )
+            ).scalar_one()
+            debts.append(PMWithdrawal(
+                row.id, row.market_id, row.last_updated, event_id, custody_id,
+            ))
+        return debts
+
+    def adopt(self, debts) -> None:
+        for debt in debts:
+            self.owed[debt.custody_id] = debt
+
+    async def strays(self, session, legs) -> list[PMWithdrawal]:
+        """Stored-NULL legs of live events that a fresh untradeable book names.
+
+        For a leg another writer withdrew first (the REST poll's #9399 arm), or
+        whose debt a process lost before `record` existed. Read-only. The removal
+        additionally requires `price_changed_at` after the source's basis, so a
+        NULL that was never the withdrawal of the observed value removes nothing.
+        """
+        if not legs:
+            return []
+        from sqlalchemy import select
+
+        from app.models.models import Event, FuturesMarket, FuturesOutcome
+
+        rows = (
+            await session.execute(
+                select(
+                    FuturesOutcome.id, FuturesOutcome.market_id,
+                    FuturesOutcome.last_updated, FuturesOutcome.price_changed_at,
+                    FuturesMarket.event_id,
+                )
+                .join(FuturesMarket, FuturesMarket.id == FuturesOutcome.market_id)
+                .join(Event, Event.id == FuturesMarket.event_id)
+                .where(
+                    FuturesOutcome.id.in_(sorted(legs)),
+                    FuturesOutcome.current_probability.is_(None),
+                    FuturesOutcome.is_winner.isnot(True),
+                    FuturesOutcome.resolution_source.is_(None),
+                    FuturesMarket.source == 'polymarket',
+                    Event.status == 'live',
+                    Event.completed_at.is_(None),
+                )
+            )
+        ).all()
+        found = []
+        for oid, market_id, last_updated, changed, event_id in rows:
+            if last_updated is None or changed is None:
+                continue
+            if self._judged.get(oid) == changed.timestamp():
+                continue
+            found.append(PMWithdrawal(
+                oid, market_id, last_updated, event_id, None, changed.timestamp(),
+            ))
+        return found
+
+    async def settle(self, session, debts) -> list[PMWithdrawal]:
+        """DELETE the debts' rows first in the removal transaction.
+
+        Returns the debts this transaction now owns: those whose row was still
+        owed, and every stray. A row already gone was settled elsewhere.
+        """
+        ids = sorted({d.custody_id for d in debts if d.custody_id is not None})
+        owned: set[int] = set()
+        if ids:
+            from sqlalchemy import delete
+
+            from app.models.models import OwedChartPoint
+
+            owned = set(
+                (
+                    await session.execute(
+                        delete(OwedChartPoint)
+                        .where(
+                            OwedChartPoint.id.in_(ids),
+                            OwedChartPoint.source == PM_WITHDRAWAL_DEBT_SOURCE,
+                        )
+                        .returning(OwedChartPoint.id)
+                    )
+                ).scalars()
+            )
+        return [d for d in debts if d.custody_id is None or d.custody_id in owned]
+
+    def settled(self, debts) -> None:
+        """After the removal transaction commits: nothing here is owed now."""
+        for debt in debts:
+            if debt.custody_id is None:
+                self._judged[debt.id] = debt.changed_at
+            else:
+                self.owed.pop(debt.custody_id, None)
+
+
+async def withdraw_attributed_event_sources(session, withdrawn_rows):
+    """#10090: remove only a PM source whose speaker was explicitly withdrawn.
+
+    Runs in its own transaction after the price withdrawal committed (never
+    inside it: the price must not wait on the event row). ``withdrawn_rows``
+    are `PMWithdrawal` debts `PMWithdrawalDebt.settle` already owns in this
+    transaction. Returns frames to publish AFTER COMMIT. An ordinary missing
+    reading never reaches this path.
     """
     from sqlalchemy import select, update, func
     from app.models.models import Event, FuturesMarket, WinProbSnapshot
@@ -996,15 +1236,20 @@ async def withdraw_attributed_event_sources(session, withdrawn_rows):
     from app.utils.live_blend import compute_source_home_probability
     from app.utils.live_push import build_frame
 
-    import math
-
     by_market = {}
     withdrawn_observations = {}
+    changed_after = {}
     for row in withdrawn_rows:
-        by_market.setdefault(row.market_id, set()).add(str(row.id))
-        withdrawn_observations[str(row.id)] = (
-            None if row.last_updated is None else row.last_updated.timestamp()
-        )
+        oid = str(row.id)
+        by_market.setdefault(row.market_id, set()).add(oid)
+        stamp = None if row.last_updated is None else row.last_updated.timestamp()
+        # Two committed withdrawals of one leg: the newer observation bounds it.
+        if stamp is None:
+            withdrawn_observations.setdefault(oid, None)
+        elif withdrawn_observations.get(oid) is None or stamp > withdrawn_observations[oid]:
+            withdrawn_observations[oid] = stamp
+        if getattr(row, "changed_at", None) is not None:
+            changed_after[oid] = row.changed_at
     if not by_market:
         return []
     event_ids = set((await session.execute(
@@ -1035,6 +1280,7 @@ async def withdraw_attributed_event_sources(session, withdrawn_rows):
         # IDs alone are insufficient: the same leg may already have a newer
         # stamped overlay. The withdrawal only owns observations no newer than
         # the actual row it cleared. Both stamps use the database clock domain.
+        # A stray also needs its price to have changed after that observation.
         matched = by_market[market_id].intersection(basis)
         if any(
             isinstance(basis[oid], bool)
@@ -1042,6 +1288,7 @@ async def withdraw_attributed_event_sources(session, withdrawn_rows):
             or not math.isfinite(basis[oid])
             or withdrawn_observations[oid] is None
             or basis[oid] > withdrawn_observations[oid]
+            or (oid in changed_after and not basis[oid] < changed_after[oid])
             for oid in matched
         ):
             continue
@@ -1054,14 +1301,12 @@ async def withdraw_attributed_event_sources(session, withdrawn_rows):
             ).values(
                 win_probability_sources=Event.win_probability_sources.op('-')('polymarket'),
             ).returning(
-                Event.win_probability_sources, Event.win_probability_sources_rev,
-                Event.status, Event.espn_win_prob_home, Event.opening_home_probability,
-                func.clock_timestamp(),
+                Event.win_probability_sources_rev, Event.status, func.clock_timestamp(),
             ).execution_options(synchronize_session=False)
         )).first()
         if removed is None:
             continue  # newer source/terminal state won while this read was pending
-        sources, revision, status, espn, opening, removed_at = removed
+        revision, status, removed_at = removed
         # A NULL history vertex stops carry-forward; it is not a fabricated
         # zero probability. It commits with the source removal or neither does.
         session.add(WinProbSnapshot(
@@ -2568,6 +2813,10 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
     # when the write lands. Reached through the refresher: no new name.
     blend_refresher.held_quotes = HeldRowQuotes()
     await blend_refresher.held_quotes.sample_database_clock(get_task_session)
+    # #10090: withdrawals a previous run committed whose source removal it
+    # never settled. A failed read is retried by the first withdrawal flush.
+    blend_refresher.withdrawal_debt = PMWithdrawalDebt()
+    await blend_refresher.withdrawal_debt.load(get_task_session)
     # #837 receipt — every accepted input is stamped (seq, receive instant) as
     # it is buffered, so a held price can be followed from the socket to the
     # stamp that carried it. `input_marks` is keyed like `price_buffer` (one
@@ -2917,22 +3166,20 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
         ``before_write(books)`` sees the exact snapshot before its transaction.
         """
         from app.tasks.live_blend_refresh import _mono
-        from app.tasks.polymarket_ws import withdraw_attributed_event_sources, _publish_committed_withdrawals
 
-        # Only committed RETURNING rows create removal obligations. NULL rows
-        # alone cannot distinguish an explicit withdrawal from missing data.
-        source_debt = getattr(blend_refresher, "_withdrawal_source_rows", None)
-        if source_debt is None:
-            source_debt = blend_refresher._withdrawal_source_rows = {}
+        # #10090: committed explicit withdrawals whose source removal is still
+        # owed, durable across a restart (`PMWithdrawalDebt`). Reached through
+        # the refresher: no new name.
+        withdrawal_debt = getattr(blend_refresher, "withdrawal_debt", None)
+        if withdrawal_debt is not None:
+            await withdrawal_debt.load(get_task_session)
         async with buffer_lock:
-            # A newly accepted valid quote supersedes its book withdrawal.
-            for oid in source_debt.keys() - withdraw_buffer.keys():
-                source_debt.pop(oid, None)
+            debt_events = withdrawal_debt.legs() if withdrawal_debt is not None else {}
             held_events = (
                 {
-                    event_id_by_outcome.get(oid)
+                    event_id_by_outcome.get(oid, debt_events.get(oid))
                     for oid, until in withdrawal_retry_until.items()
-                    if oid in withdraw_buffer and until > _mono()
+                    if (oid in withdraw_buffer or oid in debt_events) and until > _mono()
                 }
                 if not final else set()
             )
@@ -2953,58 +3200,97 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                 and event_id_by_outcome.get(oid) not in exclude_events
                 and event_id_by_outcome.get(oid) not in held_events
             }
-        if not books:
+            # Owed removals take the same loop and event gates as books. A leg
+            # whose newer quote is still buffered is judged after that write.
+            debts = [
+                debt
+                for debt in (withdrawal_debt.owed.values() if debt_events else ())
+                if debt.id not in price_buffer
+                and (standalone is None or (debt.id in alone) == standalone)
+                and (props is None or (debt.id in non_blend_outcome_ids) == props)
+                and (only_events is None or debt.event_id in only_events)
+                and debt.event_id not in exclude_events
+                and debt.event_id not in held_events
+            ]
+        if not books and not debts:
             return []
         if before_write is not None:
-            kept = await before_write(books)
+            # It judges legs by id only; an owed removal is ordered like a book.
+            kept = await before_write(
+                {**{debt.id: None for debt in debts}, **books} if debts else books
+            )
             if kept is not None:
                 # #10090: books on an event whose stamp is still queued or
                 # running stay buffered for a later flush (`join_stamp_reading`).
-                books = kept
-                if not books:
+                books = {oid: book for oid, book in books.items() if oid in kept}
+                debts = [debt for debt in debts if debt.id in kept]
+                if not books and not debts:
                     return []
-        try:
-            async with get_task_session() as session:
-                if not final:
-                    await session.execute(
-                        SET_LOCK_TIMEOUT_SQL,
-                        {"ms": lock_timeout_value(PRICE_CHUNK_LOCK_TIMEOUT_MS)},
-                    )
-                rows = await withdraw_book_refuted_prices(session, books)
-                for row in rows:
-                    if row.last_updated is None:
-                        continue  # no observation stamp to push; REST serves it
-                    queue_market_change(
-                        session,
-                        market_id=row.market_id,
-                        source="polymarket",
-                        outcome_observed_at={row.id: row.last_updated},
-                    )
-                # #6598: a withdrawn leg leaves the field `rank` orders.
-                markets = sorted({row.market_id for row in rows})
-                if markets:
-                    stats["ranks_rederived"] += (
-                        await session.execute(rerank_market_fields_stmt(markets))
-                    ).rowcount
-        except Exception as exc:
-            stats["errors"] += 1
-            logger.exception(
-                "Polymarket WS: withdrawal error (%d retained for retry)", len(books)
-            )
-            if not final and is_lock_timeout(exc):
-                # Keep the complete failed transaction; newer books on another
-                # leg of its event must not bypass this eligibility cooldown.
-                until = _mono() + PRICE_FLUSH_SECONDS
-                withdrawal_retry_until.update(dict.fromkeys(books, until))
-                return []
-            return None
-        # Price/card custody has committed independently. Retain the exact
-        # explicit withdrawal before any subsequent await, including cancellation.
-        source_debt.update((row.id, row) for row in rows if row.id in withdraw_buffer)
-        await blend_refresher.publish_market_changes(session)
-        selected_debt = {oid: source_debt[oid] for oid in books if oid in source_debt}
+        rows = []
+        strays = []
+        if books:
+            try:
+                async with get_task_session() as session:
+                    if not final:
+                        await session.execute(
+                            SET_LOCK_TIMEOUT_SQL,
+                            {"ms": lock_timeout_value(PRICE_CHUNK_LOCK_TIMEOUT_MS)},
+                        )
+                    rows = await withdraw_book_refuted_prices(session, books)
+                    for row in rows:
+                        if row.last_updated is None:
+                            continue  # no observation stamp to push; REST serves it
+                        queue_market_change(
+                            session,
+                            market_id=row.market_id,
+                            source="polymarket",
+                            outcome_observed_at={row.id: row.last_updated},
+                        )
+                    # #6598: a withdrawn leg leaves the field `rank` orders.
+                    markets = sorted({row.market_id for row in rows})
+                    if markets:
+                        stats["ranks_rederived"] += (
+                            await session.execute(rerank_market_fields_stmt(markets))
+                        ).rowcount
+                    if withdrawal_debt is not None:
+                        # The withdrawal commits only with its owed removal.
+                        recorded = await withdrawal_debt.record(session, rows)
+                        withdrawn_now = {row.id for row in rows}
+                        strays = await withdrawal_debt.strays(session, {
+                            oid for oid in books
+                            if oid not in withdrawn_now and oid not in debt_events
+                            and oid not in non_blend_outcome_ids
+                            and event_id_by_outcome.get(oid) is not None
+                        })
+            except BaseException as exc:
+                # The commit may have landed unacknowledged (a dropped
+                # connection, or cancellation during its await): the next
+                # flush re-reads every durable row memory does not hold.
+                if withdrawal_debt is not None:
+                    withdrawal_debt.loaded = False
+                if not isinstance(exc, Exception):
+                    raise
+                stats["errors"] += 1
+                logger.exception(
+                    "Polymarket WS: withdrawal error (%d retained for retry)", len(books)
+                )
+                if not final and is_lock_timeout(exc):
+                    # Keep the complete failed transaction; newer books on another
+                    # leg of its event must not bypass this eligibility cooldown.
+                    until = _mono() + PRICE_FLUSH_SECONDS
+                    withdrawal_retry_until.update(dict.fromkeys(books, until))
+                    return []
+                return None
+            if withdrawal_debt is not None:
+                withdrawal_debt.adopt(recorded)
+                # A leg whose newer quote arrived meanwhile waits for that write.
+                debts.extend(debt for debt in recorded if debt.id not in price_buffer)
+            await blend_refresher.publish_market_changes(session)
+        settled = []
         invalidations = []
-        if selected_debt:
+        if debts or strays:
+            from app.tasks.polymarket_ws import withdraw_attributed_event_sources
+
             try:
                 async with get_task_session() as removal_session:
                     if not final:
@@ -3012,31 +3298,44 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                             SET_LOCK_TIMEOUT_SQL,
                             {"ms": lock_timeout_value(PRICE_CHUNK_LOCK_TIMEOUT_MS)},
                         )
+                    # The rows settle with the removal, or neither commits.
+                    settled = await withdrawal_debt.settle(removal_session, debts + strays)
                     invalidations = await withdraw_attributed_event_sources(
-                        removal_session, list(selected_debt.values()),
+                        removal_session, settled,
                     )
             except Exception as exc:
+                # The withdrawal is committed and its debt still owed: in
+                # memory, and durably in its row.
                 stats["errors"] += 1
                 logger.exception("Polymarket WS: source withdrawal retained for retry")
                 if not final and is_lock_timeout(exc):
                     until = _mono() + min(PRICE_FLUSH_SECONDS, 0.25)
-                    withdrawal_retry_until.update(dict.fromkeys(selected_debt, until))
+                    withdrawal_retry_until.update(
+                        dict.fromkeys({debt.id for debt in debts + strays}, until)
+                    )
                     return []
                 return None
-            # A successful resolver/CAS refusal also settles this obligation:
-            # a valid alternative, newer quote or terminal result owns the source.
-            for oid, row in selected_debt.items():
-                if source_debt.get(oid) is row:
-                    source_debt.pop(oid, None)
+            # A resolver/CAS refusal settles too: a valid alternative, a newer
+            # quote or a terminal result owns the source now.
+            withdrawal_debt.settled(debts + strays)
+            for debt in debts:
+                withdrawal_retry_until.pop(debt.id, None)
         for oid in books:
             withdrawal_retry_until.pop(oid, None)
-        await _publish_committed_withdrawals(blend_refresher, invalidations)
+        if invalidations:
+            from app.tasks.polymarket_ws import _publish_committed_withdrawals
+
+            await _publish_committed_withdrawals(blend_refresher, invalidations)
         async with buffer_lock:
             for oid, book in books.items():
                 if withdraw_buffer.get(oid) == book:
                     del withdraw_buffer[oid]
         stats["held_prices_withdrawn"] += len(rows)
-        return [row.id for row in rows]
+        # R-A: a leg whose removal settled on this pass is returned even when
+        # an earlier pass committed its withdrawal, so its stamp is never lost.
+        return list(dict.fromkeys(
+            [row.id for row in rows] + [debt.id for debt in settled]
+        ))
 
     async def _flush_prices(flush_started=None, final=False):
         """One flush. Non-lock failures return False for the cadence retry;
