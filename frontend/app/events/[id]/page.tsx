@@ -35,7 +35,7 @@ import {
   type ReconcileControl,
   type WriteJournal,
 } from "@/lib/reconcileControl";
-import { fetchEventWithLiveFrame, keepNewerHeldHeadline } from "@/lib/reconcileEventPoll";
+import { carryNewerHeldState, fetchEventWithLiveFrame, keepNewerHeldHeadline } from "@/lib/reconcileEventPoll";
 import {
   admitChartFrames,
   appendHeroObservation,
@@ -47,12 +47,15 @@ import { canSubscribeEventQuotes, quotePairCoversTrigger } from "@/lib/eventQuot
 import FreshnessChip from "@/components/event/FreshnessChip";
 import {
   applyLiveFrame,
+  applyLiveFrameRail,
   adoptFoldedQuote,
   frameInvalidatesFoldedBlend,
   eventFeedIsStalled,
   makeEventRefreshInterval,
   pageLiveClaimIsUnbacked,
 } from "@/lib/eventLivePush";
+import { frameFoldOrder } from "@/lib/foldRevision";
+import { frameCarriesUnpricedSnapshot, snapshotRailPaysPricelessTrigger } from "@/lib/sourceSnapshot";
 import LiveAgeStamp, { heroStampIsStale } from "@/components/event/LiveAgeStamp";
 import { heroFreshness } from "@/lib/event/heroFreshness";
 import { newestServedScore } from "@/lib/event/newestServedScore";
@@ -506,7 +509,12 @@ export default function EventPage({ params }: EventPageProps) {
     if (held && canSubscribeEventQuotes(held) && (
       liveFrame.p === null || held.hero_probability_source !== "blend" ||
       (liveFrame.status && liveFrame.status !== held.status) ||
-      (held.status !== "live" && frameInvalidatesFoldedBlend(held, liveFrame))
+      (held.status !== "live" && frameInvalidatesFoldedBlend(held, liveFrame)) ||
+      // #10090: a newer write whose same-commit snapshot holds no real source
+      // is not a blend — its `p` is the producer's fallback. Adopt neither the
+      // number nor the map; read the authoritative pair, as for no price.
+      (frameCarriesUnpricedSnapshot(liveFrame) &&
+        frameFoldOrder(held.blend_fold_revision, liveFrame.rev) === "newer")
     )) {
       quoteTriggerRef.current = liveFrame;
       foldedRefetch.request();
@@ -518,7 +526,7 @@ export default function EventPage({ params }: EventPageProps) {
     }
     // #9294: contributor notifications invalidate the fold without carrying
     // an adoptable price. Never install one as a price or replay it on a poll.
-    if (liveFrame.p === null || liveFrame.p === undefined) return;
+    if (liveFrame.p === null || liveFrame.p === undefined || frameCarriesUnpricedSnapshot(liveFrame)) return;
     // Every frame now gets here, so an older price can follow a newer one in a
     // batch. `applyLiveFrame` refuses it against the cache; the poll's replay
     // must not regress to it either.
@@ -529,7 +537,15 @@ export default function EventPage({ params }: EventPageProps) {
       // `applyLiveFrame` spreads `prev` FIRST and then only the fields a frame
       // speaks for, so a frame arriving after the background poll carries the
       // newer games line forward instead of reverting it (CERT-1994).
-      (prev) => applyLiveFrame(prev, frame),
+      // #10090: decided on the value actually stored, so a snapshot rail that
+      // lands discharges a priceless trigger it covers (no trailing pair).
+      (prev) => {
+        const { next, snapshotRail } = applyLiveFrameRail(prev, frame);
+        if (snapshotRail && snapshotRailPaysPricelessTrigger(quoteTriggerRef.current, frame)) {
+          quoteTriggerRef.current = null;
+        }
+        return next;
+      },
       // No revalidate: the frame IS the new value. Refetching here would put a
       // request on every tick and undo the point of pushing.
       { revalidate: false },
@@ -1037,10 +1053,10 @@ export default function EventPage({ params }: EventPageProps) {
     // onto it, so the rail loses the removed source without the headline going
     // back, and the two halves need only agree on the floor (two fresh builds
     // a write apart would otherwise refuse each other). It PAYS the floor only
-    // when a pinned history edge covers it too: an unpinned history makes no
-    // revision claim, so the chart half stays owed and the persistent read
-    // asks again (D4). Any other pair keeps history-covers-detail and
-    // refuse-if-older.
+    // when the history covers it too — a pinned edge's revision, or an
+    // unpinned complete fresh build's `history_fold_revision`; otherwise the
+    // chart half stays owed and the persistent read asks again (D4). Any other
+    // pair keeps history-covers-detail and refuse-if-older.
     const covering = reconcileLedger.floors()
       .filter((floor) => reconcileFloorCoverage(detail, history, readingEventId, floor) !== "none");
     const reconciling = covering.length > 0;
@@ -1060,7 +1076,10 @@ export default function EventPage({ params }: EventPageProps) {
     await Promise.all([
       reconciling && servedHistoryIsNewer(latestBlendEdgeRef.current, history)
         ? undefined : refreshHistoryRef.current(history, { revalidate: false }),
-      refreshEventRef.current(adopted, { revalidate: false }),
+      // #10090: against what the cache holds AT the write, not the rendered
+      // value — a poll stored while this pair was out may not have rendered
+      // yet (G2), and its provably newer game state must not be put back.
+      refreshEventRef.current((cached) => carryNewerHeldState(adopted, cached), { revalidate: false }),
     ]);
     if (quoteTriggerRef.current === trigger) quoteTriggerRef.current = null;
     if (recoveryIntentRef.current === recovery) recoveryIntentRef.current = 0;

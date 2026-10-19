@@ -47,6 +47,7 @@
  */
 
 import { parseReconcileControl, type ReconcileControl } from "./reconcileControl";
+import { snapshotFrameIsOversize } from "./sourceSnapshot";
 
 export interface LiveStreamFrame {
   event_id: number;
@@ -64,6 +65,12 @@ export interface LiveStreamFrame {
   folded_quote?: unknown;
   /** Raw actual-fold notification promises an object/null projection result. */
   folded_quote_pending?: boolean;
+  /**
+   * #10090: the same write's complete source map (`lib/sourceSnapshot.ts`).
+   * Dropped here when the raw frame is over the decoder's size bound (D3), so
+   * the frame is then exactly its legacy shape.
+   */
+  source_snapshot?: unknown;
 }
 
 /** The slice of `EventSource` this controller uses. */
@@ -428,6 +435,9 @@ export function createLiveStreamController(
       // Guard the shape rather than trusting it: a malformed frame that set `p`
       // to undefined would blank a working hero.
       if (typeof parsed?.event_id !== 'number') return;
+      if (parsed.source_snapshot !== undefined && snapshotFrameIsOversize(String(raw))) {
+        delete parsed.source_snapshot;
+      }
       // THE ONLY place the delivery clock is rearmed. A frame is the only
       // evidence that anything is still publishing.
       lastDataAt = now();
