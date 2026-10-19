@@ -35,7 +35,7 @@ import {
   type ReconcileControl,
   type WriteJournal,
 } from "@/lib/reconcileControl";
-import { fetchEventWithLiveFrame, keepNewerHeldHeadline } from "@/lib/reconcileEventPoll";
+import { carryNewerHeldState, fetchEventWithLiveFrame, keepNewerHeldHeadline } from "@/lib/reconcileEventPoll";
 import {
   admitChartFrames,
   appendHeroObservation,
@@ -1076,7 +1076,10 @@ export default function EventPage({ params }: EventPageProps) {
     await Promise.all([
       reconciling && servedHistoryIsNewer(latestBlendEdgeRef.current, history)
         ? undefined : refreshHistoryRef.current(history, { revalidate: false }),
-      refreshEventRef.current(adopted, { revalidate: false }),
+      // #10090: against what the cache holds AT the write, not the rendered
+      // value — a poll stored while this pair was out may not have rendered
+      // yet (G2), and its provably newer game state must not be put back.
+      refreshEventRef.current((cached) => carryNewerHeldState(adopted, cached), { revalidate: false }),
     ]);
     if (quoteTriggerRef.current === trigger) quoteTriggerRef.current = null;
     if (recoveryIntentRef.current === recovery) recoveryIntentRef.current = 0;

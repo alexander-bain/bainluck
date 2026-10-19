@@ -27,7 +27,7 @@ import vm from "vm";
 import ts from "typescript";
 import { createFoldedRefetchScheduler } from "@/lib/foldedRefetchScheduler";
 import { canSubscribeEventQuotes, quotePairCoversTrigger } from "@/lib/eventQuoteStream";
-import { keepNewerHeldHeadline } from "@/lib/reconcileEventPoll";
+import { carryNewerHeldState, keepNewerHeldHeadline } from "@/lib/reconcileEventPoll";
 import { historyRangeParam } from "@/lib/event/historyRange";
 import { EVENT_BOOT_HISTORY_HOURS } from "@/lib/event/detailBoot";
 import { createReconcileLedger, createWriteJournal, rebaseOnCoveringRead, reconcileFloorCoverage, servedHistoryIsNewer } from "@/lib/reconcileControl";
@@ -80,7 +80,7 @@ function setup(detailRevisions: Array<() => Promise<number>>) {
   const pairedQuoteReadRef: { current: (() => Promise<unknown>) | null } = { current: null };
   const context: Record<string, unknown> = {
     createFoldedRefetchScheduler, canSubscribeEventQuotes, quotePairCoversTrigger,
-    keepNewerHeldHeadline, historyRangeParam, EVENT_BOOT_HISTORY_HOURS, FOLDED_FRAME_REFETCH_MS,
+    keepNewerHeldHeadline, carryNewerHeldState, historyRangeParam, EVENT_BOOT_HISTORY_HOURS, FOLDED_FRAME_REFETCH_MS,
     pairedQuoteReadRef, quoteTriggerRef, heldEventRef,
     storedEventRef: { current: undefined }, // #10090 G2: no poll result stored here
     // #10090 G1: no reconcile control is owed in these cases.
@@ -107,7 +107,10 @@ function setup(detailRevisions: Array<() => Promise<number>>) {
     fetchEventHistory: async (): Promise<History> => ({ event_id: EVENT_ID, blend_edge_pinned: true,
       blend_edge_fold_revision: { 7: 12 }, aggregate_line: [{ home_probability: 0.52 }] }),
     refreshHistoryRef: { current: async (h: History) => { historyRef.current = h; } },
-    refreshEventRef: { current: async (d: Detail) => { heldEventRef.current = d; applied += 1; } },
+    // swr's mutate: a function is called with the cached value (#10090 state carry).
+    refreshEventRef: { current: async (d: Detail | ((cached: Detail | undefined) => Detail)) => {
+      heldEventRef.current = typeof d === "function" ? d(heldEventRef.current) : d; applied += 1;
+    } },
     setLastRefresh: () => {},
     Date,
   };
