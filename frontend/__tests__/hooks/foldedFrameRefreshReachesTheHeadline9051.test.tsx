@@ -45,6 +45,7 @@ import fs from "fs";
 import path from "path";
 import useSWR, { SWRConfig } from "swr";
 import { applyLiveFrame, frameInvalidatesFoldedBlend, makeEventRefreshInterval } from "../../lib/eventLivePush";
+import { frameCarriesUnpricedSnapshot } from "../../lib/sourceSnapshot";
 import { fetchEventWithLiveFrame } from "../../lib/reconcileEventPoll";
 import { createFoldedRefetchScheduler, takeFreshRead } from "../../lib/foldedRefetchScheduler";
 import {
@@ -169,7 +170,7 @@ function HeldEvent(props: { net: Net; liveFrame: LiveFrame | null; servedHistory
     }
     // #9294: contributor notifications invalidate the fold without carrying
     // an adoptable price. Never install one as a price or replay it on a poll.
-    if (liveFrame.p === null || liveFrame.p === undefined) return;
+    if (liveFrame.p === null || liveFrame.p === undefined || frameCarriesUnpricedSnapshot(liveFrame)) return;
     latestLiveFrameRef.current = heldFrameAfter(latestLiveFrameRef.current, liveFrame);
     const frame = { ...liveFrame, p: liveFrame.p };
     refreshEvent(
@@ -272,7 +273,7 @@ describe("structural pin: the harness carries the page's own wiring", () => {
     expect(PAGE).toMatch(/useEffect\(\(\) => \(\) => foldedRefetch\.cancel\(\), \[foldedRefetch\]\)/);
     // The push effect: a refused frame requests a refetch and writes NOTHING.
     expect(PAGE).toMatch(/if \(frameInvalidatesFoldedBlend\(heldEventRef\.current, liveFrame\)\) \{\s*foldedRefetch\.request\(\{ keepBackoff: true \}\);\s*return;\s*\}/);
-    expect(PAGE).toMatch(/\(prev\) => applyLiveFrame\(prev, frame\),/);
+    expect(PAGE).toMatch(/const \{ next, snapshotRail \} = applyLiveFrameRail\(prev, frame\);/);
     expect(PAGE).toMatch(/\}, \[refreshEvent, eventId, foldedRefetch\]\);\s*(?:\/\/[^\n]*\n\s*)*const reconcileCatchupRef[^]*?\}, \[eventId, reconcileLedger\]\);\s*const quoteEligible = canSubscribeEventQuotes\(event\);/);
     expect(PAGE).toMatch(/\} = useLiveEventStream\(eventId, quoteEligible, applyPushedFrame, applyReconcileControl\);/);
     expect(PAGE.indexOf("frameInvalidatesFoldedBlend(heldEventRef.current, liveFrame)"))
@@ -282,7 +283,7 @@ describe("structural pin: the harness carries the page's own wiring", () => {
     expect(PAGE).toMatch(/refreshEvent\(\(prev\) => adoptNewerBlendEdge\(prev, edge\), \{ revalidate: false \}\);/);
     // Exactly one place applies a frame, and it is guarded: the 95bcc174 shape
     // (`void refreshEvent();` beside the frame write) is gone.
-    expect(PAGE.match(/\(prev\) => applyLiveFrame\(prev, frame\),/g)).toHaveLength(1);
+    expect(PAGE.match(/const \{ next, snapshotRail \} = applyLiveFrameRail\(prev, frame\);/g)).toHaveLength(1);
     // #10090 G1: plus its journal entry while a paired read is in flight — a replay, not a write.
     expect(PAGE.match(/pairJournalRef\.current\?\.record\(\(prev\) => applyLiveFrame\(prev, frame\)\);/g)).toHaveLength(1);
     expect(PAGE).not.toMatch(/foldedRefetchAtRef/);

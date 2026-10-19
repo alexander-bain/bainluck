@@ -47,12 +47,15 @@ import { canSubscribeEventQuotes, quotePairCoversTrigger } from "@/lib/eventQuot
 import FreshnessChip from "@/components/event/FreshnessChip";
 import {
   applyLiveFrame,
+  applyLiveFrameRail,
   adoptFoldedQuote,
   frameInvalidatesFoldedBlend,
   eventFeedIsStalled,
   makeEventRefreshInterval,
   pageLiveClaimIsUnbacked,
 } from "@/lib/eventLivePush";
+import { frameFoldOrder } from "@/lib/foldRevision";
+import { frameCarriesUnpricedSnapshot, snapshotRailPaysPricelessTrigger } from "@/lib/sourceSnapshot";
 import LiveAgeStamp, { heroStampIsStale } from "@/components/event/LiveAgeStamp";
 import { heroFreshness } from "@/lib/event/heroFreshness";
 import { newestServedScore } from "@/lib/event/newestServedScore";
@@ -506,7 +509,12 @@ export default function EventPage({ params }: EventPageProps) {
     if (held && canSubscribeEventQuotes(held) && (
       liveFrame.p === null || held.hero_probability_source !== "blend" ||
       (liveFrame.status && liveFrame.status !== held.status) ||
-      (held.status !== "live" && frameInvalidatesFoldedBlend(held, liveFrame))
+      (held.status !== "live" && frameInvalidatesFoldedBlend(held, liveFrame)) ||
+      // #10090: a newer write whose same-commit snapshot holds no real source
+      // is not a blend — its `p` is the producer's fallback. Adopt neither the
+      // number nor the map; read the authoritative pair, as for no price.
+      (frameCarriesUnpricedSnapshot(liveFrame) &&
+        frameFoldOrder(held.blend_fold_revision, liveFrame.rev) === "newer")
     )) {
       quoteTriggerRef.current = liveFrame;
       foldedRefetch.request();
@@ -518,7 +526,7 @@ export default function EventPage({ params }: EventPageProps) {
     }
     // #9294: contributor notifications invalidate the fold without carrying
     // an adoptable price. Never install one as a price or replay it on a poll.
-    if (liveFrame.p === null || liveFrame.p === undefined) return;
+    if (liveFrame.p === null || liveFrame.p === undefined || frameCarriesUnpricedSnapshot(liveFrame)) return;
     // Every frame now gets here, so an older price can follow a newer one in a
     // batch. `applyLiveFrame` refuses it against the cache; the poll's replay
     // must not regress to it either.
@@ -529,7 +537,15 @@ export default function EventPage({ params }: EventPageProps) {
       // `applyLiveFrame` spreads `prev` FIRST and then only the fields a frame
       // speaks for, so a frame arriving after the background poll carries the
       // newer games line forward instead of reverting it (CERT-1994).
-      (prev) => applyLiveFrame(prev, frame),
+      // #10090: decided on the value actually stored, so a snapshot rail that
+      // lands discharges a priceless trigger it covers (no trailing pair).
+      (prev) => {
+        const { next, snapshotRail } = applyLiveFrameRail(prev, frame);
+        if (snapshotRail && snapshotRailPaysPricelessTrigger(quoteTriggerRef.current, frame)) {
+          quoteTriggerRef.current = null;
+        }
+        return next;
+      },
       // No revalidate: the frame IS the new value. Refetching here would put a
       // request on every tick and undo the point of pushing.
       { revalidate: false },

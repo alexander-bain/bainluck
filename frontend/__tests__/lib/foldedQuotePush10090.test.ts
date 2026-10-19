@@ -6,7 +6,9 @@ import fs from "fs";
 import path from "path";
 import vm from "vm";
 import ts from "typescript";
-import { adoptFoldedQuote, applyLiveFrame, frameInvalidatesFoldedBlend } from "@/lib/eventLivePush";
+import { adoptFoldedQuote, applyLiveFrame, applyLiveFrameRail, frameInvalidatesFoldedBlend } from "@/lib/eventLivePush";
+import { frameFoldOrder } from "@/lib/foldRevision";
+import { frameCarriesUnpricedSnapshot, snapshotRailPaysPricelessTrigger } from "@/lib/sourceSnapshot";
 import { appendHeroObservation } from "@/lib/liveChartHistory";
 import { canSubscribeEventQuotes } from "@/lib/eventQuoteStream";
 import { heldFrameAfter } from "@/hooks/useLiveEventStream";
@@ -34,7 +36,7 @@ let effect: string | undefined;
 function visit(node: ts.Node) {
   if (ts.isCallExpression(node) && node.expression.getText(tree) === "useCallback" &&
       node.arguments[1]?.getText(tree) === "[refreshEvent, eventId, foldedRefetch]" &&
-      node.arguments[0]?.getText(tree).includes("applyLiveFrame(prev, frame)")) {
+      node.arguments[0]?.getText(tree).includes("applyLiveFrameRail(prev, frame)")) {
     effect = node.arguments[0].getText(tree);
   }
   ts.forEachChild(node, visit);
@@ -58,6 +60,7 @@ function harness() {
     pairJournalRef: { current: null }, // #10090 G1: no paired read in flight here
     refreshEvent: mutations, setLastRefresh: jest.fn(), Date,
     adoptFoldedQuote, applyLiveFrame, frameInvalidatesFoldedBlend, canSubscribeEventQuotes, heldFrameAfter,
+    applyLiveFrameRail, frameCarriesUnpricedSnapshot, frameFoldOrder, snapshotRailPaysPricelessTrigger,
   };
   const listeners = new Map<string, (e: unknown) => void>();
   const stream: StreamHandle = { readyState: 1, close: () => {},

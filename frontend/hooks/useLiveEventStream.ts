@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from 'react';
 import { API_URL } from '@/lib/api';
 import { frameFoldOrder } from '@/lib/foldRevision';
 import { rememberLiveChartFrame, type LiveChartFrame } from '@/lib/liveChartHistory';
+import { frameCarriesUnpricedSnapshot } from '@/lib/sourceSnapshot';
 import type { ReconcileControl } from '@/lib/reconcileControl';
 import {
   TICK_INTERVAL_MS,
@@ -61,7 +62,7 @@ export function heldFrameAfter(previous: LiveFrame | null, next: LiveFrame): Liv
   // A held frame it would refuse must not keep out the valid one behind it.
   const priced = (f: LiveFrame) =>
     typeof f.p === 'number' && Number.isFinite(f.p) && f.p >= 0 && f.p <= 1 &&
-    f.folded_quote === undefined && !f.folded_quote_pending;
+    f.folded_quote === undefined && !f.folded_quote_pending && !frameCarriesUnpricedSnapshot(f);
   if (!priced(previous) || !priced(next)) return next;
   if ((previous.status ?? null) !== (next.status ?? null)) return next;
   return frameFoldOrder(previous.rev, next.rev) === 'older' ? previous : next;

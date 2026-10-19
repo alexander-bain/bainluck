@@ -29,7 +29,9 @@ import type { StreamHandle } from "../../lib/liveStreamController";
 import { createReconnectCatchup } from "../../lib/reconnectCatchup";
 import { createFoldedRefetchScheduler, takeFreshRead } from "../../lib/foldedRefetchScheduler";
 import { canSubscribeEventQuotes, quotePairCoversTrigger } from "../../lib/eventQuoteStream";
-import { adoptFoldedQuote, applyLiveFrame, frameInvalidatesFoldedBlend } from "../../lib/eventLivePush";
+import { adoptFoldedQuote, applyLiveFrame, applyLiveFrameRail, frameInvalidatesFoldedBlend } from "../../lib/eventLivePush";
+import { frameFoldOrder } from "../../lib/foldRevision";
+import { frameCarriesUnpricedSnapshot, snapshotRailPaysPricelessTrigger } from "../../lib/sourceSnapshot";
 import { fetchEventWithLiveFrame, keepNewerHeldHeadline } from "../../lib/reconcileEventPoll";
 import { adoptNewerBlendEdge, edgeInvalidatesHeldBlend, servedBlendEdgeObservation } from "../../lib/blendObservationClock";
 import { historyRangeParam } from "../../lib/event/historyRange";
@@ -118,6 +120,9 @@ const withPm = (rev: number) => ({ kalshi: src(0.56, rev), polymarket: src(0.5, 
 const frame = (rev: number, p: number, source = "kalshi") => JSON.stringify({
   event_id: E, p, source, source_value: p, updated_at: T(rev), status: "live", rev: { [E]: rev },
 });
+// #10090 source_snapshot: the same frame plus the write's complete source map.
+const snapFrame = (rev: number, p: number, rail: Rail | Record<string, unknown>, over: Record<string, unknown> = {}) =>
+  JSON.stringify({ ...JSON.parse(frame(rev, p)), source_snapshot: { event_id: E, rev: { [E]: rev }, win_probability_sources: rail }, ...over });
 const control = (custody: string, floor: number, id = E) =>
   JSON.stringify({ event_id: id, custody_id: custody, removal_rev: { [id]: floor } });
 
@@ -186,6 +191,7 @@ function HeldPage({ net, eventId }: { net: Net; eventId: number }) {
     eventId, heldEventRef, adoptFoldedQuote, pairJournalRef, refreshEvent, setLastRefresh, Date,
     canSubscribeEventQuotes, quoteTriggerRef, foldedRefetch, frameInvalidatesFoldedBlend,
     latestLiveFrameRef, heldFrameAfter, applyLiveFrame,
+    applyLiveFrameRail, frameCarriesUnpricedSnapshot, frameFoldOrder, snapshotRailPaysPricelessTrigger,
   }), [refreshEvent, eventId, foldedRefetch]);
   const reconcileCatchupRef = useRef(null);
   const reconcileOrdinalRef = useRef(0);
@@ -776,5 +782,153 @@ describe("#10090 G1 repairs mounted: a journaled poll never steps the page back,
     expect(p.read()).toBe("live|60|kalshi|r12|c60");
     expect(harness.ledger!.owed()).toBe(false);
     await p.unmount();
+  });
+});
+
+// ── #10090 source_snapshot: a coherent rail on every newer price ────────────
+// (reconciliation-contract-20261019/NATIVE-SOURCE-SNAPSHOT-CONSUMER-CONTRACT.md,
+// ROOT-COHERENT-RAIL-PAYMENT-DECISION.md.) A snapshot proves only the rail it
+// replaces: it pays no floor and no history on web.
+describe("#10090 source_snapshot mounted: the rail moves with the price", () => {
+  const kalshi = (rev: number, v = 0.6) => ({ kalshi: src(v, rev) });
+
+  it("a newer snapshot takes the whole rail with the price: the withdrawn source leaves before any read", async () => {
+    const p = await mount();
+    await p.emit("probability", snapFrame(11, 0.58, kalshi(11, 0.58)));
+    expect(p.read()).toBe("live|58|kalshi|r11|c55");
+    expect(p.net.details.filter((r) => r.fresh)).toHaveLength(0);
+    await p.advance(60_000);
+    expect(p.pairs()).toHaveLength(0);
+    await p.unmount();
+  });
+
+  it("removal then genuine re-addition follow quote order; an older poll restores nothing", async () => {
+    const p = await mount();
+    await p.emit("probability", snapFrame(11, 0.58, kalshi(11, 0.58)));
+    await p.emit("probability", snapFrame(12, 0.57, withPm(12)));
+    expect(p.read()).toBe("live|57|kalshi+polymarket|r12|c55");
+    await p.emit("probability", snapFrame(13, 0.6, kalshi(13)));
+    expect(p.read()).toBe("live|60|kalshi|r13|c55");
+    harness.revalidate!();
+    await settle();
+    p.net.details.filter((r) => !r.fresh).at(-1)!.d.resolve(live(12, 0.57, withPm(12)));
+    await settle();
+    expect(p.read()).toBe("live|60|kalshi|r13|c55");
+    await p.unmount();
+  });
+
+  it("an equal, older or refused snapshot is exactly today's frame", async () => {
+    const p = await mount();
+    await p.emit("probability", snapFrame(10, 0.7, kalshi(10, 0.7)));
+    expect(p.read()).toBe("live|55|kalshi+polymarket|r10|c55");
+    // Identity mismatch: the frame is legacy — p moves, the rail keeps Polymarket.
+    await p.emit("probability", snapFrame(11, 0.58, kalshi(11, 0.58), { source_snapshot: {
+      event_id: E, rev: { [E]: 12 }, win_probability_sources: kalshi(11, 0.58) } }));
+    expect(p.read()).toBe("live|58|kalshi+polymarket|r11|c55");
+    await p.unmount();
+  });
+
+  it("continuous snapshots overtake every read: the first pinned covering history pays; unpinned or failed history stays owed", async () => {
+    const p = await mount();
+    await p.control("owed-1", 11);
+    await p.advance(250);
+    expect(p.pairs()).toHaveLength(1);
+    await p.emit("probability", snapFrame(12, 0.6, kalshi(12)));
+    await p.emit("probability", snapFrame(13, 0.62, kalshi(13, 0.62)));
+    expect(p.read()).toBe("live|62|kalshi|r13|c55");
+    // The rail on screen already covers the floor; an unpinned history still proves nothing.
+    await p.answer(live(12, 0.6, kalshi(12)), unpinned(12, 0.6));
+    expect(p.read()).toBe("live|62|kalshi|r13|c60");
+    expect(harness.ledger!.owed()).toBe(true);
+    await p.advance(1000);
+    expect(p.pairs()).toHaveLength(2);
+    await p.emit("probability", snapFrame(14, 0.63, kalshi(14, 0.63)));
+    await p.answer(new Error("503"), new Error("503"));
+    expect(harness.ledger!.owed()).toBe(true);
+    await p.advance(2000);
+    expect(p.pairs()).toHaveLength(3);
+    await p.emit("probability", snapFrame(15, 0.64, kalshi(15, 0.64)));
+    await p.emit("probability", snapFrame(16, 0.65, kalshi(16, 0.65)));
+    await p.answer(live(14, 0.63, kalshi(14, 0.63)), history(14, 0.63));
+    expect(p.read()).toBe("live|65|kalshi|r16|c63");
+    expect(harness.ledger!.owed()).toBe(false);
+    for (let rev = 17; rev < 30; rev += 1) { await p.emit("probability", snapFrame(rev, 0.6, kalshi(rev))); await p.advance(1000); }
+    expect(p.pairs()).toHaveLength(3);
+    await p.unmount();
+  });
+
+  it("a snapshot replayed onto a detail below the floor fixes the rail but pays nothing (web keeps G1's detail rule)", async () => {
+    const p = await mount(live(9, 0.55, withPm(9)), history(9, 0.55));
+    await p.control("owed-1", 10);
+    await p.control("owed-2", 12);
+    await p.advance(250);
+    await p.emit("probability", snapFrame(12, 0.6, kalshi(12)));
+    await p.answer(live(11, 0.58, withPm(11)), history(12, 0.6));
+    expect(p.read()).toBe("live|60|kalshi|r12|c60");
+    expect(harness.ledger!.floors()).toEqual([{ [E]: 12 }]);
+    await p.advance(1000);
+    expect(p.pairs()).toHaveLength(2);
+    await p.answer(live(12, 0.6, kalshi(12)), history(12, 0.6));
+    expect(harness.ledger!.owed()).toBe(false);
+    await p.unmount();
+  });
+
+  it.each([
+    ["an empty map", {}],
+    ["only the sportsbook count", { betting_book_count: { value: 3, display_name: "Books", type: "count", color: "#000" } }],
+  ])("an unpriced snapshot (%s) writes nothing and asks the pair; a priced one past it clears that debt", async (_n, rail) => {
+    const p = await mount();
+    await p.emit("probability", snapFrame(11, 0.5, rail));
+    expect(p.read()).toBe("live|55|kalshi+polymarket|r10|c55");
+    await p.advance(1000);
+    expect(p.pairs()).toHaveLength(1);
+    // A source returns before the read lands: its complete rail covers what the trigger owed.
+    await p.emit("probability", snapFrame(12, 0.6, kalshi(12)));
+    expect(p.read()).toBe("live|60|kalshi|r12|c55");
+    await p.answer(new Error("503"), new Error("503"));
+    await p.advance(60_000);
+    expect(p.pairs()).toHaveLength(1);
+    expect(p.read()).toBe("live|60|kalshi|r12|c55");
+    await p.unmount();
+  });
+
+  it("without the later priced snapshot the unpriced trigger stays owed and retries", async () => {
+    const p = await mount();
+    await p.emit("probability", snapFrame(11, 0.5, {}));
+    await p.advance(1000);
+    expect(p.pairs()).toHaveLength(1);
+    await p.answer(new Error("503"), new Error("503"));
+    await p.advance(60_000);
+    expect(p.pairs().length).toBeGreaterThan(1);
+    await p.unmount();
+  });
+
+  it("a final frame carrying a snapshot leaves the rail and asks the read; a snapshot after the final does nothing", async () => {
+    const p = await mount();
+    await p.emit("probability", snapFrame(11, 1, kalshi(11, 1), { status: "completed" }));
+    expect(p.read()).toBe("live|55|kalshi+polymarket|r10|c55");
+    await p.advance(1000);
+    expect(p.pairs()).toHaveLength(1);
+    await p.answer(final(11), history(11, 1));
+    expect(p.read()).toMatch(/^completed\|100\|kalshi\|/);
+    await p.emit("probability", snapFrame(12, 0.6, kalshi(12)));
+    expect(p.read()).toMatch(/^completed\|100\|kalshi\|/);
+    await p.unmount();
+  });
+
+  it("a folded page treats a raw frame carrying a snapshot exactly as the same frame without one", async () => {
+    const folded = () => ({ ...live(10, 0.55, withPm(10)), blend_fold_revision: { [E]: 10, [B]: 4 } });
+    const run = async (data: string) => {
+      const p = await mount(folded());
+      await p.emit("probability", data);
+      await p.advance(1000);
+      const out = { read: p.read(), details: p.net.details.length, pairs: p.pairs().length };
+      await p.unmount();
+      return out;
+    };
+    const legacy = await run(frame(11, 0.58));
+    const withSnapshot = await run(snapFrame(11, 0.58, kalshi(11, 0.58)));
+    expect(withSnapshot).toEqual(legacy);
+    expect(withSnapshot.read).toBe("live|55|kalshi+polymarket|r10,4|c55");
   });
 });
