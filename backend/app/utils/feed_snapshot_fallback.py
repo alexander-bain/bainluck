@@ -137,3 +137,45 @@ async def read_snapshot_fallbacks(
         for row in older.all():
             answered[row.event_id] = row.home_win_probability
     return answered
+
+
+# ── #1480: ONE ANSWER FOR EVERY READER OF THE SAME CANDIDATE SET ─────────────
+#
+# The answer depends only on ``ids``: the recent window changes which pass
+# answers an id, never the answer (see "WHY IT READS IN TWO PASSES"). So
+# `/api/feed` reuses one answer per id set through `principal_independent_cache`
+# instead of each Sports/Discover miss re-reading it, and the key has no clock.
+
+#: The shared-artifact namespace the answer is reused under.
+SNAPSHOT_FALLBACK_SHARED_NAMESPACE = "event_snapshot_fallback"
+
+
+def snapshot_fallback_share_key(ids: Sequence[int]) -> tuple:
+    """The shared-cache key for one fallback id set.
+
+    The two statements' digest rotates the key if either changes; ``"v1"`` is
+    the answer's shape.
+    """
+    from app.utils.principal_independent_cache import digest_of
+
+    return (
+        "v1",
+        digest_of([SNAPSHOT_FALLBACK_SQL, SNAPSHOT_FALLBACK_RECENT_SQL]),
+        digest_of(str(event_id) for event_id in ids),
+    )
+
+
+async def read_snapshot_fallback_artifact(
+    db: Any, ids: Sequence[int], *, now: datetime
+) -> dict[int, float]:
+    """`read_snapshot_fallbacks` as plain floats, the form that is shared.
+
+    The caller rounds ``float(home)`` either way, so a float here gives the
+    card the same number a ``Decimal`` would. Nothing is caught.
+    """
+    return {
+        event_id: float(home)
+        for event_id, home in (
+            await read_snapshot_fallbacks(db, ids, now=now)
+        ).items()
+    }

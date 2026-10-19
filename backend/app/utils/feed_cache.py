@@ -336,6 +336,18 @@ def live_total_age_headroom_s(oldest_artifact_age_s: float) -> int:
     spent = math.ceil(max(0.0, oldest_artifact_age_s))
     return max(0, FEED_RESPONSE_STALE_TTL_LIVE_SECONDS - spent)
 
+
+def nonlive_total_age_headroom_s(strict_artifact_age_s: float) -> int:
+    """`live_total_age_headroom_s` for a page with no live card (#1480, N-strict).
+
+    Spent only on the age of `principal_independent_cache.STRICT_AGE_NAMESPACES`
+    artifacts — game readings a request used to read for itself — so a non-live
+    page built from one stays within `FEED_RESPONSE_STALE_TTL_SECONDS` of the
+    reading, exactly as when the request read it. Rounded up for the same reason.
+    """
+    spent = math.ceil(max(0.0, strict_artifact_age_s))
+    return max(0, FEED_RESPONSE_STALE_TTL_SECONDS - spent)
+
 # LAT-P089 operator kill switch for the inert-principal share.
 FEED_INERT_PRINCIPAL_SHARE_ENV = "FEED_INERT_PRINCIPAL_SHARE"
 _INERT_SHARE_OFF_VALUES = frozenset({"0", "false", "no", "off"})
@@ -1040,6 +1052,7 @@ def feed_response_cache_ttls(
     identified: bool = False,
     live: bool = False,
     oldest_artifact_age_s: float = 0.0,
+    strict_artifact_age_s: float = 0.0,
 ) -> tuple[int, int]:
     """``(fresh_ttl, stale_ttl)`` for one feed response cache entry (#2216).
 
@@ -1054,6 +1067,13 @@ def feed_response_cache_ttls(
     It applies on the same discipline: a ``min``, only when ``live``, and it can
     only ever SHORTEN. Defaulting to ``0.0`` keeps every existing caller's answer
     byte-identical, so an un-updated call site is conservative rather than wrong.
+
+    ``strict_artifact_age_s`` (#1480) is the same term for the
+    ``STRICT_AGE_NAMESPACES`` artifacts only, and it binds on EVERY page: on a
+    page with no live card it shortens both TTLs to what is left of the 300 s
+    stale window. Those artifacts are also in ``oldest_artifact_age_s``, so the
+    live branch already counts them; ``max`` keeps that true for a caller that
+    passes only this one. Same ``min``-only discipline, same ``0.0`` default.
     """
     fresh = feed_response_cache_ttl(
         my_teams_only=my_teams_only, identified=identified
@@ -1063,7 +1083,13 @@ def feed_response_cache_ttls(
         fresh = min(fresh, FEED_RESPONSE_TTL_LIVE_SECONDS)
         stale = min(stale, FEED_RESPONSE_STALE_TTL_LIVE_SECONDS)
         # The inputs have already spent part of the ceiling.
-        headroom = live_total_age_headroom_s(oldest_artifact_age_s)
+        headroom = live_total_age_headroom_s(
+            max(oldest_artifact_age_s, strict_artifact_age_s)
+        )
+        fresh = min(fresh, headroom)
+        stale = min(stale, headroom)
+    else:
+        headroom = nonlive_total_age_headroom_s(strict_artifact_age_s)
         fresh = min(fresh, headroom)
         stale = min(stale, headroom)
     return fresh, stale
