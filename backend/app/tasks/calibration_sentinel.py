@@ -560,12 +560,14 @@ def placeholder_band_diagnosis(
     same threshold and margin as every other coverage decision (no number of its
     own):
 
-    * ``placeholder_artifact`` — at least the coverage threshold of the band
-      never showed a bid or trade: missing trading evidence, which the curve
-      already excludes.
+    * ``placeholder_artifact`` — at least the coverage threshold of a bounded
+      sample of the band never showed a bid or trade: the explanation policy's
+      bar is met. A policy label, not an all-cohort finding — the traded
+      remainder's error and the published curve are not measured by it.
     * ``placeholder_partial`` — within the margin under it.
-    * ``not_placeholder`` — the band traded; missing trading evidence does not
-      explain the miss. It does NOT by itself call the cohort a forecast failure:
+    * ``not_placeholder`` — below the margin: missing trading evidence does not
+      meet the bar to explain the miss, though a nonzero fraction is still a
+      measurement. It does NOT by itself call the cohort a forecast failure:
       the overall diagnosis (other classes, published curve) still decides that.
     * ``evidence_unavailable`` — the census did not read this band (``evidence``
       says why). Price alone is never promoted to a placeholder verdict.
@@ -1323,36 +1325,51 @@ def _sample_heading(cohort: dict) -> str:
 def placeholder_band_lines(cohort: dict) -> list[str]:
     """#1057 — the placeholder-price check, for a body or a recurrence.
 
-    Empty for a cohort that is not a placeholder-band sub-cohort. Says which of
-    the four states the evidence supports, and never lets a price-band candidate
-    read as a confirmed placeholder."""
+    Empty for a cohort that is not a placeholder-band sub-cohort. Says where the
+    bounded sample's no-bid fraction sits against the explanation threshold, and
+    never lets a price-band candidate read as a confirmed placeholder.
+
+    The census answers ONE question: what fraction of a bounded sample lacked
+    trading evidence. It does not measure the error of the rows that traded, nor
+    the published curve, so no state here clears the cohort of a forecast
+    failure (or convicts it of one): meeting the threshold names its fraction and
+    leaves the traded remainder and the published error unresolved, and falling
+    below it keeps its measured nonzero no-bid fraction."""
     diag = cohort.get("placeholder_band")
     if not diag:
         return []
     lo, hi = POLY_PLACEHOLDER_BAND
     ph = diag.get("no_bid_fraction")
     pct = f"{ph*100:.1f}%" if ph is not None else None
+    rest = f"{(1 - ph)*100:.1f}%" if ph is not None else None
+    bar = f"{SENTINEL_COVERAGE_THRESHOLD*100:.0f}%"
+    unresolved = (
+        f"The other {rest} of the sample did show a bid or a trade; this check "
+        f"does not measure whether those rows missed, and it does not measure the "
+        f"published curve's error (see Disposition). Both stay unresolved unless "
+        f"separately measured."
+    )
     verdict = diag.get("verdict")
     if verdict == PLACEHOLDER_ARTIFACT:
-        head = "PLACEHOLDER ARTIFACT — missing trading evidence, not a forecast failure"
+        head = f"no-bid fraction MEETS the {bar} explanation threshold ({pct} of a bounded sample)"
         why = (
             f"{pct} of a bounded sample of this band's outcomes never showed a bid "
-            f"or a trade in any snapshot (#151's rule). The published curve already "
-            f"excludes those rows."
+            f"or a trade in any snapshot (#151's rule), meeting the {bar} explanation "
+            f"threshold. The published curve already excludes those rows. {unresolved}"
         )
     elif verdict == PLACEHOLDER_PARTIAL:
-        head = "PARTLY placeholder — check the rest of the band"
+        head = f"no-bid fraction NEAR the {bar} explanation threshold ({pct} of a bounded sample)"
         why = (
             f"{pct} of a bounded sample never showed a bid or a trade, within "
-            f"{SENTINEL_COVERAGE_MARGIN*100:.0f} points of the "
-            f"{SENTINEL_COVERAGE_THRESHOLD*100:.0f}% threshold. Read which rows "
-            f"traded before calling this a forecast failure."
+            f"{SENTINEL_COVERAGE_MARGIN*100:.0f} points under the {bar} threshold. "
+            f"{unresolved}"
         )
     elif verdict == PLACEHOLDER_NOT_PLACEHOLDER:
-        head = "NOT a placeholder artifact — the band traded"
+        head = f"no-bid fraction BELOW the {bar} explanation threshold ({pct} of a bounded sample)"
         why = (
-            f"Only {pct} of a bounded sample lacked bid/trade evidence, so missing "
-            f"trading evidence does not explain this miss. The diagnosis below "
+            f"{pct} of a bounded sample never showed a bid or a trade — measured, "
+            f"and below the {bar} threshold, so missing trading evidence does not "
+            f"meet the bar to explain this miss. {unresolved} The diagnosis below "
             f"decides whether another class does."
         )
     else:

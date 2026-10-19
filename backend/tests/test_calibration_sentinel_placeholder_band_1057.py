@@ -16,13 +16,17 @@ own run of the real ``_run_calibration_sentinel``:
 
   * ARTIFACT  — the band misses and the census reads no bid/trade: the class is
     rediscovered (backtest) and suppressed as known work (live).
-  * TRADED    — the same miss, but the census reads bids/trades: a real forecast
-    failure, which files and says it is NOT a placeholder artifact.
+  * TRADED    — the same miss, but the census reads bids/trades: it files, and
+    its no-bid fraction is reported as measured and below the threshold.
   * CONTROL   — a healthy traded 0.50 band: nothing flags, nothing is labelled.
   * UNRELATED — a high-cp miss outside the band: flags under its own views and
     is never called a placeholder.
   * UNKNOWN   — the census could not read the band: the diagnosis says UNKNOWN,
     the cohort is NOT suppressed, and the body says price alone proves nothing.
+  * BOUNDED   — a mixed 40/60 sample meets the threshold and a 20% sample falls
+    below it: neither headline makes an all-cohort claim, both report the
+    measured fraction and its traded remainder, and the published curve stays
+    UNKNOWN (root's review of 5512155).
 
 The census itself runs on SQLite (its SQL is portable, as #10516's sample SQL
 is), so the candidate/confirmed split is proven on the real query, not a fake.
@@ -377,7 +381,7 @@ class TestTraded:
         assert f["placeholder_band"]["verdict"] == cs.PLACEHOLDER_NOT_PLACEHOLDER
         (c,) = _band_cohorts(filed)
         body = cs.build_issue_body(c, c.get("explained_by"), c.get("coverage", 0.0))
-        assert "NOT a placeholder artifact" in body
+        assert "BELOW the 40% explanation threshold (5.0% of a bounded sample)" in body
         assert "PLACEHOLDER ARTIFACT" not in body
 
     def test_a_partial_reading_is_said_as_partial(self, monkeypatch):
@@ -445,6 +449,70 @@ class TestUnavailableEvidence:
         (c,) = _band_cohorts(filed)
         comment = cs.build_reobservation_comment(c)
         assert "UNKNOWN" in comment
+
+
+# ---------------------------------------------------------------------------
+# Root's review of 5512155: the census measures ONE fraction of a bounded
+# sample. Meeting the threshold is the explanation policy's bar, not proof that
+# the traded remainder is forecast-correct, and the published curve is a
+# separate measurement. Each arm is rendered in the filed body AND the
+# recurrence, and the disposition stays published_unknown throughout.
+# ---------------------------------------------------------------------------
+def _section(text_):
+    lines = text_.splitlines()
+    start = next(i for i, ln in enumerate(lines) if ln.startswith("### Placeholder-price check"))
+    return "\n".join(lines[start:start + 2])
+
+
+def _rendered(monkeypatch, fraction):
+    # suppress_known=False so a threshold-meeting cohort reaches the renderer:
+    # the bar it meets is the one the live run suppresses on, and its prose is
+    # what a backtest or recurrence prints.
+    stats, filed, _ = _run(monkeypatch, _HEALTHY_TAILS + _BAND_MISS,
+                           band_fraction=fraction, suppress_known=False)
+    (f,) = _band_findings(stats)
+    (c,) = _band_cohorts(filed)
+    body = cs.build_issue_body(c, c.get("explained_by"), c.get("coverage", 0.0))
+    return f, c, body, cs.build_reobservation_comment(c)
+
+
+class TestTheHeadlineIsBoundedByItsEvidence:
+    def test_a_mixed_40_60_sample_meets_the_bar_and_claims_no_more(self, monkeypatch):
+        f, c, body, comment = _rendered(monkeypatch, 0.4)
+        # The standing policy is untouched: 40% is the bar and it is met.
+        assert f["explained_by"] == "poly_placeholder"
+        assert f["placeholder_band"]["verdict"] == cs.PLACEHOLDER_ARTIFACT
+        assert c["disposition"] == cs.DISP_PUBLISHED_UNKNOWN
+        for text_ in (body, comment):
+            sec = _section(text_)
+            assert "MEETS the 40% explanation threshold (40.0% of a bounded sample)" in sec
+            assert "The other 60.0% of the sample did show a bid or a trade" in sec
+            assert "published curve's error" in sec and "unresolved" in sec
+            assert "forecast failure" not in sec.lower()
+            assert "PLACEHOLDER ARTIFACT" not in text_
+            assert f"`{cs.DISP_PUBLISHED_UNKNOWN}`" in text_
+
+    def test_a_below_threshold_nonzero_fraction_stays_measured(self, monkeypatch):
+        f, c, body, comment = _rendered(monkeypatch, 0.2)
+        assert f["explained_by"] is None
+        assert f["placeholder_band"]["verdict"] == cs.PLACEHOLDER_NOT_PLACEHOLDER
+        assert c["disposition"] == cs.DISP_PUBLISHED_UNKNOWN
+        for text_ in (body, comment):
+            sec = _section(text_)
+            assert "BELOW the 40% explanation threshold (20.0% of a bounded sample)" in sec
+            assert "20.0% of a bounded sample never showed a bid or a trade — measured" in sec
+            assert "The other 80.0% of the sample did show a bid or a trade" in sec
+            assert "unresolved" in sec
+            assert "the band traded" not in sec
+            assert "NOT a placeholder artifact" not in sec
+            assert f"`{cs.DISP_PUBLISHED_UNKNOWN}`" in text_
+
+    def test_a_near_threshold_fraction_names_its_remainder(self, monkeypatch):
+        _, _, body, comment = _rendered(monkeypatch, 0.37)
+        for text_ in (body, comment):
+            sec = _section(text_)
+            assert "NEAR the 40% explanation threshold (37.0% of a bounded sample)" in sec
+            assert "The other 63.0% of the sample" in sec
 
 
 # ---------------------------------------------------------------------------
