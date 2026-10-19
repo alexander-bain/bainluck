@@ -30,7 +30,7 @@
  */
 
 import "../helpers/minimalDom";
-import React, { act, useCallback, useMemo, useRef } from "react";
+import React, { act, useCallback, useMemo, useRef, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import fs from "fs";
 import path from "path";
@@ -185,6 +185,9 @@ function ChartPage({ net, eventId }: { net: Net; eventId: number }) {
   const { chartPoints, status: reportedStreamStatus } = useLiveEventStream(eventId, quoteEligible, applyPushedFrame);
 
   // ── app/events/[id]/page.tsx — the chart composition, carried (PINNED) ─────
+  // #10090 attempt155: the page bumps this only when an accepted recovery pair
+  // adds a source reading; no finished-game path here moves it.
+  const [sourceObservationVersion] = useState(0);
   const admittedChartRef = useRef<AdmittedChartFrames | null>(null);
   const historyData = useMemo(
     () => {
@@ -202,7 +205,7 @@ function ChartPage({ net, eventId }: { net: Net; eventId: number }) {
         ? appendHeroObservation(joined, event, servedHistory)
         : joined;
     },
-    [servedHistory, event, quoteEligible, chartPoints, eventId],
+    [servedHistory, event, quoteEligible, chartPoints, eventId, sourceObservationVersion],
   );
 
   seen = {
@@ -306,6 +309,7 @@ describe("structural pin: the harness carries the page's own composition", () =>
     expect(PAGE).toMatch(/keepPreviousData: true,\s*\}\s*\);/);
     // The composition, line for line, in order.
     const carried = [
+      "const [sourceObservationVersion, setSourceObservationVersion] = useState(0);",
       "const admittedChartRef = useRef<AdmittedChartFrames | null>(null);",
       "const historyData = useMemo(",
       "if (admittedChartRef.current?.eventId !== eventId) admittedChartRef.current = null;",
@@ -320,7 +324,7 @@ describe("structural pin: the harness carries the page's own composition", () =>
       "return quoteEligible",
       "? appendHeroObservation(joined, event, servedHistory)",
       ": joined;",
-      "[servedHistory, event, quoteEligible, chartPoints, eventId],",
+      "[servedHistory, event, quoteEligible, chartPoints, eventId, sourceObservationVersion],",
     ];
     let from = 0;
     for (const line of carried) {

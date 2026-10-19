@@ -684,6 +684,47 @@ export function admitCurrentSourceObservations(
     .slice(-MAX_LIVE_CHART_FRAMES) };
 }
 
+/** Preserve an eligible source reading received by a covering pair even if
+ * replaying newer writes replaces that reading before the next render. Only
+ * source points enter the existing bounded bank; the adopted headline wins. */
+export function admitRecoveredSourceObservations(
+  previous: AdmittedChartFrames | null,
+  history: SourceObservationHistory | undefined,
+  recovered: SourceObservationDetail,
+  adopted: SourceObservationDetail,
+): AdmittedChartFrames | null {
+  const revision = parseFoldRevision(adopted.blend_fold_revision);
+  const recoveredRevision = parseFoldRevision(recovered.blend_fold_revision);
+  if (!Number.isSafeInteger(adopted.id) || recovered.id !== adopted.id ||
+      history?.event_id !== adopted.id || adopted.completed_at ||
+      !isQuoteStreamStatus(adopted.status) || !revision || !recoveredRevision ||
+      Object.keys(revision).length !== 1 || !(String(adopted.id) in revision)) return previous;
+  const order = compareFoldRevision(revision, recoveredRevision);
+  if (order !== "same" && order !== "newer") return previous;
+  if (previous) {
+    const previousRevision = parseFoldRevision(previous.foldRevision);
+    if (previous.eventId !== adopted.id || !previousRevision) return previous;
+    const since = compareFoldRevision(revision, previousRevision);
+    if (since !== "same" && since !== "newer") return previous;
+  }
+  const base = previous ?? { eventId: adopted.id!, points: [], foldRevision: revision };
+  // This pair may be older than the history the page keeps. It can add its
+  // own readings, but cannot prune sources already admitted under that newer
+  // history. The next memo applies the retained served history's authority.
+  const points = new Map<string, SourceChartObservation>();
+  for (const point of [...(base.sourcePoints ?? []), ...currentSourceObservations(history, recovered)]) {
+    const relation = frameFoldOrder(revision, point.rev);
+    if (relation !== "same" && relation !== "older") continue;
+    const key = `${point.source}:${Date.parse(point.timestamp)}`;
+    const old = points.get(key);
+    if (old?.rev && point.rev && compareFoldRevision(point.rev, old.rev) === "older") continue;
+    points.set(key, point);
+  }
+  return { ...base, foldRevision: revision, sourcePoints: [...points.values()]
+    .sort((a, b) => Date.parse(a.timestamp) - Date.parse(b.timestamp))
+    .slice(-MAX_LIVE_CHART_FRAMES) };
+}
+
 /** Render only the source bank already admitted while eligible. A completed
  * detail may retain pre-finish observations, never admit a new one. */
 export function appendAdmittedSourceObservations<T extends SourceObservationHistory>(

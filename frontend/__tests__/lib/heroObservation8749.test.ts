@@ -107,5 +107,7 @@ test('the page derives historyData through appendHeroObservation on the live arm
   expect(memo).toMatch(/if \(quoteEligible\) admittedChartRef\.current = admitCurrentSourceObservations\(\s*admitChartFrames\(eventId, chartPoints, event\),/);
   expect(memo).toContain('const pushed = mergeLiveChartHistory(observed, frames);');
   expect(memo).toMatch(/quoteEligible\s*\? appendHeroObservation\(joined, event, servedHistory\)\s*: joined/);
-  expect(memo).toMatch(/\[servedHistory, event, quoteEligible, chartPoints, eventId\]/);
+  // #10090 attempt155: an accepted recovery pair that only changes the bank
+  // still reaches the memo.
+  expect(memo).toMatch(/\[servedHistory, event, quoteEligible, chartPoints, eventId, sourceObservationVersion\]/);
 });

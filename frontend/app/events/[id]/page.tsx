@@ -40,6 +40,7 @@ import {
   admitChartFrames,
   appendHeroObservation,
   admitCurrentSourceObservations,
+  admitRecoveredSourceObservations,
   appendAdmittedSourceObservations,
   finishedChartFrames,
   mergeLiveChartHistory,
@@ -989,6 +990,7 @@ export default function EventPage({ params }: EventPageProps) {
   // last minutes of the journey off the chart. Replaced on every eligible
   // render; after the finish only `finishedChartFrames` may read it, and it
   // admits nothing new.
+  const [sourceObservationVersion, setSourceObservationVersion] = useState(0);
   const admittedChartRef = useRef<AdmittedChartFrames | null>(null);
   const historyData = useMemo(
     () => {
@@ -1011,7 +1013,7 @@ export default function EventPage({ params }: EventPageProps) {
         ? appendHeroObservation(joined, event, servedHistory)
         : joined;
     },
-    [servedHistory, event, quoteEligible, chartPoints, eventId],
+    [servedHistory, event, quoteEligible, chartPoints, eventId, sourceObservationVersion],
   );
 
   // UX-P051 (#1710) — which of ESPN's two clock fields the phase badge may
@@ -1083,6 +1085,17 @@ export default function EventPage({ params }: EventPageProps) {
     // raised by `owe()` during the writes is a new object and stays owed.
     const written = (floor: unknown) => reconcileFloorCoverage(adopted, history, readingEventId, floor);
     if (covering.some((floor) => written(floor) === "none")) return;
+    if (reconciling) {
+      const recoveredBank = admitRecoveredSourceObservations(
+        admittedChartRef.current, history, detail, adopted,
+      );
+      if (recoveredBank !== admittedChartRef.current) {
+        admittedChartRef.current = recoveredBank;
+        // SWR may retain both newer history and identical rebased detail.
+        // The received observation still has to reach the chart's memo.
+        setSourceObservationVersion((version) => version + 1);
+      }
+    }
     await Promise.all([
       reconciling && servedHistoryIsNewer(latestBlendEdgeRef.current, history)
         ? undefined : refreshHistoryRef.current(history, { revalidate: false }),
