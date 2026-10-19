@@ -70,6 +70,17 @@ pytestmark = [
 BARRIER_S = 2.0
 
 
+def _acknowledged(batch):
+    """As Redis does (#10090 attempt151): a positive PUBLISH reply per frame
+    acknowledges its revision, so the stamp's publication intent is settled
+    and recovery owes no price-free control for it."""
+    return {
+        (f["event_id"], f["rev"][str(f["event_id"])]) for f in batch
+        if isinstance(f.get("rev"), dict)
+        and type(f["rev"].get(str(f["event_id"]))) is int
+    }
+
+
 @pytest.fixture
 async def maker():
     from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
@@ -79,7 +90,11 @@ async def maker():
 
     wanted = [
         Base.metadata.tables[name]
-        for name in ("sports", "teams", "venues", "events", "futures_markets", "futures_outcomes", "win_prob_snapshots")
+        for name in (
+            "sports", "teams", "venues", "events", "futures_markets", "futures_outcomes", "win_prob_snapshots",
+            # #10090 attempt151: a stamp commits its publication intent here.
+            "owed_chart_points",
+        )
     ]
     engine = create_async_engine(DB_URL)
     async with engine.begin() as conn:
@@ -191,6 +206,7 @@ async def _run_both_arms(maker, monkeypatch, *, reverse_arm=None, direct_batch=F
 
         async def _publish(batch, _me=source):
             frames[_me].extend(batch)
+            return _acknowledged(batch)
 
         arm._oriented = _oriented
         arm._publish = _publish
@@ -320,6 +336,7 @@ async def _one_arm_behind_a_foreign_lock(maker, monkeypatch, *, lock_timeout_ms)
 
     async def _publish(batch):
         frames.extend(batch)
+        return _acknowledged(batch)
 
     arm._oriented = _oriented
     arm._publish = _publish
@@ -460,6 +477,7 @@ async def _one_arm_behind_a_chain(maker, monkeypatch, *, statement_bound):
 
     async def _publish(batch):
         frames.extend(batch)
+        return _acknowledged(batch)
 
     arm._oriented = _oriented
     arm._publish = _publish
