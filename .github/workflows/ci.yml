@@ -7999,6 +7999,25 @@ jobs:
             exit 1
           fi
 
+      - name: "#1057 the sentinel's placeholder-band candidate and census (real Postgres)"
+        # The futures mining scan gained a price_band column and a seventh
+        # GROUP BY key; a mistake there fails the whole scan and the sentinel
+        # mines no futures cohort. Runs the real scan and the real band census
+        # over CTE-shadowed rows, read-only.
+        if: matrix.group == 'shared-suffix' && needs.change-scope.outputs.reuse != 'true'
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_calibration_sentinel_placeholder_band_1057_pg.py \
+            -v -rs 2>&1 | tee /tmp/sentinel_placeholder_band_1057.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/sentinel_placeholder_band_1057.txt; then
+            echo "::error::#1057 placeholder-band gate SKIPPED — the gate did not run"
+            exit 1
+          fi
+          grep -qE "[^0-9]4 passed[,[:space:]]" /tmp/sentinel_placeholder_band_1057.txt || {
+            echo "::error::#1057 placeholder-band gate did not run all four cases"
+            exit 1
+          }
+
       - name: "#1912 the per-market never-graded census counts exactly what the grouped census did (real Postgres)"
         # The full census gating the reviewed recovery wave timed out at 20 s on
         # production; `_CENSUS_SQL` now states the cohort per market (EXISTS /
