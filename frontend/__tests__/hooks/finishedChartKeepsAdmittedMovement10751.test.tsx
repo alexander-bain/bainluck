@@ -44,6 +44,8 @@ import { pinChartEdgeToHero } from "../../lib/chartEdgePin";
 import {
   admitChartFrames,
   appendHeroObservation,
+  admitCurrentSourceObservations,
+  appendAdmittedSourceObservations,
   finishedChartFrames,
   mergeLiveChartHistory,
   type AdmittedChartFrames,
@@ -187,13 +189,18 @@ function ChartPage({ net, eventId }: { net: Net; eventId: number }) {
   const historyData = useMemo(
     () => {
       if (admittedChartRef.current?.eventId !== eventId) admittedChartRef.current = null;
-      if (quoteEligible) admittedChartRef.current = admitChartFrames(eventId, chartPoints, event);
+      if (quoteEligible) admittedChartRef.current = admitCurrentSourceObservations(
+        admitChartFrames(eventId, chartPoints, event), admittedChartRef.current, servedHistory, event,
+      );
       const frames = quoteEligible
         ? admittedChartRef.current?.points ?? []
         : finishedChartFrames(admittedChartRef.current, eventId, event, servedHistory);
-      const pushed = mergeLiveChartHistory(servedHistory, frames);
-      const joined = pushed !== servedHistory ? pushed : pinChartEdgeToHero(servedHistory, event);
-      return quoteEligible ? appendHeroObservation(joined, event, servedHistory) : joined;
+      const observed = appendAdmittedSourceObservations(servedHistory, admittedChartRef.current, event);
+      const pushed = mergeLiveChartHistory(observed, frames);
+      const joined = pushed !== observed ? pushed : pinChartEdgeToHero(observed, event);
+      return quoteEligible
+        ? appendHeroObservation(joined, event, servedHistory)
+        : joined;
     },
     [servedHistory, event, quoteEligible, chartPoints, eventId],
   );
@@ -302,13 +309,17 @@ describe("structural pin: the harness carries the page's own composition", () =>
       "const admittedChartRef = useRef<AdmittedChartFrames | null>(null);",
       "const historyData = useMemo(",
       "if (admittedChartRef.current?.eventId !== eventId) admittedChartRef.current = null;",
-      "if (quoteEligible) admittedChartRef.current = admitChartFrames(eventId, chartPoints, event);",
+      "if (quoteEligible) admittedChartRef.current = admitCurrentSourceObservations(",
+      "admitChartFrames(eventId, chartPoints, event), admittedChartRef.current, servedHistory, event,",
       "const frames = quoteEligible",
       "? admittedChartRef.current?.points ?? []",
       ": finishedChartFrames(admittedChartRef.current, eventId, event, servedHistory);",
-      "const pushed = mergeLiveChartHistory(servedHistory, frames);",
-      "const joined = pushed !== servedHistory ? pushed : pinChartEdgeToHero(servedHistory, event);",
-      "return quoteEligible ? appendHeroObservation(joined, event, servedHistory) : joined;",
+      "const observed = appendAdmittedSourceObservations(servedHistory, admittedChartRef.current, event);",
+      "const pushed = mergeLiveChartHistory(observed, frames);",
+      "const joined = pushed !== observed ? pushed : pinChartEdgeToHero(observed, event);",
+      "return quoteEligible",
+      "? appendHeroObservation(joined, event, servedHistory)",
+      ": joined;",
       "[servedHistory, event, quoteEligible, chartPoints, eventId],",
     ];
     let from = 0;
