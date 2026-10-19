@@ -90,7 +90,7 @@ async def test_exact_frames_order_zero_listener_success_and_bounded_sends(n):
     batch = frames(n)
     await r._publish(batch)
     assert client.commands == [
-        frame_publish_command(f) for f in batch
+        frame_publish_command(f, require_replay=True) for f in batch
     ]
     assert client.batch_sizes == [min(32, n - start) for start in range(0, n, 32)]
     assert client.reads_before_send == list(range(0, n, 32))
