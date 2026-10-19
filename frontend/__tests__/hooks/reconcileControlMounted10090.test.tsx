@@ -34,7 +34,9 @@ import { fetchEventWithLiveFrame, keepNewerHeldHeadline } from "../../lib/reconc
 import { adoptNewerBlendEdge, edgeInvalidatesHeldBlend, servedBlendEdgeObservation } from "../../lib/blendObservationClock";
 import { historyRangeParam } from "../../lib/event/historyRange";
 import { EVENT_BOOT_HISTORY_HOURS } from "../../lib/event/detailBoot";
-import { createReconcileLedger, createWriteJournal, rebaseOnCoveringRead, servedHistoryIsNewer } from "../../lib/reconcileControl";
+import {
+  createReconcileLedger, createWriteJournal, rebaseOnCoveringRead, reconcileFloorCoverage, servedHistoryIsNewer,
+} from "../../lib/reconcileControl";
 
 const PAGE = fs.readFileSync(path.join(__dirname, "../../app/events/[id]/page.tsx"), "utf8");
 const FOLDED_FRAME_REFETCH_MS = Number(PAGE.match(/const FOLDED_FRAME_REFETCH_MS = (\d+)/)![1]);
@@ -89,8 +91,8 @@ type Detail = {
   win_probability_sources: Rail;
 };
 type History = {
-  event_id: number; blend_edge_pinned: boolean; blend_edge_observed_at: string;
-  blend_edge_fold_revision: Record<string, number>;
+  event_id: number; blend_edge_pinned: boolean; blend_edge_observed_at: string | null;
+  blend_edge_fold_revision: Record<string, number> | null;
   aggregate_line: { timestamp: string; home_probability: number }[];
 };
 const live = (rev: number, p: number, rail: Rail, id = E): Detail => ({
@@ -105,6 +107,11 @@ const final = (rev: number): Detail => ({
 const history = (rev: number, p: number, id = E): History => ({
   event_id: id, blend_edge_pinned: true, blend_edge_observed_at: T(rev), blend_edge_fold_revision: { [id]: rev },
   aggregate_line: [{ timestamp: T(rev), home_probability: p }],
+});
+// What the route serves when the line's right edge is not a "now" claim (no
+// line, a stale pre-match line, outside the edge window): no pin, no revision.
+const unpinned = (rev: number, p: number, id = E): History => ({
+  ...history(rev, p, id), blend_edge_pinned: false, blend_edge_observed_at: null, blend_edge_fold_revision: null,
 });
 const withPm = (rev: number) => ({ kalshi: src(0.56, rev), polymarket: src(0.5, rev - 1) });
 const frame = (rev: number, p: number, source = "kalshi") => JSON.stringify({
@@ -196,7 +203,7 @@ function HeldPage({ net, eventId }: { net: Net; eventId: number }) {
   refreshHistoryRef.current = refreshHistory;
   pairedQuoteReadRef.current = PAIR.runInNewContext({
     eventId, fullHistoryRequested, fetchEvent, fetchEventHistory, EVENT_BOOT_HISTORY_HOURS, historyRangeParam,
-    createWriteJournal, rebaseOnCoveringRead, servedHistoryIsNewer, latestBlendEdgeRef, pairJournalRef, reconcileLedger, storedEventRef,
+    createWriteJournal, rebaseOnCoveringRead, reconcileFloorCoverage, servedHistoryIsNewer, latestBlendEdgeRef, pairJournalRef, reconcileLedger, storedEventRef,
     quotePairCoversTrigger, keepNewerHeldHeadline, canSubscribeEventQuotes, setLastRefresh, Date,
     quoteTriggerRef, recoveryIntentRef, quoteReadLifetimeRef, quoteEventIdRef, quoteHistoryRangeRef,
     refreshHistoryRef, refreshEventRef, heldEventRef,
@@ -406,6 +413,60 @@ describe("#10090 G1 mounted: an owed reconcile floor on a busy live page", () =>
     expect(harness.ledger!.earliestOwedAt()).toBeNull();
     await p.advance(120_000);
     expect(p.pairs()).toHaveLength(5);
+    await p.unmount();
+  });
+
+  it("D4: a covering detail with an UNPINNED history fixes the rail but never pays; failed and stale reads keep it; a pinned covering history pays by itself", async () => {
+    const p = await mount();
+    await p.control("owed-1", 11);
+    await p.advance(250);
+    expect(p.pairs()).toHaveLength(1);
+    await p.push(12, 0.6);
+    await p.push(13, 0.62);
+    // The detail is post-removal; the chart half makes no revision claim.
+    await p.answer(live(12, 0.6, { kalshi: src(0.6, 12) }), unpinned(12, 0.6));
+    expect(p.read()).toBe("live|62|kalshi|r13|c60");
+    expect(harness.ledger!.owed()).toBe(true);
+    // No price, control or tap from here on: the page asks again by itself.
+    await p.advance(999);
+    expect(p.pairs()).toHaveLength(1);
+    await p.advance(1);
+    expect(p.pairs()).toHaveLength(2);
+    await p.answer(new Error("offline"), new Error("offline"));
+    expect(harness.ledger!.owed()).toBe(true);
+    await p.advance(2000);
+    expect(p.pairs()).toHaveLength(3);
+    // A stale pair: a cached detail below the floor and the old pinned chart.
+    await p.answer(live(10, 0.55, withPm(10)), history(10, 0.55));
+    expect(p.read()).toBe("live|62|kalshi|r13|c60");
+    expect(harness.ledger!.owed()).toBe(true);
+    await p.advance(4000);
+    expect(p.pairs()).toHaveLength(4);
+    // Unpinned again: still unproven, however many times it is read.
+    await p.answer(live(13, 0.62, { kalshi: src(0.62, 13) }), unpinned(13, 0.62));
+    expect(harness.ledger!.owed()).toBe(true);
+    await p.advance(8000);
+    expect(p.pairs()).toHaveLength(5);
+    await p.answer(live(13, 0.62, { kalshi: src(0.62, 13) }), history(13, 0.62));
+    expect(p.read()).toBe("live|62|kalshi|r13|c62");
+    expect(harness.ledger!.owed()).toBe(false);
+    expect(harness.ledger!.earliestOwedAt()).toBeNull();
+    await p.advance(120_000);
+    expect(p.pairs()).toHaveLength(5);
+    await p.unmount();
+  });
+
+  it("D4: a pinned history edge with no revision to order never pays either", async () => {
+    const p = await mount();
+    await p.control("owed-1", 11);
+    await p.advance(250);
+    await p.answer(live(12, 0.6, { kalshi: src(0.6, 12) }), { ...history(12, 0.6), blend_edge_fold_revision: null });
+    expect(harness.ledger!.owed()).toBe(true);
+    await p.advance(1000);
+    expect(p.pairs()).toHaveLength(2);
+    await p.answer(live(12, 0.6, { kalshi: src(0.6, 12) }), history(12, 0.6));
+    expect(p.read()).toBe("live|60|kalshi|r12|c60");
+    expect(harness.ledger!.owed()).toBe(false);
     await p.unmount();
   });
 

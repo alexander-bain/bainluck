@@ -30,7 +30,7 @@ import { canSubscribeEventQuotes, quotePairCoversTrigger } from "@/lib/eventQuot
 import { keepNewerHeldHeadline } from "@/lib/reconcileEventPoll";
 import { historyRangeParam } from "@/lib/event/historyRange";
 import { EVENT_BOOT_HISTORY_HOURS } from "@/lib/event/detailBoot";
-import { createReconcileLedger, createWriteJournal, rebaseOnCoveringRead, servedHistoryIsNewer } from "@/lib/reconcileControl";
+import { createReconcileLedger, createWriteJournal, rebaseOnCoveringRead, reconcileFloorCoverage, servedHistoryIsNewer } from "@/lib/reconcileControl";
 
 const PAGE_PATH = path.join(__dirname, "../../app/events/[id]/page.tsx");
 const PAGE = fs.readFileSync(PAGE_PATH, "utf8");
@@ -85,7 +85,7 @@ function setup(detailRevisions: Array<() => Promise<number>>) {
     storedEventRef: { current: undefined }, // #10090 G2: no poll result stored here
     // #10090 G1: no reconcile control is owed in these cases.
     reconcileLedger: createReconcileLedger(), reconcileRetryDelayMs: () => 1000,
-    createWriteJournal, rebaseOnCoveringRead, servedHistoryIsNewer, latestBlendEdgeRef: { current: null },
+    createWriteJournal, rebaseOnCoveringRead, reconcileFloorCoverage, servedHistoryIsNewer, latestBlendEdgeRef: { current: null },
     pairJournalRef: { current: null },
     recoveryIntentRef: { current: 0 }, quoteReadLifetimeRef: { current: 0 },
     eventId: EVENT_ID, fullHistoryRequested: false,

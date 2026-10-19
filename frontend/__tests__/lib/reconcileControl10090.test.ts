@@ -14,6 +14,7 @@ import {
   createWriteJournal,
   parseReconcileControl,
   rebaseOnCoveringRead,
+  reconcileFloorCoverage,
   servedHistoryIsNewer,
   type ReconcileControl,
 } from "@/lib/reconcileControl";
@@ -234,5 +235,48 @@ describe("#10090 a covering read keeps a newer served chart", () => {
     expect(servedHistoryIsNewer(null, read)).toBe(false);
     expect(servedHistoryIsNewer({}, read)).toBe(false);
     expect(servedHistoryIsNewer({ foldRevision: { [E]: 13 } }, { ...read, blend_edge_pinned: false })).toBe(false);
+  });
+});
+
+describe("#10090 D4 what a paired read proves about an owed floor", () => {
+  const TWIN = 15332402;
+  const floor = { [TWIN]: 6 };
+  const detail = (rev: Record<string, number> | null, status = "live") =>
+    ({ id: E, status, blend_fold_revision: rev });
+  const pinned = (rev: Record<string, number> | null) =>
+    ({ event_id: E, blend_edge_pinned: true, blend_edge_fold_revision: rev });
+  const unpinned = { event_id: E, blend_edge_pinned: false, blend_edge_fold_revision: null };
+  const covering = { [E]: 12, [TWIN]: 6 };
+
+  it("a covering detail with an unpinned (or unstated) history pays only the detail half", () => {
+    expect(reconcileFloorCoverage(detail(covering), unpinned, E, floor)).toBe("detail");
+    expect(reconcileFloorCoverage(detail(covering), { event_id: E }, E, floor)).toBe("detail");
+    expect(reconcileFloorCoverage(detail(covering), { event_id: E, blend_edge_pinned: null }, E, floor)).toBe("detail");
+    // An unpinned history's revision is not a claim, even when one is sent.
+    expect(reconcileFloorCoverage(detail(covering),
+      { event_id: E, blend_edge_pinned: false, blend_edge_fold_revision: covering }, E, floor)).toBe("detail");
+  });
+  it("pays only when a pinned history edge covers every floor row too", () => {
+    expect(reconcileFloorCoverage(detail(covering), pinned(covering), E, floor)).toBe("paid");
+    expect(reconcileFloorCoverage(detail(covering), pinned({ [E]: 12, [TWIN]: 7 }), E, floor)).toBe("paid");
+  });
+  it("a pinned history below the floor, missing the row, or with no revision proves nothing", () => {
+    expect(reconcileFloorCoverage(detail(covering), pinned({ [E]: 12, [TWIN]: 5 }), E, floor)).toBe("none");
+    expect(reconcileFloorCoverage(detail(covering), pinned({ [E]: 12 }), E, floor)).toBe("none");
+    expect(reconcileFloorCoverage(detail(covering), pinned(null), E, floor)).toBe("none");
+  });
+  it("a detail below the floor never covers, whatever the history says", () => {
+    expect(reconcileFloorCoverage(detail({ [E]: 12, [TWIN]: 5 }), pinned(covering), E, floor)).toBe("none");
+    expect(reconcileFloorCoverage(detail({ [E]: 12 }), unpinned, E, floor)).toBe("none");
+    expect(reconcileFloorCoverage(detail(null), pinned(covering), E, floor)).toBe("none");
+  });
+  it("another event's halves, or an unparseable floor, never cover", () => {
+    expect(reconcileFloorCoverage({ ...detail(covering), id: E + 1 }, pinned(covering), E, floor)).toBe("none");
+    expect(reconcileFloorCoverage(detail(covering), { ...pinned(covering), event_id: E + 1 }, E, floor)).toBe("none");
+    expect(reconcileFloorCoverage(detail(covering), pinned(covering), E, null)).toBe("none");
+    expect(reconcileFloorCoverage(detail(covering), pinned(covering), E, {})).toBe("none");
+  });
+  it("a terminal detail is the final owner and retires the floor", () => {
+    expect(reconcileFloorCoverage(detail(null, "completed"), unpinned, E, floor)).toBe("paid");
   });
 });

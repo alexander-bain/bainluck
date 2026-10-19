@@ -6,8 +6,9 @@ import { compareFoldRevision, parseFoldRevision, type FoldRevision } from "./fol
  * current state". It is NOT a price. It names an obligation (`custody_id`) and
  * a row-wise coverage FLOOR (`removal_rev`, the same `{ "<row id>": rev }` space
  * as `blend_fold_revision`): a paired read pays the obligation only when its
- * detail — and a pinned history edge — is at or beyond the floor on every row.
- * A missing row never covers (`coversQuoteRevision`).
+ * detail AND a pinned history edge are each at or beyond the floor on every
+ * row (`reconcileFloorCoverage`). A missing row never covers, and an unpinned
+ * history proves nothing, so it never pays.
  *
  *   event: reconcile
  *   data: {"event_id":15332323,"custody_id":"…","removal_rev":{"15332402":1129}}
@@ -168,6 +169,37 @@ export function createWriteJournal<T>(cap = RECONCILE_JOURNAL_CAP): WriteJournal
     get entries() { return entries; },
     get overflowed() { return overflowed; },
   };
+}
+
+/**
+ * #10090 D4 — what one paired read proves about one owed floor.
+ *
+ *   "paid"   — the detail covers the floor and so does a PINNED history edge's
+ *              own fold revision (or the detail is terminal: the final owner).
+ *   "detail" — the detail covers the floor, but the history makes no revision
+ *              claim (`blend_edge_pinned` is not true). The rail may be rebased
+ *              onto the detail; the chart half is unproven, so the floor stays
+ *              owed and the page's persistent read asks again.
+ *   "none"   — the detail is below the floor, or a pinned history edge is
+ *              below it or carries no revision to order.
+ *
+ * `quotePairCoversTrigger` lets an unpinned history cover trivially, which is
+ * right for a price trigger and wrong for a removal: nothing here (no forced
+ * pin, read-start clock or existing price snapshot) stands in for the
+ * history's own revision.
+ */
+export type FloorCoverage = "paid" | "detail" | "none";
+
+export function reconcileFloorCoverage(
+  detail: { id: number; status?: string | null; blend_fold_revision?: unknown },
+  history: { event_id: number; blend_edge_pinned?: boolean | null; blend_edge_fold_revision?: unknown },
+  eventId: number, floor: unknown,
+): FloorCoverage {
+  if (detail.id !== eventId || history.event_id !== eventId || !parseFoldRevision(floor)) return "none";
+  if (!isQuoteStreamStatus(detail.status)) return "paid";
+  if (!coversQuoteRevision(detail.blend_fold_revision, floor)) return "none";
+  if (history.blend_edge_pinned !== true) return "detail";
+  return coversQuoteRevision(history.blend_edge_fold_revision, floor) ? "paid" : "none";
 }
 
 type Versioned = { status?: string | null; blend_fold_revision?: unknown };

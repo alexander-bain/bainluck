@@ -34,7 +34,7 @@ import { frameInvalidatesFoldedBlend } from "../../lib/eventLivePush";
 import { keepNewerHeldHeadline } from "../../lib/reconcileEventPoll";
 import { historyRangeParam } from "../../lib/event/historyRange";
 import { EVENT_BOOT_HISTORY_HOURS } from "../../lib/event/detailBoot";
-import { createReconcileLedger, createWriteJournal, rebaseOnCoveringRead, servedHistoryIsNewer } from "../../lib/reconcileControl";
+import { createReconcileLedger, createWriteJournal, rebaseOnCoveringRead, reconcileFloorCoverage, servedHistoryIsNewer } from "../../lib/reconcileControl";
 
 const PAGE = fs.readFileSync(path.join(__dirname, "../../app/events/[id]/page.tsx"), "utf8");
 const FOLDED_FRAME_REFETCH_MS = Number(PAGE.match(/const FOLDED_FRAME_REFETCH_MS = (\d+)/)![1]);
@@ -150,7 +150,7 @@ function HeldPage({ net, eventId, liveFrame }: { net: Net; eventId: number; live
   const refreshHistoryRef = useRef(refreshHistory);
   refreshHistoryRef.current = refreshHistory;
   pairedQuoteReadRef.current = PAIR.runInNewContext({
-    createWriteJournal, rebaseOnCoveringRead, servedHistoryIsNewer, latestBlendEdgeRef: { current: null }, pairJournalRef, reconcileLedger,
+    createWriteJournal, rebaseOnCoveringRead, reconcileFloorCoverage, servedHistoryIsNewer, latestBlendEdgeRef: { current: null }, pairJournalRef, reconcileLedger,
     eventId, fullHistoryRequested, fetchEvent, fetchEventHistory, EVENT_BOOT_HISTORY_HOURS, historyRangeParam,
     quotePairCoversTrigger, keepNewerHeldHeadline, canSubscribeEventQuotes, setLastRefresh, Date,
     // #10090 G2: this harness's poll stores no result; 10666 drives that path.

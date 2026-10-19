@@ -29,6 +29,7 @@ import {
   createReconcileLedger,
   createWriteJournal,
   rebaseOnCoveringRead,
+  reconcileFloorCoverage,
   servedHistoryIsNewer,
   type ReconcileControl,
   type WriteJournal,
@@ -1012,15 +1013,18 @@ export default function EventPage({ params }: EventPageProps) {
     if (quoteReadLifetimeRef.current !== readingLifetime ||
         quoteEventIdRef.current !== readingEventId || quoteHistoryRangeRef.current !== fullHistoryRequested ||
         !quotePairCoversTrigger(detail, history, readingEventId, quoteTriggerRef.current?.rev)) return;
-    // #10090: a pair whose BOTH halves cover an owed reconcile floor is adopted
+    // #10090: a pair whose detail covers an owed reconcile floor is adopted
     // even when newer writes overtook it in flight — those writes are replayed
     // onto it, so the rail loses the removed source without the headline going
     // back, and the two halves need only agree on the floor (two fresh builds
-    // a write apart would otherwise refuse each other). Any other pair keeps
-    // history-covers-detail and refuse-if-older.
-    const covered = (floor: unknown) => quotePairCoversTrigger(detail, history, readingEventId, floor);
-    const reconciling = reconcileLedger.floors().some(covered);
-    if (!reconciling && !covered(detail.blend_fold_revision)) return;
+    // a write apart would otherwise refuse each other). It PAYS the floor only
+    // when a pinned history edge covers it too: an unpinned history makes no
+    // revision claim, so the chart half stays owed and the persistent read
+    // asks again (D4). Any other pair keeps history-covers-detail and
+    // refuse-if-older.
+    const coverage = (floor: unknown) => reconcileFloorCoverage(detail, history, readingEventId, floor);
+    const reconciling = reconcileLedger.floors().some((floor) => coverage(floor) !== "none");
+    if (!reconciling && !quotePairCoversTrigger(detail, history, readingEventId, detail.blend_fold_revision)) return;
     const adopted = reconciling
       ? rebaseOnCoveringRead(detail, journal, heldEventRef.current)
       : keepNewerHeldHeadline(detail, heldEventRef.current) === detail ? detail : null;
@@ -1032,7 +1036,7 @@ export default function EventPage({ params }: EventPageProps) {
     ]);
     if (quoteTriggerRef.current === trigger) quoteTriggerRef.current = null;
     if (recoveryIntentRef.current === recovery) recoveryIntentRef.current = 0;
-    if (quoteReadLifetimeRef.current === readingLifetime) reconcileLedger.settle(covered);
+    if (quoteReadLifetimeRef.current === readingLifetime) reconcileLedger.settle((floor) => coverage(floor) === "paid");
     setLastRefresh(Date.now());
   };
 
