@@ -1,5 +1,6 @@
 import { coversQuoteRevision, isQuoteStreamStatus } from "./eventQuoteStream";
 import { compareFoldRevision, parseFoldRevision, type FoldRevision } from "./foldRevision";
+import { carryNewerHeldState } from "./reconcileEventPoll";
 
 /**
  * #10090 — the `reconcile` control: "a source left this event's fold; read the
@@ -221,7 +222,7 @@ export function reconcileFloorCoverage(
   return coversQuoteRevision(history.history_fold_revision, floor) ? "paid" : "detail";
 }
 
-type Versioned = { status?: string | null; blend_fold_revision?: unknown };
+type Versioned = { id: number; status?: string | null; blend_fold_revision?: unknown };
 
 /**
  * #10090 — the poll a pair journaled, replayed onto the value it lands on: the
@@ -234,13 +235,16 @@ type Versioned = { status?: string | null; blend_fold_revision?: unknown };
  * rail. A same, older, incomparable or unversioned poll is not replayed: the
  * pair overwrites the cache with its own adopted value, so a same-revision
  * poll's game state (status, score) yields to the pair's detail.
+ * A replayed poll is newer in PRICE, not necessarily in game state: when the
+ * value it lands on read the row provably later, that state is carried onto
+ * it (`carryNewerHeldState`), exactly as a poll landing on the page would be.
  */
 export function replayJournaledPoll<T extends Versioned>(polled: T, onto: T): T | undefined {
-  if (!isQuoteStreamStatus(polled.status)) return polled;
+  if (!isQuoteStreamStatus(polled.status)) return carryNewerHeldState(polled, onto);
   const polledRevision = parseFoldRevision(polled.blend_fold_revision);
   const ontoRevision = parseFoldRevision(onto.blend_fold_revision);
   return polledRevision && ontoRevision && compareFoldRevision(polledRevision, ontoRevision) === "newer"
-    ? polled : undefined;
+    ? carryNewerHeldState(polled, onto) : undefined;
 }
 
 /**

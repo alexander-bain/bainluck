@@ -32,7 +32,7 @@ import { canSubscribeEventQuotes, quotePairCoversTrigger } from "../../lib/event
 import { adoptFoldedQuote, applyLiveFrame, applyLiveFrameRail, frameInvalidatesFoldedBlend } from "../../lib/eventLivePush";
 import { frameFoldOrder } from "../../lib/foldRevision";
 import { frameCarriesUnpricedSnapshot, snapshotRailPaysPricelessTrigger } from "../../lib/sourceSnapshot";
-import { fetchEventWithLiveFrame, keepNewerHeldHeadline } from "../../lib/reconcileEventPoll";
+import { carryNewerHeldState, fetchEventWithLiveFrame, keepNewerHeldHeadline } from "../../lib/reconcileEventPoll";
 import { adoptNewerBlendEdge, edgeInvalidatesHeldBlend, servedBlendEdgeObservation } from "../../lib/blendObservationClock";
 import { historyRangeParam } from "../../lib/event/historyRange";
 import { EVENT_BOOT_HISTORY_HOURS } from "../../lib/event/detailBoot";
@@ -215,7 +215,7 @@ function HeldPage({ net, eventId }: { net: Net; eventId: number }) {
   pairedQuoteReadRef.current = PAIR.runInNewContext({
     eventId, fullHistoryRequested, fetchEvent, fetchEventHistory, EVENT_BOOT_HISTORY_HOURS, historyRangeParam,
     createWriteJournal, rebaseOnCoveringRead, reconcileFloorCoverage, servedHistoryIsNewer, latestBlendEdgeRef, pairJournalRef, reconcileLedger, storedEventRef,
-    quotePairCoversTrigger, keepNewerHeldHeadline, canSubscribeEventQuotes, setLastRefresh, Date,
+    quotePairCoversTrigger, keepNewerHeldHeadline, carryNewerHeldState, canSubscribeEventQuotes, setLastRefresh, Date,
     quoteTriggerRef, recoveryIntentRef, quoteReadLifetimeRef, quoteEventIdRef, quoteHistoryRangeRef,
     refreshHistoryRef, refreshEventRef, heldEventRef,
   });
@@ -1062,6 +1062,84 @@ describe("#10090 history coverage mounted: a complete unpinned chart finishes re
     expect(harness.ledger!.owed()).toBe(false);
     await p.advance(120_000);
     expect(p.pairs()).toHaveLength(1);
+    await p.unmount();
+  });
+});
+
+// ── #10090 state window (LIVE-STATE-WINDOW-CONSUMER-CONTRACT.md v3) ─────────
+describe("#10090 state window mounted: a same-revision read never puts the game back", () => {
+  const at = (second: number) => `2026-10-19T01:00:${String(second).padStart(2, "0")}.000000+00:00`;
+  const stamped = (d: Detail, from: number, to: number) =>
+    ({ ...d, state_read_not_before: at(from), state_read_not_after: at(to) }) as Detail;
+  const kickoff = (rev: number, rail: Rail): Detail =>
+    ({ ...live(rev, 0.55, rail), status: "scheduled", home_score: null, away_score: null });
+  type Page = Awaited<ReturnType<typeof mount>>;
+  const poll = async (p: Page, d: Detail) => {
+    harness.revalidate!();
+    await settle();
+    p.net.details.filter((r) => !r.fresh).at(-1)!.d.resolve(d);
+    await settle();
+  };
+  const score = () => [harness.event!.home_score, harness.event!.away_score];
+
+  it("X1 poll: a scheduled detail read before kickoff lands after the live 0-0 page — the page stays live", async () => {
+    const p = await mount(stamped({ ...live(10, 0.55, withPm(10)), home_score: 0, away_score: 0 }, 20, 21));
+    await poll(p, stamped(kickoff(10, withPm(10)), 10, 11));
+    expect(p.read()).toBe("live|55|kalshi+polymarket|r10|c55");
+    expect(score()).toEqual([0, 0]);
+    expect(sources).toHaveLength(1);
+    await p.unmount();
+  });
+
+  it("X2 poll: a 0-0 read before the touchdown lands after the 7-0 page — the page stays 7-0", async () => {
+    const p = await mount(stamped({ ...live(10, 0.55, withPm(10)), home_score: 7, away_score: 0 }, 20, 21));
+    await poll(p, stamped({ ...live(10, 0.55, withPm(10)), home_score: 0, away_score: 0 }, 10, 11));
+    expect(score()).toEqual([7, 0]);
+    await p.unmount();
+  });
+
+  it("a real correction (later window, lower score) and an overlapping window are adopted as today", async () => {
+    const p = await mount(stamped({ ...live(10, 0.55, withPm(10)), home_score: 7, away_score: 0 }, 20, 21));
+    await poll(p, stamped({ ...live(10, 0.55, withPm(10)), home_score: 0, away_score: 0 }, 30, 31));
+    expect(score()).toEqual([0, 0]);
+    await poll(p, stamped({ ...live(10, 0.55, withPm(10)), home_score: 3, away_score: 0 }, 25, 40));
+    expect(score()).toEqual([3, 0]);
+    await p.unmount();
+  });
+
+  it("C3 poll: a final read later is never reopened by a cached live poll — kept whole", async () => {
+    const held = stamped(final(20), 20, 21);
+    const p = await mount(held, history(20, 1));
+    await poll(p, stamped(live(30, 0.55, withPm(30)), 10, 11));
+    expect(p.read()).toBe("completed|100|kalshi|r20|c100");
+    expect(harness.event).toEqual(held);
+    expect(sources).toHaveLength(0);
+    await p.unmount();
+  });
+
+  it("pair site: a covering read built before kickoff, landing after the stored live poll, pays without stepping back", async () => {
+    const p = await mount(stamped(kickoff(10, withPm(10)), 10, 11));
+    await p.control("owed-1", 11);
+    await p.advance(250);
+    expect(p.pairs()).toHaveLength(1);
+    harness.revalidate!();
+    await settle();
+    // In ONE tick: the poll stores live 0-0 (read at 30 s), and the pair's
+    // detail (read at 20 s, before kickoff) lands before React renders it.
+    await act(async () => {
+      p.net.details.filter((r) => !r.fresh).at(-1)!.d.resolve(
+        stamped({ ...live(10, 0.55, withPm(10)), home_score: 0, away_score: 0 }, 30, 31));
+      for (let i = 0; i < 12; i += 1) await Promise.resolve();
+      const pair = p.pending();
+      pair.detail.resolve(stamped(kickoff(11, { kalshi: src(0.55, 11) }), 20, 21));
+      pair.history.resolve(history(11, 0.55));
+      for (let i = 0; i < 12; i += 1) await Promise.resolve();
+    });
+    await settle();
+    expect(p.read()).toBe("live|55|kalshi|r11|c55");
+    expect(score()).toEqual([0, 0]);
+    expect(harness.event!).toMatchObject({ state_read_not_before: at(30) });
+    expect(harness.ledger!.owed()).toBe(false);
     await p.unmount();
   });
 });

@@ -33,7 +33,7 @@ import { canSubscribeEventQuotes, quotePairCoversTrigger } from "../../lib/event
 import { frameInvalidatesFoldedBlend } from "../../lib/eventLivePush";
 import { frameFoldOrder } from "../../lib/foldRevision";
 import { frameCarriesUnpricedSnapshot } from "../../lib/sourceSnapshot";
-import { keepNewerHeldHeadline } from "../../lib/reconcileEventPoll";
+import { carryNewerHeldState, keepNewerHeldHeadline } from "../../lib/reconcileEventPoll";
 import { historyRangeParam } from "../../lib/event/historyRange";
 import { EVENT_BOOT_HISTORY_HOURS } from "../../lib/event/detailBoot";
 import { createReconcileLedger, createWriteJournal, rebaseOnCoveringRead, reconcileFloorCoverage, servedHistoryIsNewer } from "../../lib/reconcileControl";
@@ -157,7 +157,7 @@ function HeldPage({ net, eventId, liveFrame }: { net: Net; eventId: number; live
   pairedQuoteReadRef.current = PAIR.runInNewContext({
     createWriteJournal, rebaseOnCoveringRead, reconcileFloorCoverage, servedHistoryIsNewer, latestBlendEdgeRef: { current: null }, pairJournalRef, reconcileLedger,
     eventId, fullHistoryRequested, fetchEvent, fetchEventHistory, EVENT_BOOT_HISTORY_HOURS, historyRangeParam,
-    quotePairCoversTrigger, keepNewerHeldHeadline, canSubscribeEventQuotes, setLastRefresh, Date,
+    quotePairCoversTrigger, keepNewerHeldHeadline, carryNewerHeldState, canSubscribeEventQuotes, setLastRefresh, Date,
     // #10090 G2: this harness's poll stores no result; 10666 drives that path.
     storedEventRef: { current: undefined },
     recoveryIntentRef, quoteReadLifetimeRef, quoteTriggerRef, quoteEventIdRef, quoteHistoryRangeRef, refreshHistoryRef, refreshEventRef, heldEventRef,
