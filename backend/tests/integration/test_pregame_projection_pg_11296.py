@@ -18,9 +18,9 @@ checks four things:
 * with the production index present the statement is served by it, with no
   sequential scan of ``odds_snapshots`` (a shape check, not a timing).
 
-A database of its own (``PREGAME_PROJECTION_DATABASE_URL``), because the fixture
-drops and creates the five tables it touches. CI provisions a disposable one in
-the ``isolated`` group. No fallback URL.
+Opt-in on ``SEARCH_TEST_DATABASE_URL`` like its neighbours. The schema is
+created if absent and only this file's own fixed ids are seeded and removed,
+so it shares the database with the other gates in its CI step.
 """
 
 from __future__ import annotations
@@ -30,7 +30,7 @@ from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
 import pytest
-from sqlalchemy import text
+from sqlalchemy import select, text
 
 from app.utils.odds_math import project_scores
 from app.utils.pregame_projection import (
@@ -42,21 +42,23 @@ from app.utils.pregame_projection import (
     read_pregame_projections,
 )
 
-DB_URL = os.environ.get("PREGAME_PROJECTION_DATABASE_URL")
+DB_URL = os.environ.get("SEARCH_TEST_DATABASE_URL")
 
 pytestmark = [
     pytest.mark.asyncio,
     pytest.mark.skipif(
         not DB_URL,
         reason=(
-            "set PREGAME_PROJECTION_DATABASE_URL to run the real-Postgres #11296 "
-            "pregame projection read (CI's isolated group provisions one)"
+            "set SEARCH_TEST_DATABASE_URL to run the real-Postgres #11296 "
+            "pregame projection read (the database-integration CI job provides one)"
         ),
     ),
 ]
 
 # gotcha #44: a fixed anchor, offsets only.
 _T0 = datetime(2026, 10, 18, 17, 0, tzinfo=timezone.utc)
+#: This file's own event ids, so it can share a database and clean up after itself.
+_IDS = {"A": 911_296_11, "B": 911_296_12, "C": 911_296_13, "D": 911_296_14}
 
 #: The oracle: every row, one per (event, book), newest strictly before the
 #: event's cutoff. Lives in the test so nothing in production can drift onto it.
@@ -81,23 +83,29 @@ async def maker():
     import app.models.models  # noqa: F401 — registers every table on Base
     from app.services.database import Base
 
-    wanted = [
-        Base.metadata.tables[name]
-        for name in ("sports", "teams", "venues", "events", "odds_snapshots")
-    ]
     engine = create_async_engine(DB_URL)
     async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.drop_all, tables=wanted, checkfirst=True)
-        await conn.run_sync(Base.metadata.create_all, tables=wanted)
+        await conn.run_sync(lambda sync: Base.metadata.create_all(sync, checkfirst=True))
         # The production index the statement is written for
         # (`4623658a2704`, created out of band — gotcha #31).
         await conn.execute(text(
-            "CREATE INDEX ix_odds_snapshots_bookmaker_closing "
+            "CREATE INDEX IF NOT EXISTS ix_odds_snapshots_bookmaker_closing "
             "ON odds_snapshots (event_id, bookmaker, captured_at DESC)"
         ))
+    await _clear(engine)
     factory = async_sessionmaker(engine, expire_on_commit=False)
     yield factory
+    await _clear(engine)
     await engine.dispose()
+
+
+async def _clear(engine):
+    ids = list(_IDS.values())
+    async with engine.begin() as conn:
+        await conn.execute(
+            text("DELETE FROM odds_snapshots WHERE event_id = ANY(:ids)"), {"ids": ids}
+        )
+        await conn.execute(text("DELETE FROM events WHERE id = ANY(:ids)"), {"ids": ids})
 
 
 async def _seed(maker):
@@ -111,12 +119,17 @@ async def _seed(maker):
     ids: dict[str, int] = {}
     want: dict[str, int] = {}
     async with maker() as session:
-        sport = Sport(key="americanfootball_nfl", name="NFL", active=True)
-        session.add(sport)
-        await session.flush()
+        sport = (
+            await session.execute(select(Sport).where(Sport.key == "americanfootball_nfl"))
+        ).scalar_one_or_none()
+        if sport is None:
+            sport = Sport(key="americanfootball_nfl", name="NFL", active=True)
+            session.add(sport)
+            await session.flush()
 
         def game(name, start, status="completed"):
             ev = Event(
+                id=_IDS[name],
                 sport_id=sport.id,
                 home_team_name=f"Home {name}",
                 away_team_name=f"Away {name}",
@@ -205,7 +218,6 @@ async def test_swapped_cutoffs_change_the_answer(maker):
 
 
 async def test_the_read_serves_the_pregame_pair_end_to_end(maker):
-    from sqlalchemy import select
     from sqlalchemy.orm import selectinload
 
     from app.models.models import Event
@@ -214,7 +226,10 @@ async def test_the_read_serves_the_pregame_pair_end_to_end(maker):
     async with maker() as session:
         events = (
             await session.execute(
-                select(Event).options(selectinload(Event.sport)).order_by(Event.id)
+                select(Event)
+                .options(selectinload(Event.sport))
+                .where(Event.id.in_(list(_IDS.values())))
+                .order_by(Event.id)
             )
         ).scalars().all()
         answers = await read_pregame_projections(
