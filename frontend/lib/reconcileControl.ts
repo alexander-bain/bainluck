@@ -78,7 +78,11 @@ export interface ReconcileLedger {
   /** Registers a control; false when an already-paid floor covers it. */
   owe(control: ReconcileControl, at: number): boolean;
   owed(): boolean;
+  /** A normal-price final still needs prompt recovery; survives overflow merging. */
+  normalPriceOwed(): boolean;
   floors(): FoldRevision[];
+  /** Identity snapshots for coverage, including normal priority within a mixed spill. */
+  coverageFloors(): FoldRevision[];
   /** Pays every entry `covers` accepts; returns how many were paid. */
   settle(covers: (floor: FoldRevision) => boolean): number;
   earliestOwedAt(): number | null;
@@ -87,7 +91,7 @@ export interface ReconcileLedger {
 }
 
 export function createReconcileLedger(): ReconcileLedger {
-  const owed = new Map<string, { floor: FoldRevision; at: number }>();
+  const owed = new Map<string, { floor: FoldRevision; at: number; normalFloor: FoldRevision | null }>();
   const fulfilled = new Map<string, FoldRevision>();
   return {
     owe(control, at) {
@@ -97,7 +101,7 @@ export function createReconcileLedger(): ReconcileLedger {
       if (held) {
         const floor = mergeFloor(held.floor, control.floor);
         const raised = Object.keys(floor).some((row) => floor[row] !== held.floor[row]);
-        owed.set(control.custodyId, { floor, at: held.at });
+        owed.set(control.custodyId, { floor, at: held.at, normalFloor: held.normalFloor ? mergeFloor(held.normalFloor, control.floor) : null });
         return raised;
       }
       if (owed.size >= RECONCILE_MAX_OWED) {
@@ -107,18 +111,22 @@ export function createReconcileLedger(): ReconcileLedger {
           const spill = owed.get(SPILL);
           owed.delete(oldest);
           owed.set(SPILL, spill
-            ? { floor: mergeFloor(spill.floor, out.floor), at: Math.min(spill.at, out.at) }
+            ? { floor: mergeFloor(spill.floor, out.floor), at: Math.min(spill.at, out.at), normalFloor: spill.normalFloor && out.normalFloor ? mergeFloor(spill.normalFloor, out.normalFloor) : spill.normalFloor ?? out.normalFloor }
             : out);
         }
       }
-      owed.set(control.custodyId, { floor: { ...control.floor }, at });
+      owed.set(control.custodyId, { floor: { ...control.floor }, at, normalFloor: control.custodyId.startsWith("normal-price:") ? { ...control.floor } : null });
       return true;
     },
     owed: () => owed.size > 0,
+    normalPriceOwed: () => [...owed.values()].some((entry) => entry.normalFloor !== null),
     floors: () => [...owed.values()].map((entry) => entry.floor),
+    coverageFloors: () => [...new Set([...owed.values()].flatMap((entry) => entry.normalFloor ? [entry.floor, entry.normalFloor] : [entry.floor]))],
     settle(covers) {
       let paid = 0;
       for (const [key, entry] of [...owed]) {
+        // Mixed spill can still owe a withdrawal after its normal price is covered.
+        if (entry.normalFloor && covers(entry.normalFloor)) entry.normalFloor = null;
         if (!covers(entry.floor)) continue;
         owed.delete(key);
         paid += 1;

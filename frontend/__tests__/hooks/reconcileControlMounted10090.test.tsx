@@ -44,6 +44,7 @@ import {
 const PAGE = fs.readFileSync(path.join(__dirname, "../../app/events/[id]/page.tsx"), "utf8");
 const FOLDED_FRAME_REFETCH_MS = Number(PAGE.match(/const FOLDED_FRAME_REFETCH_MS = (\d+)/)![1]);
 const LIVE_REFRESH_INTERVAL = Number(PAGE.match(/const LIVE_REFRESH_INTERVAL = (\d+)/)![1]);
+const NORMAL_PRICE_RETRY_CEILING_MS = Number(PAGE.match(/const NORMAL_PRICE_RETRY_CEILING_MS = (\d+)/)![1]);
 
 function pageScript(pick: (n: ts.Node, tree: ts.SourceFile) => string | undefined): vm.Script {
   const tree = ts.createSourceFile("page.tsx", PAGE, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
@@ -183,7 +184,7 @@ function HeldPage({ net, eventId }: { net: Net; eventId: number }) {
   refreshEventRef.current = refreshEvent;
   const [foldedRefetch] = useState(() => FACTORY.runInNewContext({
     createFoldedRefetchScheduler, canSubscribeEventQuotes, reconcileIntentRef, FOLDED_FRAME_REFETCH_MS, Date, reconcileLedger,
-    reconcileRetryDelayMs: RETRY_DELAY.runInNewContext({ LIVE_REFRESH_INTERVAL, Math }),
+    reconcileRetryDelayMs: RETRY_DELAY.runInNewContext({ LIVE_REFRESH_INTERVAL, NORMAL_PRICE_RETRY_CEILING_MS, Math }),
     quoteTriggerRef, recoveryIntentRef, pairedQuoteReadRef, freshNextEventReadRef, refreshEventRef, heldEventRef,
   }) as ReturnType<typeof createFoldedRefetchScheduler>);
   useEffect(() => () => foldedRefetch.cancel(), [foldedRefetch]);
@@ -1142,4 +1143,121 @@ describe("#10090 state window mounted: a same-revision read never puts the game 
     expect(harness.ledger!.owed()).toBe(false);
     await p.unmount();
   });
+});
+
+
+describe("Attempt152 longest final recovery wait", () => {
+  it.each(["offline", "stale", "sustained", "phase-countercase", "worst-phase"])("Attempt152 fixed silence %s", async (fault) => {
+    const p = await mount();
+    const start = Date.now();
+    await p.control("normal-price:polymarket:11", 11);
+    // worst-phase: reads recover 10 ms after the first failed reply past 27 s,
+    // so the page waits out one whole capped step.
+    let restoreMs: number | null = fault === "sustained" || fault === "worst-phase" ? null
+      : fault === "phase-countercase" ? 30_620 : 31_500;
+    let answered = 0;
+    let adoptedMs: number | null = null;
+    const replies: { at: number; healthy: boolean }[] = [];
+    const maxMs = fault === "sustained" ? 60_000 : 70_000;
+    while (Date.now() - start < maxMs) {
+      await p.advance(10);
+      expect(p.pairs().length - answered).toBeLessThanOrEqual(1);
+      if (p.pairs().length > answered && Date.now() - p.pending().at >= 50) {
+        const healthy = restoreMs !== null && Date.now() - start >= restoreMs;
+        if (healthy) await p.answer(live(11, 0.78, { kalshi: src(0.78, 11) }), history(11, 0.78));
+        else if (fault === "stale") await p.answer(live(10, 0.55, withPm(10)), history(10, 0.55));
+        else await p.answer(new Error("offline"), new Error("offline"));
+        if (fault === "worst-phase" && restoreMs === null && Date.now() - start >= 27_000) restoreMs = Date.now() - start + 10;
+        answered += 1;
+        replies.push({at: Date.now() - start, healthy});
+        if (p.read() === "live|78|kalshi|r11|c78") {
+          adoptedMs = Date.now() - start;
+          expect(harness.ledger!.owed()).toBe(false);
+          break;
+        }
+        expect(harness.ledger!.owed()).toBe(true);
+        expect(p.read()).toBe("live|55|kalshi+polymarket|r10|c55");
+      }
+    }
+    const starts = p.pairs().map((r) => r.at - start);
+    for (let i = 1; i < starts.length; i++) expect(starts[i] - starts[i-1]).toBeGreaterThanOrEqual(1000);
+    if (restoreMs !== null) {
+      expect(adoptedMs).not.toBeNull();
+      // Guard the speed change: parent exponential ladder fails this fixed fault.
+      expect(adoptedMs! - restoreMs).toBeLessThanOrEqual(4_100);
+      // The cap bounds the wait; it does not make it subsecond.
+      if (fault === "worst-phase") expect(adoptedMs! - restoreMs).toBeGreaterThan(3_900);
+      const paidCount = p.pairs().length;
+      await p.advance(40_000);
+      expect(p.pairs()).toHaveLength(paidCount);
+    } else {
+      expect(adoptedMs).toBeNull();
+      expect(harness.ledger!.owed()).toBe(true);
+      // Guard the cost: a minute of failing reads stays at 17 pairs (parent 6;
+      // one-second steps made 58 of the caller's shared 180/min).
+      expect(starts.length).toBeLessThanOrEqual(17);
+      expect(Math.max(...starts.slice(1).map((at, i) => at - starts[i]))).toBeLessThanOrEqual(4_100);
+    }
+    const out = process.env.ATTEMPT152_RECEIPTS!;
+    if (out) {
+    fs.mkdirSync(out, {recursive:true});
+    fs.writeFileSync(path.join(out, fault + ".json"), JSON.stringify({fault, restoreMs, adoptedMs,
+      postRestorationMs: adoptedMs !== null && restoreMs !== null ? adoptedMs - restoreMs : null,
+      observationMs: maxMs, starts, replies, pairCount: starts.length,
+      httpRequests: starts.length * 2, delivered: adoptedMs === null ? 0 : 1,
+      missing: adoptedMs === null ? 1 : 0, final: p.read()}, null, 2));
+    }
+    await p.unmount();
+  });
+});
+
+
+it("Attempt152 normal-price retries honor server hold and retire on terminal while waiting", async () => {
+  const p = await mount();
+  await p.control("normal-price:polymarket:11", 11);
+  await p.advance(250);
+  const throttled = Object.assign(new Error("429"), { retryAfterMs: 20_000 });
+  await p.answer(throttled, history(10, 0.55));
+  await p.advance(19_999);
+  expect(p.pairs()).toHaveLength(1);
+  await p.advance(1);
+  expect(p.pairs()).toHaveLength(2);
+  await p.answer(final(12), history(12, 1));
+  expect(harness.ledger!.owed()).toBe(false);
+  await p.advance(60_000);
+  expect(p.pairs()).toHaveLength(2);
+  await p.unmount();
+});
+
+
+it("Attempt152 mounted mixed spill stops the capped ladder after its normal revision is adopted", async () => {
+  const p = await mount();
+  await p.control("normal-price:polymarket:11", 11);
+  for (let i = 0; i < 40; i++) await p.control("withdraw-" + i, 12 + i);
+  await p.advance(250);
+  expect(harness.ledger!.normalPriceOwed()).toBe(true);
+  await p.answer(live(11, 0.78, { kalshi: src(0.78, 11) }), history(11, 0.78));
+  expect(p.read()).toBe("live|78|kalshi|r11|c78");
+  expect(harness.ledger!.normalPriceOwed()).toBe(false);
+  expect(harness.ledger!.owed()).toBe(true);
+  await p.advance(1000);
+  const reads = p.pairs().length;
+  await p.answer(live(11, 0.78, { kalshi: src(0.78, 11) }), history(11, 0.78));
+  await p.advance(1999);
+  expect(p.pairs()).toHaveLength(reads);
+  await p.advance(1);
+  expect(p.pairs()).toHaveLength(reads + 1);
+  await p.answer(live(11, 0.78, { kalshi: src(0.78, 11) }), history(11, 0.78));
+  await p.advance(4000);
+  expect(p.pairs()).toHaveLength(reads + 2);
+  await p.answer(live(11, 0.78, { kalshi: src(0.78, 11) }), history(11, 0.78));
+  // Normal-price duty would read again at its 4 s cap; the withdrawal left
+  // behind keeps its own 8 s step.
+  await p.advance(4000);
+  expect(p.pairs()).toHaveLength(reads + 2);
+  await p.advance(3999);
+  expect(p.pairs()).toHaveLength(reads + 2);
+  await p.advance(1);
+  expect(p.pairs()).toHaveLength(reads + 3);
+  await p.unmount();
 });

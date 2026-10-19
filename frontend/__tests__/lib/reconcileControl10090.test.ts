@@ -333,3 +333,54 @@ describe("#10090 an unpinned history's complete-build coverage (history_fold_rev
     expect(servedHistoryIsNewer({ foldRevision: { [E]: 13 } }, unpinned({ [E]: 99, [TWIN]: 99 }))).toBe(false);
   });
 });
+
+
+describe("Attempt152 normal-price duty", () => {
+  it("keeps normal-price priority through duplicate, raised floor and overflow, then retires it only on coverage", () => {
+    const ledger = createReconcileLedger();
+    expect(ledger.normalPriceOwed()).toBe(false);
+    ledger.owe(control("normal-price:pm:11", { [E]: 11 }), 0);
+    expect(ledger.owe(control("normal-price:pm:11", { [E]: 11 }), 1)).toBe(false);
+    ledger.owe(control("normal-price:pm:11", { [E]: 12 }), 2);
+    for (let i = 0; i < 40; i++) ledger.owe(control("withdraw-" + i, { [E]: 20 + i }), 3 + i);
+    // Existing parent contract counts up to 32 named entries plus its spill.
+    expect(ledger.floors().length).toBeLessThanOrEqual(RECONCILE_MAX_OWED + 1);
+    expect(ledger.normalPriceOwed()).toBe(true);
+    ledger.settle(floor => coversQuoteRevision({ [E]: 11 }, floor));
+    expect(ledger.normalPriceOwed()).toBe(true);
+    ledger.settle(floor => coversQuoteRevision({ [E]: 100 }, floor));
+    expect(ledger.normalPriceOwed()).toBe(false);
+    expect(ledger.owed()).toBe(false);
+  });
+  it("a paid normal floor leaves a withdrawal on its old policy; clear retires normal duty", () => {
+    const ledger = createReconcileLedger();
+    ledger.owe(control("normal-price:pm:11", { [E]: 11 }), 0);
+    ledger.owe(control("withdraw", { [E]: 12 }), 1);
+    ledger.settle(floor => coversQuoteRevision({ [E]: 11 }, floor));
+    expect(ledger.normalPriceOwed()).toBe(false);
+    expect(ledger.owed()).toBe(true);
+    expect(ledger.owe(control("normal-price:pm:11", { [E]: 11 }), 2)).toBe(false);
+    expect(ledger.normalPriceOwed()).toBe(false);
+    ledger.owe(control("normal-price:pm:13", { [E]: 13 }), 3);
+    ledger.clear();
+    expect(ledger.normalPriceOwed()).toBe(false);
+  });
+});
+
+
+it("Attempt152 mixed spill retires fast retries once its normal floor is covered, even while withdrawal remains", () => {
+  const ledger = createReconcileLedger();
+  ledger.owe(control("normal-price:pm:11", { [E]: 11 }), 0);
+  for (let i = 0; i < 40; i++) ledger.owe(control("withdraw-" + i, { [E]: 12 + i }), i + 1);
+  expect(ledger.normalPriceOwed()).toBe(true);
+  ledger.settle(floor => coversQuoteRevision({ [E]: 11 }, floor));
+  expect(ledger.normalPriceOwed()).toBe(false);
+  expect(ledger.owed()).toBe(true);
+  ledger.owe(control("normal-price:pm:100", { [E]: 100 }), 100);
+  expect(ledger.normalPriceOwed()).toBe(true);
+  ledger.settle(floor => coversQuoteRevision({ [E]: 99 }, floor));
+  expect(ledger.normalPriceOwed()).toBe(true);
+  ledger.settle(floor => coversQuoteRevision({ [E]: 100 }, floor));
+  expect(ledger.normalPriceOwed()).toBe(false);
+  expect(ledger.owed()).toBe(false);
+});

@@ -257,8 +257,15 @@ function heroCrestImage(
 const LIVE_REFRESH_INTERVAL = 32000; // Match backend LIVE_POLL_INTERVAL (32s)
 /** #9051: floor between detail refetches a folded hero asks for on refused frames. */
 const FOLDED_FRAME_REFETCH_MS = 1000;
+/**
+ * #10090: a normal-price final caps the same ladder at 4 s, so a recovered read
+ * lands within ~4 s instead of 32 s. Cost while reads keep failing: ~34 reads a
+ * minute (parent ~12; 1 s steps were 116 of the caller's shared 180/min).
+ */
+const NORMAL_PRICE_RETRY_CEILING_MS = 4000;
 /** #10090: an owed reconcile read retries 1, 2, 4 … s apart, never slower than the live poll. */
-const reconcileRetryDelayMs = (attempt: number) => Math.min(LIVE_REFRESH_INTERVAL, 1000 * 2 ** (attempt - 1));
+const reconcileRetryDelayMs = (attempt: number, normalPriceOwed = false) =>
+  Math.min(normalPriceOwed ? NORMAL_PRICE_RETRY_CEILING_MS : LIVE_REFRESH_INTERVAL, 1000 * 2 ** (attempt - 1));
 const SCHEDULED_REFRESH_INTERVAL = 120000;
 
 export default function EventPage({ params }: EventPageProps) {
@@ -419,7 +426,7 @@ export default function EventPage({ params }: EventPageProps) {
     // One bounded retry uses the existing scheduler; normal polling remains.
     () => (quoteTriggerRef.current !== null || recoveryIntentRef.current !== 0) && canSubscribeEventQuotes(heldEventRef.current),
     // #10090: an owed reconcile floor has no retry cap; it is paid or retired.
-    { owed: () => reconcileLedger.owed() && canSubscribeEventQuotes(heldEventRef.current), delayMs: reconcileRetryDelayMs },
+    { owed: () => reconcileLedger.owed() && canSubscribeEventQuotes(heldEventRef.current), delayMs: (attempt) => reconcileRetryDelayMs(attempt, reconcileLedger.normalPriceOwed()) },
   ));
   useEffect(() => () => foldedRefetch.cancel(), [foldedRefetch]);
 
@@ -1067,7 +1074,7 @@ export default function EventPage({ params }: EventPageProps) {
     // unpinned complete fresh build's `history_fold_revision`; otherwise the
     // chart half stays owed and the persistent read asks again (D4). Any other
     // pair keeps history-covers-detail and refuse-if-older.
-    const covering = reconcileLedger.floors()
+    const covering = reconcileLedger.coverageFloors()
       .filter((floor) => reconcileFloorCoverage(detail, history, readingEventId, floor) !== "none");
     const reconciling = covering.length > 0;
     if (!reconciling && !quotePairCoversTrigger(detail, history, readingEventId, detail.blend_fold_revision)) return;
