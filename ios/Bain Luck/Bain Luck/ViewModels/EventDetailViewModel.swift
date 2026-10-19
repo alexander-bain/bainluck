@@ -168,11 +168,12 @@ final class EventDetailViewModel: ObservableObject {
     /// quote, control or tap. Capped at the last step, never given up.
     static let reconcileRetryDelays: [TimeInterval] = [1.5, 3, 6, 12, 24]
     var reconcileMemory: (owed: Int, settled: Int) { (reconcileOwedCustody.count, reconcileSettled.count) }
-    /// #10090 — the revision at which a source snapshot last replaced this
-    /// page's whole singleton rail. Proof of the reconcile floor's detail half
-    /// only while the page still holds exactly that revision (checked where
-    /// the floor is evaluated); one vector, never a remembered "once shown".
-    private var snapshotRailAt: FoldRevision?
+    /// #10090 — the rail an authoritative push last put on this page whole (a
+    /// singleton source snapshot or an adopted full folded quote), read back
+    /// from the page it wrote. Proof of the reconcile floor's detail half only
+    /// while the page still holds exactly that revision and those sources
+    /// (checked where the floor is evaluated); never a remembered "once shown".
+    private var committedRail: LiveEventPriceReconciliation.CommittedRail?
 
     /// #10643 — `frame`, carrying the row-wise highest revision it and `held`
     /// named, so a delayed or other-row arrival never erases a newer
@@ -856,6 +857,18 @@ final class EventDetailViewModel: ObservableObject {
         retireReconcile()
     }
 
+    /// #10090 — read the committed rail back from the page actually written,
+    /// in the same turn: only a page that holds `revision` as its live blend
+    /// records it. Anything else leaves no proof.
+    @MainActor
+    private func recordCommittedRail(at revision: FoldRevision) {
+        guard let page = event, LiveEventPriceReconciliation.pairedFoldRevision(in: page) == revision else {
+            committedRail = nil
+            return
+        }
+        committedRail = .init(revision: revision, sources: Set((page.winProbabilitySources ?? [:]).keys))
+    }
+
     /// Dropped without payment, with a named owner: the reader left
     /// (`stopRefresh` — the return's fresh `load()` and the next connection's
     /// re-delivered custody own it), or the page left the priced states (a
@@ -957,8 +970,8 @@ final class EventDetailViewModel: ObservableObject {
             if let floor = reconcileFloor {
                 if LiveEventPriceReconciliation.reconcileFloorShown(
                     floor, served: fetched, servedHistory: h, page: event
-                ) || LiveEventPriceReconciliation.reconcileFloorShownBySnapshotRail(
-                    floor, snapshotRail: snapshotRailAt, servedHistory: h, page: event
+                ) || LiveEventPriceReconciliation.reconcileFloorShownByCommittedRail(
+                    floor, committedRail: committedRail, servedHistory: h, page: event
                 ) {
                     settleReconcile()
                 } else {
@@ -1163,7 +1176,6 @@ final class EventDetailViewModel: ObservableObject {
         visit += 1
         stopStream()
         retireReconcile()
-        snapshotRailAt = nil
     }
 
     // MARK: - Live push
@@ -1347,6 +1359,10 @@ final class EventDetailViewModel: ObservableObject {
         case .adopt(let quote):
             LiveEventPriceReconciliation.adoptingFoldedQuote(quote, into: &current)
             commitAdoptedPrice(prior: prior, current: current, at: quote.heroProbabilityObservedAt?.asDate)
+            // #10090 — the full quote's price, rail and revision are now the
+            // page's together: the only folded rail proof. A raw row's frame
+            // or snapshot, a held/older quote and a null result record none.
+            recordCommittedRail(at: quote.blendFoldRevision)
             return
         case .hold:
             event = current
@@ -1506,7 +1522,7 @@ final class EventDetailViewModel: ObservableObject {
 
         event = current
         if let adoptedSnapshot {
-            snapshotRailAt = adoptedSnapshot
+            recordCommittedRail(at: adoptedSnapshot)
             // #11253 — the withdrawal's rail is now on the page, by the same
             // rule a pair meets: held == shown, not older than owed.
             _ = clearOwedInvalidationIfShown(served: adoptedSnapshot)

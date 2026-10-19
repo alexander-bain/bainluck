@@ -114,18 +114,28 @@ nonisolated enum LiveEventPriceReconciliation {
         return true
     }
 
-    /// #10090 — the floor's detail half by its second proof (source snapshot):
-    /// the page holds, right now, the committed singleton rail a snapshot put
-    /// on it (`snapshotRail`, that snapshot's revision), and it covers the
-    /// floor. Any later write that moves the page's revision — a legacy raw
-    /// frame, a newer read — breaks the equality, so a remembered snapshot
-    /// proves nothing. It proves the rail only: the history half is the same
-    /// pinned covering edge `reconcileFloorShown` requires, never the map.
-    static func reconcileFloorShownBySnapshotRail(
-        _ floor: FoldRevision, snapshotRail: FoldRevision?, servedHistory: EventHistoryResponse, page: EventDetail?
+    /// #10090 — a rail an authoritative push put on the page WHOLE: a newer
+    /// singleton write's committed `source_snapshot`, or an adopted full
+    /// folded quote. Its identity is the full revision it was committed at and
+    /// the sources it lists; one vector and one key set, never a history.
+    struct CommittedRail: Equatable, Sendable {
+        let revision: FoldRevision
+        let sources: Set<String>
+    }
+
+    /// #10090 — the floor's detail half by its second proof: the page holds,
+    /// right now, the committed rail it was given — the same full revision and
+    /// the same sources — and that revision covers every floor row (a missing
+    /// row refuses). A later write that moves the revision or changes which
+    /// sources are listed fails it; a remembered rail proves nothing. It proves
+    /// the rail only: the history half is the same pinned covering edge
+    /// `reconcileFloorShown` requires, never a map or a quote.
+    static func reconcileFloorShownByCommittedRail(
+        _ floor: FoldRevision, committedRail: CommittedRail?, servedHistory: EventHistoryResponse, page: EventDetail?
     ) -> Bool {
-        guard let page, let snapshotRail, servedHistory.eventId == page.id,
-              snapshotRail.covers(floor), pairedFoldRevision(in: page) == snapshotRail,
+        guard let page, let committedRail, servedHistory.eventId == page.id,
+              committedRail.revision.covers(floor), pairedFoldRevision(in: page) == committedRail.revision,
+              Set((page.winProbabilitySources ?? [:]).keys) == committedRail.sources,
               servedHistory.blendEdgePinned == true,
               let edge = servedHistory.blendEdgeFoldRevision?.revision, edge.covers(floor) else { return false }
         return true

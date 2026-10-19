@@ -656,11 +656,13 @@ final class ASourceSnapshotAdoption10090Tests: XCTestCase {
         let unpinned = try Self.history(p: 0.5, edge: nil, at: Self.removedAt)
         let pinned13 = try Self.history(p: 0.5, edge: #"{"4242":13}"#, at: Self.removedAt)
         let pinnedBoth = try Self.history(p: 0.5, edge: #"{"4242":11,"77":1}"#, at: Self.removedAt)
+        let kalshi: Set<String> = ["kalshi"]
         let shown = { (floor: FoldRevision, served: EventDetail, history: EventHistoryResponse,
                        page: EventDetail, rail: FoldRevision?) in
             LiveEventPriceReconciliation.reconcileFloorShown(floor, served: served, servedHistory: history, page: page)
-                || LiveEventPriceReconciliation.reconcileFloorShownBySnapshotRail(
-                    floor, snapshotRail: rail, servedHistory: history, page: page)
+                || LiveEventPriceReconciliation.reconcileFloorShownByCommittedRail(
+                    floor, committedRail: rail.map { .init(revision: $0, sources: kalshi) },
+                    servedHistory: history, page: page)
         }
         XCTAssertTrue(shown(floor, servedOld, pinned11, page12, rail12))
         XCTAssertFalse(shown(floor, servedOld, pinned11, page12, nil), "no snapshot, no second proof")
