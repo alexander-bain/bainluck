@@ -98,20 +98,34 @@ nonisolated enum LiveEventPriceReconciliation {
     /// preserved over it leaves a revision on the page that is not the
     /// response's, and a newer sibling quote does not prove its rail or
     /// history reconciled. The history half pays only on affirmative proof
-    /// (Root's D4 ruling): a PINNED edge whose own revision covers the floor.
-    /// An unpinned or revisionless history proves nothing and keeps the floor
-    /// owed; nothing here invents an edge, a revision or a clock for it. A
-    /// served final pays nothing either: leaving the priced states retires the
-    /// floor through its named owner (`configureAutoRefresh`).
+    /// (`historyCoversFloor`). A served final pays nothing either: leaving the
+    /// priced states retires the floor through its named owner
+    /// (`configureAutoRefresh`).
     static func reconcileFloorShown(
         _ floor: FoldRevision, served: EventDetail, servedHistory: EventHistoryResponse, page: EventDetail?
     ) -> Bool {
         guard let page, page.id == served.id, servedHistory.eventId == served.id,
               let revision = served.blendFoldRevision?.revision, revision.covers(floor),
               page.blendFoldRevision?.revision == revision,
-              servedHistory.blendEdgePinned == true,
-              let edge = servedHistory.blendEdgeFoldRevision?.revision, edge.covers(floor) else { return false }
+              historyCoversFloor(floor, servedHistory) else { return false }
         return true
+    }
+
+    /// #10090 — the floor's history half, by one of two proofs:
+    /// - a PINNED edge whose own revision covers the floor (Root's D4 ruling);
+    /// - an UNPINNED history whose complete-build `history_fold_revision`
+    ///   covers every floor row (Root's history-consumer admission).
+    /// A pinned edge below the floor or without a revision stays owed even
+    /// beside a covering vector: the pin is the drawn endpoint, and a read
+    /// prefix cannot vouch for a pinned value older than the floor. An absent,
+    /// null, malformed, older or row-missing vector proves nothing. The
+    /// vector is read ordering only; nothing here pins, adds a point, or moves
+    /// a clock or freshness.
+    static func historyCoversFloor(_ floor: FoldRevision, _ history: EventHistoryResponse) -> Bool {
+        if history.blendEdgePinned == true {
+            return history.blendEdgeFoldRevision?.revision?.covers(floor) ?? false
+        }
+        return history.historyFoldRevision?.revision?.covers(floor) ?? false
     }
 
     /// #10090 — a rail an authoritative push put on the page WHOLE: a newer
@@ -128,7 +142,7 @@ nonisolated enum LiveEventPriceReconciliation {
     /// the same sources — and that revision covers every floor row (a missing
     /// row refuses). A later write that moves the revision or changes which
     /// sources are listed fails it; a remembered rail proves nothing. It proves
-    /// the rail only: the history half is the same pinned covering edge
+    /// the rail only: the history half is the same `historyCoversFloor` proof
     /// `reconcileFloorShown` requires, never a map or a quote.
     static func reconcileFloorShownByCommittedRail(
         _ floor: FoldRevision, committedRail: CommittedRail?, servedHistory: EventHistoryResponse, page: EventDetail?
@@ -136,8 +150,7 @@ nonisolated enum LiveEventPriceReconciliation {
         guard let page, let committedRail, servedHistory.eventId == page.id,
               committedRail.revision.covers(floor), pairedFoldRevision(in: page) == committedRail.revision,
               Set((page.winProbabilitySources ?? [:]).keys) == committedRail.sources,
-              servedHistory.blendEdgePinned == true,
-              let edge = servedHistory.blendEdgeFoldRevision?.revision, edge.covers(floor) else { return false }
+              historyCoversFloor(floor, servedHistory) else { return false }
         return true
     }
 

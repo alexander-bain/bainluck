@@ -61,6 +61,21 @@ final class AReconcileControlPaysAWithdrawnSourceFloor10090Tests: XCTestCase {
         """)
     }
 
+    /// #10090 history-consumer admission — a history carrying the producer's
+    /// complete-build `history_fold_revision`, as raw JSON text so a malformed
+    /// vector can be served (`nil` leaves the key out). `pin` is the raw pin
+    /// fragment; the default is the producer's explicit unpinned shape.
+    fileprivate static let unpinnedFragment = #""blend_edge_pinned":false,"blend_edge_fold_revision":null,"#
+    fileprivate static func coverageHistory(p: Double, at: String, coverage: String?,
+                                            pin: String = unpinnedFragment,
+                                            eventId: Int = 4242) throws -> EventHistoryResponse {
+        let vector = coverage.map { #""history_fold_revision":\#($0),"# } ?? ""
+        return try decode(EventHistoryResponse.self, """
+        {"event_id":\(eventId),"home_team":"Home","away_team":"Away","status":"live","history":[],\(pin)\(vector)
+         "aggregate_line":[{"timestamp":"\(at)","home_probability":\(p)}]}
+        """)
+    }
+
     private final class Handle: LiveStreamHandle, @unchecked Sendable {
         var isClosed = false
         var handlers: [String: [@MainActor (String) -> Void]] = [:]
@@ -110,6 +125,12 @@ final class AReconcileControlPaysAWithdrawnSourceFloor10090Tests: XCTestCase {
             var fails = false
             /// The history's pinned edge; defaults to the detail's revision.
             var edge: String?? = .none
+            /// When set, the history is `coverageHistory` with this raw
+            /// `history_fold_revision` (`.some(nil)`: key absent), `pin` its raw
+            /// pin fragment and `historyEventId` its event.
+            var coverage: String?? = .none
+            var pin = AReconcileControlPaysAWithdrawnSourceFloor10090Tests.unpinnedFragment
+            var historyEventId = 4242
         }
         var page: EventDetail
         var pageHistory: EventHistoryResponse
@@ -159,6 +180,10 @@ final class AReconcileControlPaysAWithdrawnSourceFloor10090Tests: XCTestCase {
             let pair = pairs[min(index, pairs.count - 1)]
             await hold(index)
             if pair.fails { throw Declined() }
+            if case .some(let coverage) = pair.coverage {
+                return try AReconcileControlPaysAWithdrawnSourceFloor10090Tests.coverageHistory(
+                    p: pair.p, at: pair.at, coverage: coverage, pin: pair.pin, eventId: pair.historyEventId)
+            }
             let edge: String?
             switch pair.edge {
             case .none: edge = pair.revision
@@ -650,6 +675,229 @@ final class AReconcileControlPaysAWithdrawnSourceFloor10090Tests: XCTestCase {
         let finished = try Self.detail(p: 0.6, revision: #"{"4242":10}"#, sources: Self.both, status: "completed")
         XCTAssertFalse(shown(floor, finished, try Self.history(p: 0.6, edge: #"{"4242":10}"#, at: Self.removedAt), finished),
                        "a served final pays nothing; leaving the priced states retires the floor instead")
+    }
+
+    // MARK: - R13 a complete fresh history pays the history half without a pin
+
+    private static func covering(_ coverage: String?, _ base: Client.Pair = without11) -> Client.Pair {
+        var pair = base
+        pair.coverage = .some(coverage)
+        return pair
+    }
+
+    private static let pinnedBelowFragment = #""blend_edge_pinned":true,"blend_edge_fold_revision":{"4242":10},"#
+    private static let pinnedNoRevisionFragment = #""blend_edge_pinned":true,"blend_edge_fold_revision":null,"#
+
+    /// Fires whichever reconcile re-ask is armed next, moving the clock with it.
+    private func elapseNextReask() async throws {
+        var due: TimeInterval?
+        for _ in 0..<400 {
+            due = EventDetailViewModel.reconcileRetryDelays.first { sleeper.pending($0) == 1 }
+            if due != nil { break }
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        let delay = try XCTUnwrap(due, "a reconcile re-ask is armed")
+        clock += delay
+        sleeper.fire(delay)
+    }
+
+    /// Root's history-consumer admission. Every response that does not prove
+    /// the history half keeps the floor owed — null, absent, malformed, empty,
+    /// row-missing, older, another event's, a pinned edge below the floor or
+    /// without a revision beside a covering vector, and a failed pair — and
+    /// the first complete fresh history whose vector covers the floor pays it
+    /// with nothing but time passing: no quote, no pin, no new point.
+    func testRefusedHistoryVectorsStayOwedAndALaterCompleteOnePaysWithNoQuote() async throws {
+        var failing = Self.covering(#"{"4242":11}"#)
+        failing.fails = true
+        var otherEvent = Self.covering(#"{"4242":11}"#)
+        otherEvent.historyEventId = 1
+        var pinnedBelow = Self.covering(#"{"4242":11}"#)
+        pinnedBelow.pin = Self.pinnedBelowFragment
+        var pinnedNoRevision = Self.covering(#"{"4242":11}"#)
+        pinnedNoRevision.pin = Self.pinnedNoRevisionFragment
+        let refusals: [(name: String, pair: Client.Pair)] = [
+            ("a null vector", Self.covering("null")),
+            ("an absent vector", Self.covering(nil)),
+            ("a string vector", Self.covering(#""4242:11""#)),
+            ("an array vector", Self.covering("[11]")),
+            ("an empty vector", Self.covering("{}")),
+            ("a fractional row", Self.covering(#"{"4242":11.5}"#)),
+            ("a string row", Self.covering(#"{"4242":"11"}"#)),
+            ("a failed pair", failing),
+            ("a null row", Self.covering(#"{"4242":null}"#)),
+            ("a negative row", Self.covering(#"{"4242":-1}"#)),
+            ("an unsafe-integer row", Self.covering(#"{"4242":9007199254740992}"#)),
+            ("a vector missing the floor row", Self.covering(#"{"77":11}"#)),
+            ("an older vector", Self.covering(#"{"4242":10}"#)),
+            ("another event's history", otherEvent),
+            ("a pinned edge below the floor beside a covering vector", pinnedBelow),
+            ("a pinned edge without a revision beside a covering vector", pinnedNoRevision),
+        ]
+        let good = Self.covering(#"{"4242":11}"#)
+        let (client, handle, vm) = try await opened(pairs: refusals.map(\.pair) + [good])
+        let owedAt = clock
+        handle.fire("reconcile", Self.control())
+        var expectedAsks: [TimeInterval] = []
+        for (index, refusal) in refusals.enumerated() {
+            if index > 0 {
+                if refusals[index - 1].pair.fails {
+                    try await settle { sleeper.pending(2) == 1 }
+                    clock += 2
+                    sleeper.fire(2)
+                } else {
+                    try await elapseNextReask()
+                }
+            }
+            let failed = refusal.pair.fails
+            try await settle {
+                client.detailReads == index + 1 && client.historyReads == index + 1
+                    && vm.pricePairRefreshFailed == failed
+            }
+            try await quiet()
+            XCTAssertEqual(vm.reconcileOwedSince, owedAt, "\(refusal.name) keeps the floor owed")
+            if !failed {
+                let delays = EventDetailViewModel.reconcileRetryDelays
+                expectedAsks.append(delays[min(index + 1, delays.count) - 1])
+            }
+        }
+        XCTAssertEqual(vm.event?.currentOdds?.homeProbability, 0.5, "the detail half has been on the page throughout")
+        XCTAssertNil(vm.event?.winProbabilitySources?["polymarket"])
+
+        try await elapseNextReask()
+        try await settle { vm.reconcileOwedSince == nil }
+        try await quiet()
+        XCTAssertNil(vm.reconcileOwedSince, "the complete fresh history pays the floor")
+        XCTAssertEqual(client.detailReads, refusals.count + 1, "with no quote and no further read")
+        XCTAssertEqual(reconcileAsks, expectedAsks)
+        XCTAssertTrue(EventDetailViewModel.reconcileRetryDelays.allSatisfy { sleeper.pending($0) == 0 },
+                      "nothing is re-asked after payment")
+        // The vector is read ordering only: the chart is the served one, unpinned
+        // and with no point added, and the hero is the detail's.
+        XCTAssertEqual(vm.history?.blendEdgePinned, false)
+        XCTAssertEqual(vm.history?.aggregateLine?.map(\.timestamp), [Self.removedAt])
+        XCTAssertEqual(vm.history?.aggregateLine?.map(\.homeProbability), [0.5])
+        XCTAssertTrue(vm.liveBlend.isEmpty, "no live point is invented")
+        XCTAssertEqual(vm.event?.currentOdds?.homeProbability, 0.5)
+    }
+
+    /// A covering vector proves the history half only: a detail below the floor
+    /// and a page now showing a newer pushed price (so not this pair's rail)
+    /// both keep the floor owed; the first pair whose detail qualifies pays.
+    func testACoveringVectorPaysOnlyBesideAQualifyingDetail() async throws {
+        let below = Self.covering(#"{"4242":11}"#, Self.stale10)
+        let overtaken = Self.covering(#"{"4242":11}"#)
+        let served12 = Self.covering(#"{"4242":12}"#, Client.Pair(
+            revision: #"{"4242":12}"#, p: 0.47, sources: Self.kalshiOnly(0.47, at: "2026-09-27T17:02:00Z"),
+            at: "2026-09-27T17:02:00Z"))
+        let (client, handle, vm) = try await opened(pairs: [below, overtaken, served12], holdPairs: [1])
+        let owedAt = clock
+        handle.fire("reconcile", Self.control())
+        try await settle { client.detailReads == 1 && client.historyReads == 1 }
+        try await quiet()
+        XCTAssertEqual(vm.reconcileOwedSince, owedAt, "a detail below the floor is not paid by a covering history")
+        XCTAssertNotNil(vm.event?.winProbabilitySources?["polymarket"])
+
+        try await elapse(1.5)
+        try await settle { client.detailReads == 2 && client.historyReads == 2 }
+        handle.fire("probability", Self.priced(12, 0.47))
+        clock += 2
+        client.release()
+        try await quiet()
+        XCTAssertEqual(vm.event?.currentOdds?.homeProbability, 0.47)
+        XCTAssertEqual(vm.reconcileOwedSince, owedAt, "the page shows a newer pushed price, not this pair's detail")
+
+        try await elapse(3)
+        try await settle { vm.reconcileOwedSince == nil }
+        XCTAssertEqual(client.detailReads, 3)
+        XCTAssertEqual(reconcileAsks, [1.5, 3])
+        XCTAssertNil(vm.event?.winProbabilitySources?["polymarket"])
+    }
+
+    /// A covering pair still in flight when the reader leaves belongs to that
+    /// page lifetime: landing after the page reopens and owes a new floor, it
+    /// pays nothing there.
+    func testACoveringPairFromAnEarlierPageLifetimePaysNothingInTheNextOne() async throws {
+        let unproven = Self.covering(nil)
+        let (client, handle, vm) = try await opened(pairs: [Self.covering(#"{"4242":11}"#), unproven],
+                                                    holdPairs: [0])
+        handle.fire("reconcile", Self.control())
+        try await settle { client.detailReads == 1 && client.historyReads == 1 }
+        vm.stopRefresh()
+        clock += 5
+        await vm.load()
+        handle.fire("open")
+        let owedAt = clock
+        handle.fire("reconcile", Self.control("c-2"))
+        try await settle { client.detailReads == 2 && client.historyReads == 2 }
+        try await quiet()
+        XCTAssertEqual(vm.reconcileOwedSince, owedAt, "the new lifetime's own unproven pair keeps it owed")
+        client.release()
+        try await quiet()
+        XCTAssertEqual(vm.reconcileOwedSince, owedAt, "the earlier lifetime's covering pair pays nothing")
+        XCTAssertNil(vm.history?.historyFoldRevision?.revision, "and is never adopted")
+    }
+
+    func testHistoryCoverageIsAnUnpinnedAlternativeThatNeverRescuesAPinnedEdge() throws {
+        let floor = try XCTUnwrap(FoldRevision(["4242": 11]))
+        func covers(_ coverage: String?, pin: String = Self.unpinnedFragment) throws -> Bool {
+            LiveEventPriceReconciliation.historyCoversFloor(
+                floor, try Self.coverageHistory(p: 0.5, at: Self.removedAt, coverage: coverage, pin: pin))
+        }
+        XCTAssertTrue(try covers(#"{"4242":11}"#))
+        XCTAssertTrue(try covers(#"{"4242":12,"77":3}"#), "extra rows and higher revisions cover")
+        XCTAssertTrue(try covers(#"{"4242":11}"#, pin: ""), "a history with no pin keys is unpinned")
+        let refused: [(String, String?)] = [
+            ("absent", nil), ("null", "null"), ("string", #""x""#), ("array", "[11]"), ("empty", "{}"),
+            ("fractional", #"{"4242":11.5}"#), ("string row", #"{"4242":"11"}"#), ("bool row", #"{"4242":true}"#),
+            ("null row", #"{"4242":null}"#), ("negative", #"{"4242":-1}"#),
+            ("unsafe integer", #"{"4242":9007199254740992}"#), ("missing row", #"{"77":11}"#),
+            ("below the floor", #"{"4242":10}"#),
+        ]
+        for (name, coverage) in refused {
+            XCTAssertFalse(try covers(coverage), "a \(name) vector proves nothing")
+        }
+        XCTAssertFalse(try covers(#"{"4242":11}"#, pin: Self.pinnedBelowFragment),
+                       "a pinned edge below the floor is not rescued by a covering read prefix")
+        XCTAssertFalse(try covers(#"{"4242":11}"#, pin: Self.pinnedNoRevisionFragment),
+                       "nor is a pinned edge with no revision")
+        XCTAssertFalse(try covers(#"{"4242":11}"#, pin: #""blend_edge_pinned":true,"blend_edge_fold_revision":"x","#))
+        XCTAssertTrue(try covers(nil, pin: #""blend_edge_pinned":true,"blend_edge_fold_revision":{"4242":11},"#),
+                      "D4's pinned covering edge still pays alone")
+        XCTAssertFalse(try covers(nil, pin: #""blend_edge_pinned":false,"blend_edge_fold_revision":{"4242":11},"#),
+                       "a revision on an edge the server did not pin is still no claim")
+        // Never throws: a malformed vector is no claim, and the chart decodes whole.
+        let malformed = try Self.coverageHistory(p: 0.5, at: Self.removedAt, coverage: #""x""#)
+        XCTAssertNil(malformed.historyFoldRevision?.revision)
+        XCTAssertEqual(malformed.aggregateLine?.count, 1)
+    }
+
+    func testACoveringVectorPaysBesideEitherRailProofAndNothingElse() throws {
+        let floor = try XCTUnwrap(FoldRevision(["4242": 11]))
+        let served = try Self.detail(p: 0.5, revision: #"{"4242":11}"#, sources: Self.kalshiOnly(0.5, at: Self.removedAt))
+        let vector11 = try Self.coverageHistory(p: 0.5, at: Self.removedAt, coverage: #"{"4242":11}"#)
+        let shown = LiveEventPriceReconciliation.reconcileFloorShown
+        XCTAssertTrue(shown(floor, served, vector11, served))
+        let below = try Self.detail(p: 0.6, revision: #"{"4242":10}"#, sources: Self.both)
+        XCTAssertFalse(shown(floor, below, vector11, below), "a detail below the floor")
+        let kept = try Self.detail(p: 0.46, revision: #"{"4242":12}"#, sources: Self.both)
+        XCTAssertFalse(shown(floor, served, vector11, kept), "the page shows a different revision")
+        XCTAssertFalse(shown(floor, served, try Self.coverageHistory(p: 0.5, at: Self.removedAt,
+                                                                     coverage: #"{"4242":11}"#, eventId: 1), served))
+        XCTAssertFalse(shown(floor, served, try Self.coverageHistory(p: 0.5, at: Self.removedAt, coverage: nil), served))
+
+        let rail = LiveEventPriceReconciliation.CommittedRail(revision: try XCTUnwrap(FoldRevision(["4242": 11])),
+                                                              sources: ["kalshi"])
+        let byRail = LiveEventPriceReconciliation.reconcileFloorShownByCommittedRail
+        XCTAssertTrue(byRail(floor, rail, vector11, served))
+        XCTAssertFalse(byRail(floor, rail, try Self.coverageHistory(p: 0.5, at: Self.removedAt, coverage: nil), served),
+                       "a rail never pays the history half")
+        XCTAssertFalse(byRail(floor, rail, try Self.coverageHistory(p: 0.5, at: Self.removedAt, coverage: #"{"4242":11}"#,
+                                                                    pin: Self.pinnedBelowFragment), served))
+        let otherSources = LiveEventPriceReconciliation.CommittedRail(revision: rail.revision,
+                                                                      sources: ["kalshi", "polymarket"])
+        XCTAssertFalse(byRail(floor, otherSources, vector11, served), "the page lists other sources")
+        XCTAssertFalse(byRail(floor, nil, vector11, served))
     }
 }
 
