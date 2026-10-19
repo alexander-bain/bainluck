@@ -5103,6 +5103,27 @@ jobs:
             exit 1
           }
 
+      - name: "#10090 restarts and transaction errors never strand a PM source removal; a due withdrawal never slows a healthy quote (real Postgres)"
+        if: matrix.group == 'shared-tail' && needs.change-scope.outputs.reuse != 'true'
+        run: |
+          if python -m pytest tests/integration/test_pm_withdrawal_recovery_regression_10090_pg.py \
+            -v -rs > /tmp/withdrawal-recovery10090.txt 2>&1; then
+            gate_status=0
+          else
+            gate_status=$?
+          fi
+          cat /tmp/withdrawal-recovery10090.txt
+          echo "EXIT CODE: $gate_status"
+          test "$gate_status" -eq 0
+          if grep -qiE "[0-9]+ skipped" /tmp/withdrawal-recovery10090.txt; then
+            echo "::error::#10090 withdrawal-recovery gate SKIPPED"
+            exit 1
+          fi
+          grep -qE "[^0-9]24 passed[,[:space:]]" /tmp/withdrawal-recovery10090.txt || {
+            echo "::error::#10090 withdrawal-recovery gate did not run all twenty-four cases"
+            exit 1
+          }
+
       - name: "#11138 a lock-held PM price row publishes the received quote, one cohort per event (real Postgres)"
         if: matrix.group == 'shared-tail' && needs.change-scope.outputs.reuse != 'true'
         run: |
