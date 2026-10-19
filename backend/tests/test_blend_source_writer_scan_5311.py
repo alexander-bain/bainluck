@@ -226,6 +226,15 @@ from app.utils.probability_eligibility import MARKET_DERIVED_SOURCES  # noqa: E4
 #    settlement is not a price, and no value we could write in its place is one
 #    we have. Keyed by the CONSTANT rather than by `<module>` — see
 #    `_module_constant_of` for why the file-wide key would be a hole.
+#  * `polymarket_ws.py::withdraw_attributed_event_sources` — PRUNE, #10090.
+#    When a wide book withdraws the Polymarket leg a live event's stamped
+#    reading was built from, the second transaction removes the `polymarket`
+#    key (`win_probability_sources - 'polymarket'`) behind a CAS on the exact
+#    prior entry, and writes a NULL history vertex. It only ever removes a key
+#    or refuses: a withdrawal is not a price. Because the key is per function,
+#    `test_the_pm_withdrawal_removal_only_subtracts_its_key` pins that its one
+#    write of this column is that subtraction, so a value written there later
+#    cannot hide behind this entry.
 KNOWN_NON_READING_WRITES: dict[tuple[str, str, str], str] = {
     ("backend/app/routes/admin_matching.py", "sawtooth_fix", "update.values"):
         "prune",
@@ -263,6 +272,8 @@ KNOWN_NON_READING_WRITES: dict[tuple[str, str, str], str] = {
      "_transition_event_statuses_impl", "orm-assign"): "sidecar",
     ("backend/app/tasks/futures_price_refresh.py",
      "_KALSHI_WITHDRAW_EVENT_HERO_SQL", "raw-sql"): "prune",
+    ("backend/app/tasks/polymarket_ws.py",
+     "withdraw_attributed_event_sources", "update.values"): "prune",
     ("backend/app/tasks/statpal_sync.py", "_set_statpal_id", "orm-assign"):
         "sidecar",
     ("backend/app/tasks/statpal_sync.py", "_sync_statpal_injuries", "update.values"):
@@ -773,6 +784,35 @@ def test_no_new_writer_persists_a_reading_without_the_stamper() -> None:
         "KNOWN_NON_READING_WRITES names sites that no longer match — the ledger "
         f"is exact in both directions, so remove them:\n  {repaired}"
     )
+
+
+def test_the_pm_withdrawal_removal_only_subtracts_its_key() -> None:
+    """#10090. The ledger entry above is keyed per function, so it would also
+    excuse a READING written in the same function's `.values()`. Pin the
+    function's whole write population of this column: exactly one, and it is
+    the column minus the constant `'polymarket'` — removal or refusal, never a
+    value, so it cannot persist an unstamped reading."""
+    path = APP_ROOT / "tasks" / "polymarket_ws.py"
+    tree = ast.parse(path.read_text())
+    fn = next(
+        node for node in ast.walk(tree)
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        and node.name == "withdraw_attributed_event_sources"
+    )
+    writes = [
+        kw.value for node in ast.walk(fn) if isinstance(node, ast.Call)
+        for kw in node.keywords if kw.arg == COLUMN
+    ] + [
+        node.value for node in ast.walk(fn) if isinstance(node, ast.Assign)
+        and any(isinstance(t, ast.Attribute) and t.attr == COLUMN for t in node.targets)
+    ] + [
+        node for node in ast.walk(fn) if isinstance(node, ast.Constant)
+        and isinstance(node.value, str) and COLUMN in node.value
+    ]
+    assert len(writes) == 1, [ast.unparse(w) for w in writes]
+    assert ast.unparse(writes[0]) == (
+        f"{MODEL}.{COLUMN}.op('-')('polymarket')"
+    ), ast.unparse(writes[0])
 
 
 def test_no_new_market_derived_reading_is_minted_without_a_record() -> None:

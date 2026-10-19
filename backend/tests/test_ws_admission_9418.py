@@ -89,6 +89,12 @@ def _is_poly_open_contract_read(stmt) -> bool:
     }
 
 
+def _is_withdrawal_debt_read(stmt) -> bool:
+    """#10090: `PMWithdrawalDebt.load` reads the owed withdrawal removals at
+    start; not a slate or reread query, so it never shifts positional routing."""
+    return "FROM owed_chart_points" in str(stmt)
+
+
 def _is_clock_sample(stmt) -> bool:
     """#11138: `HeldRowQuotes.sample_database_clock` is not a slate or reread
     query; answered on its own so it never shifts the positional routing."""
@@ -112,7 +118,7 @@ def _install_session(monkeypatch, slate_batches, reread, *, replay_slate=False):
 
     state = {
         "slate": list(slate_batches), "rereads": [], "reread_calls": 0,
-        "slate_replays": 0,
+        "slate_replays": 0, "debt_reads": [],
     }
     answered = {}
 
@@ -121,6 +127,9 @@ def _install_session(monkeypatch, slate_batches, reread, *, replay_slate=False):
             if stmt is SET_LOCK_TIMEOUT_SQL:  # #10661: the flush's per-phase lock budget
                 return _Result([])
             if _is_poly_open_contract_read(stmt):
+                return _Result([])
+            if _is_withdrawal_debt_read(stmt):
+                state["debt_reads"].append(stmt)
                 return _Result([])
             if _is_clock_sample(stmt):  # #11138: the held-quote DB-clock sample
                 return SimpleNamespace(scalar_one=lambda: datetime.now(timezone.utc))
@@ -295,6 +304,26 @@ class TestACompleteSubscriptionDoesNotRecycle:
 
         assert ended is None, ended
         assert connects["n"] == 1
+
+    async def test_polymarket_loads_its_owed_withdrawal_removals_at_start(
+        self, monkeypatch,
+    ):
+        """#10090: the consumer installs the durable withdrawal custodian and
+        reads the rows a previous run left owed before it streams. Without it
+        a removal lost with its process (SIGKILL, a cancelled commit
+        acknowledgement) would wait for a book that may never come."""
+        module, consumer, slate = _poly(monkeypatch)
+        _timing(monkeypatch, module, refresh=0.2, check=0.01, floor=0)
+        _install_quiet_socket(monkeypatch)
+        state = _install_session(monkeypatch, slate, lambda: [900])
+
+        await asyncio.wait_for(consumer(), timeout=5)
+
+        assert state["debt_reads"], "the consumer never read its owed removals"
+        sql = str(state["debt_reads"][0].compile(
+            dialect=postgresql.dialect(), compile_kwargs={"literal_binds": True},
+        ))
+        assert f"'{module.PM_WITHDRAWAL_DEBT_SOURCE}'" in sql, sql
 
     @pytest.mark.parametrize("arm", [_poly], ids=["polymarket"])
     async def test_no_live_events_at_all_does_not_recycle(self, monkeypatch, arm):

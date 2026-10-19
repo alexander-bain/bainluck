@@ -80,6 +80,12 @@ def _is_poly_open_contract_read(stmt) -> bool:
     }
 
 
+def _is_withdrawal_debt_read(stmt) -> bool:
+    """#10090: `PMWithdrawalDebt.load` reads the owed withdrawal removals at
+    start; not a slate or reread query, so it never shifts positional routing."""
+    return "FROM owed_chart_points" in str(stmt)
+
+
 def _is_clock_sample(stmt) -> bool:
     """#11138: `HeldRowQuotes.sample_database_clock` is neither slate nor
     reread; answered on its own so it never shifts the positional routing."""
@@ -99,6 +105,8 @@ def _install_session(monkeypatch, slate_batches, reread):
     class _Session:
         async def execute(self, _stmt):
             if _is_poly_open_contract_read(_stmt):
+                return _Result([])
+            if _is_withdrawal_debt_read(_stmt):
                 return _Result([])
             if _is_clock_sample(_stmt):  # #11138: the held-quote DB-clock sample
                 return SimpleNamespace(scalar_one=lambda: datetime.now(timezone.utc))
