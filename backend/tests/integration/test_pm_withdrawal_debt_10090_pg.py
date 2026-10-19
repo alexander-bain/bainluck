@@ -58,6 +58,7 @@ import pytest
 from sqlalchemy import text
 
 from app.models.models import FuturesOutcome
+from app.tasks import live_blend_refresh as blend
 from app.tasks import polymarket_ws as pm
 from tests.integration.test_live_blend_grouped_commit_8129_pg import (  # noqa: F401
     DB_URL,
@@ -402,16 +403,30 @@ async def test_the_real_newer_overlay_interleaving_writes_then_removes(
     t = await setup(rig, consumer, monkeypatch)
     held = await wire_held_quotes(t, consumer)
     await prime(t)
+    # The held quote's flush starts one refresher floor after prime's stamp,
+    # as the real cadence would (`min_refresh_interval_s=PERIOD`). Called
+    # back to back, the held write returns within its 1-50 ms lock budget and
+    # its stamp lands inside the floor: owed, never run, because nothing else
+    # flushes (CI 2 of 2 on 7c297/f82; locally the gap was 0.26-0.37 s against
+    # the 0.25 s floor, so it passed by tens of milliseconds).
+    await asyncio.sleep(max(
+        0.0,
+        t.r._last_refresh_at[EVENT] + t.r.min_refresh_interval_s - blend._mono(),
+    ))
     conn, tx = await hold_price_row(rig, OUTCOME)
     try:
         t.accept(OUTCOME, 0.65)
         await flush(t)
-        # Precondition, named so a recurrence says what it is: #11138 orders a
+        # Preconditions, named so a recurrence says what it is: #11138 orders a
         # held quote only after a DB-clock sample that completed within its
         # bound. A sample that timed out (a contended database) leaves the
         # quote unordered and nothing to overlay; that is not this property.
         assert held.sample_failures == 0, (
             f"precondition: {held.sample_failures} DB-clock sample(s) timed out"
+        )
+        assert held._quotes.get(OUTCOME, (None,))[0] == 0.65, "quote not held"
+        assert EVENT not in t.r._throttle_deferred, (
+            "precondition: the held quote's stamp fell inside the refresher floor"
         )
         await wait_for(lambda: any(v == 0.65 for _, e, v, _ in t.pubs if e == EVENT))
         overlay = await state(rig)
