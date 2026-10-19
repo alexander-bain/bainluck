@@ -1699,6 +1699,9 @@ class LiveBlendRefresher:
         self._normal_epoch = 0
         self._normal_after = 0
         self._normal_horizon = None
+        # Positively acknowledged revisions, highest per event, settled by the
+        # next recovery opportunity rather than on the publication path.
+        self._normal_acked: dict[int, int] = {}
         # One owner across refresh calls. A chart session cannot borrow slots
         # from a newer admission window or escape the three-session ceiling.
         self._session_slots = asyncio.Semaphore(FRESH_STAMP_WORKERS)
@@ -1849,7 +1852,6 @@ class LiveBlendRefresher:
         a whole extra flush for its stamp. Receipts keep the real clock: they
         time the hold, not the schedule. Omitted, behaviour is unchanged.
         """
-        self._start_normal_recovery()
         self._start_history()
         self._holding = None
         now = _mono()
@@ -3735,25 +3737,36 @@ class LiveBlendRefresher:
         self._normal_epoch += 1
 
     async def _publish_prices(self, frames):
+        """Publish committed price frames; remember what Redis acknowledged.
+
+        No database work here. Settling an intent needs a session, and the
+        publication lock orders the next cohort's frames behind this call:
+        a DELETE awaited here held the next game's price behind the
+        database (and one of the three stamp slots) on every publication.
+        The next recovery opportunity settles the remembered revisions; a
+        lost process leaves only intents whose recovery is price-free.
+        """
         try:
-            acknowledged = await self._publish(frames)
-            # Exactly the revisions `_publish` can acknowledge: an int at the
-            # frame's own event key. A revision-less frame owes no intent.
-            expected = {
-                (f["event_id"], f["rev"][str(f["event_id"])]) for f in frames
-                if isinstance(f.get("rev"), dict)
-                and type(f["rev"].get(str(f["event_id"]))) is int
-            }
-            if expected - (acknowledged or set()):
-                self._note_normal_debt()
-            await self._settle_normal_recovery(acknowledged)
-            return acknowledged
+            acknowledged = await self._publish(frames) or set()
         except BaseException as exc:
             self._note_normal_debt()
             if not isinstance(exc, Exception):
                 raise
-            logger.exception("live_blend_refresh[%s]: normal ACK settlement retained", self.source)
-            return acknowledged if "acknowledged" in locals() else set()
+            logger.exception("live_blend_refresh[%s]: normal publication retained", self.source)
+            return set()
+        # Exactly the revisions `_publish` can acknowledge: an int at the
+        # frame's own event key. A revision-less frame owes no intent.
+        expected = {
+            (f["event_id"], f["rev"][str(f["event_id"])]) for f in frames
+            if isinstance(f.get("rev"), dict)
+            and type(f["rev"].get(str(f["event_id"]))) is int
+        }
+        if expected - acknowledged:
+            self._note_normal_debt()
+        for eid, rev in acknowledged:
+            if rev > self._normal_acked.get(eid, -1):
+                self._normal_acked[eid] = rev
+        return acknowledged
 
     def _start_normal_recovery(self):
         task = self._normal_task
@@ -3773,6 +3786,25 @@ class LiveBlendRefresher:
         from app.tasks.base import get_task_session
         factory = self._session_factory or get_task_session
         try:
+            # Recovery never queues for a stamp's slot: with all three taken,
+            # this opportunity passes and the next one (after the cooldown)
+            # tries again.
+            if self._session_slots.locked():
+                return
+            acked, self._normal_acked = self._normal_acked, {}
+            if acked:
+                try:
+                    await self._settle_normal_recovery(set(acked.items()))
+                except asyncio.CancelledError:
+                    raise
+                except Exception:
+                    # Dropped, not restored: the durable rows remain, so the
+                    # discovery below republishes their price-free control
+                    # and its acknowledgement settles them.
+                    logger.exception(
+                        "live_blend_refresh[%s]: normal ACK settlement retained",
+                        self.source,
+                    )
             epoch = self._normal_epoch
             # Freeze a finite sweep: new arrivals cannot indefinitely postpone
             # retrying an older failed event. Both reads use (source, id); bound
