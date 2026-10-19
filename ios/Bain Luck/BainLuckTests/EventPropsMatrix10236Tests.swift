@@ -128,7 +128,11 @@ final class EventPropsMatrix10236Tests: XCTestCase {
         XCTAssertNil(gone.current.quotedProbability)
         XCTAssertEqual(EventPropsMatrixLayout.cellText(gone), "\u{2014}")
         XCTAssertNil(EventPropsMatrixLayout.changeText(gone), "its comparable delta is not shown without a quote")
-        XCTAssertTrue(EventPropsMatrixLayout.accessibilityLabel(gone, stat: during.stats.first).hasSuffix("no current price"))
+        // #10877: the typed state names no reason, so the speech claims none.
+        let spoken = EventPropsMatrixLayout.accessibilityLabel(gone, stat: during.stats.first)
+        XCTAssertTrue(spoken.hasSuffix(", current probability unavailable"), spoken)
+        XCTAssertFalse(spoken.contains("price"), spoken)
+        XCTAssertFalse(spoken.contains("percent"), "no number is spoken without a quote: \(spoken)")
         XCTAssertEqual(EventPropsMatrixLayout.grid(during, statKey: "hits")?.unavailableCount, 1)
 
         for bad in [Double.nan, .infinity, 1.5, -0.1] {
@@ -147,6 +151,17 @@ final class EventPropsMatrix10236Tests: XCTestCase {
         XCTAssertEqual(EventPropsMatrixLayout.cellText(graded), "Hit")
         XCTAssertNil(EventPropsMatrixLayout.changeText(graded))
         XCTAssertEqual(EventPropsMatrixLayout.grid(try props(dict), statKey: "hits")?.unavailableCount, 0)
+        // #10877: the authoritative result keeps its own speech; an
+        // actual-only row with no result claims neither a result nor a reason.
+        let hits = try props(dict).stats.first
+        XCTAssertEqual(EventPropsMatrixLayout.accessibilityLabel(graded, stat: hits),
+                       "Aaron Judge, 2 or more hits, result: hit")
+        let ungraded = try row(try props(try editing(judge2) {
+            $0["current"] = ["state": "actual_only", "probability": NSNull(), "basis": NSNull(), "observed_at": NSNull()]
+            $0["result"] = NSNull()
+        }), judge2)
+        XCTAssertEqual(EventPropsMatrixLayout.accessibilityLabel(ungraded, stat: hits),
+                       "Aaron Judge, 2 or more hits, current probability unavailable")
     }
 
     // MARK: - Change since pregame
