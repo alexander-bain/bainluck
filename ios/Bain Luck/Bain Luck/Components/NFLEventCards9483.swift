@@ -371,6 +371,7 @@ struct NFLMilestoneCardView9483: View {
     let color: Color
     @ObservedObject var state: NFLCardDeckState9483
     var expanded = false
+    @Environment(\.dynamicTypeSize) private var size
     @ScaledMetric(relativeTo: .caption2) private var scaledAxisFont: CGFloat = 12
     private var axisFontSize: CGFloat { EventChartTypography.labelSize(scaled: scaledAxisFont) }
 
@@ -379,6 +380,23 @@ struct NFLMilestoneCardView9483: View {
         let rung = selected.map { card.rungs[$0] }
         VStack(alignment: .leading, spacing: 10) {
             HStack(alignment: .top) {
+                // #11285 — a small identity cue beside the name when this
+                // ladder's own rows serve a headshot; loading or failed keeps
+                // a plain circle, so the name never moves. At accessibility
+                // sizes the cue is dropped: its 44pt broke "McCaf-/frey" mid-word
+                // on a 375pt phone at AX5, and the name is the identity.
+                if let headshot = card.headshot, !size.isAccessibilitySize {
+                    AsyncImage(url: headshot) { phase in
+                        if case .success(let image) = phase {
+                            image.resizable().scaledToFill()
+                        } else {
+                            color.opacity(0.15)
+                        }
+                    }
+                    .frame(width: 36, height: 36)
+                    .clipShape(Circle())
+                    .accessibilityHidden(true)
+                }
                 VStack(alignment: .leading, spacing: 3) {
                     Text(card.stat)
                         .font(.caption)
@@ -424,7 +442,7 @@ struct NFLMilestoneCardView9483: View {
                 .accessibilityLabel("Previous line")
                 if expanded {
                     // Details sheet lives on the full-size reader only; the
-                    // compact card opens through its "Open full size" control.
+                    // compact card opens through its "Open story" control.
                     Button {
                         if let rung { state.detailsRowID = rung.rowID }
                     } label: {
@@ -684,6 +702,15 @@ struct NFLEventCardView9483: View {
 /// the page scrolls vertically, so a tap on a chart inside a card is never
 /// taken as a request to expand it.
 struct NFLEventCardDeckView9483: View {
+    /// #11285 (Alex, build 65) — the compact card's opener. "Open full size"
+    /// promised a screen-filling view the reader does not draw (it keeps the
+    /// game context and a neighbouring card's edge); "Open story" (Root 2018Z)
+    /// names what it opens. One spelling for the deck and the NBA stream;
+    /// VoiceOver says `openerAccessibilityLabel`.
+    static let openerTitle = "Open story"
+    static func openerAccessibilityLabel(_ cardTitle: String) -> String { "Open \(cardTitle)" }
+    static let openerIdentifier = "story-card-open"
+
     let cards: [NFLEventCard9483]
     let awayName: String
     let homeName: String
@@ -727,11 +754,12 @@ struct NFLEventCardDeckView9483: View {
                             NFLEventCardView9483(card: card, awayName: awayName, homeName: homeName,
                                                  awayColor: awayColor, homeColor: homeColor, state: state)
                             Button { state.open(card.id) } label: {
-                                Label("Open full size", systemImage: "arrow.up.left.and.arrow.down.right")
+                                Label(Self.openerTitle, systemImage: "arrow.up.left.and.arrow.down.right")
                                     .font(.caption.weight(.semibold))
                                     .frame(maxWidth: .infinity, minHeight: 44)
                             }
-                            .accessibilityLabel("Open \(card.title) full size")
+                            .accessibilityLabel(Self.openerAccessibilityLabel(card.title))
+                            .accessibilityIdentifier(Self.openerIdentifier)
                         }
                         .containerRelativeFrame(.horizontal) { width, _ in cards.count > 1 ? width * 0.86 : width }
                         .accessibilityFocused($focused, equals: card.id)

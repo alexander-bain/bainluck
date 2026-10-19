@@ -67,7 +67,10 @@ final class PropsStatNameIsNeverClipped10076Tests: XCTestCase {
         XCTAssertEqual(h, oneLineHeight, accuracy: 0.5)
     }
 
-    /// The finished game's "Final N" sits on the name's line in both shapes.
+    /// The finished game's "Final N" sits on the name's line where the two fit,
+    /// and never adds a line. #11285 — at the reader's caption size the name and
+    /// "Final 31" no longer share this 155pt column, so there "Final N" leads
+    /// the caption's line instead (still two lines, the name unclipped).
     func testFinalReadoutStaysOnTheNameLine() {
         let withFinal = PropsStatGroupHeader(label: statName, caption: caption, finalText: "Final 31")
         XCTAssertEqual(size(withFinal, width: wide).height, oneLineHeight, accuracy: 0.5)
