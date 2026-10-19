@@ -42,7 +42,10 @@ import {
   foldStates,
   mceState,
   startCorrectnessReads,
+  startUiClock,
   summarize,
+  UI_CLOCK_INTERVAL_MS,
+  WINNERS_STALE_AFTER_S,
   type CorrectnessReads,
   type ReadResult,
 } from "@/lib/correctnessConsole";
@@ -422,6 +425,103 @@ describe("one bounded read per endpoint", () => {
   });
 });
 
+// ── the presentation clock (Root 002 on e603826e7f) ───────────────────────
+
+describe("fetched evidence ages into stale in a tab left open — with no new request", () => {
+  function fakeDoc() {
+    const listeners = new Set<() => void>();
+    const doc = {
+      visibilityState: "visible" as DocumentVisibilityState,
+      addEventListener: (_t: string, fn: () => void) => listeners.add(fn),
+      removeEventListener: (_t: string, fn: () => void) => listeners.delete(fn),
+      fire() {
+        listeners.forEach((fn) => fn());
+      },
+      listeners,
+    };
+    return doc;
+  }
+
+  afterEach(() => jest.useRealTimers());
+
+  it("turns a green winner tile stale after its TTL passes, judged on the ticking clock only", () => {
+    jest.useFakeTimers();
+    const fetchSpy = jest.fn();
+    const realFetch = global.fetch;
+    global.fetch = fetchSpy as unknown as typeof fetch;
+    try {
+      const loadedAt = NOW;
+      // A snapshot 20 minutes old at load — green.
+      const read = ok(winnersPayload([winnerSource()], minutesAgo(20)));
+      let clock = loadedAt;
+      let judged = evaluateWinnerCoverage(read, clock);
+      expect(judged.state).toBe("green");
+      const doc = fakeDoc();
+      const base = jest.now();
+      const stop = startUiClock(
+        (t) => {
+          clock = t;
+          judged = evaluateWinnerCoverage(read, clock);
+        },
+        { doc: doc as unknown as Document, now: () => loadedAt + (jest.now() - base) },
+      );
+      // Still inside the two-beat TTL 99 minutes later (20 + 99 = 119 min old).
+      jest.advanceTimersByTime(99 * 60_000);
+      expect(judged.state).toBe("green");
+      // Past it: the same fetched evidence is now stale, its verdict kept as history.
+      jest.advanceTimersByTime(2 * 60_000);
+      expect((clock - Date.parse(minutesAgo(20))) / 1000).toBeGreaterThan(WINNERS_STALE_AFTER_S);
+      expect(judged).toMatchObject({ state: "stale", lastVerdict: "green" });
+      // The source's own timestamp never moved; nothing was fetched.
+      expect(judged.asOf).toBe(minutesAgo(20));
+      expect(fetchSpy).not.toHaveBeenCalled();
+      stop();
+    } finally {
+      global.fetch = realFetch;
+    }
+  });
+
+  it("re-judges at once when the tab returns from the background, not at the next tick", () => {
+    jest.useFakeTimers();
+    const doc = fakeDoc();
+    const ticks: number[] = [];
+    let wall = NOW;
+    const stop = startUiClock((t) => ticks.push(t), { doc: doc as unknown as Document, now: () => wall });
+    wall = NOW + 3 * 3600_000; // hidden for three hours; throttled timers never fired
+    doc.visibilityState = "hidden";
+    doc.fire();
+    expect(ticks).toEqual([]);
+    doc.visibilityState = "visible";
+    doc.fire();
+    expect(ticks).toEqual([wall]);
+    stop();
+  });
+
+  it("ticks on its interval and stops completely on unmount", () => {
+    jest.useFakeTimers();
+    const doc = fakeDoc();
+    const ticks: number[] = [];
+    const stop = startUiClock((t) => ticks.push(t), { doc: doc as unknown as Document });
+    jest.advanceTimersByTime(UI_CLOCK_INTERVAL_MS * 3);
+    expect(ticks).toHaveLength(3);
+    stop();
+    expect(doc.listeners.size).toBe(0);
+    jest.advanceTimersByTime(UI_CLOCK_INTERVAL_MS * 10);
+    doc.fire();
+    expect(ticks).toHaveLength(3);
+    expect(jest.getTimerCount()).toBe(0);
+  });
+
+  it("shows the reader the time the tiles were judged against", () => {
+    const html = renderToStaticMarkup(
+      <CorrectnessConsoleView tiles={evaluateAll(INITIAL_READS, NOW)} nowMs={NOW + 3 * 3600_000} settledMs={null} />,
+    );
+    expect(html).toContain('data-judged-at="2026-10-20T00:00:00.000Z"');
+    expect(html).toContain("Judged against the clock at");
+    expect(html).toContain("12:00:00 AM UTC");
+  });
+});
+
 // ── the page as a whole ────────────────────────────────────────────────────
 
 function healthyReads(): CorrectnessReads {
@@ -550,8 +650,15 @@ describe("the page's own contract", () => {
 
   it("reads existing endpoints plainly: no bust/force/inline, no polling, no retries", () => {
     for (const p of Object.values(CORRECTNESS_ENDPOINTS)) expect(p).not.toContain("?");
-    expect(page + lib).not.toMatch(/bust|force=|inline=|setInterval|refreshInterval|maxRetries/);
+    expect(page + lib).not.toMatch(/bust|force=|inline=|refreshInterval|maxRetries/);
     expect(page).not.toMatch(/method:\s*["']POST/);
+    // The ONE timer is the presentation clock, which the tests below prove
+    // issues no request; the page itself owns none.
+    expect(page).not.toContain("setInterval");
+    expect(lib.match(/setInterval\(/g)).toHaveLength(1);
+    const clock = lib.slice(lib.indexOf("export function startUiClock"));
+    expect(clock.slice(0, clock.indexOf("\n}\n"))).toContain("setInterval(");
+    expect(page).toMatch(/useEffect\(\(\) => startUiClock\(setNowMs\), \[\]\)/);
   });
 
   it("keeps the public calibration read free of the admin credential", () => {

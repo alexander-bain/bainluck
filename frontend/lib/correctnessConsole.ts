@@ -205,6 +205,42 @@ export async function startCorrectnessReads(
   return Math.round(now() - started);
 }
 
+// ─── The presentation clock ─────────────────────────────────────────────────
+
+/** How often fetched evidence is re-judged against the wall clock. */
+export const UI_CLOCK_INTERVAL_MS = 30_000;
+
+type VisibilityDoc = Pick<Document, "addEventListener" | "removeEventListener" | "visibilityState">;
+
+/**
+ * Root finding 002 on e603826e7f: the page judged freshness against a clock
+ * that only moved when a read settled, so after the last read a green tile
+ * stayed green forever in a tab left open — evidence never aged into stale.
+ *
+ * This ticks a LOCAL clock: every `intervalMs`, and immediately when the tab
+ * comes back from the background (timers are throttled while hidden). It only
+ * calls `onTick(now)`. It issues no request, triggers no producer and never
+ * touches a source's own timestamp — re-judging old evidence is the whole job.
+ * Returns the cleanup the page runs on unmount.
+ */
+export function startUiClock(
+  onTick: (nowMs: number) => void,
+  opts: { intervalMs?: number; doc?: VisibilityDoc | null; now?: () => number } = {},
+): () => void {
+  const now = opts.now ?? Date.now;
+  const doc = opts.doc === undefined ? (typeof document !== "undefined" ? document : null) : opts.doc;
+  const tick = () => onTick(now());
+  const timer = setInterval(tick, opts.intervalMs ?? UI_CLOCK_INTERVAL_MS);
+  const onVisible = () => {
+    if (doc?.visibilityState === "visible") tick();
+  };
+  doc?.addEventListener("visibilitychange", onVisible);
+  return () => {
+    clearInterval(timer);
+    doc?.removeEventListener("visibilitychange", onVisible);
+  };
+}
+
 // ─── Small, total readers over untrusted JSON ───────────────────────────────
 
 function isObj(v: unknown): v is Record<string, unknown> {

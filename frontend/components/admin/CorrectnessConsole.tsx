@@ -146,6 +146,10 @@ export default function CorrectnessConsoleView({ tiles, nowMs, settledMs, authNo
       {anyUnauthorized && authNotice && <div className="mb-4">{authNotice}</div>}
       <div className="flex flex-wrap items-center gap-3 mb-4 text-xs text-text-muted">
         <span>{settledMs === null ? "Reads in progress…" : `All reads settled in ${settledMs} ms`}</span>
+        <span data-judged-at={new Date(nowMs).toISOString()}>
+          Judged against the clock at{" "}
+          {new Date(nowMs).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", second: "2-digit", timeZoneName: "short" })}
+        </span>
         {onReload && (
           <button
             type="button"

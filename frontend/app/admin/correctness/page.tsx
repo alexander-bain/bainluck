@@ -2,8 +2,10 @@
 
 // #847 — /admin/correctness: "can we trust our numbers today?" on one page.
 // Composes five EXISTING endpoints once per visit (and on Reload) — no polling,
-// no retries, no bust/force parameters. Judgment lives in
-// `lib/correctnessConsole.ts`; rendering in `components/admin/CorrectnessConsole`.
+// no retries, no bust/force parameters. A local clock re-judges the evidence
+// already fetched, so a tab left open ages into stale without a new request.
+// Judgment lives in `lib/correctnessConsole.ts`; rendering in
+// `components/admin/CorrectnessConsole`.
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
@@ -21,6 +23,7 @@ import {
   INITIAL_READS,
   evaluateAll,
   startCorrectnessReads,
+  startUiClock,
   type CorrectnessReads,
 } from "@/lib/correctnessConsole";
 
@@ -61,6 +64,9 @@ export default function CorrectnessConsolePage() {
     });
     return () => ctrl.abort();
   }, [secret, round]);
+
+  // Local time only: makes no request (Root 002).
+  useEffect(() => startUiClock(setNowMs), []);
 
   const tiles = useMemo(() => evaluateAll(reads, nowMs), [reads, nowMs]);
   const reload = useCallback(() => setRound((r) => r + 1), []);
