@@ -1,3 +1,4 @@
+import SwiftUI
 import XCTest
 @testable import Bain_Luck
 
@@ -61,5 +62,32 @@ final class NFLMilestoneHeadshot11285Tests: XCTestCase {
         let aged = card.current(at: now.addingTimeInterval(3 * 3600))
         XCTAssertNotEqual(aged.rungs.map(\.chance), card.rungs.map(\.chance), "control: the prices did age")
         XCTAssertEqual(aged.headshot, URL(string: purdy))
+    }
+
+    // MARK: - Fit (#11285 N2)
+
+    /// The card's drawn height for `subject` at `size` on a 375pt phone's card.
+    private func height(_ subject: String, headshot: String?, at size: DynamicTypeSize) throws -> CGFloat {
+        let card = try XCTUnwrap(NFLMilestoneCard9483.cards(
+            props: ladder(subject, headshots: [headshot, headshot, headshot]),
+            eventStatus: "scheduled", commenceTime: now.addingTimeInterval(3600),
+            homeTeam: "San Francisco 49ers", awayTeam: "Washington Commanders", now: now).first)
+        XCTAssertEqual(card.headshot?.absoluteString, headshot, "control: the card carries the case")
+        let host = hostForMeasurement(
+            NFLMilestoneCardView9483(card: card, color: .orange, state: NFLCardDeckState9483()), at: size)
+        return host.sizeThatFits(in: CGSize(width: 311, height: CGFloat.greatestFiniteMagnitude)).height
+    }
+
+    /// At accessibility sizes the headshot takes no name width: the card lays out
+    /// exactly as it does with no headshot served, so "McCaffrey" stays one word
+    /// (with the cue drawn, AX5 at 311pt broke it "McCaf-/frey").
+    func testAtAccessibilitySizesTheHeadshotTakesNoNameWidth() throws {
+        for subject in ["Christian McCaffrey", "Jaxon Smith-Njigba"] {
+            for size in [DynamicTypeSize.accessibility3, .accessibility5] {
+                XCTAssertEqual(try height(subject, headshot: purdy, at: size),
+                               try height(subject, headshot: nil, at: size), accuracy: 0.5,
+                               "\(subject) at \(size): the headshot changed the layout")
+            }
+        }
     }
 }

@@ -371,6 +371,7 @@ struct NFLMilestoneCardView9483: View {
     let color: Color
     @ObservedObject var state: NFLCardDeckState9483
     var expanded = false
+    @Environment(\.dynamicTypeSize) private var size
     @ScaledMetric(relativeTo: .caption2) private var scaledAxisFont: CGFloat = 12
     private var axisFontSize: CGFloat { EventChartTypography.labelSize(scaled: scaledAxisFont) }
 
@@ -381,8 +382,10 @@ struct NFLMilestoneCardView9483: View {
             HStack(alignment: .top) {
                 // #11285 — a small identity cue beside the name when this
                 // ladder's own rows serve a headshot; loading or failed keeps
-                // a plain circle, so the name never moves.
-                if let headshot = card.headshot {
+                // a plain circle, so the name never moves. At accessibility
+                // sizes the cue is dropped: its 44pt broke "McCaf-/frey" mid-word
+                // on a 375pt phone at AX5, and the name is the identity.
+                if let headshot = card.headshot, !size.isAccessibilitySize {
                     AsyncImage(url: headshot) { phase in
                         if case .success(let image) = phase {
                             image.resizable().scaledToFill()
