@@ -69,13 +69,26 @@ describe("#9398 — the footer is drawn only when it holds something", () => {
     expect(html).toMatch(/>ESPN</);
   });
 
-  it("a projection alone keeps the footer and its Proj line", () => {
+  // #2920: the projection is a row of its own now, not the footer's lead, so it
+  // no longer holds an otherwise-empty footer open. And hockey's sportsbook
+  // pair is the pinned ±1.5 puck line, so a hockey card prints none at all.
+  it("a hockey projection is withheld and draws no footer", () => {
     const base = fixture.leafs_canadiens as unknown as Event;
     const html = card("leafs_canadiens", {
       current_odds: { ...base.current_odds!, projected_home_score: 3.6, projected_away_score: 2.7 },
     });
-    expect(html).toContain(FOOTER);
-    expect(html).toMatch(/Proj/);
+    expect(html).not.toContain(FOOTER);
+    expect(html).not.toContain("event-card-projected-final");
+  });
+
+  it("an admitted projection alone prints its own row and still no empty footer", () => {
+    const base = fixture.leafs_canadiens as unknown as Event;
+    const html = card("leafs_canadiens", {
+      sport: "basketball_nba",
+      current_odds: { ...base.current_odds!, projected_home_score: 112.6, projected_away_score: 108.2 },
+    });
+    expect(html).toContain('data-projected-final="113-108"');
+    expect(html).not.toContain(FOOTER);
   });
 
   it("a finished game still draws no footer", () => {

@@ -179,10 +179,10 @@ describe("#8156 an impossible projected final is not printed", () => {
     // the exact glyphs the hero renders it with (thin spaces around an en
     // dash), so a "fix" that merely renamed the line would fail here.
     //
-    // ⚠️ THE SEPARATOR IS WRITTEN AS ESCAPES ON PURPOSE. The hero renders the
-    // pair with `{"\u2009\u2013\u2009"}`; the pretty ASCII form `3 - 3` never appears
-    // in the markup, so an assertion spelled that way could not fail and would
-    // be a decoration.
+    // ⚠️ #2920 changed the glyphs: the hero now names each number beside its
+    // team (`ProjectedFinalLine`) and stamps the pair on `data-projected-final`.
+    // The old thin-space form is kept as a second net for any line still
+    // printing it; the stamp is the one that can fail today.
     //
     // Notice 34 is the other half of the same assertion: the space is left
     // empty and not explained, so no apology takes the scoreline's place.
@@ -190,6 +190,7 @@ describe("#8156 an impossible projected final is not printed", () => {
 
     const html = draw();
 
+    expect(html).not.toContain('data-projected-final="3-3"');
     expect(html).not.toContain("3\u2009\u2013\u20093");
     expect(html).not.toContain("too close");
   });

@@ -100,13 +100,15 @@ function card(ev: Event): string {
   );
 }
 
+// #2920: both surfaces print through `ProjectedFinalLine`, which stamps the
+// pair home-away on `data-projected-final` whatever order its names read in.
 function heroPair(html: string): string | null {
-  const m = html.match(/Projected final: (\d+) – (\d+)/);
+  const m = html.match(/data-testid="event-hero-projected-final" data-projected-final="(\d+)-(\d+)"/);
   return m ? `${m[1]}-${m[2]}` : null;
 }
 
 function cardPair(html: string): string | null {
-  const m = html.match(/Proj <span[^>]*>(\d+)-(\d+)</);
+  const m = html.match(/data-testid="event-card-projected-final" data-projected-final="(\d+)-(\d+)"/);
   return m ? `${m[1]}-${m[2]}` : null;
 }
 
@@ -121,6 +123,7 @@ describe("#9034 — card and hero print one projected final", () => {
     // Strawman against a fix that printed both: the photographed `17 – 28`
     // must be gone, not joined.
     expect(page(event())).not.toContain(`17${SEP}28`);
+    expect(page(event())).not.toContain('data-projected-final="17-28"');
   });
 
   it("agreement holds for any disagreeing pair, not just the specimen's numbers", () => {

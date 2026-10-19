@@ -28,7 +28,8 @@ import {
 import type { HostCue } from "@/lib/sameFixtureHostCue";
 import { providerGameNumber } from "@/lib/teamGames";
 import { PinIcon } from "@/components/PinButton";
-import { sportsbookProjectedPair } from "@/lib/projectedFinalPair";
+import { cardProjectedFinal, projectedFinalLabel } from "@/lib/projectedFinalPair";
+import ProjectedFinalLine from "@/components/ProjectedFinalLine";
 import {
   hasNoReportedResult,
   isFinishedStatus,
@@ -231,9 +232,10 @@ export default function EventCard({
   const opening = event.opening_odds;
 
   // #9006 / #9034 — the gates live in `sportsbookProjectedPair`, which the
-  // event page reads too before kickoff, so the card's `Proj` and the hero's
-  // `Projected final` are one pair.
-  const projectedScore = sportsbookProjectedPair(odds, event.sport);
+  // event page reads too before kickoff, so the card's projected final and the
+  // hero's are one pair. #2920: rounded and tie-gated in `cardProjectedFinal`,
+  // the way the hero rounds and gates it.
+  const projectedScore = cardProjectedFinal(odds, event.sport);
 
   // UX-P166 — the live footer's "Opened 62/38" prints both sides of one question
   // in fixed positions, which makes it a duel. Rounding the two independently
@@ -607,9 +609,13 @@ export default function EventCard({
   // (Leafs–Canadiens on /sports/icehockey_nhl, 9/28) otherwise ended in a rule
   // and an empty ~40px strip, which reads as something that failed to load.
   // These are the footer's own three branches plus its broadcast, restated.
+  // #2920: the projection left the footer for a row of its own (below), so it
+  // no longer holds the footer open.
   const footerHasLead =
-    (!isLive && !!projectedScore) ||
-    (isLive && !!opening && openedHomePct !== null && (openedAwayWithheld || openedAwayPct !== null));
+    isLive && !!opening && openedHomePct !== null && (openedAwayWithheld || openedAwayPct !== null);
+  // Pre-game only, on the footer's old terms: a finished card compares results,
+  // and a suspended one is stopped, not upcoming (CERT-792).
+  const showProjectedFinal = !isLive && !isFinished && !isSuspended && !!projectedScore;
   const showFooter = !isFinished && !isSuspended && (footerHasLead || !!event.espn?.broadcast);
 
   return (
@@ -1000,6 +1006,21 @@ export default function EventCard({
             </div>
           </div>
 
+          {/* #2920 / #9483 — the projected final, labelled in full and named
+              per team, home first like the rows above. It was a muted `Proj
+              30-22` in the footer, two unattributed numbers in the smallest type
+              on the card. */}
+          {showProjectedFinal && projectedScore && (
+            <ProjectedFinalLine
+              label={projectedFinalLabel(event.sport)}
+              first={{ name: homeShort, score: projectedScore.home }}
+              second={{ name: awayShort, score: projectedScore.away }}
+              order="home-away"
+              variant="card"
+              testId="event-card-projected-final"
+            />
+          )}
+
           {/* #2764 — ONE label for the pair, never one per row: both grey
               numbers always come off the same rung, so saying it twice on one
               card is noise. Alex's rule is "labelled when not a prediction
@@ -1023,21 +1044,13 @@ export default function EventCard({
           )}
 
           {/* Footer — contextual info (hide for finished games, and for
-              suspended ones: "Proj 6-4" is a pregame promise and the match is
-              stopped, not upcoming — CERT-792). Absent entirely when it would
+              suspended ones: the match is stopped, not upcoming — CERT-792). Absent entirely when it would
               hold nothing (#9398). */}
           {showFooter && (
             <div className="mt-2.5 pt-2 border-t border-surface-border/50 flex justify-between items-center text-micro">
-              {/* UX-P074: `!= null`, not `!== null`. An ABSENT key answered the
-                  strict test with `undefined !== null` → true, and the card then
-                  printed "Proj NaN-NaN". Found the moment the league rail — a
-                  producer that carries a blend and no projection — started
-                  feeding this shared card. */}
-              {!isLive && projectedScore ? (
-                <span className="text-text-muted">
-                  Proj <span className="font-mono text-text-secondary">{Math.round(projectedScore.home)}-{Math.round(projectedScore.away)}</span>
-                </span>
-              ) : isLive && opening && openedHomePct !== null && openedAwayWithheld ? (
+              {/* UX-P074's "Proj NaN-NaN" guard moved with the projection: an
+                  absent or non-finite half is refused in `sportsbookProjectedPair`. */}
+              {isLive && opening && openedHomePct !== null && openedAwayWithheld ? (
                 /* #6238 — the opening pair is the same complement at an earlier
                    instant, so the away half goes with the current one. The
                    footer is KEPT, not dropped: the home opening figure is as

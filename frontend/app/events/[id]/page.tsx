@@ -21,7 +21,8 @@ import {
 import { canonicalEventHref } from "@/lib/canonicalEventUrl";
 import { matrixForStat, type DuringPlayerProps } from "@/lib/duringPlayerPropsMatrixSelection";
 import { withoutEventOwnMoneyline } from "@/lib/eventOwnMoneyline";
-import { eventPageProjectedPair } from "@/lib/projectedFinalPair";
+import { eventPageProjectedPair, projectedFinalLabel } from "@/lib/projectedFinalPair";
+import ProjectedFinalLine from "@/components/ProjectedFinalLine";
 import { teamTextColor } from "@/lib/teamColors";
 import { heldFrameAfter, useLiveEventStream, type LiveFrame } from "@/hooks/useLiveEventStream";
 import { createReconnectCatchup } from "@/lib/reconnectCatchup";
@@ -2983,6 +2984,63 @@ export default function EventPage({ params }: EventPageProps) {
               />
               )}
 
+              {/* Projected final score — derived from spread + total, no gambling jargon.
+
+                  #2441: gated on the sport DECLARING that a derived spread is
+                  a real quantity here. The projection is a points model; on a
+                  tennis match it is a fabricated scoreline in a unit the sport
+                  does not have. An undeclared sport gets the same silence, by
+                  design — see `UNSCORED_IN_POINTS`. */}
+              {/* #5257: and gated on there still being a result to forecast.
+                  The old test was a DENYLIST of two terminal states, so a
+                  `suspended` event — and a `scheduled` one long past its own
+                  kickoff — fell straight through it and printed a projected
+                  final under this card's own "No result reported" badge. This
+                  is #5206's defect one card up, and #4018's line applies as
+                  verbatim as it did there: a forecast and a result are two
+                  questions and they get two predicates. `isSuspended` is the
+                  page's ONE `hasNoReportedResult` answer (computed above, #4015)
+                  and is the same one the badge four lines up is drawn from, so
+                  the card can no longer ask the question one way and answer it
+                  the other. */}
+              {/* #5697 AC2: and gated on the reader being able to see the state
+                  the forecast is about. `projectionHasGameStateToFrame` is
+                  computed beside the scores it reads — a live game with no score
+                  pair prints no projected final, a game that has not kicked off
+                  still does. */}
+              {/* #8156: and gated on the pair being a result the sport can
+                  produce. The `Math.round` below is applied per side, so any
+                  pair under a run apart lands on one integer and a no-tie sport
+                  printed an impossible final (`3 – 3` on live MLB).
+                  `projectedPairIsAPossibleResult` is computed beside the other
+                  projection gates and rounds exactly the way this line does —
+                  the two must never drift, which is why the rounding is not
+                  written out twice in two different expressions. */}
+              {/* #4885: and gated on the pair being reachable from the score
+                  the hero prints: `Projected final: 3 – 2` under a live `4 – 2`
+                  is always false. `projectedPairIsReachableFromTheScore` rounds
+                  the way this line does and reads `bestHomeScore`/`bestAwayScore`,
+                  the values in the score slots, never the event row. */}
+              {/* #8922: every gate above is now evaluated once, in
+                  `heroProjectedFinal`, because the margin and points maps print
+                  the same pair and must never disagree with this line about
+                  whether there is one. */}
+              {/* #2920 / #9483 — directly under the chance it explains, above
+                  the trend, opening and source lines (Alex, 2026-10-19: the 11px
+                  muted `Projected final: 30 – 22` under "11 sportsbooks" was
+                  unreadable and tied neither number to a team). Each number now
+                  sits beside its team's name, home first like the columns. */}
+              {heroProjectedFinal && (
+                <ProjectedFinalLine
+                  label={projectedFinalLabel(event.sport)}
+                  first={{ name: heroShortNames.home, score: heroProjectedFinal.home }}
+                  second={{ name: heroShortNames.away, score: heroProjectedFinal.away }}
+                  order="home-away"
+                  variant="hero"
+                  testId="event-hero-projected-final"
+                />
+              )}
+
               {/* Trend indicator — change since opening (live/pregame only).
 
                   #5719 — POINTS, and the difference of the PRINTED levels.
@@ -3135,54 +3193,6 @@ export default function EventPage({ params }: EventPageProps) {
                 </div>
               )}
 
-              {/* Projected final score — derived from spread + total, no gambling jargon.
-
-                  #2441: gated on the sport DECLARING that a derived spread is
-                  a real quantity here. The projection is a points model; on a
-                  tennis match it is a fabricated scoreline in a unit the sport
-                  does not have. An undeclared sport gets the same silence, by
-                  design — see `UNSCORED_IN_POINTS`. */}
-              {/* #5257: and gated on there still being a result to forecast.
-                  The old test was a DENYLIST of two terminal states, so a
-                  `suspended` event — and a `scheduled` one long past its own
-                  kickoff — fell straight through it and printed a projected
-                  final under this card's own "No result reported" badge. This
-                  is #5206's defect one card up, and #4018's line applies as
-                  verbatim as it did there: a forecast and a result are two
-                  questions and they get two predicates. `isSuspended` is the
-                  page's ONE `hasNoReportedResult` answer (computed above, #4015)
-                  and is the same one the badge four lines up is drawn from, so
-                  the card can no longer ask the question one way and answer it
-                  the other. */}
-              {/* #5697 AC2: and gated on the reader being able to see the state
-                  the forecast is about. `projectionHasGameStateToFrame` is
-                  computed beside the scores it reads — a live game with no score
-                  pair prints no projected final, a game that has not kicked off
-                  still does. */}
-              {/* #8156: and gated on the pair being a result the sport can
-                  produce. The `Math.round` below is applied per side, so any
-                  pair under a run apart lands on one integer and a no-tie sport
-                  printed an impossible final (`3 – 3` on live MLB).
-                  `projectedPairIsAPossibleResult` is computed beside the other
-                  projection gates and rounds exactly the way this line does —
-                  the two must never drift, which is why the rounding is not
-                  written out twice in two different expressions. */}
-              {/* #4885: and gated on the pair being reachable from the score
-                  the hero prints: `Projected final: 3 – 2` under a live `4 – 2`
-                  is always false. `projectedPairIsReachableFromTheScore` rounds
-                  the way this line does and reads `bestHomeScore`/`bestAwayScore`,
-                  the values in the score slots, never the event row. */}
-              {/* #8922: every gate above is now evaluated once, in
-                  `heroProjectedFinal`, because the margin and points maps print
-                  the same pair and must never disagree with this line about
-                  whether there is one. */}
-              {heroProjectedFinal && (
-                <div className="mt-1.5">
-                  <span className="text-[11px] text-text-muted">
-                    Projected final: {heroProjectedFinal.home}{"\u2009\u2013\u2009"}{heroProjectedFinal.away}
-                  </span>
-                </div>
-              )}
             </div>
 
             {/* Away Team */}

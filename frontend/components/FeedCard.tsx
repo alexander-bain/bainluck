@@ -51,6 +51,8 @@ import { awayIsTheComplement } from "@/lib/drawPricedWinner";
 import { probabilityBarPair, SEGMENT_OPACITY } from "@/lib/probabilityBarPair";
 import { teamCrestInitials, teamShortNames } from "@/lib/teamShortName";
 import TeamNameLink from "./TeamNameLink";
+import ProjectedFinalLine from "./ProjectedFinalLine";
+import { cardProjectedFinal, projectedFinalLabel } from "@/lib/projectedFinalPair";
 
 interface FeedCardProps {
   item: FeedItem;
@@ -375,6 +377,20 @@ function EventFeedCard({
   // live-style probability split for one nothing is reporting on.
   const isSuspended = isSuspendedStatus(data.status);
   const isScheduled = data.status === "scheduled";
+  // #2920 / #9483 — the projected final the league/search card and the event
+  // headline print, admitted by the same rule (`cardProjectedFinal`). Before
+  // play only: a scheduled row whose kickoff has passed is no longer "before".
+  // `/api/feed` does not serve the pair yet (release-root, 2026-10-19), so this
+  // stays empty until it does — never a second, card-local calculation.
+  const projectedNames = teamShortNames(
+    { name: data.home_team, abbreviation: data.home_team_data?.abbreviation },
+    { name: data.away_team, abbreviation: data.away_team_data?.abbreviation },
+    data.sport,
+  );
+  const projectedFinal =
+    isScheduled && Date.parse(data.commence_time) > Date.now()
+      ? cardProjectedFinal(data.current_odds, data.sport)
+      : null;
   // #8635: the server's last-resort highlight for a live game is the word
   // "Live", which repeats the green LIVE chip beside it. Drop only that echo; a
   // live label that says something new ("Odds moved", "Wild game") still shows.
@@ -994,6 +1010,19 @@ function EventFeedCard({
               data-bar-segment="home"
             />
           </div>
+        )}
+
+        {/* #2920 / #9483 — the projected final, named per team, away first
+            like this card's rows. */}
+        {projectedFinal && (
+          <ProjectedFinalLine
+            label={projectedFinalLabel(data.sport)}
+            first={{ name: projectedNames.away, score: projectedFinal.away }}
+            second={{ name: projectedNames.home, score: projectedFinal.home }}
+            order="away-home"
+            variant="card"
+            testId="feed-card-projected-final"
+          />
         )}
 
         {/* Bottom row: reason + context + thumbs.

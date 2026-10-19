@@ -333,7 +333,7 @@ describe("supported and unsupported mounts", () => {
     );
     // #10573: the card's headline is the pair the hero's `Projected final` line prints, the same variable.
     expect(page).toMatch(/projectedFinal=\{heroProjectedFinal\}\s+periodBoundaries=\{periodBoundaries\}/);
-    expect(page).toMatch(/Projected final: \{heroProjectedFinal\.home\}/);
+    expect(page).toMatch(/<ProjectedFinalLine[\s\S]{0,200}?score: heroProjectedFinal\.home/);
     // The page never statically imports the chart or the module: the projection stays in its own chunk.
     expect(page).not.toMatch(/^import .*ProjectedFinalPoints(Chart|Module)/m);
   });

@@ -63,7 +63,9 @@ function card(event: Event): string {
   return renderToStaticMarkup(<EventCard event={event} />);
 }
 
-const PROJ = /Proj <span/;
+// #2920: the card's projection is the shared `ProjectedFinalLine` row now, not
+// a `Proj` footer span. The test id is what marks it.
+const PROJ = /data-testid="event-card-projected-final"/;
 
 describe("#9006 — the specimen is what the issue says it is", () => {
   it("the fight serves a projected pair with a negative half", () => {
@@ -74,8 +76,12 @@ describe("#9006 — the specimen is what the issue says it is", () => {
     expect(fight.current_odds?.projected_away_score).toBe(-1.8);
   });
 
-  it("strawman: the same row with no sport and a non-negative pair prints Proj", () => {
-    expect(card(row("15314292", { sport: null }, { projected_away_score: 1.8 }))).toMatch(PROJ);
+  it("strawman: the same row relabelled football with a non-negative pair prints a projection", () => {
+    // #2920: a row with NO sport now prints none either — an undeclared sport is
+    // not admitted (`projectedFinalFormat`). Relabelling the fight as football
+    // is what proves the sport, and nothing else on the row, is the gate.
+    expect(card(row("15314292", { sport: "americanfootball_nfl" }, { projected_away_score: 1.8 }))).toMatch(PROJ);
+    expect(card(row("15314292", { sport: null }, { projected_away_score: 1.8 }))).not.toMatch(PROJ);
   });
 });
 
@@ -102,7 +108,7 @@ describe("#9006 — a negative projected half is withheld in every sport", () =>
   it("control: the served football row keeps its projection", () => {
     const html = card(row("14781701"));
     expect(html).toMatch(PROJ);
-    expect(html).toContain("18-29");
+    expect(html).toContain('data-projected-final="18-29"');
   });
 });
 
