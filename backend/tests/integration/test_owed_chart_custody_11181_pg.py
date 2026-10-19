@@ -101,6 +101,13 @@ def _refresher(rig, **kwargs):
 
     async def publish(batch):
         frames.extend(batch)
+        # As Redis does (#10090 attempt151): a positive PUBLISH reply per
+        # frame acknowledges its revision, so the price intent is settled.
+        return {
+            (f["event_id"], f["rev"][str(f["event_id"])]) for f in batch
+            if isinstance(f.get("rev"), dict)
+            and type(f["rev"].get(str(f["event_id"]))) is int
+        }
 
     r._publish = publish
     return r, frames
@@ -145,9 +152,15 @@ async def _points(rig):
 
 
 async def _owed(rig):
+    """Chart custody only: the refresher's own source. Its price publication
+    intents (`polymarket_price_publish`, #10090) are a different duty."""
     async with rig.maker() as session:
         return (
-            await session.execute(select(OwedChartPoint).order_by(OwedChartPoint.id))
+            await session.execute(
+                select(OwedChartPoint)
+                .where(OwedChartPoint.source == "polymarket")
+                .order_by(OwedChartPoint.id)
+            )
         ).scalars().all()
 
 
@@ -442,4 +455,7 @@ async def test_two_drains_overlapping_on_the_same_rows_pay_each_once(rig):
     )
     assert await _owed(rig) == []
     async with rig.maker() as session:
-        assert (await session.execute(select(func.count(OwedChartPoint.id)))).scalar() == 0
+        assert (await session.execute(
+            select(func.count(OwedChartPoint.id))
+            .where(OwedChartPoint.source == "polymarket")
+        )).scalar() == 0

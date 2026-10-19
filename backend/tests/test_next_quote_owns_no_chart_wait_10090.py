@@ -6,7 +6,9 @@ import contextvars
 from types import SimpleNamespace
 import pytest
 from tests.test_live_blend_refresh import (
+    NormalRecoverySession,
     TestTheHeadlineDoesNotWaitForItsChartPoint as _HeadlineRig,
+    is_normal_recovery_owner,
 )
 
 
@@ -296,6 +298,9 @@ async def test_history_commit_failure_retries_quietly_with_original_scalar_point
 
     @asynccontextmanager
     async def factory():
+        if is_normal_recovery_owner(r):
+            yield NormalRecoverySession()  # attempt151's recovery owner
+            return
         opens.append(len(opens) + 1)
         number = len(opens)
         yield session

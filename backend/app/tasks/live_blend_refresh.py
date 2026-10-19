@@ -1690,6 +1690,21 @@ class LiveBlendRefresher:
         self._last_write_at: dict[int, float] = {}
         self._last_written_value: dict[int, float] = {}
         self._last_snapshot_at: dict[int, float] = {}
+        # Local151 durable normal-price intent; no full frames retained in memory.
+        self._normal_source = self.source + "_price_publish"
+        self._normal_task = None
+        self._normal_retry_at = 0.0
+        self._normal_closed = False
+        self._normal_has_debt = True  # one recovery discovery on startup
+        self._normal_epoch = 0
+        self._normal_after = 0
+        self._normal_horizon = None
+        # Positively acknowledged revisions, highest per event, settled by the
+        # next recovery opportunity rather than on the publication path.
+        self._normal_acked: dict[int, int] = {}
+        # Revisions this process committed whose publication has not resolved
+        # (held from before COMMIT). Discovery leaves them to that publication.
+        self._normal_inflight: set[tuple[int, int]] = set()
         # One owner across refresh calls. A chart session cannot borrow slots
         # from a newer admission window or escape the three-session ceiling.
         self._session_slots = asyncio.Semaphore(FRESH_STAMP_WORKERS)
@@ -1973,14 +1988,14 @@ class LiveBlendRefresher:
                 await publication_done()
                 waiting_frames.remove(frames)
                 # No cancellation point between removing and submitting frames.
-                publishing = asyncio.create_task(self._publish(frames))
+                publishing = self._publish_prices_task(frames)
 
         async def publish_inline(frames):
             # The singleton still sends its own frames before its stamp
             # returns. The lock only orders them with an admitted cohort's.
             async with publication_lock:
                 await publication_done()
-                await self._publish(frames)
+                await self._publish_prices(frames)
 
         def committed(group_ids):
             # Called synchronously AFTER COMMIT and cache installation, BEFORE
@@ -2342,7 +2357,7 @@ class LiveBlendRefresher:
                         # consumer cancellation. _publish retains its 5s bound.
                         frames = [frame for group in waiting_frames for frame in group]
                         waiting_frames.clear()
-                        publishing = asyncio.create_task(self._publish(frames))
+                        publishing = self._publish_prices_task(frames)
                         await publication_done(cancel_on_interrupt=False)
         return self.stats
 
@@ -2420,6 +2435,7 @@ class LiveBlendRefresher:
         without opening a session, when nothing is queued or nothing queued is
         due yet.
         """
+        self._start_normal_recovery()
         self._start_history()
         if not self._lock_retry and not self._throttle_deferred:
             if self.receipts is not None:
@@ -2951,6 +2967,7 @@ class LiveBlendRefresher:
             try:
                 yield reserved, ready
             except BaseException:
+                self._note_normal_debt()
                 # A COMMIT whose acknowledgement was lost may still have
                 # stored this transaction's custody rows: the next drain reads,
                 # and a load already in flight cannot conclude it saw them.
@@ -3099,9 +3116,13 @@ class LiveBlendRefresher:
         Failed scalar debt stays in the queue for the next run. The owner never
         republishes frames or turns history-only debt into blend debt.
         """
+        interrupted = None
+        try:
+            await self._close_normal_recovery()
+        except asyncio.CancelledError as exc:
+            interrupted = exc
         self._start_history(force=True)
         task = self._history_task
-        interrupted = None
         while task is not None and not task.done():
             try:
                 await asyncio.wait({task})
@@ -3190,6 +3211,7 @@ class LiveBlendRefresher:
         if self._session_factory is not None:
             get_task_session = self._session_factory  # #2471: the consumer's
         async with (
+            self._normal_holds() as held,
             self._history_reservations(event_ids, now, owed_snapshots) as reservation,
             self._session_slot(), get_task_session() as session,
         ):
@@ -3391,6 +3413,19 @@ class LiveBlendRefresher:
                             continue
 
                         stamped_at = new_sources[self.source]["updated_at"]
+                        # Intent and source revision COMMIT together. A crash
+                        # before publication cannot erase the last recovery duty.
+                        # Same revision rule as `build_frame`: a writer with no
+                        # integer revision makes no claim, so it owes no intent
+                        # and its stamp is not refused for lacking one.
+                        if isinstance(new_rev, int) and not isinstance(new_rev, bool):
+                            from sqlalchemy import insert
+                            from app.models.models import OwedChartPoint
+                            await session.execute(insert(OwedChartPoint).values(
+                                source=self._normal_source, event_id=event_id,
+                                value=value, reading={"rev": new_rev,
+                                                      "updated_at": stamped_at},
+                            ))
                         # Scalar extraction is still inside the event scope:
                         # if it fails, this stamp cannot commit without its
                         # due chart obligation.
@@ -3489,6 +3524,10 @@ class LiveBlendRefresher:
                     else:
                         frame["source_snapshot"] = snapshot
                     pending.append(frame)
+                    # Held before COMMIT: no recovery read can see this
+                    # intent before this process has claimed its publication.
+                    held |= self._normal_revisions([frame])
+                    self._normal_inflight |= held
                 except Exception as exc:
                     if lock_budget_failed:
                         raise
@@ -3541,9 +3580,15 @@ class LiveBlendRefresher:
                 # Ordered with the running quote call's admitted frames.
                 window = self._admission
                 publish_committed = (
-                    self._publish if window is None else window.publish_inline
+                    self._publish_prices if window is None else window.publish_inline
                 )
             await publish_committed(pending)
+        except BaseException:
+            # Frames that never reached `_publish_prices` release here; an
+            # early release costs at most one redundant control, a lost one
+            # would hide the intent from discovery for this process's life.
+            self._release_normal(held)
+            raise
         finally:
             # The debt was registered immediately after COMMIT, before the
             # first publication await. Cancellation cannot strand it.
@@ -3685,6 +3730,238 @@ class LiveBlendRefresher:
             return 0
         self.stats["market_published"] += sent
         return sent
+
+    async def _settle_normal_recovery(self, acknowledged):
+        from sqlalchemy import text
+        from app.tasks.base import get_task_session
+        if not acknowledged:
+            return
+        if self._session_slots.locked():
+            # Never queue behind a stamp for a slot: the next opportunity
+            # settles these. Checked with no await before the acquisition.
+            self._remember_normal_acks(acknowledged)
+            return
+        factory = self._session_factory or get_task_session
+        # Settling an older ACK cannot erase a newer committed intent.
+        async with asyncio.timeout(.25):
+            async with self._session_slot(), factory() as session:
+                for eid, rev in acknowledged:
+                    await session.execute(text(
+                        "DELETE FROM owed_chart_points WHERE source=:source "
+                        "AND event_id=:eid AND (reading->>'rev')::bigint<=:rev"
+                    ), {"source": self._normal_source, "eid": eid, "rev": rev})
+
+    def _note_normal_debt(self):
+        self._normal_has_debt = True
+        self._normal_epoch += 1
+
+    @staticmethod
+    def _normal_revisions(frames):
+        # Exactly the revisions `_publish` can acknowledge: an int at the
+        # frame's own event key. A revision-less frame owes no intent.
+        return {
+            (f["event_id"], f["rev"][str(f["event_id"])]) for f in frames
+            if isinstance(f.get("rev"), dict)
+            and type(f["rev"].get(str(f["event_id"]))) is int
+        }
+
+    def _release_normal(self, held):
+        self._normal_inflight.difference_update(held)
+
+    @contextlib.asynccontextmanager
+    async def _normal_holds(self):
+        """The stamp transaction's held intent revisions.
+
+        A failed transaction releases them: its intents never committed, and
+        a stale hold would hide an older owed revision of the same game from
+        discovery.
+        """
+        held = set()
+        try:
+            yield held
+        except BaseException:
+            self._release_normal(held)
+            raise
+
+    def _publish_prices_task(self, frames):
+        """`_publish_prices` as its own task. A task cancelled before its
+        first step never runs the coroutine's release, so the task's
+        completion releases too (a second release is a no-op)."""
+        task = asyncio.create_task(self._publish_prices(frames))
+        held = self._normal_revisions(frames)
+        task.add_done_callback(lambda _task: self._release_normal(held))
+        return task
+
+    def _remember_normal_acks(self, acknowledged):
+        for eid, rev in acknowledged:
+            if rev > self._normal_acked.get(eid, -1):
+                self._normal_acked[eid] = rev
+
+    async def _publish_prices(self, frames):
+        """Publish committed price frames; remember what Redis acknowledged.
+
+        No database work here. Settling an intent needs a session, and the
+        publication lock orders the next cohort's frames behind this call:
+        a DELETE awaited here held the next game's price behind the
+        database (and one of the three stamp slots) on every publication.
+        The next recovery opportunity settles the remembered revisions; a
+        lost process leaves only intents whose recovery is price-free.
+
+        Every publication is also a recovery opportunity, started here and
+        awaited by nothing. A busy timed flush always has a price batch, so
+        it never reaches `refresh_pending`; without this a failed game that
+        went quiet waited for a fully empty flush.
+        """
+        expected = self._normal_revisions(frames)
+        try:
+            acknowledged = await self._publish(frames) or set()
+        except BaseException as exc:
+            self._release_normal(expected)
+            self._note_normal_debt()
+            if not isinstance(exc, Exception):
+                raise
+            logger.exception("live_blend_refresh[%s]: normal publication retained", self.source)
+            self._start_normal_recovery()
+            return set()
+        if expected - acknowledged:
+            self._note_normal_debt()
+        # Resolved: acknowledged revisions are now in `_normal_acked`, the rest
+        # are owed to the next opportunity.
+        self._remember_normal_acks(acknowledged)
+        self._release_normal(expected)
+        self._start_normal_recovery()
+        return acknowledged
+
+    def _start_normal_recovery(self):
+        task = self._normal_task
+        if task is not None and not task.done():
+            return
+        if task is not None and not task.cancelled():
+            task.exception()
+        # Another owner may finish an already-started COMMIT after our empty
+        # startup scan. Keep a bounded discovery opportunity on the existing
+        # flush loop even when this instance has not recorded a failure.
+        if self._normal_closed or _mono() < self._normal_retry_at:
+            return
+        self._normal_task = asyncio.create_task(self._recover_normal_prices())
+
+    async def _recover_normal_prices(self):
+        from sqlalchemy import text
+        from app.tasks.base import get_task_session
+        factory = self._session_factory or get_task_session
+        try:
+            # Recovery never queues for a stamp's slot: with all three taken,
+            # this opportunity passes and the next one (after the cooldown)
+            # tries again. Each of its three acquisitions checks this with no
+            # await between the check and the acquisition.
+            if self._session_slots.locked():
+                return
+            acked, self._normal_acked = self._normal_acked, {}
+            if acked:
+                try:
+                    await self._settle_normal_recovery(set(acked.items()))
+                except asyncio.CancelledError:
+                    raise
+                except Exception:
+                    # Dropped, not restored: the durable rows remain, so the
+                    # discovery below republishes their price-free control
+                    # and its acknowledgement settles them.
+                    logger.exception(
+                        "live_blend_refresh[%s]: normal ACK settlement retained",
+                        self.source,
+                    )
+            if self._session_slots.locked():
+                return
+            epoch = self._normal_epoch
+            # Freeze a finite sweep: new arrivals cannot indefinitely postpone
+            # retrying an older failed event. Both reads use (source, id); bound
+            # raw rows BEFORE coalescing so duplicate revisions cannot turn a
+            # LIMIT32 result into an unbounded DISTINCT/sort over the backlog.
+            async with asyncio.timeout(.25):
+                async with self._session_slot(), factory() as session:
+                    if self._normal_horizon is None:
+                        self._normal_horizon = (await session.execute(text(
+                            "SELECT id FROM owed_chart_points WHERE source=:source "
+                            "ORDER BY id DESC LIMIT 1"
+                        ), {"source": self._normal_source})).scalar_one_or_none()
+                        if self._normal_horizon is None:
+                            if epoch == self._normal_epoch:
+                                self._normal_has_debt = False
+                            return
+                    rows = (await session.execute(text(
+                        "SELECT id, event_id, reading FROM owed_chart_points "
+                        "WHERE source=:source AND id>:after AND id<=:horizon "
+                        "ORDER BY id LIMIT 32"
+                    ), {"source": self._normal_source, "after": self._normal_after,
+                        "horizon": self._normal_horizon})).all()
+            if not rows:
+                self._normal_after = 0
+                self._normal_horizon = None
+                return
+            self._normal_after = rows[-1].id
+            if len(rows) < 32 or self._normal_after >= self._normal_horizon:
+                self._normal_after = 0
+                self._normal_horizon = None
+            # These are price-free minimum-revision requests, not historical
+            # prices. The reader fetches current authoritative state even when
+            # a newer revision exists outside this bounded page. Keep the
+            # highest revision per event within this page; never drop its debt
+            # until publication is positively acknowledged.
+            latest = {}
+            for row in rows:
+                prior = latest.get(row.event_id)
+                if prior is None or row.reading["rev"] > prior.reading["rev"]:
+                    latest[row.event_id] = row
+            # A revision this process still owns belongs to its own publication:
+            # in flight, or acknowledged after the swap above and settled by the
+            # next opportunity. A control for it would cost every open reader
+            # of a busy game a paired read. A lost process owns nothing, so a
+            # fresh owner still republishes every intent.
+            owned = dict(self._normal_acked)
+            for eid, rev in self._normal_inflight:
+                if rev > owned.get(eid, -1):
+                    owned[eid] = rev
+            rows = [
+                row for row in latest.values()
+                if row.reading["rev"] > owned.get(row.event_id, -1)
+            ]
+            frames = []
+            for _cid, eid, reading in rows:
+                rev = {str(eid): reading["rev"]}
+                frames.append({
+                    "event_id": eid, "p": None, "rev": rev,
+                    "updated_at": reading["updated_at"], "reconcile_only": True,
+                    "reconcile": {"event_id": eid,
+                        "custody_id": f"normal-price:{eid}:{reading['rev']}",
+                        "removal_rev": rev},
+                })
+            # No database session or event lock spans Redis publication.
+            async with asyncio.timeout(.25):
+                acknowledged = await self._publish(frames) if frames else set()
+            await self._settle_normal_recovery(acknowledged)
+        except Exception:
+            logger.exception("live_blend_refresh[%s]: durable normal recovery retained", self.source)
+        finally:
+            self._normal_retry_at = _mono() + .5
+
+    async def _close_normal_recovery(self):
+        self._normal_closed = True
+        task = self._normal_task
+        if task is None:
+            return
+        if not task.done():
+            task.cancel()
+        interrupted = None
+        while not task.done():
+            try:
+                await asyncio.wait({task})
+            except asyncio.CancelledError as exc:
+                interrupted = exc
+        if not task.cancelled():
+            task.exception()
+        self._normal_task = None
+        if interrupted is not None:
+            raise interrupted
 
     async def _publish(self, frames: list[dict]) -> set[tuple[int, int]]:
         """Fan the committed frames out to any SSE subscribers. Never raises.

@@ -21,6 +21,7 @@ BUDGETS = {
 }
 from tests.test_live_blend_refresh import (
     _RecordingSession, _event_and_market, _one_event_refresher,
+    is_normal_publication_intent,
 )
 
 
@@ -59,6 +60,8 @@ def rig(
                 self.calls.append("update")
                 if cancel == "update":
                     raise _Canceled("canceling statement due to statement timeout")
+            elif is_normal_publication_intent(statement):
+                self.calls.append("intent")
             else:
                 self.calls.append("read")
             return await super().execute(statement, *args, **kwargs)
@@ -126,7 +129,8 @@ async def test_mixed_group_installs_one_budget_before_savepoint_and_actual_updat
     # e0b52e11ed: each owns its transaction, so no sibling savepoint. The
     # skipped event still issues nothing past its read.
     assert x.session.calls.count("read") == 2
-    assert [c for c in x.session.calls if c != "read"] == ["stamp_budget", "update"]
+    # attempt151: the stamp's publication intent follows its UPDATE.
+    assert [c for c in x.session.calls if c != "read"] == ["stamp_budget", "update", "intent"]
     assert [f["event_id"] for f in x.frames] == [2]
 
 
@@ -143,7 +147,7 @@ async def test_a_cold_stamp_adds_only_the_statement_bound_before_its_update(monk
     x = rig(monkeypatch, cold=True, skipped=None)
     await x.r.refresh([1], flush_started=1000)
     assert x.session.calls == [
-        "read", "budget", "orientation_read", "statement_bound", "update",
+        "read", "budget", "orientation_read", "statement_bound", "update", "intent",
     ]
     assert [f["event_id"] for f in x.frames] == [1]
 
