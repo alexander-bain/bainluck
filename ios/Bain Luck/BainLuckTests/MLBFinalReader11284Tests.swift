@@ -100,6 +100,27 @@ final class MLBFinalReader11284Tests: XCTestCase {
         return body
     }
 
+    /// Edits one typed option of a matrix body (`game_question_matrix` or
+    /// `series_question_matrix`), by question and option key.
+    private func editingOption(_ body: [String: Any], matrix: String, question: String, option: String,
+                               _ change: (inout [String: Any]) -> Void) throws -> [String: Any] {
+        var body = body
+        var grid = try XCTUnwrap(body[matrix] as? [String: Any])
+        var questions = try XCTUnwrap(grid["questions"] as? [[String: Any]])
+        let q = try XCTUnwrap(questions.firstIndex { $0["question_key"] as? String == question }, question)
+        var options = try XCTUnwrap(questions[q]["options"] as? [[String: Any]])
+        let o = try XCTUnwrap(options.firstIndex { $0["option_key"] as? String == option }, option)
+        change(&options[o])
+        questions[q]["options"] = options
+        grid["questions"] = questions
+        body[matrix] = grid
+        return body
+    }
+
+    private func hasRecordedQuote(_ original: MLBOriginal11284) -> Bool {
+        fields(original).contains { $0.label.hasPrefix("Last recorded") }
+    }
+
     // MARK: - Eligibility
 
     func testOnlyAFinishedMLBGameIsEligibleByItsStatusNeverItsDate() {
@@ -336,7 +357,8 @@ final class MLBFinalReader11284Tests: XCTestCase {
         XCTAssertEqual(card.lines.map(\.line), stride(from: 2.5, through: 14.5, by: 1).map { $0 },
                        "full-game lines only: the first-five-innings lines stay in the catalog")
         XCTAssertEqual(card.actualTotal, 10, "3 + 7 from the final score, never a quote")
-        XCTAssertEqual(card.lines.map(\.venueResult), Array(repeating: true, count: 8) + Array(repeating: false, count: 5))
+        XCTAssertEqual(card.lines.map(\.venueResult),
+                       Array(repeating: .won, count: 8) + Array(repeating: .lost, count: 5))
         XCTAssertEqual(card.lines.map(\.pregame), Array(repeating: nil, count: 13), "no admitted pin")
         let open = try XCTUnwrap(card.defaultIndex)
         XCTAssertEqual(card.lines[open].line, 9.5, "the highest line the total cleared")
@@ -360,7 +382,7 @@ final class MLBFinalReader11284Tests: XCTestCase {
         XCTAssertEqual(card.optionCount, 9)
         XCTAssertEqual(card.reason, "Separate series markets")
         let games = try XCTUnwrap(card.questions.first { $0.questionKey == "m:62898790" })
-        XCTAssertEqual(games.options.map(\.result), ["Open"], "the game's final does not settle the series total")
+        XCTAssertEqual(games.options.map(\.result), [.open], "the game's final does not settle the series total")
         XCTAssertEqual(card.questions.flatMap(\.options).map(\.pregame), Array(repeating: nil, count: 9))
         XCTAssertEqual(card.questions.first?.options.map(\.label),
                        ["CWS wins 2-0", "HOU wins 2-0", "HOU wins 2-1", "CWS wins 2-1"])
@@ -382,11 +404,142 @@ final class MLBFinalReader11284Tests: XCTestCase {
         XCTAssertEqual(cards.map(\.family), [.homeRuns, .strikeouts, .totals, .extraInnings, .series])
         let card = try XCTUnwrap(extra(cards))
         XCTAssertEqual(card.outcomes.map(\.label), ["Yes"])
-        XCTAssertNil(card.outcomes[0].venueResult, "ungraded: never inferred from a nine-inning score")
+        XCTAssertEqual(card.outcomes[0].venueResult, .pending, "ungraded: never inferred from a nine-inning score")
         XCTAssertEqual(value("Venue result", in: card.outcomes[0].original), ["Pending"])
         XCTAssertEqual(value("Pregame chance", in: card.outcomes[0].original), ["Unavailable"])
+        XCTAssertFalse(fields(card.outcomes[0].original).contains { $0.label.hasPrefix("Last recorded") },
+                       "a settled `other` row's 16% quote is withheld, as the catalog withholds it")
         // The First Inning Run and First 5 Innings rows are not extra innings.
         XCTAssertEqual(card.outcomes.count, 1)
+    }
+
+    // MARK: - R1: no withheld, terminal or undated quote in Details
+
+    func testR1CapturedSeriesAndTotalsDetailsCarryNoRecordedQuote() throws {
+        // Non-vacuous: the capture serves raw legs on these options (Kalshi
+        // 1.0 / 0.0, totals stamped Oct 9) beside `value_state: result`.
+        let markets = try decode(GameMarketsResponse.self, object(Self.capturedMarkets))
+        let related = try decode(RelatedFuturesResponse.self, object(Self.capturedRelated))
+        let served = (markets.gameQuestionMatrix?.questions ?? []) + (related.seriesQuestionMatrix?.questions ?? [])
+        XCTAssertTrue(served.flatMap(\.options).contains { !($0.sourceEvidence ?? []).isEmpty })
+        let cards = try captured()
+        let totals = try XCTUnwrap(totals(cards))
+        let series = try XCTUnwrap(series(cards))
+        let originals = totals.lines.map(\.original) + series.questions.flatMap(\.options).map(\.original)
+        XCTAssertEqual(originals.count, 13 + 9)
+        for original in originals {
+            XCTAssertFalse(hasRecordedQuote(original), original.id)
+            XCTAssertFalse(fields(original).contains {
+                $0.value.hasPrefix(formatProbability(1)) || $0.value.hasPrefix(formatProbability(0))
+            },
+                           "\(original.id): a settlement value is not a chance")
+        }
+    }
+
+    func testR1BrownsSevenPlusDetailsCarryNoOverAxisLastValue() throws {
+        // Non-vacuous: both Brown 6.5 rows serve over_probability 0.09,
+        // observed after the final.
+        let props = try XCTUnwrap(object(Self.capturedMarkets)["player_props"] as? [[String: Any]])
+        XCTAssertEqual(props.filter { $0["market_name"] as? String == "Hunter Brown: Strikeouts O/U 6.5" }
+            .compactMap { $0["over_probability"] as? Double }, [0.09, 0.09])
+        let card = try XCTUnwrap(strikeouts(captured()))
+        for target in card.targets {
+            XCTAssertFalse(hasRecordedQuote(target.original), "\(target.milestone)+")
+        }
+        let seven = card.targets[1]
+        XCTAssertFalse(fields(seven.original).contains { $0.value.contains(formatProbability(0.09)) })
+        XCTAssertEqual(value("Recorded in game", in: seven.original), ["Not captured"])
+        XCTAssertEqual(value("Pregame mark · Over", in: seven.original),
+                       [formatProbability(0.445), formatProbability(0.445)], "the pregame mark stays")
+    }
+
+    func testR1AQuotedDatedOpenLegStillPrintsAndTerminalOrUndatedLegsDoNot() throws {
+        // CONSTRUCTED: the series' still-open games question given a quoted
+        // published value and one raw Kalshi leg.
+        func details(raw: Any, at: Any, state: String = "quoted") throws -> MLBOriginal11284 {
+            let related = try editingOption(object(Self.capturedRelated), matrix: "series_question_matrix",
+                                            question: "m:62898790", option: "o:237333169") {
+                $0["published"] = ["value": 0.42, "value_state": state, "basis": "published_source_display",
+                                   "source": "kalshi", "observed_at": NSNull()] as [String: Any]
+                $0["source_evidence"] = [["source": "kalshi", "market_id": 62898790, "outcome_id": 237333169,
+                                          "leg_side": "category", "raw_probability": raw, "observed_at": at] as [String: Any]]
+            }
+            let card = try XCTUnwrap(series(deck(markets: nil, related: related)))
+            let option = try XCTUnwrap(card.questions.first { $0.questionKey == "m:62898790" }?.options.first)
+            return option.original
+        }
+        let dated = "2026-09-30T20:15:00+00:00"
+        let quoted = try details(raw: 0.42, at: dated)
+        let stamp = try XCTUnwrap(SourceAge.preciseStamp(dated))
+        XCTAssertEqual(value("Last recorded · Kalshi", in: quoted), ["\(formatProbability(0.42)) · \(stamp)"],
+                       "the rule is not \"print nothing\"")
+        XCTAssertFalse(hasRecordedQuote(try details(raw: 0.42, at: dated, state: "result")), "only beside a quote")
+        XCTAssertFalse(hasRecordedQuote(try details(raw: 1.0, at: dated)), "an exact 1 is a settlement value")
+        XCTAssertFalse(hasRecordedQuote(try details(raw: 0.0, at: dated)), "an exact 0 is a settlement value")
+        XCTAssertFalse(hasRecordedQuote(try details(raw: 0.42, at: NSNull())), "an undated leg is not printed")
+    }
+
+    // MARK: - R2: Pending is only ungraded
+
+    func testR2AlvarezsServedLossIsNotConfirmedNotPending() throws {
+        // Non-vacuous: Alvarez's 1+ carries the venue's api_settlement false.
+        let after = try XCTUnwrap(object(Self.capturedMarkets)["after_player_props"] as? [String: Any])
+        let question = try XCTUnwrap((after["questions"] as? [[String: Any]])?.first {
+            $0["question_key"] as? String == "s:yordan alvarez|home_runs|full_game|ge:1|over" })
+        let grade = try XCTUnwrap(question["venue_grade"] as? [String: Any])
+        XCTAssertEqual(grade["is_winner"] as? Bool, false)
+        XCTAssertEqual(grade["resolution_source"] as? String, "api_settlement")
+        let card = try XCTUnwrap(homeRuns(captured()))
+        for entry in card.entries {
+            XCTAssertEqual(value("Venue settlement", in: entry.original), ["Not confirmed"], entry.player)
+        }
+    }
+
+    func testR2AnUnknownOrVoidProducerTotalIsNotPending() throws {
+        func line(_ result: Any) throws -> MLBTotalsCard11284.Line {
+            let body = try editingOption(object(Self.capturedMarkets), matrix: "game_question_matrix",
+                                         question: "q:count|runs|game|full_game|ge:10",
+                                         option: try overKey()) { $0["result"] = result }
+            let card = try XCTUnwrap(totals(deck(markets: body, related: nil)))
+            return try XCTUnwrap(card.lines.first { $0.line == 9.5 })
+        }
+        // CONSTRUCTED: the 9.5 line's producer result edited.
+        for state in ["unknown", "void"] {
+            let unknown = try line(["state": state, "evidence_kind": "none"] as [String: Any])
+            XCTAssertEqual(unknown.venueResult, .notConfirmed, state)
+            XCTAssertEqual(value("Venue result", in: unknown.original), ["Not confirmed"], state)
+        }
+        XCTAssertEqual(try line(["state": "open", "evidence_kind": "none"]).venueResult, .open)
+        XCTAssertEqual(try line(NSNull()).venueResult, .pending, "no producer verdict is ungraded")
+        XCTAssertEqual(try line(["state": "won", "evidence_kind": "settled_grade_fields"]).venueResult, .won)
+    }
+
+    func testR2UngradedBrownRowsStayPending() throws {
+        let card = try XCTUnwrap(strikeouts(captured()))
+        for target in card.targets {
+            XCTAssertEqual(Set(value("Venue result", in: target.original)), ["Pending"], "\(target.milestone)+")
+        }
+    }
+
+    func testR2AServedRowGradeIsWonPendingOrNotConfirmedNeverLost() {
+        typealias R = MLBVenueResult11284
+        XCTAssertEqual(R.venue(isWinner: nil, resolutionSource: nil), .pending)
+        XCTAssertEqual(R.venue(isWinner: true, resolutionSource: "api_settlement"), .won)
+        XCTAssertEqual(R.venue(isWinner: false, resolutionSource: "api_settlement"), .notConfirmed)
+        XCTAssertEqual(R.venue(isWinner: true, resolutionSource: nil), .notConfirmed, "no source: unprovable")
+        XCTAssertEqual(R.venue(isWinner: nil, resolutionSource: "api_settlement"), .notConfirmed)
+        XCTAssertEqual(R.venue(isWinner: true, resolutionSource: "ungradeable_result"), .notConfirmed)
+        XCTAssertEqual(R.venue(isWinner: true, resolutionSource: "polymarket_inferred"), .notConfirmed)
+        XCTAssertEqual(R.notConfirmed.label, "Not confirmed")
+    }
+
+    /// The 9.5 line's Over option key in the capture.
+    private func overKey() throws -> String {
+        let grid = try XCTUnwrap(object(Self.capturedMarkets)["game_question_matrix"] as? [String: Any])
+        let question = try XCTUnwrap((grid["questions"] as? [[String: Any]])?.first {
+            $0["question_key"] as? String == "q:count|runs|game|full_game|ge:10" })
+        let options = try XCTUnwrap(question["options"] as? [[String: Any]])
+        return try XCTUnwrap(options.first { $0["side"] as? String == "over" }?["option_key"] as? String)
     }
 
     // MARK: - The existing 10237 route fixture

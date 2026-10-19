@@ -20,7 +20,10 @@ import Foundation
 /// - a venue's settlement is the venue's (`OutcomeVerdict`, the producer's
 ///   `result.state`) and stays apart from any sporting comparison;
 /// - no in-game prop history is delivered, so a recorded in-game probability
-///   is "Not captured", never borrowed from a neighbour or interpolated.
+///   is "Not captured", never borrowed from a neighbour or interpolated;
+/// - a quote the catalog withholds after the final (`QuestionCatalog9483
+///   .reading` → `.settled`) is withheld in Details too, and an exact 0 or 1
+///   or an undated value never prints as a chance.
 ///
 /// A slot with no associated original deals no card; a slot whose comparison
 /// cannot be built keeps its card with the unavailable parts said, and every
@@ -51,6 +54,48 @@ enum MLBStoryFamily11284: String, CaseIterable {
 
 // MARK: - Exact originals
 
+/// A venue's settlement of one original, in words that claim no more than the
+/// payload proves. Pending is only a row nothing has graded; a grade this page
+/// cannot prove — a served loss on a market it cannot see resolved, a producer
+/// `unknown` or `void`, a retraction — is Not confirmed, never Lost.
+enum MLBVenueResult11284: Hashable {
+    case won, lost, open, pending, notConfirmed
+
+    var label: String {
+        switch self {
+        case .won: return "Won"
+        case .lost: return "Lost"
+        case .open: return "Open"
+        case .pending: return "Pending"
+        case .notConfirmed: return "Not confirmed"
+        }
+    }
+
+    /// A served row's own grade. The market's status is not served beside
+    /// the row, so `OutcomeVerdict` is asked as for an open market: only a
+    /// venue's authoritative WON crosses it (#6082), and a served false — the
+    /// column's default — cannot be told from no grade. So there is no Lost
+    /// here: a row with any grade that is not a provable win is Not confirmed.
+    static func venue(isWinner: Bool?, resolutionSource: String?) -> Self {
+        if isWinner == nil && resolutionSource == nil { return .pending }
+        return OutcomeVerdict.verdict(isWinner: isWinner, resolutionSource: resolutionSource,
+                                      marketResolved: false) == .won ? .won : .notConfirmed
+    }
+
+    /// The producer's verdict for a typed option (`result.state`): won, lost
+    /// and open verbatim, no result ungraded, and `unknown`, `void` or any
+    /// unread state Not confirmed.
+    static func producer(_ result: QuestionMatrixResult?) -> Self {
+        switch result?.state {
+        case nil: return .pending
+        case "won"?: return .won
+        case "lost"?: return .lost
+        case "open"?: return .open
+        default: return .notConfirmed
+        }
+    }
+}
+
 /// The exact original behind a story's line, frozen inside the card so its
 /// Details show what was on screen until Refresh. Every value is named for
 /// what it is — saved chance, last recorded quote, final count, venue
@@ -70,28 +115,6 @@ struct MLBOriginal11284: Equatable, Identifiable {
     let title: String
     let sections: [Section]
 
-    /// The venue's own settlement of a served row: only a venue's
-    /// authoritative WON crosses an unresolved market (`OutcomeVerdict`), so a
-    /// row the venue has not graded reads pending — never a sporting result.
-    static func venueResult(isWinner: Bool?, resolutionSource: String?) -> String {
-        switch OutcomeVerdict.verdict(isWinner: isWinner, resolutionSource: resolutionSource,
-                                      marketResolved: false) {
-        case .won?: return "Won"
-        case .lost?: return "Lost"
-        case nil: return "Pending"
-        }
-    }
-
-    /// The producer's verdict for a typed option, verbatim.
-    static func producerResult(_ result: QuestionMatrixResult?) -> String {
-        switch result?.state {
-        case "won"?: return "Won"
-        case "lost"?: return "Lost"
-        case "open"?: return "Open"
-        default: return "Pending"
-        }
-    }
-
     static func stamp(_ iso: String?) -> String {
         SourceAge.preciseStamp(iso) ?? "time unavailable"
     }
@@ -101,15 +124,31 @@ struct MLBOriginal11284: Equatable, Identifiable {
         return value
     }
 
+    /// A chance strictly between 0 and 1: an exact 0 or 1 is a settlement
+    /// value, not a chance (`NBALadderCard9483.pin`).
+    static func openChance(_ value: Double?) -> Double? {
+        guard let value = chance(value), value > 0, value < 1 else { return nil }
+        return value
+    }
+
+    /// A recorded value Details may print: an open chance with a time the
+    /// reader can read. Undated, terminal or unreadable values print nothing.
+    static func recorded(_ value: Double?, at iso: String?) -> String? {
+        guard let value = openChance(value), let stamp = SourceAge.preciseStamp(iso) else { return nil }
+        return "\(formatProbability(value)) · \(stamp)"
+    }
+
     static func idList(_ ids: [Int]?) -> String? {
         guard let ids, !ids.isEmpty else { return nil }
         return ids.map(String.init).joined(separator: ", ")
     }
 
-    /// A served prop row: its own side, line, venue, the pregame mark and last
-    /// recorded quote on the Over axis they are served on, the venue's result
-    /// and its identities. A legacy `actual`/`hit` is not printed: it is not
-    /// an official final.
+    /// A served prop row: its own side, line, venue, the pregame mark on the
+    /// Over axis it is served on, the venue's result and its identities. A
+    /// legacy `actual`/`hit` is not printed: it is not an official final. Nor
+    /// is the row's last quote: this page exists only after the final, where
+    /// the catalog withholds it (`QuestionCatalog9483.reading` → `.settled`),
+    /// and here it is an after-final refresh, not an in-game observation.
     static func propFields(_ prop: GameMarketPlayerProp) -> [Field] {
         var fields = [Field(label: "Original side", value: prop.outcomeName)]
         if let threshold = prop.threshold, threshold.isFinite {
@@ -119,13 +158,10 @@ struct MLBOriginal11284: Equatable, Identifiable {
             fields.append(Field(label: "Venue", value: venue))
         }
         fields.append(Field(label: "Pregame mark · Over",
-                            value: chance(prop.pregameMark).map { formatProbability($0) } ?? "Unavailable"))
-        if let quote = chance(prop.overProbability) {
-            fields.append(Field(label: "Last recorded · Over",
-                                value: "\(formatProbability(quote)) · \(stamp(prop.observedAt))"))
-        }
+                            value: openChance(prop.pregameMark).map { formatProbability($0) } ?? "Unavailable"))
         fields.append(Field(label: "Venue result",
-                            value: venueResult(isWinner: prop.isWinner, resolutionSource: prop.resolutionSource)))
+                            value: MLBVenueResult11284.venue(isWinner: prop.isWinner,
+                                                             resolutionSource: prop.resolutionSource).label))
         if let market = prop._marketId { fields.append(Field(label: "Market", value: String(market))) }
         if let outcomes = idList(prop.contributorOutcomeIds) {
             fields.append(Field(label: "Outcome", value: outcomes))
@@ -133,7 +169,10 @@ struct MLBOriginal11284: Equatable, Identifiable {
         return fields
     }
 
-    /// A typed option of the game or series matrix (10238.v1).
+    /// A typed option of the game or series matrix (10238.v1). A source's raw
+    /// leg prints only beside a `quoted` published value — never as the quote
+    /// of a settled option (`QuestionMatrixSourceEvidence`) — and only when it
+    /// is dated and not terminal.
     static func option(_ question: QuestionMatrixQuestion, _ option: QuestionMatrixOption,
                        pin: (probability: Double, at: String)?, eventID: Int) -> MLBOriginal11284 {
         var fields = [Field(label: "Original side", value: option.label.isEmpty ? question.label : option.label)]
@@ -142,13 +181,12 @@ struct MLBOriginal11284: Equatable, Identifiable {
         }
         fields.append(Field(label: "Pregame chance",
                             value: pin.map { "\(formatProbability($0.probability)) · \(stamp($0.at))" } ?? "Unavailable"))
-        for evidence in option.sourceEvidence ?? [] {
-            guard let raw = chance(evidence.rawProbability) else { continue }
+        for evidence in option.published.quotedValue == nil ? [] : option.sourceEvidence ?? [] {
+            guard let value = recorded(evidence.rawProbability, at: evidence.observedAt) else { continue }
             let venue = SourceLabels.label(for: evidence.source) ?? "Venue"
-            fields.append(Field(label: "Last recorded · \(venue)",
-                                value: "\(formatProbability(raw)) · \(stamp(evidence.observedAt))"))
+            fields.append(Field(label: "Last recorded · \(venue)", value: value))
         }
-        fields.append(Field(label: "Venue result", value: producerResult(option.result)))
+        fields.append(Field(label: "Venue result", value: MLBVenueResult11284.producer(option.result).label))
         if let markets = idList(option.marketIds) { fields.append(Field(label: "Market", value: markets)) }
         if let outcomes = idList(option.contributorOutcomeIds) {
             fields.append(Field(label: "Outcome", value: outcomes))
@@ -161,18 +199,17 @@ struct MLBOriginal11284: Equatable, Identifiable {
                            label: "Note", value: "Recorded values are history, not a current chance.")])])
     }
 
-    /// A served `other` row.
+    /// A served `other` row. Its last quote is withheld after the final, as
+    /// the catalog withholds it.
     static func other(_ row: GameMarketOther, eventID: Int) -> MLBOriginal11284 {
         var fields = [Field(label: "Original side", value: row.outcomeName)]
         if let venue = SourceLabels.label(for: row.source) {
             fields.append(Field(label: "Venue", value: venue))
         }
         fields.append(Field(label: "Pregame chance", value: "Unavailable"))
-        if let quote = chance(row.probability) {
-            fields.append(Field(label: "Last recorded", value: "\(formatProbability(quote)) · \(stamp(row.observedAt))"))
-        }
         fields.append(Field(label: "Venue result",
-                            value: venueResult(isWinner: row.isWinner, resolutionSource: row.resolutionSource)))
+                            value: MLBVenueResult11284.venue(isWinner: row.isWinner,
+                                                             resolutionSource: row.resolutionSource).label))
         if let market = row._marketId { fields.append(Field(label: "Market", value: String(market))) }
         if let outcomes = idList(row.contributorOutcomeIds) {
             fields.append(Field(label: "Outcome", value: outcomes))
@@ -375,9 +412,9 @@ struct MLBHomeRunCard11284: Equatable {
         }
         for contributor in question.expectation.contributors {
             let venue = SourceLabels.label(for: contributor.source) ?? "Venue"
-            let value = MLBOriginal11284.chance(contributor.probability).map { formatProbability($0) } ?? "Unavailable"
             saved.append(Field(label: "\(venue) · \(contributor.outcomeName ?? "outcome")",
-                               value: "\(value) · \(MLBOriginal11284.stamp(contributor.observedAt))"))
+                               value: MLBOriginal11284.recorded(contributor.probability, at: contributor.observedAt)
+                                   ?? "Unavailable"))
         }
         let finalValue: String
         if let count = actual?.finalCount {
@@ -397,8 +434,8 @@ struct MLBHomeRunCard11284: Equatable {
         }
         result.append(Field(label: "Against \(question.predicate.label)", value: comparison))
         result.append(Field(label: "Venue settlement",
-                            value: MLBOriginal11284.venueResult(isWinner: question.venueGrade?.isWinner,
-                                                                resolutionSource: question.venueGrade?.resolutionSource)))
+                            value: MLBVenueResult11284.venue(isWinner: question.venueGrade?.isWinner,
+                                                             resolutionSource: question.venueGrade?.resolutionSource).label))
         var ids: [Field] = []
         if let markets = MLBOriginal11284.idList(question._marketIds) { ids.append(Field(label: "Market", value: markets)) }
         if let outcomes = MLBOriginal11284.idList(question.contributorOutcomeIds) {
@@ -591,8 +628,9 @@ struct MLBTotalsCard11284: Equatable {
         let label: String
         /// The producer's admitted pregame pin, or nil.
         let pregame: Double?
-        /// The producer's verdict (`result.state`), or nil.
-        let venueResult: Bool?
+        /// The producer's verdict (`result.state`), its unknown kept apart
+        /// from open.
+        let venueResult: MLBVenueResult11284
         let original: MLBOriginal11284
         var id: String { optionKey }
     }
@@ -637,7 +675,7 @@ struct MLBTotalsCard11284: Equatable {
             let pin = NBALadderCard9483.pin(option)
             lines.append(Line(optionKey: option.optionKey, line: line,
                               label: "Over \(NBALadderCard9483.number(line)) runs",
-                              pregame: pin?.probability, venueResult: option.result?.isWinner,
+                              pregame: pin?.probability, venueResult: .producer(option.result),
                               original: MLBOriginal11284.option(question, option, pin: pin, eventID: eventID)))
         }
         var counts: [Double: Int] = [:]
@@ -656,8 +694,8 @@ struct MLBExtraInningsCard11284: Equatable {
     struct Outcome: Equatable, Identifiable {
         let label: String
         let venue: String?
-        /// The venue's own settlement (`OutcomeVerdict`), or nil.
-        let venueResult: OutcomeVerdict?
+        /// The venue's own settlement of the row.
+        let venueResult: MLBVenueResult11284
         let original: MLBOriginal11284
         var id: String { original.id }
     }
@@ -678,9 +716,7 @@ struct MLBExtraInningsCard11284: Equatable {
     static func build(_ rows: [GameMarketOther], eventID: Int) -> MLBExtraInningsCard11284? {
         let outcomes = rows.filter { isExtraInnings($0) }.map { row in
             Outcome(label: row.outcomeName, venue: SourceLabels.label(for: row.source),
-                    venueResult: OutcomeVerdict.verdict(isWinner: row.isWinner,
-                                                        resolutionSource: row.resolutionSource,
-                                                        marketResolved: false),
+                    venueResult: .venue(isWinner: row.isWinner, resolutionSource: row.resolutionSource),
                     original: MLBOriginal11284.other(row, eventID: eventID))
         }
         return outcomes.isEmpty ? nil : MLBExtraInningsCard11284(eventID: eventID, outcomes: outcomes)
@@ -698,7 +734,7 @@ struct MLBSeriesCard11284: Equatable {
         let label: String
         /// The producer's admitted pregame pin, or nil.
         let pregame: Double?
-        let result: String
+        let result: MLBVenueResult11284
         let original: MLBOriginal11284
         var id: String { optionKey }
     }
@@ -727,7 +763,7 @@ struct MLBSeriesCard11284: Equatable {
                 return Option(optionKey: option.optionKey,
                               label: option.label.isEmpty ? question.label : option.label,
                               pregame: pin?.probability,
-                              result: MLBOriginal11284.producerResult(option.result),
+                              result: .producer(option.result),
                               original: MLBOriginal11284.option(question, option, pin: pin, eventID: eventID))
             }
             return Question(questionKey: question.questionKey, label: question.label, options: options)

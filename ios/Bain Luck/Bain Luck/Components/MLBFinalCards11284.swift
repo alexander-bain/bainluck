@@ -413,9 +413,9 @@ struct MLBTotalsCardView11284: View {
             }
             chart(selected: selected)
             HStack(spacing: 12) {
-                Label("Won", systemImage: "checkmark")
-                Label("Lost", systemImage: "xmark")
-                Label("Pending", systemImage: "questionmark")
+                ForEach(legend, id: \.self) { result in
+                    Label(result.label, systemImage: Self.glyph(result))
+                }
                 Spacer(minLength: 0)
             }
             .font(.caption2)
@@ -450,8 +450,20 @@ struct MLBTotalsCardView11284: View {
         state.selectMLB(card.lines[current + delta].optionKey, slot: slot)
     }
 
-    private static func resultWord(_ result: Bool?) -> String {
-        result.map { $0 ? "Won" : "Lost" } ?? "Pending"
+    /// The results this card's lines carry, in a fixed order.
+    private var legend: [MLBVenueResult11284] {
+        [.won, .lost, .open, .pending, .notConfirmed].filter { result in
+            card.lines.contains { $0.venueResult == result }
+        }
+    }
+
+    private static func glyph(_ result: MLBVenueResult11284) -> String {
+        switch result {
+        case .won: return "checkmark"
+        case .lost: return "xmark"
+        case .open, .pending: return "questionmark"
+        case .notConfirmed: return "minus"
+        }
     }
 
     private func readout(_ line: MLBTotalsCard11284.Line?) -> some View {
@@ -462,7 +474,7 @@ struct MLBTotalsCardView11284: View {
                 if let comparison = card.comparison(line) {
                     Text(comparison).font(.caption2).foregroundStyle(.secondary)
                 }
-                Text("Venue result: \(Self.resultWord(line.venueResult))"
+                Text("Venue result: \(line.venueResult.label)"
                      + (line.pregame.map { " · pregame \(formatProbability($0))" } ?? "")
                      + (expanded ? " · details" : ""))
                     .font(.caption2)
@@ -489,14 +501,13 @@ struct MLBTotalsCardView11284: View {
                 PointMark(x: .value("Line", line.line), y: .value("Row", 0.0))
                     .symbol {
                         RoundedRectangle(cornerRadius: 2)
-                            .fill(line.venueResult == true ? color : Color.secondary.opacity(0.1))
+                            .fill(line.venueResult == .won ? color : Color.secondary.opacity(0.1))
                             .overlay(RoundedRectangle(cornerRadius: 2)
                                 .stroke(isSelected ? Color.primary : Color.secondary.opacity(0.35),
                                         lineWidth: isSelected ? 2 : 1))
-                            .overlay(Image(systemName: line.venueResult == true ? "checkmark"
-                                           : line.venueResult == false ? "xmark" : "questionmark")
+                            .overlay(Image(systemName: Self.glyph(line.venueResult))
                                 .font(.system(size: 7, weight: .bold))
-                                .foregroundStyle(line.venueResult == true ? Color.white : Color.secondary))
+                                .foregroundStyle(line.venueResult == .won ? Color.white : Color.secondary))
                             .frame(width: 10, height: 26)
                     }
             }
@@ -524,11 +535,11 @@ struct MLBTotalsCardView11284: View {
     }
 
     private var spokenChart: String {
-        let won = card.lines.filter { $0.venueResult == true }.count
-        let lost = card.lines.filter { $0.venueResult == false }.count
-        let pending = card.lines.count - won - lost
+        let counts = legend.map { result in
+            "\(card.lines.filter { $0.venueResult == result }.count) \(result.label.lowercased())"
+        }
         let actual = card.actualTotal.map { "Actual final \($0) runs. " } ?? "Actual final unavailable. "
-        return actual + "\(card.lines.count) run lines: venue results \(won) won, \(lost) lost, \(pending) pending. "
+        return actual + "\(card.lines.count) run lines: venue results \(counts.joined(separator: ", ")). "
             + "These are results, not chances."
     }
 }
@@ -565,9 +576,9 @@ struct MLBExtraInningsCardView11284: View {
                 }
             }
             Spacer(minLength: 8)
-            Text("Venue result: \(outcome.venueResult?.label ?? "Pending")")
+            Text("Venue result: \(outcome.venueResult.label)")
                 .font(.subheadline.weight(.semibold))
-                .foregroundStyle(outcome.venueResult == nil ? Color.secondary : Color.primary)
+                .foregroundStyle(outcome.venueResult == .won ? Color.primary : Color.secondary)
             if expanded {
                 Image(systemName: "chevron.right").font(.caption).foregroundStyle(.secondary)
             }
@@ -656,13 +667,13 @@ struct MLBSeriesCardView11284: View {
                 MLBFigure11284(label: "Chance before this game",
                                value: option.pregame.map { formatProbability($0) } ?? "Unavailable",
                                color: option.pregame == nil ? Color.secondary : color)
-                Text("Venue result: \(option.result)")
+                Text("Venue result: \(option.result.label)")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
             .padding(10)
             .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
-            .background(option.result == "Won" ? color.opacity(0.07) : Color.secondary.opacity(0.04),
+            .background(option.result == .won ? color.opacity(0.07) : Color.secondary.opacity(0.04),
                         in: RoundedRectangle(cornerRadius: 10))
             .overlay(RoundedRectangle(cornerRadius: 10)
                 .stroke(selected ? color : Color.secondary.opacity(0.2), lineWidth: selected ? 1.5 : 1))
@@ -670,7 +681,7 @@ struct MLBSeriesCardView11284: View {
         .buttonStyle(.plain)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("\(option.label). Chance before this game "
-            + "\(option.pregame.map { formatProbability($0) } ?? "unavailable"). Venue result \(option.result).")
+            + "\(option.pregame.map { formatProbability($0) } ?? "unavailable"). Venue result \(option.result.label).")
         .accessibilityAddTraits(selected ? .isSelected : [])
     }
 }
