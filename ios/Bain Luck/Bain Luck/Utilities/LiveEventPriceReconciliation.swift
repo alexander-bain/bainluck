@@ -114,6 +114,54 @@ nonisolated enum LiveEventPriceReconciliation {
         return true
     }
 
+    /// #10090 — the floor's detail half by its second proof (source snapshot):
+    /// the page holds, right now, the committed singleton rail a snapshot put
+    /// on it (`snapshotRail`, that snapshot's revision), and it covers the
+    /// floor. Any later write that moves the page's revision — a legacy raw
+    /// frame, a newer read — breaks the equality, so a remembered snapshot
+    /// proves nothing. It proves the rail only: the history half is the same
+    /// pinned covering edge `reconcileFloorShown` requires, never the map.
+    static func reconcileFloorShownBySnapshotRail(
+        _ floor: FoldRevision, snapshotRail: FoldRevision?, servedHistory: EventHistoryResponse, page: EventDetail?
+    ) -> Bool {
+        guard let page, let snapshotRail, servedHistory.eventId == page.id,
+              snapshotRail.covers(floor), pairedFoldRevision(in: page) == snapshotRail,
+              servedHistory.blendEdgePinned == true,
+              let edge = servedHistory.blendEdgeFoldRevision?.revision, edge.covers(floor) else { return false }
+        return true
+    }
+
+    /// #10090 — what a raw singleton frame's committed `source_snapshot` may
+    /// do on this page (NATIVE-SOURCE-SNAPSHOT-CONSUMER-CONTRACT §3–§4).
+    enum SourceSnapshotAdoption: Equatable {
+        /// A newer priced write with a real source: its `p` and this complete
+        /// rail replace the held ones together.
+        case adopt([String: WinProbSource])
+        /// A newer write whose map holds no real source (or whose `p` is not a
+        /// price): not a live blend. Nothing is shown; the rail is owed at
+        /// this revision through the existing priceless-write arm.
+        case unpriced(FoldRevision)
+        /// Not this path's: the legacy frame rules apply, byte for byte.
+        case legacy
+    }
+
+    /// Only on a page holding a live ONE-ROW blend, for a strictly newer write
+    /// to that row, in a priced phase. A folded hero never takes a raw row's
+    /// map (its rail is the fold's), a `folded_probability` result carries
+    /// none, an equal/older/replayed write adopts nothing, and a frame that
+    /// ends the game keeps the legacy path (`awaitingServedFinal`).
+    static func sourceSnapshotAdoption(_ frame: LiveStreamFrame, held: EventDetail) -> SourceSnapshotAdoption {
+        guard !frame.foldedResult, frame.eventId == held.id, let snapshot = frame.validSourceSnapshot,
+              let heldRevision = pairedFoldRevision(in: held), heldRevision.rows.count == 1,
+              FoldRevision.frameOrder(held: heldRevision, frame: snapshot.revision) == .newer,
+              frame.status.map(EventPriceStreaming.isEligible) ?? true else { return .legacy }
+        let priced = frame.p.map { $0.isFinite && (0...1).contains($0) } ?? false
+        let blended = snapshot.sources.keys.contains {
+            $0 != "final_result" && WinProbSourceCatalog.realSourceKeys.contains($0)
+        }
+        return priced && blended ? .adopt(snapshot.sources) : .unpriced(snapshot.revision)
+    }
+
     /// #10090 — what a held folded blend does with a frame that speaks for the
     /// server's FULL fold (or promises to). Web's `adoptFoldedQuote`.
     enum FoldedQuoteDecision: Equatable {

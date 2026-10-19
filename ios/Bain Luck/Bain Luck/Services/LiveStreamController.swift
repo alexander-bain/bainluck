@@ -147,6 +147,11 @@ nonisolated struct LiveStreamFrame: Decodable, Sendable, Equatable {
     /// carries. `nil` for explicit null, for a malformed quote, and on every
     /// raw frame; `foldedResult` tells those apart.
     let foldedQuote: ServedFoldedQuote?
+    /// #10090 — the committed source map this row's write was published with
+    /// (Live #11264), as it arrived: `nil` when absent, `.snapshot == nil` when
+    /// refused. Both behave exactly as a legacy frame. Read it through
+    /// `validSourceSnapshot`, which also checks it against this frame.
+    let sourceSnapshot: ServedSourceSnapshot?
     /// #10090 — set by the controller, never decoded: this frame arrived as the
     /// named `folded_probability` event, the answer to a pending raw frame.
     var foldedResult = false
@@ -154,7 +159,7 @@ nonisolated struct LiveStreamFrame: Decodable, Sendable, Equatable {
     init(eventId: Int, p: Double?, source: String?, sourceValue: Double?,
          updatedAt: String?, status: String?, rev: ServedFoldRevision? = nil,
          foldedQuotePending: Bool? = nil, foldedQuote: ServedFoldedQuote? = nil,
-         foldedResult: Bool = false) {
+         sourceSnapshot: ServedSourceSnapshot? = nil, foldedResult: Bool = false) {
         self.eventId = eventId
         self.p = p
         self.source = source
@@ -164,11 +169,106 @@ nonisolated struct LiveStreamFrame: Decodable, Sendable, Equatable {
         self.rev = rev
         self.foldedQuotePending = foldedQuotePending
         self.foldedQuote = foldedQuote
+        self.sourceSnapshot = sourceSnapshot
         self.foldedResult = foldedResult
     }
 
     private enum CodingKeys: String, CodingKey {
-        case eventId, p, source, sourceValue, updatedAt, status, rev, foldedQuotePending, foldedQuote
+        case eventId, p, source, sourceValue, updatedAt, status, rev, foldedQuotePending, foldedQuote,
+             sourceSnapshot
+    }
+
+    /// The snapshot, only if it speaks for exactly this frame's write: the same
+    /// event, and the frame's own one-row revision keyed by that event. A frame
+    /// with no valid revision has no valid snapshot.
+    var validSourceSnapshot: SourceSnapshot? {
+        guard let snapshot = sourceSnapshot?.snapshot, snapshot.eventId == eventId,
+              let revision = rev?.revision, revision.rows.count == 1, revision.rows[String(eventId)] != nil,
+              snapshot.revision == revision else { return nil }
+        return snapshot
+    }
+
+    /// The controller's decode: the raw payload size rides in `userInfo`, so a
+    /// snapshot inside an oversized frame is refused before its map is read.
+    static func decode(_ raw: String) -> LiveStreamFrame? {
+        guard let data = raw.data(using: .utf8) else { return nil }
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
+        decoder.userInfo[SourceSnapshot.frameBytesKey] = data.count
+        return try? decoder.decode(LiveStreamFrame.self, from: data)
+    }
+}
+
+/// #10090 — a singleton row's complete committed source map, published beside
+/// the price it produced (Live #11264, `live_push.build_source_snapshot`). It
+/// has no price and no clock of its own: the frame's `p`, `updated_at` and
+/// `rev` are those. `{}` is a complete empty map.
+///
+/// The limits below are THIS CLIENT'S refusal bounds, not the producer's: a
+/// snapshot past them is refused (read as absent), which costs only the
+/// existing paired read.
+nonisolated struct SourceSnapshot: Decodable, Sendable, Equatable {
+    static let maxFrameBytes = 16 * 1024
+    static let maxEntries = 32
+    static let maxKeyBytes = 64
+    static let frameBytesKey = CodingUserInfoKey(rawValue: "bainluck.liveStreamFrameBytes")!
+
+    let eventId: Int
+    let revision: FoldRevision
+    let sources: [String: WinProbSource]
+
+    init(eventId: Int, revision: FoldRevision, sources: [String: WinProbSource]) {
+        self.eventId = eventId
+        self.revision = revision
+        self.sources = sources
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case eventId, rev, winProbabilitySources
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        eventId = try c.decode(Int.self, forKey: .eventId)
+        let rows = try c.decode([String: Int].self, forKey: .rev)
+        let sources = try c.decode([String: WinProbSource].self, forKey: .winProbabilitySources)
+        // Same value refusals as `FoldedQuote`: a map that cannot be printed
+        // exactly as served is refused whole, never half-adopted. Unknown
+        // sibling keys inside an entry (`price_evidence`, …) are not read.
+        guard rows.count == 1, let revision = FoldRevision(rows),
+              sources.count <= Self.maxEntries,
+              sources.allSatisfy({ key, source in
+                  guard (1...Self.maxKeyBytes).contains(key.utf8.count),
+                        let value = source.value?.doubleValue, value.isFinite,
+                        source.updatedAt.map({ $0.asDate != nil }) ?? true else { return false }
+                  return WinProbSourceCatalog.realSourceKeys.contains(key) ? (0...1).contains(value) : value >= 0
+              }) else {
+            throw DecodingError.dataCorrupted(.init(codingPath: decoder.codingPath,
+                                                    debugDescription: "unprintable source snapshot"))
+        }
+        self.revision = revision
+        self.sources = sources
+    }
+}
+
+/// The snapshot as it arrived. NEVER THROWS, like `ServedFoldedQuote`: a bad
+/// snapshot degrades to "no snapshot" — the legacy frame — and never drops the
+/// price around it. A frame decoded without its size (not the controller's
+/// decode) refuses it too.
+nonisolated struct ServedSourceSnapshot: Decodable, Sendable, Equatable {
+    let snapshot: SourceSnapshot?
+
+    init(_ snapshot: SourceSnapshot?) {
+        self.snapshot = snapshot
+    }
+
+    init(from decoder: Decoder) throws {
+        guard let bytes = decoder.userInfo[SourceSnapshot.frameBytesKey] as? Int,
+              bytes <= SourceSnapshot.maxFrameBytes else {
+            snapshot = nil
+            return
+        }
+        snapshot = try? decoder.singleValueContainer().decode(SourceSnapshot.self)
     }
 }
 
@@ -600,14 +700,11 @@ final class LiveStreamController {
             { [weak self, weak next] raw in
                 guard let self, let next, !self.stopped, self.handle === next else { return }
                 self.lastMessageAt = self.now()
-                guard let data = raw.data(using: .utf8) else { return }
-                let decoder = JSONDecoder()
-                decoder.keyDecodingStrategy = .convertFromSnakeCase
                 // One bad frame is not a reason to abandon the stream. A decode
                 // failure also GUARDS THE SHAPE: a malformed frame that dropped
                 // `event_id` would otherwise be handed on and could blank a working
                 // hero.
-                guard var frame = try? decoder.decode(LiveStreamFrame.self, from: data) else { return }
+                guard var frame = LiveStreamFrame.decode(raw) else { return }
                 frame.foldedResult = foldedResult
                 LiveTimingSeam.frameReceived(frame)
                 // TRANSPORT clock only (above), exactly like a heartbeat. Decoding a

@@ -168,6 +168,11 @@ final class EventDetailViewModel: ObservableObject {
     /// quote, control or tap. Capped at the last step, never given up.
     static let reconcileRetryDelays: [TimeInterval] = [1.5, 3, 6, 12, 24]
     var reconcileMemory: (owed: Int, settled: Int) { (reconcileOwedCustody.count, reconcileSettled.count) }
+    /// #10090 — the revision at which a source snapshot last replaced this
+    /// page's whole singleton rail. Proof of the reconcile floor's detail half
+    /// only while the page still holds exactly that revision (checked where
+    /// the floor is evaluated); one vector, never a remembered "once shown".
+    private var snapshotRailAt: FoldRevision?
 
     /// #10643 — `frame`, carrying the row-wise highest revision it and `held`
     /// named, so a delayed or other-row arrival never erases a newer
@@ -952,6 +957,8 @@ final class EventDetailViewModel: ObservableObject {
             if let floor = reconcileFloor {
                 if LiveEventPriceReconciliation.reconcileFloorShown(
                     floor, served: fetched, servedHistory: h, page: event
+                ) || LiveEventPriceReconciliation.reconcileFloorShownBySnapshotRail(
+                    floor, snapshotRail: snapshotRailAt, servedHistory: h, page: event
                 ) {
                     settleReconcile()
                 } else {
@@ -1156,6 +1163,7 @@ final class EventDetailViewModel: ObservableObject {
         visit += 1
         stopStream()
         retireReconcile()
+        snapshotRailAt = nil
     }
 
     // MARK: - Live push
@@ -1356,6 +1364,13 @@ final class EventDetailViewModel: ObservableObject {
             }
         }
 
+        // #10090 — a newer singleton write's committed source map (Live
+        // #11264). Absent or refused is the legacy frame, byte for byte.
+        let snapshot = LiveEventPriceReconciliation.sourceSnapshotAdoption(frame, held: current)
+        var unpricedSnapshot = false
+        if case .unpriced = snapshot { unpricedSnapshot = true }
+        var adoptedSnapshot: FoldRevision?
+
         let stamped = frame.updatedAt?.asDate
         // #9051: when the held blend carries its fold revision, commit order
         // decides, not a clock. A frame from before a source removal still folds
@@ -1383,11 +1398,13 @@ final class EventDetailViewModel: ObservableObject {
                 trailingProvenanceFrame = Self.trailingRequirement(adding: frame, to: trailingProvenanceFrame)
             }
         } else if let foldOrder {
-            priceIsNotNewer = foldOrder != .newer
+            // #10090 — an unpriced snapshot (no real source: the server's `p`
+            // is a fallback, not a blend) shows nothing, like a null `p`.
+            priceIsNotNewer = foldOrder != .newer || unpricedSnapshot
             if foldOrder == .incomparable {
                 streamRefetchGeneration = deliveryGeneration
                 requestRevisionRefetch()
-            } else if foldOrder == .newer, frame.p == nil, let revision = frame.rev?.revision {
+            } else if foldOrder == .newer, frame.p == nil || unpricedSnapshot, let revision = frame.rev?.revision {
                 // #11253 — a newer write with no price: the row's fold changed
                 // (a venue withdrew) and there is no value to show. It writes
                 // nothing and is not dated onto the held value; the existing
@@ -1426,6 +1443,15 @@ final class EventDetailViewModel: ObservableObject {
             odds.awayRenderedPercent = nil
             current.currentOdds = odds
             LiveEventPriceReconciliation.adoptFrameProvenance(frame, into: &current)
+            // #10090 — the write's committed map replaces the rail WHOLE, in
+            // this same turn as its price and revision: a withdrawn venue
+            // leaves with the price that no longer folds it. A pushed bar for a
+            // venue the map no longer lists is retired, never replayed.
+            if case .adopt(let sources) = snapshot, let revision = frame.rev?.revision {
+                current.winProbabilitySources = sources
+                latestSourceFrames = latestSourceFrames.filter { sources[$0.key] != nil }
+                adoptedSnapshot = revision
+            }
             // The hero now shows a NEWER pushed price — the only thing the
             // page's stream dot may claim (#8320). A clockless unversioned
             // frame still moves the hero (legacy display) but proves no newer
@@ -1479,6 +1505,12 @@ final class EventDetailViewModel: ObservableObject {
         }
 
         event = current
+        if let adoptedSnapshot {
+            snapshotRailAt = adoptedSnapshot
+            // #11253 — the withdrawal's rail is now on the page, by the same
+            // rule a pair meets: held == shown, not older than owed.
+            _ = clearOwedInvalidationIfShown(served: adoptedSnapshot)
+        }
         if acceptedNewPrice {
             LiveTimingSeam.modelHeadlineAdopted(current, path: "stream")
             recordPriceActivity(from: prior, to: current)
