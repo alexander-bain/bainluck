@@ -304,16 +304,18 @@ afterEach(() => {
 describe("structural pin: the harness carries the page's own wiring", () => {
   it("app/events/[id]/page.tsx still reads as the lines HeldPage mounts", () => {
     // The fetcher, with the held-event getter a REST read reconciles against.
-    expect(PAGE).toMatch(/fetchEventWithLiveFrame\(\s*\(\) => fetchEvent\(eventId, takeFreshRead\(freshNextEventReadRef\)\),\s*\(\) => latestLiveFrameRef\.current,\s*\(\) => latestBlendEdgeRef\.current,\s*\(\) => heldEventRef\.current,/);
+    expect(PAGE).toMatch(/fetchEventWithLiveFrame\(\s*\(\) => fetchEvent\(eventId, takeFreshRead\(freshNextEventReadRef\)\)\.then\(\(polled\) => \{\s*pairJournalRef\.current\?\.record\(\(held\) => keepNewerHeldHeadline\(polled, held\)\);\s*return polled;\s*\}\),\s*\(\) => latestLiveFrameRef\.current,\s*\(\) => latestBlendEdgeRef\.current,\s*\(\) => heldEventRef\.current,/);
     // The scheduler and its two branches.
-    expect(PAGE).toMatch(/createFoldedRefetchScheduler\(\s*\(\) => \{\s*if \(\(quoteTriggerRef\.current \|\| recoveryIntentRef\.current\) && pairedQuoteReadRef\.current\) return pairedQuoteReadRef\.current\(\);\s*freshNextEventReadRef\.current = true;\s*return refreshEventRef\.current\(\);\s*\}, FOLDED_FRAME_REFETCH_MS,/);
+    expect(PAGE).toMatch(/createFoldedRefetchScheduler\(\s*\(\) => \{\s*if \(\(quoteTriggerRef\.current \|\| recoveryIntentRef\.current \|\| reconcileLedger\.owed\(\)\) && pairedQuoteReadRef\.current\) return pairedQuoteReadRef\.current\(\);\s*freshNextEventReadRef\.current = true;\s*return refreshEventRef\.current\(\);\s*\}, FOLDED_FRAME_REFETCH_MS,/);
     // The hook, its status, and the fallback for a stream that reports only `connected`.
-    expect(PAGE).toMatch(/status: reportedStreamStatus,\s*recoveryGeneration,\s*\} = useLiveEventStream\(eventId, quoteEligible, applyPushedFrame\);/);
+    expect(PAGE).toMatch(/status: reportedStreamStatus,\s*recoveryGeneration,\s*\} = useLiveEventStream\(eventId, quoteEligible, applyPushedFrame, applyReconcileControl\);/);
     expect(PAGE).toMatch(/const streamStatus = reportedStreamStatus \?\? \(streamConnected \? "open" : "idle"\);/);
     // The push effect: refuse-and-refetch first, then the one guarded write.
     expect(PAGE).toMatch(/if \(held && canSubscribeEventQuotes\(held\) && \(\s*liveFrame\.p === null \|\| held\.hero_probability_source !== "blend" \|\|\s*\(liveFrame\.status && liveFrame\.status !== held\.status\) \|\|\s*\(held\.status !== "live" && frameInvalidatesFoldedBlend\(held, liveFrame\)\)\s*\)\) \{\s*quoteTriggerRef\.current = liveFrame;\s*foldedRefetch\.request\(\);\s*return;\s*\}/);
-    expect(PAGE).toMatch(/if \(liveFrame\.p === null \|\| liveFrame\.p === undefined\) return;\s*(?:\/\/[^\n]*\n\s*)*latestLiveFrameRef\.current = heldFrameAfter\(latestLiveFrameRef\.current, liveFrame\);\s*const frame = \{ \.\.\.liveFrame, p: liveFrame\.p \};\s*refreshEvent\(/);
-    expect(PAGE.match(/applyLiveFrame\(prev, frame\)/g)).toHaveLength(1);
+    expect(PAGE).toMatch(/if \(liveFrame\.p === null \|\| liveFrame\.p === undefined\) return;\s*(?:\/\/[^\n]*\n\s*)*latestLiveFrameRef\.current = heldFrameAfter\(latestLiveFrameRef\.current, liveFrame\);\s*const frame = \{ \.\.\.liveFrame, p: liveFrame\.p \};\s*pairJournalRef\.current\?\.record\(\(prev\) => applyLiveFrame\(prev, frame\)\);\s*refreshEvent\(/);
+    expect(PAGE.match(/\(prev\) => applyLiveFrame\(prev, frame\),/g)).toHaveLength(1);
+    // #10090 G1: plus its journal entry while a paired read is in flight — a replay, not a write.
+    expect(PAGE.match(/pairJournalRef\.current\?\.record\(\(prev\) => applyLiveFrame\(prev, frame\)\);/g)).toHaveLength(1);
     // The status wiring: the ACCEPTED clock, and one step per render from the held result.
     expect(PAGE).toMatch(/const acceptedPriceClock = event\.hero_probability_observed_at \?\? freshestSourceStamp;/);
     expect(PAGE).toMatch(/connectionTrackerRef\.current = stepConnectionTracker\(\s*connectionTrackerRef\.current,\s*\{\s*eventId,\s*status: streamStatus,\s*priceObservedAt: acceptedPriceClock,/);

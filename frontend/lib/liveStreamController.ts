@@ -46,6 +46,8 @@
  * one. No test in here branches on the wall clock (gotcha #44).
  */
 
+import { parseReconcileControl, type ReconcileControl } from "./reconcileControl";
+
 export interface LiveStreamFrame {
   event_id: number;
   p: number | null;
@@ -89,6 +91,8 @@ export interface LiveStreamDeps {
   onDeliveringChange: (delivering: boolean) => void;
   /** #10666: local monotonic recovery ordinal, never a quote revision. */
   onRecovery?: (ordinal: number) => void;
+  /** #10090: a validated `reconcile` control — an owed read, never a price. */
+  onReconcile?: (control: ReconcileControl) => void;
   /**
    * #10200 — what the TRANSPORT is doing, for the reader-facing status only.
    *
@@ -220,7 +224,7 @@ export interface LiveStreamController {
 export function createLiveStreamController(
   deps: LiveStreamDeps,
 ): LiveStreamController {
-  const { open, now, onFrame, onDeliveringChange, onStatusChange, onRecovery, schedule } = deps;
+  const { open, now, onFrame, onDeliveringChange, onStatusChange, onRecovery, onReconcile, schedule } = deps;
   const healthyRolloverDelay =
     deps.healthyRolloverDelay ??
     (() =>
@@ -398,6 +402,16 @@ export function createLiveStreamController(
       recoveryGeneration = generation;
       // Recovery signals delivery debt, never fresh data or a new quote clock.
       onRecovery?.(++recoveryNotifications);
+    });
+
+    // #10090: separate from `resync` — a named owed read with its own custody id
+    // and row-wise floor. Like `resync` it touches no clock, cursor or status,
+    // so a control can neither postpone the data-silence fallback nor pass for
+    // a price. Not deduped here: the page's ledger owns what is still owed.
+    next.addEventListener('reconcile', (event) => {
+      if (stopped || handle !== next) return;
+      const control = parseReconcileControl((event as { data?: unknown })?.data);
+      if (control) onReconcile?.(control);
     });
 
     const onProbability = (event: unknown) => {

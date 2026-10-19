@@ -26,6 +26,11 @@ export function createFoldedRefetchScheduler(
   // Opt-in for authoritative quote pairs: one retry after a failed or
   // insufficient read, even when no later invalidation arrives.
   retryUnresolved?: () => boolean,
+  // #10090: an obligation no retry count may discharge (a reconcile floor).
+  // After the one retry above, keep retrying while `owed()` holds, each wait
+  // `delayMs(attempt)` from the previous read's end — still one read in
+  // flight, and a fresh `request()` restarts the ladder.
+  persistent?: { owed: () => boolean; delayMs: (attempt: number) => number },
 ): FoldedRefetchScheduler {
   let lastAt = Number.NEGATIVE_INFINITY;
   let trailing: ReturnType<typeof setTimeout> | null = null;
@@ -34,6 +39,12 @@ export function createFoldedRefetchScheduler(
   let generation = 0;
   let automaticRetries = 0;
   let automaticRetryPending = false;
+  let backoff: ReturnType<typeof setTimeout> | null = null;
+  let backoffAttempts = 0;
+  const disarmBackoff = () => {
+    if (backoff) clearTimeout(backoff);
+    backoff = null;
+  };
 
   const finish = (startedGeneration: number) => {
     if (generation !== startedGeneration) return;
@@ -42,6 +53,17 @@ export function createFoldedRefetchScheduler(
       automaticRetries += 1;
       automaticRetryPending = true;
       pending = true;
+    }
+    if (!pending && persistent?.owed()) {
+      backoffAttempts += 1;
+      const chosen = persistent.delayMs(backoffAttempts);
+      const wait = Number.isFinite(chosen) ? Math.max(windowMs, chosen) : windowMs;
+      backoff = setTimeout(() => {
+        backoff = null;
+        if (!persistent.owed()) return;
+        pending = true;
+        schedule();
+      }, wait);
     }
     if (pending) schedule();
   };
@@ -79,6 +101,8 @@ export function createFoldedRefetchScheduler(
 
   return {
     request() {
+      disarmBackoff();
+      backoffAttempts = 0;
       automaticRetryPending = false;
       automaticRetries = 0;
       pending = true;
@@ -90,6 +114,8 @@ export function createFoldedRefetchScheduler(
       pending = false;
       inFlight = false;
       generation += 1;
+      disarmBackoff();
+      backoffAttempts = 0;
       automaticRetries = 0;
       automaticRetryPending = false;
     },

@@ -25,6 +25,14 @@ import { eventPageProjectedPair } from "@/lib/projectedFinalPair";
 import { teamTextColor } from "@/lib/teamColors";
 import { heldFrameAfter, useLiveEventStream, type LiveFrame } from "@/hooks/useLiveEventStream";
 import { createReconnectCatchup } from "@/lib/reconnectCatchup";
+import {
+  createReconcileLedger,
+  createWriteJournal,
+  rebaseOnCoveringRead,
+  servedHistoryIsNewer,
+  type ReconcileControl,
+  type WriteJournal,
+} from "@/lib/reconcileControl";
 import { fetchEventWithLiveFrame, keepNewerHeldHeadline } from "@/lib/reconcileEventPoll";
 import {
   admitChartFrames,
@@ -242,6 +250,8 @@ function heroCrestImage(
 const LIVE_REFRESH_INTERVAL = 32000; // Match backend LIVE_POLL_INTERVAL (32s)
 /** #9051: floor between detail refetches a folded hero asks for on refused frames. */
 const FOLDED_FRAME_REFETCH_MS = 1000;
+/** #10090: an owed reconcile read retries 1, 2, 4 … s apart, never slower than the live poll. */
+const reconcileRetryDelayMs = (attempt: number) => Math.min(LIVE_REFRESH_INTERVAL, 1000 * 2 ** (attempt - 1));
 const SCHEDULED_REFRESH_INTERVAL = 120000;
 
 export default function EventPage({ params }: EventPageProps) {
@@ -297,6 +307,10 @@ export default function EventPage({ params }: EventPageProps) {
   // same tick it writes the cache, before React renders that write, so this
   // sees a result that `heldEventRef` and the quote lifetime do not see yet.
   const storedEventRef = useRef<EventDetailResponse | undefined>(undefined);
+  // #10090: every write to the event cache while one paired read is in flight,
+  // so a read that newer prices overtook can still be adopted, by replaying
+  // them onto it (`rebaseOnCoveringRead`). Null when no pair is in flight.
+  const pairJournalRef = useRef<WriteJournal<EventDetailResponse> | null>(null);
   // #10200: the chart status's memory of what this mount has ADOPTED — advanced
   // once per render from the held result, never from a raw frame.
   const connectionTrackerRef = useRef<ConnectionTracker>(EMPTY_CONNECTION_TRACKER);
@@ -332,7 +346,10 @@ export default function EventPage({ params }: EventPageProps) {
   } = useSWR(
     ["event", eventId],
     () => fetchEventWithLiveFrame(
-      () => fetchEvent(eventId, takeFreshRead(freshNextEventReadRef)),
+      () => fetchEvent(eventId, takeFreshRead(freshNextEventReadRef)).then((polled) => {
+        pairJournalRef.current?.record((held) => keepNewerHeldHeadline(polled, held));
+        return polled;
+      }),
       () => latestLiveFrameRef.current,
       () => latestBlendEdgeRef.current,
       () => heldEventRef.current,
@@ -364,7 +381,11 @@ export default function EventPage({ params }: EventPageProps) {
   const quoteTriggerRef = useRef<LiveFrame | null>(null);
   const recoveryIntentRef = useRef(0);
   const quoteReadLifetimeRef = useRef(0);
+  // #10090: the reconcile floors this page still owes. Bounded; see the ledger.
+  const [reconcileLedger] = useState(createReconcileLedger);
   const quoteEventIdRef = useRef(eventId);
+  // Another event's obligations are that page's; this one's own load reads it.
+  if (quoteEventIdRef.current !== eventId) reconcileLedger.clear();
   if (quoteEventIdRef.current !== eventId) recoveryIntentRef.current = 0;
   if (quoteEventIdRef.current !== eventId) quoteTriggerRef.current = null;
   quoteEventIdRef.current = eventId;
@@ -372,13 +393,15 @@ export default function EventPage({ params }: EventPageProps) {
   refreshEventRef.current = refreshEvent;
   const [foldedRefetch] = useState(() => createFoldedRefetchScheduler(
     () => {
-      if ((quoteTriggerRef.current || recoveryIntentRef.current) && pairedQuoteReadRef.current) return pairedQuoteReadRef.current();
+      if ((quoteTriggerRef.current || recoveryIntentRef.current || reconcileLedger.owed()) && pairedQuoteReadRef.current) return pairedQuoteReadRef.current();
       freshNextEventReadRef.current = true;
       return refreshEventRef.current();
     }, FOLDED_FRAME_REFETCH_MS, Date.now,
     // A failed/behind pair still owes this quote even if the stream goes quiet.
     // One bounded retry uses the existing scheduler; normal polling remains.
     () => (quoteTriggerRef.current !== null || recoveryIntentRef.current !== 0) && canSubscribeEventQuotes(heldEventRef.current),
+    // #10090: an owed reconcile floor has no retry cap; it is paid or retired.
+    { owed: () => reconcileLedger.owed() && canSubscribeEventQuotes(heldEventRef.current), delayMs: reconcileRetryDelayMs },
   ));
   useEffect(() => () => foldedRefetch.cancel(), [foldedRefetch]);
 
@@ -457,6 +480,7 @@ export default function EventPage({ params }: EventPageProps) {
     // its explicit full fold is independently ordered against the held hero.
     const folded = adoptFoldedQuote(held, liveFrame, eventId);
     if (folded.handled) {
+      pairJournalRef.current?.record((prev) => adoptFoldedQuote(prev, liveFrame, eventId).next);
       if (folded.next !== held) {
         refreshEvent(
           (prev) => adoptFoldedQuote(prev, liveFrame, eventId).next,
@@ -487,6 +511,7 @@ export default function EventPage({ params }: EventPageProps) {
     // must not regress to it either.
     latestLiveFrameRef.current = heldFrameAfter(latestLiveFrameRef.current, liveFrame);
     const frame = { ...liveFrame, p: liveFrame.p };
+    pairJournalRef.current?.record((prev) => applyLiveFrame(prev, frame));
     refreshEvent(
       // `applyLiveFrame` spreads `prev` FIRST and then only the fields a frame
       // speaks for, so a frame arriving after the background poll carries the
@@ -499,13 +524,27 @@ export default function EventPage({ params }: EventPageProps) {
     setLastRefresh(Date.now());
   }, [refreshEvent, eventId, foldedRefetch]);
 
+  // #10090: a `reconcile` control owes this page a paired read covering its
+  // floor. It is registered whatever price order the stream delivered (a newer
+  // sibling price proves nothing about the rail), and never reopens a result.
+  const reconcileCatchupRef = useRef<ReturnType<typeof createReconnectCatchup> | null>(null);
+  const reconcileOrdinalRef = useRef(0);
+  const applyReconcileControl = useCallback((control: ReconcileControl) => {
+    if (control.eventId !== eventId) return;
+    // A result already stored but not yet rendered needs no check here: its
+    // render ends eligibility, which clears the ledger before any jitter fires.
+    if (!canSubscribeEventQuotes(heldEventRef.current)) return;
+    if (!reconcileLedger.owe(control, Date.now())) return;
+    reconcileCatchupRef.current?.recover(++reconcileOrdinalRef.current);
+  }, [eventId, reconcileLedger]);
+
   const quoteEligible = canSubscribeEventQuotes(event);
   const {
     connected: streamConnected,
     chartPoints,
     status: reportedStreamStatus,
     recoveryGeneration,
-  } = useLiveEventStream(eventId, quoteEligible, applyPushedFrame);
+  } = useLiveEventStream(eventId, quoteEligible, applyPushedFrame, applyReconcileControl);
   // #10200: the transport's own observation, for the chart status only — the
   // disconnect refetch below still keys on `streamConnected`. A stream that reports only
   // `connected` (an older hook, a test double) reads as open or idle.
@@ -523,14 +562,27 @@ export default function EventPage({ params }: EventPageProps) {
       foldedRefetch.request();
     });
     recoveryRef.current = recovery;
+    // #10090: the same jittered spread for a reconcile control, its own timer
+    // (one per page, not per notification), onto the same single-flight pair.
+    const reconcile = createReconnectCatchup(() => {
+      if (canSubscribeEventQuotes(heldEventRef.current)) foldedRefetch.request();
+    });
+    reconcileCatchupRef.current = reconcile;
     return () => {
       recovery.cancel();
       recoveryRef.current = null;
+      reconcile.cancel();
+      reconcileCatchupRef.current = null;
+      // Retired with named owners: a result is read whole by the terminal detail
+      // read that ended eligibility (no live rail survives it); navigation hands
+      // the new event its own load, and a return re-reads, with the server
+      // re-sending an unretired control on the new stream's open.
+      reconcileLedger.clear();
       recoveryIntentRef.current = 0;
       quoteReadLifetimeRef.current += 1;
       foldedRefetch.cancel();
     };
-  }, [eventId, quoteEligible, foldedRefetch]);
+  }, [eventId, quoteEligible, foldedRefetch, reconcileLedger]);
   useEffect(() => {
     if (quoteEligible && recoveryGeneration) recoveryRef.current?.recover(recoveryGeneration);
   }, [recoveryGeneration, quoteEligible, eventId]);
@@ -937,11 +989,19 @@ export default function EventPage({ params }: EventPageProps) {
     const trigger = quoteTriggerRef.current;
     const recovery = recoveryIntentRef.current;
     const readingLifetime = quoteReadLifetimeRef.current;
-    const [detail, history] = await Promise.all([
-      fetchEvent(readingEventId, true),
-      fetchEventHistory(readingEventId, EVENT_BOOT_HISTORY_HOURS,
-        historyRangeParam(fullHistoryRequested), true),
-    ]);
+    const journal = createWriteJournal<EventDetailResponse>();
+    pairJournalRef.current = journal;
+    let detail: EventDetailResponse;
+    let history: Awaited<ReturnType<typeof fetchEventHistory>>;
+    try {
+      [detail, history] = await Promise.all([
+        fetchEvent(readingEventId, true),
+        fetchEventHistory(readingEventId, EVENT_BOOT_HISTORY_HOURS,
+          historyRangeParam(fullHistoryRequested), true),
+      ]);
+    } finally {
+      if (pairJournalRef.current === journal) pairJournalRef.current = null;
+    }
     // #10090 G2: a result that landed while this pair was in flight ends it,
     // so an older live pair cannot put the game back on a live number. The
     // stored read, not only the held one: a continuation queued behind the
@@ -951,15 +1011,28 @@ export default function EventPage({ params }: EventPageProps) {
         (stored?.id === readingEventId && !canSubscribeEventQuotes(stored))) return;
     if (quoteReadLifetimeRef.current !== readingLifetime ||
         quoteEventIdRef.current !== readingEventId || quoteHistoryRangeRef.current !== fullHistoryRequested ||
-        !quotePairCoversTrigger(detail, history, readingEventId, quoteTriggerRef.current?.rev) ||
-        !quotePairCoversTrigger(detail, history, readingEventId, detail.blend_fold_revision) ||
-        keepNewerHeldHeadline(detail, heldEventRef.current) !== detail) return;
+        !quotePairCoversTrigger(detail, history, readingEventId, quoteTriggerRef.current?.rev)) return;
+    // #10090: a pair whose BOTH halves cover an owed reconcile floor is adopted
+    // even when newer writes overtook it in flight — those writes are replayed
+    // onto it, so the rail loses the removed source without the headline going
+    // back, and the two halves need only agree on the floor (two fresh builds
+    // a write apart would otherwise refuse each other). Any other pair keeps
+    // history-covers-detail and refuse-if-older.
+    const covered = (floor: unknown) => quotePairCoversTrigger(detail, history, readingEventId, floor);
+    const reconciling = reconcileLedger.floors().some(covered);
+    if (!reconciling && !covered(detail.blend_fold_revision)) return;
+    const adopted = reconciling
+      ? rebaseOnCoveringRead(detail, journal, heldEventRef.current)
+      : keepNewerHeldHeadline(detail, heldEventRef.current) === detail ? detail : null;
+    if (!adopted) return;
     await Promise.all([
-      refreshHistoryRef.current(history, { revalidate: false }),
-      refreshEventRef.current(keepNewerHeldHeadline(detail, heldEventRef.current), { revalidate: false }),
+      reconciling && servedHistoryIsNewer(latestBlendEdgeRef.current, history)
+        ? undefined : refreshHistoryRef.current(history, { revalidate: false }),
+      refreshEventRef.current(adopted, { revalidate: false }),
     ]);
     if (quoteTriggerRef.current === trigger) quoteTriggerRef.current = null;
     if (recoveryIntentRef.current === recovery) recoveryIntentRef.current = 0;
+    if (quoteReadLifetimeRef.current === readingLifetime) reconcileLedger.settle(covered);
     setLastRefresh(Date.now());
   };
 
@@ -1002,6 +1075,7 @@ export default function EventPage({ params }: EventPageProps) {
       foldedRefetch.request();
       return;
     }
+    pairJournalRef.current?.record((prev) => adoptNewerBlendEdge(prev, edge));
     refreshEvent((prev) => adoptNewerBlendEdge(prev, edge), { revalidate: false });
   }, [servedHistory, refreshEvent, foldedRefetch, holdsHeadline]);
 
