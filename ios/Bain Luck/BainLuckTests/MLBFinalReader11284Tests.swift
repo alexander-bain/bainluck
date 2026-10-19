@@ -358,6 +358,7 @@ final class MLBFinalReader11284Tests: XCTestCase {
         let card = try XCTUnwrap(series(captured()))
         XCTAssertEqual(card.questions.count, 4)
         XCTAssertEqual(card.optionCount, 9)
+        XCTAssertEqual(card.reason, "Separate series markets")
         let games = try XCTUnwrap(card.questions.first { $0.questionKey == "m:62898790" })
         XCTAssertEqual(games.options.map(\.result), ["Open"], "the game's final does not settle the series total")
         XCTAssertEqual(card.questions.flatMap(\.options).map(\.pregame), Array(repeating: nil, count: 9))

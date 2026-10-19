@@ -715,7 +715,7 @@ struct MLBSeriesCard11284: Equatable {
 
     var optionCount: Int { questions.reduce(0) { $0 + $1.options.count } }
 
-    var reason: String { "Separate questions about the series" }
+    var reason: String { "Separate series markets" }
 
     static func build(_ matrix: EventQuestionMatrix?, eventID: Int) -> MLBSeriesCard11284? {
         guard let matrix, matrix.contract == NBAEventCards9483.matrixContract,
