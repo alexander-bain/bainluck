@@ -385,3 +385,4 @@ class TestTheRigCanSeeTheRace:
             assert live_fanout.fanout().subscriber_count == 0
         finally:
             held.set()
+            await reader.stop()  # port: a reader still running is never abandoned
