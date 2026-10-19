@@ -448,6 +448,8 @@ struct EventDetailView: View {
                                          // #8651 — its live edge, read once per
                                          // payload rather than on every rebuild.
                                          preloadedHistoryEdge: vm.historyDigest.map(\.edge),
+                                         // #10090 — every payload, not only a moved edge.
+                                         preloadedHistoryGeneration: vm.historyGeneration,
                                          // #920 — the pushed blends the hero is
                                          // already showing, so the chart's right
                                          // edge reaches the same moment it does.

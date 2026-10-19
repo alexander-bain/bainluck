@@ -50,6 +50,12 @@ nonisolated struct EventHistoryResponse: Decodable, Sendable, Equatable {
     /// from (detail's `blend_fold_revision` twin; null when there is no pin).
     let blendEdgePinned: Bool?
     let blendEdgeFoldRevision: ServedFoldRevision?
+    /// #10090 — `{row_id: rev}` a complete FRESH build read every series it
+    /// draws after, for exactly the rows it charts, pinned or not (producer
+    /// `app/utils/history_coverage.py`). Read ordering only: never a price, a
+    /// clock, a new point, a pin or a drawn vertex. Null on any cacheable,
+    /// partial or doubtful build; a malformed vector decodes as no claim.
+    let historyFoldRevision: ServedFoldRevision?
     /// #9496 — the prediction-market spread/total ladders' projected final
     /// (`pm_spread_data.projected_final`). Only that one field is read; see
     /// `PMSpreadData`. Optional and never-throwing: additive, and a malformed

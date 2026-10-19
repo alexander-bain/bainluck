@@ -62,8 +62,27 @@ final class EventDetailViewModel: ObservableObject {
         didSet {
             historyDigest = history.map(EventHistoryDigest.init)
             historyArrivedAt = history == nil ? nil : Date(timeIntervalSince1970: now())
+            historyGeneration &+= 1
+            if let edges = historyDigest?.edges {
+                historyIsDrawn = EventHistoryFreshness.shouldAdopt(edges, over: drawnHistoryEdges)
+                if historyIsDrawn { drawnHistoryEdges = edges }
+            } else {
+                historyIsDrawn = false
+            }
         }
     }
+    /// #10090 — bumped on every write to `history`, so the chart is offered
+    /// every payload the page takes, not only one whose live edge moved: a
+    /// withdrawn source's series can leave a payload at the same edge.
+    private(set) var historyGeneration = 0
+    /// #10090 — the edges of the payload the chart holds, kept by the chart's
+    /// own rule (`OddsChartViewModel.adopt`, `EventHistoryFreshness`): an
+    /// offered payload that rule refuses is refused there. `nil` = nothing
+    /// offered yet.
+    private var drawnHistoryEdges: EventHistoryEdges?
+    /// #10090 — whether the chart takes the current `history`. A reconcile
+    /// floor's history half is paid only by a payload the reader is shown.
+    private(set) var historyIsDrawn = false
     /// #10239 / #10478 — the reader's clock when the current `history` arrived.
     /// The projected final-points module reads it as `asOf` on a scheduled or
     /// live page, so the chart holds still between payloads instead of moving
@@ -139,6 +158,41 @@ final class EventDetailViewModel: ObservableObject {
     /// revision, so a repeatedly stale response cannot loop (the poll remains).
     private var owedInvalidation: FoldRevision?
     private var owedInvalidationRetriedAt: FoldRevision?
+
+    /// #10090 — a `reconcile` control's owed coverage floor: every row any
+    /// unpaid control named, at the highest revision named for it. Paid only by
+    /// a pair `reconcileFloorShown` accepts; a failed, stale or overtaken pair,
+    /// a rollover and a retry cap pay nothing. Merging keeps it bounded by the
+    /// event's fold rows, and a merge can only tighten it, so no unpaid row is
+    /// ever lost.
+    private var reconcileFloor: FoldRevision?
+    /// When the oldest unpaid control arrived, for accounting. Kept across
+    /// merges; cleared only when the floor is paid or retired.
+    private(set) var reconcileOwedSince: TimeInterval?
+    /// Pairs completed against the current floor without paying it. Picks the
+    /// next `reconcileRetryDelays` step.
+    private var reconcileMisses = 0
+    /// Custody ids behind the unpaid floor (dedup and accounting only — the
+    /// floor alone is coverage), and the recently paid ones with the floor that
+    /// paid them. Both capped: an evicted paid id costs at most one defensive
+    /// re-read when it is delivered again, never an unpaid row.
+    private var reconcileOwedCustody: [String] = []
+    private var reconcileSettled: [(custody: String, floor: FoldRevision)] = []
+    static let reconcileOwedCustodyMemory = 8
+    static let reconcileSettledMemory = 16
+    /// #10090 — the re-ask after a pair left the floor unpaid (stale server,
+    /// newer price kept over it, or a failure the pair retry does not own).
+    /// One task at a time, shared with the #9657 pair retry, through the
+    /// coalescing reader: this is what resumes owed work with no further
+    /// quote, control or tap. Capped at the last step, never given up.
+    static let reconcileRetryDelays: [TimeInterval] = [1.5, 3, 6, 12, 24]
+    var reconcileMemory: (owed: Int, settled: Int) { (reconcileOwedCustody.count, reconcileSettled.count) }
+    /// #10090 — the rail an authoritative push last put on this page whole (a
+    /// singleton source snapshot or an adopted full folded quote), read back
+    /// from the page it wrote. Proof of the reconcile floor's detail half only
+    /// while the page still holds exactly that revision and those sources
+    /// (checked where the floor is evaluated); never a remembered "once shown".
+    private var committedRail: LiveEventPriceReconciliation.CommittedRail?
 
     /// #10643 — `frame`, carrying the row-wise highest revision it and `held`
     /// named, so a delayed or other-row arrival never erases a newer
@@ -777,6 +831,77 @@ final class EventDetailViewModel: ObservableObject {
         return true
     }
 
+    // MARK: - #10090 reconcile control
+
+    /// A validated `reconcile` control for this page. Registered whatever the
+    /// held price's order — an older or equal floor after a newer sibling quote
+    /// is still owed, because that quote proves neither its rail nor history.
+    /// It writes nothing the page shows, earns no receipt or delivery, and asks
+    /// only the coalesced pair (no task or timer per control). A finished page
+    /// takes none: no control reopens a final.
+    @MainActor
+    private func receiveReconcile(_ control: LiveStreamReconcile) {
+        guard control.eventId == eventId, let held = event, held.id == eventId,
+              EventPriceStreaming.isEligible(held.status) else { return }
+        // A paid custody delivered again (a reconnect's re-send) asks nothing,
+        // unless it now names rows past the floor that paid it.
+        if reconcileSettled.contains(where: { $0.custody == control.custodyId && $0.floor.covers(control.removalRev) }) {
+            return
+        }
+        reconcileFloor = reconcileFloor.flatMap {
+            FoldRevision($0.rows.merging(control.removalRev.rows, uniquingKeysWith: max))
+        } ?? control.removalRev
+        if reconcileOwedSince == nil { reconcileOwedSince = now() }
+        if !reconcileOwedCustody.contains(control.custodyId) {
+            reconcileOwedCustody.append(control.custodyId)
+            if reconcileOwedCustody.count > Self.reconcileOwedCustodyMemory { reconcileOwedCustody.removeFirst() }
+        }
+        requestRevisionRefetch()
+    }
+
+    /// The floor is on the page. Its custody ids join the bounded paid memory.
+    @MainActor
+    private func settleReconcile() {
+        guard let floor = reconcileFloor else { return }
+        for custody in reconcileOwedCustody {
+            reconcileSettled.removeAll { $0.custody == custody }
+            reconcileSettled.append((custody, floor))
+        }
+        if reconcileSettled.count > Self.reconcileSettledMemory {
+            reconcileSettled.removeFirst(reconcileSettled.count - Self.reconcileSettledMemory)
+        }
+        if let since = reconcileOwedSince {
+            logger.info("Reconcile paid for \(self.eventId) after \(self.now() - since)s, \(self.reconcileMisses) unpaid pairs")
+        }
+        retireReconcile()
+    }
+
+    /// #10090 — read the committed rail back from the page actually written,
+    /// in the same turn: only a page that holds `revision` as its live blend
+    /// records it. Anything else leaves no proof.
+    @MainActor
+    private func recordCommittedRail(at revision: FoldRevision) {
+        guard let page = event, LiveEventPriceReconciliation.pairedFoldRevision(in: page) == revision else {
+            committedRail = nil
+            return
+        }
+        committedRail = .init(revision: revision, sources: Set((page.winProbabilitySources ?? [:]).keys))
+    }
+
+    /// Dropped without payment, with a named owner: the reader left
+    /// (`stopRefresh` — the return's fresh `load()` and the next connection's
+    /// re-delivered custody own it), or the page left the priced states (a
+    /// served final or non-priced status is itself the authoritative read, and
+    /// a pushed final keeps the live cadence until `awaitingServedFinal`'s load
+    /// serves it).
+    @MainActor
+    private func retireReconcile() {
+        reconcileFloor = nil
+        reconcileOwedSince = nil
+        reconcileMisses = 0
+        reconcileOwedCustody.removeAll()
+    }
+
     /// Detail and history only — the two payloads that carry the blend and its
     /// revision. Not a `load()`: that is six requests and owns `lastLoadedAt`.
     @MainActor
@@ -804,6 +929,12 @@ final class EventDetailViewModel: ObservableObject {
             let served = LiveEventPriceReconciliation.pairedFoldRevision(in: fetched)
             adopt(fetched, recordsPriceActivity: recordsActivity)
             history = h
+            // #10090 — an ordinary history read issued before this pair landed
+            // is refused after it (`applyOptional`). On a live page it is a build
+            // from before the pair, and at the same edge the chart would take it
+            // after the floor was paid, drawing a withdrawn source again.
+            appliedOptionalGeneration[.history] = optionalReadGeneration
+            let historyDrawn = historyIsDrawn
             var deliveredPrice = false
             if recordsActivity { pricePairRefreshFailed = false }
             // An opening/consensus hero first becomes a stream-proven blend
@@ -859,6 +990,21 @@ final class EventDetailViewModel: ObservableObject {
                 streamRefetchGeneration = deliveryGeneration
                 revisionRefetchPending = true
             }
+            // #10090 — the reconcile floor is paid only when this pair is what
+            // the page now shows, its history included: a payload the chart
+            // refuses (`historyIsDrawn`) proves nothing the reader can see.
+            // Otherwise it stays owed for the retry below.
+            if let floor = reconcileFloor {
+                if historyDrawn, LiveEventPriceReconciliation.reconcileFloorShown(
+                    floor, served: fetched, servedHistory: h, page: event
+                ) || LiveEventPriceReconciliation.reconcileFloorShownByCommittedRail(
+                    floor, committedRail: committedRail, servedHistory: h, page: event
+                ) {
+                    settleReconcile()
+                } else {
+                    reconcileMisses += 1
+                }
+            }
             // #10468 — the pair the CURRENT connection asked for put a covered
             // or newer price on the page: that is a delivery, and the only way
             // a folded hero (which refuses every raw frame) can renew it. A
@@ -879,6 +1025,8 @@ final class EventDetailViewModel: ObservableObject {
                 streamHasPushedPrice = false
                 configureAutoRefresh()
             }
+            // A failure never pays a reconcile floor, whoever owns the retry.
+            if reconcileFloor != nil { reconcileMisses += 1 }
             logger.error("Price-pair read failed for \(self.eventId): \(error)")
         }
         rearmPricePairRetry()
@@ -895,9 +1043,31 @@ final class EventDetailViewModel: ObservableObject {
         pricePairRetryTask = nil
         guard pricePairRefreshFailed else {
             pricePairFailures = 0
+            scheduleReconcileRetryIfOwed()
             return
         }
         schedulePricePairRetry()
+    }
+
+    /// #10090 — the unpaid reconcile floor's re-ask, in the pair-retry slot
+    /// (`reconcileRetryDelays`). A failed pair's own retry owns the re-ask
+    /// while it runs; its pair re-checks the floor. Re-armed only by a
+    /// completed pair, so arriving prices cannot keep postponing it.
+    @MainActor
+    private func scheduleReconcileRetryIfOwed() {
+        guard reconcileFloor != nil, reconcileMisses > 0 else { return }
+        let delays = Self.reconcileRetryDelays
+        let delay = delays[min(reconcileMisses, delays.count) - 1]
+        let pause = sleep
+        pricePairRetryTask = Task { @MainActor [weak self] in
+            await pause(delay)
+            guard !Task.isCancelled, let self else { return }
+            guard self.reconcileFloor != nil, EventPriceStreaming.isEligible(self.event?.status) else {
+                self.pricePairRetryTask = nil
+                return
+            }
+            self.requestRevisionRefetch()
+        }
     }
 
     @MainActor
@@ -945,6 +1115,7 @@ final class EventDetailViewModel: ObservableObject {
             startStreamIfNeeded()
         } else {
             stopStream()
+            retireReconcile()
         }
 
         // Decided AFTER the socket work, never before it: `stopStream()` clears
@@ -1031,6 +1202,7 @@ final class EventDetailViewModel: ObservableObject {
         installedPlan = nil
         visit += 1
         stopStream()
+        retireReconcile()
     }
 
     // MARK: - Live push
@@ -1087,6 +1259,7 @@ final class EventDetailViewModel: ObservableObject {
                 // acknowledges only a newer price for this delivery generation.
                 self.requestRevisionRefetch(resyncGeneration: self.deliveryGeneration)
             },
+            onReconcile: { [weak self] control in self?.receiveReconcile(control) },
             deliversFoldedQuotes: true
         )
         stream = controller
@@ -1213,6 +1386,10 @@ final class EventDetailViewModel: ObservableObject {
         case .adopt(let quote):
             LiveEventPriceReconciliation.adoptingFoldedQuote(quote, into: &current)
             commitAdoptedPrice(prior: prior, current: current, at: quote.heroProbabilityObservedAt?.asDate)
+            // #10090 — the full quote's price, rail and revision are now the
+            // page's together: the only folded rail proof. A raw row's frame
+            // or snapshot, a held/older quote and a null result record none.
+            recordCommittedRail(at: quote.blendFoldRevision)
             return
         case .hold:
             event = current
@@ -1229,6 +1406,13 @@ final class EventDetailViewModel: ObservableObject {
                 return
             }
         }
+
+        // #10090 — a newer singleton write's committed source map (Live
+        // #11264). Absent or refused is the legacy frame, byte for byte.
+        let snapshot = LiveEventPriceReconciliation.sourceSnapshotAdoption(frame, held: current)
+        var unpricedSnapshot = false
+        if case .unpriced = snapshot { unpricedSnapshot = true }
+        var adoptedSnapshot: FoldRevision?
 
         let stamped = frame.updatedAt?.asDate
         // #9051: when the held blend carries its fold revision, commit order
@@ -1257,11 +1441,13 @@ final class EventDetailViewModel: ObservableObject {
                 trailingProvenanceFrame = Self.trailingRequirement(adding: frame, to: trailingProvenanceFrame)
             }
         } else if let foldOrder {
-            priceIsNotNewer = foldOrder != .newer
+            // #10090 — an unpriced snapshot (no real source: the server's `p`
+            // is a fallback, not a blend) shows nothing, like a null `p`.
+            priceIsNotNewer = foldOrder != .newer || unpricedSnapshot
             if foldOrder == .incomparable {
                 streamRefetchGeneration = deliveryGeneration
                 requestRevisionRefetch()
-            } else if foldOrder == .newer, frame.p == nil, let revision = frame.rev?.revision {
+            } else if foldOrder == .newer, frame.p == nil || unpricedSnapshot, let revision = frame.rev?.revision {
                 // #11253 — a newer write with no price: the row's fold changed
                 // (a venue withdrew) and there is no value to show. It writes
                 // nothing and is not dated onto the held value; the existing
@@ -1300,6 +1486,15 @@ final class EventDetailViewModel: ObservableObject {
             odds.awayRenderedPercent = nil
             current.currentOdds = odds
             LiveEventPriceReconciliation.adoptFrameProvenance(frame, into: &current)
+            // #10090 — the write's committed map replaces the rail WHOLE, in
+            // this same turn as its price and revision: a withdrawn venue
+            // leaves with the price that no longer folds it. A pushed bar for a
+            // venue the map no longer lists is retired, never replayed.
+            if case .adopt(let sources) = snapshot, let revision = frame.rev?.revision {
+                current.winProbabilitySources = sources
+                latestSourceFrames = latestSourceFrames.filter { sources[$0.key] != nil }
+                adoptedSnapshot = revision
+            }
             // The hero now shows a NEWER pushed price — the only thing the
             // page's stream dot may claim (#8320). A clockless unversioned
             // frame still moves the hero (legacy display) but proves no newer
@@ -1353,6 +1548,12 @@ final class EventDetailViewModel: ObservableObject {
         }
 
         event = current
+        if let adoptedSnapshot {
+            recordCommittedRail(at: adoptedSnapshot)
+            // #11253 — the withdrawal's rail is now on the page, by the same
+            // rule a pair meets: held == shown, not older than owed.
+            _ = clearOwedInvalidationIfShown(served: adoptedSnapshot)
+        }
         if acceptedNewPrice {
             LiveTimingSeam.modelHeadlineAdopted(current, path: "stream")
             recordPriceActivity(from: prior, to: current)

@@ -90,6 +90,101 @@ nonisolated enum LiveEventPriceReconciliation {
         return kept
     }
 
+    /// #10090 — whether one authoritative detail + history pair put a
+    /// withdrawn source's `reconcile` floor on the page. Root's paired decision:
+    /// the response must cover each floor row at or past its floor (a missing
+    /// row refuses), and it must be what the page now SHOWS — a newer pushed
+    /// headline kept over it (`keepingNewerHeldHeadline`) or a pushed frame
+    /// preserved over it leaves a revision on the page that is not the
+    /// response's, and a newer sibling quote does not prove its rail or
+    /// history reconciled. The history half pays only on affirmative proof
+    /// (`historyCoversFloor`). A served final pays nothing either: leaving the
+    /// priced states retires the floor through its named owner
+    /// (`configureAutoRefresh`).
+    static func reconcileFloorShown(
+        _ floor: FoldRevision, served: EventDetail, servedHistory: EventHistoryResponse, page: EventDetail?
+    ) -> Bool {
+        guard let page, page.id == served.id, servedHistory.eventId == served.id,
+              let revision = served.blendFoldRevision?.revision, revision.covers(floor),
+              page.blendFoldRevision?.revision == revision,
+              historyCoversFloor(floor, servedHistory) else { return false }
+        return true
+    }
+
+    /// #10090 — the floor's history half, by one of two proofs:
+    /// - a PINNED edge whose own revision covers the floor (Root's D4 ruling);
+    /// - an UNPINNED history whose complete-build `history_fold_revision`
+    ///   covers every floor row (Root's history-consumer admission).
+    /// A pinned edge below the floor or without a revision stays owed even
+    /// beside a covering vector: the pin is the drawn endpoint, and a read
+    /// prefix cannot vouch for a pinned value older than the floor. An absent,
+    /// null, malformed, older or row-missing vector proves nothing. The
+    /// vector is read ordering only; nothing here pins, adds a point, or moves
+    /// a clock or freshness.
+    static func historyCoversFloor(_ floor: FoldRevision, _ history: EventHistoryResponse) -> Bool {
+        if history.blendEdgePinned == true {
+            return history.blendEdgeFoldRevision?.revision?.covers(floor) ?? false
+        }
+        return history.historyFoldRevision?.revision?.covers(floor) ?? false
+    }
+
+    /// #10090 — a rail an authoritative push put on the page WHOLE: a newer
+    /// singleton write's committed `source_snapshot`, or an adopted full
+    /// folded quote. Its identity is the full revision it was committed at and
+    /// the sources it lists; one vector and one key set, never a history.
+    struct CommittedRail: Equatable, Sendable {
+        let revision: FoldRevision
+        let sources: Set<String>
+    }
+
+    /// #10090 — the floor's detail half by its second proof: the page holds,
+    /// right now, the committed rail it was given — the same full revision and
+    /// the same sources — and that revision covers every floor row (a missing
+    /// row refuses). A later write that moves the revision or changes which
+    /// sources are listed fails it; a remembered rail proves nothing. It proves
+    /// the rail only: the history half is the same `historyCoversFloor` proof
+    /// `reconcileFloorShown` requires, never a map or a quote.
+    static func reconcileFloorShownByCommittedRail(
+        _ floor: FoldRevision, committedRail: CommittedRail?, servedHistory: EventHistoryResponse, page: EventDetail?
+    ) -> Bool {
+        guard let page, let committedRail, servedHistory.eventId == page.id,
+              committedRail.revision.covers(floor), pairedFoldRevision(in: page) == committedRail.revision,
+              Set((page.winProbabilitySources ?? [:]).keys) == committedRail.sources,
+              historyCoversFloor(floor, servedHistory) else { return false }
+        return true
+    }
+
+    /// #10090 — what a raw singleton frame's committed `source_snapshot` may
+    /// do on this page (NATIVE-SOURCE-SNAPSHOT-CONSUMER-CONTRACT §3–§4).
+    enum SourceSnapshotAdoption: Equatable {
+        /// A newer priced write with a real source: its `p` and this complete
+        /// rail replace the held ones together.
+        case adopt([String: WinProbSource])
+        /// A newer write whose map holds no real source (or whose `p` is not a
+        /// price): not a live blend. Nothing is shown; the rail is owed at
+        /// this revision through the existing priceless-write arm.
+        case unpriced(FoldRevision)
+        /// Not this path's: the legacy frame rules apply, byte for byte.
+        case legacy
+    }
+
+    /// Only on a page holding a live ONE-ROW blend, for a strictly newer write
+    /// to that row, in a priced phase. A folded hero never takes a raw row's
+    /// map (its rail is the fold's), a `folded_probability` result carries
+    /// none, an equal/older/replayed write adopts nothing, and a frame that
+    /// ends the game keeps the legacy path (`awaitingServedFinal`).
+    static func sourceSnapshotAdoption(_ frame: LiveStreamFrame, held: EventDetail) -> SourceSnapshotAdoption {
+        guard !frame.foldedResult, frame.eventId == held.id, let snapshot = frame.validSourceSnapshot,
+              let heldRevision = pairedFoldRevision(in: held), heldRevision.rows.count == 1,
+              FoldRevision.frameOrder(held: heldRevision, frame: snapshot.revision) == .newer,
+              frame.status.map(EventPriceStreaming.isEligible) ?? true else { return .legacy }
+        let priced = frame.p.map { $0.isFinite && (0...1).contains($0) } ?? false
+        let blended = snapshot.sources.keys.contains {
+            $0 != "final_result" && WinProbSourceCatalog.realSourceKeys.contains($0)
+        }
+        return priced && blended ? .adopt(snapshot.sources) : .unpriced(snapshot.revision)
+    }
+
     /// #10090 — what a held folded blend does with a frame that speaks for the
     /// server's FULL fold (or promises to). Web's `adoptFoldedQuote`.
     enum FoldedQuoteDecision: Equatable {
