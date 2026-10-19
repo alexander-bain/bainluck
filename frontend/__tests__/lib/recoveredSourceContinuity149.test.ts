@@ -111,6 +111,18 @@ describe("#10090 attempt149 recovered source continuity (actual page memo)", () 
     expect(has(render(detail(4, 0.75, 1), [], h), 0.78, 1)).toBe(false);
   });
 
+  it("lets a served reading beat the banked one at the same time after the detail moved on", () => {
+    const render = rig();
+    expect(has(render(detail(3, 0.78, 1)), 0.78, 1)).toBe(true);
+    const h = served();
+    h.history_fold_revision = { 1: 4 };
+    h.win_prob_history.polymarket.push({ timestamp: at(1), home_probability: 0.75 });
+    const out = render(detail(4, 0.7, 2), [], h);
+    expect(has(out, 0.75, 1)).toBe(true);
+    expect(has(out, 0.7, 2)).toBe(true);
+    expect(has(out, 0.78, 1)).toBe(false);
+  });
+
   it("bounds the source bank at 720 observations, newest kept", () => {
     let bank: chart.AdmittedChartFrames | null = null;
     for (let i = 1; i <= 750; i++) {
