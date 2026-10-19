@@ -14,6 +14,7 @@ Risk mitigations:
 
 import bisect
 import logging
+import math
 import re
 from datetime import datetime, timezone
 
@@ -6472,7 +6473,32 @@ async def _resolve_kalshi_player_props_from_boxscore():
     return stats
 
 
-def _total_bases_verdict(hits: int, hr: int, threshold: int) -> bool | None:
+def _box_count(player_stats: dict, key: str) -> tuple[int | None, bool]:
+    """Read one box-score count as ``(count, invalid)``.
+
+    #802: the resolver read ``player_stats.get("hits") or 0``, so an ABSENT
+    count became an OBSERVED zero. The ESPN parser drops a dashed or non-finite
+    stat rather than storing it (``ESPNService._parse_stat_value``), so absence
+    is a real shape: ``{"hits": 1}`` graded "4+" a certain loser though the
+    missing home-run count could be 1.
+
+    ``(n, False)`` — an observed count: a finite, non-negative whole number
+    (the parser stores floats, so 1.0 reads as 1).
+    ``(None, False)`` — absent (missing key or ``None``): nothing observed.
+    ``(None, True)`` — present but not a count (negative, fractional, bool,
+    string, non-finite): the box is not trusted to bound anything.
+    """
+    value = player_stats.get(key)
+    if value is None:
+        return None, False
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None, True
+    if not math.isfinite(value) or value < 0 or value != int(value):
+        return None, True
+    return int(value), False
+
+
+def _total_bases_verdict(hits: int | None, hr: int | None, threshold: int) -> bool | None:
     """Resolve a 'total bases >= threshold' outcome from hits + HR alone.
 
     ESPN gives hits (H) and home runs (R, a subset of hits) but not
@@ -6481,9 +6507,24 @@ def _total_bases_verdict(hits: int, hr: int, threshold: int) -> bool | None:
         TB_max = 3*H + R   (non-HR hits all triples)
     Returns True (certain winner), False (certain loser), or None
     (indeterminate — leave unresolved).
+
+    #802: ``None`` is an ABSENT count, never a zero. The verdict is the one
+    every consistent completion agrees on (R is a subset of H):
+        R absent  -> R in [0, H], so TB in [H, 4*H]
+        H absent  -> H >= R and each HR is 4 bases, so TB >= 4*R, no ceiling
+        both absent, or R > H -> None (nothing to bound, or no such line)
     """
-    tb_min = hits + 3 * hr
-    tb_max = 3 * hits + hr
+    if hits is None and hr is None:
+        return None
+    if hits is None:
+        return True if 4 * hr >= threshold else None
+    if hr is None:
+        tb_min, tb_max = hits, 4 * hits
+    elif hr > hits:
+        return None
+    else:
+        tb_min = hits + 3 * hr
+        tb_max = 3 * hits + hr
     if tb_max < threshold:
         return False
     if tb_min >= threshold:
@@ -6511,7 +6552,16 @@ async def _resolve_kalshi_total_bases_from_boxscore():
     certain winners for low N) without doubles/triples. Marked
     resolution_source='box_score_bound' so it's auditable as a bound, not exact.
     """
-    stats = {"resolved": 0, "no_player": 0, "no_parse": 0, "indeterminate": 0, "live_box": 0, "errors": []}
+    stats = {
+        "resolved": 0,
+        "no_player": 0,
+        "no_parse": 0,
+        "indeterminate": 0,
+        "incomplete_stats": 0,
+        "invalid_stats": 0,
+        "live_box": 0,
+        "errors": [],
+    }
 
     try:
         async with get_task_session() as session:
@@ -6583,14 +6633,24 @@ async def _resolve_kalshi_total_bases_from_boxscore():
                     stats["no_player"] += 1
                     continue
 
-                hits = player_stats.get("hits") or 0
-                hr = player_stats.get("home runs") or 0
+                # #802: an absent count is not an observed zero, and a value
+                # that is not a count refuses the row. Refused rows stay
+                # `is_winner IS NULL` and are counted, never graded.
+                hits, hits_invalid = _box_count(player_stats, "hits")
+                hr, hr_invalid = _box_count(player_stats, "home runs")
+                if hits_invalid or hr_invalid or (
+                    hits is not None and hr is not None and hr > hits
+                ):
+                    stats["invalid_stats"] += 1
+                    continue
                 verdict = _total_bases_verdict(hits, hr, threshold)
 
                 if verdict is False:
                     loser_ids.append(row.outcome_id)
                 elif verdict is True:
                     winner_ids.append(row.outcome_id)
+                elif hits is None or hr is None:
+                    stats["incomplete_stats"] += 1
                 else:
                     stats["indeterminate"] += 1
 
@@ -6616,9 +6676,11 @@ async def _resolve_kalshi_total_bases_from_boxscore():
         logger.error("Total-bases bound resolution error: %s", e)
 
     logger.info(
-        "Total-bases bound resolution: %d resolved, %d indeterminate, %d no_player, %d no_parse, %d live_box, %d errors",
+        "Total-bases bound resolution: %d resolved, %d indeterminate, %d incomplete_stats, %d invalid_stats, %d no_player, %d no_parse, %d live_box, %d errors",
         stats["resolved"],
         stats["indeterminate"],
+        stats["incomplete_stats"],
+        stats["invalid_stats"],
         stats["no_player"],
         stats["no_parse"],
         stats["live_box"],
