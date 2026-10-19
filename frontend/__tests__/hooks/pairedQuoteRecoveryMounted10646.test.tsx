@@ -147,7 +147,9 @@ function HeldPage({ net, eventId, liveFrame }: { net: Net; eventId: number; live
   refreshHistoryRef.current = refreshHistory;
   pairedQuoteReadRef.current = PAIR.runInNewContext({
     eventId, fullHistoryRequested, fetchEvent, fetchEventHistory, EVENT_BOOT_HISTORY_HOURS, historyRangeParam,
-    quotePairCoversTrigger, keepNewerHeldHeadline, setLastRefresh, Date,
+    quotePairCoversTrigger, keepNewerHeldHeadline, canSubscribeEventQuotes, setLastRefresh, Date,
+    // #10090 G2: this harness's poll stores no result; 10666 drives that path.
+    storedEventRef: { current: undefined },
     recoveryIntentRef, quoteReadLifetimeRef, quoteTriggerRef, quoteEventIdRef, quoteHistoryRangeRef, refreshHistoryRef, refreshEventRef, heldEventRef,
   });
 

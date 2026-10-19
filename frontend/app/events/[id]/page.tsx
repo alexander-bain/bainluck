@@ -293,6 +293,10 @@ export default function EventPage({ params }: EventPageProps) {
   // #9051: the headline the page holds (written after the hook), for the poll
   // reconcile and the refuse-and-refetch checks below.
   const heldEventRef = useRef<EventDetailResponse | undefined>(undefined);
+  // #10090 G2: the event the read last STORED. swr calls `onSuccess` in the
+  // same tick it writes the cache, before React renders that write, so this
+  // sees a result that `heldEventRef` and the quote lifetime do not see yet.
+  const storedEventRef = useRef<EventDetailResponse | undefined>(undefined);
   // #10200: the chart status's memory of what this mount has ADOPTED — advanced
   // once per render from the held result, never from a raw frame.
   const connectionTrackerRef = useRef<ConnectionTracker>(EMPTY_CONNECTION_TRACKER);
@@ -346,7 +350,7 @@ export default function EventPage({ params }: EventPageProps) {
       // #7621: a STABLE reference, built above. Inlining the arrow here again
       // is the bug — see the note on `eventPollInterval`.
       refreshInterval: eventPollInterval,
-      onSuccess: () => setLastRefresh(Date.now()),
+      onSuccess: (stored) => { storedEventRef.current = stored; setLastRefresh(Date.now()); },
     }
   );
   // #9051: a ref, so the push effect does not re-run — and re-apply its frame —
@@ -938,6 +942,13 @@ export default function EventPage({ params }: EventPageProps) {
       fetchEventHistory(readingEventId, EVENT_BOOT_HISTORY_HOURS,
         historyRangeParam(fullHistoryRequested), true),
     ]);
+    // #10090 G2: a result that landed while this pair was in flight ends it,
+    // so an older live pair cannot put the game back on a live number. The
+    // stored read, not only the held one: a continuation queued behind the
+    // poll's cache write runs before React renders it.
+    const stored = storedEventRef.current;
+    if (!canSubscribeEventQuotes(heldEventRef.current) ||
+        (stored?.id === readingEventId && !canSubscribeEventQuotes(stored))) return;
     if (quoteReadLifetimeRef.current !== readingLifetime ||
         quoteEventIdRef.current !== readingEventId || quoteHistoryRangeRef.current !== fullHistoryRequested ||
         !quotePairCoversTrigger(detail, history, readingEventId, quoteTriggerRef.current?.rev) ||

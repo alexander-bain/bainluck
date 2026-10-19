@@ -81,6 +81,7 @@ function setup(detailRevisions: Array<() => Promise<number>>) {
     createFoldedRefetchScheduler, canSubscribeEventQuotes, quotePairCoversTrigger,
     keepNewerHeldHeadline, historyRangeParam, EVENT_BOOT_HISTORY_HOURS, FOLDED_FRAME_REFETCH_MS,
     pairedQuoteReadRef, quoteTriggerRef, heldEventRef,
+    storedEventRef: { current: undefined }, // #10090 G2: no poll result stored here
     recoveryIntentRef: { current: 0 }, quoteReadLifetimeRef: { current: 0 },
     eventId: EVENT_ID, fullHistoryRequested: false,
     quoteEventIdRef: { current: EVENT_ID }, quoteHistoryRangeRef: { current: false },
