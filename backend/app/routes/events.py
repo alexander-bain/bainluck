@@ -87,6 +87,10 @@ from app.utils.sport_keys import NON_SPORT_LLM_CATEGORIES, SPORT_PREFIX_TO_LLM_C
 from app.utils.futures_market_snapshot import (
     outcome_prints_a_price as _outcome_prints_a_price,
 )
+from app.utils.pregame_projection import (
+    attach_pregame_projection,
+    read_pregame_projections,
+)
 from app.utils.prematch_reading import (
     PREMATCH_PRIOR_SQL,
     SETTLED_STATUSES,
@@ -11676,6 +11680,14 @@ async def search_events(
     # say whether the futures arms or the event formatting spent it.
     _mark("event_format")
 
+    # #11296: a final row's pregame projected score, the same object the event
+    # page serves. One bounded statement for the page, billed to its own stage;
+    # a failure answers `read_failed` on the settled rows and costs nothing else.
+    _projections = await read_pregame_projections(db, events, loaded_sport_key)
+    for _formatted in formatted_results:
+        attach_pregame_projection(_formatted, _projections.get(_formatted.get("id")))
+    _mark("pregame_projection")
+
     # Calculate pagination metadata
     total_count = total_count or 0
     # #2623: `total_results` is what the page prints as "· 16 games", so a count
@@ -20290,6 +20302,13 @@ async def get_event(
         )
         if _prematch_odds is not None:
             response["prematch_odds"] = _prematch_odds
+        # #11296 — the projected final forecast BEFORE play, with its own
+        # source, time and kind. A sibling of `prematch_odds`, never inside it:
+        # that object's `source` names the probability prior's venue.
+        _projection = await read_pregame_projections(
+            db, [event], lambda _e: event_sport_key
+        )
+        attach_pregame_projection(response, _projection.get(event.id))
 
     # #240 Item 1: emit a single, unambiguous hero probability (the blend) at the
     # top level so native/web clients bind to ONE number per question instead of

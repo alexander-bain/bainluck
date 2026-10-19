@@ -242,6 +242,8 @@
     "#7878 win-prob retention keeps observation evidence (real Postgres)",
     "#11286 odds retention — provision the disposable database",
     "#11286 odds retention keeps a spread/total move under a flat home price (real Postgres)",
+    "#11296 pregame projection — provision the disposable database",
+    "#11296 a final's pregame projection is read from before the start (real Postgres)",
     "#8796 one failed statement does not discard the ESPN pass (real Postgres)",
     "#9797 a failed replaced-player release costs its own row, not the tennis pass (real Postgres)",
     "#9049 the ESPN pass lets go of each game's row before its next ESPN call (real Postgres)",

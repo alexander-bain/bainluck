@@ -7383,6 +7383,53 @@ jobs:
             exit 1
           }
 
+      - name: "#11296 pregame projection — provision the disposable database"
+        # Its own database for the reason the #11286 step above gives: the file
+        # drops and creates the five tables it touches.
+        if: matrix.group == 'isolated' && needs.change-scope.outputs.reuse != 'true'
+        run: |
+          set -o pipefail
+          python - <<'PY' >> "$GITHUB_ENV"
+          import asyncio, asyncpg
+
+          DB = "bl_pregame_projection_11296"
+
+          async def go():
+              c = await asyncpg.connect(
+                  user="postgres", password="postgres", database="postgres",
+                  host="localhost", port=5432)
+              await c.execute(f'DROP DATABASE IF EXISTS {DB}')
+              await c.execute(f'CREATE DATABASE {DB}')
+              await c.close()
+
+          asyncio.run(go())
+          print(
+              "PREGAME_PROJECTION_DATABASE_URL="
+              f"postgresql+asyncpg://postgres:postgres@localhost:5432/{DB}"
+          )
+          PY
+          echo "provisioned bl_pregame_projection_11296"
+
+      - name: "#11296 a final's pregame projection is read from before the start (real Postgres)"
+        # A finished game's `current_odds` pair is in-play, so the comparison
+        # reads each book's last row strictly before the published start. The
+        # statement is a positional unnest + loose index scan + strict-bound
+        # LATERAL; only a real server can say which rows it returns. Skip
+        # detection plus a count, as for #11286.
+        if: matrix.group == 'isolated' && needs.change-scope.outputs.reuse != 'true'
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_pregame_projection_pg_11296.py \
+            -v -rs 2>&1 | tee /tmp/pregameprojection11296.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/pregameprojection11296.txt; then
+            echo "::error::#11296 pregame projection SKIPPED — the gate did not run"
+            exit 1
+          fi
+          grep -qE "[^0-9]5 passed[,[:space:]]" /tmp/pregameprojection11296.txt || {
+            echo "::error::#11296 pregame projection did not run all five cases"
+            exit 1
+          }
+
       - name: "#7878 win-prob evidence crosses the history response (real Postgres, real route)"
         # Codex's exact-head review of PR #8438 found the producer's evidence
         # never reached a client: the final `game_state` projection (#6546)
