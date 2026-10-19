@@ -188,6 +188,7 @@
     "#10090 a slow removal notification never stalls another game or a healthy price; a recycled worker adopts every owed removal (real Postgres + Redis)",
     "#10090 an open page receives a committed price while its recovery read is held (real Postgres)",
     "#10090 an open or reopened page always learns the source removals it owes, never via an old price (real Postgres + Redis)",
+    "#10090 a held page receives the last committed price after a publication outage, without a new venue tick (real Postgres + Redis)",
     "#11138 a lock-held PM price row publishes the received quote, one cohort per event (real Postgres)",
     "#10090 a held PM quote returning to its stored price is published, held or just released (real Postgres)",
     "#10090 a brief hold on a PM prop or standalone price never costs a whole retry period (real Postgres)",

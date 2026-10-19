@@ -95,6 +95,12 @@ STEP_ENV_KEYS = {
         "#10090 an open or reopened page always learns the source removals it "
         "owes, never via an old price (real Postgres + Redis)",
     ): {"PM_WITHDRAWAL_REDIS_URL"},
+    # #10090 attempt151's ported controls: loopback redis:7 db 11; no secret.
+    (
+        "database-integration",
+        "#10090 a held page receives the last committed price after a "
+        "publication outage, without a new venue tick (real Postgres + Redis)",
+    ): {"PM_WITHDRAWAL_REDIS_URL"},
     ("search-recall", "Every database integration group passed"): {
         "SCOPE_RESULT",
         "INTEGRATION_RESULT",
