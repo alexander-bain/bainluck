@@ -18930,6 +18930,22 @@ async def event_state_read_window(db: AsyncSession) -> dict:
     chooses for them. A cached payload carries the window of the build that
     made it, which is the point: that build is what it describes.
 
+    What the window covers — events-row columns ONLY: the raw ``status``,
+    ``home_score``/``away_score``, ``completed_at``, ``period``/``game_clock``,
+    ``score_source``/``score_observed_at``, ``box_score_data`` (players and the
+    period line) and the tennis ``linescore``. Two limits a reader must keep:
+
+    * the served ``status`` is ``served_event_status(row status, served
+      commence, dyno now)``; the Kalshi start recovery (which moves only the
+      commence) and the dyno's clock act after the window, and both can only
+      demote ``live`` to ``scheduled`` near commence, never invent a state;
+    * keys read AFTER the window are not covered: the ``venue_*`` settlement
+      keys (``_venue_settlement_served`` adds ``venue_settled``,
+      ``venue_settled_result`` and ``venue_closed_no_winner``; it never touches
+      ``status``), ``live_probability_pinned``, ``hero_*`` and
+      ``prematch_odds``. They travel with the status that gated them; the
+      window does not order them.
+
     Fails closed to ``{}`` — on any error, an absent row, a value that is not a
     timezone-aware datetime, or a reversed pair. An absent window is "no
     claim", never a guessed one.
@@ -18940,7 +18956,10 @@ async def event_state_read_window(db: AsyncSession) -> dict:
         ).first()
     except Exception:
         # Gotcha #42's bargain: a payload without the clock is served exactly
-        # as before. The window is additive; it may never cost a page.
+        # as before. The window is additive. Honest limit: there is no
+        # savepoint, so a failure of THIS statement that leaves the connection
+        # up also leaves the transaction aborted for the reads below; "never
+        # costs a page" holds when the failure is the connection itself.
         logger.warning("event detail: state read window unavailable", exc_info=True)
         return {}
     if row is None or len(row) != 2:
