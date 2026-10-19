@@ -350,7 +350,8 @@ export default function EventPage({ params }: EventPageProps) {
     () => fetchEventWithLiveFrame(
       () => fetchEvent(eventId, takeFreshRead(freshNextEventReadRef)).then((polled) => {
         // #10090: replayed onto a pair's fresher read only when final or
-        // strictly newer — never a step back in game state or source rail.
+        // strictly newer. A same-revision poll is not replayed, so the pair's
+        // own detail wins that tie (no game-state tiebreak here).
         pairJournalRef.current?.record((onto) => replayJournaledPoll(polled, onto));
         return polled;
       }),
@@ -1050,6 +1051,10 @@ export default function EventPage({ params }: EventPageProps) {
     if (!adopted) return;
     // Paid on what is WRITTEN, not on the detail before the replay: a replay
     // that took the value back below a floor the detail covered is refused.
+    // Only the floors the detail itself covered are paid: a replayed frame
+    // raises the written revision but keeps the detail's rail, so it cannot
+    // vouch for a removal the detail never saw. Identity, not equality: a floor
+    // raised by `owe()` during the writes is a new object and stays owed.
     const written = (floor: unknown) => reconcileFloorCoverage(adopted, history, readingEventId, floor);
     if (covering.some((floor) => written(floor) === "none")) return;
     await Promise.all([
@@ -1059,7 +1064,7 @@ export default function EventPage({ params }: EventPageProps) {
     ]);
     if (quoteTriggerRef.current === trigger) quoteTriggerRef.current = null;
     if (recoveryIntentRef.current === recovery) recoveryIntentRef.current = 0;
-    if (quoteReadLifetimeRef.current === readingLifetime) reconcileLedger.settle((floor) => written(floor) === "paid");
+    if (quoteReadLifetimeRef.current === readingLifetime) reconcileLedger.settle((floor) => covering.includes(floor) && written(floor) === "paid");
     setLastRefresh(Date.now());
   };
 

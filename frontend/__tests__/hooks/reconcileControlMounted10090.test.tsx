@@ -752,4 +752,29 @@ describe("#10090 G1 repairs mounted: a journaled poll never steps the page back,
     expect(pairOptions()).toEqual([undefined, undefined]);
     await p.unmount();
   });
+
+  // Authority G1R REVISE (1000Z) R2: only the floors the DETAIL covered are paid.
+  it("Authority R2: a frame replayed mid-pair cannot pay a floor the detail never covered; the page asks again", async () => {
+    const p = await mount(live(9, 0.55, withPm(9)), history(9, 0.55));
+    await p.control("owed-1", 10); // an earlier removal the detail will cover
+    await p.control("owed-2", 12); // Polymarket withdrawn at 12
+    await p.advance(250);
+    expect(p.pairs()).toHaveLength(1);
+    // The post-removal price lands while the read is out ...
+    await p.push(12, 0.6);
+    // ... and the detail was built at 11: it still folds Polymarket. The
+    // pinned chart edge is already at 12.
+    await p.answer(live(11, 0.58, withPm(11)), history(12, 0.6));
+    expect(p.read()).toBe("live|60|kalshi+polymarket|r12|c60");
+    // Ledger first: the replayed frame raised the written revision to 12, but
+    // the rail it kept is the detail's, so the withdrawal is still owed.
+    expect(harness.ledger!.owed()).toBe(true);
+    expect(harness.ledger!.floors()).toEqual([{ [E]: 12 }]);
+    await p.advance(1000);
+    expect(p.pairs()).toHaveLength(2);
+    await p.answer(live(12, 0.6, { kalshi: src(0.6, 12) }), history(12, 0.6));
+    expect(p.read()).toBe("live|60|kalshi|r12|c60");
+    expect(harness.ledger!.owed()).toBe(false);
+    await p.unmount();
+  });
 });

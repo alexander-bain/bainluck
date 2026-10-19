@@ -212,8 +212,9 @@ type Versioned = { status?: string | null; blend_fold_revision?: unknown };
  * keeps only the headline and takes score, status and clock from the poll, and
  * for an incomparable one it returns the poll whole — so replayed after a
  * fresher read it put the game back a step, or the removed source back on the
- * rail. A same, older, incomparable or unversioned poll stays in the cache it
- * already wrote; the next poll re-reads it.
+ * rail. A same, older, incomparable or unversioned poll is not replayed: the
+ * pair overwrites the cache with its own adopted value, so a same-revision
+ * poll's game state (status, score) yields to the pair's detail.
  */
 export function replayJournaledPoll<T extends Versioned>(polled: T, onto: T): T | undefined {
   if (!isQuoteStreamStatus(polled.status)) return polled;
