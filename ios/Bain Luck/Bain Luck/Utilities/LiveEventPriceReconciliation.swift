@@ -97,17 +97,20 @@ nonisolated enum LiveEventPriceReconciliation {
     /// headline kept over it (`keepingNewerHeldHeadline`) or a pushed frame
     /// preserved over it leaves a revision on the page that is not the
     /// response's, and a newer sibling quote does not prove its rail or
-    /// history reconciled. A pinned history edge speaks for the history half
-    /// and must cover too; an unpinned one makes no claim. A served finished
-    /// game is the final owner: once the game ends `adopt` takes it whole.
+    /// history reconciled. The history half pays only on affirmative proof
+    /// (Root's D4 ruling): a PINNED edge whose own revision covers the floor.
+    /// An unpinned or revisionless history proves nothing and keeps the floor
+    /// owed; nothing here invents an edge, a revision or a clock for it. A
+    /// served final pays nothing either: leaving the priced states retires the
+    /// floor through its named owner (`configureAutoRefresh`).
     static func reconcileFloorShown(
         _ floor: FoldRevision, served: EventDetail, servedHistory: EventHistoryResponse, page: EventDetail?
     ) -> Bool {
-        guard let page, page.id == served.id, servedHistory.eventId == served.id else { return false }
-        if EventState.isFinished(served.status) { return true }
-        guard let revision = served.blendFoldRevision?.revision, revision.covers(floor),
-              page.blendFoldRevision?.revision == revision else { return false }
-        if let edge = servedHistory.blendEdgeFoldRevision?.revision, !edge.covers(floor) { return false }
+        guard let page, page.id == served.id, servedHistory.eventId == served.id,
+              let revision = served.blendFoldRevision?.revision, revision.covers(floor),
+              page.blendFoldRevision?.revision == revision,
+              servedHistory.blendEdgePinned == true,
+              let edge = servedHistory.blendEdgeFoldRevision?.revision, edge.covers(floor) else { return false }
         return true
     }
 

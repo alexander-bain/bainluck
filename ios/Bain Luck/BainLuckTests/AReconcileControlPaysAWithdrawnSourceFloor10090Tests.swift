@@ -52,8 +52,9 @@ final class AReconcileControlPaysAWithdrawnSourceFloor10090Tests: XCTestCase {
     }
 
     /// `edge: nil` serves an unpinned history, which makes no revision claim.
-    fileprivate static func history(p: Double, edge: String?, at: String, eventId: Int = 4242) throws -> EventHistoryResponse {
-        let pin = edge.map { #""blend_edge_pinned":true,"blend_edge_fold_revision":\#($0),"blend_edge_observed_at":"\#(at)","# } ?? ""
+    fileprivate static func history(p: Double, edge: String?, at: String, eventId: Int = 4242,
+                                    pinned: Bool = true) throws -> EventHistoryResponse {
+        let pin = edge.map { #""blend_edge_pinned":\#(pinned),"blend_edge_fold_revision":\#($0),"blend_edge_observed_at":"\#(at)","# } ?? ""
         return try decode(EventHistoryResponse.self, """
         {"event_id":\(eventId),"home_team":"Home","away_team":"Away","status":"live","history":[],\(pin)
          "aggregate_line":[{"timestamp":"\(at)","home_probability":\(p)}]}
@@ -277,17 +278,41 @@ final class AReconcileControlPaysAWithdrawnSourceFloor10090Tests: XCTestCase {
         XCTAssertEqual(reconcileAsks, [1.5])
     }
 
-    func testAPinnedHistoryEdgeBelowTheFloorDoesNotPayIt() async throws {
-        var staleHistory = Self.without11
-        staleHistory.edge = .some(#"{"4242":10}"#)
-        let (client, handle, vm) = try await opened(pairs: [staleHistory, Self.without11])
+    /// Root's D4 ruling: the history half pays only on affirmative proof. A
+    /// covering detail beside an unpinned history, a failed pair and a pinned
+    /// edge below the floor all keep it owed; a proven covering history later
+    /// pays with nothing but time passing.
+    func testAnUnprovenHistoryNeverPaysAndAProvenOneLaterPaysWithNoNewInput() async throws {
+        var unpinned = Self.without11
+        unpinned.edge = .some(nil)
+        var failing = Self.without11
+        failing.fails = true
+        var staleEdge = Self.without11
+        staleEdge.edge = .some(#"{"4242":10}"#)
+        let (client, handle, vm) = try await opened(pairs: [unpinned, failing, staleEdge, Self.without11])
+        let owedAt = clock
         handle.fire("reconcile", Self.control())
-        try await settle { client.detailReads == 1 }
+        try await settle { client.detailReads == 1 && vm.event?.winProbabilitySources?["polymarket"] == nil }
         try await quiet()
-        XCTAssertNotNil(vm.reconcileOwedSince, "the history half has not reached the floor")
+        XCTAssertEqual(vm.reconcileOwedSince, owedAt, "a covering detail beside an unpinned history pays nothing")
+
         try await elapse(1.5)
+        try await settle { client.detailReads == 2 && vm.pricePairRefreshFailed }
+        try await quiet()
+        XCTAssertEqual(vm.reconcileOwedSince, owedAt, "a failed pair keeps it")
+
+        try await settle { sleeper.pending(2) == 1 }
+        clock += 2
+        sleeper.fire(2)
+        try await settle { client.detailReads == 3 && !vm.pricePairRefreshFailed }
+        try await quiet()
+        XCTAssertEqual(vm.reconcileOwedSince, owedAt, "a pinned edge below the floor keeps it")
+
+        try await elapse(6)
         try await settle { vm.reconcileOwedSince == nil }
-        XCTAssertEqual(client.detailReads, 2)
+        try await quiet()
+        XCTAssertEqual(client.detailReads, 4)
+        XCTAssertEqual(reconcileAsks, [1.5, 6], "the reconcile re-ask, with the pair retry owning the failure")
     }
 
     // MARK: - R3 an older/equal control after a newer sibling
@@ -482,7 +507,7 @@ final class AReconcileControlPaysAWithdrawnSourceFloor10090Tests: XCTestCase {
         XCTAssertTrue(reconcileAsks.isEmpty)
     }
 
-    func testAServedFinalIsTheFinalOwnerOfTheFloor() async throws {
+    func testAServedFinalRetiresTheFloorThroughItsNamedOwner() async throws {
         var served = Self.stale10
         served.status = "completed"
         let (client, handle, vm) = try await opened(pairs: [served])
@@ -609,8 +634,11 @@ final class AReconcileControlPaysAWithdrawnSourceFloor10090Tests: XCTestCase {
         let edge11 = try Self.history(p: 0.5, edge: #"{"4242":11}"#, at: Self.removedAt)
         let shown = LiveEventPriceReconciliation.reconcileFloorShown
         XCTAssertTrue(shown(floor, served, edge11, served))
-        XCTAssertTrue(shown(floor, served, try Self.history(p: 0.5, edge: nil, at: Self.removedAt), served),
-                      "an unpinned history makes no claim")
+        XCTAssertFalse(shown(floor, served, try Self.history(p: 0.5, edge: nil, at: Self.removedAt), served),
+                       "an unpinned history proves nothing")
+        XCTAssertFalse(shown(floor, served, try Self.history(p: 0.5, edge: #"{"4242":11}"#, at: Self.removedAt,
+                                                             pinned: false), served),
+                       "a revision on an edge the server did not pin proves nothing")
         XCTAssertFalse(shown(floor, served, edge11, nil))
         XCTAssertFalse(shown(floor, served, try Self.history(p: 0.5, edge: #"{"4242":10}"#, at: Self.removedAt), served))
         XCTAssertFalse(shown(floor, served, try Self.history(p: 0.5, edge: #"{"4242":11}"#, at: Self.removedAt, eventId: 1), served))
@@ -620,7 +648,8 @@ final class AReconcileControlPaysAWithdrawnSourceFloor10090Tests: XCTestCase {
                                          sources: Self.kalshiOnly(0.5, at: Self.removedAt), id: 1)
         XCTAssertFalse(shown(floor, served, edge11, otherEvent))
         let finished = try Self.detail(p: 0.6, revision: #"{"4242":10}"#, sources: Self.both, status: "completed")
-        XCTAssertTrue(shown(floor, finished, try Self.history(p: 0.6, edge: #"{"4242":10}"#, at: Self.removedAt), finished))
+        XCTAssertFalse(shown(floor, finished, try Self.history(p: 0.6, edge: #"{"4242":10}"#, at: Self.removedAt), finished),
+                       "a served final pays nothing; leaving the priced states retires the floor instead")
     }
 }
 
