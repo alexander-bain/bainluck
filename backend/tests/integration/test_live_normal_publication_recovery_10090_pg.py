@@ -807,17 +807,33 @@ async def test_ambiguous_send_after_retry_timeout_does_not_execute_live_after_te
 
     t.r._client = lambda: SimpleNamespace(connection_pool=Pool())
     # Redis serializes this 700 ms busy loop: the retry's bytes queue behind it.
+    # Redis 7 freezes TIME for a whole script until its 5 s busy threshold
+    # (CI's redis:7 ran the old TIME loop for 5.000 s, into redis-py 8's 5 s
+    # read timeout), so the loop runs on os.clock where the server has it;
+    # Redis 6.2 has no os library and its TIME advances. TIME at script start
+    # is the execution's start on both. The end is a TIME pipelined behind the
+    # EVAL on the same connection, which Redis runs as soon as the script ends.
     lua = (
         "local t=redis.call('TIME'); "
         "local start_us=tonumber(t[1])*1000000+tonumber(t[2]); "
-        "local until_us=start_us+700000; "
-        "repeat t=redis.call('TIME') until tonumber(t[1])*1000000+tonumber(t[2])>=until_us; "
-        "return {start_us,tonumber(t[1])*1000000+tonumber(t[2])}"
+        "local os_lib=rawget(_G,'os'); "
+        "if os_lib then local c=os_lib.clock(); repeat until os_lib.clock()-c>=0.7 "
+        "else local until_us=start_us+700000; "
+        "repeat t=redis.call('TIME') until tonumber(t[1])*1000000+tonumber(t[2])>=until_us "
+        "end; "
+        "return start_us"
     )
+
+    async def block():
+        pipe = blocker.pipeline(transaction=False)
+        pipe.eval(lua, 0)
+        pipe.time()
+        start_us, (seconds, micros) = await pipe.execute()
+        return start_us, seconds * 1_000_000 + micros
 
     async def delayed(frames):
         nonlocal blocking_task
-        blocking_task = asyncio.create_task(blocker.eval(lua, 0))
+        blocking_task = asyncio.create_task(block())
         await asyncio.sleep(.04)
         return await original(frames)
 
@@ -943,11 +959,14 @@ def count_pending(r):
     return calls
 
 
-def refuse_first_price_of(r, event_id, publish):
+def refuse_first_price_of(r, event_id, publish, *, hold=0):
     """`publish` acknowledges what it sends. Once armed, A's next price frame
     is dropped unsent and unacknowledged; every price-free control is
-    acknowledged (Redis accepted it) and recorded."""
-    armed, refused, controls, sent_at, sent = [], [], [], {}, []
+    acknowledged (Redis accepted it) and recorded. With ``hold``, every price
+    send takes that long before it is acknowledged, and each send's span is
+    recorded: a cohort's later group commits while an earlier one is sending
+    and is still owed when that send's recovery opportunity reads."""
+    armed, refused, controls, sent_at, sent, spans = [], [], [], {}, [], []
 
     async def gate(frames):
         acked, forward = set(), []
@@ -961,8 +980,12 @@ def refuse_first_price_of(r, event_id, publish):
             else:
                 forward.append(f)
         if forward:
+            began = time.monotonic()
+            if hold:
+                await asyncio.sleep(hold)
             acked |= await publish(forward) or set()
             now = time.monotonic()
+            spans.append((began, now))
             for f in forward:
                 sent_at.setdefault((f["event_id"], f.get("source_value")), now)
                 sent.append((f["event_id"], now))
@@ -971,8 +994,40 @@ def refuse_first_price_of(r, event_id, publish):
     r._publish = gate
     return SimpleNamespace(
         arm=lambda: armed.append(True), refused=refused, controls=controls,
-        sent_at=sent_at, sent=sent,
+        sent_at=sent_at, sent=sent, spans=spans,
     )
+
+
+#: Authority's 151 review of 0f6389ce65: a price send this long, two busy games
+#: per flush. Each group commits on its own and the groups send one at a time,
+#: so a recovery opportunity started by one group's send reads the other's
+#: committed intent while it waits or sends.
+COHORT_HOLD = .05
+
+
+def record_recovery_runs(r):
+    """Wrap the recovery owner (still the task `_start_normal_recovery`
+    creates, so it keeps its own session) and record each run's span."""
+    runs = []
+    shipped = r._recover_normal_prices
+
+    async def recorded():
+        began = time.monotonic()
+        try:
+            return await shipped()
+        finally:
+            runs.append((began, time.monotonic()))
+
+    r._recover_normal_prices = recorded
+    return runs
+
+
+def overlapping(runs, spans):
+    """Recovery runs that overlapped a busy price send."""
+    return [
+        run for run in runs
+        if any(run[0] < end and began < run[1] for began, end in spans)
+    ]
 
 
 def median(values):
@@ -980,22 +1035,29 @@ def median(values):
     return ordered[len(ordered) // 2]
 
 
+@pytest.mark.parametrize("cohort", [False, True])
 async def test_busy_timed_pm_flushes_recover_a_quiet_failed_game(
-    rig, consumer, monkeypatch,
+    rig, consumer, monkeypatch, cohort,
 ):
     t = await setup(rig, consumer, monkeypatch)
     t.r.min_refresh_interval_s = 0
-    gate = refuse_first_price_of(t.r, 1, t.r._publish)
+    gate = refuse_first_price_of(
+        t.r, 1, t.r._publish, hold=COHORT_HOLD if cohort else 0,
+    )
+    runs = record_recovery_runs(t.r)
     pending = count_pending(t.r)
     values = iter(round(.40 + i / 1000, 3) for i in range(400))
     recv = {}
+    busy_games = {2, 3} if cohort else {2}
 
     async def busy_flush():
         # TIMED, as production's cadence calls it, and not joined: a PM
-        # flush leaves its stamp owner running into the next one. B has new
-        # input on EVERY flush.
+        # flush leaves its stamp owner running into the next one. B (and,
+        # in the cohort, C) has new input on EVERY flush.
         value = next(values)
         recv[value] = t.accept(2, value).recv_mono
+        if cohort:
+            t.accept(3, next(values))
         started = time.monotonic()
         assert await t.tracked_flush(started) is True
         await asyncio.sleep(PERIOD)
@@ -1016,6 +1078,7 @@ async def test_busy_timed_pm_flushes_recover_a_quiet_failed_game(
         await t.boundary.join_stamps()
         stubbed = latencies(stubbed_from)
         del t.r._start_normal_recovery
+        assert not gate.controls, "recovery was stubbed out"
 
         # Phase 2: A's single publication is refused, then A goes quiet.
         live_from = time.monotonic()
@@ -1029,6 +1092,7 @@ async def test_busy_timed_pm_flushes_recover_a_quiet_failed_game(
             ):
                 recovered = n
         await t.boundary.join_stamps()
+        await join(t.r)
         live = latencies(live_from)
 
         assert gate.refused, "rig: A's publication was refused"
@@ -1037,6 +1101,15 @@ async def test_busy_timed_pm_flushes_recover_a_quiet_failed_game(
         assert not pending, "premise: a busy timed flush never reaches refresh_pending"
         written_b = {fs for fs, vals in t.writes if 2 in vals}
         assert set(busy) <= written_b, "premise: B's batch was never empty"
+        if cohort:
+            written_c = {fs for fs, vals in t.writes if 3 in vals}
+            assert set(busy) <= written_c, "premise: C's batch was never empty"
+            assert overlapping(runs, gate.spans), (
+                "premise: no recovery run overlapped a busy price send", runs,
+            )
+        # A busy game's price is on its way or delivered: recovery owes its
+        # readers nothing for it.
+        assert not [c for c in gate.controls if c[0] in busy_games], gate.controls
         assert len(stubbed) >= 6 and len(live) >= 6, (stubbed, live)
         assert max(live) < 1, (live, stubbed)
         assert median(live) - median(stubbed) < .1, (live, stubbed)
@@ -1046,62 +1119,86 @@ async def test_busy_timed_pm_flushes_recover_a_quiet_failed_game(
         await t.r.drain_history()
 
 
-async def _seed_second_kalshi_game(rig):
+#: event (= market id): home outcome, away outcome, ticker, (home, code),
+#: (away, code), title
+KALSHI_GAMES = {
+    2: (3, 4, "KXMLBGAME-26OCT17ATLNYM", ("New York Mets", "NYM"),
+        ("Atlanta Braves", "ATL"), "Atlanta vs New York M Winner?"),
+    3: (5, 6, "KXMLBGAME-26OCT17WSHPHI", ("Philadelphia Phillies", "PHI"),
+        ("Washington Nationals", "WSH"), "Washington vs Philadelphia Winner?"),
+}
+
+
+async def _seed_kalshi_game(rig, eid):
     from app.models.models import Event, FuturesMarket, FuturesOutcome, Sport
     from sqlalchemy import select
 
+    home_oid, away_oid, ticker, (home, home_code), (away, away_code), title = (
+        KALSHI_GAMES[eid]
+    )
     now = datetime.now(timezone.utc)
     async with rig.maker() as session:
         sport_id = await session.scalar(select(Sport.id).where(Sport.key == "baseball_mlb"))
         session.add(Event(
-            id=2, sport_id=sport_id, home_team_name="New York Mets",
-            away_team_name="Atlanta Braves", commence_time=now - timedelta(minutes=30),
+            id=eid, sport_id=sport_id, home_team_name=home,
+            away_team_name=away, commence_time=now - timedelta(minutes=30),
             status="live", win_probability_sources={}, opening_home_probability=0.5,
         ))
         session.add(FuturesMarket(
-            id=2, source="kalshi", external_id="KXMLBGAME-26OCT17ATLNYM",
-            sport_id=sport_id, event_id=2, name="Atlanta vs New York M Winner?",
+            id=eid, source="kalshi", external_id=ticker,
+            sport_id=sport_id, event_id=eid, name=title,
             status="open", category="game",
         ))
         await session.flush()
-        for oid, name, ticker, prob in (
-            (3, "New York Mets", "KXMLBGAME-26OCT17ATLNYM-NYM", 0.55),
-            (4, "Atlanta Braves", "KXMLBGAME-26OCT17ATLNYM-ATL", 0.45),
+        for oid, name, side, prob in (
+            (home_oid, home, home_code, 0.55),
+            (away_oid, away, away_code, 0.45),
         ):
             session.add(FuturesOutcome(
-                id=oid, market_id=2, external_id=ticker, name=name,
-                current_probability=prob, rank=1 if oid == 3 else 2,
+                id=oid, market_id=eid, external_id=f"{ticker}-{side}", name=name,
+                current_probability=prob, rank=1 if oid == home_oid else 2,
                 last_updated=now - timedelta(minutes=1),
             ))
         await session.commit()
 
 
-async def test_busy_timed_kalshi_flushes_recover_a_quiet_failed_game(rig):
+@pytest.mark.parametrize("cohort", [False, True])
+async def test_busy_timed_kalshi_flushes_recover_a_quiet_failed_game(rig, cohort):
     from tests.integration import test_kalshi_held_price_row_10090_pg as k
 
     await k.seed(rig)
-    await _seed_second_kalshi_game(rig)
+    busy_games = {2, 3} if cohort else {2}
+    for eid in sorted(busy_games):
+        await _seed_kalshi_game(rig, eid)
     c = k.Consumer(rig, overlay=False)
-    c.ns["market_id_by_outcome"].update({3: 2, 4: 2})
-    c.ns["event_id_by_outcome"].update({3: 2, 4: 2})
-    c.ns["live_event_ids"].add(2)
+    for eid in busy_games:
+        home_oid, away_oid = KALSHI_GAMES[eid][:2]
+        c.ns["market_id_by_outcome"].update({home_oid: eid, away_oid: eid})
+        c.ns["event_id_by_outcome"].update({home_oid: eid, away_oid: eid})
+        c.ns["live_event_ids"].add(eid)
     r = c.refresher
 
     async def acknowledge(frames):
         c.frames.extend(frames)
         return acknowledge_all(frames)
 
-    gate = refuse_first_price_of(r, 1, acknowledge)
+    gate = refuse_first_price_of(
+        r, 1, acknowledge, hold=COHORT_HOLD if cohort else 0,
+    )
+    runs = record_recovery_runs(r)
     pending = count_pending(r)
     source = "kalshi_price_publish"
     values = iter(round(.30 + i / 1000, 3) for i in range(400))
 
     async def busy_flush(into):
-        # B (outcome 3, home of game 2) has new input on EVERY flush. The
-        # frame carries B's blend, not the raw quote: time the first B frame
-        # this flush published.
+        # B (outcome 3, home of game 2) — and, in the cohort, C (outcome 5,
+        # home of game 3) — has new input on EVERY flush. The frame carries
+        # B's blend, not the raw quote: time the first B frame this flush
+        # published.
         before = len(gate.sent)
         c.batch[3] = (next(values), None, None)
+        if cohort:
+            c.batch[5] = (next(values), None, None)
         received = time.monotonic()
         assert await c.flush() is True
         published = [at for eid, at in gate.sent[before:] if eid == 2]
@@ -1110,14 +1207,15 @@ async def test_busy_timed_kalshi_flushes_recover_a_quiet_failed_game(rig):
         await asyncio.sleep(PERIOD)
 
     try:
-        await r.refresh([1, 2])
-        assert {e for e, _ in gate.sent_at} == {1, 2}, "rig: both games speak"
+        await r.refresh([1, *sorted(busy_games)])
+        assert {e for e, _ in gate.sent_at} == {1, *busy_games}, "rig: every game speaks"
         # Phase 1, the comparison arm: recovery stubbed out, B alone.
         r._start_normal_recovery = lambda: None
         stubbed, live = [], []
         for _ in range(8):
             await busy_flush(stubbed)
         del r._start_normal_recovery
+        assert not gate.controls, "recovery was stubbed out"
 
         # Phase 2: A's single publication is refused, then A goes quiet.
         gate.arm()
@@ -1129,11 +1227,21 @@ async def test_busy_timed_kalshi_flushes_recover_a_quiet_failed_game(rig):
                 await owed_for(rig, source, 1)
             ):
                 recovered = n
+        task = r._normal_task
+        if task is not None:
+            await asyncio.wait_for(asyncio.shield(task), 2)
 
         assert gate.refused, "rig: A's publication was refused"
         assert (1, gate.refused[0]) in gate.controls, "A's control names its revision"
         assert recovered is not None, "A's intent never settled through 8 busy flushes"
         assert not pending, "premise: a flush with a batch never reaches refresh_pending"
+        if cohort:
+            assert overlapping(runs, gate.spans), (
+                "premise: no recovery run overlapped a busy price send", runs,
+            )
+        # A busy game's price is on its way or delivered: recovery owes its
+        # readers nothing for it.
+        assert not [c for c in gate.controls if c[0] in busy_games], gate.controls
         assert len(stubbed) >= 6 and len(live) >= 6, (stubbed, live)
         assert max(live) < 1, (live, stubbed)
         assert median(live) - median(stubbed) < .1, (live, stubbed)
