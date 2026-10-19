@@ -439,7 +439,7 @@ struct NFLMilestoneCardView9483: View {
                 .accessibilityLabel("Previous line")
                 if expanded {
                     // Details sheet lives on the full-size reader only; the
-                    // compact card opens through its "Explore card" control.
+                    // compact card opens through its "Open story" control.
                     Button {
                         if let rung { state.detailsRowID = rung.rowID }
                     } label: {
@@ -701,10 +701,10 @@ struct NFLEventCardView9483: View {
 struct NFLEventCardDeckView9483: View {
     /// #11285 (Alex, build 65) — the compact card's opener. "Open full size"
     /// promised a screen-filling view the reader does not draw (it keeps the
-    /// game context and a neighbouring card's edge); the selected design's
-    /// "Explore card" promises what it does. One spelling for the deck and the
-    /// NBA stream; VoiceOver says `openerAccessibilityLabel`.
-    static let openerTitle = "Explore card"
+    /// game context and a neighbouring card's edge); "Open story" (Root 2018Z)
+    /// names what it opens. One spelling for the deck and the NBA stream;
+    /// VoiceOver says `openerAccessibilityLabel`.
+    static let openerTitle = "Open story"
     static func openerAccessibilityLabel(_ cardTitle: String) -> String { "Open \(cardTitle)" }
     static let openerIdentifier = "story-card-open"
 

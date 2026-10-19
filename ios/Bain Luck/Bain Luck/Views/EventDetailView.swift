@@ -2315,29 +2315,50 @@ struct EventDetailView: View {
         return (away, home)
     }
 
-    /// #11285 — the pregame projection, balanced under the chances: the gated
-    /// label (the caller's one spelling, #5697), then each team's projected
-    /// points in its own half, under its own chance — the halves are the
-    /// chance pair's (`HStackLayout(spacing: 8)`, each leading), so away sits
-    /// under away and the row uses its full width. Accessibility sizes stack
-    /// the pair as the chances are stacked. The points stay below the chances'
-    /// size; names wrap, never shrink. Spoken once, label first.
+    /// #11285 — the pregame projection as one compact full-width row under
+    /// the chances (Design's brief, Root 2018Z): the gated label (the caller's
+    /// one spelling, #5697) on the left, "49ers 24 – 21 Commanders" on the
+    /// right, away first as the chances are. Sized to fit one line on a 375pt
+    /// phone at the default text size (~296pt of 311pt for this pair); larger
+    /// text puts the pair, still right-aligned, under its label, then each
+    /// team on its own line — nothing shrinks or truncates. The points stay
+    /// below the chances' size. Spoken once, label first.
     private func adoptedPregameProjection11285(
         figure: String, label caption: Text,
         names: (away: String, home: String), colors: (away: Color, home: Color)
     ) -> some View {
         let label = caption
-            .font(.subheadline)
+            .font(.footnote)
             .foregroundStyle(.secondary)
-        let halves = dynamicTypeSize.isAccessibilitySize
-            ? AnyLayout(VStackLayout(alignment: .leading, spacing: 4))
-            : AnyLayout(HStackLayout(alignment: .firstTextBaseline, spacing: 8))
-        return VStack(alignment: .leading, spacing: 2) {
+        return Group {
             if let pair = Self.projectedPair11285(figure) {
-                label
-                halves {
-                    adoptedProjectedSide11285(names.away, color: colors.away, points: pair.away)
-                    adoptedProjectedSide11285(names.home, color: colors.home, points: pair.home)
+                let scoreline = HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    projectedTeam11285(names.away, color: colors.away)
+                    projectedPoints11285(pair.away)
+                    Text("\u{2013}").font(.headline).foregroundStyle(.secondary)
+                    projectedPoints11285(pair.home)
+                    projectedTeam11285(names.home, color: colors.home)
+                }
+                .fixedSize()
+                ViewThatFits(in: .horizontal) {
+                    HStack(alignment: .firstTextBaseline, spacing: 12) {
+                        label.fixedSize()
+                        Spacer(minLength: 0)
+                        scoreline
+                    }
+                    VStack(alignment: .trailing, spacing: 2) {
+                        label.frame(maxWidth: .infinity, alignment: .leading)
+                        scoreline
+                    }
+                    VStack(alignment: .leading, spacing: 2) {
+                        label
+                        HStack(alignment: .firstTextBaseline, spacing: 6) {
+                            projectedTeam11285(names.away, color: colors.away); projectedPoints11285(pair.away)
+                        }
+                        HStack(alignment: .firstTextBaseline, spacing: 6) {
+                            projectedTeam11285(names.home, color: colors.home); projectedPoints11285(pair.home)
+                        }
+                    }
                 }
             } else {
                 // A figure that is not a plain pair (a named unit) prints whole.
@@ -2345,7 +2366,7 @@ struct EventDetailView: View {
                     label
                     Spacer(minLength: 0)
                     Text(figure)
-                        .font(.title3.weight(.bold).monospacedDigit())
+                        .font(.headline.monospacedDigit())
                         .foregroundStyle(Color.primary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -2357,19 +2378,18 @@ struct EventDetailView: View {
         .accessibilityIdentifier("adopted-pregame-projection")
     }
 
-    /// One team's half of the pregame projection: its name, then its points.
-    private func adoptedProjectedSide11285(_ name: String, color: Color, points: Int) -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: 6) {
-            Text(name)
-                .font(.subheadline.weight(.semibold))
-                .foregroundStyle(color)
-                .fixedSize(horizontal: false, vertical: true)
-            Text("\(points)")
-                .font(.title3.weight(.bold).monospacedDigit())
-                .foregroundStyle(Color.primary)
-                .fixedSize()
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
+    private func projectedTeam11285(_ name: String, color: Color) -> some View {
+        Text(name)
+            .font(.footnote.weight(.semibold))
+            .foregroundStyle(color)
+            .fixedSize(horizontal: false, vertical: true)
+    }
+
+    private func projectedPoints11285(_ points: Int) -> some View {
+        Text("\(points)")
+            .font(.headline.monospacedDigit())
+            .foregroundStyle(Color.primary)
+            .fixedSize()
     }
 
     /// One adopted side's figure and baseline, visible and spoken, from the same

@@ -69,30 +69,36 @@ final class NFLReaderBuild65Feedback11285Tests: XCTestCase {
                       "the scored arm's figure-over-caption is not this ship")
     }
 
-    /// The halves are the chance pair's: two leading columns at its spacing,
-    /// stacked at accessibility sizes as the chances are. A lone leading
-    /// figure is what Alex saw.
-    func testThePregameRowSplitsIntoTheChancePairsHalves() throws {
+    /// Root 2018Z / Design: label on the left, the named pair on the right,
+    /// wrapping (never shrinking) at larger text. A lone leading figure is
+    /// what Alex saw.
+    func testThePregameRowIsLabelLeftAndNamedPairRight() throws {
         let page = try source("Views/EventDetailView.swift")
         let start = try XCTUnwrap(page.range(of: "private func adoptedPregameProjection11285("))
         let end = try XCTUnwrap(page.range(of: "struct AdoptedSide9483", range: start.upperBound..<page.endIndex))
         let body = String(page[start.upperBound..<end.lowerBound])
-        XCTAssertTrue(body.contains("AnyLayout(HStackLayout(alignment: .firstTextBaseline, spacing: 8))"))
-        XCTAssertTrue(body.contains("AnyLayout(VStackLayout(alignment: .leading, spacing: 4))"))
-        XCTAssertTrue(body.contains("dynamicTypeSize.isAccessibilitySize"))
-        XCTAssertTrue(body.contains("adoptedProjectedSide11285(names.away, color: colors.away, points: pair.away)"))
-        XCTAssertTrue(body.contains("adoptedProjectedSide11285(names.home, color: colors.home, points: pair.home)"))
-        XCTAssertTrue(body.contains(".frame(maxWidth: .infinity, alignment: .leading)"), "each half takes its column")
+        let fits = try XCTUnwrap(body.range(of: "ViewThatFits(in: .horizontal) {"))
+        let oneLine = String(body[fits.upperBound...].prefix(260))
+        XCTAssertTrue(oneLine.contains("label.fixedSize()"), "the label leads the one-line row")
+        XCTAssertTrue(oneLine.contains("Spacer(minLength: 0)"))
+        XCTAssertTrue(oneLine.contains("scoreline"), "the named pair trails the one-line row")
+        XCTAssertTrue(body.contains("VStack(alignment: .trailing, spacing: 2) {"), "wrapped, the pair stays right")
+        XCTAssertTrue(body.contains("projectedTeam11285(names.away, color: colors.away)"))
+        XCTAssertTrue(body.contains("projectedTeam11285(names.home, color: colors.home)"))
+        let away = try XCTUnwrap(body.range(of: "projectedPoints11285(pair.away)"))
+        let home = try XCTUnwrap(body.range(of: "projectedPoints11285(pair.home)"))
+        XCTAssertLessThan(away.lowerBound, home.lowerBound, "away first, as the chances are")
         XCTAssertFalse(body.contains("minimumScaleFactor"), "names wrap, never shrink")
         XCTAssertFalse(body.contains("Text(\"Projected final\")"), "the label stays the gate's one spelling (#5697)")
-        // The pair's own chance columns use the same spacing.
-        XCTAssertTrue(page.contains(": AnyLayout(HStackLayout(alignment: .nflPairedFigure9483, spacing: 8))"))
+        // Points below the chances' size.
+        XCTAssertTrue(body.contains(".font(.headline.monospacedDigit())"))
+        XCTAssertFalse(body.contains("eventHeadlineChanceSize9483"))
     }
 
     // MARK: - 3. The opener says what it opens
 
-    func testTheOpenerIsExploreCardAndVoiceOverNamesTheCard() {
-        XCTAssertEqual(NFLEventCardDeckView9483.openerTitle, "Explore card")
+    func testTheOpenerIsOpenStoryAndVoiceOverNamesTheCard() {
+        XCTAssertEqual(NFLEventCardDeckView9483.openerTitle, "Open story")
         XCTAssertEqual(NFLEventCardDeckView9483.openerAccessibilityLabel("Brock Purdy · Passing yards"),
                        "Open Brock Purdy · Passing yards")
         XCTAssertFalse(NFLEventCardDeckView9483.openerTitle.localizedCaseInsensitiveContains("full"))

@@ -53,7 +53,7 @@ final class ANFLReaderKeepsItsCardThroughARotation11060Tests: XCTestCase {
         let id = try eventID()
         XCUIDevice.shared.orientation = .portrait
         let app = UITestLaunch.launchApp(extra: ["-launch_route", "bainluck://events/\(id)"] + extra)
-        // #11285 — the opener reads "Explore card"; VoiceOver says "Open <title>".
+        // #11285 — the opener reads "Open story"; VoiceOver says "Open <title>".
         let opens = app.buttons.matching(identifier: "story-card-open")
         var swipes = 0
         while !(opens.firstMatch.exists && opens.firstMatch.isHittable) && swipes < 25 {
