@@ -27,9 +27,10 @@ as detail's `blend_fold_revision` and the live frame's `rev`
 
 ## how it is read, and why each check exists
 
-The vector is read ONCE, by `folded_probability_sources_with_revision` — the
-statement detail's vector comes from — after the build has resolved WHICH rows
-it will chart and BEFORE it reads any of their history. Under READ COMMITTED
+The vector is read ONCE, by `folded_revision_vector` — the statement detail's
+vector comes from, without the price bags this caller never uses — after the
+build has resolved WHICH rows it will chart and BEFORE it reads any of their
+history. Under READ COMMITTED
 every later statement on the build's session sees every commit that statement
 saw, so a removal it counts is in the snapshot rows read after it (the
 withdrawal vertex commits with the bag change, `tasks/polymarket_ws.py`). A
@@ -82,7 +83,7 @@ def coverage_from_prefix(
 ) -> Optional[dict[str, int]]:
     """The prefix vector, if it certifies exactly the rows this build reads.
 
-    ``prefix_vector`` is `folded_probability_sources_with_revision`'s vector,
+    ``prefix_vector`` is `folded_revision_vector`'s vector,
     read before any history; ``read_row_ids`` are the rows the series reads use
     (`folded_series_event_ids`); ``canonical_loaded_rev`` is the revision on the
     canonical row this build took its own bag from.
@@ -119,11 +120,9 @@ async def read_coverage_prefix(
     `folded_series_event_ids` gives (a failed read here aborts the transaction
     every later read shares, so hiding it would only move the failure).
     """
-    from app.utils.proven_duplicates import folded_probability_sources_with_revision
+    from app.utils.proven_duplicates import folded_revision_vector
 
-    _sources, vector = await folded_probability_sources_with_revision(
-        db, event, absorbed
-    )
+    vector = await folded_revision_vector(db, event, absorbed)
     return coverage_from_prefix(
         vector,
         canonical_id=getattr(event, "id", None),

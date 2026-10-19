@@ -207,3 +207,101 @@ class TestTheRouteReadsItInTheRightPlace:
         assert "blend_edge_fold_revision" not in served
         assert "history_build_is_complete()" in served
         assert "on_demand_backfill" in served
+
+
+class _Recording:
+    """Answers the fold's one statement with ``rows`` shaped to its columns."""
+
+    def __init__(self, rows):
+        self.rows = rows
+        self.statements = []
+
+    async def execute(self, statement, *a, **kw):
+        self.statements.append(statement)
+        names = [c.name for c in statement.selected_columns]
+        return _Rows([tuple(row[n] for n in names) for row in self.rows])
+
+
+class TestThePrefixReadsNoPriceBags:
+    """The prefix needs row identity and revision only. Real-Postgres equality
+    and the route's own statement: the `_pg` file's C12/C13."""
+
+    def _rows(self):
+        bag = {"polymarket": {"value": 0.6}, "noise": {"value": 0.5, "pad": "x" * 4096}}
+        base = dict(home_team_name="Arsenal", away_team_name="Chelsea", win_probability_sources=bag)
+        return [
+            dict(base, id=C, win_probability_sources_rev=4, tagged=False),
+            dict(base, id=T, win_probability_sources_rev=9, tagged=True),
+            # Tagged but home/away swapped: not folded unless absorbed.
+            dict(base, id=A, home_team_name="Chelsea", away_team_name="Arsenal",
+                 win_probability_sources_rev=2, tagged=True),
+        ]
+
+    def _both(self, rows, absorbed=()):
+        from types import SimpleNamespace
+
+        from app.utils.proven_duplicates import (
+            folded_probability_sources_with_revision,
+            folded_revision_vector,
+        )
+
+        event = SimpleNamespace(
+            id=C, home_team_name="Arsenal", away_team_name="Chelsea",
+            win_probability_sources={"held": {"value": 0.1}}, win_probability_sources_rev=4,
+        )
+        lean, full = _Recording(rows), _Recording(rows)
+        vector = asyncio.run(folded_revision_vector(lean, event, absorbed))
+        _sources, full_vector = asyncio.run(
+            folded_probability_sources_with_revision(full, event, absorbed)
+        )
+        return vector, full_vector, lean, full
+
+    @pytest.mark.parametrize("absorbed_ids", [(), (A,), (C, A), (104,)])
+    def test_the_same_vector_and_refusals_as_the_bag_fold(self, absorbed_ids):
+        from types import SimpleNamespace
+
+        absorbed = [SimpleNamespace(id=i, win_probability_sources={}) for i in absorbed_ids]
+        vector, full_vector, _lean, _full = self._both(self._rows(), absorbed)
+        assert vector == full_vector
+        expected = {
+            (): {"101": 4, "102": 9},
+            (A,): {"101": 4, "102": 9, "103": 2},
+            (C, A): {"101": 4, "102": 9, "103": 2},
+            (104,): None,  # an absorbed row the statement did not return
+        }[tuple(absorbed_ids)]
+        assert vector == expected
+
+    def test_a_missing_canonical_is_refused_by_both(self):
+        rows = [r for r in self._rows() if r["id"] != C]
+        vector, full_vector, _lean, _full = self._both(rows)
+        assert vector is None and full_vector is None
+
+    def test_the_statement_selects_no_bag(self):
+        _v, _f, lean, full = self._both(self._rows())
+        names = lambda s: [c.name for c in s.selected_columns]  # noqa: E731
+        assert len(lean.statements) == 1 and len(full.statements) == 1
+        assert "win_probability_sources" not in names(lean.statements[0])
+        assert "win_probability_sources_rev" in names(lean.statements[0])
+        # Same rows, same predicate: only the bag column differs.
+        assert names(full.statements[0]) == (
+            names(lean.statements[0])[:3] + ["win_probability_sources"] + names(lean.statements[0])[3:]
+        )
+        assert str(lean.statements[0].whereclause) == str(full.statements[0].whereclause)
+
+    def test_a_read_error_is_raised_not_swallowed(self):
+        from types import SimpleNamespace
+
+        from app.utils.proven_duplicates import folded_revision_vector
+
+        class Boom:
+            async def execute(self, *a, **kw):
+                raise RuntimeError("statement failed")
+
+        event = SimpleNamespace(id=C, home_team_name="Arsenal", away_team_name="Chelsea")
+        with pytest.raises(RuntimeError, match="statement failed"):
+            asyncio.run(folded_revision_vector(Boom(), event))
+
+    def test_the_route_prefix_reads_the_lean_vector(self):
+        src = inspect.getsource(__import__("app.utils.history_coverage", fromlist=["x"]).read_coverage_prefix)
+        assert "folded_revision_vector(db, event, absorbed)" in src
+        assert "folded_probability_sources_with_revision" not in src
