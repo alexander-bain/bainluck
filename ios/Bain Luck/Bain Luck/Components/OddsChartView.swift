@@ -415,6 +415,12 @@ struct OddsChartView: View {
     /// update the page takes in, and reading the edge parses every stamp in the
     /// payload — ~300 ms a rebuild on a full NFL game, measured in a simulator.
     var preloadedHistoryEdge: Date??
+    /// #10090 — a counter the page bumps on every history write
+    /// (`EventDetailViewModel.historyGeneration`). With it the chart is offered
+    /// every payload — a same-edge correction such as a withdrawn source's
+    /// series leaving — and `OddsChartViewModel.adopt` still decides. `nil`
+    /// keys the offer on the edge alone, as before.
+    var preloadedHistoryGeneration: Int?
     /// #925 — the scrubbed moment's readout (clock, score, point time, "as
     /// of", probabilities), drawn between the chart's header and its plot.
     ///
@@ -585,6 +591,7 @@ struct OddsChartView: View {
          selectedRange: Binding<OddsTimeRange> = .constant(.sinceStart),
          preloadedHistory: EventHistoryResponse? = nil,
          preloadedHistoryEdge: Date?? = nil,
+         preloadedHistoryGeneration: Int? = nil,
          liveFrames: [LiveBlendPoint] = [],
          readout: GamePlayCardView? = nil,
          publicationJourney: PublicationJourney4974.Journey? = nil,
@@ -614,6 +621,7 @@ struct OddsChartView: View {
         self.liveFrames = liveFrames
         self.preloadedHistory = preloadedHistory
         self.preloadedHistoryEdge = preloadedHistoryEdge
+        self.preloadedHistoryGeneration = preloadedHistoryGeneration
         self.readout = readout
         self.publicationJourney = publicationJourney
         _selectedRange = selectedRange
@@ -728,6 +736,16 @@ struct OddsChartView: View {
         return preloadedHistory.flatMap(EventHistoryFreshness.lastReading(in:))
     }
 
+    /// What the chart is offered on: the page payload's live edge and, when the
+    /// page supplies one, its write counter.
+    private struct HistoryOffer: Equatable {
+        let edge: Date?
+        let generation: Int?
+    }
+    private var historyOffer: HistoryOffer {
+        HistoryOffer(edge: historyEdge, generation: preloadedHistoryGeneration)
+    }
+
     var body: some View {
         VStack(spacing: 8) {
             if noReadings {
@@ -748,10 +766,10 @@ struct OddsChartView: View {
         // #920. The page re-polls every 120 s and hands the result down; until
         // this existed, every one of those payloads was dropped on the floor by
         // a `StateObject` that only reads its initial value. Keyed on the live
-        // edge rather than the payload because `EventHistoryResponse` is not
-        // `Equatable` — and a date is the right key anyway: it changes exactly
-        // when there is something new to draw.
-        .onChange(of: historyEdge) { _, _ in
+        // edge and the page's write counter (#10090), never on the payload:
+        // comparing whole payloads on every body pass costs what #8651 removed,
+        // and the edge alone never offered a same-edge correction.
+        .onChange(of: historyOffer) { _, _ in
             guard let preloadedHistory else { return }
             vm.adopt(preloadedHistory)
         }

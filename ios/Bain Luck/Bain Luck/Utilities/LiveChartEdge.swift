@@ -146,8 +146,16 @@ nonisolated enum EventHistoryFreshness {
     /// refresh cannot blank a chart that is drawing.
     static func shouldAdopt(_ fresh: EventHistoryResponse, over current: EventHistoryResponse?) -> Bool {
         guard let current else { return true }
-        guard let freshEdge = lastReading(in: fresh) else { return false }
-        guard let currentEdge = lastReading(in: current) else { return true }
+        return shouldAdopt(freshEdge: lastReading(in: fresh), over: .some(lastReading(in: current)))
+    }
+
+    /// The same rule over edges already read (`EventHistoryDigest.edge`). The
+    /// outer `nil` of `current` is "nothing held"; an inner `nil` is a held
+    /// payload with no readings.
+    static func shouldAdopt(freshEdge: Date?, over current: Date??) -> Bool {
+        guard let current else { return true }
+        guard let freshEdge else { return false }
+        guard let currentEdge = current else { return true }
         return freshEdge >= currentEdge
     }
 }

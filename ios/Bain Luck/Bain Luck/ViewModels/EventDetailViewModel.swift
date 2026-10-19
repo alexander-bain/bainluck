@@ -62,8 +62,24 @@ final class EventDetailViewModel: ObservableObject {
         didSet {
             historyDigest = history.map(EventHistoryDigest.init)
             historyArrivedAt = history == nil ? nil : Date(timeIntervalSince1970: now())
+            historyGeneration &+= 1
+            historyIsDrawn = history != nil
+                && EventHistoryFreshness.shouldAdopt(freshEdge: historyDigest?.edge, over: drawnHistoryEdge)
+            if historyIsDrawn { drawnHistoryEdge = .some(historyDigest?.edge) }
         }
     }
+    /// #10090 — bumped on every write to `history`, so the chart is offered
+    /// every payload the page takes, not only one whose live edge moved: a
+    /// withdrawn source's series can leave a payload at the same edge.
+    private(set) var historyGeneration = 0
+    /// #10090 — the live edge of the payload the chart holds, kept by the
+    /// chart's own rule (`OddsChartViewModel.adopt`, `EventHistoryFreshness`):
+    /// an offered payload whose edge is behind it is refused there. Outer
+    /// `nil` = nothing offered yet.
+    private var drawnHistoryEdge: Date??
+    /// #10090 — whether the chart takes the current `history`. A reconcile
+    /// floor's history half is paid only by a payload the reader is shown.
+    private(set) var historyIsDrawn = false
     /// #10239 / #10478 — the reader's clock when the current `history` arrived.
     /// The projected final-points module reads it as `asOf` on a scheduled or
     /// live page, so the chart holds still between payloads instead of moving
@@ -910,6 +926,7 @@ final class EventDetailViewModel: ObservableObject {
             let served = LiveEventPriceReconciliation.pairedFoldRevision(in: fetched)
             adopt(fetched, recordsPriceActivity: recordsActivity)
             history = h
+            let historyDrawn = historyIsDrawn
             var deliveredPrice = false
             if recordsActivity { pricePairRefreshFailed = false }
             // An opening/consensus hero first becomes a stream-proven blend
@@ -966,9 +983,11 @@ final class EventDetailViewModel: ObservableObject {
                 revisionRefetchPending = true
             }
             // #10090 — the reconcile floor is paid only when this pair is what
-            // the page now shows; otherwise it stays owed for the retry below.
+            // the page now shows, its history included: a payload the chart
+            // refuses (`historyIsDrawn`) proves nothing the reader can see.
+            // Otherwise it stays owed for the retry below.
             if let floor = reconcileFloor {
-                if LiveEventPriceReconciliation.reconcileFloorShown(
+                if historyDrawn, LiveEventPriceReconciliation.reconcileFloorShown(
                     floor, served: fetched, servedHistory: h, page: event
                 ) || LiveEventPriceReconciliation.reconcileFloorShownByCommittedRail(
                     floor, committedRail: committedRail, servedHistory: h, page: event

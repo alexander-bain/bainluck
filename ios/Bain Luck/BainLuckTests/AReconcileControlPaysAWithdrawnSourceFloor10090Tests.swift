@@ -838,6 +838,42 @@ final class AReconcileControlPaysAWithdrawnSourceFloor10090Tests: XCTestCase {
         XCTAssertNil(vm.history?.historyFoldRevision?.revision, "and is never adopted")
     }
 
+    /// Authority's adoption rule: the history half is paid by the chart the
+    /// reader is shown. A covering pair whose history the chart refuses — its
+    /// live edge is behind the drawn one (`EventHistoryFreshness`) — pays
+    /// nothing, by the vector or by a pinned covering edge; the next covering
+    /// pair the chart takes pays.
+    func testACoveringHistoryTheChartRefusesPaysNothing() async throws {
+        let behind = "2026-09-27T16:59:00Z"
+        var vectorBehind = Self.covering(#"{"4242":11}"#)
+        vectorBehind.at = behind
+        var pinnedBehind = Self.without11
+        pinnedBehind.at = behind
+        let (client, handle, vm) = try await opened(pairs: [vectorBehind, pinnedBehind, Self.covering(#"{"4242":11}"#)])
+        let drawnEdge = vm.historyDigest?.edge
+        let owedAt = clock
+        handle.fire("reconcile", Self.control())
+        try await settle { client.detailReads == 1 && client.historyReads == 1 }
+        try await quiet()
+        XCTAssertEqual(vm.history?.historyFoldRevision?.revision, FoldRevision(["4242": 11]))
+        XCTAssertFalse(vm.historyIsDrawn, "the chart refuses a payload whose edge is behind the drawn one")
+        XCTAssertEqual(vm.reconcileOwedSince, owedAt, "so its covering vector pays nothing")
+
+        try await elapse(1.5)
+        try await settle { client.detailReads == 2 && client.historyReads == 2 }
+        try await quiet()
+        XCTAssertEqual(vm.history?.blendEdgePinned, true)
+        XCTAssertFalse(vm.historyIsDrawn)
+        XCTAssertEqual(vm.reconcileOwedSince, owedAt, "nor does a pinned covering edge the chart refuses")
+
+        try await elapse(3)
+        try await settle { vm.reconcileOwedSince == nil }
+        XCTAssertTrue(vm.historyIsDrawn)
+        XCTAssertGreaterThan(try XCTUnwrap(vm.historyDigest?.edge), try XCTUnwrap(drawnEdge))
+        XCTAssertEqual(client.detailReads, 3)
+        XCTAssertEqual(reconcileAsks, [1.5, 3])
+    }
+
     func testHistoryCoverageIsAnUnpinnedAlternativeThatNeverRescuesAPinnedEdge() throws {
         let floor = try XCTUnwrap(FoldRevision(["4242": 11]))
         func covers(_ coverage: String?, pin: String = Self.unpinnedFragment) throws -> Bool {
