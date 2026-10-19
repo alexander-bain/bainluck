@@ -32742,6 +32742,13 @@ async def get_event_odds_history(
                 "away_probability": float(snap.away_win_probability) if snap.away_win_probability is not None else None,
                 "draw_probability": float(snap.draw_probability) if snap.draw_probability is not None else None,
                 "game_state": snap.game_state,
+                # Internal aggregation marker; ordinary NULL/missing readings
+                # do not retire a source. Removed before returning the response.
+                "_explicit_source_withdrawal": (
+                    snap.home_win_probability is None
+                    and isinstance(snap.game_state, dict)
+                    and snap.game_state.get("live_source_withdrawal") is True
+                ),
             })
 
         # #6535 — the chart was the last place the withdrawn grade still showed.
@@ -33538,6 +33545,7 @@ async def get_event_odds_history(
                 )
                 for p in points
                 if p.get("home_probability") is not None
+                or p.get("_explicit_source_withdrawal") is True
             ]
             if source_points:
                 agg_sources[source_key] = source_points
@@ -33561,6 +33569,11 @@ async def get_event_odds_history(
         _history_mark_partial()
         # Graceful degradation — frontend falls back to naive averaging
         pass
+
+    # The marker is an internal aggregation instruction, not a new wire field.
+    for source_points in win_prob_history.values():
+        for point in source_points:
+            point.pop("_explicit_source_withdrawal", None)
 
     # ── UX-P003 / #3714: pin the blend line's right edge to the point-in-time blend ──
     #

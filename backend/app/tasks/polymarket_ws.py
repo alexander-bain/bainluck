@@ -984,6 +984,130 @@ async def withdraw_book_refuted_prices(session, books: dict) -> list:
     return withdrawn
 
 
+async def withdraw_attributed_event_sources(session, withdrawn_rows):
+    """Local experiment: invalidate only an explicitly withdrawn PM speaker.
+
+    Call inside the price-withdrawal transaction; return frames for AFTER
+    COMMIT. Ordinary missing readings do not call this path.
+    """
+    from sqlalchemy import select, update, func
+    from app.models.models import Event, FuturesMarket, WinProbSnapshot
+    from app.tasks.live_blend_refresh import LiveBlendRefresher
+    from app.utils.live_blend import compute_source_home_probability
+    from app.utils.live_push import build_frame
+
+    import math
+
+    by_market = {}
+    withdrawn_observations = {}
+    for row in withdrawn_rows:
+        by_market.setdefault(row.market_id, set()).add(str(row.id))
+        withdrawn_observations[str(row.id)] = (
+            None if row.last_updated is None else row.last_updated.timestamp()
+        )
+    if not by_market:
+        return []
+    event_ids = set((await session.execute(
+        select(FuturesMarket.event_id).where(
+            FuturesMarket.id.in_(by_market),
+            FuturesMarket.source == 'polymarket',
+            FuturesMarket.event_id.isnot(None),
+        )
+    )).scalars())
+    if not event_ids:
+        return []
+    # Re-read the whole source population in the removal transaction, after
+    # the independent price withdrawal committed. A newly stored quote wins.
+    groups = await LiveBlendRefresher('polymarket')._read_groups(session, sorted(event_ids))
+    frames = []
+    for event_id, (event, group) in groups.items():
+        if event.status != 'live' or event.completed_at is not None:
+            continue
+        prior = (event.win_probability_sources or {}).get('polymarket')
+        if not isinstance(prior, dict):
+            continue
+        eligibility = prior.get('eligibility')
+        market_id = eligibility.get('market_id') if isinstance(eligibility, dict) else None
+        basis = prior.get('observed_basis')
+        if (market_id not in by_market or not isinstance(basis, dict)
+                or by_market[market_id].isdisjoint(basis)):
+            continue
+        # IDs alone are insufficient: the same leg may already have a newer
+        # stamped overlay. The withdrawal only owns observations no newer than
+        # the actual row it cleared. Both stamps use the database clock domain.
+        matched = by_market[market_id].intersection(basis)
+        if any(
+            isinstance(basis[oid], bool)
+            or not isinstance(basis[oid], (int, float))
+            or not math.isfinite(basis[oid])
+            or withdrawn_observations[oid] is None
+            or basis[oid] > withdrawn_observations[oid]
+            for oid in matched
+        ):
+            continue
+        if compute_source_home_probability(group, event.home_team_name, event.away_team_name) is not None:
+            continue
+        removed = (await session.execute(
+            update(Event).where(
+                Event.id == event_id, Event.status == 'live', Event.completed_at.is_(None),
+                Event.win_probability_sources['polymarket'] == prior,
+            ).values(
+                win_probability_sources=Event.win_probability_sources.op('-')('polymarket'),
+            ).returning(
+                Event.win_probability_sources, Event.win_probability_sources_rev,
+                Event.status, Event.espn_win_prob_home, Event.opening_home_probability,
+                func.clock_timestamp(),
+            ).execution_options(synchronize_session=False)
+        )).first()
+        if removed is None:
+            continue  # newer source/terminal state won while this read was pending
+        sources, revision, status, espn, opening, removed_at = removed
+        # A NULL history vertex stops carry-forward; it is not a fabricated
+        # zero probability. It commits with the source removal or neither does.
+        session.add(WinProbSnapshot(
+            event_id=event_id, source='polymarket', captured_at=removed_at,
+            home_win_probability=None, away_win_probability=None,
+            valid_until=removed_at, game_state={'live_source_withdrawal': True},
+        ))
+        frame = build_frame(event_id=event_id,
+            probability=None, source=None,
+            source_value=None, updated_at=removed_at.isoformat(), status=status, rev=revision)
+        frame['invalidation'] = True
+        frames.append(frame)
+    return frames
+
+
+async def _publish_committed_withdrawals(refresher, frames):
+    """Own one bounded event send after commit, even if the caller cancels.
+
+    No retry of an ambiguous Redis send. The existing publisher bounds its
+    attempt; this owner joins it before allowing cancellation to leave.
+    """
+    if not frames:
+        return
+    import asyncio
+
+    for frame in frames:
+        event_id = frame['event_id']
+        refresher._last_written_value.pop(event_id, None)
+        refresher._last_refresh_at.pop(event_id, None)
+        refresher._last_snapshot_at.pop(event_id, None)
+    task = asyncio.create_task(
+        refresher._publish(frames), name='polymarket-withdrawal-event-publish',
+    )
+    interrupted = None
+    while not task.done():
+        try:
+            await asyncio.shield(task)
+        except asyncio.CancelledError as exc:
+            if task.cancelled():
+                raise
+            interrupted = exc
+    task.result()
+    if interrupted is not None:
+        raise interrupted
+
+
 class _PMPriceWriteResult:
     """A committed acknowledgement; only written rows may stage fresh receipts."""
 
@@ -2793,8 +2917,17 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
         ``before_write(books)`` sees the exact snapshot before its transaction.
         """
         from app.tasks.live_blend_refresh import _mono
+        from app.tasks.polymarket_ws import withdraw_attributed_event_sources, _publish_committed_withdrawals
 
+        # Only committed RETURNING rows create removal obligations. NULL rows
+        # alone cannot distinguish an explicit withdrawal from missing data.
+        source_debt = getattr(blend_refresher, "_withdrawal_source_rows", None)
+        if source_debt is None:
+            source_debt = blend_refresher._withdrawal_source_rows = {}
         async with buffer_lock:
+            # A newly accepted valid quote supersedes its book withdrawal.
+            for oid in source_debt.keys() - withdraw_buffer.keys():
+                source_debt.pop(oid, None)
             held_events = (
                 {
                     event_id_by_outcome.get(oid)
@@ -2865,9 +2998,39 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                 withdrawal_retry_until.update(dict.fromkeys(books, until))
                 return []
             return None
+        # Price/card custody has committed independently. Retain the exact
+        # explicit withdrawal before any subsequent await, including cancellation.
+        source_debt.update((row.id, row) for row in rows if row.id in withdraw_buffer)
+        await blend_refresher.publish_market_changes(session)
+        selected_debt = {oid: source_debt[oid] for oid in books if oid in source_debt}
+        invalidations = []
+        if selected_debt:
+            try:
+                async with get_task_session() as removal_session:
+                    if not final:
+                        await removal_session.execute(
+                            SET_LOCK_TIMEOUT_SQL,
+                            {"ms": lock_timeout_value(PRICE_CHUNK_LOCK_TIMEOUT_MS)},
+                        )
+                    invalidations = await withdraw_attributed_event_sources(
+                        removal_session, list(selected_debt.values()),
+                    )
+            except Exception as exc:
+                stats["errors"] += 1
+                logger.exception("Polymarket WS: source withdrawal retained for retry")
+                if not final and is_lock_timeout(exc):
+                    until = _mono() + min(PRICE_FLUSH_SECONDS, 0.25)
+                    withdrawal_retry_until.update(dict.fromkeys(selected_debt, until))
+                    return []
+                return None
+            # A successful resolver/CAS refusal also settles this obligation:
+            # a valid alternative, newer quote or terminal result owns the source.
+            for oid, row in selected_debt.items():
+                if source_debt.get(oid) is row:
+                    source_debt.pop(oid, None)
         for oid in books:
             withdrawal_retry_until.pop(oid, None)
-        await blend_refresher.publish_market_changes(session)
+        await _publish_committed_withdrawals(blend_refresher, invalidations)
         async with buffer_lock:
             for oid, book in books.items():
                 if withdraw_buffer.get(oid) == book:
