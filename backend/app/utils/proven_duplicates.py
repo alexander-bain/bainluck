@@ -902,16 +902,46 @@ async def folded_probability_sources_with_revision(
     the vector is ``None``: a fold that is not one snapshot makes no claim.
     Orientation and the tagged-then-absorbed order are unchanged.
     """
+    canonical_sources, oriented, revision = await _read_fold(
+        db, event, absorbed, bags=True
+    )
+    merged = merge_probability_sources(
+        canonical_sources,
+        [(twin_id, sources) for twin_id, sources, _ in oriented],
+    )
+    return merged, revision
+
+
+async def folded_revision_vector(
+    db, event, absorbed: Sequence = ()
+) -> dict[str, int] | None:
+    """:func:`folded_probability_sources_with_revision`'s vector alone (#10090).
+
+    The same one statement, rows, orientation, absorbed order and snapshot
+    rule, without the price bags: a caller that needs only which rows the fold
+    reads and at what revision (the history coverage prefix) never pays to read
+    or merge them. Errors are not swallowed.
+    """
+    _canonical_sources, _oriented, revision = await _read_fold(
+        db, event, absorbed, bags=False
+    )
+    return revision
+
+
+async def _read_fold(db, event, absorbed: Sequence, *, bags: bool):
+    """``(canonical bag, [(row_id, bag, rev)], vector)`` from the fold's one
+    statement. With ``bags=False`` the bag column is not selected and every bag
+    read off the statement is ``None``."""
     from app.utils.wps_revision import fold_revision_vector
 
     absorbed_by_id = {row.id: row for row in absorbed if row.id != event.id}
+    columns = [Event.id, Event.home_team_name, Event.away_team_name]
+    if bags:
+        columns.append(Event.win_probability_sources)
     rows = (
         await db.execute(
             select(
-                Event.id,
-                Event.home_team_name,
-                Event.away_team_name,
-                Event.win_probability_sources,
+                *columns,
                 Event.win_probability_sources_rev,
                 tagged_duplicate_of(event.id).label("tagged"),
             ).where(
@@ -925,6 +955,8 @@ async def folded_probability_sources_with_revision(
     ).all()
     read = {}
     for row in rows:
+        if not bags:
+            row = (*row[:3], None, *row[3:])
         row_id, home, away, sources, rev, tagged = _fold_row(row)
         read[row_id] = (home, away, sources, rev, tagged)
 
@@ -956,10 +988,6 @@ async def folded_probability_sources_with_revision(
                 (row_id, absorbed_by_id[row_id].win_probability_sources, None)
             )
 
-    merged = merge_probability_sources(
-        canonical_sources,
-        [(twin_id, sources) for twin_id, sources, _ in oriented],
-    )
     revision = (
         fold_revision_vector(
             event.id, canonical_rev, [(twin_id, rev) for twin_id, _, rev in oriented]
@@ -967,7 +995,7 @@ async def folded_probability_sources_with_revision(
         if one_snapshot
         else None
     )
-    return merged, revision
+    return canonical_sources, oriented, revision
 
 
 def _tag_elements(tags: object) -> list[str]:

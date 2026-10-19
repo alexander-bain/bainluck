@@ -33,7 +33,11 @@ transaction.
       is covered;
 * C10 a reader arriving during an older build is answered by a build that
       read its removal; the older reader keeps the older claim;
-* C11 a cancelled builder's waiter is answered by its own build's claim.
+* C11 a cancelled builder's waiter is answered by its own build's claim;
+* C12 the prefix's vector and refusals equal the bag fold's on real rows
+      (twins, flipped orientation, absorbed, deleted rows, a removal);
+* C13 the route's prefix statement selects no price bag, a large irrelevant
+      one included, and certifies the same rows.
 
 Runs where `SEARCH_TEST_DATABASE_URL` is set (CI `search-recall`).
 """
@@ -512,3 +516,130 @@ class TestTheCoalescedGeneration:
         release.set()
         assert new_body["history_fold_revision"] == _v(c=1)
         assert sum(map(is_prefix_or_pin, newer_session.statements)) >= 1
+
+
+_BAG_COLUMN = __import__("re").compile(r"events\.win_probability_sources(?!_rev)")
+PAD = "x" * 2_000_000  # a ~2 MB source the prefix has no use for
+
+
+def _wire(engine):
+    """Every SQL string the engine sends to Postgres, in order."""
+    from sqlalchemy import event as sa_event
+
+    sent: list[str] = []
+
+    def record(conn, cursor, statement, *a):
+        sent.append(_flat(statement))
+
+    sa_event.listen(engine.sync_engine, "before_cursor_execute", record)
+    return sent, lambda: sa_event.remove(engine.sync_engine, "before_cursor_execute", record)
+
+
+async def _pad(Plain, event_id):
+    async with Plain() as s:
+        await s.execute(
+            text(
+                "UPDATE events SET win_probability_sources = win_probability_sources "
+                "|| jsonb_build_object('noise', jsonb_build_object('value', 0.5, 'pad', CAST(:pad AS text))) "
+                "WHERE id = :id"
+            ),
+            {"pad": PAD, "id": event_id},
+        )
+        await s.commit()
+
+
+class TestThePrefixReadsNoBags:
+    async def _both(self, Plain, absorbed_ids=(), *, before=None):
+        from app.models.models import Event
+        from app.utils.proven_duplicates import (
+            folded_probability_sources_with_revision,
+            folded_revision_vector,
+        )
+
+        async with Plain() as s:
+            event = await s.get(Event, CANON)
+            absorbed = [
+                (await s.get(Event, i)) or type("Gone", (), {"id": i, "win_probability_sources": {}})()
+                for i in absorbed_ids
+            ]
+            if before is not None:
+                await before()
+            lean = await folded_revision_vector(s, event, absorbed)
+            _sources, full = await folded_probability_sources_with_revision(s, event, absorbed)
+        return lean, full
+
+    async def test_c12_the_same_vector_and_refusals_as_the_bag_fold(self, pg):
+        from app.models.models import Event
+
+        engine, Plain, _Hooked = pg
+        await _seed(Plain, twin=True)
+        await _pad(Plain, TWIN)
+        async with Plain() as s:
+            # Tagged, home/away swapped: folded only when absorbed.
+            s.add(Event(
+                id=LATE_TWIN, sport_id=SPORT, home_team_name="Chelsea",
+                away_team_name="Arsenal", commence_time=_now() - timedelta(minutes=50),
+                status="live", event_tags=[f"provenance:duplicate-of:{CANON}"],
+                win_probability_sources={"kalshi": {"value": 0.4}},
+            ))
+            await s.commit()
+
+        cases = {}
+        cases["twins"] = await self._both(Plain)
+        cases["absorbed flipped twin"] = await self._both(Plain, (LATE_TWIN,))
+        cases["absorbed canonical"] = await self._both(Plain, (CANON, LATE_TWIN))
+        async with Plain() as s:
+            await _remove(s, TWIN, "kalshi")
+        cases["after a twin removal"] = await self._both(Plain, (LATE_TWIN,))
+
+        async def delete(event_id):
+            async with Plain() as s:
+                await s.execute(text("DELETE FROM win_prob_snapshots WHERE event_id = :id"), {"id": event_id})
+                await s.execute(text("DELETE FROM events WHERE id = :id"), {"id": event_id})
+                await s.commit()
+
+        cases["absorbed row deleted"] = await self._both(
+            Plain, (LATE_TWIN,), before=lambda: delete(LATE_TWIN)
+        )
+        cases["canonical deleted"] = await self._both(Plain, before=lambda: delete(CANON))
+
+        for name, (lean, full) in cases.items():
+            assert lean == full, name
+        assert {k: lean for k, (lean, _) in cases.items()} == {
+            "twins": _v(c=0, t=1),  # `_pad` bumped the twin
+            "absorbed flipped twin": _v(c=0, t=1, u=0),
+            "absorbed canonical": _v(c=0, t=1, u=0),
+            "after a twin removal": _v(c=0, t=2, u=0),
+            "absorbed row deleted": None,
+            "canonical deleted": None,
+        }
+
+    async def test_c13_the_routes_prefix_selects_no_bag_and_certifies_the_same_rows(self, pg):
+        engine, Plain, Hooked = pg
+        await _seed(Plain, twin=True)
+        await _pad(Plain, CANON)
+        await _pad(Plain, TWIN)
+        sent, stop = _wire(engine)
+        try:
+            body, session = await _fresh(Hooked)
+        finally:
+            stop()
+        assert body["history_fold_revision"] == _v(c=1, t=1)
+        prefix = next(sql for sql in session.statements if is_prefix_or_pin(sql))
+        assert not _BAG_COLUMN.search(prefix), prefix
+        on_wire = [sql for sql in sent if is_prefix_or_pin(sql)]
+        assert on_wire and not _BAG_COLUMN.search(on_wire[0]), on_wire[:1]
+        # The bag fold the detail and pin use still reads bags (control: the
+        # pattern can see one).
+        from app.utils.proven_duplicates import folded_probability_sources_with_revision
+        from app.models.models import Event
+
+        sent2, stop2 = _wire(engine)
+        try:
+            async with Plain() as s:
+                event = await s.get(Event, CANON)
+                sources, _ = await folded_probability_sources_with_revision(s, event)
+        finally:
+            stop2()
+        assert sources["noise"]["pad"] == PAD
+        assert any(is_prefix_or_pin(sql) and _BAG_COLUMN.search(sql) for sql in sent2)
