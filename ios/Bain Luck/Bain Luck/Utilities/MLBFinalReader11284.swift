@@ -520,7 +520,11 @@ struct MLBMilestoneCard11284: Equatable {
         for prop in props {
             guard let shape = ladderShape(prop), shape.stat.lowercased().contains("strikeout"),
                   !PlayerPropsFamily.isTeamSubject(shape.player, teams: teams) else { continue }
-            let key = "\(shape.player)|\(shape.stat)|\(prop.source ?? "")"
+            // The venue is the ladder's identity only (never printed from
+            // here; the card keeps `prop.source` itself): a row with no served
+            // venue groups under an empty venue segment, never a named one.
+            let venueSegment = prop.source.map { "|\($0)" } ?? "|"
+            let key = "\(shape.player)|\(shape.stat)\(venueSegment)"
             ladders[key, default: (shape.player, shape.stat, prop.source, [])].rows.append(prop)
         }
         let after = AfterPropsMatrixLayout.drawable(markets?.afterPlayerProps)
