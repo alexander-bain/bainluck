@@ -73,6 +73,9 @@ def rig(
             trace.append(("pending", None))
 
     class Session:
+        def __init__(self):
+            self.info = {}  # detached committed-market frame interface
+
         async def execute(self, statement, params=None):
             if statement is SET_LOCK_TIMEOUT_SQL:
                 trace.append(("lock_budget", params))
@@ -107,7 +110,7 @@ def rig(
         if failed_price is not None and failed_price in chunk:
             return False
         if start_market_publish is not None:
-            start_market_publish(None)
+            start_market_publish(Session())
         for oid, value in chunk.items():
             if batch.get(oid) == value:
                 batch.pop(oid)

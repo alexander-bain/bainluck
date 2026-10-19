@@ -1596,6 +1596,30 @@ class TestACommittedChunkRefreshesItsEvent:
             if FAR_EVENT in ids:
                 seen.append((held(71), held(81)))
 
+        from types import SimpleNamespace
+        from app.utils.repair_lock_budget import SET_LOCK_TIMEOUT_SQL
+
+        # #10090: the withdrawal runs under the persistent owner fence; grant
+        # it the way a committed claim ends and answer its two new statements.
+        async def claimed(debt, _sessions):
+            debt._owner_id = 1
+            return True
+
+        async def owner_holds(debt, _session):
+            return None
+
+        monkeypatch.setattr(poly_task.PMWithdrawalDebt, "_claim_owner", claimed)
+        monkeypatch.setattr(poly_task.PMWithdrawalDebt, "guard_owner", owner_holds)
+        withdrawing_execute = _Withdrawing.execute
+
+        async def _execute(self, stmt, *a, **kw):
+            if stmt is SET_LOCK_TIMEOUT_SQL:
+                return _Replayed([])
+            if "pg_current_xact_id()" in str(stmt):
+                return SimpleNamespace(scalar_one=lambda: "1")
+            return await withdrawing_execute(self, stmt, *a, **kw)
+
+        monkeypatch.setattr(_Withdrawing, "execute", _execute)
         stats = await _drive(
             monkeypatch, rig, flush=0.2, session=_Withdrawing,
             on_refresh=on_refresh,

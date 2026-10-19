@@ -118,6 +118,11 @@ class _RecordingSession:
     """
 
     def __init__(self, batches, writes):
+        # #10090: a real session's `.info` — one dict per session, kept
+        # through commit, rollback and close; the flush detaches committed
+        # market frames from it. These writes return no moved quote, so
+        # no frame is ever staged and it stays empty.
+        self.info = {}
         self._batches = batches
         self._writes = writes
 
@@ -129,6 +134,26 @@ class _RecordingSession:
                 self._writes.extend(price_writes(stmt))
             return _Result([])
         return _Result(self._batches.pop(0) if self._batches else [])
+
+
+def test_the_fake_session_has_its_own_empty_info_like_a_real_session():
+    """#10090: the flush detaches committed market frames from `session.info`
+    (`AsyncSession.info`, one dict per session). This fake must stand in for
+    that attribute: its own dict per session and, because its writes return no
+    moved quote, nothing committed for the flush to publish. A shared or
+    pre-filled dict would hand the flush a frame no commit here produced, and
+    the fake refresher would only log the failed publish, not fail a test."""
+    import inspect
+
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+    from app.utils.market_quote_push import take_committed_market_changes
+
+    assert isinstance(inspect.getattr_static(AsyncSession, "info"), property)
+    first, second = _RecordingSession([], []), _RecordingSession([], [])
+    assert first.info is not second.info
+    assert take_committed_market_changes(first) == []
+    assert first.info == {}
 
 
 def _install_slate(monkeypatch, writes):

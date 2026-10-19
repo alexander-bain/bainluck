@@ -12,6 +12,16 @@ from app.utils import live_push, live_fanout, request_cache
 from tests import test_event_frame_batching_10659 as publication_tests
 
 from tests.test_folded_event_stream_invalidation_837 import Hub, Request
+from tests._event_stream_legacy_view import install_legacy_view
+
+
+@pytest.fixture(autouse=True)
+def _legacy_wire_view(monkeypatch):
+    """#10090: these tests predate the stream's owned coverage read and
+    assert chunk position, so reconcile controls are dropped too; see
+    tests/_event_stream_legacy_view.py."""
+    install_legacy_view(monkeypatch, drop_reconcile=True)
+
 
 private_redis_socket = publication_tests.private_redis_socket
 

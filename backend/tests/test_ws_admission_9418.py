@@ -103,6 +103,22 @@ def _is_clock_sample(stmt) -> bool:
     return str(stmt) == str(select(func.clock_timestamp()))
 
 
+def _stand_in_for_a_granted_withdrawal_owner(monkeypatch):
+    """#10090: each Polymarket consumer claims the persistent withdrawal-owner
+    row before its first debt scan (advisory lock, NOWAIT row lock, commit).
+    This fake answers slate/reread queries by position, so the claim's own
+    statements would shift that routing; the fence itself is pinned on real
+    PostgreSQL by tests/integration/test_pm_withdrawal_recovery_regression_10090_pg.py.
+    Grant the claim the way a committed one ends — the row id is
+    recorded — so the real `load` then reads the owed rows."""
+
+    async def claimed(debt, _sessions):
+        debt._owner_id = 1
+        return True
+
+    monkeypatch.setattr(poly_task.PMWithdrawalDebt, "_claim_owner", claimed)
+
+
 def _install_session(monkeypatch, slate_batches, reread, *, replay_slate=False):
     """The slate's queries are answered in order; every later query is the
     admission reread, answered by `reread()` (which may raise).
@@ -116,6 +132,7 @@ def _install_session(monkeypatch, slate_batches, reread, *, replay_slate=False):
     """
     import app.tasks.base as task_base
 
+    _stand_in_for_a_granted_withdrawal_owner(monkeypatch)
     state = {
         "slate": list(slate_batches), "rereads": [], "reread_calls": 0,
         "slate_replays": 0, "debt_reads": [],

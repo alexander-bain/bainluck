@@ -42,6 +42,9 @@ def writer_rig(clock, *, error=None, database=None, **kwargs):
                             refusal_delay=0.0, refusal_message=PRICE_ROW_LOCK_REFUSAL_MESSAGE)
 
     class Session:
+        def __init__(self):
+            self.info = {}  # no market frames staged by this lock-budget fake
+
         budget_s = None  # no SET: the final drain waits for its locks
 
         async def execute(self, stmt, params=None):
@@ -595,6 +598,7 @@ async def test_later_admitted_pair_adopts_latest_values_marks_and_new_withdrawal
     class DelayedSession:
         def __init__(self, session):
             self.session = session
+            self.info = session.info
 
         async def execute(self, stmt, params=None):
             if isinstance(stmt, tuple) and stmt[0] == "price":

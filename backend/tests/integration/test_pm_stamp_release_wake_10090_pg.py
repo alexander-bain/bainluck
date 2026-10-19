@@ -217,6 +217,7 @@ async def build(rig, consumer, monkeypatch, *, trace: bool, lock_ms: int):
     r._client = lambda: client
 
     p = pm_rig(batch={}, mapping=dict(event_of), books={})
+    # Local111 adapter: the extracted closure needs its actual new module global.
     p.release.set()
     from app.tasks.polymarket_open_contracts import (
         FLUSH_CHUNK_ROWS, OPEN_FLUSH_CHUNKS_PER_FLUSH,

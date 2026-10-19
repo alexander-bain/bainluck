@@ -3659,10 +3659,22 @@ class LiveBlendRefresher:
         and it does not wait on ``refresh()`` — a standalone future has no
         event blend to stamp, and its quote is just as real. Never raises.
         """
-        from app.utils.market_quote_push import publish_committed_market_changes
+        from app.utils.market_quote_push import take_committed_market_changes
 
         try:
-            sent = await publish_committed_market_changes(session, self._client())
+            changes = take_committed_market_changes(session)
+        except Exception:
+            self.stats["market_publish_errors"] += 1
+            logger.warning("live_blend_refresh[%s]: market detachment failed", self.source, exc_info=True)
+            return 0
+        return await self.publish_market_frames(changes)
+
+    async def publish_market_frames(self, changes: list[dict]) -> int:
+        """Publish already detached committed market invalidations."""
+        from app.utils.market_quote_push import publish_market_changes
+
+        try:
+            sent = await publish_market_changes(changes, self._client())
         except Exception:
             self.stats["market_publish_errors"] += 1
             self._redis = None
@@ -3674,7 +3686,7 @@ class LiveBlendRefresher:
         self.stats["market_published"] += sent
         return sent
 
-    async def _publish(self, frames: list[dict]) -> None:
+    async def _publish(self, frames: list[dict]) -> set[tuple[int, int]]:
         """Fan the committed frames out to any SSE subscribers. Never raises.
 
         Bounded packed sends avoid one Redis round trip per event (#10659).
@@ -3682,12 +3694,15 @@ class LiveBlendRefresher:
         method. A PUBLISH with no listeners is successful publication.
 
         Each command error is consumed and counted without costing siblings.
-        An unanswered send may already have run: never automatically retry it.
+        An unanswered send may already have run: do not retry inside this attempt.
+        Return positively acknowledged revisions to the withdrawal custodian;
+        its durable replay may resend the exact committed invalidation later.
         Timeout, cancellation or transport failure disconnects the borrowed
         socket before it returns to the consumer's shared pool.
         """
+        acknowledged: set[tuple[int, int]] = set()
         if not frames:
-            return
+            return acknowledged
         sent = 0
         accounted = 0
         exact_trace = getattr(self.receipts, "exact_trace", None)
@@ -3748,6 +3763,8 @@ class LiveBlendRefresher:
                                 raise ValueError("invalid Redis PUBLISH acknowledgment")
                             accounted += 1
                             sent += 1
+                            if isinstance(revision, dict) and type(revision.get(str(event_id))) is int:
+                                acknowledged.add((event_id, revision[str(event_id)]))
                             self.stats["published"] += 1
                             if exact_trace is not None:
                                 with contextlib.suppress(Exception):
@@ -3772,6 +3789,7 @@ class LiveBlendRefresher:
                 len(frames),
                 exc_info=True,
             )
+        return acknowledged
 
     async def _maybe_snapshot(
         self, session, event_id: int, value: float, reading, now: float,

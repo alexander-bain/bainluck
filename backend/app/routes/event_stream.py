@@ -375,6 +375,50 @@ async def _await_honouring_cancel(awaitable):
     return result
 
 
+
+def _withdrawal_reconcile(frame: dict, event_id: int, origin_id: int):
+    """Separate control admission from price freshness and price ordering."""
+    control = frame.get("reconcile")
+    if (not isinstance(control, dict)
+            or type(frame.get("event_id")) is not int
+            or type(control.get("event_id")) is not int
+            or frame["event_id"] != origin_id
+            or control["event_id"] != origin_id):
+        return None
+    custody = control.get("custody_id")
+    floor = control.get("removal_rev")
+    if (not isinstance(custody, str) or not 1 <= len(custody) <= 96
+            or not isinstance(floor, dict) or set(floor) != {str(origin_id)}
+            or type(floor[str(origin_id)]) is not int
+            or not 0 <= floor[str(origin_id)] <= 9007199254740991
+            or floor != frame.get("rev")):
+        return None
+    return {"event_id": event_id, "custody_id": custody, "removal_rev": floor}
+
+
+async def _current_reconcile(event_id: int, event_ids: list[int]):
+    """One current-state coverage read on connect/confirmation/hub recovery.
+
+    This is a recovery obligation, never a reader acknowledgement. Committed
+    state covers earlier removals; a transaction committing later still needs
+    its producer notification/recovery. No per-price query or new retention key.
+    """
+    import hashlib
+    async with asyncio.timeout(1):
+        async with async_session_maker() as db:
+            rows = (await db.execute(select(
+                Event.id, Event.win_probability_sources_rev,
+            ).where(Event.id.in_(event_ids)))).all()
+    floor = {str(eid): rev for eid, rev in rows
+             if type(rev) is int and 0 <= rev <= 9007199254740991}
+    if set(floor) != {str(eid) for eid in event_ids}:
+        raise ValueError("incomplete reconciliation coverage")
+    identity = json.dumps(floor, sort_keys=True, separators=(",", ":"))
+    return {"event_id": event_id,
+            "custody_id": "state:" + hashlib.sha256(identity.encode()).hexdigest(),
+            "removal_rev": floor}
+
+
 async def _stream(
     event_id: int, request: Request, contributor_ids: Optional[list[int]] = None,
 ) -> AsyncIterator[str]:
@@ -387,10 +431,29 @@ async def _stream(
     subscription = _FoldSubscription(hub)
     started = asyncio.get_event_loop().time()
     _open_connections += 1
+    initial_coverage = None
+    recovery_coverage = None
+    recovery_force = False
+    pending_confirmations = set()
+    pending_recovery = False
+    next_frame = None
+
+    async def read_recovery(ids, confirmed):
+        control = await _current_reconcile(event_id, ids)
+        retained = (await _await_honouring_cancel(latest_frames(confirmed))) if confirmed else []
+        return control, retained
+
     try:
         await subscription.subscribe([event_id, *(contributor_ids or [])])
         yield f"retry: {RETRY_MS}\n\n"
         yield sse_encode(json.dumps({"event_id": event_id}), event="open")
+        recovery_ids = list(subscription.subscriptions)
+        # One owned read may finish after replay or live prices. Reconciliation
+        # is an obligation, not permission to hold already committed prices.
+        initial_coverage = asyncio.create_task(
+            _current_reconcile(event_id, recovery_ids)
+        )
+        last_state_control = None
 
         # Replay immediately after initiating subscription, so the first frame
         # never waits on Redis. Redis may not have registered SUBSCRIBE yet,
@@ -414,12 +477,45 @@ async def _stream(
             # actually frees the slot — check it every pass, not just on send.
             if await request.is_disconnected():
                 return
+            if any(getattr(sub, "dropped", 0) for sub in subscription.subscriptions.values()):
+                # A dropped obligation cannot be paid by later price traffic.
+                # Reconnect owns a fresh coverage read; never heartbeat through
+                # a silently lost control or launch per-drop database queries.
+                yield sse_encode(json.dumps({"reason": "mailbox_overflow"}), event="reconnect")
+                return
             loop_now = asyncio.get_event_loop().time()
             if loop_now - started >= MAX_CONNECTION_S:
                 yield sse_encode(
                     json.dumps({"reason": "max_age"}), event="reconnect"
                 )
                 return
+
+            if initial_coverage is not None and initial_coverage.done():
+                control = initial_coverage.result()  # Failure still closes.
+                initial_coverage = None
+                yield sse_encode(json.dumps(control), event="reconcile")
+                last_state_control = control["custody_id"]
+
+            if recovery_coverage is not None and recovery_coverage.done():
+                control, retained = recovery_coverage.result()  # Failure closes.
+                recovery_coverage = None
+                if recovery_force or control["custody_id"] != last_state_control:
+                    yield sse_encode(json.dumps(control), event="reconcile")
+                    last_state_control = control["custody_id"]
+                for item in retained:
+                    rev = _origin_revision(json.loads(item[1]), item[0])
+                    if rev is not None and rev > sent_revision.get(item[0], -1):
+                        replay.append(item)
+            if recovery_coverage is None and (pending_recovery or pending_confirmations):
+                # One extra owned read, independent of price drain. A repeated
+                # confirmation/generation during this read stays pending for a
+                # later read, so its post-registration boundary is not lost.
+                confirmed = sorted(pending_confirmations)
+                ids = recovery_ids if pending_recovery else confirmed
+                recovery_force = pending_recovery
+                pending_recovery = False
+                pending_confirmations.clear()
+                recovery_coverage = asyncio.create_task(read_recovery(ids, confirmed))
 
             # Bounded wait: this is what keeps the heartbeat on its clock even
             # when the market is completely silent, and what keeps this
@@ -428,15 +524,32 @@ async def _stream(
             from_replay = bool(replay)
             if from_replay:
                 origin_id, payload = replay.popleft()
-            else:
+            elif next_frame is None and initial_coverage is None and recovery_coverage is None:
+                # Nothing owned can complete during this wait: keep the
+                # parent's inline read, with no task or wait set per frame.
                 origin_id, payload = await _await_honouring_cancel(
                     subscription.next(timeout=FRAME_WAIT_S)
                 )
+            else:
+                # A completed coverage read must wake an otherwise quiet
+                # stream. Keep the mailbox owner when a read wins the race:
+                # cancelling it could consume and lose a simultaneous frame.
+                if next_frame is None:
+                    next_frame = asyncio.create_task(
+                        subscription.next(timeout=FRAME_WAIT_S)
+                    )
+                waiting = {next_frame}
+                waiting.update(task for task in (initial_coverage, recovery_coverage)
+                               if task is not None)
+                done, _ = await _await_honouring_cancel(asyncio.wait(
+                    waiting, return_when=asyncio.FIRST_COMPLETED
+                ))
+                if next_frame not in done:
+                    continue
+                origin_id, payload = next_frame.result()
+                next_frame = None
             if payload is CONFIRMED:
-                for item in await _await_honouring_cancel(latest_frames([origin_id])):
-                    rev = _origin_revision(json.loads(item[1]), item[0])
-                    if rev is not None and rev > sent_revision.get(item[0], -1):
-                        replay.append(item)
+                pending_confirmations.add(origin_id)
                 continue
             if isinstance(payload, Recovery):
                 # Fold subscriptions share a hub generation; emit it only once.
@@ -445,6 +558,7 @@ async def _stream(
                     yield sse_encode(
                         json.dumps({"generation": recovery_generation}), event="resync"
                     )
+                    pending_recovery = True
                 continue
             if payload is CLOSED:
                 # The shared reader stopped, so no frame will ever arrive on
@@ -460,6 +574,12 @@ async def _stream(
                 return
             if payload is not None:
                 frame = parse_frame(payload)
+                if frame is not None and frame.get("event_id") == origin_id:
+                    control = _withdrawal_reconcile(frame, event_id, origin_id)
+                    if control is not None:
+                        yield sse_encode(json.dumps(control), event="reconcile")
+                    if frame.get("reconcile_only") is True:
+                        continue
                 if (frame is not None and type(frame.get("event_id")) is int
                         and frame["event_id"] == origin_id and _frame_is_fresh(
                             frame, datetime.now(timezone.utc)
@@ -554,6 +674,11 @@ async def _stream(
         # interrupted and cannot raise out of the generator; the hub's reader
         # sends the `UNSUBSCRIBE` on its next pass.
         subscription.release()
+        owned_reads = [task for task in (initial_coverage, recovery_coverage, next_frame) if task is not None]
+        for task in owned_reads:
+            task.cancel()
+        if owned_reads:
+            await asyncio.gather(*owned_reads, return_exceptions=True)
 
 
 @router.get("/{event_id}/stream")

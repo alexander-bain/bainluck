@@ -452,6 +452,14 @@ class TestStreamOutput:
     """The generator's actual bytes. Everything below is a class of bug that
     leaves the wire looking correct while no client handler ever fires."""
 
+    @pytest.fixture(autouse=True)
+    def _legacy_wire_view(self, monkeypatch):
+        """#10090: predates the stream's owned coverage read and its reconcile
+        controls; see tests/_event_stream_legacy_view.py."""
+        from tests._event_stream_legacy_view import install_legacy_view
+
+        install_legacy_view(monkeypatch)
+
     @pytest.mark.asyncio
     async def test_the_heartbeat_is_an_observable_named_event(
         self, monkeypatch
@@ -639,6 +647,14 @@ class TestConnectLookupDoesNotPinAConnection:
     the framework.
     """
 
+    @pytest.fixture(autouse=True)
+    def _legacy_wire_view(self, monkeypatch):
+        """#10090: predates the stream's owned coverage read and its reconcile
+        controls; see tests/_event_stream_legacy_view.py."""
+        from tests._event_stream_legacy_view import install_legacy_view
+
+        install_legacy_view(monkeypatch)
+
     @pytest.mark.asyncio
     async def test_the_lookup_session_is_returned_before_the_first_frame(
         self, monkeypatch
@@ -675,6 +691,11 @@ class TestConnectLookupDoesNotPinAConnection:
         chunks = [chunk async for chunk in response.body_iterator]
         assert chunks, "the stream produced nothing, so it proved nothing"
         # Still exactly one, still closed: the stream itself touches no session.
+        # (#10090: the stream's own coverage read opens and closes one session
+        # per read — at most two open at once, the initial read and one
+        # recovery read — and a recovery read repeats on every confirmation or
+        # new generation; the legacy view stubs that read, so this counts the
+        # connect-time lookup alone.)
         assert (maker.opened, maker.closed) == (1, 1)
 
     def test_the_handler_takes_no_request_scoped_db_dependency(self):

@@ -27,12 +27,20 @@ reading is what the allocator keeps. It says nothing about how much a
 production worker saves. Every arm prints a first ``lab`` line: what mallopt
 accepted, and a probe of what free() and then one trim returned. ``probe``
 prints that line and exits (with or without the condition).
+
+The consumer's withdrawal-debt owner claim (#11276) is answered the way it
+succeeds on a healthy production start, so the real load reads the empty
+custody table once, as it did before the claim existed; an unanswered claim
+would raise and format a traceback on every flush inside the measured window.
+The run exits non-zero unless every claimed debt loaded and no "withdrawal
+debt not loaded" was logged. Ownership correctness is the real-PG gates' job.
 """
 
 import asyncio
 import ctypes
 import gc
 import json
+import logging
 import os
 import random
 import sys
@@ -116,6 +124,38 @@ class Result:
 
     def scalars(self):
         return self
+
+
+NOT_LOADED = "Polymarket WS: withdrawal debt not loaded"
+
+
+class NotLoaded(logging.Handler):
+    """Counts the debt's load failures; the records still propagate as before."""
+
+    def __init__(self):
+        super().__init__()
+        self.count = 0
+
+    def emit(self, record):
+        if str(record.msg).startswith(NOT_LOADED):
+            self.count += 1
+
+
+def claim_owner(claims):
+    """One successful claim, as on a healthy production start (#11276).
+
+    The real claim's SQL (an advisory lock, then the owner row) is not a shape
+    this rig's ``Result`` answers. The row id is set only after the claim, as in
+    the real method; ``load()`` itself still runs and reads the custody table.
+    """
+
+    async def claim(debt, _sessions):
+        if debt._owner_id is None:
+            debt._owner_id = 1
+            claims.append(debt)
+        return True
+
+    return claim
 
 
 class Sink(list):
@@ -300,7 +340,11 @@ async def main(handovers):
             await asyncio.sleep(0.005)
             lag[0] = max(lag[0], (loop.time() - due) * 1000)
 
+    claims, not_loaded = [], NotLoaded()
+    task.logger.addHandler(not_loaded)
+
     _install(mp, rig)
+    mp.setattr(task.PMWithdrawalDebt, "_claim_owner", claim_owner(claims))
     mp.setattr(websockets, "connect", lambda *a, **k: Socket())
     mp.setattr(blend, "LiveBlendRefresher", Refresher)
     mp.setattr(topup, "topup_clob_tokens", no_topup)
@@ -344,6 +388,13 @@ async def main(handovers):
     stop.set()
     await asyncio.wait_for(owner, 60)
     mp.undo()
+    task.logger.removeHandler(not_loaded)
+    # Otherwise this run measured a consumer the rig failed, not the candidate.
+    if not claims or not all(debt.loaded for debt in claims):
+        sys.exit(f"withdrawal debt owner claim/load did not succeed: claims={len(claims)}"
+                 f" loaded={[debt.loaded for debt in claims]}")
+    if not_loaded.count:
+        sys.exit(f"withdrawal debt not loaded logged {not_loaded.count} time(s)")
 
 
 if __name__ == "__main__":

@@ -214,7 +214,13 @@ async def test_singleton_page_receives_the_row_snapshot_unchanged(monkeypatch):
 async def test_folded_page_never_receives_a_row_snapshot(monkeypatch):
     from app.routes import event_stream as route
     from app.utils import live_fanout
+    from tests._event_stream_legacy_view import install_legacy_view
     from tests.test_folded_event_stream_invalidation_837 import Hub, Request
+
+    # #10090: predates the stream's owned coverage read and asserts chunk
+    # position, so reconcile controls are dropped too; see
+    # tests/_event_stream_legacy_view.py.
+    install_legacy_view(monkeypatch, drop_reconcile=True)
 
     hub, projected = Hub(), []
     quote = {"event_id": 1, "blend_fold_revision": {"1": 11, "2": 22},

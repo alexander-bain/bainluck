@@ -40,6 +40,7 @@ from tests.test_poly_ws_min_order_trade_9733 import (
     _run,
     _trade,
 )
+from app.utils.repair_lock_budget import SET_LOCK_TIMEOUT_SQL
 import tests.test_poly_ws_side1_leg_pairing_8403 as rig
 
 SPECIMEN_BRAVES = 238779087
@@ -181,6 +182,38 @@ def test_books_with_complements(targets, bid, ask, complement_of, expected):
 # ── the real consumer, socket and slate faked ─────────────────────────────
 
 
+@pytest.fixture(autouse=True)
+def _granted_withdrawal_owner(monkeypatch):
+    """#10090: the withdrawal transaction now runs under the persistent owner
+    fence (claimed at start, FOR SHARE in the body), takes the per-phase lock
+    budget and records its xid. The owner fence's refusal and fencing arms
+    are pinned on real PostgreSQL by
+    tests/integration/test_pm_withdrawal_recovery_regression_10090_pg.py; here
+    the consumer is the granted owner and the rig's session gives the two new
+    statements the answers a real session gives. Every other statement still
+    reaches the rig unchanged."""
+
+    async def claimed(debt, _sessions):
+        debt._owner_id = 1
+        return True
+
+    async def owner_holds(debt, _session):
+        return None
+
+    monkeypatch.setattr(poly_task.PMWithdrawalDebt, "_claim_owner", claimed)
+    monkeypatch.setattr(poly_task.PMWithdrawalDebt, "guard_owner", owner_holds)
+    execute = rig._Session.execute
+
+    async def _execute(self, stmt, params=None):
+        if stmt is SET_LOCK_TIMEOUT_SQL:
+            return rig._Result([])
+        if "pg_current_xact_id()" in str(stmt):
+            return SimpleNamespace(scalar_one=lambda: "1")
+        return await execute(self, stmt)
+
+    monkeypatch.setattr(rig._Session, "execute", _execute)
+
+
 STAMP = datetime(2026, 9, 30, 20, 34, 20, tzinfo=timezone.utc)
 
 
@@ -189,13 +222,13 @@ async def _run_with_stored(monkeypatch, frames, stored, pushed):
     the legs' stored prices (recognised by its columns, not by its turn)."""
     execute = rig._Session.execute
 
-    async def _execute(self, stmt):
+    async def _execute(self, stmt, params=None):
         columns = [
             getattr(c, "name", None) for c in getattr(stmt, "selected_columns", [])
         ]
         if columns == ["id", "current_probability"]:
             return rig._Result(list(stored.items()))
-        result = await execute(self, stmt)
+        result = await execute(self, stmt, params)
         params = stmt.compile().params if isinstance(stmt, Update) else {}
         if "current_probability" in params and params["current_probability"] is None:
             # the withdrawal's RETURNING row
