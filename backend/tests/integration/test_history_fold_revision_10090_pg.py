@@ -27,6 +27,7 @@ transaction.
 * C5  tagged twins: a twin's removal is certified per row;
 * C6  a twin tagged between membership and the prefix: no claim;
 * C7  the canonical's bag moving between its load and the prefix: no claim;
+* C7b an absorbed fold that raised or hit its cap: the route makes no claim;
 * C8  a swallowed read error: the body is served, without a claim;
 * C9  an empty chart is covered; a single-source chart with nothing removed
       is covered;
@@ -373,6 +374,35 @@ class TestMembershipAndTheCanonicalBag:
         assert "FROM events" in first[0] and "events.win_probability_sources_rev" in first[0]
         # The build holds the canonical's rev-0 bag; the prefix reads rev 1.
         assert body["history_fold_revision"] is None
+
+    async def test_c7b_an_absorbed_fold_that_did_not_run_whole_makes_no_claim(self, pg, monkeypatch):
+        """The route hands the fold's own completeness to the prefix. The real
+        fold runs and its rows are kept; only its flag says it raised or hit
+        its candidate cap, so the rows it would have absorbed are unknown."""
+        from app.utils import serve_fold_absorbed as sfa
+
+        _e, Plain, Hooked = pg
+        await _seed(Plain)
+        async with Plain() as s:
+            assert await _remove(s, CANON, "polymarket") == 1
+        real = sfa.serve_fold_absorbed_rows_with_completeness
+        incomplete, calls = [True], []
+
+        async def fold(db, event):
+            rows, complete = await real(db, event)
+            calls.append(complete)
+            return rows, complete and not incomplete[0]
+
+        monkeypatch.setattr(sfa, "serve_fold_absorbed_rows_with_completeness", fold)
+        body, _ = await _fresh(Hooked)
+        assert calls == [True], "the route read the fold once, and it ran whole"
+        assert _withdrawn(body, "polymarket"), "the body is still served"
+        assert body["history_fold_revision"] is None
+        # Control: the same build with the fold's flag left true is certified.
+        incomplete[0] = False
+        whole, _ = await _fresh(Hooked)
+        assert calls == [True, True]
+        assert whole["history_fold_revision"] == _v(c=1)
 
 
 class TestOnlyACompleteFreshBuildClaims:

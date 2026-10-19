@@ -8020,18 +8020,19 @@ jobs:
           }
 
       - name: "#10090 history_fold_revision certifies only what a fresh build read past (real Postgres)"
-        # #10090 producer. 12 = C1 a removal committed before the build is
+        # #10090 producer. 13 = C1 a removal committed before the build is
         # certified with NO pinned edge (and an ordinary read claims nothing) +
         # C2 a removal between prefix and series is drawn but not certified +
         # C3 a removal after the series read is neither + C4 an in-flight
         # removal is neither until it commits + C5 a twin's removal per row +
         # C6 a twin tagged after membership: no claim + C7 the canonical bag
-        # moving after its load: no claim + C8 a swallowed read: body, no
+        # moving after its load: no claim + C7b an absorbed fold that raised
+        # or hit its cap: the route makes no claim + C8 a swallowed read: body, no
         # claim + C9/C9b empty and single-source charts covered + C10 a reader
         # arriving mid-build gets a build that read its removal + C11 a
         # cancelled builder's waiter gets its own claim. Mutants: vector read
         # at the end (C2, C3 red), membership unchecked (C6), canonical bag
-        # unchecked (C7), partial ignored (C8), ordinary build claims (C1),
+        # unchecked (C7), route ignores fold completeness (C7b), partial ignored (C8), ordinary build claims (C1),
         # pin vector borrowed (10 red), barrier accepts an older build (C10).
         # drop_all/create_all, so isolated; named here because a `*_pg.py`
         # nobody adds runs nowhere.
@@ -8044,8 +8045,8 @@ jobs:
             echo "::error::#10090 history coverage gate SKIPPED — the gate did not run"
             exit 1
           fi
-          grep -qE "[^0-9]12 passed[,[:space:]]" /tmp/historycoverage10090.txt || {
-            echo "::error::#10090 history coverage gate did not run all twelve cases"
+          grep -qE "[^0-9]13 passed[,[:space:]]" /tmp/historycoverage10090.txt || {
+            echo "::error::#10090 history coverage gate did not run all thirteen cases"
             exit 1
           }
 
