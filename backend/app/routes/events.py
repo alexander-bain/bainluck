@@ -38,6 +38,7 @@ from app.services.anchor_channel import (
 from app.services.same_instant_refutation import same_instant_refuted_on_page
 from app.utils.agent_origin import ORIGIN_HEADER, ORIGIN_USER
 from app.utils.start_placeholder import start_is_tbd
+from app.utils.feed_snapshot_fallback import WITHDRAWAL_MARKER_KEY
 from app.utils.scheduled_start import (
     loaded_commence_time_source,
     served_start_is_from_schedule,
@@ -31324,6 +31325,11 @@ _SERVED_GAME_STATE_KEYS = frozenset({
     "time_source",
 })
 
+#: The writer's withdrawal marker. Not in the census above on purpose: it is
+#: served only on a point the route itself classified as a withdrawal, never
+#: passed through by key (#11272).
+_SERVED_WITHDRAWAL_KEY = WITHDRAWAL_MARKER_KEY
+
 
 def _project_served_game_state(win_prob_history: dict) -> None:
     """Narrow every point's `game_state` to the keys a client reads.
@@ -31350,9 +31356,23 @@ def _project_served_game_state(win_prob_history: dict) -> None:
     A non-dict `game_state` is left exactly as it is: the column is JSONB and a
     row may hold a list or a string, no client parses one, and rewriting it here
     would be a second change hiding inside a size fix.
+
+    #11272 — one key outside the census is served, and only on the row that
+    earned it. The writer marks a genuine withdrawal as a NULL point with
+    `live_source_withdrawal: true`; the route decides which points those are when
+    it builds each one from its stored row (`_explicit_source_withdrawal`), and
+    that decision — not the key — is what travels. So the marker reaches the wire
+    as boolean `true` on exactly those points and on no other: an ordinary NULL,
+    a string "true", a `false`, or a synthetic point that merely COPIED the row's
+    dict (the live-edge extension shares it) serves the projection it always did.
+    The internal flag is removed here, on every point, whatever it says.
     """
     for points in (win_prob_history or {}).values():
         for point in points or []:
+            withdrawal = (
+                point.pop("_explicit_source_withdrawal", None) is True
+                and point.get("home_probability") is None
+            )
             state = point.get("game_state")
             if not isinstance(state, dict):
                 continue
@@ -31361,6 +31381,8 @@ def _project_served_game_state(win_prob_history: dict) -> None:
                 for key, value in state.items()
                 if key in _SERVED_GAME_STATE_KEYS
             }
+            if withdrawal:
+                projected[_SERVED_WITHDRAWAL_KEY] = True
             point["game_state"] = projected or None
 
 
@@ -33704,9 +33726,8 @@ async def get_event_odds_history(
         pass
 
     # The marker is an internal aggregation instruction, not a new wire field.
-    for source_points in win_prob_history.values():
-        for point in source_points:
-            point.pop("_explicit_source_withdrawal", None)
+    # `_project_served_game_state` removes it, after turning a genuine
+    # withdrawal back into the writer's own `game_state` marker (#11272).
 
     # ── UX-P003 / #3714: pin the blend line's right edge to the point-in-time blend ──
     #
