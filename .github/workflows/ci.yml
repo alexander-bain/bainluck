@@ -3032,16 +3032,18 @@ jobs:
 
       - name: "#11296 a final's pregame projection is read from before the start (real Postgres)"
         # A final's newest odds row is in-play; this pins the read of each
-        # book's last row before the listed start. Skip detection plus a count.
+        # book's last row before the listed start, and that the event page,
+        # league rail and feed serve the same object. Skip detection + count.
         if: matrix.group == 'shared-middle' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_pregame_projection_pg_11296.py \
+            tests/integration/test_pregame_projection_lists_pg_11296.py \
             -v -rs 2>&1 | tee /tmp/pregame11296.txt
           if grep -qiE "[0-9]+ skipped" /tmp/pregame11296.txt; then
             echo "::error::#11296 pregame projection SKIPPED"; exit 1
           fi
-          grep -qE "[^0-9]6 passed[,[:space:]]" /tmp/pregame11296.txt || {
+          grep -qE "[^0-9]10 passed[,[:space:]]" /tmp/pregame11296.txt || {
             echo "::error::#11296 pregame projection did not run every case"; exit 1; }
 
       - name: Kalshi cliff-drain bind contract (real Postgres)
