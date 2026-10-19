@@ -634,7 +634,6 @@ struct MLBSeriesCardView11284: View {
                         tile(option, selected: option.optionKey == selected?.optionKey)
                     }
                 }
-                MLBPregameKey11284(color: color, label: "Chance before this game")
                 if expanded, let selected {
                     Button("Outcome details") { state.detailsRowID = selected.original.id }
                         .font(.callout.weight(.semibold))
@@ -654,10 +653,10 @@ struct MLBSeriesCardView11284: View {
                     .font(.subheadline.weight(.bold))
                     .lineLimit(3)
                     .fixedSize(horizontal: false, vertical: true)
-                Text(option.pregame.map { formatProbability($0) } ?? "Unavailable")
-                    .font(.headline.monospacedDigit())
-                    .foregroundStyle(option.pregame == nil ? Color.secondary : color)
-                Text(option.result)
+                MLBFigure11284(label: "Chance before this game",
+                               value: option.pregame.map { formatProbability($0) } ?? "Unavailable",
+                               color: option.pregame == nil ? Color.secondary : color)
+                Text("Venue result: \(option.result)")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
