@@ -280,3 +280,56 @@ describe("#10090 D4 what a paired read proves about an owed floor", () => {
     expect(reconcileFloorCoverage(detail(null, "completed"), unpinned, E, floor)).toBe("paid");
   });
 });
+
+describe("#10090 an unpinned history's complete-build coverage (history_fold_revision)", () => {
+  const TWIN = 15332402;
+  const floor = { [E]: 11, [TWIN]: 6 };
+  const detail = (rev: Record<string, number> | null, status = "live") =>
+    ({ id: E, status, blend_fold_revision: rev });
+  const covering = { [E]: 12, [TWIN]: 6 };
+  const unpinned = (vector: unknown, over: Record<string, unknown> = {}) =>
+    ({ event_id: E, blend_edge_pinned: false, blend_edge_fold_revision: null, history_fold_revision: vector, ...over });
+
+  it("pays when it covers every floor row, as the pinned edge would; extra rows and higher revisions are fine", () => {
+    expect(reconcileFloorCoverage(detail(covering), unpinned(covering), E, floor)).toBe("paid");
+    expect(reconcileFloorCoverage(detail(covering), unpinned({ [E]: 40, [TWIN]: 9, 77: 1 }), E, floor)).toBe("paid");
+    // Unstated pin, same as false.
+    const { blend_edge_pinned: _drop, ...noPin } = unpinned(covering);
+    expect(reconcileFloorCoverage(detail(covering), noPin, E, floor)).toBe("paid");
+    expect(reconcileFloorCoverage(detail(covering), unpinned(covering, { blend_edge_pinned: null }), E, floor)).toBe("paid");
+  });
+  it("never pays for a detail below the floor or from another event", () => {
+    expect(reconcileFloorCoverage(detail({ [E]: 12, [TWIN]: 5 }), unpinned(covering), E, floor)).toBe("none");
+    expect(reconcileFloorCoverage(detail(null), unpinned(covering), E, floor)).toBe("none");
+    expect(reconcileFloorCoverage({ ...detail(covering), id: E + 1 }, unpinned(covering), E, floor)).toBe("none");
+    expect(reconcileFloorCoverage(detail(covering), unpinned(covering, { event_id: E + 1 }), E, floor)).toBe("none");
+  });
+  it("absent, null, malformed, partial, below-floor or missing-row coverage leaves only the detail half", () => {
+    for (const vector of [
+      undefined, null, "12", 12, [], [12], {}, { [E]: "12", [TWIN]: 6 }, { [E]: 12.5, [TWIN]: 6 },
+      { [E]: -1, [TWIN]: 6 }, { [E]: 2 ** 53, [TWIN]: 6 }, { [E]: 12, [TWIN]: null },
+      { [E]: 12 },                 // the twin row is missing: not covered
+      { [E]: 12, [TWIN]: 5 },      // below on one row
+      { [E]: 10, [TWIN]: 9 },      // below on the other
+    ]) {
+      expect(reconcileFloorCoverage(detail(covering), unpinned(vector), E, floor)).toBe("detail");
+    }
+  });
+  it("a pinned edge keeps its own rule: the vector never vouches past an edge below the floor or without a revision", () => {
+    const pinned = (edge: unknown) => unpinned(covering, { blend_edge_pinned: true, blend_edge_fold_revision: edge });
+    expect(reconcileFloorCoverage(detail(covering), pinned({ [E]: 12, [TWIN]: 5 }), E, floor)).toBe("none");
+    expect(reconcileFloorCoverage(detail(covering), pinned(null), E, floor)).toBe("none");
+    expect(reconcileFloorCoverage(detail(covering), pinned(covering), E, floor)).toBe("paid");
+    // and the pinned edge alone still pays without any vector
+    expect(reconcileFloorCoverage(detail(covering),
+      { event_id: E, blend_edge_pinned: true, blend_edge_fold_revision: covering }, E, floor)).toBe("paid");
+  });
+  it("an unparseable floor is never covered by any vector, and a terminal detail still retires it", () => {
+    expect(reconcileFloorCoverage(detail(covering), unpinned(covering), E, null)).toBe("none");
+    expect(reconcileFloorCoverage(detail(covering), unpinned(covering), E, {})).toBe("none");
+    expect(reconcileFloorCoverage(detail(null, "completed"), unpinned(null), E, floor)).toBe("paid");
+  });
+  it("is not a pinned edge: a covering read with only a coverage vector never displaces a newer served chart edge", () => {
+    expect(servedHistoryIsNewer({ foldRevision: { [E]: 13 } }, unpinned({ [E]: 99, [TWIN]: 99 }))).toBe(false);
+  });
+});

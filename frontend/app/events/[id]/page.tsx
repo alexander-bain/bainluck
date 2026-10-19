@@ -1053,10 +1053,10 @@ export default function EventPage({ params }: EventPageProps) {
     // onto it, so the rail loses the removed source without the headline going
     // back, and the two halves need only agree on the floor (two fresh builds
     // a write apart would otherwise refuse each other). It PAYS the floor only
-    // when a pinned history edge covers it too: an unpinned history makes no
-    // revision claim, so the chart half stays owed and the persistent read
-    // asks again (D4). Any other pair keeps history-covers-detail and
-    // refuse-if-older.
+    // when the history covers it too — a pinned edge's revision, or an
+    // unpinned complete fresh build's `history_fold_revision`; otherwise the
+    // chart half stays owed and the persistent read asks again (D4). Any other
+    // pair keeps history-covers-detail and refuse-if-older.
     const covering = reconcileLedger.floors()
       .filter((floor) => reconcileFloorCoverage(detail, history, readingEventId, floor) !== "none");
     const reconciling = covering.length > 0;
