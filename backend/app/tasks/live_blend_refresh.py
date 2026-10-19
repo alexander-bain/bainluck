@@ -3409,13 +3409,17 @@ class LiveBlendRefresher:
                         stamped_at = new_sources[self.source]["updated_at"]
                         # Intent and source revision COMMIT together. A crash
                         # before publication cannot erase the last recovery duty.
-                        from sqlalchemy import insert
-                        from app.models.models import OwedChartPoint
-                        await session.execute(insert(OwedChartPoint).values(
-                            source=self._normal_source, event_id=event_id,
-                            value=value, reading={"rev": int(new_rev),
-                                                  "updated_at": stamped_at},
-                        ))
+                        # Same revision rule as `build_frame`: a writer with no
+                        # integer revision makes no claim, so it owes no intent
+                        # and its stamp is not refused for lacking one.
+                        if isinstance(new_rev, int) and not isinstance(new_rev, bool):
+                            from sqlalchemy import insert
+                            from app.models.models import OwedChartPoint
+                            await session.execute(insert(OwedChartPoint).values(
+                                source=self._normal_source, event_id=event_id,
+                                value=value, reading={"rev": new_rev,
+                                                      "updated_at": stamped_at},
+                            ))
                         # Scalar extraction is still inside the event scope:
                         # if it fails, this stamp cannot commit without its
                         # due chart obligation.
@@ -3733,7 +3737,13 @@ class LiveBlendRefresher:
     async def _publish_prices(self, frames):
         try:
             acknowledged = await self._publish(frames)
-            expected = {(f["event_id"], f["rev"][str(f["event_id"])]) for f in frames}
+            # Exactly the revisions `_publish` can acknowledge: an int at the
+            # frame's own event key. A revision-less frame owes no intent.
+            expected = {
+                (f["event_id"], f["rev"][str(f["event_id"])]) for f in frames
+                if isinstance(f.get("rev"), dict)
+                and type(f["rev"].get(str(f["event_id"]))) is int
+            }
             if expected - (acknowledged or set()):
                 self._note_normal_debt()
             await self._settle_normal_recovery(acknowledged)
