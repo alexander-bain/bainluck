@@ -12388,7 +12388,60 @@ async def _score_events(
             )
             continue
 
+    # #11295 — the sportsbooks' projected final, read once for the cards built
+    # above (see `card_projected_pair`). After the loop, so only cards that were
+    # admitted are read.
+    await _attach_card_projected_pairs(db, scored_items, events)
+
     return scored_items
+
+
+async def _attach_card_projected_pairs(
+    db: AsyncSession, items: list[dict], events: list
+) -> None:
+    """Add the detail page's projected pair to each scheduled/live game card.
+
+    One statement for the whole build, inside a SAVEPOINT: the pair is an
+    addition to a card, so a failed read costs the cards their pair and nothing
+    else (gotcha #42). Without the savepoint, a failed statement would abort the
+    transaction and every later stage on this session with it. A cancellation
+    (the events-stage deadline) is not caught and propagates as itself.
+    """
+    from app.utils.card_projected_pair import (
+        attach_card_projected_pair,
+        read_card_projected_pairs,
+    )
+
+    by_id = {e.id: e for e in events}
+    cards: list[dict] = []
+    for item in items:
+        data = item.get("data") if item.get("type") == "event" else None
+        if not isinstance(data, dict) or not isinstance(data.get("current_odds"), dict):
+            continue
+        event = by_id.get(data.get("id"))
+        if event is None:
+            continue
+        cards.append(
+            {
+                "id": event.id,
+                "stored_status": event.status,
+                "served_status": data.get("status"),
+                "commence_time": event.commence_time,
+                "sport_key": data.get("sport"),
+            }
+        )
+    if not cards:
+        return
+    try:
+        async with db.begin_nested():
+            pairs = await read_card_projected_pairs(db, cards)
+    except Exception:  # noqa: BLE001 — see the docstring
+        logger.exception("Feed: projected-pair read failed; cards keep no pair")
+        return
+    for item in items:
+        data = item.get("data") if item.get("type") == "event" else None
+        if isinstance(data, dict):
+            attach_card_projected_pair(data.get("current_odds"), pairs.get(data.get("id")))
 
 
 def _futures_feed_load_options() -> list:

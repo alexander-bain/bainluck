@@ -2001,6 +2001,22 @@ jobs:
             exit 1
           fi
 
+      - name: "#11295 a game card carries the event page's projected final (real Postgres)"
+        # #11295. `/api/feed` and `/api/leagues/{sport}` read the latest row per
+        # sportsbook for their scheduled/live game cards and must serve the SAME
+        # projected pair `/api/events/{id}` serves. The recursive per-book walk
+        # and the detail route's own read only mean anything on a server. Named
+        # here because a `*_pg.py` nobody adds runs nowhere.
+        if: matrix.group == 'shared-middle' && needs.change-scope.outputs.reuse != 'true'
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_card_projected_pair_11295_pg.py \
+            -v -rs 2>&1 | tee /tmp/cardpair11295.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/cardpair11295.txt; then
+            echo "::error::#11295 card projected pair gate SKIPPED — the gate did not run"
+            exit 1
+          fi
+
       - name: Provenance enum contract (real Postgres)
         # C-ADHOC-PROV-CORE. The receiver accepted `play` while the migration's
         # enum declared six values without it, and the route specimen STORED it
