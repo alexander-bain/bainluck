@@ -210,6 +210,19 @@ struct NFLMilestoneCard9483: Equatable, Identifiable {
     let rungs: [Rung]
     /// The stat's final value as the server graded it; nil until then.
     let actual: Double?
+    /// #11285 — the served headshot of THIS ladder's own rows
+    /// (`GameMarketPlayerProp.playerHeadshot`), never a name join; nil when
+    /// none is served or the rows disagree (`headshot(of:)`).
+    var headshot: URL? = nil
+
+    /// The one https headshot a ladder's rows agree on, or nil.
+    static func headshot(of rows: [GameMarketPlayerProp]) -> URL? {
+        let served = Set(rows.compactMap(\.playerHeadshot)
+            .map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty })
+        guard served.count == 1, let url = served.first.flatMap({ URL(string: $0) }),
+              url.scheme == "https" else { return nil }
+        return url
+    }
 
     /// Both bases are named for what they are: before kickoff the current
     /// price is the pregame chance; once play starts the number is the
@@ -241,7 +254,7 @@ struct NFLMilestoneCard9483: Equatable, Identifiable {
                         rowID: rung.rowID, hit: rung.hit)
         }
         return NFLMilestoneCard9483(id: id, player: player, stat: stat, side: side, basis: basis,
-                                    rungs: aged, actual: actual)
+                                    rungs: aged, actual: actual, headshot: headshot)
     }
 
     /// A quote is recent when its observation clock is readable and no older
@@ -313,7 +326,8 @@ struct NFLMilestoneCard9483: Equatable, Identifiable {
                 id: key, player: ladder.player, stat: stat,
                 side: PlayerPropsTeam.side(for: ladder.rows.compactMap(\.playerTeam).first),
                 basis: basis, rungs: rungs,
-                actual: finished ? ladder.rows.compactMap(\.actual).first : nil)
+                actual: finished ? ladder.rows.compactMap(\.actual).first : nil,
+                headshot: headshot(of: ladder.rows))
             guard card.profile != nil else { return nil }
             return (card, PlayerPropsFamily.family(statLabel: stat, isPriced: true))
         }

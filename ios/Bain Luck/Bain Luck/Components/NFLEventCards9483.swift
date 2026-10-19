@@ -379,6 +379,21 @@ struct NFLMilestoneCardView9483: View {
         let rung = selected.map { card.rungs[$0] }
         VStack(alignment: .leading, spacing: 10) {
             HStack(alignment: .top) {
+                // #11285 — a small identity cue beside the name when this
+                // ladder's own rows serve a headshot; loading or failed keeps
+                // a plain circle, so the name never moves.
+                if let headshot = card.headshot {
+                    AsyncImage(url: headshot) { phase in
+                        if case .success(let image) = phase {
+                            image.resizable().scaledToFill()
+                        } else {
+                            color.opacity(0.15)
+                        }
+                    }
+                    .frame(width: 36, height: 36)
+                    .clipShape(Circle())
+                    .accessibilityHidden(true)
+                }
                 VStack(alignment: .leading, spacing: 3) {
                     Text(card.stat)
                         .font(.caption)
