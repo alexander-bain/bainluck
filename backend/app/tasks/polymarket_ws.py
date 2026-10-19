@@ -2733,7 +2733,7 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
         reap_stopped_loops, run_flush_cadence,
     )
     from app.tasks.polymarket_token_topup import (
-        topup_clob_tokens, topup_outcome_clob_tokens,
+        topup_clob_tokens, topup_outcome_clob_tokens, condition_id_of,
     )
     from app.tasks.ws_admission import (  # #9418
         unadmitted_live_events,
@@ -2863,7 +2863,7 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
         price_book_snapshots=book_snapshot_prices_enabled(),
     )
 
-    async def load_game_slate():
+    async def load_game_slate(*, stored_live_only=False):
         # Load linked Polymarket market asset IDs
         async with get_task_session() as session:
             result = await session.execute(
@@ -2881,6 +2881,7 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                     FuturesMarket.event_id.isnot(None),
                     _slate_event_window(),
                     _slate_market_filter(),
+                    *([Event.status.in_(("live", "suspended"))] if stored_live_only else []),
                 )
             )
             rows = result.all()
@@ -2909,6 +2910,7 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
         tokens_by_market: dict[int, list[str]] = {}
         non_blend_market_ids: set[int] = set()
         live_win_topup_ids: set[int] = set()
+        stored_outcome_tokens: dict[int, tuple[int, str]] = {}
 
         async with get_task_session() as session:
             market_result = await session.execute(
@@ -2932,6 +2934,17 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                     # Same conservative WIN eligibility as the blend owner map.
                     # Props remain in the fleet but cannot take these ask seats.
                     live_win_topup_ids.add(mid)
+                if stored_live_only:
+                    # Same persisted per-outcome attribution read by the outcome
+                    # top-up. Parent moneylines have no market-level token array.
+                    stored = (metadata or {}).get("clob_yes_token_by_outcome")
+                    if isinstance(stored, dict):
+                        for raw_oid, token in stored.items():
+                            if token:
+                                try:
+                                    stored_outcome_tokens[int(raw_oid)] = (mid, str(token))
+                                except (TypeError, ValueError):
+                                    pass
                 if mext:
                     condition_to_market[mext] = mid
                     ext_by_market[mid] = mext
@@ -2963,7 +2976,7 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                 for mid in market_ids
                 if mid not in tokens_by_market
             ]
-            if topup_missing:
+            if topup_missing and not stored_live_only:
                 try:
                     topped = await topup_clob_tokens(
                         session,
@@ -3023,8 +3036,19 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                 if mid not in tokens_by_market
                 for oid, ext in outcomes_by_market.get(mid, [])
             ]
-            outcome_yes_token: dict[int, str] = {}
-            if outcome_topup_targets:
+            # The normal top-up reads stored metadata only for markets with
+            # at least one addressable outcome. That read returns all persisted
+            # siblings, including one whose own external ID is unparseable.
+            stored_markets = {
+                mid for mid, _oid, ext in outcome_topup_targets
+                if condition_id_of(ext) is not None
+            }
+            outcome_yes_token: dict[int, str] = {
+                oid: token
+                for oid, (mid, token) in stored_outcome_tokens.items()
+                if stored_live_only and mid in stored_markets
+            }
+            if outcome_topup_targets and not stored_live_only:
                 try:
                     outcome_yes_token = {
                         oid: token
@@ -3108,7 +3132,12 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
             "unmapped_assets": unmapped_assets,
         }
 
-    game_slate = await load_game_slate()
+    game_slate = await load_game_slate(stored_live_only=True)
+    complete_startup_slate = bool(game_slate["asset_to_outcome"])
+    if not complete_startup_slate:
+        # Preserve the original full-slate/open-only fallback when nothing
+        # attributable can be subscribed from the stored live subset.
+        game_slate = await load_game_slate()
     asset_ids = game_slate["asset_ids"].copy()
     asset_to_outcome = game_slate["asset_to_outcome"].copy()
     asset_to_market = game_slate["asset_to_market"].copy()
@@ -5664,6 +5693,28 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
         )
 
     async def admit_open_contracts():
+        nonlocal game_slate
+        if complete_startup_slate:
+            try:
+                started = time.monotonic()
+                full_slate = await load_game_slate()
+                # No open catalog has been admitted yet. Install the complete
+                # game maps before subscribing their new tokens; never make a
+                # recovered live token wait for the independent open read.
+                await refresh_catalog(
+                    full_slate, (None, False, {}, False),
+                    _PMCatalogHandoverTiming(
+                        "startup-games", slate_read_s=time.monotonic() - started,
+                    ),
+                )
+                ws.update_asset_ids(
+                    asset_ids.copy(), preserve_existing_shards=True,
+                )
+                game_slate = full_slate
+            except Exception:
+                logger.exception(
+                    "Polymarket WS full startup slate failed; retaining stored live subscriptions"
+                )
         open_read, open_read_s = preread, None
         if open_read is None:
             started = time.monotonic()

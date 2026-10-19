@@ -555,12 +555,14 @@ class PolymarketWebSocket:
         self.on_new_market: Optional[Callable] = None
         self._asset_refresh: Optional[asyncio.Event] = None
         self._next_asset_ids: list[str] = []
+        self._preserve_existing_shards = False
 
     def update_asset_ids(
         self,
         asset_ids: list[str],
         *,
         price_book_snapshots: Optional[bool] = None,
+        preserve_existing_shards: bool = False,
     ) -> None:
         """Replace a refreshable client's desired catalog, including an empty one."""
         if self._asset_refresh is None:
@@ -568,6 +570,10 @@ class PolymarketWebSocket:
         if price_book_snapshots is not None:
             self._price_book_snapshots = price_book_snapshots
         self._next_asset_ids = list(dict.fromkeys(asset_ids))
+        # A staged startup can add its full catalog without restarting the
+        # live subset. Applies to this expansion only; later updates compact
+        # underfull shards normally, and empty shards still stop immediately.
+        self._preserve_existing_shards = preserve_existing_shards
         # The caller has already handed the routing maps to the new catalog.
         # Narrow every fence now, before the owner loop next runs, so a socket
         # that keeps a dropped token cannot deliver it in between. Only the
@@ -621,6 +627,8 @@ class PolymarketWebSocket:
         try:
             while True:
                 self._asset_refresh.clear()
+                preserve_existing = self._preserve_existing_shards
+                self._preserve_existing_shards = False
                 wanted = set(self._next_asset_ids)
                 retained = {
                     i: [a for a in ids if a in wanted]
@@ -648,7 +656,8 @@ class PolymarketWebSocket:
                     for i, ids in retained.items()
                     if not ids
                     or (
-                        (added or ids != self._shard_ids.get(i))
+                        not preserve_existing
+                        and (added or ids != self._shard_ids.get(i))
                         and under_half(ids)
                     )
                 }
