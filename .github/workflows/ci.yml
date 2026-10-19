@@ -286,6 +286,30 @@ jobs:
         if: needs.change-scope.outputs.scope != 'frontend' && needs.change-scope.outputs.reuse != 'true'
         run: pip install -r requirements.txt
 
+      # #10090 attempt163 — the real-Redis publication controls (every
+      # `private_redis_socket` case in test_event_frame_batching_10659.py and
+      # the 163 retention files) skipped on these shards: the runner has no
+      # redis-server. A pinned, hash-checked redislite wheel supplies ONLY the
+      # binary: it is not pip-installed and not put on PATH, so nothing listens
+      # on 6379 and `shutil.which("redis-server")` callers are unchanged. Only
+      # EVENT_FRAME_REDIS_SERVER readers see it, and EVENT_FRAME_REDIS_REQUIRED
+      # turns that fixture's skip into a failure, so a broken step reddens the
+      # shard instead of silently testing less. Every shard gets it because
+      # ci_shard.py assigns files by measured duration, not by name.
+      - name: Private redis-server binary for the real-Redis publication controls (#10090)
+        if: needs.change-scope.outputs.scope != 'frontend' && needs.change-scope.outputs.reuse != 'true'
+        run: |
+          set -euo pipefail
+          dir="$RUNNER_TEMP/redislite"
+          wheel=redislite-6.2.912183-cp311-cp311-manylinux_2_17_x86_64.manylinux2014_x86_64.whl
+          pip download --no-deps --only-binary=:all: redislite==6.2.912183 -d "$dir"
+          echo "d5ed8af4d03225a9b19e279d40f8d8feae872f87a9cd9f017751864fe7b224c6  $dir/$wheel" | sha256sum -c -
+          python -c "import sys, zipfile; zipfile.ZipFile(sys.argv[1]).extract('redislite/bin/redis-server', sys.argv[2])" "$dir/$wheel" "$dir"
+          chmod +x "$dir/redislite/bin/redis-server"
+          "$dir/redislite/bin/redis-server" --version
+          echo "EVENT_FRAME_REDIS_SERVER=$dir/redislite/bin/redis-server" >> "$GITHUB_ENV"
+          echo "EVENT_FRAME_REDIS_REQUIRED=1" >> "$GITHUB_ENV"
+
       - name: Run tests (shard ${{ matrix.shard }}/${{ strategy.job-total }})
         if: needs.change-scope.outputs.scope != 'frontend' && needs.change-scope.outputs.reuse != 'true'
         # `strategy.job-total` rather than a literal 4: the matrix list is then
@@ -5219,8 +5243,8 @@ jobs:
             echo "::error::#10090 normal-publication recovery gate SKIPPED"
             exit 1
           fi
-          grep -qE "[^0-9]22 passed[,[:space:]]" /tmp/normal-recovery10090.txt || {
-            echo "::error::#10090 normal-publication recovery gate did not run all twenty-two cases"
+          grep -qE "[^0-9]23 passed[,[:space:]]" /tmp/normal-recovery10090.txt || {
+            echo "::error::#10090 normal-publication recovery gate did not run all twenty-three cases"
             exit 1
           }
 

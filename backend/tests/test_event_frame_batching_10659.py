@@ -198,6 +198,10 @@ async def test_checkout_accepts_modern_and_redis_5_0_pool_signatures(legacy):
 def private_redis_socket():
     binary = os.environ.get("EVENT_FRAME_REDIS_SERVER") or shutil.which("redis-server")
     if not binary:
+        if os.environ.get("EVENT_FRAME_REDIS_REQUIRED"):
+            # CI provides the binary; its absence there is a failure, never a
+            # silent skip of the deciding real-Redis controls (#10090 163).
+            pytest.fail("EVENT_FRAME_REDIS_REQUIRED is set but no redis-server was found")
         pytest.skip(
             "set EVENT_FRAME_REDIS_SERVER for private real-Redis event publication controls"
         )
