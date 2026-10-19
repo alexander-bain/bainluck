@@ -73,33 +73,35 @@ final class AWithdrawnSourceLeavesTheOpenPage11253Tests: XCTestCase {
     }
 
     /// `load()` reads `page`; once `armed`, every fresh read is a stream pair
-    /// answered from `pairs` (the last repeats). `holdPair` freezes one pair's
-    /// two halves until `release()`.
+    /// answered from `pairs` by absolute read index (the last repeats). Each
+    /// index in `holdPairs` freezes that pair's two halves until `release()`.
     @MainActor private final class Client: EventDetailProviding {
         struct Declined: Error {}
         struct Pair { let revision: Int; let p: Double; let sources: String; let at: String }
         var page: EventDetail
         var pageHistory: EventHistoryResponse
         var pairs: [Pair] = []
-        var holdPair: Int?
+        var holdPairs: Set<Int> = []
         var armed = false
         private(set) var detailReads = 0
         private(set) var historyReads = 0
-        private var released = false
-        private var waiters: [CheckedContinuation<Void, Never>] = []
+        private var waiters: [(Int, CheckedContinuation<Void, Never>)] = []
         init(page: EventDetail, history: EventHistoryResponse) {
             self.page = page
             self.pageHistory = history
         }
+        /// Releases every pair waiting now; later held indexes still hold.
         func release() {
-            released = true
             let pending = waiters
             waiters.removeAll()
-            for waiter in pending { waiter.resume() }
+            for (index, waiter) in pending {
+                holdPairs.remove(index)
+                waiter.resume()
+            }
         }
         private func hold(_ index: Int) async {
-            guard index == holdPair, !released else { return }
-            await withCheckedContinuation { waiters.append($0) }
+            guard holdPairs.contains(index) else { return }
+            await withCheckedContinuation { waiters.append((index, $0)) }
         }
         func fetchEvent(id: Int) async throws -> EventDetail { page }
         func fetchEventHistory(id: Int, hours: Int) async throws -> EventHistoryResponse { pageHistory }
@@ -131,14 +133,14 @@ final class AWithdrawnSourceLeavesTheOpenPage11253Tests: XCTestCase {
 
     /// A live one-row blend at revision 10: hero 60, rail Kalshi 50 + Polymarket 82.
     private func opened(
-        page: EventDetail? = nil, pairs: [Client.Pair], holdPair: Int? = nil
+        page: EventDetail? = nil, pairs: [Client.Pair], holdPairs: Set<Int> = []
     ) async throws -> (Client, Handle, EventDetailViewModel) {
         let client = Client(
             page: try page ?? Self.detail(p: 0.6, revision: #"{"4242":10}"#, sources: Self.both),
             history: try Self.history(p: 0.6, revision: #"{"4242":10}"#, at: "2026-09-27T17:00:00Z")
         )
         client.pairs = pairs
-        client.holdPair = holdPair
+        client.holdPairs = holdPairs
         let handle = Handle()
         let vm = EventDetailViewModel(
             eventId: 4242, client: client, makeStreamHandle: { _ in handle },
@@ -208,7 +210,7 @@ final class AWithdrawnSourceLeavesTheOpenPage11253Tests: XCTestCase {
         // A delayed pre-withdrawal price still folds Polymarket in: refused.
         handle.fire("probability", Self.priced(10, 0.6, source: "polymarket", at: "2026-09-27T17:00:20Z"))
         try await quiet()
-        XCTAssertEqual(client.detailReads, 1, "a replay on either connection is not a new withdrawal")
+        XCTAssertEqual(client.detailReads, 1, "a replay, before or after a transport open, is not a new withdrawal")
         XCTAssertEqual(client.historyReads, 1)
         XCTAssertEqual(vm.event?.currentOdds?.homeProbability, 0.5)
         XCTAssertNil(vm.event?.winProbabilitySources?["polymarket"])
@@ -257,7 +259,7 @@ final class AWithdrawnSourceLeavesTheOpenPage11253Tests: XCTestCase {
     func testANewerQuoteDuringThePairKeepsTheHeadlineAndOneTrailingPairDropsTheSource() async throws {
         let trailing = Client.Pair(revision: 12, p: 0.48, sources: Self.kalshiOnly(0.48, at: "2026-09-27T17:02:00Z"),
                                    at: "2026-09-27T17:02:00Z")
-        let (client, handle, vm) = try await opened(pairs: [Self.withoutPolymarket, trailing], holdPair: 0)
+        let (client, handle, vm) = try await opened(pairs: [Self.withoutPolymarket, trailing], holdPairs: [0])
         defer { vm.stopRefresh() }
         handle.fire("probability", Self.invalidation(11))
         try await settle { client.detailReads == 1 && client.historyReads == 1 }
@@ -276,13 +278,20 @@ final class AWithdrawnSourceLeavesTheOpenPage11253Tests: XCTestCase {
         XCTAssertEqual(client.historyReads, 2)
     }
 
-    /// The bound: a server still serving 11 after the trailing ask cannot make
-    /// the page loop. One trailing pair per held revision; the poll remains.
-    func testAStaleServerAfterTheTrailingPairDoesNotLoop() async throws {
-        let (client, handle, vm) = try await opened(pairs: [Self.withoutPolymarket], holdPair: 0)
+    /// The bound, and the debt it must not drop: a server still serving 11
+    /// after the trailing ask cannot make the page loop, and the page does not
+    /// pretend the venue left. One trailing pair per HELD revision whenever
+    /// another pair lands; a priced quote never asks on its own.
+    func testAStaleServerAfterTheTrailingPairDoesNotLoopOrDropTheDebt() async throws {
+        let stale12 = Client.Pair(revision: 12, p: 0.48, sources: Self.kalshiOnly(0.48, at: "2026-09-27T17:02:00Z"),
+                                  at: "2026-09-27T17:02:00Z")
+        let fresh13 = Client.Pair(revision: 13, p: 0.46, sources: Self.kalshiOnly(0.46, at: "2026-09-27T17:03:00Z"),
+                                  at: "2026-09-27T17:03:00Z")
+        let (client, handle, vm) = try await opened(
+            pairs: [Self.withoutPolymarket, Self.withoutPolymarket, stale12, fresh13], holdPairs: [0, 2])
         defer { vm.stopRefresh() }
         handle.fire("probability", Self.invalidation(11))
-        try await settle { client.detailReads == 1 }
+        try await settle { client.detailReads == 1 && client.historyReads == 1 }
         handle.fire("probability", Self.priced(12, 0.48))
         clock += 2
         client.release()
@@ -291,17 +300,33 @@ final class AWithdrawnSourceLeavesTheOpenPage11253Tests: XCTestCase {
         try await Task.sleep(for: .milliseconds(300))
         XCTAssertEqual(client.detailReads, 2, "the same held revision asks once")
         XCTAssertEqual(client.historyReads, 2)
+        // The honest residual: nothing claims the venue left.
         XCTAssertEqual(vm.event?.currentOdds?.homeProbability, 0.48)
+        XCTAssertEqual(vm.event?.blendFoldRevision?.revision?.rows, ["4242": 12])
+        XCTAssertEqual(vm.event?.winProbabilitySources?["polymarket"]?.value?.doubleValue, 0.82)
 
-        // A genuinely newer held quote may ask once more, and that read settles it.
-        client.pairs = [Client.Pair(revision: 13, p: 0.46, sources: Self.kalshiOnly(0.46, at: "2026-09-27T17:03:00Z"),
-                                    at: "2026-09-27T17:03:00Z")]
-        handle.fire("probability", Self.invalidation(13, at: "2026-09-27T17:03:00Z"))
-        try await settle { client.detailReads == 3 && vm.event?.winProbabilitySources?["polymarket"] == nil }
+        handle.fire("probability", Self.priced(13, 0.46, at: "2026-09-27T17:03:00Z"))
+        XCTAssertEqual(vm.event?.currentOdds?.homeProbability, 0.46)
         try await quiet()
-        XCTAssertEqual(client.detailReads, 3)
+        XCTAssertEqual(client.detailReads, 2, "a priced quote asks nothing")
+        XCTAssertEqual(vm.event?.winProbabilitySources?["polymarket"]?.value?.doubleValue, 0.82)
+
+        // An unrelated pair (an unorderable frame) lands: still stale (12),
+        // beaten by held 13, so the kept debt asks once more at 13.
+        handle.fire("probability", """
+        {"event_id":4242,"p":null,"source":null,"source_value":null,"updated_at":null,
+         "status":"live","rev":{"9999":1}}
+        """)
+        try await settle { client.detailReads == 3 && client.historyReads == 3 }
+        clock += 2
+        client.release()
+        try await settle { client.detailReads == 4 && vm.event?.winProbabilitySources?["polymarket"] == nil }
+        try await quiet()
+        XCTAssertEqual(client.detailReads, 4, "the debt survived the stale reads and is paid by the fresh one")
+        XCTAssertEqual(client.historyReads, 4)
         XCTAssertNil(vm.event?.winProbabilitySources?["polymarket"])
         XCTAssertEqual(vm.event?.currentOdds?.homeProbability, 0.46)
+        XCTAssertEqual(vm.event?.blendFoldRevision?.revision?.rows, ["4242": 13])
     }
 
     // MARK: - T5 folded controls (unchanged behaviour)
