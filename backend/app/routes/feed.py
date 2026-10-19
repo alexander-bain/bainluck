@@ -127,9 +127,10 @@ from app.utils.graded_card import (
     rendered_card_percents,
 )
 from app.utils.prematch_reading import (
-    PREMATCH_PRIOR_SQL,
+    PREMATCH_PRIOR_SHARED_NAMESPACE,
     prematch_prior_binds,
-    prematch_row_to_reading,
+    prematch_prior_share_key,
+    read_prematch_priors,
     resolve_prematch_reading,
 )
 from app.utils.discover_bundles import (
@@ -3736,6 +3737,11 @@ async def get_feed(
     # 60s response TTL while carrying 60s-old inputs. This is the missing term;
     # `live_total_age_headroom_s()` is the arithmetic that spends it.
     _shared_origins: list[float] = []
+    # #1480 (N-strict): the origins of the shared GAME READINGS only
+    # (`STRICT_AGE_NAMESPACES`). Their age is spent on non-live pages too, at
+    # the two seams where this build publishes, so a page with no live card
+    # stays within the 300 s stale window of the readings it shows.
+    _strict_origins: list[float] = []
     # Bind it as this request's ambient sink. The second shared artifact
     # (`canonical_counts`) is resolved three frames down inside `_score_futures`;
     # a contextvar avoids threading a diagnostic through a scoring signature,
@@ -3744,6 +3750,7 @@ async def get_feed(
     # and therefore its own context copy, so the binding does not need an
     # explicit reset to stay request-scoped.
     _bind_shared_reuse_sink(_shared_reuse, _shared_tiers, _shared_origins)
+    _pic.bind_strict_age_sink(_strict_origins)
 
     if (debug or exclude_reviewed) and not await _check_admin_auth(secret, request, db):
         _set_feed_timing_header(response, _started_at)
@@ -3936,7 +3943,7 @@ async def get_feed(
             return None
         return value if isinstance(value, dict) else None
 
-    def _live_ttls(payload, *, oldest_artifact_age_s=None):
+    def _live_ttls(payload, *, oldest_artifact_age_s=None, strict_artifact_age_s=0.0):
         """#2216: the ``(fresh, stale)`` TTLs THIS payload actually earns.
 
         ``_cache_ttl`` above is the principal's baseline and is computed before
@@ -3987,6 +3994,8 @@ async def get_feed(
             live=payload_contains_live_event(payload),
             # LAT-P230: the age the payload's INPUTS had already spent.
             oldest_artifact_age_s=oldest_artifact_age_s,
+            # #1480: passed only by the build seam that consumed them.
+            strict_artifact_age_s=strict_artifact_age_s,
         )
 
     def _payload_built_at(payload):
@@ -5400,6 +5409,8 @@ async def get_feed(
                             tag_filter=dynamic_tag_filter or None,
                             static_tag_filter=static_tag_filter or None,
                             sports_mode=(mode or "").lower() == "sports",
+                            # #1480: reuse the reader-independent game readings.
+                            share_inputs=True,
                         )
                     feed_items.extend(event_items)
                 except Exception as e:
@@ -6434,8 +6445,12 @@ async def get_feed(
         # opposite sides of the ceiling — the serve/refuse decision and the TTL
         # stamped on what is served have to come from the same instant.
         _consumed_age_s = _pic.oldest_consumed_artifact_age_s(_shared_origins)
+        # #1480 (N-strict): read once here too and spent on both publications.
+        _strict_age_s = _pic.oldest_consumed_artifact_age_s(_strict_origins)
         _publish_fresh_ttl, _publish_stale_ttl = _live_ttls(
-            payload, oldest_artifact_age_s=_consumed_age_s
+            payload,
+            oldest_artifact_age_s=_consumed_age_s,
+            strict_artifact_age_s=_strict_age_s,
         )
 
         # --- CERT-1864: past the ceiling the page is REBUILT, not served -----
@@ -6825,6 +6840,7 @@ async def get_feed(
                         # so the age its inputs already spent travels with it.
                         # CERT-1864: the same reading as the decision above.
                         oldest_artifact_age_s=_consumed_age_s,
+                        strict_artifact_age_s=_strict_age_s,
                     )
                     _page_base_json = _json_module.dumps(
                         _page_base_body, default=str
@@ -11298,6 +11314,7 @@ async def _score_events(
     static_tag_filter: Optional[list[str]] = None,
     price_refresh_events: list | None = None,
     sports_mode: bool = False,
+    share_inputs: bool = False,
 ) -> list[dict]:
     """Score and format events for the feed.
 
@@ -11318,6 +11335,11 @@ async def _score_events(
     earlier from his iPhone Sports tab, including one that was live and that he
     had swiped. The sports-mode futures half (`_score_sports_mode_futures`)
     already reads neither set.
+
+    ``share_inputs`` (#1480): the snapshot fallback and the prematch prior are
+    read through `principal_independent_cache`, so readers of the same candidate
+    set reuse one answer. Only `/api/feed`'s build passes it, and it is ignored
+    for My Teams and for a price refresh, which read directly as before.
     """
     # Wider time windows for my_teams_only — users want to see all their
     # team's upcoming games and recent results.
@@ -11570,13 +11592,28 @@ async def _score_events(
     events_needing_fallback = [] if price_refresh_events is not None else [
         e for e in events if _compute_aggregate_probability(e) is None
     ]
+    # #1480: both id sets below come from the candidates alone — after the twin
+    # fold, before any per-reader suppression — so every reader of one candidate
+    # set presents the same key. A followed-teams page is never shared.
+    _share_inputs = share_inputs and not my_teams_only and price_refresh_events is None
     if events_needing_fallback:
         fallback_ids = [e.id for e in events_needing_fallback]
-        from app.utils.feed_snapshot_fallback import read_snapshot_fallbacks
+        from app.utils.feed_snapshot_fallback import (
+            SNAPSHOT_FALLBACK_SHARED_NAMESPACE,
+            read_snapshot_fallback_artifact,
+            read_snapshot_fallbacks,
+            snapshot_fallback_share_key,
+        )
 
-        for event_id, home in (
-            await read_snapshot_fallbacks(db, fallback_ids, now=now)
-        ).items():
+        if _share_inputs:
+            _fallback_answer = await _pic.get_or_build(
+                SNAPSHOT_FALLBACK_SHARED_NAMESPACE,
+                snapshot_fallback_share_key(fallback_ids),
+                lambda: read_snapshot_fallback_artifact(db, fallback_ids, now=now),
+            )
+        else:
+            _fallback_answer = await read_snapshot_fallbacks(db, fallback_ids, now=now)
+        for event_id, home in _fallback_answer.items():
             snapshot_fallbacks[event_id] = round(float(home), 6)
 
     # ── WHAT EACH PREDICTION MARKET SAID BEFORE THE MATCH (ux/1036 Tier A) ──
@@ -11609,20 +11646,21 @@ async def _score_events(
     # production dyno: **p50 1,126.9 ms -> 117.5 ms, 1,075,139 buffers -> 19,859,
     # and the same 53 rows**. Equivalence is a CI gate, not a claim:
     # `tests/integration/test_prematch_prior_lateral_equivalence_pg.py`.
+    #
+    # #6277 — the row's shape is defined once, beside the statement that
+    # produced it (`read_prematch_priors`), so a member cannot be dropped here
+    # without a test noticing.
     prematch_by_event: dict[int, dict[str, tuple]] = {}
     pm_binds = prematch_prior_binds(events)
     if pm_binds is not None:
-        from sqlalchemy import text
-
-        pm_result = await db.execute(text(PREMATCH_PRIOR_SQL), pm_binds)
-        for row in pm_result.all():
-            # #6277 — the row's shape is defined once, beside the statement that
-            # produced it, so a member cannot be dropped here without a test
-            # noticing. It was inline, and inline made this the one link in the
-            # chain no unit test could reach.
-            prematch_by_event.setdefault(row.event_id, {})[
-                row.source
-            ] = prematch_row_to_reading(row)
+        if _share_inputs:
+            prematch_by_event = await _pic.get_or_build(
+                PREMATCH_PRIOR_SHARED_NAMESPACE,
+                prematch_prior_share_key(pm_binds),
+                lambda: read_prematch_priors(db, pm_binds),
+            )
+        else:
+            prematch_by_event = await read_prematch_priors(db, pm_binds)
 
     # Score each event using aggregate probabilities from all available sources
     scored_items = []
