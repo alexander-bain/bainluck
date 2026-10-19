@@ -36,7 +36,10 @@ const PILLARS: NavPillar[] = [
   {
     label: "System Health",
     icon: <Activity className="w-4 h-4" />,
-    items: [{ label: "Operations Dashboard", href: "/admin" }],
+    items: [
+      { label: "Operations Dashboard", href: "/admin" },
+      { label: "Correctness Console", href: "/admin/correctness" },
+    ],
   },
   {
     label: "Product Analytics",
