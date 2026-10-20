@@ -356,9 +356,12 @@ struct NFLFinishCardView9483: View {
             Text(Self.points(value))
                 .font(.headline.monospacedDigit())
                 .fixedSize()
+            // #11285 — the label wraps in the stacked layout ("pregame
+            // proje…" at the largest text size).
             Text(label)
                 .font(.caption2)
                 .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
         }
     }
 
