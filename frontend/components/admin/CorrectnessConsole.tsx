@@ -11,6 +11,7 @@ import PageHeader from "@/components/admin/PageHeader";
 import {
   ageSeconds,
   formatAge,
+  SOURCE_CLOCK_SKEW_S,
   summarize,
   type CorrectnessRow,
   type CorrectnessState,
@@ -80,6 +81,9 @@ export function CorrectnessTileCard({ tile, nowMs }: { tile: CorrectnessTile; no
   const style = STATE_STYLE[tile.state];
   const headingId = `correctness-${tile.key}`;
   const age = ageSeconds(tile.asOf, nowMs);
+  // ageSeconds clamps a time ahead of this clock to 0; past the skew tolerance
+  // there is no age to print, and "built 0s ago" would claim one.
+  const builtAhead = tile.asOf !== null && Date.parse(tile.asOf) - nowMs > SOURCE_CLOCK_SKEW_S * 1000;
   const notCurrent = tile.state === "stale" || tile.state === "freshness_unknown";
   return (
     <section
@@ -126,7 +130,7 @@ export function CorrectnessTileCard({ tile, nowMs }: { tile: CorrectnessTile; no
       )}
       <p className="text-[11px] text-text-muted mt-1 break-all">
         {tile.source}
-        {tile.asOf ? ` · built ${formatAge(age)}` : tile.state !== "loading" && tile.key !== "guess_family" ? " · build time unknown" : ""}
+        {tile.asOf ? (builtAhead ? " · built ahead of this browser's clock" : ` · built ${formatAge(age)}`) : tile.state !== "loading" && tile.key !== "guess_family" ? " · build time unknown" : ""}
         {typeof tile.readMs === "number" ? ` · read in ${tile.readMs} ms` : ""}
       </p>
     </section>

@@ -390,6 +390,10 @@ export const WINNERS_STALE_AFTER_S = 2 * 3600;
  * The gap that turns a source red is `needs_backfill`. Heuristic resolutions
  * are not counted as a gap here — they have an answer — but they are not
  * claimed authoritative either: they are shown on every row.
+ *
+ * Current only while `computed_at` is within `WINNERS_STALE_AFTER_S` on this
+ * tab's clock. Undated or unparseable reads stale; a `computed_at` more than
+ * `SOURCE_CLOCK_SKEW_S` ahead of the tab's clock is graded but never current.
  */
 export function evaluateWinnerCoverage(read: ReadResult, nowMs: number): CorrectnessTile {
   const base = {
@@ -448,8 +452,15 @@ export function evaluateWinnerCoverage(read: ReadResult, nowMs: number): Correct
       : red > 0
         ? `${red} of ${rows.length} sources have markets with no resolution`
         : `Not all sources could be verified`;
-  const age = ageSeconds(asOf, nowMs);
   const tile: CorrectnessTile = { ...base, state, headline, rows, asOf, readMs: read.ms };
+  // `ageSeconds` clamps a time ahead of this tab's clock to 0, so the TTL test
+  // alone would call it current. A computed_at past the skew tolerance gives
+  // this tab no age to vouch for: graded and kept as history, never current.
+  const computedMs = asOf === null ? NaN : Date.parse(asOf);
+  if (Number.isFinite(computedMs) && computedMs - nowMs > SOURCE_CLOCK_SKEW_S * 1000) {
+    return notCurrent(tile, "freshness_unknown", "Freshness unknown — it was computed more than 5 min ahead of this browser's clock");
+  }
+  const age = ageSeconds(asOf, nowMs);
   return withFreshness(tile, age === null || age > WINNERS_STALE_AFTER_S);
 }
 

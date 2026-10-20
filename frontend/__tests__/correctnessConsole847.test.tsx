@@ -26,7 +26,7 @@ import path from "path";
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
-import CorrectnessConsoleView from "@/components/admin/CorrectnessConsole";
+import CorrectnessConsoleView, { CorrectnessTileCard } from "@/components/admin/CorrectnessConsole";
 import { SENTINELS, SILENCE_MULTIPLIER } from "@/components/admin/SentinelsCard";
 import {
   ADMIN_READS,
@@ -346,6 +346,155 @@ describe("winner coverage — the gap is markets with no resolution at all", () 
   it("refuses a wrong shape instead of drawing an empty green", () => {
     expect(evaluateWinnerCoverage(ok({ detail: "No cached result yet." }), NOW).state).toBe("unavailable");
     expect(evaluateWinnerCoverage(ok(winnersPayload([])), NOW).state).toBe("unavailable");
+  });
+});
+
+// Root's da9c review (024): the SAME healthy winners answer, read on a tab whose
+// clock is behind its computed_at. `ageSeconds` clamps that to 0, so the TTL
+// test alone called it current. Every case below changes one thing from the
+// ordinary-clock control.
+describe("winner coverage — no all-clear without a local age", () => {
+  const healthy = () => winnersPayload([winnerSource()]);
+  const computed = (body: ReturnType<typeof winnersPayload>) => Date.parse(body.computed_at as string);
+  const winnerCard = (html: string) => {
+    const start = html.indexOf('data-tile="winner_coverage"');
+    return html.slice(start, html.indexOf("</section>", start));
+  };
+
+  it("the healthy answer is green and current on an ordinary clock (the control)", () => {
+    const t = evaluateWinnerCoverage(ok(healthy()), NOW);
+    expect(t).toMatchObject({ state: "green", headline: "Every source covered (1 sources)", asOf: minutesAgo(20) });
+    expect(t.lastVerdict).toBeUndefined();
+    expect(summarize([t]).status).toBe("good");
+  });
+
+  it("keeps the same answer as graded history, not current, when this tab's clock is ten minutes before computed_at", () => {
+    const body = healthy();
+    const control = evaluateWinnerCoverage(ok(body), NOW);
+    const t = evaluateWinnerCoverage(ok(body), computed(body) - 10 * 60_000);
+    expect(t).toMatchObject({ state: "freshness_unknown", lastVerdict: "green" });
+    expect(t.headline).toBe(
+      "Freshness unknown — it was computed more than 5 min ahead of this browser's clock. Last read: Every source covered (1 sources)",
+    );
+    // The producer's own time, the rows and their denominators and heuristic
+    // disclosure are kept exactly; nothing is re-stamped or dropped.
+    expect(t.asOf).toBe(body.computed_at);
+    expect(t.rows).toEqual(control.rows);
+    expect(t.rows[0]).toMatchObject({ value: "100.0% (900/900)", note: "0 with no resolution · 20 resolved by heuristic, not authority" });
+    expect(summarize([t]).status).toBe("warning");
+  });
+
+  it("uses the existing 300 s skew tolerance: exactly at it is current, one ms past it is not", () => {
+    const body = healthy();
+    expect(SOURCE_CLOCK_SKEW_S).toBe(300);
+    expect(evaluateWinnerCoverage(ok(body), computed(body) - SOURCE_CLOCK_SKEW_S * 1000).state).toBe("green");
+    expect(evaluateWinnerCoverage(ok(body), computed(body) - SOURCE_CLOCK_SKEW_S * 1000 - 1)).toMatchObject({
+      state: "freshness_unknown",
+      lastVerdict: "green",
+    });
+  });
+
+  it("keeps a red gap in future-stamped data as its last verdict — never dropped, never current", () => {
+    const body = winnersPayload([winnerSource({ has_winner: 849, needs_backfill: 1 })]);
+    const t = evaluateWinnerCoverage(ok(body), computed(body) - 10 * 60_000);
+    expect(t).toMatchObject({ state: "freshness_unknown", lastVerdict: "red" });
+    expect(t.headline).toBe(
+      "Freshness unknown — it was computed more than 5 min ahead of this browser's clock. Last read: 1 of 1 sources have markets with no resolution",
+    );
+    expect(t.rows[0]).toMatchObject({ state: "red", value: "99.9% (899/900)", note: "1 with no resolution · 20 resolved by heuristic, not authority" });
+    const html = renderToStaticMarkup(<CorrectnessTileCard tile={t} nowMs={computed(body) - 10 * 60_000} />);
+    expect(html).toContain('data-last-verdict="red"');
+    expect(html).toContain("The data read");
+    expect(html).toContain("— not a current verdict.");
+  });
+
+  it("leaves the genuine stale, undated and unparseable cases as they were (stale, verdict kept)", () => {
+    const at = (iso: unknown) => evaluateWinnerCoverage(ok({ sources: [winnerSource()], computed_at: iso }), NOW);
+    // The 7200 s horizon is unchanged: at it, current; one second past, stale.
+    expect(at(new Date(NOW - WINNERS_STALE_AFTER_S * 1000).toISOString()).state).toBe("green");
+    expect(at(new Date(NOW - WINNERS_STALE_AFTER_S * 1000 - 1000).toISOString())).toMatchObject({ state: "stale", lastVerdict: "green" });
+    expect(at(null)).toMatchObject({ state: "stale", lastVerdict: "green", asOf: null });
+    // An unparseable time is shown as sent, never normalised into a date.
+    expect(at("not-a-time")).toMatchObject({ state: "stale", lastVerdict: "green", asOf: "not-a-time" });
+    expect(at(1760907600)).toMatchObject({ state: "stale", asOf: null });
+  });
+
+  it("does not turn an unknown or failed read into a clock verdict", () => {
+    const behind = computed(healthy()) - 10 * 60_000;
+    const refused: ReadResult = { status: "error", kind: "unauthorized", detail: "HTTP 403", ms: 40, httpStatus: 403 };
+    const pending: ReadResult = { status: "error", kind: "pending", detail: "HTTP 202", ms: 40, httpStatus: 202 };
+    expect(evaluateWinnerCoverage(refused, behind).state).toBe("unauthorized");
+    expect(evaluateWinnerCoverage(pending, behind).state).toBe("unavailable");
+    expect(evaluateWinnerCoverage({ status: "loading" }, behind).state).toBe("loading");
+    expect(evaluateWinnerCoverage(ok({ sources: [{ source: "kalshi", resolved: "lots" }], computed_at: healthy().computed_at }), behind)).toMatchObject({
+      state: "freshness_unknown",
+      lastVerdict: "unavailable",
+    });
+  });
+
+  it("an open tab whose clock moves behind computed_at and back re-judges on its ticks alone — no new request", () => {
+    jest.useFakeTimers();
+    const fetchSpy = jest.fn();
+    const realFetch = global.fetch;
+    global.fetch = fetchSpy as unknown as typeof fetch;
+    try {
+      const body = healthy();
+      const read = ok(body);
+      let wall = NOW;
+      let judged = evaluateWinnerCoverage(read, wall);
+      expect(judged.state).toBe("green");
+      const stop = startUiClock(
+        (t) => {
+          judged = evaluateWinnerCoverage(read, t);
+        },
+        { doc: null, now: () => wall },
+      );
+      wall = computed(body) - 10 * 60_000; // the device clock is set back
+      jest.advanceTimersByTime(UI_CLOCK_INTERVAL_MS);
+      expect(judged).toMatchObject({ state: "freshness_unknown", lastVerdict: "green", asOf: body.computed_at });
+      wall = NOW; // and corrected
+      jest.advanceTimersByTime(UI_CLOCK_INTERVAL_MS);
+      expect(judged).toMatchObject({ state: "green", asOf: body.computed_at });
+      expect(judged.lastVerdict).toBeUndefined();
+      expect(fetchSpy).not.toHaveBeenCalled();
+      stop();
+    } finally {
+      global.fetch = realFetch;
+      jest.useRealTimers();
+    }
+  });
+
+  it("what a reader sees: the same page, tab clock behind, shows the winner card as history with no invented age", () => {
+    const reads = healthyReads();
+    const body = (reads.winners as { data: ReturnType<typeof winnersPayload> }).data;
+    const behind = computed(body) - 10 * 60_000;
+    const normal = winnerCard(renderToStaticMarkup(<CorrectnessConsoleView tiles={evaluateAll(reads, NOW)} nowMs={NOW} settledMs={10} />));
+    expect(normal).toContain('data-state="green"');
+    expect(normal).toContain("built 20 min ago");
+
+    const card = winnerCard(renderToStaticMarkup(<CorrectnessConsoleView tiles={evaluateAll(reads, behind)} nowMs={behind} settledMs={10} />));
+    expect(card).toContain('data-state="freshness_unknown"');
+    expect(card).toContain('data-last-verdict="green"');
+    expect(card).toContain(`data-as-of="${body.computed_at}"`);
+    expect(card).toContain("Freshness unknown — it was computed more than 5 min ahead of this browser&#x27;s clock.");
+    expect(card).toContain("built ahead of this browser&#x27;s clock");
+    expect(card).not.toContain("built 0s ago");
+    expect(card).toContain("100.0% (900/900)");
+  });
+
+  it("the header: a winners answer stamped past the tolerance stops counting as green, everything else unchanged", () => {
+    const normalReads = healthyReads();
+    const aheadReads = { ...normalReads, winners: ok(winnersPayload([winnerSource()], new Date(NOW + 10 * 60_000).toISOString())) };
+    const normalTiles = evaluateAll(normalReads, NOW);
+    const aheadTiles = evaluateAll(aheadReads, NOW);
+    expect(normalTiles.filter((t) => t.state === "green").map((t) => t.key)).toEqual(["winner_coverage", "category_mce", "source_coverage"]);
+    expect(aheadTiles.filter((t) => t.state === "green").map((t) => t.key)).toEqual(["category_mce", "source_coverage"]);
+    expect(aheadTiles.filter((t) => t.key !== "winner_coverage")).toEqual(normalTiles.filter((t) => t.key !== "winner_coverage"));
+    expect(summarize(normalTiles).summary).toBe("3 of 6 green · 3 unverified");
+    expect(summarize(aheadTiles)).toEqual({ status: "warning", summary: "2 of 6 green · 4 unverified" });
+    const html = renderToStaticMarkup(<CorrectnessConsoleView tiles={aheadTiles} nowMs={NOW} settledMs={10} />);
+    expect(html).toContain("2 of 6 green · 4 unverified");
+    expect(winnerCard(html)).toContain('data-state="freshness_unknown"');
   });
 });
 
