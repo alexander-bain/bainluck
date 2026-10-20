@@ -1363,9 +1363,14 @@ final class EventDetailViewModel: ObservableObject {
         blendPreviewExpiry = nil
         if blendPreview != held { blendPreview = held }
         guard let held else { return }
-        let wait = max(0, held.expiresAt - at)
+        // Capped at a day: `ttl_ms` may be any safe integer, and converting a
+        // larger wait to nanoseconds traps. Display gates on `expiresAt` anyway.
+        // Converted here, not in the task, so the frame that set it is the one
+        // that would fail.
+        let wait = min(max(0, held.expiresAt - at), 86_400)
+        let nanoseconds = UInt64(wait * 1_000_000_000) + 1_000_000
         blendPreviewExpiry = Task { @MainActor [weak self] in
-            try? await Task.sleep(nanoseconds: UInt64(wait * 1_000_000_000) + 1_000_000)
+            try? await Task.sleep(nanoseconds: nanoseconds)
             guard !Task.isCancelled, let self, self.blendPreview == held else { return }
             self.blendPreview = nil
         }

@@ -109,14 +109,19 @@ struct EventDetailView: View {
     }
     /// #9436 — what the hero's whole-string change reads: the pair the chart's
     /// live-edge label also prints (`LivePriceActivity.displayedLabels`), which
-    /// is exactly the pair the hero draws; moving only while live.
+    /// is exactly the pair the hero draws; moving only while live. #10090: the
+    /// hero prints `vm.headline(event)`, so this reads it too — otherwise a
+    /// commit confirming a shown preview slides the stale committed value away.
     private func heroValue(away: Bool) -> String {
         guard let event = vm.event else { return "" }
-        let labels = LivePriceActivity.displayedLabels(in: event)
+        let labels = LivePriceActivity.displayedLabels(in: vm.headline(event))
         return (away ? labels.away : labels.home) ?? ""
     }
+    /// #10090: `priceActivity` describes committed moves, not a preview's, so
+    /// while one is held the direction is unknown (nil).
     private func heroRising(away: Bool) -> Bool? {
-        (away ? vm.priceActivity?.awayDelta : vm.priceActivity?.homeDelta).map { $0 > 0 }
+        guard vm.blendPreview == nil else { return nil }
+        return (away ? vm.priceActivity?.awayDelta : vm.priceActivity?.homeDelta).map { $0 > 0 }
     }
     private var priceStreamingEligible: Bool { EventPriceStreaming.isEligible(vm.event?.status) }
     private var heroMoves: Bool { priceStreamingEligible && vm.liveUpdateStatus != .interrupted }

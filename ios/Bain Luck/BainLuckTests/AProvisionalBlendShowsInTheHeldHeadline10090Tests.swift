@@ -396,4 +396,47 @@ final class AProvisionalBlendShowsInTheHeldHeadline10090Tests: XCTestCase {
         handle.fire("preview", Self.blendJSON(1, 0.8))
         XCTAssertEqual(try headline(vm), 0.6)
     }
+
+    /// The decoder admits any safe `ttl_ms`; the expiry re-render must not trap on it.
+    func testTheLargestAdmittedTtlShowsWithoutTrapping() async throws {
+        let (vm, handle, _) = try await heldPage()
+        defer { vm.stopRefresh() }
+        handle.fire("open")
+        handle.fire("preview", Self.blendJSON(1, 0.8, ttl: FoldRevision.maxSafeInteger))
+        XCTAssertEqual(try headline(vm), 0.8)
+    }
+
+    // MARK: - The page's wiring
+
+    private static func source(_ relative: String) throws -> String {
+        let root = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()      // BainLuckTests
+            .deletingLastPathComponent()      // Bain Luck (project dir)
+        return try String(contentsOf: root.appendingPathComponent(relative), encoding: .utf8)
+    }
+
+    /// From `start` through the first `end` after it.
+    private static func slice(_ text: String, from start: String, to end: String) throws -> String {
+        let head = try XCTUnwrap(text.range(of: start), start)
+        let tail = try XCTUnwrap(text.range(of: end, range: head.upperBound..<text.endIndex), end)
+        return String(text[head.lowerBound..<tail.upperBound])
+    }
+
+    /// Every page test reads `vm.headline(...)` directly, so only the page's
+    /// source shows the hero, and the hero alone, is fed the headline.
+    func testTheHeroAndItsSlideReadTheHeadlineAndTheChartDoesNot() throws {
+        let page = try Self.source("Bain Luck/Views/EventDetailView.swift")
+        XCTAssertEqual(page.components(separatedBy: "heroSection(vm.headline(event))").count - 1, 1,
+                       "the hero is drawn from the headline")
+        XCTAssertFalse(page.contains("heroSection(event)"))
+        let value = try Self.slice(page, from: "private func heroValue(away: Bool) -> String {", to: "\n    }\n")
+        XCTAssertTrue(value.contains("displayedLabels(in: vm.headline(event))"),
+                      "the slide reads the string the hero prints")
+        let rising = try Self.slice(page, from: "private func heroRising(away: Bool) -> Bool? {", to: "\n    }\n")
+        XCTAssertTrue(rising.contains("guard vm.blendPreview == nil else { return nil }"))
+        let chart = try Self.slice(page, from: "OddsChartView(eventId:",
+                                  to: "vm.publicationJourney, key: publicationTaskKey))")
+        XCTAssertFalse(chart.contains("vm.headline("), "the chart keeps committed truth")
+        XCTAssertFalse(chart.contains("blendPreview"))
+    }
 }
