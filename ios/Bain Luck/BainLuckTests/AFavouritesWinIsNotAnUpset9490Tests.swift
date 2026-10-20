@@ -123,7 +123,7 @@ final class AFavouritesWinIsNotAnUpset9490Tests: XCTestCase {
 
     func testTheFinishedRowAsksTheReadingNotAFixedCut() throws {
         let code = try cardCode()
-        let start = try XCTUnwrap(code.range(of: "privatefuncpreGameOddsLabel(forside:TeamSide)"),
+        let start = try XCTUnwrap(code.range(of: "privatefuncpreGameOddsLabel(forside:TeamSide,labelled:Bool=false)"),
                                   "the scan is not reading EventCardView.swift")
         let body = String(code[start.upperBound...].prefix(1200))
         XCTAssertTrue(body.contains(
