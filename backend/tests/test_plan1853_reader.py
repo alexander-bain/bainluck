@@ -217,7 +217,7 @@ class FakeHeroku:
             else:
                 s.sendall(b"0\r\n\r\n")
         except OSError:
-            pass
+            pass  # the reader left first (it stops once the evidence is whole): a broken pipe is expected
         finally:
             s.close()
 
@@ -559,6 +559,19 @@ def test_a_refused_connection_is_one_attempt(reader, netrc):
 
     r = reader.read_plan(LAUNCH, netrc, connector=connector)
     assert (r["verdict"], r["reason"], attempts) == ("UNCERTAIN", "TRANSPORT", ["api.heroku.com"])
+
+
+@pytest.mark.parametrize("stage", ["api.heroku.com", "logplex.heroku.com"])
+def test_an_operator_interrupt_propagates_as_itself_never_as_a_verdict(reader, netrc, heroku, stage):
+    fake = heroku(b"")
+
+    def connector(host, port, budget):
+        if host == stage:
+            raise KeyboardInterrupt
+        return fake.connect(host, port, budget)
+
+    with pytest.raises(KeyboardInterrupt):
+        reader.read_plan(LAUNCH, netrc, connector=connector)
 
 
 @pytest.mark.parametrize("url", [

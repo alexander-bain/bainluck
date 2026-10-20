@@ -288,7 +288,7 @@ def _resolve(host: str, port: int, budget: Budget, getaddrinfo=socket.getaddrinf
     def work():
         try:
             box["ok"] = getaddrinfo(host, port, type=socket.SOCK_STREAM)
-        except BaseException as exc:  # noqa: BLE001 - reported by type only
+        except Exception as exc:  # noqa: BLE001 - reported by type only
             box["err"] = exc
 
     t = threading.Thread(target=work, name="plan1853-resolve", daemon=True)
@@ -385,7 +385,7 @@ def open_log_session(run: str, token: str, budget: Budget, connector) -> str:
         resp = conn.getresponse()
         payload = resp.read()
         status = resp.status
-    except BaseException as exc:
+    except Exception as exc:  # an interrupt propagates as itself, never as a verdict
         raise _transport_error("log-session request", exc) from None
     finally:
         conn.close()
@@ -432,7 +432,7 @@ def stream_log(host: str, target: str, run: str, budget: Budget, connector) -> "
                     log.end()
                     break
                 log.feed(data)
-        except BaseException as exc:
+        except Exception as exc:  # an interrupt propagates as itself, never as a verdict
             log.error = _transport_error("log stream", exc)
     finally:
         conn.close()
