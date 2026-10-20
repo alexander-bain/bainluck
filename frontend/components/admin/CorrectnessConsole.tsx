@@ -5,7 +5,7 @@
 // Every state carries a WORD as well as a colour, so a tile is readable without
 // colour vision and in a grayscale screenshot.
 
-import type { ReactNode } from "react";
+import type { KeyboardEvent, ReactNode } from "react";
 
 import PageHeader from "@/components/admin/PageHeader";
 import {
@@ -17,6 +17,7 @@ import {
   type CorrectnessState,
   type CorrectnessTile,
 } from "@/lib/correctnessConsole";
+import { CONSOLE_TABS, panelId, tabAfterKey, tabId, type ConsoleTab } from "@/lib/correctnessConsoleTabs";
 
 const STATE_STYLE: Record<CorrectnessState, { label: string; badge: string; border: string }> = {
   green: { label: "OK", badge: "bg-accent-live/10 text-accent-live", border: "border-accent-live/30" },
@@ -145,9 +146,56 @@ export interface CorrectnessConsoleViewProps {
   /** Drawn under the header when a read was refused (`AdminAuthNotice`). */
   authNotice?: ReactNode;
   onReload?: () => void;
+  /**
+   * The Matching and Source Intelligence tabs. Absent: the overview alone, as
+   * before. Each panel is already-composed content; a panel for a tab never
+   * shown this visit is null, so nothing behind it is mounted or read.
+   */
+  tabs?: {
+    active: ConsoleTab;
+    onSelect: (tab: ConsoleTab) => void;
+    panels: Partial<Record<Exclude<ConsoleTab, "overview">, ReactNode>>;
+  };
 }
 
-export default function CorrectnessConsoleView({ tiles, nowMs, settledMs, authNotice, onReload }: CorrectnessConsoleViewProps) {
+/** WAI-ARIA tabs with automatic activation: arrows/Home/End select and focus. */
+export function ConsoleTabList({ active, onSelect }: { active: ConsoleTab; onSelect: (tab: ConsoleTab) => void }) {
+  const onKeyDown = (e: KeyboardEvent<HTMLButtonElement>) => {
+    const next = tabAfterKey(e.key, active);
+    if (next === null) return;
+    e.preventDefault();
+    onSelect(next);
+    if (typeof document !== "undefined") document.getElementById(tabId(next))?.focus();
+  };
+  return (
+    <div role="tablist" aria-label="Correctness Console views" className="flex gap-1 mb-4 border-b border-surface-border overflow-x-auto">
+      {CONSOLE_TABS.map((t) => {
+        const selected = t.key === active;
+        return (
+          <button
+            key={t.key}
+            type="button"
+            role="tab"
+            id={tabId(t.key)}
+            aria-selected={selected}
+            aria-controls={panelId(t.key)}
+            tabIndex={selected ? 0 : -1}
+            onClick={() => onSelect(t.key)}
+            onKeyDown={onKeyDown}
+            data-tab={t.key}
+            className={`px-3 py-2 -mb-px text-sm whitespace-nowrap border-b-2 ${
+              selected ? "border-accent-brand text-text-primary font-semibold" : "border-transparent text-text-secondary hover:text-text-primary"
+            }`}
+          >
+            {t.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+export default function CorrectnessConsoleView({ tiles, nowMs, settledMs, authNotice, onReload, tabs }: CorrectnessConsoleViewProps) {
   const { status, summary } = summarize(tiles);
   const anyUnauthorized = tiles.some((t) => t.state === "unauthorized");
   return (
@@ -177,11 +225,34 @@ export default function CorrectnessConsoleView({ tiles, nowMs, settledMs, authNo
           </button>
         )}
       </div>
-      <div className="grid grid-cols-1 lg:grid-cols-2 2xl:grid-cols-3 gap-4">
-        {tiles.map((t) => (
-          <CorrectnessTileCard key={t.key} tile={t} nowMs={nowMs} />
-        ))}
+      {tabs && <ConsoleTabList active={tabs.active} onSelect={tabs.onSelect} />}
+      {/* The panel wrapper carries no display class: `grid` on the same element
+          would override the `hidden` attribute and draw the tiles under every tab. */}
+      <div
+        {...(tabs
+          ? { role: "tabpanel", id: panelId("overview"), "aria-labelledby": tabId("overview"), hidden: tabs.active !== "overview", "data-panel": "overview" }
+          : {})}
+      >
+        <div className="grid grid-cols-1 lg:grid-cols-2 2xl:grid-cols-3 gap-4">
+          {tiles.map((t) => (
+            <CorrectnessTileCard key={t.key} tile={t} nowMs={nowMs} />
+          ))}
+        </div>
       </div>
+      {tabs &&
+        (["matching", "source_intelligence"] as const).map((key) => (
+          <div
+            key={key}
+            role="tabpanel"
+            id={panelId(key)}
+            aria-labelledby={tabId(key)}
+            hidden={tabs.active !== key}
+            tabIndex={0}
+            data-panel={key}
+          >
+            {tabs.panels[key] ?? null}
+          </div>
+        ))}
     </div>
   );
 }

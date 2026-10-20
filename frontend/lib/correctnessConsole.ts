@@ -649,7 +649,7 @@ const COVERAGE_CACHE_STATUS: Record<string, number> = {
   partial: 503,
   producer_error: 503,
 };
-const LINK_RATE_CACHE_STATUS: Record<string, number> = {
+export const LINK_RATE_CACHE_STATUS: Record<string, number> = {
   hit: 200,
   miss: 202,
   error: 503,
