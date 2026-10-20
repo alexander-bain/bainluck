@@ -35,8 +35,11 @@ enum TennisChartReading9483 {
         let source: String
         let date: Date
         let home: Double
-        /// The away side as the served row supplied it, never `1 − home`. Nil
-        /// when the row carries none; the card's own complement prints then.
+        /// The away side the source supplies on its own — the sportsbook
+        /// `consensus` row at exactly this time, aggregated apart from home —
+        /// never `1 − home`. Nil everywhere else: the blend's away side is its
+        /// exhaustive complement, printed and never looked up, and any other
+        /// series supplies none.
         let away: Double?
     }
 
@@ -62,9 +65,9 @@ enum TennisChartReading9483 {
     struct Series {
         let eventId: Int
         let source: String
-        /// The series' own observations, oldest first: no live-edge re-serve and
-        /// no settled 0/1 end on a finished match (that end is the result, which
-        /// the chart's card prints as Final, not a recorded chance).
+        /// The series' own observations, oldest first (served order within one
+        /// time): no live-edge re-serve and no result row on a finished match
+        /// (`series(…)` says which row that is).
         let points: [ChartDataPoint]
         /// The chart's own breaks in that line (`OddsChartView.observationSegments`).
         let segments: [[ChartDataPoint]]
@@ -131,48 +134,49 @@ enum TennisChartReading9483 {
     }
 
     /// The tennis series for a chart, or nil when there is no readout line.
+    ///
+    /// A finished match's series loses ONE row: the last one SERVED, when it is
+    /// exactly 0 or 1. The backend appends exactly one result row to each series
+    /// of a finished event with a resolved winner, and the card names that same
+    /// single reading Final (`ChartReadoutPhase9483`). Earlier certainty is a
+    /// genuine recording and stays. The row is chosen in served order, before
+    /// the sort, because the result row's minute can equal the last genuine
+    /// row's (1% then 0% at one stamp), and ties then keep served order.
+    ///
+    /// Limitation, carried as it stands: the blend and sportsbook rows carry no
+    /// per-row result tag on this device, so a genuine last reading at exactly
+    /// 0 or 1 on a finished event whose winner the backend never resolved (no
+    /// result row appended) is dropped as the result too — the card names it
+    /// Final by the same rule, so the two agree. No threshold, clock or
+    /// inferred finish is added to tell them apart.
     static func series(eventId: Int, points: [ChartDataPoint], source: String?,
                        scheduledStart: Date?, gameStart: Date?, finished: Bool,
                        history: EventHistoryResponse?) -> Series? {
         guard let source else { return nil }
-        var own = points.filter { $0.source == source && !$0.isLiveEdge }.sorted { $0.date < $1.date }
-        if finished {
-            while let end = own.last, end.probability == 0 || end.probability == 1 { own.removeLast() }
+        var served = Array(points.filter { $0.source == source && !$0.isLiveEdge }.enumerated())
+        if finished, let end = served.last, end.element.probability == 0 || end.element.probability == 1 {
+            served.removeLast()
         }
+        let own = served
+            .sorted { ($0.element.date, $0.offset) < ($1.element.date, $1.offset) }
+            .map(\.element)
         guard !own.isEmpty else { return nil }
         return Series(eventId: eventId, source: source, points: own,
                       segments: OddsChartView.observationSegments(own, gameStart: gameStart),
                       scheduledStart: scheduledStart, history: history)
     }
 
-    /// The away probability the served row at exactly `date` carries: the blend's
-    /// `aggregate_line` or the sportsbook `history`. Rows are oldest first; a
-    /// miss (a pushed live frame, a venue series) is nil, never a neighbour.
+    /// The away probability a source supplies on its own at exactly `date`.
+    /// Only the sportsbook `consensus` does (`history`, away aggregated apart
+    /// from home): exactly one served row at that time, in any order, else nil.
+    /// A duplicate, a missing row or a row with no away side is nil, never a
+    /// neighbour and never `1 − home`. The blend's `aggregate_line` serves no
+    /// away side and is never looked up; a venue series decodes none.
     static func suppliedAway(at date: Date, source: String, in history: EventHistoryResponse?) -> Double? {
-        guard let history else { return nil }
-        switch source {
-        case "aggregate":
-            guard let rows = history.aggregateLine else { return nil }
-            return search(rows.count, date) { (timestamp: rows[$0].timestamp, away: rows[$0].awayProbability) }
-        case "consensus":
-            let rows = history.history
-            return search(rows.count, date) { (timestamp: rows[$0].timestamp, away: rows[$0].awayProbability) }
-        default:
-            return nil
-        }
-    }
-
-    private static func search(_ count: Int, _ date: Date,
-                               _ row: (Int) -> (timestamp: String, away: Double?)) -> Double? {
-        var low = 0, high = count - 1
-        while low <= high {
-            let mid = (low + high) / 2
-            let candidate = row(mid)
-            guard let stamp = candidate.timestamp.asDate else { return nil }
-            if stamp == date { return candidate.away }
-            if stamp < date { low = mid + 1 } else { high = mid - 1 }
-        }
-        return nil
+        guard source == "consensus", let history else { return nil }
+        let rows = history.history.filter { $0.timestamp.asDate == date }
+        guard rows.count == 1 else { return nil }
+        return rows[0].awayProbability
     }
 
     /// "2:51 PM" today, "Sep 13, 2:51 PM" otherwise: a match's readings span
@@ -211,12 +215,22 @@ enum TennisChartReading9483 {
         return baseline
     }
 
-    /// Both sides as the card prints a chart moment (`GamePlayCardView.printedLabels`):
-    /// the supplied away side when the row has one, else the card's complement.
+    /// Both sides as the card prints a chart moment (`GamePlayCardView.printedLabels`),
+    /// chosen by the source's contract. The blend's away side is its exhaustive
+    /// binary complement, as the chart's readout prints it
+    /// (`OddsChartView.playPoint`; tennis prices no draw). Every other source
+    /// prints the away side it supplied, or leaves the slot empty.
     static func labels(for reading: Reading) -> (home: String, away: String) {
-        let printed = GamePlayCardView.printedLabels(home: reading.home, away: reading.away ?? (1.0 - reading.home))
+        let away = reading.source == "aggregate"
+            ? DrawPricedWinner.printablePair(away: 1.0 - reading.home, home: reading.home, sport: sportKey)?.away
+            : reading.away
+        let printed = GamePlayCardView.printedLabels(home: reading.home, away: away)
         return (printed.home, printed.away ?? "")
     }
+
+    /// The sport this helper ever reads (`applies(sportKey:)`), as the draw rule
+    /// looks it up.
+    private static let sportKey = "tennis"
 }
 
 /// #9483 tennis — the held reading. Stored by `OddsChartView` the way it stores

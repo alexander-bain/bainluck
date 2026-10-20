@@ -13,6 +13,13 @@ import XCTest
 /// does and reads "Before scheduled start"; an inspected point is a "Recorded
 /// chance" at its own time; a held reading that is no longer exactly there is
 /// unavailable, never its neighbour.
+///
+/// lane1b's 2026-10-20 review of `dba9a21648` set two contracts this file now
+/// pins: a finished series loses ONE result row (the last served, at exactly
+/// 0 or 1), never earlier certainty; and the away side is chosen by the
+/// source — the blend prints its exhaustive complement without a lookup, the
+/// sportsbook consensus prints the side it supplied from exactly one row, and
+/// nothing else invents one.
 @MainActor
 final class TennisRecordedChanceBeforeScheduledStart9483Tests: XCTestCase {
 
@@ -33,31 +40,58 @@ final class TennisRecordedChanceBeforeScheduledStart9483Tests: XCTestCase {
 
     /// Opening −180 min, last earlier −60, then a run from the start, a break of
     /// 160 min (the chart's own rule: > 600 s and > 15 × the 10-minute cadence),
-    /// and a second run. Each served row carries its own away side.
+    /// and a second run. The third value is the away side a sportsbook
+    /// consensus row supplies on its own; the blend's rows never carry one.
     private let rows: [(Double, Double, Double)] = [
         (-180, 0.5758, 0.4242), (-60, 0.5599, 0.4401), (0, 0.60, 0.35),
         (10, 0.62, 0.38), (20, 0.64, 0.36), (180, 0.90, 0.10), (190, 0.9772, 0.0227),
     ]
 
-    private func history(eventId: Int = 4242, rows: [(Double, Double, Double)]? = nil) throws -> EventHistoryResponse {
-        let line = (rows ?? self.rows).map {
-            #"{"timestamp":"\#(stamp($0.0))","home_probability":\#($0.1),"away_probability":\#($0.2)}"#
-        }.joined(separator: ",")
+    private func decode(eventId: Int, history: String, aggregateLine: String?) throws -> EventHistoryResponse {
         let decoder = JSONDecoder()
         decoder.keyDecodingStrategy = .convertFromSnakeCase
+        let line = aggregateLine.map { #","aggregate_line":[\#($0)]"# } ?? ""
         return try decoder.decode(EventHistoryResponse.self, from: Data("""
         {"event_id":\(eventId),"home_team":"Alexander Zverev","away_team":"Ben Shelton",
-         "status":"live","history":[],"aggregate_line":[\(line)]}
+         "status":"live","history":[\(history)]\(line)}
         """.utf8))
     }
 
+    /// The blend, production-shaped: an `aggregate_line` row is `{timestamp,
+    /// home_probability}` only (events.py writes no away side).
+    private func history(eventId: Int = 4242, rows: [(Double, Double, Double)]? = nil) throws -> EventHistoryResponse {
+        let line = (rows ?? self.rows).map {
+            #"{"timestamp":"\#(stamp($0.0))","home_probability":\#($0.1)}"#
+        }.joined(separator: ",")
+        return try decode(eventId: eventId, history: "", aggregateLine: line)
+    }
+
+    /// The sportsbook consensus: each `history` row carries the away side it
+    /// aggregated apart from home (nil prints `null`), in the order given.
+    private func consensusHistory(eventId: Int = 4242,
+                                  rows: [(Double, Double, Double?)]) throws -> EventHistoryResponse {
+        let served = rows.map { row -> String in
+            let away = row.2.map { "\($0)" } ?? "null"
+            return #"{"timestamp":"\#(stamp(row.0))","home_probability":\#(row.1),"away_probability":\#(away),"bookmaker_count":7}"#
+        }.joined(separator: ",")
+        return try decode(eventId: eventId, history: served, aggregateLine: nil)
+    }
+
     private func series(points: [ChartDataPoint]? = nil, scheduledStart: Date?,
-                        finished: Bool = false, eventId: Int = 4242,
+                        finished: Bool = false, eventId: Int = 4242, source: String = "aggregate",
                         history: EventHistoryResponse? = nil) throws -> TennisChartReading9483.Series {
-        let drawn = points ?? rows.map { point($0.0, $0.1) }
+        let drawn = points ?? rows.map { point($0.0, $0.1, source: source) }
         return try XCTUnwrap(TennisChartReading9483.series(
-            eventId: eventId, points: drawn, source: "aggregate", scheduledStart: scheduledStart,
+            eventId: eventId, points: drawn, source: source, scheduledStart: scheduledStart,
             gameStart: start, finished: finished, history: try history ?? self.history()))
+    }
+
+    private func consensus(rows: [(Double, Double, Double)]? = nil,
+                           history: EventHistoryResponse? = nil) throws -> TennisChartReading9483.Series {
+        let served = rows ?? self.rows
+        return try series(points: served.map { point($0.0, $0.1, source: "consensus") }, scheduledStart: start,
+                          source: "consensus",
+                          history: try history ?? consensusHistory(rows: served.map { ($0.0, $0.1, $0.2) }))
     }
 
     private func plain(_ s: String) -> String {
@@ -90,8 +124,13 @@ final class TennisRecordedChanceBeforeScheduledStart9483Tests: XCTestCase {
         let baseline = try XCTUnwrap(s.baseline)
         XCTAssertEqual(baseline.date, at(-60))
         XCTAssertEqual(baseline.home, 0.5599)
-        XCTAssertEqual(baseline.away, 0.4401, "the served away side, not 1 − home")
+        XCTAssertNil(baseline.away, "the blend's away side is printed as its complement, never looked up")
+        XCTAssertEqual(TennisChartReading9483.labels(for: baseline).away, "44%")
         XCTAssertNotEqual(baseline.date, at(-180), "the baseline merged into the opening reading")
+        // The sportsbook consensus baseline keeps the away side its row supplied.
+        let supplied = try XCTUnwrap(try consensus().baseline)
+        XCTAssertEqual(supplied.date, at(-60))
+        XCTAssertEqual(supplied.away, 0.4401, "the supplied away side, not 1 − home")
         XCTAssertEqual(plain(TennisChartReading9483.baselineHeading(for: baseline, now: start,
                                                                     timeZone: utc, locale: us)),
                        "Before scheduled start · 5:00 PM")
@@ -131,25 +170,76 @@ final class TennisRecordedChanceBeforeScheduledStart9483Tests: XCTestCase {
         XCTAssertEqual(TennisChartReading9483.separateBaseline(s.baseline, shown: later), s.baseline)
     }
 
-    func testTheSuppliedSidesPrintAsSuppliedNotAsAComplement() throws {
-        let s = try series(scheduledStart: start)
+    // MARK: - The away side, by the source's contract
+
+    /// The sportsbook consensus aggregates away apart from home, so its pair is
+    /// independent (60% / 35%) and prints as supplied.
+    func testTheConsensusSuppliedSidePrintsAsSuppliedNotAsAComplement() throws {
+        let s = try consensus()
         let first = try XCTUnwrap(reading(s.resolve(s.inspect(at: at(0)))))
         XCTAssertEqual(first.away, 0.35)
         let printed = TennisChartReading9483.labels(for: first)
         XCTAssertEqual(printed.home, "60%")
         XCTAssertEqual(printed.away, "35%", "the away side was rewritten as 1 − home")
-        // CONTROL — a row with no away side prints the card's complement.
-        let bare = TennisChartReading9483.Reading(eventId: 4242, source: "aggregate", date: at(0),
-                                                  home: 0.60, away: nil)
-        XCTAssertEqual(TennisChartReading9483.labels(for: bare).away, "40%")
+        XCTAssertEqual(first.date, at(0), "the reading keeps its own observation time")
     }
 
-    func testAPushedFrameWithNoServedRowHasNoSuppliedAway() throws {
-        let h = try history()
-        XCTAssertEqual(TennisChartReading9483.suppliedAway(at: at(20), source: "aggregate", in: h), 0.36)
-        XCTAssertNil(TennisChartReading9483.suppliedAway(at: at(21), source: "aggregate", in: h),
-                     "a time between rows borrowed a neighbour's away side")
-        XCTAssertNil(TennisChartReading9483.suppliedAway(at: at(20), source: "kalshi", in: h))
+    /// A duplicate, a missing row or a null away side leaves the slot empty —
+    /// never the old `1 − home` fallback.
+    func testAConsensusSideThatCannotBeFoundExactlyOncePrintsNoAway() throws {
+        let duplicated = try consensusHistory(rows: rows.map { ($0.0, $0.1, $0.2) } + [(0, 0.60, 0.35)])
+        let twice = try consensus(history: duplicated)
+        let atDuplicate = twice.reading(for: point(0, 0.60, source: "consensus"))
+        XCTAssertNil(atDuplicate.away)
+        XCTAssertEqual(TennisChartReading9483.labels(for: atDuplicate).away, "", "a duplicate printed 40%")
+        let s = try consensus()
+        let pushed = s.reading(for: point(21, 0.63, source: "consensus"))
+        XCTAssertNil(pushed.away, "a time between rows borrowed a neighbour's away side")
+        XCTAssertEqual(TennisChartReading9483.labels(for: pushed).away, "", "a missing row printed 37%")
+        let nullAway = try consensus(history: try consensusHistory(rows: [(-60, 0.5599, nil), (0, 0.60, 0.35)]))
+        let bare = nullAway.reading(for: point(-60, 0.5599, source: "consensus"))
+        XCTAssertNil(bare.away)
+        XCTAssertEqual(TennisChartReading9483.labels(for: bare).away, "", "a null away side printed 44%")
+        // CONTROL — the same series finds the single row it does serve.
+        XCTAssertEqual(TennisChartReading9483.labels(for: s.reading(for: point(0, 0.60, source: "consensus"))).away,
+                       "35%")
+    }
+
+    func testConsensusRowsServedNewestFirstStillPrintTheSuppliedSide() throws {
+        let h = try consensusHistory(rows: rows.reversed().map { ($0.0, $0.1, $0.2) })
+        XCTAssertEqual(TennisChartReading9483.suppliedAway(at: at(20), source: "consensus", in: h), 0.36)
+        XCTAssertEqual(TennisChartReading9483.suppliedAway(at: at(-180), source: "consensus", in: h), 0.4242)
+        let s = try consensus(history: h)
+        XCTAssertEqual(TennisChartReading9483.labels(for: try XCTUnwrap(s.baseline)).away, "44%")
+        XCTAssertEqual(s.baseline?.away, 0.4401)
+    }
+
+    /// The blend serves no away side; its pair is the exhaustive binary
+    /// complement the chart's readout already prints — on a served row and on a
+    /// pushed frame with no row alike, and with no lookup either way.
+    func testTheBlendPrintsItsComplementWithoutALookup() throws {
+        let s = try series(scheduledStart: start)
+        let served = try XCTUnwrap(reading(s.resolve(s.inspect(at: at(0)))))
+        XCTAssertNil(served.away)
+        XCTAssertEqual(TennisChartReading9483.labels(for: served).home, "60%")
+        XCTAssertEqual(TennisChartReading9483.labels(for: served).away, "40%")
+        let pushed = s.reading(for: point(21, 0.63))
+        XCTAssertNil(pushed.away)
+        XCTAssertEqual(TennisChartReading9483.labels(for: pushed).away, "37%")
+        XCTAssertNil(TennisChartReading9483.suppliedAway(at: at(20), source: "aggregate", in: try history()),
+                     "the blend's away side was looked up")
+    }
+
+    /// A venue line decodes no away side, so none prints.
+    func testAVenueSeriesPrintsNoAway() throws {
+        let venue = try series(scheduledStart: start, source: "kalshi")
+        let held = try XCTUnwrap(reading(venue.resolve(venue.inspect(at: at(0)))))
+        XCTAssertEqual(held.source, "kalshi")
+        XCTAssertNil(held.away)
+        XCTAssertEqual(TennisChartReading9483.labels(for: held).home, "60%")
+        XCTAssertEqual(TennisChartReading9483.labels(for: held).away, "", "a venue line invented 40%")
+        XCTAssertNil(TennisChartReading9483.suppliedAway(at: at(20), source: "kalshi",
+                                                         in: try consensusHistory(rows: rows.map { ($0.0, $0.1, $0.2) })))
     }
 
     // MARK: - Gaps are never filled
@@ -190,12 +280,14 @@ final class TennisRecordedChanceBeforeScheduledStart9483Tests: XCTestCase {
     }
 
     func testAHeldReadingWhoseAwaySideAloneWasCorrectedIsUnavailable() throws {
-        let held = try XCTUnwrap(try series(scheduledStart: start).baseline)
+        let held = try XCTUnwrap(try consensus().baseline)
+        XCTAssertEqual(held.away, 0.4401, "fixture: the consensus row supplies its own away side")
         var corrected = rows
         corrected[1] = (-60, 0.5599, 0.4300)
-        let after = try series(points: corrected.map { point($0.0, $0.1) }, scheduledStart: start,
-                               history: try history(rows: corrected))
+        let after = try consensus(rows: corrected)
         XCTAssertEqual(after.resolve(.reading(held)), .unavailable)
+        // CONTROL — the uncorrected consensus series still finds it.
+        XCTAssertEqual(try consensus().resolve(.reading(held)), .reading(held, held: true))
     }
 
     func testAMissingHeldReadingIsUnavailableNotItsNeighbour() throws {
@@ -232,6 +324,33 @@ final class TennisRecordedChanceBeforeScheduledStart9483Tests: XCTestCase {
                        "a finished match's 100% end became the latest recorded chance")
         // CONTROL — an unfinished line keeps the same point.
         XCTAssertEqual(try series(points: points, scheduledStart: start, finished: false).latest?.date, at(230))
+    }
+
+    /// Only the ONE result row goes. Certainty recorded before it is a genuine
+    /// reading, and a reader holding one keeps it when the match finishes.
+    func testCertaintyRecordedBeforeTheResultRowStaysARecordedChance() throws {
+        let live = rows.map { point($0.0, $0.1) } + [point(200, 0.98), point(205, 1.0)]
+        let before = try series(points: live, scheduledStart: start)
+        let held = try XCTUnwrap(reading(before.resolve(before.inspect(at: at(205)))))
+        XCTAssertEqual(held.home, 1.0)
+        let finished = try series(points: live + [point(210, 1.0)], scheduledStart: start, finished: true)
+        XCTAssertEqual(finished.latest?.date, at(205), "genuine certainty before the result row was dropped")
+        XCTAssertEqual(finished.resolve(.reading(held)), .reading(held, held: true))
+        XCTAssertNil(finished.points.first { $0.date == at(210) }, "control: the result row itself is excluded")
+    }
+
+    /// The result row's minute can equal the last genuine row's (1% then 0% at
+    /// one stamp). Served last, it is the one removed; the genuine reading stays
+    /// unique and a held one resolves.
+    func testAResultRowOnTheLastGenuineRowsTimeLeavesThatReadingHeld() throws {
+        let live = rows.map { point($0.0, $0.1) } + [point(200, 0.01)]
+        let before = try series(points: live, scheduledStart: start)
+        let held = try XCTUnwrap(before.latest)
+        XCTAssertEqual(held.home, 0.01)
+        let finished = try series(points: live + [point(200, 0.0)], scheduledStart: start, finished: true)
+        XCTAssertEqual(finished.points.filter { $0.date == at(200) }.count, 1)
+        XCTAssertEqual(finished.latest, held, "the genuine reading at the result's time was lost")
+        XCTAssertEqual(finished.resolve(.reading(held)), .reading(held, held: true))
     }
 
     func testALiveEdgeReServeIsNotAReading() throws {
