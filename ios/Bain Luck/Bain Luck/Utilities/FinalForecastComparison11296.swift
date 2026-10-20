@@ -105,7 +105,10 @@ enum FinalForecastComparison11296 {
         guard let sportUnit = unit(forSport: sport), p.unit == sportUnit else { return nil }
         guard let actualPeriod, p.period == actualPeriod.rawValue else { return nil }
 
-        guard let books = p.bookmakerCount, books.isFinite, books.rounded() == books, books >= 1
+        // `Int(exactly:)` refuses NaN, infinity, fractions AND a finite value
+        // Int cannot hold (1e19) — that one would trap in `Int(_:)`, and a
+        // malformed number withholds the line, never the card.
+        guard let books = p.bookmakerCount.flatMap({ Int(exactly: $0) }), books >= 1
         else { return nil }
         // The producer reads strictly before the boundary; anything else is
         // not the reading this label describes.
@@ -123,12 +126,13 @@ enum FinalForecastComparison11296 {
         let vocab = SportVocab.forSport(sport)
         guard vocab.sportsbookSpreadIsAMargin else { return nil }
         // `.rounded()` rounds half away from zero, which equals JS `Math.round`
-        // for the positive values that reach here.
-        let roundedHome = Int(home.rounded())
-        let roundedAway = Int(away.rounded())
+        // for the positive values that reach here. A finite half too large for
+        // Int withholds the line instead of trapping.
+        guard let roundedHome = Int(exactly: home.rounded()),
+              let roundedAway = Int(exactly: away.rounded()) else { return nil }
         guard roundedHome != roundedAway || vocab.canEndInATie else { return nil }
 
-        return Comparison(label: label, away: roundedAway, home: roundedHome, bookmakerCount: Int(books))
+        return Comparison(label: label, away: roundedAway, home: roundedHome, bookmakerCount: books)
     }
 
     /// The visible pair in the card's own order — both native cards stack away

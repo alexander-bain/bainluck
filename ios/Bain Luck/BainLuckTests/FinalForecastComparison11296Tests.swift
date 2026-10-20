@@ -1,4 +1,5 @@
 import XCTest
+import SwiftUI
 @testable import Bain_Luck
 
 /// #11296 — the forecast line under a native finished card's actual result.
@@ -311,9 +312,14 @@ final class FinalForecastComparison11296Tests: XCTestCase {
     }
 
     func testMalformedCountsAreRefused() {
-        for books: Double? in [0, -1, 1.5, nil] {
+        for books: Double? in [0, -1, 1.5, nil, .infinity, .nan, 1e19] {
             XCTAssertNil(resolve(projection(books: books)), String(describing: books))
         }
+        // Controls: a whole count Int can hold prints, however large, so 1e19
+        // is refused for being unrepresentable, not for being big.
+        XCTAssertEqual(resolve(projection(books: 21))?.bookmakerCount, 21, "control: the served count")
+        XCTAssertEqual(resolve(projection(books: 1e15))?.bookmakerCount, 1_000_000_000_000_000,
+                       "control: a large representable count")
     }
 
     func testOneBookOneStampJustBeforeTheBoundaryIsAdmitted() {
@@ -340,10 +346,18 @@ final class FinalForecastComparison11296Tests: XCTestCase {
     // MARK: - Values and rounding
 
     func testNonPositiveOrAbsentForecastHalvesAreRefused() {
-        for v: Double? in [0, -0.5, nil, .infinity, .nan] {
+        for v: Double? in [0, -0.5, nil, .infinity, .nan, 1e19] {
             XCTAssertNil(resolve(projection(home: v)), "home \(String(describing: v))")
             XCTAssertNil(resolve(projection(away: v)), "away \(String(describing: v))")
         }
+        // Controls: the served halves print, and so does a large half Int can
+        // hold, so 1e19 is refused for being unrepresentable, not for being big.
+        XCTAssertEqual(resolve(projection())?.home, 29, "control: the served home half")
+        XCTAssertEqual(resolve(projection())?.away, 22, "control: the served away half")
+        XCTAssertEqual(resolve(projection(home: 1e15))?.home, 1_000_000_000_000_000,
+                       "control: a large representable home half")
+        XCTAssertEqual(resolve(projection(away: 1e15))?.away, 1_000_000_000_000_000,
+                       "control: a large representable away half")
     }
 
     func testAbsentOrNegativeActualScoresAreRefused() {
