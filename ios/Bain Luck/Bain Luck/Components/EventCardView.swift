@@ -530,11 +530,18 @@ struct EventCardView: View {
     /// left over, under `lineLimit(1)`, so at AX5 both sides read
     /// "Washingt…" / "San Fran…" and a reader could not say who played. Here
     /// the crest and the COMPLETE name share the first row and the name wraps
-    /// as far as it needs; the same score and the same pre-match number sit on
-    /// the row beneath, under the name, inside this team's group — so each
-    /// value stays with its own side. Fonts, weights and colours are the
-    /// single row's expressions, verbatim, so the two arms cannot drift. A
-    /// finished card draws no record, so there is none here.
+    /// as far as it needs; the score sits on its own line beneath, under the
+    /// name, inside this team's group — so each value stays with its own side.
+    /// Fonts, weights and colours are the single row's expressions, verbatim,
+    /// so the two arms cannot drift. A finished card draws no record, so there
+    /// is none here.
+    ///
+    /// Design's REVISE (2026-10-20): "17" and "24%" side by side read as one
+    /// unexplained pair of numbers — FINAL says the game is over, nothing says
+    /// the percent is from before it. So the pre-match number is its own block
+    /// below the score, under a visible "Pregame win chance" label that wraps
+    /// downward rather than squeezing the number. Same selection, rounding,
+    /// withholding and colour as the single row; no number, no block.
     private func finishedAccessibilityTeamRow(name: String, avatar: ParticipantAvatar, color: Color, score: Int?, won: Bool, side: TeamSide) -> some View {
         VStack(alignment: .leading, spacing: 2) {
             HStack(alignment: .top, spacing: 8) {
@@ -554,7 +561,7 @@ struct EventCardView: View {
                     .fixedSize(horizontal: false, vertical: true)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
-            HStack(spacing: 8) {
+            VStack(alignment: .leading, spacing: 4) {
                 if let score {
                     Text("\(score)")
                         .font(isLive ? .title3.monospacedDigit() : .subheadline.monospacedDigit())
@@ -564,10 +571,10 @@ struct EventCardView: View {
                 if canStillBeGraded {
                     probabilityWithMovement(for: side)
                 } else {
-                    preGameOddsLabel(for: side)
+                    preGameOddsLabel(for: side, labelled: true)
                 }
             }
-            .fixedSize()
+            .frame(maxWidth: .infinity, alignment: .leading)
             // Under the name: past the 24pt crest and the row's 8pt gap, the
             // same inset `FinalForecastLine11296` takes below.
             .padding(.leading, 32)
@@ -869,8 +876,12 @@ struct EventCardView: View {
     /// `.secondary.opacity(0.7)` — a grey pre-match number under "No result
     /// reported", which is the treatment web settled on, and no verdict on a row
     /// that has none (#4788).
+    ///
+    /// `labelled` (#11325, the finished accessibility row only) stacks the same
+    /// number under a "Pregame win chance" label, so it cannot be mistaken for
+    /// a second score. The default draws exactly what every other row draws.
     @ViewBuilder
-    private func preGameOddsLabel(for side: TeamSide) -> some View {
+    private func preGameOddsLabel(for side: TeamSide, labelled: Bool = false) -> some View {
         let reading = prematch
         // #5363 — the settled row's pre-game number is the same complement.
         let prob: Double? = side == .home
@@ -884,7 +895,7 @@ struct EventCardView: View {
             let isUpset = won && (reading?.winnerWasUnderdog(
                 homeWon: homeWon, awayWon: awayWon, pricesADraw: awayIsWithheld) ?? false)
 
-            HStack(spacing: 2) {
+            let number = HStack(spacing: 2) {
                 Text(formatProbability(prob, renderedPercent: reading?.percents[side == .home ? 1 : 0]))
                     .font(.caption)
                     .fontWeight(.semibold)
@@ -895,6 +906,18 @@ struct EventCardView: View {
                 (won && wasHeavyFavorite) ? .secondary :
                 .secondary.opacity(0.7)
             )
+            if labelled {
+                VStack(alignment: .leading, spacing: 0) {
+                    Text("Pregame win chance")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    number
+                        .fixedSize()
+                }
+            } else {
+                number
+            }
         }
     }
 

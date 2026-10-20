@@ -66,6 +66,10 @@ final class FinishedFeedCardAccessibility11325Tests: XCTestCase {
             XCTAssertTrue(nameSitsAbove(home, reading: "SanFrancisco49ers", in: read),
                           "\(name): the complete home name does not sit directly above its 23 — \(all)")
 
+            // The served final carries no pre-game probability: no label, no block.
+            XCTAssertFalse(read.contains { normalized($0.text).contains("Pregame") },
+                           "\(name): a pre-game chance label printed with no pre-game probability — \(all)")
+
             let label = try XCTUnwrap(read.first { $0.text.contains("Projection") },
                                       "\(name): the forecast line is gone — \(all)")
             XCTAssertGreaterThan(label.box.minY, home.box.maxY, "\(name): the forecast left its place under the result")
@@ -77,10 +81,11 @@ final class FinishedFeedCardAccessibility11325Tests: XCTestCase {
         }
     }
 
-    /// Each pre-game probability stays in its own team's group: away's on 17's
-    /// row, under its name and above the home name; home's on 23's row, under
-    /// its name. A copy that swaps the sides, or moves the numbers out of the
-    /// groups, leaves a percent off its score's row.
+    /// Each pre-game probability stays in its own team's group and says what it
+    /// is: the actual score alone on its line, and directly under it a complete
+    /// "Pregame win chance" label, then the whole percent — away's under 17 and
+    /// above the home name, home's under 23. A copy that swaps the sides, drops
+    /// the label, or puts the percent back beside the score has no such block.
     func testTheFinishedSportsCardAtAX5KeepsEachPreGameProbabilityWithItsOwnTeam() throws {
         XCTAssertNil(try served(14780563).openingOdds, "precondition: the served final carries no pre-game probability")
         let odds = try served(14780563, editing: #""ended_at": "#,
@@ -90,27 +95,33 @@ final class FinishedFeedCardAccessibility11325Tests: XCTestCase {
         XCTAssertNil(odds.prematchOdds, "precondition: the card falls back to the constructed opening_odds")
         for width: CGFloat in [320, 393] {
             let name = "sports-nfl-\(Int(width))-ax5-constructed-odds"
-            let read = separatingFusedValues(try sportsLines(odds, width: width, size: .accessibility5, name: name))
+            let read = try sportsLines(odds, width: width, size: .accessibility5, name: name)
             let all = describe(read)
 
             for percent in ["24%", "76%"] {
                 XCTAssertEqual(read.filter { valueTokens($0.text).contains(percent) }.count, 1,
                                "\(name): \(percent) is not printed exactly once — \(all)")
             }
-            let away = try XCTUnwrap(valueRow(score: "17", percent: "24%", in: read),
-                                     "\(name): 24% is not on 17's row, after it — \(all)")
-            let home = try XCTUnwrap(valueRow(score: "23", percent: "76%", in: read),
-                                     "\(name): 76% is not on 23's row, after it — \(all)")
-            let awayName = try XCTUnwrap(nameLines(above: away.score, reading: "WashingtonCommanders", in: read),
+            let away = try XCTUnwrap(scoreLine("17", in: read), "\(name): no actual 17 on a line of its own — \(all)")
+            let home = try XCTUnwrap(scoreLine("23", in: read), "\(name): no actual 23 on a line of its own — \(all)")
+            for score in [away, home] {
+                XCTAssertFalse(read.contains { $0.box.minX > score.box.maxX && sameRow($0, score) },
+                               "\(name): something is printed beside the actual \(score.text) — \(all)")
+            }
+            let awayChance = try XCTUnwrap(chanceBlock(under: away, percent: "24%", in: read),
+                                           "\(name): 24% is not directly under 17, after a complete 'Pregame win chance' — \(all)")
+            let homeChance = try XCTUnwrap(chanceBlock(under: home, percent: "76%", in: read),
+                                           "\(name): 76% is not directly under 23, after a complete 'Pregame win chance' — \(all)")
+            let awayName = try XCTUnwrap(nameLines(above: away, reading: "WashingtonCommanders", in: read),
                                          "\(name): the complete away name does not sit directly above its 17 — \(all)")
-            let homeName = try XCTUnwrap(nameLines(above: home.score, reading: "SanFrancisco49ers", in: read),
+            let homeName = try XCTUnwrap(nameLines(above: home, reading: "SanFrancisco49ers", in: read),
                                          "\(name): the complete home name does not sit directly above its 23 — \(all)")
-            XCTAssertGreaterThan(away.percent.box.midY, awayName.bottom.box.maxY,
+            XCTAssertGreaterThan(awayChance.percent.box.midY, awayName.bottom.box.maxY,
                                  "\(name): 24% is not below Washington Commanders — \(all)")
-            XCTAssertLessThan(away.percent.box.midY, homeName.top.box.minY,
+            XCTAssertLessThan(awayChance.percent.box.maxY, homeName.top.box.minY,
                               "\(name): 24% is not above San Francisco 49ers — \(all)")
-            XCTAssertGreaterThan(home.percent.box.midY, homeName.bottom.box.maxY,
-                                 "\(name): 76% is not below San Francisco 49ers — \(all)")
+            XCTAssertGreaterThan(homeChance.label.box.minY, homeName.bottom.box.maxY,
+                                 "\(name): 76% and its label are not below San Francisco 49ers — \(all)")
         }
     }
 
@@ -346,22 +357,24 @@ final class FinishedFeedCardAccessibility11325Tests: XCTestCase {
         tokens(text.replacingOccurrences(of: " %", with: "%"))
     }
 
-    /// A score and its pre-game percent on one row, score first, clear of the
-    /// forecast line. Vision may read the row as one observation ("17 24%",
-    /// both boxes are that line) or two ("17", then "24%" to its right on its
-    /// row). Either way each value must read exactly; anything else is no row.
-    private func valueRow(score: String, percent: String, in read: [Line]) -> (score: Line, percent: Line)? {
-        let label = read.first { $0.text.contains("Projection") }?.box.minY ?? .infinity
-        let above = read.filter { $0.box.minY < label }
-        if let both = above.first(where: { valueTokens($0.text) == [score, percent] }) {
-            return (both, both)
-        }
-        for s in above where valueTokens(s.text) == [score] {
-            if let p = above.first(where: {
-                valueTokens($0.text) == [percent] && sameRow($0, s) && $0.box.minX > s.box.maxX
-            }) {
-                return (s, p)
-            }
+    /// The lines directly under `score`, in its column, clear of the forecast
+    /// line: the label reading exactly "Pregame win chance" top to bottom
+    /// (wrapped wherever the width puts it), then one line reading exactly
+    /// `percent` — the whole value on its own. Nothing may sit between the
+    /// score, the label and the value; anything else is no block. Returns the
+    /// label's top line and the percent's line.
+    private func chanceBlock(under score: Line, percent: String, in read: [Line]) -> (label: Line, percent: Line)? {
+        let forecast = read.first { $0.text.contains("Projection") }?.box.minY ?? .infinity
+        let column = read.filter {
+            $0.box.minY >= score.box.maxY - 2 && $0.box.minY < forecast
+                && $0.box.minX >= score.box.minX - 8 && $0.box.minX <= score.box.minX + 40
+        }.sorted { $0.box.minY < $1.box.minY }
+        let target = "Pregamewinchance"
+        var acc = ""
+        for line in column {
+            if acc == target { return valueTokens(line.text) == [percent] ? (column[0], line) : nil }
+            acc += normalized(line.text)
+            if !target.hasPrefix(acc) { return nil }
         }
         return nil
     }
@@ -403,46 +416,6 @@ final class FinishedFeedCardAccessibility11325Tests: XCTestCase {
                           height: line.box.height + 2 * pad)
         guard let reread = try? line.frame.recognize(in: name), reread.count == 1 else { return line }
         return Line(text: reread[0].text, box: reread[0].box, frame: line.frame)
-    }
-
-    /// Vision can read a score and the percent printed after it as ONE token
-    /// ("1724%" for "17 24%": the 1→7 gap is 12.7pt, the 7→2 gap 15.0pt).
-    /// Such a line — one token, digits then "%" — is cut at its widest blank
-    /// run, which must be the only run that wide, and each side is read again
-    /// on its own: the left must read digits only, the right a percent of at
-    /// most 100, and the two must spell the fused token exactly. The score
-    /// keeps the box up to its own ink, the percent from its own ink on.
-    /// Anything else leaves the line as it was read.
-    private func separatingFusedValues(_ read: [Line]) -> [Line] {
-        read.flatMap { line -> [Line] in
-            let fused = valueTokens(line.text)
-            guard fused.count == 1, fused[0].range(of: #"^[0-9]{2,}%$"#, options: .regularExpression) != nil
-            else { return [line] }
-            let ink = line.frame.inkClusters(in: line.box)
-            let gaps = ink.indices.dropFirst().map { (at: $0, width: ink[$0].minX - ink[$0 - 1].maxX) }
-            guard let widest = gaps.max(by: { $0.width < $1.width }),
-                  gaps.filter({ $0.width == widest.width }).count == 1 else { return [line] }
-            let scoreEnd = ink[widest.at - 1].maxX, percentStart = ink[widest.at].minX
-            let cut = (scoreEnd + percentStart) / 2, pad = line.box.height * 0.15
-            let y = line.box.minY - pad, h = line.box.height + 2 * pad
-            guard let left = try? line.frame.recognize(in: CGRect(x: line.box.minX - 4, y: y,
-                                                                  width: cut - line.box.minX + 4, height: h)),
-                  let right = try? line.frame.recognize(in: CGRect(x: cut, y: y,
-                                                                   width: line.box.maxX + 4 - cut, height: h)),
-                  left.count == 1, right.count == 1 else { return [line] }
-            let score = valueTokens(left[0].text), percent = valueTokens(right[0].text)
-            guard score.count == 1, percent.count == 1,
-                  score[0].range(of: #"^[0-9]+$"#, options: .regularExpression) != nil,
-                  percent[0].range(of: #"^[0-9]{1,3}%$"#, options: .regularExpression) != nil,
-                  let value = Int(percent[0].dropLast()), value <= 100,
-                  score[0] + percent[0] == fused[0] else { return [line] }
-            let b = line.box
-            return [Line(text: score[0], box: CGRect(x: b.minX, y: b.minY, width: scoreEnd - b.minX, height: b.height),
-                         frame: line.frame),
-                    Line(text: percent[0], box: CGRect(x: percentStart, y: b.minY, width: b.maxX - percentStart,
-                                                       height: b.height),
-                         frame: line.frame)]
-        }
     }
 
     /// The Discover title prints "Away @ Home". `normalized` drops the "@"
