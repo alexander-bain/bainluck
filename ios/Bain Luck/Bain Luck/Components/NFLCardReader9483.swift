@@ -140,6 +140,18 @@ struct NFLCardReader9483: View {
         isNarrowAccessibility(width: width, accessibility: accessibility) ? width - 2 * 14 : max(240, width - 44)
     }
 
+    /// #11285 — the most height the win-chances line may take on a narrow
+    /// phone at accessibility sizes, from the reader's height; nil elsewhere.
+    /// At 320pt/AX5 Back, the match line and the chances line took ~70% of the
+    /// reader, leaving a card only its kicker above the footer (Design,
+    /// residual 2). There the chances line scrolls inside this band, under a
+    /// match line that keeps the score and state whole and fixed: the type
+    /// keeps its size and nothing leaves the reader. 375pt and wider, and
+    /// every non-accessibility size, are unchanged.
+    static func chancesMaxHeight(width: CGFloat, height: CGFloat, accessibility: Bool) -> CGFloat? {
+        isNarrowAccessibility(width: width, accessibility: accessibility) ? (height * 0.12).rounded() : nil
+    }
+
     init(liveCards: [NFLEventCard9483], liveHeader: NFLReaderHeader9483,
          awayName: String, homeName: String, awayColor: Color, homeColor: Color,
          state: NFLCardDeckState9483, liveRows: [String: GameMarketPlayerProp]) {
@@ -168,7 +180,7 @@ struct NFLCardReader9483: View {
             let cards = cards(at: tick.date)
             GeometryReader { geo in
                 VStack(spacing: 0) {
-                    top(now: tick.date, width: geo.size.width)
+                    top(now: tick.date, width: geo.size.width, height: geo.size.height)
                     Divider()
                     if cards.isEmpty {
                         Text("No game stories right now")
@@ -239,7 +251,7 @@ struct NFLCardReader9483: View {
     /// One row of controls — a short Back and, when there is one, Refresh —
     /// then one match summary. At accessibility sizes the text stays large;
     /// it is the repetition that goes, not the type size.
-    private func top(now: Date, width: CGFloat) -> some View {
+    private func top(now: Date, width: CGFloat, height: CGFloat) -> some View {
         VStack(alignment: .leading, spacing: 2) {
             HStack(alignment: .center) {
                 Button { state.close() } label: {
@@ -266,16 +278,35 @@ struct NFLCardReader9483: View {
                 .font(.subheadline.weight(.bold))
                 .fixedSize(horizontal: false, vertical: true)
             if !header.chances.isEmpty {
-                Text(header.chances)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
+                if let band = Self.chancesMaxHeight(width: width, height: height,
+                                                    accessibility: dynamicTypeSize.isAccessibilitySize) {
+                    // Whole when it fits the band; otherwise it scrolls there,
+                    // its indicator flashed so the rest reads as reachable.
+                    ViewThatFits(in: .vertical) {
+                        chancesLine
+                        ScrollView(.vertical) {
+                            chancesLine.frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                        .scrollIndicators(.visible)
+                        .scrollIndicatorsFlash(onAppear: true)
+                    }
+                    .frame(maxHeight: band)
+                } else {
+                    chancesLine
+                }
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, Self.headerMargin(width: width, accessibility: dynamicTypeSize.isAccessibilitySize))
         .padding(.bottom, 8)
         .accessibilityElement(children: .contain)
+    }
+
+    private var chancesLine: some View {
+        Text(header.chances)
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .fixedSize(horizontal: false, vertical: true)
     }
 
     private func rail(_ cards: [NFLEventCard9483], width: CGFloat) -> some View {
