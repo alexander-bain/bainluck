@@ -9,10 +9,10 @@ struct MyStuffView: View {
     @EnvironmentObject private var authManager: AuthManager
     @EnvironmentObject private var navCoordinator: NavigationCoordinator
     @EnvironmentObject private var pinManager: PinManager
-    @StateObject private var vm = MyStuffViewModel()
-    @StateObject private var pinContent = SavedPinContentViewModel()
+    @StateObject private var vm: MyStuffViewModel
+    @StateObject private var pinContent: SavedPinContentViewModel
     @State private var predictionStats: PredictionStats?
-    @State private var path = NavigationPath()
+    @State private var path: NavigationPath
     @State private var showOnboarding = false
     @State private var showPinManagement = false
     /// Width available to the iPad card grid, in points. 0 until the first
@@ -28,6 +28,18 @@ struct MyStuffView: View {
     #if os(macOS)
     @Environment(\.openWindow) private var openWindow
     #endif
+    /// #10878 — the Mac window's kept place for this screen: both models, the
+    /// open detail and the team feed's scroll offset. `nil` everywhere else,
+    /// which is today's behaviour. The account-change rebind below still runs
+    /// on whichever models the screen holds.
+    private let macPlace: MacReadingPlace<MacReadingState10878.MyStuffModels>?
+
+    init(macPlace: MacReadingPlace<MacReadingState10878.MyStuffModels>? = nil) {
+        self.macPlace = macPlace
+        _vm = StateObject(wrappedValue: macPlace?.models(orMake: { MacReadingState10878.MyStuffModels() }).feed ?? MyStuffViewModel())
+        _pinContent = StateObject(wrappedValue: macPlace?.models(orMake: { MacReadingState10878.MyStuffModels() }).pins ?? SavedPinContentViewModel())
+        _path = State(initialValue: macPlace?.path ?? NavigationPath())
+    }
 
     /// Whether the gear that leads to Preferences — and so to Delete Account —
     /// is offered. Being signed in is the whole test.
@@ -120,6 +132,7 @@ struct MyStuffView: View {
                 path.append(route)
             }
         }
+        .onChange(of: path) { _, newPath in macPlace?.path = newPath }
         // Rebind on ANY auth identity change — login, logout, account switch, or a
         // failed restore dropping back to anonymous (L2-217 Item 2 / C88).
         // `activeFeedUserId` fires even on the nil→nil `user` restore-failure case
@@ -607,6 +620,7 @@ struct MyStuffView: View {
             UIImpactFeedbackGenerator(style: .light).impactOccurred()
             #endif
         }
+        .macReadingOffset(macPlace)
     }
 
     // MARK: - Section Builder

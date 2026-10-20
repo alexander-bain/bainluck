@@ -22,7 +22,34 @@ enum AppTab: Int, Hashable {
 /// Coordinates deep link and universal link URL handling with tab navigation.
 @MainActor
 final class NavigationCoordinator: ObservableObject {
-    @Published var selectedTab: AppTab = .discover
+    @Published var selectedTab: AppTab = .discover {
+        didSet {
+            // #10878 / #4940 — choosing Search while Search is already showing
+            // (`.search` → `.search`) is the Mac menu's Command-K or Command-3
+            // pressed again; the sidebar never re-sets the tab it is on. Arriving
+            // at Search from another tab is NOT an ask: a sidebar click must
+            // reopen the reader's kept place (#10903) and arrowing down the
+            // sidebar must not fall into the field. The menu commands (#10909)
+            // only set this on the focused window's own coordinator, so the ask
+            // stays in that window.
+            if selectedTab == .search, oldValue == .search, selectingSearchRequestsFocus {
+                searchFocus.request()
+            }
+        }
+    }
+    /// #10878 / #4940 — whether choosing Search again asks its field for focus.
+    /// On by default only on the Mac, where Search is reached from the keyboard;
+    /// a phone that raised its keyboard on a tab re-tap would cover the tab bar
+    /// (#6446). Settable so the iOS test target can exercise both answers.
+    var selectingSearchRequestsFocus: Bool = {
+        #if os(macOS)
+        true
+        #else
+        false
+        #endif
+    }()
+    /// This window's outstanding ask for Search field focus; SearchView drains it.
+    @Published private(set) var searchFocus = MacSearchFocusTicket10878()
     @Published var pendingRoute: Route?
     @Published var pendingSearchQuery: String?
     @Published var liveGameCount: Int = 0
@@ -341,5 +368,17 @@ final class NavigationCoordinator: ObservableObject {
         let query = pendingSearchQuery
         pendingSearchQuery = nil
         return query
+    }
+
+    /// Command-K from another tab: the menu selects Search, then asks. Separate
+    /// from the selection because arriving at Search by itself is not an ask
+    /// (see `selectedTab`).
+    func requestSearchFocus() {
+        searchFocus.request()
+    }
+
+    /// True once per outstanding Search-focus ask (see `MacSearchFocusTicket10878`).
+    func consumeSearchFocusRequest() -> Bool {
+        searchFocus.consume()
     }
 }
