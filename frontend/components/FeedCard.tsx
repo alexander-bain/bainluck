@@ -53,6 +53,7 @@ import { teamCrestInitials, teamShortNames } from "@/lib/teamShortName";
 import TeamNameLink from "./TeamNameLink";
 import ProjectedFinalLine from "./ProjectedFinalLine";
 import { cardProjectedFinal, projectedFinalLabel } from "@/lib/projectedFinalPair";
+import { finalForecastComparison } from "@/lib/finalForecastComparison";
 
 interface FeedCardProps {
   item: FeedItem;
@@ -391,6 +392,17 @@ function EventFeedCard({
     isScheduled && Date.parse(data.commence_time) > Date.now()
       ? cardProjectedFinal(data.current_odds, data.sport)
       : null;
+  // #11296 — on a final, the sportsbooks' last pair before the scheduled start,
+  // by the same rule as the league card and the headline. `/api/feed` does not
+  // send `pregame_projection` yet, so this stays empty until it does.
+  const finalForecast = finalForecastComparison({
+    sportKey: data.sport,
+    status: data.status,
+    homeScore: data.home_score,
+    awayScore: data.away_score,
+    actualPeriod: "full_game",
+    projection: data.pregame_projection,
+  });
   // #8635: the server's last-resort highlight for a live game is the word
   // "Live", which repeats the green LIVE chip beside it. Drop only that echo; a
   // live label that says something new ("Odds moved", "Wild game") still shows.
@@ -1022,6 +1034,16 @@ function EventFeedCard({
             order="away-home"
             variant="card"
             testId="feed-card-projected-final"
+          />
+        )}
+        {finalForecast && (
+          <ProjectedFinalLine
+            label={finalForecast.label}
+            first={{ name: projectedNames.away, score: finalForecast.forecast.away }}
+            second={{ name: projectedNames.home, score: finalForecast.forecast.home }}
+            order="away-home"
+            variant="card"
+            testId="feed-card-final-forecast"
           />
         )}
 

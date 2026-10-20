@@ -22,6 +22,8 @@ import { canonicalEventHref } from "@/lib/canonicalEventUrl";
 import { matrixForStat, type DuringPlayerProps } from "@/lib/duringPlayerPropsMatrixSelection";
 import { withoutEventOwnMoneyline } from "@/lib/eventOwnMoneyline";
 import { eventPageProjectedPair, projectedFinalLabel } from "@/lib/projectedFinalPair";
+import { finalForecastComparison } from "@/lib/finalForecastComparison";
+import FinalForecastDetails from "@/components/event/FinalForecastDetails";
 import ProjectedFinalLine from "@/components/ProjectedFinalLine";
 import { teamTextColor } from "@/lib/teamColors";
 import { heldFrameAfter, useLiveEventStream, type LiveFrame } from "@/hooks/useLiveEventStream";
@@ -1814,6 +1816,26 @@ export default function EventPage({ params }: EventPageProps) {
         : null,
     [heroProjectedHome, heroProjectedAway]
   );
+  // #11296 — a FINISHED headline's forecast: the sportsbooks' last pair before
+  // the scheduled start, under the actual score the columns print. Only where
+  // that score is on screen (a stoppage filler prints no score to sit beside).
+  // A scoreboard final covers the full game, overtime included; soccer's
+  // forecasts are 90-minute ones, so they are refused here until a payload can
+  // say a match ended inside regulation.
+  const heroFinalForecast = useMemo(
+    () =>
+      isFinished && heroScorePairPresent && !heroScoreIsStoppageFiller
+        ? finalForecastComparison({
+            sportKey: event?.sport,
+            status: event?.status,
+            homeScore: bestHomeScore,
+            awayScore: bestAwayScore,
+            actualPeriod: "full_game",
+            projection: event?.pregame_projection,
+          })
+        : null,
+    [isFinished, heroScorePairPresent, heroScoreIsStoppageFiller, event?.sport, event?.status, bestHomeScore, bestAwayScore, event?.pregame_projection]
+  );
   // #11103 — the game-story cards print the hero's projected final, never a second one.
   const nflCardsShown = useMemo(() => withPageProjection(nflCards, heroProjectedFinal), [nflCards, heroProjectedFinal]);
 
@@ -3093,6 +3115,23 @@ export default function EventPage({ params }: EventPageProps) {
                   variant="hero"
                   testId="event-hero-projected-final"
                 />
+              )}
+              {/* #11296 — on a final, the forecast band under the result the
+                  columns print: same team order, no grade, no colour. Where it
+                  came from sits one tap down, closed. `heroProjectedFinal` is
+                  null on a final, so the two never print together. */}
+              {heroFinalForecast && (
+                <>
+                  <ProjectedFinalLine
+                    label={heroFinalForecast.label}
+                    first={{ name: heroShortNames.home, score: heroFinalForecast.forecast.home }}
+                    second={{ name: heroShortNames.away, score: heroFinalForecast.forecast.away }}
+                    order="home-away"
+                    variant="hero"
+                    testId="event-hero-final-forecast"
+                  />
+                  <FinalForecastDetails details={heroFinalForecast.details} />
+                </>
               )}
 
               {/* Trend indicator — change since opening (live/pregame only).

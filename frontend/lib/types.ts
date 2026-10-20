@@ -6,6 +6,8 @@ import type { ConfidenceSignals } from "@/lib/confidence";
 // The props section is shared with the tournament hub's match rows — one
 // definition of a prop card, not a second copy that agrees today (UX-P152).
 import type { MatchProp } from "@/lib/matchDetail";
+// #11296: the served shape is declared once, beside the one rule that reads it.
+import type { PregameProjection, PregameProjectionUnavailable } from "@/lib/finalForecastComparison";
 // Same reasoning as `MatchProp` above: the finished match the by-event route
 // serves IS a results-list row, so it is that type and not a copy of it (#2447),
 // and the hub's result rows and an event page's settled hero are the SAME fact,
@@ -229,6 +231,14 @@ export interface Event {
   bookmaker_odds?: BookmakerOddsDetail[];
   highlight?: Highlight;
   opening_odds?: OpeningOdds;
+  /**
+   * #11296 — on a settled row only: each sportsbook's last projected pair
+   * before the scheduled start (`/api/events/{id}` and search serve it), or the
+   * reason there is none. OPTIONAL: an older or cached payload carries neither.
+   * Read only through `finalForecastComparison`.
+   */
+  pregame_projection?: PregameProjection | null;
+  pregame_projection_unavailable?: PregameProjectionUnavailable | null;
   /**
    * THE ONE BLEND (standing ruling #1) — the single probability every surface
    * shows for this event. The backend computes it with
@@ -1728,6 +1738,9 @@ export interface FeedEventData {
    * (`{"polymarket": {"value": 0.5, ...}}`). `lib/probabilityEvidence.ts` reads both.
    */
   win_probability_sources?: Record<string, number | { value?: number | null }>;
+  /** #11296 — the same settled-row keys as `Event`; `/api/feed` does not send them yet. */
+  pregame_projection?: PregameProjection | null;
+  pregame_projection_unavailable?: PregameProjectionUnavailable | null;
   opening_odds?: {
     home_probability: number;
     away_probability: number | null;
