@@ -40,7 +40,7 @@ from sqlalchemy import (
     String,
 )
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import aliased, selectinload
+from sqlalchemy.orm import aliased, defer, selectinload
 from sqlalchemy.orm.attributes import set_committed_value
 
 from app.dependencies.auth import get_optional_user
@@ -11421,6 +11421,16 @@ async def _score_events(
         select(Event)
         .join(Sport, Event.sport_id == Sport.id)
         .options(selectinload(Event.sport))
+        # #1480: THE BOX SCORE STAYS IN THE DATABASE, as it does for the live
+        # poll since #9047. This read hands back up to 500 candidate rows on
+        # every Sports/Discover miss and on every My Teams build, and the
+        # asyncpg dialect json-decodes every JSONB value on every row at fetch
+        # time, on the event loop. Nothing on this path reads `box_score_data`:
+        # the cards, the scoring, the twin fold and the two snapshot reads use
+        # the other columns, all still selected. `raiseload` so a future reader
+        # fails by name instead of lazy-loading inside the async session.
+        # Pinned by `test_feed_candidate_unread_columns_1480.py`.
+        .options(defer(Event.box_score_data, raiseload=True))
         .where(*candidate_conditions)
     )
 
