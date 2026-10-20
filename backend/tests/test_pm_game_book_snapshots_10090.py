@@ -18,6 +18,10 @@ import websockets
 import app.services.polymarket_ws as service
 import app.tasks.live_blend_refresh as blend
 import app.tasks.polymarket_ws as task
+from tests.test_ws_flush_retry_q491 import (
+    is_stored_live_slate_read,
+    stored_live_batches,
+)
 
 
 def _cells(callback):
@@ -56,16 +60,21 @@ async def _reconnect(monkeypatch, frame, *, flag="1", stale=False):
 
     monkeypatch.setattr(blend, "run_flush_cadence", hold_flush)
 
-    slate = iter([
+    scenario = [
         [(71, 7, "0xabc_yes", "0xabc", 900),
          (72, 7, "0xabc_no", "0xabc", 900)],
         [(7, "0xabc", {"clob_token_ids": ["111", "222"]}, "scheduled")],
         [(71, 7, "0xabc_yes"), (72, 7, "0xabc_no")],
-    ])
+    ]
+    slate = [list(batch) for batch in scenario]
 
     class Session:
-        async def execute(self, _statement):
-            rows = next(slate, [])
+        async def execute(self, statement):
+            if is_stored_live_slate_read(statement):
+                # #10090 attempt156: the stored-live load reads its own three
+                # batches; the full slate stays queued for the full read.
+                slate[:0] = stored_live_batches(*scenario)
+            rows = slate.pop(0) if slate else []
             return SimpleNamespace(all=lambda: rows)
 
     @asynccontextmanager

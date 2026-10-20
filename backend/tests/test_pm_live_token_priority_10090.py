@@ -119,6 +119,7 @@ async def test_real_slate_prioritizes_live_win_and_keeps_both_token_orientations
         get_task_session=context,
         topup_clob_tokens=capped,
         topup_outcome_clob_tokens=outcome_topup,
+        condition_id_of=topup.condition_id_of,
     )
     exec(
         compile(ast.Module(body=[loader], type_ignores=[]), "real_pm_slate", "exec"),

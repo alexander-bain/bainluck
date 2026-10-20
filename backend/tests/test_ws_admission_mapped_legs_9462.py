@@ -27,6 +27,10 @@ import app.tasks.live_blend_refresh as lbr
 import app.tasks.polymarket_token_topup as topup
 import app.tasks.polymarket_ws as poly_task
 import app.tasks.ws_admission as admission
+from tests.test_ws_flush_retry_q491 import (
+    is_stored_live_slate_read,
+    stored_live_batches,
+)
 
 
 # ---------------------------------------------------------------- fakes ----
@@ -110,6 +114,10 @@ def _install_session(monkeypatch, slate_batches, reread):
                 return _Result([])
             if _is_clock_sample(_stmt):  # #11138: the held-quote DB-clock sample
                 return SimpleNamespace(scalar_one=lambda: datetime.now(timezone.utc))
+            if is_stored_live_slate_read(_stmt):
+                # #10090 attempt156: the stored-live load reads its own three
+                # batches ahead of the full slate, which stays queued.
+                state["slate"][:0] = stored_live_batches(*slate_batches[:3])
             if state["slate"]:
                 return _Result(state["slate"].pop(0))
             state["reread_calls"] += 1
