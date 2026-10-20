@@ -1526,3 +1526,209 @@ async def source_intelligence(
         logger.debug("source-intelligence: Redis warm failed", exc_info=True)
 
     return response
+
+
+# ---------------------------------------------------------------------------
+# #847 — the saved-only reader behind ``GET /api/admin/source-intelligence/cached``
+# (the route lives on the admin matching router so it carries admin auth).
+#
+# It reads the primary snapshot and, ONLY when the primary is missing, the
+# retained ``:stale`` copy. That fallback is load-bearing, not cosmetic: the
+# primary's 21600 s expiry equals the producer's 6-hour cadence, so the primary
+# is absent for each build's duration, and for every cycle a degraded build
+# refuses to write. Both writers (the producer and a healthy inline build of the
+# public route) store the identical payload under both keys, so the copy is
+# served whole, labelled ``served_from: "retained_stale"`` with its own
+# ``generated_at`` — never presented as the current snapshot. A primary that is
+# present but unreadable, oversized or malformed is reported as exactly that;
+# the copy does not stand in for it. Nothing here builds, refreshes, warms or
+# writes either key.
+# ---------------------------------------------------------------------------
+
+# Two sequential GETs at most, each under the client's 0.5 s socket bound, plus
+# the transfer of a payload whose case-study series are not size-capped by the
+# producer.
+_SI_SAVED_READ_DEADLINE_S = 2.0
+# A declared bound, not a measured one: the producer does not cap case-study
+# series length. A payload past it is answered ``oversized`` and never trimmed.
+_SI_SAVED_MAX_BYTES = 8 * 1024 * 1024
+_SI_FRESHNESS_BASIS = "age_from_generated_at_stamped_when_the_build_returned"
+_SI_SERVED_FROM = {_REDIS_KEY: "primary", _REDIS_STALE_KEY: "retained_stale"}
+
+
+def _si_saved_now() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def _check_si_list(value, check) -> None:
+    from app.utils.saved_snapshot_read import SavedPayloadInvalid
+
+    if not isinstance(value, list):
+        raise SavedPayloadInvalid("invalid_section")
+    for item in value:
+        if not isinstance(item, dict):
+            raise SavedPayloadInvalid("invalid_row")
+        check(item)
+
+
+def _check_si_payload(payload) -> datetime:
+    """Check a saved payload against what the Source Intelligence build writes.
+
+    Every field the view reads is type-checked before use and the coverage
+    denominators must reconcile; extra fields pass through untouched. Returns
+    the parsed ``generated_at``.
+    """
+    from app.utils.saved_snapshot_read import (
+        SavedPayloadInvalid,
+        in_range,
+        is_count,
+        is_name,
+        is_number,
+        parse_aware_timestamp,
+    )
+
+    def need(ok: bool, reason: str) -> None:
+        if not ok:
+            raise SavedPayloadInvalid(reason)
+
+    need(isinstance(payload, dict), "invalid_payload")
+    generated_at = parse_aware_timestamp(payload.get("generated_at"))
+
+    coverage = payload.get("coverage")
+    need(isinstance(coverage, dict), "invalid_section")
+    need(is_count(coverage.get("total_events")) and is_count(coverage.get("multi_source_events")),
+         "invalid_count")
+    sport_counts = ("total", "betting", "espn", "stat_model", "kalshi", "polymarket", "mlb")
+
+    def coverage_sport(row):
+        need(is_name(row.get("sport")), "invalid_row")
+        need(all(is_count(row.get(k)) for k in sport_counts), "invalid_count")
+
+    def overlap(row):
+        need(is_count(row.get("sources")) and is_count(row.get("events")), "invalid_count")
+
+    _check_si_list(coverage.get("by_sport"), coverage_sport)
+    _check_si_list(coverage.get("by_source_count"), overlap)
+    need(sum(r["total"] for r in coverage["by_sport"]) == coverage["total_events"],
+         "counts_do_not_reconcile")
+    need(sum(r["events"] for r in coverage["by_source_count"] if r["sources"] >= 2)
+         == coverage["multi_source_events"], "counts_do_not_reconcile")
+
+    def accuracy(row):
+        need(is_name(row.get("source")), "invalid_row")
+        need(is_count(row.get("observations")), "invalid_count")
+        need(in_range(row.get("brier"), 0, 1) and in_range(row.get("mae"), 0, 1)
+             and in_range(row.get("brier_ci"), 0, float("inf")), "invalid_number")
+
+        def bucket(b):
+            need(type(b.get("idx")) is int and 0 <= b["idx"] <= 9, "invalid_row")
+            need(is_count(b.get("n")), "invalid_count")
+            need(in_range(b.get("avg_prob"), 0, 1) and in_range(b.get("actual"), 0, 1),
+                 "invalid_number")
+
+        _check_si_list(row.get("buckets"), bucket)
+
+    _check_si_list(payload.get("source_accuracy"), accuracy)
+
+    disagreements = payload.get("disagreements")
+    need(isinstance(disagreements, dict), "invalid_section")
+    need(is_count(disagreements.get("total_comparisons")), "invalid_count")
+    need(all(in_range(disagreements.get(k), 0, 1) for k in ("rate_5pp", "rate_10pp", "rate_20pp")),
+         "invalid_number")
+
+    def disagreement_sport(row):
+        need(is_name(row.get("sport")), "invalid_row")
+        need(is_count(row.get("comparisons")), "invalid_count")
+        need(in_range(row.get("rate_5pp"), 0, 1), "invalid_number")
+
+    def pair(row):
+        need(is_name(row.get("source_a")) and is_name(row.get("source_b")), "invalid_row")
+        need(is_count(row.get("count")), "invalid_count")
+        need(in_range(row.get("avg_divergence"), 0, 1) and in_range(row.get("a_closer_pct"), 0, 1),
+             "invalid_number")
+        for split in ("by_phase", "by_sport"):
+            cells = row.get(split)
+            need(isinstance(cells, dict), "invalid_row")
+            for cell in cells.values():
+                need(isinstance(cell, dict), "invalid_row")
+                need(is_count(cell.get("comparisons")), "invalid_count")
+                need(in_range(cell.get("a_closer_pct"), 0, 1), "invalid_number")
+
+    _check_si_list(disagreements.get("by_sport"), disagreement_sport)
+    _check_si_list(disagreements.get("pairwise"), pair)
+
+    def case_study(row):
+        need(type(row.get("event_id")) is int, "invalid_row")
+        need(is_name(row.get("sport")) and isinstance(row.get("score"), str)
+             and isinstance(row.get("date"), str), "invalid_row")
+        need(all(row.get(k) is None or isinstance(row.get(k), str) for k in ("home_team", "away_team")),
+             "invalid_row")
+        need(type(row.get("home_won")) is bool, "invalid_row")
+        need(in_range(row.get("max_divergence"), 0, 1), "invalid_number")
+        series = row.get("series")
+        need(isinstance(series, dict), "invalid_series")
+        for source, points in series.items():
+            need(is_name(source) and isinstance(points, list), "invalid_series")
+            for point in points:
+                need(isinstance(point, dict) and isinstance(point.get("t"), str), "invalid_series")
+                # A finite number, not a [0, 1] range: the series query filters
+                # only ``IS NOT NULL``, so the producer passes stored values through
+                # unbounded and one odd snapshot must not refuse the whole view.
+                need(is_number(point.get("p")), "invalid_series")
+
+    _check_si_list(payload.get("case_studies"), case_study)
+    return generated_at
+
+
+async def read_source_intelligence_saved() -> tuple[int, dict]:
+    """The whole saved-only read: ``(http_status, body)``. Never builds.
+
+    The request clock only ages the saved snapshot; nothing is written back.
+    """
+    from app.utils.saved_snapshot_read import (
+        SavedPayloadInvalid,
+        SavedReadError,
+        read_first_saved,
+        saved_reader_response,
+        strict_loads,
+    )
+
+    def respond(status, state, reason, **kw):
+        return saved_reader_response(
+            status, state, reason,
+            freshness_basis=_SI_FRESHNESS_BASIS, max_bytes=_SI_SAVED_MAX_BYTES, **kw,
+        )
+
+    try:
+        found = await read_first_saved(
+            (_REDIS_KEY, _REDIS_STALE_KEY), deadline_s=_SI_SAVED_READ_DEADLINE_S
+        )
+    except SavedReadError as exc:
+        logger.warning("source-intelligence cached: cache read failed (%s)", exc.code)
+        return respond(503, "error", exc.code)
+    if found.key is None:
+        return respond(202, "miss", "no_saved_snapshot_or_retained_copy")
+    served = {
+        "served_key": found.key,
+        "served_from": _SI_SERVED_FROM[found.key],
+        "saved_bytes": found.size,
+    }
+    if found.size > _SI_SAVED_MAX_BYTES:
+        return respond(503, "oversized", "saved_snapshot_exceeds_read_bound", **served)
+    try:
+        payload = strict_loads(found.raw)
+        generated_at = _check_si_payload(payload)
+    except SavedPayloadInvalid as exc:
+        return respond(503, "malformed", exc.reason, **served)
+
+    age = (_si_saved_now() - generated_at).total_seconds()
+    if age < 0:
+        freshness, reason = "unknown", "generated_at_in_future"
+    else:
+        freshness = "unreviewed"
+        reason = (
+            "saved_snapshot" if served["served_from"] == "primary"
+            else "primary_missing_served_retained_copy"
+        )
+    return respond(200, "hit", reason, payload=payload, age_seconds=age,
+                   freshness=freshness, **served)

@@ -1592,6 +1592,215 @@ async def prediction_market_link_rate_cached(
     return JSONResponse(body, status_code=status, headers={"Cache-Control": "no-store"})
 
 
+# ---------------------------------------------------------------------------
+# #847 — the Correctness Console's saved-only readers for matured linkage and
+# Source Intelligence.
+#
+# Both producers already save the full view payload: ``precompute_admin_matured_
+# linkage`` (*/30, ``bainluck:admin:matured_linkage``, ex 3600) and
+# ``precompute_source_intelligence`` (heavy, 1/7/13/19:30 UTC, a primary key
+# with ex 21600 plus a retained ``:stale`` copy with ex 7 d). The legacy GETs
+# compute inline on a miss and write the cache; these routes only read it, via
+# ``app.utils.saved_snapshot_read``: fixed keys, one total deadline, a byte
+# bound, typed states, no database dependency, no refresh/bust input and no
+# write. Both keys and both readers' payloads are passed through whole — the
+# matured-linkage ``misses`` and ``unlinked_held`` included.
+#
+# FRESHNESS. Neither payload carries a freshness policy and none has been
+# reviewed, so a hit reports its age from the payload's own ``generated_at``
+# and says ``freshness: "unreviewed"``. Nothing here calls a snapshot fresh.
+# ---------------------------------------------------------------------------
+
+_MATURED_LINKAGE_CACHE_KEY = "bainluck:admin:matured_linkage"
+# The whole read: client lookup, pool wait, connect, health-check PING, GET and
+# its one fast-fail retry — the same budget as the link-rate reader.
+_MATURED_LINKAGE_READ_DEADLINE_S = 1.0
+# The slate is bounded (imminent events only), so a real payload is a few
+# hundred KB at most; this bound only refuses absurd bytes.
+_MATURED_LINKAGE_MAX_BYTES = 2 * 1024 * 1024
+_MATURED_LINKAGE_FRESHNESS_BASIS = "age_from_generated_at_stamped_when_compute_returned"
+_MATURED_LINKAGE_STATUSES = ("ok", "insufficient_slate")
+_UNLINKED_HELD_STATUSES = ("ok", "insufficient_slate", "error")
+
+
+def _saved_reader_now() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def _check_matured_linkage_payload(payload: Any) -> datetime:
+    """Check a saved payload against what ``_compute_matured_linkage`` writes.
+
+    Only fields the payload has always carried are required; every type is
+    checked before the value is used; the denominators must reconcile. Extra
+    fields pass through untouched. Returns the parsed ``generated_at``.
+    """
+    from app.utils.saved_snapshot_read import (
+        SavedPayloadInvalid,
+        in_range,
+        is_count,
+        is_name,
+        parse_aware_timestamp,
+    )
+
+    if not isinstance(payload, dict):
+        raise SavedPayloadInvalid("invalid_payload")
+    generated_at = parse_aware_timestamp(payload.get("generated_at"))
+    if payload.get("status") not in _MATURED_LINKAGE_STATUSES:
+        raise SavedPayloadInvalid("invalid_status")
+    if not isinstance(payload.get("window"), str):
+        raise SavedPayloadInvalid("invalid_window")
+    counts = ("checkable_pairs", "backed", "phantom", "events_checked", "events_consistent")
+    if not all(is_count(payload.get(k)) for k in counts):
+        raise SavedPayloadInvalid("invalid_count")
+    total = payload["checkable_pairs"]
+    if payload["backed"] + payload["phantom"] != total:
+        raise SavedPayloadInvalid("counts_do_not_reconcile")
+    if payload["events_consistent"] > payload["events_checked"]:
+        raise SavedPayloadInvalid("counts_do_not_reconcile")
+    if (payload["status"] == "insufficient_slate") != (total == 0):
+        raise SavedPayloadInvalid("invalid_status")
+    headline = payload.get("headline_pct", "absent")
+    if total == 0:
+        if headline is not None:
+            raise SavedPayloadInvalid("invalid_rate")
+    elif not in_range(headline, 0, 100):
+        raise SavedPayloadInvalid("invalid_rate")
+
+    by_source = payload.get("by_source")
+    if not isinstance(by_source, dict):
+        raise SavedPayloadInvalid("invalid_section")
+    for name, block in by_source.items():
+        if not is_name(name) or not isinstance(block, dict):
+            raise SavedPayloadInvalid("invalid_section")
+        if not all(is_count(block.get(k)) for k in ("total", "backed", "phantom")):
+            raise SavedPayloadInvalid("invalid_count")
+        if block["backed"] + block["phantom"] != block["total"]:
+            raise SavedPayloadInvalid("counts_do_not_reconcile")
+        pct = block.get("backed_pct", "absent")
+        if not (pct is None if block["total"] == 0 else in_range(pct, 0, 100)):
+            raise SavedPayloadInvalid("invalid_rate")
+    if sum(b["total"] for b in by_source.values()) != total:
+        raise SavedPayloadInvalid("counts_do_not_reconcile")
+
+    misses = payload.get("misses")
+    if not isinstance(misses, list) or not all(isinstance(m, dict) for m in misses):
+        raise SavedPayloadInvalid("invalid_misses")
+    if len(misses) != payload["phantom"]:
+        raise SavedPayloadInvalid("counts_do_not_reconcile")
+
+    held = payload.get("unlinked_held")
+    if not isinstance(held, dict) or held.get("status") not in _UNLINKED_HELD_STATUSES:
+        raise SavedPayloadInvalid("invalid_unlinked_held")
+    if held["status"] == "error":
+        if not isinstance(held.get("error"), str):
+            raise SavedPayloadInvalid("invalid_unlinked_held")
+    else:
+        held_misses = held.get("misses")
+        if not is_count(held.get("headline_unlinked_held")) or not is_count(held.get("events_checked")):
+            raise SavedPayloadInvalid("invalid_unlinked_held")
+        if not isinstance(held_misses, list) or not all(isinstance(m, dict) for m in held_misses):
+            raise SavedPayloadInvalid("invalid_unlinked_held")
+        if len(held_misses) != held["headline_unlinked_held"]:
+            raise SavedPayloadInvalid("counts_do_not_reconcile")
+    return generated_at
+
+
+async def read_matured_linkage_saved() -> tuple[int, dict]:
+    """The whole saved-only read: ``(http_status, body)``. Never computes.
+
+    The request clock only ages the saved snapshot; nothing is written back.
+    """
+    from app.utils.saved_snapshot_read import (
+        SavedPayloadInvalid,
+        SavedReadError,
+        read_first_saved,
+        saved_reader_response,
+        strict_loads,
+    )
+
+    def respond(status, state, reason, **kw):
+        return saved_reader_response(
+            status, state, reason,
+            freshness_basis=_MATURED_LINKAGE_FRESHNESS_BASIS,
+            max_bytes=_MATURED_LINKAGE_MAX_BYTES, **kw,
+        )
+
+    try:
+        found = await read_first_saved(
+            (_MATURED_LINKAGE_CACHE_KEY,), deadline_s=_MATURED_LINKAGE_READ_DEADLINE_S
+        )
+    except SavedReadError as exc:
+        logger.warning("matured-linkage cached: cache read failed (%s)", exc.code)
+        return respond(503, "error", exc.code)
+    if found.key is None:
+        return respond(202, "miss", "no_saved_snapshot")
+    served = {"served_key": found.key, "served_from": "primary", "saved_bytes": found.size}
+    if found.size > _MATURED_LINKAGE_MAX_BYTES:
+        return respond(503, "oversized", "saved_snapshot_exceeds_read_bound", **served)
+    try:
+        payload = strict_loads(found.raw)
+        generated_at = _check_matured_linkage_payload(payload)
+    except SavedPayloadInvalid as exc:
+        return respond(503, "malformed", exc.reason, **served)
+
+    age = (_saved_reader_now() - generated_at).total_seconds()
+    if age < 0:
+        freshness, reason = "unknown", "generated_at_in_future"
+    else:
+        freshness = "unreviewed"
+        reason = (
+            "saved_snapshot_with_unlinked_held_error"
+            if payload["unlinked_held"]["status"] == "error"
+            else "saved_snapshot"
+        )
+    return respond(200, "hit", reason, payload=payload, age_seconds=age,
+                   freshness=freshness, **served)
+
+
+@router.get("/prediction-markets/matured-linkage/cached")
+async def prediction_market_matured_linkage_cached(
+    request: Request,
+    secret: str = Query(None, description="Admin secret for authorization"),
+):
+    """#847: the matured-linkage payload from the saved snapshot ONLY.
+
+    Same key the legacy GET and ``precompute_admin_matured_linkage`` write; this
+    route only reads it, and serves the full payload (``misses`` and
+    ``unlinked_held`` included). A miss is 202; an unreadable cache, oversized
+    bytes or a payload that fails the contract is 503 — each with its own
+    ``cache_state``/``reason``. Deliberately NO ``Depends(get_db)``, no
+    ``?bust=`` and no inline fallback.
+    """
+    _check_admin_secret(secret, request=request)
+
+    from fastapi.responses import JSONResponse
+
+    status, body = await read_matured_linkage_saved()
+    return JSONResponse(body, status_code=status, headers={"Cache-Control": "no-store"})
+
+
+@router.get("/source-intelligence/cached")
+async def source_intelligence_cached(
+    request: Request,
+    secret: str = Query(None, description="Admin secret for authorization"),
+):
+    """#847: the Source Intelligence payload from saved evidence ONLY.
+
+    Reads the primary snapshot, and only when it is MISSING the retained stale
+    copy, saying which one it served (``served_from``/``served_key``). The
+    public ``/api/source-intelligence`` route and its producer are unchanged.
+    Deliberately NO ``Depends(get_db)``, no ``?refresh=`` and no inline build.
+    """
+    _check_admin_secret(secret, request=request)
+
+    from fastapi.responses import JSONResponse
+
+    from app.routes.source_intelligence import read_source_intelligence_saved
+
+    status, body = await read_source_intelligence_saved()
+    return JSONResponse(body, status_code=status, headers={"Cache-Control": "no-store"})
+
+
 @router.get("/prediction-markets/tier1-compliance")
 async def tier1_source_compliance(
     request: Request,
