@@ -469,6 +469,199 @@ class TestRefusals:
         assert (exc.value.state, exc.value.reason) == ("malformed", "invalid_count")
 
 
+def _aged(seconds):
+    return T0 + timedelta(seconds=seconds)
+
+
+def _retained_error_envelope(lg=None):
+    # A later failed run that kept the earlier observation (attempt after it).
+    return _envelope(_last_good() if lg is None else lg, outcome="error",
+                     started=_aged(900), finished=_aged(911))
+
+
+class TestFreshnessPolicy:
+    """"approved" is the reviewed 1800 s from observation start and nothing else."""
+
+    @pytest.mark.parametrize("age,freshness,reason", [
+        (1799, "fresh", "observed"),
+        (1800, "stale", "observation_older_than_horizon"),
+        (1801, "stale", "observation_older_than_horizon"),
+        (2000, "stale", "observation_older_than_horizon"),
+        (3599, "stale", "observation_older_than_horizon"),
+    ])
+    def test_the_reviewed_horizon_ages_from_the_observation(self, client, poisoned, monkeypatch,
+                                                           age, freshness, reason):
+        env = _envelope()
+        resp, body, _ = _get(client, monkeypatch, _blob(env), now=_aged(age))
+        assert resp.status_code == 200
+        assert (body["cache_state"], body["freshness"], body["reason"]) == ("hit", freshness, reason)
+        assert body["age_seconds"] == age
+        assert body["fresh_until"] == _aged(1800).isoformat()
+        assert body["last_good"] == env["last_good"]
+
+    def test_retention_still_ends_at_observation_plus_3600(self, client, poisoned, monkeypatch):
+        resp, body, _ = _get(client, monkeypatch, _blob(_envelope()), now=_aged(3600))
+        assert (resp.status_code, body["cache_state"], body["freshness"]) == (202, "expired", "unknown")
+        assert body["last_good"] is None
+
+    # Root's specimen (cf00, age 2000 s): 3500 was served as fresh, 1800 as stale.
+    @pytest.mark.parametrize("horizon", [3500, 3600, 1801, 1799, 1, 10**400])
+    @pytest.mark.parametrize("age", [60, 2000])
+    def test_an_approved_horizon_other_than_the_reviewed_one_is_refused(self, client, poisoned,
+                                                                       monkeypatch, horizon, age):
+        resp, body, _ = _get(client, monkeypatch, _blob(_envelope(_last_good(fresh_for_seconds=horizon))),
+                             now=_aged(age))
+        assert resp.status_code == 503
+        assert (body["cache_state"], body["freshness"], body["reason"]) == (
+            "malformed", "unknown", "incompatible_freshness_policy")
+        # Nothing of the refused envelope is served as evidence, and no age is.
+        assert body["last_good"] is None and body["latest_attempt"] is None
+        assert body["age_seconds"] is None and body["fresh_until"] is None
+
+    def test_the_reviewed_horizon_control_at_the_same_age(self, client, poisoned, monkeypatch):
+        resp, body, _ = _get(client, monkeypatch, _blob(_envelope(_last_good(fresh_for_seconds=1800))),
+                             now=_aged(2000))
+        assert (resp.status_code, body["freshness"], body["age_seconds"]) == (200, "stale", 2000)
+
+    @pytest.mark.parametrize("fresh,policy", [
+        (None, "approved"), (1800.0, "approved"), (True, "approved"), (0, "approved"),
+        (-1800, "approved"), ("1800", "approved"), (1800, "unreviewed"), (1800, "APPROVED"),
+        (1800, ["approved"]), (1800, None),
+    ])
+    def test_a_policy_of_the_wrong_shape_stays_invalid(self, client, poisoned, monkeypatch, fresh, policy):
+        lg = _last_good(fresh_for_seconds=fresh, freshness_policy_status=policy)
+        resp, body, _ = _get(client, monkeypatch, _blob(_envelope(lg)), now=_aged(60))
+        assert (resp.status_code, body["cache_state"], body["reason"]) == (
+            503, "malformed", "invalid_freshness_policy")
+
+    @pytest.mark.parametrize("age", [60, 1799, 2000, 3599])
+    def test_the_unreviewed_path_is_never_aged_into_fresh_or_stale(self, client, poisoned, monkeypatch, age):
+        lg = _last_good(fresh_for_seconds=None, freshness_policy_status="unreviewed")
+        resp, body, _ = _get(client, monkeypatch, _blob(_envelope(lg)), now=_aged(age))
+        assert resp.status_code == 200
+        assert (body["freshness"], body["reason"], body["fresh_until"]) == (
+            "unknown", "freshness_policy_unreviewed", None)
+        assert body["last_good"] == lg
+
+    @pytest.mark.parametrize("age,freshness", [(1000, "fresh"), (1799, "fresh"), (1800, "stale"), (3599, "stale")])
+    def test_a_later_error_retaining_old_evidence_never_extends_it(self, client, poisoned, monkeypatch,
+                                                                  age, freshness):
+        env = _retained_error_envelope()
+        resp, body, _ = _get(client, monkeypatch, _blob(env), now=_aged(age))
+        assert resp.status_code == 200
+        assert (body["freshness"], body["reason"]) == (freshness, "latest_attempt_failed")
+        assert body["fresh_until"] == _aged(1800).isoformat()
+        assert body["last_good"] == env["last_good"]
+
+    def test_retained_evidence_with_an_incompatible_horizon_is_refused(self, client, poisoned, monkeypatch):
+        env = _retained_error_envelope(_last_good(fresh_for_seconds=3500))
+        resp, body, _ = _get(client, monkeypatch, _blob(env), now=_aged(2000))
+        assert (resp.status_code, body["cache_state"], body["reason"]) == (
+            503, "malformed", "incompatible_freshness_policy")
+        assert body["last_good"] is None
+
+    def test_retained_evidence_expires_at_its_own_retention_after_an_error(self, client, poisoned, monkeypatch):
+        resp, body, _ = _get(client, monkeypatch, _blob(_retained_error_envelope()), now=_aged(3600))
+        assert (resp.status_code, body["cache_state"]) == (202, "expired")
+        assert body["producer_error"] == {"kind": "statement_timeout", "code": "query_canceled"}
+        assert body["last_good"] is None
+
+
+# Every JSON value type, including the ones Python's decoder adds (NaN, huge ints).
+_JSON_PROBES = ([], {}, 1.5, float("nan"), True, None, 10**400, -1, "x", "")
+
+
+def _leaf_paths(node, path=()):
+    yield path
+    if isinstance(node, dict):
+        for key, value in node.items():
+            yield from _leaf_paths(value, path + (key,))
+    elif isinstance(node, list):
+        for i, value in enumerate(node):
+            yield from _leaf_paths(value, path + (i,))
+
+
+def _substituted(base, path, value):
+    env = json.loads(json.dumps(base))
+    node = env
+    for step in path[:-1]:
+        node = node[step]
+    node[path[-1]] = value
+    return env
+
+
+def _json_kind(value):
+    if isinstance(value, bool):
+        return "bool"
+    if isinstance(value, int):
+        return "int"
+    if isinstance(value, float):
+        return "float"
+    return type(value).__name__
+
+
+class TestMalformedTypes:
+    @pytest.mark.parametrize("kind", [[], {}, 1, 1.5, True, None])
+    def test_a_non_string_error_kind_is_a_typed_refusal(self, client, poisoned, monkeypatch, kind):
+        env = _envelope(None, outcome="error", error={"kind": kind, "code": "database_error"})
+        resp, body, _ = _get(client, monkeypatch, _blob(env))
+        assert (resp.status_code, body["cache_state"], body["reason"]) == (
+            503, "malformed", "invalid_latest_attempt")
+        assert body["latest_attempt"] is None
+
+    @pytest.mark.parametrize("kind,status,state", [
+        ("query_error", 503, "producer_error"),
+        ("unsupported_kind", 503, "malformed"),
+    ])
+    def test_string_error_kind_controls(self, client, poisoned, monkeypatch, kind, status, state):
+        env = _envelope(None, outcome="error", error={"kind": kind, "code": "database_error"})
+        resp, body, _ = _get(client, monkeypatch, _blob(env))
+        assert (resp.status_code, body["cache_state"]) == (status, state)
+
+    def test_an_observation_too_late_to_retain_is_a_typed_refusal(self, client, poisoned, monkeypatch):
+        late = "9999-12-31T23:59:59+00:00"
+        lg = _last_good(observation_started_at="9999-12-31T23:30:00+00:00", observation_finished_at=late,
+                        computed_at=late, published_at=late, retained_until=late)
+        resp, body, _ = _get(client, monkeypatch, _blob(_envelope(lg)))
+        assert (resp.status_code, body["cache_state"], body["reason"]) == (503, "malformed", "invalid_timestamp")
+
+    def test_absurdly_nested_json_is_a_typed_refusal(self, client, poisoned, monkeypatch):
+        resp, body, _ = _get(client, monkeypatch, b"[" * 100_000 + b"]" * 100_000)
+        assert (resp.status_code, body["cache_state"], body["reason"]) == (503, "malformed", "not_json")
+
+    @pytest.mark.parametrize("base", [
+        _envelope(), _retained_error_envelope(),
+        _envelope(None, outcome="error", error={"kind": "query_error", "code": "database_error"}),
+    ], ids=["success", "error_retaining_evidence", "error_without_evidence"])
+    def test_every_field_given_every_json_type_gets_a_typed_answer(self, client, poisoned, monkeypatch, base):
+        # Through the real route and JSONResponse: no value of any JSON type in any
+        # field may escape as a server error, and a value of the wrong type is
+        # never served as evidence.
+        redis = PoisonRedis(None)
+        _serve(monkeypatch, redis, _aged(60))
+        typed = {"hit", "miss", "error", "malformed", "partial", "producer_error", "expired"}
+        cases = 0
+        for path in _leaf_paths(base):
+            if not path:
+                continue
+            node = base
+            for step in path:
+                node = node[step]
+            original = node
+            for probe in _JSON_PROBES:
+                redis.value = json.dumps(_substituted(base, path, probe)).encode()
+                resp = client.get(PATH, headers=AUTH)
+                body = resp.json()
+                cases += 1
+                assert resp.status_code in (200, 202, 503), (path, probe)
+                assert body["cache_state"] in typed, (path, probe)
+                if probe is not None and _json_kind(probe) != _json_kind(original):
+                    assert resp.status_code == 503 and body["cache_state"] in ("malformed", "partial"), \
+                        (path, probe, body["reason"])
+        # Every field of the base was probed (not a vacuous sweep).
+        assert cases == (len(list(_leaf_paths(base))) - 1) * len(_JSON_PROBES) >= 8 * len(_JSON_PROBES)
+
+
 # ---------------------------------------------------------------------------
 # GET: the read is off the loop and bounded as a whole
 # ---------------------------------------------------------------------------
@@ -828,6 +1021,22 @@ class TestProducer:
         await cov._precompute_admin_event_source_coverage()
         env = json.loads(redis.sets[-1][1])
         assert env["last_good"] is None and redis.sets[-1][2] == 3600
+
+    async def test_a_failure_never_retains_evidence_with_an_incompatible_horizon(self, monkeypatch):
+        redis = FakeRedis(_blob(_envelope(_last_good(fresh_for_seconds=3500))))
+        clock = Clock(T0 + timedelta(seconds=100), step=0.5)
+        _arm_producer(monkeypatch, FakeSession(ROWS, helper_exc=RuntimeError("x")), redis, clock=clock)
+        result = await cov._precompute_admin_event_source_coverage()
+        assert result["published"] is True
+        env = json.loads(redis.sets[-1][1])
+        assert env["last_good"] is None and redis.sets[-1][2] == 3600
+
+    async def test_absurdly_nested_prior_bytes_are_not_evidence(self, monkeypatch):
+        redis = FakeRedis(b"[" * 100_000 + b"]" * 100_000)
+        _arm_producer(monkeypatch, FakeSession(ROWS, helper_exc=RuntimeError("x")), redis)
+        result = await cov._precompute_admin_event_source_coverage()
+        assert result["published"] is True
+        assert json.loads(redis.sets[-1][1])["last_good"] is None
 
     async def test_an_unreadable_prior_cache_is_never_overwritten(self, monkeypatch):
         import redis as redis_lib

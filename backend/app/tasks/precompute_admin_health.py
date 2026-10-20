@@ -278,8 +278,10 @@ def _validate_attempt(attempt: Any) -> tuple[dict, datetime, datetime]:
             raise CoverageEnvelopeInvalid("malformed", "invalid_latest_attempt")
     elif attempt["outcome"] == "error":
         error = _exact_keys(attempt["error"], {"kind", "code"}, "invalid_latest_attempt")
-        if error["kind"] not in _COVERAGE_ERROR_KINDS or not isinstance(error["code"], str) \
-                or not _SAFE_CODE.match(error["code"]):
+        # Type first: a saved list or object is unhashable and would escape the
+        # membership test as a TypeError instead of a typed refusal.
+        if not isinstance(error["kind"], str) or error["kind"] not in _COVERAGE_ERROR_KINDS \
+                or not isinstance(error["code"], str) or not _SAFE_CODE.match(error["code"]):
             raise CoverageEnvelopeInvalid("malformed", "invalid_latest_attempt")
     else:
         raise CoverageEnvelopeInvalid("malformed", "invalid_latest_attempt")
@@ -304,11 +306,21 @@ def _validate_last_good(last_good: Any) -> tuple[dict, datetime]:
     if stamps != sorted(stamps):
         raise CoverageEnvelopeInvalid("malformed", "timestamps_out_of_order")
     retained = _parse_ts(last_good["retained_until"])
-    if retained != observed + timedelta(seconds=EVENT_SOURCE_COVERAGE_RETAIN_SECONDS):
+    try:
+        retain_end = observed + timedelta(seconds=EVENT_SOURCE_COVERAGE_RETAIN_SECONDS)
+    except OverflowError:
+        # A parseable stamp so late that no retention window fits after it.
+        raise CoverageEnvelopeInvalid("malformed", "invalid_timestamp") from None
+    if retained != retain_end:
         raise CoverageEnvelopeInvalid("malformed", "retention_not_from_observation")
     fresh, policy = last_good["fresh_for_seconds"], last_good["freshness_policy_status"]
-    if not ((policy == "approved" and _is_int(fresh) and fresh > 0)
-            or (policy == "unreviewed" and fresh is None)):
+    if policy == "approved" and _is_int(fresh) and fresh > 0:
+        # "approved" means the REVIEWED horizon and nothing else. Any other saved
+        # number is a policy nobody reviewed and would misstate how long this
+        # evidence is fresh; it is refused, never trusted or rewritten.
+        if fresh != EVENT_SOURCE_COVERAGE_FRESH_FOR_SECONDS:
+            raise CoverageEnvelopeInvalid("malformed", "incompatible_freshness_policy")
+    elif not (policy == "unreviewed" and fresh is None):
         raise CoverageEnvelopeInvalid("malformed", "invalid_freshness_policy")
 
     window = _exact_keys(last_good["window"], {
@@ -500,7 +512,8 @@ async def read_event_source_coverage_cache() -> tuple[int, dict]:
         if isinstance(raw, (bytes, bytearray)):
             raw = raw.decode("utf-8")
         envelope = json.loads(raw)
-    except (UnicodeDecodeError, ValueError, TypeError):
+    except (UnicodeDecodeError, ValueError, TypeError, RecursionError):
+        # RecursionError: the C decoder's answer to valid but absurdly nested JSON.
         return _coverage_response(503, "malformed", "unknown", "not_json")
     try:
         validate_coverage_envelope(envelope)
@@ -773,7 +786,7 @@ async def _precompute_admin_event_source_coverage() -> dict:
                 candidate = prior["last_good"]
                 if candidate is not None and _parse_ts(candidate["retained_until"]) > attempt_finished:
                     retained_good = candidate
-        except (CoverageEnvelopeInvalid, ValueError, TypeError):
+        except (CoverageEnvelopeInvalid, ValueError, TypeError, RecursionError):
             retained_good = None  # unusable evidence is not last-good evidence
         envelope = {
             "schema_version": EVENT_SOURCE_COVERAGE_SCHEMA_VERSION,
