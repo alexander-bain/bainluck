@@ -191,7 +191,7 @@ final class TennisRecordedChanceBeforeScheduledStart9483Tests: XCTestCase {
         let twice = try consensus(history: duplicated)
         let atDuplicate = twice.reading(for: point(0, 0.60, source: "consensus"))
         XCTAssertNil(atDuplicate.away)
-        XCTAssertEqual(TennisChartReading9483.labels(for: atDuplicate).away, "", "a duplicate printed 40%")
+        XCTAssertEqual(TennisChartReading9483.labels(for: atDuplicate).away, "", "a duplicate printed 35%")
         let s = try consensus()
         let pushed = s.reading(for: point(21, 0.63, source: "consensus"))
         XCTAssertNil(pushed.away, "a time between rows borrowed a neighbour's away side")
@@ -399,6 +399,135 @@ final class TennisRecordedChanceBeforeScheduledStart9483Tests: XCTestCase {
         XCTAssertEqual(pin.held, .reading(try XCTUnwrap(s.latest)))
     }
 
+    // MARK: - Design C1: both competitors' lines, by the source contract
+
+    private func vertices(_ runs: [[PairedWinVertex9483]]) -> [[String]] {
+        runs.map { $0.map { "\(Int(($0.date.timeIntervalSince(start) / 60).rounded()))@\($0.probability)" } }
+    }
+
+    /// The blend's second line is its exhaustive complement, vertex for
+    /// vertex, in one run — the same number the panel prints for that side.
+    func testTheBlendDrawsTheSecondCompetitorAsItsComplement() {
+        let run = [point(0, 0.60), point(10, 0.62), point(20, 0.75)]
+        let away = TennisChartReading9483.awayRuns(run, source: "aggregate", supplied: [:])
+        XCTAssertEqual(away.count, 1, "the blend's second line broke a run it has no break in")
+        XCTAssertEqual(away.first?.map(\.date), run.map(\.date))
+        for (drawn, expected) in zip(away.first?.map(\.probability) ?? [], [0.40, 0.38, 0.25]) {
+            XCTAssertEqual(drawn, expected, accuracy: 1e-12)
+        }
+        XCTAssertEqual(away.first?.count, 3)
+    }
+
+    /// The consensus draws ONLY the side it supplied, at exactly that time:
+    /// a null away side or a duplicated row breaks the line there — never a
+    /// neighbour, never `1 − home`, and never normalised against home.
+    func testTheConsensusDrawsOnlyTheSideItSuppliedAndBreaksWhereItSuppliedNone() throws {
+        let h = try consensusHistory(rows: [
+            (-60, 0.5599, 0.4401), (0, 0.60, nil), (10, 0.62, 0.35), (20, 0.64, 0.33),
+            (180, 0.90, 0.10), (180, 0.90, 0.12), (190, 0.9772, 0.0227),
+        ])
+        let supplied = TennisChartReading9483.suppliedAways(in: h)
+        let run = [-60.0, 0, 10, 20, 180, 190].map { point($0, 0.5, source: "consensus") }
+        let away = TennisChartReading9483.awayRuns(run, source: "consensus", supplied: supplied)
+        XCTAssertEqual(vertices(away), [["-60@0.4401"], ["10@0.35", "20@0.33"], ["190@0.0227"]],
+                       "the consensus line must print its supplied sides and break at a null and a duplicate")
+        // CONTROL — the same run read as the blend is one unbroken complement,
+        // so the breaks above are the consensus contract, not the run.
+        XCTAssertEqual(TennisChartReading9483.awayRuns(run, source: "aggregate", supplied: supplied).count, 1)
+    }
+
+    func testAVenueSeriesDrawsNoSecondCompetitor() throws {
+        let supplied = TennisChartReading9483.suppliedAways(in: try consensusHistory(rows: [(0, 0.60, 0.35)]))
+        for venue in ["kalshi", "polymarket", "espn"] {
+            XCTAssertEqual(TennisChartReading9483.awayRuns([point(0, 0.60, source: venue)], source: venue,
+                                                           supplied: supplied).count, 0, venue)
+        }
+    }
+
+    /// The whole-line map is the one-time lookup's rule, read once: they agree
+    /// at every served time, including a null side and a duplicate.
+    func testTheSuppliedAwaysAgreeWithTheOneTimeLookup() throws {
+        let served: [(Double, Double, Double?)] = [(-60, 0.5599, nil), (0, 0.60, 0.35), (10, 0.62, 0.38),
+                                                   (10, 0.62, 0.38), (20, 0.64, 0.36)]
+        let h = try consensusHistory(rows: Array(served.reversed()))
+        let supplied = TennisChartReading9483.suppliedAways(in: h)
+        for minutes in [-60.0, 0, 10, 20, 30] {
+            XCTAssertEqual(supplied[at(minutes)],
+                           TennisChartReading9483.suppliedAway(at: at(minutes), source: "consensus", in: h),
+                           "\(minutes)")
+        }
+        XCTAssertEqual(supplied.count, 2, "only 0 and 20 supply exactly one away side")
+        XCTAssertEqual(TennisChartReading9483.suppliedAways(in: nil), [:])
+    }
+
+    func testBothCompetitorsDrawOnlyOverOneSeriesWithAnAwayContract() throws {
+        let points = [point(0, 0.60, source: "consensus"), point(10, 0.62, source: "consensus")]
+        let supplying = TennisChartReading9483.suppliedAways(in: try consensusHistory(rows: [(0, 0.60, 0.35)]))
+        let silent = TennisChartReading9483.suppliedAways(in: try consensusHistory(rows: [(0, 0.60, nil)]))
+        typealias R = TennisChartReading9483
+        XCTAssertTrue(R.drawsBothCompetitors(drawnSources: ["aggregate"], points: [point(0, 0.6)], supplied: [:]))
+        XCTAssertTrue(R.drawsBothCompetitors(drawnSources: ["consensus"], points: points, supplied: supplying))
+        XCTAssertFalse(R.drawsBothCompetitors(drawnSources: ["consensus"], points: points, supplied: silent),
+                       "a consensus that supplied no away side would key a line that draws nothing")
+        XCTAssertFalse(R.drawsBothCompetitors(drawnSources: ["consensus", "kalshi"], points: points, supplied: supplying),
+                       "several unblended lines keep today's chart")
+        XCTAssertFalse(R.drawsBothCompetitors(drawnSources: ["kalshi"], points: [point(0, 0.6, source: "kalshi")],
+                                              supplied: supplying), "no opponent series is invented for a venue")
+    }
+
+    /// The held marker's second dot sits at the value the panel prints for
+    /// that side, and nowhere the panel prints none.
+    func testTheHeldMarkersSecondDotSitsWhereThePanelPrints() throws {
+        let blend = try series(scheduledStart: start)
+        let blended = try XCTUnwrap(reading(blend.resolve(blend.inspect(at: at(10)))))
+        XCTAssertEqual(try XCTUnwrap(TennisChartReading9483.awayValue(for: blended)), 0.38, accuracy: 1e-12)
+        let books = try consensus()
+        let supplied = books.reading(for: point(0, 0.60, source: "consensus"))
+        XCTAssertEqual(TennisChartReading9483.awayValue(for: supplied), 0.35, "not the 40% complement")
+        XCTAssertNil(TennisChartReading9483.awayValue(for: books.reading(for: point(21, 0.63, source: "consensus"))))
+        for r in [blended, supplied] {
+            XCTAssertEqual(GamePlayCardView.printedLabels(home: r.home, away: TennisChartReading9483.awayValue(for: r)).away,
+                           TennisChartReading9483.labels(for: r).away)
+        }
+    }
+
+    // MARK: - Design C2: one compact comparison, Show latest after it
+
+    func testTheComparisonNamesOnceThenTheTwoPairsThenShowLatest() throws {
+        let s = try series(scheduledStart: start)
+        let held = try XCTUnwrap(reading(s.resolve(s.inspect(at: at(180)))))
+        let baseline = try XCTUnwrap(s.baseline)
+        typealias R = TennisChartReading9483
+        XCTAssertEqual(R.panelParts(shown: .reading(held, held: true), baseline: baseline, offersLatest: true),
+                       [.names, .shown(.reading(held, held: true)), .baseline(baseline), .showLatest],
+                       "the baseline must sit directly under the reading, with Show latest after both")
+        XCTAssertEqual(R.panelParts(shown: .gap(at(100)), baseline: baseline, offersLatest: true),
+                       [.names, .shown(.gap(at(100))), .baseline(baseline), .showLatest])
+        XCTAssertEqual(R.panelParts(shown: .unavailable, baseline: nil, offersLatest: true),
+                       [.shown(.unavailable), .showLatest], "no names head an empty table")
+        XCTAssertEqual(R.panelParts(shown: .reading(baseline, held: true), baseline: baseline, offersLatest: false),
+                       [.names, .shown(.reading(baseline, held: true))], "the same pair never prints twice")
+    }
+
+    // MARK: - Design C3: the full-size header keeps the match and its result
+
+    func testTheFullSizeHeaderNamesTheMatchAndItsFinalSetsResult() {
+        typealias C = TennisMatchContext9483
+        XCTAssertEqual(C.matchup(home: "Zverev", away: "Shelton"), "Zverev · Shelton")
+        XCTAssertEqual(C.result(finished: true, homeScore: 3, awayScore: 1, sportKey: "tennis_atp_us_open"),
+                       "Final · 3–1 sets", "the result is the scoreboard's, home first, named in sets")
+        XCTAssertEqual(C.result(finished: true, homeScore: 1, awayScore: 3, sportKey: "tennis_wta_us_open"),
+                       "Final · 1–3 sets")
+        XCTAssertEqual(C.result(finished: true, homeScore: nil, awayScore: 1, sportKey: "tennis_atp_us_open"), "Final",
+                       "a missing side is no result, never an invented one")
+        XCTAssertNil(C.result(finished: false, homeScore: 2, awayScore: 1, sportKey: "tennis_atp_us_open"),
+                     "a live match's state is the cover's live status, not a claimed result")
+        // CONTROL — the unit is the scoreboard's own: a sport that counts what
+        // its market quotes names none.
+        XCTAssertEqual(C.result(finished: true, homeScore: 24, awayScore: 17, sportKey: "americanfootball_nfl"),
+                       "Final · 24–17")
+    }
+
     // MARK: - Wiring (source scans; the behaviour above is worthless unasked)
 
     private func code(_ path: String) throws -> String {
@@ -477,5 +606,60 @@ final class TennisRecordedChanceBeforeScheduledStart9483Tests: XCTestCase {
         }
         XCTAssertTrue(helper.contains("\"Recorded chance\""))
         XCTAssertTrue(helper.contains("\"Before scheduled start\""))
+    }
+
+    private let contextPath = "Bain Luck/Components/TennisMatchContext9483.swift"
+    private let pagePath = "Bain Luck/Views/EventDetailView.swift"
+
+    func testTheChartDrawsBothCompetitorsByTheTennisContract() throws {
+        let chart = try stripped(chartPath)
+        XCTAssertTrue(chart.contains(
+            "guardTennisChartReading9483.applies(sportKey:sportKey),checkpoints==nil,letteamColorselse{returnnil}"),
+                      "the tennis pair must stay off a checkpoint mount")
+        XCTAssertTrue(chart.contains("letsupplied=drawn==[\"consensus\"]?TennisChartReading9483.suppliedAways(in:vm.history):[:]"))
+        XCTAssertTrue(chart.contains("lettennisPaired=tennisPairedLines(for:dataPoints,checkpoints:checkpoints)letpaired=tennisPaired?.colors??pairedLineColors(admitted:balance)"),
+                      "the chart lost the tennis pair, or it displaced the NFL/MLB admission")
+        XCTAssertTrue(chart.contains("paired:paired,tennisSupplied:tennisPaired?.supplied)"))
+        XCTAssertTrue(chart.contains(
+            "letawayRuns=tennisSupplied.map{TennisChartReading9483.awayRuns(segment,source:source,supplied:$0)}??[PairedWinLines9483.awayRun(segment)]"),
+                      "tennis must draw its second line by source, every other paired page by complement")
+        XCTAssertTrue(chart.contains("ifletpaired,letsplit,tennisSupplied==nil||TennisChartReading9483.drawsAwayTail(source:source){"),
+                      "the consensus must never draw the blend's complement tail")
+        XCTAssertTrue(chart.contains("tennisPaired==nil||TennisChartReading9483.drawsAwayTail(source:liveSplit.source)"))
+        XCTAssertTrue(chart.contains("awayColor:tennisPaired?.colors.away)"), "the held marker lost its second dot")
+        // The axis: on the pair the side labels hide (each line is its own
+        // player's chance, read up one 0–100% scale) and the key names both.
+        XCTAssertTrue(chart.contains(
+            "ifTennisChartReading9483.applies(sportKey:sportKey){returntennisPairedLines(for:dataPoints,checkpoints:checkpointMount(for:dataPoints))?.colors}"),
+                      "the gutter must hide its above/below side labels on the tennis pair")
+        XCTAssertTrue(chart.contains(
+            "letpaired=(TennisChartReading9483.applies(sportKey:sportKey)?tennisPairedLines(for:dataPoints,checkpoints:checkpointMount(for:dataPoints))?.colors:nil)??pairedLineColors(admitted:admitted)"),
+                      "the key must name both players on the tennis pair")
+    }
+
+    func testThePanelIsOneComparisonWithShowLatestAfterIt() throws {
+        let helper = try codeOnly(helperPath)
+        let flat = helper.filter { !$0.isWhitespace }
+        XCTAssertTrue(flat.contains("letparts=TennisChartReading9483.panelParts(shown:shown,baseline:series.baseline,offersLatest:scrubDate==nil&&offersLatest(shown))"))
+        XCTAssertFalse(helper.contains("Divider()"), "the comparison is one table, not two stacked blocks")
+        XCTAssertEqual(helper.components(separatedBy: "TennisChartReading9483.showLatestText").count - 1, 1)
+        XCTAssertTrue(flat.contains("case.showLatest:Button(TennisChartReading9483.showLatestText){pin.holdLatest(in:series)}.font(.caption).frame(minHeight:44,alignment:.leading)"),
+                      "Show latest keeps its 44pt target, in its own row after the comparison")
+        XCTAssertTrue(flat.contains(".font(prominent?.title3.bold():.subheadline.bold())"), "the values' type must not shrink")
+    }
+
+    func testTheFullSizeHeaderReadsTheScoreboardNeverAProjection() throws {
+        let chart = try stripped(chartPath)
+        XCTAssertTrue(chart.contains("ifTennisChartReading9483.applies(sportKey:sportKey){ToolbarItem(placement:.principal){tennisHeader}}"),
+                      "the full-size header lost the match context, or it reached other sports")
+        XCTAssertTrue(chart.contains("TennisMatchContext9483.result(finished:EventState.isFinished(status),homeScore:homeScore,awayScore:awayScore,sportKey:sportKey)"))
+        XCTAssertTrue(try codeOnly(pagePath).filter { !$0.isWhitespace }
+                        .contains("sportKey:event.sport,homeScore:event.homeScore,awayScore:event.awayScore,"),
+                      "the page must hand the chart its own scoreboard")
+        let context = try codeOnly(contextPath)
+        for forbidden in ["rojected", "rojection", "robability", "games", "completedAt"] {
+            XCTAssertFalse(context.contains(forbidden), forbidden)
+        }
+        XCTAssertTrue(context.contains("SportVocab.forSport(sportKey).scoreboardUnit"))
     }
 }

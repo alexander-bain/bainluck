@@ -179,6 +179,78 @@ enum TennisChartReading9483 {
         return rows[0].awayProbability
     }
 
+    // MARK: - Both competitors' lines (Design C1, 2026-10-20)
+
+    /// Every time at which the consensus supplies its own away side, by the
+    /// rule `suppliedAway(at:source:in:)` applies to one time — exactly one
+    /// served row there, carrying an away side — read once for a whole line
+    /// rather than once per vertex.
+    static func suppliedAways(in history: EventHistoryResponse?) -> [Date: Double] {
+        guard let history else { return [:] }
+        var rows: [Date: Int] = [:]
+        var aways: [Date: Double] = [:]
+        for row in history.history {
+            guard let date = row.timestamp.asDate else { continue }
+            rows[date, default: 0] += 1
+            if let away = row.awayProbability { aways[date] = away }
+        }
+        return aways.filter { rows[$0.key] == 1 }
+    }
+
+    /// Whether the chart draws the second competitor's line beside the first.
+    /// Only over one drawn series whose away side has a contract: the blend
+    /// (its exhaustive complement) or the consensus where it supplied at least
+    /// one away side of its own. Several venue lines, or one venue line, keep
+    /// today's single line: no opponent series is invented for them.
+    static func drawsBothCompetitors(drawnSources: [String], points: [ChartDataPoint],
+                                     supplied: [Date: Double]) -> Bool {
+        if drawnSources == ["aggregate"] { return true }
+        if drawnSources == ["consensus"] {
+            return points.contains { $0.source == "consensus" && supplied[$0.date] != nil }
+        }
+        return false
+    }
+
+    /// The second competitor's line over one drawn run, by the same source
+    /// contract the panel prints by (`labels(for:)`): the blend's complement
+    /// vertex for vertex (tennis prices no draw); the consensus's own supplied
+    /// side, broken wherever a vertex has none, so an unknown side is a gap and
+    /// never a neighbour or `1 − home`; nothing for any other series.
+    static func awayRuns(_ run: [ChartDataPoint], source: String,
+                         supplied: [Date: Double]) -> [[PairedWinVertex9483]] {
+        switch source {
+        case "aggregate":
+            return [PairedWinLines9483.awayRun(run)]
+        case "consensus":
+            var runs: [[PairedWinVertex9483]] = []
+            var current: [PairedWinVertex9483] = []
+            for point in run {
+                if let away = supplied[point.date] {
+                    current.append(PairedWinVertex9483(date: point.date, probability: away))
+                } else if !current.isEmpty {
+                    runs.append(current)
+                    current = []
+                }
+            }
+            if !current.isEmpty { runs.append(current) }
+            return runs
+        default:
+            return []
+        }
+    }
+
+    /// The live edge's away tail is the blend's alone: the hero's away number
+    /// it ends on is the blend's complement, which no other series draws.
+    static func drawsAwayTail(source: String) -> Bool {
+        source == "aggregate"
+    }
+
+    /// Where a reading's second competitor sits on the plot: the value
+    /// `labels(for:)` prints, unformatted. Nil where it prints nothing.
+    static func awayValue(for reading: Reading) -> Double? {
+        reading.source == "aggregate" ? 1.0 - reading.home : reading.away
+    }
+
     /// "2:51 PM" today, "Sep 13, 2:51 PM" otherwise: a match's readings span
     /// days, and a weekday alone cannot date an archived one.
     static func time(_ date: Date, now: Date = Date(), timeZone: TimeZone = .autoupdatingCurrent,
@@ -213,6 +285,30 @@ enum TennisChartReading9483 {
         guard let baseline else { return nil }
         if case .reading(let reading, _) = shown, reading == baseline { return nil }
         return baseline
+    }
+
+    /// One row of the panel, top to bottom.
+    enum PanelPart: Equatable {
+        /// The two competitors' names, once, heading the value columns.
+        case names
+        case shown(Shown)
+        case baseline(Reading)
+        case showLatest
+    }
+
+    /// The panel as one compact comparison (Design C2, 2026-10-20): the names
+    /// once, the shown reading's row, its dated baseline's row directly under
+    /// it, and "Show latest" after both, so the two pairs sit together and the
+    /// 44pt utility never pushes the baseline down.
+    static func panelParts(shown: Shown, baseline: Reading?, offersLatest: Bool) -> [PanelPart] {
+        let separate = separateBaseline(baseline, shown: shown)
+        var printsValues = separate != nil
+        if case .reading = shown { printsValues = true }
+        var parts: [PanelPart] = printsValues ? [.names] : []
+        parts.append(.shown(shown))
+        if let separate { parts.append(.baseline(separate)) }
+        if offersLatest { parts.append(.showLatest) }
+        return parts
     }
 
     /// Both sides as the card prints a chart moment (`GamePlayCardView.printedLabels`),
@@ -271,6 +367,12 @@ struct TennisReadingPanel9483: View {
     var scrubDate: Date? = nil
 
     @Environment(\.dynamicTypeSize) private var textSize
+    /// The value columns, wide enough for "100%" at each row's type and
+    /// scaled with it, so the dated caption beside them takes the rest.
+    /// (Not private: a defaulted private `var` would make the memberwise
+    /// init private, and `OddsChartView` builds this panel.)
+    @ScaledMetric(relativeTo: .title3) var prominentColumn: CGFloat = 64
+    @ScaledMetric(relativeTo: .subheadline) var column: CGFloat = 52
 
     private var shown: TennisChartReading9483.Shown {
         if let scrubDate { return series.resolve(series.inspect(at: scrubDate)) }
@@ -285,38 +387,95 @@ struct TennisReadingPanel9483: View {
     }
 
     private func content(_ shown: TennisChartReading9483.Shown) -> some View {
-        VStack(alignment: .leading, spacing: expanded ? 8 : 6) {
-            switch shown {
-            case .reading(let reading, _):
-                Text(TennisChartReading9483.heading(for: reading, scheduledStart: series.scheduledStart))
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-                chances(reading, prominent: expanded)
-            case .gap(let date):
-                Text("No recorded chance at \(TennisChartReading9483.time(date))")
-                    .font(.subheadline)
-                    .fixedSize(horizontal: false, vertical: true)
-            case .unavailable:
-                Text(TennisChartReading9483.unavailableText)
-                    .font(.subheadline)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            if scrubDate == nil, offersLatest(shown) {
-                Button(TennisChartReading9483.showLatestText) { pin.holdLatest(in: series) }
-                    .font(.caption)
-                    .frame(minHeight: 44, alignment: .leading)
-            }
-            if let baseline = TennisChartReading9483.separateBaseline(series.baseline, shown: shown) {
-                Divider()
-                Text(TennisChartReading9483.baselineHeading(for: baseline))
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-                chances(baseline, prominent: false)
+        let parts = TennisChartReading9483.panelParts(
+            shown: shown, baseline: series.baseline, offersLatest: scrubDate == nil && offersLatest(shown))
+        return VStack(alignment: .leading, spacing: expanded ? 8 : 6) {
+            ForEach(Array(parts.enumerated()), id: \.offset) { _, part in
+                switch part {
+                case .names:
+                    if !textSize.isAccessibilitySize { names }
+                case .shown(.reading(let reading, _)):
+                    row(TennisChartReading9483.heading(for: reading, scheduledStart: series.scheduledStart),
+                        reading, prominent: expanded)
+                case .shown(.gap(let date)):
+                    Text("No recorded chance at \(TennisChartReading9483.time(date))")
+                        .font(.subheadline)
+                        .fixedSize(horizontal: false, vertical: true)
+                case .shown(.unavailable):
+                    Text(TennisChartReading9483.unavailableText)
+                        .font(.subheadline)
+                        .fixedSize(horizontal: false, vertical: true)
+                case .baseline(let baseline):
+                    row(TennisChartReading9483.baselineHeading(for: baseline), baseline, prominent: false)
+                case .showLatest:
+                    Button(TennisChartReading9483.showLatestText) { pin.holdLatest(in: series) }
+                        .font(.caption)
+                        .frame(minHeight: 44, alignment: .leading)
+                }
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var valueColumn: CGFloat { expanded ? prominentColumn : column }
+
+    /// The two names once, over the value columns of every row below.
+    private var names: some View {
+        HStack(alignment: .lastTextBaseline, spacing: 8) {
+            Spacer(minLength: 0)
+            name(homeName)
+            name(awayName)
+        }
+        .accessibilityHidden(true)
+    }
+
+    private func name(_ text: String) -> some View {
+        Text(text)
+            .font(.caption)
+            .foregroundStyle(.primary)
+            .lineLimit(2)
+            .frame(width: valueColumn, alignment: .leading)
+    }
+
+    /// One dated pair: its caption, then each competitor's value under that
+    /// competitor's name. At accessibility sizes the caption takes its own
+    /// line and each value carries its name, as the panel did before.
+    @ViewBuilder
+    private func row(_ heading: String, _ reading: TennisChartReading9483.Reading, prominent: Bool) -> some View {
+        let printed = TennisChartReading9483.labels(for: reading)
+        if textSize.isAccessibilitySize {
+            VStack(alignment: .leading, spacing: 6) {
+                caption(heading)
+                chance(homeName, printed.home, colors?.home ?? .blue, prominent)
+                chance(awayName, printed.away, colors?.away ?? .red, prominent)
+            }
+        } else {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                caption(heading)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                value(printed.home, colors?.home ?? .blue, prominent)
+                value(printed.away, colors?.away ?? .red, prominent)
+            }
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel([heading, "\(homeName) \(printed.home)", "\(awayName) \(printed.away)"]
+                .map { $0.trimmingCharacters(in: .whitespaces) }
+                .joined(separator: ", "))
+        }
+    }
+
+    private func caption(_ text: String) -> some View {
+        Text(text)
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .fixedSize(horizontal: false, vertical: true)
+    }
+
+    private func value(_ text: String, _ color: Color, _ prominent: Bool) -> some View {
+        Text(text)
+            .font(prominent ? .title3.bold() : .subheadline.bold())
+            .monospacedDigit()
+            .foregroundStyle(color)
+            .frame(width: valueColumn, alignment: .leading)
     }
 
     /// This panel previewing the observation under a finger at `date`.
@@ -331,17 +490,6 @@ struct TennisReadingPanel9483: View {
         guard pin.held != nil else { return false }
         if case .reading(let reading, _) = shown { return reading != series.latest }
         return series.latest != nil
-    }
-
-    private func chances(_ reading: TennisChartReading9483.Reading, prominent: Bool) -> some View {
-        let printed = TennisChartReading9483.labels(for: reading)
-        let layout = textSize.isAccessibilitySize
-            ? AnyLayout(VStackLayout(alignment: .leading, spacing: 6))
-            : AnyLayout(HStackLayout(alignment: .top, spacing: 12))
-        return layout {
-            chance(homeName, printed.home, colors?.home ?? .blue, prominent)
-            chance(awayName, printed.away, colors?.away ?? .red, prominent)
-        }
     }
 
     private func chance(_ name: String, _ value: String, _ color: Color, _ prominent: Bool) -> some View {
@@ -374,7 +522,10 @@ struct TennisScrubbedReadingPanel9483: View {
 
 /// #9483 tennis — where the held reading sits on the plot: a dotted rule and a
 /// dot at its own time and value. Hidden under a finger (the crosshair is the
-/// reading then) and whenever the held reading is not exactly there.
+/// reading then) and whenever the held reading is not exactly there. Where the
+/// chart draws the second competitor's line (`awayColor`), a second dot sits
+/// on it at the value the panel prints for that side, and only where it
+/// prints one.
 struct TennisHeldReadingMarker9483: View {
     @ObservedObject var pin: TennisReadingPin9483
     @ObservedObject var selection: OddsChartSelection
@@ -382,6 +533,7 @@ struct TennisHeldReadingMarker9483: View {
     let proxy: ChartProxy
     let plotFrame: CGRect
     let color: Color
+    var awayColor: Color? = nil
 
     var body: some View {
         if !selection.isScrubbing, case .reading(let reading, held: true) = series.resolve(pin.held),
@@ -397,6 +549,13 @@ struct TennisHeldReadingMarker9483: View {
                     .fill(color)
                     .frame(width: 8, height: 8)
                     .position(x: plotFrame.minX + x, y: plotFrame.minY + y)
+                if let awayColor, let away = TennisChartReading9483.awayValue(for: reading),
+                   let awayY = proxy.position(forY: away), awayY >= 0, awayY <= plotFrame.height {
+                    Circle()
+                        .fill(awayColor)
+                        .frame(width: 8, height: 8)
+                        .position(x: plotFrame.minX + x, y: plotFrame.minY + awayY)
+                }
             }
             .allowsHitTesting(false)
             .accessibilityHidden(true)
