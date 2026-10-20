@@ -11,8 +11,10 @@ module does nothing; running it as a script exits 2 and does nothing.
 Shape (the conventions of the reviewed #683 native operator, re-bound to #847):
 the OWNER (caller) forks one WORKER in its own process group; the worker runs
 admission, reserves the single attempt, spawns the native CHILD, reads its output
-and writes the receipt. The owner returns within the one wall whatever happens,
-killing only that worker group if it has to.
+and writes the receipt. The owner kills only that worker group if it has to. A
+successful return is only ever made inside the one wall; an OS-level stall inside
+the owner's own close/kill/waitpid cannot be interrupted from Python, so a NO_RESULT
+return can come late (measured, and refused by contract.accept). See README.
 
 Bounds, both shared by everything this tool owns, both reserved before work starts:
   * ONE monotonic wall of 15 s from the first line of run_attempt: admission,
@@ -20,8 +22,17 @@ Bounds, both shared by everything this tool owns, both reserved before work star
     Cleanup is reserved inside it; nothing resets per plan; nothing late succeeds.
   * ONE cumulative 524288-byte ledger: child stdout + stderr, every receipt byte
     (temp files included, abandoned ones too) and the owner-return metadata.
-    This bounds what this tool serializes. It is NOT a cap on libpq's internal
-    or wire buffers: the driver holds each full result before the child sees it.
+    The child's share is reserved out of it before the child starts and passed to
+    the child, which checks it before every write it makes (its records, its
+    refusal, everything on its fd 2). So bytes the worker has not read yet were
+    still inside the ledger, and once the child is gone the worker drains both
+    pipes to EOF: received_bytes is every byte the child wrote, not what was read
+    before a refusal. Two residuals the child cannot pre-charge (the interpreter's
+    own startup diagnostics, and a library writing straight to fd 1, which libpq
+    does not) are still drained and counted exactly; past the ledger they are
+    reported as an overrun, never hidden. This bounds what this tool serializes.
+    It is NOT a cap on libpq's internal or wire buffers: the driver holds each full
+    result before the child sees it.
 """
 from __future__ import annotations
 
@@ -59,6 +70,9 @@ CLEANUP_RESERVE = 1.5
 OWNER_MARGIN = 0.05
 OWNER_RESERVE = 2048
 REFUSAL_RESERVE = 8192
+# Ledger room for what the interpreter may write to stderr before child.py's first
+# statement takes fd 2 over; the child's own budget never includes it.
+PRESTART_RESERVE = 4096
 INPUT_CAP = 16384
 RECEIPT_DIR = Path.home() / '.bainluck' / 'plan847-attempts'
 # No ambient credentials or libpq defaults reach the child. The pgpass/service paths
@@ -97,6 +111,21 @@ class Ledger:
         if n > self.available(reserve):
             raise OutputExceeded()
         self.bytes += n
+
+
+def _drain(pipe, deadline):
+    """Read a dead child's pipe to EOF. Returns (bytes read, reached EOF)."""
+    n = 0
+    while _now() < deadline:
+        try:
+            chunk = os.read(pipe.fileno(), 65536)
+        except BlockingIOError:
+            # The child is reaped, so another process still holds the write end.
+            return n, False
+        if not chunk:
+            return n, True
+        n += len(chunk)
+    return n, False
 
 
 def _remaining(deadline):
@@ -177,7 +206,7 @@ def _serialize(value, path, *, first, deadline, ledger, reserve):
 
 
 def run_attempt(*, credential, admission, owner):
-    """The only entry. One attempt under one 15 s wall; returns within it.
+    """The only entry. One attempt under one 15 s wall; success is only returned within it.
 
     A returned verdict of PLAN_ONLY_PENDING_ROOT_REVIEW is still not a result by
     itself: read the receipt bytes and pass both to contract.accept(). A disk
@@ -387,14 +416,19 @@ def _worker(*, credential, admission, owner, deadline):
     reason = None
     proc = None
     output = bytearray()
-    total = stderr_bytes = 0
+    total = stderr_bytes = overrun = 0
     selector = selectors.DefaultSelector()
     try:
         _serialize(receipt, path, first=True, deadline=deadline, ledger=ledger,
                    reserve=OWNER_RESERVE + REFUSAL_RESERVE)
         if type(credential) is not str or not credential or '\0' in credential or len(credential.encode()) > 12000:
             raise ValueError('INPUT_REFUSED')
-        payload = (json.dumps(dict(credential=credential, admission=admission, owner=owner),
+        # The child's whole share of the ledger, fixed before it starts.
+        budget = ledger.available(OWNER_RESERVE + REFUSAL_RESERVE + PRESTART_RESERVE)
+        if budget <= 0:
+            raise OutputExceeded()
+        payload = (json.dumps(dict(credential=credential, admission=admission, owner=owner,
+                                   output_budget=budget),
                               separators=(',', ':'), allow_nan=False) + '\n').encode()
         if len(payload) > INPUT_CAP:
             raise ValueError('INPUT_REFUSED')
@@ -476,6 +510,22 @@ def _worker(*, credential, admission, owner, deadline):
                     except subprocess.TimeoutExpired:
                         # No fresh allowance: the owner kills this whole group.
                         raise TimeoutError('WALL_EXPIRED')
+            # The child is gone: what it left in its pipes is output it wrote. Count
+            # every byte (never retain it); no reported number stops at the last read.
+            for pipe in (proc.stdout, proc.stderr):
+                if pipe.closed:
+                    continue
+                n, eof = _drain(pipe, deadline)
+                total += n
+                if pipe is proc.stderr:
+                    stderr_bytes += n
+                try:
+                    ledger.charge(n, OWNER_RESERVE + REFUSAL_RESERVE)
+                except OutputExceeded:
+                    overrun += n
+                    reason = reason or 'OUTPUT_EXCEEDED'
+                if not eof:
+                    reason = reason or 'CLEANUP_UNCERTAIN'
             for pipe in (proc.stdin, proc.stdout, proc.stderr):
                 if not pipe.closed:
                     pipe.close()
@@ -504,7 +554,7 @@ def _worker(*, credential, admission, owner, deadline):
     _remaining(deadline)
     summary.update(verdict='NO_RESULT' if reason else 'PLAN_ONLY_PENDING_ROOT_REVIEW',
                    reason=reason, candidate_sha256=None if reason else candidate_hash,
-                   combined_output_bytes=ledger.bytes + OWNER_RESERVE)
+                   combined_output_bytes=ledger.bytes + OWNER_RESERVE + overrun)
     return summary, ledger
 
 

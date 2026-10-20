@@ -342,7 +342,7 @@ class TestEvidence:
 # ─── end to end: real supervisor, real worker, real child, fake driver ───────
 
 class Rig:
-    def __init__(self, tmp_path, monkeypatch, behavior=None, virtual=True):
+    def __init__(self, tmp_path, monkeypatch, behavior=None, virtual=True, meter=False, prestart=0):
         tmp_path.mkdir(parents=True, exist_ok=True)
         self.dir = tmp_path
         self.log = tmp_path / 'driver.log'
@@ -356,6 +356,8 @@ class Rig:
             import lib_plan847_fake_driver as fake
             sys.argv = [{str(TOOL / 'child.py')!r}]
             fake.install(json.loads({json.dumps(behavior or {})!r}), {str(self.log)!r}, {str(self.clock)!r})
+            if {meter!r}:
+                fake.meter({str(self.log)!r}, {prestart!r})
             runpy.run_path({str(TOOL / 'child.py')!r}, run_name='__main__')
         '''))
         monkeypatch.setattr(supervisor, '_child_argv', lambda: PRODUCTION_ARGV()[:-1] + [str(launcher), str(TOOL / 'child.py')])
@@ -378,6 +380,14 @@ class Rig:
 
     def executed(self):
         return [e['kind'] for e in self.events() if e['event'] == 'execute']
+
+    def written(self, kind='complete', stream=None):
+        """Bytes the child's writes into its parent's pipes completed (or attempted)."""
+        names = {f'{s}_write_{kind}' for s in ((stream,) if stream else ('stdout', 'stderr'))}
+        return sum(e['bytes'] for e in self.events() if e['event'] in names)
+
+    def disk(self):
+        return sum(p.stat().st_size for p in self.receipts.iterdir())
 
     def receipt(self, aid='adm-847-test-0001'):
         return (self.receipts / f'{aid}.json').read_bytes()
@@ -468,7 +478,8 @@ class TestEndToEnd:
 
     def test_the_child_itself_refuses_a_bad_admission_before_importing_a_driver(self, tmp_path, monkeypatch):
         rig = Rig(tmp_path, monkeypatch)
-        payload = json.dumps({'credential': DSN, 'admission': admission(subject='683'), 'owner': OWNER}).encode()
+        payload = json.dumps({'credential': DSN, 'admission': admission(subject='683'), 'owner': OWNER,
+                              'output_budget': 100_000}).encode()
         proc = subprocess.run(supervisor._child_argv(), input=payload, capture_output=True,
                               env=supervisor.CHILD_ENV, timeout=10)
         assert proc.returncode == 1 and proc.stderr == b''
@@ -638,14 +649,13 @@ class TestEndToEnd:
         assert result['combined_output_bytes'] <= cap
         disk = json.loads(big.receipt())
         assert disk['reason'] == 'OUTPUT_EXCEEDED' and 'candidate_evidence' not in disk
-        # One plan past the stream allowance is refused at the stream, mid-read. The child
-        # parks at query3's rollback: the few KB left unread fit the pipe buffer, so without
-        # it whether candidate C runs before the terminate lands is scheduling, not the tool.
-        huge = Rig(tmp_path / 'huge', monkeypatch, {'explain_query3': [{'plan_pad': 515_000}],
-                                                    'rollback': [{'stall': True}]})
+        # One plan past the child's budget, unstalled: the child's budget is its share of
+        # this ledger, so it refuses the record before writing it and candidate C never
+        # runs. TestSerializedOutputBound meters this specimen's completed writes.
+        huge = Rig(tmp_path / 'huge', monkeypatch, {'explain_query3': [{'plan_pad': 515_000}]})
         result = huge.run()
-        assert result['verdict'] == 'NO_RESULT' and result['reason'] == 'OUTPUT_EXCEEDED', result
-        assert result['received_bytes'] < 515_000 and result['combined_output_bytes'] <= cap
+        assert result['verdict'] == 'NO_RESULT' and result['reason'] == 'NONZERO_EXIT', result
+        assert result['received_bytes'] < 1000 and result['combined_output_bytes'] <= cap
         assert 'explain_candidateC' not in huge.executed()
         # One record past the child's own ceiling never reaches the pipe at all.
         over = Rig(tmp_path / 'over', monkeypatch, {'explain_query3': [{'plan_pad': 530_000}]})
@@ -673,6 +683,202 @@ class TestEndToEnd:
         assert rig.real_seconds <= 15.1
         assert rig.executed() == FULL_SEQUENCE  # the plans ran; the late receipt still grants nothing
         _assert_gone(rig.child_pid())
+
+
+# ─── serialized output: what the child WRITES, not what the worker read ─────────
+#
+# Root's 4bbe replay: completed child stdout writes reached 524,858 bytes (over the
+# 524,288 cap) while the owner reported received 511,968 / combined 518,183, because
+# the worker stopped reading at its allowance and the rest sat in the pipe. These
+# tests meter writes the CHILD completes into its parent's pipes (after the real write
+# returns), give the child free advance with one 150 ms worker-read delay, and never
+# stall it. Nothing here widens the cap or the wall.
+
+CAP = contract.LIMITS['combined_output_bytes']
+# The most the child may ever write: its budget is this minus the first receipt.
+STREAM = CAP - supervisor.OWNER_RESERVE - supervisor.REFUSAL_RESERVE - supervisor.PRESTART_RESERVE
+
+
+def _delay_worker_read_once(rig, monkeypatch, at):
+    """Root's scheduling control: one 150 ms sleep in the WORKER once it has read `at`
+    bytes. The worker is a forked process, so the delay is recorded in the rig's log."""
+    owner = os.getpid()
+    real_read = os.read
+    state = {'seen': 0, 'delayed': False}
+
+    def read(fd, n):
+        raw = real_read(fd, n)
+        if os.getpid() != owner:
+            state['seen'] += len(raw)
+            if state['seen'] >= at and not state['delayed']:
+                state['delayed'] = True
+                with open(rig.log, 'a') as f:
+                    f.write(json.dumps({'event': 'worker_read_delay', 'seen': state['seen']}) + '\n')
+                time.sleep(.15)
+        return raw
+    monkeypatch.setattr(supervisor.os, 'read', read)
+
+
+def _delayed(rig):
+    return any(e['event'] == 'worker_read_delay' for e in rig.events())
+
+
+def _assert_counted_and_bounded(rig, result):
+    """Every byte the child wrote is inside its budget and inside the reported ledger."""
+    written = rig.written()
+    assert written <= STREAM, (written, STREAM)
+    assert result['received_bytes'] == written, (result, written)
+    assert written + rig.disk() + supervisor.OWNER_RESERVE <= result['combined_output_bytes'] <= CAP, result
+
+
+class TestSerializedOutputBound:
+    def test_roots_4bbe_replay_stops_inside_the_childs_budget(self, tmp_path, monkeypatch):
+        rig = Rig(tmp_path, monkeypatch, {'explain_query3': [{'plan_pad': 523_000}],
+                                          'explain_candidateC': [{'plan_pad': 1000}]}, meter=True)
+        _delay_worker_read_once(rig, monkeypatch, 510_000)
+        result = rig.run()
+        assert result['verdict'] == 'NO_RESULT' and result['reason'] == 'NONZERO_EXIT', result
+        assert result['exit_code'] == 1 and result['owner_completed'] is True
+        # Root's delay point (510,000 bytes read) is never reached: nothing near it was written.
+        assert not _delayed(rig)
+        _assert_counted_and_bounded(rig, result)
+        # The oversize record was refused before it was even attempted; the first error stops.
+        assert rig.written('attempt') == rig.written() < 1000
+        assert 'explain_candidateC' not in rig.executed()
+
+    @pytest.mark.parametrize('pads,delay_at,reason,exit_code', [
+        ((515_000, None), 1, 'NONZERO_EXIT', 1),            # the old specimen, without its stall
+        ((300_000, 300_000), 250_000, 'NONZERO_EXIT', 1),   # each fits, the sum does not
+        ((400_000, 110_000), 400_000, 'NONZERO_EXIT', 1),   # the sum crosses near the cap
+        ((495_000, 1_000), 440_000, 'OUTPUT_EXCEEDED', 0),  # the stream fits; stream + receipt does not
+    ])
+    def test_an_unstalled_child_never_writes_past_its_budget(self, tmp_path, monkeypatch, pads, delay_at,
+                                                             reason, exit_code):
+        behavior = {'explain_query3': [{'plan_pad': pads[0]}]}
+        if pads[1]:
+            behavior['explain_candidateC'] = [{'plan_pad': pads[1]}]
+        rig = Rig(tmp_path, monkeypatch, behavior, meter=True)
+        _delay_worker_read_once(rig, monkeypatch, delay_at)
+        result = rig.run()
+        assert result['verdict'] == 'NO_RESULT' and result['reason'] == reason, result
+        assert result['exit_code'] == exit_code
+        assert _delayed(rig) and not any(e['event'] == 'stall' for e in rig.events())
+        _assert_counted_and_bounded(rig, result)
+        assert rig.written('attempt') == rig.written()
+        if exit_code == 1:
+            assert rig.executed()[-1] == ('explain_query3' if pads[1] is None else 'explain_candidateC')
+
+    def test_control_a_large_run_within_budget_is_accepted_and_counted_exactly(self, tmp_path, monkeypatch):
+        rig = Rig(tmp_path, monkeypatch, {'explain_query3': [{'plan_pad': 100_000}],
+                                          'explain_candidateC': [{'plan_pad': 100_000}]}, meter=True)
+        _delay_worker_read_once(rig, monkeypatch, 100_000)
+        result = rig.run()
+        assert result['verdict'] == 'PLAN_ONLY_PENDING_ROOT_REVIEW', result
+        assert _delayed(rig) and result['exit_code'] == 0
+        _assert_counted_and_bounded(rig, result)
+        assert rig.written() > 200_000 and rig.executed() == FULL_SEQUENCE
+        assert set(contract.accept(result, rig.receipt())) == {'query3', 'candidateC'}
+
+    def test_stderr_spends_the_same_budget_as_the_records(self, tmp_path, monkeypatch):
+        rig = Rig(tmp_path, monkeypatch, {'connect': [{'stderr': 'n' * 12_000}],
+                                          'explain_query3': [{'plan_pad': 500_000}]}, meter=True)
+        result = rig.run()
+        # 500 KB fits the budget alone; after 12 KB of forwarded stderr it does not.
+        assert result['verdict'] == 'NO_RESULT' and result['reason'] == 'NONZERO_EXIT', result
+        assert rig.written(stream='stderr') == 12_000
+        _assert_counted_and_bounded(rig, result)
+        assert 'explain_candidateC' not in rig.executed()
+
+    def test_control_small_stderr_still_reaches_the_worker_and_refuses(self, tmp_path, monkeypatch):
+        rig = Rig(tmp_path, monkeypatch, {'connect': [{'stderr': 'n' * 12_000}]}, meter=True)
+        result = rig.run()
+        assert result['verdict'] == 'NO_RESULT' and result['reason'] == 'STDERR_REFUSED', result
+        assert result['exit_code'] == 0 and rig.executed() == FULL_SEQUENCE
+        assert rig.written(stream='stderr') == 12_000
+        _assert_counted_and_bounded(rig, result)
+
+    def test_a_stderr_flood_never_reaches_the_parent(self, tmp_path, monkeypatch):
+        """300 KB on fd 2 lands in the child's private pipe; its writer blocks and the wall ends it."""
+        # 13.6 s: past the child's share of the wall, inside the cleanup reserve.
+        rig = Rig(tmp_path, monkeypatch, {'begin': [{'stderr_flood': 300_000, 'bump': 13.6}]}, meter=True)
+        result = rig.run()
+        assert result['verdict'] == 'NO_RESULT' and result['reason'] == 'WALL_EXPIRED', result
+        assert result['owner_completed'] is True
+        assert any(e['event'] == 'stderr_flood' for e in rig.events())
+        assert rig.written('attempt') == rig.written() == 0
+        _assert_counted_and_bounded(rig, result)
+        _assert_gone(rig.child_pid())
+
+    def test_a_library_writing_straight_to_stdout_is_counted_never_hidden(self, tmp_path, monkeypatch):
+        """Residual: fd 1 writes that are not child.py records are not pre-charged. The worker
+        refuses at its allowance and drains to EOF, so the report covers every byte written."""
+        rig = Rig(tmp_path, monkeypatch, {'begin': [{'flood': 600_000}]}, meter=True)
+        result = rig.run()
+        assert result['verdict'] == 'NO_RESULT' and result['reason'] == 'OUTPUT_EXCEEDED', result
+        assert rig.written() <= result['received_bytes'] <= rig.written('attempt')
+        assert result['combined_output_bytes'] >= result['received_bytes'] + rig.disk() + supervisor.OWNER_RESERVE
+        _assert_gone(rig.child_pid())
+
+    def test_control_start_up_stderr_inside_its_reserve_is_counted_and_refused(self, tmp_path, monkeypatch):
+        rig = Rig(tmp_path, monkeypatch, meter=True, prestart=100)
+        result = rig.run()
+        assert result['verdict'] == 'NO_RESULT' and result['reason'] == 'STDERR_REFUSED', result
+        assert rig.written(stream='stderr') == 100
+        _assert_counted_and_bounded(rig, result)
+
+    def test_start_up_stderr_past_its_reserve_is_reported_as_an_overrun(self, tmp_path, monkeypatch):
+        """Residual: interpreter output before child.py's first line is outside the child's
+        budget. Past PRESTART_RESERVE it is still counted, and the report says over the cap."""
+        rig = Rig(tmp_path, monkeypatch, {'explain_query3': [{'plan_pad': 300_000}],
+                                          'explain_candidateC': [{'plan_pad': 200_000}]},
+                  meter=True, prestart=30_000)
+        result = rig.run()
+        assert result['verdict'] == 'NO_RESULT' and result['reason'] == 'OUTPUT_EXCEEDED', result
+        assert rig.written() <= result['received_bytes'] <= rig.written('attempt')
+        assert result['combined_output_bytes'] >= result['received_bytes'] + rig.disk() + supervisor.OWNER_RESERVE
+        assert result['combined_output_bytes'] > CAP
+        _assert_gone(rig.child_pid())
+
+    @pytest.mark.parametrize('budget', [None, True, 100_000.0, 43, CAP + 1, -1])
+    def test_the_child_refuses_a_missing_or_invalid_budget_before_any_driver(self, tmp_path, monkeypatch, budget):
+        rig = Rig(tmp_path, monkeypatch)
+        request = {'credential': DSN, 'admission': admission(), 'owner': OWNER}
+        if budget is not None:
+            request['output_budget'] = budget
+        proc = subprocess.run(supervisor._child_argv(), input=json.dumps(request).encode(), capture_output=True,
+                              env=supervisor.CHILD_ENV, timeout=10)
+        assert proc.returncode == 1 and proc.stderr == b''
+        assert proc.stdout == b'{"kind":"refusal","reason":"CHILD_REFUSED"}\n'
+        assert [e['event'] for e in rig.events()] == ['launch']
+
+    def test_the_refusal_is_held_back_from_the_childs_budget(self, tmp_path, monkeypatch):
+        rig = Rig(tmp_path, monkeypatch)
+        guard = (json.dumps({'kind': 'guard', 'plan': 'query3', 'row': list(contract.GUARD_ROW)},
+                            separators=(',', ':')) + '\n').encode()
+        refusal = b'{"kind":"refusal","reason":"CHILD_REFUSED"}\n'
+        # Room for the guard record, but then not for the refusal: so the guard is never written.
+        request = {'credential': DSN, 'admission': admission(), 'owner': OWNER,
+                   'output_budget': len(guard) + len(refusal) - 1}
+        proc = subprocess.run(supervisor._child_argv(), input=json.dumps(request).encode(), capture_output=True,
+                              env=supervisor.CHILD_ENV, timeout=10)
+        assert proc.returncode == 1 and proc.stderr == b'' and proc.stdout == refusal
+        # Control: one byte more and the guard fits beside the refusal.
+        rig = Rig(tmp_path / 'control', monkeypatch)
+        request['output_budget'] += 1
+        proc = subprocess.run(supervisor._child_argv(), input=json.dumps(request).encode(), capture_output=True,
+                              env=supervisor.CHILD_ENV, timeout=10)
+        assert proc.returncode == 1 and proc.stdout == guard + refusal
+
+    def test_the_child_alone_never_writes_more_than_its_budget(self, tmp_path, monkeypatch):
+        rig = Rig(tmp_path, monkeypatch)
+        request = {'credential': DSN, 'admission': admission(), 'owner': OWNER, 'output_budget': 200}
+        proc = subprocess.run(supervisor._child_argv(), input=json.dumps(request).encode(), capture_output=True,
+                              env=supervisor.CHILD_ENV, timeout=10)
+        # The guard record fits; the plan does not; the refusal was held back from the start.
+        assert proc.returncode == 1 and proc.stderr == b'' and len(proc.stdout) <= 200
+        assert proc.stdout.startswith(b'{"kind":"guard"')
+        assert proc.stdout.endswith(b'{"kind":"refusal","reason":"CHILD_REFUSED"}\n')
+        assert 'explain_candidateC' not in rig.executed()
 
 
 # ─── the owner's own setup and finalization ──────────────────────────────────
@@ -948,6 +1154,13 @@ class TestEntrySurface:
         # stderr, which (correctly) refused every real attempt in the local rig.
         for key in ('PGPASSFILE', 'PGSERVICEFILE'):
             assert not os.path.lexists(supervisor.CHILD_ENV[key])
+
+    def test_no_docstring_promises_an_owner_return_the_os_cannot_guarantee(self):
+        # README: an OS-level stall in the owner's own close/kill/waitpid can make a
+        # NO_RESULT return late. No public text may promise otherwise.
+        texts = (supervisor.__doc__, supervisor.run_attempt.__doc__, (TOOL / 'README.md').read_text())
+        for text in texts:
+            assert 'whatever happens' not in text and 'returns within it' not in text
 
     def test_no_generic_sql_or_cap_override_exists(self):
         text = (TOOL / 'supervisor.py').read_text() + (TOOL / 'child.py').read_text()

@@ -14,6 +14,9 @@ Per kind, an action list indexed by occurrence (0 = first time), each action may
   row      replace the guard row;  status: replace the cursor status message
   truncate write half a record to stdout and exit 0
   stderr   write text to stderr
+  flood    write N bytes straight to fd 1 in 512-byte (atomic) writes, bypassing the
+           child's records: what a library writing to stdout would do
+  stderr_flood  write N bytes to fd 2: the first 4096, then any bump, then the rest
 The log records events as JSON lines and stores only a SHA-256 of the DSN.
 """
 import hashlib
@@ -66,8 +69,20 @@ def _action(kind):
     if action.get('stderr'):
         sys.stderr.write(action['stderr'])
         sys.stderr.flush()
-    if action.get('bump'):
+    if action.get('stderr_flood'):
+        n = action['stderr_flood']
+        _log({'event': 'stderr_flood', 'kind': kind, 'bytes': n})
+        os.write(2, b'e' * 4096)
+        if action.get('bump'):
+            bump(action['bump'])
+        rest = memoryview(b'e' * (n - 4096))
+        while rest:
+            rest = rest[os.write(2, rest):]
+    elif action.get('bump'):
         bump(action['bump'])
+    if action.get('flood'):
+        for _ in range(action['flood'] // 512):
+            os.write(1, b'#' * 512)
     if action.get('stall'):
         _log({'event': 'stall', 'kind': kind})
         while True:
@@ -138,6 +153,54 @@ def connect(dsn, **kwargs):
     _log({'event': 'connect', 'kwargs': kwargs, 'dsn_sha256': hashlib.sha256(dsn.encode()).hexdigest()})
     _action('connect')
     return Connection()
+
+
+def meter(log, prestart=0):
+    """Count what the child's writes COMPLETE into its parent's two pipes.
+
+    Installed by the launcher before child.py runs. Records go through sys.stdout.buffer
+    and are logged only after the real write and flush return; raw fd writes are matched
+    to the parent's pipes by inode, so a write into the child's private fd 2 pipe is not
+    a write to the parent and is never counted. An `_attempt` event precedes each write,
+    so a write cut off by a signal is bracketed. `prestart` bytes go to the parent's
+    stderr before child.py starts, as interpreter start-up diagnostics would.
+    """
+    targets = {os.fstat(1).st_ino: 'stdout', os.fstat(2).st_ino: 'stderr'}
+
+    def note(event, n):
+        with open(log, 'a') as f:
+            f.write(json.dumps({'event': event, 'bytes': n}) + '\n')
+
+    real_out = sys.stdout.buffer
+    real_write = os.write
+
+    class Meter:
+        def write(self, raw):
+            note('stdout_write_attempt', len(raw))
+            n = real_out.write(raw)
+            real_out.flush()
+            note('stdout_write_complete', n)
+            return n
+
+        def flush(self):
+            return real_out.flush()
+
+    class Out:
+        buffer = Meter()
+
+    def write(fd, data):
+        target = targets.get(os.fstat(fd).st_ino)
+        if target:
+            note(target + '_write_attempt', len(data))
+        n = real_write(fd, data)
+        if target:
+            note(target + '_write_complete', n)
+        return n
+
+    sys.stdout = Out()
+    os.write = write
+    if prestart:
+        write(2, b'p' * prestart)
 
 
 def install(behavior, log, clock):

@@ -8,9 +8,15 @@ the installed psycopg2 and opens ONE connection. Per sealed plan: BEGIN READ ONL
 the two SET LOCALs, the guard check, the EXPLAIN, ROLLBACK. The first error stops
 everything; the second plan never starts after a failed first.
 
-The parent owns the wall and the output ledger. libpq buffers each result in full
-before this process sees it, so the parent's byte ledger bounds what is serialized,
-not the driver's internal or wire buffers.
+The parent owns the wall and the output ledger, and hands this process its share of
+the ledger as `output_budget` in the request. Everything this process serializes to
+its parent counts against that ONE budget and is checked BEFORE the write, so a byte
+left unread in a pipe was still inside it: every stdout record, the refusal record
+(its size is held back from the start), and every byte anything writes to fd 2 from
+this file's first statement on. fd 2 is re-pointed at a private pipe that is drained
+and forwarded within the budget at each record and before exit. libpq buffers each
+result in full before this process sees it; that driver memory and wire traffic is
+not serialized output and is not what the budget bounds.
 """
 import importlib.util
 import json
@@ -22,8 +28,14 @@ from pathlib import Path
 
 B = Path(__file__).resolve().parent
 INPUT_CAP = 16384
-RECORD_CAP = 524288
+OUTPUT_CAP = 524288
+REQUEST_KEYS = {'credential', 'admission', 'owner', 'output_budget'}
+REFUSAL = b'{"kind":"refusal","reason":"CHILD_REFUSED"}\n'
 OWNED = None
+# Until the request names a budget, only the refusal record may be written.
+BUDGET = len(REFUSAL)
+SPENT = 0
+ERR_IN = REAL_ERR = None
 
 
 def _contract():
@@ -33,12 +45,57 @@ def _contract():
     return module
 
 
+def spend(n):
+    """Charge n bytes BEFORE writing them; the refusal record's size is never spendable."""
+    global SPENT
+    if SPENT + n > BUDGET - len(REFUSAL):
+        raise ValueError('OUTPUT_REFUSED')
+    SPENT += n
+
+
+def own_stderr():
+    """Point fd 2 at a private pipe, so no stderr byte reaches the parent unbudgeted."""
+    global ERR_IN, REAL_ERR
+    REAL_ERR = os.dup(2)
+    r, w = os.pipe()
+    os.dup2(w, 2)
+    os.close(w)
+    os.set_blocking(r, False)
+    ERR_IN = r
+
+
+def forward_stderr():
+    # Anything written to fd 2 since the last check (Python warnings, the driver).
+    # A writer that fills the private pipe between checks blocks; the parent's wall ends it.
+    if ERR_IN is None:
+        return
+    sys.stderr.flush()  # a partial line held in Python's own buffer is fd 2 output too
+    while True:
+        try:
+            raw = os.read(ERR_IN, 4096)
+        except BlockingIOError:
+            return
+        if not raw:
+            return
+        spend(len(raw))
+        view = memoryview(raw)
+        while view:
+            view = view[os.write(REAL_ERR, view):]
+
+
 def emit(record):
     raw = (json.dumps(record, separators=(',', ':'), allow_nan=False, ensure_ascii=True) + '\n').encode('ascii')
-    if len(raw) > RECORD_CAP:
-        raise ValueError('RECORD_REFUSED')
+    forward_stderr()
+    spend(len(raw))
     sys.stdout.buffer.write(raw)
     sys.stdout.buffer.flush()
+
+
+def refuse():
+    # Fits by construction: its size was held back from every budget.
+    if SPENT + len(REFUSAL) <= BUDGET:
+        sys.stdout.buffer.write(REFUSAL)
+        sys.stdout.buffer.flush()
 
 
 def wait_ready(conn, extensions):
@@ -110,22 +167,33 @@ def close_owned(signum, frame):
 
 
 def main():
+    global BUDGET
     signal.signal(signal.SIGTERM, close_owned)
     signal.signal(signal.SIGINT, close_owned)
     try:
+        own_stderr()
         if len(sys.argv) != 1:
             raise ValueError('ARGS_REFUSED')
         payload = sys.stdin.buffer.read(INPUT_CAP + 1)
         if len(payload) > INPUT_CAP:
             raise ValueError('INPUT_REFUSED')
         request = _contract().loads(payload)
-        if type(request) is not dict or set(request) != {'credential', 'admission', 'owner'}:
+        if type(request) is not dict or set(request) != REQUEST_KEYS:
             raise ValueError('INPUT_REFUSED')
+        budget = request['output_budget']
+        if type(budget) is not int or not len(REFUSAL) <= budget <= OUTPUT_CAP:
+            raise ValueError('INPUT_REFUSED')
+        BUDGET = budget
         collect(request)
+        forward_stderr()
     except BaseException:
         # Never stringify an exception, print a traceback, a DSN or driver text.
         try:
-            emit({'kind': 'refusal', 'reason': 'CHILD_REFUSED'})
+            forward_stderr()
+        except BaseException:
+            pass
+        try:
+            refuse()
         finally:
             os._exit(1)
     os._exit(0)
