@@ -12450,6 +12450,7 @@ async def _attach_card_projected_pairs(
     """
     from app.utils.card_projected_pair import (
         attach_card_projected_pair,
+        card_projection_card,
         card_projection_read_timeout_ms,
         read_card_projected_pairs_bounded,
     )
@@ -12464,13 +12465,9 @@ async def _attach_card_projected_pairs(
         if event is None:
             continue
         cards.append(
-            {
-                "id": event.id,
-                "stored_status": event.status,
-                "served_status": data.get("status"),
-                "commence_time": event.commence_time,
-                "sport_key": data.get("sport"),
-            }
+            card_projection_card(
+                event, served_status=data.get("status"), sport_key=data.get("sport")
+            )
         )
     if not cards:
         return

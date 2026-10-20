@@ -87,6 +87,11 @@ from app.utils.sport_keys import NON_SPORT_LLM_CATEGORIES, SPORT_PREFIX_TO_LLM_C
 from app.utils.futures_market_snapshot import (
     outcome_prints_a_price as _outcome_prints_a_price,
 )
+from app.utils.card_projected_pair import (
+    LIVE_PROJECTION_KEY,
+    attach_card_projected_pair,
+    event_live_projection,
+)
 from app.utils.pregame_projection import (
     attach_pregame_projection,
     read_pregame_projections,
@@ -11640,6 +11645,24 @@ async def search_events(
             event, aggregated_odds_map.get(event.id), gei_percentiles, team_lookup,
             folded_sources=folded_map.get(event.id),
         )
+        # #2920 — the event page's marked in-play pair, from the rows this route
+        # already read, so a search row and the page it opens agree.
+        _odds_entry = aggregated_odds_map.get(event.id)
+        if _odds_entry and isinstance(formatted.get("current_odds"), dict):
+            try:
+                attach_card_projected_pair(
+                    formatted["current_odds"],
+                    {
+                        LIVE_PROJECTION_KEY: event_live_projection(
+                            _odds_entry["all_snapshots"],
+                            event,
+                            served_status=formatted.get("status"),
+                            sport_key=loaded_sport_key(event),
+                        )
+                    },
+                )
+            except Exception:  # noqa: BLE001 — gotcha #42: one row, not the page
+                logger.exception("live projection failed for event %s", event.id)
         formatted_results.append(formatted)
 
         # Track sports for disambiguation info.
@@ -20177,6 +20200,23 @@ async def get_event(
             # feature to show, outside a short closed list of comparison surfaces
             # this payload is not on.
         }
+        # #2920 — the in-play pair, marked, by the cards' admission and from the
+        # rows read above, so the page and its card cannot print two finals.
+        # Asked by the status this page PRINTS. Optional: never the page.
+        try:
+            attach_card_projected_pair(
+                response["current_odds"],
+                {
+                    LIVE_PROJECTION_KEY: event_live_projection(
+                        all_latest_snapshots,
+                        event,
+                        served_status=response.get("status"),
+                        sport_key=event_sport_key,
+                    )
+                },
+            )
+        except Exception:  # noqa: BLE001 — gotcha #42
+            logger.exception("live projection failed for event %s", event.id)
 
         # Show ALL bookmakers in the table (not just filtered ones)
         # so users see every book we ever had odds from.
