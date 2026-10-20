@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from collections import OrderedDict
+from contextlib import nullcontext
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import logging
@@ -28,6 +29,11 @@ logger = logging.getLogger(__name__)
 
 PROJECTION_TIMEOUT_S = 1.0
 MAX_PENDING = 8
+# Recovery reads (`fresh=True`, only from `project_recovery_quote`) may hold at
+# most one of the two load slots and half the pending entries, so a failing
+# recovery cohort can never refuse or queue ordinary readers out of both.
+RECOVERY_MAX_SLOTS = 1
+RECOVERY_MAX_PENDING = 4
 MAX_CACHED = 64
 RECOVERY_RETRY_S = 0.25
 RECOVERY_MAX_RETRY_S = 0.5
@@ -107,6 +113,7 @@ class FoldedQuoteProjector:
         self._cached = OrderedDict()
         self._recovery_retry_after = OrderedDict()
         self._slots = asyncio.Semaphore(2)
+        self._recovery_slots = asyncio.Semaphore(RECOVERY_MAX_SLOTS)
         self._first_load_at = None
         self._last_success_at = None
         self._last_load_started_at = float("-inf")
@@ -122,7 +129,7 @@ class FoldedQuoteProjector:
         load_started = asyncio.get_running_loop().time()
         try:
             async with asyncio.timeout(PROJECTION_TIMEOUT_S):
-                async with self._slots:
+                async with self._recovery_slots if fresh else nullcontext(), self._slots:
                     load_started = asyncio.get_running_loop().time()
                     quote = await load_folded_quote(event_id, origin_id, revision)
         except asyncio.CancelledError:
@@ -186,6 +193,9 @@ class FoldedQuoteProjector:
             return None  # departing last waiter still owns bounded cleanup
         if work is None:
             if len(self._pending) >= MAX_PENDING:
+                return None
+            # Pending counts queued, active and still-cancelling work alike.
+            if fresh and sum(1 for pending in self._pending if pending[-1]) >= RECOVERY_MAX_PENDING:
                 return None
             if self._first_load_at is None:
                 self._first_load_at = now
