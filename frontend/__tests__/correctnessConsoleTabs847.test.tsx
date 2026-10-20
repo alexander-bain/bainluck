@@ -393,7 +393,9 @@ describe("payload checks refuse what the view would misdraw (each beside its unm
     ["a 100% headline over an empty slate", (p) => { p.status = "insufficient_slate"; }, maturedLinkageSection, maturedPayload],
     ["unlinked_held misses do not reconcile", (p) => { (p.unlinked_held as { headline_unlinked_held: number }).headline_unlinked_held = 5; }, maturedLinkageSection, maturedPayload],
     ["a miss without its matchup", (p) => { delete (p.misses as Record<string, unknown>[])[0].matchup; }, maturedLinkageSection, maturedPayload],
-    ["a sport card with a zero denominator", (p) => { ((p.accuracy as { sports: Record<string, { total: number }> }).sports.basketball_nba).total = 0; }, sportCardsSection, sportCardsPayload],
+    // Internally consistent zero (every count 0, empty provenance), so only the
+    // denominator rule can refuse it: a zero card is a defect, never a measurement.
+    ["a sport card with a zero denominator", (p) => { (p.accuracy as { sports: Record<string, unknown> }).sports.basketball_nba = { total: 0, sources: { odds_api: 0, espn: 0, statpal: 0 }, commence_time_sources: {}, odds_api_linked_pct: 0, reliability: "LOW" }; }, sportCardsSection, sportCardsPayload],
     ["a source count above its total", (p) => { ((p.accuracy as { sports: Record<string, { sources: { espn: number } }> }).sports.basketball_nba).sources.espn = 11; }, sportCardsSection, sportCardsPayload],
     ["a 7-day window", (p) => { (p.window as { days: number }).days = 7; }, sportCardsSection, sportCardsPayload],
     ["a window start that is not 14 days before as_of", (p) => { (p.window as { start: string }).start = "2026-10-07T18:48:00+00:00"; }, sportCardsSection, sportCardsPayload],
