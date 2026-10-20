@@ -147,7 +147,7 @@ describe("#4885 a projected final below the score on the board is not printed", 
     expect(html).toMatch(/>4</);
     // The ship.
     expect(html).not.toContain(PROJECTION);
-    expect(html).not.toContain(`3${SEP}2`);
+    expect(html).not.toContain(`data-projected-final="3-2"`);
     // NON-VACUITY: the specimen's hero is still drawn.
     expect(html).toContain("Orioles");
     expect(html).toContain("Jays");
@@ -176,20 +176,20 @@ describe("#4885 a projected final below the score on the board is not printed", 
 
     const html = draw();
     expect(html).toContain(PROJECTION);
-    expect(html).toContain(`5${SEP}3`);
+    expect(html).toContain(`data-projected-final="5-3"`);
   });
 
   it("still projects a pair EQUAL to the score (no more scoring is a real final)", () => {
     historyPayload = history(4.1, 2.2);
 
-    expect(draw()).toContain(`${PROJECTION}: 4${SEP}2`);
+    expect(draw()).toContain(`data-projected-final="4-2"`);
   });
 
   it("reads the PRINTED integer: 3.6 under a score of 4 prints 4 and stays", () => {
     // A gate on the raw float would withhold a line the reader reads as right.
     historyPayload = history(3.6, 2.4);
 
-    expect(draw()).toContain(`${PROJECTION}: 4${SEP}2`);
+    expect(draw()).toContain(`data-projected-final="4-2"`);
   });
 
   it("still projects before first pitch, where there is no score to contradict", () => {
@@ -201,6 +201,6 @@ describe("#4885 a projected final below the score on the board is not printed", 
     });
     historyPayload = history(3.3, 1.9);
 
-    expect(draw()).toContain(`${PROJECTION}: 3${SEP}2`);
+    expect(draw()).toContain(`data-projected-final="3-2"`);
   });
 });

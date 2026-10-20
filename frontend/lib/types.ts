@@ -1712,6 +1712,12 @@ export interface FeedEventData {
     away_rendered_percent?: number | null;
     bookmaker_count?: number;
     source?: string;  // "aggregate" when computed from non-sportsbook sources
+    // #2920 / #9483 — the sportsbooks' projected pair `/api/events/{id}` and
+    // search already serve. OPTIONAL: `/api/feed` does not send it yet, and a
+    // card without it prints no projected final. Read only through
+    // `cardProjectedFinal`.
+    projected_home_score?: number | null;
+    projected_away_score?: number | null;
   };
   /**
    * UX-P042 (#1640) — the feed has always sent this; the type simply omitted it,

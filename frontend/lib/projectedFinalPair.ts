@@ -24,6 +24,7 @@
  */
 
 import type { Event } from "@/lib/types";
+import { sportVocab } from "@/lib/marketMapUtils";
 import { sportsbookProjectionDrawable } from "@/lib/scoreDifferentialHeading";
 
 export interface ProjectedScorePair {
@@ -43,17 +44,101 @@ export interface ProjectedScorePair {
  * half means the inputs were not a points line.
  */
 export function sportsbookProjectedPair(
-  odds: Event["current_odds"] | null | undefined,
+  odds: SportsbookProjectionFields | null | undefined,
   sportKey: string | null | undefined,
 ): ProjectedScorePair | null {
   return odds &&
     odds.projected_home_score != null &&
     odds.projected_away_score != null &&
+    Number.isFinite(odds.projected_home_score) &&
+    Number.isFinite(odds.projected_away_score) &&
     odds.projected_home_score >= 0 &&
     odds.projected_away_score >= 0 &&
-    sportsbookProjectionDrawable(sportKey ?? undefined)
+    sportsbookProjectionDrawable(sportKey ?? undefined) &&
+    projectedFinalFormat(sportKey) !== null
     ? { home: odds.projected_home_score, away: odds.projected_away_score }
     : null;
+}
+
+/** The two keys this file reads. `Event.current_odds` and the feed's leaner
+ *  `current_odds` both satisfy it; the feed's are optional because `/api/feed`
+ *  does not serve them yet (the card stays silent until it does). */
+export interface SportsbookProjectionFields {
+  projected_home_score?: number | null;
+  projected_away_score?: number | null;
+}
+
+/**
+ * #2920 / #9483 — WHICH SPORTS' SPORTSBOOK PAIR IS A FINAL SCORE, AND IN WHAT.
+ *
+ * The pair is solved from a spread point and a total, so it is a scoreline only
+ * where both are quoted in the unit the scoreboard counts and the spread moves
+ * with the matchup. Admitted on real fixtures (production search payloads,
+ * 2026-10-19):
+ *
+ *   americanfootball_*  points  NFL 14780563 −7.3 / 51.9 → 29.6 – 22.3
+ *   basketball_*        points  NBA 15195969 −5.5 / 234.8 → 120.2 – 114.7
+ *   soccer_*            goals   EPL 15315510 0.0 / 2.5 → 1.2 – 1.2 — the
+ *                               markets settle on 90 minutes, so the label says so
+ *
+ * Everything else answers null, and that is a statement, not a gap to fill:
+ *
+ *   baseball_*    the run line is pinned at ±1.5 (#8617 — Mets @ Rangers 5.0 – 3.5)
+ *   icehockey_*   the puck line is pinned the same way: NHL 15333056 and 15332424
+ *                 both −1.5 → "4 – 3" and "4 – 3" whatever the price; AHL
+ *                 15327140 served 1.5 / 1.5 → 0.0 – 1.5
+ *   tennis_*      a games spread and total under a SETS scoreboard (Shanghai
+ *                 15326853 → 11.2 – 11.3 over a 0 – 2 match)
+ *   mma / boxing  a rounds total (#9006 — "Proj 6--2")
+ *   golf, racing  a field, not two sides
+ *   cricket, esports, rugby, Aussie rules, everything undeclared — no measured
+ *                 fixture says the spread is a margin in a scoreboard unit
+ *
+ * The event page's in-game pair comes from the prediction-market ladders and
+ * keeps its own gate (`hasDerivedSpread`); this table decides the SPORTSBOOK
+ * pair, which is the only one a card can read.
+ */
+export interface ProjectedFinalFormat {
+  unit: "points" | "goals";
+  /** The visible label. Always begins "Projected final". */
+  label: string;
+}
+
+const PROJECTED_FINAL_FORMATS: { prefix: string; format: ProjectedFinalFormat }[] = [
+  { prefix: "americanfootball_", format: { unit: "points", label: "Projected final" } },
+  { prefix: "basketball_", format: { unit: "points", label: "Projected final" } },
+  { prefix: "soccer_", format: { unit: "goals", label: "Projected final (90 min)" } },
+];
+
+export function projectedFinalFormat(
+  sportKey: string | null | undefined,
+): ProjectedFinalFormat | null {
+  const key = (sportKey ?? "").toLowerCase();
+  if (!key) return null;
+  return PROJECTED_FINAL_FORMATS.find((row) => key.startsWith(row.prefix))?.format ?? null;
+}
+
+/** The label the event page prints over whichever pair it holds. */
+export function projectedFinalLabel(sportKey: string | null | undefined): string {
+  return projectedFinalFormat(sportKey)?.label ?? "Projected final";
+}
+
+/**
+ * The sportsbook pair as a CARD prints it: rounded per side exactly as the event
+ * page rounds it, and refused where the page refuses it before kickoff — a half
+ * at zero, or a level scoreline in a sport that cannot end level (#8156). The
+ * page's live-only gates (#4885, #5697) have nothing to test on a pre-game card.
+ */
+export function cardProjectedFinal(
+  odds: SportsbookProjectionFields | null | undefined,
+  sportKey: string | null | undefined,
+): ProjectedScorePair | null {
+  const pair = sportsbookProjectedPair(odds, sportKey);
+  if (!pair || pair.home <= 0 || pair.away <= 0) return null;
+  const home = Math.round(pair.home);
+  const away = Math.round(pair.away);
+  if (home === away && !sportVocab(sportKey ?? undefined).canEndInATie) return null;
+  return { home, away };
 }
 
 /**
@@ -66,6 +151,12 @@ export function sportsbookProjectedPair(
  * `isLive` must be the card's own predicate — `status === "live"` and the start
  * time passed — because that is the one that decides whether the card prints
  * its projection.
+ *
+ * Before kickoff, a sport whose sportsbook spread IS a margin but whose format
+ * this file refuses (hockey's pinned puck line) answers null, not the ladders:
+ * the forecast is withheld, never swapped for another source while the card
+ * one tap back prints nothing. Baseball's run line is not a margin at all, so
+ * it keeps its ladder fallback (#8617).
  */
 export function eventPageProjectedPair(opts: {
   odds: Event["current_odds"] | null | undefined;
@@ -77,6 +168,12 @@ export function eventPageProjectedPair(opts: {
     const sportsbook = sportsbookProjectedPair(opts.odds, opts.sportKey);
     if (sportsbook) {
       return { home_score: sportsbook.home, away_score: sportsbook.away };
+    }
+    if (
+      sportsbookProjectionDrawable(opts.sportKey ?? undefined) &&
+      projectedFinalFormat(opts.sportKey) === null
+    ) {
+      return null;
     }
   }
   return opts.ladderPair ?? null;

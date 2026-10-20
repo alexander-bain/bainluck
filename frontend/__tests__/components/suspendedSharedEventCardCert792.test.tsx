@@ -170,13 +170,18 @@ describe("the shared EventCard renders the suspended state", () => {
     // "Proj 6-4" is a promise about a game that is going to be played. This one
     // stopped. The payload above carries real projections so this case cannot
     // pass merely because the fields were absent.
-    expect(text(render(makeEvent()))).not.toContain("Proj");
+    //
+    // #2920: a tennis pair is games under a SETS scoreboard and is no longer
+    // admitted at all, so both arms here relabel the row to a points sport —
+    // otherwise the suppression would pass for the sport's reason, not this one.
+    expect(text(render(makeEvent({ sport: "basketball_nba" } as Partial<Event>)))).not.toContain("Proj");
   });
 
   it("still shows the pregame footer on a SCHEDULED card", () => {
     const rendered = text(
       render(
         makeEvent({
+          sport: "basketball_nba",
           status: "scheduled",
           commence_time: new Date(Date.now() + 3 * 3600_000).toISOString(),
           home_score: null,
@@ -184,6 +189,7 @@ describe("the shared EventCard renders the suspended state", () => {
         } as Partial<Event>),
       ),
     );
-    expect(rendered).toContain("Proj");
+    // #2920: the full label, in its own row (it was the footer's `Proj`).
+    expect(rendered).toContain("Projected final");
   });
 });
