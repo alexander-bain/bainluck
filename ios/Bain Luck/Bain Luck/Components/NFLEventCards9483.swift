@@ -348,6 +348,10 @@ struct NFLFinishCardView9483: View {
         Text(isHome ? homeName : awayName)
             .font(.subheadline.weight(.semibold))
             .foregroundStyle(isHome ? homeColor : awayColor)
+            // #11285 — a one-word name too wide for its own line at the
+            // largest sizes ("Command…" at AX5) shrinks to fit, never broken.
+            .lineLimit(1)
+            .minimumScaleFactor(0.8)
     }
 
     private func number(_ value: Double, label: String,
