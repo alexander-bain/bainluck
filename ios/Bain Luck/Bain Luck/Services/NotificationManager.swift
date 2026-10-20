@@ -85,6 +85,15 @@ final class NotificationManager: NSObject, ObservableObject, UNUserNotificationC
     /// Reference to the nav coordinator for deep linking from notifications.
     weak var navCoordinator: NavigationCoordinator?
 
+    #if os(macOS)
+    @MainActor
+    func bindMacNavigation(_ navigation: NavigationCoordinator?) {
+        navCoordinator = navigation
+        MacNotificationDelivery10878.shared.bind(navigation, permitsBrowsing: navigation != nil)
+    }
+
+    #endif
+
     private override init() {
         super.init()
         UNUserNotificationCenter.current().delegate = self
@@ -228,6 +237,15 @@ final class NotificationManager: NSObject, ObservableObject, UNUserNotificationC
         // The decision is `notificationDestination`, which is pure and tested.
         // This method's remaining job is dispatch — see that function for why the
         // precedence between the action and `url` is load-bearing.
+        #if os(macOS)
+        let destination = Self.notificationDestination(
+            actionIdentifier: response.actionIdentifier,
+            userInfo: userInfo
+        )
+        Task { @MainActor in
+            MacNotificationDelivery10878.shared.receive(destination)
+        }
+        #else
         switch Self.notificationDestination(
             actionIdentifier: response.actionIdentifier,
             userInfo: userInfo
@@ -252,6 +270,7 @@ final class NotificationManager: NSObject, ObservableObject, UNUserNotificationC
             break
         }
 
+        #endif
         completionHandler()
     }
 
