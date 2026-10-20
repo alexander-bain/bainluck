@@ -277,6 +277,11 @@ class TestOscarsEdition:
         # Control: the winner question for the same category stays a title member.
         w = oscars(mk(990012, "Will Julianne Moore win Best Actress at the 99th Academy Awards?"))
         assert (w.outcome, w.edge_class) == ("admitted", "title")
+        # Control: "nominated" inside a relative clause describes the film; still a title.
+        r = oscars(mk(990014, "Will a film that is nominated for 10+ Oscars win Best Picture "
+                              "at the 99th Academy Awards?"))
+        assert (r.outcome, r.edge_class) == ("admitted", "title")
+        assert clause(r, "class")["input"] == "category"
         # Wrong edition is still decided before class.
         prior = oscars(mk(990013, q.replace("99th", "98th")))
         assert (prior.outcome, prior.reason) == ("excluded", td.OTHER_EDITION)

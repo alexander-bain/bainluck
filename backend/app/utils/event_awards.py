@@ -68,6 +68,12 @@ _NOMINATED_RE = re.compile(
     r"\b(?:be|get|gets|got|is|are)\s+(?:[a-z]+-)?nominated\b|^\s*nominated\s+for\b",
     re.IGNORECASE,
 )
+# The same verb phrase inside a "that/which" relative clause describes a noun ("a film
+# that is nominated for 10+ Oscars win Best Picture?"), so it is removed before the check.
+_RELATIVE_NOMINATED_RE = re.compile(
+    r"\b(?:that|which)\s+(?:be|get|gets|got|is|are)\s+(?:[a-z]+-)?nominated\b",
+    re.IGNORECASE,
+)
 
 # Leading boilerplate stripped so a category card reads "Best Picture", not
 # "Oscar winner: Best Picture". Applied in order; a leading edition year is
@@ -218,7 +224,8 @@ def classify_market(external_id: str | None, name: str | None) -> str:
     else is a novelty prop."""
     eid = (external_id or "").upper()
     n = (name or "").lower()
-    if "NOM" in eid or "nomination" in n or "nominee" in n or _NOMINATED_RE.search(n):
+    if ("NOM" in eid or "nomination" in n or "nominee" in n
+            or _NOMINATED_RE.search(_RELATIVE_NOMINATED_RE.sub(" ", n))):
         return "nominations"
     if _CATEGORY_NAME_RE.search(name or ""):
         return "category"
