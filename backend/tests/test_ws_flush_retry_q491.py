@@ -79,6 +79,14 @@ POLY_SLATE = [
     ],
 ]
 
+#: #10090 attempt156: the same slate with its event stored `live`, so a
+#: stored-live slate read returns every row of it.
+POLY_SLATE_LIVE = [
+    POLY_SLATE[0],
+    [(*row[:3], "live") for row in POLY_SLATE[1]],
+    POLY_SLATE[2],
+]
+
 KALSHI_TICKER = "KXTEST-Y"
 KALSHI_MARKET_EXT = "KXTEST"
 KALSHI_OUTCOME_ID = 81
@@ -88,6 +96,33 @@ KALSHI_SLATE = [
     [(KALSHI_MARKET_EXT, MARKET_ID, EVENT_ID)],
     [(KALSHI_TICKER, MARKET_ID, KALSHI_OUTCOME_ID)],
 ]
+
+#: #10090 attempt156: the Polymarket consumer's FIRST slate read is the stored
+#: live subset (`Event.status IN ('live', 'suspended')`). The full slate is read
+#: after it, or at once when that subset maps nothing. A positional fake must
+#: answer the subset read with the rows such a read can return, which are the
+#: scenario's own live/suspended markets, and must answer the market and outcome
+#: reads that follow it with those markets only. A scenario whose events are all
+#: `scheduled` therefore sees an empty subset and the original full read.
+STORED_LIVE_STATUSES = ("live", "suspended")
+
+
+def is_stored_live_slate_read(stmt) -> bool:
+    """The Polymarket slate read restricted to stored live/suspended events."""
+    sql = str(stmt)
+    return "linked_event_id" in sql and "events.status IN (" in sql
+
+
+def stored_live_batches(slate_rows, market_rows, outcome_rows):
+    """The slate, market and outcome reads of one stored-live load.
+
+    Market rows carry the linked event's status in their fourth column."""
+    live = {row[0] for row in market_rows if row[3] in STORED_LIVE_STATUSES}
+    return [
+        [row for row in slate_rows if row[1] in live],
+        [row for row in market_rows if row[0] in live],
+        [row for row in outcome_rows if row[1] in live],
+    ]
 
 
 # ---------------------------------------------------------------- fakes ----
@@ -183,7 +218,7 @@ class _FlakySession:
     write.
     """
 
-    def __init__(self, batches, writes, budget, gate, ack=None):
+    def __init__(self, batches, writes, budget, gate, ack=None, stored_live=None):
         # #10090: a real session's `.info` — one dict per session, kept
         # through commit, rollback and close; the flush detaches committed
         # market frames from it. These writes return no moved quote, so
@@ -194,6 +229,7 @@ class _FlakySession:
         self._budget = budget
         self._gate = gate
         self._ack = ack
+        self._stored_live = stored_live
 
     async def execute(self, stmt, params=None):
         if stmt is SET_LOCK_TIMEOUT_SQL:  # #10661: the flush's per-phase lock budget
@@ -250,6 +286,10 @@ class _FlakySession:
                         )
                     ])
             return _Result([])
+        if self._stored_live is not None and is_stored_live_slate_read(stmt):
+            # #10090 attempt156: the stored-live load reads its own three
+            # batches; the full slate stays queued for the full read.
+            self._batches[:0] = self._stored_live()
         return _Result(self._batches.pop(0) if self._batches else [])
 
 
@@ -278,9 +318,12 @@ def _install_slate(monkeypatch, slate, writes, budget, gate=None, ack=None):
 
     batches = [list(b) for b in slate]
 
+    def stored_live():  # #10090: called only on a Polymarket stored-live read
+        return stored_live_batches(*slate[:3])
+
     class _Ctx:
         async def __aenter__(self):
-            return _FlakySession(batches, writes, budget, gate, ack)
+            return _FlakySession(batches, writes, budget, gate, ack, stored_live)
 
         async def __aexit__(self, *_exc):
             return False
