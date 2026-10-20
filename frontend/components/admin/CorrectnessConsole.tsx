@@ -22,6 +22,7 @@ const STATE_STYLE: Record<CorrectnessState, { label: string; badge: string; bord
   amber: { label: "Watch", badge: "bg-accent-warning/10 text-accent-warning", border: "border-accent-warning/30" },
   red: { label: "Act now", badge: "bg-accent-danger/10 text-accent-danger", border: "border-accent-danger/30" },
   stale: { label: "Stale", badge: "bg-surface-elevated text-text-secondary", border: "border-surface-border" },
+  freshness_unknown: { label: "Freshness unknown", badge: "bg-surface-elevated text-text-secondary", border: "border-surface-border" },
   partial: { label: "Partly verified", badge: "bg-surface-elevated text-text-secondary", border: "border-surface-border" },
   unavailable: { label: "Unverified", badge: "bg-surface-elevated text-text-secondary", border: "border-surface-border" },
   unauthorized: { label: "Not authorized", badge: "bg-surface-elevated text-text-muted", border: "border-surface-border" },
@@ -33,8 +34,9 @@ const STATE_STYLE: Record<CorrectnessState, { label: string; badge: string; bord
 export const ROWS_VISIBLE = 8;
 
 /**
- * `muted`: the row sits in a stale tile, so its verdict is history, not a
- * current call — it reads "was …" in neutral colour, never a live red/green.
+ * `muted`: the row sits in a tile that is not current (stale, or freshness
+ * unknown), so its verdict is history, not a current call — it reads "was …"
+ * in neutral colour, never a live red/green.
  */
 export function StateBadge({ state, muted = false }: { state: CorrectnessState; muted?: boolean }) {
   const s = STATE_STYLE[state];
@@ -78,6 +80,7 @@ export function CorrectnessTileCard({ tile, nowMs }: { tile: CorrectnessTile; no
   const style = STATE_STYLE[tile.state];
   const headingId = `correctness-${tile.key}`;
   const age = ageSeconds(tile.asOf, nowMs);
+  const notCurrent = tile.state === "stale" || tile.state === "freshness_unknown";
   return (
     <section
       aria-labelledby={headingId}
@@ -95,14 +98,14 @@ export function CorrectnessTileCard({ tile, nowMs }: { tile: CorrectnessTile; no
         <StateBadge state={tile.state} />
       </div>
       <p className="text-sm text-text-primary mt-2 break-words">{tile.headline}</p>
-      {tile.state === "stale" && tile.lastVerdict && (
+      {notCurrent && tile.lastVerdict && (
         <p className="text-xs text-text-secondary mt-1">
-          The stale data read <StateBadge state={tile.lastVerdict} muted /> — not a current verdict.
+          {tile.state === "stale" ? "The stale data" : "The data"} read <StateBadge state={tile.lastVerdict} muted /> — not a current verdict.
         </p>
       )}
       {tile.rows.length > 0 && (
         <div className="mt-3">
-          <RowList rows={tile.rows} stale={tile.state === "stale"} />
+          <RowList rows={tile.rows} stale={notCurrent} />
         </div>
       )}
       {tile.related && tile.related.length > 0 && (
@@ -112,6 +115,15 @@ export function CorrectnessTileCard({ tile, nowMs }: { tile: CorrectnessTile; no
         </div>
       )}
       <p className="text-[11px] text-text-muted mt-3 break-words">{tile.method}</p>
+      {tile.evidence && tile.evidence.length > 0 && (
+        <ul className="mt-1" data-evidence="">
+          {tile.evidence.map((line) => (
+            <li key={line} className="text-[11px] text-text-muted break-words">
+              {line}
+            </li>
+          ))}
+        </ul>
+      )}
       <p className="text-[11px] text-text-muted mt-1 break-all">
         {tile.source}
         {tile.asOf ? ` · built ${formatAge(age)}` : tile.state !== "loading" && tile.key !== "guess_family" ? " · build time unknown" : ""}
@@ -141,7 +153,7 @@ export default function CorrectnessConsoleView({ tiles, nowMs, settledMs, authNo
         status={status}
         summary={summary}
         ideal="every tile OK, each against its documented threshold; anything unread or stale is unverified, never OK"
-        subtitle="Correctness Console — winner coverage, guesses, calibration, sources, links and grids, from existing endpoints"
+        subtitle="Correctness Console — winner coverage, guesses, calibration, sources, links and grids, from saved evidence and existing endpoints"
       />
       {anyUnauthorized && authNotice && <div className="mb-4">{authNotice}</div>}
       <div className="flex flex-wrap items-center gap-3 mb-4 text-xs text-text-muted">

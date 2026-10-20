@@ -1,6 +1,9 @@
 // #847 — the Correctness Console: "can we trust our numbers today?"
 //
-// One admin page composing EXISTING endpoints only. This module is the whole
+// One admin page composing EXISTING endpoints only — and, for source coverage
+// and link rate, their SAVED-ONLY contracts (`/event-source-coverage/cached`,
+// `/prediction-markets/link-rate/cached`), so opening the page never starts the
+// live coverage query or the inline link-rate compute. This module is the whole
 // judgment layer: every tile's threshold, denominator and freshness rule lives
 // here as a pure function, so the rule can be read in one place and asserted
 // without a browser (this project has no jsdom — render tests are
@@ -20,8 +23,11 @@
 //                       issue-roadmap-2026-q3.md); green <3pp (/health §F
 //                       "MCE (target: <3pp)", and the payload's own
 //                       scorecard.bar.reader_bar_pp = 3.0). Between is amber.
-//   - source coverage   /health §G: Tier-1 source <100% → red
-//   - link rate         /health §D: Tier-1 open game-market link rate target 100%
+//   - source coverage   /health §G: Tier-1 source <100% → red. Current only
+//                       inside the saved observation's own reviewed horizon.
+//   - link rate         /health §D: Tier-1 open game-market link rate target 100%.
+//                       No freshness horizon is reviewed for the saved snapshot,
+//                       so it is graded but never called current (never green).
 //   - grid health       the Grid Sentinel's own per-league verdict (CLAUDE.md:
 //                       grid accuracy belongs to the Sentinel, RED means REAL).
 //                       A raw audit penalty score is not a verdict and is not read.
@@ -35,6 +41,11 @@ export type CorrectnessState =
   | "red"
   /** Read fine, but the artifact is older than its own producer cadence allows. */
   | "stale"
+  /**
+   * Read fine and graded, but there is no basis to call it current: no reviewed
+   * freshness horizon, an unknown producing release, or a clock in the future.
+   */
+  | "freshness_unknown"
   /** Some rows measured, some could not be — no all-clear is possible. */
   | "partial"
   /** Could not be read, or read as a shape we cannot stand behind. */
@@ -71,6 +82,8 @@ export interface CorrectnessTile {
   related?: CorrectnessRow[];
   /** Wall-clock ms of the read(s) behind this tile, when measured. */
   readMs?: number | null;
+  /** Producer-side facts behind the number: window, provenance, horizons. */
+  evidence?: string[];
 }
 
 export type CorrectnessTileKey =
@@ -83,11 +96,15 @@ export type CorrectnessTileKey =
 
 // ─── Read results ───────────────────────────────────────────────────────────
 
-/** The outcome of ONE bounded read. `data` is untrusted JSON. */
+/**
+ * The outcome of ONE bounded read. `data` is untrusted JSON. An error carries
+ * `body` when a 202 / non-2xx answer was itself JSON: the saved-only routes say
+ * WHY there is no number (miss, expired, malformed…) in exactly that body.
+ */
 export type ReadResult =
   | { status: "loading" }
   | { status: "ok"; data: unknown; ms: number; httpStatus: number }
-  | { status: "error"; kind: ReadErrorKind; detail: string; ms: number; httpStatus?: number };
+  | { status: "error"; kind: ReadErrorKind; detail: string; ms: number; httpStatus?: number; body?: unknown };
 
 export type ReadErrorKind = "unauthorized" | "http" | "timeout" | "network" | "parse" | "pending";
 
@@ -96,24 +113,29 @@ export const READ_TIMEOUT_MS = 10_000;
 export interface CorrectnessReads {
   winners: ReadResult;
   calibration: ReadResult;
-  dashboard: ReadResult;
+  sourceCoverage: ReadResult;
   linkRate: ReadResult;
   gridSentinel: ReadResult;
 }
 
-/** The five existing endpoints. GET only, no bust/force/inline parameter. */
+/**
+ * The five endpoints. GET only, no bust/force/inline parameter. Coverage and
+ * link rate read the saved-only routes: `/api/admin/dashboard` runs the live
+ * coverage query and `/prediction-markets/link-rate` computes inline on a cold
+ * cache, so neither is ever read from here — not even as a fallback.
+ */
 export const CORRECTNESS_ENDPOINTS = {
   winners: "/api/admin/backfill-winners/status",
   calibration: "/api/calibration",
-  dashboard: "/api/admin/dashboard",
-  linkRate: "/api/admin/prediction-markets/link-rate",
+  sourceCoverage: "/api/admin/event-source-coverage/cached",
+  linkRate: "/api/admin/prediction-markets/link-rate/cached",
   gridSentinel: "/api/admin/grid-sentinel/last",
 } as const satisfies Record<keyof CorrectnessReads, string>;
 
 /** Which reads need the admin credential. `/api/calibration` is public. */
 export const ADMIN_READS: ReadonlySet<keyof CorrectnessReads> = new Set([
   "winners",
-  "dashboard",
+  "sourceCoverage",
   "linkRate",
   "gridSentinel",
 ]);
@@ -127,7 +149,8 @@ export const ADMIN_READS: ReadonlySet<keyof CorrectnessReads> = new Set([
  *
  * HTTP 202 is NOT success here: `backfill-winners/status` answers 202 with a
  * `detail` body when its cache is empty, and `res.ok` is true for 202. Reading
- * that body as the payload is exactly the empty-200 trap.
+ * that body as the payload is exactly the empty-200 trap. A 202 or non-2xx
+ * body that parses as JSON is kept as the error's `body` — never as `data`.
  */
 export async function boundedRead(
   doFetch: (signal: AbortSignal) => Promise<Response>,
@@ -156,11 +179,12 @@ export async function boundedRead(
       return { status: "error", kind: "unauthorized", detail: `HTTP ${res.status}`, ms: elapsed(), httpStatus: res.status };
     }
     if (res.status === 202) {
-      const body = await res.text().catch(() => "");
-      return { status: "error", kind: "pending", detail: `HTTP 202 — no cached result yet${body ? `: ${body.slice(0, 160)}` : ""}`, ms: elapsed(), httpStatus: 202 };
+      const text = await res.text().catch(() => "");
+      return { status: "error", kind: "pending", detail: `HTTP 202 — no cached result yet${text ? `: ${text.slice(0, 160)}` : ""}`, ms: elapsed(), httpStatus: 202, body: parseJsonBody(text) };
     }
     if (!res.ok) {
-      return { status: "error", kind: "http", detail: `HTTP ${res.status}`, ms: elapsed(), httpStatus: res.status };
+      const text = await res.text().catch(() => "");
+      return { status: "error", kind: "http", detail: `HTTP ${res.status}`, ms: elapsed(), httpStatus: res.status, body: parseJsonBody(text) };
     }
     try {
       const data: unknown = await res.json();
@@ -175,10 +199,19 @@ export async function boundedRead(
   }
 }
 
+function parseJsonBody(text: string): unknown {
+  if (!text) return undefined;
+  try {
+    return JSON.parse(text) as unknown;
+  } catch {
+    return undefined;
+  }
+}
+
 export const INITIAL_READS: CorrectnessReads = {
   winners: { status: "loading" },
   calibration: { status: "loading" },
-  dashboard: { status: "loading" },
+  sourceCoverage: { status: "loading" },
   linkRate: { status: "loading" },
   gridSentinel: { status: "loading" },
 };
@@ -298,7 +331,9 @@ function fmt(n: number): string {
 export function foldStates(states: CorrectnessState[]): CorrectnessState {
   if (states.length === 0) return "unavailable";
   if (states.includes("red")) return "red";
-  const unverified = states.some((s) => s === "unavailable" || s === "stale" || s === "partial" || s === "no_threshold");
+  const unverified = states.some(
+    (s) => s === "unavailable" || s === "stale" || s === "freshness_unknown" || s === "partial" || s === "no_threshold",
+  );
   const anyMeasured = states.some((s) => s === "green" || s === "amber");
   if (unverified) return anyMeasured ? "partial" : states.includes("stale") ? "stale" : "unavailable";
   if (states.includes("amber")) return "amber";
@@ -502,6 +537,7 @@ const STATE_RANK: Record<CorrectnessState, number> = {
   unavailable: 1,
   amber: 2,
   stale: 3,
+  freshness_unknown: 3,
   partial: 3,
   no_threshold: 4,
   green: 5,
@@ -576,10 +612,117 @@ export function evaluateCategoryMce(read: ReadResult): CorrectnessTile {
   return { ...withFreshness(tile, true), headline: `Stale curve — ${why}. Last read: ${headline}` };
 }
 
+// ─── Saved-only contracts (coverage + link rate) ────────────────────────────
+//
+// Both routes answer from a saved cache and nothing else, with a typed
+// `cache_state` that the HTTP status must agree with. Anything that does not
+// match is refused as a wrong shape — never read as "no data" or as a number.
+
+/** `cache_state` → the HTTP status the route sends with it. */
+const COVERAGE_CACHE_STATUS: Record<string, number> = {
+  hit: 200,
+  miss: 202,
+  expired: 202,
+  error: 503,
+  malformed: 503,
+  partial: 503,
+  producer_error: 503,
+};
+const LINK_RATE_CACHE_STATUS: Record<string, number> = {
+  hit: 200,
+  miss: 202,
+  error: 503,
+  malformed: 503,
+  unavailable: 503,
+};
+export const SAVED_CONTRACT_SCHEMA_VERSION = 1;
+
+interface SavedAnswer {
+  body: Record<string, unknown>;
+  cacheState: string;
+  reason: string;
+  ms: number;
+}
+
+type TileBase = Omit<CorrectnessTile, "state" | "headline" | "rows" | "asOf">;
+
+/**
+ * The saved-contract body behind a read, or a finished tile when there is none:
+ * loading / refused / timed out / unparseable reads keep their generic tiles,
+ * and a 202 or 503 WITHOUT the contract's body is a plain failed read.
+ */
+function savedAnswer(base: TileBase, read: ReadResult, statusFor: Record<string, number>): SavedAnswer | CorrectnessTile {
+  if (read.status === "loading") return readFailureTile(base, read)!;
+  const httpStatus = read.httpStatus;
+  const body = read.status === "ok" ? read.data : read.kind === "pending" || read.kind === "http" ? read.body : undefined;
+  const isContract =
+    isObj(body) &&
+    body.schema_version === SAVED_CONTRACT_SCHEMA_VERSION &&
+    typeof body.cache_state === "string" &&
+    Object.prototype.hasOwnProperty.call(statusFor, body.cache_state) &&
+    typeof body.reason === "string";
+  if (!isContract) {
+    return readFailureTile(base, read) ?? wrongShape(base, "not the saved-evidence contract", read.ms);
+  }
+  const cacheState = body.cache_state as string;
+  if (statusFor[cacheState] !== httpStatus) {
+    return wrongShape(base, `cache_state ${cacheState} sent as HTTP ${httpStatus ?? "unknown"}`, read.ms);
+  }
+  return { body, cacheState, reason: body.reason as string, ms: read.ms };
+}
+
+function isTile(x: SavedAnswer | CorrectnessTile): x is CorrectnessTile {
+  return "key" in x;
+}
+
+/** A whole count: integers only — the saved contracts never carry fractions. */
+function asWhole(v: unknown): number | null {
+  return typeof v === "number" && Number.isInteger(v) && v >= 0 ? v : null;
+}
+
+function asTime(v: unknown): string | null {
+  const s = asStr(v);
+  return s && Number.isFinite(Date.parse(s)) ? s : null;
+}
+
+/** A server reason code, shown verbatim but bounded. */
+function code(v: unknown): string {
+  const s = asStr(v);
+  return s ? s.slice(0, 80) : "reason not given";
+}
+
+const NO_NUMBER_HEADLINE: Record<string, string> = {
+  miss: "Unavailable — nothing is saved yet, and this page does not compute it",
+  expired: "Unavailable — the saved observation is past its retention",
+  error: "Unavailable — the saved evidence could not be read",
+  malformed: "Unavailable — the saved evidence was refused as malformed",
+  partial: "Unavailable — the saved evidence was refused as incomplete",
+  producer_error: "Unavailable — the producer failed and nothing earlier is saved",
+  unavailable: "Unavailable — the saved snapshot records no data",
+};
+
+/** Why a saved answer is not current, in words, keyed by the server's reason. */
+const NOT_CURRENT_WHY: Record<string, string> = {
+  freshness_policy_unreviewed: "no reviewed freshness horizon was saved with it",
+  source_identity_unknown: "the release that produced it is unknown",
+  observation_clock_in_future: "its observation time is in the future",
+  generated_at_in_future: "its generated_at is in the future",
+  observation_older_than_horizon: "the observation is older than its 30-min horizon",
+};
+
+function producerErrorText(err: unknown): string | null {
+  if (!isObj(err)) return null;
+  return `${code(err.kind)}/${code(err.code)}`;
+}
+
+/** Freshness is out of the question: keep the graded verdict as history. */
+function notCurrent(tile: CorrectnessTile, state: "stale" | "freshness_unknown", prefix: string): CorrectnessTile {
+  return { ...tile, state, lastVerdict: tile.state, headline: `${prefix}. Last read: ${tile.headline}` };
+}
+
 // ─── 4. Source coverage ─────────────────────────────────────────────────────
 
-export const TIER1_SPORT_KEYS = ["americanfootball_nfl", "basketball_nba", "baseball_mlb", "icehockey_nhl"] as const;
-/** The five sources /health §G checks, by `source_coverage` field name. */
+/** The five sources /health §G checks, by coverage-row field name. */
 export const COVERAGE_SOURCES = ["odds_api", "espn", "statpal", "kalshi", "polymarket"] as const;
 const COVERAGE_LABEL: Record<(typeof COVERAGE_SOURCES)[number], string> = {
   odds_api: "Odds API",
@@ -593,56 +736,84 @@ const SPORT_LABEL: Record<string, string> = {
   basketball_nba: "NBA",
   baseball_mlb: "MLB",
   icehockey_nhl: "NHL",
+  basketball_ncaab: "NCAAB",
+  golf_pga: "PGA Golf",
 };
-/** Computed live per request; an hour-old answer means something is wrong. */
-export const DASHBOARD_STALE_AFTER_S = 3600;
 
 /**
- * `/api/admin/dashboard` `source_coverage[]`: per sport, events commencing in
- * the last 7 days through the next 2, and how many carry each source. A source
- * the row's own `expected_sources` marks false is skipped, not counted green.
- * A Tier-1 sport with no row has nothing measured, which blocks the all-clear.
- * The panel's failure shape is `[{"error": …}]` — unavailable, never empty.
+ * `/api/admin/event-source-coverage/cached`: the saved observation of the
+ * dashboard's coverage query. The Tier-1 list is the route's own `tier1[]`
+ * projection (every Tier-1 sport, Golf included, each over ITS OWN event
+ * denominator) — a sport the observation had no events for stays on the tile as
+ * unmeasured. A source the row marks not expected is skipped, not counted green.
+ *
+ * Current only on the route's `freshness: "fresh"`, and only until the saved
+ * `fresh_until` (observation start + the reviewed 30 min) passes on this tab's
+ * clock. `stale` reads stale; `unknown` (unreviewed policy, unknown release,
+ * future clock) is graded but never current. Every non-hit answer keeps its own
+ * reason. Nothing here asks the server to compute, warm or refresh.
  */
 export function evaluateSourceCoverage(read: ReadResult, nowMs: number): CorrectnessTile {
   const base = {
     key: "source_coverage" as const,
     title: "Tier-1 source coverage",
     method:
-      "Share of NFL/NBA/MLB/NHL events (commencing 7 days ago through 2 days ahead) carrying each expected source. Any expected source below 100% → red (/health §G).",
-    source: `${CORRECTNESS_ENDPOINTS.dashboard} → source_coverage`,
+      "Share of each Tier-1 sport's events in the saved observation's window carrying each expected source, over that sport's own event count. Any expected source below 100% → red (/health §G). Age is from when the observation started, never from when this page read it.",
+    source: CORRECTNESS_ENDPOINTS.sourceCoverage,
   };
-  const failed = readFailureTile(base, read);
-  if (failed) return failed;
-  if (read.status !== "ok") return wrongShape(base, "no data", 0);
-  const d = read.data;
-  if (!isObj(d) || !Array.isArray(d.source_coverage)) return wrongShape(base, "no source_coverage[]", read.ms);
-  const asOf = asStr(d.generated_at);
-  const list = d.source_coverage;
-  if (list.length > 0 && isObj(list[0]) && "error" in list[0]) {
-    return { ...base, state: "unavailable", headline: "Unavailable — the coverage query failed on the server", rows: [], asOf, readMs: read.ms };
+  const saved = savedAnswer(base, read, COVERAGE_CACHE_STATUS);
+  if (isTile(saved)) return saved;
+  const { body: b, cacheState, reason, ms } = saved;
+  const producerError = producerErrorText(b.producer_error);
+
+  if (cacheState !== "hit") {
+    const expired = isObj(b.expired_observation) ? asTime(b.expired_observation.observation_started_at) : null;
+    const evidence = [
+      ...(expired ? [`Expired observation started ${expired}, retained until ${code(b.retained_until)}`] : []),
+      ...(producerError ? [`Latest producer attempt failed: ${producerError}`] : []),
+    ];
+    return {
+      ...base,
+      state: "unavailable",
+      headline: `${NO_NUMBER_HEADLINE[cacheState]} (${code(reason)}${producerError && cacheState === "producer_error" ? `; ${producerError}` : ""})`,
+      rows: [],
+      asOf: null,
+      readMs: ms,
+      ...(evidence.length ? { evidence } : {}),
+    };
   }
+
+  const lg = isObj(b.last_good) ? b.last_good : null;
+  const observedAt = lg ? asTime(lg.observation_started_at) : null;
+  const tier1 = Array.isArray(b.tier1) ? b.tier1 : null;
+  const freshness = b.freshness;
+  if (!lg || !observedAt || lg.complete !== true || lg.unit !== "events" || !tier1 || tier1.length === 0) {
+    return wrongShape(base, "a hit without its observation", ms);
+  }
+  if (freshness !== "fresh" && freshness !== "stale" && freshness !== "unknown") {
+    return wrongShape(base, "unknown freshness", ms);
+  }
+
   const rows: CorrectnessRow[] = [];
-  for (const sport of TIER1_SPORT_KEYS) {
-    const row = list.find((r) => isObj(r) && r.sport === sport);
-    const label = SPORT_LABEL[sport];
-    if (!isObj(row)) {
+  for (const entry of tier1) {
+    const sport = isObj(entry) ? asStr(entry.sport) : null;
+    if (!isObj(entry) || !sport) return wrongShape(base, "a Tier-1 row without a sport", ms);
+    const label = SPORT_LABEL[sport] ?? sport;
+    if (entry.row_state === "no_in_window_events") {
       rows.push({ label, value: "no events in window", state: "unavailable", note: "nothing measured for this sport" });
       continue;
     }
-    const total = asCount(row.total);
-    if (total === null || total === 0) {
-      rows.push({ label, value: total === 0 ? "no events in window" : "—", state: "unavailable" });
-      continue;
+    const total = asWhole(entry.denominator);
+    if (entry.row_state !== "observed" || total === null || total === 0 || !isObj(entry.sources)) {
+      return wrongShape(base, `Tier-1 row ${label}`, ms);
     }
-    const expected = isObj(row.expected_sources) ? row.expected_sources : null;
     for (const src of COVERAGE_SOURCES) {
-      if (expected && expected[src] === false) continue;
-      const n = asCount(row[src]);
-      if (n === null) {
-        rows.push({ label: `${label} · ${COVERAGE_LABEL[src]}`, value: "—", state: "unavailable", note: "count missing" });
-        continue;
+      const cell = entry.sources[src];
+      const n = isObj(cell) ? asWhole(cell.count) : null;
+      if (!isObj(cell) || n === null || n > total || typeof cell.expected !== "boolean") {
+        return wrongShape(base, `Tier-1 row ${label} · ${COVERAGE_LABEL[src]}`, ms);
       }
+      if (cell.expected === false) continue;
       rows.push({
         label: `${label} · ${COVERAGE_LABEL[src]}`,
         value: `${pct(n, total)} (${fmt(n)}/${fmt(total)})`,
@@ -650,18 +821,51 @@ export function evaluateSourceCoverage(read: ReadResult, nowMs: number): Correct
       });
     }
   }
-  const state = foldStates(rows.map((r) => r.state));
+  const graded = foldStates(rows.map((r) => r.state));
   rows.sort((a, b) => STATE_RANK[a.state] - STATE_RANK[b.state]);
   const red = rows.filter((r) => r.state === "red").length;
-  const headline = state === "green" ? "Every expected Tier-1 source on every event" : `${red} of ${rows.length} sport × source cells below 100%`;
-  const age = ageSeconds(asOf, nowMs);
-  return withFreshness({ ...base, state, headline, rows, asOf, readMs: read.ms }, age === null || age > DASHBOARD_STALE_AFTER_S);
+  const headline =
+    graded === "green" ? "Every expected Tier-1 source on every event" : `${red} of ${rows.length} sport × source cells below 100%`;
+
+  const evidence: string[] = [];
+  const win = isObj(lg.window) ? lg.window : null;
+  if (win && asTime(win.window_start) && asTime(win.window_end)) {
+    evidence.push(`Window: events commencing ${code(win.window_start)} through ${code(win.window_end)}, both inclusive`);
+  }
+  const prov = isObj(lg.source_provenance) ? lg.source_provenance : null;
+  if (prov) {
+    const rev = asStr(prov.executing_source_revision);
+    const rel = asStr(prov.executing_release_version);
+    evidence.push(
+      prov.provenance_status === "deployment_reported"
+        ? `Produced by release ${rel ?? "unknown"} at ${rev ? rev.slice(0, 10) : "unknown revision"}`
+        : "Producing release unknown",
+    );
+  }
+  const freshUntil = asTime(b.fresh_until);
+  const retainedUntil = asTime(b.retained_until);
+  if (freshUntil) evidence.push(`Fresh until ${freshUntil}`);
+  if (retainedUntil) evidence.push(`Kept until ${retainedUntil}`);
+  if (producerError) evidence.push(`Latest producer attempt failed: ${producerError} — the retained observation is shown`);
+
+  const tile: CorrectnessTile = { ...base, state: graded, headline, rows, asOf: observedAt, readMs: ms, evidence };
+  if (retainedUntil && nowMs >= Date.parse(retainedUntil)) {
+    return notCurrent(tile, "stale", "Stale — the saved observation has passed its retention in this open tab");
+  }
+  if (freshness === "fresh") {
+    if (!freshUntil) return wrongShape(base, "fresh without fresh_until", ms);
+    if (nowMs >= Date.parse(freshUntil)) {
+      return notCurrent(tile, "stale", "Stale — the observation aged past its 30-min horizon in this open tab");
+    }
+    return tile;
+  }
+  if (freshness === "stale") return notCurrent(tile, "stale", `Stale — ${NOT_CURRENT_WHY.observation_older_than_horizon}`);
+  const why = NOT_CURRENT_WHY[reason] ?? (reason === "latest_attempt_failed" ? "the server reports its freshness unknown" : code(reason));
+  return notCurrent(tile, "freshness_unknown", `Freshness unknown — ${why}`);
 }
 
 // ─── 5. Link rate ───────────────────────────────────────────────────────────
 
-/** Two producer beats (every 30 min) — also the cache TTL, 3600 s. */
-export const LINK_RATE_STALE_AFTER_S = 3600;
 const TIER1_LEAGUES: [string, string][] = [
   ["football", "NFL"],
   ["basketball", "NBA"],
@@ -670,31 +874,39 @@ const TIER1_LEAGUES: [string, string][] = [
 ];
 
 /**
- * `/prediction-markets/link-rate`. Graded on Tier-1 OPEN game markets per venue
- * from COUNTS — the payload's `link_rate` is `0` when `open_total` is 0, which
- * would read a nothing as a failure. The all-markets rate and its exclusions are
- * shown, uncoloured: no threshold is documented for them. A payload the route
- * marks `stale` (served the last snapshot after a failed compute) or
- * `unavailable` (no snapshot at all) is never graded current.
+ * `/prediction-markets/link-rate/cached`: the saved link-rate snapshot, never
+ * the inline compute. Graded on Tier-1 OPEN game markets per venue from COUNTS
+ * — the payload's `link_rate` is `0` when `open_total` is 0, which would read a
+ * nothing as a failure. The all-markets rate and its exclusions are shown,
+ * uncoloured: no threshold is documented for them.
+ *
+ * NEVER CURRENT: the route says `freshness: "unreviewed"` — no horizon has been
+ * reviewed for this payload, and its `generated_at` is stamped when the compute
+ * RETURNED. So the tile shows the graded verdict as history with its age and is
+ * never green; a snapshot the payload itself marks `stale` reads stale.
  */
 export function evaluateLinkRate(read: ReadResult, nowMs: number): CorrectnessTile {
   const base = {
     key: "link_rate" as const,
     title: "Game-market link rate",
     method:
-      "Tier-1 (NFL/NBA/MLB/NHL) open Kalshi and Polymarket game markets linked to an event. Target 100% (/health §D); below → red. The overall rate has no documented threshold.",
+      "Tier-1 (NFL/NBA/MLB/NHL) open Kalshi and Polymarket game markets linked to an event. Target 100% (/health §D); below → red. The overall rate has no documented threshold. Age is from the snapshot's generated_at (when its computation finished); no freshness horizon is reviewed for it, so it is never shown as current.",
     source: CORRECTNESS_ENDPOINTS.linkRate,
   };
-  const failed = readFailureTile(base, read);
-  if (failed) return failed;
-  if (read.status !== "ok") return wrongShape(base, "no data", 0);
-  const d = read.data;
-  if (!isObj(d)) return wrongShape(base, "not an object", read.ms);
-  const asOf = asStr(d.generated_at);
-  if (d.unavailable === true) {
-    return { ...base, state: "unavailable", headline: `Unavailable — no snapshot (${asStr(d.stale_reason) ?? "reason not given"})`, rows: [], asOf, readMs: read.ms };
+  const saved = savedAnswer(base, read, LINK_RATE_CACHE_STATUS);
+  if (isTile(saved)) return saved;
+  const { body: b, cacheState, reason, ms } = saved;
+  const d = isObj(b.payload) ? b.payload : null;
+
+  if (cacheState !== "hit") {
+    const detail = cacheState === "unavailable" && d ? code(d.stale_reason) : code(reason);
+    const asOf = cacheState === "unavailable" ? asTime(b.generated_at) : null;
+    return { ...base, state: "unavailable", headline: `${NO_NUMBER_HEADLINE[cacheState]} (${detail})`, rows: [], asOf, readMs: ms };
   }
-  if (!isObj(d.kalshi) || !isObj(d.polymarket)) return wrongShape(base, "no venue blocks", read.ms);
+  const asOf = asTime(b.generated_at);
+  if (!d || !asOf || d.generated_at !== b.generated_at) return wrongShape(base, "a hit without its snapshot", ms);
+  if (b.freshness !== "unreviewed" && b.freshness !== "unknown") return wrongShape(base, "unknown freshness", ms);
+  if (!isObj(d.kalshi) || !isObj(d.polymarket)) return wrongShape(base, "no venue blocks", ms);
   const rows: CorrectnessRow[] = [];
   for (const venue of ["kalshi", "polymarket"] as const) {
     const block = d[venue] as Record<string, unknown>;
@@ -748,15 +960,23 @@ export function evaluateLinkRate(read: ReadResult, nowMs: number): CorrectnessTi
       });
     }
   }
-  const state = foldStates(rows.map((r) => r.state));
+  const graded = foldStates(rows.map((r) => r.state));
   rows.sort((a, b) => STATE_RANK[a.state] - STATE_RANK[b.state]);
   const red = rows.filter((r) => r.state === "red").length;
-  const headline = state === "green" ? "Every open Tier-1 game market linked" : `${red} of ${rows.length} venue × league cells below 100%`;
-  const age = ageSeconds(asOf, nowMs);
-  const tile: CorrectnessTile = { ...base, state, headline, rows, related, asOf, readMs: read.ms };
-  const routeStale = d.stale === true;
-  const out = withFreshness(tile, routeStale || age === null || age > LINK_RATE_STALE_AFTER_S);
-  return routeStale ? { ...out, headline: `Stale snapshot (${asStr(d.stale_reason) ?? "reason not given"}). Last read: ${headline}` } : out;
+  const headline = graded === "green" ? "Every open Tier-1 game market linked" : `${red} of ${rows.length} venue × league cells below 100%`;
+  const tile: CorrectnessTile = {
+    ...base,
+    state: graded,
+    headline,
+    rows,
+    related,
+    asOf,
+    readMs: ms,
+    evidence: [`Snapshot age ${formatAge(ageSeconds(asOf, nowMs))}, from generated_at; freshness ${code(b.freshness)}`],
+  };
+  if (d.stale === true) return notCurrent(tile, "stale", `Stale snapshot (${code(d.stale_reason)})`);
+  if (b.freshness === "unknown") return notCurrent(tile, "freshness_unknown", `Freshness unknown — ${NOT_CURRENT_WHY[reason] ?? code(reason)}`);
+  return notCurrent(tile, "freshness_unknown", "Freshness unreviewed — no horizon is reviewed for this snapshot, so it is not a current verdict");
 }
 
 // ─── 6. Grid health ─────────────────────────────────────────────────────────
@@ -994,7 +1214,7 @@ export function evaluateAll(reads: CorrectnessReads, nowMs: number): Correctness
     evaluateWinnerCoverage(reads.winners, nowMs),
     evaluateGuessFamily(reads.winners, reads.calibration),
     evaluateCategoryMce(reads.calibration),
-    evaluateSourceCoverage(reads.dashboard, nowMs),
+    evaluateSourceCoverage(reads.sourceCoverage, nowMs),
     evaluateLinkRate(reads.linkRate, nowMs),
     evaluateGridHealth(reads.gridSentinel, nowMs),
   ];

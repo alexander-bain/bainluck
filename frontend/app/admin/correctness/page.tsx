@@ -1,8 +1,9 @@
 "use client";
 
 // #847 — /admin/correctness: "can we trust our numbers today?" on one page.
-// Composes five EXISTING endpoints once per visit (and on Reload) — no polling,
-// no retries, no bust/force parameters. A local clock re-judges the evidence
+// Composes five endpoints once per visit (and on Reload) — no polling, no
+// retries, no bust/force parameters. Coverage and link rate come from their
+// saved-only routes, so opening or reloading starts no live computation. A local clock re-judges the evidence
 // already fetched, so a tab left open ages into stale without a new request.
 // Judgment lives in `lib/correctnessConsole.ts`; rendering in
 // `components/admin/CorrectnessConsole`.
