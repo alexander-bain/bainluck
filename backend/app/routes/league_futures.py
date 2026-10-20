@@ -1630,6 +1630,44 @@ async def _attach_venue_settlement(
     await attach_venue_settlement(db, events, briefs, now)
 
 
+async def _attach_card_projected_pairs(
+    db: AsyncSession, events: Sequence[Event], briefs: list[dict]
+) -> None:
+    """Add the detail page's sportsbook projected pair to the rail cards (#11295).
+
+    Mutates ``briefs`` in place, matched to their rows BY ID (see
+    `_attach_venue_settlement` for why never by position). Only a brief that
+    already carries `current_odds` gains the keys; the calculation and the
+    admission rules live in `app/utils/card_projected_pair.py`, shared with
+    `/api/feed`.
+    """
+    from app.utils.card_projected_pair import (
+        attach_card_projected_pair,
+        read_card_projected_pairs,
+    )
+
+    by_id = {int(e.id): e for e in events}
+    cards: list[dict] = []
+    for brief in briefs:
+        event = by_id.get(brief.get("id"))
+        if event is None or not isinstance(brief.get("current_odds"), dict):
+            continue
+        cards.append(
+            {
+                "id": event.id,
+                "stored_status": event.status,
+                "served_status": brief.get("status"),
+                "commence_time": event.commence_time,
+                "sport_key": brief.get("sport"),
+            }
+        )
+    if not cards:
+        return
+    pairs = await read_card_projected_pairs(db, cards)
+    for brief in briefs:
+        attach_card_projected_pair(brief.get("current_odds"), pairs.get(brief.get("id")))
+
+
 def _format_game_brief(
     event: Event,
     sport_key: str | None = None,
@@ -3690,6 +3728,23 @@ async def build_league(sport_key: str, db: AsyncSession) -> dict:
                 logger.exception(
                     "league page: venue-settlement attach failed; rails keep "
                     "their current sentence"
+                )
+
+        # ── #11295: the projected final the game's own page already serves ──
+        #
+        # Upcoming rail only, after the cap, so the read is at most
+        # UPCOMING_GAMES_LIMIT ids. Last DB read in this block on purpose: a
+        # failed statement here can only cost the cards their pair. Same
+        # guard and bound as the settlement attach above (gotcha #42).
+        if upcoming_games:
+            try:
+                await asyncio.wait_for(
+                    _attach_card_projected_pairs(db, _g_events, upcoming_games),
+                    timeout=10,
+                )
+            except Exception:  # noqa: BLE001 — see the gotcha #42 note above
+                logger.exception(
+                    "league page: projected-pair attach failed; cards keep no pair"
                 )
     except Exception:
         logger.exception("league page: games rails failed for %s", sport_key)

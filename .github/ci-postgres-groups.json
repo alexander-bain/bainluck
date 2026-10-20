@@ -60,6 +60,7 @@
     "#8692 a between-rounds golf source keeps its basis for the card's move (real Postgres)",
     "#5024 a decided ladder's row is reachable by touch age (real Postgres)",
     "#11254 a withdrawn venue is not a feed card's fallback (real Postgres)",
+    "#11295 a game card carries the event page's projected final (real Postgres)",
     "Provenance enum contract (real Postgres)",
     "Futures price writer contract (real Postgres)",
     "#9484 the Kalshi socket signals only a quote that moved (real Postgres)",
