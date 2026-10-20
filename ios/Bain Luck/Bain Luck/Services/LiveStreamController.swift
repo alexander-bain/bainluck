@@ -452,6 +452,13 @@ final class LiveStreamController {
     /// #10090 — a validated `reconcile` control. Separate from `onResync` on
     /// purpose: a resync generation names no rows and no obligation.
     private let onReconcile: @MainActor (LiveStreamReconcile) -> Void
+    /// #10090 — a raw `preview` event's data: a provisional blend that is NOT a
+    /// committed frame (`BlendPreview`). Touches no clock or delivery state: it
+    /// can neither keep push "delivering" nor postpone the data-silence fallback.
+    private let onPreview: @MainActor (String) -> Void
+    /// #10090 — previews are never replayed, so every (re)open and the end of
+    /// the match clear them.
+    private let onPreviewReset: @MainActor () -> Void
     /// #10090 — whether the owner reads `folded_probability`. Opt-in, so a
     /// surface that only needs "something moved" (Discover's cards) keeps its
     /// one refresh per raw frame instead of a second for the quote after it.
@@ -493,6 +500,8 @@ final class LiveStreamController {
         onDeliveringChange: @escaping @MainActor (Bool) -> Void,
         onResync: @escaping @MainActor () -> Void = {},
         onReconcile: @escaping @MainActor (LiveStreamReconcile) -> Void = { _ in },
+        onPreview: @escaping @MainActor (String) -> Void = { _ in },
+        onPreviewReset: @escaping @MainActor () -> Void = {},
         deliversFoldedQuotes: Bool = false,
         schedule: @escaping LiveStreamSchedule = LiveStreamController.sleepThenRun,
         healthyRolloverDelay: @escaping () -> TimeInterval = {
@@ -505,6 +514,8 @@ final class LiveStreamController {
         self.onDeliveringChange = onDeliveringChange
         self.onResync = onResync
         self.onReconcile = onReconcile
+        self.onPreview = onPreview
+        self.onPreviewReset = onPreviewReset
         self.deliversFoldedQuotes = deliversFoldedQuotes
         self.schedule = schedule
         self.healthyRolloverDelay = healthyRolloverDelay
@@ -690,6 +701,7 @@ final class LiveStreamController {
         // A different server process may begin its recovery generation at 1.
         next.on("open") { [weak self, weak next] _ in
             guard let self, let next, !self.stopped, self.handle === next else { return }
+            self.onPreviewReset()
             self.lastResyncGeneration = 0
             self.lastMessageAt = self.now()
             self.lastDataAt = self.now()
@@ -748,6 +760,13 @@ final class LiveStreamController {
             self.onReconcile(control)
         }
 
+        // #10090: a provisional blend, never routed through `onProbability` and
+        // never a delivery: no clock is touched, exactly as on web.
+        next.on("preview") { [weak self, weak next] raw in
+            guard let self, let next, !self.stopped, self.handle === next else { return }
+            self.onPreview(raw)
+        }
+
         next.on("heartbeat") { [weak self, weak next] _ in
             guard let self, let next, !self.stopped, self.handle === next else { return }
             // TRANSPORT clock only. A heartbeat proves this server process is
@@ -762,6 +781,7 @@ final class LiveStreamController {
         // page on the final number.
         next.on("closed") { [weak self, weak next] _ in
             guard let self, let next, self.handle === next else { return }
+            self.onPreviewReset()
             self.stop()
         }
 

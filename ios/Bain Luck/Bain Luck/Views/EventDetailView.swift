@@ -388,7 +388,10 @@ struct EventDetailView: View {
             ScrollView {
                 VStack(spacing: 12) {
                     VStack(spacing: usesApprovedHeadlinePresentation9483(event) ? 0 : 12) {
-                    heroSection(event)
+                    // #10090 — the hero alone may show a provisional blend;
+                    // with none held this is `event` itself. The chart and
+                    // every other section keep committed truth.
+                    heroSection(vm.headline(event))
                         .background(GeometryReader { proxy in
                             Color.clear.preference(
                                 key: NavShowsScorePreferenceKey.self,
