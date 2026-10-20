@@ -15,6 +15,11 @@ import XCTest
 ///   ("Receiving Yar…" at AX3, `nfl-final-393-ax3-p1`) →
 ///   `testAFinalCardsStatCategoryWrapsBesideItsActualOnThePage`,
 ///   `testAFinalCardsStatCategoryWrapsInTheReader`
+/// - the story card's name broken mid-word beside the final figure ("DeVon-"
+///   at AX5, r5 page-393) → `assertIdentity` in the same two tests; the
+///   default row kept beside the figure → `testTheDefaultSizeKeepsTheStoryCardRow`
+/// - the Projected finish card's label cut short in the stacked layout
+///   ("pregame proje…" at AX5, r9 axxxxl-8) → `testTheProjectedFinishLabelsReadWholeInTheDeck`
 @MainActor
 final class HeaderAndFinalCardFit11285Tests: XCTestCase {
 
@@ -238,42 +243,62 @@ final class HeaderAndFinalCardFit11285Tests: XCTestCase {
                                     "\(name): the name overlaps the figure's row — \(all)")
     }
 
-    func testAFinalCardsStatCategoryWrapsBesideItsActualOnThePage() async throws {
+    /// The real page at `width`, scrolled until the deck card's header is on
+    /// screen whole; the header (nil when never found) and what was read near
+    /// the name on the way.
+    private func pageHeader(width: CGFloat, size: DynamicTypeSize, name: String) async throws -> (Header?, String) {
         let (event, markets) = try finalPage()
-        // 393 is the r2 specimen; 375 the narrower control phone. Each scrolls
-        // until the deck card's header is on screen whole.
+        let vm = EventDetailViewModel(eventId: event.id, client: PageClient(event: event, markets: markets),
+                                      makeStreamHandle: { _ in PageHandle() })
+        await vm.load()
+        let view = NavigationStack { EventDetailView(eventId: event.id, viewModel: vm) }
+            .environmentObject(PinManager())
+            .environment(\.scenePhase, .active).environment(\.colorScheme, .light)
+        let host = hostForMeasurement(view, at: size)
+        host.view.frame = CGRect(x: 0, y: 0, width: width, height: width < 380 ? 812 : 852)
+        let window = UIWindow(frame: host.view.frame)
+        window.rootViewController = host
+        window.isHidden = false
+        defer { vm.stopRefresh(); window.isHidden = true }
+        settle(host, 1.0)
+        let scroller = try XCTUnwrap(Self.pageScroller(host.view), "\(name): the page scrolls")
+        var found: Header?
+        var seen = ""
+        var y: CGFloat = 0
+        while found == nil, y <= 4000 {
+            scroller.setContentOffset(CGPoint(x: 0, y: y), animated: false)
+            settle(host, 0.4)
+            let read = try lines(host, name: "\(name)-y\(Int(y))")
+            found = header(in: read, player: "DeVon", actual: "65")
+            let here = near(read, player: "DeVon")
+            if !here.isEmpty { seen += " [y\(Int(y))] " + here }
+            y += 240
+        }
+        return (found, seen)
+    }
+
+    func testAFinalCardsStatCategoryWrapsBesideItsActualOnThePage() async throws {
+        // 393 is the r2 specimen; 375 the narrower control phone.
         for (width, size) in [(CGFloat(393), DynamicTypeSize.accessibility3), (393, .accessibility5),
                               (375, .accessibility3)] {
             let name = "page-\(Int(width))-\(size)"
-            let vm = EventDetailViewModel(eventId: event.id, client: PageClient(event: event, markets: markets),
-                                          makeStreamHandle: { _ in PageHandle() })
-            await vm.load()
-            let view = NavigationStack { EventDetailView(eventId: event.id, viewModel: vm) }
-                .environmentObject(PinManager())
-                .environment(\.scenePhase, .active).environment(\.colorScheme, .light)
-            let host = hostForMeasurement(view, at: size)
-            host.view.frame = CGRect(x: 0, y: 0, width: width, height: width < 380 ? 812 : 852)
-            let window = UIWindow(frame: host.view.frame)
-            window.rootViewController = host
-            window.isHidden = false
-            defer { vm.stopRefresh(); window.isHidden = true }
-            settle(host, 1.0)
-            let scroller = try XCTUnwrap(Self.pageScroller(host.view), "\(name): the page scrolls")
-            var found: Header?
-            var seen = ""
-            var y: CGFloat = 0
-            while found == nil, y <= 4000 {
-                scroller.setContentOffset(CGPoint(x: 0, y: y), animated: false)
-                settle(host, 0.4)
-                let read = try lines(host, name: "\(name)-y\(Int(y))")
-                found = header(in: read, player: "DeVon", actual: "65")
-                let here = near(read, player: "DeVon")
-                if !here.isEmpty { seen += " [y\(Int(y))] " + here }
-                y += 240
-            }
+            let (found, seen) = try await pageHeader(width: width, size: size, name: name)
             assertCategory(found, name, seen: seen)
             assertIdentity(found, name)
         }
+    }
+
+    /// Default sizes keep the existing row: the name under the category and
+    /// beside the final figure, never moved under it.
+    func testTheDefaultSizeKeepsTheStoryCardRow() async throws {
+        let name = "page-393-large"
+        let (found, seen) = try await pageHeader(width: 393, size: .large, name: name)
+        assertCategory(found, name, seen: seen)
+        guard let found else { return }
+        let all = found.all.map(\.text).joined(separator: " | ")
+        XCTAssertTrue(found.name.text.hasPrefix("DeVonta Smith"), "\(name): the name read \"\(found.name.text)\" — \(all)")
+        XCTAssertLessThan(found.name.box.minY, found.figure.box.maxY,
+                          "\(name): the name left the figure's row at the default size — \(all)")
     }
 
     func testAFinalCardsStatCategoryWrapsInTheReader() throws {
@@ -309,6 +334,112 @@ final class HeaderAndFinalCardFit11285Tests: XCTestCase {
             let found = header(in: read, player: "DeVon", actual: "65")
             assertCategory(found, name, seen: near(read, player: "DeVon"))
             assertIdentity(found, name)
+        }
+    }
+
+    // MARK: - Projected finish labels
+
+    /// The r9 specimen's card: live, 49ers (home) 29.5 pregame and 33 projected
+    /// now, built through the page's own builder from a pregame and a current
+    /// capture either side of the first observed game state.
+    private func liveFinishCard() throws -> NFLFinishCard9483 {
+        let base = Date(timeIntervalSince1970: 1_791_000_000)
+        func t(_ minutes: Double) -> Date { base.addingTimeInterval(minutes * 60) }
+        let card = try XCTUnwrap(NFLFinishCard9483.build(.init(
+            sportKey: "americanfootball_nfl", sourceKey: "draftkings", basis: .sameBookSameCaptureFullGameSpreadAndTotal,
+            pairs: [.init(at: t(-30), home: 29.5, away: 21.5, homeProbability: nil, kind: .recorded),
+                    .init(at: t(30), home: 33, away: 13.5, homeProbability: nil, kind: .recorded)],
+            actuals: [], kickoffAt: nil, scoreObservationStartAt: t(0), finalAt: nil,
+            asOf: t(40), windowStartAt: nil, requestCutoffAt: nil)), "control: the builder deals the card")
+        XCTAssertEqual(card.phase, .during, "control: live, not final")
+        XCTAssertEqual(card.projectedNow?.home, 33, "control: a current projection")
+        XCTAssertNil(card.final, "control: no final score")
+        return card
+    }
+
+    /// A label's lines, read whole, strictly between the number it belongs to
+    /// and the next line down: no ellipsis, no line drawn over either.
+    private func assertLabel(_ label: ArraySlice<Line>, reads expected: String, under above: Line, over below: Line,
+                             _ name: String, all: String) {
+        let text = label.map(\.text).joined(separator: " ")
+        XCTAssertEqual(text.filter(\.isLetter), expected.filter(\.isLetter),
+                       "\(name): the label read \"\(text)\" between \"\(above.text)\" and \"\(below.text)\" — \(all)")
+        guard let first = label.first, let last = label.last else { return }
+        XCTAssertGreaterThanOrEqual(first.box.minY, above.box.maxY, "\(name): \"\(first.text)\" overlaps \"\(above.text)\" above")
+        XCTAssertLessThanOrEqual(last.box.maxY, below.box.minY, "\(name): \"\(last.text)\" overlaps \"\(below.text)\" below")
+    }
+
+    /// r9: on the page deck at the largest size the live card's stacked layout
+    /// printed "pregame proje…". Mounted as the page mounts it — the deck with
+    /// a neighbouring card (so the 0.86 width) inside a vertical scroller at
+    /// the page's 16pt margin — each team row reads name, number, its whole
+    /// label, number, its whole label, top to bottom, then the whole legend.
+    func testTheProjectedFinishLabelsReadWholeInTheDeck() throws {
+        let finish = try liveFinishCard()
+        let (_, markets) = try finalPage()
+        let neighbour = try XCTUnwrap(NFLMilestoneCard9483.cards(
+            props: markets.playerProps ?? [], eventStatus: "completed",
+            commenceTime: ISO8601DateFormatter().date(from: "2026-09-28T17:00:00Z")!,
+            homeTeam: "Chicago Bears", awayTeam: "Philadelphia Eagles",
+            now: ISO8601DateFormatter().date(from: "2026-09-28T21:00:00Z")!).first, "control: a second card")
+        // The names the page passes (`nflNames`): the r9 game, WAS at SF.
+        let (away, home) = TeamShortName.shortPair(away: "Washington Commanders", home: "San Francisco 49ers",
+                                                   sportKey: "americanfootball_nfl")
+        for width in [CGFloat(393), 375] {
+            let name = "finish-\(Int(width))-accessibility5"
+            let deck = NFLEventCardDeckView9483(
+                cards: [.finish(finish), .milestone(neighbour)], awayName: away, homeName: home,
+                awayColor: .indigo, homeColor: .red, state: NFLCardDeckState9483())
+            let view = ScrollView { deck.padding(.horizontal, 16) }.environment(\.colorScheme, .light)
+            let host = hostForMeasurement(view, at: .accessibility5)
+            // Tall enough to hold the whole card in one frame; the vertical
+            // scroller proposes no height either way.
+            host.view.frame = CGRect(x: 0, y: 0, width: width, height: 2400)
+            let window = UIWindow(frame: host.view.frame)
+            window.rootViewController = host
+            window.isHidden = false
+            defer { window.isHidden = true }
+            settle(host, 0.8)
+            // The finish card only: the neighbour starts past its right edge.
+            let cardRight = 16 + (width - 32) * 0.86
+            let read = try lines(host, name: name).filter { $0.box.minX < cardRight }
+                .sorted { $0.box.minY < $1.box.minY }
+            let all = read.map(\.text).joined(separator: " | ")
+            XCTAssertFalse(read.contains { $0.text.contains("…") || $0.text.contains("...") },
+                           "\(name): an ellipsis is drawn — \(all)")
+            func index(_ text: String, after: Int) -> Int? {
+                read.indices.first { $0 > after && read[$0].text.trimmingCharacters(in: .whitespaces) == text }
+            }
+            // Each row's two numbers, top to bottom (the axis ticks are
+            // touchdowns, never these).
+            let rows = [(away, "21.5", "13.5"), (home, "29.5", "33")]
+            var marks: [(pregame: Int, now: Int)] = []
+            for (_, pregame, now) in rows {
+                guard let p = index(pregame, after: marks.last?.now ?? -1), let n = index(now, after: p) else { break }
+                marks.append((p, n))
+            }
+            guard marks.count == rows.count,
+                  let legend = read.indices.first(where: { $0 > marks[1].now && read[$0].text.hasPrefix("Points") }) else {
+                XCTFail("\(name): the rows' numbers and the legend did not read in order — \(all)")
+                continue
+            }
+            // A row ends at the next row's name, the last at the legend.
+            let ends = [marks[1].pregame - 1, legend]
+            for (i, (team, _, _)) in rows.enumerated() {
+                let (p, n) = marks[i]
+                // The stacked layout: the whole name on its own line over the number.
+                XCTAssertEqual(read[p - 1].text.trimmingCharacters(in: .whitespaces), team,
+                               "\(name): the line over \(read[p].text) is not the whole name \(team) — \(all)")
+                assertLabel(read[(p + 1)..<n], reads: "pregame projection", under: read[p], over: read[n],
+                            "\(name) \(team)", all: all)
+                assertLabel(read[(n + 1)..<max(n + 1, ends[i])], reads: "projected now", under: read[n],
+                            over: read[ends[i]], "\(name) \(team)", all: all)
+            }
+            // The live legend, whole, under the last row.
+            let stop = read.indices.first { $0 > legend && read[$0].text.contains("Open") } ?? read.endIndex
+            let text = read[legend..<stop].map(\.text).joined(separator: " ")
+            XCTAssertEqual(text.filter { $0.isLetter || $0 == "=" }, "Pointsoutline=pregamefilled=projectednow",
+                           "\(name): the legend read \"\(text)\" — \(all)")
         }
     }
 
