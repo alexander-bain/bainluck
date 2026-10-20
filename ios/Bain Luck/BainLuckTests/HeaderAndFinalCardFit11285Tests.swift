@@ -991,10 +991,11 @@ final class HeaderAndFinalCardFit11285Tests: XCTestCase {
     /// #11285 (Design, narrow-reader residual 2) — at 320pt/AX5 the live
     /// header (the shape `nflReaderHeader` prints, as a literal) left the card
     /// only its kicker above the footer. There the chances line scrolls in a
-    /// short band under the match line: the card has room to read, the score
-    /// and state stay on screen, and the chances are reached by scrolling the
-    /// band, never removed. Where the rule does not apply (393/AX5, 320/Large)
-    /// the chances line draws whole and no band is drawn.
+    /// band of exactly its cap under the match line: the card has room to read,
+    /// the score and state stay fixed above the band, and the chances are
+    /// reached by scrolling the band, never removed. Where the rule does not
+    /// apply (393/AX5, 320/Large) the chances line draws whole and no band is
+    /// drawn.
     func testTheExpandedReaderLeavesTheStoryRoomOnANarrowPhone() throws {
         XCTAssertEqual(NFLCardReader9483.chancesMaxHeight(width: 320, height: 600, accessibility: true), 72)
         XCTAssertNil(NFLCardReader9483.chancesMaxHeight(width: 320, height: 600, accessibility: false))
@@ -1052,6 +1053,21 @@ final class HeaderAndFinalCardFit11285Tests: XCTestCase {
                 let scroller = try XCTUnwrap(band, "\(name): the chances line has no scrolling band — \(all)")
                 XCTAssertFalse(read.contains { $0.text.contains("88%") },
                                "control: \(name): the band shows the whole chances line, so it banded nothing — \(all)")
+                // The band is its cap: the reader's stack may not squeeze it
+                // (to 0pt, the chances gone). The reader measures the safe area.
+                let cap = try XCTUnwrap(NFLCardReader9483.chancesMaxHeight(
+                    width: width, height: host.view.safeAreaLayoutGuide.layoutFrame.height, accessibility: true))
+                XCTAssertEqual(scroller.bounds.height, cap, accuracy: 1,
+                               "\(name): the band was squeezed below its cap — \(all)")
+                // The score and the state sit above the band, outside it: by
+                // position, not mere presence. The band's frame in its
+                // superview, so its own offset cannot move the reference.
+                let bandTop = try XCTUnwrap(scroller.superview).convert(scroller.frame, to: host.view).minY
+                let score = try XCTUnwrap(read.first { $0.text.contains("13") && $0.text.contains("20") },
+                                          "\(name): no score — \(all)")
+                let gameState = try XCTUnwrap(read.first { $0.text.contains("Q3") }, "\(name): no state — \(all)")
+                XCTAssertLessThanOrEqual(max(score.box.maxY, gameState.box.maxY), bandTop + 2,
+                                         "\(name): the score or state sits inside the band — \(all)")
                 scroller.setContentOffset(CGPoint(x: 0, y: scroller.contentSize.height - scroller.bounds.height),
                                           animated: false)
                 settle(host, 0.3)
@@ -1059,8 +1075,10 @@ final class HeaderAndFinalCardFit11285Tests: XCTestCase {
                 XCTAssertTrue(scrolled.contains { $0.text.contains("88%") },
                               "\(name): the chances' last figure cannot be reached — "
                                 + scrolled.map(\.text).joined(separator: " | "))
-                XCTAssertTrue(scrolled.contains { $0.text.contains("Q3") },
-                              "\(name): scrolling the band moved the game state")
+                let stateAfter = try XCTUnwrap(scrolled.filter { $0.text.contains("Q3") }.min { $0.box.minY < $1.box.minY },
+                                               "\(name): the state left the screen")
+                XCTAssertEqual(stateAfter.box.minY, gameState.box.minY, accuracy: 2,
+                               "\(name): scrolling the band moved the game state")
             } else {
                 XCTAssertNil(band, "\(name): a band where the rule does not apply — \(all)")
                 XCTAssertTrue(read.contains { $0.text.contains("88%") }, "\(name): the chances line is not whole — \(all)")

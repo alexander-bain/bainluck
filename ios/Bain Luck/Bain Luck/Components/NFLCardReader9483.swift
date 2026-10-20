@@ -287,6 +287,10 @@ struct NFLCardReader9483: View {
                         ScrollView(.vertical) {
                             chancesLine.frame(maxWidth: .infinity, alignment: .leading)
                         }
+                        // The band is its cap, never the stack's leftover: a
+                        // flexible scroller here let the reader's VStack
+                        // squeeze it to 0pt and the chances vanished (lane1 R1).
+                        .frame(height: band)
                         .scrollIndicators(.visible)
                         .scrollIndicatorsFlash(onAppear: true)
                     }
