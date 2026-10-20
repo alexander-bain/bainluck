@@ -958,6 +958,40 @@ async def _poll_datagolf_live() -> dict:
                                     )
                                     market = existing.scalar_one_or_none()
 
+                                    # #11315: a RESOLVED market is not reopened.
+                                    # DataGolf's status string lags the result,
+                                    # so `current_event` can be a tournament
+                                    # that is already over while the in-play
+                                    # endpoint still answers with its board.
+                                    # Reopening here put the finished board back
+                                    # in the open set the re-query below reads:
+                                    # the live writer then priced it again, and
+                                    # once the live phase ended the hourly poll
+                                    # (whose own guard reads `resolved`) saw an
+                                    # OPEN board and wrote the pre-tournament
+                                    # field over the final journey. The row is
+                                    # left exactly as stored — status, name and
+                                    # metadata — so nothing below can reach it.
+                                    #
+                                    # A future-dated resolved row is the #1076
+                                    # class (resolved by mistake before its end
+                                    # date) and keeps the reopen it always had;
+                                    # the predicate is the complement of the
+                                    # #1076 restore's. A `closed` row reopens as
+                                    # before.
+                                    if (
+                                        market is not None
+                                        and market.status == SETTLED_STATUS
+                                        and (
+                                            market.resolution_date is None
+                                            or market.resolution_date <= datetime.now(timezone.utc)
+                                        )
+                                    ):
+                                        stats["resolved_market_reopen_refused"] = (
+                                            stats.get("resolved_market_reopen_refused", 0) + 1
+                                        )
+                                        continue
+
                                     if market:
                                         market.status = "open"
                                         market.name = market_name
