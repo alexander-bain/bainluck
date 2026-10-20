@@ -95,3 +95,22 @@ Current results/source-sha256.json inventories the new files. Inventories are
 recorded after tests, not contemporaneous copied per-run source snapshots.
 
 API background: [Node filesystem flags and exclusive creation](https://nodejs.org/api/fs.html#file-system-flags).
+
+
+## First rescan and test-only correction
+
+The [first rescan on b297ae6](https://github.com/alexander-bain/bainluck/runs/118758427665)
+no longer listed the original seven high findings/four notes, but failed on one
+new `js/file-system-race` in the added independent verifier at line 40
+([alert 4301](https://github.com/alexander-bain/bainluck/security/code-scanning/4301)).
+This was a test-side pathname stat followed by a later pathname byte read, not a
+finding in the hardened Journal. It is not suppressed or treated as clearance.
+
+The verifier now checks mode/size with fstat and compares exact bytes using
+explicit positional reads on one held descriptor; standalone reopen comparisons
+hold a no-follow descriptor through the byte read and close it in finally.
+Its UTF-8, capacity, torn/corrupt recovery and EIO assertions are preserved. The
+corrected 21 cases passed in both the reviewer and final staged reruns. No runtime
+source changed, no other suite was relabeled as rerun, and the prior verifier hash
+is retained in the compact verification record. Another exact-head remote rescan
+is still required before clearing the security hold.

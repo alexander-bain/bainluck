@@ -13,6 +13,21 @@ const root=process.env.SECURITY_ROOT||path.resolve(path.dirname(fileURLToPath(im
 const modules=['fenced-display-authority','stream-backpressure','stream-reconnect'];
 const digest=value=>crypto.createHash('sha256').update(JSON.stringify(value)).digest('hex');
 const line=value=>Buffer.from(JSON.stringify({value,hash:digest(value)})+'\n');
+// Independent byte comparison through the same held descriptor, using explicit
+// positions because append writes can leave the descriptor's shared offset at EOF.
+const readBytes=fd=>{
+  const bytes=Buffer.alloc(fs.fstatSync(fd).size);
+  for(let offset=0;offset<bytes.length;){
+    const n=fs.readSync(fd,bytes,offset,bytes.length-offset,offset);
+    assert.ok(n>0,'complete positional byte read');
+    offset+=n;
+  }
+  return bytes;
+};
+const readFileBytes=file=>{
+  const fd=fs.openSync(file,fs.constants.O_RDONLY|fs.constants.O_NOFOLLOW);
+  try{return readBytes(fd);}finally{fs.closeSync(fd);}
+};
 const trackedIo=()=>{
   const live=new Set();
   return {live,io:{
@@ -30,14 +45,14 @@ for(const name of modules){
   test(`${name}: literal Unicode/space/percent path, private create, repeated positional recovery`,()=>withDir(dir=>{
     const f=path.join(dir,'Δ literal % journal.wal'),j=new Journal(f);
     try{
-      assert.equal(fs.statSync(f).mode&0o777,0o600);
+      assert.equal(fs.fstatSync(j.fd).mode&0o777,0o600);
       const first={kind:'first',text:'é漢字'},second={kind:'second',n:2};
       j.append(first);
       assert.deepEqual(j.read(),{records:[first],tornBytes:0});
       assert.deepEqual(j.read(),{records:[first],tornBytes:0});
       j.append(second);
       assert.deepEqual(j.read(),{records:[first,second],tornBytes:0});
-      assert.deepEqual(fs.readFileSync(f),Buffer.concat([line(first),line(second)]));
+      assert.deepEqual(readBytes(j.fd),Buffer.concat([line(first),line(second)]));
     }finally{j.close();}
     const reopened=new Journal(f);
     try{assert.equal(reopened.records.length,2);}finally{reopened.close();}
@@ -47,7 +62,7 @@ for(const name of modules){
     const j=new Journal(f,{maxBytes:bytes.length});
     try{
       j.append(value);
-      assert.equal(fs.statSync(f).size,bytes.length);
+      assert.equal(fs.fstatSync(j.fd).size,bytes.length);
       assert.throws(()=>j.append(value));
       assert.deepEqual(j.records,[value]);
     }finally{j.close();}
@@ -56,18 +71,18 @@ for(const name of modules){
     const tracker=trackedIo();
     assert.throws(()=>new Journal(f,{maxBytes:bytes.length-1,io:tracker.io}));
     assert.equal(tracker.live.size,0);
-    assert.deepEqual(fs.readFileSync(f),bytes);
+    assert.deepEqual(readFileBytes(f),bytes);
   }));
   test(`${name}: torn suffix poisons replay and append without truncating evidence`,()=>withDir(dir=>{
     const f=path.join(dir,'torn.wal'),value={kind:'x',n:1};
     const j=new Journal(f);j.append(value);j.close();
     fs.appendFileSync(f,'{"unfinished":"é');
-    const original=fs.readFileSync(f),r=new Journal(f);
+    const original=readFileBytes(f),r=new Journal(f);
     try{
       assert.deepEqual(r.records,[value]);
       assert.equal(r.poisoned,true);
       assert.throws(()=>r.append({kind:'y'}));
-      assert.deepEqual(fs.readFileSync(f),original);
+      assert.deepEqual(readBytes(r.fd),original);
     }finally{r.close();}
   }));
   test(`${name}: corrupt recovery never leaks a descriptor or rewrites the file`,()=>withDir(dir=>{
@@ -76,7 +91,7 @@ for(const name of modules){
     const tracker=trackedIo();
     for(let n=0;n<3;n++)assert.throws(()=>new Journal(f,{io:tracker.io}));
     assert.equal(tracker.live.size,0);
-    assert.deepEqual(fs.readFileSync(f),bytes);
+    assert.deepEqual(readFileBytes(f),bytes);
   }));
   test(`${name}: reopening after failed creation directory fsync requires a successful directory sync`,()=>withDir(dir=>{
     const f=path.join(dir,'creation-retry.wal'),tracker=trackedIo();
@@ -117,7 +132,7 @@ for(const name of modules){
     const f=path.join(dir,'partial.wal'),j=new Journal(f);
     j.io={writeSync:(fd,bytes,offset,length)=>fs.writeSync(fd,bytes,offset,Math.min(length,3)),fsyncSync:fs.fsyncSync};
     const value={kind:'partial',text:'é漢字'};j.append(value);
-    assert.deepEqual(fs.readFileSync(f),line(value));
+    assert.deepEqual(readBytes(j.fd),line(value));
     j.close();
     const g=new Journal(path.join(dir,'eio.wal')),b=new Broker({journal:g}),t=b.claim('owner');
     try{

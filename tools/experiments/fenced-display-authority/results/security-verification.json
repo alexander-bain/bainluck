@@ -45,5 +45,20 @@
   "source_receipt_limitation": "Post-run inventories; not contemporaneous per-run source snapshots. Frozen journal/schedule bytes were independently checked across tests.",
   "trusted_boundary": "Single writer, trusted parent directory and ancestors. No-follow protects final component only; no namespace-survival, multi-host, power-loss or host-loss guarantee.",
   "existing_user_directory_permissions_changed": false,
-  "alerts_dismissed_or_suppressed": false
+  "alerts_dismissed_or_suppressed": false,
+  "test_only_followon": {
+    "parent_commit": "b297ae6fe6c41bfb9772f74fff6054c35ad56b6c",
+    "reason": "Its first CodeQL rescan reported one new test-side js/file-system-race at independent verifier line40, alert4301; original seven highs/four notes were no longer listed.",
+    "failed_scan": "https://github.com/alexander-bain/bainluck/runs/118758427665",
+    "alert": "https://github.com/alexander-bain/bainluck/security/code-scanning/4301",
+    "previous_test_sha256": "712672921d36ecf7d353a4b953c4c50c47a4dcdef6a13986455c7196d8d72e6f",
+    "current_test_sha256": "1417a148ce7f927ad85ef553b1c5222dbad0e86868ccb9018305e737b22c51eb",
+    "test_change": "Use fstat and positional byte reads on held descriptors; no path-stat/path-read pairs. Exact serialization, UTF-8, recovery and EIO assertions retained.",
+    "runtime_files_changed": false,
+    "focused_checks_rerun": 21,
+    "reviewer_checks_rerun": 21,
+    "other_suites_rerun": false,
+    "alert_dismissed_or_suppressed": false,
+    "new_remote_rescan": "pending; hold remains"
+  }
 }
