@@ -788,6 +788,16 @@ struct NFLEventCardDeckView9483: View {
     /// horizontal container, never nested.
     var stream: NBAStoryStreamView9483.Page?
     @AccessibilityFocusState private var focused: String?
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+
+    /// A card's width in the deck: the next card peeks past its edge. #11285 —
+    /// on a 320pt screen (Display Zoom) at accessibility sizes a peeking card
+    /// cannot hold a whole team name even at its smallest allowed size
+    /// ("Commanders" at AX5 needs 238pt; the peeking card leaves 216), so each
+    /// card takes the whole width there; the count says there are more.
+    static func cardWidth(_ width: CGFloat, count: Int, accessibility: Bool) -> CGFloat {
+        count > 1 && !(accessibility && width < 300) ? width * 0.86 : width
+    }
 
     var body: some View {
         if let stream {
@@ -827,7 +837,10 @@ struct NFLEventCardDeckView9483: View {
                             .accessibilityLabel(Self.openerAccessibilityLabel(card.title))
                             .accessibilityIdentifier(Self.openerIdentifier)
                         }
-                        .containerRelativeFrame(.horizontal) { width, _ in cards.count > 1 ? width * 0.86 : width }
+                        .containerRelativeFrame(.horizontal) { width, _ in
+                            Self.cardWidth(width, count: cards.count,
+                                           accessibility: dynamicTypeSize.isAccessibilitySize)
+                        }
                         .accessibilityFocused($focused, equals: card.id)
                         .id(card.id)
                     }

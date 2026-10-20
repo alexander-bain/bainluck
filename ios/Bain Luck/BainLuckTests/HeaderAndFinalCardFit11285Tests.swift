@@ -20,6 +20,9 @@ import XCTest
 ///   default row kept beside the figure → `testTheDefaultSizeKeepsTheStoryCardRow`
 /// - the Projected finish card's label cut short in the stacked layout
 ///   ("pregame proje…" at AX5, r9 axxxxl-8) → `testTheProjectedFinishLabelsReadWholeInTheDeck`
+/// - the Projected finish card too narrow for "Commanders" on a 320pt screen
+///   at AX5 even at the name's 0.8 floor (lane1 0531Z) → the 320 width in
+///   both Projected finish tests
 /// - the Projected finish chart's marks drawn across its team-name label
 ///   ("Comm▪an◻ders" at AX5, Design 06b/07b) → `testTheProjectedFinishChartsMarksClearItsTeamNames`
 @MainActor
@@ -387,7 +390,13 @@ final class HeaderAndFinalCardFit11285Tests: XCTestCase {
         // The names the page passes (`nflNames`): the r9 game, WAS at SF.
         let (away, home) = TeamShortName.shortPair(away: "Washington Commanders", home: "San Francisco 49ers",
                                                    sportKey: "americanfootball_nfl")
-        for width in [CGFloat(393), 375] {
+        // 320 is a phone under Display Zoom (lane1 0531Z): there the peeking
+        // card is too narrow for "Commanders" even at its 0.8 floor, so the
+        // deck gives each card the whole width at accessibility sizes.
+        XCTAssertEqual(NFLEventCardDeckView9483.cardWidth(288, count: 2, accessibility: true), 288)
+        XCTAssertEqual(NFLEventCardDeckView9483.cardWidth(288, count: 2, accessibility: false), 288 * 0.86)
+        XCTAssertEqual(NFLEventCardDeckView9483.cardWidth(343, count: 2, accessibility: true), 343 * 0.86)
+        for width in [CGFloat(393), 375, 320] {
             let name = "finish-\(Int(width))-accessibility5"
             let deck = NFLEventCardDeckView9483(
                 cards: [.finish(finish), .milestone(neighbour)], awayName: away, homeName: home,
@@ -403,7 +412,7 @@ final class HeaderAndFinalCardFit11285Tests: XCTestCase {
             defer { window.isHidden = true }
             settle(host, 0.8)
             // The finish card only: the neighbour starts past its right edge.
-            let cardRight = 16 + (width - 32) * 0.86
+            let cardRight = 16 + NFLEventCardDeckView9483.cardWidth(width - 32, count: 2, accessibility: true)
             let read = try lines(host, name: name).filter { $0.box.minX < cardRight }
                 .sorted { $0.box.minY < $1.box.minY }
             let all = read.map(\.text).joined(separator: " | ")
@@ -530,7 +539,7 @@ final class HeaderAndFinalCardFit11285Tests: XCTestCase {
     /// point marks across its own name label ("Comm▪an◻ders"). The chart prints
     /// each team's name at the top of the team's band; the marks must sit
     /// wholly below the name's ink, every mark still drawn, both teams on one
-    /// points scale. Large text at 393 and 375 is the defect; xxxLarge is where
+    /// points scale. Large text at 393, 375 and 320 (Display Zoom) is the defect; xxxLarge is where
     /// the marks first touched the name; the default size is the control that
     /// keeps its 120pt chart.
     func testTheProjectedFinishChartsMarksClearItsTeamNames() throws {
@@ -549,7 +558,7 @@ final class HeaderAndFinalCardFit11285Tests: XCTestCase {
                                                    sportKey: "americanfootball_nfl")
         let (awayColor, homeColor) = (Color.indigo, Color.red)
         for (width, size) in [(CGFloat(393), DynamicTypeSize.large), (393, .accessibility5), (375, .accessibility5),
-                              (375, .xxxLarge)] {
+                              (320, .accessibility5), (375, .xxxLarge)] {
             let name = "finish-chart-\(Int(width))-\(size)"
             let deck = NFLEventCardDeckView9483(
                 cards: [.finish(finish), .milestone(neighbour)], awayName: away, homeName: home,
@@ -562,7 +571,8 @@ final class HeaderAndFinalCardFit11285Tests: XCTestCase {
             window.isHidden = false
             defer { window.isHidden = true }
             settle(host, 0.8)
-            let cardRight = 16 + (width - 32) * 0.86
+            let cardRight = 16 + NFLEventCardDeckView9483.cardWidth(width - 32, count: 2,
+                                                                    accessibility: size.isAccessibilitySize)
             let (read, px) = try cardFrame(host, cardRight: cardRight, name: name)
             let all = read.map(\.text).joined(separator: " | ")
             func band(_ top: CGFloat, _ bottom: CGFloat) -> CGRect {
