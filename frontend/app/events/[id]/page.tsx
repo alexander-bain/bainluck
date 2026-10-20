@@ -1383,6 +1383,18 @@ export default function EventPage({ params }: EventPageProps) {
       ? data : null;
   }, [event?.id, event?.status, gameMarkets]);
 
+  // #10090: one disposable chart projection supplies the line and its resting
+  // probability. The adopted history/cache and source/score observations stay intact.
+  const previewChartLine = useMemo(() => overlayBlendPreviewLine(
+    event, blendPreview, blendPreviewNow, historyData?.aggregate_line ?? undefined,
+  ), [event, blendPreview, blendPreviewNow, historyData?.aggregate_line]);
+  const previewChartHistory = useMemo(() => historyData &&
+    previewChartLine !== (historyData.aggregate_line ?? undefined)
+    ? { ...historyData, aggregate_line: previewChartLine } : historyData,
+  [historyData, previewChartLine]);
+  const previewChartAt = previewChartHistory !== historyData
+    ? previewChartLine?.[previewChartLine.length - 1]?.timestamp : undefined;
+
   // Both charts read the same served + received publication history (#920).
   const sparklinePoints = useMemo(() =>
     (historyData?.aggregate_line ?? []).map(p => ({
@@ -1400,7 +1412,7 @@ export default function EventPage({ params }: EventPageProps) {
   const lastChartPoint = useMemo<ActiveChartPoint | null>(
     () =>
       computeLastChartPoint(
-        historyData,
+        previewChartHistory,
         servedScore.home_score,
         servedScore.away_score,
         // #4571 — the event row's own clock, so the helper can date the score by
@@ -1413,7 +1425,7 @@ export default function EventPage({ params }: EventPageProps) {
         // newer confirmed whole pair replace an older held history pair.
         event?.status,
       ),
-    [historyData, servedScore, event?.status, event?.espn],
+    [previewChartHistory, servedScore, event?.status, event?.espn],
   );
 
   // #4889 — ONE CLOCK ON THE PAGE. The header and the readout under the chart
@@ -1631,8 +1643,9 @@ export default function EventPage({ params }: EventPageProps) {
         event?.sport || undefined,
         // #6158 — a late start opens "Since Start" at the observed first period.
         periodBoundaries,
+        previewChartAt,
       ),
-    [historyData, chartTimeRange, event?.commence_time, event?.status, event?.sport, periodBoundaries],
+    [historyData, chartTimeRange, event?.commence_time, event?.status, event?.sport, periodBoundaries, previewChartAt],
   );
 
   // ── #5720 — A RECORD IS NOT A SCORE, AND ON A STARTED GAME WITH NO SCORE A
@@ -3495,9 +3508,7 @@ export default function EventPage({ params }: EventPageProps) {
               winProbSources={historyData?.win_prob_sources}
               scoringPlays={historyData?.scoring_plays}
               scoreHistory={historyData?.score_history}
-              aggregateLine={overlayBlendPreviewLine(
-                event, blendPreview, blendPreviewNow, historyData?.aggregate_line ?? undefined,
-              )}
+              aggregateLine={previewChartLine}
               backendBlendServed={backendBlendServed}
               completedAt={historyData?.completed_at ?? undefined}
               eventId={eventId}
@@ -4134,9 +4145,7 @@ export default function EventPage({ params }: EventPageProps) {
               winProbSources={historyData?.win_prob_sources}
               scoringPlays={historyData?.scoring_plays}
               scoreHistory={historyData?.score_history}
-              aggregateLine={overlayBlendPreviewLine(
-                event, blendPreview, blendPreviewNow, historyData?.aggregate_line ?? undefined,
-              )}
+              aggregateLine={previewChartLine}
               backendBlendServed={backendBlendServed}
               completedAt={historyData?.completed_at ?? undefined}
               eventId={eventId}

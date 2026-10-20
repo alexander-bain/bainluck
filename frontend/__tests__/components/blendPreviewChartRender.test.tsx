@@ -11,7 +11,7 @@ jest.mock('recharts', () => ({
   ResponsiveContainer: ({children}: {children: React.ReactElement}) => React.cloneElement(children, {width: 390, height: 300}),
 }));
 import OddsChart from '@/components/OddsChart';
-import { computeSharedChartDomain } from '@/lib/eventKeyStats';
+import { computeLastChartPoint, computeSharedChartDomain } from '@/lib/eventKeyStats';
 
 const served: EventHistoryResponse = JSON.parse(readFileSync(join(__dirname, '../fixtures/event-15322164-history-10093.json'), 'utf8'));
 const event = {id: 15322164, status: 'live', hero_probability_source: 'blend', blend_fold_revision: {'15322164': 221}};
@@ -40,4 +40,22 @@ test('the real chart draws the admitted preview before any commit, and expiry re
 
 test('a newer committed revision cannot be covered by an older provisional chart point', () => {
   expect(render(overlayBlendPreviewLine({...event, blend_fold_revision: {'15322164': 222}}, held, 500, served.aggregate_line ?? undefined))).toBe(render(served.aggregate_line));
+});
+
+
+test('a later preview extends the shared domain and resting probability without redating scores or plays', () => {
+  const observed_at = '2026-10-01T17:44:25Z';
+  const state = previewAfter(null, {...frame, observed_at}, event.id, 0);
+  const line = overlayBlendPreviewLine(event, state, 500, served.aggregate_line ?? undefined);
+  const projected = {...served, aggregate_line: line};
+  const before = computeLastChartPoint(served, 2, 1, '2026-10-01T17:40:00Z', null, 'live');
+  const after = computeLastChartPoint(projected, 2, 1, '2026-10-01T17:40:00Z', null, 'live');
+  expect(after).toEqual({...before, homeProb: .75, awayProb: .25, probKnown: true});
+  const expanded = computeSharedChartDomain(served, 'live', 'live', '2026-10-01T15:00:00Z', 'tennis', undefined, observed_at);
+  expect(Date.parse(expanded!.end)).toBeGreaterThanOrEqual(Date.parse(observed_at));
+  expect(Date.parse(domain!.end)).toBeLessThan(Date.parse(observed_at));
+  expect(computeSharedChartDomain(served, 'live', 'completed', '2026-10-01T15:00:00Z', 'tennis', undefined, observed_at))
+    .toEqual(computeSharedChartDomain(served, 'live', 'completed', '2026-10-01T15:00:00Z', 'tennis'));
+  expect(computeSharedChartDomain(served, 'live', 'live', '2026-10-01T15:00:00Z', 'tennis', undefined, 'bad-time'))
+    .toEqual(domain);
 });

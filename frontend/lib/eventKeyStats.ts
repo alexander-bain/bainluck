@@ -1398,6 +1398,8 @@ export function computeSharedChartDomain(
   sport: string | undefined,
   /** #6158 — the page's `derivePeriodBoundaries` result; see `observedPlayStartMs`. */
   periodBoundaries?: PeriodBoundary[] | null,
+  /** Admitted display-only probability observation; never a score/source restamp. */
+  renderedProbabilityAt?: string,
 ): SharedChartDomain | null {
   if (!historyData) return null;
 
@@ -1421,6 +1423,10 @@ export function computeSharedChartDomain(
       const t = new Date(pt.timestamp).getTime();
       if (!isNaN(t)) timestamps.push(t);
     }
+  }
+  if (renderedProbabilityAt && ["live", "scheduled", "suspended"].includes(eventStatus ?? "")) {
+    const renderedAt = Date.parse(renderedProbabilityAt);
+    if (Number.isFinite(renderedAt)) timestamps.push(renderedAt);
   }
   if (timestamps.length === 0) return null;
 
