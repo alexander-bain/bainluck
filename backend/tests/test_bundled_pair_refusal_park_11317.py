@@ -276,6 +276,24 @@ async def test_a_refused_sibling_leg_wakes_the_devig_when_its_book_proves(monkey
 
 
 @pytest.mark.asyncio
+async def test_a_midpoint_appearing_at_the_old_ask_only_price_wakes_the_devig(monkeypatch):
+    # lane1b's review: the away leg's ask-only primary price (.18) already
+    # equals the midpoint that later appears, so a primary-price-only
+    # signature would wait for the sweep. The devig proves on the midpoint.
+    r, rec = build(monkeypatch, rows=lambda: board(".825", ".18"))
+    book(rec, A, "0.00", ".18")
+    assert rec.readers["steady_book_midpoint"](A) is None
+    await r.refresh([1], flush_started=rec.clock.t)
+    assert len(rec.updates) == 1 and set(r._book_refused) == {1}
+    rig = consumer_flush(r)
+    assert await quiet_flushes(rig, r, rec, 2) == [0, 0]
+    book(rec, A, ".17", ".19")
+    assert rec.readers["steady_book_primary_price"](A) == Decimal(".18")
+    assert await quiet_flushes(rig, r, rec, 1) == [1]
+    assert len(rec.updates) == 2 and not r._book_refused
+
+
+@pytest.mark.asyncio
 async def test_a_fresh_price_for_a_parked_pair_is_read_at_once(monkeypatch):
     r, rec = build(monkeypatch)
     mismatch(rec)

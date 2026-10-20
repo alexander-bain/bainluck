@@ -1374,13 +1374,16 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
         # ticker, compared (never interpreted) by the refresher: a refused
         # pair is read again only once one of these differs. The stored row
         # is not here; a new stored price reaches the refresher as a batch.
-        # The primary-price proof is the midpoint whenever one exists.
+        # The midpoint is its own term: the two-leg devig proves each leg on
+        # it, and an ask-only primary price can already equal the midpoint
+        # that later appears.
         ids = ticker_to_ids.get(ticker) if isinstance(ticker, str) else None
         if ids is None:
             return None
         market_id, oid = ids[0], ids[1]
         socks = tuple(
             (id(client.sock), client.sock.current_book_primary_price(ticker),
+             client.sock.current_book_midpoint(ticker),
              client.sock.current_primary_input(ticker))
             for client in game_clients
             if ticker in client.tickers and client.task is not None
