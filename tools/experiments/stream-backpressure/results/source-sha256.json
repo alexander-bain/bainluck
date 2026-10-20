@@ -20,7 +20,7 @@
   "src/bounded-sse-writer.mjs": "198aac3023819b2a67175903f61482a2b15657412ad9fa17d7ca7cd5391ee6d4",
   "src/broker.mjs": "26f3063d6a2813ee72752675a3568ec86c30b27055fffd383009fe67f8eda3ba",
   "src/client.mjs": "4e859c884ef58c2158c04a706ebcbce4be8a52327cace86df3af68eda847e783",
-  "src/journal.mjs": "c925af20817f85153cb1ed0fd4b209ad388ae78a1c6927bcef252407e930ab38",
+  "src/journal.mjs": "3e60005beabf5fcc5d68d59469ef374cfc08efc56e80dddb3b147a25b41b7646",
   "src/protocol.mjs": "42233065b7e45cede6509f933d26744b2d89e2da8ec7e4099dd9a38efe259e20",
   "src/run-bounded.mjs": "a7b7f417236afecf6427d0f6edc3c978cda59b05637bd15d6e5d65bdae176459",
   "src/scenarios.mjs": "35ae427cd9dc569a4a532620075ddfa742c4fb1f04b9ba1771b3e7e16e31a2af",
@@ -32,9 +32,9 @@
   "tests/baseline-failures.mjs": "c3c1f2c5f43f8f5540fd8855e724fcebf8f716fc18018021778e998033ae1ac9",
   "tests/fixtures/captured-renewal-margins.json": "ea16b64a103e6b381b2ea0bbc19f8e433ba84de0e76b5c22e5462820e56dfe35",
   "tests/fixtures/polling-wire-client.mjs": "2c1ed62e8dc12bc052c24d9c8606aed2003f43e86cd573b73c4ca7bca7d38f6a",
-  "tests/inherited-model.mjs": "a4f1f7aa0a68f30c3b20edcba79f6bb24d5d17d0597597a5e2ad10ae37df6fc3",
+  "tests/inherited-model.mjs": "af3f2aee06aa3cb75e28e6bbcc4cfccfa20c68710c6012e699db76b4257b7cbb",
   "tests/renewal-events.test.mjs": "54f160b4772a7b72dae7491e49471bdd7e0ffc695eb5129c8827c5fb276a6659",
-  "tests/renewal-independent.test.mjs": "5a85e7a3412f23c191fdd39c13ff6720614b0d0c62820501ef7b7610cee4dff1",
+  "tests/renewal-independent.test.mjs": "cea068d1a2674b3a94c1680fe3ad9f7df2c5eb4652b4c5684ae2cd267a076bf9",
   "tests/transport-unit.mjs": "92fd715a83f3c723ec8fadc68bce6e8adf69a4046b1e7002464731725d9a4a0e",
   "tests/wire-test.mjs": "b7a8f51b5069d24ea2f90886339b99652f246b8fa9caf238bbfebe2d50376143"
 }

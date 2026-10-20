@@ -1,7 +1,9 @@
-import assert from 'node:assert/strict';import fs from 'node:fs';import path from 'node:path';
+import assert from 'node:assert/strict';import fs from 'node:fs';import path from 'node:path';import os from 'node:os';
 import {Broker,Client,frame,deliver} from './broker.mjs';
 import {Owner as OldOwner,Client as OldClient,frame as oldFrame} from '../baseline/recovery-candidate.mjs';
-const out=process.env.OUT||'/tmp/fenced-tests';fs.mkdirSync(out,{recursive:true});
+// An explicit OUT and its ancestors must be trusted. Never chmod existing paths.
+// Otherwise use a fresh, private directory rather than a predictable shared path.
+const out=process.env.OUT||fs.mkdtempSync(path.join(os.tmpdir(),'fenced-tests-'));fs.mkdirSync(out,{recursive:true,mode:0o700});
 const blocked={persist:()=>new Promise(()=>{}),reconcile:async()=>null};
 const summary={scope:'Deterministic model scheduling, not browser/paint/network measurements',staleOwner:{scenarios:100,baselineStaleDisplays:0,brokerStaleDisplays:0},reconnect:{scenarios:100,baselineStaleDisplays:0,brokerStaleDisplays:0},takeoverPlacement:[],randomized:{seeds:100,stepsPerSeed:300,operations:0,accepted:0,rejected:0,olderEpochViewsWithinLease:0,maxLeaseChallengeAgeMsWhileOlderEpochVisible:0}};
 for(let n=1;n<=100;n++){
@@ -31,4 +33,4 @@ for(let seed=1;seed<=summary.randomized.seeds;seed++){
  const groups=new Map();for(const p of c.points){const k=p.boot+'/'+p.epoch;const prev=groups.get(k)||0;assert.ok(p.seq>prev,`seed ${seed}: point regressed/duplicated`);groups.set(k,p.seq);}
 }
 assert.equal(summary.staleOwner.baselineStaleDisplays,100);assert.equal(summary.staleOwner.brokerStaleDisplays,0);assert.equal(summary.reconnect.baselineStaleDisplays,100);assert.equal(summary.reconnect.brokerStaleDisplays,0);
-fs.writeFileSync(path.join(out,'schedule-matrix.json'),JSON.stringify(summary,null,2)+'\n');console.log(JSON.stringify(summary,null,2));
+fs.writeFileSync(path.join(out,'schedule-matrix.json'),JSON.stringify(summary,null,2)+'\n',{flag:'wx',mode:0o600});console.log(JSON.stringify(summary,null,2));console.error(`Schedule report: ${path.join(out,'schedule-matrix.json')}`);

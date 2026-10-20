@@ -1,6 +1,7 @@
+import os from 'node:os';
 import test from 'node:test';import assert from 'node:assert/strict';import fs from 'node:fs';import path from 'node:path';
 import {Broker,Client,frame,hash,deliver,SCOPE} from './broker.mjs';import {Journal} from './journal.mjs';
-const out=process.env.OUT||'/tmp/fenced-tests';fs.mkdirSync(out,{recursive:true});
+const out=process.env.OUT||fs.mkdtempSync(path.join(os.tmpdir(),'fenced-tests-'));fs.mkdirSync(out,{recursive:true,mode:0o700});if(!process.env.OUT)console.error('Private experiment output: '+out);
 const env=(opts={})=>{let time=0;const b=new Broker(opts),t=b.claim('owner-a'),c=new Client({now:()=>time});b.open(c.start());deliver(b,c);return {b,t,c,at:v=>time=v};};
 const receipt=j=>({hash:j.hash});
 await test('single authority rejects stale owner before publication on still-connected client',()=>{const {b,t,c}=env();b.offer(t,frame(1,.4));deliver(b,c);const n=b.claim('owner-b');assert.equal(b.offer(t,frame(2,.9)).error,'fenced-or-terminal');assert.equal(c.current.p,.4);deliver(b,c);assert.equal(c.current,null);b.offer(n,frame(1,.6));deliver(b,c);assert.equal(c.current.p,.6);});

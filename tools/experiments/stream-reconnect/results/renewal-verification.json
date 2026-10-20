@@ -2,7 +2,7 @@
   "parent_commit": "58de889adbf63d5c659f19802602faaf8a07b964",
   "wire_sha256": "bcb35334f4ebdaf23298ee90db638f573ac3faca14b34c61f65e985b2005e25f",
   "node": "24.19.0",
-  "source_manifest": "source-sha256.json",
+  "source_manifest": "source-sha256-before-security.json",
   "source_manifest_recorded_after_run": true,
   "source_manifest_limitation": "Post-run hash inventory of unchanged tested files; not a contemporaneous per-run copied source snapshot.",
   "ttl_or_source_policy_changed": false,
@@ -57,5 +57,6 @@
     "passed": 2,
     "failed": 0,
     "scope": "Replay of exact captured synthetic acceptance times; not a replacement compatibility run."
-  }
+  },
+  "subsequent_security_hardening": "This is historical verification, not a rerun of the descriptor-bound journal/security follow-on. See ../../SECURITY-UPDATE.md."
 }

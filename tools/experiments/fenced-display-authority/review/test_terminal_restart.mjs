@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import {candidateUrl} from './candidate-path.mjs';
-const {Broker,Client,frame,deliver}=await import(candidateUrl('src/broker.mjs'));
+const {Broker,Client,frame}=await import(candidateUrl('src/broker.mjs'));
 const {Journal}=await import(candidateUrl('src/journal.mjs'));
 
 test('persistent terminal reconnect conveys terminal state without reviving an owner or value',()=>{

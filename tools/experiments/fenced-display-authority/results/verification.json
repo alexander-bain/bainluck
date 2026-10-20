@@ -132,7 +132,7 @@
     "source": "benchmark.log filesystem birth and final-write timestamps",
     "shared_host_overlap": "Other authorized work overlapped this window. This is not an idle-host benchmark or causal overhead estimate."
   },
-  "source_manifest": "source-sha256.json",
+  "source_manifest": "source-sha256-before-security.json",
   "source_manifest_recorded_after_run": true,
   "runnable_source_changed_after_run": false,
   "source_receipt_limitation": "This manifest was generated after the run from unchanged staged runnable files. It is not a contemporaneously copied per-run source snapshot.",
@@ -142,5 +142,6 @@
     "src/protocol.mjs": "42233065b7e45cede6509f933d26744b2d89e2da8ec7e4099dd9a38efe259e20",
     "src/journal.mjs": "c925af20817f85153cb1ed0fd4b209ad388ae78a1c6927bcef252407e930ab38",
     "src/benchmark.mjs": "1636d047f99b8d9a0d13277bd637c33bb7eb3979cd298202689711d14a579fc9"
-  }
+  },
+  "subsequent_security_hardening": "This is historical verification, not a rerun of the descriptor-bound journal/security follow-on. See ../../SECURITY-UPDATE.md."
 }

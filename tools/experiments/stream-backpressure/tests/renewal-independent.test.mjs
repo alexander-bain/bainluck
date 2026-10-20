@@ -1,6 +1,5 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import fs from 'node:fs';
 import path from 'node:path';
 import {pathToFileURL,fileURLToPath} from 'node:url';
 const source=process.env.EVENT_SOURCE || fileURLToPath(new URL('../src/',import.meta.url));

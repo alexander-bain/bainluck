@@ -1,3 +1,5 @@
+> Security follow-on: read [the journal/output hardening scope and current verification](../SECURITY-UPDATE.md). Historical measurements below are not new-source reruns.
+
 # Real loopback SSE reconnect experiment
 
 > Targeted follow-on: [event-driven renewal confirmation](../RENEWAL-UPDATE.md).

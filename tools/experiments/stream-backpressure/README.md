@@ -1,3 +1,5 @@
+> Security follow-on: read [the journal/output hardening scope and current verification](../SECURITY-UPDATE.md). Historical measurements below are not new-source reruns.
+
 # Bounded SSE backpressure laboratory
 
 > Targeted follow-on: [event-driven renewal confirmation](../RENEWAL-UPDATE.md).

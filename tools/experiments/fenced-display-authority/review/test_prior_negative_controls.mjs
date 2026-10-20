@@ -3,7 +3,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import {candidateUrl} from './candidate-path.mjs';
-const {Owner,Client,frame,hash}=await import(candidateUrl('baseline/recovery-candidate.mjs'));
+const {Owner,Client,frame}=await import(candidateUrl('baseline/recovery-candidate.mjs'));
 const traces=[];
 const token={stream:'independent-review',epoch:'old-epoch',generation:1};
 const newer={...token,epoch:'new-epoch',generation:2};

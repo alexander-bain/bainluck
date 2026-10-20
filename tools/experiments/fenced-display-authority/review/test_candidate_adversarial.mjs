@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import {candidateUrl} from './candidate-path.mjs';
-const {Broker,Client,frame,hash,deliver}=await import(candidateUrl('src/broker.mjs'));
+const {Broker,Client,frame,deliver}=await import(candidateUrl('src/broker.mjs'));
 const traces=[];
 function fixture(){let time=0;const b=new Broker({leaseMs:250});const token=b.claim('owner-one');const c=new Client({now:()=>time,leaseMs:250});b.open(c.start());deliver(b,c);return {b,c,token,setTime:n=>time=n};}
 const observe=(name,x,extra={})=>traces.push({name,current:structuredClone(x.c.current),status:x.c.status,epoch:x.c.epoch,revision:x.c.revision,deadline:x.c.deadline,...extra});

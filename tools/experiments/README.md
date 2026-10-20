@@ -6,7 +6,9 @@ production setting is changed. Read each module's README and limits before reuse
 Frozen predecessor copies are intentional comparison controls, not a shared
 production dependency or a combined pipeline.
 
-| Module | What to review | Verification |
+The table records the pre-renewal, pre-security baseline verification. Follow-on results and failures are listed separately below.
+
+| Module | What to review | Historical verification |
 | --- | --- | --- |
 | [display-before-persist](display-before-persist/README.md) | Publish provisional value before PG commit; bounded writer; truthful ACK state | 19 checks; original focused handoff code/tests unchanged |
 | [provisional-recovery](provisional-recovery/README.md) | Retained unresolved jobs; memory vs WAL-after vs WAL-before custody | 29 candidate + 5 independent; 26 SIGKILL; real owned-PG outage |
@@ -48,3 +50,7 @@ and replay-gap experiments remain excluded until separately reviewed.
 ## Targeted renewal follow-on
 
 The two stream modules now include [event-driven, nonce-specific renewal confirmation](RENEWAL-UPDATE.md). This is a separate cherry-pickable experimental change. The prior full-suite receipts remain pinned to the predecessor source; current verification is separate. It is not a full-history or end-to-end latency fix.
+
+## Filesystem security follow-on
+
+[Descriptor-bound journals and safe schedule output](SECURITY-UPDATE.md) address the seven high CodeQL findings in the experimental files. This remains draft review material; do not equate focused local tests with a clean repository security rescan or production acceptance.
