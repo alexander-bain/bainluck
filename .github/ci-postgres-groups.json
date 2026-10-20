@@ -101,6 +101,7 @@
     "#6073 the stuck-status rescue declines a row that moved under it (real Postgres)",
     "#5918 the league rail loads the sport the fold reads (real Postgres)",
     "Pre-match prior equivalence (real Postgres)",
+    "#11296 a final's pregame projection is read from before the start (real Postgres)",
     "Kalshi cliff-drain bind contract (real Postgres)",
     "CREATE-wave INSERT bind contract (real Postgres)",
     "Calibration mode-price source scope (real Postgres)",
