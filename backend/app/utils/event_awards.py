@@ -59,6 +59,14 @@ _CATEGORY_NAME_RE = re.compile(
     r"\bbest\b|\baward for\b|\bwinner\b|\boutstanding\b", re.IGNORECASE
 )
 
+# A question asking whether someone GETS nominated ("Will X be nominated for Best
+# Actress?") is a nomination market even though it names a "Best" category (#11336).
+# Verb-phrase only: an adjectival "a nominated film" / "most-nominated" in a winner
+# question stays a winner category, and \b keeps "denominated" out.
+_NOMINATED_RE = re.compile(
+    r"\b(?:be|get|gets|got|is|are)\s+nominated\b|\bnominated\s+for\b", re.IGNORECASE
+)
+
 # Leading boilerplate stripped so a category card reads "Best Picture", not
 # "Oscar winner: Best Picture". Applied in order; a leading edition year is
 # stripped first.
@@ -203,11 +211,12 @@ def classify_market(external_id: str | None, name: str | None) -> str:
     """Classify an award market: "category" (a co-equal winner category),
     "nominations" (who gets nominated), or "novelty" (attendance/most-wins/etc.).
 
-    Nominations win first (ticker "NOM" or name says nomination/nominee); then a
-    real award category by name; anything else is a novelty prop."""
+    Nominations win first (ticker "NOM" or name says nomination/nominee, or asks
+    whether someone gets nominated); then a real award category by name; anything
+    else is a novelty prop."""
     eid = (external_id or "").upper()
     n = (name or "").lower()
-    if "NOM" in eid or "nomination" in n or "nominee" in n:
+    if "NOM" in eid or "nomination" in n or "nominee" in n or _NOMINATED_RE.search(n):
         return "nominations"
     if _CATEGORY_NAME_RE.search(name or ""):
         return "category"
