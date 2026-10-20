@@ -22,6 +22,7 @@ import app.tasks.polymarket_ws as polymarket_ws
 import app.utils.kalshi_price_pipeline as kalshi_price_pipeline
 import app.utils.kalshi_price_statement as kalshi_price_statement
 from app.tasks.polymarket import sub_market_metadata
+from app.utils.kalshi_primary_quote import PrimaryQuoteCustody
 
 
 def _flush_function(module, consumer_name: str) -> ast.AsyncFunctionDef:
@@ -593,6 +594,9 @@ def _quiet_namespace(module, refresher):
         # #837: Polymarket's held-price withdrawals and receive marks; none.
         "withdraw_buffer": {},
         "input_marks": {},
+        # #10090: Kalshi's primary-quote custody (bundled Challenger pair).
+        "primary_quote_custody": PrimaryQuoteCustody(),
+        "ticker_to_ids": {},
         # Polymarket's run-scoped lock-retry isolation; nothing held.
         "lock_retry_events": set(),
         "lock_retry_until": {},

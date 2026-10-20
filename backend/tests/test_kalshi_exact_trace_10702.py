@@ -21,6 +21,7 @@ from app.tasks.kalshi import _kalshi_yes_probability
 from app.tasks.live_blend_refresh import InputMark, LiveBlendRefresher, TailReceipts
 from app.utils.kalshi_exact_trace import ExactKalshiTrace, MAX_PENDING
 from app.utils.live_push import MAX_FRAME_AGE_S, RETAIN_AND_PUBLISH, build_frame
+from app.utils.kalshi_primary_quote import PrimaryQuoteCustody
 from tests.test_event_frame_batching_10659 import ProtocolRedis
 from tests.test_kalshi_ws_lifecycle_dispatch_10667 import (
     Feed,
@@ -261,6 +262,8 @@ def handler(trace, mapped=True, non_blend=()):
         buffer_lock=asyncio.Lock(),
         price_buffer={},
         input_marks={},
+        # #10090: the worker's primary-quote custody (bundled Challenger pair).
+        primary_quote_custody=PrimaryQuoteCustody(),
         # #10090 closure names in the worker (`_run_kalshi_ws_consumer`).
         time=time,
         non_blend_outcome_ids=set(non_blend),
