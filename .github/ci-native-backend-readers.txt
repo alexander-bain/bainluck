@@ -19,6 +19,7 @@ tests/test_watch_fresh_face_receipt_10577.py
 tests/test_watch_ui_timeout_scope.py
 tests/test_mutation_guard.py
 tests/test_pre_offer_gate.py
+tests/test_mutation_pair_specificity_847_linkrate.py
 tests/test_native_residue_range_10708.py
 tests/test_rail_clock_is_the_recovered_kickoff_6031.py
 tests/test_native_gates_compile_provenance.py
