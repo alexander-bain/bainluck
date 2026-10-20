@@ -52,7 +52,7 @@ import { probabilityBarPair, SEGMENT_OPACITY } from "@/lib/probabilityBarPair";
 import { teamCrestInitials, teamShortNames } from "@/lib/teamShortName";
 import TeamNameLink from "./TeamNameLink";
 import ProjectedFinalLine from "./ProjectedFinalLine";
-import { cardProjectedFinal, projectedFinalLabel } from "@/lib/projectedFinalPair";
+import { cardProjectedFinal, liveCardProjectedFinal, projectedFinalLabel } from "@/lib/projectedFinalPair";
 import { finalForecastComparison } from "@/lib/finalForecastComparison";
 
 interface FeedCardProps {
@@ -380,9 +380,10 @@ function EventFeedCard({
   const isScheduled = data.status === "scheduled";
   // #2920 / #9483 — the projected final the league/search card and the event
   // headline print, admitted by the same rule (`cardProjectedFinal`). Before
-  // play only: a scheduled row whose kickoff has passed is no longer "before".
-  // `/api/feed` does not serve the pair yet (release-root, 2026-10-19), so this
-  // stays empty until it does — never a second, card-local calculation.
+  // play: a scheduled row whose kickoff has passed is no longer "before".
+  // Live: only the producer's marked in-play pair, read against the score this
+  // card prints (`liveCardProjectedFinal`) — never the bare pair, which can be
+  // a pregame reading on a live row. Never a second, card-local calculation.
   const projectedNames = teamShortNames(
     { name: data.home_team, abbreviation: data.home_team_data?.abbreviation },
     { name: data.away_team, abbreviation: data.away_team_data?.abbreviation },
@@ -391,7 +392,12 @@ function EventFeedCard({
   const projectedFinal =
     isScheduled && Date.parse(data.commence_time) > Date.now()
       ? cardProjectedFinal(data.current_odds, data.sport)
-      : null;
+      : isLive
+        ? liveCardProjectedFinal(data.current_odds, data.sport, {
+            home: data.home_score,
+            away: data.away_score,
+          })
+        : null;
   // #11296 — on a final, the sportsbooks' last pair before the scheduled start,
   // by the same rule as the league card and the headline. `/api/feed` does not
   // send `pregame_projection` yet, so this stays empty until it does.
@@ -1025,7 +1031,8 @@ function EventFeedCard({
         )}
 
         {/* #2920 / #9483 — the projected final, named per team, away first
-            like this card's rows. */}
+            like this card's rows. Live, it sits under the score the rows
+            print, which stays the card's first statement. */}
         {projectedFinal && (
           <ProjectedFinalLine
             label={projectedFinalLabel(data.sport)}
