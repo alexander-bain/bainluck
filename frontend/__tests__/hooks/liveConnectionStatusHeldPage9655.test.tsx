@@ -146,6 +146,7 @@ function HeldPage({ net, eventId }: { net: Net; eventId: number }) {
   currentMutate = () => refreshEvent();
   const pairedQuoteReadRef = useRef<(() => Promise<unknown>) | null>(null);
   const quoteTriggerRef = useRef<LiveFrame | null>(null);
+  const sourceAddedHistoryRef = useRef<unknown>(null);
   const quoteEventIdRef = useRef(eventId);
   if (quoteEventIdRef.current !== eventId) quoteTriggerRef.current = null;
   quoteEventIdRef.current = eventId;
@@ -179,6 +180,7 @@ function HeldPage({ net, eventId }: { net: Net; eventId: number }) {
         frameFoldOrder(held.blend_fold_revision, liveFrame.rev) === "newer")
     )) {
       quoteTriggerRef.current = liveFrame;
+      sourceAddedHistoryRef.current = null;
       foldedRefetch.request();
       return;
     }
@@ -316,9 +318,9 @@ describe("structural pin: the harness carries the page's own wiring", () => {
     expect(PAGE).toMatch(/status: reportedStreamStatus,\s*recoveryGeneration,\s*\} = useLiveEventStream\(eventId, quoteEligible, applyPushedFrame, applyReconcileControl\);/);
     expect(PAGE).toMatch(/const streamStatus = reportedStreamStatus \?\? \(streamConnected \? "open" : "idle"\);/);
     // The push effect: refuse-and-refetch first, then the one guarded write.
-    expect(PAGE).toMatch(/if \(held && canSubscribeEventQuotes\(held\) && \(\s*liveFrame\.p === null \|\| held\.hero_probability_source !== "blend" \|\|\s*\(liveFrame\.status && liveFrame\.status !== held\.status\) \|\|\s*\(held\.status !== "live" && frameInvalidatesFoldedBlend\(held, liveFrame\)\) \|\|\s*(?:\/\/[^\n]*\n\s*)*\(frameCarriesUnpricedSnapshot\(liveFrame\) &&\s*frameFoldOrder\(held\.blend_fold_revision, liveFrame\.rev\) === "newer"\)\s*\)\) \{\s*quoteTriggerRef\.current = liveFrame;\s*foldedRefetch\.request\(\);\s*return;\s*\}/);
-    expect(PAGE).toMatch(/if \(liveFrame\.p === null \|\| liveFrame\.p === undefined \|\| frameCarriesUnpricedSnapshot\(liveFrame\)\) return;\s*(?:\/\/[^\n]*\n\s*)*latestLiveFrameRef\.current = heldFrameAfter\(latestLiveFrameRef\.current, liveFrame\);\s*const frame = \{ \.\.\.liveFrame, p: liveFrame\.p \};\s*pairJournalRef\.current\?\.record\(\(prev\) => applyLiveFrame\(prev, frame\)\);\s*refreshEvent\(/);
-    expect(PAGE.match(/const \{ next, snapshotRail \} = applyLiveFrameRail\(prev, frame\);/g)).toHaveLength(1);
+    expect(PAGE).toMatch(/if \(held && canSubscribeEventQuotes\(held\) && \(\s*liveFrame\.p === null \|\| held\.hero_probability_source !== "blend" \|\|\s*\(liveFrame\.status && liveFrame\.status !== held\.status\) \|\|\s*\(held\.status !== "live" && frameInvalidatesFoldedBlend\(held, liveFrame\)\) \|\|\s*(?:\/\/[^\n]*\n\s*)*\(frameCarriesUnpricedSnapshot\(liveFrame\) &&\s*frameFoldOrder\(held\.blend_fold_revision, liveFrame\.rev\) === "newer"\)\s*\)\) \{\s*quoteTriggerRef\.current = liveFrame;\s*sourceAddedHistoryRef\.current = null;\s*foldedRefetch\.request\(\);\s*return;\s*\}/);
+    expect(PAGE).toMatch(/if \(liveFrame\.p === null \|\| liveFrame\.p === undefined \|\| frameCarriesUnpricedSnapshot\(liveFrame\)\) return;\s*(?:\/\/[^\n]*\n\s*)*latestLiveFrameRef\.current = heldFrameAfter\(latestLiveFrameRef\.current, liveFrame\);\s*const frame = \{ \.\.\.liveFrame, p: liveFrame\.p \};\s*let sourceAdded = false;\s*pairJournalRef\.current\?\.record\(\(prev\) => applyLiveFrame\(prev, frame\)\);\s*void refreshEvent\(/);
+    expect(PAGE.match(/const adopted = applyLiveFrameRail\(prev, frame\);/g)).toHaveLength(1);
     // #10090 G1: plus its journal entry while a paired read is in flight — a replay, not a write.
     expect(PAGE.match(/pairJournalRef\.current\?\.record\(\(prev\) => applyLiveFrame\(prev, frame\)\);/g)).toHaveLength(1);
     // The status wiring: the ACCEPTED clock, and one step per render from the held result.

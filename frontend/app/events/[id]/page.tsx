@@ -47,7 +47,7 @@ import {
   mergeLiveChartHistory,
   type AdmittedChartFrames,
 } from "@/lib/liveChartHistory";
-import { canSubscribeEventQuotes, quotePairCoversTrigger } from "@/lib/eventQuoteStream";
+import { canSubscribeEventQuotes, coversQuoteRevision, quotePairCoversTrigger } from "@/lib/eventQuoteStream";
 import FreshnessChip from "@/components/event/FreshnessChip";
 import {
   applyLiveFrame,
@@ -391,6 +391,9 @@ export default function EventPage({ params }: EventPageProps) {
   // when a client-side navigation reuses the component for another event.
   const pairedQuoteReadRef = useRef<(() => Promise<unknown>) | null>(null);
   const quoteTriggerRef = useRef<LiveFrame | null>(null);
+  // Source membership needs a pinned chart edge, not just a fresh history.
+  // Bound this obligation to the scheduler's initial pair and one retry.
+  const sourceAddedHistoryRef = useRef<{ trigger: LiveFrame; attempts: number } | null>(null);
   const recoveryIntentRef = useRef(0);
   const quoteReadLifetimeRef = useRef(0);
   // #10090: the reconcile floors this page still owes. Bounded; see the ledger.
@@ -403,6 +406,7 @@ export default function EventPage({ params }: EventPageProps) {
   if (quoteEventIdRef.current !== eventId) reconcileLedger.clear();
   if (quoteEventIdRef.current !== eventId) recoveryIntentRef.current = 0;
   if (quoteEventIdRef.current !== eventId) quoteTriggerRef.current = null;
+  if (quoteEventIdRef.current !== eventId) sourceAddedHistoryRef.current = null;
   if (quoteEventIdRef.current !== eventId) reconcileIntentRef.current = false;
   quoteEventIdRef.current = eventId;
   const refreshEventRef = useRef(refreshEvent);
@@ -488,6 +492,8 @@ export default function EventPage({ params }: EventPageProps) {
   // one render, so an effect saw only the batch's last frame: a newer price
   // followed by an older invalidation left the headline on the old price until
   // history answered, while the chart (which banks every frame) moved.
+  const reconcileCatchupRef = useRef<ReturnType<typeof createReconnectCatchup> | null>(null);
+  const reconcileOrdinalRef = useRef(0);
   const applyPushedFrame = useCallback((liveFrame: LiveFrame) => {
     if (liveFrame.event_id !== eventId) return;
     // #9051: a FOLDED hero (canonical + twins) refuses a raw-row frame, which
@@ -521,6 +527,7 @@ export default function EventPage({ params }: EventPageProps) {
         frameFoldOrder(held.blend_fold_revision, liveFrame.rev) === "newer")
     )) {
       quoteTriggerRef.current = liveFrame;
+      sourceAddedHistoryRef.current = null;
       foldedRefetch.request();
       return;
     }
@@ -536,15 +543,22 @@ export default function EventPage({ params }: EventPageProps) {
     // must not regress to it either.
     latestLiveFrameRef.current = heldFrameAfter(latestLiveFrameRef.current, liveFrame);
     const frame = { ...liveFrame, p: liveFrame.p };
+    let sourceAdded = false;
     pairJournalRef.current?.record((prev) => applyLiveFrame(prev, frame));
-    refreshEvent(
+    void refreshEvent(
       // `applyLiveFrame` spreads `prev` FIRST and then only the fields a frame
       // speaks for, so a frame arriving after the background poll carries the
       // newer games line forward instead of reverting it (CERT-1994).
       // #10090: decided on the value actually stored, so a snapshot rail that
       // lands discharges a priceless trigger it covers (no trailing pair).
       (prev) => {
-        const { next, snapshotRail } = applyLiveFrameRail(prev, frame);
+        const adopted = applyLiveFrameRail(prev, frame);
+        const { next, snapshotRail } = adopted;
+        sourceAdded = adopted.sourceAdded === true;
+        if (sourceAdded) {
+          quoteTriggerRef.current = liveFrame;
+          sourceAddedHistoryRef.current = { trigger: liveFrame, attempts: 0 };
+        }
         if (snapshotRail && snapshotRailPaysPricelessTrigger(quoteTriggerRef.current, frame)) {
           quoteTriggerRef.current = null;
         }
@@ -553,15 +567,20 @@ export default function EventPage({ params }: EventPageProps) {
       // No revalidate: the frame IS the new value. Refetching here would put a
       // request on every tick and undo the point of pushing.
       { revalidate: false },
-    );
+    ).then(() => {
+      // Source history is persisted after publication. Reuse the existing
+      // bounded catch-up timer instead of racing that write or adding a poll.
+      // Only an actual cache adoption may request this read.
+      if (sourceAdded) reconcileCatchupRef.current?.recover(
+        ++reconcileOrdinalRef.current, 250,
+      );
+    });
     setLastRefresh(Date.now());
   }, [refreshEvent, eventId, foldedRefetch]);
 
   // #10090: a `reconcile` control owes this page a paired read covering its
   // floor. It is registered whatever price order the stream delivered (a newer
   // sibling price proves nothing about the rail), and never reopens a result.
-  const reconcileCatchupRef = useRef<ReturnType<typeof createReconnectCatchup> | null>(null);
-  const reconcileOrdinalRef = useRef(0);
   const applyReconcileControl = useCallback((control: ReconcileControl) => {
     if (control.eventId !== eventId) return;
     // A result already stored but not yet rendered needs no check here: its
@@ -618,6 +637,8 @@ export default function EventPage({ params }: EventPageProps) {
       reconcileLedger.clear();
       reconcileIntentRef.current = false;
       recoveryIntentRef.current = 0;
+      if (sourceAddedHistoryRef.current?.trigger === quoteTriggerRef.current) quoteTriggerRef.current = null;
+      sourceAddedHistoryRef.current = null;
       quoteReadLifetimeRef.current += 1;
       foldedRefetch.cancel();
     };
@@ -1034,81 +1055,104 @@ export default function EventPage({ params }: EventPageProps) {
     const trigger = quoteTriggerRef.current;
     const recovery = recoveryIntentRef.current;
     const readingLifetime = quoteReadLifetimeRef.current;
-    const journal = createWriteJournal<EventDetailResponse>();
-    pairJournalRef.current = journal;
-    // #10090: a pair read for an owed floor alone is paced by the scheduler's
-    // ladder (which honors a 429's wait), so each half is one request. A
-    // price-trigger or recovery pair keeps its existing retries.
-    const freshOptions = trigger || recovery ? undefined : { maxRetries: 0 };
-    let detail: EventDetailResponse;
-    let history: Awaited<ReturnType<typeof fetchEventHistory>>;
+    const sourceHistory = sourceAddedHistoryRef.current?.trigger === trigger
+      ? sourceAddedHistoryRef.current : null;
+    if (sourceHistory) sourceHistory.attempts += 1;
     try {
-      [detail, history] = await Promise.all([
-        fetchEvent(readingEventId, true, freshOptions),
-        fetchEventHistory(readingEventId, EVENT_BOOT_HISTORY_HOURS,
-          historyRangeParam(fullHistoryRequested), true, freshOptions),
+      const journal = createWriteJournal<EventDetailResponse>();
+      pairJournalRef.current = journal;
+      // #10090: a pair read for an owed floor alone is paced by the scheduler's
+      // ladder (which honors a 429's wait), so each half is one request. A
+      // price-trigger or recovery pair keeps its existing retries.
+      const freshOptions = trigger || recovery ? undefined : { maxRetries: 0 };
+      let detail: EventDetailResponse;
+      let history: Awaited<ReturnType<typeof fetchEventHistory>>;
+      try {
+        [detail, history] = await Promise.all([
+          fetchEvent(readingEventId, true, freshOptions),
+          fetchEventHistory(readingEventId, EVENT_BOOT_HISTORY_HOURS,
+            historyRangeParam(fullHistoryRequested), true, freshOptions),
+        ]);
+      } finally {
+        if (pairJournalRef.current === journal) pairJournalRef.current = null;
+      }
+      // #10090 G2: a result that landed while this pair was in flight ends it,
+      // so an older live pair cannot put the game back on a live number. The
+      // stored read, not only the held one: a continuation queued behind the
+      // poll's cache write runs before React renders it.
+      const stored = storedEventRef.current;
+      if (!canSubscribeEventQuotes(heldEventRef.current) ||
+          (stored?.id === readingEventId && !canSubscribeEventQuotes(stored))) return;
+      if (quoteReadLifetimeRef.current !== readingLifetime ||
+          quoteEventIdRef.current !== readingEventId || quoteHistoryRangeRef.current !== fullHistoryRequested ||
+          !quotePairCoversTrigger(detail, history, readingEventId, quoteTriggerRef.current?.rev)) return;
+      // #10090: a pair whose detail covers an owed reconcile floor is adopted
+      // even when newer writes overtook it in flight — those writes are replayed
+      // onto it, so the rail loses the removed source without the headline going
+      // back, and the two halves need only agree on the floor (two fresh builds
+      // a write apart would otherwise refuse each other). It PAYS the floor only
+      // when the history covers it too — a pinned edge's revision, or an
+      // unpinned complete fresh build's `history_fold_revision`; otherwise the
+      // chart half stays owed and the persistent read asks again (D4). Any other
+      // pair keeps history-covers-detail and refuse-if-older.
+      const covering = reconcileLedger.floors()
+        .filter((floor) => reconcileFloorCoverage(detail, history, readingEventId, floor) !== "none");
+      const reconciling = covering.length > 0;
+      if (!reconciling && !quotePairCoversTrigger(detail, history, readingEventId, detail.blend_fold_revision)) return;
+      const adopted = reconciling
+        ? rebaseOnCoveringRead(detail, journal, heldEventRef.current)
+        : keepNewerHeldHeadline(detail, heldEventRef.current) === detail ? detail : null;
+      if (!adopted) return;
+      // Paid on what is WRITTEN, not on the detail before the replay: a replay
+      // that took the value back below a floor the detail covered is refused.
+      // Only the floors the detail itself covered are paid: a replayed frame
+      // raises the written revision but keeps the detail's rail, so it cannot
+      // vouch for a removal the detail never saw. Identity, not equality: a floor
+      // raised by `owe()` during the writes is a new object and stays owed.
+      const written = (floor: unknown) => reconcileFloorCoverage(adopted, history, readingEventId, floor);
+      if (covering.some((floor) => written(floor) === "none")) return;
+      if (reconciling) {
+        const recoveredBank = admitRecoveredSourceObservations(
+          admittedChartRef.current, history, detail, adopted,
+        );
+        if (recoveredBank !== admittedChartRef.current) {
+          admittedChartRef.current = recoveredBank;
+          // SWR may retain both newer history and identical rebased detail.
+          // The received observation still has to reach the chart's memo.
+          setSourceObservationVersion((version) => version + 1);
+        }
+      }
+      const [adoptedHistory] = await Promise.all([
+        reconciling && servedHistoryIsNewer(latestBlendEdgeRef.current, history)
+          ? undefined : refreshHistoryRef.current(history, { revalidate: false }),
+        // #10090: against what the cache holds AT the write, not the rendered
+        // value — a poll stored while this pair was out may not have rendered
+        // yet (G2), and its provably newer game state must not be put back.
+        refreshEventRef.current((cached) => carryNewerHeldState(adopted, cached), { revalidate: false }),
       ]);
-    } finally {
-      if (pairJournalRef.current === journal) pairJournalRef.current = null;
-    }
-    // #10090 G2: a result that landed while this pair was in flight ends it,
-    // so an older live pair cannot put the game back on a live number. The
-    // stored read, not only the held one: a continuation queued behind the
-    // poll's cache write runs before React renders it.
-    const stored = storedEventRef.current;
-    if (!canSubscribeEventQuotes(heldEventRef.current) ||
-        (stored?.id === readingEventId && !canSubscribeEventQuotes(stored))) return;
-    if (quoteReadLifetimeRef.current !== readingLifetime ||
-        quoteEventIdRef.current !== readingEventId || quoteHistoryRangeRef.current !== fullHistoryRequested ||
-        !quotePairCoversTrigger(detail, history, readingEventId, quoteTriggerRef.current?.rev)) return;
-    // #10090: a pair whose detail covers an owed reconcile floor is adopted
-    // even when newer writes overtook it in flight — those writes are replayed
-    // onto it, so the rail loses the removed source without the headline going
-    // back, and the two halves need only agree on the floor (two fresh builds
-    // a write apart would otherwise refuse each other). It PAYS the floor only
-    // when the history covers it too — a pinned edge's revision, or an
-    // unpinned complete fresh build's `history_fold_revision`; otherwise the
-    // chart half stays owed and the persistent read asks again (D4). Any other
-    // pair keeps history-covers-detail and refuse-if-older.
-    const covering = reconcileLedger.floors()
-      .filter((floor) => reconcileFloorCoverage(detail, history, readingEventId, floor) !== "none");
-    const reconciling = covering.length > 0;
-    if (!reconciling && !quotePairCoversTrigger(detail, history, readingEventId, detail.blend_fold_revision)) return;
-    const adopted = reconciling
-      ? rebaseOnCoveringRead(detail, journal, heldEventRef.current)
-      : keepNewerHeldHeadline(detail, heldEventRef.current) === detail ? detail : null;
-    if (!adopted) return;
-    // Paid on what is WRITTEN, not on the detail before the replay: a replay
-    // that took the value back below a floor the detail covered is refused.
-    // Only the floors the detail itself covered are paid: a replayed frame
-    // raises the written revision but keeps the detail's rail, so it cannot
-    // vouch for a removal the detail never saw. Identity, not equality: a floor
-    // raised by `owe()` during the writes is a new object and stays owed.
-    const written = (floor: unknown) => reconcileFloorCoverage(adopted, history, readingEventId, floor);
-    if (covering.some((floor) => written(floor) === "none")) return;
-    if (reconciling) {
-      const recoveredBank = admitRecoveredSourceObservations(
-        admittedChartRef.current, history, detail, adopted,
+      const sourceHistoryPaid = !sourceHistory || (
+        adoptedHistory?.blend_edge_pinned === true &&
+        coversQuoteRevision(adoptedHistory.blend_edge_fold_revision, trigger?.rev)
       );
-      if (recoveredBank !== admittedChartRef.current) {
-        admittedChartRef.current = recoveredBank;
-        // SWR may retain both newer history and identical rebased detail.
-        // The received observation still has to reach the chart's memo.
-        setSourceObservationVersion((version) => version + 1);
+      if (quoteTriggerRef.current === trigger && sourceHistoryPaid) {
+        quoteTriggerRef.current = null;
+        if (sourceAddedHistoryRef.current === sourceHistory) sourceAddedHistoryRef.current = null;
+      }
+      if (recoveryIntentRef.current === recovery) recoveryIntentRef.current = 0;
+      if (quoteReadLifetimeRef.current === readingLifetime) reconcileLedger.settle((floor) => covering.includes(floor) && written(floor) === "paid");
+      setLastRefresh(Date.now());
+    } finally {
+      // EXPIRED, not paid: after the one automatic retry, ordinary polling
+      // owns an unavailable edge. Never turn later invalidations into pairs.
+      // Identity/lifetime fences keep a newer or another page's debt intact.
+      if (sourceHistory && sourceHistory.attempts >= 2 &&
+          sourceAddedHistoryRef.current === sourceHistory &&
+          quoteReadLifetimeRef.current === readingLifetime &&
+          quoteEventIdRef.current === readingEventId) {
+        if (quoteTriggerRef.current === trigger) quoteTriggerRef.current = null;
+        sourceAddedHistoryRef.current = null;
       }
     }
-    await Promise.all([
-      reconciling && servedHistoryIsNewer(latestBlendEdgeRef.current, history)
-        ? undefined : refreshHistoryRef.current(history, { revalidate: false }),
-      // #10090: against what the cache holds AT the write, not the rendered
-      // value — a poll stored while this pair was out may not have rendered
-      // yet (G2), and its provably newer game state must not be put back.
-      refreshEventRef.current((cached) => carryNewerHeldState(adopted, cached), { revalidate: false }),
-    ]);
-    if (quoteTriggerRef.current === trigger) quoteTriggerRef.current = null;
-    if (recoveryIntentRef.current === recovery) recoveryIntentRef.current = 0;
-    if (quoteReadLifetimeRef.current === readingLifetime) reconcileLedger.settle((floor) => covering.includes(floor) && written(floor) === "paid");
-    setLastRefresh(Date.now());
   };
 
   const [foldedHistoryRefetch] = useState(() => createFoldedRefetchScheduler(
