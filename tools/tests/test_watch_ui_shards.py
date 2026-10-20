@@ -5,6 +5,7 @@ import subprocess
 import importlib.util
 import json
 import os
+import plistlib
 import shlex
 import sys
 from pathlib import Path
@@ -158,21 +159,21 @@ class WatchUIShardTests(unittest.TestCase):
                 [call[0] for call in calls], ["build-for-testing", "build"]
             )
             build_for_testing, companion = calls
+            # Only a concrete-device build writes the checker insert (#11201).
             self.assertEqual(build_for_testing.count("-destination"), 1)
             self.assertEqual(
                 build_for_testing[build_for_testing.index("-destination") + 1],
-                "generic/platform=watchOS Simulator",
+                "platform=watchOS Simulator,id=owned-watch",
             )
             self.assertEqual(companion.count("-destination"), 1)
             self.assertEqual(
                 companion[companion.index("-destination") + 1],
                 "generic/platform=iOS Simulator",
             )
-            for call in calls:
-                self.assertFalse(
-                    [argument for argument in call if "id=" in argument],
-                    "No producer build may ask Xcode for a concrete simulator",
-                )
+            self.assertFalse(
+                [argument for argument in companion if "id=" in argument],
+                "No companion build may ask Xcode for a concrete simulator",
+            )
             derived = [call[call.index("-derivedDataPath") + 1] for call in calls]
             for call in calls:
                 self.assertEqual(call.count("ARCHS=arm64"), 1)
@@ -327,6 +328,266 @@ class WatchUIShardTests(unittest.TestCase):
             " -parallel-testing-enabled NO)",
         )
         self.assertNotIn("generic/", journey)
+
+    def test_products_pack_from_the_runtime_record_taken_after_preparation(self):
+        # 1775's producer listed the Watch runtime under Volumes/ before booting
+        # the pair and under the cryptexd mount afterwards; a concrete build
+        # writes the mounted checker path. Only the later record relocates it.
+        harness = (ROOT / "tools/watch-ui-products.sh").read_text()
+        prepared = harness.index('> "$OUT/prepared-simulators.json"')
+        self.assertLess(harness.index('bootstatus "$TEST_UDID" -b'), prepared)
+        self.assertLess(prepared, harness.index("xcodebuild build-for-testing"))
+        start = harness.index('python3 "$ROOT/tools/watch_ui_products.py" pack')
+        end = harness.index("\n", harness.index('--watch-runtime "$RUNTIME"', start))
+        out = self.root / "products"
+        out.mkdir()
+        record = self.root / "pack-command.jsonl"
+        capture = (
+            "import json,os,sys; "
+            "open(os.environ['RECORD'], 'a').write(json.dumps(sys.argv[1:])+'\\n')"
+        )
+        shell = (
+            "set -eu\npython3() { "
+            + shlex.quote(sys.executable)
+            + " -c "
+            + shlex.quote(capture)
+            + ' "$@"; }\n'
+            + harness[start:end]
+            + "\n"
+        )
+        environment = dict(
+            os.environ,
+            ROOT=str(ROOT),
+            OUT=str(out),
+            RUN=str(self.root / "run"),
+            RECORD=str(record),
+            SHA=self.sha,
+            DERIVED="derived",
+            PHONE_DERIVED="phone-derived",
+            SIM_ARCH="arm64",
+            RUNTIME="com.apple.CoreSimulator.SimRuntime.watchOS-27-0",
+        )
+        subprocess.run(["bash", "-c", shell], env=environment, check=True)
+        (arguments,) = [json.loads(line) for line in record.read_text().splitlines()]
+        self.assertEqual(
+            arguments[arguments.index("--simulators") + 1],
+            str(out / "prepared-simulators.json"),
+        )
+        spec = importlib.util.spec_from_file_location(
+            "watch_ui_products", ROOT / "tools/watch_ui_products.py"
+        )
+        products = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(products)
+        tail = "Library/Developer/CoreSimulator/Profiles/Runtimes/watchOS 27.0.simruntime/Contents/Resources/RuntimeRoot"
+        mounted = self.root / "cryptexd/mnt/watchOS_24R362" / tail
+        checker = mounted / "usr/lib/libMainThreadChecker.dylib"
+        checker.parent.mkdir(parents=True)
+        checker.write_bytes(b"selected-runtime-checker")
+        for name, root in (
+            ("simulators.json", self.root / "Volumes/watchOS_24R362" / tail),
+            ("prepared-simulators.json", mounted),
+        ):
+            runtime = {
+                "identifier": environment["RUNTIME"],
+                "platform": "watchOS",
+                "isAvailable": True,
+                "version": "27.0",
+                "buildversion": "24R362",
+                "runtimeRoot": str(root),
+            }
+            (out / name).write_text(json.dumps({"runtimes": [runtime]}))
+
+        def relocation(simulators):
+            from unittest.mock import patch
+
+            selected = []
+            argv = list(arguments)
+            argv[argv.index("--simulators") + 1] = str(simulators)
+            with patch.object(sys, "argv", argv), patch.object(
+                products, "pack", side_effect=lambda *a: selected.append(a[6])
+            ):
+                products.main()
+            payload = Path(tempfile.mkdtemp(dir=self.root)) / "payload"
+            run = payload / "watch/Build/Products/BainLuckWatchUITests.xctestrun"
+            run.parent.mkdir(parents=True)
+            run.write_bytes(
+                plistlib.dumps(
+                    {
+                        products.XCTEST: {
+                            "TestingEnvironmentVariables": {
+                                "DYLD_INSERT_LIBRARIES": str(checker)
+                            }
+                        },
+                        "__xctestrun_metadata__": {"FormatVersion": 1},
+                    }
+                )
+            )
+            mapping = products.runtime_support(payload, selected[0])
+            inserted = plistlib.loads(run.read_bytes())[products.XCTEST][
+                "TestingEnvironmentVariables"
+            ]["DYLD_INSERT_LIBRARIES"]
+            return mapping, inserted
+
+        mapping, inserted = relocation(out / "prepared-simulators.json")
+        self.assertEqual(
+            inserted, "__TESTROOT__/RuntimeSupport/libMainThreadChecker.dylib"
+        )
+        self.assertEqual(mapping[0]["sections"], ["TestingEnvironmentVariables"])
+        self.assertEqual(mapping[0]["runtime_checker_path"], str(checker))
+        # The first listing names no mount the build used: nothing relocates and
+        # the journey would have to find the producer's absolute path itself.
+        self.assertEqual(relocation(out / "simulators.json"), ([], str(checker)))
+
+    def test_runtime_receipts_record_three_points_without_changing_the_gate(self):
+        journey = (ROOT / "tools/watch-ui-journey.sh").read_text()
+        lines = journey.splitlines()
+        calls = [line for line in lines if line.startswith("runtime_receipt ")]
+        self.assertEqual(
+            calls,
+            [
+                "runtime_receipt before-products-verification",
+                'runtime_receipt boot-ready "$TEST_UDID" "$PHONE_UDID"',
+                'runtime_receipt before-test-without-building "$TEST_UDID" "$PHONE_UDID"',
+            ],
+        )
+        # Before any device exists, then this run's own pair at boot-ready and
+        # directly before XCTest, each beside the step it describes.
+        self.assertLess(
+            journey.index(calls[0]), journey.index('TEST_UDID="$(xcrun simctl create')
+        )
+        self.assertTrue(
+            lines[lines.index(calls[0]) + 1].startswith(
+                'python3 "$ROOT/tools/watch_ui_products.py" verify '
+            )
+        )
+        self.assertLess(journey.index("boot-ready' >>"), journey.index(calls[1]))
+        self.assertEqual(
+            lines[lines.index(calls[1]) - 1 : lines.index(calls[1]) + 2 : 2],
+            ["STATE", "exit 0"],
+        )
+        self.assertTrue(
+            lines[lines.index(calls[2]) + 1].startswith(
+                'if xcodebuild test-without-building "${XCODE_ARGS[@]}"'
+            )
+        )
+        start = journey.index("runtime_receipt() {")
+        end = "\nRUNTIME_RECEIPT\n}\n"
+        helper = journey[start : journey.index(end, start) + len(end)]
+        fixtures = self.root / "receipt-fixtures"
+        (fixtures / "bin").mkdir(parents=True)
+        runtimes = [
+            {
+                "identifier": "com.apple.CoreSimulator.SimRuntime.watchOS-27-0",
+                "bundlePath": "/Library/Developer/CoreSimulator/Volumes/watchOS_24R362/x.simruntime",
+                "isAvailable": True,
+            }
+        ]
+        (fixtures / "runtimes.json").write_text(json.dumps({"runtimes": runtimes}))
+        devices = {
+            "devices": {
+                "watch-runtime": [
+                    {"udid": "owned-watch", "state": "Booted"},
+                    {"udid": "shared-watch", "state": "Shutdown"},
+                ],
+                "phone-runtime": [{"udid": "owned-phone", "state": "Booted"}],
+                "other-runtime": [{"udid": "shared-phone", "state": "Booted"}],
+            }
+        }
+        (fixtures / "devices.json").write_text(json.dumps(devices))
+        xcrun = fixtures / "bin/xcrun"
+        xcrun.write_text(
+            "#!/bin/bash\n"
+            'printf "%s\\n" "$*" >> "$FIXTURES/xcrun-calls.txt"\n'
+            'case "$XCRUN_MODE $*" in\n'
+            '  "ok simctl list runtimes --json") cat "$FIXTURES/runtimes.json" ;;\n'
+            '  "ok simctl list devices --json") cat "$FIXTURES/devices.json" ;;\n'
+            "  fail*) echo 'The watchOS 27.0 simulator runtime is not available' >&2; exit 3 ;;\n"
+            "  *) exit 97 ;;\n"
+            "esac\n"
+        )
+        xcrun.chmod(0o755)
+
+        def run(mode, unwritable=False):
+            out = Path(tempfile.mkdtemp(dir=self.root))
+            (fixtures / "xcrun-calls.txt").write_text("")
+            if unwritable:
+                (out / "runtime-receipts.jsonl").mkdir()
+            shell = (
+                "set -euo pipefail\n"
+                "trap 'echo trapped > \"$OUT/trapped.txt\"; exit 99' ERR\n"
+                + helper
+                + "runtime_receipt before-products-verification\n"
+                + "runtime_receipt boot-ready owned-watch owned-phone\n"
+                + 'echo continued > "$OUT/continued.txt"\n'
+            )
+            environment = dict(
+                os.environ,
+                OUT=str(out),
+                FIXTURES=str(fixtures),
+                XCRUN_MODE=mode,
+                PATH=str(fixtures / "bin") + os.pathsep + os.environ["PATH"],
+            )
+            process = subprocess.run(
+                ["bash", "-c", shell], env=environment, capture_output=True, text=True
+            )
+            self.assertEqual(process.returncode, 0, process.stderr)
+            self.assertFalse((out / "trapped.txt").exists())
+            self.assertEqual((out / "continued.txt").read_text(), "continued\n")
+            calls = (fixtures / "xcrun-calls.txt").read_text().splitlines()
+            # One read of each record per point: never retried.
+            self.assertEqual(
+                calls,
+                [
+                    "simctl list runtimes --json",
+                    "simctl list runtimes --json",
+                    "simctl list devices --json",
+                ],
+            )
+            if unwritable:
+                return out, None
+            receipts = [
+                json.loads(line)
+                for line in (out / "runtime-receipts.jsonl").read_text().splitlines()
+            ]
+            self.assertEqual(
+                [r["point"] for r in receipts],
+                ["before-products-verification", "boot-ready"],
+            )
+            self.assertEqual(receipts[0]["selected_devices"], [])
+            self.assertNotIn("devices_read", receipts[0])
+            self.assertEqual(
+                receipts[1]["selected_devices"], ["owned-watch", "owned-phone"]
+            )
+            return out, receipts
+
+        _, receipts = run("ok")
+        for receipt in receipts:
+            self.assertEqual(receipt["runtimes"], runtimes)
+            self.assertEqual(receipt["runtimes_read"]["exit_code"], 0)
+        self.assertEqual(
+            receipts[1]["devices"],
+            {
+                "watch-runtime": [{"udid": "owned-watch", "state": "Booted"}],
+                "phone-runtime": [{"udid": "owned-phone", "state": "Booted"}],
+            },
+        )
+        _, receipts = run("fail")
+        for receipt in receipts:
+            for key in ("runtimes", "devices"):
+                self.assertNotIn(key, receipt)
+            read = receipt["runtimes_read"]
+            self.assertEqual(read["exit_code"], 3)
+            self.assertIn("runtime is not available", read["stderr"])
+            self.assertIn("read_error", read)
+        self.assertEqual(receipts[1]["devices_read"]["exit_code"], 3)
+        out, _ = run("ok", unwritable=True)
+        self.assertEqual(
+            (out / "preflight.log").read_text().splitlines(),
+            [
+                "runtime receipt before-products-verification not written (exit 1)",
+                "runtime receipt boot-ready not written (exit 1)",
+            ],
+        )
 
     def test_mixed_immutable_product_packages_cannot_form_full_gate(self):
         path = self.root / "readings/products-verification.json"

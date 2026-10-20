@@ -159,14 +159,13 @@ SIM_ARCH="$(python3 "$ROOT/tools/watch_simulator_architecture.py" --prepared-pai
   --simulators "$OUT/prepared-simulators.json" --pairs "$OUT/prepared-pairs.json" \
   --watch-sdk "$SDK_VERSION" --phone-sdk "$PHONE_SDK_VERSION" \
   --output "$OUT/simulator-architecture.json")"
-# Build only for the generic watchOS Simulator at the architecture resolved
-# above from this exact new pair (#11201). Xcode dropped every concrete Watch
-# from the build's destination set minutes after listing it, before compiling.
-# Execution still runs on each journey runner's own exact new pair.
+# Build for this exact new Watch at the architecture resolved above from this
+# pair (#11201): only a concrete-device build writes Xcode's Main Thread Checker
+# insert into the xctestrun. The companion has no xctestrun and stays generic.
 XCODE_ARGS=(
   -project "$ROOT/ios/Bain Luck/Bain Luck.xcodeproj"
   -scheme BainLuckWatchUITests -configuration Debug
-  -destination 'generic/platform=watchOS Simulator'
+  -destination "platform=watchOS Simulator,id=$TEST_UDID"
   -derivedDataPath "$DERIVED" -parallel-testing-enabled NO -jobs 2
   -clonedSourcePackagesDirPath "$PACKAGES" -disableAutomaticPackageResolution
   "ARCHS=$SIM_ARCH"
@@ -191,10 +190,12 @@ xcodebuild build -project "$ROOT/ios/Bain Luck/Bain Luck.xcodeproj" \
   'OTHER_SWIFT_FLAGS=$(inherited) -Xfrontend -disable-sandbox' \
   > "$OUT/companion-build.log" 2>&1
 [[ "$BUILD_SOURCE_FINGERPRINT" == "$(python3 -c 'from pathlib import Path; from tools.watch_ui_products import source_fingerprint; print(source_fingerprint(Path(".")))')" ]]
+# The record taken after preparation names the runtime mount the build used;
+# the first listing can predate CoreSimulator remounting it (#11201).
 PHASE='package immutable simulator products'
 python3 "$ROOT/tools/watch_ui_stage.py" phase --output-dir "$OUT" --phase "$PHASE"
 python3 "$ROOT/tools/watch_ui_products.py" pack --repo "$ROOT" --sha "$SHA" \
   --watch "$DERIVED" --phone "$PHONE_DERIVED" --architecture "$SIM_ARCH" \
   --output "$RUN/package" --archive "$OUT/products.tar.gz" \
-  --simulators "$OUT/simulators.json" --watch-runtime "$RUNTIME"
+  --simulators "$OUT/prepared-simulators.json" --watch-runtime "$RUNTIME"
 cp "$RUN/package/manifest.json" "$OUT/manifest.json"
