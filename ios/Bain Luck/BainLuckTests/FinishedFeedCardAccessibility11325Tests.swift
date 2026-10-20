@@ -22,7 +22,9 @@ import XCTest
 /// Fixture: the two served finals from `FinalForecastComparison11296Tests`
 /// (production `/api/feed?mode=sports`, 2026-10-20 07:10Z), trimmed to the
 /// keys these cards read. The live copy edits ONE value — `status` — and is
-/// CONSTRUCTED, not served.
+/// CONSTRUCTED, not served. The odds copy inserts ONE key — `opening_odds` —
+/// and is CONSTRUCTED, not served: the served capture carries no pre-game
+/// probability, so no served frame draws one, and its frames say so by name.
 @MainActor
 final class FinishedFeedCardAccessibility11325Tests: XCTestCase {
 
@@ -72,6 +74,43 @@ final class FinishedFeedCardAccessibility11325Tests: XCTestCase {
             for line in read where line.box.maxY < label.box.minY {
                 XCTAssertFalse(isElided(line.text), "\(name): '\(line.text)' is cut short — \(all)")
             }
+        }
+    }
+
+    /// Each pre-game probability stays in its own team's group: away's on 17's
+    /// row, under its name and above the home name; home's on 23's row, under
+    /// its name. A copy that swaps the sides, or moves the numbers out of the
+    /// groups, leaves a percent off its score's row.
+    func testTheFinishedSportsCardAtAX5KeepsEachPreGameProbabilityWithItsOwnTeam() throws {
+        XCTAssertNil(try served(14780563).openingOdds, "precondition: the served final carries no pre-game probability")
+        let odds = try served(14780563, editing: #""ended_at": "#,
+                              to: Self.constructedOpeningOdds + #", "ended_at": "#)
+        XCTAssertEqual(odds.openingOdds?.awayProbability, 0.2381)
+        XCTAssertEqual(odds.openingOdds?.homeProbability, 0.7619)
+        XCTAssertNil(odds.prematchOdds, "precondition: the card falls back to the constructed opening_odds")
+        for width: CGFloat in [320, 393] {
+            let name = "sports-nfl-\(Int(width))-ax5-constructed-odds"
+            let read = try sportsLines(odds, width: width, size: .accessibility5, name: name)
+            let all = describe(read)
+
+            for percent in ["24%", "76%"] {
+                XCTAssertEqual(read.filter { valueTokens($0.text).contains(percent) }.count, 1,
+                               "\(name): \(percent) is not printed exactly once — \(all)")
+            }
+            let away = try XCTUnwrap(valueRow(score: "17", percent: "24%", in: read),
+                                     "\(name): 24% is not on 17's row, after it — \(all)")
+            let home = try XCTUnwrap(valueRow(score: "23", percent: "76%", in: read),
+                                     "\(name): 76% is not on 23's row, after it — \(all)")
+            let awayName = try XCTUnwrap(nameLines(above: away.score, reading: "WashingtonCommanders", in: read),
+                                         "\(name): the complete away name does not sit directly above its 17 — \(all)")
+            let homeName = try XCTUnwrap(nameLines(above: home.score, reading: "SanFrancisco49ers", in: read),
+                                         "\(name): the complete home name does not sit directly above its 23 — \(all)")
+            XCTAssertGreaterThan(away.percent.box.midY, awayName.bottom.box.maxY,
+                                 "\(name): 24% is not below Washington Commanders — \(all)")
+            XCTAssertLessThan(away.percent.box.midY, homeName.top.box.minY,
+                              "\(name): 24% is not above San Francisco 49ers — \(all)")
+            XCTAssertGreaterThan(home.percent.box.midY, homeName.bottom.box.maxY,
+                                 "\(name): 76% is not below San Francisco 49ers — \(all)")
         }
     }
 
@@ -302,6 +341,46 @@ final class FinishedFeedCardAccessibility11325Tests: XCTestCase {
         return false
     }
 
+    /// `nameSitsAbove`, returning the name's top and bottom lines.
+    private func nameLines(above score: Line, reading target: String, in read: [Line]) -> (top: Line, bottom: Line)? {
+        let column = read.filter {
+            $0.box.maxY <= score.box.minY + 2
+                && $0.box.minX >= score.box.minX - 8 && $0.box.minX <= score.box.minX + 40
+        }.sorted { $0.box.minY > $1.box.minY }
+        var acc = ""
+        for line in column {
+            acc = normalized(line.text) + acc
+            if acc == target { return (line, column[0]) }
+            if !target.hasSuffix(acc) { return nil }
+        }
+        return nil
+    }
+
+    /// Tokens with a percent read as "24 %" closed up to "24%".
+    private func valueTokens(_ text: String) -> [String] {
+        tokens(text.replacingOccurrences(of: " %", with: "%"))
+    }
+
+    /// A score and its pre-game percent on one row, score first, clear of the
+    /// forecast line. Vision may read the row as one observation ("17 24%",
+    /// both boxes are that line) or two ("17", then "24%" to its right on its
+    /// row). Either way each value must read exactly; anything else is no row.
+    private func valueRow(score: String, percent: String, in read: [Line]) -> (score: Line, percent: Line)? {
+        let label = read.first { $0.text.contains("Projection") }?.box.minY ?? .infinity
+        let above = read.filter { $0.box.minY < label }
+        if let both = above.first(where: { valueTokens($0.text) == [score, percent] }) {
+            return (both, both)
+        }
+        for s in above where valueTokens(s.text) == [score] {
+            if let p = above.first(where: {
+                valueTokens($0.text) == [percent] && sameRow($0, s) && $0.box.minX > s.box.maxX
+            }) {
+                return (s, p)
+            }
+        }
+        return nil
+    }
+
     private func sameRow(_ a: Line, _ b: Line) -> Bool {
         a.box.midY >= b.box.minY - 2 && a.box.midY <= b.box.maxY + 2
     }
@@ -327,6 +406,12 @@ final class FinishedFeedCardAccessibility11325Tests: XCTestCase {
         let items = try d.decode([FeedItem].self, from: Data(json.utf8))
         return try XCTUnwrap(items.compactMap(\.event).first { $0.id == id }, "served event \(id) did not decode")
     }
+
+    /// CONSTRUCTED, not served: the served NFL final carries no pre-game
+    /// probability. The shape `AFinishedCardPrintsTheNumberItsLineQuotes8622Tests`
+    /// decodes; the pair rounds to 24/76, digits no score or forecast uses.
+    private static let constructedOpeningOdds =
+        #""opening_odds": {"home_probability": 0.7619, "away_probability": 0.2381, "favorite": "home"}"#
 
     /// Trimmed from `FinalForecastComparison11296Tests.servedItems` (same
     /// served capture), keeping its two finals verbatim.
