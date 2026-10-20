@@ -31,6 +31,7 @@ import { isQuoteStreamStatus } from "./eventQuoteStream";
 
 import { compareFoldRevision, frameFoldOrder, parseFoldRevision } from "./foldRevision";
 import { readSourceSnapshot } from "./sourceSnapshot";
+import { PROBABILITY_SOURCE_KEYS } from "./confidence";
 
 /**
  * How often an open event page revalidates, given what the stream is doing.
@@ -514,7 +515,7 @@ export function applyLiveFrame<T>(prev: T | undefined, frame: LiveFrame): T | un
  */
 export function applyLiveFrameRail<T>(
   prev: T | undefined, frame: LiveFrame,
-): { next: T | undefined; snapshotRail: boolean } {
+): { next: T | undefined; snapshotRail: boolean; sourceAdded?: boolean } {
   const refused = { next: prev, snapshotRail: false };
   if (!prev) return refused;
   // #10090: a valid snapshot with no real source says this `p` is the
@@ -584,5 +585,10 @@ export function applyLiveFrameRail<T>(
       },
     },
   } as unknown as T;
-  return { next, snapshotRail };
+  // A valid adopted membership change can reveal a source with no served
+  // history yet. It authorizes a fresh history read, never a synthetic series.
+  const sourceAdded = snapshotRail && Object.keys(snapshot.sources).some(
+    key => key !== "final_result" && PROBABILITY_SOURCE_KEYS.has(key) && !(key in sources),
+  );
+  return { next, snapshotRail, ...(sourceAdded ? { sourceAdded: true } : {}) };
 }

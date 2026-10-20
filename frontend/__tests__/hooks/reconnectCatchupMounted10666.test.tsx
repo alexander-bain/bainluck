@@ -135,11 +135,13 @@ function HeldPage({ net, eventId, candidate, enabled }: { net: Net; eventId: num
   // ── app/events/[id]/page.tsx — these lines as the page writes them ────────
   const pairedQuoteReadRef = useRef<(() => Promise<unknown>) | null>(null);
   const quoteTriggerRef = useRef<LiveFrame | null>(null);
+  const sourceAddedHistoryRef = useRef<{ trigger: LiveFrame; attempts: number } | null>(null);
   const recoveryIntentRef = useRef(0);
   const quoteReadLifetimeRef = useRef(0);
   const reconcileIntentRef = useRef(false);
   const quoteEventIdRef = useRef(eventId);
   if (quoteEventIdRef.current !== eventId) { quoteTriggerRef.current = null; recoveryIntentRef.current = 0; }
+  if (quoteEventIdRef.current !== eventId) sourceAddedHistoryRef.current = null;
   quoteEventIdRef.current = eventId;
   const refreshEventRef = useRef(refreshEvent);
   refreshEventRef.current = refreshEvent;
@@ -154,6 +156,7 @@ function HeldPage({ net, eventId, candidate, enabled }: { net: Net; eventId: num
   const recoveryRef = useRef<ReturnType<typeof createReconnectCatchup> | null>(null);
   const reconcileCatchupRef = useRef<ReturnType<typeof createReconnectCatchup> | null>(null);
   useEffect(RECOVERY_EFFECT.runInNewContext({
+    sourceAddedHistoryRef, quoteTriggerRef,
     quoteEligible, createReconnectCatchup, canSubscribeEventQuotes, reconcileIntentRef, heldEventRef,
     recoveryIntentRef, quoteReadLifetimeRef, recoveryRef, foldedRefetch, reconcileCatchupRef, reconcileLedger,
   }), [eventId, quoteEligible, foldedRefetch]);
@@ -170,6 +173,7 @@ function HeldPage({ net, eventId, candidate, enabled }: { net: Net; eventId: num
       (held.status !== "live" && frameInvalidatesFoldedBlend(held, liveFrame))
     )) {
       quoteTriggerRef.current = liveFrame;
+      sourceAddedHistoryRef.current = null;
       foldedRefetch.request();
       return;
     }
@@ -180,6 +184,7 @@ function HeldPage({ net, eventId, candidate, enabled }: { net: Net; eventId: num
   const refreshHistoryRef = useRef(refreshHistory);
   refreshHistoryRef.current = refreshHistory;
   pairedQuoteReadRef.current = PAIR.runInNewContext({
+    sourceAddedHistoryRef,
     createWriteJournal, rebaseOnCoveringRead, reconcileFloorCoverage, servedHistoryIsNewer, latestBlendEdgeRef: { current: null }, pairJournalRef, reconcileLedger,
     eventId, fullHistoryRequested, fetchEvent, fetchEventHistory, EVENT_BOOT_HISTORY_HOURS, historyRangeParam,
     quotePairCoversTrigger, keepNewerHeldHeadline, carryNewerHeldState, setLastRefresh, Date, storedEventRef,
