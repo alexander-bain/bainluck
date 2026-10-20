@@ -279,5 +279,5 @@ def test_both_hourly_waits_route_through_the_inbox_aware_wait():
     assert source.count('idle_until "$((NOW + NAP))"') == 2
     assert "ONCE=$(next_once)" in source
     assert "INBOX_POLL=60\n" in source and "BUS_INBOX_POLL" not in source
-    selector = next(l for l in source.splitlines() if l.startswith("next_once ()"))
+    selector = next(ln for ln in source.splitlines() if ln.startswith("next_once ()"))
     assert "/dev/null" not in selector, selector
