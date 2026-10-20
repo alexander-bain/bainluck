@@ -1,0 +1,202 @@
+import Foundation
+
+/// #10090 — a provisional blend shown before its event stamp commits
+/// (`backend/app/utils/blend_preview.py`). The iPhone twin of web's
+/// `frontend/lib/blendPreview.ts`; the rules are the same and so is the reason.
+///
+/// The server sends these only for its canary events, as a separate `preview`
+/// SSE event. Without one, every function here returns its input and the page
+/// renders exactly what it renders today.
+///
+/// A preview is never written into the page's committed `event`. It is an
+/// overlay on the hero number alone, and it gives way to committed truth by rule:
+///
+/// - It carries no committed revision. Its `base_rev` is the revision it was
+///   composed on; it shows only while the page holds no NEWER committed
+///   revision of its one row. Any newer commit wins, whoever wrote it.
+/// - `epoch` is the writing process's display claim, fenced at Redis: a
+///   replacement worker's claim is a higher epoch. The reader keeps the highest
+///   epoch it has seen and refuses anything older (`readerAfter`) — an earlier
+///   epoch never regains the display, whatever order frames arrive in. A
+///   higher epoch voids whatever the older one showed.
+/// - Within an epoch, previews order by `seq`: a lower seq never replaces a
+///   higher one, and a `revoke` withdraws every preview up to `through_seq`.
+/// - It expires `ttl_ms` after arrival — a backstop for a revoke lost with a
+///   stopped worker; the server revokes on its own clock as well.
+/// - A reconnect clears the held preview (previews are never replayed, so a
+///   missed revoke cannot be ruled out across a reconnect); the epoch floor is
+///   kept, because epochs only rise.
+/// - It shows only for the same quote status the page holds, on a live blend
+///   hero whose committed revision is this event's one row
+///   (`LiveEventPriceReconciliation.pairedFoldRevision`).
+nonisolated struct BlendPreviewFrame: Decodable, Sendable, Equatable {
+    enum Kind: String, Sendable { case blend, revoke }
+
+    /// This client's refusal bound, like `SourceSnapshot.maxFrameBytes`. The
+    /// producer's frame is a few hundred bytes.
+    static let maxFrameBytes = 16 * 1024
+
+    let eventId: Int
+    let p: Double?
+    let status: String?
+    let kind: Kind
+    let epoch: Int
+    let seq: Int
+    /// Present on every `blend`; absent on a `revoke`.
+    let baseRev: Int?
+    let ttlMs: Int?
+    /// Present on every `revoke`.
+    let throughSeq: Int?
+
+    init(eventId: Int, p: Double?, status: String?, kind: Kind, epoch: Int, seq: Int,
+         baseRev: Int? = nil, ttlMs: Int? = nil, throughSeq: Int? = nil) {
+        self.eventId = eventId
+        self.p = p
+        self.status = status
+        self.kind = kind
+        self.epoch = epoch
+        self.seq = seq
+        self.baseRev = baseRev
+        self.ttlMs = ttlMs
+        self.throughSeq = throughSeq
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case eventId, p, status, rev, preview
+    }
+
+    private enum PreviewKeys: String, CodingKey {
+        case kind, epoch, seq, baseRev, ttlMs, throughSeq
+    }
+
+    /// Web's `safeInt`: a non-negative integer a JSON number carries exactly.
+    /// `Int` decoding already refuses a fraction, a string and a bool.
+    private static func safe(_ value: Int?) -> Bool {
+        value.map { $0 >= 0 && $0 <= FoldRevision.maxSafeInteger } ?? false
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        func refuse(_ why: String) -> DecodingError {
+            .dataCorrupted(.init(codingPath: decoder.codingPath, debugDescription: why))
+        }
+        // A committed revision on a "preview" is a contradiction: refuse it.
+        guard !c.contains(.rev) else { throw refuse("a preview carries no committed revision") }
+        eventId = try c.decode(Int.self, forKey: .eventId)
+        p = try c.decodeIfPresent(Double.self, forKey: .p)
+        status = try c.decodeIfPresent(String.self, forKey: .status)
+        let preview = try c.nestedContainer(keyedBy: PreviewKeys.self, forKey: .preview)
+        guard let kind = Kind(rawValue: try preview.decode(String.self, forKey: .kind)) else {
+            throw refuse("unknown preview kind")
+        }
+        self.kind = kind
+        epoch = try preview.decode(Int.self, forKey: .epoch)
+        seq = try preview.decode(Int.self, forKey: .seq)
+        baseRev = try preview.decodeIfPresent(Int.self, forKey: .baseRev)
+        ttlMs = try preview.decodeIfPresent(Int.self, forKey: .ttlMs)
+        throughSeq = try preview.decodeIfPresent(Int.self, forKey: .throughSeq)
+        guard Self.safe(epoch), Self.safe(seq) else { throw refuse("unordered preview") }
+        switch kind {
+        case .revoke:
+            guard Self.safe(throughSeq) else { throw refuse("revoke without through_seq") }
+        case .blend:
+            guard let p, p.isFinite, (0...1).contains(p), Self.safe(baseRev), Self.safe(ttlMs) else {
+                throw refuse("unprintable preview")
+            }
+        }
+    }
+
+    /// The controller's raw `preview` data, or `nil` for anything that is not a
+    /// well-formed provisional frame. Never throws: one bad frame is dropped.
+    static func decode(_ raw: String) -> BlendPreviewFrame? {
+        guard raw.utf8.count <= maxFrameBytes, let data = raw.data(using: .utf8) else { return nil }
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
+        return try? decoder.decode(BlendPreviewFrame.self, from: data)
+    }
+}
+
+/// The one preview an event's reader holds.
+nonisolated struct BlendPreviewState: Sendable, Equatable {
+    let eventId: Int
+    let epoch: Int
+    let seq: Int
+    let baseRev: Int
+    let p: Double
+    let status: String?
+    /// On the page's own `now()` clock: after this the preview is not shown.
+    let expiresAt: TimeInterval
+}
+
+/// What one event's reader holds: its preview, and the highest epoch it has seen.
+nonisolated struct BlendPreviewReader: Sendable, Equatable {
+    var held: BlendPreviewState?
+    /// The fence floor: frames from a lower epoch are refused. -1 before any.
+    var epoch: Int
+
+    static let empty = BlendPreviewReader(held: nil, epoch: -1)
+}
+
+nonisolated enum BlendPreview {
+    /// The reader after `frame` arrives at `now`. A lower epoch is fenced out; a
+    /// higher one raises the floor and voids the older epoch's preview first.
+    static func readerAfter(_ reader: BlendPreviewReader, _ frame: BlendPreviewFrame,
+                            eventId: Int, now: TimeInterval) -> BlendPreviewReader {
+        guard frame.eventId == eventId, frame.epoch >= reader.epoch else { return reader }
+        let held = frame.epoch > reader.epoch ? nil : reader.held
+        return BlendPreviewReader(held: previewAfter(held, frame, eventId: eventId, now: now),
+                                  epoch: frame.epoch)
+    }
+
+    /// Within one epoch: the preview to hold after `frame` arrives at `now`.
+    static func previewAfter(_ state: BlendPreviewState?, _ frame: BlendPreviewFrame,
+                             eventId: Int, now: TimeInterval) -> BlendPreviewState? {
+        guard frame.eventId == eventId else { return state }
+        let sameEpoch = state.map { $0.epoch == frame.epoch } ?? false
+        switch frame.kind {
+        case .revoke:
+            guard let state, sameEpoch, let through = frame.throughSeq else {
+                // A new epoch spoke; the old one's preview cannot be trusted.
+                return nil
+            }
+            return state.seq <= through ? nil : state
+        case .blend:
+            if let state, sameEpoch, frame.seq <= state.seq { return state }
+            guard let p = frame.p, let baseRev = frame.baseRev, let ttlMs = frame.ttlMs else { return state }
+            return BlendPreviewState(eventId: eventId, epoch: frame.epoch, seq: frame.seq, baseRev: baseRev,
+                                     p: p, status: frame.status, expiresAt: now + Double(ttlMs) / 1000)
+        }
+    }
+
+    /// The provisional hero probability to show, or `nil` for committed truth.
+    static func displayed(_ state: BlendPreviewState?, held: EventDetail?, now: TimeInterval) -> Double? {
+        guard let state, let held, now < state.expiresAt, held.id == state.eventId,
+              let status = held.status, EventPriceStreaming.isEligible(status), status == state.status,
+              // Only a singleton revision of this very row, dating the number on
+              // screen, can be ordered against `base_rev`; a folded hero (several
+              // rows), no revision, or a hero that is not the blend shows
+              // committed truth.
+              let committed = LiveEventPriceReconciliation.pairedFoldRevision(in: held),
+              committed.rows.count == 1, let rev = committed.rows[String(state.eventId)] else { return nil }
+        return rev > state.baseRev ? nil : state.p
+    }
+
+    /// `event` with the provisional hero overlaid, or `event` itself when no
+    /// preview applies — so a page without previews renders unchanged. The
+    /// committed clock and revision stay: a preview has neither.
+    static func overlay(_ event: EventDetail, _ state: BlendPreviewState?, now: TimeInterval) -> EventDetail {
+        guard let p = displayed(state, held: event, now: now), var odds = event.currentOdds else { return event }
+        var shown = event
+        odds.homeProbability = p
+        // A withheld away side (#6238, draw-priced sports) stays withheld.
+        odds.awayProbability = odds.awayProbability == nil ? nil : 1 - p
+        // The served whole percents describe the committed pair, not this one;
+        // both nil means every reader rounds this pair WHOLE (`duelPercents`).
+        odds.homeRenderedPercent = nil
+        odds.awayRenderedPercent = nil
+        shown.currentOdds = odds
+        shown.heroProbability = p
+        shown.heroProbabilityAway = event.heroProbabilityAway == nil ? nil : 1 - p
+        return shown
+    }
+}

@@ -141,6 +141,17 @@ final class EventDetailViewModel: ObservableObject {
     /// has to push again before the page says it is being pushed to.
     @Published private(set) var streamHasPushedPrice = false
 
+    /// #10090 — the held provisional blend (`BlendPreview`), or nil. Never part
+    /// of `event` or `liveBlend`: the page overlays it on the hero alone
+    /// (`headline(_:)`), so nothing committed — history, chart, rail, revision,
+    /// delivery — ever reads it. Always nil when the server sends none. Cleared
+    /// when its lifetime ends; `blendPreviewReader` keeps its ordering.
+    @Published private(set) var blendPreview: BlendPreviewState?
+    /// #10090 — the preview and the epoch floor that orders the next one. The
+    /// floor survives every reset: epochs only rise.
+    private var blendPreviewReader = BlendPreviewReader.empty
+    private var blendPreviewExpiry: Task<Void, Never>?
+
     /// #8320: a successful stream-triggered authoritative fold read also
     /// delivers a price. Socket open / cached unchanged reads do not.
     private var deliveryGeneration = 0
@@ -1260,6 +1271,8 @@ final class EventDetailViewModel: ObservableObject {
                 self.requestRevisionRefetch(resyncGeneration: self.deliveryGeneration)
             },
             onReconcile: { [weak self] control in self?.receiveReconcile(control) },
+            onPreview: { [weak self] raw in self?.receivePreview(raw) },
+            onPreviewReset: { [weak self] in self?.clearPreview() },
             deliversFoldedQuotes: true
         )
         stream = controller
@@ -1312,6 +1325,55 @@ final class EventDetailViewModel: ObservableObject {
         streamDelivering = false
         latestPriceFrame = nil
         latestSourceFrames.removeAll()
+        clearPreview()
+    }
+
+    // MARK: - Provisional headline (#10090)
+
+    /// `event` with the held provisional blend on its hero, or `event` itself
+    /// (committed truth) when none applies — a newer committed revision, a
+    /// folded or non-blend hero, a changed status or an expired preview.
+    @MainActor
+    func headline(_ event: EventDetail) -> EventDetail {
+        BlendPreview.overlay(event, blendPreview, now: now())
+    }
+
+    @MainActor
+    private func receivePreview(_ raw: String) {
+        guard let frame = BlendPreviewFrame.decode(raw) else { return }
+        let at = now()
+        let next = BlendPreview.readerAfter(blendPreviewReader, frame, eventId: eventId, now: at)
+        guard next != blendPreviewReader else { return }
+        blendPreviewReader = next
+        publishPreview(next.held, at: at)
+    }
+
+    /// Clears the held preview; keeps the epoch floor (epochs only rise).
+    @MainActor
+    private func clearPreview() {
+        blendPreviewReader.held = nil
+        publishPreview(nil, at: now())
+    }
+
+    /// Publishes `held` and re-renders once when its lifetime ends, so an
+    /// expired provisional value gives way to the committed one without a frame.
+    @MainActor
+    private func publishPreview(_ held: BlendPreviewState?, at: TimeInterval) {
+        blendPreviewExpiry?.cancel()
+        blendPreviewExpiry = nil
+        if blendPreview != held { blendPreview = held }
+        guard let held else { return }
+        // Capped at a day: `ttl_ms` may be any safe integer, and converting a
+        // larger wait to nanoseconds traps. Display gates on `expiresAt` anyway.
+        // Converted here, not in the task, so the frame that set it is the one
+        // that would fail.
+        let wait = min(max(0, held.expiresAt - at), 86_400)
+        let nanoseconds = UInt64(wait * 1_000_000_000) + 1_000_000
+        blendPreviewExpiry = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: nanoseconds)
+            guard !Task.isCancelled, let self, self.blendPreview == held else { return }
+            self.blendPreview = nil
+        }
     }
 
     /// #10090 — an adopted authoritative quote, committed the way an accepted
