@@ -91,6 +91,17 @@ struct NativeEventDiscoverCard: View {
         EventState.isFinished(event.status)
     }
 
+    /// #11296 — on a final, the sportsbooks' last pair before the scheduled
+    /// start, by the same rule as the Sports card (`EventCardView`). Nil draws
+    /// nothing. Internal so the suite reaches the wiring.
+    var finalForecast11296: FinalForecastComparison11296.Comparison? {
+        guard isDone else { return nil }
+        return FinalForecastComparison11296.resolve(
+            sport: event.sport, status: event.status,
+            homeScore: event.homeScore, awayScore: event.awayScore,
+            actualPeriod: .fullGame, projection: event.pregameProjection)
+    }
+
     /// The card's team line, for every state of the game (#5538).
     ///
     /// This used to read `"\(away) \(isDone ? "" : "@") \(home)"`. Dropping the
@@ -255,6 +266,13 @@ struct NativeEventDiscoverCard: View {
                     .font(.headline.weight(.bold))
                     .lineLimit(2)
                     .fixedSize(horizontal: false, vertical: true)
+
+                // #11296 — the final score is the hero above; the forecast
+                // before it is one quiet line here, in the title's team order.
+                if let finalForecast = finalForecast11296 {
+                    FinalForecastLine11296(
+                        comparison: finalForecast, awayName: event.awayTeam, homeName: event.homeTeam)
+                }
 
                 // live/048 — the shared summary, in the slot the settled card
                 // uses for its result. Same string the web Discover card

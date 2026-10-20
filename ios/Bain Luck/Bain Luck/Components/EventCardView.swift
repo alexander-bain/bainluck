@@ -345,7 +345,27 @@ struct EventCardView: View {
                 won: homeWon,
                 side: .home
             )
+
+            if let finalForecast = finalForecast11296 {
+                FinalForecastLine11296(
+                    comparison: finalForecast, awayName: event.awayTeam, homeName: event.homeTeam)
+                    // Under the team names, past the 24pt crest and the row's 8pt gap.
+                    .padding(.leading, 32)
+            }
         }
+    }
+
+    /// #11296 — on a final, the sportsbooks' last pair before the scheduled
+    /// start, beneath the two rows that print the result. Nil on every other
+    /// state and wherever the pair cannot be shown honestly; nil draws nothing.
+    /// A scoreboard final covers the full game, so soccer's 90-minute forecast
+    /// is withheld (see the helper). Internal so the suite reaches the wiring.
+    var finalForecast11296: FinalForecastComparison11296.Comparison? {
+        guard isFinished else { return nil }
+        return FinalForecastComparison11296.resolve(
+            sport: event.sport, status: event.status,
+            homeScore: event.homeScore, awayScore: event.awayScore,
+            actualPeriod: .fullGame, projection: event.pregameProjection)
     }
 
     private func teamRow(name: String, avatar: ParticipantAvatar, color: Color, record: String?, score: Int?, won: Bool, side: TeamSide) -> some View {
