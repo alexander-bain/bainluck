@@ -1,0 +1,215 @@
+{
+  "sourceHashes": {
+    "src/bounded-sse-writer.mjs": "198aac3023819b2a67175903f61482a2b15657412ad9fa17d7ca7cd5391ee6d4",
+    "src/stream-server.mjs": "27943f29224832f046d2f0381f18f9c04d210feea4cfc7e0f4c817156825ddf9",
+    "tests/backpressure-wire.mjs": "db35877417eca94c654b47ceea8ee9328d40ef006a9d36ed46ae6b1aa3748722",
+    "src/client.mjs": "4e859c884ef58c2158c04a706ebcbce4be8a52327cace86df3af68eda847e783",
+    "src/protocol.mjs": "42233065b7e45cede6509f933d26744b2d89e2da8ec7e4099dd9a38efe259e20",
+    "src/broker.mjs": "26f3063d6a2813ee72752675a3568ec86c30b27055fffd383009fe67f8eda3ba"
+  },
+  "kind": "bounded-loopback-backpressure",
+  "startedAt": "2026-10-20T14:41:12.872Z",
+  "scope": "Synthetic loopback only; paused real Node HTTP/TCP reader; no browser or Internet partition claim",
+  "caps": {
+    "maxSseClients": 3,
+    "applicationAndNodeBufferedBytesPerClient": 2097152,
+    "maxBurstMs": 30000,
+    "maxFrames": 5000
+  },
+  "baselineShutdown": {
+    "remainingSockets": 0,
+    "remainingLabs": 0,
+    "cleanupTimedOut": false
+  },
+  "candidateShutdown": {
+    "remainingSockets": 0,
+    "remainingLabs": 0,
+    "cleanupTimedOut": false
+  },
+  "passed": true,
+  "endedAt": "2026-10-20T14:41:30.104Z",
+  "cases": [
+    {
+      "name": "baseline-real-paused-reader",
+      "passed": true,
+      "expectedSafetyFailure": true,
+      "conclusion": "Baseline keeps enqueueing after actual write(false)",
+      "publications": 240,
+      "writesAfterFirstFalse": 144,
+      "writesWithoutInterveningDrain": 49,
+      "peakObservedNodeBytes": 82904,
+      "burstMs": 524.793154
+    },
+    {
+      "name": "candidate-real-paused-reader-and-responsive-reader",
+      "passed": true,
+      "conclusion": "Bounded slow-client disconnect while normal reader receives every synthetic point without duplicates; latest-only snapshot recovery",
+      "publications": 491,
+      "burstMs": 2847.664339,
+      "maxControlResponseMs": 19.045662000000448,
+      "recoveryMs": 24.819368999999824,
+      "observedRecoveryPoints": [
+        491
+      ],
+      "normalPointCount": 491,
+      "normalPendingWithoutStorageAck": true,
+      "slowStats": {
+        "writes": 478,
+        "writeFalse": 1,
+        "drains": 0,
+        "peakQueuedBytes": 124875,
+        "peakQueuedFrames": 14,
+        "peakNodeBytes": 71423,
+        "peakBufferedBytes": 196298,
+        "discardedFrames": 14,
+        "discardedBytes": 124875,
+        "maxWriteCallMs": 16.248053000000255,
+        "maxQueueWaitMs": 3.8483039999996436,
+        "maxDrainWaitMs": 0,
+        "callbacksAfterClose": 0,
+        "closeReason": "queue-limit"
+      },
+      "fastStats": {
+        "writes": 493,
+        "writeFalse": 0,
+        "drains": 0,
+        "peakQueuedBytes": 8920,
+        "peakQueuedFrames": 1,
+        "peakNodeBytes": 35712,
+        "peakBufferedBytes": 35712,
+        "discardedFrames": 0,
+        "discardedBytes": 0,
+        "maxWriteCallMs": 11.777299999999741,
+        "maxQueueWaitMs": 8.736855999999989,
+        "maxDrainWaitMs": 0,
+        "callbacksAfterClose": 0,
+        "closeReason": null
+      },
+      "postCloseWrites": 0
+    },
+    {
+      "name": "candidate-real-abandon-while-blocked",
+      "passed": true,
+      "publications": 474,
+      "stats": {
+        "writes": 476,
+        "writeFalse": 1,
+        "drains": 0,
+        "peakQueuedBytes": 8919,
+        "peakQueuedFrames": 1,
+        "peakNodeBytes": 71416,
+        "peakBufferedBytes": 71416,
+        "discardedFrames": 0,
+        "discardedBytes": 0,
+        "maxWriteCallMs": 7.204974999999649,
+        "maxQueueWaitMs": 5.35283200000049,
+        "maxDrainWaitMs": 0,
+        "callbacksAfterClose": 0,
+        "closeReason": "response-close"
+      },
+      "remainingBrokerSessions": 0
+    },
+    {
+      "name": "candidate-real-drain-resume",
+      "passed": true,
+      "publications": 476,
+      "pausedToLatestMs": 363.977918999999,
+      "stats": {
+        "writes": 478,
+        "writeFalse": 1,
+        "drains": 1,
+        "peakQueuedBytes": 17839,
+        "peakQueuedFrames": 2,
+        "peakNodeBytes": 71423,
+        "peakBufferedBytes": 89262,
+        "discardedFrames": 0,
+        "discardedBytes": 0,
+        "maxWriteCallMs": 16.51140900000064,
+        "maxQueueWaitMs": 351.96589499999936,
+        "maxDrainWaitMs": 355.0092140000015,
+        "callbacksAfterClose": 0,
+        "closeReason": null
+      },
+      "exactFullPointCount": 476
+    },
+    {
+      "name": "candidate-real-no-drain-deadline",
+      "passed": true,
+      "publications": 474,
+      "observedDisconnectMs": 456.94096699999864,
+      "configuredStallMs": 400,
+      "stats": {
+        "writes": 476,
+        "writeFalse": 1,
+        "drains": 0,
+        "peakQueuedBytes": 8920,
+        "peakQueuedFrames": 1,
+        "peakNodeBytes": 71423,
+        "peakBufferedBytes": 71423,
+        "discardedFrames": 0,
+        "discardedBytes": 0,
+        "maxWriteCallMs": 19.222309000000678,
+        "maxQueueWaitMs": 9.069046999999046,
+        "maxDrainWaitMs": 0,
+        "callbacksAfterClose": 0,
+        "closeReason": "drain-timeout"
+      }
+    },
+    {
+      "name": "candidate-real-handover-purges-old-backlog-by-disconnect",
+      "passed": true,
+      "oldPublications": 474,
+      "stats": {
+        "writes": 474,
+        "writeFalse": 1,
+        "drains": 0,
+        "peakQueuedBytes": 17840,
+        "peakQueuedFrames": 2,
+        "peakNodeBytes": 71423,
+        "peakBufferedBytes": 89263,
+        "discardedFrames": 2,
+        "discardedBytes": 17840,
+        "maxWriteCallMs": 18.26620399999956,
+        "maxQueueWaitMs": 7.0522949999995035,
+        "maxDrainWaitMs": 0,
+        "callbacksAfterClose": 0,
+        "closeReason": "authority-changed-with-backlog"
+      },
+      "recoveryPoints": [
+        {
+          "boot": "7adf70a5-1506-4bb3-b285-13935b661c37",
+          "epoch": 2,
+          "seq": 1,
+          "p": 0.2,
+          "id": "7adf70a5-1506-4bb3-b285-13935b661c37/2/1/8ef1116640976171053849d6d98b26ebbf0cc5f6f0105b97904f829c6de5fb61"
+        }
+      ]
+    }
+  ],
+  "verification": {
+    "nodeVersion": "v24.19.0",
+    "writerUnits": {
+      "passed": 15,
+      "total": 15
+    },
+    "inheritedModel": {
+      "passed": 36,
+      "total": 36
+    },
+    "transportUnits": {
+      "passed": 4,
+      "total": 4
+    },
+    "reconnectWire": {
+      "passed": 20,
+      "total": 20
+    },
+    "reconnectReceiptAuditAssertions": 1134,
+    "independentPureTests": {
+      "passed": 21,
+      "total": 21
+    },
+    "independentWireAudit": "6 cases passed; exact source hashes matched",
+    "baselineMockExpectedFailures": 2
+  }
+}

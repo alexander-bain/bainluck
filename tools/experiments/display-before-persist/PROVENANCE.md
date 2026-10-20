@@ -34,7 +34,9 @@ made that those packaging edits were in the earlier browser-measured code.
 
 ## Separate experiment inventory
 
-These were kept out so the first PR is small and independently runnable. Their
+The original focused handoff excluded these; the approved expansion now includes
+separate recovery, authority, real-stream and backpressure directories. Estimator
+and PM dispatch changes remain outside the PR. Their
 existing deliverable filenames identify the evidence without exposing private
 file-service links or copying nested bundles into the repository:
 
@@ -50,6 +52,7 @@ file-service links or copying nested bundles into the repository:
   authority candidate. Its architecture and timing evidence are separate from
   this baseline and carry no inherited subsecond bound.
 
-Actual SSE reconnect/disconnect work is still separate and is not included or
-represented as passing by this PR. Review and accept this mechanism separately
-before deciding whether to propose any follow-up module or production adaptation.
+Actual SSE reconnect and bounded slow-client transport are now included in separate
+modules with their own verified scope. New copy-cost and replay-gap successors are
+not included. Review and accept each mechanism separately before any production
+adaptation; these are not one combined end-to-end implementation.

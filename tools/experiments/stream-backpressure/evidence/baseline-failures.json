@@ -1,0 +1,24 @@
+{
+  "scope": "No socket mock: exact unchanged baseline HTTP handler and pump, response.write always false, no drain emitted; checks intentionally expose absent protection",
+  "source": "baseline/stream-server.mjs",
+  "pass": false,
+  "expectedFailures": 2,
+  "framesWritten": 258,
+  "bufferedBytes": 168865,
+  "pendingBefore": 258,
+  "noDrainObservationMs": 50,
+  "stoppedAfterFalse": false,
+  "drainDeadline": false,
+  "failures": [
+    {
+      "kind": "preserved-expected-failure",
+      "invariant": "Stop writing after first false until drain",
+      "message": "must not write again until drain\n\n258 !== 1\n"
+    },
+    {
+      "kind": "preserved-expected-failure",
+      "invariant": "Bound no-drain wait",
+      "message": "no-drain connection must disconnect on configured finite deadline (baseline has none)\n\nfalse !== true\n"
+    }
+  ]
+}

@@ -1,0 +1,14 @@
+{
+  "name": "isolated-bounded-sse-backpressure-lab",
+  "private": true,
+  "type": "module",
+  "version": "0.1.0",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "test": "bash run.sh test",
+    "pressure": "bash run.sh pressure",
+    "serve": "bash run.sh serve"
+  }
+}

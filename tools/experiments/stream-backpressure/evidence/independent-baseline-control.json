@@ -1,0 +1,12 @@
+{
+  "scope": "Independent pure fake-response HTTP handler test; no TCP listener, no external data",
+  "baselineInvariantFailure": true,
+  "firstFalseFollowedByFurtherWrites": 129,
+  "slowWriteCalls": 130,
+  "handshakeWriteCalls": 2,
+  "slowNodeLikeBufferedBytes": 87757,
+  "fastFinal": 1,
+  "fastFrames": 129,
+  "disconnectOccurred": false,
+  "limits": "2 clients, 128 publications, <2MiB application input; simulated writableLength is not actual Node or kernel memory"
+}

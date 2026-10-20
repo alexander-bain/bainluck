@@ -1,0 +1,123 @@
+{
+  "generatedAt": "2026-10-20T14:45:48.387Z",
+  "scope": "Independent pure fake-response writer and HTTP-handler tests. No socket, external service, production data, merge, or deployment.",
+  "candidateHashes": "198aac3023819b2a67175903f61482a2b15657412ad9fa17d7ca7cd5391ee6d4  candidate/src/bounded-sse-writer.mjs\n26f3063d6a2813ee72752675a3568ec86c30b27055fffd383009fe67f8eda3ba  candidate/src/broker.mjs\n4e859c884ef58c2158c04a706ebcbce4be8a52327cace86df3af68eda847e783  candidate/src/client.mjs\n42233065b7e45cede6509f933d26744b2d89e2da8ec7e4099dd9a38efe259e20  candidate/src/protocol.mjs\n27943f29224832f046d2f0381f18f9c04d210feea4cfc7e0f4c817156825ddf9  candidate/src/stream-server.mjs\n4298e6f78ab221a5f707aa965382d742638d357ad6cc4a164269c1a5c81b4072  candidate/src/wire-client.mjs\n",
+  "passed": 21,
+  "failed": 0,
+  "results": [
+    {
+      "name": "one write(false) blocks all subsequent writes until drain",
+      "pass": true
+    },
+    {
+      "name": "every repeated false requires another drain; no duplicate or lost bytes",
+      "pass": true
+    },
+    {
+      "name": "UTF-8 encoded-byte limit and oversize rejection do not emit partial frame",
+      "pass": true
+    },
+    {
+      "name": "byte and frame queue ceilings close without over-admission",
+      "pass": true
+    },
+    {
+      "name": "combined admission bound includes simulated Node writableLength",
+      "observed": {
+        "peak": 96,
+        "discarded": 32
+      },
+      "pass": true
+    },
+    {
+      "name": "no-drain timeout disconnects; closed writer ignores late drain and enqueue",
+      "pass": true
+    },
+    {
+      "name": "response close cancels blocked timer; repeated close stays idempotent",
+      "pass": true
+    },
+    {
+      "name": "thrown write closes and calls onClosed once",
+      "pass": true
+    },
+    {
+      "name": "close emitted inside write does not leave a timer or blocked state",
+      "pass": true
+    },
+    {
+      "name": "enqueue callback reentrancy preserves FIFO when write itself enqueues",
+      "pass": true
+    },
+    {
+      "name": "write callback reentrant enqueue does not write before initial false is observed",
+      "pass": true
+    },
+    {
+      "name": "write event callback closing writer cannot create a fresh timeout",
+      "pass": true
+    },
+    {
+      "name": "invalid writer options reject or clean up broker/session registration",
+      "pass": true
+    },
+    {
+      "name": "slow overflow is isolated and fresh session recovers latest only",
+      "observed": {
+        "slowWrites": 1,
+        "fastFinal": 16,
+        "recoveredSeq": 16,
+        "recoveredPoints": [
+          16
+        ]
+      },
+      "pass": true
+    },
+    {
+      "name": "post-handover stale application backlog disconnects without writes",
+      "pass": true
+    },
+    {
+      "name": "held old frame released after new authority does not rewind headline",
+      "observed": {
+        "headlineBeforeClose": 0.9,
+        "oldFrameNeverWritten": true
+      },
+      "pass": true
+    },
+    {
+      "name": "delayed same-owner frame cannot rewind a newer displayed headline",
+      "pass": true
+    },
+    {
+      "name": "terminal state rejects unsent publication backlog and fresh snapshot stays terminal",
+      "pass": true
+    },
+    {
+      "name": "partial SSE frame at EOF is discarded; fresh session restores only exact latest",
+      "observed": {
+        "recoverSeq": 3,
+        "recoverValue": 0.9,
+        "retainedPoints": [
+          1,
+          3
+        ],
+        "missingSeq2Invented": false
+      },
+      "pass": true
+    },
+    {
+      "name": "abort before handshake rejects promptly and leaves no current authority",
+      "pass": true
+    },
+    {
+      "name": "timer timeout is not a hard SLA during event-loop stall",
+      "observed": {
+        "configuredStallMs": 20,
+        "actualElapsedMs": 65.83223600000002,
+        "scope": "Cooperative event-loop timer, not wall-clock availability guarantee"
+      },
+      "pass": true
+    }
+  ]
+}

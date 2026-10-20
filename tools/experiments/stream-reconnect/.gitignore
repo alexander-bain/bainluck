@@ -1,0 +1,7 @@
+node_modules/
+runtime/
+local-results/*
+results/*
+!results/original-source-sha256.json
+!results/verification.json
+!results/source-sha256.json
