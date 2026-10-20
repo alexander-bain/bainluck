@@ -30,6 +30,9 @@ import XCTest
 ///   `testTheNBAStreamsProjectedFinishReadsWholeNames`
 /// - the "Game stories" heading broken mid-word beside its count ("Game
 ///   sto-ries" at 320pt/AX5, deck and stream) → `testTheGameStoriesHeadingWrapsBetweenWords`
+/// - the expanded reader's match line and kicker broken mid-word at
+///   320pt/AX5 ("Comman-/ders", "PROJECT-/ED", Design q1) →
+///   `testTheExpandedReaderKeepsWordsWholeOnANarrowPhone`
 @MainActor
 final class HeaderAndFinalCardFit11285Tests: XCTestCase {
 
@@ -891,6 +894,96 @@ final class HeaderAndFinalCardFit11285Tests: XCTestCase {
                            "\(name): the teams' marks are on different scales (\(ac), \(hc))")
             XCTAssertEqual(hc[0] - ac[1], (29.5 - 21.5) * awayScale, accuracy: awayScale,
                            "\(name): the 49ers' pregame mark is not where one scale puts it (\(ac), \(hc))")
+        }
+    }
+
+    // MARK: - The expanded reader on a narrow phone
+
+    /// Design q1 (S2 `bfd25619e9`, 320x693 AX5): the expanded reader broke its
+    /// match line "Comman-/ders at" and its card's kicker "PROJECT-/ED FINISH".
+    /// There the reader gives back its own margin and the card's peek, and the
+    /// type keeps its size; 375 and wider, and default sizes, are unchanged.
+    /// Mounted as the page's `nflReader` mounts it: the live finish card through
+    /// the page's builder, a neighbouring card, the page's short names and the
+    /// rows the reader holds. The q1 header is the retained before case; the
+    /// second is the shape `nflReaderHeader` prints live.
+    func testTheExpandedReaderKeepsWordsWholeOnANarrowPhone() throws {
+        XCTAssertEqual(NFLCardReader9483.headerMargin(width: 320, accessibility: true), 6)
+        XCTAssertEqual(NFLCardReader9483.headerMargin(width: 320, accessibility: false), 18)
+        XCTAssertEqual(NFLCardReader9483.headerMargin(width: 375, accessibility: true), 18)
+        XCTAssertEqual(NFLCardReader9483.cardWidth(320, accessibility: true), 292)
+        XCTAssertEqual(NFLCardReader9483.cardWidth(320, accessibility: false), 276)
+        XCTAssertEqual(NFLCardReader9483.cardWidth(375, accessibility: true), 331)
+        XCTAssertEqual(NFLCardReader9483.cardWidth(200, accessibility: false), 240, "the old floor")
+        // A text-size change across the accessibility boundary resizes every
+        // card at 320, so the rail must re-seat the open card; at 393 the
+        // cards keep their width and the rail does not re-seat.
+        let order = ["a", "b", "c"]
+        XCTAssertNotEqual(NFLCardReader9483.railGeneration(width: 320, accessibility: true, order: order),
+                          NFLCardReader9483.railGeneration(width: 320, accessibility: false, order: order),
+                          "320: a Large-to-accessibility switch must re-seat the open card")
+        XCTAssertEqual(NFLCardReader9483.railGeneration(width: 393, accessibility: true, order: order),
+                       NFLCardReader9483.railGeneration(width: 393, accessibility: false, order: order),
+                       "393: a text-size switch must not re-seat")
+
+        let finish = try liveFinishCard()
+        let (_, markets) = try finalPage()
+        let props = markets.playerProps ?? []
+        let neighbour = try XCTUnwrap(NFLMilestoneCard9483.cards(
+            props: props, eventStatus: "completed",
+            commenceTime: ISO8601DateFormatter().date(from: "2026-09-28T17:00:00Z")!,
+            homeTeam: "Chicago Bears", awayTeam: "Philadelphia Eagles",
+            now: ISO8601DateFormatter().date(from: "2026-09-28T21:00:00Z")!).first, "control: a second card")
+        let (away, home) = TeamShortName.shortPair(away: "Washington Commanders", home: "San Francisco 49ers",
+                                                   sportKey: "americanfootball_nfl")
+        XCTAssertEqual(away, "Commanders", "control: the specimen's short name")
+        let deck: [NFLEventCard9483] = [.finish(finish), .milestone(neighbour)]
+        let q1 = NFLReaderHeader9483(match: "Commanders at 49ers · Live", chances: "Commanders 13 · 49ers 20")
+        let live = NFLReaderHeader9483(match: "Commanders 13\u{2013}20 49ers · Q3 5:47",
+                                       chances: "Win chances · Commanders 12% · 49ers 88%")
+        for (label, header, width, height, size) in [
+            ("q1", q1, CGFloat(320), CGFloat(693), DynamicTypeSize.accessibility5),
+            ("live", live, 320, 693, .accessibility5),
+            ("q1", q1, 393, 852, .accessibility5), ("q1", q1, 320, 693, .large),
+        ] {
+            let name = "reader-\(label)-\(Int(width))x\(Int(height))-\(size)"
+            let state = NFLCardDeckState9483()
+            state.open(deck[0].id)
+            let reader = NFLCardReader9483(
+                liveCards: deck, liveHeader: header, awayName: away, homeName: home,
+                awayColor: .indigo, homeColor: .red,
+                state: state, liveRows: NFLCardReaderHold9483.rows(for: deck, in: props))
+            let host = hostForMeasurement(reader.environment(\.colorScheme, .light), at: size)
+            host.view.frame = CGRect(x: 0, y: 0, width: width, height: height)
+            let window = UIWindow(frame: host.view.frame)
+            window.rootViewController = host
+            window.isHidden = false
+            defer { window.isHidden = true }
+            settle(host, 0.8)
+            let read = try tiledLines(host, name: name).sorted { $0.box.minY < $1.box.minY }
+            let all = read.map { "\($0.text)@\(Int($0.box.minX)),\(Int($0.box.minY))" }.joined(separator: " | ")
+            XCTAssertEqual(state.openCardID, deck[0].id, "\(name): the reader left the card it was opened on")
+            // No line ends in a break: "Comman-", "PROJECT-".
+            XCTAssertFalse(read.contains { $0.text.trimmingCharacters(in: .whitespaces).hasSuffix("-") },
+                           "\(name): a word broke at a line end — \(all)")
+            // The match line starts on the whole name, at the margin the rule gives.
+            let match = try XCTUnwrap(read.first { $0.text.contains("Comman") }, "\(name): no match line — \(all)")
+            XCTAssertTrue(match.text.hasPrefix("Commanders"), "\(name): the match line read \"\(match.text)\" — \(all)")
+            let margin = NFLCardReader9483.headerMargin(width: width, accessibility: size.isAccessibilitySize)
+            XCTAssertEqual(match.box.minX, margin, accuracy: 5, "\(name): the match line's margin — \(all)")
+            // The card's kicker reads its whole first word, and under it the
+            // card's headline starts on the leader's name ("49ers still …").
+            let kicker = try XCTUnwrap(read.firstIndex { $0.text.contains("PROJECTED") },
+                                       "\(name): the kicker broke — \(all)")
+            // The live header's chances line pushes the headline below the
+            // phone-height frame (the card scrolls in the reader), so this is
+            // read where the frame shows it.
+            if label == "q1" {
+                XCTAssertTrue(read[(kicker + 1)...].contains { $0.text.hasPrefix("49ers") },
+                              "\(name): no headline under the kicker — \(all)")
+            }
+            XCTAssertFalse(read.contains { $0.text.contains("…") || $0.text.contains("...") },
+                           "\(name): an ellipsis is drawn — \(all)")
         }
     }
 

@@ -116,6 +116,29 @@ struct NFLCardReader9483: View {
     /// are ignored until the requested card has actually landed).
     @State private var visible: String?
     @State private var seated = false
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+
+    /// #11285 — on a 320pt screen (Display Zoom) at accessibility sizes the
+    /// reader's own margins broke whole words: inside 18pt margins the match
+    /// line's "Commanders" (≈305pt at AX5) read "Comman-/ders", and the
+    /// peeking card left its kicker 244pt, so "PROJECTED" (≈249pt) read
+    /// "PROJECT-/ED". There the reader gives that width back instead of
+    /// shrinking the type: the match line keeps a 6pt margin and each card
+    /// takes the rail's whole width (the count says there are more). 375pt
+    /// and wider, and every non-accessibility size, are unchanged.
+    static func isNarrowAccessibility(width: CGFloat, accessibility: Bool) -> Bool {
+        accessibility && width < 340
+    }
+
+    /// The match line's horizontal margin.
+    static func headerMargin(width: CGFloat, accessibility: Bool) -> CGFloat {
+        isNarrowAccessibility(width: width, accessibility: accessibility) ? 6 : 18
+    }
+
+    /// A card's width on the rail, inside its 14pt content margins.
+    static func cardWidth(_ width: CGFloat, accessibility: Bool) -> CGFloat {
+        isNarrowAccessibility(width: width, accessibility: accessibility) ? width - 2 * 14 : max(240, width - 44)
+    }
 
     init(liveCards: [NFLEventCard9483], liveHeader: NFLReaderHeader9483,
          awayName: String, homeName: String, awayColor: Color, homeColor: Color,
@@ -145,7 +168,7 @@ struct NFLCardReader9483: View {
             let cards = cards(at: tick.date)
             GeometryReader { geo in
                 VStack(spacing: 0) {
-                    top(now: tick.date)
+                    top(now: tick.date, width: geo.size.width)
                     Divider()
                     if cards.isEmpty {
                         Text("No game stories right now")
@@ -200,16 +223,23 @@ struct NFLCardReader9483: View {
 
     private struct IdentifiedRow: Identifiable { let id: String }
 
-    /// What the rail's card frames and order depend on (#11060).
+    /// What the rail's card frames and order depend on (#11060). Since
+    /// #11285 a card's width also follows the type size on a narrow phone,
+    /// so the generation carries the width the frame actually uses.
     struct RailGeneration: Equatable {
         let width: CGFloat
+        let cardWidth: CGFloat
         let order: [String]
+    }
+
+    static func railGeneration(width: CGFloat, accessibility: Bool, order: [String]) -> RailGeneration {
+        RailGeneration(width: width, cardWidth: cardWidth(width, accessibility: accessibility), order: order)
     }
 
     /// One row of controls — a short Back and, when there is one, Refresh —
     /// then one match summary. At accessibility sizes the text stays large;
     /// it is the repetition that goes, not the type size.
-    private func top(now: Date) -> some View {
+    private func top(now: Date, width: CGFloat) -> some View {
         VStack(alignment: .leading, spacing: 2) {
             HStack(alignment: .center) {
                 Button { state.close() } label: {
@@ -243,7 +273,7 @@ struct NFLCardReader9483: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.horizontal, 18)
+        .padding(.horizontal, Self.headerMargin(width: width, accessibility: dynamicTypeSize.isAccessibilitySize))
         .padding(.bottom, 8)
         .accessibilityElement(children: .contain)
     }
@@ -259,7 +289,7 @@ struct NFLCardReader9483: View {
                                                  state: state, expanded: true)
                                 .padding(.vertical, 16)
                         }
-                        .frame(width: max(240, width - 44))
+                        .frame(width: Self.cardWidth(width, accessibility: dynamicTypeSize.isAccessibilitySize))
                         .id(card.id)
                         .accessibilityHidden(card.id != visible)
                     }
@@ -292,9 +322,11 @@ struct NFLCardReader9483: View {
             // #11060 — a rotation or width change resizes every card, and a
             // Refresh can reorder them; the old offset then lands on another
             // card while `visible` (count, dots, focus) still names this one.
-            // Re-seat on the width+order generation and ignore the reports the
-            // re-layout makes until the card has landed again.
-            .onChange(of: RailGeneration(width: width, order: cards.map(\.id))) { _, _ in
+            // A text-size change on a narrow phone resizes them too (#11285).
+            // Re-seat on the width+card width+order generation and ignore the
+            // reports the re-layout makes until the card has landed again.
+            .onChange(of: Self.railGeneration(width: width, accessibility: dynamicTypeSize.isAccessibilitySize,
+                                              order: cards.map(\.id))) { _, _ in
                 guard let visible else { return }
                 seated = false
                 proxy.scrollTo(visible, anchor: .leading)
