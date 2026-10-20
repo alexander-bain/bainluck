@@ -90,7 +90,7 @@ final class FinishedFeedCardAccessibility11325Tests: XCTestCase {
         XCTAssertNil(odds.prematchOdds, "precondition: the card falls back to the constructed opening_odds")
         for width: CGFloat in [320, 393] {
             let name = "sports-nfl-\(Int(width))-ax5-constructed-odds"
-            let read = try sportsLines(odds, width: width, size: .accessibility5, name: name)
+            let read = separatingFusedValues(try sportsLines(odds, width: width, size: .accessibility5, name: name))
             let all = describe(read)
 
             for percent in ["24%", "76%"] {
@@ -128,7 +128,7 @@ final class FinishedFeedCardAccessibility11325Tests: XCTestCase {
 
         // Both names, complete, in the name column (single-digit scores are too
         // small a target for Vision to pin, so the 1–1 is left to the frames).
-        let column = read.filter { $0.box.minX >= 40 }.sorted { $0.box.minY < $1.box.minY }
+        let column = read.map { clearOfCrest($0, columnEdge: 40) }.filter { $0.box.minX >= 40 }.sorted { $0.box.minY < $1.box.minY }
         let joined = column.map { normalized($0.text) }.joined()
         XCTAssertTrue(joined.contains("UnionSantaFe"), "\(name): away name incomplete — \(all)")
         XCTAssertTrue(joined.contains("DeportivoRiestra"), "\(name): home name incomplete — \(all)")
@@ -168,7 +168,7 @@ final class FinishedFeedCardAccessibility11325Tests: XCTestCase {
         // The single row puts the (truncated) name to the score's LEFT on the
         // same row; the finished layout puts the score under the name, with
         // nothing beside it. How far the name is cut is not this test's claim.
-        XCTAssertTrue(read.contains { $0.box.minX >= 40 && $0.box.maxX < away.box.minX && sameRow(away, $0) },
+        XCTAssertTrue(read.map { clearOfCrest($0, columnEdge: 40) }.contains { $0.box.minX >= 40 && $0.box.maxX < away.box.minX && sameRow(away, $0) },
                       "\(name): a live card took the finished layout — \(all)")
     }
 
@@ -187,7 +187,7 @@ final class FinishedFeedCardAccessibility11325Tests: XCTestCase {
             let target = "WashingtonCommandersSanFrancisco49ers"
             var acc = "", title: [Line] = []
             for line in above {
-                let next = normalized(line.text) + acc
+                let next = normalized(titleText(line, above: acc, home: "SanFrancisco49ers")) + acc
                 guard target.hasSuffix(next) else { break }
                 acc = next
                 title.append(line)
@@ -202,7 +202,9 @@ final class FinishedFeedCardAccessibility11325Tests: XCTestCase {
 
     // MARK: - Hosting and reading
 
-    private struct Line { let text: String; let box: CGRect }
+    /// A line Vision read, and the rendered frame it was read from (so a line
+    /// Vision fused with a neighbouring glyph can be settled from its pixels).
+    private struct Line { let text: String; let box: CGRect; let frame: RenderedFrame11325 }
 
     private let pins = PinManager(
         defaults: UserDefaults(suiteName: "FinishedFeedCardAccessibility11325Tests")!,
@@ -254,33 +256,16 @@ final class FinishedFeedCardAccessibility11325Tests: XCTestCase {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("finished-card-11325-\(name).png")
         try XCTUnwrap(image.pngData()).write(to: url)
         print("Finished card 11325 rendered evidence: \(url.path)")
+        let frame = RenderedFrame11325(image: try XCTUnwrap(image.cgImage), bounds: bounds)
         let mid = bounds.height / 2, overlap: CGFloat = 200
-        let upper = try bandLines(image, bounds: bounds,
-                                  band: CGRect(x: 0, y: 0, width: bounds.width, height: mid + overlap / 2))
-        let lower = try bandLines(image, bounds: bounds,
-                                  band: CGRect(x: 0, y: mid - overlap / 2, width: bounds.width,
-                                               height: bounds.height - mid + overlap / 2))
+        let upper = try bandLines(frame, band: CGRect(x: 0, y: 0, width: bounds.width, height: mid + overlap / 2))
+        let lower = try bandLines(frame, band: CGRect(x: 0, y: mid - overlap / 2, width: bounds.width,
+                                                      height: bounds.height - mid + overlap / 2))
         return upper.filter { $0.box.midY < mid } + lower.filter { $0.box.midY >= mid }
     }
 
-    private func bandLines(_ image: UIImage, bounds: CGRect, band: CGRect) throws -> [Line] {
-        let cg = try XCTUnwrap(image.cgImage)
-        let scale = CGFloat(cg.width) / bounds.width
-        let crop = try XCTUnwrap(cg.cropping(to: CGRect(x: band.minX * scale, y: band.minY * scale,
-                                                        width: band.width * scale, height: band.height * scale)))
-        let request = VNRecognizeTextRequest()
-        request.recognitionLevel = .accurate
-        request.usesLanguageCorrection = false
-        request.minimumTextHeight = 0
-        try VNImageRequestHandler(cgImage: crop).perform([request])
-        return (request.results ?? []).compactMap { o in
-            o.topCandidates(1).first.map { c in
-                let b = o.boundingBox
-                return Line(text: c.string, box: CGRect(x: band.minX + b.minX * band.width,
-                                                        y: band.minY + (1 - b.maxY) * band.height,
-                                                        width: b.width * band.width, height: b.height * band.height))
-            }
-        }
+    private func bandLines(_ frame: RenderedFrame11325, band: CGRect) throws -> [Line] {
+        try frame.recognize(in: band).map { Line(text: $0.text, box: $0.box, frame: frame) }
     }
 
     // MARK: - Reading rules
@@ -328,7 +313,7 @@ final class FinishedFeedCardAccessibility11325Tests: XCTestCase {
     /// Whether the lines directly above `score`, in its column, read exactly
     /// `target` — the complete name and nothing between it and its score.
     private func nameSitsAbove(_ score: Line, reading target: String, in read: [Line]) -> Bool {
-        let column = read.filter {
+        let column = read.map { clearOfCrest($0, columnEdge: score.box.minX - 8) }.filter {
             $0.box.maxY <= score.box.minY + 2
                 && $0.box.minX >= score.box.minX - 8 && $0.box.minX <= score.box.minX + 40
         }.sorted { $0.box.minY > $1.box.minY }
@@ -343,7 +328,7 @@ final class FinishedFeedCardAccessibility11325Tests: XCTestCase {
 
     /// `nameSitsAbove`, returning the name's top and bottom lines.
     private func nameLines(above score: Line, reading target: String, in read: [Line]) -> (top: Line, bottom: Line)? {
-        let column = read.filter {
+        let column = read.map { clearOfCrest($0, columnEdge: score.box.minX - 8) }.filter {
             $0.box.maxY <= score.box.minY + 2
                 && $0.box.minX >= score.box.minX - 8 && $0.box.minX <= score.box.minX + 40
         }.sorted { $0.box.minY > $1.box.minY }
@@ -387,6 +372,95 @@ final class FinishedFeedCardAccessibility11325Tests: XCTestCase {
 
     private func describe(_ read: [Line]) -> String {
         read.map { "'\($0.text)'@\(Int($0.box.minX)),\(Int($0.box.minY))" }.joined(separator: " ")
+    }
+
+    // MARK: - Lines Vision fused with a neighbour (settled from the frame)
+
+    /// A crest's ink is at most this wide; the blank gap between a crest and
+    /// its name is at least `crestGap`. Measured on the 837e3c152c frames:
+    /// crests 14.6–24.7pt wide, crest→name gaps 9.3–15.7pt, while the widest
+    /// letter gap in any line crossing a name column's edge is 6.3pt
+    /// (N→F of "NFL").
+    private static let crestWidth: CGFloat = 30
+    private static let crestGap: CGFloat = 8
+
+    /// Vision can read a team crest and the first line of the name beside it
+    /// as ONE line that starts at the crest ("wWashing-"@7, "®San Francisco"@11,
+    /// "(' Union"@8). Such a line, crossing the name column's `columnEdge`, is
+    /// read again from the pixels right of the blank gap that separates crest
+    /// and name — and only when the frame shows that gap: the first blank run
+    /// at least `crestGap` wide has no more than a crest's width of ink before
+    /// it, and the ink after it starts in the column. The re-read must be one
+    /// line. Otherwise the line is returned as read, and stays out of the column.
+    private func clearOfCrest(_ line: Line, columnEdge edge: CGFloat) -> Line {
+        guard line.box.minX < edge, line.box.maxX > edge else { return line }
+        let ink = line.frame.inkClusters(in: line.box)
+        guard let first = ink.first,
+              let gap = ink.indices.dropFirst().first(where: { ink[$0].minX - ink[$0 - 1].maxX >= Self.crestGap }),
+              ink[gap - 1].maxX - first.minX <= Self.crestWidth, ink[gap].minX >= edge else { return line }
+        let cut = (ink[gap - 1].maxX + ink[gap].minX) / 2, pad = line.box.height * 0.15
+        let name = CGRect(x: cut, y: line.box.minY - pad, width: line.box.maxX + 4 - cut,
+                          height: line.box.height + 2 * pad)
+        guard let reread = try? line.frame.recognize(in: name), reread.count == 1 else { return line }
+        return Line(text: reread[0].text, box: reread[0].box, frame: line.frame)
+    }
+
+    /// Vision can read a score and the percent printed after it as ONE token
+    /// ("1724%" for "17 24%": the 1→7 gap is 12.7pt, the 7→2 gap 15.0pt).
+    /// Such a line — one token, digits then "%" — is cut at its widest blank
+    /// run, which must be the only run that wide, and each side is read again
+    /// on its own: the left must read digits only, the right a percent of at
+    /// most 100, and the two must spell the fused token exactly. The score
+    /// keeps the box up to its own ink, the percent from its own ink on.
+    /// Anything else leaves the line as it was read.
+    private func separatingFusedValues(_ read: [Line]) -> [Line] {
+        read.flatMap { line -> [Line] in
+            let fused = valueTokens(line.text)
+            guard fused.count == 1, fused[0].range(of: #"^[0-9]{2,}%$"#, options: .regularExpression) != nil
+            else { return [line] }
+            let ink = line.frame.inkClusters(in: line.box)
+            let gaps = ink.indices.dropFirst().map { (at: $0, width: ink[$0].minX - ink[$0 - 1].maxX) }
+            guard let widest = gaps.max(by: { $0.width < $1.width }),
+                  gaps.filter({ $0.width == widest.width }).count == 1 else { return [line] }
+            let scoreEnd = ink[widest.at - 1].maxX, percentStart = ink[widest.at].minX
+            let cut = (scoreEnd + percentStart) / 2, pad = line.box.height * 0.15
+            let y = line.box.minY - pad, h = line.box.height + 2 * pad
+            guard let left = try? line.frame.recognize(in: CGRect(x: line.box.minX - 4, y: y,
+                                                                  width: cut - line.box.minX + 4, height: h)),
+                  let right = try? line.frame.recognize(in: CGRect(x: cut, y: y,
+                                                                   width: line.box.maxX + 4 - cut, height: h)),
+                  left.count == 1, right.count == 1 else { return [line] }
+            let score = valueTokens(left[0].text), percent = valueTokens(right[0].text)
+            guard score.count == 1, percent.count == 1,
+                  score[0].range(of: #"^[0-9]+$"#, options: .regularExpression) != nil,
+                  percent[0].range(of: #"^[0-9]{1,3}%$"#, options: .regularExpression) != nil,
+                  let value = Int(percent[0].dropLast()), value <= 100,
+                  score[0] + percent[0] == fused[0] else { return [line] }
+            let b = line.box
+            return [Line(text: score[0], box: CGRect(x: b.minX, y: b.minY, width: scoreEnd - b.minX, height: b.height),
+                         frame: line.frame),
+                    Line(text: percent[0], box: CGRect(x: percentStart, y: b.minY, width: b.maxX - percentStart,
+                                                       height: b.height),
+                         frame: line.frame)]
+        }
+    }
+
+    /// The Discover title prints "Away @ Home". `normalized` drops the "@"
+    /// (or "©"/"®"), but Vision can also read it as the letter "a" ("a San").
+    /// A lone leading "a" is dropped only where the separator belongs — the
+    /// rest of its line plus the title lines below spell exactly `home`, the
+    /// complete home name — and only when its ink is at least as tall as the
+    /// next glyph's: the "@" spans the capital height and drops below the
+    /// baseline (44.0pt vs 38.7pt for the "S" after it), a lowercase "a" does
+    /// not (29.0pt in the same line).
+    private func titleText(_ line: Line, above acc: String, home: String) -> String {
+        let parts = line.text.split(separator: " ", maxSplits: 1)
+        guard parts.count == 2, parts[0] == "a", normalized(String(parts[1])) + acc == home else { return line.text }
+        let b = line.box
+        let ink = line.frame.inkClusters(in: CGRect(x: b.minX - b.height / 2, y: b.minY - b.height * 0.15,
+                                                    width: b.width + b.height / 2, height: b.height * 1.3))
+        guard ink.count >= 2, ink[0].height >= ink[1].height else { return line.text }
+        return String(parts[1])
     }
 
     // MARK: - Fixture
@@ -489,4 +563,87 @@ final class FinishedFeedCardAccessibility11325Tests: XCTestCase {
       }
     ]
     """#
+}
+
+/// A rendered card frame (`bounds` in points, `image` at device scale), read
+/// two ways: by Vision, and by where its ink is. A column holds ink when any
+/// pixel in it is darker than luma 200 — the cards' grey text (≈142) and team
+/// colours are ink; white and the status pill's fill (≈240) are not.
+/// CoreGraphics and Vision only.
+private final class RenderedFrame11325 {
+    let bounds: CGRect
+    private let image: CGImage
+    private let width: Int, height: Int
+
+    init(image: CGImage, bounds: CGRect) {
+        self.image = image; self.bounds = bounds; width = image.width; height = image.height
+    }
+
+    /// Row-major luma, top row first, over white; decoded only when a line
+    /// needs its ink read. Empty if it cannot be drawn, and then no ink is found.
+    private lazy var luma: [UInt8] = {
+        let w = width, h = height
+        var rgba = [UInt8](repeating: 0, count: w * h * 4)
+        let drawn = rgba.withUnsafeMutableBytes { buffer -> Bool in
+            guard let context = CGContext(data: buffer.baseAddress, width: w, height: h, bitsPerComponent: 8,
+                                          bytesPerRow: w * 4, space: CGColorSpaceCreateDeviceRGB(),
+                                          bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return false }
+            context.setFillColor(CGColor(red: 1, green: 1, blue: 1, alpha: 1))
+            context.fill(CGRect(x: 0, y: 0, width: w, height: h))
+            context.draw(image, in: CGRect(x: 0, y: 0, width: w, height: h))
+            return true
+        }
+        guard drawn else { return [] }
+        return (0..<(w * h)).map { i in
+            UInt8((299 * Int(rgba[4 * i]) + 587 * Int(rgba[4 * i + 1]) + 114 * Int(rgba[4 * i + 2])) / 1000)
+        }
+    }()
+
+    private var scale: CGFloat { CGFloat(width) / bounds.width }
+
+    /// Vision's lines inside `rect` (points), read on their own; boxes in points.
+    /// Throws if `rect` cannot be cut from the frame.
+    func recognize(in rect: CGRect) throws -> [(text: String, box: CGRect)] {
+        let s = scale
+        guard let crop = image.cropping(to: CGRect(x: rect.minX * s, y: rect.minY * s,
+                                                   width: rect.width * s, height: rect.height * s))
+        else { throw CocoaError(.coderInvalidValue) }
+        let request = VNRecognizeTextRequest()
+        request.recognitionLevel = .accurate
+        request.usesLanguageCorrection = false
+        request.minimumTextHeight = 0
+        try VNImageRequestHandler(cgImage: crop).perform([request])
+        return (request.results ?? []).compactMap { o in
+            o.topCandidates(1).first.map { c in
+                let b = o.boundingBox
+                return (c.string, CGRect(x: rect.minX + b.minX * rect.width, y: rect.minY + (1 - b.maxY) * rect.height,
+                                         width: b.width * rect.width, height: b.height * rect.height))
+            }
+        }
+    }
+
+    /// The ink inside `rect` (points), left to right: each maximal run of
+    /// inked columns, boxed to the rows its ink spans.
+    func inkClusters(in rect: CGRect) -> [CGRect] {
+        let s = scale
+        let x0 = max(0, Int((rect.minX * s).rounded(.down))), x1 = min(width, Int((rect.maxX * s).rounded(.up)))
+        let y0 = max(0, Int((rect.minY * s).rounded(.down))), y1 = min(height, Int((rect.maxY * s).rounded(.up)))
+        guard x0 < x1, y0 < y1, luma.count == width * height else { return [] }
+        var clusters: [CGRect] = [], start: Int?, top = Int.max, bottom = Int.min
+        for x in x0...x1 {
+            var inked = false
+            if x < x1 {
+                for y in y0..<y1 where luma[y * width + x] < 200 {
+                    inked = true; top = min(top, y); bottom = max(bottom, y)
+                }
+            }
+            if inked, start == nil { start = x }
+            if !inked, let from = start {
+                clusters.append(CGRect(x: CGFloat(from) / s, y: CGFloat(top) / s,
+                                       width: CGFloat(x - from) / s, height: CGFloat(bottom - top + 1) / s))
+                start = nil; top = .max; bottom = .min
+            }
+        }
+        return clusters
+    }
 }
