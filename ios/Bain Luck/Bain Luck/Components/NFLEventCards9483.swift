@@ -241,6 +241,8 @@ struct NFLFinishCardView9483: View {
     let homeColor: Color
     var expanded = false
     @ScaledMetric(relativeTo: .caption2) private var scaledAxisFont: CGFloat = 12
+    /// The line the chart draws each team's name on, at the top of its band.
+    @ScaledMetric(relativeTo: .caption) private var trackNameLine: CGFloat = 16
 
     private var later: NFLFinishCard9483.Pair? { card.final ?? card.projectedNow }
     private var laterLabel: String? {
@@ -299,7 +301,7 @@ struct NFLFinishCardView9483: View {
                                           proxy: proxy, plotFrame: geo[proxy.plotAreaFrame])
                 }
             }
-            .frame(height: expanded ? 220 : 120)
+            .frame(height: chartHeight)
             .accessibilityHidden(true)
             ForEach([false, true], id: \.self) { isHome in
                 // One row when the name and both numbers fit whole; otherwise
@@ -339,6 +341,17 @@ struct NFLFinishCardView9483: View {
     }
 
     private var axisFontSize: CGFloat { EventChartTypography.labelSize(scaled: scaledAxisFont) }
+    private var chartHeight: CGFloat {
+        Self.chartHeight(expanded: expanded, nameLine: trackNameLine, axisFontSize: axisFontSize)
+    }
+
+    /// #11285 — each team's band draws its name at the top and its points
+    /// across the middle, so the band's top half holds the name's line and
+    /// half a mark: at large sizes the chart grows rather than drawing the
+    /// points over the name ("Comm▪an◻ders" at AX5). Default sizes keep 120.
+    static func chartHeight(expanded: Bool, nameLine: CGFloat, axisFontSize: CGFloat) -> CGFloat {
+        max(expanded ? 220 : 120, 2 * 2 * (nameLine + 8) + 2 * axisFontSize)
+    }
     /// One tick per gridline step (a touchdown in football) across the axis.
     private var pointTicks: [Double] {
         Array(stride(from: domain.lowerBound, through: domain.upperBound, by: card.tickStep))
@@ -348,6 +361,10 @@ struct NFLFinishCardView9483: View {
         Text(isHome ? homeName : awayName)
             .font(.subheadline.weight(.semibold))
             .foregroundStyle(isHome ? homeColor : awayColor)
+            // #11285 — a one-word name too wide for its own line at the
+            // largest sizes ("Command…" at AX5) shrinks to fit, never broken.
+            .lineLimit(1)
+            .minimumScaleFactor(0.8)
     }
 
     private func number(_ value: Double, label: String,
@@ -356,9 +373,12 @@ struct NFLFinishCardView9483: View {
             Text(Self.points(value))
                 .font(.headline.monospacedDigit())
                 .fixedSize()
+            // #11285 — the label wraps in the stacked layout ("pregame
+            // proje…" at the largest text size).
             Text(label)
                 .font(.caption2)
                 .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
         }
     }
 
@@ -392,48 +412,44 @@ struct NFLMilestoneCardView9483: View {
         let selected = state.selectedIndex(in: card)
         let rung = selected.map { card.rungs[$0] }
         VStack(alignment: .leading, spacing: 10) {
-            HStack(alignment: .top) {
-                // #11285 — a small identity cue beside the name when this
-                // ladder's own rows serve a headshot; loading or failed keeps
-                // a plain circle, so the name never moves. At accessibility
-                // sizes the cue is dropped: its 44pt broke "McCaf-/frey" mid-word
-                // on a 375pt phone at AX5, and the name is the identity.
-                if let headshot = card.headshot, !size.isAccessibilitySize {
-                    AsyncImage(url: headshot) { phase in
-                        if case .success(let image) = phase {
-                            image.resizable().scaledToFill()
-                        } else {
-                            color.opacity(0.15)
-                        }
-                    }
-                    .frame(width: 36, height: 36)
-                    .clipShape(Circle())
-                    .accessibilityHidden(true)
-                }
+            if size.isAccessibilitySize {
+                // #11285 (Design, 0220Z) — at accessibility sizes the name takes
+                // the card's whole width under the category and final figure;
+                // beside the figure it broke mid-word ("DeVon- / ta" at AX5 on
+                // a 393pt phone).
                 VStack(alignment: .leading, spacing: 3) {
-                    // #11285 — the plotted quantity wraps rather than
-                    // truncating beside a final figure ("Receiving Yar…" at AX3).
-                    Text(card.stat)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                    // #11061 — a hyphenated name needs a third line at
-                    // accessibility sizes ("Jaxon / Smith- / Njigba").
-                    Text(card.player)
-                        .font(.title3.weight(.bold))
-                        .lineLimit(3)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-                Spacer(minLength: 4)
-                if let actual = card.actual {
-                    VStack(alignment: .trailing, spacing: 0) {
-                        Text(NFLFinishCardView9483.points(actual))
-                            .font(.title.weight(.bold).monospacedDigit())
-                            .foregroundStyle(color)
-                        Text("final")
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
+                    HStack(alignment: .top) {
+                        statLabel
+                        Spacer(minLength: 4)
+                        actualFigure
                     }
+                    playerName
+                }
+            } else {
+                HStack(alignment: .top) {
+                    // #11285 — a small identity cue beside the name when this
+                    // ladder's own rows serve a headshot; loading or failed keeps
+                    // a plain circle, so the name never moves. At accessibility
+                    // sizes the cue is dropped: its 44pt broke "McCaf-/frey" mid-word
+                    // on a 375pt phone at AX5, and the name is the identity.
+                    if let headshot = card.headshot {
+                        AsyncImage(url: headshot) { phase in
+                            if case .success(let image) = phase {
+                                image.resizable().scaledToFill()
+                            } else {
+                                color.opacity(0.15)
+                            }
+                        }
+                        .frame(width: 36, height: 36)
+                        .clipShape(Circle())
+                        .accessibilityHidden(true)
+                    }
+                    VStack(alignment: .leading, spacing: 3) {
+                        statLabel
+                        playerName
+                    }
+                    Spacer(minLength: 4)
+                    actualFigure
                 }
             }
             Text(card.caption)
@@ -475,6 +491,37 @@ struct NFLMilestoneCardView9483: View {
                 }
                 .disabled(selected.map { $0 >= card.rungs.count - 1 } ?? true)
                 .accessibilityLabel("Next line")
+            }
+        }
+    }
+
+    // #11285 — the plotted quantity wraps rather than truncating beside a
+    // final figure ("Receiving Yar…" at AX3).
+    private var statLabel: some View {
+        Text(card.stat)
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .fixedSize(horizontal: false, vertical: true)
+    }
+
+    // #11061 — a hyphenated name needs a third line at accessibility sizes
+    // ("Jaxon / Smith- / Njigba").
+    private var playerName: some View {
+        Text(card.player)
+            .font(.title3.weight(.bold))
+            .lineLimit(3)
+            .fixedSize(horizontal: false, vertical: true)
+    }
+
+    @ViewBuilder private var actualFigure: some View {
+        if let actual = card.actual {
+            VStack(alignment: .trailing, spacing: 0) {
+                Text(NFLFinishCardView9483.points(actual))
+                    .font(.title.weight(.bold).monospacedDigit())
+                    .foregroundStyle(color)
+                Text("final")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
             }
         }
     }
@@ -717,6 +764,45 @@ struct NFLEventCardView9483: View {
 
 // MARK: - The deck under the chart
 
+/// The deck's heading, shared by the deck and the NBA story stream: "Game
+/// stories" with its card count at the trailing edge. #11285 — on a 320pt
+/// screen at accessibility sizes the row cannot hold both whole and the title
+/// broke mid-word ("Game sto-ries"), so there the count goes under the title,
+/// which wraps between words. Where both fit, the row is unchanged.
+struct GameStoriesHeader9483: View {
+    /// Nil prints no count.
+    let count: Int?
+    var alignment: VerticalAlignment = .center
+
+    var body: some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(alignment: alignment) {
+                title
+                Spacer()
+                countText
+            }
+            VStack(alignment: .leading, spacing: 2) {
+                title
+                countText
+            }
+        }
+    }
+
+    private var title: some View {
+        Text("Game stories")
+            .font(.headline)
+    }
+
+    @ViewBuilder
+    private var countText: some View {
+        if let count {
+            Text(count == 1 ? "1 card" : "\(count) cards")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+    }
+}
+
 /// The compact cards, side by side, each with an explicit "Open" control —
 /// the page scrolls vertically, so a tap on a chart inside a card is never
 /// taken as a request to expand it.
@@ -741,6 +827,17 @@ struct NFLEventCardDeckView9483: View {
     /// horizontal container, never nested.
     var stream: NBAStoryStreamView9483.Page?
     @AccessibilityFocusState private var focused: String?
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+
+    /// A card's width in the deck: the next card peeks past its edge. #11285 —
+    /// on a 320pt screen (Display Zoom) at accessibility sizes a peeking card
+    /// cannot hold a whole team name even at its smallest allowed size
+    /// ("Commanders" at AX5 needs 238pt; the peeking card leaves 216), so each
+    /// card takes the whole width there; the count says there are more. The
+    /// NBA story stream's shelf uses the same rule.
+    static func cardWidth(_ width: CGFloat, count: Int, accessibility: Bool) -> CGFloat {
+        count > 1 && !(accessibility && width < 300) ? width * 0.86 : width
+    }
 
     var body: some View {
         if let stream {
@@ -754,14 +851,7 @@ struct NFLEventCardDeckView9483: View {
 
     private var deck: some View {
         VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                Text("Game stories")
-                    .font(.headline)
-                Spacer()
-                Text(cards.count == 1 ? "1 card" : "\(cards.count) cards")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
+            GameStoriesHeader9483(count: cards.count)
             // Re-read each minute so a pregame price that stops being observed
             // loses its number on the page too, not only in the reader.
             TimelineView(.periodic(from: .now, by: 60)) { tick in
@@ -780,7 +870,10 @@ struct NFLEventCardDeckView9483: View {
                             .accessibilityLabel(Self.openerAccessibilityLabel(card.title))
                             .accessibilityIdentifier(Self.openerIdentifier)
                         }
-                        .containerRelativeFrame(.horizontal) { width, _ in cards.count > 1 ? width * 0.86 : width }
+                        .containerRelativeFrame(.horizontal) { width, _ in
+                            Self.cardWidth(width, count: cards.count,
+                                           accessibility: dynamicTypeSize.isAccessibilitySize)
+                        }
                         .accessibilityFocused($focused, equals: card.id)
                         .id(card.id)
                     }
