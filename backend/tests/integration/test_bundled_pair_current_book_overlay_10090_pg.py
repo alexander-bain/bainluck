@@ -4,19 +4,17 @@ Ported from the reviewed attempt190 packet onto the 8129 per-test schema rig.
 """
 import tempfile
 from pathlib import Path
-import os
 from contextlib import asynccontextmanager
 from datetime import timedelta
 from decimal import Decimal
 from types import SimpleNamespace as NS
 import pytest
 from sqlalchemy import select,update,func,text
-from sqlalchemy.ext.asyncio import create_async_engine,async_sessionmaker
-from app.models.models import Base,Sport,Event,FuturesMarket,FuturesOutcome
+from app.models.models import Sport,Event,FuturesMarket,FuturesOutcome
 from app.tasks.live_blend_refresh import HeldRowQuotes,LiveBlendRefresher
 from app.services.kalshi_ws import KalshiWebSocket
 from app.utils.kalshi_orderbook import KalshiOrderBook
-from tests.integration.test_live_blend_grouped_commit_8129_pg import (  # noqa: F401
+from tests.integration.test_live_blend_grouped_commit_8129_pg import (  # noqa: F401 — the fixture
     DB_URL, rig,
 )
 
@@ -38,7 +36,7 @@ def healthy_socket():
 
 @pytest.mark.asyncio
 async def test_K1_real_PG_race_then_actual_refresher_current_book_gate(rig,monkeypatch):
- engine,maker=rig.engine,rig.maker
+ maker=rig.maker
  try:
   async with maker() as db:
    now=await db.scalar(select(func.clock_timestamp()));sport=Sport(key='local181',name='Local181');db.add(sport);await db.flush()

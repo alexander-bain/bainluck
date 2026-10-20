@@ -3,7 +3,7 @@
 Ported from the reviewed attempt190 packet onto the 8129 per-test schema rig.
 """
 import tempfile
-import os,json
+import json
 from pathlib import Path
 from contextlib import asynccontextmanager
 from datetime import timedelta
@@ -11,13 +11,12 @@ from decimal import Decimal
 from types import SimpleNamespace as NS
 import pytest
 from sqlalchemy import select,update,func
-from sqlalchemy.ext.asyncio import create_async_engine,async_sessionmaker
-from app.models.models import Base,Sport,Event,FuturesMarket,FuturesOutcome
+from app.models.models import Sport,Event,FuturesMarket,FuturesOutcome
 from app.tasks.live_blend_refresh import LiveBlendRefresher,HeldRowQuotes
 from app.tasks.kalshi import _kalshi_yes_probability
 from app.services.kalshi_ws import KalshiWebSocket
 from app.utils.kalshi_orderbook import KalshiOrderBook
-from tests.integration.test_live_blend_grouped_commit_8129_pg import (  # noqa: F401
+from tests.integration.test_live_blend_grouped_commit_8129_pg import (  # noqa: F401 — the fixture
     DB_URL, rig,
 )
 
@@ -42,7 +41,7 @@ def snapshot(s,ticker,bid,ask,seq):
 @pytest.mark.parametrize('landing',['commit','held'])
 @pytest.mark.parametrize('kind',['zero_bid_offask_trade','empty_bid_offask_trade'])
 async def test_offask_policy_change_must_reach_headline(rig,monkeypatch,kind,landing):
- engine,maker=rig.engine,rig.maker
+ maker=rig.maker
  suffix=str((23 if kind=='zero_bid_offask_trade' else 24)+(2 if landing=='held' else 0));p='KXATPCHALLENGERMATCH-26OCT'+suffix+'BROKRU';h=p+'-BRO';a=p+'-KRU'
  receipt={'arm':ARM,'case':kind,'landing':landing,'inputs':[],'stages':[],'claim':'backend regression gate; no measured visible delay'}
  try:

@@ -50,6 +50,7 @@ from pathlib import Path
 import pytest
 from sqlalchemy import text
 
+from app.utils.kalshi_primary_quote import PrimaryQuoteCustody
 from tests.integration.test_live_blend_grouped_commit_8129_pg import (  # noqa: F401
     DB_URL,
     rig,
@@ -138,6 +139,8 @@ class Consumer:
             market_id_by_outcome={HOME: MARKET, AWAY: MARKET},
             event_id_by_outcome={HOME: EVENT, AWAY: EVENT},
             input_marks={}, tail_receipts=self.receipts,
+            # #10090: the worker's primary-quote custody (bundled pair).
+            primary_quote_custody=PrimaryQuoteCustody(), ticker_to_ids={},
             open_contract_outcome_ids=set(), blend_refresher=self.refresher,
             non_blend_outcome_ids=set(), get_task_session=self.sessions,
             stats=defaultdict(int), logger=logging.getLogger(__name__),

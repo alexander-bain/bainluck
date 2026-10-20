@@ -3,21 +3,19 @@
 Ported from the reviewed attempt190 packet onto the 8129 per-test schema rig.
 """
 import tempfile
-import os,json
+import json
 from pathlib import Path
 from contextlib import asynccontextmanager
 from datetime import timedelta
-from decimal import Decimal
 from types import SimpleNamespace as NS
 import pytest
 from sqlalchemy import select,update,func
-from sqlalchemy.ext.asyncio import create_async_engine,async_sessionmaker
-from app.models.models import Base,Sport,Event,FuturesMarket,FuturesOutcome
+from app.models.models import Sport,Event,FuturesMarket,FuturesOutcome
 from app.tasks.live_blend_refresh import LiveBlendRefresher,HeldRowQuotes
 from app.services.kalshi_ws import KalshiWebSocket
 from app.utils.kalshi_orderbook import KalshiOrderBook
 from tests import test_bundled_pair_quote_transition_10090 as fixture
-from tests.integration.test_live_blend_grouped_commit_8129_pg import (  # noqa: F401
+from tests.integration.test_live_blend_grouped_commit_8129_pg import (  # noqa: F401 — the fixture
     DB_URL, rig,
 )
 
@@ -34,7 +32,7 @@ ARM = "current"
 @pytest.mark.asyncio
 @pytest.mark.parametrize('landing',['commit','held'])
 async def test_real_book_transition_delivers_without_another_ticker(rig,monkeypatch,landing):
- engine,maker=rig.engine,rig.maker
+ maker=rig.maker
  suffix='27' if landing=='commit' else '28';p='KXATPCHALLENGERMATCH-26OCT'+suffix+'BROKRU';h=p+'-BRO';a=p+'-KRU'
  receipt={'arm':ARM,'landing':landing,'original_tickers':0,'selected':[],'steps':[],'claim':'correctness gate; no visible interval measured'}
  try:

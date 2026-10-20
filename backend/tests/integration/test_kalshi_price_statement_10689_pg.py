@@ -23,6 +23,7 @@ from app.tasks import base as task_base, kalshi_ws
 from app.tasks.live_blend_refresh import TailReceipts, event_ids_for_outcomes
 from app.utils import market_quote_push
 from app.utils.futures_rank import rerank_market_fields_stmt
+from app.utils.kalshi_primary_quote import PrimaryQuoteCustody
 from app.utils.kalshi_price_statement import (
     KALSHI_PRICE_STATEMENTS,
     KALSHI_REPEAT_REFRESH_SECONDS,
@@ -329,6 +330,9 @@ async def _run(control, candidate):
         buffer_lock=asyncio.Lock(),
         price_buffer=buffer,
         input_marks={},
+        # #10090: the worker's primary-quote custody (bundled pair).
+        primary_quote_custody=PrimaryQuoteCustody(),
+        ticker_to_ids={},
         market_id_by_outcome={i: 1 for i in incoming},
         event_id_by_outcome={i: 100 for i in incoming},
         blend_refresher=Refresher(),
