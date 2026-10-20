@@ -7,7 +7,7 @@
  * renders exactly what it renders today.
  *
  * A preview is never written into the page's committed cache. It is an overlay
- * on the hero number alone, and it gives way to committed truth by rule:
+ * on the hero and a disposable chart projection, and it gives way to committed truth by rule:
  *
  * - It carries no committed revision. Its `base_rev` is the revision it was
  *   composed on; it shows only while the page holds no NEWER committed
@@ -38,6 +38,8 @@ export interface BlendPreviewFrame {
   p: number | null;
   status?: string | null;
   provisional?: boolean;
+  /** Source observation supplied by the preview; never the browser receipt time. */
+  observed_at?: string;
   preview: {
     kind: "blend" | "revoke";
     epoch: number;
@@ -59,6 +61,7 @@ export interface BlendPreviewState {
   status: string | null;
   /** `now()` milliseconds after which the preview is no longer shown. */
   expiresAt: number;
+  observedAt?: string;
 }
 
 const safeInt = (value: unknown): value is number =>
@@ -132,6 +135,7 @@ export function previewAfter(
     p: frame.p as number,
     status: frame.status ?? null,
     expiresAt: now + (preview.ttl_ms as number),
+    observedAt: typeof frame.observed_at === "string" ? frame.observed_at : undefined,
   };
 }
 
@@ -169,4 +173,33 @@ export function overlayBlendPreview<T extends HeldBlend | null | undefined>(
   const p = displayedPreview(state, event, now);
   if (p === null || !event) return event;
   return { ...event, hero_probability: p, hero_probability_away: 1 - p } as T;
+}
+
+interface PreviewChartPoint {
+  timestamp: string;
+  home_probability: number;
+}
+
+/**
+ * A disposable render projection, never committed history. Use the exact same
+ * preview fence as the headline and its supplied observation time. A preview
+ * with no usable time, or behind the committed chart, cannot extend the edge.
+ * Revoke, expiry, reconnect and a newer commit return the original line.
+ */
+export function overlayBlendPreviewLine(
+  event: HeldBlend | null | undefined,
+  state: BlendPreviewState | null,
+  now: number,
+  line: PreviewChartPoint[] | undefined,
+): PreviewChartPoint[] | undefined {
+  const p = displayedPreview(state, event, now);
+  const timestamp = state?.observedAt;
+  if (p === null || !timestamp) return line;
+  const at = Date.parse(timestamp);
+  if (!Number.isFinite(at)) return line;
+  for (const point of line ?? []) {
+    const committedAt = Date.parse(point.timestamp);
+    if (!Number.isFinite(committedAt) || committedAt >= at) return line;
+  }
+  return [...(line ?? []), { timestamp, home_probability: p }];
 }

@@ -61,7 +61,7 @@ import {
   pageLiveClaimIsUnbacked,
 } from "@/lib/eventLivePush";
 import { frameFoldOrder } from "@/lib/foldRevision";
-import { overlayBlendPreview } from "@/lib/blendPreview";
+import { overlayBlendPreview, overlayBlendPreviewLine } from "@/lib/blendPreview";
 import { frameCarriesUnpricedSnapshot, snapshotRailPaysPricelessTrigger } from "@/lib/sourceSnapshot";
 import LiveAgeStamp, { heroStampIsStale } from "@/components/event/LiveAgeStamp";
 import { heroFreshness } from "@/lib/event/heroFreshness";
@@ -3495,7 +3495,9 @@ export default function EventPage({ params }: EventPageProps) {
               winProbSources={historyData?.win_prob_sources}
               scoringPlays={historyData?.scoring_plays}
               scoreHistory={historyData?.score_history}
-              aggregateLine={historyData?.aggregate_line ?? undefined}
+              aggregateLine={overlayBlendPreviewLine(
+                event, blendPreview, blendPreviewNow, historyData?.aggregate_line ?? undefined,
+              )}
               backendBlendServed={backendBlendServed}
               completedAt={historyData?.completed_at ?? undefined}
               eventId={eventId}
@@ -4132,7 +4134,9 @@ export default function EventPage({ params }: EventPageProps) {
               winProbSources={historyData?.win_prob_sources}
               scoringPlays={historyData?.scoring_plays}
               scoreHistory={historyData?.score_history}
-              aggregateLine={historyData?.aggregate_line ?? undefined}
+              aggregateLine={overlayBlendPreviewLine(
+                event, blendPreview, blendPreviewNow, historyData?.aggregate_line ?? undefined,
+              )}
               backendBlendServed={backendBlendServed}
               completedAt={historyData?.completed_at ?? undefined}
               eventId={eventId}
