@@ -665,17 +665,64 @@ describe("one presentation, two routes, no extra tracking or computation", () =>
   const legacyMatching = code("app/admin/matching/page.tsx");
   const legacySI = code("app/admin/source-intelligence/page.tsx");
 
-  it("both standalone routes and the console draw the same presentation modules", () => {
-    expect(legacyMatching).toContain('from "@/app/admin/_views/MatchingView"');
-    expect(legacySI).toContain('from "@/app/admin/_views/SourceIntelligenceView"');
-    expect(panels).toContain('from "@/app/admin/_views/MatchingView"');
-    expect(panels).toContain('from "@/app/admin/_views/SourceIntelligenceView"');
-    for (const c of ["MaturedLinkageCard", "SportCoverageSections", "PredictionMarketDiagnosticSection", "SourceContributionSection"]) {
-      expect(legacyMatching).toContain(`<${c}`);
-      expect(panels).toContain(`<${c}`);
-    }
-    expect(legacySI).toContain("<SourceIntelligenceView");
-    expect(panels).toContain("<SourceIntelligenceView");
+  it("only the console imports the carried-over views; the standalone pages stay their own", () => {
+    // A module two routes import becomes a numbered SHARED chunk, which the
+    // shipped-copy gate (ruling 141) reads as a reader surface. One importer
+    // keeps this staff copy inside the app/admin/correctness route chunk.
+    expect(legacyMatching).not.toContain("_views/");
+    expect(legacySI).not.toContain("_views/");
+    // Runtime importers only: a type-only import emits no code into any chunk.
+    const importers: string[] = [];
+    const walk = (d: string) => {
+      for (const e of fs.readdirSync(path.join(root, d), { withFileTypes: true })) {
+        const rel = path.join(d, e.name);
+        if (e.isDirectory()) walk(rel);
+        else if (/\.(ts|tsx)$/.test(e.name)) {
+          const runtime = code(rel).match(/^import (?!type )[\s\S]*?from "@\/app\/admin\/_views\/[^"]+";/gm) ?? [];
+          if (runtime.length > 0) importers.push(rel);
+        }
+      }
+    };
+    for (const d of ["app", "components", "lib", "hooks"]) walk(d);
+    expect(importers).toEqual(["components/admin/CorrectnessConsoleTabs.tsx"]);
+  });
+
+  /**
+   * PARITY OF COPY. Every reader-visible sentence on the standalone pages —
+   * JSX text and string literals — is carried by the tab's views, so the tab
+   * cannot quietly lose a section, a caveat or an action note. The few legacy
+   * strings that are not carried are listed with the reason.
+   */
+  const NOT_CARRIED: Record<string, string> = {
+    "Loading analysis...": "the tab's typed loading notice replaces the page-level spinner",
+    "Admin: Data Quality — Matching": "the standalone page's GA title; the console tracks itself once",
+  };
+
+  const sentences = (src: string): string[] => {
+    const out = new Set<string>();
+    const norm = (x: string) => x.replace(/\s+/g, " ").trim();
+    for (const m of src.matchAll(/>([^<>{}]+)</g)) out.add(norm(m[1]));
+    for (const m of src.matchAll(/"([^"\n]{12,})"/g)) out.add(norm(m[1]));
+    // Copy only: drop className strings and the code a `>=` comparison drags in.
+    return [...out].filter((x) => x.length >= 12 && / /.test(x) && /[A-Za-z]{3}/.test(x) && !/[=;]/.test(x) && !/^[:?]/.test(x) && !/^[:?]/.test(x) && !/^[a-z0-9:\-/[\].% ]+$/.test(x));
+  };
+  it.each([
+    ["/admin/matching", () => legacyMatching, () => matchingView + panels],
+    ["/admin/source-intelligence", () => legacySI, () => siView + panels],
+  ])("every reader-visible sentence of %s is carried into the tab", (_route, legacy, carried) => {
+    const have = carried().replace(/\s+/g, " ");
+    const all = sentences(legacy());
+    // Non-vacuity: the extractor really reads the page's copy.
+    expect(all.length).toBeGreaterThan(20);
+    const missing = all.filter((x) => !have.includes(x) && !(x in NOT_CARRIED));
+    expect(missing).toEqual([]);
+  });
+
+  it("every NOT_CARRIED exclusion is still needed — the list cannot grow stale or hide a carried line", () => {
+    const legacyAll = [...sentences(legacyMatching), ...sentences(legacySI)];
+    const have = (matchingView + siView + panels).replace(/\s+/g, " ");
+    const wrong = Object.keys(NOT_CARRIED).filter((k) => !legacyAll.includes(k) || have.includes(k));
+    expect(wrong).toEqual([]);
   });
 
   it("the shared views and panels track nothing and fetch nothing", () => {

@@ -1,12 +1,13 @@
 "use client";
 
-// The Source Intelligence view's presentation, shared by
-// `/admin/source-intelligence` and the Correctness Console's Source
-// Intelligence tab (#847). Pure: no fetch, no analytics hook, no auth — each
-// route owns its reads and its three GA hooks. The header and the "when was
-// this built" line are slots, because the two routes read different
-// endpoints and so state provenance differently. The pairwise sport filter is
-// local view state: filtering never sends a request.
+// The Source Intelligence view's presentation for the Correctness Console's
+// Source Intelligence tab (#847), carried over from `/admin/source-intelligence`.
+// Pure: no fetch, no analytics hook, no auth. Imported by the console alone, for
+// the shared-chunk reason in `MatchingView.tsx`; the standalone page stays as it
+// is until retired, and the parity test checks its copy is carried here. The
+// header and the "when was this built" line are slots: the console states
+// saved-snapshot provenance there. The pairwise sport filter is local view
+// state: filtering never sends a request.
 
 import type { ReactNode } from "react";
 import { useMemo, useState } from "react";

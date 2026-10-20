@@ -1,9 +1,19 @@
 "use client";
 
-// The Matching view's presentation, shared by `/admin/matching` and the
-// Correctness Console's Matching tab (#847). Pure: no fetch, no analytics hook,
-// no auth — each route owns its own reads and its own three GA hooks, so this
-// module can be mounted twice without double-tracking a page.
+// The Matching view's presentation for the Correctness Console's Matching tab
+// (#847), carried over from `/admin/matching`. Pure: no fetch, no analytics
+// hook, no auth — the console page owns its reads and its three GA hooks.
+//
+// Why a copy and not a module both routes import: a module two routes import
+// is emitted as a numbered SHARED chunk, and the shipped-copy gate
+// (`shippedCopyBans`, ruling 141) treats shared chunks as reader surfaces, so
+// this staff copy — which names venues because an operator has to go and fix
+// them — would fail it. Imported by the console alone, it ships inside the
+// `app/admin/correctness` route chunk, where ruling 138 exempts staff copy.
+// The standalone page stays untouched until its parity is accepted and it is
+// retired; `correctnessConsoleTabs847.test.tsx` checks that every reader-
+// visible sentence of that page is carried here, so the two cannot drift
+// silently.
 //
 // Every section takes its data plus an optional `notice`. A route that has no
 // trustworthy number for a section (a miss, a refused snapshot, a failed read)

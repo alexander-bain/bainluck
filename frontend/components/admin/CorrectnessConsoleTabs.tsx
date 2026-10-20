@@ -1,7 +1,7 @@
 // #847 — the Correctness Console's Matching and Source Intelligence panels.
 // Pure: each panel draws the sections `lib/correctnessConsoleTabs.ts` parsed,
-// through the SAME presentation the standalone `/admin/matching` and
-// `/admin/source-intelligence` pages use (`app/admin/_views/`). No fetch, no
+// through the presentation carried over from the standalone `/admin/matching`
+// and `/admin/source-intelligence` pages (`app/admin/_views/`). No fetch, no
 // analytics hook — the console page owns its reads and its three GA hooks.
 //
 // What differs from the standalone pages is only what saved evidence obliges:
