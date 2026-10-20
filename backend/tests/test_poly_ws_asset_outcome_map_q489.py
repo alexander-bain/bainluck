@@ -22,6 +22,10 @@ import asyncio
 
 import pytest
 from tests.pm_bulk_test_support import price_writes
+from tests.test_ws_flush_retry_q491 import (
+    is_stored_live_slate_read,
+    stored_live_batches,
+)
 import websockets
 from sqlalchemy.dialects import postgresql
 from sqlalchemy.sql.dml import Update
@@ -117,7 +121,7 @@ class _RecordingSession:
     write, so the assertion has to read the write.
     """
 
-    def __init__(self, batches, writes):
+    def __init__(self, batches, writes, scenario=None):
         # #10090: a real session's `.info` — one dict per session, kept
         # through commit, rollback and close; the flush detaches committed
         # market frames from it. These writes return no moved quote, so
@@ -125,6 +129,7 @@ class _RecordingSession:
         self.info = {}
         self._batches = batches
         self._writes = writes
+        self._scenario = scenario
 
     async def execute(self, stmt):
         if isinstance(stmt, Update):
@@ -133,6 +138,10 @@ class _RecordingSession:
             if table == "futures_outcomes" and price_writes(stmt):
                 self._writes.extend(price_writes(stmt))
             return _Result([])
+        if self._scenario is not None and is_stored_live_slate_read(stmt):
+            # #10090 attempt156: the stored-live load reads its own three
+            # batches; the full slate stays queued for the full read.
+            self._batches[:0] = stored_live_batches(*self._scenario)
         return _Result(self._batches.pop(0) if self._batches else [])
 
 
@@ -163,7 +172,7 @@ def _install_slate(monkeypatch, writes):
 
     class _Ctx:
         async def __aenter__(self):
-            return _RecordingSession(batches, writes)
+            return _RecordingSession(batches, writes, POLY_SLATE)
 
         async def __aexit__(self, *_exc):
             return False
@@ -286,10 +295,11 @@ class TestUnmappableAssetsAreDroppedNotGuessed:
             [(MARKET_ID, CONDITION_ID, {"clob_token_ids": [YES_TOKEN, NO_TOKEN, "999"]}, "scheduled")],
             list(POLY_SLATE[2]),
         ]
+        scenario = [list(b) for b in batches]
 
         class _Ctx:
             async def __aenter__(self):
-                return _RecordingSession(batches, writes)
+                return _RecordingSession(batches, writes, scenario)
 
             async def __aexit__(self, *_exc):
                 return False

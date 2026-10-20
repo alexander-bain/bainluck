@@ -48,6 +48,10 @@ from tests.pm_bulk_test_support import (
     fail_price_trigger,
     price_writes,
 )
+from tests.test_ws_flush_retry_q491 import (
+    is_stored_live_slate_read,
+    stored_live_batches,
+)
 import websockets
 from sqlalchemy import (
     Column, DateTime, Integer, MetaData, String, Table, create_engine, insert, text,
@@ -752,6 +756,10 @@ class _Session:
             return _Replayed(
                 [e for e in self._rig.bridge_reads[-1] if e in self._rig.undecided]
             )
+        if is_stored_live_slate_read(stmt):
+            # #10090 attempt156: the stored-live load reads its own three
+            # batches; the full slate stays queued for the full read.
+            self._rig.slate[:0] = self._rig.stored_live()
         return _Replayed(self._rig.slate.pop(0) if self._rig.slate else [])
 
 
@@ -800,6 +808,13 @@ class _Rig:
     def __init__(self, engine, slate, open_rows, frames_for, open_read_fails=False):
         self.engine = engine
         self.slate = [list(b) for b in slate]
+        # #10090 attempt156: what a stored live/suspended slate read returns.
+        # GAME_SLATE's event is `scheduled`, so that read maps nothing and the
+        # consumer takes the original full read, the row sequence master saw.
+        # A slate with no market read (`[[]]`) maps nothing either way.
+        self.stored_live = lambda: (
+            stored_live_batches(*slate[:3]) if len(slate) >= 3 else [[], [], []]
+        )
         self._open_rows = open_rows
         self.open_read_fails = open_read_fails
         self.frames_for = frames_for

@@ -50,6 +50,10 @@ from types import SimpleNamespace
 
 import pytest
 from tests.pm_bulk_test_support import price_writes
+from tests.test_ws_flush_retry_q491 import (
+    is_stored_live_slate_read,
+    stored_live_batches,
+)
 import websockets
 from sqlalchemy.dialects import postgresql
 from sqlalchemy.sql.dml import Update
@@ -362,7 +366,7 @@ class _Result:
 
 
 class _Session:
-    def __init__(self, batches, writes, meta_writes):
+    def __init__(self, batches, writes, meta_writes, scenario=None):
         # #10090: a real session's `.info` — one dict per session, kept
         # through commit, rollback and close; the flush detaches committed
         # market frames from it. These writes return no moved quote, so
@@ -371,6 +375,7 @@ class _Session:
         self._batches = batches
         self._writes = writes
         self._meta_writes = meta_writes
+        self._scenario = scenario
 
     async def execute(self, stmt, params=None):
         if stmt is SET_LOCK_TIMEOUT_SQL:  # the chunk's per-transaction lock budget
@@ -396,6 +401,10 @@ class _Session:
             elif stmt.table.name == "futures_markets":
                 self._meta_writes.append(params["id_1"])
             return _Result([])
+        if self._scenario is not None and is_stored_live_slate_read(stmt):
+            # #10090 attempt156: the stored-live load reads its own three
+            # batches; the full slate stays queued for the full read.
+            self._batches[:0] = stored_live_batches(*self._scenario)
         return _Result(self._batches.pop(0) if self._batches else [])
 
 
@@ -488,10 +497,11 @@ class TestTheMoneylineLegReachesTheRenderedBlend:
             ]
         )
         batches = _production_batches()
+        scenario = [list(b) for b in batches]
 
         class _Ctx:
             async def __aenter__(self):
-                return _Session(batches, writes, meta_writes)
+                return _Session(batches, writes, meta_writes, scenario)
 
             async def __aexit__(self, *_exc):
                 return False
@@ -559,10 +569,11 @@ class TestTheMoneylineLegReachesTheRenderedBlend:
             [_FakeMarket(HOME_CONDITION, [HOME_YES_TOKEN, HOME_NO_TOKEN])]
         )
         batches = _production_batches()
+        scenario = [list(b) for b in batches]
 
         class _Ctx:
             async def __aenter__(self):
-                return _Session(batches, writes, meta_writes)
+                return _Session(batches, writes, meta_writes, scenario)
 
             async def __aexit__(self, *_exc):
                 return False
@@ -629,10 +640,11 @@ class TestTheMoneylineLegReachesTheRenderedBlend:
                 (901, 59620623, f"{prop_condition}_yes"),
             ],
         ]
+        scenario = [list(b) for b in batches]
 
         class _Ctx:
             async def __aenter__(self):
-                return _Session(batches, writes, meta_writes)
+                return _Session(batches, writes, meta_writes, scenario)
 
             async def __aexit__(self, *_exc):
                 return False

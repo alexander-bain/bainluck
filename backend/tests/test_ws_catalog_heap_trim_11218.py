@@ -173,9 +173,21 @@ def _held(lab: dict) -> bool:
     )
 
 
+#: The startup installs are not refreshes and never trim. #10090 attempt156:
+#: the full slate installed after the stored-live subset ("startup-games") is
+#: one of them, beside the "initial" install.
+STARTUP_INSTALLS = ("startup-games", "initial")
+
+
 def _gate(parent_end: dict, arm: list[dict], arm_end: dict) -> list[str]:
     """The candidate's clauses this arm fails, by name ([] = it passes)."""
-    trimmed = arm[0]["released"] is None and all(isinstance(x["released"], int) for x in arm[1:])
+    installs = [x for x in arm if x["reason"] in STARTUP_INSTALLS]
+    refreshes = [x for x in arm if x["reason"] not in STARTUP_INSTALLS]
+    trimmed = (
+        bool(installs) and bool(refreshes)
+        and all(x["released"] is None for x in installs)
+        and all(isinstance(x["released"], int) for x in refreshes)
+    )
     failed = []
     if not trimmed:
         failed.append("every_refresh_trimmed")
@@ -186,7 +198,7 @@ def _gate(parent_end: dict, arm: list[dict], arm_end: dict) -> list[str]:
         failed.append("resident_benefit")
     # The cost: the trim is synchronous work on the delivery loop. Bounded
     # loosely here; the per-refresh `took=` line is the production reading.
-    if not (trimmed and max(x["trim_ms"] for x in arm[1:]) < 250):
+    if not (trimmed and max(x["trim_ms"] for x in refreshes) < 250):
         failed.append("trim_cost")
     return failed
 
@@ -255,7 +267,12 @@ async def test_polymarket_trims_after_every_installed_catalog_refresh(monkeypatc
     from tests.test_pm_open_cycle_lifetime_10090 import CatalogRig
     from tests.test_ws_consumer_session_lifetime_2471 import _install
 
+    from tests.test_ws_flush_retry_q491 import POLY_SLATE_LIVE
+
     rig, finished, trims, stop = CatalogRig(), [], [], asyncio.Event()
+    # #10090 attempt156: the rig answers every slate read with this slate, the
+    # stored-live read included, so its event must be stored live.
+    rig.slate = POLY_SLATE_LIVE
     finish = task._PMCatalogHandoverTiming.finish
 
     def on_finish(self, outcome):
@@ -307,8 +324,12 @@ async def test_polymarket_trims_after_every_installed_catalog_refresh(monkeypatc
 
     # The startup install is not a refresh; each refresh trims once, after its
     # own handover finished (so its read's copies were already dropped).
-    assert finished[0] == "initial"
-    assert trims == [("polymarket", n) for n in range(2, len(trims) + 2)]
+    # #10090 attempt156: exactly one startup-games handover (the full slate
+    # installed after the stored-live subset) precedes the initial one, and it
+    # is not a refresh either.
+    assert finished[:2] == ["startup-games", "initial"]
+    assert finished.count("startup-games") == 1
+    assert trims == [("polymarket", n) for n in range(3, len(trims) + 3)]
     assert stats["catalog_refreshes"] == len(trims)
 
 

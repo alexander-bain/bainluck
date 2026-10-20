@@ -58,6 +58,10 @@ from sqlalchemy import (
 from sqlalchemy.orm import Session
 from sqlalchemy.sql.dml import Update
 from sqlalchemy.sql.selectable import Select
+from tests.test_ws_flush_retry_q491 import (
+    is_stored_live_slate_read,
+    stored_live_batches,
+)
 
 import app.services.kalshi_ws as kalshi_svc
 import app.services.polymarket_api as polymarket_api
@@ -159,9 +163,10 @@ class _Replayed:
 class _HybridSession:
     """An AsyncSession-shaped wrapper over a REAL sync Session."""
 
-    def __init__(self, real, batches):
+    def __init__(self, real, batches, stored_live=None):
         self.sync_session = real
         self._batches = batches
+        self._stored_live = stored_live
         self.wrote_a_price = False
 
     @property
@@ -179,6 +184,10 @@ class _HybridSession:
             return self.sync_session.execute(stmt, *args, **kwargs)
         if isinstance(stmt, Update):
             return _Replayed([], rowcount=0)
+        if self._stored_live is not None and is_stored_live_slate_read(stmt):
+            # #10090 attempt156: the stored-live load reads its own three
+            # batches; the full slate stays queued for the full read.
+            self._batches[:0] = self._stored_live()
         return _Replayed(self._batches.pop(0) if self._batches else [])
 
 
@@ -304,6 +313,12 @@ async def _drive_kalshi(monkeypatch, engine, messages, event_id=EVENT_ID,
         ]
     else:
         batches = [list(b) for b in POLY_SLATE]
+    # #10090 attempt156: only the Polymarket consumer issues the stored-live
+    # read. POLY_SLATE's event is `scheduled`, so that read maps nothing and the
+    # consumer takes the original full read, the row sequence master saw.
+    stored_live = (
+        None if venue == "kalshi" else lambda: stored_live_batches(*POLY_SLATE[:3])
+    )
     budget = {"fail_commits": fail_commits}
 
     class _Refresher(blend_mod.LiveBlendRefresher):
@@ -318,7 +333,7 @@ async def _drive_kalshi(monkeypatch, engine, messages, event_id=EVENT_ID,
     class _SessionCtx:
         async def __aenter__(self):
             self.real = Session(engine)
-            self.session = _HybridSession(self.real, batches)
+            self.session = _HybridSession(self.real, batches, stored_live)
             return self.session
 
         async def __aexit__(self, exc_type, *_exc):
