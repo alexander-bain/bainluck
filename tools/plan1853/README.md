@@ -1,0 +1,31 @@
+# #1853 plan-output reader
+
+PILLAR: TRUTH. SHIP: settled markets in the original never-graded cohort can show their venue-confirmed results instead of remaining blank.
+
+`reader.py` reads the output of ONE operator-launched, no-flag plan run of `backend/scripts/repair_1853_archive_grades.py` on `bainluck-heavy` and writes one receipt. **Nothing in this directory authorizes running it, launching the plan or applying anything.** Operator selection, admission, the window and the launch itself are separate gates.
+
+## What it is bound to
+
+- **Target**: `bainluck-heavy`, the exact command `python3 scripts/repair_1853_archive_grades.py`, `POST https://api.heroku.com/apps/bainluck-heavy/log-sessions` and the HTTPS `.heroku.com` `logplex_url` that endpoint returns. No app, command, SQL, URL, proxy or provider argument exists. Proxy variables are ignored.
+- **Run handle**: the one `done, run.N` line of the saved launch output. That line must name the exact command on `bainluck-heavy`, and no other `run.N` may appear in the evidence.
+- **Envelope**: one shared 30 s deadline (awake, sleep-counting and wall clocks; the largest wins) and one 16,384-byte cap. The cap covers every byte the reader takes in: the netrc file, both responses' status lines, headers, chunk framing and bodies, and error bodies. One log session and one read. No retry, no polling, no second address.
+- **Credential**: the `api.heroku.com` password from `$HOME/.netrc`, read in-process. No `heroku auth:token` child, so there are no detached CLI workers. It must be a regular file. The token and the bearer URL never reach argv, the environment, the terminal or the receipt.
+- **Judgement**: the script (sha256 `ab45ba3f…159c`, git blob `dd3ece533b`) and `kalshi_market_status.py` (`c74d6281…7940`) are pinned. Any other bytes make the result `SOURCE_PIN`. Every judged output is held to the script's own print. The checks are: exactly one framed `Starting process` line for the exact command and exactly one `Process exited with status N`; dyno-framed lines only (NULs at line ends are framing, a NUL anywhere else is malformed); one byte-canonical `json.dumps(indent=2)` document; the script's own keys, event and archive; every planned leg graded the same way by the retained archive through `gradeable_winner`; and `plan_digest` recomputed by the script's own `plan_digest` code.
+
+| reader exit | verdict | meaning |
+|---|---|---|
+| 0 | `ADMISSIBLE_PLAN` | run exited 0: the complete 22-leg plan, digest verified. Pays the plan gate only. `apply_authorized` is always false |
+| 10 | `STOP_RESULT` | run exited 1 with the script's own stop: that population must never be applied |
+| 20 | `REFUSAL` | run exited 2 with the script's own one-line refusal |
+| 30 | `UNCERTAIN` | everything else, including a timeout, an oversized read, a traceback under exit 1, any other exit, extra text, or a mismatched run or command |
+
+A stop or a refusal is evidence, not success, and not a reason to retry. A reader timeout does not prove the remote run stopped.
+
+## Known limits (stated, not widened)
+
+- **The ordinary plan does not fit 16,384 bytes.** Logplex frames each of the plan's 195 printed lines (6,671 B raw), so the read alone is 16,410 B (`run.NNNN`) or 16,609 B (`run.NNNNN`), before credential, API and HTTP overhead. A 30-leg stop is 21,491 B. At the proposed cap the reader returns `UNCERTAIN OVERSIZED` on an honest plan. Widening the cap is Root's decision.
+- **Run time**: dyno boot plus the plan must finish inside whatever is left of the 30 s after the session opens.
+- **Strict content rules**: any non-JSON app line (an import-time warning, for example) or any unrecognized platform line (`Error R14`, for example) is `UNCERTAIN`.
+- **Unproven against real output**: the logplex line shape and the `logplex_url` host come from Heroku's documented format, not from a retained real capture. `getaddrinfo` cannot be interrupted, so it runs on an abandoned daemon thread. TLS handshake bytes are not metered.
+
+Usage, attended only: `python3 tools/plan1853/reader.py --launcher <saved launch output> --receipt <new file>`.
