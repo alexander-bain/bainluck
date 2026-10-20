@@ -764,6 +764,45 @@ struct NFLEventCardView9483: View {
 
 // MARK: - The deck under the chart
 
+/// The deck's heading, shared by the deck and the NBA story stream: "Game
+/// stories" with its card count at the trailing edge. #11285 — on a 320pt
+/// screen at accessibility sizes the row cannot hold both whole and the title
+/// broke mid-word ("Game sto-ries"), so there the count goes under the title,
+/// which wraps between words. Where both fit, the row is unchanged.
+struct GameStoriesHeader9483: View {
+    /// Nil prints no count.
+    let count: Int?
+    var alignment: VerticalAlignment = .center
+
+    var body: some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(alignment: alignment) {
+                title
+                Spacer()
+                countText
+            }
+            VStack(alignment: .leading, spacing: 2) {
+                title
+                countText
+            }
+        }
+    }
+
+    private var title: some View {
+        Text("Game stories")
+            .font(.headline)
+    }
+
+    @ViewBuilder
+    private var countText: some View {
+        if let count {
+            Text(count == 1 ? "1 card" : "\(count) cards")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+    }
+}
+
 /// The compact cards, side by side, each with an explicit "Open" control —
 /// the page scrolls vertically, so a tap on a chart inside a card is never
 /// taken as a request to expand it.
@@ -794,7 +833,8 @@ struct NFLEventCardDeckView9483: View {
     /// on a 320pt screen (Display Zoom) at accessibility sizes a peeking card
     /// cannot hold a whole team name even at its smallest allowed size
     /// ("Commanders" at AX5 needs 238pt; the peeking card leaves 216), so each
-    /// card takes the whole width there; the count says there are more.
+    /// card takes the whole width there; the count says there are more. The
+    /// NBA story stream's shelf uses the same rule.
     static func cardWidth(_ width: CGFloat, count: Int, accessibility: Bool) -> CGFloat {
         count > 1 && !(accessibility && width < 300) ? width * 0.86 : width
     }
@@ -811,14 +851,7 @@ struct NFLEventCardDeckView9483: View {
 
     private var deck: some View {
         VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                Text("Game stories")
-                    .font(.headline)
-                Spacer()
-                Text(cards.count == 1 ? "1 card" : "\(cards.count) cards")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
+            GameStoriesHeader9483(count: cards.count)
             // Re-read each minute so a pregame price that stops being observed
             // loses its number on the page too, not only in the reader.
             TimelineView(.periodic(from: .now, by: 60)) { tick in

@@ -76,6 +76,7 @@ struct NBAStoryStreamView9483: View {
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.accessibilityVoiceOverEnabled) private var voiceOver
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @AccessibilityFocusState private var focused: String?
 
     /// Whether at least `visibleShare` of the stage is unobscured; nil when
@@ -144,16 +145,7 @@ struct NBAStoryStreamView9483: View {
         let shown = slots.filter { if case .card = $0 { return true } else { return false } }.count
         let pendingDiffers = stream.map { $0.pendingIDs != $0.appliedIDs } ?? false
         return VStack(alignment: .leading, spacing: 8) {
-            HStack(alignment: .firstTextBaseline) {
-                Text("Game stories")
-                    .font(.headline)
-                Spacer()
-                if shown > 0 {
-                    Text(shown == 1 ? "1 card" : "\(shown) cards")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-            }
+            GameStoriesHeader9483(count: shown > 0 ? shown : nil, alignment: .firstTextBaseline)
             controls(begun: stream != nil, held: stream?.held ?? false, pendingDiffers: pendingDiffers, count: shown)
             if !slots.isEmpty {
                 shelf(slots, byID: byID, reasons: plan.reasons, present: present)
@@ -203,7 +195,12 @@ struct NBAStoryStreamView9483: View {
                                                     refresh: refreshOrder)
                             }
                         }
-                        .containerRelativeFrame(.horizontal) { width, _ in slots.count > 1 ? width * 0.86 : width }
+                        // #11285 — the deck's width rule: at accessibility sizes
+                        // on a 320pt screen each card takes the whole width.
+                        .containerRelativeFrame(.horizontal) { width, _ in
+                            NFLEventCardDeckView9483.cardWidth(width, count: slots.count,
+                                                               accessibility: dynamicTypeSize.isAccessibilitySize)
+                        }
                         .accessibilityFocused($focused, equals: slot.id)
                         .id(slot.id)
                     }
