@@ -1,7 +1,10 @@
 """Admin endpoints for prediction market matching, link rate, sawtooth, and matching review."""
 
 
+import asyncio
+import json
 import logging
+import math
 import re
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional, Sequence
@@ -1326,6 +1329,250 @@ async def prediction_market_link_rate(
     except Exception:
         logger.warning("link-rate: cache write failed", exc_info=True)
     return payload
+
+
+# ---------------------------------------------------------------------------
+# #847 — the link rate from saved evidence ONLY, for the Correctness Console.
+#
+# The GET above computes inline and rewarms the cache on a miss, an unreadable
+# cache or bad JSON (and always on ``?bust=1``). The console must open without
+# starting that computation, so the route below reads ``_LINK_RATE_CACHE_KEY``
+# once and reports what it found. Nothing on its path computes, opens a
+# session, enqueues, writes the cache or falls back: a cold or broken cache is
+# answered as exactly that, never filled in on the request path.
+#
+# FRESHNESS. The saved payload carries no freshness policy. Its only clock is
+# ``generated_at``, which ``_compute_link_rate`` stamps when the computation
+# RETURNS (its queries started earlier), and both writers — this file's GET and
+# ``precompute_admin_link_rate`` — set the key with a 3600 s expiry, which
+# bounds how long a snapshot can be served, not how current it is. No horizon
+# has been reviewed for this payload, so a hit reports its age and says
+# ``freshness: "unreviewed"``; nothing here calls it fresh or stale.
+# ---------------------------------------------------------------------------
+
+LINK_RATE_CACHED_SCHEMA_VERSION = 1
+# The reader's whole budget: client lookup, pool wait, connect, health-check
+# PING, GET and its one fast-fail retry. The client's CONNECT timeout is still
+# the 5 s default, so its own socket bounds cannot hold a read to this — the
+# deadline does.
+_LINK_RATE_CACHED_READ_DEADLINE_S = 1.0
+_LINK_RATE_FRESHNESS_BASIS = "age_from_generated_at_stamped_when_compute_returned"
+
+
+class _LinkRateCacheReadError(Exception):
+    def __init__(self, code: str):
+        super().__init__(code)
+        self.code = code
+
+
+class _LinkRatePayloadInvalid(ValueError):
+    def __init__(self, reason: str):
+        super().__init__(reason)
+        self.reason = reason
+
+
+def _link_rate_cached_now() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def _link_rate_cached_client():
+    """The request-path client: the existing ``socket_timeout=0.5, fast_fail=True``
+    signature (#1197), so this is a lookup in the per-process client cache — no
+    new pool and no change to the shared Redis policy."""
+    from app.tasks.redis_state import get_redis_client
+
+    return get_redis_client(socket_timeout=0.5, fast_fail=True)
+
+
+def _blocking_link_rate_get():
+    return _link_rate_cached_client().get(_LINK_RATE_CACHE_KEY)
+
+
+def _discard_late_link_rate_read(future) -> None:
+    # The read outlived its deadline; its result (or error) has no reader.
+    if not future.cancelled():
+        future.exception()
+
+
+async def _read_link_rate_cache_raw():
+    """One GET of the link-rate key, off the event loop, under a total deadline.
+
+    ``asyncio.wait`` rather than ``wait_for``: the deadline bounds THIS request's
+    wait. An executor thread cannot be cancelled — it finishes under the
+    client's own socket bounds and its late result is discarded.
+    """
+    loop = asyncio.get_running_loop()
+    future = loop.run_in_executor(None, _blocking_link_rate_get)
+    done, _ = await asyncio.wait({future}, timeout=_LINK_RATE_CACHED_READ_DEADLINE_S)
+    if not done:
+        future.add_done_callback(_discard_late_link_rate_read)
+        raise _LinkRateCacheReadError("read_deadline_exceeded")
+    try:
+        return future.result()
+    except Exception:
+        raise _LinkRateCacheReadError("redis_unavailable") from None
+
+
+def _reject_non_finite(token: str):
+    # ``json.loads`` accepts NaN/Infinity; the response encoder refuses them, so
+    # a saved payload holding one is malformed here, not a 500 later.
+    raise _LinkRatePayloadInvalid("non_finite_number")
+
+
+def _is_count(value: Any) -> bool:
+    return type(value) is int and value >= 0
+
+
+def _is_rate(value: Any) -> bool:
+    return type(value) in (int, float) and math.isfinite(value) and 0 <= value <= 100
+
+
+def _validate_count_block(block: Any, total_key: str, rate_keys: tuple[str, ...]) -> None:
+    if not isinstance(block, dict):
+        raise _LinkRatePayloadInvalid("invalid_section")
+    counts = (total_key, "linked", "open_total", "open_linked")
+    if not all(_is_count(block.get(key)) for key in counts):
+        raise _LinkRatePayloadInvalid("invalid_count")
+    if (
+        block["linked"] > block[total_key]
+        or block["open_total"] > block[total_key]
+        or block["open_linked"] > block["open_total"]
+    ):
+        raise _LinkRatePayloadInvalid("count_exceeds_total")
+    if not all(_is_rate(block.get(key)) for key in rate_keys):
+        raise _LinkRatePayloadInvalid("invalid_rate")
+
+
+def _validate_link_rate_payload(payload: Any) -> datetime:
+    """Check a saved payload against the shape ``_compute_link_rate`` writes.
+
+    Only fields the payload has always carried are required; every type is
+    checked before the value is used. Extra fields pass through untouched.
+    Returns the parsed ``generated_at``.
+    """
+    if not isinstance(payload, dict):
+        raise _LinkRatePayloadInvalid("invalid_payload")
+    for key in ("stale", "unavailable"):
+        if key in payload and type(payload[key]) is not bool:
+            raise _LinkRatePayloadInvalid("invalid_marker")
+    if "stale_reason" in payload and not isinstance(payload["stale_reason"], str):
+        raise _LinkRatePayloadInvalid("invalid_marker")
+    raw_ts = payload.get("generated_at")
+    if not isinstance(raw_ts, str):
+        raise _LinkRatePayloadInvalid("invalid_generated_at")
+    try:
+        generated_at = datetime.fromisoformat(raw_ts)
+    except ValueError:
+        raise _LinkRatePayloadInvalid("invalid_generated_at") from None
+    if generated_at.tzinfo is None:
+        raise _LinkRatePayloadInvalid("invalid_generated_at")
+    if payload.get("unavailable") is True:
+        # The legacy GET's no-data shape: its sections are empty on purpose.
+        return generated_at
+
+    _validate_count_block(
+        payload.get("overall"), "total_game_markets", ("link_rate_pct", "link_rate_all_pct")
+    )
+    overall = payload["overall"]
+    if "link_rate_raw_pct" in overall and not _is_rate(overall["link_rate_raw_pct"]):
+        raise _LinkRatePayloadInvalid("invalid_rate")
+    for venue in ("kalshi", "polymarket"):
+        section = payload.get(venue)
+        if not isinstance(section, dict):
+            raise _LinkRatePayloadInvalid("invalid_section")
+        _validate_count_block(section.get("totals"), "total", ("link_rate_pct", "link_rate_all_pct"))
+        rows = section.get("by_sport")
+        if not isinstance(rows, list):
+            raise _LinkRatePayloadInvalid("invalid_section")
+        for row in rows:
+            _validate_count_block(row, "total", ("link_rate", "link_rate_all"))
+            if not isinstance(row.get("sport"), str) or not row["sport"]:
+                raise _LinkRatePayloadInvalid("invalid_bucket")
+            if row.get("league") is not None and not isinstance(row["league"], str):
+                raise _LinkRatePayloadInvalid("invalid_bucket")
+    return generated_at
+
+
+def _link_rate_cached_response(
+    status: int,
+    cache_state: str,
+    reason: str,
+    *,
+    payload: Optional[dict] = None,
+    age_seconds: Optional[float] = None,
+    freshness: str = "unknown",
+) -> tuple[int, dict]:
+    return status, {
+        "schema_version": LINK_RATE_CACHED_SCHEMA_VERSION,
+        "cache_state": cache_state,
+        "reason": reason,
+        "freshness": freshness,
+        "freshness_basis": _LINK_RATE_FRESHNESS_BASIS,
+        "generated_at": payload["generated_at"] if payload is not None else None,
+        "age_seconds": age_seconds,
+        "payload": payload,
+    }
+
+
+async def read_link_rate_cache() -> tuple[int, dict]:
+    """The whole saved-only read: ``(http_status, body)``. Never computes.
+
+    The request clock only ages the saved snapshot; no saved field is replaced
+    by it and nothing is written back.
+    """
+    try:
+        raw = await _read_link_rate_cache_raw()
+    except _LinkRateCacheReadError as exc:
+        logger.warning("link-rate cached: cache read failed (%s)", exc.code)
+        return _link_rate_cached_response(503, "error", exc.code)
+    if raw is None:
+        return _link_rate_cached_response(202, "miss", "no_saved_snapshot")
+    try:
+        if isinstance(raw, (bytes, bytearray)):
+            raw = raw.decode("utf-8")
+        payload = json.loads(raw, parse_constant=_reject_non_finite)
+    except _LinkRatePayloadInvalid as exc:
+        return _link_rate_cached_response(503, "malformed", exc.reason)
+    except (UnicodeDecodeError, ValueError, TypeError, RecursionError):
+        return _link_rate_cached_response(503, "malformed", "not_json")
+    try:
+        generated_at = _validate_link_rate_payload(payload)
+    except _LinkRatePayloadInvalid as exc:
+        return _link_rate_cached_response(503, "malformed", exc.reason)
+
+    age = (_link_rate_cached_now() - generated_at).total_seconds()
+    if payload.get("unavailable") is True:
+        return _link_rate_cached_response(
+            503, "unavailable", "saved_snapshot_unavailable", payload=payload, age_seconds=age
+        )
+    if age < 0:
+        freshness, reason = "unknown", "generated_at_in_future"
+    else:
+        freshness = "unreviewed"
+        reason = "saved_snapshot_marked_stale" if payload.get("stale") is True else "saved_snapshot"
+    return _link_rate_cached_response(
+        200, "hit", reason, payload=payload, age_seconds=age, freshness=freshness
+    )
+
+
+@router.get("/prediction-markets/link-rate/cached")
+async def prediction_market_link_rate_cached(
+    request: Request,
+    secret: str = Query(None, description="Admin secret for authorization"),
+):
+    """#847: the link-rate payload from the saved snapshot ONLY.
+
+    Same key the GET above and its precompute beat write; this route only reads
+    it. A miss is 202, an unreadable cache or a payload that fails the contract
+    is 503, each with its own ``cache_state``/``reason``. Deliberately NO
+    ``Depends(get_db)``, no ``?bust=`` and no inline fallback.
+    """
+    _check_admin_secret(secret, request=request)
+
+    from fastapi.responses import JSONResponse
+
+    status, body = await read_link_rate_cache()
+    return JSONResponse(body, status_code=status, headers={"Cache-Control": "no-store"})
 
 
 @router.get("/prediction-markets/tier1-compliance")
