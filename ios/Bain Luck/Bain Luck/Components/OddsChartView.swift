@@ -459,6 +459,10 @@ struct OddsChartView: View {
     /// Only the crosshair/readout observe selection. A reference held in State
     /// does not subscribe this data-plot owner to finger movement (#8651).
     @State private var selection: OddsChartSelection
+    /// #9483 tennis — the reading a lifted finger (or opening full size) holds,
+    /// shared by the inline chart and its cover; held as `selection` is, so only
+    /// the panel and its marker observe it.
+    @State private var tennisPin = TennisReadingPin9483()
     @StateObject private var vm: OddsChartViewModel
     @State private var isFullscreen = false
     /// The drawn plot area's width, reported by each chart's own overlay. The
@@ -523,9 +527,45 @@ struct OddsChartView: View {
                                 pageGaveCard: Bool) -> ChartReadoutContext9483 {
         let source = Self.readoutSource(in: dataPoints, pageGaveCard: pageGaveCard)
             ?? Self.primarySource(in: dataPoints)
+        // #9483 tennis — no "Pregame" badge on a tennis reading: the cut is at
+        // best a scheduled start, and the tennis panel says "Before scheduled
+        // start" where it is one (`TennisChartReading9483`).
+        if TennisChartReading9483.applies(sportKey: sportKey) {
+            return .chart(playStart: nil, gameFinished: EventState.isFinished(status),
+                          readoutPoints: dataPoints.filter { $0.source == source },
+                          checkpoints: checkpoints)
+        }
         return .chart(playStart: sinceStartDate, gameFinished: EventState.isFinished(status),
                       readoutPoints: dataPoints.filter { $0.source == source },
                       checkpoints: checkpoints)
+    }
+
+    /// #9483 tennis — the chart's readout series as the tennis panel reads it,
+    /// or nil off tennis. Taken before the range cut, so a held reading and its
+    /// baseline survive a switch between All and Since Start; after the
+    /// finished-match clip and the page's original window, so neither is
+    /// post-match drift. Nil under a checkpoint mount (#4974): a scrub there
+    /// lands on a stored checkpoint, and that chart keeps its own readout.
+    private func tennisSeries(enriched: [ChartDataPoint],
+                              checkpoints: PublicationCheckpointMount4974?) -> TennisChartReading9483.Series? {
+        guard TennisChartReading9483.applies(sportKey: sportKey), checkpoints == nil else { return nil }
+        var points = enriched
+        if EventState.isFinished(status), let endDate = gameEndDate {
+            points = points.filter { $0.date <= endDate }
+        }
+        if let legacyDataDomain {
+            points = points.filter { SharedChartWindow.contains($0.date, in: legacyDataDomain) }
+        }
+        return TennisChartReading9483.series(
+            eventId: eventId, points: points,
+            source: Self.readoutSource(in: points, pageGaveCard: readout != nil),
+            scheduledStart: kickoffDate, gameStart: gameStartDate,
+            finished: EventState.isFinished(status), history: vm.history)
+    }
+
+    private func tennisPanel(_ series: TennisChartReading9483.Series, expanded: Bool) -> TennisReadingPanel9483 {
+        TennisReadingPanel9483(pin: tennisPin, series: series, homeName: homeShort, awayName: awayShort,
+                               colors: teamColors, expanded: expanded)
     }
 
     /// Show the All / Since Start picker only when the game has started
@@ -863,6 +903,7 @@ struct OddsChartView: View {
                 let checkpoints = checkpointMount(for: dataPoints)
                 let moments = checkpoints?.moments(from: history.moments)
                     ?? Self.chartMoments(from: history.moments, points: dataPoints)
+                let tennis = tennisSeries(enriched: enrichedPoints, checkpoints: checkpoints)
                 // #3278 — "drawable", not "non-empty". See `hasDrawableLine`: one
                 // snapshot in the window rendered the whole frame around no line.
                 if !Self.chartIsDrawable(dataPoints, mount: checkpoints) {
@@ -934,7 +975,8 @@ struct OddsChartView: View {
                                   floatingCard: Self.inlineScrubCard(
                                     page: readout, homeTeam: homeTeamName, awayTeam: awayTeamName,
                                     colors: teamColors, homeLogo: homeTeamLogo, awayLogo: awayTeamLogo,
-                                    finished: EventState.isFinished(status)))
+                                    finished: EventState.isFinished(status)),
+                                  tennis: tennis)
                     }
                     .frame(height: chartHeight)
 
@@ -957,6 +999,14 @@ struct OddsChartView: View {
                         .padding(.leading, chartTeamGutterWidth)
                         .padding(.top, 2)
                         .frame(maxWidth: .infinity, alignment: .leading)
+
+                    // #9483 tennis — the held reading, below the plot so its
+                    // arrival on a lifted finger never moves the chart (#925).
+                    if let tennis {
+                        tennisPanel(tennis, expanded: false)
+                            .padding(.leading, chartTeamGutterWidth)
+                            .padding(.top, 6)
+                    }
                 }
             }
         }
@@ -984,6 +1034,7 @@ struct OddsChartView: View {
                     let checkpoints = checkpointMount(for: dataPoints)
                     let moments = checkpoints?.moments(from: history.moments)
                         ?? Self.chartMoments(from: history.moments, points: dataPoints)
+                    let tennis = tennisSeries(enriched: enrichedPoints, checkpoints: checkpoints)
                     // #3278 — the same drawability test the inline chart uses. This
                     // branch used to render literally nothing (a blank sheet under a
                     // nav bar) when there were no points, and the full frame around
@@ -1026,7 +1077,13 @@ struct OddsChartView: View {
                             // has a scoring play, so a 0–0 game opened fullscreen
                             // printed no probability at all (Patriots at Jaguars,
                             // 14782706, NE 42% → 39% in the first quarter).
-                            if let card = Self.fullscreenReadout(
+                            // #9483 tennis — the held reading above its dated
+                            // baseline, in the card's place; opening holds the
+                            // reading shown, so the return finds the same one.
+                            if let tennis {
+                                TennisScrubbedReadingPanel9483(selection: selection,
+                                                               panel: tennisPanel(tennis, expanded: true))
+                            } else if let card = Self.fullscreenReadout(
                                 page: readout, homeTeam: homeTeamName, awayTeam: awayTeamName,
                                 colors: teamColors, homeLogo: homeTeamLogo, awayLogo: awayTeamLogo) {
                                 OddsChartSelectionReadout(selection: selection,
@@ -1086,7 +1143,7 @@ struct OddsChartView: View {
                                           periodMarkers: periodMarkers, moments: moments,
                                           checkpoints: checkpoints,
                                           plotWidth: $fullscreenPlotWidth, sharesPageAxis: false,
-                                          pageGaveCard: readout != nil)
+                                          pageGaveCard: readout != nil, tennis: tennis)
                             }
                             legendView(dataPoints: dataPoints, sources: history.winProbSources ?? [:])
                             momentCaption(moments)
@@ -1836,7 +1893,8 @@ struct OddsChartView: View {
                            periodMarkers: [PeriodMarker], moments: [ChartMoment],
                            checkpoints: PublicationCheckpointMount4974? = nil,
                            plotWidth: Binding<CGFloat>, sharesPageAxis: Bool,
-                           pageGaveCard: Bool, floatingCard: GamePlayCardView? = nil) -> some View {
+                           pageGaveCard: Bool, floatingCard: GamePlayCardView? = nil,
+                           tennis: TennisChartReading9483.Series? = nil) -> some View {
         // Filter period markers to visible data range
         let visibleMarkers: [PeriodMarker]
         if let minDate = dataPoints.map(\.date).min(),
@@ -2009,6 +2067,11 @@ struct OddsChartView: View {
                         .allowsHitTesting(false)
                         .accessibilityHidden(true)
                 }
+                if let tennis {
+                    TennisHeldReadingMarker9483(pin: tennisPin, selection: selection, series: tennis,
+                                                proxy: proxy, plotFrame: plotFrame,
+                                                color: teamColors?.home ?? .accentColor)
+                }
                 OddsChartSelectionOverlay(selection: selection, proxy: proxy, plotFrame: plotFrame,
                                           dataPoints: dataPoints, homeShort: homeShort,
                                           awayShort: awayShort, moments: moments,
@@ -2052,6 +2115,11 @@ struct OddsChartView: View {
                     },
                     holdsTheScrollStill: { selection.holdsTheScrollStill },
                     onEnd: {
+                        // #9483 tennis — the lifted finger holds the observation
+                        // it was reading, or the break it was over.
+                        if let tennis, let date = selection.date {
+                            tennisPin.hold(tennis.inspect(at: date))
+                        }
                         selection.end()
                     }
                 )
