@@ -32,6 +32,13 @@
 			remoteGlobalIDString = A7869E292F525C6A000542D3;
 			remoteInfo = "Bain Luck";
 		};
+		A7C10878000000000000000B /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = A7869E222F525C69000542D3 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = A7869E292F525C6A000542D3;
+			remoteInfo = "Bain Luck";
+		};
 		A7C0000000000000000000FB /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
 			containerPortal = A7869E222F525C69000542D3 /* Project object */;
@@ -114,6 +121,7 @@
 		A70F40112FA6C20000170BF2 /* BainLuckWatch Watch App.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "BainLuckWatch Watch App.app"; sourceTree = BUILT_PRODUCTS_DIR; };
 		A7869E2A2F525C6A000542D3 /* Bain Luck.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "Bain Luck.app"; sourceTree = BUILT_PRODUCTS_DIR; };
 		A7C0000000000000000000E2 /* BainLuckTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = BainLuckTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		A7C108780000000000000002 /* BainLuckMacTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = BainLuckMacTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		A7C0000000000000000000F2 /* BainLuckWidget.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = BainLuckWidget.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		A7C0000000000000000000D2 /* BainLuckComplication.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = BainLuckComplication.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		A7C0000000000000000000C2 /* BainLuckUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = BainLuckUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -207,6 +215,13 @@
 			);
 			target = A7C0000000000000000000E1 /* BainLuckTests */;
 		};
+		A7C10878000000000000000C /* Exceptions for "BainLuckTests" folder in "BainLuckMacTests" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				MacMainWindow10878Tests.swift,
+			);
+			target = A7C108780000000000000001 /* BainLuckMacTests */;
+		};
 /* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -222,6 +237,9 @@
 		};
 		A7C0000000000000000000E3 /* BainLuckTests */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				A7C10878000000000000000C /* Exceptions for "BainLuckTests" folder in "BainLuckMacTests" target */,
+			);
 			path = BainLuckTests;
 			sourceTree = "<group>";
 		};
@@ -311,6 +329,13 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		A7C108780000000000000005 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
@@ -334,6 +359,7 @@
 				A70F400C2FA6C20000170BF2 /* BainLuckWatch.app */,
 				A70F40112FA6C20000170BF2 /* BainLuckWatch Watch App.app */,
 				A7C0000000000000000000E2 /* BainLuckTests.xctest */,
+				A7C108780000000000000002 /* BainLuckMacTests.xctest */,
 				A7C0000000000000000000F2 /* BainLuckWidget.appex */,
 				A7C0000000000000000000D2 /* BainLuckComplication.appex */,
 				A7C0000000000000000000C2 /* BainLuckUITests.xctest */,
@@ -440,6 +466,26 @@
 			);
 			productName = BainLuckTests;
 			productReference = A7C0000000000000000000E2 /* BainLuckTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
+		A7C108780000000000000001 /* BainLuckMacTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = A7C108780000000000000007 /* Build configuration list for PBXNativeTarget "BainLuckMacTests" */;
+			buildPhases = (
+				A7C108780000000000000004 /* Sources */,
+				A7C108780000000000000005 /* Frameworks */,
+				A7C108780000000000000006 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				A7C10878000000000000000A /* PBXTargetDependency */,
+			);
+			name = BainLuckMacTests;
+			packageProductDependencies = (
+			);
+			productName = BainLuckMacTests;
+			productReference = A7C108780000000000000002 /* BainLuckMacTests.xctest */;
 			productType = "com.apple.product-type.bundle.unit-test";
 		};
 		A7C0000000000000000000F1 /* BainLuckWidget */ = {
@@ -553,6 +599,10 @@
 						CreatedOnToolsVersion = 26.6;
 						TestTargetID = A7869E292F525C6A000542D3;
 					};
+					A7C108780000000000000001 = {
+						CreatedOnToolsVersion = 27.0;
+						TestTargetID = A7869E292F525C6A000542D3;
+					};
 					A7C0000000000000000000F1 = {
 						CreatedOnToolsVersion = 26.6;
 					};
@@ -591,6 +641,7 @@
 				A70F400B2FA6C20000170BF2 /* BainLuckWatch */,
 				A70F40102FA6C20000170BF2 /* BainLuckWatch Watch App */,
 				A7C0000000000000000000E1 /* BainLuckTests */,
+				A7C108780000000000000001 /* BainLuckMacTests */,
 				A7C0000000000000000000F1 /* BainLuckWidget */,
 				A7C0000000000000000000D1 /* BainLuckComplication */,
 				A7C0000000000000000000C1 /* BainLuckUITests */,
@@ -650,6 +701,13 @@
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 		A7C0000000000000000000A6 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		A7C108780000000000000006 /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -728,6 +786,13 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		A7C108780000000000000004 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
@@ -746,6 +811,11 @@
 			isa = PBXTargetDependency;
 			target = A7869E292F525C6A000542D3 /* Bain Luck */;
 			targetProxy = A7C0000000000000000000EB /* PBXContainerItemProxy */;
+		};
+		A7C10878000000000000000A /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = A7869E292F525C6A000542D3 /* Bain Luck */;
+			targetProxy = A7C10878000000000000000B /* PBXContainerItemProxy */;
 		};
 		A7C0000000000000000000FA /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
@@ -1137,6 +1207,48 @@
 			};
 			name = Release;
 		};
+		A7C108780000000000000008 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_EMBED_SWIFT_STANDARD_LIBRARIES = YES;
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = J893F72P4R;
+				GENERATE_INFOPLIST_FILE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 26.2;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = "com.bainluck.BainLuckMacTests";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+				SUPPORTED_PLATFORMS = macosx;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_VERSION = 5.0;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Bain Luck.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Bain Luck";
+			};
+			name = Debug;
+		};
+		A7C108780000000000000009 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_EMBED_SWIFT_STANDARD_LIBRARIES = YES;
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = J893F72P4R;
+				GENERATE_INFOPLIST_FILE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 26.2;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = "com.bainluck.BainLuckMacTests";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+				SUPPORTED_PLATFORMS = macosx;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_VERSION = 5.0;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Bain Luck.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Bain Luck";
+			};
+			name = Release;
+		};
 		A7C0000000000000000000F8 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
@@ -1401,6 +1513,15 @@
 			buildConfigurations = (
 				A7C0000000000000000000E8 /* Debug */,
 				A7C0000000000000000000E9 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		A7C108780000000000000007 /* Build configuration list for PBXNativeTarget "BainLuckMacTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				A7C108780000000000000008 /* Debug */,
+				A7C108780000000000000009 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
