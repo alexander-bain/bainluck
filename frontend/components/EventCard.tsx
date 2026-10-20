@@ -30,6 +30,7 @@ import { providerGameNumber } from "@/lib/teamGames";
 import { PinIcon } from "@/components/PinButton";
 import { cardProjectedFinal, projectedFinalLabel } from "@/lib/projectedFinalPair";
 import ProjectedFinalLine from "@/components/ProjectedFinalLine";
+import { finalForecastComparison } from "@/lib/finalForecastComparison";
 import {
   hasNoReportedResult,
   isFinishedStatus,
@@ -616,6 +617,17 @@ export default function EventCard({
   // Pre-game only, on the footer's old terms: a finished card compares results,
   // and a suspended one is stopped, not upcoming (CERT-792).
   const showProjectedFinal = !isLive && !isFinished && !isSuspended && !!projectedScore;
+  // #11296 — and on a final, the sportsbooks' last pair before the scheduled
+  // start, beneath the result the score strip prints. A scoreboard final covers
+  // the full game; soccer's 90-minute forecasts are refused (see the helper).
+  const finalForecast = finalForecastComparison({
+    sportKey: event.sport,
+    status: event.status,
+    homeScore: event.home_score,
+    awayScore: event.away_score,
+    actualPeriod: "full_game",
+    projection: event.pregame_projection,
+  });
   const showFooter = !isFinished && !isSuspended && (footerHasLead || !!event.espn?.broadcast);
 
   return (
@@ -1018,6 +1030,16 @@ export default function EventCard({
               order="home-away"
               variant="card"
               testId="event-card-projected-final"
+            />
+          )}
+          {finalForecast && (
+            <ProjectedFinalLine
+              label={finalForecast.label}
+              first={{ name: homeShort, score: finalForecast.forecast.home }}
+              second={{ name: awayShort, score: finalForecast.forecast.away }}
+              order="home-away"
+              variant="card"
+              testId="event-card-final-forecast"
             />
           )}
 
