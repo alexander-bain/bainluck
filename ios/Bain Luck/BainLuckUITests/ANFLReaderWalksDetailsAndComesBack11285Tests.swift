@@ -102,9 +102,21 @@ final class ANFLReaderWalksDetailsAndComesBack11285Tests: XCTestCase {
         XCTAssertNotEqual(names[0], names[1], "control: the first two cards are distinct cards")
         print("READER11285 cards=\(ordered)")
 
-        // 1. Open story from the first card's own opener.
+        // 1. Open story from the first card's own opener — nudged by its OWN
+        // frame out of the tab bar's band first, so the page position measured
+        // here is the one the tap starts from (r1/r5: a tap on a non-hittable
+        // opener let XCUITest scroll the page before the baseline was used).
         let opener = app.buttons[ordered[0]]
-        XCTAssertTrue(opener.isHittable, "the first card's opener is on screen")
+        var lifts = 0
+        while (!opener.isHittable || opener.frame.maxY > app.frame.height * 0.8) && lifts < 8 {
+            let x = app.frame.width * 0.5
+            let origin = app.coordinate(withNormalizedOffset: .zero)
+            origin.withOffset(CGVector(dx: x, dy: app.frame.height * 0.5))
+                .press(forDuration: 0.05, thenDragTo: origin.withOffset(CGVector(dx: x, dy: app.frame.height * 0.35)))
+            sleep(1); lifts += 1
+        }
+        XCTAssertTrue(opener.isHittable && opener.frame.maxY <= app.frame.height * 0.8,
+                      "the first card's opener is on screen, clear of the tab bar — \(opener.frame)")
         let pageY = opener.frame.minY
         opener.tap()
         let back = app.buttons["Back to the game"]
