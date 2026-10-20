@@ -22,12 +22,25 @@ second address or route. Its only network peers are ``api.heroku.com`` and the
 host. It ignores proxy environment variables (it opens its own sockets), so an
 operator whose only egress is an HTTP proxy cannot use it.
 
-THE ENVELOPE (Root's proposal, 2026-10-20). One 30 s deadline is shared by every
-stage: credential read, name resolution, connect, TLS, request, response and
-log stream. One 16,384-byte cap is shared by every byte the reader takes in:
-the credential file, both responses' status lines, headers and bodies (chunk
-framing included), and error bodies. Running out of either is UNCERTAIN, never
-a truncated plan. A reader timeout does not prove the remote run stopped.
+THE ENVELOPE (Root, 2026-10-20; revised under 035A). One 30 s deadline is
+shared by every stage from the top of ``main``: receipt creation, launcher and
+credential reads, TLS context, name resolution, connect, handshake, request,
+response, log stream and receipt serialization. One 65,536-byte cap is shared
+by every byte the reader takes in AND every byte it retains: the launcher
+file, the credential file, both responses' status lines, headers, chunk framing
+and bodies, error bodies, the log retained in the receipt (charged at its
+base64 size as it arrives) and a fixed reserve for the receipt's own metadata.
+The serialized receipt is checked against what is left before it is written.
+Running out of either is UNCERTAIN, never a truncated plan. A reader timeout
+does not prove the remote run stopped. (The first envelope, 16,384 bytes, could
+not hold an honest 22-leg plan; that refusal is kept as a test.)
+
+WHAT THE SOURCE CANNOT BOUND. Local file opens and reads, the system trust
+store load inside the TLS context, the receipt write, and ``getaddrinfo`` (run
+on a daemon thread the reader abandons at the deadline) are operating-system
+waits no in-process timer can interrupt. A hard wall around the whole client
+needs an external bounded invocation at admission; this file does not prove
+the operator has one.
 
 THE CREDENTIAL. The ``api.heroku.com`` password from the operator's netrc file,
 read in-process (no ``heroku auth:token`` child, so nothing can outlive the
@@ -83,7 +96,8 @@ COMMAND = "python3 scripts/repair_1853_archive_grades.py"
 API_HOST = "api.heroku.com"
 LOG_HOST_SUFFIX = ".heroku.com"
 DEADLINE_S = 30.0
-CAP_BYTES = 16_384
+CAP_BYTES = 65_536
+RECEIPT_RESERVE = 4_096  # the receipt's metadata; its retained log is charged separately
 LAUNCHER_MAX_BYTES = 4_096
 LOG_LINES = 1_500
 NETRC_MACHINE = "api.heroku.com"
@@ -91,6 +105,7 @@ NETRC_MACHINE = "api.heroku.com"
 REPO = Path(__file__).resolve().parents[2]
 SCRIPT_PATH = REPO / "backend" / "scripts" / "repair_1853_archive_grades.py"
 KMS_PATH = REPO / "backend" / "app" / "utils" / "kalshi_market_status.py"
+ARCHIVE_PATH = SCRIPT_PATH.parent / "data" / "1853-KXUECLSCORE-26JUL30LEVIFK-archive.json"
 #: The bytes this reader's schema, digest and verdict rule come from. Heavy must
 #: carry the same script blob (git dd3ece533b) for a run to be judged by it.
 SCRIPT_SHA256 = "ab45ba3fa5f1ffe80ab6f14994a51520fe563454c9599aa79d65e991bfb4159c"
@@ -222,32 +237,41 @@ def parse_launcher(raw: bytes) -> str:
     return run
 
 
-def read_netrc_token(path: Path, budget: Budget) -> str:
-    """The ``api.heroku.com`` password, read once, in-process, within the budget.
-
-    The file must be a regular file (a FIFO or device would stall the read); its
-    bytes are charged to the cap.
-    """
+def read_local(path: Path, budget: Budget, *, limit: int, stage: str, label: str,
+               reason: str) -> bytes:
+    """One local input, read once: opened non-blocking, a regular file only (a
+    FIFO or device would stall), at most ``limit`` bytes, every byte charged."""
     budget.remaining()
     try:
         fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK)
     except OSError as exc:
-        raise Uncertain("CREDENTIAL", f"netrc unavailable ({type(exc).__name__})") from None
+        raise Uncertain(reason, f"{label} unavailable ({type(exc).__name__})") from None
     try:
         if not stat.S_ISREG(os.fstat(fd).st_mode):
-            raise Uncertain("CREDENTIAL", "netrc is not a regular file")
+            raise Uncertain(reason, f"{label} is not a regular file")
+        most = min(limit, max(budget.room(), 0))
         raw = b""
-        while len(raw) <= budget.room():
+        while len(raw) <= most:
             try:
-                chunk = os.read(fd, budget.room() + 1 - len(raw))
+                chunk = os.read(fd, most + 1 - len(raw))
             except OSError as exc:
-                raise Uncertain("CREDENTIAL", f"netrc read failed ({type(exc).__name__})") from None
+                raise Uncertain(reason, f"{label} read failed ({type(exc).__name__})") from None
             if not chunk:
                 break
             raw += chunk
     finally:
         os.close(fd)
-    budget.charge(len(raw), "credential")
+    budget.charge(len(raw), stage)
+    if len(raw) > limit:
+        raise Uncertain(reason, f"{label} exceeds {limit} bytes")
+    budget.remaining()
+    return raw
+
+
+def read_netrc_token(path: Path, budget: Budget) -> str:
+    """The ``api.heroku.com`` password, read once, in-process, within the budget."""
+    raw = read_local(path, budget, limit=CAP_BYTES, stage="credential", label="netrc",
+                     reason="CREDENTIAL")
     try:
         lines = raw.decode("utf-8").splitlines()
     except UnicodeDecodeError:
@@ -307,16 +331,28 @@ def tls_context() -> ssl.SSLContext:
     return ctx
 
 
-def connect_tls(host: str, port: int, budget: Budget):
-    family, kind, proto, _, addr = _resolve(host, port, budget)
+def connect_tls(host: str, port: int, budget: Budget, getaddrinfo=socket.getaddrinfo):
+    """Context, first address, connect, handshake — each wait sized from what is
+    left of the ONE deadline at the moment it starts, and a step that returns
+    after the deadline is late, not a success."""
+    ctx = tls_context()  # loads the trust store: a local read no timer can interrupt
+    budget.remaining()
+    family, kind, proto, _, addr = _resolve(host, port, budget, getaddrinfo=getaddrinfo)
     raw = socket.socket(family, kind, proto)
     try:
         raw.settimeout(budget.remaining())
         raw.connect(addr)
-        return tls_context().wrap_socket(raw, server_hostname=host)
+        raw.settimeout(budget.remaining())  # the handshake gets only what connect left
+        tls = ctx.wrap_socket(raw, server_hostname=host)
     except BaseException:
         raw.close()
         raise
+    try:
+        budget.remaining()
+    except Uncertain:
+        tls.close()
+        raise
+    return tls
 
 
 class _Metered:
@@ -328,7 +364,10 @@ class _Metered:
         self._sock, self._budget, self._stage = sock, budget, stage
 
     def recv_into(self, buf, nbytes: int = 0) -> int:
-        want = min(nbytes or len(buf), max(self._budget.room(), 0) + 1)
+        room = max(self._budget.room(), 0)
+        if self._stage == "log":  # each log byte also costs its 4/3 retained in the receipt
+            room = room * 3 // 7
+        want = min(nbytes or len(buf), room + 1)
         self._sock.settimeout(self._budget.remaining())
         n = self._sock.recv_into(buf, want)
         self._budget.charge(n, self._stage)
@@ -339,7 +378,9 @@ class _Metered:
         self._sock.sendall(data)
 
     def makefile(self, mode="rb", *args, **kwargs):
-        return io.BufferedReader(socket.SocketIO(self, "rb"))
+        # No read-ahead: every byte taken off the socket is handed straight to
+        # the parser, so no received byte can sit unvalidated in a buffer.
+        return io.BufferedReader(socket.SocketIO(self, "rb"), buffer_size=1)
 
     def _decref_socketios(self) -> None:
         pass
@@ -418,7 +459,7 @@ def log_endpoint(url: str) -> tuple[str, str]:
 def stream_log(host: str, target: str, run: str, budget: Budget, connector) -> "LogRead":
     """GET the session once; read until the run's terminal evidence is complete,
     the stream ends, or the budget runs out."""
-    log = LogRead(run)
+    log = LogRead(run, budget)
     conn = _Conn(host, budget, "log", connector)
     try:
         try:
@@ -442,6 +483,10 @@ def stream_log(host: str, target: str, run: str, budget: Budget, connector) -> "
 # ── the log ───────────────────────────────────────────────────────────────────
 
 
+def _b64len(n: int) -> int:
+    return 4 * ((n + 2) // 3)
+
+
 class LogRead:
     """The raw bytes read for one dyno, framed back into lines.
 
@@ -450,8 +495,8 @@ class LogRead:
     read cannot be trusted.
     """
 
-    def __init__(self, run: str) -> None:
-        self.run = run
+    def __init__(self, run: str, budget: Optional[Budget] = None) -> None:
+        self.run, self.budget = run, budget
         self.raw = bytearray()
         self.ended = False
         self.error: Optional[Uncertain] = None
@@ -461,7 +506,10 @@ class LogRead:
         self._consumed = 0
 
     def feed(self, data: bytes) -> None:
+        before = _b64len(len(self.raw))
         self.raw += data
+        if self.budget is not None:
+            self.budget.charge(_b64len(len(self.raw)) - before, "log_retained")
         end = self.raw.rfind(b"\n") + 1
         if end > self._consumed:
             for line in bytes(self.raw[self._consumed:end]).split(b"\n")[:-1]:
@@ -501,9 +549,13 @@ class LogRead:
         return [int(m["status"]) for m in map(_EXITED.match, self.heroku) if m]
 
     def ready(self) -> bool:
-        """Everything a verdict needs has arrived (or nothing more can help)."""
+        """Everything a verdict needs has arrived (or nothing more can help).
+        Never while a partial line is buffered: its bytes are not yet validated,
+        so the read goes on (inside the same deadline) until the line completes."""
         if self.malformed:
             return True
+        if self.partial:
+            return False
         exits = self.exits()
         if not exits:
             return False
@@ -606,6 +658,8 @@ def judge(log: LogRead, script, kms) -> tuple[int, dict]:
         raise log.malformed
     if log.error:
         raise log.error  # the read stopped before its evidence was whole
+    if log.partial:
+        raise Uncertain("PARTIAL_TAIL", "bytes after the last complete line were never validated")
     starts = [m["cmd"] for m in map(_STARTING.match, log.heroku) if m]
     if len(starts) != 1 or starts[0] != COMMAND:
         raise Uncertain("MISMATCHED_COMMAND", f"{len(starts)} start lines; exactly one for the exact command is required")
@@ -637,32 +691,41 @@ def judge(log: LogRead, script, kms) -> tuple[int, dict]:
     if json.dumps(doc, indent=2, default=str) != text:
         raise Uncertain("NONCANONICAL", "the document is not byte-for-byte the script's own print")
     code = judge_plan(doc, status, script, kms)
-    return code, {"exit_status": status, "plan_digest": doc["plan_digest"],
-                  "planned_count": len(doc["planned"]), "document": doc}
+    found = {"exit_status": status, "plan_digest": doc["plan_digest"],
+             "planned_count": len(doc["planned"])}
+    if code == STOP:
+        found["stop"] = doc["stop"]
+    return code, found  # the full document is the receipt's retained log, byte for byte
 
 
 # ── the read ──────────────────────────────────────────────────────────────────
 
 
-def read_plan(launcher: bytes, netrc_path: Path, *, connector: Optional[Callable] = None,
-              deadline_s: float = DEADLINE_S, cap: int = CAP_BYTES) -> dict:
-    """One read, end to end. Never raises; the receipt says what happened."""
-    budget = Budget(deadline_s, cap)
+def read_plan(launcher_path: Path, netrc_path: Path, *, connector: Optional[Callable] = None,
+              budget: Optional[Budget] = None, deadline_s: float = DEADLINE_S,
+              cap: int = CAP_BYTES) -> dict:
+    """One read, end to end. Never raises an ordinary error; the receipt says
+    what happened. ``budget`` is the caller's when the deadline started earlier
+    (``main`` starts it before creating the receipt)."""
+    budget = budget or Budget(deadline_s, cap)
     connector = connector or connect_tls
     receipt: dict = {
         "tool": "tools/plan1853/reader.py",
         "reader_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
         "script_sha256": SCRIPT_SHA256, "kms_sha256": KMS_SHA256,
         "app": APP, "command": COMMAND,
-        "launcher_sha256": hashlib.sha256(launcher).hexdigest(),
-        "deadline_s": deadline_s, "cap_bytes": cap,
+        "deadline_s": budget.deadline_s, "cap_bytes": budget.cap,
         "apply_authorized": False,  # no verdict here authorizes a backup, apply or restore
         "pays_plan_gate": False,
         "remote_run_state": "not observed by a timeout: a reader timeout does not prove the run stopped",
     }
     log: Optional[LogRead] = None
     try:
+        budget.charge(RECEIPT_RESERVE, "receipt_reserve")
         script, kms = load_pinned()
+        launcher = read_local(launcher_path, budget, limit=LAUNCHER_MAX_BYTES, stage="launcher",
+                              label="launcher evidence", reason="LAUNCHER")
+        receipt["launcher_sha256"] = hashlib.sha256(launcher).hexdigest()
         run = parse_launcher(launcher)
         receipt["run"] = run
         token = read_netrc_token(netrc_path, budget)
@@ -685,15 +748,46 @@ def read_plan(launcher: bytes, netrc_path: Path, *, connector: Optional[Callable
         receipt.update(verdict=VERDICTS[UNCERTAIN], reason="HARNESS", detail=type(exc).__name__)
     receipt["exit_code"] = code
     receipt["elapsed_s"] = round(budget.elapsed(), 3)
-    receipt["bytes"] = {"used": budget.used, "by_stage": dict(budget.by_stage)}
+    receipt["bytes"] = {"charged": budget.used, "intake": intake_bytes(budget),
+                        "by_stage": dict(budget.by_stage)}
+    try:  # fixed, pinned local sources: read to judge, never evidence, outside the cap
+        receipt["local_pinned_bytes"] = sum(
+            f.stat().st_size for f in (SCRIPT_PATH, KMS_PATH, ARCHIVE_PATH, Path(__file__)))
+    except OSError:
+        receipt["local_pinned_bytes"] = None
     if log is not None:
         receipt["log"] = {
             "raw_b64": base64.b64encode(bytes(log.raw)).decode(),
             "raw_sha256": hashlib.sha256(bytes(log.raw)).hexdigest(),
-            "app_lines": len(log.app), "platform_lines": list(log.heroku),
+            "app_lines": len(log.app), "platform_lines": len(log.heroku),
             "ended": log.ended, "partial_tail": log.partial,
         }
     return receipt
+
+
+def intake_bytes(budget: Budget) -> int:
+    """Every byte taken in: what was charged, less what was charged for retention."""
+    held = budget.by_stage.get("receipt_reserve", 0) + budget.by_stage.get("log_retained", 0)
+    return budget.used - held
+
+
+def serialize_receipt(receipt: dict, budget: Budget) -> bytes:
+    """The receipt's bytes, held inside the one cap together with everything taken
+    in. A receipt that would not fit is replaced by a short UNCERTAIN one that
+    says so — never truncated, never empty, never a pass."""
+    intake = intake_bytes(budget)
+    body = json.dumps(receipt, indent=2, sort_keys=True).encode()
+    if intake + len(body) <= budget.cap:
+        return body
+    keep = ("tool", "reader_sha256", "script_sha256", "kms_sha256", "app", "command", "run",
+            "launcher_sha256", "log_host", "deadline_s", "cap_bytes", "elapsed_s", "bytes",
+            "remote_run_state")
+    short = {k: receipt[k] for k in keep if k in receipt}
+    short.update(verdict=VERDICTS[UNCERTAIN], reason="RECEIPT_OVERSIZED", exit_code=UNCERTAIN,
+                 apply_authorized=False, pays_plan_gate=False,
+                 original_reason=receipt.get("reason"),
+                 detail=f"intake {intake} B plus a {len(body)} B receipt exceeds the {budget.cap} B cap")
+    return json.dumps(short, indent=2, sort_keys=True).encode()
 
 
 class _Parser(argparse.ArgumentParser):
@@ -704,26 +798,25 @@ class _Parser(argparse.ArgumentParser):
 
 
 def main(argv=None) -> int:
+    budget = Budget()  # the ONE deadline starts before anything is created or read
     p = _Parser(description="Read one #1853 no-flag plan run's output (read-only).")
     p.add_argument("--launcher", required=True, type=Path, help="the saved run:detached output")
     p.add_argument("--receipt", required=True, type=Path, help="a NEW file for the receipt")
     args = p.parse_args(argv)
     try:
-        fd = os.open(args.receipt, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        fd = os.open(args.receipt, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
     except OSError as exc:
         print(f"UNCERTAIN receipt not created ({type(exc).__name__})", file=sys.stderr)
         return UNCERTAIN
-    try:
-        with open(args.launcher, "rb") as fh:
-            launcher = fh.read(LAUNCHER_MAX_BYTES + 1)
-    except OSError:
-        launcher = b""
     netrc = Path(os.environ.get("HOME", "/nonexistent")) / ".netrc"
-    receipt = read_plan(launcher, netrc)
-    with os.fdopen(fd, "w") as fh:
-        json.dump(receipt, fh, indent=2, sort_keys=True)
-    print(f"{receipt['verdict']} {receipt['reason']} exit={receipt['exit_code']} receipt={args.receipt}")
-    return receipt["exit_code"]
+    receipt = read_plan(args.launcher, netrc, budget=budget)
+    body = serialize_receipt(receipt, budget)
+    with os.fdopen(fd, "wb") as fh:
+        fh.write(body)
+    final = json.loads(body)
+    print(f"{final['verdict']} {final['reason']} exit={final['exit_code']} "
+          f"receipt_bytes={len(body)} elapsed_s={budget.elapsed():.3f} receipt={args.receipt}")
+    return final["exit_code"]
 
 
 if __name__ == "__main__":

@@ -39,7 +39,8 @@ TOKEN = "inert-fake-token-0123456789"
 LOG_PATH = "/sessions/0f0e0d0c-inert?srv=1700000000"
 LOG_URL = f"https://logplex.heroku.com{LOG_PATH}"
 RUN = "run.4321"
-ROOMY = 65_536  # a TEST cap that proves the parser; not a proposed envelope
+ROOMY = 262_144  # a TEST cap that proves the parser alone; not an envelope
+FIRST_ENVELOPE = 16_384  # Root's first proposal: kept as evidence that it cannot hold a plan
 LAUNCH = (
     "Running python3 scripts/repair_1853_archive_grades.py on ⬢ bainluck-heavy... "
     f"done, {RUN} (Standard-1X)\n"
@@ -114,6 +115,21 @@ class _ChangedSession(bounds.PlanSession):
         return res
 
 
+class _AllUngradedSession(bounds.PlanSession):
+    """Every stored leg ungraded: the largest plan the archive allows (30 legs)."""
+
+    async def execute(self, statement, params=None):
+        kind = bounds._kind(str(statement))
+        if kind == "stored_legs":
+            await super().execute(statement, params)
+            return bounds._Result([(r["outcome_id"], r["external_id"], None, None)
+                                   for r in bounds.STORED["stored"]])
+        if kind == "approved":
+            self.calls.append(kind)
+            return bounds._Result([(i, json.dumps({"id": i})) for i in params["ids"]])
+        return await super().execute(statement, params)
+
+
 def real_print(kind, repair, monkeypatch, capsys) -> tuple[str, int]:
     """What the real script prints (stdout, or the traceback Python would print)
     and the exit status Python would report, for one plan-mode run."""
@@ -122,6 +138,7 @@ def real_print(kind, repair, monkeypatch, capsys) -> tuple[str, int]:
         "plan": lambda: bounds.PlanSession(calls),
         "stop": lambda: _MovedSession(calls),
         "refusal": lambda: _ChangedSession(calls),
+        "stop30": lambda: _AllUngradedSession(calls),
         "timeout": lambda: bounds.PlanSession(calls, fault=bounds._timeout(), fault_at="stored_legs"),
     }[kind]()
     bounds._wire(repair, monkeypatch, [session])
@@ -159,7 +176,11 @@ class FakeHeroku:
     and every request it received."""
 
     def __init__(self, log=b"", *, api_status=201, api_body=None, log_status=200,
-                 keep_open=False, delay=0.0, log_url=LOG_URL, chunk=1000):
+                 keep_open=False, delay=0.0, log_url=LOG_URL, chunk=1000, then=(),
+                 header_pad=0, burst=False):
+        self.burst = burst  # the whole response in ONE write: all of it already arrived
+        self.then, self.pad = then, b"".join(
+            b"X-Inert-%04d: %s\r\n" % (i, b"h" * 40) for i in range(header_pad // 56))
         self.log, self.api_status, self.api_body = log, api_status, api_body
         self.log_status, self.keep_open, self.delay = log_status, keep_open, delay
         self.log_url, self.chunk = log_url, chunk
@@ -199,17 +220,28 @@ class FakeHeroku:
             if host == "api.heroku.com":
                 body = self.api_body if self.api_body is not None else json.dumps(
                     {"id": "inert", "logplex_url": self.log_url}).encode()
-                s.sendall(b"HTTP/1.1 %d X\r\nContent-Type: application/json\r\n"
-                          b"Content-Length: %d\r\n\r\n" % (self.api_status, len(body)) + body)
+                s.sendall(b"HTTP/1.1 %d X\r\nContent-Type: application/json\r\n" % self.api_status
+                          + self.pad + b"Content-Length: %d\r\n\r\n" % len(body) + body)
                 return
             if self.log_status != 200:
                 s.sendall(b"HTTP/1.1 %d X\r\nContent-Length: 0\r\n\r\n" % self.log_status)
                 return
-            s.sendall(b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n")
+            head = b"HTTP/1.1 200 OK\r\n" + self.pad + b"Transfer-Encoding: chunked\r\n\r\n"
+            if self.burst:
+                parts = [self.log[i:i + self.chunk] for i in range(0, len(self.log), self.chunk)]
+                parts += [p for _, p in self.then]
+                s.sendall(head + b"".join(b"%x\r\n" % len(p) + p + b"\r\n" for p in parts))
+                while self.keep_open and s.recv(65536):
+                    pass
+                return
+            s.sendall(head)
             for i in range(0, len(self.log), self.chunk):
                 if self.delay:
                     time.sleep(self.delay)
                 part = self.log[i:i + self.chunk]
+                s.sendall(b"%x\r\n" % len(part) + part + b"\r\n")
+            for wait, part in self.then:  # later bytes, each its own chunk
+                time.sleep(wait)
                 s.sendall(b"%x\r\n" % len(part) + part + b"\r\n")
             if self.keep_open:  # a tail session: nothing more, until the reader leaves
                 while s.recv(65536):
@@ -241,8 +273,21 @@ def heroku():
         h.close()
 
 
+def launch_file(where: Path, launcher: bytes = LAUNCH) -> Path:
+    path = where / f"launch-{time.monotonic_ns()}.txt"
+    path.write_bytes(launcher)
+    return path
+
+
 def read(reader, fake, netrc, launcher=LAUNCH, **kw):
-    return reader.read_plan(launcher, netrc, connector=fake.connect, **kw)
+    return reader.read_plan(launch_file(netrc.parent, launcher), netrc, connector=fake.connect, **kw)
+
+
+def app_text(reader, r) -> str:
+    """The printed document, recovered from the receipt's retained log alone."""
+    log = reader.LogRead(RUN)
+    log.feed(base64.b64decode(r["log"]["raw_b64"]))
+    return "\n".join(log.app) + "\n"
 
 
 # ── 1. the ordinary 22-leg plan ──────────────────────────────────────────────
@@ -258,7 +303,8 @@ def test_the_ordinary_22_leg_plan_is_admissible_with_the_scripts_own_digest(
     assert (r["verdict"], r["exit_code"], r["pays_plan_gate"], r["apply_authorized"]) == (
         "ADMISSIBLE_PLAN", 0, True, False)
     printed = json.loads(text)
-    assert r["document"] == printed and r["planned_count"] == 22
+    assert app_text(reader, r) == text and r["planned_count"] == 22  # the full JSON, from the receipt
+    assert "document" not in r  # retained once, as the log; never duplicated
     # The digest came from the real plan_digest over the real ApprovedGrades.
     assert r["plan_digest"] == printed["plan_digest"]
     assert reader.script_digest(repair, printed["planned"]) == printed["plan_digest"]
@@ -280,16 +326,17 @@ def test_the_ordinary_22_leg_plan_is_admissible_with_the_scripts_own_digest(
 def test_the_ordinary_plan_does_not_fit_the_proposed_16384_byte_envelope(
     reader, repair, monkeypatch, capsys, netrc, heroku
 ):
-    """The exact source limitation: logplex frames every one of the plan's 195
-    printed lines, so the honest ordinary read is larger than 16,384 bytes. At
-    the proposed cap the reader fails closed rather than truncate the plan."""
+    """The source limitation that 035A answered, kept as evidence: logplex frames
+    every one of the plan's 195 printed lines, so the honest ordinary read alone
+    is larger than 16,384 bytes. At that cap the reader fails closed rather than
+    truncate the plan."""
     text, _ = real_print("plan", repair, monkeypatch, capsys)
     framed = frame(text, 0)
-    assert len(text.encode()) < reader.CAP_BYTES < len(framed)
-    r = read(reader, heroku(framed), netrc)
+    assert len(text.encode()) < FIRST_ENVELOPE < len(framed)
+    r = read(reader, heroku(framed), netrc, cap=FIRST_ENVELOPE)
     assert r["cap_bytes"] == 16_384
     assert (r["verdict"], r["reason"], r["exit_code"]) == ("UNCERTAIN", "OVERSIZED", 30)
-    assert "document" not in r and r["bytes"]["used"] <= reader.CAP_BYTES + 1
+    assert "plan_digest" not in r
 
 
 # ── 2. stop, refusal, and the exit 1 that is NOT a stop ──────────────────────
@@ -304,7 +351,8 @@ def test_a_changed_population_is_a_stop_result_that_must_never_be_applied(
     assert (r["verdict"], r["exit_code"], r["pays_plan_gate"], r["apply_authorized"]) == (
         "STOP_RESULT", 10, False, False)
     assert r["stop_population_must_never_be_applied"] is True
-    assert r["planned_count"] == 21 and r["document"]["stop"].startswith("plan holds 21 legs")
+    assert r["planned_count"] == 21 and r["stop"].startswith("plan holds 21 legs")
+    assert app_text(reader, r) == text
 
 
 def test_an_exit_1_document_whose_stop_is_not_the_scripts_own_is_not_a_stop(
@@ -557,7 +605,7 @@ def test_a_refused_connection_is_one_attempt(reader, netrc):
         attempts.append(host)
         raise ConnectionRefusedError("inert")
 
-    r = reader.read_plan(LAUNCH, netrc, connector=connector)
+    r = reader.read_plan(launch_file(netrc.parent), netrc, connector=connector)
     assert (r["verdict"], r["reason"], attempts) == ("UNCERTAIN", "TRANSPORT", ["api.heroku.com"])
 
 
@@ -571,7 +619,7 @@ def test_an_operator_interrupt_propagates_as_itself_never_as_a_verdict(reader, n
         return fake.connect(host, port, budget)
 
     with pytest.raises(KeyboardInterrupt):
-        reader.read_plan(LAUNCH, netrc, connector=connector)
+        reader.read_plan(launch_file(netrc.parent), netrc, connector=connector)
 
 
 @pytest.mark.parametrize("url", [
@@ -622,20 +670,44 @@ def test_a_netrc_without_one_usable_api_entry_is_refused(reader, tmp_path, herok
 
 def test_a_credential_file_past_the_cap_is_oversized(reader, tmp_path, heroku):
     path = tmp_path / "netrc"
-    path.write_text(f"machine api.heroku.com\n  password {TOKEN}\n" + "# pad\n" * 4000)
+    path.write_text(f"machine api.heroku.com\n  password {TOKEN}\n" + "# pad\n" * 12000)
     r = read(reader, heroku(b""), path)
     assert (r["verdict"], r["reason"]) == ("UNCERTAIN", "OVERSIZED")
-    assert r["bytes"]["by_stage"]["credential"] == reader.CAP_BYTES + 1
+    room = reader.CAP_BYTES - reader.RECEIPT_RESERVE - r["bytes"]["by_stage"]["launcher"]
+    assert r["bytes"]["by_stage"]["credential"] == room + 1
 
 
 # ── 9. overflow, deadline and cleanup ────────────────────────────────────────
 
 
-def test_output_past_the_cap_stops_one_byte_past_it(reader, repair, monkeypatch, capsys, netrc, heroku):
+@pytest.mark.parametrize("cap", [reader_cap for reader_cap in range(40_000, 65_537, 2_957)])
+def test_output_past_the_cap_stops_a_few_bytes_past_it(
+    reader, repair, monkeypatch, capsys, netrc, heroku, cap
+):
     text, _ = real_print("plan", repair, monkeypatch, capsys)
-    r = read(reader, heroku(frame(text * 6, 0), chunk=8192), netrc, cap=ROOMY)
+    r = read(reader, heroku(frame(text * 6, 0), chunk=8192), netrc, cap=cap)
     assert (r["verdict"], r["reason"]) == ("UNCERTAIN", "OVERSIZED")
-    assert r["bytes"]["used"] == ROOMY + 1
+    # Intake and retention together stop within a few bytes of the cap, wherever it falls.
+    assert cap < r["bytes"]["charged"] <= cap + 4
+
+
+def test_a_log_receive_never_asks_for_more_than_the_cap_can_pay(reader):
+    """Each log byte costs 1 taken in plus 4/3 retained: a receive asks for at
+    most room*3/7 + 1 bytes, so retention can never overshoot the cap."""
+    asked = []
+
+    class Sock:
+        def settimeout(self, t):
+            pass
+
+        def recv_into(self, buf, n):
+            asked.append(n)
+            return 0
+
+    budget = reader.Budget(cap=7_000)
+    reader._Metered(Sock(), budget, "log").recv_into(bytearray(8192))
+    reader._Metered(Sock(), budget, "api").recv_into(bytearray(8192))
+    assert asked == [3_001, 7_001]
 
 
 def test_a_slow_drip_cannot_stretch_the_shared_deadline(reader, repair, monkeypatch, capsys, netrc, heroku):
@@ -659,7 +731,7 @@ def test_a_resolver_that_answers_late_is_abandoned_at_the_deadline(reader, netrc
         raise AssertionError("a late answer was used")
 
     t0 = time.monotonic()
-    r = reader.read_plan(LAUNCH, netrc, connector=connector, deadline_s=0.5)
+    r = reader.read_plan(launch_file(netrc.parent), netrc, connector=connector, deadline_s=0.5)
     assert (r["verdict"], r["reason"]) == ("UNCERTAIN", "DEADLINE")
     assert time.monotonic() - t0 < 1.0 and not answered.is_set()
     answered.wait(3)  # the abandoned thread finishes later and changes nothing
@@ -680,7 +752,8 @@ def test_a_close_that_raises_never_changes_the_verdict(reader, repair, monkeypat
             self._s.close()
             raise OSError("inert close failure")
 
-    r = reader.read_plan(LAUNCH, netrc, connector=lambda h, p, b: Raising(fake.connect(h, p, b)),
+    r = reader.read_plan(launch_file(netrc.parent), netrc,
+                         connector=lambda h, p, b: Raising(fake.connect(h, p, b)),
                          cap=ROOMY)
     assert r["verdict"] == "ADMISSIBLE_PLAN"
 
@@ -701,12 +774,15 @@ def test_no_credential_or_bearer_url_leaves_the_reader(
     receipt = tmp_path / "receipt.json"
     code = reader.main(["--launcher", str(tmp_path / "launch.txt"), "--receipt", str(receipt)])
     captured = capsys.readouterr()
-    assert code == 30  # the CLI reads at the proposed 16,384 cap: the ordinary plan is OVERSIZED
+    assert code == 0  # the CLI reads at the revised 65,536 cap: the ordinary plan pays
     blob = receipt.read_bytes() + captured.out.encode() + captured.err.encode()
     for secret in (TOKEN, LOG_PATH, "0f0e0d0c-inert", "srv=1700000000"):
         assert secret.encode() not in blob
     assert oct(receipt.stat().st_mode & 0o777) == "0o600"
-    assert json.loads(receipt.read_text())["reason"] == "OVERSIZED"
+    final = json.loads(receipt.read_text())
+    assert final["verdict"] == "ADMISSIBLE_PLAN" and final["apply_authorized"] is False
+    assert final["bytes"]["intake"] + receipt.stat().st_size <= reader.CAP_BYTES
+    assert f"receipt_bytes={receipt.stat().st_size}" in captured.out
 
 
 def test_proxy_variables_are_ignored_and_tls_is_verified(reader, monkeypatch):
@@ -743,11 +819,11 @@ def test_the_reader_names_no_app_command_or_endpoint_argument(reader):
     import inspect
 
     assert set(inspect.signature(reader.read_plan).parameters) == {
-        "launcher", "netrc_path", "connector", "deadline_s", "cap"}
+        "launcher_path", "netrc_path", "connector", "budget", "deadline_s", "cap"}
     src = READER.read_text()
     assert "add_argument" in src and src.count("add_argument(") == 2
     assert (reader.APP, reader.API_HOST, reader.DEADLINE_S, reader.CAP_BYTES) == (
-        "bainluck-heavy", "api.heroku.com", 30.0, 16_384)
+        "bainluck-heavy", "api.heroku.com", 30.0, 65_536)
     code = src.split('"""', 2)[2]  # everything after the module docstring
     for word in ("subprocess", "os.system", "posix_spawn", "ps:stop",
                  "ps:kill", "--apply", "--backup", "--restore", "HEROKU_API_KEY"):
@@ -762,3 +838,271 @@ def test_usage_errors_and_an_existing_receipt_are_uncertain_not_a_verdict(reader
     existing.write_text("{}")
     assert reader.main(["--launcher", str(tmp_path / "nope"), "--receipt", str(existing)]) == 30
     assert existing.read_text() == "{}"
+
+
+# ── 11. 035A R1: a partial tail is never paid on ─────────────────────────────
+
+
+def test_root_partial_tail_reproducer_now_refuses(reader, repair, monkeypatch, capsys):
+    """Root's inert reproducer (artifacts/calibration-1853-reader-review-20261020)."""
+    text, status = real_print("plan", repair, monkeypatch, capsys)
+    script, kms = reader.load_pinned()
+    log = reader.LogRead(RUN)
+    log.feed(frame(text, status))
+    assert reader.judge(log, script, kms)[0] == reader.ADMISSIBLE  # the complete control
+    log = reader.LogRead(RUN)
+    log.feed(frame(text, status) + b"2026-10-20T20:15:00Z app[run.9999]: incomplete")
+    assert log.partial and not log.ready()
+    with pytest.raises(reader.Uncertain) as e:
+        reader.judge(log, script, kms)
+    assert e.value.reason == "PARTIAL_TAIL"
+
+
+def _tail(text, partial: bytes) -> tuple[bytes, bytes]:
+    """The log minus its last two lines, and those two lines plus ``partial`` as
+    ONE later chunk, so the partial arrives in the same buffer as the exit."""
+    lines = frame(text, 0).split(b"\n")[:-1]
+    return b"\n".join(lines[:-2]) + b"\n", b"\n".join(lines[-2:]) + b"\n" + partial
+
+
+_TS = b"2026-10-20T20:59:59.000000+00:00 "
+
+
+@pytest.mark.parametrize("partial,rest,expect", [
+    (_TS + b"app[run.99", b"99]: incomplete\n", "MISMATCHED_RUN"),
+    (_TS + b"app[" + RUN.encode() + b"]: trail", b"ing text\n", "EXTRA_TEXT"),
+    (_TS + b"heroku[" + RUN.encode() + b"]: Process exit", b"ed with status 0\n", "AMBIGUOUS_TERMINAL"),
+    (_TS + b"heroku[" + RUN.encode() + b"]: Error R1", b"4 (Memory quota exceeded)\n", "UNRECOGNIZED_LIFECYCLE"),
+    (_TS + b"heroku[" + RUN.encode() + b"]: State changed from complete to do", b"wn\n", "ADMISSIBLE_PLAN"),
+], ids=["wrong-run", "extra-app", "second-exit", "lifecycle-r14", "valid-lifecycle-control"])
+def test_a_partial_tail_is_read_to_its_end_inside_the_deadline_then_judged(
+    reader, repair, monkeypatch, capsys, netrc, heroku, partial, rest, expect
+):
+    text, _ = real_print("plan", repair, monkeypatch, capsys)
+    body, last = _tail(text, partial)
+    fake = heroku(body, then=[(0.0, last), (0.3, rest)], keep_open=True)
+    r = read(reader, fake, netrc, deadline_s=5)
+    assert r["log"]["partial_tail"] is False
+    assert (r["verdict"] if expect == "ADMISSIBLE_PLAN" else r["reason"]) == expect
+
+
+def test_a_partial_tail_that_never_completes_is_never_paid(
+    reader, repair, monkeypatch, capsys, netrc, heroku
+):
+    text, _ = real_print("plan", repair, monkeypatch, capsys)
+    body, last = _tail(text, _TS + b"app[run.99")
+    r = read(reader, heroku(body, then=[(0.0, last)], keep_open=True), netrc, deadline_s=1.0)
+    assert (r["verdict"], r["reason"]) == ("UNCERTAIN", "DEADLINE") and r["log"]["partial_tail"]
+    r = read(reader, heroku(body, then=[(0.0, last)]), netrc, deadline_s=5)  # the stream ends
+    assert (r["verdict"], r["reason"]) == ("UNCERTAIN", "MALFORMED_FRAME")
+
+
+# ── 12. 035A R2: complete evidence AND its receipt fit one cap ───────────────
+
+
+@pytest.mark.parametrize("kind,status,verdict,legs", [
+    ("plan", 0, "ADMISSIBLE_PLAN", 22), ("stop", 1, "STOP_RESULT", 21), ("stop30", 1, "STOP_RESULT", 30),
+])
+def test_complete_evidence_and_its_receipt_fit_the_revised_envelope(
+    reader, repair, monkeypatch, capsys, netrc, heroku, kind, status, verdict, legs
+):
+    """Real prints, real framing (five-digit run), 2 KiB of headers on each
+    response: the whole intake plus the whole serialized receipt stay inside
+    65,536 bytes, and the receipt is the real one, not the oversized stand-in."""
+    text, code = real_print(kind, repair, monkeypatch, capsys)
+    assert code == status
+    run = "run.43210"
+    launcher = LAUNCH.replace(RUN.encode(), run.encode())
+    budget = reader.Budget()
+    fake = heroku(frame(text, status, run=run), header_pad=2048)
+    r = reader.read_plan(launch_file(netrc.parent, launcher), netrc, connector=fake.connect,
+                         budget=budget)
+    body = reader.serialize_receipt(r, budget)
+    final = json.loads(body)
+    assert (final["verdict"], final["planned_count"]) == (verdict, legs)
+    intake = final["bytes"]["intake"]
+    assert intake + len(body) <= reader.CAP_BYTES, (intake, len(body))
+    assert budget.used <= reader.CAP_BYTES
+    assert base64.b64decode(final["log"]["raw_b64"]) == frame(text, status, run=run)
+
+
+def test_retention_and_the_receipt_reserve_are_charged_as_the_log_arrives(
+    reader, repair, monkeypatch, capsys, netrc, heroku
+):
+    text, _ = real_print("plan", repair, monkeypatch, capsys)
+    r = read(reader, heroku(frame(text, 0)), netrc)
+    stages, raw = r["bytes"]["by_stage"], base64.b64decode(r["log"]["raw_b64"])
+    assert stages["log_retained"] == len(r["log"]["raw_b64"]) == 4 * ((len(raw) + 2) // 3)
+    assert stages["receipt_reserve"] == reader.RECEIPT_RESERVE
+    assert r["bytes"]["intake"] == r["bytes"]["charged"] - stages["log_retained"] - reader.RECEIPT_RESERVE
+    assert "credential" in stages and "launcher" in stages and TOKEN not in json.dumps(r)
+
+
+def test_a_receipt_that_cannot_fit_is_replaced_never_truncated(reader):
+    budget = reader.Budget(cap=10_000)
+    budget.charge(9_000, "log")
+    receipt = {"verdict": "ADMISSIBLE_PLAN", "reason": "ADMISSIBLE_PLAN", "exit_code": 0,
+               "pays_plan_gate": True, "apply_authorized": False, "run": RUN,
+               "log": {"raw_b64": "A" * 4000}, "bytes": {"intake": 9_000}}
+    body = reader.serialize_receipt(receipt, budget)
+    final = json.loads(body)
+    assert (final["verdict"], final["reason"], final["exit_code"]) == ("UNCERTAIN", "RECEIPT_OVERSIZED", 30)
+    assert final["pays_plan_gate"] is False and final["original_reason"] == "ADMISSIBLE_PLAN"
+    assert "log" not in final and final["run"] == RUN and len(body) < 1_000
+
+
+# ── 13. 035A R3: every wait is sized from the one deadline ───────────────────
+
+
+@pytest.fixture
+def silent_unix_server():
+    import tempfile
+
+    where = tempfile.mkdtemp(dir="/tmp", prefix="p1853-")
+    path = os.path.join(where, "s")
+    srv = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    srv.bind(path)
+    srv.listen(4)  # accepts into the backlog and never answers a ClientHello
+    yield path
+    srv.close()
+    os.unlink(path)
+    os.rmdir(where)
+
+
+def test_the_handshake_gets_only_what_connect_left(reader, monkeypatch, silent_unix_server):
+    real_connect = socket.socket.connect
+
+    def slow_connect(self, addr):
+        time.sleep(0.6)
+        return real_connect(self, addr)
+
+    monkeypatch.setattr(socket.socket, "connect", slow_connect)
+    gai = lambda *a, **k: [(socket.AF_UNIX, socket.SOCK_STREAM, 0, "", silent_unix_server)]  # noqa: E731
+    t0 = time.monotonic()
+    with pytest.raises((reader.Uncertain, TimeoutError)):
+        reader.connect_tls("api.heroku.com", 443, reader.Budget(deadline_s=1.0), getaddrinfo=gai)
+    assert time.monotonic() - t0 < 1.3  # a stale pre-connect timeout would run to ~1.6 s
+
+
+def test_a_tls_context_that_loads_past_the_deadline_is_late(reader, monkeypatch):
+    real = reader.tls_context
+    asked = []
+    monkeypatch.setattr(reader, "tls_context", lambda: (time.sleep(0.4), real())[1])
+    with pytest.raises(reader.Uncertain) as e:
+        reader.connect_tls("api.heroku.com", 443, reader.Budget(deadline_s=0.3),
+                           getaddrinfo=lambda *a, **k: asked.append(a) or [])
+    assert e.value.reason == "DEADLINE" and asked == []
+
+
+def test_a_handshake_that_returns_after_the_deadline_is_late_and_closed(
+    reader, monkeypatch, silent_unix_server
+):
+    closed = []
+
+    class LateTLS:
+        def close(self):
+            closed.append(True)
+
+    class Ctx:
+        def wrap_socket(self, raw, server_hostname):
+            time.sleep(0.5)
+            raw.detach()
+            return LateTLS()
+
+    monkeypatch.setattr(reader, "tls_context", Ctx)
+    gai = lambda *a, **k: [(socket.AF_UNIX, socket.SOCK_STREAM, 0, "", silent_unix_server)]  # noqa: E731
+    with pytest.raises(reader.Uncertain) as e:
+        reader.connect_tls("api.heroku.com", 443, reader.Budget(deadline_s=0.3), getaddrinfo=gai)
+    assert e.value.reason == "DEADLINE" and closed == [True]
+
+
+@pytest.mark.parametrize("make,detail", [
+    ("fifo", "launcher evidence is not a regular file"),
+    ("missing", "launcher evidence unavailable (FileNotFoundError)"),
+    ("directory", "launcher evidence is not a regular file"),
+    ("latin1", "launcher evidence is not UTF-8"),
+])
+def test_launch_evidence_is_read_like_the_credential(reader, netrc, heroku, tmp_path, make, detail):
+    path = tmp_path / "launch-input"
+    writer = None
+    if make == "fifo":
+        os.mkfifo(path)
+        writer = os.open(path, os.O_RDWR | os.O_NONBLOCK)
+        os.write(writer, LAUNCH[:40])
+    elif make == "directory":
+        path.mkdir()
+    elif make == "latin1":
+        path.write_bytes(LAUNCH.replace("⬢".encode(), b"\xe2"))
+    fake = heroku(b"")
+    t0 = time.monotonic()
+    try:
+        r = reader.read_plan(path, netrc, connector=fake.connect)
+    finally:
+        if writer is not None:
+            os.close(writer)
+    assert (r["verdict"], r["reason"], r["detail"]) == ("UNCERTAIN", "LAUNCHER", detail)
+    assert time.monotonic() - t0 < 1 and fake.hosts == [] and "credential" not in r["bytes"]["by_stage"]
+
+
+def test_main_starts_the_deadline_first_and_a_fifo_launcher_cannot_hold_it(reader, tmp_path, capsys):
+    fifo = tmp_path / "launch.fifo"
+    os.mkfifo(fifo)
+    writer = os.open(fifo, os.O_RDWR | os.O_NONBLOCK)
+    receipt = tmp_path / "receipt.json"
+    t0 = time.monotonic()
+    try:
+        code = reader.main(["--launcher", str(fifo), "--receipt", str(receipt)])
+    finally:
+        os.close(writer)
+    assert code == 30 and time.monotonic() - t0 < 2
+    final = json.loads(receipt.read_text())
+    assert (final["reason"], final["detail"]) == ("LAUNCHER", "launcher evidence is not a regular file")
+    assert final["bytes"]["by_stage"] == {"receipt_reserve": reader.RECEIPT_RESERVE}  # never read
+
+
+class _Preloaded:
+    """A log socket whose whole response has already arrived: every byte is
+    available to the very first receive, so any read-ahead would take it in."""
+
+    def __init__(self, response: bytes) -> None:
+        self._data, self.sent = memoryview(response), b""
+
+    def settimeout(self, t):
+        pass
+
+    def sendall(self, data):
+        self.sent += bytes(data)
+
+    def recv_into(self, buf, n=0):
+        n = min(n or len(buf), len(buf), len(self._data))
+        if not n:
+            raise TimeoutError("inert: nothing more will arrive")
+        buf[:n] = self._data[:n]
+        self._data = self._data[n:]
+        return n
+
+    def close(self):
+        pass
+
+
+def test_every_log_byte_taken_in_is_a_byte_handed_to_the_parser(
+    reader, repair, monkeypatch, capsys, netrc, heroku
+):
+    """No read-ahead: bytes that have already arrived after the terminal evidence
+    stay on the socket — never taken in and left unvalidated in a buffer."""
+    text, _ = real_print("plan", repair, monkeypatch, capsys)
+    log = frame(text, 0)
+    parts = [log[i:i + 1000] for i in range(0, len(log), 1000)] + [b"z" * 3000]
+    response = b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n" + b"".join(
+        b"%x\r\n" % len(p) + p + b"\r\n" for p in parts)
+    fake = heroku(b"")
+
+    def connector(host, port, budget):
+        return fake.connect(host, port, budget) if host == "api.heroku.com" else _Preloaded(response)
+
+    r = reader.read_plan(launch_file(netrc.parent), netrc, connector=connector)
+    assert r["verdict"] == "ADMISSIBLE_PLAN"
+    raw = base64.b64decode(r["log"]["raw_b64"])
+    assert raw == log
+    framing = r["bytes"]["by_stage"]["log"] - len(raw)  # status line, header, chunk sizes
+    assert 0 < framing < 300, framing  # the 3,000-byte chunk behind the evidence was never taken in
