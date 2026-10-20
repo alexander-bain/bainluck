@@ -915,6 +915,16 @@ final class HeaderAndFinalCardFit11285Tests: XCTestCase {
         XCTAssertEqual(NFLCardReader9483.cardWidth(320, accessibility: false), 276)
         XCTAssertEqual(NFLCardReader9483.cardWidth(375, accessibility: true), 331)
         XCTAssertEqual(NFLCardReader9483.cardWidth(200, accessibility: false), 240, "the old floor")
+        // A text-size change across the accessibility boundary resizes every
+        // card at 320, so the rail must re-seat the open card; at 393 the
+        // cards keep their width and the rail does not re-seat.
+        let order = ["a", "b", "c"]
+        XCTAssertNotEqual(NFLCardReader9483.railGeneration(width: 320, accessibility: true, order: order),
+                          NFLCardReader9483.railGeneration(width: 320, accessibility: false, order: order),
+                          "320: a Large-to-accessibility switch must re-seat the open card")
+        XCTAssertEqual(NFLCardReader9483.railGeneration(width: 393, accessibility: true, order: order),
+                       NFLCardReader9483.railGeneration(width: 393, accessibility: false, order: order),
+                       "393: a text-size switch must not re-seat")
 
         let finish = try liveFinishCard()
         let (_, markets) = try finalPage()

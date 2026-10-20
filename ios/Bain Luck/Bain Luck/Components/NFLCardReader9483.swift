@@ -223,10 +223,17 @@ struct NFLCardReader9483: View {
 
     private struct IdentifiedRow: Identifiable { let id: String }
 
-    /// What the rail's card frames and order depend on (#11060).
+    /// What the rail's card frames and order depend on (#11060). Since
+    /// #11285 a card's width also follows the type size on a narrow phone,
+    /// so the generation carries the width the frame actually uses.
     struct RailGeneration: Equatable {
         let width: CGFloat
+        let cardWidth: CGFloat
         let order: [String]
+    }
+
+    static func railGeneration(width: CGFloat, accessibility: Bool, order: [String]) -> RailGeneration {
+        RailGeneration(width: width, cardWidth: cardWidth(width, accessibility: accessibility), order: order)
     }
 
     /// One row of controls — a short Back and, when there is one, Refresh —
@@ -315,9 +322,11 @@ struct NFLCardReader9483: View {
             // #11060 — a rotation or width change resizes every card, and a
             // Refresh can reorder them; the old offset then lands on another
             // card while `visible` (count, dots, focus) still names this one.
-            // Re-seat on the width+order generation and ignore the reports the
-            // re-layout makes until the card has landed again.
-            .onChange(of: RailGeneration(width: width, order: cards.map(\.id))) { _, _ in
+            // A text-size change on a narrow phone resizes them too (#11285).
+            // Re-seat on the width+card width+order generation and ignore the
+            // reports the re-layout makes until the card has landed again.
+            .onChange(of: Self.railGeneration(width: width, accessibility: dynamicTypeSize.isAccessibilitySize,
+                                              order: cards.map(\.id))) { _, _ in
                 guard let visible else { return }
                 seated = false
                 proxy.scrollTo(visible, anchor: .leading)
