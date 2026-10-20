@@ -1369,6 +1369,35 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
         return found[0][1] if primary_quote_custody.eligible(
             row, found[0], held_quotes, overlaid=overlaid,
         ) else None
+    def steady_book_signature(ticker):
+        # #11317 P2: every in-memory input the bundled proof reads for this
+        # ticker, compared (never interpreted) by the refresher: a refused
+        # pair is read again only once one of these differs. The stored row
+        # is not here; a new stored price reaches the refresher as a batch.
+        # The midpoint is its own term: the two-leg devig proves each leg on
+        # it, and an ask-only primary price can already equal the midpoint
+        # that later appears.
+        ids = ticker_to_ids.get(ticker) if isinstance(ticker, str) else None
+        if ids is None:
+            return None
+        market_id, oid = ids[0], ids[1]
+        socks = tuple(
+            (id(client.sock), client.sock.current_book_primary_price(ticker),
+             client.sock.current_book_midpoint(ticker),
+             client.sock.current_primary_input(ticker))
+            for client in game_clients
+            if ticker in client.tickers and client.task is not None
+            and not client.task.done()
+        )
+        held = getattr(blend_refresher.held_quotes, "_quotes", None) or {}
+        return (
+            market_id in prices.settled_market_ids, socks,
+            primary_quote_custody.received.get(oid),
+            primary_quote_custody.landed.get(oid),
+            primary_quote_custody.held.get(oid),
+            held.get(oid),
+        )
+    blend_refresher.current_book_signature = steady_book_signature
     blend_refresher.current_primary_input = steady_primary_input
     blend_refresher.current_book_primary_price = steady_book_primary_price
     blend_refresher.require_current_book_proof = True
@@ -3071,7 +3100,8 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
                 "%d msgs | blend stamped=%d no_reading=%d throttled=%d errors=%d "
                 "lock_skipped=%d unobserved=%d stale=%d | %s deferred=%d "
                 "preempted=%d beside=%d fenced=%d live=%d book=%d quotes=%d "
-                "resnapshots=%d quote_priority=%d probe_refused=%d",
+                "resnapshots=%d quote_priority=%d probe_refused=%d "
+                "bundled_refused=%d parked=%d",
                 stats["price_updates"], stats["flushes"],
                 stats["settlements"], stats["errors"],
                 game_messages(),
@@ -3092,6 +3122,10 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
                 # #10090: of `live`, the not-live events lifted by their quotes.
                 len(quote_only_event_ids),
                 stats["short_probe_refused"],
+                # #11317: of no_reading, the bundled-pair proof's refusals;
+                # then the refused pairs parked until an input changes.
+                blend.get("bundled_refused", 0),
+                len(getattr(blend_refresher, "_book_refused", ())),
             )
             flush_timings.reset()
             _report_liveness(
