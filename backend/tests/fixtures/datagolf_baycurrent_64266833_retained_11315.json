@@ -1,0 +1,5642 @@
+{
+ "provenance": {
+  "kind": "RETAINED \u2014 verbatim values extracted from one immutable capture; nothing re-derived",
+  "source_path": "artifacts/discovery-containers-release-plan/event-page-design-20261011/t20-chart-first-v471/prototype/src/golfJourney.json",
+  "source_sha256": "1bdd575deb988730374dc7e52225bad45b6312671b2eab73a184dd5fa0330fa1",
+  "source_bytes": 824843,
+  "captured_at": "2026-10-12T23:53:53.546490+00:00",
+  "blocks": {
+   "market": "capture['market'] scalar identity fields",
+   "outcomes": "capture['market']['outcomes'][*] id, name, is_winner, resolution_source (external_id is NOT in the capture)",
+   "leaderboard": "capture['history']['leaderboard'] (the history route serves the market's stored metadata board)",
+   "lines": "capture['history']['outcomes'][*] for 241857512 (Brennan) and 242242539 (Bridgeman), points verbatim"
+  },
+  "not_retained": "outcome external_id, market settled_at, metadata datagolf_event_id/tour/leaderboard_updated_at/round_history, row versions"
+ },
+ "market": {
+  "id": 64266833,
+  "name": "Baycurrent Classic - Winner",
+  "status": "resolved",
+  "source": "datagolf",
+  "external_id": "datagolf:pga:527:win",
+  "market_type": "field",
+  "mutually_exclusive": true,
+  "commence_time": "2026-10-08T00:00:00+00:00",
+  "resolution_date": "2026-10-11T00:00:00+00:00",
+  "outcome_count": 155
+ },
+ "outcomes": [
+  {
+   "id": 242242520,
+   "name": "Xander Schauffele",
+   "is_winner": null,
+   "resolution_source": null
+  },
+  {
+   "id": 242242522,
+   "name": "Wyndham Clark",
+   "is_winner": null,
+   "resolution_source": null
+  },
+  {
+   "id": 242242527,
+   "name": "Collin Morikawa",
+   "is_winner": null,
+   "resolution_source": null
+  },
+  {
+   "id": 242242528,
+   "name": "Justin Thomas",
+   "is_winner": null,
+   "resolution_source": null
+  },
+  {
+   "id": 242242532,
+   "name": "Ryan Gerard",
+   "is_winner": null,
+   "resolution_source": null
+  },
+  {
+   "id": 242242534,
+   "name": "Hideki Matsuyama",
+   "is_winner": null,
+   "resolution_source": null
+  },
+  {
+   "id": 241857513,
+   "name": "Doug Ghim",
+   "is_winner": null,
+   "resolution_source": null
+  },
+  {
+   "id": 242242535,
+   "name": "Min Woo Lee",
+   "is_winner": null,
+   "resolution_source": null
+  },
+  {
+   "id": 242242537,
+   "name": "Adam Scott",
+   "is_winner": null,
+   "resolution_source": null
+  },
+  {
+   "id": 241857514,
+   "name": "Maverick McNealy",
+   "is_winner": null,
+   "resolution_source": null
+  },
+  {
+   "id": 242242539,
+   "name": "Jacob Bridgeman",
+   "is_winner": null,
+   "resolution_source": null
+  },
+  {
+   "id": 241857512,
+   "name": "Michael Brennan",
+   "is_winner": null,
+   "resolution_source": null
+  },
+  {
+   "id": 242242545,
+   "name": "Michael Thorbjornsen",
+   "is_winner": null,
+   "resolution_source": null
+  },
+  {
+   "id": 242242546,
+   "name": "Sungjae Im",
+   "is_winner": null,
+   "resolution_source": null
+  },
+  {
+   "id": 242242542,
+   "name": "Kurt Kitayama",
+   "is_winner": null,
+   "resolution_source": null
+  },
+  {
+   "id": 241857515,
+   "name": "Matt Wallace",
+   "is_winner": null,
+   "resolution_source": null
+  },
+  {
+   "id": 241857522,
+   "name": "Johnny Keefer",
+   "is_winner": null,
+   "resolution_source": null
+  },
+  {
+   "id": 242242549,
+   "name": "Keegan Bradley",
+   "is_winner": null,
+   "resolution_source": null
+  },
+  {
+   "id": 241857519,
+   "name": "Kevin Yu",
+   "is_winner": null,
+   "resolution_source": null
+  },
+  {
+   "id": 241857517,
+   "name": "Jackson Suber",
+   "is_winner": null,
+   "resolution_source": null
+  },
+  {
+   "id": 242242554,
+   "name": "Rickie Fowler",
+   "is_winner": null,
+   "resolution_source": null
+  },
+  {
+   "id": 242242553,
+   "name": "Alex Smalley",
+   "is_winner": null,
+   "resolution_source": null
+  },
+  {
+   "id": 242242555,
+   "name": "Keita Nakajima",
+   "is_winner": null,
+   "resolution_source": null
+  },
+  {
+   "id": 242242557,
+   "name": "Ryo Hisatsune",
+   "is_winner": null,
+   "resolution_source": null
+  },
+  {
+   "id": 242242559,
+   "name": "Keith Mitchell",
+   "is_winner": null,
+   "resolution_source": null
+  },
+  {
+   "id": 241857545,
+   "name": "Steven Fisk",
+   "is_winner": null,
+   "resolution_source": null
+  },
+  {
+   "id": 241857538,
+   "name": "Zach Bauchou",
+   "is_winner": null,
+   "resolution_source": null
+  },
+  {
+   "id": 241857527,
+   "name": "Max Homa",
+   "is_winner": null,
+   "resolution_source": null
+  },
+  {
+   "id": 241857524,
+   "name": "Kristoffer Ventura",
+   "is_winner": null,
+   "resolution_source": null
+  },
+  {
+   "id": 242242563,
+   "name": "Jordan Spieth",
+   "is_winner": null,
+   "resolution_source": null
+  },
+  {
+   "id": 241857518,
+   "name": "Jordan Smith",
+   "is_winner": null,
+   "resolution_source": null
+  },
+  {
+   "id": 242242564,
+   "name": "Michael Kim",
+   "is_winner": null,
+   "resolution_source": null
+  },
+  {
+   "id": 241857534,
+   "name": "Max Greyserman",
+   "is_winner": null,
+   "resolution_source": null
+  },
+  {
+   "id": 241857520,
+   "name": "Davis Thompson",
+   "is_winner": null,
+   "resolution_source": null
+  },
+  {
+   "id": 242242568,
+   "name": "Brian Harman",
+   "is_winner": null,
+   "resolution_source": null
+  },
+  {
+   "id": 241857521,
+   "name": "Mac Meissner",
+   "is_winner": null,
+   "resolution_source": null
+  },
+  {
+   "id": 241857531,
+   "name": "Kevin Roy",
+   "is_winner": null,
+   "resolution_source": null
+  },
+  {
+   "id": 241857548,
+   "name": "Stephan Jaeger",
+   "is_winner": null,
+   "resolution_source": null
+  },
+  {
+   "id": 241857549,
+   "name": "Lee Hodges",
+   "is_winner": null,
+   "resolution_source": null
+  },
+  {
+   "id": 241857530,
+   "name": "Pierceson Coody",
+   "is_winner": null,
+   "resolution_source": null
+  },
+  {
+   "id": 241857525,
+   "name": "Beau Hossler",
+   "is_winner": null,
+   "resolution_source": null
+  },
+  {
+   "id": 242242573,
+   "name": "Ricky Castillo",
+   "is_winner": null,
+   "resolution_source": null
+  },
+  {
+   "id": 242242578,
+   "name": "Sahith Theegala",
+   "is_winner": null,
+   "resolution_source": null
+  },
+  {
+   "id": 241857533,
+   "name": "Ben Kohles",
+   "is_winner": null,
+   "resolution_source": null
+  },
+  {
+   "id": 241857543,
+   "name": "Christiaan Bezuidenhout",
+   "is_winner": null,
+   "resolution_source": null
+  },
+  {
+   "id": 241857540,
+   "name": "Billy Horschel",
+   "is_winner": null,
+   "resolution_source": null
+  },
+  {
+   "id": 241857536,
+   "name": "Rasmus Neergaard-Petersen",
+   "is_winner": null,
+   "resolution_source": null
+  },
+  {
+   "id": 241857556,
+   "name": "Taylor Moore",
+   "is_winner": null,
+   "resolution_source": null
+  },
+  {
+   "id": 241857544,
+   "name": "John Parry",
+   "is_winner": null,
+   "resolution_source": null
+  },
+  {
+   "id": 241857542,
+   "name": "Nick Taylor",
+   "is_winner": null,
+   "resolution_source": null
+  },
+  {
+   "id": 241857550,
+   "name": "Matt McCarty",
+   "is_winner": null,
+   "resolution_source": null
+  },
+  {
+   "id": 241857571,
+   "name": "Takumi Kanaya",
+   "is_winner": null,
+   "resolution_source": null
+  },
+  {
+   "id": 241857562,
+   "name": "Aldrich Potgieter",
+   "is_winner": null,
+   "resolution_source": null
+  },
+  {
+   "id": 242242596,
+   "name": "Nico Echavarria",
+   "is_winner": null,
+   "resolution_source": null
+  },
+  {
+   "id": 241857551,
+   "name": "Chandler Phillips",
+   "is_winner": null,
+   "resolution_source": null
+  },
+  {
+   "id": 242242594,
+   "name": "Taylor Pendrith",
+   "is_winner": null,
+   "resolution_source": null
+  },
+  {
+   "id": 241857567,
+   "name": "Tony Finau",
+   "is_winner": null,
+   "resolution_source": null
+  },
+  {
+   "id": 241857561,
+   "name": "Denny McCarthy",
+   "is_winner": null,
+   "resolution_source": null
+  },
+  {
+   "id": 241857576,
+   "name": "Patrick Rodgers",
+   "is_winner": null,
+   "resolution_source": null
+  },
+  {
+   "id": 242242598,
+   "name": "Jinichiro Kozuma",
+   "is_winner": null,
+   "resolution_source": null
+  },
+  {
+   "id": 242242604,
+   "name": "Hiroshi Iwata",
+   "is_winner": null,
+   "resolution_source": null
+  },
+  {
+   "id": 241857577,
+   "name": "Andrew Putnam",
+   "is_winner": null,
+   "resolution_source": null
+  },
+  {
+   "id": 241857591,
+   "name": "David Lipsky",
+   "is_winner": null,
+   "resolution_source": null
+  },
+  {
+   "id": 242242600,
+   "name": "Yusaku Hosono",
+   "is_winner": null,
+   "resolution_source": null
+  },
+  {
+   "id": 241857574,
+   "name": "Tom Hoge",
+   "is_winner": null,
+   "resolution_source": null
+  },
+  {
+   "id": 242242602,
+   "name": "Sang-hee Lee",
+   "is_winner": null,
+   "resolution_source": null
+  },
+  {
+   "id": 242242609,
+   "name": "Aguri Iwasaki",
+   "is_winner": null,
+   "resolution_source": null
+  },
+  {
+   "id": 242242613,
+   "name": "Kosuke Sunagawa",
+   "is_winner": null,
+   "resolution_source": null
+  },
+  {
+   "id": 242242616,
+   "name": "Yoshinori Fujimoto",
+   "is_winner": null,
+   "resolution_source": null
+  },
+  {
+   "id": 242242611,
+   "name": "Ren Yonezawa",
+   "is_winner": null,
+   "resolution_source": null
+  },
+  {
+   "id": 242242614,
+   "name": "Tomohiro Ishizaka",
+   "is_winner": null,
+   "resolution_source": null
+  },
+  {
+   "id": 242242618,
+   "name": "Koshin Nagasaki",
+   "is_winner": null,
+   "resolution_source": null
+  },
+  {
+   "id": 241857553,
+   "name": "Patrick Fishburn",
+   "is_winner": null,
+   "resolution_source": null
+  },
+  {
+   "id": 241857622,
+   "name": "Brendon Todd",
+   "is_winner": null,
+   "resolution_source": null
+  },
+  {
+   "id": 241857612,
+   "name": "C.T. Pan",
+   "is_winner": null,
+   "resolution_source": null
+  },
+  {
+   "id": 241857564,
+   "name": "Hayden Springer",
+   "is_winner": null,
+   "resolution_source": null
+  },
+  {
+   "id": 241857566,
+   "name": "Jesper Svensson",
+   "is_winner": null,
+   "resolution_source": null
+  },
+  {
+   "id": 241857582,
+   "name": "Luke Clanton",
+   "is_winner": null,
+   "resolution_source": null
+  },
+  {
+   "id": 241857589,
+   "name": "Kevin Streelman",
+   "is_winner": null,
+   "resolution_source": null
+  },
+  {
+   "id": 241857587,
+   "name": "Ben Silverman",
+   "is_winner": null,
+   "resolution_source": null
+  },
+  {
+   "id": 241857595,
+   "name": "Adam Svensson",
+   "is_winner": null,
+   "resolution_source": null
+  },
+  {
+   "id": 241857625,
+   "name": "David Lingmerth",
+   "is_winner": null,
+   "resolution_source": null
+  },
+  {
+   "id": 241857559,
+   "name": "Sudarshan Yellamaraju",
+   "is_winner": null,
+   "resolution_source": null
+  },
+  {
+   "id": 241857539,
+   "name": "Emiliano Grillo",
+   "is_winner": null,
+   "resolution_source": null
+  },
+  {
+   "id": 241857541,
+   "name": "Mackenzie Hughes",
+   "is_winner": null,
+   "resolution_source": null
+  },
+  {
+   "id": 241857554,
+   "name": "Max McGreevy",
+   "is_winner": null,
+   "resolution_source": null
+  },
+  {
+   "id": 241857573,
+   "name": "John VanDerLaan",
+   "is_winner": null,
+   "resolution_source": null
+  },
+  {
+   "id": 241857575,
+   "name": "Mark Hubbard",
+   "is_winner": null,
+   "resolution_source": null
+  },
+  {
+   "id": 241857594,
+   "name": "Joe Highsmith",
+   "is_winner": null,
+   "resolution_source": null
+  },
+  {
+   "id": 241857617,
+   "name": "Nick Dunlap",
+   "is_winner": null,
+   "resolution_source": null
+  },
+  {
+   "id": 241857586,
+   "name": "Erik Van Rooyen",
+   "is_winner": null,
+   "resolution_source": null
+  },
+  {
+   "id": 241857606,
+   "name": "Alejandro Tosti",
+   "is_winner": null,
+   "resolution_source": null
+  },
+  {
+   "id": 241857628,
+   "name": "Zach J. Johnson",
+   "is_winner": null,
+   "resolution_source": null
+  },
+  {
+   "id": 241857526,
+   "name": "Chris Kirk",
+   "is_winner": null,
+   "resolution_source": null
+  },
+  {
+   "id": 241857607,
+   "name": "Dylan Wu",
+   "is_winner": null,
+   "resolution_source": null
+  },
+  {
+   "id": 241857569,
+   "name": "Isaiah Salinda",
+   "is_winner": null,
+   "resolution_source": null
+  },
+  {
+   "id": 241857572,
+   "name": "Chandler Blanchet",
+   "is_winner": null,
+   "resolution_source": null
+  },
+  {
+   "id": 241857581,
+   "name": "Davis Chatfield",
+   "is_winner": null,
+   "resolution_source": null
+  },
+  {
+   "id": 241857603,
+   "name": "Harry Higgs",
+   "is_winner": null,
+   "resolution_source": null
+  },
+  {
+   "id": 241857511,
+   "name": "Ben James",
+   "is_winner": null,
+   "resolution_source": null
+  },
+  {
+   "id": 241857529,
+   "name": "Harry Hall",
+   "is_winner": null,
+   "resolution_source": null
+  },
+  {
+   "id": 241857532,
+   "name": "Rasmus Hojgaard",
+   "is_winner": null,
+   "resolution_source": null
+  },
+  {
+   "id": 241857535,
+   "name": "Neal Shipley",
+   "is_winner": null,
+   "resolution_source": null
+  },
+  {
+   "id": 241857537,
+   "name": "Zecheng Dou",
+   "is_winner": null,
+   "resolution_source": null
+  },
+  {
+   "id": 241857546,
+   "name": "Matthieu Pavon",
+   "is_winner": null,
+   "resolution_source": null
+  },
+  {
+   "id": 241857547,
+   "name": "William Mouw",
+   "is_winner": null,
+   "resolution_source": null
+  },
+  {
+   "id": 241857552,
+   "name": "Austin Smotherman",
+   "is_winner": null,
+   "resolution_source": null
+  },
+  {
+   "id": 241857565,
+   "name": "Joel Dahmen",
+   "is_winner": null,
+   "resolution_source": null
+  },
+  {
+   "id": 241857570,
+   "name": "Gordon Sargent",
+   "is_winner": null,
+   "resolution_source": null
+  },
+  {
+   "id": 241857579,
+   "name": "Lucas Glover",
+   "is_winner": null,
+   "resolution_source": null
+  },
+  {
+   "id": 241857580,
+   "name": "Pontus Nyholm",
+   "is_winner": null,
+   "resolution_source": null
+  },
+  {
+   "id": 241857583,
+   "name": "Garrick Higgo",
+   "is_winner": null,
+   "resolution_source": null
+  },
+  {
+   "id": 241857584,
+   "name": "Tyler Duncan",
+   "is_winner": null,
+   "resolution_source": null
+  },
+  {
+   "id": 241857592,
+   "name": "Hank Lebioda",
+   "is_winner": null,
+   "resolution_source": null
+  },
+  {
+   "id": 241857593,
+   "name": "David Skinns",
+   "is_winner": null,
+   "resolution_source": null
+  },
+  {
+   "id": 241857600,
+   "name": "Danny Walker",
+   "is_winner": null,
+   "resolution_source": null
+  },
+  {
+   "id": 241857602,
+   "name": "Peter Malnati",
+   "is_winner": null,
+   "resolution_source": null
+  },
+  {
+   "id": 241857609,
+   "name": "Rafael Campos",
+   "is_winner": null,
+   "resolution_source": null
+  },
+  {
+   "id": 241857613,
+   "name": "Patton Kizzire",
+   "is_winner": null,
+   "resolution_source": null
+  },
+  {
+   "id": 241857614,
+   "name": "Vince Whaley",
+   "is_winner": null,
+   "resolution_source": null
+  },
+  {
+   "id": 241857615,
+   "name": "Michael Thompson",
+   "is_winner": null,
+   "resolution_source": null
+  },
+  {
+   "id": 241857619,
+   "name": "Boston Bracken",
+   "is_winner": null,
+   "resolution_source": null
+  },
+  {
+   "id": 241857620,
+   "name": "Christo Lamprecht",
+   "is_winner": null,
+   "resolution_source": null
+  },
+  {
+   "id": 241857621,
+   "name": "Carson Lundell",
+   "is_winner": null,
+   "resolution_source": null
+  },
+  {
+   "id": 241857626,
+   "name": "Rhett Rasmussen",
+   "is_winner": null,
+   "resolution_source": null
+  },
+  {
+   "id": 241857629,
+   "name": "Bowen Mauss",
+   "is_winner": null,
+   "resolution_source": null
+  },
+  {
+   "id": 241857599,
+   "name": "Davis Riley",
+   "is_winner": null,
+   "resolution_source": null
+  },
+  {
+   "id": 241857510,
+   "name": "Jackson Koivun",
+   "is_winner": null,
+   "resolution_source": null
+  },
+  {
+   "id": 241857597,
+   "name": "Aaron Wise",
+   "is_winner": null,
+   "resolution_source": null
+  },
+  {
+   "id": 241857616,
+   "name": "Kensei Hirata",
+   "is_winner": null,
+   "resolution_source": null
+  },
+  {
+   "id": 241857623,
+   "name": "Matt Snyder",
+   "is_winner": null,
+   "resolution_source": null
+  },
+  {
+   "id": 241857598,
+   "name": "Kihei Akina",
+   "is_winner": null,
+   "resolution_source": null
+  },
+  {
+   "id": 241857578,
+   "name": "A.J. Ewart",
+   "is_winner": null,
+   "resolution_source": null
+  },
+  {
+   "id": 241857596,
+   "name": "Ben Martin",
+   "is_winner": null,
+   "resolution_source": null
+  },
+  {
+   "id": 241857516,
+   "name": "Marco Penge",
+   "is_winner": null,
+   "resolution_source": null
+  },
+  {
+   "id": 241857523,
+   "name": "Eric Cole",
+   "is_winner": null,
+   "resolution_source": null
+  },
+  {
+   "id": 241857528,
+   "name": "Rico Hoey",
+   "is_winner": null,
+   "resolution_source": null
+  },
+  {
+   "id": 241857555,
+   "name": "Haotong Li",
+   "is_winner": null,
+   "resolution_source": null
+  },
+  {
+   "id": 241857557,
+   "name": "David Ford",
+   "is_winner": null,
+   "resolution_source": null
+  },
+  {
+   "id": 241857558,
+   "name": "Trace Crowe",
+   "is_winner": null,
+   "resolution_source": null
+  },
+  {
+   "id": 241857563,
+   "name": "Zac Blair",
+   "is_winner": null,
+   "resolution_source": null
+  },
+  {
+   "id": 241857585,
+   "name": "Adrien Dumont De Chassart",
+   "is_winner": null,
+   "resolution_source": null
+  },
+  {
+   "id": 241857588,
+   "name": "Justin Lower",
+   "is_winner": null,
+   "resolution_source": null
+  },
+  {
+   "id": 241857590,
+   "name": "Paul Peterson",
+   "is_winner": null,
+   "resolution_source": null
+  },
+  {
+   "id": 241857604,
+   "name": "Jimmy Stanger",
+   "is_winner": null,
+   "resolution_source": null
+  },
+  {
+   "id": 241857605,
+   "name": "Brice Garnett",
+   "is_winner": null,
+   "resolution_source": null
+  },
+  {
+   "id": 241857608,
+   "name": "Jeffrey Kang",
+   "is_winner": null,
+   "resolution_source": null
+  },
+  {
+   "id": 241857618,
+   "name": "Marcelo Rozo",
+   "is_winner": null,
+   "resolution_source": null
+  },
+  {
+   "id": 241857601,
+   "name": "Will Gordon",
+   "is_winner": null,
+   "resolution_source": null
+  },
+  {
+   "id": 241857568,
+   "name": "Chad Ramey",
+   "is_winner": null,
+   "resolution_source": null
+  },
+  {
+   "id": 241857610,
+   "name": "Adam Schenk",
+   "is_winner": null,
+   "resolution_source": null
+  },
+  {
+   "id": 241857611,
+   "name": "Cam Davis",
+   "is_winner": null,
+   "resolution_source": null
+  },
+  {
+   "id": 241857560,
+   "name": "Seamus Power",
+   "is_winner": null,
+   "resolution_source": null
+  },
+  {
+   "id": 241857627,
+   "name": "Seonghyeon An",
+   "is_winner": null,
+   "resolution_source": null
+  },
+  {
+   "id": 241857624,
+   "name": "Tyson Shelley",
+   "is_winner": null,
+   "resolution_source": null
+  }
+ ],
+ "leaderboard": [
+  {
+   "name": "Michael Brennan",
+   "thru": "18",
+   "dg_id": 29197,
+   "position": "1",
+   "today_score": -3,
+   "total_score": -16,
+   "current_round": 4
+  },
+  {
+   "name": "Jackson Suber",
+   "thru": "18",
+   "dg_id": 29279,
+   "position": "T41",
+   "today_score": -1,
+   "total_score": -5,
+   "current_round": 4
+  },
+  {
+   "name": "Keita Nakajima",
+   "thru": "18",
+   "dg_id": 21074,
+   "position": "T50",
+   "today_score": -3,
+   "total_score": -4,
+   "current_round": 4
+  },
+  {
+   "name": "Adam Scott",
+   "thru": "18",
+   "dg_id": 6430,
+   "position": "T13",
+   "today_score": 1,
+   "total_score": -11,
+   "current_round": 4
+  },
+  {
+   "name": "Stephan Jaeger",
+   "thru": "18",
+   "dg_id": 16394,
+   "position": "T4",
+   "today_score": -1,
+   "total_score": -13,
+   "current_round": 4
+  },
+  {
+   "name": "Rickie Fowler",
+   "thru": "18",
+   "dg_id": 12965,
+   "position": "71",
+   "today_score": 5,
+   "total_score": 9,
+   "current_round": 4
+  },
+  {
+   "name": "Jacob Bridgeman",
+   "thru": "18",
+   "dg_id": 29433,
+   "position": "T2",
+   "today_score": -2,
+   "total_score": -15,
+   "current_round": 4
+  },
+  {
+   "name": "Keith Mitchell",
+   "thru": "18",
+   "dg_id": 17365,
+   "position": "T2",
+   "today_score": -3,
+   "total_score": -15,
+   "current_round": 4
+  },
+  {
+   "name": "Ryan Gerard",
+   "thru": "18",
+   "dg_id": 29767,
+   "position": "T4",
+   "today_score": -3,
+   "total_score": -13,
+   "current_round": 4
+  },
+  {
+   "name": "Brian Harman",
+   "thru": "18",
+   "dg_id": 8825,
+   "position": "T4",
+   "today_score": -4,
+   "total_score": -13,
+   "current_round": 4
+  },
+  {
+   "name": "Xander Schauffele",
+   "thru": "18",
+   "dg_id": 19895,
+   "position": "T4",
+   "today_score": -4,
+   "total_score": -13,
+   "current_round": 4
+  },
+  {
+   "name": "Kevin Roy",
+   "thru": "18",
+   "dg_id": 18424,
+   "position": "T13",
+   "today_score": -3,
+   "total_score": -11,
+   "current_round": 4
+  },
+  {
+   "name": "Jordan Smith",
+   "thru": "18",
+   "dg_id": 18586,
+   "position": "T4",
+   "today_score": -1,
+   "total_score": -13,
+   "current_round": 4
+  },
+  {
+   "name": "Zach Bauchou",
+   "thru": "18",
+   "dg_id": 19846,
+   "position": "T9",
+   "today_score": 1,
+   "total_score": -12,
+   "current_round": 4
+  },
+  {
+   "name": "Sungjae Im",
+   "thru": "18",
+   "dg_id": 17488,
+   "position": "T9",
+   "today_score": -3,
+   "total_score": -12,
+   "current_round": 4
+  },
+  {
+   "name": "Min Woo Lee",
+   "thru": "18",
+   "dg_id": 16841,
+   "position": "T9",
+   "today_score": -5,
+   "total_score": -12,
+   "current_round": 4
+  },
+  {
+   "name": "Ren Yonezawa",
+   "thru": "18",
+   "dg_id": 25739,
+   "position": "T9",
+   "today_score": -7,
+   "total_score": -12,
+   "current_round": 4
+  },
+  {
+   "name": "Jordan Spieth",
+   "thru": "18",
+   "dg_id": 14636,
+   "position": "T13",
+   "today_score": -4,
+   "total_score": -11,
+   "current_round": 4
+  },
+  {
+   "name": "Christiaan Bezuidenhout",
+   "thru": "18",
+   "dg_id": 18103,
+   "position": "T17",
+   "today_score": -3,
+   "total_score": -10,
+   "current_round": 4
+  },
+  {
+   "name": "Nico Echavarria",
+   "thru": "18",
+   "dg_id": 22833,
+   "position": "T33",
+   "today_score": -2,
+   "total_score": -6,
+   "current_round": 4
+  },
+  {
+   "name": "Mac Meissner",
+   "thru": "18",
+   "dg_id": 28159,
+   "position": "T23",
+   "today_score": 2,
+   "total_score": -8,
+   "current_round": 4
+  },
+  {
+   "name": "Lee Hodges",
+   "thru": "18",
+   "dg_id": 25157,
+   "position": "T33",
+   "today_score": -1,
+   "total_score": -6,
+   "current_round": 4
+  },
+  {
+   "name": "Michael Kim",
+   "thru": "18",
+   "dg_id": 17543,
+   "position": "T17",
+   "today_score": -1,
+   "total_score": -10,
+   "current_round": 4
+  },
+  {
+   "name": "Ben Kohles",
+   "thru": "18",
+   "dg_id": 16395,
+   "position": "T17",
+   "today_score": -3,
+   "total_score": -10,
+   "current_round": 4
+  },
+  {
+   "name": "Billy Horschel",
+   "thru": "18",
+   "dg_id": 11276,
+   "position": "T21",
+   "today_score": -4,
+   "total_score": -9,
+   "current_round": 4
+  },
+  {
+   "name": "Hideki Matsuyama",
+   "thru": "18",
+   "dg_id": 13562,
+   "position": "T21",
+   "today_score": -4,
+   "total_score": -9,
+   "current_round": 4
+  },
+  {
+   "name": "Takumi Kanaya",
+   "thru": "18",
+   "dg_id": 19729,
+   "position": "T23",
+   "today_score": -2,
+   "total_score": -8,
+   "current_round": 4
+  },
+  {
+   "name": "Rasmus Neergaard-Petersen",
+   "thru": "18",
+   "dg_id": 23841,
+   "position": "T23",
+   "today_score": -4,
+   "total_score": -8,
+   "current_round": 4
+  },
+  {
+   "name": "Patrick Rodgers",
+   "thru": "18",
+   "dg_id": 16283,
+   "position": "T29",
+   "today_score": -1,
+   "total_score": -7,
+   "current_round": 4
+  },
+  {
+   "name": "John Parry",
+   "thru": "18",
+   "dg_id": 13764,
+   "position": "T23",
+   "today_score": -3,
+   "total_score": -8,
+   "current_round": 4
+  },
+  {
+   "name": "Kosuke Sunagawa",
+   "thru": "18",
+   "dg_id": 19682,
+   "position": "T23",
+   "today_score": -1,
+   "total_score": -8,
+   "current_round": 4
+  },
+  {
+   "name": "Justin Thomas",
+   "thru": "18",
+   "dg_id": 14139,
+   "position": "T23",
+   "today_score": 4,
+   "total_score": -8,
+   "current_round": 4
+  },
+  {
+   "name": "Ricky Castillo",
+   "thru": "18",
+   "dg_id": 27819,
+   "position": "T29",
+   "today_score": -3,
+   "total_score": -7,
+   "current_round": 4
+  },
+  {
+   "name": "Tomohiro Ishizaka",
+   "thru": "18",
+   "dg_id": 25538,
+   "position": "T29",
+   "today_score": -4,
+   "total_score": -7,
+   "current_round": 4
+  },
+  {
+   "name": "Denny McCarthy",
+   "thru": "18",
+   "dg_id": 19870,
+   "position": "T29",
+   "today_score": -2,
+   "total_score": -7,
+   "current_round": 4
+  },
+  {
+   "name": "Max Homa",
+   "thru": "18",
+   "dg_id": 17538,
+   "position": "T13",
+   "today_score": -1,
+   "total_score": -11,
+   "current_round": 4
+  },
+  {
+   "name": "Yoshinori Fujimoto",
+   "thru": "18",
+   "dg_id": 11773,
+   "position": "T33",
+   "today_score": -5,
+   "total_score": -6,
+   "current_round": 4
+  },
+  {
+   "name": "Doug Ghim",
+   "thru": "18",
+   "dg_id": 24550,
+   "position": "T17",
+   "today_score": -4,
+   "total_score": -10,
+   "current_round": 4
+  },
+  {
+   "name": "Ryo Hisatsune",
+   "thru": "18",
+   "dg_id": 22760,
+   "position": "T41",
+   "today_score": 1,
+   "total_score": -5,
+   "current_round": 4
+  },
+  {
+   "name": "Matt Wallace",
+   "thru": "18",
+   "dg_id": 20706,
+   "position": "T50",
+   "today_score": -1,
+   "total_score": -4,
+   "current_round": 4
+  },
+  {
+   "name": "Jinichiro Kozuma",
+   "thru": "18",
+   "dg_id": 14209,
+   "position": "T41",
+   "today_score": -3,
+   "total_score": -5,
+   "current_round": 4
+  },
+  {
+   "name": "Andrew Putnam",
+   "thru": "18",
+   "dg_id": 14704,
+   "position": "T33",
+   "today_score": -1,
+   "total_score": -6,
+   "current_round": 4
+  },
+  {
+   "name": "Michael Thorbjornsen",
+   "thru": "18",
+   "dg_id": 26649,
+   "position": "T33",
+   "today_score": 0,
+   "total_score": -6,
+   "current_round": 4
+  },
+  {
+   "name": "Keegan Bradley",
+   "thru": "18",
+   "dg_id": 13872,
+   "position": "T41",
+   "today_score": 1,
+   "total_score": -5,
+   "current_round": 4
+  },
+  {
+   "name": "Tony Finau",
+   "thru": "18",
+   "dg_id": 11676,
+   "position": "T41",
+   "today_score": -3,
+   "total_score": -5,
+   "current_round": 4
+  },
+  {
+   "name": "Beau Hossler",
+   "thru": "18",
+   "dg_id": 15470,
+   "position": "T41",
+   "today_score": 1,
+   "total_score": -5,
+   "current_round": 4
+  },
+  {
+   "name": "David Lipsky",
+   "thru": "18",
+   "dg_id": 15980,
+   "position": "T54",
+   "today_score": -1,
+   "total_score": -3,
+   "current_round": 4
+  },
+  {
+   "name": "Collin Morikawa",
+   "thru": "18",
+   "dg_id": 22085,
+   "position": "T33",
+   "today_score": -2,
+   "total_score": -6,
+   "current_round": 4
+  },
+  {
+   "name": "Taylor Moore",
+   "thru": "18",
+   "dg_id": 21944,
+   "position": "T41",
+   "today_score": -1,
+   "total_score": -5,
+   "current_round": 4
+  },
+  {
+   "name": "Nick Taylor",
+   "thru": "18",
+   "dg_id": 13126,
+   "position": "T41",
+   "today_score": -2,
+   "total_score": -5,
+   "current_round": 4
+  },
+  {
+   "name": "Kristoffer Ventura",
+   "thru": "18",
+   "dg_id": 15651,
+   "position": "T41",
+   "today_score": 0,
+   "total_score": -5,
+   "current_round": 4
+  },
+  {
+   "name": "Pierceson Coody",
+   "thru": "18",
+   "dg_id": 28309,
+   "position": "T50",
+   "today_score": -3,
+   "total_score": -4,
+   "current_round": 4
+  },
+  {
+   "name": "Matt McCarty",
+   "thru": "18",
+   "dg_id": 28635,
+   "position": "T50",
+   "today_score": -6,
+   "total_score": -4,
+   "current_round": 4
+  },
+  {
+   "name": "Tom Hoge",
+   "thru": "18",
+   "dg_id": 15575,
+   "position": "70",
+   "today_score": 0,
+   "total_score": 7,
+   "current_round": 4
+  },
+  {
+   "name": "Johnny Keefer",
+   "thru": "18",
+   "dg_id": 32457,
+   "position": "T33",
+   "today_score": -4,
+   "total_score": -6,
+   "current_round": 4
+  },
+  {
+   "name": "Yusaku Hosono",
+   "thru": "18",
+   "dg_id": 25797,
+   "position": "T33",
+   "today_score": -1,
+   "total_score": -6,
+   "current_round": 4
+  },
+  {
+   "name": "Max Greyserman",
+   "thru": "18",
+   "dg_id": 23465,
+   "position": "T61",
+   "today_score": -3,
+   "total_score": -1,
+   "current_round": 4
+  },
+  {
+   "name": "Aguri Iwasaki",
+   "thru": "18",
+   "dg_id": 28203,
+   "position": "T54",
+   "today_score": -4,
+   "total_score": -3,
+   "current_round": 4
+  },
+  {
+   "name": "Taylor Pendrith",
+   "thru": "18",
+   "dg_id": 17780,
+   "position": "T54",
+   "today_score": -4,
+   "total_score": -3,
+   "current_round": 4
+  },
+  {
+   "name": "Chandler Phillips",
+   "thru": "18",
+   "dg_id": 27164,
+   "position": "T54",
+   "today_score": -2,
+   "total_score": -3,
+   "current_round": 4
+  },
+  {
+   "name": "Davis Thompson",
+   "thru": "18",
+   "dg_id": 27364,
+   "position": "T54",
+   "today_score": -2,
+   "total_score": -3,
+   "current_round": 4
+  },
+  {
+   "name": "Maverick McNealy",
+   "thru": "18",
+   "dg_id": 18634,
+   "position": "T59",
+   "today_score": -4,
+   "total_score": -2,
+   "current_round": 4
+  },
+  {
+   "name": "Kevin Yu",
+   "thru": "18",
+   "dg_id": 17881,
+   "position": "T59",
+   "today_score": -2,
+   "total_score": -2,
+   "current_round": 4
+  },
+  {
+   "name": "Kurt Kitayama",
+   "thru": "18",
+   "dg_id": 21891,
+   "position": "T61",
+   "today_score": -5,
+   "total_score": -1,
+   "current_round": 4
+  },
+  {
+   "name": "Koshin Nagasaki",
+   "thru": "18",
+   "dg_id": 31582,
+   "position": "69",
+   "today_score": 2,
+   "total_score": 6,
+   "current_round": 4
+  },
+  {
+   "name": "Wyndham Clark",
+   "thru": "18",
+   "dg_id": 23604,
+   "position": "T63",
+   "today_score": -2,
+   "total_score": 1,
+   "current_round": 4
+  },
+  {
+   "name": "Alex Smalley",
+   "thru": "18",
+   "dg_id": 18474,
+   "position": "T63",
+   "today_score": -2,
+   "total_score": 1,
+   "current_round": 4
+  },
+  {
+   "name": "Sang-hee Lee",
+   "thru": "18",
+   "dg_id": 13923,
+   "position": "65",
+   "today_score": -1,
+   "total_score": 2,
+   "current_round": 4
+  },
+  {
+   "name": "Steven Fisk",
+   "thru": "18",
+   "dg_id": 26657,
+   "position": "T66",
+   "today_score": -4,
+   "total_score": 3,
+   "current_round": 4
+  },
+  {
+   "name": "Hiroshi Iwata",
+   "thru": "18",
+   "dg_id": 9099,
+   "position": "T66",
+   "today_score": -1,
+   "total_score": 3,
+   "current_round": 4
+  },
+  {
+   "name": "Sahith Theegala",
+   "thru": "18",
+   "dg_id": 23014,
+   "position": "68",
+   "today_score": 0,
+   "total_score": 5,
+   "current_round": 4
+  },
+  {
+   "name": "Aldrich Potgieter",
+   "thru": "18",
+   "dg_id": 27900,
+   "position": "72",
+   "today_score": 3,
+   "total_score": 11,
+   "current_round": 4
+  }
+ ],
+ "lines": {
+  "241857512": {
+   "name": "Michael Brennan",
+   "history": [
+    {
+     "timestamp": "2026-10-05T01:08:38.821032+00:00",
+     "probability": 0.043067,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-05T17:39:14.507306+00:00",
+     "probability": 0.026167,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-06T13:08:40.644152+00:00",
+     "probability": 0.026017,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-08T00:02:03.231914+00:00",
+     "probability": 0.024326,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-08T00:11:13.058928+00:00",
+     "probability": 0.026065,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-08T00:16:55.542752+00:00",
+     "probability": 0.025622,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-08T00:23:03.133505+00:00",
+     "probability": 0.014292,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-08T00:27:33.145591+00:00",
+     "probability": 0.015469,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-08T00:32:03.148937+00:00",
+     "probability": 0.014907,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-08T00:36:33.267676+00:00",
+     "probability": 0.015422,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-08T00:42:33.349212+00:00",
+     "probability": 0.015924,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-08T00:47:03.467275+00:00",
+     "probability": 0.015264,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-08T00:56:03.237230+00:00",
+     "probability": 0.01351,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-08T01:01:38.226778+00:00",
+     "probability": 0.013155,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-08T01:06:08.309734+00:00",
+     "probability": 0.013972,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-08T01:12:08.303481+00:00",
+     "probability": 0.014164,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-08T01:16:30.062412+00:00",
+     "probability": 0.021297,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-08T01:21:08.558032+00:00",
+     "probability": 0.020149,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-08T01:27:08.639061+00:00",
+     "probability": 0.017398,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-08T01:31:26.916892+00:00",
+     "probability": 0.018913,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-08T01:36:08.458334+00:00",
+     "probability": 0.019577,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-08T01:42:08.462936+00:00",
+     "probability": 0.018772,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-08T01:46:26.904828+00:00",
+     "probability": 0.018064,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-08T01:51:08.591737+00:00",
+     "probability": 0.015852,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-08T01:57:08.492012+00:00",
+     "probability": 0.016457,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-08T02:01:32.422514+00:00",
+     "probability": 0.017605,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-08T02:06:08.863154+00:00",
+     "probability": 0.017295,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-08T02:12:08.442006+00:00",
+     "probability": 0.017733,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-08T02:16:33.390446+00:00",
+     "probability": 0.017894,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-08T02:21:08.578066+00:00",
+     "probability": 0.025937,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-08T02:27:08.700847+00:00",
+     "probability": 0.026399,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-08T02:36:13.310618+00:00",
+     "probability": 0.027463,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-08T02:46:29.234103+00:00",
+     "probability": 0.025836,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-08T02:51:08.598563+00:00",
+     "probability": 0.028484,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-08T02:57:08.575077+00:00",
+     "probability": 0.035296,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-08T03:01:38.486948+00:00",
+     "probability": 0.036006,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-08T03:07:38.415236+00:00",
+     "probability": 0.036872,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-08T03:12:08.483856+00:00",
+     "probability": 0.035702,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-08T03:16:38.372037+00:00",
+     "probability": 0.033618,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-08T03:21:08.495213+00:00",
+     "probability": 0.035061,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-08T03:27:08.684216+00:00",
+     "probability": 0.035695,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-08T03:31:38.545519+00:00",
+     "probability": 0.033726,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-08T03:36:08.436708+00:00",
+     "probability": 0.032565,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-08T03:42:08.398714+00:00",
+     "probability": 0.024206,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-08T03:46:38.504366+00:00",
+     "probability": 0.027172,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-08T03:51:08.444107+00:00",
+     "probability": 0.025616,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-08T03:57:08.415687+00:00",
+     "probability": 0.023154,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-08T04:01:38.448606+00:00",
+     "probability": 0.021505,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-08T04:06:08.459731+00:00",
+     "probability": 0.024229,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-08T04:12:08.572694+00:00",
+     "probability": 0.025786,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-08T04:16:38.638257+00:00",
+     "probability": 0.026243,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-08T04:21:08.445056+00:00",
+     "probability": 0.029748,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-08T04:27:08.423388+00:00",
+     "probability": 0.02785,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-08T04:31:38.695212+00:00",
+     "probability": 0.030076,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-08T04:36:08.476578+00:00",
+     "probability": 0.025378,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-08T04:42:08.515784+00:00",
+     "probability": 0.024745,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-08T04:46:38.487589+00:00",
+     "probability": 0.023758,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-08T04:51:09.005838+00:00",
+     "probability": 0.024747,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-08T04:57:08.971709+00:00",
+     "probability": 0.02152,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-08T05:06:09.189943+00:00",
+     "probability": 0.018676,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-08T05:12:09.189349+00:00",
+     "probability": 0.019196,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-08T05:16:39.126639+00:00",
+     "probability": 0.019371,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-08T05:21:09.103878+00:00",
+     "probability": 0.01897,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-08T05:27:09.192337+00:00",
+     "probability": 0.017318,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-08T05:31:39.251792+00:00",
+     "probability": 0.019122,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-08T05:36:09.226450+00:00",
+     "probability": 0.01898,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-08T05:42:09.098398+00:00",
+     "probability": 0.019235,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-08T05:46:39.390867+00:00",
+     "probability": 0.019022,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-08T05:51:09.148688+00:00",
+     "probability": 0.020022,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-08T05:57:09.366348+00:00",
+     "probability": 0.016974,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-08T06:01:30.800138+00:00",
+     "probability": 0.019823,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-08T06:06:01.132593+00:00",
+     "probability": 0.018587,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-08T06:12:01.029217+00:00",
+     "probability": 0.018815,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-08T06:16:30.978149+00:00",
+     "probability": 0.020218,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-08T06:22:31.080453+00:00",
+     "probability": 0.019735,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-08T06:27:01.043399+00:00",
+     "probability": 0.019431,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-08T06:31:30.973790+00:00",
+     "probability": 0.020688,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-08T06:37:31.205466+00:00",
+     "probability": 0.020526,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-08T06:42:01.216854+00:00",
+     "probability": 0.019168,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-08T06:46:31.004456+00:00",
+     "probability": 0.020802,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-08T06:51:00.993924+00:00",
+     "probability": 0.020509,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-08T06:57:01.285974+00:00",
+     "probability": 0.019481,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-08T07:01:31.228243+00:00",
+     "probability": 0.019221,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-08T07:07:31.021816+00:00",
+     "probability": 0.018817,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-09T00:01:54.271593+00:00",
+     "probability": 0.019567,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-09T00:06:24.569832+00:00",
+     "probability": 0.020507,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-09T00:11:16.020101+00:00",
+     "probability": 0.019935,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-09T00:16:54.121527+00:00",
+     "probability": 0.018983,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-09T00:21:24.361544+00:00",
+     "probability": 0.020187,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-09T00:27:24.299799+00:00",
+     "probability": 0.021141,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-09T00:31:54.432306+00:00",
+     "probability": 0.019021,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-09T00:36:24.206129+00:00",
+     "probability": 0.020662,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-09T00:41:07.477710+00:00",
+     "probability": 0.019858,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-09T00:51:24.151362+00:00",
+     "probability": 0.018297,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-09T00:57:24.059847+00:00",
+     "probability": 0.020071,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-09T01:01:54.411616+00:00",
+     "probability": 0.020958,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-09T01:06:24.117663+00:00",
+     "probability": 0.018327,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-09T01:11:05.714663+00:00",
+     "probability": 0.021633,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-09T01:16:52.306605+00:00",
+     "probability": 0.021518,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-09T01:21:24.221027+00:00",
+     "probability": 0.020433,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-09T01:27:24.425662+00:00",
+     "probability": 0.020939,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-09T01:31:54.571872+00:00",
+     "probability": 0.020079,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-09T01:36:24.532871+00:00",
+     "probability": 0.019258,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-09T01:42:24.709592+00:00",
+     "probability": 0.019686,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-09T01:46:55.026284+00:00",
+     "probability": 0.009928,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-09T01:51:24.654444+00:00",
+     "probability": 0.015098,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-09T01:57:24.715348+00:00",
+     "probability": 0.016251,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-09T02:01:59.282505+00:00",
+     "probability": 0.016105,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-09T02:06:24.836570+00:00",
+     "probability": 0.017211,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-09T02:11:11.909513+00:00",
+     "probability": 0.017338,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-09T02:16:57.222706+00:00",
+     "probability": 0.020614,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-09T02:21:24.867456+00:00",
+     "probability": 0.018947,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-09T02:27:24.676035+00:00",
+     "probability": 0.02188,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-09T02:31:55.452236+00:00",
+     "probability": 0.016831,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-09T02:36:24.689467+00:00",
+     "probability": 0.016593,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-09T02:41:20.080252+00:00",
+     "probability": 0.017069,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-09T02:46:48.365847+00:00",
+     "probability": 0.015992,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-09T02:51:24.713585+00:00",
+     "probability": 0.031423,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-09T02:57:24.801333+00:00",
+     "probability": 0.031209,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-09T03:01:54.854394+00:00",
+     "probability": 0.028342,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-09T03:06:24.928070+00:00",
+     "probability": 0.030343,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-09T03:11:12.860871+00:00",
+     "probability": 0.02643,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-09T03:16:53.653676+00:00",
+     "probability": 0.027183,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-09T03:21:25.008971+00:00",
+     "probability": 0.02494,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-09T03:27:24.817660+00:00",
+     "probability": 0.024563,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-09T03:31:54.901607+00:00",
+     "probability": 0.028417,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-09T03:36:24.817000+00:00",
+     "probability": 0.022007,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-09T03:41:13.090598+00:00",
+     "probability": 0.024576,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-09T03:46:53.727811+00:00",
+     "probability": 0.023996,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-09T03:51:24.732031+00:00",
+     "probability": 0.024593,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-09T03:57:24.797035+00:00",
+     "probability": 0.024317,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-09T04:01:54.833885+00:00",
+     "probability": 0.023501,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-09T04:06:24.758254+00:00",
+     "probability": 0.021421,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-09T04:11:15.242501+00:00",
+     "probability": 0.022897,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-09T04:16:54.757109+00:00",
+     "probability": 0.039376,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-09T04:21:24.742441+00:00",
+     "probability": 0.042106,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-09T04:27:24.789808+00:00",
+     "probability": 0.040647,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-09T04:31:54.822029+00:00",
+     "probability": 0.044382,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-09T04:36:24.971616+00:00",
+     "probability": 0.067809,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-09T04:41:09.040738+00:00",
+     "probability": 0.070929,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-09T04:46:49.098542+00:00",
+     "probability": 0.068298,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-09T04:51:24.875685+00:00",
+     "probability": 0.090157,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-09T04:57:24.779033+00:00",
+     "probability": 0.100494,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-09T05:01:54.933191+00:00",
+     "probability": 0.095096,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-09T05:06:25.123480+00:00",
+     "probability": 0.095574,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-09T05:12:24.939797+00:00",
+     "probability": 0.091321,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-09T05:16:54.854142+00:00",
+     "probability": 0.092997,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-09T05:21:24.981246+00:00",
+     "probability": 0.094494,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-09T05:27:25.121923+00:00",
+     "probability": 0.084846,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-09T05:32:05.421227+00:00",
+     "probability": 0.085788,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-09T05:36:24.993990+00:00",
+     "probability": 0.084573,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-09T05:42:24.976809+00:00",
+     "probability": 0.085246,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-09T05:46:54.961700+00:00",
+     "probability": 0.090809,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-09T05:51:24.941083+00:00",
+     "probability": 0.081919,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-09T05:57:25.853387+00:00",
+     "probability": 0.083479,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-09T06:01:55.007660+00:00",
+     "probability": 0.078887,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-09T06:06:25.056796+00:00",
+     "probability": 0.078658,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-09T06:12:24.917957+00:00",
+     "probability": 0.076175,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-09T06:16:55.057037+00:00",
+     "probability": 0.079064,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-09T06:21:25.519889+00:00",
+     "probability": 0.078511,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-09T06:27:25.086697+00:00",
+     "probability": 0.033885,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-09T06:31:54.980387+00:00",
+     "probability": 0.032847,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-09T06:36:24.977474+00:00",
+     "probability": 0.034472,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-09T06:42:43.024481+00:00",
+     "probability": 0.032713,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-09T06:46:54.836301+00:00",
+     "probability": 0.032874,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-09T06:51:25.119887+00:00",
+     "probability": 0.031789,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-09T07:01:55.134023+00:00",
+     "probability": 0.033262,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-09T07:06:24.990357+00:00",
+     "probability": 0.033478,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-09T07:12:24.978448+00:00",
+     "probability": 0.032282,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-09T11:03:25.396420+00:00",
+     "probability": 0.032022,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-10T00:01:32.121700+00:00",
+     "probability": 0.033625,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-10T00:07:32.296237+00:00",
+     "probability": 0.030661,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-10T00:12:02.146122+00:00",
+     "probability": 0.032517,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-10T00:16:38.233711+00:00",
+     "probability": 0.033268,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-10T00:22:36.878874+00:00",
+     "probability": 0.032561,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-10T00:27:02.254196+00:00",
+     "probability": 0.03131,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-10T00:31:32.393467+00:00",
+     "probability": 0.032338,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-10T00:37:36.325422+00:00",
+     "probability": 0.031946,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-10T00:42:02.397711+00:00",
+     "probability": 0.02962,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-10T00:46:32.201718+00:00",
+     "probability": 0.03186,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-10T00:52:32.230383+00:00",
+     "probability": 0.030473,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-10T00:57:02.292294+00:00",
+     "probability": 0.030924,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-10T01:01:44.967297+00:00",
+     "probability": 0.032088,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-10T01:07:40.922682+00:00",
+     "probability": 0.031637,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-10T01:11:31.557654+00:00",
+     "probability": 0.031166,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-10T01:16:32.368568+00:00",
+     "probability": 0.032676,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-10T01:22:32.457644+00:00",
+     "probability": 0.02872,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-10T01:27:02.328365+00:00",
+     "probability": 0.029426,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-10T01:31:30.766239+00:00",
+     "probability": 0.028067,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-10T01:37:29.853954+00:00",
+     "probability": 0.026812,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-10T01:42:03.894288+00:00",
+     "probability": 0.024681,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-10T01:46:32.499339+00:00",
+     "probability": 0.020435,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-10T01:52:30.103758+00:00",
+     "probability": 0.022602,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-10T01:57:02.295932+00:00",
+     "probability": 0.024775,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-10T02:01:32.388551+00:00",
+     "probability": 0.024336,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-10T02:07:30.589268+00:00",
+     "probability": 0.022995,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-10T02:12:02.539866+00:00",
+     "probability": 0.025624,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-10T02:16:32.509056+00:00",
+     "probability": 0.026254,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-10T02:22:29.118118+00:00",
+     "probability": 0.017763,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-10T02:31:36.176169+00:00",
+     "probability": 0.016318,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-10T02:41:10.306614+00:00",
+     "probability": 0.01573,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-10T02:46:29.373474+00:00",
+     "probability": 0.013814,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-10T02:52:25.547135+00:00",
+     "probability": 0.013275,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-10T02:57:02.515905+00:00",
+     "probability": 0.01301,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-10T03:01:32.475241+00:00",
+     "probability": 0.01272,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-10T03:07:27.584475+00:00",
+     "probability": 0.012513,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-10T03:12:09.791890+00:00",
+     "probability": 0.015715,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-10T03:16:32.467564+00:00",
+     "probability": 0.028462,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-10T03:22:28.900262+00:00",
+     "probability": 0.031867,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-10T03:27:02.467693+00:00",
+     "probability": 0.030362,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-10T03:31:32.355628+00:00",
+     "probability": 0.028533,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-10T03:37:24.925694+00:00",
+     "probability": 0.024332,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-10T03:42:02.599933+00:00",
+     "probability": 0.02315,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-10T03:46:32.528698+00:00",
+     "probability": 0.024348,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-10T03:52:32.323694+00:00",
+     "probability": 0.025766,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-10T03:57:02.721177+00:00",
+     "probability": 0.049227,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-10T04:01:32.667681+00:00",
+     "probability": 0.049619,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-10T04:07:32.604608+00:00",
+     "probability": 0.048805,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-10T04:12:02.392117+00:00",
+     "probability": 0.04674,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-10T04:16:32.504599+00:00",
+     "probability": 0.045167,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-10T04:22:29.559191+00:00",
+     "probability": 0.02374,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-10T04:27:02.372895+00:00",
+     "probability": 0.023854,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-10T04:31:32.369451+00:00",
+     "probability": 0.023337,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-10T04:37:32.480772+00:00",
+     "probability": 0.034495,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-10T04:42:02.586740+00:00",
+     "probability": 0.026826,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-10T04:46:32.643579+00:00",
+     "probability": 0.026164,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-10T04:57:02.421912+00:00",
+     "probability": 0.039714,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-10T05:01:29.696997+00:00",
+     "probability": 0.039231,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-10T05:07:35.495038+00:00",
+     "probability": 0.038718,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-10T05:12:29.682303+00:00",
+     "probability": 0.039912,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-10T05:16:32.524509+00:00",
+     "probability": 0.034392,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-10T05:22:32.710013+00:00",
+     "probability": 0.062316,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-10T05:27:02.718901+00:00",
+     "probability": 0.060441,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-10T05:31:32.787975+00:00",
+     "probability": 0.051189,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-10T05:37:32.795010+00:00",
+     "probability": 0.05239,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-10T05:42:02.797854+00:00",
+     "probability": 0.065375,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-10T05:46:35.986461+00:00",
+     "probability": 0.06609,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-10T05:52:32.606932+00:00",
+     "probability": 0.065073,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-10T05:57:02.608225+00:00",
+     "probability": 0.068153,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-10T06:01:32.642953+00:00",
+     "probability": 0.068377,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-10T06:07:32.662386+00:00",
+     "probability": 0.110941,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-10T06:12:02.573288+00:00",
+     "probability": 0.111349,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-10T06:16:33.417463+00:00",
+     "probability": 0.122032,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-10T06:22:32.896568+00:00",
+     "probability": 0.134204,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-10T06:27:02.942302+00:00",
+     "probability": 0.152409,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-10T06:31:32.642402+00:00",
+     "probability": 0.165546,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-10T06:37:32.753311+00:00",
+     "probability": 0.158014,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-10T06:41:27.690470+00:00",
+     "probability": 0.164414,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-10T06:46:46.608343+00:00",
+     "probability": 0.158622,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-10T06:52:32.921891+00:00",
+     "probability": 0.16228,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-10T06:57:03.118947+00:00",
+     "probability": 0.16165,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-10T07:01:33.168803+00:00",
+     "probability": 0.16103,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-10T07:07:32.955805+00:00",
+     "probability": 0.161659,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-10T11:22:35.155437+00:00",
+     "probability": 0.162848,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-11T00:02:37.532470+00:00",
+     "probability": 0.161117,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-11T00:07:07.544047+00:00",
+     "probability": 0.16231,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-11T00:12:00.122315+00:00",
+     "probability": 0.160562,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-11T00:18:14.003636+00:00",
+     "probability": 0.16009,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-11T00:21:55.871409+00:00",
+     "probability": 0.162364,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-11T00:27:46.592637+00:00",
+     "probability": 0.16203,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-11T00:32:25.882164+00:00",
+     "probability": 0.161347,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-11T00:36:48.896569+00:00",
+     "probability": 0.162033,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-11T00:42:03.732719+00:00",
+     "probability": 0.16111,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-11T00:47:42.984192+00:00",
+     "probability": 0.159715,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-11T00:51:54.681637+00:00",
+     "probability": 0.161742,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-11T00:56:25.710971+00:00",
+     "probability": 0.159316,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-11T01:02:25.829089+00:00",
+     "probability": 0.160828,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-11T01:06:47.216580+00:00",
+     "probability": 0.159677,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-11T01:11:25.894787+00:00",
+     "probability": 0.158856,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-11T01:17:25.996026+00:00",
+     "probability": 0.166451,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-11T01:21:51.113011+00:00",
+     "probability": 0.165099,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-11T01:27:55.889037+00:00",
+     "probability": 0.164868,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-11T01:32:25.929155+00:00",
+     "probability": 0.192953,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-11T01:36:55.765217+00:00",
+     "probability": 0.185964,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-11T01:41:50.635611+00:00",
+     "probability": 0.160633,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-11T01:47:26.043890+00:00",
+     "probability": 0.164559,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-11T01:51:55.909934+00:00",
+     "probability": 0.171994,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-11T01:56:18.272058+00:00",
+     "probability": 0.164446,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-11T02:02:25.797469+00:00",
+     "probability": 0.176499,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-11T02:06:49.546752+00:00",
+     "probability": 0.170413,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-11T02:11:25.914867+00:00",
+     "probability": 0.168429,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-11T02:17:26.184322+00:00",
+     "probability": 0.167284,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-11T02:21:46.781176+00:00",
+     "probability": 0.157481,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-11T02:27:55.905318+00:00",
+     "probability": 0.146401,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-11T02:36:56.174519+00:00",
+     "probability": 0.151558,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-11T02:41:27.839983+00:00",
+     "probability": 0.119334,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-11T02:47:26.204894+00:00",
+     "probability": 0.119814,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-11T02:51:48.376763+00:00",
+     "probability": 0.122406,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-11T02:56:25.933285+00:00",
+     "probability": 0.167158,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-11T03:02:26.039667+00:00",
+     "probability": 0.166147,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-11T03:06:49.491181+00:00",
+     "probability": 0.165353,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-11T03:11:38.956586+00:00",
+     "probability": 0.126804,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-11T03:17:26.084407+00:00",
+     "probability": 0.140962,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-11T03:21:48.518176+00:00",
+     "probability": 0.14379,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-11T03:27:57.815530+00:00",
+     "probability": 0.137681,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-11T03:32:25.820139+00:00",
+     "probability": 0.176915,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-11T03:36:56.232276+00:00",
+     "probability": 0.179586,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-11T03:41:25.890612+00:00",
+     "probability": 0.158702,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-11T03:47:26.160310+00:00",
+     "probability": 0.166027,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-11T03:51:50.533672+00:00",
+     "probability": 0.162545,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-11T03:56:26.064918+00:00",
+     "probability": 0.138153,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-11T04:02:26.587145+00:00",
+     "probability": 0.127325,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-11T04:06:56.215374+00:00",
+     "probability": 0.126113,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-11T04:11:37.607125+00:00",
+     "probability": 0.129158,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-11T04:17:26.043707+00:00",
+     "probability": 0.044956,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-11T04:21:56.168662+00:00",
+     "probability": 0.054213,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-11T04:27:55.803030+00:00",
+     "probability": 0.055791,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-11T04:32:25.858478+00:00",
+     "probability": 0.089611,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-11T04:36:56.195550+00:00",
+     "probability": 0.213213,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-11T04:41:25.968157+00:00",
+     "probability": 0.224169,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-11T04:47:26.137402+00:00",
+     "probability": 0.22529,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-11T04:51:49.540257+00:00",
+     "probability": 0.2057,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-11T04:56:26.068260+00:00",
+     "probability": 0.427755,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-11T05:02:25.929267+00:00",
+     "probability": 0.432251,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-11T05:06:48.547245+00:00",
+     "probability": 0.499296,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-11T05:11:25.974142+00:00",
+     "probability": 0.425359,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-11T05:17:25.818931+00:00",
+     "probability": 0.443319,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-11T05:21:56.090554+00:00",
+     "probability": 0.467451,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-11T05:27:50.421885+00:00",
+     "probability": 0.507311,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-11T05:32:25.965758+00:00",
+     "probability": 0.500797,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-11T05:36:55.848422+00:00",
+     "probability": 0.559045,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-11T05:41:26.109476+00:00",
+     "probability": 0.54438,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-11T05:47:26.024631+00:00",
+     "probability": 0.500976,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-11T05:51:55.997823+00:00",
+     "probability": 0.482769,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-11T05:56:25.840963+00:00",
+     "probability": 0.569662,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-11T06:02:25.916250+00:00",
+     "probability": 0.634128,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-11T06:06:55.965994+00:00",
+     "probability": 0.699176,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-11T06:11:34.934252+00:00",
+     "probability": 0.692617,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-11T06:17:26.152308+00:00",
+     "probability": 0.695028,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-11T06:21:56.159202+00:00",
+     "probability": 0.672089,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-11T06:27:55.986139+00:00",
+     "probability": 0.739941,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-11T06:32:25.936365+00:00",
+     "probability": 0.746772,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-11T06:36:56.060523+00:00",
+     "probability": 0.74375,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-11T06:41:26.165769+00:00",
+     "probability": 1.0,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-11T22:08:55.891004+00:00",
+     "probability": 0.026017,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    }
+   ]
+  },
+  "242242539": {
+   "name": "Jacob Bridgeman",
+   "history": [
+    {
+     "timestamp": "2026-10-05T17:39:14.507306+00:00",
+     "probability": 0.031583,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-06T13:08:40.644152+00:00",
+     "probability": 0.030317,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-08T00:02:03.231914+00:00",
+     "probability": 0.030437,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-08T00:06:33.172825+00:00",
+     "probability": 0.031918,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-08T00:11:13.058928+00:00",
+     "probability": 0.032499,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-08T00:16:55.542752+00:00",
+     "probability": 0.030501,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-08T00:23:03.133505+00:00",
+     "probability": 0.03247,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-08T00:27:33.145591+00:00",
+     "probability": 0.031927,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-08T00:32:03.148937+00:00",
+     "probability": 0.03259,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-08T00:36:33.267676+00:00",
+     "probability": 0.030873,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-08T00:42:33.349212+00:00",
+     "probability": 0.033551,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-08T00:47:03.467275+00:00",
+     "probability": 0.028132,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-08T00:51:33.222200+00:00",
+     "probability": 0.027119,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-08T00:56:03.237230+00:00",
+     "probability": 0.028834,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-08T01:01:38.226778+00:00",
+     "probability": 0.025581,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-08T01:06:08.309734+00:00",
+     "probability": 0.028967,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-08T01:12:08.303481+00:00",
+     "probability": 0.03117,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-08T01:16:30.062412+00:00",
+     "probability": 0.030911,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-08T01:21:08.558032+00:00",
+     "probability": 0.028989,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-08T01:27:08.639061+00:00",
+     "probability": 0.02704,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-08T01:31:26.916892+00:00",
+     "probability": 0.028587,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-08T01:36:08.458334+00:00",
+     "probability": 0.029103,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-08T01:42:08.462936+00:00",
+     "probability": 0.037536,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-08T01:51:08.591737+00:00",
+     "probability": 0.038574,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-08T01:57:08.492012+00:00",
+     "probability": 0.03771,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-08T02:01:32.422514+00:00",
+     "probability": 0.036979,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-08T02:12:08.442006+00:00",
+     "probability": 0.050256,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-08T02:16:33.390446+00:00",
+     "probability": 0.050596,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-08T02:21:08.578066+00:00",
+     "probability": 0.048475,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-08T02:27:08.700847+00:00",
+     "probability": 0.052914,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-08T02:31:38.648207+00:00",
+     "probability": 0.049369,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-08T02:36:13.310618+00:00",
+     "probability": 0.051008,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-08T02:42:08.507576+00:00",
+     "probability": 0.049966,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-08T02:46:29.234103+00:00",
+     "probability": 0.050325,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-08T02:51:08.598563+00:00",
+     "probability": 0.051321,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-08T02:57:08.575077+00:00",
+     "probability": 0.049519,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-08T03:01:38.486948+00:00",
+     "probability": 0.077084,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-08T03:12:08.483856+00:00",
+     "probability": 0.076209,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-08T03:16:38.372037+00:00",
+     "probability": 0.066837,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-08T03:21:08.495213+00:00",
+     "probability": 0.069468,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-08T03:27:08.684216+00:00",
+     "probability": 0.070924,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-08T03:31:38.545519+00:00",
+     "probability": 0.073059,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-08T03:36:08.436708+00:00",
+     "probability": 0.098778,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-08T03:46:38.504366+00:00",
+     "probability": 0.099951,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-08T03:51:08.444107+00:00",
+     "probability": 0.102115,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-08T03:57:08.415687+00:00",
+     "probability": 0.100755,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-08T04:01:38.448606+00:00",
+     "probability": 0.105575,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-08T04:06:08.459731+00:00",
+     "probability": 0.104938,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-08T04:12:08.572694+00:00",
+     "probability": 0.079616,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-08T04:16:38.638257+00:00",
+     "probability": 0.081493,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-08T04:21:08.445056+00:00",
+     "probability": 0.085499,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-08T04:27:08.423388+00:00",
+     "probability": 0.11055,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-08T04:31:38.695212+00:00",
+     "probability": 0.112863,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-08T04:36:08.476578+00:00",
+     "probability": 0.110099,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-08T04:42:08.515784+00:00",
+     "probability": 0.118846,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-08T04:46:38.487589+00:00",
+     "probability": 0.118404,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-08T04:51:09.005838+00:00",
+     "probability": 0.173018,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-08T04:57:08.971709+00:00",
+     "probability": 0.17384,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-08T05:01:39.221294+00:00",
+     "probability": 0.171538,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-08T05:06:09.189943+00:00",
+     "probability": 0.215476,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-08T05:12:09.189349+00:00",
+     "probability": 0.212756,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-08T05:16:39.126639+00:00",
+     "probability": 0.201992,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-08T05:21:09.103878+00:00",
+     "probability": 0.194162,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-08T05:27:09.192337+00:00",
+     "probability": 0.196914,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-08T05:31:39.251792+00:00",
+     "probability": 0.197745,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-08T05:36:09.226450+00:00",
+     "probability": 0.197011,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-08T05:42:09.098398+00:00",
+     "probability": 0.202305,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-08T05:46:39.390867+00:00",
+     "probability": 0.195274,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-08T05:51:09.148688+00:00",
+     "probability": 0.201102,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-08T05:57:09.366348+00:00",
+     "probability": 0.19756,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-08T06:01:30.800138+00:00",
+     "probability": 0.204693,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-08T06:06:01.132593+00:00",
+     "probability": 0.195129,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-08T06:12:01.029217+00:00",
+     "probability": 0.194885,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-08T06:16:30.978149+00:00",
+     "probability": 0.197676,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-08T06:22:31.080453+00:00",
+     "probability": 0.19876,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-08T06:27:01.043399+00:00",
+     "probability": 0.198916,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-08T06:31:30.973790+00:00",
+     "probability": 0.199882,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-08T06:37:31.205466+00:00",
+     "probability": 0.197637,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-08T06:42:01.216854+00:00",
+     "probability": 0.196454,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-08T06:46:31.004456+00:00",
+     "probability": 0.196342,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-08T06:51:00.993924+00:00",
+     "probability": 0.197985,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-08T06:57:01.285974+00:00",
+     "probability": 0.199379,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-08T07:01:31.228243+00:00",
+     "probability": 0.20324,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-08T07:07:31.021816+00:00",
+     "probability": 0.198977,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-09T00:01:54.271593+00:00",
+     "probability": 0.207032,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-09T00:06:24.569832+00:00",
+     "probability": 0.20057,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-09T00:11:16.020101+00:00",
+     "probability": 0.203232,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-09T00:16:54.121527+00:00",
+     "probability": 0.20745,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-09T00:21:24.361544+00:00",
+     "probability": 0.203534,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-09T00:31:54.432306+00:00",
+     "probability": 0.201481,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-09T00:36:24.206129+00:00",
+     "probability": 0.204877,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-09T00:41:07.477710+00:00",
+     "probability": 0.207991,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-09T00:46:54.210856+00:00",
+     "probability": 0.202998,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-09T00:51:24.151362+00:00",
+     "probability": 0.201298,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-09T00:57:24.059847+00:00",
+     "probability": 0.204919,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-09T01:01:54.411616+00:00",
+     "probability": 0.202326,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-09T01:06:24.117663+00:00",
+     "probability": 0.203126,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-09T01:11:05.714663+00:00",
+     "probability": 0.211015,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-09T01:16:52.306605+00:00",
+     "probability": 0.214104,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-09T01:21:24.221027+00:00",
+     "probability": 0.21148,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-09T01:27:24.425662+00:00",
+     "probability": 0.212425,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-09T01:31:54.571872+00:00",
+     "probability": 0.215369,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-09T01:36:24.532871+00:00",
+     "probability": 0.211774,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-09T01:42:24.709592+00:00",
+     "probability": 0.216482,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-09T01:46:55.026284+00:00",
+     "probability": 0.224216,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-09T01:51:24.654444+00:00",
+     "probability": 0.291878,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-09T01:57:24.715348+00:00",
+     "probability": 0.294273,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-09T02:01:59.282505+00:00",
+     "probability": 0.293789,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-09T02:06:24.836570+00:00",
+     "probability": 0.279532,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-09T02:11:11.909513+00:00",
+     "probability": 0.284797,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-09T02:16:57.222706+00:00",
+     "probability": 0.272481,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-09T02:21:24.867456+00:00",
+     "probability": 0.268969,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-09T02:27:24.676035+00:00",
+     "probability": 0.267584,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-09T02:31:55.452236+00:00",
+     "probability": 0.260864,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-09T02:36:24.689467+00:00",
+     "probability": 0.258973,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-09T02:41:20.080252+00:00",
+     "probability": 0.216146,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-09T02:46:48.365847+00:00",
+     "probability": 0.210122,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-09T02:51:24.713585+00:00",
+     "probability": 0.216375,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-09T02:57:24.801333+00:00",
+     "probability": 0.204946,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-09T03:01:54.854394+00:00",
+     "probability": 0.205528,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-09T03:06:24.928070+00:00",
+     "probability": 0.192222,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-09T03:11:12.860871+00:00",
+     "probability": 0.180535,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-09T03:16:53.653676+00:00",
+     "probability": 0.178822,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-09T03:21:25.008971+00:00",
+     "probability": 0.194973,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-09T03:27:24.817660+00:00",
+     "probability": 0.202026,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-09T03:31:54.901607+00:00",
+     "probability": 0.207571,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-09T03:36:24.817000+00:00",
+     "probability": 0.206434,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-09T03:41:13.090598+00:00",
+     "probability": 0.187438,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-09T03:46:53.727811+00:00",
+     "probability": 0.196221,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-09T03:51:24.732031+00:00",
+     "probability": 0.195238,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-09T03:57:24.797035+00:00",
+     "probability": 0.172392,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-09T04:01:54.833885+00:00",
+     "probability": 0.177038,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-09T04:06:24.758254+00:00",
+     "probability": 0.176224,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-09T04:11:15.242501+00:00",
+     "probability": 0.178406,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-09T04:16:54.757109+00:00",
+     "probability": 0.169524,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-09T04:21:24.742441+00:00",
+     "probability": 0.169399,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-09T04:27:24.789808+00:00",
+     "probability": 0.166155,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-09T04:31:54.822029+00:00",
+     "probability": 0.175606,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-09T04:36:24.971616+00:00",
+     "probability": 0.188095,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-09T04:41:09.040738+00:00",
+     "probability": 0.191227,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-09T04:46:49.098542+00:00",
+     "probability": 0.186107,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-09T04:51:24.875685+00:00",
+     "probability": 0.184446,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-09T04:57:24.779033+00:00",
+     "probability": 0.124562,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-09T05:01:54.933191+00:00",
+     "probability": 0.121792,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-09T05:06:25.123480+00:00",
+     "probability": 0.123118,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-09T05:12:24.939797+00:00",
+     "probability": 0.119371,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-09T05:16:54.854142+00:00",
+     "probability": 0.159545,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-09T05:21:24.981246+00:00",
+     "probability": 0.160543,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-09T05:27:25.121923+00:00",
+     "probability": 0.163973,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-09T05:32:05.421227+00:00",
+     "probability": 0.166311,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-09T05:36:24.993990+00:00",
+     "probability": 0.161465,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-09T05:42:24.976809+00:00",
+     "probability": 0.158689,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-09T05:46:54.961700+00:00",
+     "probability": 0.160141,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-09T05:51:24.941083+00:00",
+     "probability": 0.207685,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-09T05:57:25.853387+00:00",
+     "probability": 0.208372,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-09T06:01:55.007660+00:00",
+     "probability": 0.196929,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-09T06:06:25.056796+00:00",
+     "probability": 0.210618,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-09T06:12:24.917957+00:00",
+     "probability": 0.209328,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-09T06:16:55.057037+00:00",
+     "probability": 0.210572,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-09T06:21:25.519889+00:00",
+     "probability": 0.216945,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-09T06:27:25.086697+00:00",
+     "probability": 0.221103,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-09T06:31:54.980387+00:00",
+     "probability": 0.220791,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-09T06:36:24.977474+00:00",
+     "probability": 0.221611,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-09T06:42:43.024481+00:00",
+     "probability": 0.223266,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-09T06:46:54.836301+00:00",
+     "probability": 0.220578,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-09T06:51:25.119887+00:00",
+     "probability": 0.242714,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-09T06:57:24.994475+00:00",
+     "probability": 0.238542,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-09T07:01:55.134023+00:00",
+     "probability": 0.241981,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-09T07:06:24.990357+00:00",
+     "probability": 0.236361,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-09T11:03:25.396420+00:00",
+     "probability": 0.237994,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-10T00:01:32.121700+00:00",
+     "probability": 0.237664,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-10T00:07:32.296237+00:00",
+     "probability": 0.239744,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-10T00:12:02.146122+00:00",
+     "probability": 0.239616,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-10T00:16:38.233711+00:00",
+     "probability": 0.240146,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-10T00:22:36.878874+00:00",
+     "probability": 0.238697,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-10T00:27:02.254196+00:00",
+     "probability": 0.236368,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-10T00:31:32.393467+00:00",
+     "probability": 0.237447,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-10T00:37:36.325422+00:00",
+     "probability": 0.237773,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-10T00:42:02.397711+00:00",
+     "probability": 0.238215,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-10T00:46:32.201718+00:00",
+     "probability": 0.233842,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-10T00:52:32.230383+00:00",
+     "probability": 0.238046,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-10T00:57:02.292294+00:00",
+     "probability": 0.23264,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-10T01:01:44.967297+00:00",
+     "probability": 0.241588,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-10T01:07:40.922682+00:00",
+     "probability": 0.243873,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-10T01:11:31.557654+00:00",
+     "probability": 0.235424,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-10T01:16:32.368568+00:00",
+     "probability": 0.241528,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-10T01:22:32.457644+00:00",
+     "probability": 0.238146,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-10T01:27:02.328365+00:00",
+     "probability": 0.239129,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-10T01:31:30.766239+00:00",
+     "probability": 0.237562,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-10T01:37:29.853954+00:00",
+     "probability": 0.237733,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-10T01:42:03.894288+00:00",
+     "probability": 0.235527,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-10T01:46:32.499339+00:00",
+     "probability": 0.23957,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-10T01:52:30.103758+00:00",
+     "probability": 0.216413,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-10T01:57:02.295932+00:00",
+     "probability": 0.230119,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-10T02:01:32.388551+00:00",
+     "probability": 0.222769,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-10T02:07:30.589268+00:00",
+     "probability": 0.223095,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-10T02:12:02.539866+00:00",
+     "probability": 0.152315,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-10T02:16:32.509056+00:00",
+     "probability": 0.155511,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-10T02:22:29.118118+00:00",
+     "probability": 0.144711,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-10T02:27:02.431908+00:00",
+     "probability": 0.14667,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-10T02:31:36.176169+00:00",
+     "probability": 0.148885,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-10T02:37:36.275556+00:00",
+     "probability": 0.141434,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-10T02:41:10.306614+00:00",
+     "probability": 0.144257,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-10T02:46:29.373474+00:00",
+     "probability": 0.140005,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-10T02:52:25.547135+00:00",
+     "probability": 0.138993,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-10T02:57:02.515905+00:00",
+     "probability": 0.153286,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-10T03:01:32.475241+00:00",
+     "probability": 0.154184,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-10T03:07:27.584475+00:00",
+     "probability": 0.152727,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-10T03:12:09.791890+00:00",
+     "probability": 0.164358,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-10T03:16:32.467564+00:00",
+     "probability": 0.175951,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-10T03:22:28.900262+00:00",
+     "probability": 0.18031,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-10T03:27:02.467693+00:00",
+     "probability": 0.181767,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-10T03:31:32.355628+00:00",
+     "probability": 0.177774,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-10T03:37:24.925694+00:00",
+     "probability": 0.102095,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-10T03:42:02.599933+00:00",
+     "probability": 0.110123,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-10T03:46:32.528698+00:00",
+     "probability": 0.105735,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-10T03:52:32.323694+00:00",
+     "probability": 0.121083,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-10T03:57:02.721177+00:00",
+     "probability": 0.107858,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-10T04:01:32.667681+00:00",
+     "probability": 0.16917,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-10T04:07:32.604608+00:00",
+     "probability": 0.161116,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-10T04:12:02.392117+00:00",
+     "probability": 0.162765,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-10T04:16:32.504599+00:00",
+     "probability": 0.223864,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-10T04:22:29.559191+00:00",
+     "probability": 0.210795,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-10T04:27:02.372895+00:00",
+     "probability": 0.206312,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-10T04:31:32.369451+00:00",
+     "probability": 0.212753,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-10T04:37:32.480772+00:00",
+     "probability": 0.297206,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-10T04:42:02.586740+00:00",
+     "probability": 0.263489,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-10T04:46:32.643579+00:00",
+     "probability": 0.254716,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-10T04:52:29.927815+00:00",
+     "probability": 0.257827,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-10T04:57:02.421912+00:00",
+     "probability": 0.274469,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-10T05:01:29.696997+00:00",
+     "probability": 0.281993,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-10T05:07:35.495038+00:00",
+     "probability": 0.283468,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-10T05:12:29.682303+00:00",
+     "probability": 0.269937,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-10T05:16:32.524509+00:00",
+     "probability": 0.246287,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-10T05:22:32.710013+00:00",
+     "probability": 0.244992,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-10T05:27:02.718901+00:00",
+     "probability": 0.242829,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-10T05:31:32.787975+00:00",
+     "probability": 0.215619,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-10T05:37:32.795010+00:00",
+     "probability": 0.210616,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-10T05:42:02.797854+00:00",
+     "probability": 0.239331,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-10T05:46:35.986461+00:00",
+     "probability": 0.244484,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-10T05:52:32.606932+00:00",
+     "probability": 0.245645,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-10T05:57:02.608225+00:00",
+     "probability": 0.252887,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-10T06:01:32.642953+00:00",
+     "probability": 0.253096,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-10T06:07:32.662386+00:00",
+     "probability": 0.216947,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-10T06:12:02.573288+00:00",
+     "probability": 0.333154,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-10T06:16:33.417463+00:00",
+     "probability": 0.351089,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-10T06:22:32.896568+00:00",
+     "probability": 0.252342,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-10T06:27:02.942302+00:00",
+     "probability": 0.24731,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-10T06:31:32.642402+00:00",
+     "probability": 0.259602,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-10T06:37:32.753311+00:00",
+     "probability": 0.255357,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-10T06:41:27.690470+00:00",
+     "probability": 0.249327,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-10T06:46:46.608343+00:00",
+     "probability": 0.244938,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-10T06:52:32.921891+00:00",
+     "probability": 0.245209,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-10T06:57:03.118947+00:00",
+     "probability": 0.245758,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-10T07:01:33.168803+00:00",
+     "probability": 0.168421,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-10T07:07:32.955805+00:00",
+     "probability": 0.1699,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-10T11:22:35.155437+00:00",
+     "probability": 0.169585,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-11T00:02:37.532470+00:00",
+     "probability": 0.16971,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-11T00:12:00.122315+00:00",
+     "probability": 0.167744,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-11T00:18:14.003636+00:00",
+     "probability": 0.168714,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-11T00:21:55.871409+00:00",
+     "probability": 0.170176,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-11T00:27:46.592637+00:00",
+     "probability": 0.170616,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-11T00:32:25.882164+00:00",
+     "probability": 0.166641,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-11T00:36:48.896569+00:00",
+     "probability": 0.167586,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-11T00:42:03.732719+00:00",
+     "probability": 0.166685,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-11T00:47:42.984192+00:00",
+     "probability": 0.167269,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-11T00:51:54.681637+00:00",
+     "probability": 0.167138,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-11T00:56:25.710971+00:00",
+     "probability": 0.168506,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-11T01:06:47.216580+00:00",
+     "probability": 0.163584,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-11T01:11:25.894787+00:00",
+     "probability": 0.165744,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-11T01:17:25.996026+00:00",
+     "probability": 0.173965,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-11T01:21:51.113011+00:00",
+     "probability": 0.173345,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-11T01:27:55.889037+00:00",
+     "probability": 0.171612,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-11T01:32:25.929155+00:00",
+     "probability": 0.202898,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-11T01:36:55.765217+00:00",
+     "probability": 0.159603,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-11T01:41:50.635611+00:00",
+     "probability": 0.167215,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-11T01:47:26.043890+00:00",
+     "probability": 0.173361,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-11T01:51:55.909934+00:00",
+     "probability": 0.158434,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-11T01:56:18.272058+00:00",
+     "probability": 0.174025,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-11T02:02:25.797469+00:00",
+     "probability": 0.180032,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-11T02:06:49.546752+00:00",
+     "probability": 0.084168,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-11T02:11:25.914867+00:00",
+     "probability": 0.084821,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-11T02:17:26.184322+00:00",
+     "probability": 0.081315,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-11T02:21:46.781176+00:00",
+     "probability": 0.07676,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-11T02:27:55.905318+00:00",
+     "probability": 0.071369,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-11T02:32:26.238967+00:00",
+     "probability": 0.069574,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-11T02:36:56.174519+00:00",
+     "probability": 0.075035,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-11T02:41:27.839983+00:00",
+     "probability": 0.053039,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-11T02:47:26.204894+00:00",
+     "probability": 0.057185,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-11T02:51:48.376763+00:00",
+     "probability": 0.049511,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-11T02:56:25.933285+00:00",
+     "probability": 0.07946,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-11T03:02:26.039667+00:00",
+     "probability": 0.079204,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-11T03:06:49.491181+00:00",
+     "probability": 0.078755,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-11T03:11:38.956586+00:00",
+     "probability": 0.062339,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-11T03:17:26.084407+00:00",
+     "probability": 0.062564,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-11T03:21:48.518176+00:00",
+     "probability": 0.06327,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-11T03:27:57.815530+00:00",
+     "probability": 0.021618,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-11T03:32:25.820139+00:00",
+     "probability": 0.030411,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-11T03:36:56.232276+00:00",
+     "probability": 0.028207,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-11T03:41:25.890612+00:00",
+     "probability": 0.023039,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-11T03:51:50.533672+00:00",
+     "probability": 0.023154,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-11T03:56:26.064918+00:00",
+     "probability": 0.016403,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-11T04:02:26.587145+00:00",
+     "probability": 0.014572,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-11T04:11:37.607125+00:00",
+     "probability": 0.013767,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-11T04:17:26.043707+00:00",
+     "probability": 0.045007,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-11T04:21:56.168662+00:00",
+     "probability": 0.054236,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-11T04:27:55.803030+00:00",
+     "probability": 0.05588,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-11T04:32:25.858478+00:00",
+     "probability": 0.088342,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-11T04:36:56.195550+00:00",
+     "probability": 0.022499,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-11T04:41:25.968157+00:00",
+     "probability": 0.025185,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-11T04:47:26.137402+00:00",
+     "probability": 0.024823,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-11T04:51:49.540257+00:00",
+     "probability": 0.071178,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-11T04:56:26.068260+00:00",
+     "probability": 0.059801,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-11T05:02:25.929267+00:00",
+     "probability": 0.056858,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-11T05:06:48.547245+00:00",
+     "probability": 0.0706,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-11T05:11:25.974142+00:00",
+     "probability": 0.08451,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-11T05:17:25.818931+00:00",
+     "probability": 0.050047,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-11T05:21:56.090554+00:00",
+     "probability": 0.051987,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-11T05:27:50.421885+00:00",
+     "probability": 0.059508,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-11T05:32:25.965758+00:00",
+     "probability": 0.062,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-11T05:36:55.848422+00:00",
+     "probability": 0.054168,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-11T05:41:26.109476+00:00",
+     "probability": 0.048734,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-11T05:47:26.024631+00:00",
+     "probability": 0.056417,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-11T05:51:55.997823+00:00",
+     "probability": 0.139097,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-11T05:56:25.840963+00:00",
+     "probability": 0.17586,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-11T06:02:25.916250+00:00",
+     "probability": 0.162562,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-11T06:06:55.965994+00:00",
+     "probability": 0.190156,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-11T06:11:34.934252+00:00",
+     "probability": 0.190636,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-11T06:17:26.152308+00:00",
+     "probability": 0.180851,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-11T06:21:56.159202+00:00",
+     "probability": 0.205769,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-11T06:27:55.986139+00:00",
+     "probability": 0.125838,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-11T06:32:25.936365+00:00",
+     "probability": 0.122725,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-11T06:36:56.060523+00:00",
+     "probability": 0.12132,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-11T06:41:26.165769+00:00",
+     "probability": 0.0,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    },
+    {
+     "timestamp": "2026-10-11T22:08:55.891004+00:00",
+     "probability": 0.030317,
+     "american_odds": null,
+     "bookmaker": "consensus"
+    }
+   ]
+  }
+ }
+}
