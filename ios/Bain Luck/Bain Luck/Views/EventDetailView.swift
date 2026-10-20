@@ -1013,8 +1013,10 @@ struct EventDetailView: View {
                 receivedAt: vm.priceActivity?.receivedAt,
                 isDisclosure: true,
                 statusInDetails: statusInDetails)
-            .frame(maxWidth: Self.heroVerdictWidth(at: dynamicTypeSize), minHeight: 44)
-            .frame(minWidth: 44)
+            .frame(maxWidth: Self.probabilityDetailsMaxWidth(at: dynamicTypeSize,
+                                                             statusInDetails: statusInDetails),
+                   minHeight: 44)
+            .frame(minWidth: 44, alignment: statusInDetails ? .trailing : .center)
             .fixedSize(horizontal: false, vertical: true)
             .contentShape(Rectangle())
         }
@@ -2650,6 +2652,14 @@ struct EventDetailView: View {
     /// The centre becomes a full-width row at the same size as the team layout.
     static func heroVerdictWidth(at size: DynamicTypeSize) -> CGFloat? {
         size >= .xxLarge ? nil : verdictSlotWidth
+    }
+
+    /// #11285 (Design, build 66) — the adopted headline's info-only control is
+    /// a compact 44pt target at the row's trailing edge. In the 150pt verdict
+    /// slot its lone glyph centred about 75pt inward; that slot is kept where
+    /// the control still prints status words.
+    static func probabilityDetailsMaxWidth(at size: DynamicTypeSize, statusInDetails: Bool) -> CGFloat? {
+        statusInDetails ? nil : heroVerdictWidth(at: size)
     }
 
     // MARK: - Hero Status Badge

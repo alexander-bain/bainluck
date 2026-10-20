@@ -12413,6 +12413,15 @@ async def _score_events(
         events,
         remaining_s=projection_budget_s() if projection_budget_s else None,
     )
+    # #11296 — a finished card's pregame projection, by the same served status,
+    # so no card carries both pairs, under its own bound inside what is left
+    # AFTER the pair read (see `_attach_pregame_projections`).
+    await _attach_pregame_projections(
+        db,
+        scored_items,
+        events,
+        remaining_s=projection_budget_s() if projection_budget_s else None,
+    )
 
     return scored_items
 
@@ -12476,6 +12485,52 @@ async def _attach_card_projected_pairs(
         data = item.get("data") if item.get("type") == "event" else None
         if isinstance(data, dict):
             attach_card_projected_pair(data.get("current_odds"), pairs.get(data.get("id")))
+
+
+async def _attach_pregame_projections(
+    db: AsyncSession,
+    items: list[dict],
+    events: list,
+    *,
+    remaining_s: float | None = None,
+) -> None:
+    """Add the pregame projection to each finished game card (#11296).
+
+    The same object `/api/events/{id}` and search serve, chosen by the status
+    the card PRINTS, the key `_attach_card_projected_pairs` uses for the current
+    pair, so a card carries at most one of the two. One statement for the
+    build; the helper runs it in a SAVEPOINT and answers ``read_failed`` rather
+    than raising, so a failed read costs the cards this key and nothing else
+    (gotcha #42). A cancellation propagates as itself.
+
+    The SAME server-side bound as the pair read (lane1b's C1 on #11295): the
+    cards are already scored, so running out must cost this key and never the
+    events stage, whose expiry serves last-good or nothing (#10534, #11259).
+    ``remaining_s`` is read after the pair read, so the two never overspend.
+    """
+    from app.utils.card_projected_pair import card_projection_read_timeout_ms
+    from app.utils.pregame_projection import (
+        attach_pregame_projection,
+        read_pregame_projections,
+    )
+
+    by_id = {e.id: e for e in events}
+    served: dict[int, dict] = {}
+    for item in items:
+        data = item.get("data") if item.get("type") == "event" else None
+        if isinstance(data, dict) and data.get("id") in by_id:
+            served[data["id"]] = data
+    if not served:
+        return
+    answers = await read_pregame_projections(
+        db,
+        [by_id[event_id] for event_id in served],
+        lambda e: served[e.id].get("sport"),
+        status_of=lambda e: served[e.id].get("status"),
+        timeout_ms=card_projection_read_timeout_ms(remaining_s),
+    )
+    for event_id, data in served.items():
+        attach_pregame_projection(data, answers.get(event_id))
 
 
 def _futures_feed_load_options() -> list:

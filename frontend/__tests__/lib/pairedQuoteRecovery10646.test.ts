@@ -82,6 +82,7 @@ function setup(detailRevisions: Array<() => Promise<number>>) {
     createFoldedRefetchScheduler, canSubscribeEventQuotes, quotePairCoversTrigger,
     keepNewerHeldHeadline, carryNewerHeldState, historyRangeParam, EVENT_BOOT_HISTORY_HOURS, FOLDED_FRAME_REFETCH_MS,
     pairedQuoteReadRef, quoteTriggerRef, heldEventRef,
+    sourceAddedHistoryRef: { current: null }, // Existing quote recovery owes no source-join edge.
     storedEventRef: { current: undefined }, // #10090 G2: no poll result stored here
     // #10090 G1: no reconcile control is owed in these cases.
     reconcileLedger: createReconcileLedger(), reconcileRetryDelayMs: () => 1000,

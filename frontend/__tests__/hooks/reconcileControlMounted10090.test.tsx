@@ -28,7 +28,7 @@ import { heldFrameAfter, useLiveEventStream } from "../../hooks/useLiveEventStre
 import type { StreamHandle } from "../../lib/liveStreamController";
 import { createReconnectCatchup } from "../../lib/reconnectCatchup";
 import { createFoldedRefetchScheduler, takeFreshRead } from "../../lib/foldedRefetchScheduler";
-import { canSubscribeEventQuotes, quotePairCoversTrigger } from "../../lib/eventQuoteStream";
+import { canSubscribeEventQuotes, coversQuoteRevision, quotePairCoversTrigger } from "../../lib/eventQuoteStream";
 import { adoptFoldedQuote, applyLiveFrame, applyLiveFrameRail, frameInvalidatesFoldedBlend } from "../../lib/eventLivePush";
 import { frameFoldOrder } from "../../lib/foldRevision";
 import { frameCarriesUnpricedSnapshot, snapshotRailPaysPricelessTrigger } from "../../lib/sourceSnapshot";
@@ -145,6 +145,7 @@ type Net = { details: Req<Detail>[]; histories: Req<History>[] };
 const harness: {
   revalidate?: () => unknown; revalidateHistory?: () => unknown; ledger?: ReturnType<typeof createReconcileLedger>;
   event?: Detail; fullHistory?: boolean; renderedHistory?: any;
+  quoteTrigger?: () => unknown; sourceHistory?: () => unknown;
 } = {};
 
 function HeldPage({ net, eventId }: { net: Net; eventId: number }) {
@@ -175,6 +176,9 @@ function HeldPage({ net, eventId }: { net: Net; eventId: number }) {
 
   const pairedQuoteReadRef = useRef<(() => Promise<unknown>) | null>(null);
   const quoteTriggerRef = useRef(null);
+  const sourceAddedHistoryRef = useRef(null);
+  harness.quoteTrigger = () => quoteTriggerRef.current;
+  harness.sourceHistory = () => sourceAddedHistoryRef.current;
   const recoveryIntentRef = useRef(0);
   const quoteReadLifetimeRef = useRef(0);
   const reconcileIntentRef = useRef(false);
@@ -182,7 +186,7 @@ function HeldPage({ net, eventId }: { net: Net; eventId: number }) {
   harness.ledger = reconcileLedger;
   const quoteEventIdRef = useRef(eventId);
   if (quoteEventIdRef.current !== eventId) reconcileLedger.clear();
-  if (quoteEventIdRef.current !== eventId) { recoveryIntentRef.current = 0; quoteTriggerRef.current = null; }
+  if (quoteEventIdRef.current !== eventId) { recoveryIntentRef.current = 0; quoteTriggerRef.current = null; sourceAddedHistoryRef.current = null; }
   quoteEventIdRef.current = eventId;
   const refreshEventRef = useRef(refreshEvent);
   refreshEventRef.current = refreshEvent;
@@ -193,14 +197,14 @@ function HeldPage({ net, eventId }: { net: Net; eventId: number }) {
   }) as ReturnType<typeof createFoldedRefetchScheduler>);
   useEffect(() => () => foldedRefetch.cancel(), [foldedRefetch]);
 
+  const reconcileCatchupRef = useRef(null);
+  const reconcileOrdinalRef = useRef(0);
   const applyPushedFrame = useCallback(PUSH.runInNewContext({
-    eventId, heldEventRef, adoptFoldedQuote, pairJournalRef, refreshEvent, setLastRefresh, Date,
-    canSubscribeEventQuotes, quoteTriggerRef, foldedRefetch, frameInvalidatesFoldedBlend,
+    eventId, heldEventRef, adoptFoldedQuote, pairJournalRef, refreshEvent, setLastRefresh, Date, reconcileCatchupRef, reconcileOrdinalRef,
+    canSubscribeEventQuotes, quoteTriggerRef, sourceAddedHistoryRef, foldedRefetch, frameInvalidatesFoldedBlend,
     latestLiveFrameRef, heldFrameAfter, applyLiveFrame,
     applyLiveFrameRail, frameCarriesUnpricedSnapshot, frameFoldOrder, snapshotRailPaysPricelessTrigger,
   }), [refreshEvent, eventId, foldedRefetch]);
-  const reconcileCatchupRef = useRef(null);
-  const reconcileOrdinalRef = useRef(0);
   const applyReconcileControl = useCallback(CONTROL.runInNewContext({
     eventId, canSubscribeEventQuotes, heldEventRef, reconcileLedger, Date,
     reconcileCatchupRef, reconcileOrdinalRef,
@@ -214,7 +218,7 @@ function HeldPage({ net, eventId }: { net: Net; eventId: number }) {
   const recoveryRef = useRef(null);
   useEffect(RECOVERY_EFFECT.runInNewContext({
     quoteEligible, createReconnectCatchup, canSubscribeEventQuotes, reconcileIntentRef, heldEventRef, recoveryRef,
-    reconcileCatchupRef, reconcileLedger, recoveryIntentRef, quoteReadLifetimeRef, foldedRefetch,
+    reconcileCatchupRef, reconcileLedger, recoveryIntentRef, quoteReadLifetimeRef, foldedRefetch, quoteTriggerRef, sourceAddedHistoryRef,
   }), [eventId, quoteEligible, foldedRefetch, reconcileLedger]);
 
   const quoteHistoryRangeRef = useRef(fullHistoryRequested);
@@ -225,7 +229,7 @@ function HeldPage({ net, eventId }: { net: Net; eventId: number }) {
     ...chart, admittedChartRef, setSourceObservationVersion,
     eventId, fullHistoryRequested, fetchEvent, fetchEventHistory, EVENT_BOOT_HISTORY_HOURS, historyRangeParam,
     createWriteJournal, rebaseOnCoveringRead, reconcileFloorCoverage, servedHistoryIsNewer, latestBlendEdgeRef, pairJournalRef, reconcileLedger, storedEventRef,
-    quotePairCoversTrigger, keepNewerHeldHeadline, carryNewerHeldState, canSubscribeEventQuotes, setLastRefresh, Date,
+    quotePairCoversTrigger, coversQuoteRevision, sourceAddedHistoryRef, keepNewerHeldHeadline, carryNewerHeldState, canSubscribeEventQuotes, setLastRefresh, Date,
     quoteTriggerRef, recoveryIntentRef, quoteReadLifetimeRef, quoteEventIdRef, quoteHistoryRangeRef,
     refreshHistoryRef, refreshEventRef, heldEventRef,
   });
@@ -1263,4 +1267,134 @@ describe("Attempt155 independent review controls", () => {
       expect(has()).toBe(true);
     }finally{await p.unmount();}
   });
+});
+
+
+describe("176 new source chart admission", () => {
+  it("reads authoritative history promptly for a newly admitted source, then ordinary prices need no reads", async () => {
+    const one={polymarket:src(.55,10)};
+    const noBlend={...unpinned(10,.55),aggregate_line:[]};
+    const p=await mount(live(10,.55,one),noBlend);
+    try {
+      await p.emit("probability",snapFrame(11,.62,withPm(11)));
+      expect(p.read()).toContain("live|62|kalshi+polymarket|r11");
+      expect(p.pairs()).toHaveLength(0);
+      await p.advance(250);
+      expect(p.pairs()).toHaveLength(1);
+      expect(p.net.histories.filter(r=>r.fresh)).toHaveLength(1);
+      await p.answer(live(11,.62,withPm(11)),history(11,.62));
+      expect(p.read()).toContain("c62");
+      for(let rev=12;rev<22;rev++) {
+        await p.emit("probability",snapFrame(rev,.63,withPm(rev)));
+        await p.advance(250);
+      }
+      expect(p.pairs()).toHaveLength(1);
+    } finally {await p.unmount();}
+  });
+});
+
+
+describe("176 source addition while reads are busy",()=>{
+ it("a refused older frame cannot invent an added-source history obligation",async()=>{
+  const p=await mount(live(10,.55,{polymarket:src(.55,10)}),{...unpinned(10,.55),aggregate_line:[]});
+  try {
+   await act(async()=>{
+    sources.at(-1)!.emit("probability",snapFrame(12,.62,{polymarket:src(.62,12)}));
+    sources.at(-1)!.emit("probability",snapFrame(11,.61,withPm(11)));
+   });
+   await settle();
+   expect(p.read()).toContain("live|62|polymarket|r12");
+   expect(p.pairs()).toHaveLength(0);
+  } finally {await p.unmount();}
+ });
+});
+
+
+describe("176 R1 bounded source-added history debt", () => {
+  const empty = (rev: number): History => ({
+    ...unpinned(rev, .62), history_fold_revision: { [E]: rev }, aggregate_line: [],
+  });
+  it("retries an adopted empty unpinned history once, then draws the pinned edge", async () => {
+    const p = await mount(live(10, .55, { polymarket: src(.55, 10) }), empty(10));
+    try {
+      await p.emit("probability", snapFrame(11, .62, withPm(11)));
+      await p.advance(250);
+      expect(p.pairs()).toHaveLength(1);
+      await p.answer(live(11, .62, withPm(11)), empty(11));
+      expect(p.read()).toContain("cNaN");
+      await p.advance(1000);
+      expect(p.pairs()).toHaveLength(2);
+      expect(p.pairs()[1].at - p.pairs()[0].at).toBe(1000);
+      await p.answer(live(11, .62, withPm(11)), history(11, .62));
+      expect(p.read()).toContain("c62");
+      await p.advance(32000);
+      expect(p.pairs()).toHaveLength(2);
+    } finally { await p.unmount(); }
+  });
+  it("expires after a second empty history without a third pair or retained trigger", async () => {
+    const p = await mount(live(10, .55, { polymarket: src(.55, 10) }), empty(10));
+    try {
+      await p.emit("probability", snapFrame(11, .62, withPm(11)));
+      await p.advance(250);
+      await p.answer(live(11, .62, withPm(11)), empty(11));
+      await p.advance(1000);
+      expect(p.pairs()).toHaveLength(2);
+      await p.answer(live(11, .62, withPm(11)), empty(11));
+      await p.advance(32000);
+      expect(p.pairs()).toHaveLength(2);
+      expect(p.read()).toContain("cNaN");
+      await p.emit("probability", snapFrame(12, .63, withPm(12)));
+      await p.advance(1000);
+      expect(p.pairs()).toHaveLength(2);
+      expect(harness.quoteTrigger!()).toBeNull();
+      expect(harness.sourceHistory!()).toBeNull();
+      expect(p.net.histories.filter(r => r.fresh)).toHaveLength(2);
+    } finally { await p.unmount(); }
+  });
+  it("expires the bounded obligation after two thrown pairs", async () => {
+    const p = await mount(live(10, .55, { polymarket: src(.55, 10) }), empty(10));
+    try {
+      await p.emit("probability", snapFrame(11, .62, withPm(11)));
+      await p.advance(250);
+      await p.answer(new Error("offline"), new Error("offline"));
+      await p.advance(1000);
+      expect(p.pairs()).toHaveLength(2);
+      await p.answer(new Error("offline"), new Error("offline"));
+      await p.advance(32000);
+      expect(p.pairs()).toHaveLength(2);
+      expect(harness.quoteTrigger!()).toBeNull();
+      expect(harness.sourceHistory!()).toBeNull();
+    } finally { await p.unmount(); }
+  });
+  it("terminal adoption retires the pending source-added retry", async () => {
+    const p = await mount(live(10, .55, { polymarket: src(.55, 10) }), empty(10));
+    try {
+      await p.emit("probability", snapFrame(11, .62, withPm(11)));
+      await p.advance(250);
+      await p.answer(live(11, .62, withPm(11)), empty(11));
+      harness.revalidate!(); await settle();
+      p.net.details.filter(r => !r.fresh).at(-1)!.d.resolve(final(12));
+      await settle();
+      await p.advance(32000);
+      expect(p.read()).toContain("completed|100");
+      expect(p.pairs()).toHaveLength(1);
+      expect(harness.quoteTrigger!()).toBeNull();
+      expect(harness.sourceHistory!()).toBeNull();
+    } finally { await p.unmount(); }
+  });
+  it("navigation retires an in-flight source-added pair without adopting it on the new page", async () => {
+    const p = await mount(live(10, .55, { polymarket: src(.55, 10) }), empty(10));
+    try {
+      await p.emit("probability", snapFrame(11, .62, withPm(11)));
+      await p.advance(250);
+      await p.navigate(B, live(20, .72, withPm(20), B), history(20, .72, B));
+      await p.answer(live(11, .62, withPm(11)), history(11, .62));
+      await p.advance(32000);
+      expect(p.read()).toContain("r20|c72");
+      expect(p.pairs(B)).toHaveLength(0);
+      expect(harness.quoteTrigger!()).toBeNull();
+      expect(harness.sourceHistory!()).toBeNull();
+    } finally { await p.unmount(); }
+  });
+
 });

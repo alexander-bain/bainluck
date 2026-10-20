@@ -411,9 +411,12 @@ struct NFLMilestoneCardView9483: View {
                     .accessibilityHidden(true)
                 }
                 VStack(alignment: .leading, spacing: 3) {
+                    // #11285 — the plotted quantity wraps rather than
+                    // truncating beside a final figure ("Receiving Yar…" at AX3).
                     Text(card.stat)
                         .font(.caption)
                         .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
                     // #11061 — a hyphenated name needs a third line at
                     // accessibility sizes ("Jaxon / Smith- / Njigba").
                     Text(card.player)

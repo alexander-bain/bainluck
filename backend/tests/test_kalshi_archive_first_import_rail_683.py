@@ -26,6 +26,7 @@ Every provider and database edge is a fake or an ``httpx.MockTransport``.
 from __future__ import annotations
 
 import asyncio
+import gc
 import inspect
 import json
 import subprocess
@@ -1543,11 +1544,42 @@ class TestConsoleInsideTheWall:
         assert json.loads(capsys.readouterr().out)["status"] == "applied"
         out.unlink()
         slow_console["delay"] = 3.0
-        t0 = time.monotonic()
-        code = mod.main(argv)
-        assert code == 3 and time.monotonic() - t0 < 0.8 + 0.15
+        walls = []
+
+        class SeenWall(bounds.OperationWall):
+            def __init__(self, *a, **kw):
+                super().__init__(*a, **kw)
+                walls.append(self)
+
+        monkeypatch.setattr(bounds, "OperationWall", SeenWall)
+        gc_pauses, gc_started = [], {}
+
+        def on_gc(phase, info):  # the test process's heap, not the CLI's
+            if phase == "start":
+                gc_started["t"] = time.monotonic()
+            elif "t" in gc_started and time.monotonic() - gc_started["t"] >= 0.01:
+                gc_pauses.append((info["generation"], round(time.monotonic() - gc_started["t"], 3)))
+
+        gc.callbacks.append(on_gc)
+        try:
+            t0 = time.monotonic()
+            code = mod.main(argv)
+            ended = time.monotonic()
+        finally:
+            gc.callbacks.remove(on_gc)
+        # The record and the console first, then the clock split at the wall's
+        # start: a late finish names whether the artifact, the wall or the time
+        # before the wall existed was late, and any collection that ran. Same
+        # bounds as one clock from t0.
         assert capsys.readouterr().out == ""
         assert json.loads(out.read_text())["committed_outcomes"] == [{"outcome_id": 7}]
+        (wall,) = walls
+        assert code == 3 and ended - wall.started < 0.8 + 0.15, (
+            f"inside the wall {ended - wall.started:.3f}s, gc pauses >= 10 ms (generation, s) {gc_pauses}"
+        )
+        assert ended - t0 < 0.8 + 0.15, (
+            f"before the wall started {wall.started - t0:.3f}s, gc pauses >= 10 ms (generation, s) {gc_pauses}"
+        )
 
     @pytest.mark.parametrize("delay", [0.0, 3.0])
     def test_a_line_written_while_working_cannot_hold_the_import_past_the_wall(
