@@ -5480,15 +5480,8 @@ jobs:
           }
 
       - name: "#10090 a live game's prop publishes while an unrelated future is locked (real Postgres)"
-        # Known props stay out of their game's headline cohort, so the planner
-        # packed a live game's prop markets into the same <=200-row phases as
-        # unrelated futures, and one 55P03 rolled the whole phase back
-        # (production v5771 2026-10-17: ~78 s of held total-points lines).
-        # Root's attempt45 countercase: a #10661 holder locks an unrelated
-        # future; the live prop must publish (independent readback) while the
-        # lock is still held, and the release + final drain recovers every
-        # value with no prop-only winner stamp. Reuses the live-beside fixture
-        # and database; same skip detection plus a count.
+        # A live prop publishes while a #10661 holder locks an unrelated future
+        # (v5771: one 55P03 held ~78 s of total-points lines). Same fixture.
         if: matrix.group == 'isolated' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
@@ -8165,8 +8158,8 @@ jobs:
             tests/integration/test_bundled_pair_quote_transition_10090_pg.py \
             tests/integration/test_bundled_pair_thin_book_10090_pg.py \
             -rs > /tmp/bp.txt 2>&1 || s=$?
-          cat /tmp/bp.txt; test "${s:-0}" -eq 0
-          ! grep -qiE "[0-9]+ skipped" /tmp/bp.txt && grep -qE "[^0-9]16 passed" /tmp/bp.txt
+          cat /tmp/bp.txt; echo "EXIT CODE: ${s:-0}"; test "${s:-0}" -eq 0
+          ! grep -qiE "[0-9]+ skipped" /tmp/bp.txt && grep -qE "[^0-9]16 passed" /tmp/bp.txt || exit 1
 
       - name: "#8910 a newer WebSocket stamp survives the two-minute poll (real Postgres)"
         # #8910 / CERT-3585's required guard. The REAL live poll against real
