@@ -106,6 +106,7 @@ class _RecoveryRetry:
 class _Work:
     task: asyncio.Task
     waiters: int = 0
+    deadline: float = float("inf")  # the creating request's; the load ends by it
 
 
 class FoldedQuoteProjector:
@@ -225,11 +226,21 @@ class FoldedQuoteProjector:
                 self._first_load_at = now
             self._last_load_started_at = now
             work = _Work(asyncio.create_task(
-                self._load(event_id, origin_id, revision[str(origin_id)], fresh, deadline)))
+                self._load(event_id, origin_id, revision[str(origin_id)], fresh, deadline)),
+                deadline=deadline)
             self._pending[key] = work
         work.waiters += 1
         try:
-            quote = await asyncio.shield(work.task)
+            if deadline < work.deadline:
+                # Only a reader that waited can join work begun after it arrived,
+                # bounded by a later request's deadline; it still leaves by its own.
+                try:
+                    async with asyncio.timeout_at(deadline):
+                        quote = await asyncio.shield(work.task)
+                except TimeoutError:
+                    return None
+            else:
+                quote = await asyncio.shield(work.task)
             if quote is not None and not fresh:
                 self._cached[key] = quote
                 self._cached.move_to_end(key)

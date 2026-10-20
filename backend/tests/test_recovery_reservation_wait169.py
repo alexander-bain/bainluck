@@ -162,6 +162,38 @@ async def test_the_request_deadline_includes_the_wait(monkeypatch):
     await drain(projector, gates, *held)
 
 
+async def test_a_waiter_that_joins_later_work_still_leaves_by_its_own_deadline(monkeypatch):
+    """A later read of the same key can take the freed entry before the waiter resumes.
+
+    The waiter then joins work bounded by that later request's deadline. It must still
+    return by its own, and its departure must not cancel the later reader's shared work.
+    """
+    monkeypatch.setattr(fq, "PROJECTION_TIMEOUT_S", 0.3)
+    joined_at = []
+    for offset in range(12):  # the release lands at every loop step before the later read
+        gates = Gates(); projector, held = await full_share(monkeypatch, gates)
+        loop = asyncio.get_running_loop(); began = loop.time()
+        waiter = asyncio.create_task(projector.project(5, notice(5), fresh=True))
+        await settle()
+        assert projector._recovery_waiting == 1
+        await asyncio.sleep(0.2)
+        gates.gate(1).set()
+        for _ in range(offset):
+            await asyncio.sleep(0)
+        later = asyncio.create_task(projector.project(5, notice(5), fresh=True))
+        assert await waiter is None
+        elapsed = loop.time() - began
+        assert elapsed < 0.4, f"offset {offset}: the waiter took {elapsed:.3f}s against its 0.3 s deadline"
+        if recovery_keys(projector, 5):  # the waiter joined the later read's work and left
+            joined_at.append(offset)
+            work = projector._pending[recovery_keys(projector, 5)[0]]
+            assert not later.done() and work.waiters == 1 and not work.task.cancelling()
+        await drain(projector, gates, *held, later)
+        if joined_at and joined_at[-1] == offset:
+            assert (await later)["event_id"] == 5, "the later reader's shared work survived"
+    assert joined_at, "no offset reached the join; the sweep no longer decides this"
+
+
 async def test_a_waited_read_spends_from_its_admitted_load_start(monkeypatch):
     """Spend accounting reads the load's own start, never the wait's start."""
     gates = Gates(); projector, held = await full_share(monkeypatch, gates)
