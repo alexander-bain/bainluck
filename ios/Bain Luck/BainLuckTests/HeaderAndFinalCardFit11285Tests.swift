@@ -179,30 +179,24 @@ final class HeaderAndFinalCardFit11285Tests: XCTestCase {
         }
     }
 
-    /// The story card's header: the name's first line ("DeVon-" at AX5, which
-    /// Vision can read together with "final"), the final figure at the card's
-    /// right (top-aligned with the category, so up to ~100pt above the name;
-    /// Vision may read it on the category's own line), and every line stacked
-    /// directly above the name in its column — the category, however many lines
-    /// it takes. Nil when this frame does not show that header whole, clear of
-    /// the bar on top.
-    private func header(in lines: [Line], player: String, actual: String) -> (category: String, all: String)? {
+    private struct Header { let category: String; let name: Line; let figure: Line; let all: [Line] }
+
+    /// The story card's header: the name's first line ("DeVon-" when it broke
+    /// mid-word, which Vision can read together with "final"), the final figure
+    /// at the card's right, and the category: every line in the name's column
+    /// from the figure's top (the row is top-aligned; Vision may read the figure
+    /// on the category's own line) down to the name. Nil when this frame does
+    /// not show that header whole, clear of the bar on top.
+    private func header(in lines: [Line], player: String, actual: String) -> Header? {
         for name in lines.filter({ $0.text.contains(player) }).sorted(by: { $0.box.minY < $1.box.minY }) {
-            guard lines.contains(where: { $0.text.contains(actual) && $0.box.maxX > name.box.minX + 180
-                    && $0.box.minY < name.box.maxY + 20 && $0.box.maxY > name.box.minY - 100 }) else { continue }
-            // Walk up the column while the lines sit close (measured 11–21pt
-            // between category lines and the name); the card's top padding
-            // (34pt+ to the deck's heading) ends the category.
-            var above: [Line] = []
-            var edge = name.box.minY
-            for line in lines.filter({ $0.box.maxY <= name.box.minY + 4 && abs($0.box.minX - name.box.minX) < 24 })
-                .sorted(by: { $0.box.maxY > $1.box.maxY }) {
-                guard edge - line.box.maxY < 26 else { break }
-                above.insert(line, at: 0)
-                edge = line.box.minY
-            }
+            guard let figure = lines.filter({ $0.text.contains(actual) && $0.box.maxX > name.box.minX + 180
+                    && $0.box.minY < name.box.maxY + 20 && $0.box.maxY > name.box.minY - 140 })
+                .min(by: { $0.box.minY < $1.box.minY }) else { continue }
+            let above = lines.filter { $0.box.minY >= figure.box.minY - 12 && $0.box.maxY <= name.box.minY + 4
+                && abs($0.box.minX - name.box.minX) < 24 }
+                .sorted { $0.box.minY < $1.box.minY }
             guard let top = above.first, top.box.minY > 110 else { continue }
-            return (above.map(\.text).joined(separator: " "), lines.map(\.text).joined(separator: " | "))
+            return Header(category: above.map(\.text).joined(separator: " "), name: name, figure: figure, all: lines)
         }
         return nil
     }
@@ -215,14 +209,33 @@ final class HeaderAndFinalCardFit11285Tests: XCTestCase {
             .joined(separator: " | ")
     }
 
-    private func assertCategory(_ found: (category: String, all: String)?, _ name: String, seen: String) {
+    private func assertCategory(_ found: Header?, _ name: String, seen: String) {
         guard let found else {
             return XCTFail("\(name): the DeVonta Smith card with its final 65 was not found; near the name: \(seen)")
         }
-        XCTAssertTrue(found.category.contains("Receiving"), "\(name): category read \"\(found.category)\" — \(found.all)")
+        let all = found.all.map(\.text).joined(separator: " | ")
+        XCTAssertTrue(found.category.contains("Receiving"), "\(name): category read \"\(found.category)\" — \(all)")
         XCTAssertTrue(found.category.contains("Yards"), "\(name): the category is truncated: \"\(found.category)\"")
         XCTAssertFalse(found.category.contains("…") || found.category.contains("..."),
                        "\(name): an ellipsis is drawn: \"\(found.category)\"")
+    }
+
+    /// At accessibility sizes the name takes the card's whole width under the
+    /// category and figure (Design 0220Z), so its first line is a whole word,
+    /// never "DeVon-". The deck card is too narrow at AX3 for "DeVonta Smith" on
+    /// one line either way, and beside the figure only page-393/AX5 broke the
+    /// name ("DeVon- / ta / Smith", r5), so that frame is the one that tells the
+    /// reflow from the old row; the others keep the name whole. The name below
+    /// the figure's top line holds in both layouts (the category's two lines
+    /// push it down); it rules out an overlap, it does not pin the reflow.
+    private func assertIdentity(_ found: Header?, _ name: String) {
+        guard let found else { return }
+        let all = found.all.map(\.text).joined(separator: " | ")
+        XCTAssertTrue(found.name.text.hasPrefix("DeVonta"),
+                      "\(name): the name's first line read \"\(found.name.text)\" — \(all)")
+        XCTAssertFalse(found.all.contains { $0.text.contains("DeVon-") }, "\(name): the name broke mid-word — \(all)")
+        XCTAssertGreaterThanOrEqual(found.name.box.minY, found.figure.box.maxY,
+                                    "\(name): the name overlaps the figure's row — \(all)")
     }
 
     func testAFinalCardsStatCategoryWrapsBesideItsActualOnThePage() async throws {
@@ -246,7 +259,7 @@ final class HeaderAndFinalCardFit11285Tests: XCTestCase {
             defer { vm.stopRefresh(); window.isHidden = true }
             settle(host, 1.0)
             let scroller = try XCTUnwrap(Self.pageScroller(host.view), "\(name): the page scrolls")
-            var found: (category: String, all: String)?
+            var found: Header?
             var seen = ""
             var y: CGFloat = 0
             while found == nil, y <= 4000 {
@@ -259,6 +272,7 @@ final class HeaderAndFinalCardFit11285Tests: XCTestCase {
                 y += 240
             }
             assertCategory(found, name, seen: seen)
+            assertIdentity(found, name)
         }
     }
 
@@ -292,7 +306,9 @@ final class HeaderAndFinalCardFit11285Tests: XCTestCase {
             defer { window.isHidden = true }
             settle(host, 0.8)
             let read = try lines(host, name: name)
-            assertCategory(header(in: read, player: "DeVon", actual: "65"), name, seen: near(read, player: "DeVon"))
+            let found = header(in: read, player: "DeVon", actual: "65")
+            assertCategory(found, name, seen: near(read, player: "DeVon"))
+            assertIdentity(found, name)
         }
     }
 

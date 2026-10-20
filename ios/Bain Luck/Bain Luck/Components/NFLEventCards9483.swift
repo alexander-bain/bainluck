@@ -392,48 +392,44 @@ struct NFLMilestoneCardView9483: View {
         let selected = state.selectedIndex(in: card)
         let rung = selected.map { card.rungs[$0] }
         VStack(alignment: .leading, spacing: 10) {
-            HStack(alignment: .top) {
-                // #11285 — a small identity cue beside the name when this
-                // ladder's own rows serve a headshot; loading or failed keeps
-                // a plain circle, so the name never moves. At accessibility
-                // sizes the cue is dropped: its 44pt broke "McCaf-/frey" mid-word
-                // on a 375pt phone at AX5, and the name is the identity.
-                if let headshot = card.headshot, !size.isAccessibilitySize {
-                    AsyncImage(url: headshot) { phase in
-                        if case .success(let image) = phase {
-                            image.resizable().scaledToFill()
-                        } else {
-                            color.opacity(0.15)
-                        }
-                    }
-                    .frame(width: 36, height: 36)
-                    .clipShape(Circle())
-                    .accessibilityHidden(true)
-                }
+            if size.isAccessibilitySize {
+                // #11285 (Design, 0220Z) — at accessibility sizes the name takes
+                // the card's whole width under the category and final figure;
+                // beside the figure it broke mid-word ("DeVon- / ta" at AX5 on
+                // a 393pt phone).
                 VStack(alignment: .leading, spacing: 3) {
-                    // #11285 — the plotted quantity wraps rather than
-                    // truncating beside a final figure ("Receiving Yar…" at AX3).
-                    Text(card.stat)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                    // #11061 — a hyphenated name needs a third line at
-                    // accessibility sizes ("Jaxon / Smith- / Njigba").
-                    Text(card.player)
-                        .font(.title3.weight(.bold))
-                        .lineLimit(3)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-                Spacer(minLength: 4)
-                if let actual = card.actual {
-                    VStack(alignment: .trailing, spacing: 0) {
-                        Text(NFLFinishCardView9483.points(actual))
-                            .font(.title.weight(.bold).monospacedDigit())
-                            .foregroundStyle(color)
-                        Text("final")
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
+                    HStack(alignment: .top) {
+                        statLabel
+                        Spacer(minLength: 4)
+                        actualFigure
                     }
+                    playerName
+                }
+            } else {
+                HStack(alignment: .top) {
+                    // #11285 — a small identity cue beside the name when this
+                    // ladder's own rows serve a headshot; loading or failed keeps
+                    // a plain circle, so the name never moves. At accessibility
+                    // sizes the cue is dropped: its 44pt broke "McCaf-/frey" mid-word
+                    // on a 375pt phone at AX5, and the name is the identity.
+                    if let headshot = card.headshot {
+                        AsyncImage(url: headshot) { phase in
+                            if case .success(let image) = phase {
+                                image.resizable().scaledToFill()
+                            } else {
+                                color.opacity(0.15)
+                            }
+                        }
+                        .frame(width: 36, height: 36)
+                        .clipShape(Circle())
+                        .accessibilityHidden(true)
+                    }
+                    VStack(alignment: .leading, spacing: 3) {
+                        statLabel
+                        playerName
+                    }
+                    Spacer(minLength: 4)
+                    actualFigure
                 }
             }
             Text(card.caption)
@@ -475,6 +471,37 @@ struct NFLMilestoneCardView9483: View {
                 }
                 .disabled(selected.map { $0 >= card.rungs.count - 1 } ?? true)
                 .accessibilityLabel("Next line")
+            }
+        }
+    }
+
+    // #11285 — the plotted quantity wraps rather than truncating beside a
+    // final figure ("Receiving Yar…" at AX3).
+    private var statLabel: some View {
+        Text(card.stat)
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .fixedSize(horizontal: false, vertical: true)
+    }
+
+    // #11061 — a hyphenated name needs a third line at accessibility sizes
+    // ("Jaxon / Smith- / Njigba").
+    private var playerName: some View {
+        Text(card.player)
+            .font(.title3.weight(.bold))
+            .lineLimit(3)
+            .fixedSize(horizontal: false, vertical: true)
+    }
+
+    @ViewBuilder private var actualFigure: some View {
+        if let actual = card.actual {
+            VStack(alignment: .trailing, spacing: 0) {
+                Text(NFLFinishCardView9483.points(actual))
+                    .font(.title.weight(.bold).monospacedDigit())
+                    .foregroundStyle(color)
+                Text("final")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
             }
         }
     }
