@@ -454,7 +454,10 @@ VALIDATED_PATHS = [
     *[(v, "by_sport", 0, k) for v in ("kalshi", "polymarket")
       for k in ("sport", "total", "linked", "open_total", "open_linked", "link_rate", "link_rate_all")],
 ]
-BAD_VALUES = [[], {}, None, "x", True, -1, 1.5, 101, 10**30]
+# Wrong at EVERY validated field (a bool is never a count, a rate or a name);
+# ``[]`` too, except as ``by_sport`` itself, where an empty list is a real answer.
+ALWAYS_BAD = [{}, None, True, False]
+BAD_VALUES = [*ALWAYS_BAD, [], "x", -1, 1.5, 101, 10**30]
 
 
 def _bad_cases():
@@ -488,6 +491,8 @@ class TestMalformed:
             _set(path, bad)(p)
             resp, body, redis = _get(client, monkeypatch, _blob(p))
             assert resp.status_code in (200, 503), (path, bad, resp.status_code)
+            if any(bad is b for b in ALWAYS_BAD) or (bad == [] and path[-1] != "by_sport"):
+                assert resp.status_code == 503, (path, bad)
             if resp.status_code == 503:
                 assert body["cache_state"] == "malformed" and body["payload"] is None, (path, bad)
                 assert set(body) == ENVELOPE_KEYS
@@ -515,6 +520,9 @@ class TestMalformed:
         (_blob({**_payload(), "stale": "yes"}), "invalid_marker"),
         (_blob({**_payload(), "unavailable": 1}), "invalid_marker"),
         (_blob({**_payload(), "stale_reason": ["compute_error"]}), "invalid_marker"),
+        (_blob(_payload(overall={**_payload()["overall"], "linked": True})), "invalid_count"),
+        (_blob({**_payload(), "kalshi": {"totals": _totals(), "by_sport": [_bucket(open_linked=False)]}}),
+         "invalid_count"),
         (_blob(_payload(overall={**_payload()["overall"], "linked": 21})), "count_exceeds_total"),
         (_blob(_payload(overall={**_payload()["overall"], "open_linked": 17})), "count_exceeds_total"),
         (_blob(_payload(overall={**_payload()["overall"], "open_total": 21})), "count_exceeds_total"),
