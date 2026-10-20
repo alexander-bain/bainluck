@@ -1,9 +1,10 @@
 // #847 — the Correctness Console: "can we trust our numbers today?"
 //
-// One admin page composing EXISTING endpoints only — and, for source coverage
-// and link rate, their SAVED-ONLY contracts (`/event-source-coverage/cached`,
-// `/prediction-markets/link-rate/cached`), so opening the page never starts the
-// live coverage query or the inline link-rate compute. This module is the whole
+// One admin page composing EXISTING endpoints only — and, for source coverage,
+// link rate and snapshot sparsity, their SAVED-ONLY reads (`/event-source-
+// coverage/cached`, `/prediction-markets/link-rate/cached`, the GET of
+// `/snapshots/distribution`), so opening the page never starts the live
+// coverage query, the inline link-rate compute or the snapshot census. This module is the whole
 // judgment layer: every tile's threshold, denominator and freshness rule lives
 // here as a pure function, so the rule can be read in one place and asserted
 // without a browser (this project has no jsdom — render tests are
@@ -32,6 +33,8 @@
 //                       grid accuracy belongs to the Sentinel, RED means REAL).
 //                       A raw audit penalty score is not a verdict and is not read.
 //   - guess family      no existing endpoint reports it (see evaluateGuessFamily)
+//   - snapshot sparsity no threshold or freshness horizon is reviewed: shown as
+//                       a number, never coloured (see evaluateSnapshotSparsity)
 // Where no threshold is documented the tile says so rather than colouring.
 
 /** Every state a tile, or a row inside one, can be in. */
@@ -92,7 +95,8 @@ export type CorrectnessTileKey =
   | "category_mce"
   | "source_coverage"
   | "link_rate"
-  | "grid_health";
+  | "grid_health"
+  | "snapshot_sparsity";
 
 // ─── Read results ───────────────────────────────────────────────────────────
 
@@ -116,13 +120,16 @@ export interface CorrectnessReads {
   sourceCoverage: ReadResult;
   linkRate: ReadResult;
   gridSentinel: ReadResult;
+  snapshotDistribution: ReadResult;
 }
 
 /**
- * The five endpoints. GET only, no bust/force/inline parameter. Coverage and
+ * The six endpoints. GET only, no bust/force/inline parameter. Coverage and
  * link rate read the saved-only routes: `/api/admin/dashboard` runs the live
  * coverage query and `/prediction-markets/link-rate` computes inline on a cold
- * cache, so neither is ever read from here — not even as a fallback.
+ * cache, so neither is ever read from here — not even as a fallback. The
+ * snapshot distribution GET only reads the saved result; its POST queues the
+ * computation and is never sent from here.
  */
 export const CORRECTNESS_ENDPOINTS = {
   winners: "/api/admin/backfill-winners/status",
@@ -130,6 +137,7 @@ export const CORRECTNESS_ENDPOINTS = {
   sourceCoverage: "/api/admin/event-source-coverage/cached",
   linkRate: "/api/admin/prediction-markets/link-rate/cached",
   gridSentinel: "/api/admin/grid-sentinel/last",
+  snapshotDistribution: "/api/admin/snapshots/distribution",
 } as const satisfies Record<keyof CorrectnessReads, string>;
 
 /** Which reads need the admin credential. `/api/calibration` is public. */
@@ -138,6 +146,7 @@ export const ADMIN_READS: ReadonlySet<keyof CorrectnessReads> = new Set([
   "sourceCoverage",
   "linkRate",
   "gridSentinel",
+  "snapshotDistribution",
 ]);
 
 /**
@@ -214,13 +223,14 @@ export const INITIAL_READS: CorrectnessReads = {
   sourceCoverage: { status: "loading" },
   linkRate: { status: "loading" },
   gridSentinel: { status: "loading" },
+  snapshotDistribution: { status: "loading" },
 };
 
 /**
- * Start all five reads at once and report each the moment it settles, so one
+ * Start every read at once and report each the moment it settles, so one
  * slow or failing endpoint never holds or blanks the others. Resolves with the
  * total wall-clock ms once every read has settled. Nothing here retries or
- * repeats: one call is one round of five requests.
+ * repeats: one call is one round of one request per endpoint.
  */
 export async function startCorrectnessReads(
   fetchFor: (key: keyof CorrectnessReads) => (signal: AbortSignal) => Promise<Response>,
@@ -1250,6 +1260,230 @@ export function evaluateGridHealth(read: ReadResult, nowMs: number): Correctness
   return { ...withFreshness(tile, true), headline: `Stale — ${why}. Last read: ${headline}` };
 }
 
+// ─── 7. Snapshot sparsity ───────────────────────────────────────────────────
+
+/** "Sparse" is 0..5 price-history snapshots on an outcome (#847 scope). */
+export const SNAPSHOT_SPARSE_MAX = 5;
+/** The producer samples this many most-recent open/active markets per source. */
+export const SNAPSHOT_SAMPLE_MARKETS = 200;
+/**
+ * The producer's cache TTL (`tasks/monitoring.py` SNAPSHOT_DIST_TTL). A
+ * retention, NOT a reviewed freshness horizon: past it the saved result would
+ * no longer exist, so a tab still holding it reads stale.
+ */
+export const SNAPSHOT_DIST_RETENTION_S = 86_400;
+/** The six buckets the producer writes; they partition `sampled_outcomes`. */
+export const SNAPSHOT_BUCKETS = [
+  ["zero_snapshots", "0"],
+  ["1_to_5", "1–5"],
+  ["6_to_20", "6–20"],
+  ["21_to_50", "21–50"],
+  ["51_to_100", "51–100"],
+  ["100_plus", "over 100"],
+] as const;
+/** The route's cache-miss 404 detail begins with exactly this. */
+const SNAPSHOT_CACHE_MISS_PREFIX = "No cached result.";
+/** `sparse_pct` is rounded to one decimal by the producer. */
+const SPARSE_PCT_TOLERANCE = 0.05 + 1e-9;
+
+function asFinite(v: unknown): number | null {
+  return typeof v === "number" && Number.isFinite(v) && v >= 0 ? v : null;
+}
+
+function oneDecimal(v: number): string {
+  return Number.isInteger(v) ? String(v) : v.toFixed(1);
+}
+
+/**
+ * One `sources[]` entry, checked against itself. Returns the row and, only for
+ * a row every check passed, its sparse share for the headline range. Every
+ * failed row stays on the tile with its source name and why — never dropped.
+ */
+function sparsityRow(s: Record<string, unknown>, name: string): { row: CorrectnessRow; sparseShare: number | null } {
+  const refuse = (note: string) => ({ row: { label: name, value: "—", state: "unavailable" as const, note }, sparseShare: null });
+  const sampled = asWhole(s.sampled_outcomes);
+  const total = asWhole(s.total_outcomes);
+  const buckets = SNAPSHOT_BUCKETS.map(([k]) => asWhole(s[k]));
+  const missing = [
+    ...(sampled === null ? ["sampled_outcomes"] : []),
+    ...(total === null ? ["total_outcomes"] : []),
+    ...SNAPSHOT_BUCKETS.filter((_, i) => buckets[i] === null).map(([k]) => k),
+  ];
+  if (sampled === null || total === null || missing.length > 0) {
+    return refuse(`not a whole count: ${missing.join(", ")}`);
+  }
+  const counts = buckets as number[];
+  if (sampled === 0) return refuse("no sampled outcomes — nothing was measured");
+  const summed = counts.reduce((a, n) => a + n, 0);
+  if (summed !== sampled) return refuse(`the six buckets add to ${fmt(summed)}, not the ${fmt(sampled)} sampled`);
+  if (sampled > total) return refuse(`${fmt(sampled)} sampled from a population of ${fmt(total)} — inconsistent`);
+  const sparse = counts[0] + counts[1];
+  const reported = asFinite(s.sparse_pct);
+  if (reported === null || reported > 100) return refuse("sparse_pct is missing or outside 0–100");
+  const fromBuckets = (100 * sparse) / sampled;
+  if (Math.abs(reported - fromBuckets) > SPARSE_PCT_TOLERANCE) {
+    return refuse(`sparse_pct ${reported}% disagrees with its buckets (${fromBuckets.toFixed(2)}%)`);
+  }
+  const avg = asFinite(s.avg_snapshots);
+  const median = asFinite(s.median_snapshots);
+  if (avg === null || median === null) return refuse("avg_snapshots or median_snapshots is missing or negative");
+  // The median is PERCENTILE_CONT(0.5) over the same outcomes, interpolating
+  // between ranks floor(k) and ceil(k), k = (sampled - 1) / 2. Both ranks fall
+  // inside the sparse buckets, or both outside, for most splits — and then the
+  // median must agree with them.
+  const k = (sampled - 1) / 2;
+  const sparseMedian = sparse >= Math.ceil(k) + 1;
+  const denseMedian = sparse <= Math.floor(k);
+  if ((sparseMedian && median > SNAPSHOT_SPARSE_MAX) || (denseMedian && median < SNAPSHOT_SPARSE_MAX + 1)) {
+    return refuse(`median ${oneDecimal(median)} disagrees with ${fmt(sparse)} of ${fmt(sampled)} sparse`);
+  }
+  if (
+    (counts[0] === sampled && (avg !== 0 || median !== 0)) ||
+    (sparse === sampled && avg > SNAPSHOT_SPARSE_MAX) ||
+    (sparse === 0 && avg < SNAPSHOT_SPARSE_MAX + 1)
+  ) {
+    return refuse(`mean ${oneDecimal(avg)} disagrees with its buckets`);
+  }
+  const spread = SNAPSHOT_BUCKETS.map(([, label], i) => `${label}: ${fmt(counts[i])}`).join(" · ");
+  return {
+    row: {
+      label: name,
+      value: `${pct(sparse, sampled)} sparse (${fmt(sparse)} of ${fmt(sampled)} sampled outcomes)`,
+      state: "no_threshold",
+      note: `Population, not the denominator: ${fmt(total)} outcomes on all open/active ${name} markets (the sample is ${pct(sampled, total)} of it) · snapshots per outcome — ${spread} · median ${oneDecimal(median)} · mean ${oneDecimal(avg)}`,
+    },
+    sparseShare: fromBuckets,
+  };
+}
+
+/**
+ * `GET /api/admin/snapshots/distribution`: the saved result of
+ * `compute_snapshot_distribution_impl`, read as-is. The route answers 200 with
+ * the record, or 404 when nothing is saved. Its 404 detail tells the reader to
+ * queue the computation; this page never does — no POST, no fallback.
+ *
+ * WHAT THE NUMBER IS: per source, the share of SAMPLED outcomes with 0..5
+ * snapshots. The sample is every outcome of the 200 most-recent open/active
+ * markets of that source — biased towards new markets. It is not the source's
+ * whole population, not the accuracy curve's cohort and not a share of all
+ * markets. The population count is shown beside it and never used as the
+ * denominator; sources are never summed into one percentage.
+ *
+ * NO COLOUR. No sparse threshold and no freshness horizon has been reviewed,
+ * so a valid row is `no_threshold` and the tile is never green, amber or red.
+ * A result computed more than `SOURCE_CLOCK_SKEW_S` ahead of this tab's clock,
+ * or with no readable `computed_at`, is freshness unknown; one older than the
+ * producer's own cache retention in a tab left open is stale.
+ *
+ * A row that is missing a count, repeated, inconsistent with its own buckets,
+ * or unnamed stays visible as unverified with its reason; it never joins the
+ * headline range.
+ */
+export function evaluateSnapshotSparsity(read: ReadResult, nowMs: number): CorrectnessTile {
+  const base = {
+    key: "snapshot_sparsity" as const,
+    title: "Price-history sparsity",
+    method:
+      `Per source: share of SAMPLED outcomes with 0–${SNAPSHOT_SPARSE_MAX} price-history snapshots. The sample is every outcome of the ${SNAPSHOT_SAMPLE_MARKETS} most-recent open/active markets of that source — biased towards new markets, not the source's whole population, not the accuracy curve's cohort and not a share of all markets. The population count is shown beside it and is never the denominator; sources are never added together. No sparse threshold or freshness horizon has been reviewed, so no colour is given. The producer leaves out a source with no sampled outcomes.`,
+    source: CORRECTNESS_ENDPOINTS.snapshotDistribution,
+  };
+  if (read.status === "error" && read.kind === "http" && read.httpStatus === 404) {
+    const detail = isObj(read.body) ? asStr(read.body.detail) : null;
+    const miss = detail !== null && detail.startsWith(SNAPSHOT_CACHE_MISS_PREFIX);
+    return {
+      ...base,
+      state: "unavailable",
+      headline: miss
+        ? "Unavailable — no saved result (HTTP 404), and this page does not compute one"
+        : "Unavailable — HTTP 404 without the route's no-saved-result answer",
+      rows: [],
+      asOf: null,
+      readMs: read.ms,
+    };
+  }
+  if (read.status === "error" && read.kind === "pending") {
+    return { ...base, state: "unavailable", headline: "Unavailable — HTTP 202, which this route never sends for a saved result", rows: [], asOf: null, readMs: read.ms };
+  }
+  const failed = readFailureTile(base, read);
+  if (failed) return failed;
+  if (read.status !== "ok") return wrongShape(base, "no data", 0);
+  const d = read.data;
+  if (!isObj(d) || !Array.isArray(d.sources)) return wrongShape(base, "no sources[]", read.ms);
+  if (d.sources.length === 0) {
+    return { ...base, state: "unavailable", headline: "Unavailable — the saved result lists no sources, which is not 0%", rows: [], asOf: null, readMs: read.ms };
+  }
+
+  const nameOf = (s: unknown) => (isObj(s) ? asStr(s.source) : null);
+  const timesSent = new Map<string, number>();
+  for (const s of d.sources) {
+    const n = nameOf(s);
+    if (n !== null) timesSent.set(n, (timesSent.get(n) ?? 0) + 1);
+  }
+  const rows: CorrectnessRow[] = [];
+  const shares: number[] = [];
+  const reported = new Set<string>();
+  for (const s of d.sources) {
+    const name = nameOf(s);
+    if (!isObj(s) || name === null) {
+      rows.push({ label: "unnamed source", value: "—", state: "unavailable", note: "a row without a source name" });
+      continue;
+    }
+    const sent = timesSent.get(name) ?? 0;
+    if (sent > 1) {
+      if (!reported.has(name)) {
+        rows.push({ label: name, value: "—", state: "unavailable", note: `sent ${sent} times in one result — no copy is used` });
+        reported.add(name);
+      }
+      continue;
+    }
+    const { row, sparseShare } = sparsityRow(s, name);
+    rows.push(row);
+    if (sparseShare !== null) shares.push(sparseShare);
+  }
+  const unread = rows.length - shares.length;
+  const rawAsOf = d.computed_at;
+  const asOf = asTime(rawAsOf);
+  if (shares.length === 0) {
+    return { ...base, state: "unavailable", headline: `Unavailable — none of the ${rows.length} source rows could be read`, rows, asOf, readMs: read.ms };
+  }
+  const lo = Math.min(...shares);
+  const hi = Math.max(...shares);
+  const share = (v: number) => (v < 100 && v >= 99.95 ? "99.9%" : `${v.toFixed(1)}%`);
+  const range = lo === hi ? share(lo) : `${share(lo)} to ${share(hi)}`;
+  const headline = [
+    `${shares.length} source${shares.length === 1 ? "" : "s"} sampled`,
+    `sparse share ${range} of ${shares.length === 1 ? "its" : "each source's"} sampled outcomes`,
+    "no reviewed threshold",
+    ...(unread > 0 ? [`${unread} row${unread === 1 ? "" : "s"} could not be read`] : []),
+  ].join(" · ");
+  const method = asStr(d.method);
+  const evidence = [
+    method ? `Producer's method: ${method.slice(0, 160)}` : "The producer did not state its method",
+    `Kept ${SNAPSHOT_DIST_RETENTION_S / 3600} h after it is computed (cache retention, not a reviewed freshness horizon). Computed only when an operator queues it; no schedule runs it, and this page never does.`,
+  ];
+  const tile: CorrectnessTile = {
+    ...base,
+    state: unread > 0 ? "partial" : "no_threshold",
+    headline,
+    rows,
+    asOf,
+    readMs: read.ms,
+    evidence,
+  };
+  if (asOf === null) {
+    const why = rawAsOf === undefined || rawAsOf === null ? "the result carries no computed_at" : "its computed_at does not parse";
+    return { ...tile, state: "freshness_unknown", headline: `Freshness unknown — ${why}. Last read: ${headline}` };
+  }
+  const computedMs = Date.parse(asOf);
+  if (computedMs - nowMs > SOURCE_CLOCK_SKEW_S * 1000) {
+    return { ...tile, state: "freshness_unknown", headline: `Freshness unknown — it was computed more than 5 min ahead of this browser's clock. Last read: ${headline}` };
+  }
+  if (nowMs - computedMs > SNAPSHOT_DIST_RETENTION_S * 1000) {
+    return { ...tile, state: "stale", headline: `Stale — older than the producer's ${SNAPSHOT_DIST_RETENTION_S / 3600} h retention in this open tab. Last read: ${headline}` };
+  }
+  return tile;
+}
+
 // ─── The page as a whole ────────────────────────────────────────────────────
 
 export function evaluateAll(reads: CorrectnessReads, nowMs: number): CorrectnessTile[] {
@@ -1260,6 +1494,7 @@ export function evaluateAll(reads: CorrectnessReads, nowMs: number): Correctness
     evaluateSourceCoverage(reads.sourceCoverage, nowMs),
     evaluateLinkRate(reads.linkRate, nowMs),
     evaluateGridHealth(reads.gridSentinel, nowMs),
+    evaluateSnapshotSparsity(reads.snapshotDistribution, nowMs),
   ];
 }
 
@@ -1269,10 +1504,10 @@ export interface ConsoleSummary {
 }
 
 /**
- * The page header. `good` needs all six tiles green — which today it cannot be,
- * because the guess-family tile has no endpoint and the grid tile has no
- * Sentinel coverage for Golf. That is the honest answer to "can we trust our
- * numbers today?" while part of the six cannot be read.
+ * The page header. `good` needs every tile green — which today it cannot be,
+ * because the guess-family tile has no endpoint, the grid tile has no Sentinel
+ * coverage for Golf and the snapshot-sparsity tile has no reviewed threshold. That is the honest answer to "can we trust our
+ * numbers today?" while part of the page cannot be graded.
  */
 export function summarize(tiles: CorrectnessTile[]): ConsoleSummary {
   const n = (s: CorrectnessState) => tiles.filter((t) => t.state === s).length;

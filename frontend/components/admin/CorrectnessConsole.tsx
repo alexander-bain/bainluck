@@ -157,7 +157,7 @@ export default function CorrectnessConsoleView({ tiles, nowMs, settledMs, authNo
         status={status}
         summary={summary}
         ideal="every tile OK, each against its documented threshold; anything unread or stale is unverified, never OK"
-        subtitle="Correctness Console — winner coverage, guesses, calibration, sources, links and grids, from saved evidence and existing endpoints"
+        subtitle="Correctness Console — winner coverage, guesses, calibration, sources, links, grids and price-history sparsity, from saved evidence and existing endpoints"
       />
       {anyUnauthorized && authNotice && <div className="mb-4">{authNotice}</div>}
       <div className="flex flex-wrap items-center gap-3 mb-4 text-xs text-text-muted">

@@ -1,7 +1,7 @@
 // #847 — THE CORRECTNESS CONSOLE ANSWERS "CAN WE TRUST OUR NUMBERS TODAY?"
 // WITHOUT EVER TURNING AN UNREAD NUMBER GREEN.
 //
-// The page composes five existing endpoints into six tiles. What these tests
+// The page composes six existing endpoints into seven tiles. What these tests
 // pin, metric by metric:
 //   - units, denominator and the CITED threshold that colours each tile;
 //   - zero versus missing: a count that is absent is unverified, a real zero
@@ -9,7 +9,7 @@
 //     denominator is NOT a failure;
 //   - stale, partial, wrong-shape and failed reads are unverified, never green,
 //     and a red seen in stale data is reported as stale-with-last-verdict;
-//   - one failing read never blanks or holds its siblings (all five start at
+//   - one failing read never blanks or holds its siblings (all six start at
 //     once and report as each settles);
 //   - a 401/403 is a statement about the credential, not the data (#6024);
 //   - the page carries the three GA4 hooks before any return, reads with the
@@ -38,11 +38,13 @@ import {
   evaluateGridHealth,
   evaluateGuessFamily,
   evaluateLinkRate,
+  evaluateSnapshotSparsity,
   evaluateSourceCoverage,
   evaluateWinnerCoverage,
   foldStates,
   GRID_SENTINEL_STALE_AFTER_S,
   mceState,
+  SNAPSHOT_DIST_RETENTION_S,
   SOURCE_CLOCK_SKEW_S,
   startCorrectnessReads,
   startUiClock,
@@ -283,6 +285,44 @@ function sentinelPayload(
 }
 const gridRow = (t: CorrectnessTile, label: string) => t.rows.find((r) => r.label === label);
 
+// The saved snapshot distribution, in the shape `compute_snapshot_distribution_impl`
+// writes (`tasks/monitoring.py`): per source, six buckets partitioning
+// `sampled_outcomes` (outcomes of the 200 most-recent open/active markets),
+// `total_outcomes` over every open/active market of that source, and
+// `sparse_pct` = round(100 * (zero + 1..5) / sampled, 1).
+function snapSource(over: Record<string, unknown> = {}) {
+  // 412 = 12 + 40 + 100 + 120 + 90 + 50; sparse 52 → 12.62% → 12.6
+  return {
+    source: "kalshi",
+    total_outcomes: 9000,
+    sampled_outcomes: 412,
+    zero_snapshots: 12,
+    "1_to_5": 40,
+    "6_to_20": 100,
+    "21_to_50": 120,
+    "51_to_100": 90,
+    "100_plus": 50,
+    avg_snapshots: 38.4,
+    median_snapshots: 31,
+    sparse_pct: 12.6,
+    ...over,
+  };
+}
+// 600 = 300 + 150 + 100 + 30 + 15 + 5; sparse 450 → 75.0
+const polySnap = (over: Record<string, unknown> = {}) =>
+  snapSource({ source: "polymarket", total_outcomes: 3000, sampled_outcomes: 600, zero_snapshots: 300, "1_to_5": 150, "6_to_20": 100, "21_to_50": 30, "51_to_100": 15, "100_plus": 5, avg_snapshots: 4.9, median_snapshots: 0.5, sparse_pct: 75, ...over });
+/** Every sampled outcome has 6+ snapshots: a real measured 0%. */
+const zeroSparse = () =>
+  snapSource({ source: "odds_api", total_outcomes: 500, sampled_outcomes: 200, zero_snapshots: 0, "1_to_5": 0, "6_to_20": 50, "21_to_50": 50, "51_to_100": 50, "100_plus": 50, avg_snapshots: 60.2, median_snapshots: 50.5, sparse_pct: 0 });
+/** Every sampled outcome has no snapshot at all: a real measured 100%. */
+const allSparse = () =>
+  snapSource({ source: "odds_api", total_outcomes: 80, sampled_outcomes: 80, zero_snapshots: 80, "1_to_5": 0, "6_to_20": 0, "21_to_50": 0, "51_to_100": 0, "100_plus": 0, avg_snapshots: 0, median_snapshots: 0, sparse_pct: 100 });
+function snapPayload(sources: unknown[] = [snapSource(), polySnap()], computedAt: unknown = minutesAgo(90)) {
+  return { computed_at: computedAt, method: "200 most-recent markets per source (open/active only)", sources };
+}
+const snapRow = (t: CorrectnessTile, label: string) => t.rows.find((r) => r.label === label);
+const SNAP_MISS_DETAIL = "No cached result. POST /api/admin/snapshots/distribution to compute.";
+
 // ── 1. winner coverage ─────────────────────────────────────────────────────
 
 describe("winner coverage — the gap is markets with no resolution at all", () => {
@@ -490,10 +530,10 @@ describe("winner coverage — no all-clear without a local age", () => {
     expect(normalTiles.filter((t) => t.state === "green").map((t) => t.key)).toEqual(["winner_coverage", "category_mce", "source_coverage"]);
     expect(aheadTiles.filter((t) => t.state === "green").map((t) => t.key)).toEqual(["category_mce", "source_coverage"]);
     expect(aheadTiles.filter((t) => t.key !== "winner_coverage")).toEqual(normalTiles.filter((t) => t.key !== "winner_coverage"));
-    expect(summarize(normalTiles).summary).toBe("3 of 6 green · 3 unverified");
-    expect(summarize(aheadTiles)).toEqual({ status: "warning", summary: "2 of 6 green · 4 unverified" });
+    expect(summarize(normalTiles).summary).toBe("3 of 7 green · 4 unverified");
+    expect(summarize(aheadTiles)).toEqual({ status: "warning", summary: "2 of 7 green · 5 unverified" });
     const html = renderToStaticMarkup(<CorrectnessConsoleView tiles={aheadTiles} nowMs={NOW} settledMs={10} />);
-    expect(html).toContain("2 of 6 green · 4 unverified");
+    expect(html).toContain("2 of 7 green · 5 unverified");
     expect(winnerCard(html)).toContain('data-state="freshness_unknown"');
   });
 });
@@ -1065,7 +1105,7 @@ describe("one bounded read per endpoint", () => {
     expect(evaluateLinkRate(r, NOW).state).toBe("unavailable");
   });
 
-  it("starts all five reads before any settles, and one failure does not hold the rest", async () => {
+  it("starts every read before any settles, and one failure does not hold the rest", async () => {
     const started: string[] = [];
     const settled: string[] = [];
     let releaseSlow: () => void = () => {};
@@ -1082,7 +1122,7 @@ describe("one bounded read per endpoint", () => {
     await new Promise((r) => setTimeout(r, 5));
     expect(started.sort()).toEqual(Object.keys(CORRECTNESS_ENDPOINTS).sort());
     // Everything but the slow read has already reported, the failure included.
-    expect(settled.sort()).toEqual(["calibration", "gridSentinel", "linkRate", "winners"]);
+    expect(settled.sort()).toEqual(["calibration", "gridSentinel", "linkRate", "snapshotDistribution", "winners"]);
     releaseSlow();
     expect(typeof (await ms)).toBe("number");
     expect(settled).toContain("sourceCoverage");
@@ -1110,7 +1150,8 @@ describe("one bounded read per endpoint", () => {
     };
     await startCorrectnessReads(fetchFor, () => {}); // open
     await startCorrectnessReads(fetchFor, () => {}); // Reload
-    expect(requested).toHaveLength(10);
+    expect(requested).toHaveLength(12);
+    expect(requested.filter((p) => p === "/api/admin/snapshots/distribution")).toHaveLength(2);
     expect(requested.filter((p) => p === "/api/admin/event-source-coverage/cached")).toHaveLength(2);
     expect(requested.filter((p) => p === "/api/admin/prediction-markets/link-rate/cached")).toHaveLength(2);
     for (const p of requested) {
@@ -1227,6 +1268,296 @@ describe("fetched evidence ages into stale in a tab left open — with no new re
   });
 });
 
+// ── 7. snapshot sparsity ───────────────────────────────────────────────────
+
+describe("snapshot sparsity — a sampled number, shown without a colour", () => {
+  it("shows each source's sparse share of its SAMPLED outcomes, never green, with the population beside it", () => {
+    const t = evaluateSnapshotSparsity(ok(snapPayload()), NOW);
+    expect(t.state).toBe("no_threshold");
+    expect(t.title).toBe("Price-history sparsity");
+    expect(snapRow(t, "kalshi")).toMatchObject({ value: "12.6% sparse (52 of 412 sampled outcomes)", state: "no_threshold" });
+    expect(snapRow(t, "kalshi")!.note).toContain("Population, not the denominator: 9,000 outcomes on all open/active kalshi markets (the sample is 4.6% of it)");
+    expect(snapRow(t, "kalshi")!.note).toContain("0: 12 · 1–5: 40 · 6–20: 100 · 21–50: 120 · 51–100: 90 · over 100: 50 · median 31 · mean 38.4");
+    expect(snapRow(t, "polymarket")).toMatchObject({ value: "75.0% sparse (450 of 600 sampled outcomes)", state: "no_threshold" });
+    expect(t.headline).toBe("2 sources sampled · sparse share 12.6% to 75.0% of each source's sampled outcomes · no reviewed threshold");
+    expect(t.asOf).toBe(minutesAgo(90));
+    expect(t.method).toContain("200 most-recent open/active markets");
+    expect(t.method).toContain("never the denominator");
+    expect(t.evidence).toContain("Producer's method: 200 most-recent markets per source (open/active only)");
+  });
+
+  it("never adds sources together: no pooled share appears anywhere on the tile", () => {
+    const t = evaluateSnapshotSparsity(ok(snapPayload()), NOW);
+    const text = JSON.stringify(t);
+    // Pooled over both: (52 + 450) / (412 + 600) = 49.6%; summed percentages: 87.6%.
+    expect(text).not.toContain("49.6%");
+    expect(text).not.toContain("87.6%");
+    expect(text).not.toContain("1,012");
+  });
+
+  it("a real measured 0% and a real measured 100% are both numbers, neither coloured", () => {
+    const zero = evaluateSnapshotSparsity(ok(snapPayload([zeroSparse()])), NOW);
+    expect(zero.state).toBe("no_threshold");
+    expect(zero.rows[0]).toMatchObject({ value: "0.0% sparse (0 of 200 sampled outcomes)", state: "no_threshold" });
+    expect(zero.headline).toBe("1 source sampled · sparse share 0.0% of its sampled outcomes · no reviewed threshold");
+    const all = evaluateSnapshotSparsity(ok(snapPayload([allSparse()])), NOW);
+    expect(all.state).toBe("no_threshold");
+    expect(all.rows[0]).toMatchObject({ value: "100.0% sparse (80 of 80 sampled outcomes)", state: "no_threshold" });
+    expect(all.headline).toContain("sparse share 100.0%");
+    for (const t of [zero, all]) {
+      expect(["green", "amber", "red"]).not.toContain(t.state);
+      expect(t.rows.every((r) => r.state === "no_threshold")).toBe(true);
+    }
+  });
+
+  it("never rounds a sample that is not all sparse up to 100%", () => {
+    // 2499 of 2500 = 99.96% → the producer rounds to 100.0, which agrees within its rounding.
+    const s = snapSource({ sampled_outcomes: 2500, total_outcomes: 2500, zero_snapshots: 2000, "1_to_5": 499, "6_to_20": 1, "21_to_50": 0, "51_to_100": 0, "100_plus": 0, avg_snapshots: 0.4, median_snapshots: 0, sparse_pct: 100 });
+    const t = evaluateSnapshotSparsity(ok(snapPayload([s])), NOW);
+    expect(t.rows[0].value).toBe("99.9% sparse (2,499 of 2,500 sampled outcomes)");
+    expect(t.headline).toContain("sparse share 99.9%");
+  });
+
+  it("divides by the sample, not the population: the same buckets read the same whatever the population", () => {
+    const small = snapSource({ total_outcomes: 412 });
+    const huge = snapSource({ total_outcomes: 4_000_000 });
+    const a = evaluateSnapshotSparsity(ok(snapPayload([small])), NOW).rows[0];
+    const b = evaluateSnapshotSparsity(ok(snapPayload([huge])), NOW).rows[0];
+    expect(a.value).toBe("12.6% sparse (52 of 412 sampled outcomes)");
+    expect(b.value).toBe(a.value);
+    expect(a.note).toContain("412 outcomes on all open/active kalshi markets (the sample is 100.0% of it)");
+    expect(b.note).toContain("4,000,000 outcomes on all open/active kalshi markets (the sample is 0.0% of it)");
+    // 52 / 4,000,000 would be 0.0013% — the population never becomes the denominator.
+    expect(b.value).not.toMatch(/^0\.0%/);
+  });
+
+  it("refuses a row whose buckets do not add up to its sample, keeping the healthy sibling", () => {
+    const t = evaluateSnapshotSparsity(ok(snapPayload([snapSource({ "100_plus": 51 }), polySnap()])), NOW);
+    expect(snapRow(t, "kalshi")).toMatchObject({ value: "—", state: "unavailable", note: "the six buckets add to 413, not the 412 sampled" });
+    expect(snapRow(t, "polymarket")!.state).toBe("no_threshold");
+    expect(t.state).toBe("partial");
+    expect(t.headline).toBe("1 source sampled · sparse share 75.0% of its sampled outcomes · no reviewed threshold · 1 row could not be read");
+  });
+
+  it("checks sparse_pct against its own buckets within the producer's one-decimal rounding", () => {
+    const read = (pctValue: unknown) => evaluateSnapshotSparsity(ok(snapPayload([snapSource({ sparse_pct: pctValue })])), NOW).rows[0];
+    // 52 / 412 = 12.621%
+    expect(read(12.6).state).toBe("no_threshold");
+    expect(read(12.65).state).toBe("no_threshold");
+    expect(read(12.7)).toMatchObject({ state: "unavailable", note: "sparse_pct 12.7% disagrees with its buckets (12.62%)" });
+    expect(read(50)).toMatchObject({ state: "unavailable" });
+    expect(read(101).note).toBe("sparse_pct is missing or outside 0–100");
+    expect(read(-1).note).toBe("sparse_pct is missing or outside 0–100");
+    expect(read("12.6").note).toBe("sparse_pct is missing or outside 0–100");
+    expect(read(undefined).note).toBe("sparse_pct is missing or outside 0–100");
+  });
+
+  it("refuses a median or mean that contradicts the buckets", () => {
+    // 75% sparse: the median outcome has at most 5 snapshots.
+    expect(evaluateSnapshotSparsity(ok(snapPayload([polySnap({ median_snapshots: 40 })])), NOW).rows[0]).toMatchObject({
+      state: "unavailable",
+      note: "median 40 disagrees with 450 of 600 sparse",
+    });
+    // 12.6% sparse: the median outcome has at least 6.
+    expect(evaluateSnapshotSparsity(ok(snapPayload([snapSource({ median_snapshots: 3 })])), NOW).rows[0].state).toBe("unavailable");
+    // Every outcome at zero snapshots: the mean and median are zero.
+    expect(evaluateSnapshotSparsity(ok(snapPayload([{ ...allSparse(), avg_snapshots: 0.3 }])), NOW).rows[0]).toMatchObject({
+      state: "unavailable",
+      note: "mean 0.3 disagrees with its buckets",
+    });
+    expect(evaluateSnapshotSparsity(ok(snapPayload([{ ...zeroSparse(), avg_snapshots: 4 }])), NOW).rows[0].state).toBe("unavailable");
+    expect(evaluateSnapshotSparsity(ok(snapPayload([snapSource({ avg_snapshots: null })])), NOW).rows[0].note).toBe(
+      "avg_snapshots or median_snapshots is missing or negative",
+    );
+  });
+
+  it("names a missing, fractional or string count instead of reading it as zero", () => {
+    const t = evaluateSnapshotSparsity(ok(snapPayload([snapSource({ zero_snapshots: undefined, "1_to_5": "40", "6_to_20": 99.5 })])), NOW);
+    expect(t.rows[0]).toMatchObject({ label: "kalshi", value: "—", state: "unavailable", note: "not a whole count: zero_snapshots, 1_to_5, 6_to_20" });
+    expect(t.state).toBe("unavailable");
+    expect(t.headline).toBe("Unavailable — none of the 1 source rows could be read");
+  });
+
+  it("refuses a sample larger than its population, and a sample of nothing", () => {
+    expect(evaluateSnapshotSparsity(ok(snapPayload([snapSource({ total_outcomes: 400 })])), NOW).rows[0].note).toBe(
+      "412 sampled from a population of 400 — inconsistent",
+    );
+    const empty = snapSource({ sampled_outcomes: 0, zero_snapshots: 0, "1_to_5": 0, "6_to_20": 0, "21_to_50": 0, "51_to_100": 0, "100_plus": 0, sparse_pct: 0 });
+    expect(evaluateSnapshotSparsity(ok(snapPayload([empty])), NOW).rows[0].note).toBe("no sampled outcomes — nothing was measured");
+  });
+
+  it("a source sent twice is shown once, unverified, and neither copy counts", () => {
+    const t = evaluateSnapshotSparsity(ok(snapPayload([snapSource(), polySnap(), snapSource({ sparse_pct: 12.6 })])), NOW);
+    const kalshi = t.rows.filter((r) => r.label === "kalshi");
+    expect(kalshi).toEqual([{ label: "kalshi", value: "—", state: "unavailable", note: "sent 2 times in one result — no copy is used" }]);
+    expect(t.state).toBe("partial");
+    expect(t.headline).toContain("sparse share 75.0% of its sampled outcomes");
+    expect(t.headline).not.toContain("12.6%");
+  });
+
+  it("keeps an unnamed row visible as unverified", () => {
+    const t = evaluateSnapshotSparsity(ok(snapPayload([snapSource({ source: "" }), "junk", polySnap()])), NOW);
+    expect(t.rows.filter((r) => r.label === "unnamed source")).toHaveLength(2);
+    expect(t.state).toBe("partial");
+  });
+
+  it("an empty source list and a wrong shape are unverified, never 0%", () => {
+    const empty = evaluateSnapshotSparsity(ok(snapPayload([])), NOW);
+    expect(empty).toMatchObject({ state: "unavailable", headline: "Unavailable — the saved result lists no sources, which is not 0%" });
+    expect(evaluateSnapshotSparsity(ok({ computed_at: minutesAgo(5) }), NOW).headline).toBe("Unavailable — unexpected response shape (no sources[])");
+    expect(evaluateSnapshotSparsity(ok([snapSource()]), NOW).state).toBe("unavailable");
+  });
+});
+
+describe("snapshot sparsity — every way of having no number stays distinguishable from a measured 0%", () => {
+  const hang = (signal: AbortSignal) => new Promise<Response>((_res, rej) => signal.addEventListener("abort", () => rej(new Error("aborted"))));
+
+  it("the route's cache-miss 404 says nothing is saved — and never repeats the instruction to compute", async () => {
+    const r = await boundedRead(async () => new Response(JSON.stringify({ detail: SNAP_MISS_DETAIL }), { status: 404 }));
+    expect(r).toMatchObject({ status: "error", kind: "http", httpStatus: 404, body: { detail: SNAP_MISS_DETAIL } });
+    const t = evaluateSnapshotSparsity(r, NOW);
+    expect(t).toMatchObject({ state: "unavailable", headline: "Unavailable — no saved result (HTTP 404), and this page does not compute one", rows: [], asOf: null });
+    const html = renderToStaticMarkup(<CorrectnessTileCard tile={t} nowMs={NOW} />);
+    expect(html).not.toContain("POST");
+    expect(html).not.toContain("to compute.");
+  });
+
+  it("separates the no-result answer from every other way of not reading a number", async () => {
+    const headlines = new Map<string, CorrectnessTile>();
+    headlines.set("miss", evaluateSnapshotSparsity(await boundedRead(async () => new Response(JSON.stringify({ detail: SNAP_MISS_DETAIL }), { status: 404 })), NOW));
+    headlines.set("other 404", evaluateSnapshotSparsity(await boundedRead(async () => new Response(JSON.stringify({ detail: "Not Found" }), { status: 404 })), NOW));
+    headlines.set("401", evaluateSnapshotSparsity(await boundedRead(async () => new Response("Invalid admin secret", { status: 401 })), NOW));
+    headlines.set("202", evaluateSnapshotSparsity(await boundedRead(async () => new Response(JSON.stringify({ status: "queued" }), { status: 202 })), NOW));
+    headlines.set("deadline", evaluateSnapshotSparsity(await boundedRead(hang, { timeoutMs: 20 }), NOW));
+    headlines.set("malformed body", evaluateSnapshotSparsity(await boundedRead(async () => new Response("<html>", { status: 200 })), NOW));
+    headlines.set("wrong shape", evaluateSnapshotSparsity(await boundedRead(async () => new Response(JSON.stringify({ status: "queued", task_id: "x" }), { status: 200 })), NOW));
+    headlines.set("500", evaluateSnapshotSparsity(await boundedRead(async () => new Response("boom", { status: 500 })), NOW));
+    const measuredZero = evaluateSnapshotSparsity(ok(snapPayload([zeroSparse()])), NOW);
+
+    expect(headlines.get("401")!.state).toBe("unauthorized");
+    expect(headlines.get("401")!.headline).toContain("says nothing about the data");
+    expect(headlines.get("other 404")!.headline).toBe("Unavailable — HTTP 404 without the route's no-saved-result answer");
+    expect(headlines.get("202")!.headline).toBe("Unavailable — HTTP 202, which this route never sends for a saved result");
+    expect(headlines.get("deadline")!.headline).toBe("Unavailable — no answer within 20 ms");
+    expect(headlines.get("wrong shape")!.headline).toBe("Unavailable — unexpected response shape (no sources[])");
+    const texts = [...headlines.values()].map((t) => t.headline);
+    expect(new Set(texts).size).toBe(texts.length);
+    for (const t of headlines.values()) {
+      expect(["unavailable", "unauthorized"]).toContain(t.state);
+      expect(t.rows).toEqual([]);
+      expect(t.headline).not.toContain("0.0%");
+      expect(t.headline).not.toBe(measuredZero.headline);
+    }
+    expect(measuredZero.state).toBe("no_threshold");
+  });
+
+  it("a missing or unparseable computed_at keeps the numbers but has no age", () => {
+    for (const [stamp, why] of [
+      [null, "the result carries no computed_at"],
+      [undefined, "the result carries no computed_at"],
+      ["yesterday", "its computed_at does not parse"],
+      [1729400000, "its computed_at does not parse"],
+    ] as const) {
+      const body: Record<string, unknown> = snapPayload([zeroSparse()]);
+      if (stamp === undefined) delete body.computed_at;
+      else body.computed_at = stamp;
+      const t = evaluateSnapshotSparsity(ok(body), NOW);
+      expect(t.state).toBe("freshness_unknown");
+      expect(t.headline).toBe(`Freshness unknown — ${why}. Last read: 1 source sampled · sparse share 0.0% of its sampled outcomes · no reviewed threshold`);
+      expect(t.asOf).toBeNull();
+      expect(t.rows[0].value).toBe("0.0% sparse (0 of 200 sampled outcomes)");
+    }
+  });
+});
+
+describe("snapshot sparsity — judged on this tab's clock, with no new request", () => {
+  afterEach(() => jest.useRealTimers());
+
+  it("a computed_at ahead of this tab's clock is freshness unknown past the existing 300 s tolerance", () => {
+    const stampAt = (msAhead: number) => new Date(NOW + msAhead).toISOString();
+    expect(evaluateSnapshotSparsity(ok(snapPayload(undefined, stampAt(SOURCE_CLOCK_SKEW_S * 1000))), NOW).state).toBe("no_threshold");
+    const ahead = evaluateSnapshotSparsity(ok(snapPayload(undefined, stampAt(SOURCE_CLOCK_SKEW_S * 1000 + 1))), NOW);
+    expect(ahead.state).toBe("freshness_unknown");
+    expect(ahead.headline).toMatch(/^Freshness unknown — it was computed more than 5 min ahead of this browser's clock\. Last read: 2 sources sampled/);
+    // The stamp is kept as the record's own; the card prints no invented age.
+    expect(ahead.asOf).toBe(stampAt(SOURCE_CLOCK_SKEW_S * 1000 + 1));
+    const html = renderToStaticMarkup(<CorrectnessTileCard tile={ahead} nowMs={NOW} />);
+    expect(html).toContain("built ahead of this browser&#x27;s clock");
+    expect(html).not.toContain("built 0s ago");
+  });
+
+  it("is stale only past the producer's own 24 h retention — exactly at it is not", () => {
+    const stampAgo = (ms: number) => new Date(NOW - ms).toISOString();
+    expect(evaluateSnapshotSparsity(ok(snapPayload(undefined, stampAgo(SNAPSHOT_DIST_RETENTION_S * 1000))), NOW).state).toBe("no_threshold");
+    const old = evaluateSnapshotSparsity(ok(snapPayload(undefined, stampAgo(SNAPSHOT_DIST_RETENTION_S * 1000 + 1))), NOW);
+    expect(old.state).toBe("stale");
+    expect(old.headline).toMatch(/^Stale — older than the producer's 24 h retention in this open tab\. Last read: /);
+  });
+
+  it("one fetched record moves from ahead-of-clock to readable to stale on the UI clock alone", () => {
+    jest.useFakeTimers();
+    const fetchSpy = jest.fn();
+    const realFetch = global.fetch;
+    global.fetch = fetchSpy as unknown as typeof fetch;
+    try {
+      // The tab's clock starts ten minutes behind the record's computed_at.
+      const computedAt = new Date(NOW).toISOString();
+      const read = ok(snapPayload(undefined, computedAt));
+      const loadedAt = NOW - 10 * 60_000;
+      let judged = evaluateSnapshotSparsity(read, loadedAt);
+      expect(judged.state).toBe("freshness_unknown");
+      const base = jest.now();
+      const stop = startUiClock((t) => (judged = evaluateSnapshotSparsity(read, t)), {
+        doc: null,
+        now: () => loadedAt + (jest.now() - base),
+      });
+      jest.advanceTimersByTime(6 * 60_000); // now 4 min behind: inside the tolerance
+      expect(judged.state).toBe("no_threshold");
+      jest.advanceTimersByTime((10 + 24 * 60) * 60_000); // past 24 h after computed_at
+      expect(judged.state).toBe("stale");
+      expect(judged.asOf).toBe(computedAt);
+      expect(fetchSpy).not.toHaveBeenCalled();
+      stop();
+    } finally {
+      global.fetch = realFetch;
+    }
+  });
+});
+
+describe("snapshot sparsity — what a reader sees", () => {
+  const tile = evaluateSnapshotSparsity(ok(snapPayload([snapSource(), polySnap(), snapSource({ source: "odds_api", "100_plus": 49 })])), NOW);
+  const html = renderToStaticMarkup(<CorrectnessTileCard tile={tile} nowMs={NOW} />);
+
+  it("labels the panel, the sample and the population, with its state as a word", () => {
+    expect(html).toContain('data-tile="snapshot_sparsity" data-state="partial"');
+    expect(html).toContain("Price-history sparsity");
+    expect(html).toContain("Partly verified");
+    expect(html).toContain("No threshold");
+    expect(html).toContain("12.6% sparse (52 of 412 sampled outcomes)");
+    expect(html).toContain("Population, not the denominator: 9,000 outcomes");
+    expect(html).toContain("the six buckets add to 411, not the 412 sampled");
+    expect(html).toContain("/api/admin/snapshots/distribution · built 2 h ago");
+    expect(html).toContain("not a reviewed freshness horizon");
+  });
+
+  it("never draws a verdict colour or an OK badge on this panel", () => {
+    expect(html).not.toMatch(/>OK</);
+    expect(html).not.toMatch(/>Act now</);
+    expect(html).not.toMatch(/>Watch</);
+    expect(html).not.toContain("text-accent-live");
+    expect(html).not.toContain("text-accent-danger");
+    expect(html).not.toContain("text-accent-warning");
+  });
+
+  it("joins the page overview as unverified, never as green", () => {
+    const tiles = evaluateAll({ ...INITIAL_READS, snapshotDistribution: ok(snapPayload([zeroSparse()])) }, NOW);
+    const page = renderToStaticMarkup(<CorrectnessConsoleView tiles={tiles} nowMs={NOW} settledMs={null} />);
+    expect(page).toContain('data-tile="snapshot_sparsity" data-state="no_threshold"');
+    expect(summarize(tiles).summary).toContain("unverified");
+    expect(summarize(tiles).summary).toMatch(/^0 of 7 green/);
+  });
+});
+
 // ── the page as a whole ────────────────────────────────────────────────────
 
 function healthyReads(): CorrectnessReads {
@@ -1236,17 +1567,19 @@ function healthyReads(): CorrectnessReads {
     sourceCoverage: saved(200, coverageHit()),
     linkRate: linkRateHit(),
     gridSentinel: ok(sentinelPayload()),
+    snapshotDistribution: ok(snapPayload()),
   };
 }
 
 describe("the header verdict", () => {
-  it("is never 'good' while the guess family cannot be read and Golf has no Sentinel coverage", () => {
+  it("is never 'good' while the guess family cannot be read, Golf has no Sentinel coverage and sparsity has no threshold", () => {
     const tiles = evaluateAll(healthyReads(), NOW);
     expect(tiles.filter((t) => t.state === "green").map((t) => t.key)).toEqual(["winner_coverage", "category_mce", "source_coverage"]);
     expect(tiles.find((t) => t.key === "grid_health")!.state).toBe("partial");
     // The saved link-rate snapshot has no reviewed freshness horizon: graded, never current.
     expect(tiles.find((t) => t.key === "link_rate")).toMatchObject({ state: "freshness_unknown", lastVerdict: "green" });
-    expect(summarize(tiles)).toEqual({ status: "warning", summary: "3 of 6 green · 3 unverified" });
+    expect(tiles.find((t) => t.key === "snapshot_sparsity")!.state).toBe("no_threshold");
+    expect(summarize(tiles)).toEqual({ status: "warning", summary: "3 of 7 green · 4 unverified" });
   });
 
   it("is critical on any red tile", () => {
@@ -1256,8 +1589,10 @@ describe("the header verdict", () => {
 
   it("is about the credential when every admin read was refused, even though the public curve answered", () => {
     const refused: ReadResult = { status: "error", kind: "unauthorized", detail: "HTTP 403", ms: 40, httpStatus: 403 };
-    const reads = { ...healthyReads(), winners: refused, sourceCoverage: refused, linkRate: refused, gridSentinel: refused };
+    const reads = { ...healthyReads(), winners: refused, sourceCoverage: refused, linkRate: refused, gridSentinel: refused, snapshotDistribution: refused };
     expect(summarize(evaluateAll(reads, NOW)).status).toBe("unauthorized");
+    // One admin read that answered keeps the header about the data.
+    expect(summarize(evaluateAll({ ...reads, snapshotDistribution: healthyReads().snapshotDistribution }, NOW)).status).toBe("warning");
   });
 
   it("is loading before anything settles", () => {
@@ -1284,8 +1619,8 @@ describe("what a reader sees", () => {
     <CorrectnessConsoleView tiles={evaluateAll(mixed, NOW)} nowMs={NOW} settledMs={10_012} />,
   );
 
-  it("draws all six tiles, each with its state as a word and a data attribute", () => {
-    for (const key of ["winner_coverage", "guess_family", "category_mce", "source_coverage", "link_rate", "grid_health"]) {
+  it("draws all seven tiles, each with its state as a word and a data attribute", () => {
+    for (const key of ["winner_coverage", "guess_family", "category_mce", "source_coverage", "link_rate", "grid_health", "snapshot_sparsity"]) {
       expect(html).toContain(`data-tile="${key}"`);
     }
     expect(html).toContain('data-tile="category_mce" data-state="stale" data-last-verdict="green"');
@@ -1397,9 +1732,19 @@ describe("the page's own contract", () => {
     expect(page + lib).not.toMatch(/refresh=|warm|enqueue|send_task/i);
   });
 
+  it("reads the saved snapshot distribution with a plain GET — never its POST, a fallback or a computation", () => {
+    expect(CORRECTNESS_ENDPOINTS.snapshotDistribution).toBe("/api/admin/snapshots/distribution");
+    expect(ADMIN_READS.has("snapshotDistribution")).toBe(true);
+    // Named once, in the endpoint table; the page sends it through the shared GET mapping.
+    expect(lib.match(/snapshots\/distribution/g)).toHaveLength(1);
+    expect(page).not.toContain("snapshots/distribution");
+    expect(page + lib).not.toMatch(/method:\s*["'`]?(?:POST|PUT|PATCH|DELETE)/i);
+    expect(page + lib).not.toMatch(/compute_snapshot_distribution|\.delay\(/);
+  });
+
   it("keeps the public calibration read free of the admin credential", () => {
     expect(ADMIN_READS.has("calibration")).toBe(false);
-    expect([...ADMIN_READS].sort()).toEqual(["gridSentinel", "linkRate", "sourceCoverage", "winners"]);
+    expect([...ADMIN_READS].sort()).toEqual(["gridSentinel", "linkRate", "snapshotDistribution", "sourceCoverage", "winners"]);
   });
 
   it("is reachable from the admin sidebar", () => {
