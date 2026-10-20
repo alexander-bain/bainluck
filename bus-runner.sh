@@ -60,6 +60,33 @@ MISSIONS="FRESH CLAIMS THRU-BASELINE"
 
 bucket ()     { date -u +%Y%m%d-%H; }
 
+# The one-time inbox and its selector. The outer loop admits exactly what this
+# prints, and the idle wait below watches the same selector, so the wait can
+# never notice a file the loop would not admit (or miss one it would).
+INBOX="$H/runner-inbox/measurement"
+next_once () { find "$INBOX" -maxdepth 1 -name '*.md' -type f | sort | head -1; }
+
+# Idle wait to an absolute DEADLINE (epoch seconds) — the drained and abandoned
+# branches' sleep to the top of the hour. One-time input can be queued at any
+# minute (#1778: Measurement038 sat unread behind a `sleep 3150`), so the wait
+# is cut into fixed INBOX_POLL (60 s) slices and looks at the inbox between
+# them: a file queued during the wait is noticed within one slice. It only RETURNS (status 1)
+# — it launches nothing, so admission stays with the guarded loop (lane_control
+# check/run, attempts, priority). The deadline is fixed by the caller, so the
+# bucket boundary does not move. Empty inbox: returns 0 at the deadline, having
+# run one `find` per slice and nothing else — no collector, no session.
+INBOX_POLL=60
+idle_until () {
+  local DEADLINE="$1" LEFT
+  while :; do
+    [ -n "$(next_once)" ] && return 1
+    LEFT=$(( DEADLINE - $(date +%s) ))
+    [ "$LEFT" -le 0 ] && return 0
+    [ "$LEFT" -gt "$INBOX_POLL" ] && LEFT="$INBOX_POLL"
+    sleep "$LEFT"
+  done
+}
+
 # Which of this hour's artifacts are absent? Prints one mission name per line.
 # This is the whole gate: present artifact == mission done for the bucket.
 missing () {
@@ -162,8 +189,8 @@ DRIFT_BUCKET=""
 
 while true; do
   python3 "$CONTROL" check measurement || { sleep 60; continue; }
-  mkdir -p "$H/runner-inbox/measurement"
-  ONCE=$(find "$H/runner-inbox/measurement" -maxdepth 1 -name '*.md' -type f | sort | head -1)
+  mkdir -p "$INBOX"
+  ONCE=$(next_once)
   if [ -n "$ONCE" ]; then
     python3 "$CONTROL" run measurement -- codex exec --full-auto "$(cat "$ONCE")"
     RC=$?
@@ -197,12 +224,12 @@ while true; do
   if [ "$DRIFT_BUCKET" != "$B" ]; then DRIFT_BUCKET="$B"; drift_line; fi
 
   if [ -z "$WANT" ]; then
-    # Drained. Sleep to the top of the next hour rather than re-polling: there is
-    # nothing that can become due before the bucket rolls, so a shorter sleep can
-    # only produce noise.
+    # Drained. Wait to the top of the next hour rather than re-polling: no M-R
+    # mission can become due before the bucket rolls. One-time input can, so the
+    # wait watches the inbox (idle_until) and hands any arrival back to the loop.
     NOW=$(date +%s); NAP=$(( 3600 - NOW % 3600 )); [ "$NAP" -lt 60 ] && NAP=60
     echo "[bus] $B drained — all M-R artifacts present ($(date '+%H:%M:%S') local). Next bucket in ${NAP}s."
-    sleep "$NAP"
+    idle_until "$((NOW + NAP))" || echo "[bus] one-time input queued during the $B wait — back to normal admission"
     continue
   fi
 
@@ -215,7 +242,9 @@ while true; do
     echo "[bus] Not retried — waiting ${NAP}s for the next bucket. If this repeats"
     echo "[bus] every hour the bus is wedged: read $LOG_DIR/bus-*.log and tell Fable."
     echo "[bus] ***************************************************************"
-    sleep "$NAP"
+    # A one-time item may cut this wait short; the attempt count is untouched,
+    # so the loop comes straight back here and the hour stays abandoned.
+    idle_until "$((NOW + NAP))" || echo "[bus] one-time input queued during the abandoned $B wait — back to normal admission"
     continue
   fi
 
