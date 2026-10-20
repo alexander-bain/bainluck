@@ -271,7 +271,49 @@ final class MacKeyboardSelection10878Tests: XCTestCase {
                 XCTAssertEqual(platform.last, "#if os(macOS)", "\(text) runs outside the Mac")
             }
         }
-        XCTAssertEqual(keyPresses, 3, "down, up, escape")
+        XCTAssertEqual(keyPresses, 2, "the arrows, escape")
+    }
+
+    /// An arrow held with Shift, Command, Option or Control is one of the
+    /// field's editing shortcuts (⇧↓ extends the text selection), so it is
+    /// handed back before it can move the pick. The single-key overload hands
+    /// the handler no press to read modifiers from, so it is refused outright.
+    /// Only those four are named: arrows always carry `.function` and
+    /// `.numericPad` on macOS, so refusing every modifier would break plain
+    /// arrows. Whether SwiftUI delivers the press to a focused field is mounted
+    /// acceptance, not this read.
+    func testModifiedArrowsStayTheFields() throws {
+        let source = try Self.appSource("Views/SearchView.swift")
+        XCTAssertFalse(source.contains(".onKeyPress(.downArrow)"), "single-key ↓ cannot see modifiers")
+        XCTAssertFalse(source.contains(".onKeyPress(.upArrow)"), "single-key ↑ cannot see modifiers")
+        let handler = try XCTUnwrap(
+            Self.slice(source, from: ".onKeyPress(keys: [.downArrow, .upArrow], phases: [.down, .repeat]) { press in", to: ".onKeyPress(.escape)"),
+            "the arrow handler no longer takes the press"
+        )
+        let statements = handler
+            .components(separatedBy: "\n")
+            .dropFirst()
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+        XCTAssertEqual(
+            statements.first,
+            "guard press.modifiers.isDisjoint(with: Self.arrowEditingModifiers) else { return .ignored }",
+            "the modifier refusal must come before anything moves the pick"
+        )
+        let declared = try XCTUnwrap(
+            Self.argument(
+                of: "private static let arrowEditingModifiers: EventModifiers = [",
+                in: source.components(separatedBy: "\n")
+                    .map { $0.trimmingCharacters(in: .whitespaces) }
+                    .first { $0.hasPrefix("private static let arrowEditingModifiers") } ?? "",
+                closingBefore: "]"
+            ),
+            "arrowEditingModifiers moved or changed shape"
+        )
+        XCTAssertEqual(
+            Set(declared.components(separatedBy: ",").map { $0.trimmingCharacters(in: .whitespaces) }),
+            [".shift", ".command", ".option", ".control"]
+        )
     }
 
     // MARK: - Helpers

@@ -318,6 +318,13 @@ struct SearchView: View {
         isSearchFocused = false
         return .handled
     }
+
+    /// Holding any of these turns an arrow into one of the field's own editing
+    /// shortcuts (⇧↓ extends the selection, ⌘↓ jumps to the end, ⌥↑ moves by
+    /// paragraph), so it never moves the pick. Named one by one on purpose:
+    /// macOS marks arrow presses `.function` and `.numericPad`, so refusing any
+    /// modifier at all would refuse plain arrows too.
+    private static let arrowEditingModifiers: EventModifiers = [.shift, .command, .option, .control]
     #endif
 
     // MARK: - Search Field
@@ -359,12 +366,13 @@ struct SearchView: View {
                 // #10878 / #4940 — up/down move through the results only while
                 // an answer is drawn; otherwise `.ignored` hands the key back to
                 // the field, so caret movement and every editing shortcut stay
-                // the system's.
-                .onKeyPress(.downArrow) {
-                    keyboardSelection.moveDown(in: keyboardRoutes) ? .handled : .ignored
-                }
-                .onKeyPress(.upArrow) {
-                    keyboardSelection.moveUp(in: keyboardRoutes) ? .handled : .ignored
+                // the system's. A modified arrow is always the field's.
+                .onKeyPress(keys: [.downArrow, .upArrow], phases: [.down, .repeat]) { press in
+                    guard press.modifiers.isDisjoint(with: Self.arrowEditingModifiers) else { return .ignored }
+                    let moved = press.key == .downArrow
+                        ? keyboardSelection.moveDown(in: keyboardRoutes)
+                        : keyboardSelection.moveUp(in: keyboardRoutes)
+                    return moved ? .handled : .ignored
                 }
                 .onKeyPress(.escape) { handleEscape() }
                 #endif
