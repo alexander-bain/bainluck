@@ -124,6 +124,33 @@ class TestClassifyMarket:
         assert classify_market("KXEMMYNOMS-26-DS", "Emmy Nominations: Outstanding Drama Series") == "nominations"
         assert classify_market("KXGRAMMYNOMAOTY", "2026 Grammy nominations for Album of the Year") == "nominations"
 
+    def test_nominated_question_is_a_nomination_not_its_best_category(self):
+        # #11336: "nominated" names no "nomination"/"nominee", and "Best" made this a
+        # winner category.
+        q = "Will Julianne Moore be nominated for Best Actress at the 99th Academy Awards?"
+        assert classify_market("pm-1", q) == "nominations"
+        assert classify_market(None, "Who will get nominated for Best Director?") == "nominations"
+        assert classify_market(None, "Will Dune: Part Three be nominated?") == "nominations"
+        assert classify_market(None, "Nominated for Best Picture: Wicked?") == "nominations"
+        assert classify_market(None, "Will Wicked be Oscar-nominated for Best Picture?") == "nominations"
+
+    def test_adjectival_nominated_in_a_winner_question_stays_a_category(self):
+        assert classify_market(None, "Will a nominated film win Best Picture?") == "category"
+        assert classify_market(None, "Will the most-nominated film win Best Picture?") == "category"
+        assert classify_market(None, "Best dollar-denominated box office?") == "category"
+        assert classify_market(None, "Will the most nominated film sweep?") == "novelty"
+        # Post-noun "nominated for" describes the film; the question is still who wins.
+        assert classify_market(
+            None, "Will a film nominated for Best Picture win Best Director?") == "category"
+        # A "that/which" relative clause also describes the film (#11336 root control).
+        assert classify_market(
+            None, "Will a film that is nominated for 10+ Oscars win Best Picture?") == "category"
+        assert classify_market(
+            None, "Will the film which got nominated for Best Picture win?") == "category"
+        # A real nomination question beside a relative clause is still a nomination.
+        assert classify_market(
+            None, "Will the film that won Cannes be nominated for Best Picture?") == "nominations"
+
     def test_novelty(self):
         assert classify_market("KXOSCARGUESTS-26", "Who will attend the Oscars?") == "novelty"
         assert classify_market("KXMOSTWINSOSCARS", "Most Oscar wins?") == "novelty"
