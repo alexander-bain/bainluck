@@ -32,6 +32,9 @@ MAX_PENDING = 8
 # Recovery reads (`fresh=True`, only from `project_recovery_quote`) may hold at
 # most one of the two load slots and half the pending entries, so a failing
 # recovery cohort can never refuse or queue ordinary readers out of both.
+# A recovery read refused only by that share waits, within its own request
+# deadline, for a recovery entry to leave; admitted and waiting recovery reads
+# together never exceed MAX_PENDING. A waiter holds no slot, entry or load.
 RECOVERY_MAX_SLOTS = 1
 RECOVERY_MAX_PENDING = 4
 MAX_CACHED = 64
@@ -114,6 +117,8 @@ class FoldedQuoteProjector:
         self._recovery_retry_after = OrderedDict()
         self._slots = asyncio.Semaphore(2)
         self._recovery_slots = asyncio.Semaphore(RECOVERY_MAX_SLOTS)
+        self._recovery_released = asyncio.Event()
+        self._recovery_waiting = 0
         self._first_load_at = None
         self._last_success_at = None
         self._last_load_started_at = float("-inf")
@@ -124,11 +129,11 @@ class FoldedQuoteProjector:
             since = self._first_load_at
         return since is not None and now - since >= RECOVERY_RETRY_S
 
-    async def _load(self, event_id, origin_id, revision, fresh=False):
+    async def _load(self, event_id, origin_id, revision, fresh, deadline):
         quote = None
         load_started = asyncio.get_running_loop().time()
         try:
-            async with asyncio.timeout(PROJECTION_TIMEOUT_S):
+            async with asyncio.timeout_at(deadline):
                 async with self._recovery_slots if fresh else nullcontext(), self._slots:
                     load_started = asyncio.get_running_loop().time()
                     quote = await load_folded_quote(event_id, origin_id, revision)
@@ -174,33 +179,53 @@ class FoldedQuoteProjector:
         if any(frame.get(field) is not None and not isinstance(frame[field], str)
                for field in ("status", "updated_at")):
             return None
-        now = asyncio.get_running_loop().time()
-        retry = self._recovery_retry_after.get(event_id)
-        if fresh and retry is not None and retry.after > now:
-            # One process-wide probe can detect restoration while all event
-            # backoffs are closed. Healthy traffic prevents this bypass.
-            probe = (not retry.spent and now >= retry.earliest and self._dark(now) and not self._pending
-                     and now - self._last_load_started_at >= RECOVERY_PROBE_S)
-            if not probe:
-                return None
         key = (event_id, origin_id, revision[str(origin_id)],
                frame.get("status"), frame.get("updated_at"), fresh)
-        if not fresh and key in self._cached:
-            self._cached.move_to_end(key)
-            return self._cached[key]
-        work = self._pending.get(key)
-        if work is not None and work.task.cancelling():
-            return None  # departing last waiter still owns bounded cleanup
-        if work is None:
+        # The request's deadline covers any wait for a recovery entry and the load.
+        deadline = asyncio.get_running_loop().time() + PROJECTION_TIMEOUT_S
+        while True:
+            # Every admission rule is re-read after a wait, at its own time.
+            now = asyncio.get_running_loop().time()
+            retry = self._recovery_retry_after.get(event_id)
+            if fresh and retry is not None and retry.after > now:
+                # One process-wide probe can detect restoration while all event
+                # backoffs are closed. Healthy traffic prevents this bypass.
+                probe = (not retry.spent and now >= retry.earliest and self._dark(now) and not self._pending
+                         and now - self._last_load_started_at >= RECOVERY_PROBE_S)
+                if not probe:
+                    return None
+            if not fresh and key in self._cached:
+                self._cached.move_to_end(key)
+                return self._cached[key]
+            work = self._pending.get(key)
+            if work is not None and work.task.cancelling():
+                return None  # departing last waiter still owns bounded cleanup
+            if work is not None:
+                break
             if len(self._pending) >= MAX_PENDING:
                 return None
             # Pending counts queued, active and still-cancelling work alike.
-            if fresh and sum(1 for pending in self._pending if pending[-1]) >= RECOVERY_MAX_PENDING:
+            recovering = sum(1 for pending in self._pending if pending[-1]) if fresh else 0
+            if recovering < RECOVERY_MAX_PENDING:
+                break
+            if recovering + self._recovery_waiting >= MAX_PENDING:
                 return None
+            # Taken with no await since the count, so a release cannot fall between.
+            released = self._recovery_released
+            self._recovery_waiting += 1
+            try:
+                async with asyncio.timeout_at(deadline):
+                    await released.wait()
+            except TimeoutError:
+                return None  # never loaded: no failure, spend or load start recorded
+            finally:
+                self._recovery_waiting -= 1
+        if work is None:
             if self._first_load_at is None:
                 self._first_load_at = now
             self._last_load_started_at = now
-            work = _Work(asyncio.create_task(self._load(event_id, origin_id, revision[str(origin_id)], fresh)))
+            work = _Work(asyncio.create_task(
+                self._load(event_id, origin_id, revision[str(origin_id)], fresh, deadline)))
             self._pending[key] = work
         work.waiters += 1
         try:
@@ -226,3 +251,7 @@ class FoldedQuoteProjector:
                 if not work.task.cancelled():
                     work.task.exception()
                 self._pending.pop(key, None)
+                if fresh:
+                    # Wake every current waiter; each re-reads admission itself.
+                    self._recovery_released.set()
+                    self._recovery_released = asyncio.Event()

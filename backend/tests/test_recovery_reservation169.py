@@ -64,9 +64,8 @@ async def test_ordinary_reads_keep_a_slot_and_their_pending_share(monkeypatch):
     projector = fq.FoldedQuoteProjector()
     recovery = [asyncio.create_task(projector.project(eid, notice(eid), fresh=True)) for eid in range(1, 7)]
     await settle()
-    # Only 4 recovery entries were admitted; the other 2 were refused at once.
-    refused = [task.result() for task in recovery if task.done()]
-    assert refused == [None, None]
+    # Only 4 recovery entries were admitted; the other 2 wait, holding no entry.
+    assert not any(task.done() for task in recovery) and projector._recovery_waiting == 2
     assert sum(1 for key in projector._pending if key[-1]) == fq.RECOVERY_MAX_PENDING == 4
     assert gate.started == [1]  # one recovery load active, three queued behind it
     ordinary = [asyncio.create_task(projector.project(eid, notice(eid))) for eid in range(21, 25)]
@@ -76,8 +75,8 @@ async def test_ordinary_reads_keep_a_slot_and_their_pending_share(monkeypatch):
     gate.release.set()
     results = await asyncio.gather(*ordinary)
     assert [r["event_id"] for r in results] == [21, 22, 23, 24]
-    await asyncio.gather(*recovery)
-    assert not projector._pending
+    assert [r["event_id"] for r in await asyncio.gather(*recovery)] == [1, 2, 3, 4, 5, 6]
+    assert not projector._pending and projector._recovery_waiting == 0
 
 
 async def test_recovery_never_holds_both_slots_even_with_no_ordinary_reader(monkeypatch):

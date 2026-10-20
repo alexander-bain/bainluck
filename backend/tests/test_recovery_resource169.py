@@ -26,11 +26,13 @@ COHORT = range(1, 13)
 async def test_failing_cohort_beside_healthy_reads(monkeypatch, failure):
     hub = Hub(); projector = fq.FoldedQuoteProjector(); restored = asyncio.Event()
     calls = []; active = 0; peak = 0; max_pending = 0; recovering = 0; recovery_peak = 0; recovery_pending = 0
+    recovery_waiting = 0
     async def load(eid, origin, rev):
-        nonlocal active, peak, max_pending, recovering, recovery_peak, recovery_pending
+        nonlocal active, peak, max_pending, recovering, recovery_peak, recovery_pending, recovery_waiting
         active += 1; peak = max(peak, active); max_pending = max(max_pending, len(projector._pending))
         recovering += eid in COHORT; recovery_peak = max(recovery_peak, recovering)
         recovery_pending = max(recovery_pending, sum(1 for key in projector._pending if key[-1]))
+        recovery_waiting = max(recovery_waiting, projector._recovery_waiting)
         calls.append((eid, restored.is_set()))
         try:
             await asyncio.sleep(LOAD_S)
@@ -85,7 +87,7 @@ async def test_failing_cohort_beside_healthy_reads(monkeypatch, failure):
             'healthy_p50_s': statistics.median(ordered), 'healthy_p95_s': ordered[int(.95 * (len(ordered) - 1))],
             'healthy_max_s': ordered[-1], 'failing_loads': failing, 'max_active': peak,
             'max_pending': max_pending, 'max_recovery_active': recovery_peak,
-            'max_recovery_pending': recovery_pending,
+            'max_recovery_pending': recovery_pending, 'max_recovery_waiting': recovery_waiting,
             'restoration_s': max(delivered.values()) - restored_at if delivered else None,
         }
         print(json.dumps(result))
@@ -93,6 +95,8 @@ async def test_failing_cohort_beside_healthy_reads(monkeypatch, failure):
         # The repair's reservation: recovery never holds both slots or the pending budget.
         assert recovery_peak <= fq.RECOVERY_MAX_SLOTS == 1
         assert recovery_pending <= fq.RECOVERY_MAX_PENDING == fq.MAX_PENDING - len(HEALTHY)
+        # Waiting recovery reads hold nothing and stay counted inside MAX_PENDING.
+        assert recovery_pending + recovery_waiting <= fq.MAX_PENDING
         assert all(len(data(x, 'folded_probability')) == 1 for x in chunks.values()) if tasks else True
         assert not refused, f'{len(refused)} healthy reads refused beside the failing cohort'
         # Healthy work waits for at most both slots' current loads plus its own.
