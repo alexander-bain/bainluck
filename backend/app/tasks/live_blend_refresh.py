@@ -3522,7 +3522,10 @@ class LiveBlendRefresher:
                                         overlaid=getattr(row, "_primary_quote_overlaid", False),
                                     )
                                 ) if getattr(self, "current_primary_input", None) is not None else None,
-                                "current_book_refused": lambda: (
+                                # Bound now: with a canary in the batch this
+                                # callback is stored in `preview_plans` and
+                                # called again by the stamp-time recheck.
+                                "current_book_refused": lambda refused=refused, event_id=event_id, group=group: (
                                     refused.append(True)
                                     or self._park_book_refused(event_id, group)
                                 ),
@@ -4446,7 +4449,6 @@ class LiveBlendRefresher:
         if not frames:
             return
         try:
-            import asyncio
             import json
 
             from app.utils.blend_preview import (
