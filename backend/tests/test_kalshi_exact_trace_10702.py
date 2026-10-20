@@ -387,7 +387,7 @@ async def test_exact_observation_basis_and_revision_link_to_real_publisher_ack()
     # 88a4a5cad3: a revisioned frame is retained and published in one EVAL.
     assert client.commands == [(
         "EVAL", RETAIN_AND_PUBLISH, 2, "live:last-event:900", "live:event:900",
-        json.dumps(frame), "900", 252, int(MAX_FRAME_AGE_S),
+        json.dumps(frame), "900", 252, int(MAX_FRAME_AGE_S), "price",
     )]
     assert records[-1]["stage"] == "EVENT_PUBLICATION"
     assert records[-1]["publication"] == "REDIS_ACK" and records[-1]["revision"] == 252

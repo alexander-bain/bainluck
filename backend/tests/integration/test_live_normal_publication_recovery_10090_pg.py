@@ -1249,3 +1249,123 @@ async def test_busy_timed_kalshi_flushes_recover_a_quiet_failed_game(rig, cohort
         await r._close_normal_recovery()
         await r.drain_history()
         c.close()
+
+
+# ---------------------------------------------------- attempt163 refusal cost
+
+RETENTION_REFUSED = "normal price replay retention failed after PUBLISH"
+
+
+async def test_sustained_retention_refusal_cost_is_bounded_per_event_per_flush(
+    rig, consumer, monkeypatch, real_redis, caplog,
+):
+    """#10090 attempt163: Redis refuses EVERY replay-cache SET for six flushes
+    of three busy games. Each price still reaches its readers; each refused
+    price costs one EVAL and one log record in its own flush and owes its
+    intent exactly once; recovery pays every intent with a price-free control
+    sent once per (event, revision); nothing settles without a control ACK.
+
+    Recovery is offered after EVERY publication (cooldown removed), the most
+    sweeps this path can run. Synthetic rows on one machine: a regression
+    bound on counts, not a production rate or latency forecast.
+    """
+    import logging
+
+    from app.utils import live_push
+
+    flushes, games = 6, (1, 2, 3)
+    client = real_redis.client()
+    subscriber = real_redis.client()
+    pubsub = subscriber.pubsub()
+    await pubsub.subscribe(*(event_channel(eid) for eid in games))
+    for _ in games:
+        await pubsub.get_message(timeout=1)
+    original = live_push.frame_publish_command
+    evals: list[tuple[int, int, str, int]] = []  # (flush, event, kind, rev)
+    current = {"flush": -1}
+
+    def refusing(frame, **kwargs):
+        cmd = original(frame, **kwargs)
+        evals.append((current["flush"], frame["event_id"], cmd[9], cmd[7]))
+        return (*cmd[:8], "0", *cmd[9:])  # real Redis refuses SET EX 0; PUBLISH runs
+
+    monkeypatch.setattr(live_push, "frame_publish_command", refusing)
+    t = await setup(rig, consumer, monkeypatch)
+    t.r._client = lambda: client
+    t.r.min_refresh_interval_s = 0
+    settled: list[tuple[int, int]] = []
+    settle = t.r._settle_normal_recovery
+
+    async def recorded_settle(acknowledged):
+        settled.extend(acknowledged)
+        return await settle(acknowledged)
+
+    t.r._settle_normal_recovery = recorded_settle
+    caplog.set_level(logging.WARNING, logger="app.tasks.live_blend_refresh")
+    try:
+        for n in range(flushes):
+            current["flush"] = n
+            t.r._normal_retry_at = 0
+            for eid in games:
+                t.accept(eid, round(.60 + n / 100 + eid / 1000, 3))
+            await flush(t)
+            await join(t.r)
+        current["flush"] = flushes  # one quiet opportunity pays the last flush
+        t.r._normal_retry_at = 0
+        await t.r.refresh_pending()
+        await join(t.r)
+        received = []
+        while (item := await pubsub.get_message(
+            ignore_subscribe_messages=True, timeout=.2,
+        )) is not None:
+            received.append(json.loads(item["data"]))
+        remaining = await owed(rig)
+    finally:
+        await close(t.r)
+        await pubsub.aclose()
+        await subscriber.aclose()
+        await client.aclose()
+
+    prices = [e for e in evals if e[2] == "price"]
+    controls = [e for e in evals if e[2] == "control"]
+    records = [r for r in caplog.records if r.name == "app.tasks.live_blend_refresh"]
+    refused = [r for r in records if r.getMessage().startswith(
+        "live_blend_refresh[polymarket]: publish failed for event ")]
+    detail = (prices, controls, [r.getMessage() for r in records], settled)
+    # One EVAL per game per flush: the refusal is never retried in its flush.
+    assert sorted((f, eid) for f, eid, _, _ in prices) == sorted(
+        (n, eid) for n in range(flushes) for eid in games), detail
+    assert len({(eid, rev) for _, eid, _, rev in prices}) == len(prices), detail
+    # One log record per refused price, and nothing else at WARNING or above:
+    # no incomplete publication, no retained recovery, no retained settlement.
+    assert len(refused) == len(prices) == flushes * len(games), detail
+    assert len(records) == len(refused), detail
+    assert all(RETENTION_REFUSED in (r.exc_text or "") for r in refused), detail
+    # Errors count the refused prices once; every control is acknowledged.
+    assert t.r.stats["publish_errors"] == len(prices), (t.r.stats, detail)
+    assert t.r.stats["published"] == len(controls), (t.r.stats, detail)
+    # Each control names a refused price's revision, at most once per
+    # (event, revision), at most one per game per sweep opportunity.
+    price_revs = {(eid, rev) for _, eid, _, rev in prices}
+    control_revs = [(eid, rev) for _, eid, _, rev in controls]
+    assert set(control_revs) <= price_revs, detail
+    assert len(control_revs) == len(set(control_revs)), detail
+    for n in range(flushes + 1):
+        per_game = [eid for f, eid, _, _ in controls if f == n]
+        assert len(per_game) == len(set(per_game)), (n, detail)
+    # No double settlement: a refused price never settles itself. Only a
+    # control's ACK settles, and only its own revision.
+    assert set(settled) <= set(control_revs), detail
+    assert not remaining, (remaining, detail)
+    # Delivery despite refusal: readers got every price and every control.
+    assert sorted((f["event_id"], f["rev"][str(f["event_id"])]) for f in received
+                  if f.get("p") is not None) == sorted(price_revs), detail
+    assert sorted((f["event_id"], f["rev"][str(f["event_id"])]) for f in received
+                  if f.get("reconcile_only")) == sorted(control_revs), detail
+    print(
+        "attempt163 sustained refusal:",
+        f"flushes={flushes} games={len(games)} price_evals={len(prices)}",
+        f"control_evals={len(controls)} warning_records={len(records)}",
+        f"settled={len(settled)} max_record_bytes="
+        f"{max(len(r.getMessage()) + len(r.exc_text or '') for r in records)}",
+    )

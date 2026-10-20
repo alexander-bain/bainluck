@@ -3981,6 +3981,7 @@ class LiveBlendRefresher:
         if not frames:
             return acknowledged
         sent = 0
+        retention_answered = False
         accounted = 0
         exact_trace = getattr(self.receipts, "exact_trace", None)
         try:
@@ -4001,7 +4002,7 @@ class LiveBlendRefresher:
                         event_revisions: list = []
                         for frame in frames[start : start + 32]:
                             try:
-                                commands.append(frame_publish_command(frame))
+                                commands.append(frame_publish_command(frame, require_replay=True))
                                 event_ids.append(frame["event_id"])
                                 event_revisions.append(frame.get("rev"))
                             except Exception:
@@ -4023,7 +4024,12 @@ class LiveBlendRefresher:
                         for event_id, revision in zip(event_ids, event_revisions):
                             try:
                                 reply = await connection.read_response()
-                            except ResponseError:
+                            except ResponseError as exc:
+                                if str(exc) == "normal price replay retention failed after PUBLISH":
+                                    # Lua already published and Redis answered. Keep
+                                    # the healthy connection, but do not pay the
+                                    # durable intent without replay custody.
+                                    retention_answered = True
                                 if exact_trace is not None:
                                     with contextlib.suppress(Exception):
                                         exact_trace.publication(event_id, revision, "REDIS_ERROR")
@@ -4054,7 +4060,7 @@ class LiveBlendRefresher:
                     raise
                 finally:
                     await pool.release(connection)
-                if sent == 0:
+                if sent == 0 and not retention_answered:
                     self._redis = None
         except Exception:
             self.stats["publish_errors"] += len(frames) - accounted

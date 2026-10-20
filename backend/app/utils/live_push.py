@@ -52,6 +52,9 @@ def _frame_revision(frame: dict) -> Optional[int]:
 # source publishers may finish out of order; only a newer revision replaces it.
 # PUBLISH's integer reply is retained for the packed sender's accounting.
 # A full replay cache must not suppress delivery to existing subscribers.
+# A normal price that could not be retained leaves its durable recovery intent
+# outstanding. Price-free recovery controls still acknowledge their PUBLISH;
+# otherwise a persistent cache failure would generate endless control retries.
 RETAIN_AND_PUBLISH = """
 local prior = redis.call('GET', KEYS[1])
 local keep = true
@@ -64,14 +67,20 @@ if prior then
         end
     end
 end
+local retention_failed = false
 if keep then
-    redis.pcall('SET', KEYS[1], ARGV[1], 'EX', ARGV[4])
+    local stored = redis.pcall('SET', KEYS[1], ARGV[1], 'EX', ARGV[4])
+    retention_failed = type(stored) == 'table' and stored.err ~= nil
 end
-return redis.call('PUBLISH', KEYS[2], ARGV[1])
+local listeners = redis.call('PUBLISH', KEYS[2], ARGV[1])
+if retention_failed and ARGV[5] == 'price' then
+    return redis.error_reply('normal price replay retention failed after PUBLISH')
+end
+return listeners
 """
 
 
-def frame_publish_command(frame: dict) -> tuple:
+def frame_publish_command(frame: dict, *, require_replay: bool = False) -> tuple:
     payload = json.dumps(frame)
     channel = event_channel(frame["event_id"])
     rev = _frame_revision(frame)
@@ -80,6 +89,7 @@ def frame_publish_command(frame: dict) -> tuple:
     return (
         "EVAL", RETAIN_AND_PUBLISH, 2, latest_frame_key(frame["event_id"]),
         channel, payload, str(frame["event_id"]), rev, int(MAX_FRAME_AGE_S),
+        "price" if require_replay and frame.get("p") is not None and not frame.get("invalidation") else "control",
     )
 
 

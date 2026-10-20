@@ -233,7 +233,26 @@ def _validate_current_composed_promotion(
     assert backend["steps"].index(_step(backend, "Install dependencies")) < backend[
         "steps"
     ].index(command)
-    assert len(backend["steps"]) == 8, "new source preparation needs review"
+    assert len(backend["steps"]) == 9, "new source preparation needs review"
+    # #10090 attempt163, the one reviewed addition: a test binary supplied
+    # outside the checkout. It runs no git and installs nothing, so it cannot
+    # change the source, the dependencies or the test selection under test.
+    redis = _step(backend, "Private redis-server binary")
+    assert redis.get("if") == RUNS
+    steps = backend["steps"]
+    assert steps.index(_step(backend, "Install dependencies")) < steps.index(
+        redis
+    ) < steps.index(command)
+    assert "git " not in redis["run"] and "pip install" not in redis["run"]
+    exported = [
+        line.split("=", 1)[0].removeprefix('echo "')
+        for line in redis["run"].splitlines()
+        if "GITHUB_ENV" in line
+    ]
+    assert sorted(exported) == [
+        "EVENT_FRAME_REDIS_REQUIRED",
+        "EVENT_FRAME_REDIS_SERVER",
+    ], exported
     verifier = jobs["shard-completeness"]
     assert verifier.get("if") == SCOPE_RUNS
     assert verifier["steps"][-1].get("if") == REUSE
