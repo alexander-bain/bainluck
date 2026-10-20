@@ -84,7 +84,7 @@ const themeLabel = (edition: ObjectValue, slug: string): string | null =>
 const isTheme = (value: unknown): boolean => { const edition = object(value); return edition?.kind === "theme_continuing" || edition?.kind === "theme_edition"; };
 const themeSectionTitles: Record<string, Record<string, string>> = {
   oscars: { title: "Award winners", advancement: "Nominations", side_question: "More questions" },
-  ai: { side_question: "Questions" },
+  ai: { side_question: "Markets" },
 };
 const cursorText = (value: unknown): value is string => typeof value === "string" && value.length > 0 && value.length <= 64 && /^[A-Za-z0-9_-]+$/.test(value);
 
