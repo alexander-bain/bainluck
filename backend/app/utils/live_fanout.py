@@ -267,6 +267,14 @@ class LiveFanout:
             self._quote_projector = FoldedQuoteProjector()
         return await self._quote_projector.project(event_id, frame)
 
+    async def project_recovery_quote(self, event_id: int, frame: dict):
+        """Share pending recovery reads, without reusing completed price state."""
+        if self._quote_projector is None:
+            from app.utils.folded_live_quote import FoldedQuoteProjector
+
+            self._quote_projector = FoldedQuoteProjector()
+        return await self._quote_projector.project(event_id, frame, fresh=True)
+
     # -- the Redis side -----------------------------------------------------
 
     async def _connect_locked(self) -> None:
