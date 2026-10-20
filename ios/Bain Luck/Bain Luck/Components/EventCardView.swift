@@ -7,6 +7,10 @@ struct EventCardView: View {
     var personalizationReasons: [String]? = nil
     var headline: String? = nil
 
+    /// #11325 — selects the finished card's accessibility arm; see
+    /// `FinishedCardAccessibility11325`.
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+
     private var isLive: Bool { event.status == "live" }
     private var isFinished: Bool { EventState.isFinished(event.status) }
     /// live/048 + CERT-786 — the branch this card did not have.
@@ -218,20 +222,44 @@ struct EventCardView: View {
         }
     }
 
+    /// #11325 — true only on a finished card at an accessibility text size.
+    /// Every other card, Large included, keeps the single-row arms below.
+    private var usesFinishedAccessibilityLayout: Bool {
+        FinishedCardAccessibility11325.applies(
+            isFinished: isFinished, typeSize: dynamicTypeSize)
+    }
+
+    private var leagueName: String {
+        event.sportName ?? sportDisplayName(for: event.sport)
+    }
+
+    private var statusBadge: some View {
+        StatusBadge(
+            status: event.status,
+            commenceTime: event.commenceTime,
+            gameClock: event.espn?.gameClock,
+            period: event.espn?.period,
+            startIsTbd: event.startIsTbd == true,
+            // #5811 — served on `/api/feed`, so the card can say it.
+            venueClosedNoWinner: event.venueClosedNoWinner == true
+        )
+    }
+
+    @ViewBuilder
     private var topBar: some View {
+        if usesFinishedAccessibilityLayout {
+            finishedAccessibilityTopBar
+        } else {
+            singleRowTopBar
+        }
+    }
+
+    private var singleRowTopBar: some View {
         HStack(spacing: 6) {
-            Text(event.sportName ?? sportDisplayName(for: event.sport))
+            Text(leagueName)
                 .font(.caption)
                 .foregroundStyle(.secondary)
-            StatusBadge(
-                status: event.status,
-                commenceTime: event.commenceTime,
-                gameClock: event.espn?.gameClock,
-                period: event.espn?.period,
-                startIsTbd: event.startIsTbd == true,
-                // #5811 — served on `/api/feed`, so the card can say it.
-                venueClosedNoWinner: event.venueClosedNoWinner == true
-            )
+            statusBadge
             if !isFinished, let ei = event.ei ?? event.pulse {
                 EIBadgeView(ei: ei, size: .sm)
             }
@@ -283,6 +311,77 @@ struct EventCardView: View {
                     .lineLimit(2)
             }
             PinButton(type: "event", id: event.id, compact: true)
+        }
+    }
+
+    /// #11325 — the finished card's top bar at accessibility sizes.
+    ///
+    /// One row held the league, FINAL, the date and the pin, so at AX5 on a
+    /// 320pt phone the row squeezed the badge until "FINAL" broke as "FI-/NAL"
+    /// and the league broke mid-word beside it. Here the league takes the full
+    /// width and wraps only between words; FINAL sits whole on the row below,
+    /// with the date and pin at trailing, and the date drops to its own line
+    /// when the three cannot share one. The badge itself is the shared
+    /// `StatusBadge`, unchanged — the caller gives it the room.
+    ///
+    /// A finished card draws no EI badge, broadcast or suspended detail (each
+    /// is gated off `isFinished` above), so the only optional pieces are the
+    /// confidence bars, the personalization badge and the headline pill, which
+    /// keep their exact conditions on the rows beneath.
+    private var finishedAccessibilityTopBar: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(leagueName)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 6) {
+                    statusBadge.fixedSize()
+                    Spacer(minLength: 6)
+                    formattedDate
+                    PinButton(type: "event", id: event.id, compact: true)
+                }
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack(spacing: 6) {
+                        statusBadge.fixedSize()
+                        Spacer(minLength: 6)
+                        PinButton(type: "event", id: event.id, compact: true)
+                    }
+                    formattedDate
+                }
+            }
+            if hasTopBarMetadata {
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: 6) { topBarMetadata }
+                    VStack(alignment: .leading, spacing: 4) { topBarMetadata }
+                }
+            }
+        }
+    }
+
+    private var hasTopBarMetadata: Bool {
+        Confidence.normalize(event.confidenceTier) != nil
+            || personalizationBadge != nil
+            || EventCardHeadlinePill.isDrawn(headline: headline, isLive: isLive)
+    }
+
+    @ViewBuilder
+    private var topBarMetadata: some View {
+        SignalBarsView(tier: event.confidenceTier)
+        if let badge = personalizationBadge {
+            badge
+        }
+        if EventCardHeadlinePill.isDrawn(headline: headline, isLive: isLive), let headline {
+            Text(headline)
+                .font(.caption2)
+                .fontWeight(.semibold)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.horizontal, 6)
+                .padding(.vertical, 2)
+                .background(.blue.opacity(0.12))
+                .foregroundStyle(.blue)
+                .clipShape(Capsule())
         }
     }
 
@@ -368,7 +467,18 @@ struct EventCardView: View {
             actualPeriod: .fullGame, projection: event.pregameProjection)
     }
 
+    @ViewBuilder
     private func teamRow(name: String, avatar: ParticipantAvatar, color: Color, record: String?, score: Int?, won: Bool, side: TeamSide) -> some View {
+        if usesFinishedAccessibilityLayout {
+            finishedAccessibilityTeamRow(
+                name: name, avatar: avatar, color: color, score: score, won: won, side: side)
+        } else {
+            singleRowTeamRow(
+                name: name, avatar: avatar, color: color, record: record, score: score, won: won, side: side)
+        }
+    }
+
+    private func singleRowTeamRow(name: String, avatar: ParticipantAvatar, color: Color, record: String?, score: Int?, won: Bool, side: TeamSide) -> some View {
         HStack(spacing: 8) {
             TeamLogoView(
                 url: avatar.url,
@@ -411,6 +521,56 @@ struct EventCardView: View {
             } else {
                 preGameOddsLabel(for: side)
             }
+        }
+    }
+
+    /// #11325 — one team's group on a finished card at accessibility sizes.
+    ///
+    /// The single row gave the name whatever the score and pre-match number
+    /// left over, under `lineLimit(1)`, so at AX5 both sides read
+    /// "Washingt…" / "San Fran…" and a reader could not say who played. Here
+    /// the crest and the COMPLETE name share the first row and the name wraps
+    /// as far as it needs; the same score and the same pre-match number sit on
+    /// the row beneath, under the name, inside this team's group — so each
+    /// value stays with its own side. Fonts, weights and colours are the
+    /// single row's expressions, verbatim, so the two arms cannot drift. A
+    /// finished card draws no record, so there is none here.
+    private func finishedAccessibilityTeamRow(name: String, avatar: ParticipantAvatar, color: Color, score: Int?, won: Bool, side: TeamSide) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            HStack(alignment: .top, spacing: 8) {
+                TeamLogoView(
+                    url: avatar.url,
+                    teamName: name,
+                    color: color,
+                    size: isLive ? 28 : 24,
+                    sportKey: event.sport,
+                    isPhotograph: avatar.isPhotograph,
+                    opponentName: side == .away ? event.homeTeam : event.awayTeam
+                )
+                Text(name)
+                    .font(.subheadline)
+                    .fontWeight(won ? .bold : .medium)
+                    .foregroundStyle(won ? .primary : (isFinished && outcome != .draw ? .secondary : .primary))
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            HStack(spacing: 8) {
+                if let score {
+                    Text("\(score)")
+                        .font(isLive ? .title3.monospacedDigit() : .subheadline.monospacedDigit())
+                        .fontWeight(isLive ? .bold : (won ? .bold : .regular))
+                        .foregroundStyle(isLive ? .primary : (won || outcome == .draw ? .primary : .secondary))
+                }
+                if canStillBeGraded {
+                    probabilityWithMovement(for: side)
+                } else {
+                    preGameOddsLabel(for: side)
+                }
+            }
+            .fixedSize()
+            // Under the name: past the 24pt crest and the row's 8pt gap, the
+            // same inset `FinalForecastLine11296` takes below.
+            .padding(.leading, 32)
         }
     }
 
@@ -779,5 +939,19 @@ struct EventCardView: View {
                 glowing: isLive
             )
         }
+    }
+}
+
+/// #11325 — when a finished game card takes its accessibility layout.
+///
+/// At accessibility text sizes the finished Sports card broke "FINAL" mid-word
+/// and cut both team names to "Washingt…" / "San Fran…", and the finished
+/// Discover card's two-line title stopped at "Washing-/ton Com…". Both cards
+/// ask this one question, so they cannot disagree about which cards change:
+/// a FINISHED card at an ACCESSIBILITY size. Large and below, and every
+/// scheduled, live, suspended or unknown card, keep the layout they had.
+enum FinishedCardAccessibility11325 {
+    static func applies(isFinished: Bool, typeSize: DynamicTypeSize) -> Bool {
+        isFinished && typeSize.isAccessibilitySize
     }
 }
