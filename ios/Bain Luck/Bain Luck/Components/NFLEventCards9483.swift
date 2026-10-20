@@ -241,6 +241,8 @@ struct NFLFinishCardView9483: View {
     let homeColor: Color
     var expanded = false
     @ScaledMetric(relativeTo: .caption2) private var scaledAxisFont: CGFloat = 12
+    /// The line the chart draws each team's name on, at the top of its band.
+    @ScaledMetric(relativeTo: .caption) private var trackNameLine: CGFloat = 16
 
     private var later: NFLFinishCard9483.Pair? { card.final ?? card.projectedNow }
     private var laterLabel: String? {
@@ -299,7 +301,7 @@ struct NFLFinishCardView9483: View {
                                           proxy: proxy, plotFrame: geo[proxy.plotAreaFrame])
                 }
             }
-            .frame(height: expanded ? 220 : 120)
+            .frame(height: chartHeight)
             .accessibilityHidden(true)
             ForEach([false, true], id: \.self) { isHome in
                 // One row when the name and both numbers fit whole; otherwise
@@ -339,6 +341,17 @@ struct NFLFinishCardView9483: View {
     }
 
     private var axisFontSize: CGFloat { EventChartTypography.labelSize(scaled: scaledAxisFont) }
+    private var chartHeight: CGFloat {
+        Self.chartHeight(expanded: expanded, nameLine: trackNameLine, axisFontSize: axisFontSize)
+    }
+
+    /// #11285 — each team's band draws its name at the top and its points
+    /// across the middle, so the band's top half holds the name's line and
+    /// half a mark: at large sizes the chart grows rather than drawing the
+    /// points over the name ("Comm▪an◻ders" at AX5). Default sizes keep 120.
+    static func chartHeight(expanded: Bool, nameLine: CGFloat, axisFontSize: CGFloat) -> CGFloat {
+        max(expanded ? 220 : 120, 2 * 2 * (nameLine + 8) + 2 * axisFontSize)
+    }
     /// One tick per gridline step (a touchdown in football) across the axis.
     private var pointTicks: [Double] {
         Array(stride(from: domain.lowerBound, through: domain.upperBound, by: card.tickStep))

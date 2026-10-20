@@ -20,6 +20,8 @@ import XCTest
 ///   default row kept beside the figure → `testTheDefaultSizeKeepsTheStoryCardRow`
 /// - the Projected finish card's label cut short in the stacked layout
 ///   ("pregame proje…" at AX5, r9 axxxxl-8) → `testTheProjectedFinishLabelsReadWholeInTheDeck`
+/// - the Projected finish chart's marks drawn across its team-name label
+///   ("Comm▪an◻ders" at AX5, Design 06b/07b) → `testTheProjectedFinishChartsMarksClearItsTeamNames`
 @MainActor
 final class HeaderAndFinalCardFit11285Tests: XCTestCase {
 
@@ -440,6 +442,188 @@ final class HeaderAndFinalCardFit11285Tests: XCTestCase {
             let text = read[legend..<stop].map(\.text).joined(separator: " ")
             XCTAssertEqual(text.filter { $0.isLetter || $0 == "=" }, "Pointsoutline=pregamefilled=projectednow",
                            "\(name): the legend read \"\(text)\" — \(all)")
+        }
+    }
+
+    // MARK: - Projected finish chart names
+
+    /// The window's RGBA pixels at the screen's scale.
+    private struct Pixels {
+        let data: [UInt8]; let width: Int; let height: Int; let scale: CGFloat
+
+        /// The points in `rect` whose pixel passes `test` (r, g, b).
+        func points(in rect: CGRect, _ test: (Int, Int, Int) -> Bool) -> [CGPoint] {
+            var hits: [CGPoint] = []
+            let x0 = max(0, Int(rect.minX * scale)), x1 = min(width, Int(rect.maxX * scale))
+            let y0 = max(0, Int(rect.minY * scale)), y1 = min(height, Int(rect.maxY * scale))
+            guard x0 < x1, y0 < y1 else { return [] }
+            for y in y0..<y1 {
+                for x in x0..<x1 {
+                    let i = (y * width + x) * 4
+                    if test(Int(data[i]), Int(data[i + 1]), Int(data[i + 2])) {
+                        hits.append(CGPoint(x: CGFloat(x) / scale, y: CGFloat(y) / scale))
+                    }
+                }
+            }
+            return hits
+        }
+
+        /// A mark's colour: within 40 per channel of `rgb`.
+        func points(_ rgb: (Int, Int, Int), in rect: CGRect) -> [CGPoint] {
+            points(in: rect) { abs($0 - rgb.0) < 40 && abs($1 - rgb.1) < 40 && abs($2 - rgb.2) < 40 }
+        }
+    }
+
+    /// The window's pixels, and Vision's lines read from the card's column
+    /// only: in the whole 2400pt window the chart's small default-size names
+    /// fall under Vision's minimum text height.
+    private func cardFrame(_ host: UIViewController, cardRight: CGFloat, name: String) throws -> ([Line], Pixels) {
+        let bounds = host.view.bounds
+        let image = UIGraphicsImageRenderer(bounds: bounds).image { _ in
+            host.view.drawHierarchy(in: bounds, afterScreenUpdates: true)
+        }
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("final-card-fit-11285-\(name).png")
+        try XCTUnwrap(image.pngData()).write(to: url)
+        print("Final card fit rendered evidence: \(url.path)")
+        let cg = try XCTUnwrap(image.cgImage)
+        let scale = CGFloat(cg.width) / bounds.width
+        var px = [UInt8](repeating: 0, count: cg.width * cg.height * 4)
+        let ctx = try XCTUnwrap(CGContext(data: &px, width: cg.width, height: cg.height, bitsPerComponent: 8,
+                                          bytesPerRow: cg.width * 4, space: CGColorSpaceCreateDeviceRGB(),
+                                          bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
+        ctx.draw(cg, in: CGRect(x: 0, y: 0, width: cg.width, height: cg.height))
+        let crop = CGRect(x: 0, y: 0, width: cardRight, height: min(bounds.height, 1200))
+        let column = try XCTUnwrap(cg.cropping(to: CGRect(x: 0, y: 0, width: crop.width * scale, height: crop.height * scale)))
+        let request = VNRecognizeTextRequest()
+        request.recognitionLevel = .accurate
+        request.usesLanguageCorrection = false
+        request.minimumTextHeight = 0
+        try VNImageRequestHandler(cgImage: column).perform([request])
+        let read = (request.results ?? []).compactMap { o in
+            o.topCandidates(1).first.map { c in
+                let b = o.boundingBox
+                return Line(text: c.string, box: CGRect(x: b.minX * crop.width, y: (1 - b.maxY) * crop.height,
+                                                        width: b.width * crop.width, height: b.height * crop.height))
+            }
+        }
+        return (read.sorted { $0.box.minY < $1.box.minY },
+                Pixels(data: px, width: cg.width, height: cg.height, scale: scale))
+    }
+
+    private static func rgb(_ color: Color) -> (Int, Int, Int) {
+        let c = UIColor(color).resolvedColor(with: UITraitCollection(userInterfaceStyle: .light))
+        var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
+        c.getRed(&r, green: &g, blue: &b, alpha: &a)
+        return (Int(r * 255), Int(g * 255), Int(b * 255))
+    }
+
+    /// The x centres of a team's two marks: its mark columns split at the
+    /// widest gap (the outline square's centre is its span's middle).
+    private static func markCentres(_ hits: [CGPoint]) -> [CGFloat] {
+        let xs = Set(hits.map { ($0.x * 3).rounded() / 3 }).sorted()
+        guard xs.count > 1 else { return [] }
+        let split = (1..<xs.count).max { xs[$0] - xs[$0 - 1] < xs[$1] - xs[$1 - 1] }!
+        return [(xs[0] + xs[split - 1]) / 2, (xs[split] + xs[xs.count - 1]) / 2]
+    }
+
+    /// Design 0521Z (06b/07b, and 08 before D3): at AX5 the chart drew its
+    /// point marks across its own name label ("Comm▪an◻ders"). The chart prints
+    /// each team's name at the top of the team's band; the marks must sit
+    /// wholly below the name's ink, every mark still drawn, both teams on one
+    /// points scale. Large text at 393 and 375 is the defect; xxxLarge is where
+    /// the marks first touched the name; the default size is the control that
+    /// keeps its 120pt chart.
+    func testTheProjectedFinishChartsMarksClearItsTeamNames() throws {
+        XCTAssertEqual(NFLFinishCardView9483.chartHeight(expanded: false, nameLine: 16, axisFontSize: 12), 120,
+                       "the default size keeps the deck chart's height")
+        XCTAssertEqual(NFLFinishCardView9483.chartHeight(expanded: true, nameLine: 16, axisFontSize: 12), 220,
+                       "the default size keeps the reader chart's height")
+        let finish = try liveFinishCard()
+        let (_, markets) = try finalPage()
+        let neighbour = try XCTUnwrap(NFLMilestoneCard9483.cards(
+            props: markets.playerProps ?? [], eventStatus: "completed",
+            commenceTime: ISO8601DateFormatter().date(from: "2026-09-28T17:00:00Z")!,
+            homeTeam: "Chicago Bears", awayTeam: "Philadelphia Eagles",
+            now: ISO8601DateFormatter().date(from: "2026-09-28T21:00:00Z")!).first, "control: a second card")
+        let (away, home) = TeamShortName.shortPair(away: "Washington Commanders", home: "San Francisco 49ers",
+                                                   sportKey: "americanfootball_nfl")
+        let (awayColor, homeColor) = (Color.indigo, Color.red)
+        for (width, size) in [(CGFloat(393), DynamicTypeSize.large), (393, .accessibility5), (375, .accessibility5),
+                              (375, .xxxLarge)] {
+            let name = "finish-chart-\(Int(width))-\(size)"
+            let deck = NFLEventCardDeckView9483(
+                cards: [.finish(finish), .milestone(neighbour)], awayName: away, homeName: home,
+                awayColor: awayColor, homeColor: homeColor, state: NFLCardDeckState9483())
+            let host = hostForMeasurement(ScrollView { deck.padding(.horizontal, 16) }
+                .environment(\.colorScheme, .light), at: size)
+            host.view.frame = CGRect(x: 0, y: 0, width: width, height: 2400)
+            let window = UIWindow(frame: host.view.frame)
+            window.rootViewController = host
+            window.isHidden = false
+            defer { window.isHidden = true }
+            settle(host, 0.8)
+            let cardRight = 16 + (width - 32) * 0.86
+            let (read, px) = try cardFrame(host, cardRight: cardRight, name: name)
+            let all = read.map(\.text).joined(separator: " | ")
+            func band(_ top: CGFloat, _ bottom: CGFloat) -> CGRect {
+                CGRect(x: 16, y: top, width: cardRight - 16, height: bottom - top)
+            }
+            // A name's ink: the grey text's rows inside Vision's box (which runs
+            // well below the glyphs at large sizes).
+            func ink(_ label: Line) -> ClosedRange<CGFloat>? {
+                let grey = px.points(in: label.box) { r, g, b in
+                    abs(r - g) < 14 && abs(g - b) < 14 && (90...190).contains(r)
+                }.map(\.y)
+                guard let top = grey.min(), let bottom = grey.max() else { return nil }
+                return top...bottom
+            }
+            // The chart's names sit above the rows' first number (the headline
+            // names a team too, so a chart name is the first line under it that
+            // starts with the name). Each found name is checked on its own: a
+            // name the marks cross can read too broken to find.
+            let rowsTop = read.first { $0.text.trimmingCharacters(in: .whitespaces) == "21.5" }?.box.minY ?? .infinity
+            let a = read.first { $0.text.hasPrefix(String(away.prefix(3))) && $0.box.maxY < rowsTop }
+            let h = read.first { $0.text.hasPrefix(String(home.prefix(3))) && $0.box.minY > (a?.box.maxY ?? .infinity)
+                && $0.box.maxY < rowsTop }
+            var inks: [ClosedRange<CGFloat>] = []
+            for (team, label) in [(away, a), (home, h)] {
+                guard let label else {
+                    XCTFail("\(name): the chart's \(team) was not read — \(all)")
+                    continue
+                }
+                XCTAssertEqual(label.text.filter { $0.isLetter || $0.isNumber }, team.filter { $0.isLetter || $0.isNumber },
+                               "\(name): the chart's name read \"\(label.text)\" — \(all)")
+                guard let rows = ink(label) else {
+                    XCTFail("\(name): no grey ink in the chart's \"\(label.text)\" — \(all)")
+                    continue
+                }
+                inks.append(rows)
+                // No mark of either team on the name's ink rows.
+                for (mark, rgb) in [(away, Self.rgb(awayColor)), (home, Self.rgb(homeColor))] {
+                    let inside = px.points(rgb, in: band(rows.lowerBound, rows.upperBound + 1))
+                    XCTAssertTrue(inside.isEmpty, "\(name): \(inside.count) \(mark) mark pixel(s) drawn across the chart's "
+                                  + "\"\(label.text)\" (ink y \(Int(rows.lowerBound))–\(Int(rows.upperBound))), "
+                                  + "first at \(inside.first.map { "\(Int($0.x)),\(Int($0.y))" } ?? "")")
+                }
+            }
+            guard let a, let h, inks.count == 2 else { continue }
+            let (aInk, hInk) = (inks[0], inks[1])
+            // Each team's two marks are drawn under its name, in its band.
+            let pitch = h.box.minY - a.box.minY
+            let awayMarks = px.points(Self.rgb(awayColor), in: band(aInk.upperBound + 1, h.box.minY))
+            let homeMarks = px.points(Self.rgb(homeColor), in: band(hInk.upperBound + 1, h.box.minY + pitch))
+            let (ac, hc) = (Self.markCentres(awayMarks), Self.markCentres(homeMarks))
+            guard ac.count == 2, hc.count == 2 else {
+                XCTFail("\(name): the marks did not draw two per team under the names (\(ac), \(hc)) — \(all)")
+                continue
+            }
+            // One points scale: Commanders 13.5 now / 21.5 pregame, 49ers 29.5
+            // pregame / 33 now, read off the same points per unit.
+            let awayScale = (ac[1] - ac[0]) / (21.5 - 13.5), homeScale = (hc[1] - hc[0]) / (33 - 29.5)
+            XCTAssertEqual(awayScale, homeScale, accuracy: awayScale * 0.08,
+                           "\(name): the teams' marks are on different scales (\(ac), \(hc))")
+            XCTAssertEqual(hc[0] - ac[1], (29.5 - 21.5) * awayScale, accuracy: awayScale,
+                           "\(name): the 49ers' pregame mark is not where one scale puts it (\(ac), \(hc))")
         }
     }
 
