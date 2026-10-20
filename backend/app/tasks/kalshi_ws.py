@@ -1315,6 +1315,64 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
         tail_receipts.run = exact_trace.run
     tail_receipts.exact_trace = exact_trace
     input_marks: dict = {}
+    from app.utils.kalshi_primary_quote import PrimaryQuoteCustody
+    primary_quote_custody = PrimaryQuoteCustody()
+    # #10090: the steady game clients (see "Connections" below), declared
+    # here because the bundled-pair proof readers iterate them.
+    game_clients: list[_KalshiClient] = []
+    # The bundled Challenger pair's current-book proof is installed on the
+    # refresher BEFORE adoption or any refresh path can stamp (lane1b P1):
+    # a refresh without it would stamp the pair with no book proof.
+    def steady_book_midpoint(ticker):
+        if not isinstance(ticker, str) or ticker not in ticker_to_ids:
+            return None
+        market_id = ticker_to_ids[ticker][0]
+        if market_id in prices.settled_market_ids:
+            return None
+        values = []
+        for client in game_clients:
+            if (ticker not in client.tickers or client.task is None or client.task.done()):
+                continue
+            value = client.sock.current_book_midpoint(ticker)
+            if value is not None:
+                values.append(value)
+        # Conflicting handover sockets are not interchangeable proof.
+        return values[0] if values and all(v == values[0] for v in values) else None
+    def steady_book_primary_price(ticker):
+        if not isinstance(ticker, str) or ticker not in ticker_to_ids:
+            return None
+        market_id = ticker_to_ids[ticker][0]
+        if market_id in prices.settled_market_ids:
+            return None
+        values = []
+        for client in game_clients:
+            if (ticker not in client.tickers or client.task is None or client.task.done()):
+                continue
+            value = client.sock.current_book_primary_price(ticker)
+            if value is not None:
+                values.append(value)
+        return values[0] if values and all(v == values[0] for v in values) else None
+    def steady_primary_input(row, held_quotes=None, *, overlaid=False):
+        ticker = getattr(row, "external_id", None)
+        if ticker not in ticker_to_ids or ticker_to_ids[ticker][0] in prices.settled_market_ids:
+            return None
+        found = []
+        for client in game_clients:
+            if ticker not in client.tickers or client.task is None or client.task.done():
+                continue
+            entry = client.sock.current_primary_input(ticker)
+            if entry is not None:
+                found.append(entry)
+        # Different input generations are not interchangeable, even at one price.
+        if not found or any(entry != found[0] for entry in found):
+            return None
+        return found[0][1] if primary_quote_custody.eligible(
+            row, found[0], held_quotes, overlaid=overlaid,
+        ) else None
+    blend_refresher.current_primary_input = steady_primary_input
+    blend_refresher.current_book_primary_price = steady_book_primary_price
+    blend_refresher.require_current_book_proof = True
+    blend_refresher.current_book_midpoint = steady_book_midpoint
     # #9462 review: stamps the previous run still owed when it recycled. Its
     # prices are already stored; the first flush below stamps them.
     stats["blend_pending_adopted"] = adopt_handed_off(blend_refresher)
@@ -1387,6 +1445,8 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
             batch_marks = {
                 oid: input_marks[oid] for oid in batch if oid in input_marks
             }
+            primary_quote_custody.retain(ids[1] for ids in ticker_to_ids.values())
+            batch_primary_inputs = primary_quote_custody.snapshot(batch)
             if exact_trace is not None:
                 with contextlib.suppress(Exception):
                     exact_trace.snapshot(batch_marks.values())
@@ -1732,6 +1792,7 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
                         for oid in oids:
                             quotes.pop(oid, None)
                 moved = event_ids_for_outcomes(cohort_event_ids, held_quotes.hold(quotes))
+                primary_quote_custody.admitted(batch_primary_inputs, quotes)
             # A held quote can still owe its first stamp after the refresh
             # floor deferred it. Re-admit that debt even when the quote itself
             # is unchanged; otherwise the unfinished-price fence keeps it out
@@ -1801,6 +1862,7 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
                                         batch_marks[oid] = input_marks[oid]
                                     else:
                                         batch_marks.pop(oid, None)
+                                batch_primary_inputs.update(primary_quote_custody.snapshot(phase))
                                 phase_bounds = {
                                     oid: held_quotes.bound_for(batch_marks.get(oid))
                                     for oid in phase
@@ -1865,6 +1927,7 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
                 held_ambiguous = False
                 written_outcome_ids: list[int] = []
                 written_observations: dict = {}
+                primary_observations: dict = {}
                 if (
                     beside is None and live_event_ids and not final_drain
                 ):
@@ -1901,6 +1964,7 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
                                     batch_marks[oid] = input_marks[oid]
                                 else:
                                     batch_marks.pop(oid, None)
+                            batch_primary_inputs.update(primary_quote_custody.snapshot(phase))
                             # #11138: each input's frozen DB bound travels WITH
                             # this snapshot (lane1 B1), for a lock refusal below.
                             if held_quotes is not None:
@@ -1974,7 +2038,7 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
                         async with contextlib.aclosing(
                             prices.phase(
                                 session, phase, force_observation=final_drain,
-                                forced_ids=held_ids,
+                                forced_ids=set(held_ids) | (set(phase) & primary_quote_custody.pending(batch_primary_inputs)),
                             )
                         ) as price_results:
                             async for result in price_results:
@@ -1999,6 +2063,7 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
                                 # #9526).
                                 for row in result.all():
                                     written_outcome_ids.append(row.id)
+                                    primary_observations[row.id] = row.last_updated
                                     if exact_trace is not None:
                                         with contextlib.suppress(Exception):
                                             if exact_trace.tracks(batch_marks.get(row.id)):
@@ -2168,6 +2233,7 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
                 # The transaction has committed. Register debt before any
                 # publication/bookkeeping await can be interrupted.
                 prices.committed_outcome_ids.update(written_outcome_ids)
+                primary_quote_custody.committed(batch_primary_inputs, primary_observations)
                 for oid in phase:
                     prices.lock_retry_until.pop(oid, None)
                     prices.ambiguous_retry_since.pop(oid, None)
@@ -2215,7 +2281,8 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
                 # written". Same contract, enforced at removal instead of at re-queue.
                 async with buffer_lock:
                     for outcome_id, entry in phase.items():
-                        if price_buffer.get(outcome_id) == entry:
+                        if (price_buffer.get(outcome_id) == entry
+                                and primary_quote_custody.received.get(outcome_id) == batch_primary_inputs.get(outcome_id)):
                             del price_buffer[outcome_id]
                     if live_event_ids and not final_drain:
                         yield_written_nonlive_tail(
@@ -2469,6 +2536,7 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
             return
 
         async with buffer_lock:
+            primary_quote_custody.receive(outcome_id, msg)
             price_buffer[outcome_id] = (prob, yes_bid, yes_ask)
             # Under the lock, so seq order is buffer order. Never raises into
             # the socket: a receipt is evidence about the price, not the price.
@@ -2623,6 +2691,14 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
             and len(parts) == 2
             and parts[0] in market_id_by_ext
         ):
+            # #10090: terminal acceptance withdraws current-book authority
+            # before deferred settlement work or a lock wait can run.
+            owner = ticker_owner.get(ticker)
+            if (ticker.startswith("KXATPCHALLENGERMATCH-")
+                    and route is not None and route[0] == "linked"
+                    and (client is None or owner is None or owner is client
+                         or owner is client.pair)):
+                prices.settled_market_ids.add(market_id_by_ext[parts[0]])
             async with buffer_lock:
                 ids = ticker_to_ids.get(ticker)
                 buffered = price_buffer.get(ids[1]) if ids else None
@@ -2771,7 +2847,8 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
     # -- Connections (#10090) --
     # Steady clients by kind; a replaced or retired client leaves these lists
     # at once and stays in `retiring` until its reader has stopped and drained.
-    game_clients: list[_KalshiClient] = []
+    # `game_clients` is declared above, with the bundled-pair proof readers
+    # that are installed before adoption.
     open_clients: list[_KalshiClient] = []
     retiring: list[_KalshiClient] = []
     handoff_tasks: set[asyncio.Task] = set()

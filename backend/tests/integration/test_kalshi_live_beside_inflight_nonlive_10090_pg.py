@@ -268,6 +268,7 @@ def _rig(engine, side, ids, source=None):
     from app.tasks.base import get_task_session
     from app.tasks.kalshi import _kalshi_yes_probability
     from app.tasks.live_blend_refresh import LiveBlendRefresher, event_ids_for_outcomes
+    from app.utils.kalshi_primary_quote import PrimaryQuoteCustody
     from app.utils.futures_rank import rerank_market_fields_stmt
     from app.utils.kalshi_price_statement import (
         KALSHI_PRICE_STATEMENTS, kalshi_price_parameters,
@@ -336,6 +337,8 @@ def _rig(engine, side, ids, source=None):
         event_ids_for_outcomes=event_ids_for_outcomes,
         _kalshi_yes_probability=_kalshi_yes_probability,
         price_buffer={}, buffer_lock=asyncio.Lock(), input_marks={},
+        # #10090: the worker's primary-quote custody (bundled pair).
+        primary_quote_custody=PrimaryQuoteCustody(),
         market_id_by_outcome=market_of, event_id_by_outcome=event_of,
         tail_receipts=_Receipts(), open_contract_outcome_ids=set(),
         blend_refresher=refresher, non_blend_outcome_ids=set(),

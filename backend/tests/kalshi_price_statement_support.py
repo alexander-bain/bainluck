@@ -48,7 +48,9 @@ def frozen_flush_ast():
 def pipeline_handoff(node):
     """The flush's `async with aclosing(prices.phase(session, phase))` block.
 
-    #10090: `forced_ids` names the held legs whose landing write always writes.
+    #10090: `forced_ids` names the held legs whose landing write always writes,
+    and the bundled-pair primary quotes whose own observation has not landed
+    yet (`PrimaryQuoteCustody.pending`).
     """
     return next(
         n
@@ -57,7 +59,8 @@ def pipeline_handoff(node):
         and ast.unparse(n.items[0].context_expr)
         == (
             "contextlib.aclosing(prices.phase(session, phase, "
-            "force_observation=final_drain, forced_ids=held_ids))"
+            "force_observation=final_drain, forced_ids=set(held_ids) | "
+            "set(phase) & primary_quote_custody.pending(batch_primary_inputs)))"
         )
     )
 

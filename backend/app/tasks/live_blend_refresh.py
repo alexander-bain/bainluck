@@ -1249,6 +1249,7 @@ PREPARED_MARKET_FIELDS = (
 )
 PREPARED_OUTCOME_FIELDS = (
     "id", "market_id", "name", "rank", "current_probability", "last_updated", "is_winner",
+    "external_id", "resolution_source",
 )
 
 
@@ -1450,6 +1451,34 @@ class HeldRowQuotes:
         entries = list(entries)
         if any(self._ambiguous(o) for entry in entries for o in entry.outcomes):
             return
+        # #10090 (K1): bundled Challenger children are separate
+        # contracts in one market. An unheld sibling committed after a held
+        # leg's frozen bound makes that mixed snapshot ambiguous. Scope this
+        # new refusal to the bundled branch; other venue/pair rules stay as-is.
+        from app.utils.aggregation import _coerce_timestamp
+
+        for entry in entries:
+            market = getattr(entry, "market", None)
+            ticker = (getattr(market, "external_id", None) or "").upper()
+            if not (
+                getattr(market, "source", None) == "kalshi"
+                and ticker.startswith("KXATPCHALLENGERMATCH-")
+                and len(ticker.split("-")) == 2
+                and len(entry.outcomes) == 2
+            ):
+                continue
+            bounds = [
+                self._quotes[row.id][1] for row in entry.outcomes
+                if getattr(row, "id", None) in self._quotes
+            ]
+            if len(bounds) != 1:
+                continue
+            for row in entry.outcomes:
+                if getattr(row, "id", None) in self._quotes:
+                    continue
+                stored = _coerce_timestamp(getattr(row, "last_updated", None))
+                if stored is not None and stored.timestamp() >= bounds[0]:
+                    return
         for entry in entries:
             entry.outcomes[:] = [self.overlaid(o) for o in entry.outcomes]
 
@@ -1640,6 +1669,15 @@ class LiveBlendRefresher:
         self._custody_clock: dict[int, float] = {}
         #: #11138 — the owning consumer's `HeldRowQuotes`, or None (no overlay).
         self.held_quotes: Optional[HeldRowQuotes] = None
+        #: #10090 — the Kalshi WS owner's current-book proof for the bundled
+        #: Challenger pair (`compute_source_home_probability`). Off unless the
+        #: owner installs all of them before its first refresh can run: the
+        #: requirement, the midpoint and primary-price readers, and the landed
+        #: primary-quote reader (`current_primary_input(row, held, overlaid=)`).
+        self.require_current_book_proof = False
+        self.current_book_midpoint = None
+        self.current_book_primary_price = None
+        self.current_primary_input = None
         #: #2471 — the owning consumer's session factory, so the stamp borrows
         #: the consumer's one engine instead of building a pool per batch.
         #: None ⇒ ``app.tasks.base.get_task_session``, looked up per batch.
@@ -2912,9 +2950,18 @@ class LiveBlendRefresher:
                     PREPARED_OUTCOME_FIELDS, outcome_values
                 )))
                 entry.outcomes.append(outcome)
+        # Strong references prevent id reuse while held.overlay_event replaces
+        # rows. Membership by id is safe until classification below completes.
+        original_rows = {id(row): row for _event, group in grouped.values()
+                         for entry in group for row in entry.outcomes}
         if held is not None:
             for _event, group in grouped.values():
                 held.overlay_event(group)
+        if getattr(self, "current_primary_input", None) is not None:
+            for _event, group in grouped.values():
+                for entry in group:
+                    for row in entry.outcomes:
+                        row._primary_quote_overlaid = id(row) not in original_rows
         return grouped
 
     async def _prepare_groups(self, event_ids: list[int]) -> dict[int, tuple]:
@@ -3290,8 +3337,26 @@ class LiveBlendRefresher:
             for event_id in sorted(grouped):
                 event, group = grouped[event_id]
                 try:
+                    proof_kwargs = {}
+                    if (getattr(self, "require_current_book_proof", False)
+                            and any(getattr(entry.market, "source", None) == "kalshi"
+                                    and (getattr(entry.market, "external_id", None) or "").upper().startswith("KXATPCHALLENGERMATCH-")
+                                    for entry in group)):
+                        proof_kwargs = {
+                            "require_current_book_midpoint": True,
+                            "current_book_midpoint": getattr(self, "current_book_midpoint", None),
+                            "current_book_primary_price": getattr(self, "current_book_primary_price", None),
+                            "current_primary_input": (
+                                lambda row: self.current_primary_input(
+                                    row, self.held_quotes,
+                                    overlaid=getattr(row, "_primary_quote_overlaid", False),
+                                )
+                            ) if getattr(self, "current_primary_input", None) is not None else None,
+                            "current_book_refused": lambda: self._throttle_deferred.add(event_id),
+                        }
                     reading = compute_source_home_probability(
                         group, event.home_team_name, event.away_team_name,
+                        **proof_kwargs,
                     )
                     if reading is None:
                         self.stats["no_reading"] += 1
@@ -3358,6 +3423,15 @@ class LiveBlendRefresher:
                     async with self._event_stamp_scope(
                         session, single_event=len(grouped) == 1,
                     ):
+                        if proof_kwargs:
+                            checked = compute_source_home_probability(
+                                group, event.home_team_name, event.away_team_name, **proof_kwargs,
+                            )
+                            if (checked is None or checked.home_probability != reading.home_probability
+                                    or checked.contributing_outcomes != reading.contributing_outcomes):
+                                self.stats["no_reading"] += 1
+                                self._dispositions[event_id] = ("no_reading",)
+                                continue
                         # `synchronize_session=False`: the ORM cannot evaluate
                         # the guard's SQL in Python, and its "fetch" fallback
                         # rewrites RETURNING to the primary key — the frame

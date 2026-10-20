@@ -37,6 +37,7 @@ from app.utils.repair_lock_budget import (  # noqa: F401 — read by the exec'd 
     lock_timeout_value,
 )
 from app.utils.resolution_authority import AUTHORITATIVE_SOURCES
+from app.utils.kalshi_primary_quote import PrimaryQuoteCustody
 from tests._kalshi_price_session import bind_session, consumer_engine
 from tests.pm_bulk_test_support import price_writes, statement_params
 
@@ -133,6 +134,9 @@ def rig(*, failed=None, declined=None, pending=(), locked=(), unchanged=()):
               market_id_by_outcome=markets, event_id_by_outcome=events,
               non_blend_outcome_ids=set(),
               input_marks={oid: oid for oid in batch}, tail_receipts=Receipts(),
+              # #10090: the worker's primary-quote custody (bundled pair),
+              # retained against the slate's ticker map (none mapped here).
+              primary_quote_custody=PrimaryQuoteCustody(), ticker_to_ids={},
               open_contract_outcome_ids={9}, blend_refresher=Refresher(),
               # #10090: no live set is the pre-#10090 plan, and no budget.
               live_event_ids=None, flush_budget=None,
