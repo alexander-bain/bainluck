@@ -779,7 +779,14 @@ private final class MountHost {
     private let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1000, height: 800),
                                   styleMask: [.titled], backing: .buffered, defer: false)
     #else
-    private let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 1000, height: 800))
+    /// Scene-backed, like the other hosted rigs that read what the page draws
+    /// (`EventPublicationCaller4974Tests.MountedPage`): a `UIWindow(frame:)`
+    /// belongs to no window scene, so nothing in it is on screen. Made by the
+    /// first `mount`, which can wait for the host app's scene.
+    private var window: UIWindow?
+    private var previousKeyWindow: UIWindow?
+    private var rootController: UIViewController?
+    private var sceneMissing = false
     #endif
 
     init<Screen: View>(_ screen: @escaping () -> Screen) {
@@ -788,15 +795,50 @@ private final class MountHost {
         window.contentView = NSHostingView(rootView: root)
         window.orderFrontRegardless()
         #else
-        window.rootViewController = UIHostingController(rootView: root)
-        window.isHidden = false
+        rootController = UIHostingController(rootView: root)
         #endif
     }
 
     func mount(_ mounted: Bool) async {
+        #if !os(macOS)
+        await attachToActiveScene()
+        #endif
         toggle.mounted = mounted
         await settle()
     }
+
+    #if !os(macOS)
+    /// Shows the hosting controller in a window of the foreground-active scene,
+    /// waiting for the host app to activate as the sibling rigs do. With no
+    /// such scene the test FAILS here, by name — it is never skipped and the
+    /// screen is never mounted scene-less.
+    private func attachToActiveScene() async {
+        guard window == nil, !sceneMissing else { return }
+        let deadline = CACurrentMediaTime() + 10
+        func activeScene() -> UIWindowScene? {
+            UIApplication.shared.connectedScenes
+                .compactMap { $0 as? UIWindowScene }
+                .first { $0.activationState == .foregroundActive }
+        }
+        while activeScene() == nil && CACurrentMediaTime() < deadline {
+            try? await Task.sleep(nanoseconds: 50_000_000)
+        }
+        guard let scene = activeScene() else {
+            let sceneStates = UIApplication.shared.connectedScenes.map {
+                "\(type(of: $0)):\($0.activationState.rawValue)"
+            }.sorted().joined(separator: ", ")
+            XCTFail("MountHost requires a foreground-active window scene; connected scenes: \(sceneStates)")
+            sceneMissing = true
+            return
+        }
+        previousKeyWindow = scene.windows.first { $0.isKeyWindow }
+        let window = UIWindow(windowScene: scene)
+        window.frame = CGRect(x: 0, y: 0, width: 1000, height: 800)
+        window.rootViewController = rootController
+        window.makeKeyAndVisible()
+        self.window = window
+    }
+    #endif
 
     /// Lets SwiftUI apply a change and run appear/disappear.
     func settle() async {
@@ -812,6 +854,7 @@ private final class MountHost {
         guard let root = window.contentView else { return [] }
         return Self.descendants(of: root).compactMap { ($0 as? NSTextField).flatMap { $0.isEditable ? $0.stringValue : nil } }
         #else
+        guard let window else { return [] }
         return Self.descendants(of: window).compactMap { ($0 as? UITextField)?.text }
         #endif
     }
@@ -839,7 +882,8 @@ private final class MountHost {
         #if os(macOS)
         window.orderOut(nil)
         #else
-        window.isHidden = true
+        window?.isHidden = true
+        previousKeyWindow?.makeKey()
         #endif
     }
 }
