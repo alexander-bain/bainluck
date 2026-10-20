@@ -383,7 +383,9 @@ function EventFeedCard({
   // play: a scheduled row whose kickoff has passed is no longer "before".
   // Live: only the producer's marked in-play pair, read against the score this
   // card prints (`liveCardProjectedFinal`) — never the bare pair, which can be
-  // a pregame reading on a live row. Never a second, card-local calculation.
+  // a pregame reading on a live row. Live means started too, as on the league
+  // card and the page: a live row whose start is still ahead by this clock is
+  // where the page prints its pregame pair. Never a second, card-local calculation.
   const projectedNames = teamShortNames(
     { name: data.home_team, abbreviation: data.home_team_data?.abbreviation },
     { name: data.away_team, abbreviation: data.away_team_data?.abbreviation },
@@ -392,8 +394,8 @@ function EventFeedCard({
   const projectedFinal =
     isScheduled && Date.parse(data.commence_time) > Date.now()
       ? cardProjectedFinal(data.current_odds, data.sport)
-      : isLive
-        ? liveCardProjectedFinal(data.current_odds, data.sport, {
+      : isLive && Date.parse(data.commence_time) <= Date.now()
+        ? liveCardProjectedFinal(data.current_odds, data.sport, data.commence_time, {
             home: data.home_score,
             away: data.away_score,
           })

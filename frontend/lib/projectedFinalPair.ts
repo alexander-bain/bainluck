@@ -168,6 +168,13 @@ export function cardProjectedFinal(
  *   - KIND `in_play`, measured from `commence_time`, and the evidence agrees:
  *     the earliest confirmation is not before the start. A pregame reading is
  *     never relabelled as a live one.
+ *   - The start it was measured from is not before the start THIS ROW carries:
+ *     an object measured from an earlier start (cached, or the start moved
+ *     later) could pass pregame quotes off as in play.
+ *   - The latest capture must be present, and is compared with nothing: a
+ *     quote first captured before the start and reconfirmed after it is an
+ *     honest in-play reading, so it may precede the boundary and the earliest
+ *     confirmation. The only ordering gates use confirmation time.
  *   - SOURCE / BASIS: the sportsbooks' spread-and-total pair, the only one the
  *     rounding path below solves.
  *   - UNIT and PERIOD the scoreboard counts in: points over the full game for
@@ -220,6 +227,7 @@ function liveInstant(value: unknown): number | null {
 export function admittedLiveProjection(
   odds: SportsbookProjectionFields | null | undefined,
   sportKey: string | null | undefined,
+  commenceTime: string | null | undefined,
 ): ProjectedScorePair | null {
   const p = odds?.live_projection as Partial<LiveProjection> | null | undefined;
   if (!p || typeof p !== "object") return null;
@@ -238,7 +246,9 @@ export function admittedLiveProjection(
   const boundary = liveInstant(p.boundary_at);
   const earliest = liveInstant(p.earliest_confirmed_at);
   const latest = liveInstant(p.latest_captured_at);
-  if (boundary === null || earliest === null || latest === null) return null;
+  const rowStart = liveInstant(commenceTime);
+  if (boundary === null || earliest === null || latest === null || rowStart === null) return null;
+  if (boundary < rowStart) return null;
   if (earliest < boundary) return null;
 
   return sportsbookProjectedPair(
@@ -260,12 +270,13 @@ export function admittedLiveProjection(
 export function liveCardProjectedFinal(
   odds: SportsbookProjectionFields | null | undefined,
   sportKey: string | null | undefined,
+  commenceTime: string | null | undefined,
   actual: { home: number | null | undefined; away: number | null | undefined },
 ): ProjectedScorePair | null {
   const { home, away } = actual;
   if (typeof home !== "number" || !Number.isFinite(home) || home < 0) return null;
   if (typeof away !== "number" || !Number.isFinite(away) || away < 0) return null;
-  const raw = admittedLiveProjection(odds, sportKey);
+  const raw = admittedLiveProjection(odds, sportKey, commenceTime);
   if (!raw) return null;
   const pair = cardProjectedFinal(
     { projected_home_score: raw.home, projected_away_score: raw.away },
@@ -300,11 +311,13 @@ export function liveCardProjectedFinal(
 export function eventPageProjectedPair(opts: {
   odds: SportsbookProjectionFields | null | undefined;
   sportKey: string | null | undefined;
+  /** The row's `commence_time`, which the in-play pair must be measured from. */
+  commenceTime: string | null | undefined;
   isLive: boolean;
   ladderPair: { home_score: number; away_score: number } | null | undefined;
 }): { home_score: number; away_score: number } | null {
   if (opts.isLive) {
-    const live = admittedLiveProjection(opts.odds, opts.sportKey);
+    const live = admittedLiveProjection(opts.odds, opts.sportKey, opts.commenceTime);
     if (live) return { home_score: live.home, away_score: live.away };
     if (opts.odds?.live_projection != null) return null;
   } else {

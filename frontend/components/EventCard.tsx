@@ -622,7 +622,7 @@ export default function EventCard({
   // never shown live: on a search row it can be the pregame reading.
   const liveProjectedScore =
     isLive && !isFinished && !isSuspended
-      ? liveCardProjectedFinal(odds, event.sport, {
+      ? liveCardProjectedFinal(odds, event.sport, event.commence_time, {
           home: event.home_score,
           away: event.away_score,
         })

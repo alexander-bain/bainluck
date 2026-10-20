@@ -187,11 +187,94 @@ describe("a live card prints the in-play pair under the score, named per team", 
 
   it("the event page reads the SAME pair, not the ladders', and rounds it to the card's numbers", () => {
     const ladder = { home_score: 41.4, away_score: 6.2 };
-    const page = eventPageProjectedPair({ odds: live.current_odds, sportKey: UGA.sport, isLive: true, ladderPair: ladder });
+    const page = eventPageProjectedPair({ odds: live.current_odds, sportKey: UGA.sport, commenceTime: UGA.commence_time, isLive: true, ladderPair: ladder });
     expect(page).toEqual({ home_score: 36.9, away_score: 10.7 });
     expect(`${Math.round(page!.home_score)}-${Math.round(page!.away_score)}`).toBe(
       stamp(card(live), BAND_CARD)!.split(" ")[0],
     );
+  });
+});
+
+describe("the band prints the in-play object's pair, never the row's plain pair", () => {
+  // The positives above copy the plain `projected_*` keys into the object, so
+  // they cannot tell "printed the object" from "printed the plain pair once the
+  // object was accepted". On detail and search the plain pair can be pregame:
+  // here it is 14780563's 29.6 / 22.3 — reachable from 21 – 0 — under UGA's
+  // in-play 36.9 / 10.7.
+  const ladder = { home_score: 41.4, away_score: 6.2 };
+
+  it.each([
+    ["a different pregame plain pair", { projected_home_score: 29.6, projected_away_score: 22.3 }],
+    ["no plain pair at all (the feed serves none)", { projected_home_score: null, projected_away_score: null }],
+  ])("%s: both cards print 37-11 and the page reads 36.9 / 10.7", (_l, plain) => {
+    const e = withOdds(UGA, { ...plain, live_projection: UGA_IN_PLAY });
+    expect(stamp(card(e), BAND_CARD)).toBe("37-11 home-away");
+    expect(stamp(feed(e), BAND_FEED)).toBe("37-11 away-home");
+    expect(
+      eventPageProjectedPair({ odds: e.current_odds, sportKey: UGA.sport, commenceTime: UGA.commence_time, isLive: true, ladderPair: ladder }),
+    ).toEqual({ home_score: 36.9, away_score: 10.7 });
+  });
+});
+
+describe("the in-play object must be measured from the start this row carries", () => {
+  // Georgia's row starts 19:30Z. An object measured from 18:30Z (cached, or a
+  // start that moved later) with its earliest confirmation at 19:00Z passes its
+  // own boundary check, yet that confirmation is pregame for this row.
+  const early = withOdds(UGA, {
+    live_projection: { ...UGA_IN_PLAY, boundary_at: "2026-09-26T18:30:00+00:00", earliest_confirmed_at: "2026-09-26T19:00:00+00:00" },
+  });
+
+  it("an earlier boundary: no band on either card, and the page withholds", () => {
+    expect(stamp(card(early), BAND_CARD)).toBeNull();
+    expect(stamp(feed(early), BAND_FEED)).toBeNull();
+    expect(
+      eventPageProjectedPair({ odds: early.current_odds, sportKey: UGA.sport, commenceTime: UGA.commence_time, isLive: true, ladderPair: { home_score: 41.4, away_score: 6.2 } }),
+    ).toBeNull();
+  });
+
+  it("the times are compared as instants: `Z` and `+00:00` name the same start", () => {
+    const z = { live_projection: { ...UGA_IN_PLAY, boundary_at: "2026-09-26T19:30:00Z" } };
+    expect(UGA.commence_time).toBe("2026-09-26T19:30:00+00:00");
+    expect(admittedLiveProjection(z, UGA.sport, UGA.commence_time)).toEqual({ home: 36.9, away: 10.7 });
+    expect(admittedLiveProjection({ live_projection: UGA_IN_PLAY }, UGA.sport, "2026-09-26T19:30:00Z")).toEqual({ home: 36.9, away: 10.7 });
+  });
+
+  it.each([
+    ["no row start", null],
+    ["an unparseable row start", "soon"],
+    ["a row start one second after the boundary", "2026-09-26T19:30:01+00:00"],
+  ])("%s is refused", (_l, commence) => {
+    expect(admittedLiveProjection({ live_projection: UGA_IN_PLAY }, UGA.sport, commence)).toBeNull();
+  });
+});
+
+describe("a reconfirmed unchanged quote is an honest in-play reading", () => {
+  // One book first quoting at 19:20Z and confirming the same value at 19:35Z
+  // after the 19:30Z start: the latest capture precedes both the boundary and
+  // the earliest confirmation. Capture and confirmation clocks have no required
+  // order (authority R3, withdrawn 2026-10-20 23:48Z), so neither is a refusal.
+  const reconfirmed = withOdds(UGA, { live_projection: { ...UGA_IN_PLAY, latest_captured_at: "2026-09-26T19:20:00+00:00" } });
+
+  it("both cards print it and the page reads it", () => {
+    expect(Date.parse("2026-09-26T19:20:00+00:00")).toBeLessThan(Date.parse(UGA_IN_PLAY.boundary_at));
+    expect(Date.parse(UGA_IN_PLAY.earliest_confirmed_at)).toBeGreaterThanOrEqual(Date.parse(UGA_IN_PLAY.boundary_at));
+    expect(stamp(card(reconfirmed), BAND_CARD)).toBe("37-11 home-away");
+    expect(stamp(feed(reconfirmed), BAND_FEED)).toBe("37-11 away-home");
+    expect(
+      eventPageProjectedPair({ odds: reconfirmed.current_odds, sportKey: UGA.sport, commenceTime: UGA.commence_time, isLive: true, ladderPair: null }),
+    ).toEqual({ home_score: 36.9, away_score: 10.7 });
+  });
+});
+
+describe("FeedCard's live branch needs the start passed, like the league card and the page", () => {
+  it("live by status but starting in 10 minutes by this clock: no FeedCard band", () => {
+    const start = new Date(Date.now() + 10 * 60_000).toISOString();
+    const early = new Date(Date.now() + 11 * 60_000).toISOString();
+    const projection = { ...UGA_IN_PLAY, boundary_at: start, earliest_confirmed_at: early, latest_captured_at: early };
+    const e = withOdds(UGA, { projected_home_score: 29.6, projected_away_score: 22.3, live_projection: projection }, { commence_time: start });
+    // The object itself is admitted, so only the started check refuses it.
+    expect(liveCardProjectedFinal(e.current_odds, UGA.sport, start, { home: 21, away: 0 })).toEqual({ home: 37, away: 11 });
+    expect(stamp(feed(e), BAND_FEED)).toBeNull();
   });
 });
 
@@ -219,7 +302,7 @@ describe("soccer: goals over 90 minutes, and only that", () => {
     expect(stamp(card(wrong), BAND_CARD)).toBeNull();
     expect(stamp(feed(wrong), BAND_FEED)).toBeNull();
     expect(
-      eventPageProjectedPair({ odds: wrong.current_odds, sportKey: KLEAGUE.sport, isLive: true, ladderPair: { home_score: 2.2, away_score: 0.4 } }),
+      eventPageProjectedPair({ odds: wrong.current_odds, sportKey: KLEAGUE.sport, commenceTime: KLEAGUE.commence_time, isLive: true, ladderPair: { home_score: 2.2, away_score: 0.4 } }),
     ).toBeNull();
   });
 });
@@ -230,7 +313,7 @@ describe("no in-play marker, no live forecast — whatever pair rides on the row
     expect(stamp(card(UGA), BAND_CARD)).toBeNull();
     expect(stamp(feed(UGA), BAND_FEED)).toBeNull();
     const ladder = { home_score: 41.4, away_score: 6.2 };
-    expect(eventPageProjectedPair({ odds: UGA.current_odds, sportKey: UGA.sport, isLive: true, ladderPair: ladder })).toBe(ladder);
+    expect(eventPageProjectedPair({ odds: UGA.current_odds, sportKey: UGA.sport, commenceTime: UGA.commence_time, isLive: true, ladderPair: ladder })).toBe(ladder);
   });
 
   it("the list routes' own marker (`projection_captured_at`) is not the in-play marker", () => {
@@ -253,9 +336,9 @@ describe("no in-play marker, no live forecast — whatever pair rides on the row
       const seeded = withOdds(pregame, { live_projection: inPlay(pregame, pregame.current_odds!.captured_at) }, halftime);
       expect(stamp(card(seeded), BAND_CARD)).toBeNull();
       expect(stamp(feed(seeded), BAND_FEED)).toBeNull();
-      expect(admittedLiveProjection(seeded.current_odds, pregame.sport)).toBeNull();
+      expect(admittedLiveProjection(seeded.current_odds, pregame.sport, pregame.commence_time)).toBeNull();
       expect(
-        eventPageProjectedPair({ odds: seeded.current_odds, sportKey: pregame.sport, isLive: true, ladderPair: { home_score: 33.2, away_score: 15.1 } }),
+        eventPageProjectedPair({ odds: seeded.current_odds, sportKey: pregame.sport, commenceTime: pregame.commence_time, isLive: true, ladderPair: { home_score: 33.2, away_score: 15.1 } }),
       ).toBeNull();
     });
   });
@@ -279,9 +362,9 @@ describe("no in-play marker, no live forecast — whatever pair rides on the row
     it("seeding the old pair as 'in play' gives the page no headline either", () => {
       const seed = inPlay(withOdds(league, {}, { commence_time: detail.commence_time }), league.current_odds!.captured_at);
       const odds = { ...detail.current_odds, live_projection: seed };
-      expect(admittedLiveProjection(odds, detail.sport)).toBeNull();
-      expect(eventPageProjectedPair({ odds, sportKey: detail.sport, isLive: true, ladderPair: null })).toBeNull();
-      expect(eventPageProjectedPair({ odds: detail.current_odds, sportKey: detail.sport, isLive: true, ladderPair: null })).toBeNull();
+      expect(admittedLiveProjection(odds, detail.sport, detail.commence_time)).toBeNull();
+      expect(eventPageProjectedPair({ odds, sportKey: detail.sport, commenceTime: detail.commence_time, isLive: true, ladderPair: null })).toBeNull();
+      expect(eventPageProjectedPair({ odds: detail.current_odds, sportKey: detail.sport, commenceTime: detail.commence_time, isLive: true, ladderPair: null })).toBeNull();
     });
   });
 });
@@ -310,8 +393,8 @@ describe("a broken or impossible in-play pair prints nothing", () => {
   });
 
   it("not an object", () => {
-    expect(admittedLiveProjection({ live_projection: "in_play" }, UGA.sport)).toBeNull();
-    expect(admittedLiveProjection({ live_projection: [UGA_IN_PLAY] }, UGA.sport)).toBeNull();
+    expect(admittedLiveProjection({ live_projection: "in_play" }, UGA.sport, UGA.commence_time)).toBeNull();
+    expect(admittedLiveProjection({ live_projection: [UGA_IN_PLAY] }, UGA.sport, UGA.commence_time)).toBeNull();
   });
 
   it("below the score already on the board (#4885): Oklahoma projected 11 while holding 14", () => {
@@ -319,14 +402,14 @@ describe("a broken or impossible in-play pair prints nothing", () => {
     expect(stamp(card(e), BAND_CARD)).toBeNull();
     expect(stamp(feed(e), BAND_FEED)).toBeNull();
     // Equal is reachable: a game with no more scoring.
-    expect(liveCardProjectedFinal({ live_projection: UGA_IN_PLAY }, UGA.sport, { home: 37, away: 11 })).toEqual({ home: 37, away: 11 });
-    expect(liveCardProjectedFinal({ live_projection: UGA_IN_PLAY }, UGA.sport, { home: 38, away: 11 })).toBeNull();
+    expect(liveCardProjectedFinal({ live_projection: UGA_IN_PLAY }, UGA.sport, UGA.commence_time, { home: 37, away: 11 })).toEqual({ home: 37, away: 11 });
+    expect(liveCardProjectedFinal({ live_projection: UGA_IN_PLAY }, UGA.sport, UGA.commence_time, { home: 38, away: 11 })).toBeNull();
   });
 
   it("a level pair in a sport that cannot end level (#8156)", () => {
     const nba = { ...UGA_IN_PLAY, projected_home_score: 110.4, projected_away_score: 110.2 };
-    expect(liveCardProjectedFinal({ live_projection: nba }, "basketball_nba", { home: 100, away: 100 })).toBeNull();
-    expect(liveCardProjectedFinal({ live_projection: { ...nba, projected_away_score: 104.1 } }, "basketball_nba", { home: 100, away: 100 })).toEqual({ home: 110, away: 104 });
+    expect(liveCardProjectedFinal({ live_projection: nba }, "basketball_nba", UGA.commence_time, { home: 100, away: 100 })).toBeNull();
+    expect(liveCardProjectedFinal({ live_projection: { ...nba, projected_away_score: 104.1 } }, "basketball_nba", UGA.commence_time, { home: 100, away: 100 })).toEqual({ home: 110, away: 104 });
   });
 });
 
@@ -358,7 +441,7 @@ describe("the game state decides, not the pair", () => {
     const e = withOdds(pregame, { live_projection: inPlay(pregame, pregame.current_odds!.captured_at) }, { commence_time: future });
     expect(stamp(card(e), BAND_CARD)).toBe("30-22 home-away");
     expect(
-      eventPageProjectedPair({ odds: e.current_odds, sportKey: pregame.sport, isLive: false, ladderPair: { home_score: 28.1, away_score: 21.0 } }),
+      eventPageProjectedPair({ odds: e.current_odds, sportKey: pregame.sport, commenceTime: e.commence_time, isLive: false, ladderPair: { home_score: 28.1, away_score: 21.0 } }),
     ).toEqual({ home_score: 29.6, away_score: 22.3 });
   });
 });
@@ -367,7 +450,7 @@ describe("formats that keep their refusal live", () => {
   it.each(["baseball_mlb", "icehockey_nhl", "tennis_atp_shanghai_masters", "cricket_ipl", "mma_mixed_martial_arts", "rugbyleague_nrl", ""])(
     "%s",
     (sport) => {
-      expect(admittedLiveProjection({ live_projection: UGA_IN_PLAY }, sport)).toBeNull();
+      expect(admittedLiveProjection({ live_projection: UGA_IN_PLAY }, sport, UGA.commence_time)).toBeNull();
       expect(projectedFinalPeriod(sport)).toBeNull();
     },
   );
