@@ -88,7 +88,16 @@ export default function ProjectedFinalLine({
           : "mt-2 flex items-baseline justify-between gap-2 min-w-0"
       }
     >
-      <span className="text-xs font-medium text-text-secondary flex-shrink-0" aria-hidden="true">
+      {/* #11296 — a long label wraps inside its own box, at the same size,
+          instead of taking room from what is beside it. The cap is a little
+          under the one-line width of the earlier "Before scheduled start", so
+          "Projection before scheduled start" breaks as "Projection before /
+          scheduled start" and neither the card's numbers nor the headline's
+          team columns lose room they had (the headline centre is sized by its
+          content, so a one-line long label would widen it into the team
+          columns). "Projected final" is narrower than the cap and lays out as
+          before. */}
+      <span className="text-xs font-medium text-text-secondary flex-shrink-0 max-w-[8rem]" aria-hidden="true">
         {label}
       </span>
       {pair}

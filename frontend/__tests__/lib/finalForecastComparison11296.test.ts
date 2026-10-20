@@ -78,7 +78,7 @@ function soccer(over: Partial<FinalForecastComparisonInput> = {}): FinalForecast
 describe("admitted: the band, its label and its details", () => {
   it("an NFL final prints the rounded pregame pair under the scheduled-start label", () => {
     expect(finalForecastComparison(nfl())).toEqual({
-      label: "Before scheduled start",
+      label: "Projection before scheduled start",
       forecast: { home: 25, away: 22 },
       details: {
         sourceLabel: "Sportsbooks",
@@ -88,7 +88,21 @@ describe("admitted: the band, its label and its details", () => {
         boundaryAt: "2026-10-18T17:00:00+00:00",
       },
     });
-    expect(FINAL_FORECAST_LABEL).toBe("Before scheduled start");
+    expect(FINAL_FORECAST_LABEL).toBe("Projection before scheduled start");
+  });
+
+  it("the label says what the numbers are, not only when they were read (Design R1)", () => {
+    // The band stands alone under a final: the old standalone "Before
+    // scheduled start" named the boundary but never said the pair was a
+    // forecast. The label must carry both, and the boundary must stay the
+    // SCHEDULED start the producer reads before, never an observed one.
+    const label = finalForecastComparison(nfl())!.label;
+    expect(label).toMatch(/^Projection\b/);
+    expect(label).toMatch(/\bbefore scheduled start$/);
+    expect(label).not.toBe("Before scheduled start");
+    expect(label).not.toMatch(/kick-?off|tip-?off|first pitch|actual/i);
+    // Same label for every admitted sport: one band, one wording.
+    expect(finalForecastComparison(nba())!.label).toBe(label);
   });
 
   it("an NBA final is admitted, rounded per side like the pre-game card", () => {

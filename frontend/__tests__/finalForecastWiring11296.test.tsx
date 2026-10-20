@@ -1,6 +1,6 @@
 /**
  * #11296 / #2920 / #9483 — a finished game's headline and cards show the
- * actual result with one "Before scheduled start" forecast band.
+ * actual result with one "Projection before scheduled start" forecast band.
  *
  * Fixtures are production payloads captured 2026-10-20 02:27Z
  * (`fixtures/finalForecast11296.json`), not hand-made objects:
@@ -114,6 +114,16 @@ function stamp(html: string, testId: string): string | null {
 }
 
 const HERO = "event-hero-final-forecast";
+/** Either wording of the band's label, old or new: a refusal prints neither. */
+const ANY_BAND_LABEL = /before scheduled start/i;
+
+/** The label span a band prints first: its classes and text. */
+function bandLabel(html: string, testId: string): { cls: string; text: string } | null {
+  const at = html.indexOf(`data-testid="${testId}"`);
+  if (at < 0) return null;
+  const m = html.slice(at).match(/<span class="([^"]*)"[^>]*>([^<]*)<\/span>/);
+  return m ? { cls: m[1], text: m[2] } : null;
+}
 const DETAILS = "event-hero-final-forecast-details";
 
 describe("the fixtures are what production served", () => {
@@ -144,8 +154,8 @@ describe("the finished headline, Buccaneers 19 – Steelers 26", () => {
   it("prints the named band, home first like the columns, rounded as the card rounds", () => {
     const html = page(detail());
     expect(stamp(html, HERO)).toBe("18-20 home-away");
-    expect(html).toContain(">Before scheduled start<");
-    expect(html).toMatch(/aria-label="Before scheduled start: [^"]+ 18, [^"]+ 20"/);
+    expect(html).toContain(">Projection before scheduled start<");
+    expect(html).toMatch(/aria-label="Projection before scheduled start: [^"]+ 18, [^"]+ 20"/);
   });
 
   it("keeps the actual result primary: both real scores still print, and no second score table", () => {
@@ -199,7 +209,7 @@ describe("the finished headline, Buccaneers 19 – Steelers 26", () => {
     const html = page(rest as Event);
     expect(stamp(html, HERO)).toBeNull();
     expect(html).not.toContain(DETAILS);
-    expect(html).not.toContain("Before scheduled start");
+    expect(html).not.toMatch(ANY_BAND_LABEL);
   });
 });
 
@@ -221,7 +231,7 @@ describe("refusals reach the headline", () => {
       } as Partial<Event>),
     );
     expect(stamp(html, HERO)).toBeNull();
-    expect(html).not.toContain("Before scheduled start");
+    expect(html).not.toMatch(ANY_BAND_LABEL);
   });
 
   it("hockey: even a projection object on an NHL final prints nothing", () => {
@@ -266,7 +276,7 @@ describe("the cards", () => {
   it("EventCard (search/league): the served NFL final prints the band beneath its result, home first", () => {
     const html = card(searchRow(14966179));
     expect(stamp(html, "event-card-final-forecast")).toBe("18-20 home-away");
-    expect(html).toContain(">Before scheduled start<");
+    expect(html).toContain(">Projection before scheduled start<");
     expect(html).not.toContain(">Projected final<");
     // The score strip still prints the actual result, above the band.
     const band = html.indexOf('data-testid="event-card-final-forecast"');
@@ -278,7 +288,7 @@ describe("the cards", () => {
   it("EventCard: the served NHL final prints no band", () => {
     const html = card(searchRow(15331169));
     expect(stamp(html, "event-card-final-forecast")).toBeNull();
-    expect(html).not.toContain("Before scheduled start");
+    expect(html).not.toMatch(ANY_BAND_LABEL);
   });
 
   it("card and headline print the same pair for the same game", () => {
@@ -290,12 +300,75 @@ describe("the cards", () => {
   it("FeedCard: away first like its rows, once the feed carries the key", () => {
     const html = feed(finishedFeedItem({ pregame_projection: SERVED } as Partial<FeedEventData>));
     expect(stamp(html, "feed-card-final-forecast")).toBe("18-20 away-home");
-    expect(html).toMatch(/aria-label="Before scheduled start: [^"]+ 20, [^"]+ 18"/);
+    expect(html).toMatch(/aria-label="Projection before scheduled start: [^"]+ 20, [^"]+ 18"/);
   });
 
   it("FeedCard: as `/api/feed` serves today (no key), nothing prints", () => {
     const html = feed(finishedFeedItem());
     expect(stamp(html, "feed-card-final-forecast")).toBeNull();
-    expect(html).not.toContain("Before scheduled start");
+    expect(html).not.toMatch(ANY_BAND_LABEL);
+  });
+});
+
+describe("the longer label wraps inside its band (Design R1)", () => {
+  // Measured in headless Chromium on the system font (lane1 artifact
+  // 11296-r1-label): "Before scheduled start" is ~132px on one line and
+  // "Projection before scheduled start" ~193px. Capped at 8rem (128px) the
+  // new label breaks as "Projection before / scheduled start", so neither
+  // the card's numbers nor the headline's team columns lose room they had.
+  // A class read cannot see geometry; it pins the decision so a revert is loud.
+  const bands: Array<[string, () => string, string]> = [
+    ["headline", () => page(detail()), HERO],
+    ["EventCard", () => card(searchRow(14966179)), "event-card-final-forecast"],
+    [
+      "FeedCard",
+      () => feed(finishedFeedItem({ pregame_projection: SERVED } as Partial<FeedEventData>)),
+      "feed-card-final-forecast",
+    ],
+  ];
+
+  it.each(bands)("%s: the full label, never the old standalone one", (_name, render, id) => {
+    const html = render();
+    expect(bandLabel(html, id)?.text).toBe("Projection before scheduled start");
+    expect(html).not.toContain(">Before scheduled start<");
+  });
+
+  it.each(bands)("%s: capped so it wraps, at the same size, never cut", (_name, render, id) => {
+    const cls = bandLabel(render(), id)!.cls.split(/\s+/);
+    expect(cls).toContain("max-w-[8rem]");
+    expect(cls).toContain("text-xs");
+    for (const cut of ["truncate", "whitespace-nowrap", "text-ellipsis", "overflow-hidden"]) {
+      expect(cls).not.toContain(cut);
+    }
+    expect(cls.some((c) => /^line-clamp-/.test(c) || /^text-\[/.test(c))).toBe(false);
+  });
+
+  it.each(bands)("%s: the numbers keep their own uncapped box after the label", (_name, render, id) => {
+    const html = render();
+    const at = html.indexOf(`data-testid="${id}"`);
+    const label = html.indexOf(">Projection before scheduled start<", at);
+    const pair = html.indexOf('aria-hidden="true"', label);
+    expect(label).toBeGreaterThan(at);
+    expect(pair).toBeGreaterThan(label);
+    const pairTag = html.slice(html.lastIndexOf("<span", pair), pair);
+    expect(pairTag).toContain("font-semibold text-text-primary");
+    expect(pairTag).not.toContain("max-w-");
+  });
+
+  it("the pre-game line keeps its own label, which sits under the cap", () => {
+    // #2920's specimen before play: the feed row with the producer's pair.
+    const base = F2920.feed_item_14780563 as FeedItem;
+    const data = base.data as FeedEventData;
+    const html = feed({
+      ...base,
+      data: {
+        ...data,
+        commence_time: new Date(Date.now() + 3 * 3600_000).toISOString(),
+        current_odds: { ...data.current_odds!, projected_home_score: 29.6, projected_away_score: 22.3 },
+      },
+    } as FeedItem);
+    expect(stamp(html, "feed-card-projected-final")).toBe("30-22 away-home");
+    expect(bandLabel(html, "feed-card-projected-final")?.text).toBe("Projected final");
+    expect(html).not.toMatch(ANY_BAND_LABEL);
   });
 });

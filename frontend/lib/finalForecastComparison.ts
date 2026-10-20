@@ -2,8 +2,8 @@
  * #11296 — A FINISHED GAME'S ACTUAL RESULT BESIDE THE SCORE FORECAST BEFORE IT.
  *
  * PILLARS: FORMATTING / TRUTH. SHIP: a finished game's card and headline show
- * its actual result with one honest "Before scheduled start" forecast band, in
- * the same units, the same period and the same team order.
+ * its actual result with one honest "Projection before scheduled start"
+ * forecast band, in the same units, the same period and the same team order.
  *
  * Why `current_odds` cannot be the forecast here: on a finished game it is each
  * sportsbook's LATEST row, which is in-play (event 15328569: kick-off 17:00Z,
@@ -65,8 +65,14 @@ export const PREGAME_KIND_LAST_BEFORE_SCHEDULED_START = "last_before_scheduled_s
  */
 export const PREGAME_BASIS_CONSENSUS_SPREAD_TOTAL = "consensus_spread_total";
 
-/** The visible label over the forecast band. Names the boundary it used. */
-export const FINAL_FORECAST_LABEL = "Before scheduled start";
+/**
+ * The visible label over the forecast band. It names what the numbers ARE (a
+ * projection) and the boundary they were read before: the band stands on its
+ * own under a final, so "Before scheduled start" alone left a reader to guess
+ * what two numbers from before play were (Design R1 on PR #11311). Contextual
+ * to this band only; the pre-game line keeps its own label.
+ */
+export const FINAL_FORECAST_LABEL = "Projection before scheduled start";
 
 /** The period a set of scores covers. `regulation` = play ended without extra time. */
 export type ScorePeriod = "full_game" | "regulation";
