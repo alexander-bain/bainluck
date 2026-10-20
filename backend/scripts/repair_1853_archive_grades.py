@@ -52,6 +52,16 @@ acknowledged — is noted on stderr and changes neither the receipt nor its exit
 an interrupt there still propagates as itself. A refusal is the same: the phase
 records it before anything rolls back, so a rollback failing on a dead
 connection never replaces the refusal, its reason or its exit 2.
+
+THE PLAN READ IS BOUNDED AND READ ONLY (Root, 2026-10-20). Its session carries
+its own statement and lock budgets through ``get_task_session``'s keyword
+channel (#4482) — never the helper's resting thirty minutes and unbounded lock
+wait — and declares ``SET TRANSACTION READ ONLY`` before its first data read.
+That is the same read in plan mode and at the top of ``--apply``, so the digest
+an apply re-derives comes from the same bounded read that was reviewed. A plan
+that times out, waits too long for a lock or is cancelled stops there: no
+digest is printed, no write session opens, nothing is committed. The write,
+restore and status sessions are unchanged.
 """
 
 from __future__ import annotations
@@ -77,6 +87,11 @@ BACKUP_TABLE = "backup_1853_archive_grades"
 _SCRIPT = "scripts/repair_1853_archive_grades.py"
 UNDO_COMMAND = f"heroku run:detached -a {REQUIRED_APP} -- python3 {_SCRIPT} --restore"
 STATUS_COMMAND = f"heroku run:detached -a {REQUIRED_APP} -- python3 {_SCRIPT} --status"
+#: The plan session's budgets, in milliseconds: a plan reads one event's 30 legs,
+#: so a statement past two seconds or a lock wait past half a second is refused
+#: rather than waited out. Proposed source bounds, not a production measurement.
+PLAN_STATEMENT_TIMEOUT_MS = 2_000
+PLAN_LOCK_TIMEOUT_MS = 500
 
 #: THE OWNERSHIP CONTRACT (CERT-4149 + Root's three counterexamples, 2026-10-16).
 #:
@@ -375,6 +390,23 @@ def refuse_unless_named_app(env) -> None:
         raise Refused(f"HEROKU_APP_NAME={app!r}; writes run only on {REQUIRED_APP}")
 
 
+@contextlib.asynccontextmanager
+async def plan_session():
+    """The plan's session: bounded per statement and per lock wait, and READ ONLY
+    before any data is read. A timeout, lock refusal or cancel leaves by the
+    wrapper's exception path, so nothing after it runs."""
+    from sqlalchemy import text
+
+    from app.tasks.base import get_task_session
+
+    async with get_task_session(
+        statement_timeout_ms=PLAN_STATEMENT_TIMEOUT_MS,
+        lock_timeout_ms=PLAN_LOCK_TIMEOUT_MS,
+    ) as session:
+        await session.execute(text("SET TRANSACTION READ ONLY"))
+        yield session
+
+
 async def build_plan(session, legs):
     from sqlalchemy import text
 
@@ -564,7 +596,7 @@ async def run(args, env, progress: Optional[Progress] = None) -> dict:
         return out
 
     legs = load_archive_legs()
-    async with get_task_session() as session:
+    async with plan_session() as session:
         grades, refused = await build_plan(session, legs)
         await session.rollback()
     digest = plan_digest(grades)

@@ -88,6 +88,12 @@ class Session:
     async def __aexit__(self, *exc):
         return False
 
+    async def execute(self, statement, params=None):
+        # Only the plan session's READ ONLY declaration reaches here: every SQL
+        # body is a double. It is recorded before the first dispose, so the
+        # write-session slices below never see it.
+        self.calls.append(str(statement))
+
     async def commit(self):
         self.calls.append("commit")
         self.commits += 1
