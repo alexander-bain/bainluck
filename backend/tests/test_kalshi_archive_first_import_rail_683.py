@@ -1449,9 +1449,11 @@ class TestCommitAcknowledgement:
 def slow_console(monkeypatch):
     """Delay only the real sinks' writes that start with ``prefix`` (a stalled pipe or terminal).
 
-    The default prefix is the receipt's opening brace on stdout.
+    The default prefix is the receipt's opening brace on stdout. ``handed``
+    keeps each such write as the sink received it, delivered or not, with the
+    instant it arrived: a stalled console still shows what the receipt said.
     """
-    state = {"delay": 0.0, "refuse": None, "prefix": "{"}
+    state = {"delay": 0.0, "refuse": None, "prefix": "{", "handed": []}
     original_install = bounds.ConsoleCap.install
 
     class SlowSink:
@@ -1460,6 +1462,7 @@ def slow_console(monkeypatch):
 
         def write(self, s):
             if s.startswith(state["prefix"]):
+                state["handed"].append((time.monotonic(), s))
                 if state["refuse"] is not None:
                     raise state["refuse"]
                 time.sleep(state["delay"])
@@ -1515,6 +1518,26 @@ def _a_collection_scans_only_the_cli():
         gc.unfreeze()
 
 
+def _slice_named_by_the_receipt(handed, t0):
+    """Where a missed receipt slice went, from the summary the stalled sink was handed.
+
+    A console slower than the wall swallows the summary, so a missing artifact
+    reads ``console ''`` and names no phase. The summary still reached the
+    sink: ``elapsed_s`` (wall clock when the receipt was built, after the
+    loop's shutdown) late means the slice went before serialising; on time,
+    with ``artifact_refused``, it went inside it. Read only, after the run.
+    """
+    if not handed:
+        return "nothing handed to the sink"
+    at, text = handed[-1]
+    try:
+        summary = json.loads(text)
+    except ValueError:
+        return {"handed_after_s": round(at - t0, 3), "text": text[-300:]}
+    keys = ("stopped", "elapsed_s", "cancel", "shutdown", "artifact", "artifact_refused")
+    return {"handed_after_s": round(at - t0, 3), **{k: summary.get(k) for k in keys}}
+
+
 class TestConsoleInsideTheWall:
     @pytest.mark.parametrize("deadline,delay", [(0.8, 0.0), (0.8, 0.6), (30.0, 3.0)])
     def test_the_import_receipt_reaches_the_console_inside_the_wall_or_not_at_all(
@@ -1536,7 +1559,8 @@ class TestConsoleInsideTheWall:
             elapsed = time.monotonic() - t0
         out = capsys.readouterr().out
         assert (tmp_path / "R.json").exists(), (
-            f"no artifact after {elapsed:.3f}s; console {out[-600:]!r}"
+            f"no artifact after {elapsed:.3f}s; console {out[-600:]!r}; "
+            f"the receipt's own slice {_slice_named_by_the_receipt(slow_console['handed'], t0)}"
         )
         receipt = json.loads((tmp_path / "R.json").read_text())
         assert code == 3 and elapsed < deadline + 0.15
