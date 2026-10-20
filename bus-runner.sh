@@ -64,18 +64,18 @@ bucket ()     { date -u +%Y%m%d-%H; }
 # prints, and the idle wait below watches the same selector, so the wait can
 # never notice a file the loop would not admit (or miss one it would).
 INBOX="$H/runner-inbox/measurement"
-next_once () { find "$INBOX" -maxdepth 1 -name '*.md' -type f 2>/dev/null | sort | head -1; }
+next_once () { find "$INBOX" -maxdepth 1 -name '*.md' -type f | sort | head -1; }
 
 # Idle wait to an absolute DEADLINE (epoch seconds) — the drained and abandoned
 # branches' sleep to the top of the hour. One-time input can be queued at any
 # minute (#1778: Measurement038 sat unread behind a `sleep 3150`), so the wait
-# is cut into BUS_INBOX_POLL slices and looks at the inbox between them: a file
-# queued during the wait is noticed within one slice. It only RETURNS (status 1)
+# is cut into fixed INBOX_POLL (60 s) slices and looks at the inbox between
+# them: a file queued during the wait is noticed within one slice. It only RETURNS (status 1)
 # — it launches nothing, so admission stays with the guarded loop (lane_control
 # check/run, attempts, priority). The deadline is fixed by the caller, so the
 # bucket boundary does not move. Empty inbox: returns 0 at the deadline, having
 # run one `find` per slice and nothing else — no collector, no session.
-INBOX_POLL="${BUS_INBOX_POLL:-60}"
+INBOX_POLL=60
 idle_until () {
   local DEADLINE="$1" LEFT
   while :; do

@@ -121,7 +121,7 @@ class Rig:
         with open(self.root / "events", "a") as f:
             f.write(f"{epoch} {verb} {path}\n")
 
-    def run(self, stop, poll=None):
+    def run(self, stop):
         env = {
             "PATH": f"{self.bin}{os.pathsep}{os.environ['PATH']}",
             "HOME": str(self.home),
@@ -131,8 +131,6 @@ class Rig:
             "FAKE_STOP": str(stop),
             "FAKE_ITEM": ONE_TIME_MARK,
         }
-        if poll is not None:
-            env["BUS_INBOX_POLL"] = poll
         proc = subprocess.Popen(
             ["/bin/bash", str(BUS)], env=env, text=True,
             stdout=subprocess.PIPE, stderr=subprocess.PIPE,
@@ -258,20 +256,28 @@ def test_non_admissible_files_do_not_wake_the_wait(tmp_path):
     assert "back to normal admission" not in rig.stdout
 
 
-@pytest.mark.parametrize("poll", ["60", "15"])
-def test_slice_length_is_the_documented_bound(tmp_path, poll):
+@pytest.mark.parametrize("past_slice_start", [1, 59])
+def test_slice_length_is_the_fixed_documented_bound(tmp_path, past_slice_start):
+    # Slices start at T0, T0+60, ...; an item queued just after one starts is the
+    # worst case and still waits less than the fixed 60 s bound.
     rig = Rig(tmp_path)
     rig.bank(B10)
-    arrival = T0 + 131
+    arrival = T0 + 120 + past_slice_start
     rig.at(arrival, "touch", rig.item)
-    rig.run(stop=T0 + 600, poll=poll)
-    assert rig.when("codex one-time")[0] - arrival < int(poll), rig.calls
+    rig.run(stop=T0 + 600)
+    assert 0 < rig.when("codex one-time")[0] - arrival < 60, rig.calls
+    naps = [int(w.split()[1]) for t, w in rig.calls if w.startswith("sleep") and t <= arrival]
+    assert naps and max(naps) == 60, naps
 
 
 def test_both_hourly_waits_route_through_the_inbox_aware_wait():
     """Pins the wiring the loop tests exercise: neither hourly branch keeps a bare
-    sleep to the hour, and admission and the wait share one selector."""
+    sleep to the hour, admission and the wait share one selector, the slice is a
+    fixed bound (no settings flag) and the selector keeps find's error output."""
     source = BUS.read_text()
     assert 'sleep "$NAP"' not in source
     assert source.count('idle_until "$((NOW + NAP))"') == 2
     assert "ONCE=$(next_once)" in source
+    assert "INBOX_POLL=60\n" in source and "BUS_INBOX_POLL" not in source
+    selector = next(l for l in source.splitlines() if l.startswith("next_once ()"))
+    assert "/dev/null" not in selector, selector
