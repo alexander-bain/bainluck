@@ -33,6 +33,10 @@ import XCTest
 /// - the expanded reader's match line and kicker broken mid-word at
 ///   320pt/AX5 ("Comman-/ders", "PROJECT-/ED", Design q1) →
 ///   `testTheExpandedReaderKeepsWordsWholeOnANarrowPhone`
+/// - the expanded reader's live header taking ~70% of a 320pt phone at AX5,
+///   leaving the card only its kicker above the footer (Design, narrow-reader
+///   residual 2) → `testTheExpandedReaderLeavesTheStoryRoomOnANarrowPhone`,
+///   and the headline under the kicker in every case of the test above
 @MainActor
 final class HeaderAndFinalCardFit11285Tests: XCTestCase {
 
@@ -975,16 +979,131 @@ final class HeaderAndFinalCardFit11285Tests: XCTestCase {
             // card's headline starts on the leader's name ("49ers still …").
             let kicker = try XCTUnwrap(read.firstIndex { $0.text.contains("PROJECTED") },
                                        "\(name): the kicker broke — \(all)")
-            // The live header's chances line pushes the headline below the
-            // phone-height frame (the card scrolls in the reader), so this is
-            // read where the frame shows it.
-            if label == "q1" {
-                XCTAssertTrue(read[(kicker + 1)...].contains { $0.text.hasPrefix("49ers") },
-                              "\(name): no headline under the kicker — \(all)")
-            }
+            // Since residual 2 the live header's chances line scrolls in its
+            // band at 320/AX5, so the headline shows under the kicker there too.
+            XCTAssertTrue(read[(kicker + 1)...].contains { $0.text.hasPrefix("49ers") },
+                          "\(name): no headline under the kicker — \(all)")
             XCTAssertFalse(read.contains { $0.text.contains("…") || $0.text.contains("...") },
                            "\(name): an ellipsis is drawn — \(all)")
         }
+    }
+
+    /// #11285 (Design, narrow-reader residual 2) — at 320pt/AX5 the live
+    /// header (the shape `nflReaderHeader` prints, as a literal) left the card
+    /// only its kicker above the footer. There the chances line scrolls in a
+    /// band of exactly its cap under the match line: the card has room to read,
+    /// the score and state stay fixed above the band, and the chances are
+    /// reached by scrolling the band, never removed. Where the rule does not
+    /// apply (393/AX5, 320/Large) the chances line draws whole and no band is
+    /// drawn.
+    func testTheExpandedReaderLeavesTheStoryRoomOnANarrowPhone() throws {
+        XCTAssertEqual(NFLCardReader9483.chancesMaxHeight(width: 320, height: 600, accessibility: true), 72)
+        XCTAssertNil(NFLCardReader9483.chancesMaxHeight(width: 320, height: 600, accessibility: false))
+        XCTAssertNil(NFLCardReader9483.chancesMaxHeight(width: 375, height: 700, accessibility: true))
+
+        let finish = try liveFinishCard()
+        let (_, markets) = try finalPage()
+        let props = markets.playerProps ?? []
+        let neighbour = try XCTUnwrap(NFLMilestoneCard9483.cards(
+            props: props, eventStatus: "completed",
+            commenceTime: ISO8601DateFormatter().date(from: "2026-09-28T17:00:00Z")!,
+            homeTeam: "Chicago Bears", awayTeam: "Philadelphia Eagles",
+            now: ISO8601DateFormatter().date(from: "2026-09-28T21:00:00Z")!).first, "control: a second card")
+        let (away, home) = TeamShortName.shortPair(away: "Washington Commanders", home: "San Francisco 49ers",
+                                                   sportKey: "americanfootball_nfl")
+        let deck: [NFLEventCard9483] = [.finish(finish), .milestone(neighbour)]
+        let live = NFLReaderHeader9483(match: "Commanders 13\u{2013}20 49ers · Q3 5:47",
+                                       chances: "Win chances · Commanders 12% · 49ers 88%")
+        for (width, height, size) in [
+            (CGFloat(320), CGFloat(693), DynamicTypeSize.accessibility5),
+            (393, 852, .accessibility5), (320, 693, .large),
+        ] {
+            let name = "reader-room-\(Int(width))x\(Int(height))-\(size)"
+            let narrow = NFLCardReader9483.isNarrowAccessibility(width: width, accessibility: size.isAccessibilitySize)
+            let state = NFLCardDeckState9483()
+            state.open(deck[0].id)
+            let reader = NFLCardReader9483(
+                liveCards: deck, liveHeader: live, awayName: away, homeName: home,
+                awayColor: .indigo, homeColor: .red,
+                state: state, liveRows: NFLCardReaderHold9483.rows(for: deck, in: props))
+            let host = hostForMeasurement(reader.environment(\.colorScheme, .light), at: size)
+            host.view.frame = CGRect(x: 0, y: 0, width: width, height: height)
+            let window = UIWindow(frame: host.view.frame)
+            window.rootViewController = host
+            window.isHidden = false
+            defer { window.isHidden = true }
+            settle(host, 0.8)
+            let read = try tiledLines(host, name: name).sorted { $0.box.minY < $1.box.minY }
+            let all = read.map { "\($0.text)@\(Int($0.box.minX)),\(Int($0.box.minY))" }.joined(separator: " | ")
+            // The score and the state stay on screen without scrolling.
+            XCTAssertTrue(read.contains { $0.text.contains("13") && $0.text.contains("20") },
+                          "\(name): the score left the screen — \(all)")
+            XCTAssertTrue(read.contains { $0.text.contains("Q3") }, "\(name): the game state left the screen — \(all)")
+            let kicker = try XCTUnwrap(read.firstIndex { $0.text.contains("PROJECTED") },
+                                       "\(name): no kicker — \(all)")
+            XCTAssertTrue(read[(kicker + 1)...].contains { $0.text.hasPrefix("49ers") },
+                          "\(name): no headline under the kicker — \(all)")
+            let band = Self.chancesBand(host.view, above: read[kicker].box.minY)
+            if narrow {
+                let scroller = try XCTUnwrap(band, "\(name): the chances line has no scrolling band — \(all)")
+                XCTAssertFalse(read.contains { $0.text.contains("88%") },
+                               "control: \(name): the band shows the whole chances line, so it banded nothing — \(all)")
+                // The band is its cap: the reader's stack may not squeeze it
+                // (to 0pt, the chances gone). The reader measures the safe area.
+                let cap = try XCTUnwrap(NFLCardReader9483.chancesMaxHeight(
+                    width: width, height: host.view.safeAreaLayoutGuide.layoutFrame.height, accessibility: true))
+                XCTAssertEqual(scroller.bounds.height, cap, accuracy: 1,
+                               "\(name): the band was squeezed below its cap — \(all)")
+                // The score and the state sit above the band, outside it: by
+                // position, not mere presence. The band's frame in its
+                // superview, so its own offset cannot move the reference.
+                let bandTop = try XCTUnwrap(scroller.superview).convert(scroller.frame, to: host.view).minY
+                let score = try XCTUnwrap(read.first { $0.text.contains("13") && $0.text.contains("20") },
+                                          "\(name): no score — \(all)")
+                let gameState = try XCTUnwrap(read.first { $0.text.contains("Q3") }, "\(name): no state — \(all)")
+                XCTAssertLessThanOrEqual(max(score.box.maxY, gameState.box.maxY), bandTop + 2,
+                                         "\(name): the score or state sits inside the band — \(all)")
+                scroller.setContentOffset(CGPoint(x: 0, y: scroller.contentSize.height - scroller.bounds.height),
+                                          animated: false)
+                settle(host, 0.3)
+                let scrolled = try tiledLines(host, name: name + "-band-scrolled")
+                XCTAssertTrue(scrolled.contains { $0.text.contains("88%") },
+                              "\(name): the chances' last figure cannot be reached — "
+                                + scrolled.map(\.text).joined(separator: " | "))
+                let stateAfter = try XCTUnwrap(scrolled.filter { $0.text.contains("Q3") }.min { $0.box.minY < $1.box.minY },
+                                               "\(name): the state left the screen")
+                XCTAssertEqual(stateAfter.box.minY, gameState.box.minY, accuracy: 2,
+                               "\(name): scrolling the band moved the game state")
+            } else {
+                XCTAssertNil(band, "\(name): a band where the rule does not apply — \(all)")
+                XCTAssertTrue(read.contains { $0.text.contains("88%") }, "\(name): the chances line is not whole — \(all)")
+            }
+            // The story's room: from the card's kicker to the footer's count,
+            // on the same first read. Before the band it was ~90pt at 320/AX5,
+            // the kicker alone. Vision may drop the count's spaces ("1of2");
+            // the digits and the count are still the open card's "1 of 2".
+            // After the band's asserts, so an unrelated footer read cannot
+            // hide a band failure.
+            let count = try XCTUnwrap(read.last { $0.text.range(of: #"(?<![0-9])1\s*of\s*2(?![0-9])"#,
+                                                                options: .regularExpression) != nil },
+                                      "\(name): no footer count — \(all)")
+            XCTAssertGreaterThanOrEqual(count.box.minY - read[kicker].box.minY, 160,
+                                        "\(name): the card has no room to read — \(all)")
+            XCTAssertEqual(state.openCardID, deck[0].id, "\(name): the reader left the card it was opened on")
+        }
+    }
+
+    /// The chances band: a vertical scroller with more to show that sits
+    /// wholly above the card's kicker (the cards' own scrollers contain it).
+    private static func chancesBand(_ view: UIView, above y: CGFloat) -> UIScrollView? {
+        var found: UIScrollView?
+        func find(_ v: UIView) {
+            if let s = v as? UIScrollView, s.contentSize.height > s.bounds.height + 1,
+               s.contentSize.width <= s.bounds.width + 1, s.convert(s.bounds, to: view).maxY <= y { found = s }
+            v.subviews.forEach(find)
+        }
+        find(view)
+        return found
     }
 
     /// The page's own vertical scroller: the tallest-content one in the window.
