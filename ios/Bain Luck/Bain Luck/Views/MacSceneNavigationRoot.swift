@@ -21,6 +21,17 @@ enum MacSceneCommands10878 {
         return true
     }
 
+    /// #4940: Command-K. Arriving at Search is not by itself a focus ask (a
+    /// sidebar click keeps the reader's place), so Quick Search selects, then
+    /// asks — on the focused eligible window only.
+    @MainActor
+    @discardableResult
+    static func quickSearch(target: NavigationCoordinator?, permitsBrowsing: Bool) -> Bool {
+        guard selectTab(.search, target: target, permitsBrowsing: permitsBrowsing) else { return false }
+        target?.requestSearchFocus()
+        return true
+    }
+
     @MainActor
     @discardableResult
     static func reportBug(target: NavigationCoordinator?) -> Bool {

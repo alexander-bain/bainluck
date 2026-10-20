@@ -142,8 +142,13 @@ struct Bain_LuckApp: App {
                     Button("My Stuff") { selectMacTab(.myStuff) }
                         .keyboardShortcut("4", modifiers: .command)
                     Divider()
-                    Button("Quick Search") { selectMacTab(.search) }
-                        .keyboardShortcut("k", modifiers: .command)
+                    Button("Quick Search") {
+                        _ = MacSceneCommands10878.quickSearch(
+                            target: focusedMacNavigation,
+                            permitsBrowsing: macBrowsingCommandsEnabled == true
+                        )
+                    }
+                    .keyboardShortcut("k", modifiers: .command)
                 }
                 .disabled(focusedMacNavigation == nil || macBrowsingCommandsEnabled != true)
             }

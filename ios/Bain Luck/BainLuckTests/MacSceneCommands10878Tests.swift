@@ -54,6 +54,39 @@ final class MacSceneCommands10878Tests: XCTestCase {
         XCTAssertEqual(game.pendingRoute, .eventDetail(id: 123))
     }
 
+    /// #4940: cold Command-K. Arriving at Search from another tab is not by
+    /// itself a focus ask, so Quick Search asks explicitly — only when its
+    /// selection succeeded, and only on the window it selected.
+    @MainActor
+    func testQuickSearchAsksForFocusOnlyOnItsEligibleTarget() {
+        let main = MacSceneCommands10878.makeNavigation(initialTab: .myStuff)
+        let other = MacSceneCommands10878.makeNavigation(initialTab: .feed)
+
+        XCTAssertFalse(MacSceneCommands10878.quickSearch(target: nil, permitsBrowsing: true))
+        XCTAssertFalse(MacSceneCommands10878.quickSearch(target: main, permitsBrowsing: false))
+        XCTAssertEqual(main.selectedTab, .myStuff)
+        XCTAssertFalse(main.consumeSearchFocusRequest())
+        XCTAssertFalse(other.consumeSearchFocusRequest())
+
+        // A plain arrival is no ask; Quick Search from the same tab is one.
+        XCTAssertTrue(MacSceneCommands10878.selectTab(.search, target: other, permitsBrowsing: true))
+        XCTAssertFalse(other.consumeSearchFocusRequest())
+        other.selectedTab = .feed
+
+        XCTAssertTrue(MacSceneCommands10878.quickSearch(target: main, permitsBrowsing: true))
+        XCTAssertEqual(main.selectedTab, .search)
+        XCTAssertTrue(main.consumeSearchFocusRequest())
+        XCTAssertFalse(main.consumeSearchFocusRequest())
+        XCTAssertEqual(other.selectedTab, .feed)
+        XCTAssertFalse(other.consumeSearchFocusRequest())
+
+        // Warm: already on Search, still exactly one focus per press.
+        XCTAssertTrue(MacSceneCommands10878.quickSearch(target: main, permitsBrowsing: true))
+        XCTAssertTrue(main.consumeSearchFocusRequest())
+        XCTAssertFalse(main.consumeSearchFocusRequest())
+        XCTAssertFalse(other.consumeSearchFocusRequest())
+    }
+
     @MainActor
     func testReportActionIsLocalAndDoesNotNavigate() {
         let main = MacSceneCommands10878.makeNavigation(initialTab: .search)
