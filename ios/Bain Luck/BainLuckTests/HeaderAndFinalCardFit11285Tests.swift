@@ -1039,13 +1039,8 @@ final class HeaderAndFinalCardFit11285Tests: XCTestCase {
             XCTAssertTrue(read.contains { $0.text.contains("13") && $0.text.contains("20") },
                           "\(name): the score left the screen — \(all)")
             XCTAssertTrue(read.contains { $0.text.contains("Q3") }, "\(name): the game state left the screen — \(all)")
-            // The story's room: from the card's kicker to the footer's count.
-            // Before the band it was ~90pt at 320/AX5, the kicker alone.
             let kicker = try XCTUnwrap(read.firstIndex { $0.text.contains("PROJECTED") },
                                        "\(name): no kicker — \(all)")
-            let count = try XCTUnwrap(read.last { $0.text.contains("of 2") }, "\(name): no footer count — \(all)")
-            XCTAssertGreaterThanOrEqual(count.box.minY - read[kicker].box.minY, 160,
-                                        "\(name): the card has no room to read — \(all)")
             XCTAssertTrue(read[(kicker + 1)...].contains { $0.text.hasPrefix("49ers") },
                           "\(name): no headline under the kicker — \(all)")
             let band = Self.chancesBand(host.view, above: read[kicker].box.minY)
@@ -1083,6 +1078,17 @@ final class HeaderAndFinalCardFit11285Tests: XCTestCase {
                 XCTAssertNil(band, "\(name): a band where the rule does not apply — \(all)")
                 XCTAssertTrue(read.contains { $0.text.contains("88%") }, "\(name): the chances line is not whole — \(all)")
             }
+            // The story's room: from the card's kicker to the footer's count,
+            // on the same first read. Before the band it was ~90pt at 320/AX5,
+            // the kicker alone. Vision may drop the count's spaces ("1of2");
+            // the digits and the count are still the open card's "1 of 2".
+            // After the band's asserts, so an unrelated footer read cannot
+            // hide a band failure.
+            let count = try XCTUnwrap(read.last { $0.text.range(of: #"(?<![0-9])1\s*of\s*2(?![0-9])"#,
+                                                                options: .regularExpression) != nil },
+                                      "\(name): no footer count — \(all)")
+            XCTAssertGreaterThanOrEqual(count.box.minY - read[kicker].box.minY, 160,
+                                        "\(name): the card has no room to read — \(all)")
             XCTAssertEqual(state.openCardID, deck[0].id, "\(name): the reader left the card it was opened on")
         }
     }
