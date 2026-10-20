@@ -50,13 +50,15 @@ const effectScript = new vm.Script(ts.transpileModule(`(${effect})`, {
 function harness() {
   let cache = held();
   const reads = jest.fn();
-  const mutations = jest.fn((update: (prev: typeof cache) => typeof cache, options: unknown) => {
+  const mutations = jest.fn(async (update: (prev: typeof cache) => typeof cache, options: unknown) => {
     expect(options).toEqual({ revalidate: false }); cache = update(cache);
   });
   let chart = { aggregate_line: [{ timestamp: OLD_AT, home_probability: 0.37 }] };
   const context: Record<string, unknown> = {
     eventId: ID, heldEventRef: { current: cache }, foldedRefetch: { request: reads },
     quoteTriggerRef: { current: null }, latestLiveFrameRef: { current: null },
+    sourceAddedHistoryRef: { current: null },
+    reconcileCatchupRef: { current: null }, reconcileOrdinalRef: { current: 0 },
     pairJournalRef: { current: null }, // #10090 G1: no paired read in flight here
     refreshEvent: mutations, setLastRefresh: jest.fn(), Date,
     adoptFoldedQuote, applyLiveFrame, frameInvalidatesFoldedBlend, canSubscribeEventQuotes, heldFrameAfter,
