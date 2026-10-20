@@ -1,0 +1,225 @@
+import SwiftUI
+
+/// #11296 — A FINISHED GAME'S ACTUAL RESULT BESIDE THE SCORE FORECAST BEFORE IT.
+///
+/// PILLARS: TRUTH / FORMATTING. SHIP: a native finished-game card shows the
+/// actual final, and under it one separate "Projection before scheduled start"
+/// line, as the web cards do.
+///
+/// This is the Swift half of `frontend/lib/finalForecastComparison.ts`, ported
+/// gate for gate. Why `currentOdds` cannot be the forecast: on a finished game
+/// it is each sportsbook's LATEST row, which is in-play. The producer
+/// (`backend/app/utils/pregame_projection.py`, `select_pregame_projection`)
+/// serves a separate `pregame_projection` instead — each sportsbook's last pair
+/// strictly before the SCHEDULED start — or `pregame_projection_unavailable`
+/// naming why not. This file is the one place the app decides whether that
+/// object may be printed under a final, and how.
+///
+/// It decides nothing the existing types already decide:
+///
+///   - finished      `EventState.isFinished` (completed or closed), the
+///                   predicate every card uses, and web's `isFinishedStatus`.
+///   - sport, sign,  `SportVocab.sportsbookSpreadIsAMargin` and `.canEndInATie`,
+///     level pair    the same facts web's `cardProjectedFinal` reads; plus the
+///                   format table below (web's `projectedFinalFormat`).
+///
+/// What it adds is only what a FINAL comparison needs, each refused rather than
+/// guessed: the KIND (only `last_before_scheduled_start`, because the label
+/// says exactly that), the BOUNDARY (`scheduled_start` only — nothing here
+/// claims an observed kickoff), the SOURCE and BASIS the label and rounding
+/// describe, the UNIT for the sport, and the PERIOD: the actual score must
+/// cover what the forecast lines settle on. Football and basketball forecasts
+/// are `full_game`; soccer's are `regulation`. No payload says whether a
+/// soccer final went to extra time, so callers pass `.fullGame` and a soccer
+/// final is withheld. This file does not infer regulation.
+///
+/// No grading: nothing here says who the forecast favoured, whether it was
+/// right, or picks a colour. Team order is keyed (home/away), never by value.
+/// The actual pair is not returned: the card already prints it.
+enum FinalForecastComparison11296 {
+
+    /// The visible label over the forecast pair — web's `FINAL_FORECAST_LABEL`,
+    /// character for character. It names what the numbers ARE and the boundary
+    /// they were read before (Design R1 on PR #11311).
+    static let label = "Projection before scheduled start"
+
+    /// The one kind the producer serves today, and the only one admitted.
+    /// `latest_before_play` and `opening` are reserved by the producer and
+    /// refused, so a new kind never prints under words describing another.
+    static let kindLastBeforeScheduledStart = "last_before_scheduled_start"
+
+    /// The one basis the producer serves: the pair is solved from a spread
+    /// point and a total, which is the reading the rounding below assumes.
+    static let basisConsensusSpreadTotal = "consensus_spread_total"
+
+    /// The period a set of scores covers. `regulation` = play ended without
+    /// extra time.
+    nonisolated enum ScorePeriod: String, Sendable {
+        case fullGame = "full_game"
+        case regulation
+    }
+
+    /// What a card prints. Rounded exactly as web's card rounds it. Keyed,
+    /// never sorted. No winner, hit/miss or colour field.
+    nonisolated struct Comparison: Equatable, Sendable {
+        let label: String
+        let away: Int
+        let home: Int
+        let bookmakerCount: Int
+    }
+
+    /// Web's `projectedFinalFormat` table: which sports' sportsbook pair is a
+    /// final score, and in what unit. Hockey, baseball, tennis, fights and
+    /// every undeclared sport answer nil, so they answer nil here.
+    nonisolated static func unit(forSport sportKey: String?) -> String? {
+        let key = (sportKey ?? "").lowercased()
+        if key.hasPrefix("americanfootball_") || key.hasPrefix("basketball_") { return "points" }
+        if key.hasPrefix("soccer_") { return "goals" }
+        return nil
+    }
+
+    /// The forecast pair to print under a finished game's actual result, or
+    /// nil when any part of it cannot be shown honestly. Nil prints nothing:
+    /// no placeholder, no gap, no explanation.
+    ///
+    /// `actualPeriod` is what the actual score covers, from evidence the caller
+    /// holds. A scoreboard final in football or basketball is `.fullGame`
+    /// (overtime included, which is what those lines settle on). Nil: refused.
+    static func resolve(
+        sport: String?,
+        status: String?,
+        homeScore: Int?,
+        awayScore: Int?,
+        actualPeriod: ScorePeriod?,
+        projection p: PregameProjection?
+    ) -> Comparison? {
+        guard EventState.isFinished(status) else { return nil }
+        guard let homeScore, let awayScore, homeScore >= 0, awayScore >= 0 else { return nil }
+        guard let p else { return nil }
+
+        guard p.kind == kindLastBeforeScheduledStart,
+              p.boundary == "scheduled_start",
+              p.source == "sportsbooks",
+              p.basis == basisConsensusSpreadTotal else { return nil }
+
+        guard let sportUnit = unit(forSport: sport), p.unit == sportUnit else { return nil }
+        guard let actualPeriod, p.period == actualPeriod.rawValue else { return nil }
+
+        guard let books = p.bookmakerCount, books.isFinite, books.rounded() == books, books >= 1
+        else { return nil }
+        // The producer reads strictly before the boundary; anything else is
+        // not the reading this label describes.
+        guard let earliest = p.earliestCapturedAt?.asDate,
+              let latest = p.latestCapturedAt?.asDate,
+              let boundary = p.boundaryAt?.asDate,
+              earliest <= latest, latest < boundary else { return nil }
+
+        // Web's `cardProjectedFinal`: a score only where the sport's spread is
+        // a margin, no half at or below zero, rounded per side, and a level
+        // pair refused where the sport cannot end level (#8156). The NFL can
+        // (a tie after one overtime), so a level NFL pair prints, as on web.
+        guard let home = p.projectedHomeScore, let away = p.projectedAwayScore,
+              home.isFinite, away.isFinite, home > 0, away > 0 else { return nil }
+        let vocab = SportVocab.forSport(sport)
+        guard vocab.sportsbookSpreadIsAMargin else { return nil }
+        // `.rounded()` rounds half away from zero, which equals JS `Math.round`
+        // for the positive values that reach here.
+        let roundedHome = Int(home.rounded())
+        let roundedAway = Int(away.rounded())
+        guard roundedHome != roundedAway || vocab.canEndInATie else { return nil }
+
+        return Comparison(label: label, away: roundedAway, home: roundedHome, bookmakerCount: Int(books))
+    }
+
+    /// The visible pair in the card's own order — both native cards stack away
+    /// over home. Each score is glued to its team's name by a no-break space,
+    /// so a number can never wrap onto a line under the other team.
+    nonisolated static func pairText(_ c: Comparison, awayName: String, homeName: String) -> String {
+        "\(awayName)\u{00A0}\(c.away) · \(homeName)\u{00A0}\(c.home)"
+    }
+
+    /// One sentence for assistive tech that names both teams.
+    nonisolated static func spokenText(_ c: Comparison, awayName: String, homeName: String) -> String {
+        "\(c.label): \(awayName) \(c.away), \(homeName) \(c.home)"
+    }
+}
+
+/// `select_pregame_projection`'s served object, field for field. Every field is
+/// optional and decoding NEVER throws: a malformed or partial object reads as
+/// fields the resolver refuses, so one odd projection can never drop the card
+/// (`FeedItem` decodes its event with `try`). Times are ISO-8601 strings; the
+/// count is a `Double` so a fractional count is refused, as web's
+/// `Number.isInteger` refuses it, rather than failing the decode.
+nonisolated struct PregameProjection: Decodable, Sendable, Equatable {
+    let projectedHomeScore: Double?
+    let projectedAwayScore: Double?
+    let kind: String?
+    let earliestCapturedAt: String?
+    let latestCapturedAt: String?
+    let boundary: String?
+    let boundaryAt: String?
+    let source: String?
+    let basis: String?
+    let bookmakerCount: Double?
+    let unit: String?
+    let period: String?
+
+    /// Matched after `.convertFromSnakeCase`, which every feed decoder uses.
+    enum CodingKeys: String, CodingKey {
+        case projectedHomeScore, projectedAwayScore, kind, earliestCapturedAt
+        case latestCapturedAt, boundary, boundaryAt, source, basis, bookmakerCount
+        case unit, period
+    }
+}
+
+extension PregameProjection {
+    /// In an extension so the memberwise initializer survives.
+    nonisolated init(from decoder: Decoder) throws {
+        let c = try? decoder.container(keyedBy: CodingKeys.self)
+        func field<T: Decodable>(_ type: T.Type, _ key: CodingKeys) -> T? {
+            guard let c else { return nil }
+            return try? c.decodeIfPresent(type, forKey: key)
+        }
+        self.init(
+            projectedHomeScore: field(Double.self, .projectedHomeScore),
+            projectedAwayScore: field(Double.self, .projectedAwayScore),
+            kind: field(String.self, .kind),
+            earliestCapturedAt: field(String.self, .earliestCapturedAt),
+            latestCapturedAt: field(String.self, .latestCapturedAt),
+            boundary: field(String.self, .boundary),
+            boundaryAt: field(String.self, .boundaryAt),
+            source: field(String.self, .source),
+            basis: field(String.self, .basis),
+            bookmakerCount: field(Double.self, .bookmakerCount),
+            unit: field(String.self, .unit),
+            period: field(String.self, .period)
+        )
+    }
+}
+
+/// The line both finished cards draw under the actual final. Caption size,
+/// secondary colour, wraps at any text size; the final score above it stays
+/// the primary number. One view so the two cards cannot drift.
+struct FinalForecastLine11296: View {
+    let comparison: FinalForecastComparison11296.Comparison
+    let awayName: String
+    let homeName: String
+
+    static let accessibilityIdentifier = "final-forecast-11296"
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(comparison.label)
+            Text(FinalForecastComparison11296.pairText(comparison, awayName: awayName, homeName: homeName))
+        }
+        .font(.caption)
+        .foregroundStyle(.secondary)
+        .multilineTextAlignment(.leading)
+        .fixedSize(horizontal: false, vertical: true)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(
+            FinalForecastComparison11296.spokenText(comparison, awayName: awayName, homeName: homeName))
+        .accessibilityIdentifier(Self.accessibilityIdentifier)
+    }
+}
