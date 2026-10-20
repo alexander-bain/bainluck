@@ -82,6 +82,10 @@ struct SearchView: View {
     /// results (the view model), the open detail and the results' scroll
     /// offset. `nil` everywhere else, which is today's behaviour.
     private let macPlace: MacReadingPlace<SearchViewModel>?
+    /// #10878 / #4940 — the result row the Mac arrow keys have picked, by its
+    /// canonical route. Never set anywhere else, so iPhone and iPad draw and
+    /// behave exactly as before.
+    @State private var keyboardSelection = MacKeyboardSelection10878<Route>()
 
     init(macPlace: MacReadingPlace<SearchViewModel>? = nil) {
         self.macPlace = macPlace
@@ -211,11 +215,26 @@ struct SearchView: View {
         .onChange(of: path) { _, newPath in macPlace?.path = newPath }
         .task {
             consumePendingSearchQuery()
+            consumeSearchFocusRequest()
             await viewModel.loadTrending()
         }
         .onChange(of: navCoordinator.pendingSearchQuery) { _, _ in
             consumePendingSearchQuery()
         }
+        // #10878 / #4940 — mount (above) AND change, as with the query: a cold
+        // Command-K asks before this view exists, a warm one only moves the ask.
+        .onChange(of: navCoordinator.searchFocus.requested) { _, _ in
+            consumeSearchFocusRequest()
+        }
+        #if os(macOS)
+        // A replaced answer keeps the same row picked if it still draws it.
+        // Skipped while a search runs: the rows are empty then only because the
+        // spinner is up, and the pick should survive to the answer.
+        .onChange(of: keyboardRoutes) { _, routes in
+            guard !viewModel.loading else { return }
+            keyboardSelection.reconcile(with: routes)
+        }
+        #endif
         .onChange(of: navCoordinator.pendingRoute) { _, _ in
             // Search tab doesn't handle route pushes — handled by feed/myStuff
         }
@@ -245,6 +264,69 @@ struct SearchView: View {
         Task { await viewModel.search() }
     }
 
+    /// #10878 / #4940 — Command-K's ask for the field. Only a Mac window ever
+    /// asks (`NavigationCoordinator.selectedTab`), and only its own SearchView
+    /// can drain it, so a second window's Search is untouched.
+    ///
+    /// An open detail is closed first: the field is on the results screen, and
+    /// Command-K is the reader asking for it. The query and results are kept.
+    /// The focus write waits one turn so a view that has only just mounted has
+    /// its field in the window to take it.
+    private func consumeSearchFocusRequest() {
+        guard navCoordinator.selectedTab == .search,
+              navCoordinator.consumeSearchFocusRequest() else { return }
+        if !path.isEmpty { path = NavigationPath() }
+        DispatchQueue.main.async { isSearchFocused = true }
+    }
+
+    #if os(macOS)
+    /// #10878 / #4940 — every result row the arrow keys can stop on, in the
+    /// order `searchResults` draws them, each destination once. It reads the
+    /// same helpers that view does, so the two cannot disagree about which rows
+    /// exist. Empty while a search runs, so the arrows and Return act only on an
+    /// answer that is on screen; empty without an answer, so on suggestions and
+    /// the empty state the arrows keep their ordinary text-field meaning.
+    private var keyboardRoutes: [Route] {
+        guard !viewModel.loading, let results = viewModel.results else { return [] }
+        let families = results.futuresFamilies ?? []
+        let flatFutures = SearchGrouping.flatFutures(results.futures, families: families)
+        let concepts = SearchGrouping.novelConcepts(
+            results.eventConcepts ?? [],
+            families: families,
+            flatFutures: flatFutures
+        )
+        // Written in draw order on purpose: this order IS the arrow order, and
+        // the guard test reads it from the text.
+        return MacKeyboardSelection10878<Route>.order([
+            featuredTournaments(matching: results.query).map { Route.tournamentHub(slug: $0.slug, name: $0.title) },
+            SearchCollectionRows.entries(in: results).map(\.route),
+            (results.teams ?? []).compactMap { $0.slug }.map { Route.teamDetail(slug: $0) },
+            results.results.map { Route.eventDetail(id: $0.id) },
+            families.flatMap { family -> [Route] in
+                [Route.futuresDetail(id: family.headline.id)] + family.members.map { Route.futuresDetail(id: $0.id) }
+            },
+            concepts.compactMap { $0.marketId }.map { Route.futuresDetail(id: $0) },
+            flatFutures.map { Route.futuresDetail(id: $0.id) },
+        ])
+    }
+
+    /// Escape drops a picked row first, then leaves the field. Neither touches
+    /// the query or the results (#6446's rule for dismissing the keyboard).
+    private func handleEscape() -> KeyPress.Result {
+        if keyboardSelection.clear() { return .handled }
+        guard isSearchFocused else { return .ignored }
+        isSearchFocused = false
+        return .handled
+    }
+
+    /// Holding any of these turns an arrow into one of the field's own editing
+    /// shortcuts (⇧↓ extends the selection, ⌘↓ jumps to the end, ⌥↑ moves by
+    /// paragraph), so it never moves the pick. Named one by one on purpose:
+    /// macOS marks arrow presses `.function` and `.numericPad`, so refusing any
+    /// modifier at all would refuse plain arrows too.
+    private static let arrowEditingModifiers: EventModifiers = [.shift, .command, .option, .control]
+    #endif
+
     // MARK: - Search Field
 
     private var searchField: some View {
@@ -261,11 +343,39 @@ struct SearchView: View {
                 #endif
                 .submitLabel(.search)
                 .onSubmit {
+                    #if os(macOS)
+                    // #10878 / #4940 — Return on a picked row opens it through
+                    // the same route its row links to; with no pick, Return
+                    // searches exactly as before.
+                    if let route = keyboardSelection.activation(in: keyboardRoutes) {
+                        path.append(route)
+                        return
+                    }
+                    #endif
                     Task { await viewModel.search() }
                 }
                 .onChange(of: viewModel.query) { _, _ in
                     viewModel.onQueryChange()
+                    #if os(macOS)
+                    // Typing means Return should search the new text, not open
+                    // a row picked from the old answer.
+                    keyboardSelection.clear()
+                    #endif
                 }
+                #if os(macOS)
+                // #10878 / #4940 — up/down move through the results only while
+                // an answer is drawn; otherwise `.ignored` hands the key back to
+                // the field, so caret movement and every editing shortcut stay
+                // the system's. A modified arrow is always the field's.
+                .onKeyPress(keys: [.downArrow, .upArrow], phases: [.down, .repeat]) { press in
+                    guard press.modifiers.isDisjoint(with: Self.arrowEditingModifiers) else { return .ignored }
+                    let moved = press.key == .downArrow
+                        ? keyboardSelection.moveDown(in: keyboardRoutes)
+                        : keyboardSelection.moveUp(in: keyboardRoutes)
+                    return moved ? .handled : .ignored
+                }
+                .onKeyPress(.escape) { handleEscape() }
+                #endif
             if !viewModel.query.isEmpty {
                 Button {
                     // Cancels in-flight work first so a late response can't
@@ -754,6 +864,7 @@ struct SearchView: View {
                         NavigationLink(value: Route.tournamentHub(slug: hub.slug, name: hub.title)) {
                             searchTournamentRow(hub)
                         }
+                        .macKeyboardRow(.tournamentHub(slug: hub.slug, name: hub.title), in: keyboardSelection)
                     }
                 } header: {
                     Label("Tournament", systemImage: "trophy.fill")
@@ -772,6 +883,7 @@ struct SearchView: View {
                         NavigationLink(value: entry.route) {
                             SearchCollectionRow(entry: entry)
                         }
+                        .macKeyboardRow(entry.route, in: keyboardSelection)
                     }
                 } header: {
                     Label("Collections", systemImage: "square.stack.3d.up.fill")
@@ -803,6 +915,7 @@ struct SearchView: View {
                             NavigationLink(value: Route.teamDetail(slug: slug)) {
                                 searchTeamRow(team)
                             }
+                            .macKeyboardRow(.teamDetail(slug: slug), in: keyboardSelection)
                         }
                     }
                 } header: {
@@ -841,6 +954,7 @@ struct SearchView: View {
                             } label: {
                                 searchEventRow(event)
                             }
+                            .macKeyboardRow(.eventDetail(id: event.id), in: keyboardSelection)
                         }
                         .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
                     } else {
@@ -848,6 +962,7 @@ struct SearchView: View {
                             NavigationLink(value: Route.eventDetail(id: event.id)) {
                                 searchEventRow(event)
                             }
+                            .macKeyboardRow(.eventDetail(id: event.id), in: keyboardSelection)
                         }
                     }
                 } header: {
@@ -883,10 +998,12 @@ struct SearchView: View {
                     NavigationLink(value: Route.futuresDetail(id: family.headline.id)) {
                         searchFamilyRow(family.headline, prominent: true)
                     }
+                    .macKeyboardRow(.futuresDetail(id: family.headline.id), in: keyboardSelection)
                     ForEach(family.members) { member in
                         NavigationLink(value: Route.futuresDetail(id: member.id)) {
                             searchFamilyRow(member, prominent: false)
                         }
+                        .macKeyboardRow(.futuresDetail(id: member.id), in: keyboardSelection)
                     }
                 } header: {
                     HStack(spacing: 6) {
@@ -931,6 +1048,7 @@ struct SearchView: View {
                             NavigationLink(value: Route.futuresDetail(id: marketId)) {
                                 searchConceptRow(concept)
                             }
+                            .macKeyboardRow(.futuresDetail(id: marketId), in: keyboardSelection)
                         }
                     }
                 } header: {
@@ -954,6 +1072,7 @@ struct SearchView: View {
                             } label: {
                                 searchFuturesRow(market)
                             }
+                            .macKeyboardRow(.futuresDetail(id: market.id), in: keyboardSelection)
                         }
                         .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
                     } else {
@@ -961,6 +1080,7 @@ struct SearchView: View {
                             NavigationLink(value: Route.futuresDetail(id: market.id)) {
                                 searchFuturesRow(market)
                             }
+                            .macKeyboardRow(.futuresDetail(id: market.id), in: keyboardSelection)
                         }
                     }
                 } header: {
@@ -1040,6 +1160,7 @@ struct SearchView: View {
         .listStyle(.insetGrouped)
         #endif
         .macReadingOffset(macPlace)
+        .macKeyboardScroll(to: keyboardSelection.selected)
     }
 
     // MARK: - Tournament Row
@@ -1377,5 +1498,47 @@ struct SearchView: View {
                 .background(color.opacity(0.12))
                 .clipShape(Capsule())
         }
+    }
+}
+
+// MARK: - Mac keyboard selection (#10878 / #4940)
+
+private extension View {
+    /// Marks the result row the Mac arrow keys picked — a tint and an outline,
+    /// and the selected trait so VoiceOver says so — and gives the row its route
+    /// as a scroll id. iPhone and iPad get the row back untouched.
+    @ViewBuilder
+    func macKeyboardRow(_ route: Route, in selection: MacKeyboardSelection10878<Route>) -> some View {
+        #if os(macOS)
+        let selected = selection.isSelected(route)
+        self
+            .background(
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(selected ? Color.accentColor.opacity(0.14) : Color.clear)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 8)
+                    .stroke(selected ? Color.accentColor.opacity(0.6) : Color.clear, lineWidth: 1.5)
+            )
+            .accessibilityAddTraits(selected ? .isSelected : [])
+            .id(route)
+        #else
+        self
+        #endif
+    }
+
+    /// Keeps the picked row on screen as the arrows move past the visible edge.
+    @ViewBuilder
+    func macKeyboardScroll(to route: Route?) -> some View {
+        #if os(macOS)
+        ScrollViewReader { proxy in
+            self.onChange(of: route) { _, route in
+                guard let route else { return }
+                proxy.scrollTo(route)
+            }
+        }
+        #else
+        self
+        #endif
     }
 }
