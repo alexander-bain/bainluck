@@ -591,6 +591,16 @@ nonisolated struct FeedEventData: Decodable, Identifiable, Sendable {
     let openingOdds: OpeningOdds?
     /// #8622 — see `PrematchOdds`. Read through `PrematchReading.resolve`.
     let prematchOdds: PrematchOdds?
+    /// #11296 — the sportsbooks' last pair before the SCHEDULED start, decoded
+    /// from `pregame_projection`; served on settled rows only. Read through
+    /// `FinalForecastComparison11296.resolve`, never printed raw. Absent (an
+    /// older server, a cached payload, a card built from the detail route)
+    /// prints nothing.
+    var pregameProjection: PregameProjection? = nil
+    /// #11296 — the producer's reason a settled row has no `pregame_projection`
+    /// (`format_unsupported`, `no_pregame_reading`, …). Decoded, and rendered
+    /// NOWHERE: a card without a forecast looks exactly as it did (notice 34).
+    var pregameProjectionUnavailable: String? = nil
     let highlight: Highlight?
     let homeTeamData: TeamData?
     let awayTeamData: TeamData?
