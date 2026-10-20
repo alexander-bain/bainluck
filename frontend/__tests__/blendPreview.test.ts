@@ -8,6 +8,7 @@
 
 import {
   displayedPreview,
+  displayedProbabilityObservedAt,
   overlayBlendPreview,
   parseBlendPreview,
   previewAfter,
@@ -188,5 +189,22 @@ describe('stream controller seam', () => {
     expect(delivering.length).toBe(before);
     sources[0].emit('closed');
     expect(resets).toBe(2);
+  });
+});
+
+
+describe('the displayed probability owns its observation clock', () => {
+  const committed = '2026-10-20T20:00:10Z';
+  const observed = '2026-10-20T20:00:05Z';
+  test.each([0, 1])('boundary probability %s uses its own observation, even if older than committed', p => {
+    const state = apply(null, {...blend(1, p), display_observed_at: observed});
+    expect(displayedProbabilityObservedAt(held(10), state, 0, committed)).toBe(observed);
+    expect(displayedProbabilityObservedAt(held(11), state, 0, committed)).toBe(committed);
+  });
+  test('a retry attempt and receipt time cannot move the displayed observation', () => {
+    const first = apply(null, {...blend(1, .7), display_observed_at: observed, observed_at: committed});
+    const retry = apply(first, {...blend(2, .7), display_observed_at: observed, observed_at: '2026-10-20T20:00:30Z'}, 500);
+    expect(displayedProbabilityObservedAt(held(10), retry, 500, committed)).toBe(observed);
+    expect(displayedProbabilityObservedAt(held(10), null, 500, undefined)).toBeUndefined();
   });
 });

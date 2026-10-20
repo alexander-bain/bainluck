@@ -177,6 +177,23 @@ export function overlayBlendPreview<T extends HeldBlend | null | undefined>(
   return { ...event, hero_probability: p, hero_probability_away: 1 - p } as T;
 }
 
+/**
+ * The observation clock of the probability actually displayed. A preview with
+ * no usable observation clock is unknown, not the committed value's time (and
+ * never the producer attempt time). The headline's exact admission gate also
+ * restores the committed clock on expiry, withdrawal or a newer commit.
+ */
+export function displayedProbabilityObservedAt(
+  event: HeldBlend | null | undefined,
+  state: BlendPreviewState | null,
+  now: number,
+  committedClock: string | null | undefined,
+): string | null | undefined {
+  if (displayedPreview(state, event, now) === null) return committedClock;
+  const timestamp = state?.observedAt;
+  return timestamp && Number.isFinite(Date.parse(timestamp)) ? timestamp : null;
+}
+
 interface PreviewChartPoint {
   timestamp: string;
   home_probability: number;
