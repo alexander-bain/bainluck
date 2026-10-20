@@ -10,7 +10,11 @@ describe('#10796 larger text keeps the numbers and the plot readable', () => {
     const page = read('Views/EventDetailView.swift');
     expect(page).toMatch(/let stacked = dynamicTypeSize >= \.xxLarge/);
     expect(page).toMatch(/size >= \.xxLarge \? nil : verdictSlotWidth/);
-    expect(page.match(/\.frame\(maxWidth: Self\.heroVerdictWidth\(at: dynamicTypeSize\)/g)).toHaveLength(4);
+    expect(page.match(/\.frame\(maxWidth: Self\.heroVerdictWidth\(at: dynamicTypeSize\)/g)).toHaveLength(3);
+    // #11285 — the fourth, the headline's details control, keeps that policy
+    // when it prints words; the info-only glyph reserves no slot.
+    expect(page.match(/\.frame\(maxWidth: Self\.probabilityDetailsMaxWidth\(at: dynamicTypeSize,/g)).toHaveLength(1);
+    expect(page).toMatch(/statusInDetails \? nil : heroVerdictWidth\(at: size\)/);
     expect(page).not.toMatch(/\.frame\(maxWidth: (?:Self|EventDetailView)\.verdictSlotWidth/);
   });
 
