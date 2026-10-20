@@ -7,9 +7,11 @@ import json
 import os
 import plistlib
 import shlex
+import signal
 import sys
 from pathlib import Path
 import tempfile
+import time
 import unittest
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -588,6 +590,75 @@ class WatchUIShardTests(unittest.TestCase):
                 "runtime receipt boot-ready not written (exit 1)",
             ],
         )
+
+    def test_a_hung_runtime_read_is_cut_at_fifteen_seconds_and_the_gate_continues(self):
+        # A hung simctl is likely in the runtime-loss family these receipts
+        # describe. The 15 s bound is what keeps the receipt from spending the
+        # step's own timeout and losing the real xcodebuild result.
+        journey = (ROOT / "tools/watch-ui-journey.sh").read_text()
+        start = journey.index("runtime_receipt() {")
+        end = "\nRUNTIME_RECEIPT\n}\n"
+        helper = journey[start : journey.index(end, start) + len(end)]
+        fixtures = self.root / "hang-fixtures"
+        (fixtures / "bin").mkdir(parents=True)
+        xcrun = fixtures / "bin/xcrun"
+        xcrun.write_text(
+            "#!/bin/bash\n"
+            'printf "%s\\n" "$*" >> "$FIXTURES/xcrun-calls.txt"\n'
+            "exec sleep 120\n"
+        )
+        xcrun.chmod(0o755)
+        out = Path(tempfile.mkdtemp(dir=self.root))
+        shell = (
+            "set -euo pipefail\n"
+            "trap 'echo trapped > \"$OUT/trapped.txt\"; exit 99' ERR\n"
+            + helper
+            + "runtime_receipt before-products-verification\n"
+            + 'echo continued > "$OUT/continued.txt"\n'
+        )
+        environment = dict(
+            os.environ,
+            OUT=str(out),
+            FIXTURES=str(fixtures),
+            PATH=str(fixtures / "bin") + os.pathsep + os.environ["PATH"],
+        )
+        process = subprocess.Popen(
+            ["bash", "-c", shell],
+            env=environment,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            start_new_session=True,
+        )
+        began = time.monotonic()
+        try:
+            _, stderr = process.communicate(timeout=45)
+        except subprocess.TimeoutExpired:
+            os.killpg(process.pid, signal.SIGKILL)
+            process.communicate()
+            self.fail("the receipt waited on a hung simctl past 45 s: it is unbounded")
+        elapsed = time.monotonic() - began
+        self.assertEqual(process.returncode, 0, stderr)
+        self.assertFalse((out / "trapped.txt").exists())
+        self.assertEqual((out / "continued.txt").read_text(), "continued\n")
+        # The fixture really hung: the read was cut by the bound, not answered.
+        self.assertGreaterEqual(elapsed, 14)
+        # One attempt, no retry.
+        self.assertEqual(
+            (fixtures / "xcrun-calls.txt").read_text().splitlines(),
+            ["simctl list runtimes --json"],
+        )
+        (receipt,) = [
+            json.loads(line)
+            for line in (out / "runtime-receipts.jsonl").read_text().splitlines()
+        ]
+        self.assertEqual(receipt["point"], "before-products-verification")
+        self.assertNotIn("runtimes", receipt)
+        read = receipt["runtimes_read"]
+        self.assertNotIn("exit_code", read)
+        self.assertTrue(read["read_error"].startswith("TimeoutExpired("), read)
+        self.assertTrue(read["read_error"].endswith(", 15)"), read)
+        self.assertFalse((out / "preflight.log").exists())
 
     def test_mixed_immutable_product_packages_cannot_form_full_gate(self):
         path = self.root / "readings/products-verification.json"
