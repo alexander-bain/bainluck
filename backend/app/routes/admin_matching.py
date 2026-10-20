@@ -1419,12 +1419,27 @@ def _reject_non_finite(token: str):
     raise _LinkRatePayloadInvalid("non_finite_number")
 
 
+def _parse_finite_float(token: str) -> float:
+    # ``parse_constant`` sees only the NaN/Infinity literals. An exponent that
+    # overflows (``1e400``) is an ordinary number token that ``float`` turns
+    # into infinity, so it is refused here too, wherever it sits — an extra
+    # field is passed through to the encoder untouched.
+    value = float(token)
+    if not math.isfinite(value):
+        raise _LinkRatePayloadInvalid("non_finite_number")
+    return value
+
+
 def _is_count(value: Any) -> bool:
     return type(value) is int and value >= 0
 
 
 def _is_rate(value: Any) -> bool:
-    return type(value) in (int, float) and math.isfinite(value) and 0 <= value <= 100
+    # A JSON integer is unbounded: compare it as an int, never through
+    # ``math.isfinite``, which raises OverflowError past float range.
+    if type(value) is int:
+        return 0 <= value <= 100
+    return type(value) is float and math.isfinite(value) and 0 <= value <= 100
 
 
 def _validate_count_block(block: Any, total_key: str, rate_keys: tuple[str, ...]) -> None:
@@ -1530,7 +1545,9 @@ async def read_link_rate_cache() -> tuple[int, dict]:
     try:
         if isinstance(raw, (bytes, bytearray)):
             raw = raw.decode("utf-8")
-        payload = json.loads(raw, parse_constant=_reject_non_finite)
+        payload = json.loads(
+            raw, parse_constant=_reject_non_finite, parse_float=_parse_finite_float
+        )
     except _LinkRatePayloadInvalid as exc:
         return _link_rate_cached_response(503, "malformed", exc.reason)
     except (UnicodeDecodeError, ValueError, TypeError, RecursionError):

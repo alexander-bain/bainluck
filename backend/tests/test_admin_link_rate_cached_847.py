@@ -457,7 +457,9 @@ VALIDATED_PATHS = [
 # Wrong at EVERY validated field (a bool is never a count, a rate or a name);
 # ``[]`` too, except as ``by_sport`` itself, where an empty list is a real answer.
 ALWAYS_BAD = [{}, None, True, False]
-BAD_VALUES = [*ALWAYS_BAD, [], "x", -1, 1.5, 101, 10**30]
+# ``10**400`` is past float range: a rate check that converts before comparing
+# raises OverflowError instead of rejecting it.
+BAD_VALUES = [*ALWAYS_BAD, [], "x", -1, 1.5, 101, 10**30, 10**400, -(10**400)]
 
 
 def _bad_cases():
@@ -551,6 +553,60 @@ class TestMalformed:
         resp, body, _ = _get(client, monkeypatch, raw)
         assert (resp.status_code, body["cache_state"], body["reason"]) == (
             503, "malformed", "non_finite_number")
+
+    @pytest.mark.parametrize("path", [("overall", "link_rate_pct"), ("kalshi", "totals", "link_rate_pct"),
+                                      ("polymarket", "by_sport", 0, "link_rate"),
+                                      ("overall", "link_rate_raw_pct")],
+                             ids=lambda p: "/".join(map(str, p)))
+    @pytest.mark.parametrize("huge", [10**400, -(10**400)])
+    def test_an_integer_rate_past_float_range_is_invalid_not_an_overflow_500(
+            self, client, poisoned, monkeypatch, path, huge):
+        p = _payload()
+        _set(path, huge)(p)
+        with pytest.raises(OverflowError):
+            math.isfinite(huge)  # the conversion the reader must never reach
+        resp, body, _ = _get(client, monkeypatch, _blob(p))
+        assert (resp.status_code, body["cache_state"], body["reason"]) == (
+            503, "malformed", "invalid_rate")
+        assert body["payload"] is None
+
+    # ``1e400`` is a valid JSON number token, not a NaN/Infinity literal, so
+    # ``parse_constant`` never sees it; ``float`` makes it infinity.
+    @pytest.mark.parametrize("where", ["extra", "nested_extra", "list_extra", "required_rate"])
+    @pytest.mark.parametrize("token", ["1e400", "-1e400", "1.5E+999"])
+    def test_an_exponent_overflow_anywhere_is_malformed_not_an_encoder_500(
+            self, client, poisoned, monkeypatch, where, token):
+        p = _payload()
+        sentinel = "EXPONENT_SENTINEL"
+        if where == "extra":
+            p["extension"] = sentinel
+        elif where == "nested_extra":
+            p["polymarket"]["denominator_diagnostics"]["spread"] = {"max": sentinel}
+        elif where == "list_extra":
+            p["kalshi"]["by_sport"][0]["history"] = [1.5, sentinel]
+        else:
+            p["overall"]["link_rate_pct"] = sentinel
+        raw = json.dumps(p).replace(f'"{sentinel}"', token).encode()
+        assert token.encode() in raw and math.isinf(float(token))
+        resp, body, _ = _get(client, monkeypatch, raw)
+        assert (resp.status_code, body["cache_state"], body["reason"]) == (
+            503, "malformed", "non_finite_number")
+        assert body["payload"] is None and set(body) == ENVELOPE_KEYS
+
+    def test_legitimate_finite_extensions_are_preserved_exactly(self, client, poisoned, monkeypatch):
+        # The control for both corrections: big-but-finite floats, an integer
+        # past float range OUTSIDE a rate field, negatives and exponents all
+        # survive the strict parse unchanged — nothing is dropped or coerced.
+        saved = _payload(extension={"max_float": 1.7976931348623157e308, "tiny": -2.5e-10,
+                                    "big_int": 10**400, "neg": -3, "series": [0.0, 1e300]})
+        saved["overall"]["link_rate_pct"] = 100
+        saved["kalshi"]["by_sport"][0]["link_rate"] = 0
+        raw = json.dumps(saved).replace("1e+300", "1E300").encode()
+        assert b"1E300" in raw
+        resp, body, _ = _get(client, monkeypatch, raw)
+        assert (resp.status_code, body["cache_state"]) == (200, "hit")
+        assert body["payload"] == saved
+        assert body["payload"]["extension"]["big_int"] == 10**400
 
     def test_unknown_extra_fields_pass_through_untouched(self, client, poisoned, monkeypatch):
         saved = _payload(future_field={"nested": [1, 2]})
