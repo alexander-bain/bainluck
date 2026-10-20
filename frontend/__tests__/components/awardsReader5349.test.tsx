@@ -24,7 +24,7 @@ test("actual page keeps the primary category visible and announces only its own 
   expect(html).toContain('id="awards-category-1"');
   expect(html).toContain("Actual unpriced winner");
   expect(html).toContain("Not announced");
-  expect(html).toContain("Trading closed · Result not announced yet");
+  expect(html).toContain("Trading closed · Result not yet confirmed");
   expect(html).toContain("Joint winners"); expect(html).toContain("Composer A"); expect(html).toContain("Composer B");
   expect(html).toContain("Another nominee"); expect(html).not.toContain(">Other<");
   expect(html).toContain("Guest1"); expect(html).toContain("Nominations and more");
@@ -36,7 +36,7 @@ test("actual page keeps the primary category visible and announces only its own 
 });
 test("closed-ungraded card never prints its favorite or standalone winner as a result", () => {
   const html = renderToStaticMarkup(<AwardsCategoryCard child={card({ settled: true, graded_winner: "Favorite" })} />);
-  expect(html).toContain("Result not announced yet"); expect(html).not.toContain("Favorite"); expect(html).not.toContain("99%");
+  expect(html).toContain("Result not yet confirmed"); expect(html).not.toContain("Favorite"); expect(html).not.toContain("99%");
 });
 test("prop grade is a result, never labelled an award winner", () => {
   const html = renderToStaticMarkup(<AwardsCategoryCard child={card({ kind: "prop", settled: true, outcomes: [grade("Guest1")] })} />);

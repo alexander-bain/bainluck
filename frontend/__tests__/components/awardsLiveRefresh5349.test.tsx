@@ -26,7 +26,7 @@ test("real SWR starts after initial missing data, admits a category announcement
   expect(mockRead).toHaveBeenCalledTimes(1); expect(host.querySelector("#awards-category-2")?.textContent).toContain("Not announced");
   await tick(30000);
   expect(mockRead).toHaveBeenCalledTimes(2); expect(host.querySelector("#awards-category-2")?.textContent).toContain("Winner"); expect(host.querySelector("#awards-category-2")?.textContent).toContain("Another director");
-  expect(host.querySelector("#awards-category-3")?.textContent).toContain("Result not announced yet");
+  expect(host.querySelector("#awards-category-3")?.textContent).toContain("Result not yet confirmed");
   Object.defineProperty(document, "visibilityState", { configurable: true, value: "hidden" }); await tick(30000); expect(mockRead).toHaveBeenCalledTimes(2);
   Object.defineProperty(document, "visibilityState", { configurable: true, value: "visible" });
   // Advance at most one native interval at a time so async revalidation settles.
