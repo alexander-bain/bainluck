@@ -1303,6 +1303,10 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
     )
     blend_refresher.held_quotes = HeldRowQuotes()
     await blend_refresher.held_quotes.sample_database_clock(get_task_session)
+    # #10090: when this arm is the named preview source, claim its display
+    # epoch before any frame (`LiveBlendRefresher.claim_preview_display`).
+    if getattr(blend_refresher, "preview", False):
+        await blend_refresher.claim_preview_display()
     # #10090 — the receipt Polymarket has carried since #837: every accepted
     # input is marked (seq, receive instant) as it is buffered, so the
     # per-minute delivery receipt can say what this game received and which

@@ -1,0 +1,172 @@
+/**
+ * #10090 — a provisional blend shown before its event stamp commits
+ * (`backend/app/utils/blend_preview.py`).
+ *
+ * The server sends these only for its canary events, as a separate `preview`
+ * SSE event. Without one, every function here returns its input and the page
+ * renders exactly what it renders today.
+ *
+ * A preview is never written into the page's committed cache. It is an overlay
+ * on the hero number alone, and it gives way to committed truth by rule:
+ *
+ * - It carries no committed revision. Its `base_rev` is the revision it was
+ *   composed on; it shows only while the page holds no NEWER committed
+ *   revision of its one row. Any newer commit wins, whoever wrote it.
+ * - `epoch` is the writing process's display claim, fenced at Redis: a
+ *   replacement worker's claim is a higher epoch, and a superseded worker can
+ *   no longer publish a blend. The reader keeps the highest epoch it has seen
+ *   and refuses anything older (`readerAfter`) — an earlier epoch never
+ *   regains the display, whatever order frames arrive in. A higher epoch voids
+ *   whatever the older one showed.
+ * - Within an epoch, previews order by `seq`: a lower seq never replaces a
+ *   higher one, and a `revoke` withdraws every preview up to `through_seq`.
+ * - It expires after `ttl_ms` from arrival — a backstop for a revoke lost with
+ *   a stopped worker; the server revokes on its own clock as well.
+ * - A reconnect clears the held preview (previews are never replayed, so a
+ *   missed revoke cannot be ruled out across a reconnect); the epoch floor is
+ *   kept, because epochs only rise.
+ * - It shows only for the same quote status the page holds, on a live blend
+ *   hero (`hero_probability_source === "blend"`).
+ */
+
+import { parseFoldRevision } from "./foldRevision";
+
+const PREVIEW_STATUSES = new Set(["live", "scheduled", "suspended"]);
+
+export interface BlendPreviewFrame {
+  event_id: number;
+  p: number | null;
+  status?: string | null;
+  provisional?: boolean;
+  preview: {
+    kind: "blend" | "revoke";
+    epoch: number;
+    seq: number;
+    base_rev?: number;
+    ttl_ms?: number;
+    through_seq?: number;
+    reason?: string;
+    pending?: Record<string, number>;
+  };
+}
+
+export interface BlendPreviewState {
+  eventId: number;
+  epoch: number;
+  seq: number;
+  baseRev: number;
+  p: number;
+  status: string | null;
+  /** `now()` milliseconds after which the preview is no longer shown. */
+  expiresAt: number;
+}
+
+const safeInt = (value: unknown): value is number =>
+  typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
+
+export function parseBlendPreview(raw: unknown): BlendPreviewFrame | null {
+  let frame: unknown = raw;
+  if (typeof raw === "string") {
+    try {
+      frame = JSON.parse(raw);
+    } catch {
+      return null;
+    }
+  }
+  if (!frame || typeof frame !== "object") return null;
+  const f = frame as Record<string, unknown>;
+  const preview = f.preview as Record<string, unknown> | undefined;
+  // A committed revision on a "preview" is a contradiction: refuse it.
+  if (typeof f.event_id !== "number" || "rev" in f || !preview || typeof preview !== "object") return null;
+  if (!safeInt(preview.epoch) || !safeInt(preview.seq)) return null;
+  if (preview.kind === "revoke") {
+    return safeInt(preview.through_seq) ? (frame as BlendPreviewFrame) : null;
+  }
+  if (preview.kind !== "blend") return null;
+  if (typeof f.p !== "number" || !Number.isFinite(f.p) || f.p < 0 || f.p > 1) return null;
+  if (!safeInt(preview.base_rev) || !safeInt(preview.ttl_ms)) return null;
+  return frame as BlendPreviewFrame;
+}
+
+/** What one event's reader holds: its preview, and the highest epoch it has seen. */
+export interface BlendPreviewReader {
+  held: BlendPreviewState | null;
+  /** The fence floor: frames from a lower epoch are refused. -1 before any. */
+  epoch: number;
+}
+
+export const EMPTY_BLEND_PREVIEW_READER: BlendPreviewReader = { held: null, epoch: -1 };
+
+/**
+ * The reader after `frame` arrives at `now`. A lower epoch is fenced out; a
+ * higher one raises the floor and voids the older epoch's preview first.
+ */
+export function readerAfter(
+  reader: BlendPreviewReader, frame: BlendPreviewFrame, eventId: number, now: number,
+): BlendPreviewReader {
+  if (frame.event_id !== eventId) return reader;
+  const epoch = frame.preview.epoch;
+  if (epoch < reader.epoch) return reader;
+  const held = epoch > reader.epoch ? null : reader.held;
+  return { held: previewAfter(held, frame, eventId, now), epoch };
+}
+
+/** Within one epoch: the preview to hold after `frame` arrives at `now`. */
+export function previewAfter(
+  state: BlendPreviewState | null, frame: BlendPreviewFrame, eventId: number, now: number,
+): BlendPreviewState | null {
+  if (frame.event_id !== eventId) return state;
+  const { preview } = frame;
+  const sameEpoch = state !== null && state.epoch === preview.epoch;
+  if (preview.kind === "revoke") {
+    if (!state) return null;
+    if (!sameEpoch) return null; // a new epoch spoke; the old one's preview cannot be trusted
+    return state.seq <= (preview.through_seq as number) ? null : state;
+  }
+  if (sameEpoch && preview.seq <= state.seq) return state;
+  return {
+    eventId,
+    epoch: preview.epoch,
+    seq: preview.seq,
+    baseRev: preview.base_rev as number,
+    p: frame.p as number,
+    status: frame.status ?? null,
+    expiresAt: now + (preview.ttl_ms as number),
+  };
+}
+
+interface HeldBlend {
+  id?: unknown;
+  status?: string | null;
+  hero_probability_source?: string | null;
+  blend_fold_revision?: unknown;
+}
+
+/** The provisional hero probability to show, or null for committed truth. */
+export function displayedPreview(
+  state: BlendPreviewState | null, held: HeldBlend | null | undefined, now: number,
+): number | null {
+  if (!state || !held || now >= state.expiresAt) return null;
+  if (held.id !== state.eventId) return null;
+  if (held.hero_probability_source !== "blend") return null;
+  const status = held.status ?? null;
+  if (status === null || !PREVIEW_STATUSES.has(status) || status !== state.status) return null;
+  // Only a singleton revision of this very row can be ordered against base_rev;
+  // a folded hero (several rows) or no revision at all shows committed truth.
+  const committed = parseFoldRevision(held.blend_fold_revision);
+  const key = String(state.eventId);
+  if (!committed || Object.keys(committed).length !== 1 || !(key in committed)) return null;
+  return committed[key] > state.baseRev ? null : state.p;
+}
+
+/**
+ * `event` with the provisional hero overlaid, or `event` itself (same object)
+ * when no preview applies — so a page without previews renders unchanged.
+ */
+export function overlayBlendPreview<T extends HeldBlend | null | undefined>(
+  event: T, state: BlendPreviewState | null, now: number,
+): T {
+  const p = displayedPreview(state, event, now);
+  if (p === null || !event) return event;
+  return { ...event, hero_probability: p, hero_probability_away: 1 - p } as T;
+}

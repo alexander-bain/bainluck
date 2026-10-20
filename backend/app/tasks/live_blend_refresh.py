@@ -1844,6 +1844,17 @@ class LiveBlendRefresher:
         #: #10090 — optional callback notified when held events release so a
         #: socket flush loop that fenced a newer quote on those events wakes.
         self.release_wake: Optional[Callable[[Iterable[int]], None]] = None
+        #: #10090 — provisional preview (`app.utils.blend_preview`): the
+        #: canary's events when THIS source is the one named to preview, else
+        #: empty. Empty (the default), every preview branch below is skipped
+        #: and the committed path runs exactly as before.
+        from app.utils.blend_preview import preview_events_for
+
+        self.preview_events: frozenset = preview_events_for(self.source)
+        self.preview = bool(self.preview_events)
+        self.preview_stats: dict[str, int] = {
+            "published": 0, "revoked": 0, "fenced": 0, "publish_errors": 0,
+        }
 
     # ── throttling ───────────────────────────────────────────────────────────
 
@@ -2996,6 +3007,16 @@ class LiveBlendRefresher:
             (Event, PREPARED_EVENT_FIELDS),
             (FuturesOutcome, PREPARED_OUTCOME_FIELDS),
         )
+        # #10090: a preview is composed BEFORE the UPDATE, so it needs the
+        # whole committed bag and the revision that dates it. A plain read: it
+        # waits on no row lock. Not selected unless this arm previews a
+        # canary event in this batch: any other read is the statement it was.
+        preview_columns = (
+            (Event.win_probability_sources.label("preview_sources"),
+             Event.win_probability_sources_rev.label("preview_rev"))
+            if not getattr(self, "preview_events", frozenset()).isdisjoint(event_ids)
+            else ()
+        )
         rows = (
             await session.execute(
                 select(*(
@@ -3003,7 +3024,7 @@ class LiveBlendRefresher:
                     if model is Event and key == "win_probability_sources"
                     else getattr(model, key)
                     for model, keys in fields for key in keys
-                ))
+                ), *preview_columns)
                 .select_from(FuturesMarket)
                 .join(Event, Event.id == FuturesMarket.event_id)
                 .outerjoin(FuturesOutcome, outcome_join)
@@ -3034,6 +3055,11 @@ class LiveBlendRefresher:
                     context["win_probability_sources"] = {
                         self.source: context["win_probability_sources"],
                     }
+                    if preview_columns:
+                        # Trailing columns; the outcome slice below zips by
+                        # field name, so they never reach an outcome row.
+                        context["preview_sources"] = row[-2]
+                        context["preview_rev"] = row[-1]
                     grouped[event_id] = (
                         SimpleNamespace(**context),
                         [],
@@ -3349,6 +3375,8 @@ class LiveBlendRefresher:
         # retry of a lock-deferred event skipped it as unchanged and the price
         # was lost for good.
         written: dict[int, float] = {}
+        # #10090 (preview arm only): each canary event's RETURNING bag.
+        committed_bags: dict[int, tuple] = {}
         # #10090: the chart points the committed stamps owe, in stamp order.
         owed_snapshots: list[tuple] = []
 
@@ -3383,6 +3411,12 @@ class LiveBlendRefresher:
                 else:
                     self._live_event_ids.discard(eid)
             if not grouped:
+                if self.preview:
+                    # #10090: this source spoke for none of these events, so
+                    # none of its pending values may keep speaking.
+                    await self._publish_previews(self._preview_settlement(
+                        event_ids, grouped, {}, set(), {},
+                    ))
                 return
 
             # #837 — ONE LOCK ORDER, ONE SAVEPOINT PER EVENT WITH SIBLINGS.
@@ -3441,70 +3475,107 @@ class LiveBlendRefresher:
                 lock_budget_set = True
                 statement_bound_set = statement_bound_set or whole_statement
 
-            for event_id in sorted(grouped):
+            # #10090 (preview arm only): canary readings awaiting their
+            # UPDATE, the preview seq each published, and canary events whose
+            # attempt failed.
+            preview_plans: dict[int, tuple] = {}
+            preview_seq: dict[int, int] = {}
+            preview_failed: set[int] = set()
+            # #10090: every CANARY event's reading is computed and its preview
+            # published BEFORE any event's UPDATE, so one event's row-lock wait
+            # cannot hold back a canary preview. The UPDATEs keep the one
+            # sorted lock order (#837). With no canary event in the batch, the
+            # work list is one "both" step per event: the same statements in
+            # the same order as before.
+            ordered = sorted(grouped)
+            canary = [eid for eid in ordered if eid in self.preview_events]
+            if canary:
+                work = ([("compute", eid) for eid in canary] + [("preview", None)]
+                        + [("stamp" if eid in self.preview_events else "both", eid)
+                           for eid in ordered])
+            else:
+                work = [("both", eid) for eid in ordered]
+            for phase, event_id in work:
+                if phase == "preview":
+                    await self._preview_before_stamp(grouped, preview_plans, preview_seq)
+                    continue
+                if phase == "stamp" and event_id not in preview_plans:
+                    continue
                 event, group = grouped[event_id]
-                refused = []
                 try:
-                    proof_kwargs = {}
-                    if (getattr(self, "require_current_book_proof", False)
-                            and any(getattr(entry.market, "source", None) == "kalshi"
-                                    and (getattr(entry.market, "external_id", None) or "").upper().startswith("KXATPCHALLENGERMATCH-")
-                                    for entry in group)):
-                        proof_kwargs = {
-                            "require_current_book_midpoint": True,
-                            "current_book_midpoint": getattr(self, "current_book_midpoint", None),
-                            "current_book_primary_price": getattr(self, "current_book_primary_price", None),
-                            "current_primary_input": (
-                                lambda row: self.current_primary_input(
-                                    row, self.held_quotes,
-                                    overlaid=getattr(row, "_primary_quote_overlaid", False),
-                                )
-                            ) if getattr(self, "current_primary_input", None) is not None else None,
-                            "current_book_refused": lambda: (
-                                refused.append(True)
-                                or self._park_book_refused(event_id, group)
-                            ),
-                        }
-                    reading = compute_source_home_probability(
-                        group, event.home_team_name, event.away_team_name,
-                        **proof_kwargs,
-                    )
-                    if reading is None:
-                        self.stats["no_reading"] += 1
-                        if refused:
-                            self.stats["bundled_refused"] += 1
-                        self._dispositions[event_id] = ("no_reading",)
-                        continue
+                    if phase == "stamp":
+                        refused, proof_kwargs, reading, value, contributing = preview_plans[event_id]
+                    else:
+                        refused = []
+                        proof_kwargs = {}
+                        if (getattr(self, "require_current_book_proof", False)
+                                and any(getattr(entry.market, "source", None) == "kalshi"
+                                        and (getattr(entry.market, "external_id", None) or "").upper().startswith("KXATPCHALLENGERMATCH-")
+                                        for entry in group)):
+                            proof_kwargs = {
+                                "require_current_book_midpoint": True,
+                                "current_book_midpoint": getattr(self, "current_book_midpoint", None),
+                                "current_book_primary_price": getattr(self, "current_book_primary_price", None),
+                                "current_primary_input": (
+                                    lambda row: self.current_primary_input(
+                                        row, self.held_quotes,
+                                        overlaid=getattr(row, "_primary_quote_overlaid", False),
+                                    )
+                                ) if getattr(self, "current_primary_input", None) is not None else None,
+                                # Bound now: with a canary in the batch this
+                                # callback is stored in `preview_plans` and
+                                # called again by the stamp-time recheck.
+                                "current_book_refused": lambda refused=refused, event_id=event_id, group=group: (
+                                    refused.append(True)
+                                    or self._park_book_refused(event_id, group)
+                                ),
+                            }
+                        reading = compute_source_home_probability(
+                            group, event.home_team_name, event.away_team_name,
+                            **proof_kwargs,
+                        )
+                        if reading is None:
+                            self.stats["no_reading"] += 1
+                            if refused:
+                                self.stats["bundled_refused"] += 1
+                            self._dispositions[event_id] = ("no_reading",)
+                            continue
 
-                    home_prob = await self._oriented(
-                        session, event_id, reading.home_probability, reading=reading,
-                        before_fallback=ensure_lock_budget,
-                    )
-                    value = round(home_prob, 4)
+                        home_prob = await self._oriented(
+                            session, event_id, reading.home_probability, reading=reading,
+                            before_fallback=ensure_lock_budget,
+                        )
+                        value = round(home_prob, 4)
 
-                    # #5661 — before the throttle decides WHEN to re-stamp, ask
-                    # WHETHER there is anything to re-stamp. The row's own
-                    # stored entry is the reference (not this process's memory,
-                    # which a dyno restart empties), and the reading's rows are
-                    # the ones the number came from, as the 120s poll dates it.
-                    contributing = (
-                        getattr(reading, "contributing_outcomes", None)
-                        or (getattr(reading, "outcome", None),)
-                    )
-                    if restamp_records_no_observation(
-                        value,
-                        oldest_observation_time(contributing),
-                        getattr(event, "win_probability_sources", None),
-                        self.source,
-                    ):
-                        self.stats["unobserved_skipped"] += 1
-                        self._dispositions[event_id] = ("unobserved", value)
-                        continue
+                        # #5661 — before the throttle decides WHEN to re-stamp, ask
+                        # WHETHER there is anything to re-stamp. The row's own
+                        # stored entry is the reference (not this process's memory,
+                        # which a dyno restart empties), and the reading's rows are
+                        # the ones the number came from, as the 120s poll dates it.
+                        contributing = (
+                            getattr(reading, "contributing_outcomes", None)
+                            or (getattr(reading, "outcome", None),)
+                        )
+                        if restamp_records_no_observation(
+                            value,
+                            oldest_observation_time(contributing),
+                            getattr(event, "win_probability_sources", None),
+                            self.source,
+                        ):
+                            self.stats["unobserved_skipped"] += 1
+                            self._dispositions[event_id] = ("unobserved", value)
+                            continue
 
-                    if not self._should_write(event_id, value, now):
-                        self.stats["unchanged_skipped"] += 1
-                        self._dispositions[event_id] = ("unchanged", value)
-                        continue
+                        if not self._should_write(event_id, value, now):
+                            self.stats["unchanged_skipped"] += 1
+                            self._dispositions[event_id] = ("unchanged", value)
+                            continue
+
+                        if phase == "compute":
+                            preview_plans[event_id] = (
+                                refused, proof_kwargs, reading, value, contributing,
+                            )
+                            continue
 
                     # The database assigns the write clock; RETURNING below
                     # supplies that exact clock to the frame and tail receipt.
@@ -3636,6 +3707,8 @@ class LiveBlendRefresher:
                     # that rolled back must not read as written), and applied only
                     # once the transaction commits — see `written` above.
                     written[event_id] = value
+                    if event_id in self.preview_events:
+                        committed_bags[event_id] = (new_sources, new_rev, event)
 
                     # #10090: the chart point is written AFTER this commit and
                     # its publication (`_write_owed_snapshots`), never inside the
@@ -3742,6 +3815,8 @@ class LiveBlendRefresher:
                         )
                         continue
                     self.stats["errors"] += 1
+                    if event_id in self.preview_events:
+                        preview_failed.add(event_id)
                     # A committed stamp whose frame failed is still stamped.
                     self._dispositions.setdefault(event_id, ("error",))
                     logger.exception(
@@ -3769,7 +3844,29 @@ class LiveBlendRefresher:
                 publish_committed = (
                     self._publish_prices if window is None else window.publish_inline
                 )
+            settled = []
+            # Over every ATTEMPTED canary event, not only those in `grouped`:
+            # a canary whose group left beside a non-canary sibling still owes
+            # its `no_group` revoke (R3).
+            if not self.preview_events.isdisjoint(event_ids):
+                # After COMMIT, BEFORE the committed frames: a sibling still
+                # pending is recomposed on the new base and goes out first, so
+                # the committed frame (rev == that base) cannot briefly put the
+                # sibling's older stored value back on the page. Revokes go
+                # after it, so a retired preview gives way to the commit that
+                # carries it, never to the older committed value. A
+                # lock-deferred event keeps its preview.
+                settled = self._preview_settlement(
+                    event_ids, grouped, preview_seq, preview_failed, committed_bags,
+                )
+                await self._publish_previews(
+                    [f for f in settled if f["preview"]["kind"] == "blend"]
+                )
             await publish_committed(pending)
+            if settled:
+                await self._publish_previews(
+                    [f for f in settled if f["preview"]["kind"] != "blend"]
+                )
         except BaseException:
             # Frames that never reached `_publish_prices` release here; an
             # early release costs at most one redundant control, a lost one
@@ -4260,6 +4357,213 @@ class LiveBlendRefresher:
                 exc_info=True,
             )
         return acknowledged
+
+    # ── #10090: provisional preview (off by default; canary events only) ──
+
+    async def _preview_before_stamp(self, grouped, plans, published_seq) -> None:
+        """Publish every planned reading's preview, then let the UPDATEs run.
+
+        Called once per attempt after all readings were computed and before
+        any event's UPDATE, so no event's row-lock wait delays another event's
+        preview. A failure here costs only the preview; the stamp proceeds.
+        """
+        from app.utils.aggregation import observation_basis
+        from app.utils.blend_preview import registry
+
+        preview = registry()
+        frames = preview.expire()
+        for event_id, (_refused, _proof, reading, value, contributing) in plans.items():
+            event, _group = grouped[event_id]
+            try:
+                frames.extend(preview.propose(
+                    event_id, self.source, value=value, event=event,
+                    row_sources=getattr(event, "preview_sources", None),
+                    row_rev=getattr(event, "preview_rev", None),
+                    eligibility=getattr(reading, "eligibility", None),
+                    observed_basis=observation_basis(contributing),
+                ))
+            except Exception:
+                self.preview_stats["publish_errors"] += 1
+                logger.warning(
+                    "live_blend_refresh[%s]: preview for event %s not composed",
+                    self.source, event_id, exc_info=True,
+                )
+                continue
+            seq = preview.pending_seq(event_id, self.source)
+            if seq is not None:
+                published_seq[event_id] = seq
+        await self._publish_previews(frames)
+
+    def _preview_settlement(self, event_ids, grouped, published_seq, failed,
+                            committed) -> list[dict]:
+        """Settle this attempt's previews against what actually committed.
+
+        Over every ATTEMPTED event, not only those the group read returned: an
+        event this source no longer speaks for (unlinked, emptied, omitted by
+        a prepared read) must not keep its pending value in the sibling's
+        previews. Returns the frames; the caller orders their publication.
+        """
+        from app.utils.blend_preview import registry
+
+        preview = registry()
+        frames: list[dict] = []
+        for event_id in dict.fromkeys(event_ids):
+            if event_id not in self.preview_events:
+                continue  # never proposed: nothing to settle
+            try:
+                if event_id not in grouped:
+                    frames.extend(preview.refused(event_id, self.source, "no_group"))
+                    continue
+                if event_id in committed:
+                    sources, rev, event = committed[event_id]
+                    frames.extend(preview.committed(
+                        event_id, self.source, seq=published_seq.get(event_id),
+                        sources=sources, rev=rev, event=event,
+                    ))
+                    continue
+                if event_id in failed:
+                    reason = "error"
+                else:
+                    reason = (self._dispositions.get(event_id) or ("unknown",))[0]
+                    if reason == "lock":
+                        continue  # still owed; the retry republishes it
+                # Also ends an expired chain with nothing pending (R4).
+                frames.extend(preview.refused(event_id, self.source, reason))
+            except Exception:
+                self.preview_stats["publish_errors"] += 1
+                logger.warning(
+                    "live_blend_refresh[%s]: preview for event %s not settled",
+                    self.source, event_id, exc_info=True,
+                )
+        return frames
+
+    async def _claim_preview_epoch(self, connection, preview) -> None:
+        """One atomic INCR + SET owner (`FENCE_CLAIM_SCRIPT`); caller holds the claim lock."""
+        from app.utils.blend_preview import (
+            FENCE_CLAIM_SCRIPT, FENCE_EPOCH_KEY, fence_owner_key,
+        )
+
+        await connection.send_command(
+            "EVAL", FENCE_CLAIM_SCRIPT, 2, FENCE_EPOCH_KEY, fence_owner_key(self.source),
+        )
+        preview.epoch = int(await connection.read_response())
+        logger.info(
+            "live_blend_refresh[%s]: preview display claimed epoch=%s",
+            self.source, preview.epoch,
+        )
+
+    async def claim_preview_display(self) -> Optional[int]:
+        """Claim this process's display epoch at startup, before any frame.
+
+        Eager, so epoch order is process START order: a replacement started
+        during a release overlap outranks the worker it replaces even if that
+        worker has not previewed yet, instead of an old process's first frame
+        in its final drain fencing the replacement for life. A no-op unless
+        this arm previews, and when this process already holds an epoch.
+        Never raises: a failed claim is retried by the first publication.
+        """
+        if not self.preview:
+            return None
+        try:
+            from app.utils.blend_preview import registry
+            from app.utils.market_quote_push import _checkout
+
+            preview = registry()
+            async with asyncio.timeout(1):
+                if preview.claim_lock is None:
+                    preview.claim_lock = asyncio.Lock()
+                async with preview.claim_lock:
+                    if preview.epoch is None:
+                        pool = self._client().connection_pool
+                        connection = await _checkout(pool)
+                        try:
+                            await self._claim_preview_epoch(connection, preview)
+                        except BaseException:
+                            self._redis = None
+                            await connection.disconnect()
+                            raise
+                        finally:
+                            await pool.release(connection)
+            return preview.epoch
+        except Exception:
+            self.preview_stats["publish_errors"] += 1
+            logger.warning(
+                "live_blend_refresh[%s]: preview display claim failed at startup",
+                self.source, exc_info=True,
+            )
+            return None
+
+    async def _publish_previews(self, frames: list[dict]) -> None:
+        """Fenced PUBLISH of provisional frames. Never raises; never retained.
+
+        Not `_publish`: a preview has no revision, owes no recovery intent and
+        must never be counted, acknowledged or replayed as a committed frame.
+        Same direct pool protocol, so a borrowed socket left in an unknown
+        state is disconnected rather than returned.
+
+        The process normally claimed its epoch at startup
+        (`claim_preview_display`); if that claim failed, the first call here
+        claims it. Every batch then goes through `FENCE_PUBLISH_SCRIPT`, which
+        drops the blends of a process another worker has superseded. No
+        epoch, no blend.
+        """
+        if not frames:
+            return
+        try:
+            import json
+
+            from app.utils.blend_preview import (
+                FENCE_PUBLISH_SCRIPT, fence_owner_key, registry,
+            )
+            from app.utils.live_push import event_channel
+            from app.utils.market_quote_push import _checkout
+
+            preview = registry()
+            owner_key = fence_owner_key(self.source)
+            async with asyncio.timeout(1):
+                if preview.claim_lock is None:
+                    preview.claim_lock = asyncio.Lock()
+                pool = self._client().connection_pool
+                async with preview.claim_lock:
+                    connection = await _checkout(pool)
+                    try:
+                        if preview.epoch is None:
+                            await self._claim_preview_epoch(connection, preview)
+                        argv: list = [preview.epoch]
+                        for frame in frames:
+                            frame["preview"]["epoch"] = preview.epoch
+                            argv.extend((
+                                frame["preview"]["kind"],
+                                event_channel(frame["event_id"]),
+                                json.dumps(frame),
+                            ))
+                        await connection.send_command(
+                            "EVAL", FENCE_PUBLISH_SCRIPT, 1, owner_key, *argv,
+                        )
+                        published, fenced, owner = await connection.read_response()
+                    except BaseException:
+                        self._redis = None
+                        await connection.disconnect()
+                        raise
+                    finally:
+                        await pool.release(connection)
+            revokes = sum(1 for f in frames if f["preview"]["kind"] == "revoke")
+            self.preview_stats["revoked"] += revokes
+            self.preview_stats["published"] += int(published) - revokes
+            if int(fenced):
+                self.preview_stats["fenced"] += int(fenced)
+                if isinstance(owner, bytes):
+                    owner = owner.decode()
+                logger.warning(
+                    "live_blend_refresh[%s]: %s preview frame(s) fenced: epoch=%s owner=%s",
+                    self.source, fenced, preview.epoch, owner or "missing",
+                )
+        except Exception:
+            self.preview_stats["publish_errors"] += 1
+            logger.warning(
+                "live_blend_refresh[%s]: preview publication incomplete (%s frames)",
+                self.source, len(frames), exc_info=True,
+            )
 
     async def _maybe_snapshot(
         self, session, event_id: int, value: float, reading, now: float,

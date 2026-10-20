@@ -5,6 +5,13 @@ import { API_URL } from '@/lib/api';
 import { frameFoldOrder } from '@/lib/foldRevision';
 import { rememberLiveChartFrame, type LiveChartFrame } from '@/lib/liveChartHistory';
 import { frameCarriesUnpricedSnapshot } from '@/lib/sourceSnapshot';
+import {
+  EMPTY_BLEND_PREVIEW_READER,
+  parseBlendPreview,
+  readerAfter,
+  type BlendPreviewReader,
+  type BlendPreviewState,
+} from '@/lib/blendPreview';
 import type { ReconcileControl } from '@/lib/reconcileControl';
 import {
   TICK_INTERVAL_MS,
@@ -95,6 +102,14 @@ interface UseLiveEventStreamResult {
   status: LiveStreamStatus;
   /** #10666: hook-lifetime monotonic recovery ordinal, scoped to this event. */
   recoveryGeneration: number;
+  /**
+   * #10090: the held provisional blend, or null. Never part of `frame` or
+   * `chartPoints`; the page overlays it on the hero only
+   * (`lib/blendPreview.ts`). Always null when the server sends none.
+   */
+  blendPreview: BlendPreviewState | null;
+  /** #10090: `Date.now()` at the last preview change or expiry, for `displayedPreview`. */
+  blendPreviewNow: number;
 }
 
 export function useLiveEventStream(
@@ -123,6 +138,10 @@ export function useLiveEventStream(
     statusEventId: number | undefined; status: LiveStreamStatus;
   }>({ statusEventId: eventId, status: 'idle' });
   const [recovery, setRecovery] = useState({ eventId, ordinal: 0 });
+  const [{ reader, previewNow }, setPreview] = useState<{
+    reader: BlendPreviewReader; previewNow: number;
+  }>({ reader: EMPTY_BLEND_PREVIEW_READER, previewNow: 0 });
+  const preview = reader.held;
   // A replacement controller starts its own ordinal at one; the hook does not.
   const recoveryOrdinal = useRef(0);
   // A ref so the controller's callbacks never close over a stale setter.
@@ -201,6 +220,26 @@ export function useLiveEventStream(
           });
         }
       },
+      onPreview: (raw) => {
+        if (!mounted.current) return;
+        const parsed = parseBlendPreview(raw);
+        if (!parsed) return;
+        const at = Date.now();
+        // The controller is per event, so the reader (and its epoch floor)
+        // never carries over from another event: see the effect cleanup.
+        setPreview(previous => ({
+          reader: readerAfter(previous.reader, parsed, eventId, at),
+          previewNow: at,
+        }));
+      },
+      onPreviewReset: () => {
+        // Clears the held preview; keeps the epoch floor (epochs only rise).
+        if (mounted.current) {
+          setPreview(previous => ({
+            reader: { held: null, epoch: previous.reader.epoch }, previewNow: Date.now(),
+          }));
+        }
+      },
       onDeliveringChange: (delivering) => {
         if (mounted.current) setConnected(delivering);
       },
@@ -222,14 +261,29 @@ export function useLiveEventStream(
     return () => {
       clearInterval(timer);
       controller.stop();
+      setPreview({ reader: EMPTY_BLEND_PREVIEW_READER, previewNow: 0 });
     };
   }, [eventId, enabled]);
+
+  // #10090: re-render once when the held preview's lifetime ends, so an
+  // expired provisional value gives way to the committed one without a frame.
+  const previewExpiresAt = preview?.expiresAt;
+  useEffect(() => {
+    if (previewExpiresAt === undefined) return;
+    const wait = Math.max(0, previewExpiresAt - Date.now());
+    const timer = setTimeout(() => {
+      if (mounted.current) setPreview(previous => ({ ...previous, previewNow: Date.now() }));
+    }, wait + 1);
+    return () => clearTimeout(timer);
+  }, [previewExpiresAt]);
 
   return {
     frame,
     connected,
     recoveryGeneration: enabled && recovery.eventId === eventId ? recovery.ordinal : 0,
     chartPoints: chartEventId === eventId ? points : [],
+    blendPreview: enabled && preview?.eventId === eventId ? preview : null,
+    blendPreviewNow: previewNow,
     // Before this event's controller has said anything, it is connecting if
     // it is going to try at all — never the last event's word.
     status: statusEventId === eventId ? status : enabled ? 'connecting' : 'idle',

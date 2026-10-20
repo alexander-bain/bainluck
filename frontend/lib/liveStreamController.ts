@@ -101,6 +101,15 @@ export interface LiveStreamDeps {
   /** #10090: a validated `reconcile` control — an owed read, never a price. */
   onReconcile?: (control: ReconcileControl) => void;
   /**
+   * #10090: a raw `preview` event's data — a
+   * provisional blend that is NOT a committed frame (`lib/blendPreview.ts`).
+   * Touches no clock, cursor or status: it can neither keep push "delivering"
+   * nor postpone the data-silence fallback.
+   */
+  onPreview?: (raw: unknown) => void;
+  /** #10090: previews are never replayed, so every (re)open and the end of the match clear them. */
+  onPreviewReset?: () => void;
+  /**
    * #10200 — what the TRANSPORT is doing, for the reader-facing status only.
    *
    * OBSERVATIONAL. Nothing in here reads it back: every decision above
@@ -231,7 +240,7 @@ export interface LiveStreamController {
 export function createLiveStreamController(
   deps: LiveStreamDeps,
 ): LiveStreamController {
-  const { open, now, onFrame, onDeliveringChange, onStatusChange, onRecovery, onReconcile, schedule } = deps;
+  const { open, now, onFrame, onDeliveringChange, onStatusChange, onRecovery, onReconcile, onPreview, onPreviewReset, schedule } = deps;
   const healthyRolloverDelay =
     deps.healthyRolloverDelay ??
     (() =>
@@ -382,6 +391,7 @@ export function createLiveStreamController(
     let transportRecoveryPending = false;
     next.addEventListener('open', () => {
       if (stopped || handle !== next) return;
+      onPreviewReset?.();
       // Native retry can reopen this handle against another server worker.
       recoveryGeneration = 0;
       lastMessageAt = now();
@@ -450,6 +460,12 @@ export function createLiveStreamController(
     // the authoritative fold can arrive after the same write's invalidation.
     next.addEventListener('folded_probability', onProbability);
 
+    // #10090: a provisional blend, never routed through `onProbability`.
+    next.addEventListener('preview', (event) => {
+      if (stopped || handle !== next) return;
+      onPreview?.((event as { data?: unknown })?.data);
+    });
+
     next.addEventListener('heartbeat', () => {
       if (stopped || handle !== next) return;
       // TRANSPORT clock only. A heartbeat proves this server process is alive
@@ -463,6 +479,7 @@ export function createLiveStreamController(
     // on the final number.
     next.addEventListener('closed', () => {
       if (handle !== next) return;
+      onPreviewReset?.();
       stop();
       setStatus('closed');
     });
