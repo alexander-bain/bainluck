@@ -109,7 +109,7 @@ describe("both theme edition shapes are accepted for their own slug", () => {
     expect(hub).toMatchObject({ state: "published", title: "AI", edition: "AI · Ongoing", revision: 5, note: null,
       theme: { totalCount: 6, nextCursor: cursor(2, 102), inventoryComplete: true, revisionMoved: false } });
     expect(ids(hub)).toEqual([101, 102]);
-    expect(hub.sections.map((s) => s.title)).toEqual(["Questions"]);
+    expect(hub.sections.map((s) => s.title)).toEqual(["Markets"]);
   });
   test("Oscars: edition identity, award sections — never the sports 'Championship'/'Advancement' titles", () => {
     const hub = parseCollection(OSC_P2(), "oscars-2027");
