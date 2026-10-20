@@ -308,6 +308,6 @@
     "#1911 the sentinel's events published aggregate is the curve's own admission (real Postgres)",
     "#1057 the sentinel's placeholder-band candidate and census (real Postgres)",
     "#1912 the per-market never-graded census counts exactly what the grouped census did (real Postgres)",
-    "#10090 a bundled Challenger pair stamps only book-proven or landed prices, without another ticker (real Postgres)"
+    "#10090 bundled pair proof (real Postgres)"
   ]
 }
