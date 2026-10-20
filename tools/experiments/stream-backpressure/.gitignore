@@ -6,3 +6,5 @@ results/*
 !results/verification.json
 review/*-output/
 review/*.json
+!results/source-sha256-before-renewal.json
+!results/renewal-verification.json

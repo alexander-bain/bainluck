@@ -1,5 +1,8 @@
 # Real-stream results and timing scope
 
+> Targeted follow-on: [event-driven renewal confirmation](../RENEWAL-UPDATE.md).
+> Historical results below describe the pre-renewal source; new targeted verification is separately pinned.
+
 ## Verified original source
 
 The final exact-source Node run passed 20 real-wire scenarios and zero-socket

@@ -11,6 +11,7 @@ MODE="${1:-test}"
 mkdir -p results
 case "$MODE" in
   test)
+    "$NODE_BIN" src/run-bounded.mjs --test tests/reviewed-pure-adversarial.mjs tests/held-fence-failures.test.mjs | tee results/independent-pure.txt
     MODEL_OUT="$(mktemp -d "${TMPDIR:-/tmp}/stream-model.XXXXXX")"
     trap 'rm -rf "$MODEL_OUT"' EXIT
     OUT="$MODEL_OUT" "$NODE_BIN" src/run-bounded.mjs --test tests/inherited-model.mjs | tee results/model-test.txt

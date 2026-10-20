@@ -16,6 +16,7 @@ case "$MODE" in
     "$NODE_BIN" src/run-bounded.mjs tests/backpressure-wire.mjs | tee results/backpressure-wire.txt
     ;;
   test)
+    "$NODE_BIN" src/run-bounded.mjs --test tests/renewal-events.test.mjs tests/renewal-independent.test.mjs | tee results/renewal-test.txt
     "$NODE_BIN" src/run-bounded.mjs tests/baseline-failures.mjs | tee results/baseline-failures.txt
     "$NODE_BIN" src/run-bounded.mjs --test tests/backpressure-unit.mjs | tee results/backpressure-unit.txt
     "$NODE_BIN" src/run-bounded.mjs tests/backpressure-wire.mjs | tee results/backpressure-wire.txt

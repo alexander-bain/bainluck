@@ -1,0 +1,472 @@
+{
+  "scope": "Exact compact client-trace subset of two failed synthetic loopback cases; not a new performance observation.",
+  "fullReceiptSha256": "5f19850ce2a8e718db49275b1383ed4e323e225a703b01d5deba24a2db0141ac",
+  "fullReceiptWallClock": "2026-10-20T16:10:05.186Z",
+  "frozenClientSha256": "4e859c884ef58c2158c04a706ebcbce4be8a52327cace86df3af68eda847e783",
+  "cases": [
+    {
+      "name": "held-old-before-fence",
+      "passed": false,
+      "error": "Timed out: value 0.9 epoch 1",
+      "clientTrace": [
+        {
+          "n": 1,
+          "kind": "connect-request",
+          "clientMonoMs": 4188.893827,
+          "hello": {
+            "session": "209d45a1-6a8c-451f-9a3d-a5a14a265068",
+            "challenge": "8410ee44-9100-4d0a-8d52-20a1ad6520b0"
+          },
+          "generation": 1
+        },
+        {
+          "n": 2,
+          "kind": "http-stream-open",
+          "clientMonoMs": 4204.379948,
+          "generation": 1
+        },
+        {
+          "n": 3,
+          "kind": "authority-envelope",
+          "clientMonoMs": 4207.265872,
+          "message": {
+            "kind": "snapshot",
+            "stream": "synthetic-stream",
+            "boot": "5b3717a1-3b17-4c42-87b8-b21b900efad4",
+            "epoch": 1,
+            "ownerId": "owner-a",
+            "session": "209d45a1-6a8c-451f-9a3d-a5a14a265068",
+            "revision": 1,
+            "status": "active",
+            "latest": null,
+            "lease": {
+              "nonce": "8410ee44-9100-4d0a-8d52-20a1ad6520b0",
+              "ttlMs": 1500
+            }
+          },
+          "transport": {
+            "writeReadyMs": 4202.887206,
+            "producerReadyMs": null,
+            "readyToWriteMs": null,
+            "clock": "server monotonic; write is enqueue, not network delivery"
+          },
+          "receivedMs": 4207.212491,
+          "acceptedMs": 4207.261986,
+          "validationMs": 0.049495000000206346,
+          "result": {
+            "snapshot": true
+          },
+          "current": null,
+          "deadlineMs": 5688.867007,
+          "pointCount": 0
+        },
+        {
+          "n": 4,
+          "kind": "control-request",
+          "clientMonoMs": 4210.158305,
+          "action": "hold-writes"
+        },
+        {
+          "n": 5,
+          "kind": "control-response",
+          "clientMonoMs": 4258.813998,
+          "action": "hold-writes",
+          "result": {
+            "ok": true,
+            "currentToken": {
+              "stream": "synthetic-stream",
+              "boot": "5b3717a1-3b17-4c42-87b8-b21b900efad4",
+              "epoch": 1,
+              "ownerId": "owner-a"
+            },
+            "revision": 1
+          }
+        },
+        {
+          "n": 6,
+          "kind": "control-request",
+          "clientMonoMs": 4258.827268,
+          "action": "publish",
+          "seq": 1,
+          "p": 0.9
+        },
+        {
+          "n": 7,
+          "kind": "control-response",
+          "clientMonoMs": 5900.843164,
+          "action": "publish",
+          "result": {
+            "accepted": true,
+            "seq": 1,
+            "currentToken": {
+              "stream": "synthetic-stream",
+              "boot": "5b3717a1-3b17-4c42-87b8-b21b900efad4",
+              "epoch": 1,
+              "ownerId": "owner-a"
+            },
+            "revision": 2
+          }
+        },
+        {
+          "n": 8,
+          "kind": "control-request",
+          "clientMonoMs": 5900.90667,
+          "action": "handover"
+        },
+        {
+          "n": 9,
+          "kind": "control-response",
+          "clientMonoMs": 11261.809063,
+          "action": "handover",
+          "result": {
+            "token": {
+              "stream": "synthetic-stream",
+              "boot": "5b3717a1-3b17-4c42-87b8-b21b900efad4",
+              "epoch": 2,
+              "ownerId": "owner-2"
+            },
+            "oldRefusal": {
+              "error": "fenced-or-terminal"
+            },
+            "currentToken": {
+              "stream": "synthetic-stream",
+              "boot": "5b3717a1-3b17-4c42-87b8-b21b900efad4",
+              "epoch": 2,
+              "ownerId": "owner-2"
+            },
+            "revision": 4
+          }
+        },
+        {
+          "n": 10,
+          "kind": "control-request",
+          "clientMonoMs": 11261.848032,
+          "action": "release-held",
+          "count": 1
+        },
+        {
+          "n": 11,
+          "kind": "control-response",
+          "clientMonoMs": 12978.132791,
+          "action": "release-held",
+          "result": {
+            "released": 1,
+            "currentToken": {
+              "stream": "synthetic-stream",
+              "boot": "5b3717a1-3b17-4c42-87b8-b21b900efad4",
+              "epoch": 2,
+              "ownerId": "owner-2"
+            },
+            "revision": 4
+          }
+        },
+        {
+          "n": 12,
+          "kind": "authority-envelope",
+          "clientMonoMs": 12978.515088,
+          "message": {
+            "kind": "publication",
+            "stream": "synthetic-stream",
+            "boot": "5b3717a1-3b17-4c42-87b8-b21b900efad4",
+            "epoch": 1,
+            "ownerId": "owner-a",
+            "seq": 1,
+            "payload": {
+              "seq": 1,
+              "p": 0.9,
+              "instrument": {
+                "provider": "synthetic-provider",
+                "market": "synthetic-market",
+                "token": "synthetic-yes",
+                "outcome": "yes"
+              },
+              "source": {
+                "kind": "synthetic",
+                "id": "fixture-1"
+              }
+            },
+            "hash": "5cfe3cdd13c1c1012aa8f12bae81999272883045d06df55dcbbafe2b04b6c29d",
+            "revision": 2,
+            "state": "pending",
+            "session": "209d45a1-6a8c-451f-9a3d-a5a14a265068"
+          },
+          "transport": {
+            "writeReadyMs": 12976.388169,
+            "producerReadyMs": 4517.521096,
+            "readyToWriteMs": 8458.867073,
+            "clock": "server monotonic; write is enqueue, not network delivery"
+          },
+          "receivedMs": 12978.322077,
+          "acceptedMs": 12978.510972,
+          "validationMs": 0.18889499999932013,
+          "result": {
+            "error": "fenced-or-expired"
+          },
+          "current": null,
+          "deadlineMs": 5688.867007,
+          "pointCount": 0
+        },
+        {
+          "n": 13,
+          "kind": "http-stream-error",
+          "clientMonoMs": 18456.536809,
+          "generation": 1,
+          "error": "local-abort"
+        },
+        {
+          "n": 14,
+          "kind": "local-close",
+          "clientMonoMs": 18456.59711
+        }
+      ],
+      "points": []
+    },
+    {
+      "name": "held-old-after-fence",
+      "passed": false,
+      "error": "Timed out: value 0.2 epoch 2",
+      "clientTrace": [
+        {
+          "n": 1,
+          "kind": "connect-request",
+          "clientMonoMs": 21093.292365,
+          "hello": {
+            "session": "564a67e1-9920-4434-a2a0-6379764d1598",
+            "challenge": "6137d160-b1cd-4f98-aa26-2496a41b832f"
+          },
+          "generation": 1
+        },
+        {
+          "n": 2,
+          "kind": "http-stream-open",
+          "clientMonoMs": 21112.324591,
+          "generation": 1
+        },
+        {
+          "n": 3,
+          "kind": "authority-envelope",
+          "clientMonoMs": 21112.532495,
+          "message": {
+            "kind": "snapshot",
+            "stream": "synthetic-stream",
+            "boot": "21503333-fea6-4e8b-9af5-b4377874856d",
+            "epoch": 1,
+            "ownerId": "owner-a",
+            "session": "564a67e1-9920-4434-a2a0-6379764d1598",
+            "revision": 1,
+            "status": "active",
+            "latest": null,
+            "lease": {
+              "nonce": "6137d160-b1cd-4f98-aa26-2496a41b832f",
+              "ttlMs": 1500
+            }
+          },
+          "transport": {
+            "writeReadyMs": 21111.863435,
+            "producerReadyMs": null,
+            "readyToWriteMs": null,
+            "clock": "server monotonic; write is enqueue, not network delivery"
+          },
+          "receivedMs": 21112.491142,
+          "acceptedMs": 21112.528779,
+          "validationMs": 0.03763700000126846,
+          "result": {
+            "snapshot": true
+          },
+          "current": null,
+          "deadlineMs": 22593.257092,
+          "pointCount": 0
+        },
+        {
+          "n": 4,
+          "kind": "control-request",
+          "clientMonoMs": 21611.934519,
+          "action": "hold-writes"
+        },
+        {
+          "n": 5,
+          "kind": "control-response",
+          "clientMonoMs": 22859.786024,
+          "action": "hold-writes",
+          "result": {
+            "ok": true,
+            "currentToken": {
+              "stream": "synthetic-stream",
+              "boot": "21503333-fea6-4e8b-9af5-b4377874856d",
+              "epoch": 1,
+              "ownerId": "owner-a"
+            },
+            "revision": 1
+          }
+        },
+        {
+          "n": 6,
+          "kind": "control-request",
+          "clientMonoMs": 22859.800757,
+          "action": "publish",
+          "seq": 1,
+          "p": 0.9
+        },
+        {
+          "n": 7,
+          "kind": "control-response",
+          "clientMonoMs": 22862.540119,
+          "action": "publish",
+          "result": {
+            "accepted": true,
+            "seq": 1,
+            "currentToken": {
+              "stream": "synthetic-stream",
+              "boot": "21503333-fea6-4e8b-9af5-b4377874856d",
+              "epoch": 1,
+              "ownerId": "owner-a"
+            },
+            "revision": 2
+          }
+        },
+        {
+          "n": 8,
+          "kind": "control-request",
+          "clientMonoMs": 22862.544536,
+          "action": "allow-writes"
+        },
+        {
+          "n": 9,
+          "kind": "control-response",
+          "clientMonoMs": 22919.060308,
+          "action": "allow-writes",
+          "result": {
+            "ok": true,
+            "currentToken": {
+              "stream": "synthetic-stream",
+              "boot": "21503333-fea6-4e8b-9af5-b4377874856d",
+              "epoch": 1,
+              "ownerId": "owner-a"
+            },
+            "revision": 2
+          }
+        },
+        {
+          "n": 10,
+          "kind": "control-request",
+          "clientMonoMs": 22919.06835,
+          "action": "handover"
+        },
+        {
+          "n": 11,
+          "kind": "control-response",
+          "clientMonoMs": 23120.361929,
+          "action": "handover",
+          "result": {
+            "token": {
+              "stream": "synthetic-stream",
+              "boot": "21503333-fea6-4e8b-9af5-b4377874856d",
+              "epoch": 2,
+              "ownerId": "owner-2"
+            },
+            "oldRefusal": {
+              "error": "fenced-or-terminal"
+            },
+            "currentToken": {
+              "stream": "synthetic-stream",
+              "boot": "21503333-fea6-4e8b-9af5-b4377874856d",
+              "epoch": 2,
+              "ownerId": "owner-2"
+            },
+            "revision": 4
+          }
+        },
+        {
+          "n": 12,
+          "kind": "authority-envelope",
+          "clientMonoMs": 23122.928682,
+          "message": {
+            "kind": "snapshot",
+            "stream": "synthetic-stream",
+            "boot": "21503333-fea6-4e8b-9af5-b4377874856d",
+            "epoch": 2,
+            "ownerId": "owner-2",
+            "session": "564a67e1-9920-4434-a2a0-6379764d1598",
+            "revision": 3,
+            "status": "active",
+            "latest": null
+          },
+          "transport": {
+            "writeReadyMs": 23115.739215,
+            "producerReadyMs": null,
+            "readyToWriteMs": null,
+            "clock": "server monotonic; write is enqueue, not network delivery"
+          },
+          "receivedMs": 23122.892247,
+          "acceptedMs": 23122.924826,
+          "validationMs": 0.03257899999880465,
+          "result": {
+            "snapshot": true
+          },
+          "current": null,
+          "deadlineMs": 22593.257092,
+          "pointCount": 0
+        },
+        {
+          "n": 13,
+          "kind": "authority-envelope",
+          "clientMonoMs": 23122.950214,
+          "message": {
+            "kind": "publication",
+            "stream": "synthetic-stream",
+            "boot": "21503333-fea6-4e8b-9af5-b4377874856d",
+            "epoch": 2,
+            "ownerId": "owner-2",
+            "seq": 1,
+            "payload": {
+              "seq": 1,
+              "p": 0.2,
+              "instrument": {
+                "provider": "synthetic-provider",
+                "market": "synthetic-market",
+                "token": "synthetic-yes",
+                "outcome": "yes"
+              },
+              "source": {
+                "kind": "synthetic",
+                "id": "fixture-1"
+              }
+            },
+            "hash": "8ef1116640976171053849d6d98b26ebbf0cc5f6f0105b97904f829c6de5fb61",
+            "revision": 4,
+            "state": "pending",
+            "session": "564a67e1-9920-4434-a2a0-6379764d1598"
+          },
+          "transport": {
+            "writeReadyMs": 23115.810192,
+            "producerReadyMs": 23115.706335,
+            "readyToWriteMs": 0.1038570000018808,
+            "clock": "server monotonic; write is enqueue, not network delivery"
+          },
+          "receivedMs": 23122.93413,
+          "acceptedMs": 23122.949393,
+          "validationMs": 0.015262999997503357,
+          "result": {
+            "error": "fenced-or-expired"
+          },
+          "current": null,
+          "deadlineMs": 22593.257092,
+          "pointCount": 0
+        },
+        {
+          "n": 14,
+          "kind": "http-stream-error",
+          "clientMonoMs": 28346.849648,
+          "generation": 1,
+          "error": "local-abort"
+        },
+        {
+          "n": 15,
+          "kind": "local-close",
+          "clientMonoMs": 28346.878222
+        }
+      ],
+      "points": []
+    }
+  ]
+}

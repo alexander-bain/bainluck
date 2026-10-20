@@ -1,5 +1,8 @@
 # Verified outcome
 
+> Targeted follow-on: [event-driven renewal confirmation](../RENEWAL-UPDATE.md).
+> Historical results below describe the pre-renewal source; new targeted verification is separately pinned.
+
 Final pressure run: 2026-10-20 14:41:12–14:41:30 UTC. All its listeners and sockets closed; final labs/sockets were zero. Results are observed synthetic loopback values, not latency promises.
 
 | Check | Observed result |

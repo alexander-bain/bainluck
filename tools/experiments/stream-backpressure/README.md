@@ -1,5 +1,8 @@
 # Bounded SSE backpressure laboratory
 
+> Targeted follow-on: [event-driven renewal confirmation](../RENEWAL-UPDATE.md).
+> Historical results below describe the pre-renewal source; new targeted verification is separately pinned.
+
 This is an isolated synthetic follow-on to the real-loopback reconnect experiment. It is not a production integration. Client, protocol, broker, and journal are copied unchanged. No market data, live capture, remote service, database, credentials, or Internet request is used.
 
 ## Run

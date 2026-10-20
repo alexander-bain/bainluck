@@ -44,3 +44,7 @@ Historical measurements and packaged reruns are labeled separately. Full origina
 raw recordings/evidence archives, private links, credentials, runtime DBs and
 node_modules are not committed. Estimator/PM dispatch policy changes, newer copy-cost
 and replay-gap experiments remain excluded until separately reviewed.
+
+## Targeted renewal follow-on
+
+The two stream modules now include [event-driven, nonce-specific renewal confirmation](RENEWAL-UPDATE.md). This is a separate cherry-pickable experimental change. The prior full-suite receipts remain pinned to the predecessor source; current verification is separate. It is not a full-history or end-to-end latency fix.

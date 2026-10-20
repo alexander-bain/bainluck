@@ -1,5 +1,8 @@
 # Real loopback SSE reconnect experiment
 
+> Targeted follow-on: [event-driven renewal confirmation](../RENEWAL-UPDATE.md).
+> Historical results below describe the pre-renewal source; new targeted verification is separately pinned.
+
 ## What this candidate adds
 
 The frozen authority model is exercised over real loopback HTTP/SSE sockets:
