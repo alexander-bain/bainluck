@@ -23,6 +23,11 @@ What is guarded:
    conflicting stored grade or winner.
 4. **The binding** — the hash moves with any row version, the board, or a grade;
    a wrong hash writes nothing; drift before the n-th UPDATE rolls back all.
+4b. **The roster** (CERT-4252) — a row the plan never writes that is crowned,
+   cleared, removed, or a row that joins, refuses the whole apply; an apply
+   without the outcome→market foreign key refuses. That the LOCKS keep such a
+   writer out is proved on real Postgres in
+   ``tests/integration/test_repair_11315_roster_lock_pg.py``, not here.
 5. **The undo** — the inverse CAS at the written version only.
 6. **A COMMIT that does not return is UNKNOWN** — no rollback claim, no retry.
 7. **Not the #1152 rails** — the broad grader and its endpoint are never called.
@@ -379,8 +384,17 @@ class FakeSession:
 
     TXID = "99000001"
 
-    def __init__(self, market, outcomes, extra_returning=0, bump_last_updated=False, commit_raises=None):
+    def __init__(
+        self,
+        market,
+        outcomes,
+        extra_returning=0,
+        bump_last_updated=False,
+        commit_raises=None,
+        outcome_fk=True,
+    ):
         self.market = dict(market) if market is not None else None
+        self.outcome_fk = outcome_fk
         self.durable = {o["id"]: dict(o, market_id=64266833) for o in outcomes}
         self.txn: dict[int, dict] = {}
         self.extra_returning = extra_returning
@@ -397,6 +411,8 @@ class FakeSession:
     async def execute(self, stmt, params):
         sql = " ".join(str(stmt).split())
         self.sql.append(sql)
+        if sql.startswith("SELECT") and "FROM pg_constraint" in sql:
+            return [_Rec(n=1 if self.outcome_fk else 0)]
         if sql.startswith("SELECT") and "FROM futures_markets" in sql:
             return [] if self.market is None else [_Rec(**self.market)]
         if sql.startswith("SELECT"):
@@ -479,7 +495,8 @@ def test_the_dry_run_writes_nothing_and_takes_no_lock(repair, retained):
     out = _run(repair, s, execute=False)
     assert s.updates == [] and s.commits == 0
     assert out["mode"] == "apply-plan" and out["written"] == 0
-    assert not any("FOR SHARE" in q for q in s.sql)
+    assert not any("FOR SHARE" in q or "FOR UPDATE" in q for q in s.sql)
+    assert out["roster_lock_premise"] is True
 
 
 def test_the_reads_are_bounded_to_the_pinned_market(repair):
@@ -493,7 +510,9 @@ def test_the_reviewed_apply_writes_the_plan_and_nothing_else(repair, retained):
     s = _session(retained)
     out = _run(repair, s, execute=True, expect_plan_hash=h)
     assert out["written"] == 72 and s.commits == 1
-    assert any("FOR SHARE" in q for q in s.sql if "futures_markets" in q)
+    reads = [q for q in s.sql if q.startswith("SELECT")]
+    assert [q.rsplit(" FOR ", 1)[-1] for q in reads[1:3]] == ["UPDATE", "SHARE"]
+    assert "FROM futures_markets" in reads[1] and "FROM futures_outcomes" in reads[2]
     grades = _grades(s)
     assert grades[BRENNAN] == (True, "leaderboard")
     assert sum(1 for g in grades.values() if g == (False, "leaderboard")) == 71
@@ -593,6 +612,132 @@ def test_a_write_that_moves_last_updated_refuses(repair, retained):
     with pytest.raises(repair.Refused, match="last_updated moved"):
         _run(repair, s, execute=True, expect_plan_hash=h)
     assert s.commits == 0
+
+
+# ── 4b. the roster: rows the plan never writes still decide "one winner" ──────
+#
+# CERT-4252's countercases. In each, every CAS the run issues still matches: the
+# concurrent write lands on a row the plan does NOT write, or adds a row. This fake
+# has no locks, so these prove the in-transaction roster check refuses; that the
+# LOCKS keep such a writer out at all (including in the instant after that check)
+# is proved only against real Postgres, in
+# tests/integration/test_repair_11315_roster_lock_pg.py.
+
+
+class AbsentRowCrownedAfterRead(FakeSession):
+    """CERT-4252 'absent-row-crowned': an unknown_absent outcome is crowned."""
+
+    def before_update(self, n):
+        if n == 1:
+            self.concurrent_write(ABSENT, is_winner=True, resolution_source="leaderboard")
+
+
+class AlreadyWinnerClearedAfterRead(FakeSession):
+    """CERT-4252 'already-winner-cleared': the already-graded winner is cleared."""
+
+    def before_update(self, n):
+        if n == 1:
+            self.concurrent_write(BRENNAN, is_winner=None, resolution_source=None)
+
+
+class OutcomeJoinsAfterRead(FakeSession):
+    """An outcome inserted into the market after the roster was read."""
+
+    def before_update(self, n):
+        if n == 1:
+            self.durable[JOINER] = dict(
+                id=JOINER,
+                market_id=64266833,
+                external_id="dg_77777777",
+                is_winner=True,
+                resolution_source="leaderboard",
+                last_updated=LAST_UPDATED,
+                row_version="88000002",
+            )
+
+
+class AbsentRowLeavesAfterRead(FakeSession):
+    """An admitted outcome is moved out of the market after the roster was read."""
+
+    def before_update(self, n):
+        if n == 1:
+            self.concurrent_write(ABSENT, market_id=1)
+
+
+ABSENT = 241857510  # RETAINED id; CONSTRUCTED as off the 72-row board
+JOINER = 999_000_001  # CONSTRUCTED
+
+
+def _brennan_already(retained):
+    outcomes = _outcomes(retained)
+    _row(outcomes, BRENNAN).update(is_winner=True, resolution_source="leaderboard")
+    return outcomes
+
+
+def test_the_countercase_rows_are_rows_the_plan_never_writes(repair, retained):
+    """Vacuity check: the concurrent targets are outside every CAS."""
+    out = _plan(repair, retained)
+    assert ABSENT in out["accounting"]["unknown_absent"]
+    assert JOINER not in {o["id"] for o in _outcomes(retained)}
+    already = _plan(repair, retained, outcomes=_brennan_already(retained))
+    assert already["admissible"] and already["accounting"]["already"] == [BRENNAN]
+    assert BRENNAN not in {w["id"] for w in already["write"]}
+
+
+@pytest.mark.parametrize(
+    "cls, brennan_already, reason",
+    [
+        (AbsentRowCrownedAfterRead, False, f"outcomes [{ABSENT}] changed"),
+        (AlreadyWinnerClearedAfterRead, True, f"outcomes [{BRENNAN}] changed"),
+        (OutcomeJoinsAfterRead, False, f"outcomes [{JOINER}] joined the market"),
+        (AbsentRowLeavesAfterRead, False, f"outcomes [{ABSENT}] left the market"),
+    ],
+    ids=["absent-row-crowned", "already-winner-cleared", "outcome-joins", "absent-row-leaves"],
+)
+def test_a_roster_change_off_the_write_list_refuses_and_commits_nothing(
+    repair, retained, cls, brennan_already, reason
+):
+    outcomes = _brennan_already(retained) if brennan_already else _outcomes(retained)
+    h = _hash(repair, retained, outcomes=outcomes)
+    s = _session(retained, cls=cls, outcomes=outcomes)
+    with pytest.raises(repair.Refused, match="roster moved inside the transaction") as caught:
+        _run(repair, s, execute=True, expect_plan_hash=h)
+    assert reason in str(caught.value)
+    # Every CAS matched: the refusal is the roster check, after the last UPDATE.
+    assert len(s.updates) == (71 if brennan_already else 72)
+    asyncio.run(s.rollback())
+    assert s.commits == 0
+    assert all(_grades(s)[i] == (None, None) for i in s.durable if i not in (ABSENT, BRENNAN, JOINER))
+
+
+def test_the_unchanged_brennan_already_roster_still_writes_the_losers(repair, retained):
+    """Positive control for the 'already' arm: the same roster, nobody moves."""
+    outcomes = _brennan_already(retained)
+    h = _hash(repair, retained, outcomes=outcomes)
+    s = _session(retained, outcomes=outcomes)
+    out = _run(repair, s, execute=True, expect_plan_hash=h)
+    assert out["written"] == 71 and s.commits == 1
+    assert [i for i, g in _grades(s).items() if g[0] is True] == [BRENNAN]
+
+
+def test_an_apply_without_the_foreign_key_refuses_before_reading(repair, retained):
+    h = _hash(repair, retained)
+    s = _session(retained, outcome_fk=False)
+    with pytest.raises(repair.Refused, match="roster_lock_premise"):
+        _run(repair, s, execute=True, expect_plan_hash=h)
+    assert s.updates == [] and not any("FOR " in q for q in s.sql)
+    # The dry run reads and reports it; it never decides admissibility.
+    plan = _run(repair, _session(retained, outcome_fk=False), execute=False)
+    assert plan["roster_lock_premise"] is False and plan["admissible"]
+
+
+def test_the_undo_does_not_depend_on_the_roster_premise(repair, retained):
+    """A restore's inverse CAS is per row, so a missing key never blocks the undo."""
+    s, written = _applied(repair, retained)
+    s.outcome_fk = False
+    plan = _run(repair, s, execute=False, written=written)
+    out = _run(repair, s, execute=True, expect_plan_hash=plan["plan_hash"], written=written)
+    assert out["written"] == 72 and all(g == (None, None) for g in _grades(s).values())
 
 
 # ── 5. the undo ──────────────────────────────────────────────────────────────

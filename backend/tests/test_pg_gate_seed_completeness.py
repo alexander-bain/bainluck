@@ -700,6 +700,11 @@ COVERED = (
     # (whole second or not) and odds/book columns (the history shape), and each
     # leg's opening/calibration fields — all named on every seed.
     "test_repair_pm_under_inverted_history_2027_pg.py",
+    # #11315 (CERT-4252's repair). Seeds by ORM; its one raw INSERT is the
+    # concurrent writer adding a crowned outcome mid-repair, which the market's
+    # FOR UPDATE must hold out through the foreign key. It names every NOT NULL
+    # column, so it dies on the lock, never on the schema.
+    "test_repair_11315_roster_lock_pg.py",
 )
 
 INTEGRATION_DIR = Path(__file__).parent / "integration"

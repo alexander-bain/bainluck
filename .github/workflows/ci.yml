@@ -8085,20 +8085,8 @@ jobs:
           }
 
       - name: "#11007 an undecided Polymarket leg stops reading as settled and Lost, and the undo round-trips (real Postgres)"
-        # PILLAR TRUTH. SHIP: the Fed rate-cut page stops calling the
-        # still-undecided October and December 2026 meetings Lost or the whole
-        # question Settled, while its genuinely decided legs keep their results.
-        # From production's poisoned rows (113883 / Gamma 106884): the attended
-        # rail's exact-id plan bound to every written row version, FOR UPDATE
-        # compare-and-set, one transaction per parent, D51 before-images in the
-        # write's own transaction, and a whole-parent restore that refuses a
-        # same-value later writer, which a session double reads green on, and
-        # that applies only to the one plan_hash named. Plus
-        # the reader's own detail route, the REAL poll writer and the REAL gated
-        # Gamma grader re-run over the repaired rows (with controls that
-        # reproduce the defect), and the REAL sunk-recovery selector reaching the
-        # parent it could not reach before. Runs in its own throwaway database on
-        # the real ORM schema.
+        # Attended repair rail, real ORM schema; what each case proves is in the
+        # test file's docstring (bytes here count toward GitHub's workflow cap).
         if: matrix.group == 'shared-suffix' && needs.change-scope.outputs.reuse != 'true'
         run: |
           set -o pipefail
@@ -8440,6 +8428,24 @@ jobs:
           fi
           grep -qE "[^0-9]3 passed([,[:space:]]|$)" /tmp/state-read-window10090.txt || {
             echo "::error::#10090 state read window gate did not execute all three cases"
+            exit 1
+          }
+
+      - name: "#11315 the exact-market grade's roster locks hold a concurrent writer out (real Postgres)"
+        # Real row locks vs a second connection; an e892 arm must let it in.
+        if: matrix.group == 'isolated' && needs.change-scope.outputs.reuse != 'true'
+        run: |
+          python -m pytest tests/integration/test_repair_11315_roster_lock_pg.py -v -rs > /tmp/roster11315.txt 2>&1 || {
+            cat /tmp/roster11315.txt
+            exit 1
+          }
+          cat /tmp/roster11315.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/roster11315.txt; then
+            echo "::error::#11315 roster lock gate skipped"
+            exit 1
+          fi
+          grep -qE "[^0-9]19 passed([,[:space:]]|$)" /tmp/roster11315.txt || {
+            echo "::error::#11315 roster lock gate did not run all nineteen cases"
             exit 1
           }
 

@@ -62,12 +62,41 @@ THE BINDING — the plan reviewed is the plan written
 ``plan_hash`` covers the market's row version, the board's sha256, every outcome's
 (id, external id, grade, source, row version) and every planned write. Any write to
 the market or to ANY of its outcomes after the reviewed dry run moves ``xmin`` and
-the hash, and the apply refuses. The apply holds the market row ``FOR SHARE`` while it
-writes, and each outcome UPDATE re-states identity, the NULL before-state and the row
-version, so a writer landing between the read and the UPDATE matches zero rows. Each
-statement must change exactly one row, ``last_updated`` must not move (only
-``is_winner`` and ``resolution_source`` are written), and the count must equal the
-plan. Any refusal rolls the whole transaction back: all writes or none.
+the hash, and the apply refuses. Each outcome UPDATE re-states identity, the NULL
+before-state and the row version. Each statement must change exactly one row,
+``last_updated`` must not move (only ``is_winner`` and ``resolution_source`` are
+written), and the count must equal the plan. Any refusal rolls the whole transaction
+back: all writes or none.
+
+THE ROSTER — every row admission read stays as read until COMMIT
+----------------------------------------------------------------
+
+Admission reads the WHOLE roster: "no other winner" is decided on rows the plan
+never writes (``unknown_absent``, ``already``). A CAS on the written rows cannot
+see a concurrent writer crown an absent player, clear an ``already`` winner, or
+insert a new outcome. So the apply locks the roster, not just its targets:
+
+* the market row ``FOR UPDATE``. A child INSERT (or an UPDATE moving an outcome
+  INTO this market) runs the foreign key's check, which takes ``FOR KEY SHARE``
+  on this row; ``FOR UPDATE`` is the one row lock that conflicts with it
+  (``FOR SHARE``/``FOR NO KEY UPDATE`` do not), so no outcome can join the
+  market until this transaction ends. It also blocks a market UPDATE/DELETE;
+* every outcome read ``FOR SHARE``, taken AFTER the market lock, in id order. It
+  conflicts with the ``FOR NO KEY UPDATE``/``FOR UPDATE`` that any UPDATE or
+  DELETE of that row needs, so no read row can change or leave until COMMIT.
+  Under READ COMMITTED a row a concurrent writer committed while we waited comes
+  back as its NEW version (new ``xmin``), so the hash refuses it;
+* the insert half rests on the foreign key existing. The run reads
+  ``pg_constraint`` for it and an apply refuses without it
+  (``roster_lock_premise``); the dry run reports it;
+* immediately before COMMIT the apply re-reads the roster inside the same
+  transaction and refuses unless every row is exactly the row admitted (or the
+  version this run wrote) and none has joined.
+
+A writer that wants a locked row waits for this transaction (it cannot commit
+first); one already holding a lock makes this run wait at most
+``LOCK_TIMEOUT_MS`` and then refuse. Locks are row locks on one market and its
+outcomes; nothing table-wide, no retry.
 
 THE UNDO — reviewable, never automatic
 --------------------------------------
@@ -527,6 +556,22 @@ _READ_OUTCOMES_SQL = (
     "WHERE market_id = :mid ORDER BY id LIMIT :cap"
 )
 
+# The roster locks (see THE ROSTER above). Only a write run takes them; the dry run
+# locks nothing. The market lock must be FOR UPDATE: it is the only row lock that
+# conflicts with the FOR KEY SHARE a child INSERT's foreign-key check takes.
+_MARKET_LOCK = " FOR UPDATE"
+_ROSTER_LOCK = " FOR SHARE"
+
+# The insert half of the roster lock exists only if this foreign key does.
+_OUTCOME_MARKET_FK_SQL = (
+    "SELECT count(*) AS n FROM pg_constraint c "
+    "JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = ANY (c.conkey) "
+    "WHERE c.contype = 'f' "
+    "AND c.conrelid = 'futures_outcomes'::regclass "
+    "AND c.confrelid = 'futures_markets'::regclass "
+    "AND array_length(c.conkey, 1) = 1 AND a.attname = 'market_id'"
+)
+
 # Everything the plan decided on, re-stated: identity, before-state and row version.
 # `xmin` moves on ANY update of the row, including one that writes the same values,
 # so a writer landing between this run's read and its UPDATE matches zero rows.
@@ -542,12 +587,45 @@ _CAS_SQL = (
 
 
 async def _read(session, *, lock: bool) -> tuple[dict | None, list[dict]]:
-    sql = _READ_MARKET_SQL + (" FOR SHARE" if lock else "")
+    # Market first: once it is held no outcome can join, so the outcome read (a
+    # fresh READ COMMITTED snapshot) sees every row that will exist before COMMIT.
+    sql = _READ_MARKET_SQL + (_MARKET_LOCK if lock else "")
     got = [dict(r._mapping) for r in await session.execute(text(sql), {"id": MARKET.id})]
-    outcomes = await session.execute(
-        text(_READ_OUTCOMES_SQL), {"mid": MARKET.id, "cap": OUTCOME_READ_CAP}
-    )
-    return (got[0] if got else None), [dict(r._mapping) for r in outcomes]
+    return (got[0] if got else None), await _read_outcomes(session, lock=lock)
+
+
+async def _read_outcomes(session, *, lock: bool) -> list[dict]:
+    sql = _READ_OUTCOMES_SQL + (_ROSTER_LOCK if lock else "")
+    outcomes = await session.execute(text(sql), {"mid": MARKET.id, "cap": OUTCOME_READ_CAP})
+    return [dict(r._mapping) for r in outcomes]
+
+
+async def _roster_lock_premise(session) -> bool:
+    got = [dict(r._mapping) for r in await session.execute(text(_OUTCOME_MARKET_FK_SQL), {})]
+    return bool(got) and got[0].get("n", 0) >= 1
+
+
+def _roster_drift(admitted: list[dict], returned: dict[int, str], now: list[dict]) -> list[str]:
+    """What moved between admission and COMMIT, read inside this transaction.
+
+    Every admitted row must still be there at the version read (or, for a row this
+    run wrote, the version its UPDATE returned) and no row may have joined. That is
+    the whole check: a row at its admitted ``xmin`` holds its admitted grade, and
+    admission already refused any winner but the pinned one.
+    """
+    expected = {o["id"]: returned.get(o["id"], o["row_version"]) for o in admitted}
+    seen = {o["id"]: o["row_version"] for o in now}
+    reasons = []
+    joined = sorted(set(seen) - set(expected))
+    left = sorted(set(expected) - set(seen))
+    moved = sorted(i for i in set(seen) & set(expected) if seen[i] != expected[i])
+    if joined:
+        reasons.append(f"outcomes {joined[:5]} joined the market")
+    if left:
+        reasons.append(f"outcomes {left[:5]} left the market")
+    if moved:
+        reasons.append(f"outcomes {moved[:5]} changed")
+    return reasons
 
 
 def _unknown_report(decided: dict, returned: dict, written: int, exc: BaseException) -> dict:
@@ -578,6 +656,14 @@ async def run(
     written: dict[int, str] | None = None,
 ) -> dict:
     """Read, decide, and — when ``execute`` — write the plan in this transaction."""
+    premise = await _roster_lock_premise(session)
+    # Only the apply decides on the whole roster; a restore's inverse CAS is per row.
+    if execute and written is None and not premise:
+        raise Refused(
+            "roster_lock_premise: no foreign key futures_outcomes(market_id) → "
+            "futures_markets(id), so the market lock cannot keep an outcome from "
+            "joining mid-run"
+        )
     market, outcomes = await _read(session, lock=execute)
     if written is not None:
         decided = plan_restore(market, outcomes, written)
@@ -622,6 +708,12 @@ async def run(
             count += 1
         if count != len(decided["write"]):
             raise Refused(f"changed {count} rows, the plan holds {len(decided['write'])}")
+        if count and written is None:
+            # The locks are the guarantee; this is the same transaction checking it
+            # held, so a missing lock refuses instead of committing a second winner.
+            drift = _roster_drift(outcomes, returned, await _read_outcomes(session, lock=False))
+            if drift:
+                raise Refused("roster moved inside the transaction: " + "; ".join(drift))
         if count:
             try:
                 await session.commit()
@@ -630,7 +722,13 @@ async def run(
             except BaseException as exc:
                 exc.commit_unknown = _unknown_report(decided, returned, count, exc)
                 raise
-    out = dict(decided, executed=execute, written=count, written_versions=returned)
+    out = dict(
+        decided,
+        executed=execute,
+        written=count,
+        written_versions=returned,
+        roster_lock_premise=premise,
+    )
     if not execute:
         out["mode"] = f"{decided['mode']}-plan"
     return out
