@@ -739,6 +739,15 @@ const SPORT_LABEL: Record<string, string> = {
   basketball_ncaab: "NCAAB",
   golf_pga: "PGA Golf",
 };
+/** The v1 contract's `tier1[]` roster (`admin_dashboard._TIER1_SPORTS`), Golf and NCAAB included. */
+export const TIER1_COVERAGE_SPORTS = [
+  "basketball_nba",
+  "americanfootball_nfl",
+  "icehockey_nhl",
+  "baseball_mlb",
+  "basketball_ncaab",
+  "golf_pga",
+] as const;
 
 /**
  * `/api/admin/event-source-coverage/cached`: the saved observation of the
@@ -747,11 +756,19 @@ const SPORT_LABEL: Record<string, string> = {
  * denominator) — a sport the observation had no events for stays on the tile as
  * unmeasured. A source the row marks not expected is skipped, not counted green.
  *
+ * The projection is a fixed roster: the v1 contract sends every sport in
+ * `TIER1_COVERAGE_SPORTS` exactly once. A missing, repeated or unknown sport is
+ * a malformed answer and is refused — a sport that never arrived cannot be
+ * skipped into an all-clear.
+ *
  * Current only on the route's `freshness: "fresh"`, and only until the saved
  * `fresh_until` (observation start + the reviewed 30 min) passes on this tab's
  * clock. `stale` reads stale; `unknown` (unreviewed policy, unknown release,
- * future clock) is graded but never current. Every non-hit answer keeps its own
- * reason. Nothing here asks the server to compute, warm or refresh.
+ * future clock) is graded but never current. An observation more than
+ * `SOURCE_CLOCK_SKEW_S` ahead of this tab's clock has no age this tab can
+ * vouch for, so a server "fresh" is graded but not called current either.
+ * Every non-hit answer keeps its own reason. Nothing here asks the server to
+ * compute, warm or refresh.
  */
 export function evaluateSourceCoverage(read: ReadResult, nowMs: number): CorrectnessTile {
   const base = {
@@ -795,10 +812,15 @@ export function evaluateSourceCoverage(read: ReadResult, nowMs: number): Correct
   }
 
   const rows: CorrectnessRow[] = [];
+  const roster: ReadonlySet<string> = new Set(TIER1_COVERAGE_SPORTS);
+  const seen = new Set<string>();
   for (const entry of tier1) {
     const sport = isObj(entry) ? asStr(entry.sport) : null;
     if (!isObj(entry) || !sport) return wrongShape(base, "a Tier-1 row without a sport", ms);
     const label = SPORT_LABEL[sport] ?? sport;
+    if (!roster.has(sport)) return wrongShape(base, `Tier-1 row for ${code(sport)}, not a Tier-1 sport`, ms);
+    if (seen.has(sport)) return wrongShape(base, `Tier-1 row ${label} sent more than once`, ms);
+    seen.add(sport);
     if (entry.row_state === "no_in_window_events") {
       rows.push({ label, value: "no events in window", state: "unavailable", note: "nothing measured for this sport" });
       continue;
@@ -820,6 +842,10 @@ export function evaluateSourceCoverage(read: ReadResult, nowMs: number): Correct
         state: n >= total ? "green" : "red",
       });
     }
+  }
+  const absent = TIER1_COVERAGE_SPORTS.filter((s) => !seen.has(s));
+  if (absent.length > 0) {
+    return wrongShape(base, `Tier-1 rows missing for ${absent.map((s) => SPORT_LABEL[s]).join(", ")}`, ms);
   }
   const graded = foldStates(rows.map((r) => r.state));
   rows.sort((a, b) => STATE_RANK[a.state] - STATE_RANK[b.state]);
@@ -856,6 +882,12 @@ export function evaluateSourceCoverage(read: ReadResult, nowMs: number): Correct
     if (!freshUntil) return wrongShape(base, "fresh without fresh_until", ms);
     if (nowMs >= Date.parse(freshUntil)) {
       return notCurrent(tile, "stale", "Stale — the observation aged past its 30-min horizon in this open tab");
+    }
+    // The server's horizon is its own; whether THIS tab can call the evidence
+    // current needs a local age, and a start this far ahead of the tab's clock
+    // gives none (the grid tile's skew rule). The observation time is kept.
+    if (Date.parse(observedAt) - nowMs > SOURCE_CLOCK_SKEW_S * 1000) {
+      return notCurrent(tile, "freshness_unknown", "Freshness unknown — its observation started more than 5 min ahead of this browser's clock");
     }
     return tile;
   }

@@ -43,9 +43,11 @@ import {
   foldStates,
   GRID_SENTINEL_STALE_AFTER_S,
   mceState,
+  SOURCE_CLOCK_SKEW_S,
   startCorrectnessReads,
   startUiClock,
   summarize,
+  TIER1_COVERAGE_SPORTS,
   UI_CLOCK_INTERVAL_MS,
   WINNERS_STALE_AFTER_S,
   type CorrectnessReads,
@@ -551,6 +553,95 @@ describe("Tier-1 source coverage — from the saved observation only", () => {
   it("a 503 without the contract's body is a plain failed read", () => {
     const t = evaluateSourceCoverage({ status: "error", kind: "http", detail: "HTTP 503", ms: 30, httpStatus: 503 }, NOW);
     expect(t).toMatchObject({ state: "unavailable", headline: "Unavailable — HTTP 503" });
+  });
+});
+
+// Root's 502f review: the SAME complete fresh answer, read on a tab whose clock is
+// behind the observation, and projections that drop or repeat a roster member.
+describe("Tier-1 source coverage — no all-clear without a local age or the whole roster", () => {
+  const obsStart = (body: ReturnType<typeof coverageHit>) => Date.parse((body.last_good as unknown as { observation_started_at: string }).observation_started_at);
+  const tier1Of = (body: ReturnType<typeof coverageHit>) => body.tier1 as { sport: string }[];
+
+  it("the complete fresh answer is green on an ordinary clock (the control every case below changes one thing in)", () => {
+    const t = evaluateSourceCoverage(saved(200, coverageHit()), NOW);
+    expect(t).toMatchObject({ state: "green", headline: "Every expected Tier-1 source on every event" });
+    expect(t.rows).toHaveLength(30);
+  });
+
+  it("keeps the same answer as graded history, not current, when this tab's clock is ten minutes before the observation", () => {
+    const body = coverageHit();
+    const clock = obsStart(body) - 10 * 60_000;
+    const t = evaluateSourceCoverage(saved(200, body), clock);
+    expect(t).toMatchObject({ state: "freshness_unknown", lastVerdict: "green" });
+    expect(t.headline).toBe(
+      "Freshness unknown — its observation started more than 5 min ahead of this browser's clock. Last read: Every expected Tier-1 source on every event",
+    );
+    // The producer's own time and the graded rows are kept; nothing is re-stamped.
+    expect(t.asOf).toBe((body.last_good as unknown as { observation_started_at: string }).observation_started_at);
+    expect(t.rows).toHaveLength(30);
+    expect(summarize([t]).status).not.toBe("good");
+  });
+
+  it("uses the grid tile's existing skew tolerance: just inside it is current, just past it is not", () => {
+    const body = coverageHit();
+    expect(evaluateSourceCoverage(saved(200, body), obsStart(body) - SOURCE_CLOCK_SKEW_S * 1000).state).toBe("green");
+    expect(evaluateSourceCoverage(saved(200, body), obsStart(body) - SOURCE_CLOCK_SKEW_S * 1000 - 1000).state).toBe("freshness_unknown");
+  });
+
+  it("the same tab reads current again once its clock is back past the observation — no new request", () => {
+    const body = coverageHit();
+    expect(evaluateSourceCoverage(saved(200, body), obsStart(body) - 10 * 60_000).state).toBe("freshness_unknown");
+    expect(evaluateSourceCoverage(saved(200, body), NOW).state).toBe("green");
+  });
+
+  it("names the contract roster the backend projects (admin_dashboard._TIER1_SPORTS), Golf and NCAAB included", () => {
+    expect([...TIER1_COVERAGE_SPORTS]).toEqual(TIER1_SPORTS);
+  });
+
+  it("refuses a projection carrying only one of the six sports instead of grading the one that arrived", () => {
+    const body = coverageHit();
+    const t = evaluateSourceCoverage(saved(200, { ...body, tier1: tier1Of(body).slice(0, 1) }), NOW);
+    expect(t).toMatchObject({ state: "unavailable", rows: [], asOf: null });
+    expect(t.headline).toBe("Unavailable — unexpected response shape (Tier-1 rows missing for NFL, NHL, MLB, NCAAB, PGA Golf)");
+  });
+
+  it.each([
+    ["PGA Golf", "golf_pga"],
+    ["NCAAB", "basketball_ncaab"],
+  ])("refuses a projection that silently omits %s — unlike a sport sent as having no events", (label, sport) => {
+    const body = coverageHit();
+    const t = evaluateSourceCoverage(saved(200, { ...body, tier1: tier1Of(body).filter((r) => r.sport !== sport) }), NOW);
+    expect(t).toMatchObject({ state: "unavailable", rows: [] });
+    expect(t.headline).toContain(`Tier-1 rows missing for ${label}`);
+  });
+
+  it("refuses one sport repeated six times — six rows is not six sports", () => {
+    const body = coverageHit();
+    const t = evaluateSourceCoverage(saved(200, { ...body, tier1: tier1Of(body).map(() => tier1Of(body)[0]) }), NOW);
+    expect(t).toMatchObject({ state: "unavailable", rows: [] });
+    expect(t.headline).toBe("Unavailable — unexpected response shape (Tier-1 row NBA sent more than once)");
+  });
+
+  it("refuses a repeat that takes a missing sport's place, keeping the length at six", () => {
+    const body = coverageHit();
+    const rows = tier1Of(body);
+    const t = evaluateSourceCoverage(saved(200, { ...body, tier1: [...rows.slice(0, 5), rows[0]] }), NOW);
+    expect(t).toMatchObject({ state: "unavailable", rows: [] });
+  });
+
+  it("refuses a sport outside the v1 roster", () => {
+    const body = coverageHit();
+    const extra = { ...tier1Of(body)[0], sport: "soccer_epl" };
+    const t = evaluateSourceCoverage(saved(200, { ...body, tier1: [...tier1Of(body), extra] }), NOW);
+    expect(t).toMatchObject({ state: "unavailable", rows: [] });
+    expect(t.headline).toContain("soccer_epl, not a Tier-1 sport");
+  });
+
+  it("does not depend on the projection's order", () => {
+    const body = coverageHit();
+    const t = evaluateSourceCoverage(saved(200, { ...body, tier1: [...tier1Of(body)].reverse() }), NOW);
+    expect(t.state).toBe("green");
+    expect(t.rows).toHaveLength(30);
   });
 });
 
