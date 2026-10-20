@@ -444,6 +444,16 @@ final class TennisRecordedChanceBeforeScheduledStart9483Tests: XCTestCase {
         }
     }
 
+    /// The live edge's away tail and its endpoint label are the blend's alone:
+    /// no other source supplied a `1 − home` side to draw there.
+    func testOnlyTheBlendDrawsTheAwayTail() {
+        typealias R = TennisChartReading9483
+        XCTAssertTrue(R.drawsAwayTail(source: "aggregate"))
+        for other in ["consensus", "kalshi", "polymarket"] {
+            XCTAssertFalse(R.drawsAwayTail(source: other), "\(other) would draw a complement it never supplied")
+        }
+    }
+
     /// The whole-line map is the one-time lookup's rule, read once: they agree
     /// at every served time, including a null side and a duplicate.
     func testTheSuppliedAwaysAgreeWithTheOneTimeLookup() throws {
@@ -507,6 +517,29 @@ final class TennisRecordedChanceBeforeScheduledStart9483Tests: XCTestCase {
                        [.shown(.unavailable), .showLatest], "no names head an empty table")
         XCTAssertEqual(R.panelParts(shown: .reading(baseline, held: true), baseline: baseline, offersLatest: false),
                        [.names, .shown(.reading(baseline, held: true))], "the same pair never prints twice")
+    }
+
+    /// A name breaks only at a space or after a hyphen or slash, so those are
+    /// the pieces the columns must fit whole (lane1b R2).
+    func testANameSplitsOnlyWhereALineMayBreak() {
+        typealias R = TennisChartReading9483
+        XCTAssertEqual(R.unbreakablePieces(of: "Medvedev"), ["Medvedev"])
+        XCTAssertEqual(R.unbreakablePieces(of: "Granollers/Zeballos"), ["Granollers/", "Zeballos"])
+        XCTAssertEqual(R.unbreakablePieces(of: "Auger-Aliassime"), ["Auger-", "Aliassime"])
+        XCTAssertEqual(R.unbreakablePieces(of: "de Minaur"), ["de", "Minaur"])
+        XCTAssertEqual(R.unbreakablePieces(of: "Davidovich Fokina / Carreño"),
+                       ["Davidovich", "Fokina", "/", "Carreño"])
+        XCTAssertEqual(R.unbreakablePieces(of: ""), [])
+    }
+
+    /// The column is the wider of the values' width and the widest name piece,
+    /// rounded up so the piece is never a fraction too wide for it.
+    func testAValueColumnWidensForALongNameAndNeverNarrowsBelowTheValues() {
+        typealias R = TennisChartReading9483
+        XCTAssertEqual(R.valueColumn(forValues: 52, widestNamePiece: 56.4), 57,
+                       "a 52pt column cuts off Medvedev and Sabalenka")
+        XCTAssertEqual(R.valueColumn(forValues: 52, widestNamePiece: 37.5), 52, "Zverev keeps the values' width")
+        XCTAssertEqual(R.valueColumn(forValues: 64, widestNamePiece: 0), 64, "before the names are measured")
     }
 
     // MARK: - Design C3: the full-size header keeps the match and its result
@@ -646,6 +679,22 @@ final class TennisRecordedChanceBeforeScheduledStart9483Tests: XCTestCase {
         XCTAssertTrue(flat.contains("case.showLatest:Button(TennisChartReading9483.showLatestText){pin.holdLatest(in:series)}.font(.caption).frame(minHeight:44,alignment:.leading)"),
                       "Show latest keeps its 44pt target, in its own row after the comparison")
         XCTAssertTrue(flat.contains(".font(prominent?.title3.bold():.subheadline.bold())"), "the values' type must not shrink")
+    }
+
+    /// The names head columns sized for them, shared with every value row,
+    /// and wrap rather than truncate (lane1b R2).
+    func testTheNameColumnsFitTheNamesAndTheValuesShareThem() throws {
+        let helper = try codeOnly(helperPath)
+        let flat = helper.filter { !$0.isWhitespace }
+        XCTAssertTrue(flat.contains("TennisChartReading9483.valueColumn(forValues:expanded?prominentColumn:column,widestNamePiece:widestNamePiece)"),
+                      "the value columns must widen for the names heading them")
+        XCTAssertTrue(flat.contains(".background(nameWidths).onPreferenceChange(TennisNamePieceWidth9483.self){widestNamePiece=$0}"))
+        XCTAssertTrue(flat.contains("TennisChartReading9483.unbreakablePieces(of:homeName)+TennisChartReading9483.unbreakablePieces(of:awayName)"))
+        XCTAssertTrue(flat.contains("Text(text).font(.caption).foregroundStyle(.primary).fixedSize(horizontal:false,vertical:true).frame(width:valueColumn,alignment:.leading)"),
+                      "a column head wraps whole, in the shared column")
+        XCTAssertTrue(flat.contains(".monospacedDigit().foregroundStyle(color).frame(width:valueColumn,alignment:.leading)"),
+                      "the values sit in the same column as their name")
+        XCTAssertFalse(helper.contains(".lineLimit("), "no name in the panel may be truncated, at any text size")
     }
 
     func testTheFullSizeHeaderReadsTheScoreboardNeverAProjection() throws {

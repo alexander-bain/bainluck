@@ -245,6 +245,35 @@ enum TennisChartReading9483 {
         source == "aggregate"
     }
 
+    /// The pieces of a competitor's name a line may never split: a line breaks
+    /// only at a space or after a hyphen or slash (a doubles pair,
+    /// "Granollers/Zeballos"). The value columns are at least as wide as the
+    /// widest piece, so a name wraps there and never mid-word or truncated.
+    static func unbreakablePieces(of name: String) -> [String] {
+        var pieces: [String] = []
+        var piece = ""
+        for character in name {
+            if character.isWhitespace {
+                if !piece.isEmpty { pieces.append(piece) }
+                piece = ""
+            } else {
+                piece.append(character)
+                if character == "-" || character == "/" {
+                    pieces.append(piece)
+                    piece = ""
+                }
+            }
+        }
+        if !piece.isEmpty { pieces.append(piece) }
+        return pieces
+    }
+
+    /// A value column: wide enough for "100%" at its row's type, and for the
+    /// widest unbreakable piece of either name heading it.
+    static func valueColumn(forValues values: CGFloat, widestNamePiece: CGFloat) -> CGFloat {
+        max(values, widestNamePiece.rounded(.up))
+    }
+
     /// Where a reading's second competitor sits on the plot: the value
     /// `labels(for:)` prints, unformatted. Nil where it prints nothing.
     static func awayValue(for reading: Reading) -> Double? {
@@ -368,11 +397,15 @@ struct TennisReadingPanel9483: View {
 
     @Environment(\.dynamicTypeSize) private var textSize
     /// The value columns, wide enough for "100%" at each row's type and
-    /// scaled with it, so the dated caption beside them takes the rest.
+    /// scaled with it (and for the names heading them, `valueColumn`), so the
+    /// dated caption beside them takes the rest.
     /// (Not private: a defaulted private `var` would make the memberwise
     /// init private, and `OddsChartView` builds this panel.)
     @ScaledMetric(relativeTo: .title3) var prominentColumn: CGFloat = 64
     @ScaledMetric(relativeTo: .subheadline) var column: CGFloat = 52
+    /// The widest unbreakable piece of either name at the heads' type, as laid
+    /// out (`nameWidths`): "Medvedev" and "Sabalenka" are wider than 52pt.
+    @State var widestNamePiece: CGFloat = 0
 
     private var shown: TennisChartReading9483.Shown {
         if let scrubDate { return series.resolve(series.inspect(at: scrubDate)) }
@@ -415,9 +448,34 @@ struct TennisReadingPanel9483: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+        .background(nameWidths)
+        .onPreferenceChange(TennisNamePieceWidth9483.self) { widestNamePiece = $0 }
     }
 
-    private var valueColumn: CGFloat { expanded ? prominentColumn : column }
+    /// One value column width for the head row and every value row below it.
+    private var valueColumn: CGFloat {
+        TennisChartReading9483.valueColumn(forValues: expanded ? prominentColumn : column,
+                                           widestNamePiece: widestNamePiece)
+    }
+
+    /// Every unbreakable piece of both names, laid out unwrapped at the heads'
+    /// type and hidden, reporting the widest.
+    private var nameWidths: some View {
+        let pieces = TennisChartReading9483.unbreakablePieces(of: homeName)
+            + TennisChartReading9483.unbreakablePieces(of: awayName)
+        return ZStack {
+            ForEach(Array(pieces.enumerated()), id: \.offset) { _, piece in
+                Text(piece)
+                    .font(.caption)
+                    .fixedSize()
+                    .background(GeometryReader { geo in
+                        Color.clear.preference(key: TennisNamePieceWidth9483.self, value: geo.size.width)
+                    })
+            }
+        }
+        .hidden()
+        .accessibilityHidden(true)
+    }
 
     /// The two names once, over the value columns of every row below.
     private var names: some View {
@@ -433,7 +491,7 @@ struct TennisReadingPanel9483: View {
         Text(text)
             .font(.caption)
             .foregroundStyle(.primary)
-            .lineLimit(2)
+            .fixedSize(horizontal: false, vertical: true)
             .frame(width: valueColumn, alignment: .leading)
     }
 
@@ -497,7 +555,7 @@ struct TennisReadingPanel9483: View {
             Text(name)
                 .font(.caption)
                 .foregroundStyle(.primary)
-                .lineLimit(1)
+                .fixedSize(horizontal: false, vertical: true)
             Text(value)
                 .font(prominent ? .title3.bold() : .subheadline.bold())
                 .monospacedDigit()
@@ -505,6 +563,15 @@ struct TennisReadingPanel9483: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .accessibilityElement(children: .combine)
+    }
+}
+
+/// #9483 tennis — the widest unbreakable name piece, carried up from the
+/// panel's hidden measurement to its value columns.
+private struct TennisNamePieceWidth9483: PreferenceKey {
+    static let defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = max(value, nextValue())
     }
 }
 
