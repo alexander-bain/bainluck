@@ -34,7 +34,7 @@ import sys
 import textwrap
 import time
 from pathlib import Path
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, contextmanager
 from types import SimpleNamespace
 
 import httpx
@@ -1495,6 +1495,26 @@ def _hanging_apply(tmp_path, deadline):
     return argv, _factory(_CommitSession(hang))
 
 
+@contextmanager
+def _a_collection_scans_only_the_cli():
+    """Keep the pytest process's own heap out of a sub-second wall.
+
+    A long CI shard holds ~0.6M tracked objects, and one automatic full
+    collection over them took 0.11-0.15 s locally. It is C-level, so it defers
+    the wall's ``SIGALRM``, and it lands where the CLI allocates: after the idle
+    wait, inside the 0.8 s wall's receipt slice (work ends 0.72 s, artifact
+    sealed by 0.78 s). Missing R.json in CI (#683) is that shape. ``gc.freeze``
+    moves what exists now into the permanent generation. It runs no collection
+    and prevents none: the CLI's own allocations are collected as in a fresh
+    attended process.
+    """
+    gc.freeze()
+    try:
+        yield
+    finally:
+        gc.unfreeze()
+
+
 class TestConsoleInsideTheWall:
     @pytest.mark.parametrize("deadline,delay", [(0.8, 0.0), (0.8, 0.6), (30.0, 3.0)])
     def test_the_import_receipt_reaches_the_console_inside_the_wall_or_not_at_all(
@@ -1510,10 +1530,14 @@ class TestConsoleInsideTheWall:
         """
         slow_console["delay"] = delay
         argv, factory = _hanging_apply(tmp_path, deadline)
-        t0 = time.monotonic()
-        code = _load_script("kalshi_archive_import.py").main(argv, session_factory=factory)
-        elapsed = time.monotonic() - t0
+        with _a_collection_scans_only_the_cli():
+            t0 = time.monotonic()
+            code = _load_script("kalshi_archive_import.py").main(argv, session_factory=factory)
+            elapsed = time.monotonic() - t0
         out = capsys.readouterr().out
+        assert (tmp_path / "R.json").exists(), (
+            f"no artifact after {elapsed:.3f}s; console {out[-600:]!r}"
+        )
         receipt = json.loads((tmp_path / "R.json").read_text())
         assert code == 3 and elapsed < deadline + 0.15
         assert receipt["uncertain_commits"][-1]["error"] == "acknowledgement_not_received"
