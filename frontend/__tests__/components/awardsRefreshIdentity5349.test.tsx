@@ -1,0 +1,32 @@
+/** @jest-environment jsdom */
+import React from "react";
+import { createRoot, type Root } from "react-dom/client";
+import { act } from "react-dom/test-utils";
+import sourceFixture from "../fixtures/awardsCategoryTruth5349.SYNTHETIC.json";
+import type { EventConceptResponse } from "@/lib/types";
+let mockSlug = "oscars-2026";
+let mockEnvelope = sourceFixture as unknown as EventConceptResponse;
+let mockInterval: (data: EventConceptResponse) => number;
+jest.mock("next/navigation", () => ({ useParams: () => ({ domain: "awards", slug: mockSlug }), useRouter: () => ({ replace: () => {} }) }));
+jest.mock("next/link", () => ({ __esModule: true, default: ({ children, ...props }: { children: React.ReactNode }) => <a {...props}>{children}</a> }));
+jest.mock("swr", () => ({ __esModule: true, default: (key: unknown[], fetcher: unknown, options?: { refreshInterval?: (data: EventConceptResponse) => number }) => { if (key?.[0] === "event-concept") { mockInterval = options!.refreshInterval!; return { data: mockEnvelope, error: null, isLoading: false }; } return { data: null, error: null, isLoading: false }; } }));
+jest.mock("@/hooks", () => ({ usePageTracking: () => {}, useScrollDepth: () => {}, useEngagementTime: () => {} }));
+jest.mock("@/lib/api", () => ({ fetchEventConcept: () => Promise.resolve(null), fetchFuturesHistory: () => Promise.resolve(null), formatProbability: (p: number | null) => p == null ? "—" : `${Math.round(p * 100)}%` }));
+import EventConceptPage from "@/app/event/[domain]/[slug]/page";
+let root: Root; let host: HTMLDivElement;
+const NOW = Date.UTC(2026, 9, 12, 12);
+beforeEach(() => { (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true; host = document.createElement("div"); root = createRoot(host); mockSlug = "oscars-2026"; mockEnvelope = sourceFixture as unknown as EventConceptResponse; jest.spyOn(Date, "now").mockReturnValue(NOW); });
+afterEach(() => { act(() => root.unmount()); jest.restoreAllMocks(); });
+test("actual mounted SWR callback survives incidental renders and stops at its original reading window", () => {
+  act(() => root.render(<EventConceptPage />)); const initial = mockInterval;
+  expect(initial(mockEnvelope)).toBe(30000);
+  jest.spyOn(Date, "now").mockReturnValue(NOW + 29 * 60 * 1000);
+  mockEnvelope = { ...mockEnvelope, event: { ...mockEnvelope.event, name: "Updated header" } };
+  act(() => root.render(<EventConceptPage />));
+  expect(mockInterval).toBe(initial); expect(initial(mockEnvelope)).toBe(30000);
+  jest.spyOn(Date, "now").mockReturnValue(NOW + 30 * 60 * 1000);
+  act(() => root.render(<EventConceptPage />));
+  expect(mockInterval).toBe(initial); expect(initial(mockEnvelope)).toBe(0);
+  mockSlug = "oscars-2025"; mockEnvelope = { ...mockEnvelope, event: { ...mockEnvelope.event, key: "event:awards:oscars-2025" } };
+  act(() => root.render(<EventConceptPage />)); expect(mockInterval).not.toBe(initial); expect(mockInterval(mockEnvelope)).toBe(0);
+});

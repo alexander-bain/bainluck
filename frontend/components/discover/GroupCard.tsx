@@ -8,6 +8,8 @@ import { BundleActionBar } from "./BundleActionBar";
 import { BundleHeader } from "./BundleHeader";
 import { bundleExpandLabel, bundleSeatCount } from "./constants";
 import { FuturesCompactRow } from "./FuturesCard";
+import { rottenTomatoesComparison } from "@/lib/discover/rottenTomatoesComparison";
+import { RottenTomatoesComparison } from "./RottenTomatoesComparison";
 
 interface GroupCardProps {
   items: FeedItem[];
@@ -61,6 +63,8 @@ export function GroupCard({ items, title, sharedQuestion, positionIndex }: Group
   // same lie as the `Show 1 more` this fix removes.
   const canExpand = items.length > peek.length;
   const shown = expanded ? items : peek;
+  const scoreComparison = rottenTomatoesComparison(items);
+  const displayedQuestion = scoreComparison ? "Rotten Tomatoes score forecasts" : sharedQuestion;
   const cat = primary.type === "futures" ? (primary.data as FeedFuturesData).llm_sport_category : null;
   const analytics = getDiscoverItemAnalytics(primary);
 
@@ -82,7 +86,7 @@ export function GroupCard({ items, title, sharedQuestion, positionIndex }: Group
     <div className="rounded-2xl border border-surface-border bg-surface-card shadow-lg overflow-hidden">
       <BundleHeader
         title={title}
-        sharedQuestion={sharedQuestion}
+        sharedQuestion={displayedQuestion}
         fallbackCount={`${items.length} markets`}
         category={cat}
         expanded={expanded}
@@ -93,13 +97,17 @@ export function GroupCard({ items, title, sharedQuestion, positionIndex }: Group
       {/* The members: the first `bundleSeatCount` of them collapsed, all of them
           expanded. Both are the same compact row — the header's question is
           answered by the rows, so the rows are what the card is for. */}
-      <div className="divide-y divide-surface-border border-t border-surface-border">
+      {scoreComparison ? (
+        <RottenTomatoesComparison comparison={{ ...scoreComparison, rows: scoreComparison.rows.slice(0, shown.length) }} />
+      ) : (
+        <div className="divide-y divide-surface-border border-t border-surface-border">
         {shown.map((item, i) => (
           <div key={i} className="px-4 py-3">
             <FuturesCompactRow item={item} data={item.data as FeedFuturesData} />
           </div>
         ))}
       </div>
+      )}
 
       {!expanded && canExpand && (
         <button
@@ -119,7 +127,7 @@ export function GroupCard({ items, title, sharedQuestion, positionIndex }: Group
       <BundleActionBar
         items={items}
         title={title}
-        sharedQuestion={sharedQuestion}
+        sharedQuestion={displayedQuestion}
         positionIndex={positionIndex}
       />
     </div>

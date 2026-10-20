@@ -3157,7 +3157,7 @@ export interface EventConceptResponse {
     // PR #6801 released (`/api/event` carries an 86400s positive mirror).
     sport_label?: string | null;
     name: string | null;
-    status: "upcoming" | "live" | "settled";
+    status: "upcoming" | "live" | "settled" | "unknown";
     start_date?: string | null;
     end_date?: string | null;
     venue?: string | null;
