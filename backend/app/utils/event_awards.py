@@ -61,10 +61,12 @@ _CATEGORY_NAME_RE = re.compile(
 
 # A question asking whether someone GETS nominated ("Will X be nominated for Best
 # Actress?") is a nomination market even though it names a "Best" category (#11336).
-# Verb-phrase only: an adjectival "a nominated film" / "most-nominated" in a winner
-# question stays a winner category, and \b keeps "denominated" out.
+# Verb-phrase only: an adjectival "a nominated film" / "most-nominated" or a post-noun
+# "a film nominated for X" in a winner question stays a winner category, so a bare
+# "nominated for" counts only when it opens the title. \b keeps "denominated" out.
 _NOMINATED_RE = re.compile(
-    r"\b(?:be|get|gets|got|is|are)\s+nominated\b|\bnominated\s+for\b", re.IGNORECASE
+    r"\b(?:be|get|gets|got|is|are)\s+(?:[a-z]+-)?nominated\b|^\s*nominated\s+for\b",
+    re.IGNORECASE,
 )
 
 # Leading boilerplate stripped so a category card reads "Best Picture", not

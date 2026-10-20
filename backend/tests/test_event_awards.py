@@ -132,12 +132,16 @@ class TestClassifyMarket:
         assert classify_market(None, "Who will get nominated for Best Director?") == "nominations"
         assert classify_market(None, "Will Dune: Part Three be nominated?") == "nominations"
         assert classify_market(None, "Nominated for Best Picture: Wicked?") == "nominations"
+        assert classify_market(None, "Will Wicked be Oscar-nominated for Best Picture?") == "nominations"
 
     def test_adjectival_nominated_in_a_winner_question_stays_a_category(self):
         assert classify_market(None, "Will a nominated film win Best Picture?") == "category"
         assert classify_market(None, "Will the most-nominated film win Best Picture?") == "category"
         assert classify_market(None, "Best dollar-denominated box office?") == "category"
         assert classify_market(None, "Will the most nominated film sweep?") == "novelty"
+        # Post-noun "nominated for" describes the film; the question is still who wins.
+        assert classify_market(
+            None, "Will a film nominated for Best Picture win Best Director?") == "category"
 
     def test_novelty(self):
         assert classify_market("KXOSCARGUESTS-26", "Who will attend the Oscars?") == "novelty"
