@@ -38,8 +38,10 @@ export interface BlendPreviewFrame {
   p: number | null;
   status?: string | null;
   provisional?: boolean;
-  /** Source observation supplied by the preview; never the browser receipt time. */
+  /** Legacy producer attempt time; never used as a chart observation. */
   observed_at?: string;
+  /** Complete blend observation clock, independent of retries and receipt time. */
+  display_observed_at?: string | null;
   preview: {
     kind: "blend" | "revoke";
     epoch: number;
@@ -135,7 +137,7 @@ export function previewAfter(
     p: frame.p as number,
     status: frame.status ?? null,
     expiresAt: now + (preview.ttl_ms as number),
-    observedAt: typeof frame.observed_at === "string" ? frame.observed_at : undefined,
+    observedAt: typeof frame.display_observed_at === "string" ? frame.display_observed_at : undefined,
   };
 }
 
