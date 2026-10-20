@@ -61,6 +61,7 @@ import {
   pageLiveClaimIsUnbacked,
 } from "@/lib/eventLivePush";
 import { frameFoldOrder } from "@/lib/foldRevision";
+import { overlayBlendPreview } from "@/lib/blendPreview";
 import { frameCarriesUnpricedSnapshot, snapshotRailPaysPricelessTrigger } from "@/lib/sourceSnapshot";
 import LiveAgeStamp, { heroStampIsStale } from "@/components/event/LiveAgeStamp";
 import { heroFreshness } from "@/lib/event/heroFreshness";
@@ -598,6 +599,9 @@ export default function EventPage({ params }: EventPageProps) {
   const quoteEligible = canSubscribeEventQuotes(event);
   const {
     connected: streamConnected,
+    // #10090: provisional hero overlay only (canary events).
+    blendPreview,
+    blendPreviewNow,
     chartPoints,
     status: reportedStreamStatus,
     recoveryGeneration,
@@ -1967,7 +1971,9 @@ export default function EventPage({ params }: EventPageProps) {
     openingHomePct,
     openingAwayPct: servedOpeningAwayPct,
   } = resolveProbability(
-    event,
+    // #10090: the hero alone may show a provisional blend; with none held
+    // this is `event` itself.
+    overlayBlendPreview(event, blendPreview, blendPreviewNow),
     historyData,
     lastChartPoint,
     isLive,

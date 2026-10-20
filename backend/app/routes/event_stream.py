@@ -52,6 +52,7 @@ from sqlalchemy.orm import selectinload
 
 from app.models import Event, FuturesMarket
 from app.services.database import async_session_maker
+from app.utils.blend_preview import is_preview_frame, preview_route_events
 from app.utils.live_push import (
     MAX_FRAME_AGE_S, event_channel, latest_frames, parse_frame, sse_encode,
 )
@@ -452,6 +453,7 @@ async def _stream(
 
     hub = fanout()
     subscription = _FoldSubscription(hub)
+    preview_on = event_id in preview_route_events()
     started = asyncio.get_event_loop().time()
     _open_connections += 1
     initial_coverage = None
@@ -627,6 +629,17 @@ async def _stream(
                 return
             if payload is not None:
                 frame = parse_frame(payload)
+                if frame is not None and is_preview_frame(frame):
+                    # #10090: a provisional blend has no revision and is
+                    # never a `probability` frame. Forwarded under its own
+                    # event name only for a canary event's unfolded page;
+                    # otherwise dropped, so no reader can take it for a
+                    # committed price.
+                    if (preview_on and origin_id == event_id
+                            and frame.get("event_id") == event_id
+                            and len(subscription.subscriptions) == 1):
+                        yield sse_encode(json.dumps(frame), event="preview")
+                    continue
                 if frame is not None and frame.get("event_id") == origin_id:
                     control = _withdrawal_reconcile(frame, event_id, origin_id)
                     if control is not None:

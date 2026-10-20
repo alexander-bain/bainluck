@@ -1765,6 +1765,7 @@ async def _publish_committed_withdrawals(refresher, frames):
         return
     import asyncio
 
+    previews = []
     for frame in frames:
         if frame.get('reconcile_only'):
             continue  # old control cannot invalidate a newer writer cache
@@ -1772,6 +1773,12 @@ async def _publish_committed_withdrawals(refresher, frames):
         refresher._last_written_value.pop(event_id, None)
         refresher._last_refresh_at.pop(event_id, None)
         refresher._last_snapshot_at.pop(event_id, None)
+        if event_id in getattr(refresher, 'preview_events', ()):
+            # #10090 (preview arm, canary events only): the withdrawn source
+            # may not keep speaking in a provisional blend.
+            from app.utils.blend_preview import registry
+
+            previews.extend(registry().refused(event_id, refresher.source, 'withdrawn'))
     task = asyncio.create_task(
         refresher._publish(frames), name='polymarket-withdrawal-event-publish',
     )
@@ -1786,6 +1793,9 @@ async def _publish_committed_withdrawals(refresher, frames):
     acknowledged = task.result()
     if interrupted is not None:
         raise interrupted
+    if previews:
+        # After the invalidation, whose newer revision already hides them.
+        await refresher._publish_previews(previews)
     return acknowledged
 
 
