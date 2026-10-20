@@ -21,6 +21,8 @@ HOOKS = {
     "current_book_midpoint",
     "current_book_primary_price",
     "current_primary_input",
+    # #11317 P2: the refused-pair parking reader rides the same install.
+    "current_book_signature",
 }
 
 
@@ -98,10 +100,10 @@ def test_the_readers_iterate_a_client_list_bound_before_them():
         stmt.lineno for stmt in run.body
         if isinstance(stmt, ast.FunctionDef) and stmt.name in {
             "steady_book_midpoint", "steady_book_primary_price",
-            "steady_primary_input",
+            "steady_primary_input", "steady_book_signature",
         }
     ]
-    assert len(bound) == 1 and len(readers) == 3
+    assert len(bound) == 1 and len(readers) == 4
     assert bound[0] < min(readers)
     assert bound[0] < max(_hook_lines(run).values())
 
@@ -114,3 +116,4 @@ def test_a_refresher_without_an_owner_requires_no_book_proof():
     assert refresher.current_book_midpoint is None
     assert refresher.current_book_primary_price is None
     assert refresher.current_primary_input is None
+    assert refresher.current_book_signature is None

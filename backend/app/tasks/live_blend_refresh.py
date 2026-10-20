@@ -96,6 +96,14 @@ DEFAULT_MIN_REFRESH_INTERVAL_S = 2.0
 #: failures and stay due at once.
 DEFAULT_FAILED_RETRY_INTERVAL_S = 5.0
 
+#: #11317 P2 — the longest a bundled pair the current-book proof refused waits
+#: with none of its proof inputs changed before it is read again. One shared
+#: sweep for every parked pair, so a quiet refused slate costs one read every
+#: sweep instead of one per pair per 2 s floor. A change to any input the proof
+#: reads wakes the pair at once (`current_book_signature`); the sweep is the
+#: backstop for a row another writer changed (the poll).
+BOOK_REFUSED_SWEEP_S = 10.0
+
 #: How long a cached inversion verdict stays good. One poll interval plus slack:
 #: the 120s poll re-derives it authoritatively, so this never has to be the
 #: durable answer, only a cheap one that cannot be stale for long.
@@ -1678,6 +1686,17 @@ class LiveBlendRefresher:
         self.current_book_midpoint = None
         self.current_book_primary_price = None
         self.current_primary_input = None
+        #: #11317 P2 — optional: ticker -> a comparable value of every
+        #: in-memory input the proof reads for that ticker (book, accepted
+        #: primary input, its custody, the held quote). Installed ⇒ a refused
+        #: pair is PARKED until one of its values changes (or the shared sweep
+        #: runs) instead of being read again every flush. None ⇒ the refusal
+        #: re-queues on every flush, as before.
+        self.current_book_signature = None
+        #: Parked refused pairs: event id -> (tickers, signature at refusal).
+        #: Still owed (handed off at a recycle), not yet worth a read.
+        self._book_refused: dict[int, tuple] = {}
+        self._book_refused_sweep_at: Optional[float] = None
         #: #2471 — the owning consumer's session factory, so the stamp borrows
         #: the consumer's one engine instead of building a pool per batch.
         #: None ⇒ ``app.tasks.base.get_task_session``, looked up per batch.
@@ -1759,6 +1778,9 @@ class LiveBlendRefresher:
             "considered": 0,
             "throttled": 0,
             "no_reading": 0,
+            # #11317 — of `no_reading`, readings the bundled pair's current-book
+            # proof withheld. `no_reading - bundled_refused` is every other cause.
+            "bundled_refused": 0,
             "stamped": 0,
             "unchanged_skipped": 0,
             # #5661 — an unchanged value whose rows no writer has re-read since
@@ -1901,6 +1923,7 @@ class LiveBlendRefresher:
         staged, stored_wall = (
             self._receipt_call(receipts.take_staged) if receipts is not None else None
         ) or ({}, None)
+        self._wake_book_refused(now)
         retry = set(self._lock_retry)
         deferred = set(self._throttle_deferred)
         fresh = set(event_ids)
@@ -1951,6 +1974,10 @@ class LiveBlendRefresher:
         # A throttled event is owed the price it just had written, so it waits
         # for its throttle rather than for its next tick.
         self._throttle_deferred = wanted.difference(due)
+        # A parked pair this batch reads is no longer parked; a refusal in
+        # this read parks it again with the inputs it was refused on.
+        for event_id in due:
+            self._book_refused.pop(event_id, None)
         self.stats["considered"] += len(due)
         # Counted once per throttled price, not once per flush it waits out.
         skipped = len(self._throttle_deferred.difference(deferred))
@@ -2475,7 +2502,8 @@ class LiveBlendRefresher:
         """
         self._start_normal_recovery()
         self._start_history()
-        if not self._lock_retry and not self._throttle_deferred:
+        if (not self._lock_retry and not self._throttle_deferred
+                and not self._book_refused_woken(_mono())):
             if self.receipts is not None:
                 # #10090: a quiet flush still closes a finished minute.
                 self._receipt_call(self.receipts.roll)
@@ -2485,8 +2513,84 @@ class LiveBlendRefresher:
         )
 
     def pending_event_ids(self) -> frozenset:
-        """Every event this refresher still owes a stamp (#9462 review)."""
-        return frozenset(self._lock_retry | self._throttle_deferred)
+        """Every event this refresher still owes a stamp (#9462 review).
+
+        #11317 P2: a parked refused pair counts only once it is worth a read
+        again (`_book_refused_woken`); until then it spends no flush. It stays
+        owed all the same: `hand_off_pending` carries it through a recycle.
+        """
+        return frozenset(
+            self._lock_retry | self._throttle_deferred
+            | self._book_refused_woken(_mono())
+        )
+
+    # ── #11317 P2: a refused bundled pair waits for a changed input ──────────
+
+    def _book_signature(self, tickers) -> tuple:
+        reader = self.current_book_signature
+        return tuple(reader(ticker) for ticker in tickers)
+
+    def _park_book_refused(self, event_id: int, group) -> None:
+        """The current-book proof refused this event's bundled pair.
+
+        Before: re-queued as throttle-deferred, so every flush read it again
+        and was refused again on the same book (v5810: no_reading ≈ 5.7×
+        stamped). Now, when the owner installed `current_book_signature`, the
+        pair is parked with the value of every in-memory input the proof read;
+        it is read again when one of them changes, when a fresh price for the
+        event arrives (a batch takes it as usual) or at the shared sweep.
+        Synchronous, called from inside the proof: the values recorded are the
+        ones the refusal saw, with no await between.
+        """
+        tickers = ()
+        if self.current_book_signature is not None:
+            tickers = tuple(sorted({
+                row.external_id
+                for entry in group
+                if getattr(entry.market, "source", None) == "kalshi"
+                and (getattr(entry.market, "external_id", None) or "").upper()
+                .startswith("KXATPCHALLENGERMATCH-")
+                for row in entry.outcomes
+                if isinstance(getattr(row, "external_id", None), str)
+            }))
+        try:
+            signature = self._book_signature(tickers) if tickers else None
+        except Exception:
+            signature = None
+        if signature is None:
+            self._throttle_deferred.add(event_id)
+            return
+        if not self._book_refused or self._book_refused_sweep_at is None:
+            self._book_refused_sweep_at = _mono() + BOOK_REFUSED_SWEEP_S
+        self._book_refused[event_id] = (tickers, signature)
+
+    def _book_refused_woken(self, now: float) -> set[int]:
+        """Parked pairs worth a read now. Pure: moves nothing."""
+        if not self._book_refused:
+            return set()
+        sweep = self._book_refused_sweep_at
+        if self.current_book_signature is None or (sweep is not None and now >= sweep):
+            return set(self._book_refused)
+        woken = set()
+        for event_id, (tickers, signature) in self._book_refused.items():
+            try:
+                changed = self._book_signature(tickers) != signature
+            except Exception:
+                changed = True  # an unreadable input is not proof of no change
+            if changed:
+                woken.add(event_id)
+        return woken
+
+    def _wake_book_refused(self, now: float) -> None:
+        """Move the woken parked pairs back into the ordinary deferred debt."""
+        woken = self._book_refused_woken(now)
+        if not woken:
+            return
+        for event_id in woken:
+            del self._book_refused[event_id]
+        self._throttle_deferred.update(woken)
+        if not self._book_refused:
+            self._book_refused_sweep_at = None
 
     def holding_event_ids(self) -> Optional[frozenset]:
         """#10090 — the running call's events whose stamp is queued or running.
@@ -2623,6 +2727,7 @@ class LiveBlendRefresher:
             # #10090: a call that keeps admitting may outlive the moment a new
             # `refresh` would have taken the debt, so the oldest due owed event
             # rides along — one at a time, behind the cohort, never fenced.
+            self._wake_book_refused(_mono())
             owed = self._lock_retry | self._throttle_deferred
             rotation = [eid for eid in self._debt_rotation if eid in owed]
             rotation += sorted(owed.difference(rotation))
@@ -2669,6 +2774,8 @@ class LiveBlendRefresher:
         retry = self._lock_retry.intersection(due)
         self._lock_retry.difference_update(due)
         self._throttle_deferred.difference_update(due)
+        for event_id in due:
+            self._book_refused.pop(event_id, None)
         self._pending_continuation = [
             eid for eid in self._pending_continuation if eid not in taken
         ]
@@ -3336,6 +3443,7 @@ class LiveBlendRefresher:
 
             for event_id in sorted(grouped):
                 event, group = grouped[event_id]
+                refused = []
                 try:
                     proof_kwargs = {}
                     if (getattr(self, "require_current_book_proof", False)
@@ -3352,7 +3460,10 @@ class LiveBlendRefresher:
                                     overlaid=getattr(row, "_primary_quote_overlaid", False),
                                 )
                             ) if getattr(self, "current_primary_input", None) is not None else None,
-                            "current_book_refused": lambda: self._throttle_deferred.add(event_id),
+                            "current_book_refused": lambda: (
+                                refused.append(True)
+                                or self._park_book_refused(event_id, group)
+                            ),
                         }
                     reading = compute_source_home_probability(
                         group, event.home_team_name, event.away_team_name,
@@ -3360,6 +3471,8 @@ class LiveBlendRefresher:
                     )
                     if reading is None:
                         self.stats["no_reading"] += 1
+                        if refused:
+                            self.stats["bundled_refused"] += 1
                         self._dispositions[event_id] = ("no_reading",)
                         continue
 
@@ -4298,6 +4411,9 @@ def hand_off_pending(refresher) -> int:
         pass  # legacy/test refresher without a chart owner
     try:
         pending = frozenset(refresher.pending_event_ids())
+        # #11317 P2: a parked refused pair is owed too; the next run's book
+        # decides it again (`adopt_pending` makes it due once).
+        pending |= frozenset(getattr(refresher, "_book_refused", ()))
     except Exception:
         return 0
     if pending:
