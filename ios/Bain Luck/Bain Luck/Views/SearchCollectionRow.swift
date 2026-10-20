@@ -7,8 +7,10 @@ nonisolated enum SearchCollectionRows {
         guard let discovery = response.collectionDiscovery else { return [] }
         var seen = Set<String>()
         return discovery.collections.compactMap { card in
-            guard let league = ContainerDiscoveryLeague(rawValue: card.edition.league) else { return nil }
-            let request = ContainerDiscoveryRequest(league: league, season: card.edition.season)
+            guard let rawLeague = card.edition.league,
+                  let season = card.edition.season, season > 0,
+                  let league = ContainerDiscoveryLeague(rawValue: rawLeague) else { return nil }
+            let request = ContainerDiscoveryRequest(league: league, season: season)
             guard let entry = request.entries(in: discovery).first(where: {
                 $0.collection.id == card.id && $0.collection.slug == card.slug
             }), seen.insert(entry.id).inserted else { return nil }
@@ -16,16 +18,19 @@ nonisolated enum SearchCollectionRows {
         }
     }
 
-    static func editionLabel(for entry: ContainerDiscoveryEntry) -> String {
-        let edition = entry.collection.edition
-        if edition.league == "mlb" { return "MLB \(edition.season) · Postseason" }
+    static func editionLabel(for entry: ContainerDiscoveryEntry) -> String? {
+        guard let validated = DiscoverCollectionFeed.entry(for: entry.collection),
+              let season = validated.collection.edition.season else { return nil }
+        let edition = validated.collection.edition
+        if edition.league == "mlb" { return "MLB \(season) · Postseason" }
+        guard let week = edition.week else { return nil }
         let stage: String
         switch edition.stage {
         case "Pre Season": stage = "Preseason "
         case "Post Season": stage = "Postseason "
         default: stage = ""
         }
-        return "NFL \(edition.season) · \(stage)Week \(edition.week ?? 0)"
+        return "NFL \(season) · \(stage)Week \(week)"
     }
 }
 
@@ -40,8 +45,8 @@ struct SearchCollectionRow: View {
                 .fixedSize(horizontal: false, vertical: true)
             // The producer name ordinarily already states the edition. Spend a
             // second line on it only when the supplied name doesn't say it.
-            let edition = SearchCollectionRows.editionLabel(for: entry)
-            if entry.collection.name != edition {
+            if let edition = SearchCollectionRows.editionLabel(for: entry),
+               entry.collection.name != edition {
                 Text(edition).font(.caption).foregroundStyle(.secondary)
             }
             Text(entry.subtitle).font(.caption).foregroundStyle(.secondary)

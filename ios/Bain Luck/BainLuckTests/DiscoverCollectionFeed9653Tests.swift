@@ -101,6 +101,22 @@ final class DiscoverCollectionFeed9653Tests: XCTestCase {
         XCTAssertEqual(DiscoverCollectionFeed.editionLabel(for: mlb), "MLB · 2026 · Postseason")
     }
 
+    func testMissingSportsIdentityCannotBecomeAnEntryOrInventAnEditionLabel() throws {
+        for field in ["league", "season"] {
+            for explicitNull in [false, true] {
+                var payload = card()
+                var edition = try XCTUnwrap(payload["edition"] as? [String: Any])
+                if explicitNull { edition[field] = NSNull() }
+                else { edition.removeValue(forKey: field) }
+                payload["edition"] = edition
+                let raw = try decoder().decode(ContainerHubCollection.self,
+                    from: JSONSerialization.data(withJSONObject: payload))
+                XCTAssertNil(DiscoverCollectionFeed.entry(for: raw))
+                XCTAssertNil(DiscoverCollectionFeed.editionLabel(for: ContainerDiscoveryEntry(collection: raw)))
+            }
+        }
+    }
+
     func testUnpublishedWithdrawnAndEmptyCollectionDataCannotBecomeCards() throws {
         for state in ["unpublished", "withdrawn", "empty", "unavailable", "unknown"] {
             var data = card()

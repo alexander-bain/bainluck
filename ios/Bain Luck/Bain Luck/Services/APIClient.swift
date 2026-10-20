@@ -1344,6 +1344,13 @@ actor APIClient {
         try await fetch(ContainerHubService.path(for: slug), requiresNetwork: true)
     }
 
+    /// Theme cursors are positions within their exact published revision.
+    func fetchContainerHub(slug: String, cursor: String, revision: Int, limit: Int) async throws -> ContainerHubResponse {
+        guard revision > 0, ContainerHubPage.validCursor(cursor), (1...100).contains(limit) else { throw APIError.invalidURL }
+        return try await fetch(ContainerHubService.path(for: slug),
+            query: ["cursor": cursor, "revision": String(revision), "limit": String(limit)], requiresNetwork: true)
+    }
+
     /// #9653: optional Browse discovery always revalidates publication/flags.
     /// No local TTL or last-good fallback may restore a revoked entry.
     func fetchContainerDiscovery(_ request: ContainerDiscoveryRequest) async throws -> ContainerDiscoveryResponse {
