@@ -116,6 +116,29 @@ struct NFLCardReader9483: View {
     /// are ignored until the requested card has actually landed).
     @State private var visible: String?
     @State private var seated = false
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+
+    /// #11285 — on a 320pt screen (Display Zoom) at accessibility sizes the
+    /// reader's own margins broke whole words: inside 18pt margins the match
+    /// line's "Commanders" (≈305pt at AX5) read "Comman-/ders", and the
+    /// peeking card left its kicker 244pt, so "PROJECTED" (≈249pt) read
+    /// "PROJECT-/ED". There the reader gives that width back instead of
+    /// shrinking the type: the match line keeps a 6pt margin and each card
+    /// takes the rail's whole width (the count says there are more). 375pt
+    /// and wider, and every non-accessibility size, are unchanged.
+    static func isNarrowAccessibility(width: CGFloat, accessibility: Bool) -> Bool {
+        accessibility && width < 340
+    }
+
+    /// The match line's horizontal margin.
+    static func headerMargin(width: CGFloat, accessibility: Bool) -> CGFloat {
+        isNarrowAccessibility(width: width, accessibility: accessibility) ? 6 : 18
+    }
+
+    /// A card's width on the rail, inside its 14pt content margins.
+    static func cardWidth(_ width: CGFloat, accessibility: Bool) -> CGFloat {
+        isNarrowAccessibility(width: width, accessibility: accessibility) ? width - 2 * 14 : max(240, width - 44)
+    }
 
     init(liveCards: [NFLEventCard9483], liveHeader: NFLReaderHeader9483,
          awayName: String, homeName: String, awayColor: Color, homeColor: Color,
@@ -145,7 +168,7 @@ struct NFLCardReader9483: View {
             let cards = cards(at: tick.date)
             GeometryReader { geo in
                 VStack(spacing: 0) {
-                    top(now: tick.date)
+                    top(now: tick.date, width: geo.size.width)
                     Divider()
                     if cards.isEmpty {
                         Text("No game stories right now")
@@ -209,7 +232,7 @@ struct NFLCardReader9483: View {
     /// One row of controls — a short Back and, when there is one, Refresh —
     /// then one match summary. At accessibility sizes the text stays large;
     /// it is the repetition that goes, not the type size.
-    private func top(now: Date) -> some View {
+    private func top(now: Date, width: CGFloat) -> some View {
         VStack(alignment: .leading, spacing: 2) {
             HStack(alignment: .center) {
                 Button { state.close() } label: {
@@ -243,7 +266,7 @@ struct NFLCardReader9483: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.horizontal, 18)
+        .padding(.horizontal, Self.headerMargin(width: width, accessibility: dynamicTypeSize.isAccessibilitySize))
         .padding(.bottom, 8)
         .accessibilityElement(children: .contain)
     }
@@ -259,7 +282,7 @@ struct NFLCardReader9483: View {
                                                  state: state, expanded: true)
                                 .padding(.vertical, 16)
                         }
-                        .frame(width: max(240, width - 44))
+                        .frame(width: Self.cardWidth(width, accessibility: dynamicTypeSize.isAccessibilitySize))
                         .id(card.id)
                         .accessibilityHidden(card.id != visible)
                     }
