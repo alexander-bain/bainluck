@@ -35,7 +35,7 @@ describe('#10252 — the hero scores share a baseline when one record wraps', ()
   });
 
   it('stretches the three columns instead of centring them', () => {
-    const row = hero.match(/<div className="flex (items-\w+) justify-between">/);
+    const row = hero.match(/<div className="flex (items-\w+) justify-between max-\[359px\]:flex-wrap">/);
     expect(row?.[1]).toBe('items-stretch');
   });
 
@@ -53,7 +53,8 @@ describe('#10252 — the hero scores share a baseline when one record wraps', ()
 
   it('keeps the centre block vertically centred', () => {
     expect(hero).toContain(
-      '<div className="flex flex-col items-center justify-center px-1 sm:px-4 min-w-0">',
+      // #11301 appends the below-360 wrap onto its own full-width row.
+      '<div className="flex flex-col items-center justify-center px-1 sm:px-4 min-w-0 max-[359px]:order-3 max-[359px]:basis-full max-[359px]:mt-3">',
     );
   });
 

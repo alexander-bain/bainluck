@@ -2824,9 +2824,19 @@ export default function EventPage({ params }: EventPageProps) {
               Carolina's 2 a line and a half below Washington's 5. The centre
               block keeps its own vertical centring (`justify-center`), and a
               record that wraps is centred under its name (`text-center`). */}
-          <div className="flex items-stretch justify-between">
+          {/* #11301 — BELOW 360px THE ROW WRAPS INTO TWO TEAM CELLS AND A BAND.
+              At 312 the chance pair ran into both crests and at 260 the
+              forecast crossed the neighbouring names and records (Design's
+              hero3 captures): three regions no longer fit side by side. Under
+              360 the two team columns take half the row each and the centre
+              block wraps to a full-width row beneath them, where each chance
+              sits under its own team (`EventHeroProbabilityPair`) and the
+              labelled forecast stacks across the whole width. Type sizes and
+              values are unchanged; the hero grows taller instead. 360 and up
+              keep the three-column anatomy exactly (#10108 measured 360). */}
+          <div className="flex items-stretch justify-between max-[359px]:flex-wrap">
             {/* Home Team */}
-            <div className="flex flex-col items-center flex-1">
+            <div className="flex flex-col items-center flex-1 max-[359px]:basis-1/2 max-[359px]:order-1">
               {/* #2447: ONE RESOLVER, BOTH SURFACES. The ladder below is
                   `home_team_data.logo_large` -> `espnTeamLogoByName` ->
                   initials, and both of the first two are TEAM resolvers. A
@@ -2919,7 +2929,7 @@ export default function EventPage({ params }: EventPageProps) {
                 be the widest one (the probability pair at 188.5px here; the
                 `+N pts <team> since open` chip on a long club name), which is
                 why the fix bounds the BLOCK rather than any one line. */}
-            <div className="flex flex-col items-center justify-center px-1 sm:px-4 min-w-0">
+            <div className="flex flex-col items-center justify-center px-1 sm:px-4 min-w-0 max-[359px]:order-3 max-[359px]:basis-full max-[359px]:mt-3">
               {isFinished ? (
                 /* Settled: winner name + chip + the result in the sport's own
                    units, no big number (mirrors FuturesHero's resolved rule).
@@ -3196,7 +3206,7 @@ export default function EventPage({ params }: EventPageProps) {
             </div>
 
             {/* Away Team */}
-            <div className="flex flex-col items-center flex-1">
+            <div className="flex flex-col items-center flex-1 max-[359px]:basis-1/2 max-[359px]:order-2">
               {/* #2447, the other side. Same ladder, same new first rung. */}
               <TournamentPlayerFace
                 eventId={eventId}

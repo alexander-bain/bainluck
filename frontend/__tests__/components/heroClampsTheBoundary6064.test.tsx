@@ -75,7 +75,7 @@ function render(props: Partial<React.ComponentProps<typeof EventHeroProbabilityP
  * nodes is not a sanitizer, so there is nothing to do incompletely.
  */
 function heroText(html: string): string {
-  const block = html.match(/<div class="flex items-baseline"[\s\S]*<\/div>/);
+  const block = html.match(/<div class="flex items-baseline[^"]*"[\s\S]*<\/div>/);
   if (!block) throw new Error("the hero pair did not render");
   const text = [...block[0].matchAll(/>([^<>]*)</g)]
     .map((m) => m[1])

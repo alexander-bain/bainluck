@@ -207,7 +207,7 @@ function heroPrints(percent: number): string {
  */
 function heroText(html: string): string {
   const block = html.match(
-    /<div class="flex items-baseline" data-testid="event-hero-probability"[\s\S]*?<\/div>/,
+    /<div class="flex items-baseline[^"]*" data-testid="event-hero-probability"[\s\S]*?<\/div>/,
   );
   if (!block) throw new Error("no hero probability pair in the rendered page");
   return [...block[0].matchAll(/>([^<>]*)</g)]
