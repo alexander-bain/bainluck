@@ -355,7 +355,7 @@ describe("the longer label wraps inside its band (Design R1)", () => {
     expect(pairTag).not.toContain("max-w-");
   });
 
-  it("the pre-game line keeps its own label, which sits under the cap", () => {
+  it("the pre-game line keeps its own label, uncapped", () => {
     // #2920's specimen before play: the feed row with the producer's pair.
     const base = F2920.feed_item_14780563 as FeedItem;
     const data = base.data as FeedEventData;
@@ -369,6 +369,37 @@ describe("the longer label wraps inside its band (Design R1)", () => {
     } as FeedItem);
     expect(stamp(html, "feed-card-projected-final")).toBe("30-22 away-home");
     expect(bandLabel(html, "feed-card-projected-final")?.text).toBe("Projected final");
+    expect(bandLabel(html, "feed-card-projected-final")!.cls.split(/\s+/)).not.toContain("max-w-[8rem]");
     expect(html).not.toMatch(ANY_BAND_LABEL);
   });
+
+  // lane1b R1 on 32cfa31c49: soccer's pre-game label is ~136px on one line,
+  // wider than the 8rem cap, so a cap on every label broke "Projected final
+  // (90 min)" across two lines on EPL/MLS cards and headlines that fit before.
+  // The production EPL search row (Leeds v Manchester United, 15315510, served
+  // 1.2 / 1.2 from 11 sportsbooks), set before play as #2920's cards test does.
+  const eplBeforePlay = (): Event =>
+    ({
+      ...(F2920.search_15315510 as Event),
+      status: "scheduled",
+      commence_time: new Date(Date.now() + 3 * 3600_000).toISOString(),
+      home_score: null,
+      away_score: null,
+    }) as Event;
+
+  it.each([
+    ["EventCard", () => card(eplBeforePlay()), "event-card-projected-final"],
+    ["headline", () => page(eplBeforePlay()), "event-hero-projected-final"],
+  ] as Array<[string, () => string, string]>)(
+    "soccer before play (%s): \"Projected final (90 min)\" prints uncapped",
+    (_name, render, id) => {
+      const html = render();
+      expect(stamp(html, id)).toBe("1-1 home-away");
+      const label = bandLabel(html, id)!;
+      expect(label.text).toBe("Projected final (90 min)");
+      expect(label.cls.split(/\s+/)).not.toContain("max-w-[8rem]");
+      expect(label.cls.split(/\s+/)).toContain("text-xs");
+      expect(html).not.toMatch(ANY_BAND_LABEL);
+    },
+  );
 });
