@@ -3845,7 +3845,10 @@ class LiveBlendRefresher:
                     self._publish_prices if window is None else window.publish_inline
                 )
             settled = []
-            if canary:
+            # Over every ATTEMPTED canary event, not only those in `grouped`:
+            # a canary whose group left beside a non-canary sibling still owes
+            # its `no_group` revoke (R3).
+            if not self.preview_events.isdisjoint(event_ids):
                 # After COMMIT, BEFORE the committed frames: a sibling still
                 # pending is recomposed on the new base and goes out first, so
                 # the committed frame (rev == that base) cannot briefly put the
@@ -4434,6 +4437,62 @@ class LiveBlendRefresher:
                 )
         return frames
 
+    async def _claim_preview_epoch(self, connection, preview) -> None:
+        """One atomic INCR + SET owner (`FENCE_CLAIM_SCRIPT`); caller holds the claim lock."""
+        from app.utils.blend_preview import (
+            FENCE_CLAIM_SCRIPT, FENCE_EPOCH_KEY, fence_owner_key,
+        )
+
+        await connection.send_command(
+            "EVAL", FENCE_CLAIM_SCRIPT, 2, FENCE_EPOCH_KEY, fence_owner_key(self.source),
+        )
+        preview.epoch = int(await connection.read_response())
+        logger.info(
+            "live_blend_refresh[%s]: preview display claimed epoch=%s",
+            self.source, preview.epoch,
+        )
+
+    async def claim_preview_display(self) -> Optional[int]:
+        """Claim this process's display epoch at startup, before any frame.
+
+        Eager, so epoch order is process START order: a replacement started
+        during a release overlap outranks the worker it replaces even if that
+        worker has not previewed yet, instead of an old process's first frame
+        in its final drain fencing the replacement for life. A no-op unless
+        this arm previews, and when this process already holds an epoch.
+        Never raises: a failed claim is retried by the first publication.
+        """
+        if not self.preview:
+            return None
+        try:
+            from app.utils.blend_preview import registry
+            from app.utils.market_quote_push import _checkout
+
+            preview = registry()
+            async with asyncio.timeout(1):
+                if preview.claim_lock is None:
+                    preview.claim_lock = asyncio.Lock()
+                async with preview.claim_lock:
+                    if preview.epoch is None:
+                        pool = self._client().connection_pool
+                        connection = await _checkout(pool)
+                        try:
+                            await self._claim_preview_epoch(connection, preview)
+                        except BaseException:
+                            self._redis = None
+                            await connection.disconnect()
+                            raise
+                        finally:
+                            await pool.release(connection)
+            return preview.epoch
+        except Exception:
+            self.preview_stats["publish_errors"] += 1
+            logger.warning(
+                "live_blend_refresh[%s]: preview display claim failed at startup",
+                self.source, exc_info=True,
+            )
+            return None
+
     async def _publish_previews(self, frames: list[dict]) -> None:
         """Fenced PUBLISH of provisional frames. Never raises; never retained.
 
@@ -4442,9 +4501,11 @@ class LiveBlendRefresher:
         Same direct pool protocol, so a borrowed socket left in an unknown
         state is disconnected rather than returned.
 
-        The first call claims this process's epoch (`FENCE_CLAIM_SCRIPT`);
-        every batch then goes through `FENCE_PUBLISH_SCRIPT`, which drops the
-        blends of a process another worker has superseded. No epoch, no blend.
+        The process normally claimed its epoch at startup
+        (`claim_preview_display`); if that claim failed, the first call here
+        claims it. Every batch then goes through `FENCE_PUBLISH_SCRIPT`, which
+        drops the blends of a process another worker has superseded. No
+        epoch, no blend.
         """
         if not frames:
             return
@@ -4452,8 +4513,7 @@ class LiveBlendRefresher:
             import json
 
             from app.utils.blend_preview import (
-                FENCE_CLAIM_SCRIPT, FENCE_EPOCH_KEY, FENCE_PUBLISH_SCRIPT,
-                fence_owner_key, registry,
+                FENCE_PUBLISH_SCRIPT, fence_owner_key, registry,
             )
             from app.utils.live_push import event_channel
             from app.utils.market_quote_push import _checkout
@@ -4468,14 +4528,7 @@ class LiveBlendRefresher:
                     connection = await _checkout(pool)
                     try:
                         if preview.epoch is None:
-                            await connection.send_command(
-                                "EVAL", FENCE_CLAIM_SCRIPT, 2, FENCE_EPOCH_KEY, owner_key,
-                            )
-                            preview.epoch = int(await connection.read_response())
-                            logger.info(
-                                "live_blend_refresh[%s]: preview display claimed epoch=%s",
-                                self.source, preview.epoch,
-                            )
+                            await self._claim_preview_epoch(connection, preview)
                         argv: list = [preview.epoch]
                         for frame in frames:
                             frame["preview"]["epoch"] = preview.epoch

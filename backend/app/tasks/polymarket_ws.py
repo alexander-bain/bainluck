@@ -3298,6 +3298,10 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
     # never settled. A failed read is retried by the first withdrawal flush.
     blend_refresher.withdrawal_debt = PMWithdrawalDebt()
     await blend_refresher.withdrawal_debt.load(get_task_session)
+    # #10090: when this arm is the named preview source, claim its display
+    # epoch before any frame (`LiveBlendRefresher.claim_preview_display`).
+    if getattr(blend_refresher, 'preview', False):
+        await blend_refresher.claim_preview_display()
     # #837 receipt — every accepted input is stamped (seq, receive instant) as
     # it is buffered, so a held price can be followed from the socket to the
     # stamp that carried it. `input_marks` is keyed like `price_buffer` (one

@@ -8,7 +8,8 @@ production topology:
 
 * the canary switch: ONE named source, named events only; everything else in
   a batch runs the statements it always ran, in the one sorted lock order;
-* the fence: a process claims an epoch at Redis before its first blend, a
+* the fence: a process claims an epoch at Redis at startup (and before its
+  first blend if that failed), a
   replacement's claim drops the superseded process's blends AT REDIS (its
   revokes still pass), and a lost owner key fails closed without a re-claim.
 
@@ -94,6 +95,39 @@ class TestTheSwitch:
         assert committed == [] and r._lock_retry == {1, 2, 3}
         assert not blend_preview.registry().has_pending(1)
         assert not blend_preview.registry().has_pending(3)
+
+    async def test_a_canary_that_lost_its_group_beside_a_non_canary_sibling_is_still_revoked(self, monkeypatch):
+        """Lane1's R3 countercase on 9126391f9f/1c8a3ee6dd: settlement was gated
+        on canary events IN `grouped`, so a canary whose markets left this
+        source's group read, retried beside a grouped non-canary sibling, kept
+        its pending value on readers until ttl_ms."""
+        (e1, m1), (e2, m2) = _event(1), _event(2)
+        session = _PreviewSession([(m1, e1), (m2, e2)], None, stored=STORED, rev=10)
+        r, _ = _one_event_refresher(monkeypatch, session)
+        assert r.preview_events == frozenset({2})
+        previews = _capture_previews(monkeypatch, r, session)
+        await r._refresh_batch([1, 2], 0.0)
+        assert blend_preview.registry().has_pending(2), "canary held and previewed"
+        session._market_rows = [(m1, e1)]  # the canary left this source's group read
+        previews.clear()
+
+        await r._refresh_batch([1, 2], 1.0)
+
+        assert [(f["event_id"], f["preview"]["kind"], f["preview"]["reason"])
+                for _, f in previews] == [(2, "revoke", "no_group")]
+        assert not blend_preview.registry().has_pending(2)
+
+    async def test_a_canary_that_lost_its_group_alone_is_revoked_too(self, monkeypatch):
+        """Control: the early-return path (nothing grouped) already settled."""
+        (e2, m2) = _event(2)
+        session = _PreviewSession([(m2, e2)], None, stored=STORED, rev=10)
+        r, _ = _one_event_refresher(monkeypatch, session)
+        previews = _capture_previews(monkeypatch, r, session)
+        await r._refresh_batch([2], 0.0)
+        session._market_rows = []
+        previews.clear()
+        await r._refresh_batch([2], 1.0)
+        assert [(f["event_id"], f["preview"]["reason"]) for _, f in previews] == [(2, "no_group")]
 
     async def test_a_batch_without_a_canary_event_reads_and_writes_as_before(self, monkeypatch):
         rows = [_event(eid) for eid in (1, 3)]
@@ -231,6 +265,81 @@ class TestTheFence:
         finally:
             await redis.aclose()
             await listener.aclose()
+
+    async def test_the_startup_claim_orders_epochs_by_process_start(self, private_redis_socket):
+        """Lane1 N3: with a lazy claim, an old worker that had not previewed yet
+        could claim in its final drain AFTER its replacement and fence the
+        replacement for life. Claimed at startup, the replacement outranks it."""
+        from app.utils import live_push
+
+        redis, listener = await _redis(private_redis_socket), await _redis(private_redis_socket)
+        try:
+            pubsub = listener.pubsub()
+            await pubsub.subscribe(live_push.event_channel(2))
+            await pubsub.get_message(timeout=1)
+            old_reg, new_reg = blend_preview.PreviewRegistry(), blend_preview.PreviewRegistry()
+            old, new = _refresher(redis), _refresher(redis)
+
+            blend_preview._REGISTRY = old_reg
+            assert await old.claim_preview_display() == old_reg.epoch is not None
+            assert await old.claim_preview_display() == old_reg.epoch, "held: no second claim"
+            blend_preview._REGISTRY = new_reg
+            await new.claim_preview_display()
+            assert new_reg.epoch > old_reg.epoch
+
+            blend_preview._REGISTRY = old_reg
+            await old._publish_previews([_blend(old_reg, value=0.8)])  # its first frame, in its drain
+            blend_preview._REGISTRY = new_reg
+            await new._publish_previews([_blend(new_reg, value=0.85)])
+
+            assert [f["preview"]["epoch"] for f in await _drain(pubsub)] == [new_reg.epoch]
+            assert old.preview_stats["fenced"] == 1 and new.preview_stats["fenced"] == 0
+            await pubsub.aclose()
+        finally:
+            await redis.aclose()
+            await listener.aclose()
+
+    async def test_the_startup_claim_is_a_noop_for_the_other_arm(self, private_redis_socket):
+        redis = await _redis(private_redis_socket)
+        try:
+            kalshi = LiveBlendRefresher("kalshi")
+            kalshi._redis = redis
+            assert await kalshi.claim_preview_display() is None
+            assert blend_preview.registry().epoch is None
+            assert await redis.exists(blend_preview.FENCE_EPOCH_KEY) == 0
+        finally:
+            await redis.aclose()
+
+    async def test_a_failed_startup_claim_is_retried_by_the_first_publication(
+        self, monkeypatch, private_redis_socket,
+    ):
+        redis = await _redis(private_redis_socket)
+        try:
+            r = _refresher(redis)
+
+            class _Down:
+                @property
+                def connection_pool(self):
+                    raise ConnectionError("redis down")
+
+            monkeypatch.setattr(r, "_client", lambda: _Down())
+            assert await r.claim_preview_display() is None
+            assert r.preview_stats["publish_errors"] == 1
+            monkeypatch.setattr(r, "_client", lambda: redis)
+            reg = blend_preview.registry()
+            await r._publish_previews([_blend(reg)])
+            assert reg.epoch is not None and r.preview_stats["published"] == 1
+        finally:
+            await redis.aclose()
+
+    def test_both_ws_arms_claim_at_startup_only_when_they_preview(self):
+        import inspect
+
+        from app.tasks import kalshi_ws, polymarket_ws
+
+        for module in (kalshi_ws, polymarket_ws):
+            src = inspect.getsource(module).replace('"', "'")
+            assert "if getattr(blend_refresher, 'preview', False):\n        await blend_refresher.claim_preview_display()" in src, module
 
     async def test_no_claim_means_no_publication(self, monkeypatch):
         """Redis unreachable at the claim: nothing goes out, nothing raises."""
