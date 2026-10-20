@@ -796,7 +796,7 @@ private final class MountHost {
         window.contentView = NSHostingView(rootView: root)
         window.orderFrontRegardless()
         #else
-        rootController = UIHostingController(rootView: root)
+        rootController = hostForMeasurement(root)
         #endif
     }
 
