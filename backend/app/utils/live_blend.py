@@ -1322,13 +1322,13 @@ def compute_source_home_probability(
     # named speaker must never confer its proof on an unproven sibling.
     orientation_contributors = [(speaker, home_prob, outcome, yes_prob)]
 
-    # Local #10090 candidate: Kalshi stores the two independent player YES
+    # #10090: Kalshi stores the two independent player YES
     # contracts as outcome rows of one event-level market. Apply the existing
     # mean(home YES, 1-away YES) rule to this positively identified tennis pair.
     # Other formats, incomplete pairs and unknown identities retain their reading.
     bundled_pair = None
     parent_ticker = (getattr(speaker.market, "external_id", None) or "").upper()
-    # Local C2A: the WS owner may require present book proof for this
+    # #10090: the WS owner may require present book proof for this
     # new bundled branch. Poll/matcher callers retain their observation-clock
     # behavior. No row timestamp or composite freshness clock is changed.
     bundled_book_scope = (

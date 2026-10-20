@@ -1,7 +1,16 @@
-"""Local190: custody of a normal-policy quote observation, never an estimator."""
+"""#10090: custody of a normal-policy Kalshi quote observation, never an estimator.
+
+A book callback may select a cached original trade under the ordinary price
+policy (`_kalshi_yes_probability`). That accepted selection carries an identity
+from the socket; the consumer records it here as received, then as landed (the
+exact committed observation) or held (the actually applied overlay bound). The
+blend refresher may let the bundled Challenger primary row speak at that price
+only after that observation has itself landed or passed held admission; a
+stored price that merely equals it proves nothing. No clock is inferred.
+"""
 
 
-class PrimaryInputCustody:
+class PrimaryQuoteCustody:
     def __init__(self):
         self.received = {}
         self.landed = {}
@@ -14,11 +23,11 @@ class PrimaryInputCustody:
                 del table[oid]
 
     def receive(self, oid, quote):
-        identity = quote.get('_lab_primary_identity')
+        identity = quote.get('_primary_quote_identity')
         if identity is None:
             self.received.pop(oid, None)
         else:
-            self.received[oid] = (identity, quote['_lab_primary_probability'])
+            self.received[oid] = (identity, quote['_primary_quote_probability'])
 
     def snapshot(self, ids):
         return {oid: self.received.get(oid) for oid in ids}

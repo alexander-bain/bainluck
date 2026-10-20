@@ -279,7 +279,7 @@ class KalshiWebSocket:
         return quote
 
     def current_book_midpoint(self, ticker):
-        """Local C2A: live sequenced-book evidence, never an observation clock."""
+        """#10090: live sequenced-book evidence, never an observation clock."""
         from decimal import Decimal, InvalidOperation
         quote = self._current_book_quote(ticker)
         if quote is None:
@@ -731,8 +731,8 @@ class KalshiWebSocket:
         # never wait for an unrelated new ticker to establish the same price.
         # Keep the callback object: ExactKalshiTrace keys its receipt by id.
         result = quote
-        result.pop("_lab_primary_identity", None)
-        result.pop("_lab_primary_probability", None)
+        result.pop("_primary_quote_identity", None)
+        result.pop("_primary_quote_probability", None)
         ticker = quote.get("market_ticker")
         value = self._primary_policy_price(quote)
         current = self._current_book_quote(ticker)
@@ -762,7 +762,7 @@ class KalshiWebSocket:
             entry = ((self._primary_generation, self._primary_serial,
                       "ticker" if original_ticker else "book"), value)
             self._primary_inputs[ticker] = entry
-        result.update(_lab_primary_identity=entry[0], _lab_primary_probability=entry[1])
+        result.update(_primary_quote_identity=entry[0], _primary_quote_probability=entry[1])
         return result
 
     async def _request_resnapshots(self, ws) -> None:
