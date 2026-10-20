@@ -173,9 +173,21 @@ def _held(lab: dict) -> bool:
     )
 
 
+#: The startup installs are not refreshes and never trim. #10090 attempt156:
+#: the full slate installed after the stored-live subset ("startup-games") is
+#: one of them, beside the "initial" install.
+STARTUP_INSTALLS = ("startup-games", "initial")
+
+
 def _gate(parent_end: dict, arm: list[dict], arm_end: dict) -> list[str]:
     """The candidate's clauses this arm fails, by name ([] = it passes)."""
-    trimmed = arm[0]["released"] is None and all(isinstance(x["released"], int) for x in arm[1:])
+    installs = [x for x in arm if x["reason"] in STARTUP_INSTALLS]
+    refreshes = [x for x in arm if x["reason"] not in STARTUP_INSTALLS]
+    trimmed = (
+        bool(installs) and bool(refreshes)
+        and all(x["released"] is None for x in installs)
+        and all(isinstance(x["released"], int) for x in refreshes)
+    )
     failed = []
     if not trimmed:
         failed.append("every_refresh_trimmed")
@@ -186,7 +198,7 @@ def _gate(parent_end: dict, arm: list[dict], arm_end: dict) -> list[str]:
         failed.append("resident_benefit")
     # The cost: the trim is synchronous work on the delivery loop. Bounded
     # loosely here; the per-refresh `took=` line is the production reading.
-    if not (trimmed and max(x["trim_ms"] for x in arm[1:]) < 250):
+    if not (trimmed and max(x["trim_ms"] for x in refreshes) < 250):
         failed.append("trim_cost")
     return failed
 

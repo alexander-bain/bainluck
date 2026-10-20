@@ -313,13 +313,14 @@ async def main(handovers):
     async def never(*_a, **_k):
         await asyncio.Event().wait()
 
-    finished, released = [], []
+    finished, released, reasons = [], [], []
     finish = task._PMCatalogHandoverTiming.finish
     real_trim = heap_trim.release_free_heap
 
     def on_finish(self, outcome):
         finish(self, outcome)
         finished.append(outcome)
+        reasons.append(self.reason)
         CATALOG.turnover()
 
     trim_ms, lag = [], [0.0]
@@ -368,7 +369,8 @@ async def main(handovers):
             seen = len(finished)
             await asyncio.sleep(0.3)  # both socket owners reconcile
             gc.collect()
-            print(json.dumps({"handover": seen, "rss": heap_trim._rss_bytes(),
+            print(json.dumps({"handover": seen, "reason": reasons[seen - 1],
+                              "rss": heap_trim._rss_bytes(),
                               "released": released[-1] if released else None,
                               "trim_ms": trim_ms[-1] if trim_ms else None,
                               "max_lag_ms": lag[0]}),
