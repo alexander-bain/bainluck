@@ -865,7 +865,7 @@ SI_MUTATIONS = {
     "pair_split_not_an_object": (("disagreements", "pairwise", 0, "by_sport"), lambda v: [],
                                  "invalid_row"),
     "case_study_series_dropped": (("case_studies", 0, "series"), lambda v: None, "invalid_series"),
-    "series_point_as_string": (("case_studies", 0, "series", "espn", 0, "p"), lambda v: str(v),
+    "series_point_as_string": (("case_studies", 0, "series", "espn", 0, "p"), str,
                                "invalid_series"),
     "home_won_as_int": (("case_studies", 0, "home_won"), lambda v: 1, "invalid_row"),
     "case_studies_not_a_list": (("case_studies",), lambda v: {}, "invalid_section"),
