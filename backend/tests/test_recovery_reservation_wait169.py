@@ -2,13 +2,25 @@
 
 The wait is inside the read's own request deadline, holds no slot, entry or load,
 and is counted: admitted plus waiting recovery reads never exceed MAX_PENDING.
+
+VIRTUAL TIME (integrator 0606Z: the deadline test failed 2 of 6 at load 15-18).
+Every test here runs on `VirtualClockLoop`, and the projector reads that loop's
+clock: time stands still while anything is runnable and jumps to the next timer
+when nothing is. A deadline measures exactly and a runner stall moves no clock.
 """
 import asyncio
+import time
 import pytest
 from app.utils import folded_live_quote as fq
+from tests._virtual_clock_loop import VirtualClockLoop, VirtualClockPolicy
 from tests.test_normal_recovery_projection159 import notice, quote
 
 pytestmark = pytest.mark.asyncio
+
+
+@pytest.fixture(scope="module")
+def event_loop_policy():
+    return VirtualClockPolicy()
 
 
 class Gates:
@@ -147,12 +159,18 @@ async def test_a_waiter_cancelled_after_its_wakeup_does_not_take_the_entry(monke
 
 
 async def test_the_request_deadline_includes_the_wait(monkeypatch):
-    monkeypatch.setattr(fq, "PROJECTION_TIMEOUT_S", 0.3)
+    # The held reads keep their slot past the fifth's deadline. With one shared
+    # budget, event 2's own deadline would land first and correctly free the slot
+    # for event 5 inside its remaining time — the premise, not a defect.
+    monkeypatch.setattr(fq, "PROJECTION_TIMEOUT_S", 10)
     gates = Gates(); projector, held = await full_share(monkeypatch, gates)
+    monkeypatch.setattr(fq, "PROJECTION_TIMEOUT_S", 0.3)
     loop = asyncio.get_running_loop(); began = loop.time()
+    assert isinstance(loop, VirtualClockLoop)
     fifth = asyncio.create_task(projector.project(5, notice(5), fresh=True))
     await asyncio.sleep(0.15)
     gates.gate(1).set()  # admitted after 0.15 s, then queued behind event 2 (held)
+    time.sleep(0.3)  # a runner stall: on a wall clock this alone breaks the bound below
     assert await fifth is None
     elapsed = loop.time() - began
     # One deadline from the request: not 0.15 s of wait plus a fresh 0.3 s load budget.

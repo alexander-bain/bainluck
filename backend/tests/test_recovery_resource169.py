@@ -4,6 +4,9 @@ Recovery may hold 1 slot and 4 pending entries, leaving the four healthy readers
 
 Injected authority with a fixed per-load cost; measures what the cohort costs the
 healthy normal path, not production SQL latency or PG capacity.
+
+Runs on `VirtualClockLoop`: the loads' fixed cost and the latency bound read one
+clock that a loaded runner cannot stretch.
 """
 import asyncio
 import json
@@ -14,8 +17,14 @@ from app.utils import live_fanout, folded_live_quote as fq
 from tests.test_normal_recovery_projection159 import notice, quote, stop
 from tests.test_folded_event_stream_invalidation_837 import Hub, Request
 from tests.test_event_stream_recovery_read_controls_10090 import data, until
+from tests._virtual_clock_loop import VirtualClockPolicy
 
 pytestmark = pytest.mark.asyncio
+
+
+@pytest.fixture(scope="module")
+def event_loop_policy():
+    return VirtualClockPolicy()
 
 LOAD_S = 0.02
 HEALTHY = range(21, 25)
