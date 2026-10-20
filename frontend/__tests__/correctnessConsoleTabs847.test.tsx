@@ -197,7 +197,9 @@ const hitSC = () => sportCardsSection(ok(envelope("hit", "saved_snapshot", sport
 const hitLR = () => linkRateSection(ok(linkEnvelope("hit", "saved_snapshot", linkRatePayload())));
 const hitSI = () => sourceIntelligenceSection(ok(envelope("hit", "saved_snapshot", siPayload())));
 
-const text = (html: string) => html.replace(/<[^>]+>/g, " ").replace(/&gt;/g, ">").replace(/&lt;/g, "<").replace(/&amp;/g, "&").replace(/&quot;/g, '"').replace(/&#x27;/g, "'").replace(/\s+/g, " ");
+// `&amp;` decodes LAST, so an escaped entity (`&amp;quot;`) is never decoded twice.
+const text = (html: string) =>
+  html.replace(/<[^>]+>/g, " ").replace(/&gt;/g, ">").replace(/&lt;/g, "<").replace(/&quot;/g, '"').replace(/&#x27;/g, "'").replace(/&amp;/g, "&").replace(/\s+/g, " ");
 const renderMatching = (over: Partial<React.ComponentProps<typeof MatchingTabPanel>> = {}, nowMs = NOW) =>
   renderToStaticMarkup(<MatchingTabPanel matured={hitML()} sportCards={hitSC()} linkRate={hitLR()} nowMs={nowMs} {...over} />);
 
