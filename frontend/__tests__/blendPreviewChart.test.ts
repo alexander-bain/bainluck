@@ -115,3 +115,30 @@ test.each([{'1': 11}, {'2': 10}, undefined])('a newer or unproven pinned history
     blend_edge_observed_at: line[0].timestamp, blend_edge_fold_revision: revision};
   expect(overlayBlendPreviewLine(event, held(), 500, served.aggregate_line, served)).toBe(served.aggregate_line);
 });
+
+// Production history can pin an older membership vector beside newly folded
+// detail. Extension needs every history member covered, not an equal count.
+const folded = {...event, blend_fold_revision: {'1': 10, '2': 5}};
+const foldedHeld = () => previewAfter(null, {...frame(), preview: {...frame().preview,
+  folded_version: 1, origin_event_id: 1, base_fold_revision: folded.blend_fold_revision}}, 1, 0);
+const pinned = (revision: Record<string, number>, aggregate_line = [...line]) => ({event_id: 1, aggregate_line,
+  blend_edge_pinned: true, blend_edge_observed_at: line[0].timestamp, blend_edge_fold_revision: revision});
+
+test('an older covered subset of a folded base is extended', () => {
+  const served = pinned({'1': 9});
+  expect(overlayBlendPreviewLine(folded, foldedHeld(), 500, served.aggregate_line, served))
+    .toEqual([...line, {timestamp: at, home_probability: .75}]);
+});
+
+test.each([{'1': 11}, {'2': 6}, {'3': 1}, {'1': 9, '3': 1}])('a newer or unknown history member refuses beside a folded base: %j', revision => {
+  const served = pinned(revision);
+  expect(overlayBlendPreviewLine(folded, foldedHeld(), 500, served.aggregate_line, served)).toBe(served.aggregate_line);
+});
+
+test('an older covered subset never replaces a synthetic edge', () => {
+  const served = pinned({'1': 9}, [...line, {timestamp: '2026-10-20T21:14:12Z', home_probability: .6}]);
+  expect(overlayBlendPreviewLine(folded, foldedHeld(), 500, served.aggregate_line, served)).toBe(served.aggregate_line);
+  const exact = pinned({'1': 9, '2': 5}, served.aggregate_line);
+  expect(overlayBlendPreviewLine(folded, foldedHeld(), 500, exact.aggregate_line, exact))
+    .toEqual([...line, {timestamp: at, home_probability: .75}]);
+});
