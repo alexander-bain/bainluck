@@ -2171,13 +2171,22 @@ struct OddsChartView: View {
                 // so a scrub never rebuilds it; VoiceOver reads the resting
                 // readout instead.
                 if let finishedEnd {
-                    finishedEndLabel9483(finishedEnd, line: endLine, sides: axis.sides,
-                                         proxy: proxy, plotFrame: plotFrame)
+                    finishedEndLabel9483(finishedEnd, line: endLine,
+                                         ink: Self.primaryInk9483(dataPoints: dataPoints, checkpoints: checkpoints,
+                                                                  gameStart: gameStartDate),
+                                         sides: axis.sides, proxy: proxy, plotFrame: plotFrame,
+                                         color: colorForSource(Self.primarySource(in: dataPoints), sources: sources),
+                                         halfStroke: strokeStyleForSource(Self.primarySource(in: dataPoints),
+                                                                          sources: sources).lineWidth / 2)
                 }
+                // #11356 (Design R2) — the held reading's dot sits on the line
+                // the readings are taken from, so it wears that line's colour:
+                // the primary line, or the one line drawn when that is the
+                // series (`readoutSource`).
                 if let tennis {
                     TennisHeldReadingMarker9483(pin: tennisPin, selection: selection, series: tennis,
                                                 proxy: proxy, plotFrame: plotFrame,
-                                                color: teamColors?.home ?? .accentColor,
+                                                color: colorForSource(tennis.source, sources: sources),
                                                 awayColor: nil)
                 }
                 OddsChartSelectionOverlay(selection: selection, proxy: proxy, plotFrame: plotFrame,
@@ -2369,7 +2378,7 @@ struct OddsChartView: View {
     private func legendView(dataPoints: [ChartDataPoint], sources: [String: WinProbSourceInfo],
                             sourcesOpen: Binding<Bool>, rail: Bool) -> some View {
         let hasBlend = dataPoints.contains { $0.source == "aggregate" }
-        let revealable = Self.revealableSources9483(in: dataPoints)
+        let revealable = Self.revealableSources9483(in: dataPoints, withheld: withheldSources9483)
         if hasBlend {
             let open = sourcesOpen.wrappedValue && !revealable.isEmpty
             if rail {
@@ -4444,7 +4453,7 @@ extension OddsChartView {
     /// (already admitted and cut to its window by `filterPoints`).
     private func axisPlan9483(dataPoints: [ChartDataPoint], checkpoints: PublicationCheckpointMount4974?,
                               sourcesOpen: Bool) -> AxisPlan9483 {
-        let revealed = sourcesOpen ? Self.revealableSources9483(in: dataPoints) : []
+        let revealed = sourcesOpen ? Self.revealableSources9483(in: dataPoints, withheld: withheldSources9483) : []
         let window = Self.probabilityWindow9483(
             points: dataPoints,
             defaultSources: Self.defaultVisibleSources(in: dataPoints),
@@ -4456,17 +4465,38 @@ extension OddsChartView {
     }
 
     /// The source lines Sources can add: every source with a reading in this
-    /// window other than the blend, sportsbook consensus first, then by key —
-    /// the order the key lists them. Only behind a blend: without one every
-    /// line is already drawn (`defaultVisibleSources`), so there is nothing to
-    /// disclose. The count the key prints is this list's, never a constant.
-    static func revealableSources9483(in points: [ChartDataPoint]) -> [String] {
+    /// window other than the blend and the `withheld` ones, sportsbook
+    /// consensus first, then by key — the order the key lists them. Only behind
+    /// a blend: without one every line is already drawn
+    /// (`defaultVisibleSources`), so there is nothing to disclose. The count
+    /// the key prints is this list's, never a constant.
+    static func revealableSources9483(in points: [ChartDataPoint], withheld: Set<String>) -> [String] {
         guard points.contains(where: { $0.source == "aggregate" }) else { return [] }
-        return Set(points.map(\.source)).subtracting(["aggregate"]).sorted { a, b in
+        return Set(points.map(\.source)).subtracting(["aggregate"]).subtracting(withheld).sorted { a, b in
             if a == "consensus" { return true }
             if b == "consensus" { return false }
             return a < b
         }
+    }
+
+    /// The served source groups Sources may not reveal — the selected web rule
+    /// (`OddsChart.tsx` `resolvedSources`), on the WHOLE group as served: the
+    /// statistical model when it has 3 or more points and strictly more than
+    /// half of them say `time_source == "wall_clock"`. Missing is not
+    /// wall-clock; exactly half is not a majority.
+    ///
+    /// Judged before any window, percentile or finger cut, so zooming or
+    /// scrubbing can never change which sources are eligible; having a
+    /// reading in the window is `revealableSources9483`'s separate test. The
+    /// no-blend fallback, which has always drawn every line, does not read it.
+    static func withheldSources9483(served: [String: [WinProbHistoryPoint]]?) -> Set<String> {
+        guard let group = served?["stat_model"], group.count >= 3 else { return [] }
+        let wallClock = group.filter { $0.gameState?.timeSource == "wall_clock" }.count
+        return wallClock * 2 > group.count ? ["stat_model"] : []
+    }
+
+    private var withheldSources9483: Set<String> {
+        Self.withheldSources9483(served: vm.history?.winProbHistory)
     }
 
     /// What this page's axis means below 50%: a qualified complementary
@@ -4612,14 +4642,33 @@ extension OddsChartView {
         return CGSize(width: ceil(width) + endLabelPlatePadding9483 * 2, height: ceil(height))
     }
 
+    /// The furthest a frame-moved label may step past the line: two plate
+    /// heights, or a tenth of the plot on a taller one (the full-size view) —
+    /// the selected web's bound (`CALLOUT_LINE_AVOID_MAX_PX`). Further than
+    /// that the number reads as labelling some other level of the chart, so
+    /// the label keeps the frame's placement instead.
+    static let endLabelAvoidMaxPlateHeights9483: CGFloat = 2
+    static let endLabelAvoidMaxPlotFraction9483: CGFloat = 0.1
+    /// The finished end's static dot (Design N3).
+    static let endDotDiameter9483: CGFloat = 8
+
     /// Where the label's centre goes, in plot-local points: to the LEFT of the
     /// end dot (the line ends at the dot, so nothing of it lies to the right),
     /// and stepped off the line it ends — above the dot when the line under the
     /// label sits lower (it climbed in), below it when it sits higher (it fell
     /// in). If that side has no room inside the plot (below the chips' band,
     /// above the bottom), the other side; never outside the plot.
+    ///
+    /// Once the frame has moved the label off that preferred spot, `ink` — the
+    /// primary line's drawn top and bottom across the label's own x span — is
+    /// read: a decisive final runs its last stretch along the frame, exactly
+    /// where the moved label lands, and its plate painted out the climb to
+    /// 100% (the web's `calloutLabelCenterY` `avoid`, #11356). A plate on that
+    /// ink steps just past it, away from the frame it left, within the plot
+    /// and the bound above; otherwise it stays where the frame put it.
     static func endLabelCenter9483(end: CGPoint, size: CGSize, lineYBeneath: CGFloat?,
-                                   plot: CGSize, topReserve: CGFloat) -> CGPoint {
+                                   plot: CGSize, topReserve: CGFloat,
+                                   ink: (ClosedRange<CGFloat>) -> ClosedRange<CGFloat>?) -> CGPoint {
         let x = max(size.width / 2, end.x - endLabelGap9483 - size.width / 2)
         let above = end.y - 2 - size.height / 2
         let below = end.y + 2 + size.height / 2
@@ -4628,38 +4677,161 @@ extension OddsChartView {
         func fits(_ y: CGFloat) -> Bool {
             y - size.height / 2 >= topReserve && y + size.height / 2 <= plot.height
         }
-        var y = prefersAbove ? above : below
+        let preferred = prefersAbove ? above : below
+        var y = preferred
         if !fits(y) { y = prefersAbove ? below : above }
         let lowest = max(topReserve + size.height / 2, size.height / 2)
-        y = min(max(y, lowest), max(lowest, plot.height - size.height / 2))
-        return CGPoint(x: x, y: y)
+        let deepest = max(lowest, plot.height - size.height / 2)
+        y = min(max(y, lowest), deepest)
+        guard y != preferred,
+              let line = ink((x - size.width / 2)...(x + size.width / 2)),
+              y + size.height / 2 > line.lowerBound, y - size.height / 2 < line.upperBound
+        else { return CGPoint(x: x, y: y) }
+        // Moved down off the top: below the line. Moved up off the bottom (a
+        // collapse to 0%): above it. Never back toward the frame it left.
+        let stepped = y > preferred ? line.upperBound + size.height / 2 : line.lowerBound - size.height / 2
+        let maxStep = max(size.height * endLabelAvoidMaxPlateHeights9483,
+                          plot.height * endLabelAvoidMaxPlotFraction9483)
+        guard stepped >= lowest, stepped <= deepest, abs(stepped - y) <= maxStep
+        else { return CGPoint(x: x, y: y) }
+        return CGPoint(x: x, y: stepped)
+    }
+
+    /// The primary line's marks exactly as `chartContent` draws them: its
+    /// joined runs (two or more points, straight segments, #7878's breaks left
+    /// open) and its lone dots — under a checkpoint mount, the layer's
+    /// surviving runs, lone readings and drawn checkpoints. Placement only:
+    /// nothing here is a value the chart prints.
+    struct PrimaryInk9483 {
+        let runs: [[ChartDataPoint]]
+        let marks: [ChartDataPoint]
+
+        /// Whether `date`/`probability` is one of these drawn marks — the
+        /// only place a finished end's dot may sit.
+        func draws(date: Date, probability: Double) -> Bool {
+            let at: (ChartDataPoint) -> Bool = { $0.date == date && $0.probability == probability }
+            return runs.contains { $0.contains(where: at) } || marks.contains(where: at)
+        }
+    }
+
+    static func primaryInk9483(dataPoints: [ChartDataPoint], checkpoints: PublicationCheckpointMount4974?,
+                               gameStart: Date?) -> PrimaryInk9483 {
+        if let checkpoints {
+            let plan = checkpoints.plan
+            return PrimaryInk9483(
+                runs: plan.lines.map(\.points),
+                marks: plan.dots.map(\.point) + plan.checkpoints.map {
+                    ChartDataPoint(date: $0.date, probability: $0.probability,
+                                   source: PublicationCheckpointMount4974.blendSource)
+                })
+        }
+        let primary = primarySource(in: dataPoints)
+        let segments = observationSegments(dataPoints.filter { $0.source == primary }, gameStart: gameStart)
+        return PrimaryInk9483(runs: segments.filter { $0.count >= 2 },
+                              marks: segments.filter { $0.count == 1 }.compactMap(\.first))
+    }
+
+    /// A lone mark's radius: both the line's lone dot and a checkpoint are
+    /// drawn at `PublicationCheckpointLayer4974.symbolArea` square points.
+    static let inkMarkRadius9483: CGFloat = sqrt(PublicationCheckpointLayer4974.symbolArea) / 2
+
+    /// The top and bottom (plot-local y) of the ink `runs` and `marks` lay
+    /// across `span` — the web's `lineYExtentBetween`. A run's vertex inside
+    /// the span counts; a straight segment crossing either edge counts at the
+    /// edge, where its drawn ink is. Only consecutive vertices of ONE run are
+    /// joined: a break between runs has no ink. Each line is widened by half
+    /// its stroke, each lone mark by its radius. Nil when nothing is drawn
+    /// there.
+    static func inkExtent9483(runs: [[CGPoint]], marks: [CGPoint], across span: ClosedRange<CGFloat>,
+                              halfStroke: CGFloat, markRadius: CGFloat) -> ClosedRange<CGFloat>? {
+        var top = CGFloat.infinity
+        var bottom = -CGFloat.infinity
+        func take(_ y: CGFloat, _ pad: CGFloat) {
+            top = min(top, y - pad)
+            bottom = max(bottom, y + pad)
+        }
+        for run in runs {
+            var previous: CGPoint?
+            for vertex in run {
+                guard vertex.x.isFinite, vertex.y.isFinite else { previous = nil; continue }
+                if span.contains(vertex.x) { take(vertex.y, halfStroke) }
+                if let u = previous, u.x != vertex.x {
+                    let lo = min(u.x, vertex.x)
+                    let hi = max(u.x, vertex.x)
+                    for edge in [span.lowerBound, span.upperBound] where edge > lo && edge < hi {
+                        take(u.y + (vertex.y - u.y) * (edge - u.x) / (vertex.x - u.x), halfStroke)
+                    }
+                }
+                previous = vertex
+            }
+        }
+        for mark in marks where mark.x.isFinite && mark.y.isFinite
+            && mark.x + markRadius >= span.lowerBound && mark.x - markRadius <= span.upperBound {
+            take(mark.y, markRadius)
+        }
+        return top <= bottom ? top...bottom : nil
+    }
+
+    /// `run` on the plot, split wherever a point has no position — a vertex
+    /// the chart cannot place is never bridged.
+    static func screenRuns9483(_ run: [ChartDataPoint], proxy: ChartProxy) -> [[CGPoint]] {
+        var runs: [[CGPoint]] = [[]]
+        for point in run {
+            if let x = proxy.position(forX: point.date), let y = proxy.position(forY: point.probability) {
+                runs[runs.count - 1].append(CGPoint(x: x, y: y))
+            } else if !(runs.last?.isEmpty ?? true) {
+                runs.append([])
+            }
+        }
+        return runs.filter { !$0.isEmpty }
     }
 
     @ViewBuilder
     private func finishedEndLabel9483(_ end: (date: Date, probability: Double), line: [ChartDataPoint],
-                                      sides: ChartProbabilityAxis9483.Sides,
-                                      proxy: ChartProxy, plotFrame: CGRect) -> some View {
-        if let text = Self.endLabelText9483(probability: end.probability, sides: sides,
-                                            homeShort: homeShort, awayShort: awayShort),
-           let x = proxy.position(forX: end.date),
+                                      ink: PrimaryInk9483, sides: ChartProbabilityAxis9483.Sides,
+                                      proxy: ChartProxy, plotFrame: CGRect,
+                                      color: Color, halfStroke: CGFloat) -> some View {
+        if let x = proxy.position(forX: end.date),
            let y = proxy.position(forY: end.probability),
            x >= 0, x <= plotFrame.width, y >= 0, y <= plotFrame.height {
-            let size = Self.endLabelSize9483(text, fontSize: axisFontSize)
-            let center = Self.endLabelCenter9483(
-                end: CGPoint(x: x, y: y), size: size,
-                lineYBeneath: Self.lineY9483(atX: x - Self.endLabelGap9483 - size.width / 2,
-                                             on: line, proxy: proxy),
-                plot: plotFrame.size, topReserve: Self.endLabelTopReserve9483)
-            Text(text)
-                .font(.system(size: axisFontSize, weight: .semibold))
-                .foregroundStyle(endLabelInk9483(probability: end.probability, sides: sides))
-                .lineLimit(1)
-                .fixedSize()
-                .padding(.horizontal, Self.endLabelPlatePadding9483)
-                .background(Color.systemBackground.opacity(0.85), in: RoundedRectangle(cornerRadius: 3))
-                .position(x: plotFrame.minX + center.x, y: plotFrame.minY + center.y)
-                .allowsHitTesting(false)
-                .accessibilityHidden(true)
+            // Design N3 — a small static dot on the line's last drawn reading
+            // or resting checkpoint, in the primary line's colour: a highlight
+            // of a mark already drawn, never a new point. No dot unless that
+            // end IS one of the drawn marks, and nothing about it animates.
+            if ink.draws(date: end.date, probability: end.probability) {
+                Circle()
+                    .fill(color)
+                    .overlay(Circle().stroke(Color.systemBackground, lineWidth: 1.5))
+                    .frame(width: Self.endDotDiameter9483, height: Self.endDotDiameter9483)
+                    .position(x: plotFrame.minX + x, y: plotFrame.minY + y)
+                    .allowsHitTesting(false)
+                    .accessibilityHidden(true)
+            }
+            if let text = Self.endLabelText9483(probability: end.probability, sides: sides,
+                                                homeShort: homeShort, awayShort: awayShort) {
+                let size = Self.endLabelSize9483(text, fontSize: axisFontSize)
+                let runs = ink.runs.flatMap { Self.screenRuns9483($0, proxy: proxy) }
+                let marks = Self.screenRuns9483(ink.marks, proxy: proxy).flatMap { $0 }
+                let center = Self.endLabelCenter9483(
+                    end: CGPoint(x: x, y: y), size: size,
+                    lineYBeneath: Self.lineY9483(atX: x - Self.endLabelGap9483 - size.width / 2,
+                                                 on: line, proxy: proxy),
+                    plot: plotFrame.size, topReserve: Self.endLabelTopReserve9483,
+                    ink: { span in
+                        Self.inkExtent9483(runs: runs, marks: marks, across: span,
+                                           halfStroke: halfStroke, markRadius: Self.inkMarkRadius9483)
+                    })
+                Text(text)
+                    .font(.system(size: axisFontSize, weight: .semibold))
+                    .foregroundStyle(endLabelInk9483(probability: end.probability, sides: sides))
+                    .lineLimit(1)
+                    .fixedSize()
+                    .padding(.horizontal, Self.endLabelPlatePadding9483)
+                    .background(Color.systemBackground.opacity(0.85), in: RoundedRectangle(cornerRadius: 3))
+                    .position(x: plotFrame.minX + center.x, y: plotFrame.minY + center.y)
+                    .allowsHitTesting(false)
+                    .accessibilityHidden(true)
+            }
         }
     }
 

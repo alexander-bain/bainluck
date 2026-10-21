@@ -98,7 +98,7 @@ final class ChartSingleTrajectory11356Tests: XCTestCase {
         return Chart.probabilityWindow9483(
             points: points,
             defaultSources: Chart.defaultVisibleSources(in: points),
-            revealed: sourcesOpen ? Chart.revealableSources9483(in: points) : [])
+            revealed: sourcesOpen ? Chart.revealableSources9483(in: points, withheld: []) : [])
     }
 
     func testTheRecordedWindowWidensWhenSourcesOpensAndRestoresWhenItCloses() {
@@ -141,16 +141,103 @@ final class ChartSingleTrajectory11356Tests: XCTestCase {
 
     func testSourcesListsEveryOtherSourceInTheWindowBehindABlendOnly() {
         let points = jaxPoints()
-        XCTAssertEqual(Chart.revealableSources9483(in: points),
+        XCTAssertEqual(Chart.revealableSources9483(in: points, withheld: []),
                        ["consensus", "espn", "kalshi", "polymarket", "stat_model"],
                        "sportsbook consensus first, then by key; the count is the list's, never a constant")
         let threeSources = points.filter { ["aggregate", "kalshi", "polymarket", "espn"].contains($0.source) }
-        XCTAssertEqual(Chart.revealableSources9483(in: threeSources), ["espn", "kalshi", "polymarket"])
+        XCTAssertEqual(Chart.revealableSources9483(in: threeSources, withheld: []), ["espn", "kalshi", "polymarket"])
         // Without a blend every line is already drawn: nothing to disclose.
         let noBlend = points.filter { $0.source != "aggregate" }
-        XCTAssertEqual(Chart.revealableSources9483(in: noBlend), [])
+        XCTAssertEqual(Chart.revealableSources9483(in: noBlend, withheld: []), [])
         XCTAssertEqual(Set(Chart.defaultVisibleSources(in: noBlend)), Set(jaxSources.keys),
                        "control: the fail-closed full set is drawn instead")
+    }
+
+    // MARK: - Which sources Sources may reveal (the selected web rule)
+
+    /// One served `stat_model` group, decoded as the app decodes it: one point
+    /// per entry of `timeSources`, each entry the raw `time_source` JSON
+    /// fragment (`nil` = the key is absent). Synthetic: these are causal
+    /// controls for the rule, not recorded games.
+    private func servedGroup(_ timeSources: [String?]) throws -> [WinProbHistoryPoint] {
+        let items = timeSources.enumerated().map { index, raw -> String in
+            let timeSource = raw.map { ",\"time_source\":\($0)" } ?? ""
+            return "{\"timestamp\":\"2026-10-11T14:\(10 + index % 50):00Z\",\"home_probability\":0.6,"
+                + "\"game_state\":{\"period\":\"2\",\"clock\":\"10:00\",\"home_score\":7,\"away_score\":3\(timeSource)}}"
+        }
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
+        return try decoder.decode([WinProbHistoryPoint].self, from: Data("[\(items.joined(separator: ","))]".utf8))
+    }
+
+    private let wallClock: String? = "\"wall_clock\""
+    private let espnClock: String? = "\"espn\""
+
+    func testTheModelIsWithheldOnlyWhenMostOfItsWholeGroupIsWallClocked() throws {
+        func withheld(_ timeSources: [String?]) throws -> Set<String> {
+            Chart.withheldSources9483(served: ["stat_model": try servedGroup(timeSources),
+                                               "aggregate": try servedGroup([wallClock, wallClock, wallClock])])
+        }
+        XCTAssertEqual(try withheld([wallClock, wallClock, espnClock]), ["stat_model"], "2 of 3: a majority")
+        XCTAssertEqual(try withheld([wallClock, wallClock, wallClock, espnClock, espnClock]), ["stat_model"])
+        XCTAssertEqual(try withheld([wallClock, wallClock, espnClock, espnClock]), [], "exactly half is not a majority")
+        XCTAssertEqual(try withheld([wallClock, wallClock]), [], "two points are never judged")
+        XCTAssertEqual(try withheld([espnClock, espnClock, espnClock]), [])
+        XCTAssertEqual(try withheld([wallClock, nil, nil]), [], "a missing clock is not wall-clock")
+        XCTAssertEqual(Chart.withheldSources9483(served: ["espn": try servedGroup([wallClock, wallClock, wallClock])]),
+                       [], "the rule is the model's only")
+        XCTAssertEqual(Chart.withheldSources9483(served: nil), [])
+    }
+
+    /// The retained real groups (C3-RETAINED-INPUT-EXPECTATIONS.json) all KEEP
+    /// the model, so they are controls only; the counts are theirs, the points
+    /// are rebuilt to those counts. Stuttgart 15330334 serves no model at all.
+    func testTheRetainedClockedModelsStayEligible() throws {
+        XCTAssertEqual(Chart.withheldSources9483(served: ["stat_model": try servedGroup(Array(repeating: espnClock, count: 27))]),
+                       [], "Jaguars 14639175: 27 ESPN-clocked")
+        XCTAssertEqual(Chart.withheldSources9483(served: ["stat_model": try servedGroup(Array(repeating: espnClock, count: 18))]),
+                       [], "Bears 14780549 one-side: 18 ESPN-clocked")
+        XCTAssertEqual(Chart.withheldSources9483(
+            served: ["stat_model": try servedGroup(Array(repeating: espnClock, count: 101) + [nil])]),
+                       [], "Bears 14780549 final: 101 ESPN-clocked and one missing")
+        XCTAssertEqual(Chart.withheldSources9483(served: ["aggregate": try servedGroup([espnClock, espnClock, espnClock])]),
+                       [], "Stuttgart shape: no model group")
+    }
+
+    /// A withheld model leaves all three things Sources owns: the count, the
+    /// lines and the window. The Jaguars window opens to 30–80 only because of
+    /// the model's 0.37s; withheld (as if the same group had been wall-clocked)
+    /// the open window is the other four sources', 45–75.
+    func testAWithheldModelIsNotCountedDrawnOrSized() {
+        let points = jaxPoints()
+        let revealed = Chart.revealableSources9483(in: points, withheld: ["stat_model"])
+        XCTAssertEqual(revealed, ["consensus", "espn", "kalshi", "polymarket"])
+        XCTAssertEqual(Chart.probabilityWindow9483(points: points, defaultSources: Chart.defaultVisibleSources(in: points),
+                                                   revealed: revealed),
+                       window(45, 75, [45, 50, 55, 60, 65, 70, 75]))
+        XCTAssertEqual(jaxWindow(sourcesOpen: true), window(30, 80, [30, 40, 50, 60, 70, 80]),
+                       "control: eligible, the model widens it")
+        let noBlend = points.filter { $0.source != "aggregate" }
+        XCTAssertTrue(Chart.defaultVisibleSources(in: noBlend).contains("stat_model"),
+                      "the no-blend fallback still draws every line; only the new disclosure obeys the rule")
+    }
+
+    /// `time_source` is additive: absent, null or a shape this build cannot
+    /// read is nil, and never costs the point, its fields or its siblings.
+    func testAnUnreadableTimeSourceNeverDropsAPointOrItsFields() throws {
+        let group = try servedGroup(["7", "null", "{\"x\":1}", nil, espnClock, wallClock])
+        XCTAssertEqual(group.count, 6, "every point decoded")
+        XCTAssertEqual(group.map { $0.gameState?.timeSource }, [nil, nil, nil, nil, "espn", "wall_clock"])
+        for point in group {
+            XCTAssertEqual(point.homeProbability, 0.6)
+            XCTAssertEqual(point.gameState?.period, "2")
+            XCTAssertEqual(point.gameState?.clock, "10:00")
+            XCTAssertEqual(point.gameState?.homeScore, 7)
+            XCTAssertEqual(point.gameState?.awayScore, 3)
+            XCTAssertNil(point.gameState?.inning)
+        }
+        XCTAssertEqual(Chart.withheldSources9483(served: ["stat_model": Array(group.prefix(4)) + [group[5]]]), [],
+                       "unreadable is never counted as wall-clock")
     }
 
     // MARK: - Checkpoints and live minutes (the web call site's inputs)
@@ -298,18 +385,131 @@ final class ChartSingleTrajectory11356Tests: XCTestCase {
         let plot = CGSize(width: 300, height: 200)
         let end = CGPoint(x: 250, y: 60)
         // Climbed in: the line under the label is lower on screen, so the label sits above.
-        XCTAssertEqual(Chart.endLabelCenter9483(end: end, size: size, lineYBeneath: 120, plot: plot, topReserve: 20),
+        XCTAssertEqual(Chart.endLabelCenter9483(end: end, size: size, lineYBeneath: 120, plot: plot, topReserve: 20,
+                                                ink: noInk),
                        CGPoint(x: 224, y: 50))
         // Fell in: below.
-        XCTAssertEqual(Chart.endLabelCenter9483(end: end, size: size, lineYBeneath: 30, plot: plot, topReserve: 20),
+        XCTAssertEqual(Chart.endLabelCenter9483(end: end, size: size, lineYBeneath: 30, plot: plot, topReserve: 20,
+                                                ink: noInk),
                        CGPoint(x: 224, y: 70))
         // A climb to the top with no room above the dot (the chips' band): below.
         XCTAssertEqual(Chart.endLabelCenter9483(end: CGPoint(x: 250, y: 22), size: size, lineYBeneath: 120,
-                                                plot: plot, topReserve: 20),
+                                                plot: plot, topReserve: 20, ink: noInk),
                        CGPoint(x: 224, y: 32))
         // Never past the plot's left edge.
         XCTAssertEqual(Chart.endLabelCenter9483(end: CGPoint(x: 10, y: 100), size: size, lineYBeneath: nil,
-                                                plot: plot, topReserve: 20).x, 20)
+                                                plot: plot, topReserve: 20, ink: noInk).x, 20)
+    }
+
+    // MARK: - The end label clears the final climb (C2)
+
+    private let noInk: (ClosedRange<CGFloat>) -> ClosedRange<CGFloat>? = { _ in nil }
+
+    /// The ink of `runs` (and lone `marks`) as the chart measures it for a 3pt line.
+    private func ink(_ runs: [[CGPoint]], marks: [CGPoint] = []) -> (ClosedRange<CGFloat>) -> ClosedRange<CGFloat>? {
+        { span in
+            Chart.inkExtent9483(runs: runs, marks: marks, across: span, halfStroke: 1.5,
+                                markRadius: Chart.inkMarkRadius9483)
+        }
+    }
+
+    /// Whether a plate centred at `center` lies on that ink.
+    private func plateCoversInk(_ center: CGPoint, _ size: CGSize,
+                                _ ink: (ClosedRange<CGFloat>) -> ClosedRange<CGFloat>?) -> Bool {
+        guard let line = ink((center.x - size.width / 2)...(center.x + size.width / 2)) else { return false }
+        return center.y + size.height / 2 > line.lowerBound && center.y - size.height / 2 < line.upperBound
+    }
+
+    /// A 270pt plot showing 25–100 (Packers-shaped final, #11356) or 0–75 (its
+    /// mirror, a collapse); a 50 × 14 plate. Geometry controls, not renders.
+    private let platePlot = CGSize(width: 300, height: 270)
+    private let plate = CGSize(width: 50, height: 14)
+    private func yOnTopWindow(_ p: CGFloat) -> CGFloat { (1 - (p - 0.25) / 0.75) * 270 }
+    private func yOnBottomWindow(_ p: CGFloat) -> CGFloat { (1 - p / 0.75) * 270 }
+
+    func testAFinalClimbToTheTopIsNotPaintedOutByItsLabel() {
+        let climb = [(150, 0.80), (230, 0.92), (250, 0.96), (270, 0.99), (290, 1.0)]
+            .map { CGPoint(x: CGFloat($0.0), y: yOnTopWindow(CGFloat($0.1))) }
+        let end = CGPoint(x: 290, y: 0)
+        let placed = Chart.endLabelCenter9483(end: end, size: plate, lineYBeneath: yOnTopWindow(0.96),
+                                              plot: platePlot, topReserve: 20, ink: ink([climb]))
+        XCTAssertFalse(plateCoversInk(placed, plate, ink([climb])), "\(placed)")
+        XCTAssertEqual(placed.x, 259)
+        XCTAssertEqual(placed.y, 34.42, accuracy: 0.001, "just below the climb's ink, not further")
+        // Removal control: without the ink the frame's placement sits on the climb.
+        let blind = Chart.endLabelCenter9483(end: end, size: plate, lineYBeneath: yOnTopWindow(0.96),
+                                             plot: platePlot, topReserve: 20, ink: noInk)
+        XCTAssertEqual(blind, CGPoint(x: 259, y: 27))
+        XCTAssertTrue(plateCoversInk(blind, plate, ink([climb])), "control: the case bites")
+    }
+
+    func testAFinalCollapseToTheBottomIsNotPaintedOutByItsLabel() {
+        let fall = [(150, 0.20), (230, 0.08), (250, 0.04), (270, 0.01), (290, 0.0)]
+            .map { CGPoint(x: CGFloat($0.0), y: yOnBottomWindow(CGFloat($0.1))) }
+        let end = CGPoint(x: 290, y: 270)
+        let placed = Chart.endLabelCenter9483(end: end, size: plate, lineYBeneath: yOnBottomWindow(0.04),
+                                              plot: platePlot, topReserve: 20, ink: ink([fall]))
+        XCTAssertFalse(plateCoversInk(placed, plate, ink([fall])), "\(placed)")
+        XCTAssertEqual(placed.y, 235.58, accuracy: 0.001, "just above the collapse's ink")
+        let blind = Chart.endLabelCenter9483(end: end, size: plate, lineYBeneath: yOnBottomWindow(0.04),
+                                             plot: platePlot, topReserve: 20, ink: noInk)
+        XCTAssertEqual(blind, CGPoint(x: 259, y: 261))
+        XCTAssertTrue(plateCoversInk(blind, plate, ink([fall])), "control: the case bites")
+    }
+
+    /// The ink is read only once the frame moved the label, and the step is
+    /// the web's bounded one.
+    func testTheLabelStepsOnlyWhenTheFrameMovedItAndNeverFurtherThanTheBound() {
+        let size = CGSize(width: 40, height: 16)
+        let plot = CGSize(width: 300, height: 200)
+        XCTAssertEqual(Chart.endLabelCenter9483(end: CGPoint(x: 250, y: 60), size: size, lineYBeneath: 120,
+                                                plot: plot, topReserve: 20, ink: { _ in 52...70 }),
+                       CGPoint(x: 224, y: 50), "at its preferred spot the label never moves for the ink")
+        // A climb so steep under the plate that clearing it is a 56pt jump
+        // (bound: max(2 × 14, 10% × 270) = 28): the frame's placement stands.
+        let steep = [(200, 0.75), (240, 0.80), (257, 0.90), (274, 0.97), (290, 1.0)]
+            .map { CGPoint(x: CGFloat($0.0), y: yOnTopWindow(CGFloat($0.1))) }
+        XCTAssertEqual(Chart.endLabelCenter9483(end: CGPoint(x: 290, y: 0), size: plate,
+                                                lineYBeneath: yOnTopWindow(0.90), plot: platePlot,
+                                                topReserve: 20, ink: ink([steep])),
+                       CGPoint(x: 259, y: 27))
+    }
+
+    /// The ink is the drawn runs: a break between runs has none, and a lone
+    /// mark counts at its own radius.
+    func testTheInkIsWhatTheLineDrawsAndNeverABridgedGap() {
+        let span: ClosedRange<CGFloat> = 234...284
+        let broken = [[CGPoint(x: 200, y: 100), CGPoint(x: 230, y: 90)], [CGPoint(x: 288, y: 5), CGPoint(x: 290, y: 0)]]
+        XCTAssertNil(Chart.inkExtent9483(runs: broken, marks: [], across: span, halfStroke: 1.5, markRadius: 2),
+                     "nothing is drawn across the break")
+        let joined = Chart.inkExtent9483(runs: [broken.flatMap { $0 }], marks: [], across: span,
+                                         halfStroke: 1.5, markRadius: 2)
+        XCTAssertNotNil(joined, "control: one run does lay ink there")
+        let unplaced = [[CGPoint(x: 200, y: 100), CGPoint(x: 230, y: 90), CGPoint(x: CGFloat.nan, y: 50),
+                         CGPoint(x: 288, y: 5), CGPoint(x: 290, y: 0)]]
+        XCTAssertNil(Chart.inkExtent9483(runs: unplaced, marks: [], across: span, halfStroke: 1.5, markRadius: 2),
+                     "a vertex with no place is never bridged")
+        XCTAssertEqual(Chart.inkExtent9483(runs: [], marks: [CGPoint(x: 260, y: 30)], across: span,
+                                           halfStroke: 1.5, markRadius: 2), 28...32)
+        XCTAssertNil(Chart.inkExtent9483(runs: [], marks: [CGPoint(x: 287, y: 30)], across: span,
+                                         halfStroke: 1.5, markRadius: 2))
+    }
+
+    /// The finished end's dot (Design N3) may only sit on a mark the line
+    /// draws: the primary line's own last reading, never a value it lacks and
+    /// never another source's point.
+    func testTheEndDotSitsOnlyOnADrawnPrimaryMark() {
+        let blend = series([0.62, 0.81, 0.97], source: "aggregate")
+        let points = blend + series([0.6, 0.7], source: "consensus")
+        let ink = Chart.primaryInk9483(dataPoints: points, checkpoints: nil, gameStart: nil)
+        XCTAssertEqual(ink.runs.map { $0.map(\.probability) }, [[0.62, 0.81, 0.97]])
+        let last = blend[2]
+        XCTAssertTrue(ink.draws(date: last.date, probability: last.probability))
+        XCTAssertFalse(ink.draws(date: last.date, probability: 1.0), "no terminal 100% the line never drew")
+        XCTAssertFalse(ink.draws(date: points[3].date, probability: 0.6), "another source's point")
+        let lone = Chart.primaryInk9483(dataPoints: [blend[0]], checkpoints: nil, gameStart: nil)
+        XCTAssertEqual(lone.marks.map(\.probability), [0.62], "a lone reading is a drawn dot")
+        XCTAssertTrue(lone.draws(date: blend[0].date, probability: 0.62))
     }
 
     // MARK: - The gutter
@@ -444,5 +644,55 @@ final class ChartSingleTrajectory11356Tests: XCTestCase {
         let end = try XCTUnwrap(chart.range(of: "structChartGutterDirection9483:View{",
                                             range: start.upperBound..<chart.endIndex))
         XCTAssertFalse(chart[start.lowerBound..<end.lowerBound].contains("selection"))
+    }
+
+    /// Design R2: the held tennis dot rides the line its readings come from,
+    /// so it wears that line's colour, never the home team's. Revealed lines
+    /// and the gutter's named poles keep their own colours.
+    func testTheHeldTennisDotWearsItsLinesColour() throws {
+        let chart = try chartCode()
+        XCTAssertTrue(chart.contains("TennisHeldReadingMarker9483(pin:tennisPin,selection:selection,series:tennis,"
+                                     + "proxy:proxy,plotFrame:plotFrame,color:colorForSource(tennis.source,sources:sources),"
+                                     + "awayColor:nil)"))
+        XCTAssertFalse(chart.contains("color:teamColors?.home??.accentColor"), "the held dot takes the home colour again")
+        XCTAssertTrue(chart.contains("case\"consensus\":baseColor=teamColors?.home??.blue"),
+                      "control: a revealed sportsbook line keeps its own colour")
+    }
+
+    /// C3's wiring: the count and the lines/window both read the one
+    /// eligibility, taken from the served groups; the fallback never does.
+    func testSourcesEligibilityIsTheServedGroupsAtEveryDisclosureSite() throws {
+        let chart = try chartCode()
+        XCTAssertEqual(count("Self.revealableSources9483(in:dataPoints,withheld:withheldSources9483)", in: chart), 2,
+                       "the key's count and the axis plan (its lines and window)")
+        XCTAssertEqual(count("revealableSources9483(in", in: chart), 3,
+                       "control: the definition and those two; no third, unfiltered caller")
+        XCTAssertTrue(chart.contains("Self.withheldSources9483(served:vm.history?.winProbHistory)"),
+                      "judged on the whole served group, not on the drawn window")
+        XCTAssertTrue(chart.contains("staticfuncdefaultVisibleSources(inpoints:[ChartDataPoint])->[String]{"
+                                     + "ifpoints.contains(where:{$0.source==\"aggregate\"}){return[\"aggregate\"]}"
+                                     + "returnArray(Set(points.map(\\.source))).sorted()}"),
+                      "the no-blend fallback is unchanged")
+    }
+
+    /// C2/N3's wiring: the label measures the primary line's drawn ink at its
+    /// stroke, and the end dot is static, in the primary line's colour.
+    func testTheEndLabelReadsThePrimaryInkAndTheEndDotIsStatic() throws {
+        let chart = try chartCode()
+        XCTAssertTrue(chart.contains("finishedEndLabel9483(finishedEnd,line:endLine,"
+                                     + "ink:Self.primaryInk9483(dataPoints:dataPoints,checkpoints:checkpoints,gameStart:gameStartDate),"
+                                     + "sides:axis.sides,proxy:proxy,plotFrame:plotFrame,"
+                                     + "color:colorForSource(Self.primarySource(in:dataPoints),sources:sources),"
+                                     + "halfStroke:strokeStyleForSource(Self.primarySource(in:dataPoints),sources:sources).lineWidth/2)"))
+        let start = try XCTUnwrap(chart.range(of: "privatefuncfinishedEndLabel9483("))
+        let end = try XCTUnwrap(chart.range(of: "staticfunclineY9483(", range: start.upperBound..<chart.endIndex))
+        let label = String(chart[start.lowerBound..<end.lowerBound])
+        XCTAssertTrue(label.contains("ifink.draws(date:end.date,probability:end.probability){Circle().fill(color)"),
+                      "a dot only on a drawn mark")
+        XCTAssertTrue(label.contains("ink:{spaninSelf.inkExtent9483(runs:runs,marks:marks,across:span,"
+                                     + "halfStroke:halfStroke,markRadius:Self.inkMarkRadius9483)}"))
+        for animated in ["animation", "withAnimation", "repeatForever", "phaseAnimator", "LiveChartEndpointFeedback"] {
+            XCTAssertFalse(label.contains(animated), "the finished end animates: \(animated)")
+        }
     }
 }
