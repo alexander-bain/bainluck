@@ -340,3 +340,133 @@ def test_revoke_during_stale_base_wait_prevents_sibling_resurrection():
     fresh = replace(base, revision={**base.revision, '3': 8})
     assert send(session, fresh, floors={'3': 8}, now=100.3) is None
     assert all(item.state != 'pending' for item in session.origins.values())
+
+
+def newer_pm(pm, value=.35):
+    frame = deepcopy(pm)
+    frame['preview']['seq'] += 1
+    frame['preview']['pending']['polymarket'] = value
+    frame['preview']['pending_entries']['polymarket'].update(value=value, observed_value=value)
+    frame['source_value'] = value
+    return frame
+
+
+def test_argon_newer_sibling_during_commit_gap_is_retained_but_not_published():
+    session, base, kalshi, pm, event = setup()
+    send(session, base, kalshi)
+    send(session, base, pm, now=100.01)
+    waiting = send(session, base, floors={'3': 8}, now=100.1)
+    assert waiting['preview']['kind'] == 'revoke'
+    pm2 = newer_pm(pm)
+    gap = send(session, base, pm2, floors={'3': 8}, now=100.15)
+    # Admission depends on B's own valid committed base. Publication still
+    # requires A's newer committed component; no incomplete blend is sent.
+    assert session.origins['2'].seq == 81
+    assert gap['preview']['kind'] == 'revoke' and gap['p'] is None
+    assert auth(gap)['3']['state'] == 'committed'
+    assert auth(gap)['2']['state'] == 'pending'
+    fresh = replace(base, revision={**base.revision, '3': 8},
+                    sources={**base.sources, **kalshi['preview']['pending_entries']})
+    resumed = send(session, fresh, floors={'3': 8}, now=100.2)
+    expected = resolve_hero(FoldedBlendView(event, {**fresh.sources, **pm2['preview']['pending_entries']}))
+    assert auth(resumed)['2']['seq'] == 81
+    assert resumed['p'] == expected.home_probability
+    assert send(session, fresh, pm, floors={'3': 8}, now=100.3) is None
+
+
+@pytest.mark.parametrize('unprojectable', ['base_rev', 'unelected', 'basis', 'authority', 'expired'])
+def test_argon_newer_unprojectable_blend_retires_previous_tuple(unprojectable):
+    session, base, _, pm, _ = setup()
+    send(session, base, pm)
+    pm2 = newer_pm(pm)
+    kwargs = {}
+    if unprojectable == 'base_rev':
+        pm2['preview']['base_rev'] += 1
+    elif unprojectable == 'unelected':
+        entry = pm2['preview']['pending_entries']['polymarket']
+        pm2['preview']['pending_entries']['kalshi'] = deepcopy(entry)
+        pm2['preview']['pending']['kalshi'] = .35
+    elif unprojectable == 'basis':
+        pm2['preview']['pending_entries']['polymarket']['observed_basis'] = {}
+    elif unprojectable == 'authority':
+        pm2['preview']['pending_entries_authority'] = 'unknown'
+    else:
+        kwargs['elapsed_ms'] = pm2['preview']['ttl_ms']
+    withdrawn = send(session, base, pm2, now=100.1, **kwargs)
+    assert session.origins['2'].identity == (12, 81)
+    assert session.origins['2'].state == 'revoked'
+    assert withdrawn['preview']['kind'] == 'revoke'
+    assert auth(withdrawn)['2'] == {'epoch': 12, 'seq': 81, 'state': 'revoked'}
+    assert send(session, base, pm, now=100.2) is None
+    # A repaired retransmission of an explicitly retired identity cannot
+    # revive it; only a genuinely later tuple may be admitted.
+    assert send(session, base, newer_pm(pm), now=100.3) is None
+
+
+def test_argon_origin_admission_still_requires_its_own_current_floor():
+    session, base, _, pm, _ = setup()
+    send(session, base, pm)
+    pm2 = newer_pm(pm)
+    refused = send(session, base, pm2, floors={'2': 23}, now=100.1)
+    assert refused['preview']['kind'] == 'revoke'
+    assert auth(refused)['2'] == {'epoch': 12, 'seq': 81, 'state': 'revoked'}
+    assert not session.origins['2'].entries
+    fresh = replace(base, revision={**base.revision, '2': 23})
+    assert send(session, fresh, pm2, floors={'2': 23}, now=100.2) is None
+    pm3 = newer_pm(pm2, value=.4)
+    pm3['preview']['base_rev'] = 23
+    resumed = send(session, fresh, pm3, floors={'2': 23}, now=100.3)
+    assert resumed['preview']['kind'] == 'blend'
+    assert auth(resumed)['2']['seq'] == 82
+
+
+@pytest.mark.parametrize('change', ['members', 'owners', 'terminal', 'missing'])
+def test_argon_newer_admission_never_bypasses_session_or_base_eligibility(change):
+    session, base, kalshi, pm, _ = setup()
+    send(session, base, kalshi)
+    send(session, base, pm)
+    if change == 'members': base = replace(base, revision={**base.revision, '4': 1})
+    elif change == 'owners': base = replace(base, owners={**base.owners, 'polymarket': 1})
+    elif change == 'terminal': base = replace(base, context={**base.context, 'status': 'completed'})
+    else: base = None
+    withdrawn = send(session, base, newer_pm(pm), now=100.1)
+    assert withdrawn['preview']['kind'] == 'revoke'
+    assert all(item.state != 'pending' for item in session.origins.values())
+    assert len(session.origins) == 2
+
+
+async def test_argon_real_redis_newest_during_gap_and_unelected_successor(ledger_rig):
+    event = _ev()
+    event.id = 1
+    base = FoldedPreviewBase.capture(
+        event, {**BASE10, 'betting': {'value': .4, 'updated_at': FRESH}, 'betting_book_count': 6},
+        {'betting': 1, 'kalshi': 3, 'polymarket': 2}, {'1': 11, '2': 10, '3': 10}, 'soccer_epl')
+    session = FoldedPreviewSession(1, [1, 2, 3])
+    [kalshi] = _blends(await ledger_rig.run(ledger_rig.k, _propose(
+        ledger_rig.k, 'kalshi', .6, event_id=3)))
+    [pm] = _blends(await ledger_rig.run(ledger_rig.p, _propose(
+        ledger_rig.p, 'polymarket', .7, event_id=2)))
+    send(session, base, kalshi)
+    send(session, base, pm)
+    send(session, base, floors={'3': 11}, now=100.1)
+    [pm2] = _blends(await ledger_rig.run(ledger_rig.p, _propose(
+        ledger_rig.p, 'polymarket', .35, event_id=2, basis_s=2)))
+    gap = send(session, base, pm2, floors={'3': 11}, now=100.2)
+    assert gap['preview']['kind'] == 'revoke'
+    assert auth(gap)['2']['seq'] == pm2['preview']['seq']
+    fresh = replace(base, revision={**base.revision, '3': 11},
+                    sources={**base.sources, **kalshi['preview']['pending_entries']})
+    resumed = send(session, fresh, floors={'3': 11}, now=100.3)
+    expected = resolve_hero(FoldedBlendView(event, {**fresh.sources, **pm2['preview']['pending_entries']}))
+    assert resumed['p'] == expected.home_probability
+    assert auth(resumed)['2']['seq'] == pm2['preview']['seq']
+    # A second source really joins B's event ledger, but the folded page
+    # elects Kalshi from A. Refuse this whole packet and retire B's old tuple.
+    [mixed] = _blends(await ledger_rig.run(ledger_rig.k, _propose(
+        ledger_rig.k, 'kalshi', .65, event_id=2, basis_s=3)))
+    assert set(mixed['preview']['pending_entries']) == {'kalshi', 'polymarket'}
+    withdrawn = send(session, fresh, mixed, floors={'3': 11}, now=100.4)
+    assert auth(withdrawn)['2'] == {
+        'epoch': mixed['preview']['epoch'], 'seq': mixed['preview']['seq'], 'state': 'revoked'}
+    assert withdrawn['preview']['kind'] == 'revoke'
+    assert send(session, fresh, pm2, floors={'3': 11}, now=100.5) is None

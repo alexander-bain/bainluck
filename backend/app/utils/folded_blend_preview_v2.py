@@ -119,19 +119,30 @@ class FoldedPreviewSession:
                 if newer and meta.get("kind") == "revoke" and _revision(meta.get("through_seq")):
                     if meta["through_seq"] < meta["seq"]:
                         self.origins[key] = _Origin(*identity, "revoked")
-                elif (ready and newer and meta.get("kind") == "blend"
-                      and meta.get("pending_entries_version") == 2
-                      and meta.get("pending_entries_authority") == "event-ledger-v1"):
-                    validated = base.pending_entries(
-                        frame, members=self.members, floors=self.vector,
-                        elapsed_ms=elapsed_ms, split_origins=True,
-                    )
+                elif newer and meta.get("kind") == "blend":
+                    validated = None
+                    if (base is not None and base.context["status"] in PREVIEW_STATUSES
+                            and meta.get("pending_entries_version") == 2
+                            and meta.get("pending_entries_authority") == "event-ledger-v1"):
+                        # A sibling's commit can delay full-fold publication
+                        # without invalidating this origin's own current base.
+                        # Retain its newest eligible tuple during that wait.
+                        origin_floors = {key: self.vector[key]} if key in self.vector else {}
+                        validated = base.pending_entries(
+                            frame, members=self.members, floors=origin_floors,
+                            elapsed_ms=elapsed_ms, split_origins=True,
+                        )
                     if validated is not None:
                         entries, observed, ttl = validated
                         self.origins[key] = _Origin(
                             *identity, "pending", meta["base_rev"],
                             now + ttl / 1000, entries, observed,
                         )
+                    elif previous is not None:
+                        # A newer ledger tuple supersedes the prior one even
+                        # when we cannot project it. Advance only an existing
+                        # fence: invalid initial input acquires no authority.
+                        self.origins[key] = _Origin(*identity, "revoked")
         return self._snapshot(base if ready else None, now)
 
     def _snapshot(self, base, now):
