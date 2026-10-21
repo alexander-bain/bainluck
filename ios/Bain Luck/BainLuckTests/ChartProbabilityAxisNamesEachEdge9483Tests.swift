@@ -279,6 +279,14 @@ final class ChartProbabilityAxisNamesEachEdge9483Tests: XCTestCase {
         XCTAssertEqual(Axis.window(readings: readings), window(35, 55, [35, 40, 45, 50, 55]))
     }
 
+    func testACoreThatKeepsHalfTheRangeUsesTheTrueExtremes() {
+        // Rule 1b: the p2..p98 core keeps over half the full span, so the true
+        // extremes 20 and 95 set the window. Without 1b the frozen web helper
+        // gives 25...100 (ticks 25, 50, 75, 100) and the 20% reading is cut off.
+        let readings = [0.20] + ramp(0.40, 0.80, 30) + [0.95]
+        XCTAssertEqual(Axis.window(readings: readings), Axis.full)
+    }
+
     func testALinesEndIsAlwaysOnThePlot() {
         let readings = ramp(0.34, 0.45, 40) + [1.0]
         XCTAssertEqual(Axis.window(readings: readings, mustShow: [1.0]), window(25, 100, [25, 50, 75, 100]))
