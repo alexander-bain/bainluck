@@ -20,3 +20,4 @@ PYTHONPATH=atomic-numeric-encoding "$PYTHON" -m unittest discover -s atomic-nume
 "$LUA51" producer-chain-metadata/tests/test_composition.lua producer-chain-metadata/
 "$PYTHON" -m pytest -q -p no:cacheprovider --asyncio-mode=auto --confcutdir=review/producer-chain review/producer-chain/test_integration.py
 "$PYTHON" real-redis-unexecuted/test_selection.py
+"$PYTHON" real-redis-unexecuted/test_runtime_selection.py

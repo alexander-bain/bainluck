@@ -18,9 +18,10 @@ from redis.retry import Retry
 from redis.backoff import NoBackoff
 
 from selection import preflight, LUA_SHA256, ADAPTER_SHA256
+from runtime_selection import validate_runtime_contract, verify_owned_runtime_version
 ROOT=Path(__file__).resolve().parent
 OUTPUT=ROOT.parent/'.work/real-redis'
-BINARY=Path(os.environ.get('DNPL_REDIS_BINARY','/nonexistent/not-configured'))
+BINARY=os.environ.get('DNPL_REDIS_BINARY')
 ADAPTER,SCRIPT=preflight()
 EXPECTED=LUA_SHA256
 RESULTS={'script_sha256':EXPECTED,'adapter_sha256':ADAPTER_SHA256,'tests':[], 'observations':{},'status':'not executed'}
@@ -31,15 +32,15 @@ class RealRedis(unittest.TestCase):
   if os.environ.get('DNPL_RUN_REAL_REDIS')!='1':
    raise RuntimeError('Unexecuted suite: explicit permitted runtime invocation required')
   preflight() # fail before any process or socket action if selected bytes changed
-  if hashlib.sha256(BINARY.read_bytes()).hexdigest()!='304e1a2ed1bb51bf62592a68d16a81a678d228599bacc039af832a5a6407d5dd':
-   raise RuntimeError('Expected the previously built official Redis7.2.16 binary')
+  contract=validate_runtime_contract(BINARY,os.environ.get('DNPL_REDIS_EXPECTED_VERSION'),os.environ.get('DNPL_REDIS_EXPECTED_SHA256'))
+  RESULTS['runtime_contract']=contract
   OUTPUT.mkdir(parents=True,exist_ok=True)
   cls.tmp=tempfile.TemporaryDirectory(prefix='dot-redis-')
   cls.addClassCleanup(cls.tmp.cleanup)
   cls.path=Path(cls.tmp.name);cls.socket=cls.path/'redis.sock'
   cls.log=(OUTPUT/'server.log').open('w')
   cls.addClassCleanup(cls.log.close)
-  cls.argv=[str(BINARY),'--port','0','--bind','127.0.0.1','--protected-mode','yes',
+  cls.argv=[contract['binary_path'],'--port','0','--bind','127.0.0.1','--protected-mode','yes',
     '--unixsocket',str(cls.socket),'--unixsocketperm','700','--save','',
     '--appendonly','no','--daemonize','no','--dir',str(cls.path)]
   RESULTS['status']='runtime launch attempted'
@@ -54,10 +55,12 @@ class RealRedis(unittest.TestCase):
    except redis.exceptions.ConnectionError:time.sleep(.02)
   else:raise RuntimeError('owned Redis did not start')
   info=cls.r.info('server');assert info['process_id']==cls.proc.pid
+  RESULTS['actual_owned_runtime_version']=info.get('redis_version')
+  verify_owned_runtime_version(contract,info)
   assert cls.r.config_get('port')['port']=='0'
   assert cls.r.config_get('appendonly')['appendonly']=='no'
   assert cls.r.config_get('save')['save']==''
-  RESULTS['runtime']={'redis_version':info['redis_version'],'redis_git_sha1':info['redis_git_sha1'],
+  RESULTS['runtime']={**contract,'redis_version':info['redis_version'],'redis_git_sha1':info['redis_git_sha1'],
    'redis_build_id':info['redis_build_id'],'process_id':cls.proc.pid,'argv':cls.argv,
    'ownership_verified':True,'tcp_port':0,'socket_permissions':oct(cls.socket.stat().st_mode & 0o777),
    'maxmemory_initial':cls.r.config_get('maxmemory'),'maxmemory_policy':cls.r.config_get('maxmemory-policy')}

@@ -31,3 +31,5 @@ Capture each exit status directly, without piping a gate to tail. `GATES.md` rec
 The additive producer patch uses zero context to avoid whitespace-only context lines in the evidence diff. For inspection only, `git apply --check --unidiff-zero producer-chain-metadata/producer-chain.patch` must be run from the matching b2b92fe checkout with the correct patch path. This PR does not apply it.
 
 The separate real-redis-unexecuted/test_selection.py checks corrected artifact hashes and Commands dispatch without opening a socket. Its23 real-engine cases have NOT run. Historical blocked runtime used the older Lua and cannot validate the numeric correction.
+
+The portable runtime successor adds 13 no-socket contract checks via real-redis-unexecuted/test_runtime_selection.py. An approved operator must explicitly select path/version/hash; Redis6.2.14 results remain compatibility-only, never proof of7.2.16. No real runtime was launched by these checks.

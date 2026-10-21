@@ -20,3 +20,11 @@ The required post-build frontend typecheck census passed exit 0: 66 existing err
 - Additive producer patch applies cleanly in check-only mode (`git apply --check --unidiff-zero`) to the pinned publication base. It is not applied.
 
 Published logs normalize only line endings and trailing whitespace to satisfy diff checks. LOG_PROVENANCE.json retains raw-capture and published hashes; complete raw logs remain in the local ignored work directory.
+
+## Portable runtime selector follow-up, 2026-10-21
+
+The follow-up changes only runtime selection, its tests, and evidence. Thirteen no-socket runtime contract tests and the existing three artifact-selection tests passed. Independent review also passed those tests plus three actual-startup refusal probes, without launching a binary. Exact corrected Lua/adapter bytes are unchanged. Backend startup 4/4 passed; the fresh approved frontend build exited0; the required subsequent typecheck exited0 with66 errors matching baseline66. These application gates do not validate a composed production prototype.
+
+An earlier build attempt lost its execution handle before completion; its outcome and possible metadata transmission remain unknown. The fresh retry above is the observed success. PORTABILITY.json records both separately and supplies raw/normalized log hashes. No runtime server was launched, installed or downloaded. All23 real-engine methods remain unexecuted here.
+
+Hosted security hold on the original head654df183: CodeQL reports one error and47 notes. Its exact alerts are being triaged, not waived as experiment-only. This follow-up does not claim hosted checks are green or grant production approval.

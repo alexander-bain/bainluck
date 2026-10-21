@@ -1,5 +1,6 @@
 {
   "base": "b2b92fe86467d0accdb02f7b765ada020b594aec",
+  "followup_parent": "654df18364946fd81819e3801daafa4d7692bfde",
   "files": [
     {
       "path": ".gitignore",
@@ -8,8 +9,8 @@
     },
     {
       "path": "GATES.md",
-      "bytes": 2642,
-      "sha256": "041334f9bb7e8b199741b3aa6282707169a5ab52965db2c34bd870ba2364af6e"
+      "bytes": 3857,
+      "sha256": "87672a80c76b73f5f216f98add8433fd76194e28fc88ab87cc69448e798a6310"
     },
     {
       "path": "INTEGRATION.md",
@@ -18,8 +19,8 @@
     },
     {
       "path": "PROVENANCE.json",
-      "bytes": 21612,
-      "sha256": "0750b5c52af006fa3ab08f8d85a59383e04e3e9432b20769873cf56bfd6fe5e5"
+      "bytes": 24173,
+      "sha256": "447c712bdb32ddfb2f891936c802a32fcfe1439d0858176d78f4675e6a049cf7"
     },
     {
       "path": "README.md",
@@ -28,8 +29,8 @@
     },
     {
       "path": "RUN.md",
-      "bytes": 2502,
-      "sha256": "b06928c850438087b3da45dcd7100379912f352748db77259ff19428144859f2"
+      "bytes": 2799,
+      "sha256": "20349dd6f8df508a08cb9551c2c01bfc4769ea7ad834b544b86b48429c6b6e51"
     },
     {
       "path": "atomic-numeric-encoding/adapter.py",
@@ -112,6 +113,11 @@
       "sha256": "513b69baf8381e89633f689abfc3660812dbf73021d6623374b1ebcbfd58c6b0"
     },
     {
+      "path": "evidence/validation/PORTABILITY.json",
+      "bytes": 2775,
+      "sha256": "be92310a7715671d43ac4402c2c75fb774fb302a994285fe454bdabc50a8622c"
+    },
+    {
       "path": "evidence/validation/backend-startup.log",
       "bytes": 1526,
       "sha256": "863ca0cb814d4b6558726ba2edd27c72efbcc180b5f993e35bf23a8c0faf6235"
@@ -132,9 +138,34 @@
       "sha256": "ddc21043c5aff58dea472feb33621c2216591a74e0275ed8a44eb8b5dec41ad1"
     },
     {
+      "path": "evidence/validation/portability-backend-startup.log",
+      "bytes": 1526,
+      "sha256": "86f2fc56bdde2648ca8c0753604bb85803a4828ebb5fa812a135964094ad59d9"
+    },
+    {
+      "path": "evidence/validation/portability-frontend-build-retry.log",
+      "bytes": 32178,
+      "sha256": "4dc1ac16a1a7778ddeb1a8d422c14837246de2245d81eb7808933bb747b3f65b"
+    },
+    {
+      "path": "evidence/validation/portability-post-build-typecheck.log",
+      "bytes": 484,
+      "sha256": "ddc21043c5aff58dea472feb33621c2216591a74e0275ed8a44eb8b5dec41ad1"
+    },
+    {
       "path": "evidence/validation/real-redis-selection-only.log",
       "bytes": 452,
       "sha256": "98edc1ee7ecef7f023b57b8fbdd44bb35ff7fcbb1e2eb4b194083a2cf0cacee0"
+    },
+    {
+      "path": "evidence/validation/runtime-portability-artifacts.log",
+      "bytes": 452,
+      "sha256": "ddf8457d33eb1fc4e4802f9611a41fe3aa1cfcb7c6734607a56d7f0fb94a497d"
+    },
+    {
+      "path": "evidence/validation/runtime-portability-tests.log",
+      "bytes": 1656,
+      "sha256": "68e4e8850b792985249cf313909a269ee6d0640f24b0daf103b1d1e5ab552d75"
     },
     {
       "path": "evidence/validation/selected-results.json",
@@ -323,8 +354,13 @@
     },
     {
       "path": "real-redis-unexecuted/README.md",
-      "bytes": 1489,
-      "sha256": "4648cc7aaa9cabf574d30d3e5c972736027e84e7457426e60a8193b55417a224"
+      "bytes": 4531,
+      "sha256": "f5a372a3f5c7fe3da95c8669ac538b8d6d057addc59a665702456a7de518e72c"
+    },
+    {
+      "path": "real-redis-unexecuted/runtime_selection.py",
+      "bytes": 2182,
+      "sha256": "70f300959428961f9a07ad96dfcc9a1a687b43840062324d51d3839a0e66a0de"
     },
     {
       "path": "real-redis-unexecuted/selection.py",
@@ -333,8 +369,13 @@
     },
     {
       "path": "real-redis-unexecuted/test_real_redis.py",
-      "bytes": 14874,
-      "sha256": "c16c802ff1bc45cd0ca62394c1a07fb85c2e89b665d449e6b2200114c88742dc"
+      "bytes": 15031,
+      "sha256": "5dd1ce40055c6f668b31d24ab034963bf2774b50765a5b0364647825f97d4212"
+    },
+    {
+      "path": "real-redis-unexecuted/test_runtime_selection.py",
+      "bytes": 3814,
+      "sha256": "5f54db282cdd777e446709eb42d4f5d6f82a6bdb0ecc17f43cfda91226e7dce4"
     },
     {
       "path": "real-redis-unexecuted/test_selection.py",
@@ -448,8 +489,8 @@
     },
     {
       "path": "run-focused.sh",
-      "bytes": 1529,
-      "sha256": "0b421f7ba4fe641bb22c451c0b12649915d784cd1c5ceec5f7dd5906f4f3c7a4"
+      "bytes": 1587,
+      "sha256": "e4d90d47b0a2112436a21b489ccd74c05ba81c17935ed4cde108c8ea492e09aa"
     },
     {
       "path": "validate_manifest.py",
