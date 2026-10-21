@@ -187,11 +187,13 @@ final class FinalForecastComparison11296Tests: XCTestCase {
             XCTAssertNil(resolve(e.pregameProjection, sport: e.sport, home: 1, away: 1, period: period))
         }
         // Control: the gate is the PERIOD, not the sport. With regulation
-        // evidence (which no payload carries today) the same object prints,
-        // level included — a league draw is a soccer result.
+        // evidence (this trimmed row predates `final_score_period`; see
+        // `FinalComparisonSoccerPeriod11296Tests` for the served witness) the
+        // same object prints, level included — a league draw is a soccer
+        // result — under the 90-minute label.
         XCTAssertEqual(
             resolve(e.pregameProjection, sport: e.sport, home: 1, away: 1, period: .regulation),
-            F.Comparison(label: F.label, away: 1, home: 1, bookmakerCount: 3))
+            F.Comparison(label: F.label90Min, away: 1, home: 1, bookmakerCount: 3))
     }
 
     func testTheServedUnavailableRowsPrintNothing() throws {
@@ -448,7 +450,8 @@ final class FinalForecastComparison11296Tests: XCTestCase {
             XCTAssertEqual(occurrences("FinalForecastLine11296(", in: code), 1, name)
             XCTAssertEqual(occurrences("ifletfinalForecast=finalForecast11296{", in: code), 1, name)
             XCTAssertEqual(occurrences("FinalForecastLine11296(comparison:finalForecast,awayName:event.awayTeam,homeName:event.homeTeam)", in: code), 1, name)
-            XCTAssertTrue(code.contains("actualPeriod:.fullGame,projection:event.pregameProjection)"), name)
+            XCTAssertTrue(code.contains("actualPeriod:FinalForecastComparison11296.actualPeriod(sport:event.sport,servedFinalScorePeriod:event.finalScorePeriod),projection:event.pregameProjection)"), name)
+            XCTAssertFalse(code.contains("actualPeriod:.fullGame"), "\(name): the period is the served witness's, never assumed")
             XCTAssertFalse(code.contains("Projectionbeforescheduledstart"), "\(name): the label is the helper's one spelling")
             XCTAssertFalse(code.contains("pregameProjectionUnavailable"), "\(name): the refusal reason renders nowhere")
         }

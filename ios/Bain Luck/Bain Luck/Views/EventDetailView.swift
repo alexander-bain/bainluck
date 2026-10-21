@@ -2024,6 +2024,16 @@ struct EventDetailView: View {
             }
             }
 
+            // #11296 — on a final, the sportsbooks' last pair before the
+            // scheduled start, one quiet line under whichever arm printed the
+            // actual result: the cards' one rule and one view, so the headline
+            // and the card one tap back print the same forecast or none. The
+            // result stays the headline's number; the pair reads away then
+            // home, as every arm above lays the teams out.
+            if let finalForecast = Self.finalForecast11296(event) {
+                FinalForecastLine11296(
+                    comparison: finalForecast, awayName: event.awayTeam, homeName: event.homeTeam)
+            }
         }
         // #9483 v476 — on the adopted pair the hero is the top of ONE card with
         // the chart (see the page body): no own backdrop or corners, a short
@@ -2038,6 +2048,20 @@ struct EventDetailView: View {
             if !approvedPair { Self.heroBackdrop(colors) }
         }
         .clipShape(RoundedRectangle(cornerRadius: approvedPair ? 0 : 16))
+    }
+
+    /// #11296 — the headline's forecast line, by the rule both finished cards
+    /// use (`EventCardView.finalForecast11296`): finished only, the served
+    /// `pregame_projection`, and the actual period from the served
+    /// `final_score_period`. Nil draws nothing. Static so the suite reaches it.
+    static func finalForecast11296(_ event: EventDetail) -> FinalForecastComparison11296.Comparison? {
+        guard EventState.isFinished(event.status) else { return nil }
+        return FinalForecastComparison11296.resolve(
+            sport: event.sport, status: event.status,
+            homeScore: event.homeScore, awayScore: event.awayScore,
+            actualPeriod: FinalForecastComparison11296.actualPeriod(
+                sport: event.sport, servedFinalScorePeriod: event.finalScorePeriod),
+            projection: event.pregameProjection)
     }
 
     /// The hero's team-tinted backdrop: its own on the legacy hero, the joined
