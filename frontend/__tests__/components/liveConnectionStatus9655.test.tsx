@@ -117,7 +117,7 @@ describe('#10200 the status button', () => {
       expect(m.details().hidden).toBeUndefined();
       const text = m.details().textContent;
       expect(text).toContain('Probability observed');
-      expect(text).toContain('Oct 2, 7:59:52 PM UTC · 8s ago');
+      expect(text).toContain('Oct 2, 7:59:52.000 PM UTC · 8s ago');
       expect(text).toContain('Score confirmed');
       expect(text).toContain('Oct 2, 7:53:00 PM UTC · 7m ago');
       expect(text).toContain('Oldest on screenThe score');

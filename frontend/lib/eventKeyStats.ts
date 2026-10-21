@@ -654,6 +654,8 @@ export function filterDisplayTags(
 // ---------------------------------------------------------------------------
 
 export interface ResolvedProbability {
+  /** Optional evidence from the branch that selected the current value. */
+  selectedProbabilitySource?: 'hero-blend' | 'history';
   homeProb: number | null;
   awayProb: number | null;
   probSourceLabel: string | null;
@@ -995,6 +997,8 @@ export function resolveProbability(
    * behaviour.
    */
   blendIsStale: boolean = false,
+  /** Opt in to selection provenance without changing legacy result shapes. */
+  includeSelection = false,
 ): ResolvedProbability {
   const odds = event.current_odds;
   const opening = event.opening_odds;
@@ -1098,6 +1102,9 @@ export function resolveProbability(
         odds,
         false,
       );
+      if (includeSelection) {
+        resolved.selectedProbabilitySource = heroBlend !== null ? 'hero-blend' : 'history';
+      }
       // The live blend and chart carry one value. Decide only its DISPLAY pair
       // together; SSE/history raw complements must not change the printed tie.
       // Preserve independently served pairs and an explicitly withheld side.
