@@ -117,6 +117,7 @@ import time
 from collections import OrderedDict
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from decimal import Decimal
 from types import SimpleNamespace
 from typing import Any, Callable, Optional
 
@@ -976,8 +977,14 @@ class LedgerRegistry(PreviewRegistry):
         try:
             text = json.dumps({
                 "sources": sources, "status": state.status,
-                "espn_win_prob_home": state.espn_win_prob_home,
-                "opening_home_probability": state.opening_home_probability,
+                # SQL Numeric columns arrive as Decimal, unlike JSONB source
+                # values. Encode these scalars numerically, never as strings.
+                "espn_win_prob_home": (float(state.espn_win_prob_home)
+                                      if isinstance(state.espn_win_prob_home, Decimal)
+                                      else state.espn_win_prob_home),
+                "opening_home_probability": (float(state.opening_home_probability)
+                                             if isinstance(state.opening_home_probability, Decimal)
+                                             else state.opening_home_probability),
             }, allow_nan=False, sort_keys=True)
         except (TypeError, ValueError):
             return None, None
