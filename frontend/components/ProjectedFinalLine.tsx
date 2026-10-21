@@ -36,6 +36,7 @@ export default function ProjectedFinalLine({
   second,
   order,
   variant,
+  emphasis = "primary",
   testId = "projected-final",
 }: {
   label: string;
@@ -45,6 +46,10 @@ export default function ProjectedFinalLine({
    *  never has to guess the orientation either. */
   order: "home-away" | "away-home";
   variant: "card" | "hero";
+  /** #11296 — `secondary` is a retained reading printed beneath a primary
+   *  pair (the live headline's pregame projection): closer to it, and in the
+   *  label's colour, so the current forecast stays the one that leads. */
+  emphasis?: "primary" | "secondary";
   testId?: string;
 }) {
   const [home, away] = order === "home-away" ? [first, second] : [second, first];
@@ -63,7 +68,9 @@ export default function ProjectedFinalLine({
   );
   const pair = (
     <span
-      className={`flex min-w-0 font-semibold text-text-primary tabular-nums ${
+      className={`flex min-w-0 ${
+        emphasis === "secondary" ? "font-medium text-text-secondary" : "font-semibold text-text-primary"
+      } tabular-nums ${
         variant === "hero"
           ? "flex-col items-center sm:flex-row sm:flex-wrap sm:justify-center sm:gap-x-1.5 text-sm"
           : "flex-wrap justify-end gap-x-1.5 text-right text-xs"
@@ -84,11 +91,11 @@ export default function ProjectedFinalLine({
       data-testid={testId}
       data-projected-final={`${home.score}-${away.score}`}
       data-projected-order={order}
-      className={
+      className={`${emphasis === "secondary" ? "mt-1" : "mt-2"} ${
         variant === "hero"
-          ? "mt-2 flex flex-col items-center gap-0.5 min-w-0 text-center"
-          : "mt-2 flex items-baseline justify-between gap-2 min-w-0"
-      }
+          ? "flex flex-col items-center gap-0.5 min-w-0 text-center"
+          : "flex items-baseline justify-between gap-2 min-w-0"
+      }`}
     >
       {/* #11296 — the final band's long label wraps inside its own box, at
           the same size, instead of taking room from what is beside it. The cap

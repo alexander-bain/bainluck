@@ -23,6 +23,7 @@ import { matrixForStat, type DuringPlayerProps } from "@/lib/duringPlayerPropsMa
 import { withoutEventOwnMoneyline } from "@/lib/eventOwnMoneyline";
 import { eventPageProjectedPair, projectedFinalLabel } from "@/lib/projectedFinalPair";
 import { finalForecastComparison, finalScorePeriod } from "@/lib/finalForecastComparison";
+import { livePregameComparison } from "@/lib/livePregameComparison";
 import FinalForecastDetails from "@/components/event/FinalForecastDetails";
 import ProjectedFinalLine from "@/components/ProjectedFinalLine";
 import { teamTextColor } from "@/lib/teamColors";
@@ -1854,6 +1855,24 @@ export default function EventPage({ params }: EventPageProps) {
         : null,
     [isFinished, heroScorePairPresent, heroScoreIsStoppageFiller, event?.sport, event?.status, bestHomeScore, bestAwayScore, event?.final_score_period, event?.pregame_projection]
   );
+  // #11296 — a LIVE headline's retained forecast: the same pre-start reading,
+  // printed beneath the current projected final it can be compared with. Only
+  // when the line above prints the producer's typed in-play pair (same unit,
+  // same period, same start); otherwise nothing is added and the current
+  // forecast prints exactly as before.
+  const heroLiveBaseline = useMemo(
+    () =>
+      livePregameComparison({
+        sportKey: event?.sport,
+        status: event?.status,
+        isLive,
+        commenceTime: event?.commence_time,
+        odds: event?.current_odds,
+        heroProjected: heroProjectedFinal,
+        projection: event?.pregame_projection,
+      }),
+    [event?.sport, event?.status, isLive, event?.commence_time, event?.current_odds, heroProjectedFinal, event?.pregame_projection]
+  );
   // #11103 — the game-story cards print the hero's projected final, never a second one.
   const nflCardsShown = useMemo(() => withPageProjection(nflCards, heroProjectedFinal), [nflCards, heroProjectedFinal]);
 
@@ -3146,6 +3165,27 @@ export default function EventPage({ params }: EventPageProps) {
                   variant="hero"
                   testId="event-hero-projected-final"
                 />
+              )}
+              {/* #11296 — live: the projection from before the scheduled start,
+                  directly beneath the current one, same team order, the final
+                  band's own words (90-minute basis said in the label). Where it
+                  came from sits one tap down, closed. */}
+              {heroProjectedFinal && heroLiveBaseline && (
+                <>
+                  <ProjectedFinalLine
+                    label={heroLiveBaseline.label}
+                    first={{ name: heroShortNames.home, score: heroLiveBaseline.baseline.home }}
+                    second={{ name: heroShortNames.away, score: heroLiveBaseline.baseline.away }}
+                    order="home-away"
+                    variant="hero"
+                    emphasis="secondary"
+                    testId="event-hero-live-baseline"
+                  />
+                  <FinalForecastDetails
+                    details={heroLiveBaseline.details}
+                    testId="event-hero-live-baseline-details"
+                  />
+                </>
               )}
               {/* #11296 — on a final, the forecast band under the result the
                   columns print: same team order, no grade, no colour. Where it
